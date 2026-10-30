@@ -421,6 +421,17 @@ Not rulings (recorded so the counts are not a surprise): `docs/phase-status.json
 (`cg_ll_1_the_llvm_backend_is_the_default`); `appx_h.py` reads a rule past a blank line inside it, which gave
 the older change logs 25 rows they had missed.
 
+#### Building verdicts 132, 133 and 135 (lead, night of 2026-10-30; none changes what the verdicts say)
+
+| Rule | What was built | Why |
+|---|---|---|
+| FFI-40a (132) | Every method entry sets its method's receiver: with `@ffi(const)` read-only, without it changing (`cimport.rs`, `applied.receivers`). It reaches the free operator functions C++ declares outside the class and Ember imports as the class's methods (`operator+(const Money&, const Money&)` as `Money.add`): their entries need `@ffi(const)` like any method's. 30 entries in 14 test overlays, for methods that only read, now say `@ffi(const)` (none of their classes has `mutable` state). | The verdict: an entry means what it says, whatever the importer reads (checklist 15). |
+| FFI-40a (132) | `E3021`/`E3023` at a call of a C++ method imported as changing, through a name that only reads, gets a help naming the line: "if it only reads its object, write `@ffi(const)` above its entry". | Checklist 9: the message gives the line to write. |
+| CLI-5 (132) | `ember bind --init` writes `@ffi(const)` (with a `# derived:` comment) above each method the importer reads as only reading its object. | The starter compiles unchanged and keeps what the import did; without it adopting the starter would make every read-only method changing. |
+| FFI-10 (133) | `safe unsafe fn` is parsed whole and refused, `E5002` ("declared both `safe` and `unsafe`"), as `safe` with `@ffi(unsafe)` was; it was a parse error with no place. | The old refusal carried to the new spelling. |
+| CLI-20 (130, 133) | `ember fmt --migrate` rewrites both: the word out of `@ffi(…)` (an empty one removed) and `unsafe fn`; in an overlay the word out, a slot left bare losing its `:` or `->`, and `unsafe fn`. Neither writes `@safety` text. | `[VER-9]`; §10's no placeholder text. |
+| MAN-9 (135) | The note's words as approved; the error beside it reworded the same way ("cannot create `…`: …; every program needs an `ember.toml` in its folder or a folder above"). | Verdict 135's lesson (checklist 18). |
+
 ### `a10_recursion` on the LLVM backend, 2026-10-30 (owner: "yes build it")
 
 The LLVM backend lost `a10_recursion` (1.71x C): not the backend's doing. The C backend built by clang

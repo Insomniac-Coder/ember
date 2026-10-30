@@ -10,4 +10,5 @@ unsafe overlay cpp "cpp_newtypes.hpp":  # SAFETY(ffi): each entry matches its de
     fn halve(ratio)
     class Socket:
         fn new(port)
+        @ffi(const)
         fn port()

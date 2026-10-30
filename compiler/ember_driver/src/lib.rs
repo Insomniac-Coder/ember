@@ -4807,12 +4807,13 @@ pub(crate) fn write_default_manifest_in(folder: &Path) -> Result<(), String> {
     let _ = std::fs::remove_file(&aside);
     match linked {
         Ok(()) => {
-            eprintln!("note: wrote `{}`, the package this program is: every program is a package [MAN-9]", path.display());
+            // Verdict 135: the note's words.
+            eprintln!("note: created `{}`: every program needs one, and this folder had none", path.display());
             Ok(())
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(error) => Err(format!(
-            "cannot write `{}`: {error}; every program is a package, with an `{}` in its folder or above [MAN-9]",
+            "cannot create `{}`: {error}; every program needs an `{}` in its folder or a folder above",
             path.display(),
             ember_branding::MANIFEST
         )),

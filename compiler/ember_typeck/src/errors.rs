@@ -1426,6 +1426,7 @@ pub(crate) fn fn_decl(span: Span) -> ast::FnDecl {
         is_unsafe: false,
         is_safe: false,
         is_foreign_decl: false,
+        written_unsafe: false,
         abi: None,
         is_gen: false,
         dispatch: ast::Dispatch::Static,

@@ -6,5 +6,6 @@ unsafe overlay cpp "fixed.hpp":  # SAFETY(ffi): each entry matches its declarati
     fn zero2(values)
     class Grid:
         fn new()
+        @ffi(const)
         fn cells() -> from(self)
         fn cells_mut() -> from(self)

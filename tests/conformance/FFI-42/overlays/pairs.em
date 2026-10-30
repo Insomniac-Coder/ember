@@ -3,6 +3,9 @@
 
 unsafe overlay cpp "pairs.hpp":  # SAFETY(ffi): each entry matches its declaration in the header
     class Pair_int:
+        @ffi(const)
         fn add(other)
+        @ffi(const)
         fn eq(other)
+        @ffi(const)
         fn sum()

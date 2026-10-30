@@ -6819,16 +6819,11 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                 if !take(applied, sink, layer, entry.is_override, "fn", &ast::Ident { name: key.as_str().into(), span: name.span }) {
                     continue;
                 }
-                // `[FFI-40a]` — `@ffi(const)` asserts it; an entry without it leaves the importer's
-                // reading of the body, as an Ember method's is worked out from its body (`[FN-4]`).
-                if let Some((class, _)) = &function.owner {
-                    let key = (class.clone(), function.name.clone());
-                    if !constant.is_empty() {
-                        applied.receivers.insert(key, false);
-                    } else if entry.is_override {
-                        // An entry replacing an earlier one replaces its `@ffi(const)` too.
-                        applied.receivers.remove(&key);
-                    }
+                // `[FFI-40a]` (verdict 132) — an entry says what its method does: with `@ffi(const)` it
+                // only reads its object, without it it may change it, whatever the importer read from
+                // the body. An entry replacing an earlier one replaces its `@ffi(const)` too.
+                if method && let Some((class, _)) = &function.owner {
+                    applied.receivers.insert((class.clone(), function.name.clone()), constant.is_empty());
                 }
                 // `[GRM-35]` (verdict 130) — an `unsafe fn` entry leaves its calls unsafe: the word the
                 // declaration writer reads for that.
@@ -7190,17 +7185,16 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
     let mut params: Vec<String> = function.params.iter().map(|(name, ty)| format!("{}{name}: {}", ty.mode, ty.ember)).collect();
     let mut result = function.result.as_ref().map(|ty| ty.ember.clone());
     let mut safe = false;
+    // `[FFI-10]` (verdict 133) — an entry that leaves the calls unsafe makes an `unsafe fn`.
+    let mut left_unsafe = false;
     if let Some(entry) = entry {
         let words = entry.params.iter().flatten().chain(&entry.result);
         // `[FFI-11c]` — a `TODO(…)` or `unsafe` word leaves the call unsafe; `unsafe` says so on
         // purpose (`[FFI-11]`), which the declaration keeps.
         // `[UNS-7]` (verdict 125) — so does `@safety("…")`, which states what callers of an unsafe function
         // must make true.
-        let left_unsafe = entry.safety.is_some() || entry.params.iter().flatten().chain(&entry.result).any(|written| word(written) == "unsafe");
+        left_unsafe = entry.safety.is_some() || entry.params.iter().flatten().chain(&entry.result).any(|written| word(written) == "unsafe");
         safe = !left_unsafe && !words.into_iter().any(|written| word(written) == "TODO");
-        if left_unsafe {
-            arguments.push("unsafe".to_string());
-        }
         for ((param, ty), written) in function.params.iter().zip(&entry.params) {
             let words = slot_words(ty, written);
             if !words.is_empty() {
@@ -7256,7 +7250,7 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
     }
     let arrow = result.map_or(String::new(), |result| format!(" -> {result}"));
     let public = if hidden { "" } else { "pub " };
-    let _ = writeln!(text, "    {public}{}fn {name}({}){arrow}", if safe { "safe " } else { "" }, params.join(", "));
+    let _ = writeln!(text, "    {public}{}fn {name}({}){arrow}", if safe { "safe " } else if left_unsafe { "unsafe " } else { "" }, params.join(", "));
     text
 }
 
@@ -8100,6 +8094,11 @@ fn starter_entry(function: &Function) -> String {
     };
     let scalar = !function.params.iter().any(|(_, ty)| todo(ty)) && !function.result.as_ref().is_some_and(|ty| ty.mode.starts_with("view") || todo(ty));
     let unsafe_word = if scalar { "unsafe " } else { "" };
+    // `[FFI-40a]` (verdict 132) — an entry without `@ffi(const)` makes its method one that changes
+    // its object, so a method the importer reads as only reading it keeps that by saying so.
+    if matches!(function.owner, Some((_, Member::Method))) {
+        let _ = writeln!(text, "    # derived: `{}` only reads its object\n    @ffi(const)", function.name);
+    }
     let _ = writeln!(text, "    {unsafe_word}fn {}({}){result}", function.name, params.join(", "));
     text
 }

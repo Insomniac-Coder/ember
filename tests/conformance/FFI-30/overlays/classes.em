@@ -5,4 +5,5 @@ unsafe overlay cpp "classes.hpp":  # SAFETY(ffi): each entry matches its declara
     class Counter:
         fn new()
         fn add(n)
+        @ffi(const)
         fn count()

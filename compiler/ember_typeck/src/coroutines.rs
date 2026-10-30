@@ -1352,6 +1352,7 @@ fn method(name: &str, params: Vec<ast::Param>, ret: Option<ast::TypeExpr>, body:
             is_unsafe: false,
             is_safe: false,
             is_foreign_decl: false,
+            written_unsafe: false,
             abi: None,
             is_gen: false,
             dispatch: ast::Dispatch::Static,

@@ -592,6 +592,59 @@ fn main():
     assert!(left.len() == 1 && left[0].contains(":2:"), "the boxed lambda is not listed:\n{}", migrated.stderr);
 }
 
+/// `[CLI-20]` (verdicts 130, 133) — a declaration left unsafe to call by the word `unsafe` becomes an
+/// `unsafe fn`: on a hand declaration `@ffi(unsafe)`, `param(p, unsafe)` and `result(unsafe)` lose the
+/// word (an `@ffi(…)` left with nothing goes), and in an overlay entry the contract word goes with the
+/// `:` or `->` it leaves bare. No `@safety` text is written for one that has none.
+#[test]
+fn fmt_migrate_writes_a_declaration_left_unsafe_as_unsafe_fn() {
+    let root = workspace_root();
+    let directory = temporary_directory("migrate-unsafe");
+    let declared = directory.join(ember_branding::source_file("declared"));
+    std::fs::write(&declared, "\
+unsafe extern \"C\":  # SAFETY(ffi): each declaration below matches its C definition
+    @ffi(unsafe, link_name=\"abs\")
+    @safety(\"callers pass what the C function `raw_abs` requires\")
+    fn raw_abs(x: i32) -> i32
+    @ffi(param(p, unsafe))
+    @safety(\"`p` must point at a live i32\")
+    fn peek(p: *i32) -> i32
+    @ffi(result(unsafe))
+    fn first() -> *i32
+
+fn main():
+    unsafe:  # SAFETY(ffi): `abs` reads its argument only
+        println(raw_abs(-5))
+").expect("the old source is writable");
+    let migrated = ember(&["fmt", "--migrate", &declared.to_string_lossy()], &root);
+    for line in [
+        "    @ffi(link_name=\"abs\")\n    @safety(\"callers pass what the C function `raw_abs` requires\")\n    unsafe fn raw_abs(x: i32) -> i32\n",
+        "    @safety(\"`p` must point at a live i32\")\n    unsafe fn peek(p: *i32) -> i32\n",
+        "    unsafe fn first() -> *i32\n",
+    ] {
+        assert!(migrated.stdout.contains(line), "missing {line:?}:\n{}\n{}", migrated.stdout, migrated.stderr);
+    }
+    assert!(!migrated.stdout.contains("unsafe)") && !migrated.stdout.contains("@ffi()"), "{}", migrated.stdout);
+    assert_eq!(migrated.stderr.matches("`unsafe` in `@ffi(…)` to `unsafe fn`").count(), 3, "{}", migrated.stderr);
+    let overlay = directory.join(format!("lib.overlay.{}", ember_branding::SOURCE_EXT));
+    std::fs::write(&overlay, "\
+unsafe overlay c \"lib.h\":  # SAFETY(ffi): each entry matches its declaration in the header
+    @safety(\"`x` is in range\")
+    fn lib_step(x) -> unsafe
+    fn lib_peek(p: unsafe, n)
+    fn lib_fill(out: borrowed unsafe count(n), n) -> borrowed one from(out) unsafe
+").expect("the old overlay is writable");
+    let migrated = ember(&["fmt", "--migrate", &overlay.to_string_lossy()], &root);
+    for line in [
+        "    @safety(\"`x` is in range\")\n    unsafe fn lib_step(x)\n",
+        "    unsafe fn lib_peek(p, n)\n",
+        "    unsafe fn lib_fill(out: borrowed count(n), n) -> borrowed one from(out)\n",
+    ] {
+        assert!(migrated.stdout.contains(line), "missing {line:?}:\n{}\n{}", migrated.stdout, migrated.stderr);
+    }
+    assert!(!migrated.stderr.contains("not rewritten"), "{}", migrated.stderr);
+}
+
 /// `[FMT-1]` — `ember fmt` writes at most 100 columns where brackets allow: a longer line breaks after
 /// its last top-level opening bracket, one item per line with a trailing comma, again where a piece
 /// is still too long, or else before each operator of its loosest kind, in parentheses put around a
@@ -8452,6 +8505,29 @@ fn bind_init_writes_a_starter_overlay_that_compiles_unchanged() {
     assert_eq!(recorded.exit, 0, "{}", recorded.stderr);
     let after = ember(&["check", &ember_branding::source_file("main")], &dir);
     assert_eq!(after.exit, 0, "`--check … --merge` did not record the header as it is now:\n{}", after.stderr);
+}
+
+/// `[CLI-5]`, `[FFI-40a]` (verdict 132) — a C++ header's starter overlay writes a class's members
+/// under `class Body:`, and `@ffi(const)` above each method the importer reads as only reading its
+/// object, since an entry without it makes the method one that changes it: the starter compiles
+/// unchanged, and `mass` is still called through a name that only reads the object.
+#[test]
+fn bind_init_writes_ffi_const_above_a_cpp_method_that_only_reads() {
+    let dir = temporary_directory("bind-init-cpp");
+    std::fs::write(dir.join(ember_branding::MANIFEST), "[package]\nname = \"body\"\nversion = \"0.1.0\"\n").unwrap();
+    std::fs::write(dir.join("body.hpp"), "#pragma once\nclass Body {\npublic:\n    explicit Body(int mass) noexcept : mass_(mass) {}\n    ~Body() {}\n    int mass() const noexcept { return mass_; }\n    void grow(int by) noexcept { mass_ += by; }\nprivate:\n    int mass_;\n};\n").unwrap();
+    let init = ember(&["bind", "body.hpp", "--init"], &dir);
+    assert_eq!(init.exit, 0, "{}", init.stderr);
+    let written = std::fs::read_to_string(dir.join(format!("body.overlay.{SOURCE_EXT}"))).expect("the starter overlay is written");
+    assert!(written.contains("    class Body:\n"), "{written}");
+    assert!(written.contains("        @ffi(const)\n        unsafe fn mass()\n"), "`mass` only reads its object:\n{written}");
+    assert!(!written.contains("@ffi(const)\n        unsafe fn grow("), "`grow` changes its object:\n{written}");
+    std::fs::write(dir.join(ember_branding::source_file("main")), format!(
+        "import cpp \"body.hpp\" with (overlay = \"body.overlay.{SOURCE_EXT}\")\n\nfn main():\n    \
+         unsafe:  # SAFETY(ffi): the box owns the body for every call\n        \
+         body = cpp.Body.new(3)\n        shared = body.get()\n        println(shared.mass())\n")).unwrap();
+    let checked = ember(&["check", &ember_branding::source_file("main")], &dir);
+    assert_eq!(checked.exit, 0, "the starter overlay does not compile:\n{}", checked.stderr);
 }
 
 /// `[FFI-50]` — `ember bind <header> --emit-cpp` writes the thunk translation unit an `import cpp`

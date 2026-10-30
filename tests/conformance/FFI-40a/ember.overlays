@@ -15,3 +15,9 @@ header = "cache.hpp"
 [overlay.declarations]
 "Cache.add" = "blake3:bb19583bf5cbf31c7a7c92ffeec6aca3fa3d22149073bba74cad386a62630cb6"
 "Cache.lookups" = "blake3:1bf1ba250668c9a3d6b7fb14cf40f5b0c1c5ba27ca75f22def6b9d3218db25be"
+
+[[overlay]]
+file = "overlays/unwritten.em"
+header = "cache.hpp"
+[overlay.declarations]
+"Cache.lookups" = "blake3:1bf1ba250668c9a3d6b7fb14cf40f5b0c1c5ba27ca75f22def6b9d3218db25be"

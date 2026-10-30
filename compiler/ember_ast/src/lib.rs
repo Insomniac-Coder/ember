@@ -326,6 +326,10 @@ pub struct FnDecl {
     /// The enclosing `unsafe extern` block declares, rather than defines,
     /// this function. Set when that block is expanded for name resolution.
     pub is_foreign_decl: bool,
+    /// `unsafe` as written. A foreign declaration's `is_unsafe` says whether its calls are unsafe,
+    /// as a plain `fn` there's are; this, whether it is written `unsafe fn`, which leaves its calls
+    /// unsafe on purpose (`[FFI-10]`, verdict 133).
+    pub written_unsafe: bool,
     /// `extern "C" fn f(...)` at item level — the ABI its definition uses, and
     /// what `@export` (XVI.10) attaches to. `None` for an ordinary function.
     ///

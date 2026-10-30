@@ -5,6 +5,7 @@ unsafe overlay cpp "containers.hpp":  # SAFETY(ffi): each entry matches its decl
     class Bag:
         fn new()
         fn put(value)
+        @ffi(const)
         fn size()
         fn iter()
     class Row:

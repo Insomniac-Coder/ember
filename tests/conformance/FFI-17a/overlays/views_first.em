@@ -6,4 +6,5 @@ unsafe overlay cpp "views.hpp":  # SAFETY(ffi): each entry matches its declarati
         fn new(value)
     class Words:
         fn new()
+        @ffi(const)
         fn first() -> from(self)

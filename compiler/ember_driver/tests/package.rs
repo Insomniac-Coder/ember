@@ -740,3 +740,23 @@ fn one_compiler_builds_the_c_and_the_cpp() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// `[MAN-9]` (verdicts 127, 135) — every program is a package: checking a file in a folder with no
+/// manifest, here or above, first creates the default one, `[package]` with the folder's name and
+/// `0.1.0`, and says so in plain words; the next check finds it and says nothing.
+#[test]
+fn man_9_a_folder_with_no_manifest_gets_the_default_one() {
+    let dir = scratch().join("tools");
+    std::fs::create_dir_all(&dir).expect("the folder is made");
+    let file = ember_branding::source_file("main");
+    std::fs::write(dir.join(&file), "fn main():\n    println(1)\n").expect("the program is written");
+    let first = ember(&["check", &file], &dir);
+    assert!(first.ok, "{}", first.stderr);
+    let manifest = dir.join(ember_branding::MANIFEST);
+    let note = format!("note: created `{}`: every program needs one, and this folder had none", manifest.display());
+    assert!(first.stderr.contains(&note), "{}", first.stderr);
+    assert_eq!(std::fs::read_to_string(&manifest).expect("the manifest is written"), "[package]\nname = \"tools\"\nversion = \"0.1.0\"\n");
+    let second = ember(&["check", &file], &dir);
+    assert!(second.ok && !second.stderr.contains("created"), "{}", second.stderr);
+    let _ = std::fs::remove_dir_all(dir.parent().expect("the scratch folder"));
+}

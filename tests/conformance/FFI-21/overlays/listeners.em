@@ -11,4 +11,5 @@ unsafe overlay cpp "listeners.hpp":  # SAFETY(ffi): each entry matches its decla
     class Bus:
         fn new()
         fn add(value)
+        @ffi(const)
         fn each(visit: callback(borrowed, user_data=context), context)

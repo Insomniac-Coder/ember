@@ -273,7 +273,8 @@ impl Parser<'_> {
                     || self.at_overlay_decl(1)
             }
             TokenKind::Ident(s) if s.is("abstract") || s.is("open") => self.at_kw_at(1, Kw::Class),
-            TokenKind::Ident(s) if s.is("safe") => self.at_fn_at(1),
+            // `safe unsafe fn` is parsed whole, so that its refusal names it (`E5002`, verdict 133).
+            TokenKind::Ident(s) if s.is("safe") => self.at_fn_at(1) || (self.at_kw_at(1, Kw::Unsafe) && self.at_fn_at(2)),
             TokenKind::Ident(_) => {
                 self.at_gen_fn() || self.at_extend_decl() || self.at_union_decl() || self.at_overlay_decl(0)
             }
@@ -414,7 +415,7 @@ impl Parser<'_> {
             }
             // `[GRM-21]` — a `gen fn` is admitted wherever `fn_decl` is.
             TokenKind::Ident(_) if self.at_gen_fn() => Some(ItemKind::Fn(self.parse_fn())),
-            TokenKind::Ident(s) if s.is("safe") && self.at_fn_at(1) => {
+            TokenKind::Ident(s) if s.is("safe") && (self.at_fn_at(1) || (self.at_kw_at(1, Kw::Unsafe) && self.at_fn_at(2))) => {
                 Some(ItemKind::Fn(self.parse_fn()))
             }
             TokenKind::Keyword(Kw::Struct) => Some(ItemKind::Struct(self.parse_struct())),
@@ -1049,7 +1050,7 @@ impl Parser<'_> {
             self.expect_newline();
         }
 
-        FnDecl { name, is_unsafe, is_safe, is_foreign_decl: false, abi, is_gen, dispatch, generics, params, ret, where_clause, body }
+        FnDecl { name, is_unsafe, is_safe, is_foreign_decl: false, written_unsafe: is_unsafe, abi, is_gen, dispatch, generics, params, ret, where_clause, body }
     }
 
     fn parse_param(&mut self) -> Param {

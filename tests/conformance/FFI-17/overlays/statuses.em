@@ -5,6 +5,8 @@ unsafe overlay cpp "statuses.hpp":  # SAFETY(ffi): each entry matches its declar
     enum Status
     class Splitter:
         fn new()
+        @ffi(const)
         fn split(value, half: out one) -> status
+        @ffi(const)
         fn decade(value, low: out one, high: out one)
 

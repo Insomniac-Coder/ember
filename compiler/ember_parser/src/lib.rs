@@ -623,6 +623,7 @@ impl<'a> Parser<'a> {
                 is_unsafe: false,
                 is_safe: false,
                 is_foreign_decl: false,
+                written_unsafe: false,
                 abi: None,
                 is_gen: false,
                 dispatch: Dispatch::Static,

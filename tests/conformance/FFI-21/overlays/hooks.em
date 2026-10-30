@@ -12,4 +12,5 @@ unsafe overlay cpp "hooks.hpp":  # SAFETY(ffi): each entry matches its declarati
     hide cancel
     class Panel:
         fn new()
+        @ffi(const)
         fn on_resize(hook: callback(borrowed, user_data=data) nullable, data, size)

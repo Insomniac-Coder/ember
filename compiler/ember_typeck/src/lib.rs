@@ -2830,6 +2830,9 @@ struct Checker<'a> {
     exported_classes: Vec<ClassId>,
     /// `[FFI-8]` — the variadic C functions (`@ffi(variadic)`).
     foreign_variadic: HashSet<DefId>,
+    /// `[FFI-10]` (verdict 133) — the foreign declarations written `unsafe fn`, whose calls are left
+    /// unsafe on purpose and refused outside unsafe code as any `unsafe fn`'s are.
+    foreign_unsafe_fns: HashSet<DefId>,
     /// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — what an opaque foreign type's declaration says of
     /// its objects, by the type's qualified name.
     foreign_type_contracts: HashMap<Symbol, ForeignTypeContract>,
@@ -3825,6 +3828,7 @@ impl<'a> Checker<'a> {
             foreign_unknown_facts: HashMap::new(),
             foreign_symbols: HashMap::new(),
             foreign_variadic: HashSet::new(),
+            foreign_unsafe_fns: HashSet::new(),
             exported_classes: Vec::new(),
             foreign_type_contracts: HashMap::new(),
             signatures: Vec::new(),
@@ -10683,11 +10687,15 @@ impl<'a> Checker<'a> {
                     }
                     if decl.is_foreign_decl {
                         self.foreign_declarations.insert(def, decl.is_safe);
+                        // `[FFI-10]` (verdict 133) — written `unsafe fn`: called as any `unsafe fn` is.
+                        if decl.written_unsafe {
+                            self.foreign_unsafe_fns.insert(def);
+                        }
                         if !decl.is_safe {
                             let mut unknown = ffi_unknown_facts(decl, &item.attrs);
                             // `[DIA-18]` — a header's function: the overlay line that states them.
                             if let Some(Some((header, _))) = self.foreign_skipped.get(self.current_module)
-                                && !ffi_left_unsafe(&item.attrs) {
+                                && !decl.written_unsafe {
                                 unknown.line = overlay_unknown_line(decl, header);
                             }
                             self.foreign_unknown_facts.insert(def, unknown);
@@ -23243,7 +23251,7 @@ impl<'a> Checker<'a> {
             let refusal = Diagnostic::error(codes::E3100, span, "a call of a variadic C function requires `unsafe`")
                 .note("C reads its further arguments by the types its format or count names, which nothing checks [FFI-8]");
             (CallKind::Variadic, refusal)
-        } else if self.foreign_declarations.contains_key(&def) {
+        } else if self.foreign_declarations.contains_key(&def) && !self.foreign_unsafe_fns.contains(&def) {
             // `[DIA-18]` — each fact the call lacks, and the line that supplies it.
             let mut refusal = Diagnostic::error(codes::E3100, span, "a foreign call without a complete safe contract requires `unsafe`");
             if let Some(unknown) = self.foreign_unknown_facts.get(&def) {
@@ -42994,14 +43002,18 @@ impl<'a> Checker<'a> {
             } else {
                 fact(name.span, format!("the entry for `{shown}`, which asserts it safe to call"));
             }
+            // `[CLI-20]` — the rewrite of the entry's retired `unsafe` words, given once.
+            let mut migration = self.overlay_unsafe_migration(name, params, result, *is_unsafe);
             for contract in params.iter().flat_map(|param| &param.contract).chain(result) {
                 // `[GRM-35]` (verdict 130) — an entry is left unsafe by being written `unsafe fn`.
                 if contract.word.name.is("unsafe") {
-                    self.sink.emit(
-                        Diagnostic::error(codes::E0104, contract.span, "`unsafe` is no contract word")
-                            .help(format!("write the entry `unsafe fn {}(…)`, with `@safety(\"…\")` above it saying what its callers must make true [GRM-35]", name.name))
-                            .note("an overlay entry leaves its calls unsafe by being written `unsafe fn`, as Ember code is [FFI-11]"),
-                    );
+                    let mut diagnostic = Diagnostic::error(codes::E0104, contract.span, "`unsafe` is no contract word")
+                        .help(format!("write the entry `unsafe fn {}(…)`, with `@safety(\"…\")` above it saying what its callers must make true [GRM-35]", name.name))
+                        .note("an overlay entry leaves its calls unsafe by being written `unsafe fn`, as Ember code is; `ember fmt --migrate` rewrites it [FFI-11], [CLI-20]");
+                    if let Some(edits) = migration.take() {
+                        diagnostic = diagnostic.migrate_edits("an overlay entry's `unsafe` word to `unsafe fn`", edits);
+                    }
+                    self.sink.emit(diagnostic);
                 } else if !FFI_CONTRACT_WORDS.contains(&contract.word.name.as_str()) {
                     self.sink.emit(
                         Diagnostic::error(codes::E0104, contract.span,
@@ -43347,6 +43359,16 @@ impl<'a> Checker<'a> {
             }
         }
         if let ast::ItemKind::Fn(decl) = &item.kind && decl.is_foreign_decl {
+            // `[FFI-10]` (verdict 133) — `safe` asserts the function safe to call, `unsafe` leaves its
+            // calls unsafe: one declaration says one of them.
+            if decl.is_safe && decl.written_unsafe {
+                let name = decl.name.name;
+                self.sink.emit(
+                    Diagnostic::error(codes::E5002, decl.name.span, format!("`{name}` is declared both `safe` and `unsafe`"))
+                        .help(format!("write `safe fn {name}` if a call within its contract cannot break memory safety, or `unsafe fn {name}`, with `@safety(\"…\")` above it, to leave its calls unsafe"))
+                        .note("`safe fn` asserts a foreign function safe to call; `unsafe fn` leaves its calls to unsafe code [FFI-10]"),
+                );
+            }
             let mut saw_ffi = false;
             for attr in &item.attrs {
                 if attr.path.len() == 1 && attr.path[0].name.is("ffi") {
@@ -43361,15 +43383,21 @@ impl<'a> Checker<'a> {
                     let mut saw_threads = false;
                     let mut saw_destroys = false;
                     let mut contracted = HashSet::new();
+                    // `[CLI-20]` — the rewrite of every retired `unsafe` of the attribute, given once.
+                    let mut migration = self.ffi_unsafe_migration(attr, decl);
                     for arg in &attr.args {
-                        // `[FFI-11]` — `unsafe` leaves the call unsafe, which a `safe fn` is not.
-                        if decl.is_safe && (ffi_unsafe_slot_arg(arg).is_some() || matches!(arg,
-                            ast::AttrArg::Expr(expr) if ffi_contract_word(expr).is_some_and(|word| word.is("unsafe")))) {
-                            self.sink.emit(
-                                Diagnostic::error(codes::E5002, attr.span, "`unsafe` leaves the call unsafe, so the function is not a `safe fn`")
-                                    .help("remove `safe`, or state the fact in place of the `unsafe` word")
-                                    .note("`unsafe` in a contract says a fact is left unstated on purpose [FFI-11]"),
-                            );
+                        // `[FFI-10]`, `[FFI-11]` (verdict 133) — a declaration left unsafe to call is
+                        // written `unsafe fn`, as an overlay entry is: `unsafe` is no word of `@ffi(…)`.
+                        if ffi_retired_unsafe_arg(arg) {
+                            let name = decl.name.name;
+                            let mut diagnostic = Diagnostic::error(codes::E0104, attr.span, "`unsafe` is no contract word")
+                                .help(format!("write the declaration `unsafe fn {name}(…)`, with `@safety(\"…\")` above it saying what its callers must make true, and take `unsafe` out of `@ffi(…)` [FFI-10]"))
+                                .note("a declaration leaves its calls unsafe by being written `unsafe fn`, as Ember code and overlay entries are; `ember fmt --migrate` rewrites it [FFI-11], [CLI-20]");
+                            if let Some(edits) = migration.take() {
+                                diagnostic = diagnostic.migrate_edits("`unsafe` in `@ffi(…)` to `unsafe fn`", edits);
+                            }
+                            self.sink.emit(diagnostic);
+                            continue;
                         }
                         match arg {
                             // `[FFI-8]` — a variadic C function: called only in `unsafe`.
@@ -43481,9 +43509,6 @@ impl<'a> Checker<'a> {
                                             .help("write it on the type the handle is: `@ffi(handle) type T`")
                                             .note("a function is not a handle; what it takes or returns may be [FFI-1], [FFI-11]"),
                                     );
-                                } else if let ast::AttrArg::Expr(expr) = arg
-                                    && ffi_contract_word(expr).is_some_and(|word| word.is("unsafe")) {
-                                    // `[FFI-11]` — `@ffi(unsafe)`: the function is left unsafe to call.
                                 } else if let Some(name) = ffi_param_contract_arg(arg).map(|(name, _)| name)
                                     .or_else(|| ffi_owned_param_arg(arg).map(|(name, _)| name))
                                     .or_else(|| ffi_retained_param_arg(arg).map(|(name, _)| name))
@@ -43697,9 +43722,78 @@ impl<'a> Checker<'a> {
     /// presence neither creates one nor makes a safe function unsafe. Every
     /// `unsafe fn` carries it: without it, `L3015`, which names the first unsafe
     /// step of a body once that is checked (`leave_fn_body`).
+    /// `[CLI-20]` (verdict 130) — `ember fmt --migrate`'s rewrite of an overlay entry left unsafe by the
+    /// contract word `unsafe`: the word taken out (a slot left with no word loses its `:` or its
+    /// `->`), and the entry written `unsafe fn`. None for an entry with no such word.
+    fn overlay_unsafe_migration(&self, name: &ast::Ident, params: &[ast::OverlayParam], result: &[ast::Contract], is_unsafe: bool)
+        -> Option<Vec<(Span, ember_diag::Replacement)>> {
+        let retired = |words: &[ast::Contract]| words.iter().any(|word| word.word.name.is("unsafe"));
+        if !params.iter().any(|param| retired(&param.contract)) && !retired(result) {
+            return None;
+        }
+        let file = name.span.file;
+        let text = &self.sources.get(&file)?.text;
+        let cut = |start: u32, end: u32| (Span::new(file, start, end), ember_diag::Replacement::Text(String::new()));
+        // A slot's words, those that are not `unsafe` kept: all gone, from where the slot's words
+        // begin (its `:` or `->`, `before`) to the last; else each `unsafe`, the last with the space
+        // before it (the migration takes the spaces after a removed word with it).
+        let slot = |words: &[ast::Contract], before: u32, edits: &mut Vec<(Span, ember_diag::Replacement)>| {
+            if words.iter().all(|word| word.word.name.is("unsafe")) {
+                edits.push(cut(before, words.last().map_or(before, |word| word.span.end)));
+            } else {
+                for (at, word) in words.iter().enumerate().filter(|(_, word)| word.word.name.is("unsafe")) {
+                    let start = if at > 0 && at + 1 == words.len() { words[at - 1].span.end } else { word.span.start };
+                    edits.push(cut(start, word.span.end));
+                }
+            }
+        };
+        let mut edits = Vec::new();
+        for param in params.iter().filter(|param| retired(&param.contract)) {
+            slot(&param.contract, param.name.span.end, &mut edits);
+        }
+        if retired(result) {
+            let first = result.first()?.span.start as usize;
+            let arrow = text.get(..first)?.rfind("->")?;
+            let before = text.get(..arrow)?.trim_end().len() as u32;
+            slot(result, before, &mut edits);
+        }
+        if !is_unsafe {
+            let fn_at = text.get(..name.span.start as usize)?.rfind("fn")? as u32;
+            edits.push((Span::new(file, fn_at, fn_at), ember_diag::Replacement::Text("unsafe ".to_string())));
+        }
+        Some(edits)
+    }
+
+    /// `[CLI-20]` (verdict 133) — `ember fmt --migrate`'s rewrite of a hand declaration left unsafe by
+    /// the word `unsafe` in `@ffi(…)`: the word taken out, an `@ffi(…)` left with nothing removed, and
+    /// the declaration written `unsafe fn`. None for one with no such word, and for a
+    /// `safe fn`, which says the opposite: which of the two it is, only its writer knows.
+    fn ffi_unsafe_migration(&self, attr: &ast::Attribute, decl: &ast::FnDecl) -> Option<Vec<(Span, ember_diag::Replacement)>> {
+        if decl.is_safe || !attr.args.iter().any(ffi_retired_unsafe_arg) {
+            return None;
+        }
+        let text = &self.sources.get(&attr.span.file)?.text;
+        let written = |arg: &ast::AttrArg| {
+            let span = match arg {
+                ast::AttrArg::Expr(expr) => expr.span,
+                ast::AttrArg::Named { name, value } => Span::new(name.span.file, name.span.start, value.span.end),
+            };
+            text.get(span.start as usize..span.end as usize)
+        };
+        let kept: Vec<&str> = attr.args.iter().filter(|arg| !ffi_retired_unsafe_arg(arg)).map(written).collect::<Option<_>>()?;
+        // An `@ffi(…)` left with nothing goes, and the migration removes the line it leaves blank.
+        let attribute = if kept.is_empty() { String::new() } else { format!("@ffi({})", kept.join(", ")) };
+        let fn_at = text.get(..decl.name.span.start as usize)?.rfind("fn")? as u32;
+        Some(vec![
+            (attr.span, ember_diag::Replacement::Text(attribute)),
+            (Span::new(attr.span.file, fn_at, fn_at), ember_diag::Replacement::Text("unsafe ".to_string())),
+        ])
+    }
+
     fn check_safety_attribute(&mut self, attrs: &[ast::Attribute], decl: &ast::FnDecl) {
-        // `[UNS-12]` — a function written in unsafe code is an `unsafe fn` (verdict 119).
-        let is_unsafe = decl.is_unsafe || self.in_unsafe;
+        // `[UNS-12]` — a function written in unsafe code is an `unsafe fn` (verdict 119). A foreign
+        // declaration written `safe unsafe fn` is refused for that (`E5002`) and nothing more.
+        let is_unsafe = decl.is_unsafe || self.in_unsafe || decl.written_unsafe;
         // A malformed `@safety` is its own error, not an `L3015` as well.
         let mut written = false;
         for attr in attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("safety")) {
@@ -56859,7 +56953,23 @@ impl<'a> Checker<'a> {
                 _ => passed,
             };
         }
-        self.pass_receiver(receiver, mode, span)
+        let cpp = mode == Mode::Mut && self.cpp_object_type(receiver.ty);
+        let mark = self.sink.mark();
+        let passed = self.pass_receiver(receiver, mode, span);
+        // `[FFI-40a]` (verdict 132) — a C++ method imported as changing its object, called through a
+        // name that only reads it: the line that makes it one that reads, if that is what it does.
+        if cpp && let Some(name) = self.declared_name(callee) {
+            for at in mark..self.sink.mark() {
+                self.sink.amend(at, |diagnostic| {
+                    if matches!(diagnostic.code, Some(codes::E3021 | codes::E3023)) {
+                        diagnostic.helps.insert(0, format!(
+                            "`{name}` is a C++ method imported as one that changes its object: C++ does not declare it `const`, or its overlay entry has no `@ffi(const)`; if it only reads its object, write `@ffi(const)` above its entry, `fn {name}(…)` [FFI-40a]"
+                        ));
+                    }
+                });
+            }
+        }
+        passed
     }
 
     fn pass_receiver(&mut self, receiver: Expr, mode: Mode, span: Span) -> Expr {
@@ -61556,12 +61666,9 @@ struct ForeignUnknownFacts {
 
 fn ffi_unknown_facts(decl: &ast::FnDecl, attrs: &[ast::Attribute]) -> ForeignUnknownFacts {
     let name = decl.name.name;
-    // `[FFI-11]` — a contract that leaves the call `unsafe` on purpose asks for no fact.
-    if ffi_left_unsafe(attrs) {
-        return ForeignUnknownFacts {
-            facts: vec![format!("`{name}`'s contract leaves its calls `unsafe` on purpose")],
-            line: String::new(),
-        };
+    // `[FFI-10]` (verdict 133) — an `unsafe fn` leaves its calls unsafe on purpose and asks for no fact.
+    if decl.written_unsafe {
+        return ForeignUnknownFacts { facts: Vec::new(), line: String::new() };
     }
     let mut facts = vec![format!("`{name}` is not asserted safe to call (`safe fn`)")];
     let mut clauses = Vec::new();
@@ -62128,9 +62235,8 @@ fn ffi_callback_params(attrs: &[ast::Attribute]) -> Vec<(Symbol, FfiCallbackCont
         .collect()
 }
 
-/// `[FFI-11]` — `param(p, unsafe)` or `result(unsafe)`: the slot's facts are left unstated on
-/// purpose, so the call stays `unsafe`. `Some(Some(p))` for a parameter, `Some(None)` for the
-/// result.
+/// `[FFI-11]` (verdict 133) — `param(p, unsafe)` or `result(unsafe)`, the retired spellings of an
+/// `unsafe fn`, which are refused. `Some(Some(p))` for a parameter, `Some(None)` for the result.
 fn ffi_unsafe_slot_arg(arg: &ast::AttrArg) -> Option<Option<Symbol>> {
     let ast::AttrArg::Expr(expr) = arg else { return None };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
@@ -62142,8 +62248,13 @@ fn ffi_unsafe_slot_arg(arg: &ast::AttrArg) -> Option<Option<Symbol>> {
     }
 }
 
-/// `[FFI-11]` — whether a declaration's contract leaves its calls `unsafe` on purpose:
-/// `@ffi(unsafe)`, or a slot's `unsafe`.
+/// `[FFI-11]` (verdict 133) — `unsafe`, `param(p, unsafe)` or `result(unsafe)` in `@ffi(…)`, the
+/// retired spellings of an `unsafe fn`.
+fn ffi_retired_unsafe_arg(arg: &ast::AttrArg) -> bool {
+    ffi_unsafe_slot_arg(arg).is_some()
+        || matches!(arg, ast::AttrArg::Expr(expr) if ffi_contract_word(expr).is_some_and(|word| word.is("unsafe")))
+}
+
 /// `[FFI-8]` — `@ffi(variadic)`: a C function whose parameters end `...`.
 fn ffi_variadic(attrs: &[ast::Attribute]) -> bool {
     attrs.iter()
@@ -62152,13 +62263,6 @@ fn ffi_variadic(attrs: &[ast::Attribute]) -> bool {
         .any(|arg| matches!(arg, ast::AttrArg::Expr(expr) if ffi_contract_word(expr).is_some_and(|word| word.is("variadic"))))
 }
 
-fn ffi_left_unsafe(attrs: &[ast::Attribute]) -> bool {
-    attrs.iter()
-        .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
-        .flat_map(|attr| attr.args.iter())
-        .any(|arg| ffi_unsafe_slot_arg(arg).is_some() || matches!(arg,
-            ast::AttrArg::Expr(expr) if ffi_contract_word(expr).is_some_and(|word| word.is("unsafe"))))
-}
 
 /// `[FFI-11]`, `[FFI-21]` — a function's `destroys(f)`: the foreign function that undoes what it
 /// registers.

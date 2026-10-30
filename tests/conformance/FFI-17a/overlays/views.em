@@ -16,10 +16,14 @@ unsafe overlay cpp "views.hpp":  # SAFETY(ffi): each entry matches its declarati
     fn boxes_destroyed()
     class Box:
         fn new(value)
+        @ffi(const)
         fn value()
     class Words:
         fn new()
+        @ffi(const)
         fn first() -> from(self)
+        @ffi(const)
         fn scores() -> from(self)
         fn scores_mut() -> from(self)
+        @ffi(const)
         fn total()

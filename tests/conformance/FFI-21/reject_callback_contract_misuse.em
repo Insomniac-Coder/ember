@@ -39,7 +39,7 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     @ffi(param(handler, callback(sideways, user_data=data)))    #$ error[E0104]: `sideways` is not how long C keeps a callback
     safe fn sideways(handler: extern "C" fn(*mut void, i32), data: *mut void)
 
-    @ffi(param(handler, callback(borrowed, user_data=data)), unsafe)    #$ error[E5002]: `unsafe` leaves the call unsafe
+    @ffi(param(handler, callback(borrowed, user_data=data)), unsafe)    #$ error[E0104]: `unsafe` is no contract word
     safe fn left_unsafe(handler: extern "C" fn(*mut void, i32), data: *mut void)
 
 fn main():
