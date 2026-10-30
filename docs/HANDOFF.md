@@ -12,11 +12,24 @@
 >    code generation, 14.44 and 14.51 alike, about once in 10,000 links held to one core; `ember bench` now
 >    builds unpinned. The dumps are in `target/m1/hang-caught` (the owner may report it to Microsoft). Ember's MSVC
 >    search looks only at VS 2022 and 2019 (`ember_build` `find_vcvars`): VS 18 is never found.
-> 3. Push `main` (the full check, both backends, and the bench gate, both backends, are green; the CI spec job's
->    steps all pass locally: last night's push failed it on the README's stale phase table, fixed in `6693188d`);
->    one CI look.
-> 4. A new hardening (Hardened_6) for verdicts 132-135; its intro must stop calling LLVM "planned" (H5 line 154).
-> 5. The compiler and tests for verdicts 132-135, and the effect error's caret.
+> 3. **Pushed** `49cadcf7`; the CI look (run 41088791994): the four Windows jobs of the LLVM backend, new in that
+>    push, red: D-934 (Clang's driver names the static C runtime for every link; the shared runtime, built for the
+>    DLL one, did not link with Microsoft's linker, the CI Clang's; lld-link here copes and the cache hid it).
+>    **Fixed in `1481f09e`** (`clang_windows_link_runtime`; Ninja's images now take that runtime too), checked with
+>    Microsoft's linker forced (`CCC_OVERRIDE_OPTIONS="# ^-fuse-ld=link ^-Wno-unused-command-line-argument"`,
+>    `^` so an explicit `-fuse-ld=lld` still wins) and an empty `EMBER_CACHE`: ember_build's tests, the driver's
+>    reload, cdylib and staticlib tests, the conformance suite.
+> 4. **Done: Hardened_6** (`07b8f62a`): verdicts 132-135, LLVM the default (`[CG-LL-1]`, the overview, the manifest
+>    example); decisions.md "Writing 0.9.15_Hardened_6". A plain `fn` in an `unsafe extern` block is unchanged
+>    (only `unsafe` inside `@ffi(…)` goes). `UNS-7` is off `built_for_0915` until verdict 134's notes are built.
+>    To push with the D-934 fix: the full check (both backends) and the bench gate, then one CI look.
+> 5. The compiler and tests for verdicts 132-135, and the effect error's caret: 132 is `cimport.rs` ~6822
+>    (`applied.receivers.insert(key, constant.is_empty())` for a method's entry); 133 is typeck's
+>    `ffi_left_unsafe`/`ffi_unsafe_slot_arg` (E0104 with the `unsafe fn` line), the importer's own declarations
+>    (`cimport.rs` pushes `unsafe` into an `unsafe fn` entry's result: write `unsafe fn` instead), and
+>    `ember fmt --migrate` for both retired spellings; 134 is `report_unstated_safety` (every call, not the
+>    first) and `incremental.rs` `report_again` (merge the notes of kept and rechecked parts); 135 is MAN-9's
+>    note.
 > 6. Back to M1 on branch `m1` (below).
 > - The laptop went down at 16:30: the night's power watcher, still running, hibernated it when the Wi-Fi changed
 >   name. The watcher runs only unattended now, and never on a network name (memory).
