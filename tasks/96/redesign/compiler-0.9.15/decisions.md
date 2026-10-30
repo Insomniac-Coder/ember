@@ -404,6 +404,28 @@ spec's own rules, not rulings; N22's wording was approved.
 - **The open question, answered:** `@ffi(unsafe)`, `param(p, unsafe)` and `result(unsafe)` go; a
   hand-written declaration unsafe to call is `@safety` above `unsafe fn` (JOB.md verdict 133).
 
+### `a10_recursion` on the LLVM backend, 2026-10-30 (owner: "yes build it")
+
+The LLVM backend lost `a10_recursion` (1.71x C): not the backend's doing. The C backend built by clang
+lost it too (1.72x) and by MSVC passed (1.02x): clang turns the C twin's `fib(n - 1) + fib(n - 2)`
+into a loop with a running total, one call a turn, because C's `+` cannot fail, and does not turn
+Ember's checked `+`. ODR-277 (2026-10-23) had settled it as the overflow check's price, after a rewrite
+with a 128-bit total measured slower (131.5 ms against 116.1 ms). The owner, shown the loop written by
+hand with every `+` still checked (Ember 61.26 ms, C 64.79 ms with clang): "yes build it".
+
+| Where | Choice | Why |
+|---|---|---|
+| `ember_analysis::accumulate`, after inlining and before the range facts remove checks | A function whose recursive case returns a call of itself added to a value runs that call as a loop's turn adding into a running total, every addition checked with the plain 64-bit check, when the range facts prove no added value negative (or the type unsigned): the arguments the function passes itself bound its parameters, and within the bounds every other value it returns is at least 0. | With every value at least 0, one grouping of the additions overflows exactly when the other does, so the program panics in exactly the cases it did; the 128-bit total of ODR-277 was what a rewrite needing no proof had to pay. |
+| The same | On an overflow the turn makes the call it stands for, then panics with the written `+`'s message: after the function's last call, as the function would have. | The program's output and the moment it stops are the function's own whatever its calls print; and a path ending in the runtime's cold panic costs the loop one jump, as the written check did. Noting the overflow in a flag instead cost a register and two instructions a turn (72.5 ms with clang). |
+| The same | The frame holds only numbers, `bool`s and `void`: nothing to drop. | A drop would happen at another time. |
+| The same | For clang and the LLVM backend the turn ends with the head's test; for MSVC the loop is tested at its start. | Measured: the C backend's C built by clang ran `fib(38)` in 85 ms tested at the start and 61 ms at the end (medians of nine runs on one core); MSVC's in 65 ms at the start and 80 at the end (`ember bench`). |
+
+Result (`ember bench --compare --core 1`, mains): MSVC 65.94 ms against C 104.58 (0.63x); the C backend by
+clang 61.70 against 64.71 (0.95x); the LLVM backend 61.97 against 64.55 (0.96x). Tests:
+`TYP-8/accept_a_recursive_sum_run_as_a_loop_gives_what_it_did_as_written`,
+`TYP-8/run_fail_a_recursive_sum_run_as_a_loop_panics_where_it_did` (every profile, both backends, and the
+evaluator agreeing), `milestones.rs` `a_recursive_sum_never_negative_runs_as_a_loop`.
+
 ### Owner verdicts on §9's rulings, 2026-10-29 (afternoon; asked as ODR 9 onward)
 
 The rulings of §9 and of verdict 125, put to the owner one at a time, numbered on from the morning's

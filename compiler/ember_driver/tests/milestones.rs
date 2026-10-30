@@ -7440,6 +7440,34 @@ fn main():
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `[TYP-8]`, `[RNG-4]` — in an optimised build a recursive sum the range facts prove never negative
+/// runs its last call as a loop's turn into a running total (`ember_analysis::accumulate`), and one
+/// whose values may be negative runs as written: of
+/// `TYP-8/accept_a_recursive_sum_run_as_a_loop_gives_what_it_did_as_written`, which checks that each
+/// gives what it did, `fib`, `total`, `ways` (unsigned) and `traced` are loops and `shifted` is not.
+#[test]
+fn a_recursive_sum_never_negative_runs_as_a_loop() {
+    let root = workspace_root();
+    let program = format!("tests/conformance/TYP-8/accept_a_recursive_sum_run_as_a_loop_gives_what_it_did_as_written.{SOURCE_EXT}");
+    let mir = ember(&["build", &program, "--emit", "mir", "--profile", "release"], &root);
+    assert_eq!(mir.exit, 0, "MIR failed:
+{}", mir.stderr);
+    let body = |name: &str| -> String {
+        let header = format!("fn {}:
+", ember_branding::item_symbol(name));
+        let Some(at) = mir.stdout.find(&header) else { return String::new() };
+        mir.stdout[at + header.len()..].split("
+fn ").next().unwrap_or_default().to_string()
+    };
+    for name in ["fib", "total", "ways", "traced"] {
+        assert!(body(name).contains("// Temp total"), "`{name}` does not run as a loop:
+{}", body(name));
+    }
+    let shifted = body("shifted");
+    assert!(!shifted.is_empty() && !shifted.contains("// Temp total"), "`shifted`, which returns negative values, runs as a loop:
+{shifted}");
+}
+
 /// D-474 — a body instantiated from `std` (a generic function's instance, a
 /// generic type's method, an interface's provided method) is kept only if
 /// something reaches it: a program that names no text iterator checks none

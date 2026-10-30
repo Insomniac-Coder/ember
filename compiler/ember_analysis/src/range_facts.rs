@@ -1357,6 +1357,17 @@ impl<'a> Analysis<'a> {
     }
 
     /// What `operand` can hold here.
+    /// The range of `operand` just before statement `index` of `block` (before its terminator when
+    /// `index` is the block's length): `Ok(None)` where nothing is known of it there, `Err(())` where
+    /// no run reaches the block (every way in contradicts the facts), or it keeps no state.
+    pub(crate) fn range_before(&self, block: usize, index: usize, operand: &Operand) -> Result<Option<Interval>, ()> {
+        let mut state = self.entry[block].clone().ok_or(())?;
+        for stmt in &self.body.blocks[block].stmts[..index] {
+            self.step(&mut state, stmt, false);
+        }
+        Ok(self.operand_range(&state, operand))
+    }
+
     fn operand_range(&self, state: &State, operand: &Operand) -> Option<Interval> {
         if let Some(term) = self.term(operand) {
             return Some(self.term_range(state, term));
@@ -2525,7 +2536,7 @@ fn overlaps(place: &Place, view: &Place) -> bool {
     !matches!(place.projection.get(view.projection.len()), Some(Projection::Index(_) | Projection::ConstIndex(_)))
 }
 
-fn rvalue_operands(rvalue: &Rvalue) -> impl Iterator<Item = &Operand> {
+pub(crate) fn rvalue_operands(rvalue: &Rvalue) -> impl Iterator<Item = &Operand> {
     let operands: Vec<&Operand> = match rvalue {
         Rvalue::Use(value) | Rvalue::UnaryOp { operand: value, .. } | Rvalue::Cast { operand: value, .. } => vec![value],
         Rvalue::Repeat { value, .. } => vec![value],

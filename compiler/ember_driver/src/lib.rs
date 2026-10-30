@@ -6688,6 +6688,12 @@ fn rewrite_calls_checks_and_loops(
     // its callee's body): make them again from the MIR as it now is.
     mir.pass("callable region summaries", types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
     mark("inlining", "all modules");
+    // `[TYP-8]` — a recursive sum (`fib(n - 1) + fib(n - 2)`) whose values are never negative runs
+    // its last call as a loop's turn into a running total, every addition still checked
+    // (`ember_analysis::accumulate`).
+    if mir.pass("accumulating recursive sums", types, |bodies, types| ember_analysis::accumulate::accumulate_recursive_sums_all(bodies, types, common, !tuned_for_msvc(options))) > 0 {
+        mir.pass("callable region summaries", types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
+    }
     // `[RNG-4]` — on the final checks: remove every check the range facts
     // prove cannot fail, before the loop passes group what is left.
     // A branch they decide goes one way, and what only the other way read

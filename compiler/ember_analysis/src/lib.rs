@@ -33,6 +33,7 @@ pub mod packed;
 /// `[BLD-7]` — the driver's threads (`ember_mir::parallel`, which lowering uses too).
 pub use ember_mir::parallel;
 pub mod range_facts;
+pub mod accumulate;
 pub mod regions;
 pub mod stack_lists;
 pub mod frame_objects;
