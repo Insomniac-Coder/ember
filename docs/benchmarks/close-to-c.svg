@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1164" height="186" viewBox="0 0 1164 186" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14">
-<rect width="1164" height="186" fill="#0d1117" rx="6"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1410" height="286" viewBox="0 0 1410 286" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14">
+<rect width="1410" height="286" fill="#0d1117" rx="6"/>
 <text x="16" y="46" fill="#9198a1" font-size="12">What the program does</text>
 <text x="545.0" y="22" fill="#e6edf3" font-weight="600" text-anchor="middle">MSVC</text>
 <line x1="440" y1="30" x2="650" y2="30" stroke="#30363d"/>
@@ -11,41 +11,72 @@
 <text x="746" y="46" fill="#9198a1" font-size="12" text-anchor="end">C</text>
 <text x="820" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember</text>
 <text x="894" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember ÷ C</text>
-<text x="1037.0" y="22" fill="#e6edf3" font-weight="600" text-anchor="middle">gcc (Linux)</text>
+<text x="1037.0" y="22" fill="#e6edf3" font-weight="600" text-anchor="middle">LLVM backend</text>
 <line x1="932" y1="30" x2="1142" y2="30" stroke="#30363d"/>
 <text x="992" y="46" fill="#9198a1" font-size="12" text-anchor="end">C</text>
 <text x="1066" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember</text>
 <text x="1140" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember ÷ C</text>
-<line x1="0" y1="57" x2="1164" y2="57" stroke="#30363d"/>
-<text x="16" y="83" fill="#e6edf3" xml:space="preserve">Calls through an interface: area of 1 million shapes, 20 times</text>
-<text x="500" y="83.0" fill="#9198a1" text-anchor="end">104 ms</text>
-<text x="574" y="83.0" fill="#e6edf3" text-anchor="end">104 ms</text>
-<text x="648" y="83.0" fill="#3fb950" text-anchor="end" font-weight="400">×1.00</text>
-<text x="746" y="83.0" fill="#9198a1" text-anchor="end">106 ms</text>
-<text x="820" y="83.0" fill="#e6edf3" text-anchor="end">105 ms</text>
-<text x="894" y="83.0" fill="#3fb950" text-anchor="end" font-weight="400">×0.99</text>
-<text x="992" y="83.0" fill="#9198a1" text-anchor="end">70 ms</text>
-<text x="1066" y="83.0" fill="#e6edf3" text-anchor="end">77 ms</text>
-<text x="1140" y="83.0" fill="#d29922" text-anchor="end" font-weight="400">×1.10</text>
-<rect x="0" y="98" width="1164" height="40" fill="#151b23"/>
-<text x="16" y="123" fill="#e6edf3" xml:space="preserve">Move 100,000 particles 2,000 times, changing each in place</text>
-<text x="500" y="123.0" fill="#9198a1" text-anchor="end">84 ms</text>
-<text x="574" y="123.0" fill="#e6edf3" text-anchor="end">84 ms</text>
-<text x="648" y="123.0" fill="#3fb950" text-anchor="end" font-weight="400">×1.00</text>
-<text x="746" y="123.0" fill="#9198a1" text-anchor="end">89 ms</text>
-<text x="820" y="123.0" fill="#e6edf3" text-anchor="end">96 ms</text>
-<text x="894" y="123.0" fill="#d29922" text-anchor="end" font-weight="400">×1.08</text>
-<text x="992" y="123.0" fill="#9198a1" text-anchor="end">91 ms</text>
-<text x="1066" y="123.0" fill="#e6edf3" text-anchor="end">93 ms</text>
-<text x="1140" y="123.0" fill="#3fb950" text-anchor="end" font-weight="400">×1.02</text>
-<text x="16" y="163" fill="#e6edf3" xml:space="preserve">1 million objects holding 6 lists, each read 40 times</text>
-<text x="500" y="163.0" fill="#9198a1" text-anchor="end">333 ms</text>
-<text x="574" y="163.0" fill="#e6edf3" text-anchor="end">305 ms</text>
-<text x="648" y="163.0" fill="#3fb950" text-anchor="end" font-weight="700">×0.92</text>
-<text x="746" y="163.0" fill="#9198a1" text-anchor="end">323 ms</text>
-<text x="820" y="163.0" fill="#e6edf3" text-anchor="end">282 ms</text>
-<text x="894" y="163.0" fill="#3fb950" text-anchor="end" font-weight="700">×0.87</text>
-<text x="992" y="163.0" fill="#9198a1" text-anchor="end">261 ms</text>
-<text x="1066" y="163.0" fill="#e6edf3" text-anchor="end">273 ms</text>
-<text x="1140" y="163.0" fill="#d29922" text-anchor="end" font-weight="400">×1.05</text>
+<text x="1283.0" y="22" fill="#e6edf3" font-weight="600" text-anchor="middle">gcc (Linux)</text>
+<line x1="1178" y1="30" x2="1388" y2="30" stroke="#30363d"/>
+<text x="1238" y="46" fill="#9198a1" font-size="12" text-anchor="end">C</text>
+<text x="1312" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember</text>
+<text x="1386" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember ÷ C</text>
+<line x1="0" y1="57" x2="1410" y2="57" stroke="#30363d"/>
+<text x="16" y="83" fill="#e6edf3" xml:space="preserve">Split a 3 MB text at its commas, counting the parts and their lengths,</text>
+<text x="16" y="103" fill="#e6edf3" xml:space="preserve">200 times: <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">text.split(&quot;,&quot;)</tspan></text>
+<text x="500" y="93.0" fill="#9198a1" text-anchor="end">56 ms</text>
+<text x="574" y="93.0" fill="#e6edf3" text-anchor="end">58 ms</text>
+<text x="648" y="93.0" fill="#3fb950" text-anchor="end" font-weight="400">×1.03</text>
+<text x="746" y="93.0" fill="#9198a1" text-anchor="end">60 ms</text>
+<text x="820" y="93.0" fill="#e6edf3" text-anchor="end">58 ms</text>
+<text x="894" y="93.0" fill="#3fb950" text-anchor="end" font-weight="400">×0.98</text>
+<text x="992" y="93.0" fill="#9198a1" text-anchor="end">60 ms</text>
+<text x="1066" y="93.0" fill="#e6edf3" text-anchor="end">64 ms</text>
+<text x="1140" y="93.0" fill="#d29922" text-anchor="end" font-weight="400">×1.08</text>
+<text x="1238" y="93.0" fill="#9198a1" text-anchor="end">47 ms</text>
+<text x="1312" y="93.0" fill="#e6edf3" text-anchor="end">45 ms</text>
+<text x="1386" y="93.0" fill="#3fb950" text-anchor="end" font-weight="400">×0.96</text>
+<rect x="0" y="118" width="1410" height="40" fill="#151b23"/>
+<text x="16" y="143" fill="#e6edf3" xml:space="preserve">Enum with <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">match</tspan>: area of 1 million shapes, 100 times</text>
+<text x="500" y="143.0" fill="#9198a1" text-anchor="end">123 ms</text>
+<text x="574" y="143.0" fill="#e6edf3" text-anchor="end">105 ms</text>
+<text x="648" y="143.0" fill="#3fb950" text-anchor="end" font-weight="700">×0.85</text>
+<text x="746" y="143.0" fill="#9198a1" text-anchor="end">113 ms</text>
+<text x="820" y="143.0" fill="#e6edf3" text-anchor="end">125 ms</text>
+<text x="894" y="143.0" fill="#d29922" text-anchor="end" font-weight="400">×1.10</text>
+<text x="992" y="143.0" fill="#9198a1" text-anchor="end">105 ms</text>
+<text x="1066" y="143.0" fill="#e6edf3" text-anchor="end">101 ms</text>
+<text x="1140" y="143.0" fill="#3fb950" text-anchor="end" font-weight="400">×0.96</text>
+<text x="1238" y="143.0" fill="#9198a1" text-anchor="end">91 ms</text>
+<text x="1312" y="143.0" fill="#e6edf3" text-anchor="end">73 ms</text>
+<text x="1386" y="143.0" fill="#3fb950" text-anchor="end" font-weight="700">×0.80</text>
+<text x="16" y="183" fill="#e6edf3" xml:space="preserve">Every third number of a list, after skipping some, at most 300,000 of</text>
+<text x="16" y="203" fill="#e6edf3" xml:space="preserve">them (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">skip</tspan>, <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">step_by</tspan>, <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">take</tspan>), 300 times</text>
+<text x="500" y="193.0" fill="#9198a1" text-anchor="end">54 ms</text>
+<text x="574" y="193.0" fill="#e6edf3" text-anchor="end">53 ms</text>
+<text x="648" y="193.0" fill="#3fb950" text-anchor="end" font-weight="400">×0.98</text>
+<text x="746" y="193.0" fill="#9198a1" text-anchor="end">49 ms</text>
+<text x="820" y="193.0" fill="#e6edf3" text-anchor="end">51 ms</text>
+<text x="894" y="193.0" fill="#d29922" text-anchor="end" font-weight="400">×1.05</text>
+<text x="992" y="193.0" fill="#9198a1" text-anchor="end">51 ms</text>
+<text x="1066" y="193.0" fill="#e6edf3" text-anchor="end">51 ms</text>
+<text x="1140" y="193.0" fill="#3fb950" text-anchor="end" font-weight="400">×1.00</text>
+<text x="1238" y="193.0" fill="#9198a1" text-anchor="end">47 ms</text>
+<text x="1312" y="193.0" fill="#e6edf3" text-anchor="end">48 ms</text>
+<text x="1386" y="193.0" fill="#3fb950" text-anchor="end" font-weight="400">×1.02</text>
+<rect x="0" y="218" width="1410" height="60" fill="#151b23"/>
+<text x="16" y="243" fill="#e6edf3" xml:space="preserve">Number the items of a list past a starting point, as copies (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">copied</tspan>,</text>
+<text x="16" y="263" fill="#e6edf3" xml:space="preserve"><tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">enumerate</tspan>, <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">skip</tspan>), 300 times</text>
+<text x="500" y="253.0" fill="#9198a1" text-anchor="end">63 ms</text>
+<text x="574" y="253.0" fill="#e6edf3" text-anchor="end">66 ms</text>
+<text x="648" y="253.0" fill="#d29922" text-anchor="end" font-weight="400">×1.05</text>
+<text x="746" y="253.0" fill="#9198a1" text-anchor="end">58 ms</text>
+<text x="820" y="253.0" fill="#e6edf3" text-anchor="end">58 ms</text>
+<text x="894" y="253.0" fill="#3fb950" text-anchor="end" font-weight="400">×1.00</text>
+<text x="992" y="253.0" fill="#9198a1" text-anchor="end">57 ms</text>
+<text x="1066" y="253.0" fill="#e6edf3" text-anchor="end">59 ms</text>
+<text x="1140" y="253.0" fill="#3fb950" text-anchor="end" font-weight="400">×1.02</text>
+<text x="1238" y="253.0" fill="#9198a1" text-anchor="end">52 ms</text>
+<text x="1312" y="253.0" fill="#e6edf3" text-anchor="end">52 ms</text>
+<text x="1386" y="253.0" fill="#3fb950" text-anchor="end" font-weight="400">×1.00</text>
 </svg>

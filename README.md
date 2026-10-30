@@ -117,10 +117,11 @@ ECS facilities, C++ interop, the interpreter, and hot reload. The open defects a
 Each program below was written twice, in Ember and by hand in C (C++ for the programs that use
 objects, strings, maps or sorting; both are in [`bench/`](bench/), with the scripts that time them),
 built by the same C compiler with the same optimisation flags,
-and timed on 2026-10-16 on one laptop, plugged in: an ASUS ROG Strix G16 (G615LR) with an Intel Core
+and timed on 2026-10-30 on one laptop, plugged in: an ASUS ROG Strix G16 (G615LR) with an Intel Core
 Ultra 9 275HX (8 performance cores and 16 slower efficiency cores), 64 GB of DDR5-5600 memory and
 Windows 11 Home (build 26200). The compilers are MSVC 19.44 and clang 22.1 on Windows, and gcc 15.2
-under WSL (Ubuntu 26.04) on the same laptop. The Windows runs are held to the performance cores; WSL
+under WSL (Ubuntu 26.04) on the same laptop; Ember's LLVM backend, its default, hands its IR to the
+same clang 22.1. The Windows runs are held to the performance cores; WSL
 cannot be held there without administrator rights, so the gcc runs ran where Windows placed them.
 Overflow checks are on unless a row says they are off (`@overflow(wrap)`). Each table shows, for
 each compiler, the hand-written C's time, Ember's time (each the middle of 11 or more runs), and
@@ -131,7 +132,9 @@ A program goes in the table of its slowest compiler.
 The [matched regression check](docs/reviews/2026-10-09/map-performance.md) compares all 50 programs
 with the preceding implementation on each compiler, and retains the raw samples.
 
-Each compiler's columns compare Ember with the hand-written C built by that compiler. On the rows
+Each compiler's columns compare Ember with the hand-written C built by that compiler: under MSVC,
+clang and gcc, Ember's C backend, whose C that compiler builds; under the LLVM backend, Ember's LLVM
+IR compiled by clang, against the hand-written C clang builds. On the rows
 marked ¹ or ², MSVC rearranges the hand-written C's loops, which changes that C's time a lot; on the
 row marked ³, gcc does something to Ember's program that it does not do to the hand-written C; the
 notes under the tables say how. With gcc, both programs are built with
@@ -139,7 +142,7 @@ notes under the tables say how. With gcc, both programs are built with
 
 ### As fast as C or faster
 
-![Programs within 5% of C or faster, with MSVC, clang and gcc: C time, Ember time, Ember divided by C](docs/benchmarks/as-fast-as-c.svg)
+![Programs within 5% of C or faster, with MSVC, clang, the LLVM backend and gcc: C time, Ember time, Ember divided by C](docs/benchmarks/as-fast-as-c.svg)
 
 ### Close to C: up to 10% slower with one of the compilers
 
@@ -149,8 +152,8 @@ notes under the tables say how. With gcc, both programs are built with
 
 > Development is in progress, and attempts will be made to speed the language up in these areas.
 
-More than 10% slower than C: 1 of the 50 programs with MSVC, 1 with clang, 2 with gcc; none with all
-three.
+More than 10% slower than C: 1 of the 50 programs with MSVC, 0 with clang, 0 with the LLVM backend,
+3 with gcc; none with all four.
 
 ![Programs more than 10% slower than C with one compiler: C time, Ember time, Ember divided by C](docs/benchmarks/slower-than-c.svg)
 
