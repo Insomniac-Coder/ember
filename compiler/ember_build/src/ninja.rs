@@ -296,6 +296,8 @@ fn image_compile_args(toolchain: &Toolchain, program: &Program<'_>, image: &Imag
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             args.extend(gnu_flags(program.profile).into_iter().chain(gcc_flags(toolchain, program.profile).iter().copied()).map(OsString::from));
             args.extend(lto_compile_flags(toolchain, lto, Link::Here).iter().map(OsString::from));
+            // The C runtime the shared runtime and the host have (`crate::reload::link_image`'s).
+            args.extend(crate::clang_windows_runtime(toolchain).map(OsString::from));
             if !cfg!(windows) {
                 // An image exports nothing: the runtime finds its manifest by section ([HR-8]).
                 args.extend(["-fPIC", "-fvisibility=hidden"].map(OsString::from));
@@ -334,6 +336,7 @@ fn image_link_args(toolchain: &Toolchain, program: &Program<'_>, image: &Image<'
             }
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
+            args.extend(crate::clang_windows_link_runtime(toolchain).into_iter().map(OsString::from));
             args.push("-shared".into());
             args.push(image.link_with.into());
             args.extend(["-o".into(), program.output.clone().into_os_string()]);

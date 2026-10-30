@@ -145,8 +145,9 @@ pub fn shared_runtime(
     }
     let mut key = Key::new();
     // v2: compiled without link-time optimisation in every profile (`[BLD-6]`); v3: under Clang on
-    // Windows, with the DLL C runtime (`clang_windows_runtime`).
-    key.part(b"reload runtime v3");
+    // Windows, with the DLL C runtime (`clang_windows_runtime`); v4: linked without the static one
+    // (`clang_windows_link_runtime`).
+    key.part(b"reload runtime v4");
     key.part(toolchain.name().as_bytes());
     key.part(profile.name().as_bytes());
     key.part(&[match reload { None => 2, Some(instances) => u8::from(instances) }]);
@@ -188,7 +189,7 @@ pub fn shared_runtime(
             Toolchain::Clang(_) | Toolchain::Gcc(_) if cfg!(windows) => {
                 let definitions = staging.join(format!("{stem}.def"));
                 write_definitions(&object, &definitions, &stem)?;
-                command.args(clang_windows_runtime(toolchain));
+                command.args(crate::clang_windows_link_runtime(toolchain));
                 command.arg("-shared").arg(&object).arg("-o").arg(&library)
                     .arg(format!("-Wl,/DEF:{}", definitions.display()))
                     .arg(format!("-Wl,/IMPLIB:{}", staging.join(format!("{stem}.lib")).display()));
@@ -254,7 +255,7 @@ pub fn link_image(
             }
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) if cfg!(windows) => {
-            command.args(clang_windows_runtime(toolchain));
+            command.args(crate::clang_windows_link_runtime(toolchain));
             command.arg("-shared").args(&objects).args(relaxed).arg(&runtime.link_with).arg("-o").arg(output)
                 .args(libraries.iter().map(|library| crate::cdylib::gnu_library(library)))
                 .arg(format!("-Wl,/INCLUDE:{manifest_symbol}"));
@@ -322,7 +323,7 @@ pub fn link_host_source(
                 .arg(&runtime.link_with);
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
-            command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile)).args(clang_windows_runtime(toolchain));
+            command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile)).args(crate::clang_windows_link_runtime(toolchain));
             for define in reload_defines(false) {
                 command.arg(format!("-D{define}"));
             }

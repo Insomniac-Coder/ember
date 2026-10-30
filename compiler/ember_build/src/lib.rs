@@ -2415,6 +2415,22 @@ pub(crate) fn clang_windows_runtime(toolchain: &Toolchain) -> Option<&'static st
     })
 }
 
+/// `clang_windows_runtime` for a link by Clang's driver: the driver names the static C runtime for
+/// every link (`-defaultlib:libcmt`), whatever runtime the objects were compiled for. Beside the DLL
+/// one the objects name, Microsoft's linker then takes the static runtime's functions and leaves the
+/// DLL runtime's imports (`__imp_getenv`) unresolved. So the static one is left out unless it is the
+/// runtime chosen, and the chosen one is named: an object compiled from the LLVM backend's IR names
+/// none. (LLVM's `lld-link` happened to cope; the CI's Clang links with Microsoft's.)
+pub(crate) fn clang_windows_link_runtime(toolchain: &Toolchain) -> Vec<&'static str> {
+    match clang_windows_runtime(toolchain) {
+        None => Vec::new(),
+        Some(runtime @ "-fms-runtime-lib=static") => vec![runtime],
+        Some(runtime @ "-fms-runtime-lib=static_dbg") => vec![runtime, "-Wl,/nodefaultlib:libcmt", "-Wl,/defaultlib:libcmtd"],
+        Some(runtime @ "-fms-runtime-lib=dll_dbg") => vec![runtime, "-Wl,/nodefaultlib:libcmt", "-Wl,/defaultlib:msvcrtd"],
+        Some(runtime) => vec![runtime, "-Wl,/nodefaultlib:libcmt", "-Wl,/defaultlib:msvcrt"],
+    }
+}
+
 /// `[BLD-13]` — Clang's driver on Windows, where a build writes debug information, as clang-cl
 /// does it: the compile's flags, then the link's. No command line or working folder in the
 /// CodeView (`folder_names` names the folders), and the link by LLVM's `lld-link` where it is

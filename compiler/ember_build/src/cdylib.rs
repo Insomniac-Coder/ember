@@ -103,7 +103,7 @@ pub fn link_cdylib(
         Toolchain::Clang(_) | Toolchain::Gcc(_) if cfg!(windows) => {
             let definitions = obj_dir.join(format!("{name}.def"));
             write_definitions(&definitions, name, exports, false)?;
-            command.args(crate::clang_windows_runtime(toolchain));
+            command.args(crate::clang_windows_link_runtime(toolchain));
             command.arg("-shared").args(&objects).args(lto_link_flags(toolchain, lto));
             if let Some(shared) = shared {
                 command.arg(&shared.link_with);
