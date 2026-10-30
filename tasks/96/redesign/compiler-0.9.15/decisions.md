@@ -387,6 +387,23 @@ Ember name, not the overlay's; `@grade(instrumented)` on a member's entry is nev
 unsafe on purpose, and `E3100` then names that instead of asking for facts. A plain `fn` there is unsafe to call
 already. Should `@ffi(unsafe)` go too, as a second spelling, or stay?
 
+### Owner verdicts on §11's rulings, 2026-10-30 (morning)
+
+The owner: "ODRs are language related decisions" — N3, N8, N11 to N14, N16, N17, N19 to N21 are not ODRs
+(tooling, tests, the watcher, planning, internals) and were not asked; N8's reading was confirmed ("yes no
+hibernate if the conditions return back to normal"). N18 (what changes `this`) and N22's codes are the
+spec's own rules, not rulings; N22's wording was approved.
+
+- **Approved as ruled:** N1 (a lambda's `@safety`), N2 (the default manifest, with the note reworded:
+  JOB.md verdict 135), N4 (`E5010`'s help), N5 (functions followed into and out of lists; an unknown one
+  is any of its type), N6 ("a lambda" in a chain; the `^` landing on the last argument is to be fixed),
+  N9 (a stray line in an overlay's `class` section), N10 (an overlay in no package is the program's), N15
+  with an addition (JOB.md verdict 134: every other call named), N22's wording.
+- **Reversed:** N7's first half — an overlay entry without `@ffi(const)` makes the method changing
+  (JOB.md verdict 132).
+- **The open question, answered:** `@ffi(unsafe)`, `param(p, unsafe)` and `result(unsafe)` go; a
+  hand-written declaration unsafe to call is `@safety` above `unsafe fn` (JOB.md verdict 133).
+
 ### Owner verdicts on §9's rulings, 2026-10-29 (afternoon; asked as ODR 9 onward)
 
 The rulings of §9 and of verdict 125, put to the owner one at a time, numbered on from the morning's

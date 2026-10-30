@@ -184,6 +184,33 @@ Also from the review:
   back ("you said 'if you want it to be treated as safe you have to write it in safe block'"), folder
   listings, and a two-line "what happens" list.
 
+## Where my rulings and the owner's differed (ODR review of 2026-10-30, morning)
+
+The owner reviewed the night's rulings. He first stopped the review to say what an ODR is: "ODRS ARE
+LANGUAGE RELATED DECISIONS". Half my list was tooling, tests, the watcher, planning and compiler internals,
+and two items were the spec's own rules presented as mine. Of the language decisions, most stood; these
+did not, or grew:
+
+| ODR | What I ruled | What the owner chose | Why his was right | The lesson |
+|---|---|---|---|---|
+| `@ffi(const)` (verdict 132) | An overlay entry without `@ffi(const)` keeps whatever the importer proved from the header's body. | An entry without `@ffi(const)` makes the method one that changes its object; `@ffi(const)` keeps it const. | An entry is the programmer's statement about the method. With my rule its meaning depended on a proof made from a body the reader of the overlay never sees, and the attribute looked pointless ("why even `@ffi(const)` if you auto figure it out anyway?"). | When the programmer writes a declaration, its meaning comes from what it says. An attribute left unwritten must not fall back to an inferred fact the reader cannot see. |
+| `@ffi(unsafe)` (verdict 133) | Left as an open question: verdict 130 retired `-> unsafe` in overlays only, so hand-written declarations kept `@ffi(unsafe)`. | `@safety` above `unsafe fn` there too; and, shown both in full code, no per-parameter `unsafe` either. | The same idea already had one spelling (`unsafe fn`), and his own verdict of the evening before had chosen it for overlays. The question answered itself by checklist item 11. | When a verdict replaces a spelling in one place, every other place spelling the same idea follows: propose it with the verdict. Show each option as full code before asking. |
+| One `L3015` per function (verdict 134) | One warning at the first call; the other calls are not shown. | One warning, and every other call listed under it (`also called at file:line:col`). | Merging repeated warnings into one is to cut noise, not to hide where the program is affected. | A diagnostic that stands for several places names all of them. |
+| The default manifest's note (verdict 135) | `wrote …, the package this program is: every program is a package [MAN-9]`. | `created …: every program needs one, and this folder had none`. | Mine was broken English with a rule tag that told him nothing. | Read every message aloud before it ships: plain English, and no tag where it adds nothing. |
+
+Also from the review:
+
+- **What an ODR is.** Only what changes what a program means, which programs compile, or what the
+  programmer sees. Tooling, tests, the watcher, plans and internals are reported as one line of "what
+  landed", if at all. A rule the spec already states is not my ruling either: I presented "what changes
+  `this`" and the codes of three new errors as decisions, and the owner could see no question in them.
+- **Explaining.** What failed: a list of 22 terse lines; an example switched in mid-question (`grow_via`,
+  then "a C function"); a side remark put into a question; telling him to "leave aside" a question he had
+  asked ("WHO THE FUCK ARE YOU TO DECIDE THAT I NEED TO LEAVE IT"). What worked: C++ terms first (`const`
+  on a `const Bag&`); his own example of the evening before (`lib_step`); a folder listing; the outcome he
+  would see (it builds, or this error); two builds in a row for an incremental bug; both options as full
+  code side by side.
+
 ## What is never mine to decide
 
 - **Any change to what the language does.** It goes to the owner, with real code, one question at a
@@ -219,3 +246,11 @@ Also from the review:
     normal model hold for them instead (ODR 14.5).
 14. Did I run it on the real compiler, and does the code do what my notes say, on every path a value can
     take (ODR 15.1, D-930)?
+15. When the programmer writes a declaration (an overlay entry, a contract), does its meaning come only
+    from what it says? An unwritten attribute must not fall back to a fact the reader cannot see
+    (verdict 132).
+16. Does an owner verdict that replaces a spelling in one place reach every other place spelling the same
+    idea? Then that is part of the ruling, not a separate question (verdict 133).
+17. When one diagnostic stands for several places, does it name all of them (verdict 134)?
+18. Read aloud, is every message plain English, with nothing in it the programmer cannot use (verdict 135)?
+19. Is it a language decision, and one the spec leaves open? Only then is it an ODR (2026-10-30).

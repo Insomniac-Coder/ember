@@ -1050,6 +1050,21 @@ verdicts, 2026-10-29", items 1 to 18, with the review's other answers):
     their class" (a top-level `fn new(x, y)` made both `Handle.new` and `MutHandle.new` safe). A
     top-level line names a function outside any class; one naming only members is `E5010` ([GRM-35],
     [FFI-12], [FFI-40a]).
+132. **An overlay entry without `@ffi(const)` makes its method one that changes its object**, whatever
+    the importer proves from the header's body; `@ffi(const)` keeps it const. Owner, shown the fix that
+    kept the importer's reading: "NO", then, of (1) not const / (2) another spelling: "1" ([FFI-40a];
+    reverses the in-place correction of Hardened_5, so a new hardening).
+133. **A hand-written C declaration unsafe to call is `@safety("…")` above `unsafe fn`, as in overlays**:
+    `@ffi(unsafe)`, `param(p, unsafe)` and `result(unsafe)` go, each refused with the line to write
+    (and rewritten by `ember fmt --migrate`); `@ffi(…)` keeps its other words (`link_name`, …). Owner:
+    "yes" (the overlay spelling here too), then, shown a hybrid (`@ffi(param(p, unsafe))` on an
+    `unsafe fn`) beside the plain form: "yes, go with your suggestion" ([FFI-11], [FFI-10], [UNS-7]).
+134. **`L3015` for a C or C++ function comes once, at its first call by place, and names every other
+    call**: the file built first, then its imports, the earliest line in each; each other call a note
+    `also called at file:line:col`. Owner: "one warning per C function is cool but how about we modify
+    the error to show all the occurrences too?", then "yes" ([UNS-7]; D-931).
+135. **The default manifest's note reads `note: created `<path>`: every program needs one, and this
+    folder had none`.** Owner: "yes" ([MAN-9]).
 
 ## Error messages are part of readability (owner, 2026-10-24)
 
