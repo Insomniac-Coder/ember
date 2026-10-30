@@ -434,6 +434,17 @@ the older change logs 25 rows they had missed.
 | EFF-2 (N6) | An effect's chain is reported at the whole call: MIR keeps a call's own expression (`BasicBlock::call_span`, set for direct, interface and indirect calls) beside its place, which stays its last argument. Moving the place itself was tried and undone: it moved a move's "moved here" from the moved argument to the call, `explain`'s "used at" likewise, and a backtrace frame's column. | The owner's "yes" to N6 named the caret as the flaw to fix, nothing else. |
 | MAN-9 (135) | The note's words as approved; the error beside it reworded the same way ("cannot create `…`: …; every program needs an `ember.toml` in its folder or a folder above"). | Verdict 135's lesson (checklist 18). |
 
+### Rulings made on autopilot, night of 2026-10-30 (lead, the owner asleep; for the morning)
+
+The owner: "back to autonomous mode ... I'll ask for ODRs in the morning", "and you go solo tonight". Only
+language decisions are listed here; each is put to the owner one at a time, with the code.
+
+| # | Rule | Ruling | Why |
+|---|---|---|---|
+| N23 | FFI-10 (verdict 133) | A plain `fn` in an `unsafe extern` block stays as it was: unsafe to call until it is written `safe fn` with its facts complete, its call refused with the facts it lacks; only `unsafe` inside `@ffi(…)` became `unsafe fn`. | The verdict named the `@ffi(…)` spellings; a plain `fn` is a declaration nothing is said of yet, as a header's function with no overlay entry is. Checklist 16 asks whether `fn` and `unsafe fn` there are two spellings of one idea: they differ in what the call's error asks for (the facts, or nothing), so I left it and ask. |
+| N24 | FFI-10 | `safe unsafe fn` on one declaration is `E5002` ("declared both `safe` and `unsafe`"), with both lines to write. | It was a parse error with no place; `safe` with `@ffi(unsafe)` was `E5002` before verdict 133. |
+| N25 | FFI-40a (verdict 132) | A free C++ operator function Ember imports as a class's method (`operator+(const Money&, const Money&)` as `Money.add`) is a method like any other: its entry without `@ffi(const)` makes it changing, though C++ passes the object by `const&`. | Verdict 132's words ("its method"); an entry means what it says. |
+
 ### `a10_recursion` on the LLVM backend, 2026-10-30 (owner: "yes build it")
 
 The LLVM backend lost `a10_recursion` (1.71x C): not the backend's doing. The C backend built by clang

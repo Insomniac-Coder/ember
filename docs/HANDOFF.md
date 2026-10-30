@@ -1,5 +1,22 @@
 # Ember — handoff
 
+> **2026-10-31, night — AUTONOMOUS (owner asleep), solo. START HERE.** Owner: "back to autonomous mode,
+> monitor wifi and power status and if any of those get disconnected and stay that way for more than 5 minutes you
+> hibernate the laptop, I'll ask for ODRs in the morning", "and you go solo tonight". Watcher: scratchpad
+> `power_wifi_hibernate.ps1` (power `Offline` or Wi-Fi not `connected` for 5 minutes; its pid in the log): end it
+> (WMI `Terminate`) when the owner is back.
+> - **Pushed** `64283514` (Hardened_6, D-934, HANDOFF). Its CI look (run 41110399577): one job red,
+>   `windows / llvm / clang / rest`, `the_128_bit_programs_run_with_the_halves`: D-935 (the runtime and Microsoft's
+>   deprecated `getenv` under Clang `-Werror`), fixed.
+> - **Committed, not pushed:** `50208c00` (verdicts 132, 133, 135 in the compiler: `@ffi(const)`, `unsafe fn` hand
+>   declarations and `fmt --migrate` of both retired spellings, the manifest note) and `f3b81be4` (verdict 134: one
+>   `L3015` per function naming every other call, merged in `Sink::ordered`; the effect caret, `BasicBlock::call_span`;
+>   D-935; the corpus overlay's `@ffi(const)`). decisions.md "Building verdicts 132 to 135 and the effect caret".
+> - **For the morning, one at a time:** N23-N25 (decisions.md "Rulings made on autopilot, night of 2026-10-30").
+> - **Push gate:** the whole suite three ways (as the CI job runs it, `EMBER_CC=clang EMBER_BACKEND=llvm`,
+>   `CCC_OVERRIDE_OPTIONS="# ^-fuse-ld=link ^-Wno-unused-command-line-argument"`, an empty `EMBER_CACHE`; then LLVM
+>   with MSVC; then `EMBER_BACKEND=c`), then the bench gate both backends, push, one CI look. Then M1 on `m1`.
+
 > **2026-10-30, evening — the owner is here. START HERE.** The owner's order (asked "at what point do you think we
 > will be able to start with implementing the spec?": "no go in order"):
 > 1. **Done: LLVM the default backend** (`6693188d`; decisions.md "The LLVM backend the default": the nine things
