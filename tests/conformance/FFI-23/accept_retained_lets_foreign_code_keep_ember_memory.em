@@ -32,7 +32,7 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     safe fn keep_point(point: Retained[Box[Point]])
     @ffi(effects=[])
     safe fn kept_point_sum() -> i64
-    fn kept_is(address: ObjectPtr[Noisy]) -> i32
+    unsafe fn kept_is(address: ObjectPtr[Noisy]) -> i32
 
 fn pinned() -> Retained[Noisy]:
     noisy = Noisy(name = "kept")

@@ -1,24 +1,18 @@
 #$ test: compile-fail
-#$ rules: DIA-18, FFI-2, FFI-10, FFI-11c
+#$ rules: DIA-18, FFI-2, FFI-11c
 #$ profiles: debug
-#$ help: state the facts on its declaration: `safe fn abs`
-#$ help: `@ffi(param(data, TODO(ownership), TODO(count), TODO(nullable)), result(TODO(ownership), TODO(count), TODO(nullable), TODO(lifetime)))` over `safe fn find`
-#$ help: `@ffi(param(text, borrowed, TODO(count)))` over `safe fn measure`
-# `[DIA-18]` — a foreign call refused for its contract's unknown facts names
-# each one and prints the declaration line that states them, every unknown
-# fact a `TODO(…)` word to replace (`[FFI-11c]`): the line compiles on the
-# unsafe declaration as printed.
+#$ help: `fn abs_value(x)` in an `unsafe overlay c "facts.h":`
+#$ help: `fn find_byte(data: TODO(ownership) TODO(count) TODO(nullable), key) -> TODO(ownership) TODO(count) TODO(nullable) TODO(lifetime)` in an `unsafe overlay c "facts.h":`
+#$ help: `fn measure(text: TODO(ownership) TODO(count) TODO(nullable))` in an `unsafe overlay c "facts.h":`
+# `[DIA-18]` — a call of a header's function that no overlay says anything of is refused for the
+# facts its contract lacks: the error names each one and prints the overlay line that states them,
+# every unknown fact a `TODO(…)` word to replace (`[FFI-11c]`). (A declaration written by hand says
+# `safe fn` or `unsafe fn` itself, verdict 136.)
 
-unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
-    @safety("callers pass what the C function `abs` requires")
-    fn abs(x: i32) -> i32
-    @safety("callers pass what the C function `find` requires")
-    fn find(data: *u8, key: u8) -> *u8
-    @ffi(param(text, borrowed, TODO(count)))
-    @safety("callers pass what the C function `measure` requires")
-    fn measure(text: *u8) -> usize
+from std.ffi import c_char
+import c "facts.h"
 
 fn main():
-    println(abs(-42))    #$ error[E3100]: unknown: `abs` is not asserted safe to call (`safe fn`)
-    found = find(null[*u8](), 3)    #$ error[E3100]: unknown: `data`: its ownership, count and nullability
-    println(measure(null[*u8]()))    #$ error[E3100]: unknown: `text`: its count
+    println(c.abs_value(-42))    #$ error[E3100]: unknown: `abs_value` is not asserted safe to call (`safe fn`)
+    found = c.find_byte(null[*u8](), 3)    #$ error[E3100]: unknown: `data`: its ownership, count and nullability
+    println(c.measure(null[*c_char]()))    #$ error[E3100]: unknown: `text`: its ownership, count and nullability

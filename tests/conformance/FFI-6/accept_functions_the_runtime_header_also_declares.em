@@ -16,7 +16,7 @@ import c "own_stdio.h"
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @safety("`text` is a NUL-terminated string")
-    fn strlen(text: *c_char) -> usize
+    unsafe fn strlen(text: *c_char) -> usize
 
 fn main():
     text: Array[c_char] = [104, 105, 0]

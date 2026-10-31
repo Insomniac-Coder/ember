@@ -168,7 +168,7 @@ pub fn shared_runtime(
     let library_in_cache = built.join(shared_library_name(&stem));
     let import_in_cache = built.join(format!("{stem}.lib"));
     if !library_in_cache.is_file() {
-        let staging = built.with_extension(format!("tmp{}", std::process::id()));
+        let staging = built.with_extension(format!("tmp{}", crate::temp_suffix()));
         let _ = std::fs::remove_dir_all(&staging);
         std::fs::create_dir_all(&staging)?;
         let object = staging.join(if matches!(toolchain, Toolchain::Msvc { .. }) { "rt.obj" } else { "rt.o" });
@@ -210,9 +210,14 @@ pub fn shared_runtime(
     }
     std::fs::create_dir_all(bin)?;
     let library = bin.join(shared_library_name(&stem));
-    let same = std::fs::read(&library).ok() == Some(std::fs::read(&library_in_cache)?);
-    if !same {
+    // The runtime beside the program is this one if it was built from the same inputs: compared by
+    // their key, not by its bytes, which another cache (another user's, or a relative cache read from
+    // another folder) links differently, while the running program holds the file open.
+    let inputs = library.with_extension("inputs");
+    let key = built.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    if !library.is_file() || std::fs::read_to_string(&inputs).ok() != Some(key.clone()) {
         std::fs::copy(&library_in_cache, &library)?;
+        std::fs::write(&inputs, &key)?;
     }
     let link_with = if cfg!(windows) { import_in_cache } else { library.clone() };
     Ok(SharedRuntime { library, link_with })

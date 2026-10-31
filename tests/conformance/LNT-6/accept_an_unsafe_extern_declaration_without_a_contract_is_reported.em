@@ -8,11 +8,11 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @safety("`text` points to a C string, read up to its zero byte")
-    fn strlen(text: *u8) -> usize  #$ warning[L5001]: `strlen` is an `unsafe extern` declaration with no contract
+    unsafe fn strlen(text: *u8) -> usize  #$ warning[L5001]: `strlen` is an `unsafe extern` declaration with no contract
     @ffi(param(text, borrowed, nul_terminated), link_name="strlen")
     safe fn c_length(text: cstr) -> usize
     @safety("callers pass what the C function `abs` requires")
-    fn abs(n: i32) -> i32
+    unsafe fn abs(n: i32) -> i32
 
 fn main():
     println(c_length(c"hello"), c_length(c"abc"))

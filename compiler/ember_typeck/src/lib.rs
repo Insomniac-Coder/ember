@@ -43361,6 +43361,26 @@ impl<'a> Checker<'a> {
         if let ast::ItemKind::Fn(decl) = &item.kind && decl.is_foreign_decl {
             // `[FFI-10]` (verdict 133) — `safe` asserts the function safe to call, `unsafe` leaves its
             // calls unsafe: one declaration says one of them.
+            // `[FFI-10]` (verdict 136) — and a hand-written one says one of them: a plain `fn` is safe to
+            // call everywhere else in Ember. A header's function the importer writes with nothing said
+            // of it yet is a plain `fn`, whose call names what it lacks (`[DIA-18]`); a generator is
+            // refused for that already. One with `unsafe` in `@ffi(…)` said it in the retired spelling,
+            // whose error below rewrites it.
+            let retired = item.attrs.iter()
+                .any(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi") && attr.args.iter().any(ffi_retired_unsafe_arg));
+            if !decl.is_safe && !decl.written_unsafe && !decl.is_gen && !retired && !self.imported_files.contains(&decl.name.span.file) {
+                let name = decl.name.name;
+                let mut diagnostic = Diagnostic::error(codes::E5002, decl.name.span, format!("`{name}` does not say whether it is safe to call"))
+                    .help(format!("write `unsafe fn {name}`, with `@safety(\"…\")` above it saying what its callers must make true, or `safe fn {name}` if a call within its contract cannot break memory safety"))
+                    .note("a plain `fn` is safe to call everywhere else in Ember, so a C function's declaration says which it is [FFI-10]");
+                if let Some(text) = self.sources.get(&decl.name.span.file).map(|source| &source.text)
+                    && let Some(at) = text.get(..decl.name.span.start as usize).and_then(|before| before.rfind("fn"))
+                {
+                    let at = at as u32;
+                    diagnostic = diagnostic.migrate("a plain `fn` in an `unsafe extern` block to `unsafe fn`", Span::new(decl.name.span.file, at, at), "unsafe ");
+                }
+                self.sink.emit(diagnostic);
+            }
             if decl.is_safe && decl.written_unsafe {
                 let name = decl.name.name;
                 self.sink.emit(

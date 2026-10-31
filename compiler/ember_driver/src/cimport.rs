@@ -2189,7 +2189,7 @@ impl Writer {
                 "static_assert(std::is_trivially_copyable_v<{spelled}> && sizeof({spelled}) == {size} && alignof({spelled}) == {align}, \"{name}: a variant Ember holds as bytes\");\n\
                  extern \"C\" std::size_t {ops}_index(const void* v) noexcept {{ return static_cast<const {spelled}*>(v)->index(); }}\n"
             );
-            let mut decls = format!("    @ffi(link_name=\"{ops}_index\")\n    @safety(\"{THUNK_SAFETY}\")\n    fn {ops}_index(object: *u8) -> usize\n");
+            let mut decls = format!("    @ffi(link_name=\"{ops}_index\")\n    @safety(\"{THUNK_SAFETY}\")\n    unsafe fn {ops}_index(object: *u8) -> usize\n");
             let (mut take, mut store, mut slots) = (String::new(), String::new(), String::new());
             for (index, (variant_name, mapped, alternative)) in alternatives.iter().enumerate() {
                 let _ = writeln!(
@@ -2199,7 +2199,7 @@ impl Writer {
                 );
                 let _ = write!(
                     decls,
-                    "    @ffi(link_name=\"{ops}_get_{index}\")\n    @safety(\"{THUNK_SAFETY}\")\n    fn {ops}_get_{index}(object: *u8, value: *mut {mapped})\n    @ffi(link_name=\"{ops}_make_{index}\")\n    @safety(\"{THUNK_SAFETY}\")\n    fn {ops}_make_{index}(object: *mut u8, value: *{mapped})\n"
+                    "    @ffi(link_name=\"{ops}_get_{index}\")\n    @safety(\"{THUNK_SAFETY}\")\n    unsafe fn {ops}_get_{index}(object: *u8, value: *mut {mapped})\n    @ffi(link_name=\"{ops}_make_{index}\")\n    @safety(\"{THUNK_SAFETY}\")\n    unsafe fn {ops}_make_{index}(object: *mut u8, value: *{mapped})\n"
                 );
                 // Each alternative's slot, before the block that reads one (`[UNS-3]`).
                 let _ = writeln!(slots, "    slot{index}: MaybeUninit[{mapped}] = MaybeUninit[{mapped}].uninit()");
@@ -3129,8 +3129,8 @@ impl Writer {
                      \x20       unsafe:  # SAFETY(ffi): the range's end, once\n\
                      \x20           {ops}_end(self.range)\n\n\
                      unsafe extern \"C\":\n\
-                     \x20   @ffi(link_name=\"{ops}_next\")\n    @safety(\"{THUNK_SAFETY}\")\n    fn {ops}_next(range: *mut u8) -> *mut {mapped}\n\
-                     \x20   @ffi(link_name=\"{ops}_end\")\n    @safety(\"{THUNK_SAFETY}\")\n    fn {ops}_end(range: *mut u8)\n"
+                     \x20   @ffi(link_name=\"{ops}_next\")\n    @safety(\"{THUNK_SAFETY}\")\n    unsafe fn {ops}_next(range: *mut u8) -> *mut {mapped}\n\
+                     \x20   @ffi(link_name=\"{ops}_end\")\n    @safety(\"{THUNK_SAFETY}\")\n    unsafe fn {ops}_end(range: *mut u8)\n"
                 ),
             );
             let result = CType {
@@ -3219,7 +3219,7 @@ impl Writer {
             let element = cpp_spelling(argument);
             let mut decls = String::new();
             let declare = |decls: &mut String, suffix: &str, signature: &str| {
-                let _ = writeln!(decls, "    @ffi(link_name=\"{ops}_{suffix}\")\n    @safety(\"{THUNK_SAFETY}\")\n    fn {ops}_{suffix}{signature}");
+                let _ = writeln!(decls, "    @ffi(link_name=\"{ops}_{suffix}\")\n    @safety(\"{THUNK_SAFETY}\")\n    unsafe fn {ops}_{suffix}{signature}");
             };
             let bridge = match name.as_str() {
                 // `[FFI-17a]` (ODR-199) — `std::function<R(A…)>`: an owned `CppFunction`, or, with
@@ -3630,7 +3630,7 @@ impl Writer {
                 let mut raw_params = vec!["object: *mut u8".to_string(), "deleted: extern \"C\" fn(*mut u8)".to_string()];
                 raw_params.extend(fn_types.iter().enumerate().map(|(k, ty)| format!("v{k}: Option[{ty}]")));
                 raw_params.extend(params.iter().map(|(param, ty, _, _)| if wrapped(ty) { format!("{param}: {}", ty.ember) } else { format!("{}{param}: {}", ty.mode, ty.ember) }));
-                let _ = writeln!(raw, "    @ffi(link_name=\"{thunk}\")\n    @safety(\"{THUNK_SAFETY}\")\n    fn {construct}({}) -> *mut {opaque}", raw_params.join(", "));
+                let _ = writeln!(raw, "    @ffi(link_name=\"{thunk}\")\n    @safety(\"{THUNK_SAFETY}\")\n    unsafe fn {construct}({}) -> *mut {opaque}", raw_params.join(", "));
                 let init = if j == init_at { "init".to_string() } else { format!("{prefix}_cpp_init_{j}") };
                 let wrapper_params: Vec<String> = params.iter().map(|(param, ty, _, _)| wrapper_param(param, ty)).collect();
                 let arguments: String = params.iter().map(|(param, ty, _, _)| format!(", {}", wrapper_argument(param, ty))).collect();
@@ -3738,7 +3738,7 @@ impl Writer {
                 "extern \"C\" void {destroy_thunk}({spelled}* object) noexcept {{ auto* made = static_cast<{tramp}*>(object); if (made->{prefix}_cpp_deleting) return; made->{prefix}_self = nullptr; delete made; }}"
             );
             let destroy = format!("{prefix}_raw_{class}_destroy");
-            let _ = writeln!(raw, "    @ffi(link_name=\"{destroy_thunk}\")\n    @safety(\"{THUNK_SAFETY}\")\n    fn {destroy}(object: *mut {opaque})");
+            let _ = writeln!(raw, "    @ffi(link_name=\"{destroy_thunk}\")\n    @safety(\"{THUNK_SAFETY}\")\n    unsafe fn {destroy}(object: *mut {opaque})");
             let mut item = String::new();
             let _ = write!(
                 item,
@@ -5494,7 +5494,7 @@ fn write_record(place: &Path, overlays: &mut [RecordedOverlay]) {
     // Written aside then renamed: builds side by side read whole records only.
     if let Some(dir) = place.parent() {
         let _ = std::fs::create_dir_all(dir);
-        let partial = place.with_extension(format!("{}.partial", std::process::id()));
+        let partial = place.with_extension(format!("{}.partial", ember_build::temp_suffix()));
         if std::fs::write(&partial, text).is_ok() && std::fs::rename(&partial, place).is_err() {
             let _ = std::fs::remove_file(&partial);
         }
@@ -7185,7 +7185,9 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
     let mut params: Vec<String> = function.params.iter().map(|(name, ty)| format!("{}{name}: {}", ty.mode, ty.ember)).collect();
     let mut result = function.result.as_ref().map(|ty| ty.ember.clone());
     let mut safe = false;
-    // `[FFI-10]` (verdict 133) — an entry that leaves the calls unsafe makes an `unsafe fn`.
+    // `[FFI-10]` (verdict 133) — an entry that leaves the calls unsafe makes an `unsafe fn`; a header's
+    // function nothing is said of yet stays a plain `fn`, whose call names the facts it lacks and
+    // the overlay line that states them (`[DIA-18]`).
     let mut left_unsafe = false;
     if let Some(entry) = entry {
         let words = entry.params.iter().flatten().chain(&entry.result);
@@ -7861,7 +7863,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         format!("    @ffi({})\n    safe fn {raw_name}({}){arrow}\n", arguments.join(", "), declared.join(", "))
     } else {
         let attribute = link.map_or(String::new(), |link| format!("    @ffi({link})\n"));
-        format!("{attribute}    @safety(\"{UNCONTRACTED}\")\n    fn {raw_name}({}){arrow}\n", declared.join(", "))
+        format!("{attribute}    @safety(\"{UNCONTRACTED}\")\n    unsafe fn {raw_name}({}){arrow}\n", declared.join(", "))
     };
     if member == Some(Member::Destructor) {
         return (raw_text, String::new());
@@ -9031,7 +9033,7 @@ fn import_cached(config: &Config, overlay: &str, cached: &mut bool) -> Result<(I
     // Written aside then renamed: builds side by side read whole records only.
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
-        let partial = dir.join(format!("{key}.{}.partial", std::process::id()));
+        let partial = dir.join(format!("{key}.{}.partial", ember_build::temp_suffix()));
         if std::fs::write(&partial, &bytes).is_ok() && std::fs::rename(&partial, &path).is_err() {
             let _ = std::fs::remove_file(&partial);
         }

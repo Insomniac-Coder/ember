@@ -356,7 +356,7 @@ impl PreparedInterfaceCache {
 /// aside and renames it into place, so a reader sees the old record or the new one, never a
 /// half-written file.
 fn write_record(path: &Path, bytes: &[u8]) -> Result<(), InterfaceArtifactError> {
-    let temp = path.with_extension(format!("tmp{}", std::process::id()));
+    let temp = path.with_extension(format!("tmp{}", crate::temp_suffix()));
     std::fs::write(&temp, bytes).map_err(|source| InterfaceArtifactError::Io { path: temp.clone(), source })?;
     if let Err(source) = std::fs::rename(&temp, path) {
         let _ = std::fs::remove_file(&temp);

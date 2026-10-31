@@ -9,9 +9,9 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     @ffi(adopt=false, destroys(pool_free))
     type Pool
     @safety("callers pass what the C function `pool_default` requires")
-    fn pool_default() -> *mut Pool
+    unsafe fn pool_default() -> *mut Pool
     @safety("callers pass what the C function `pool_free` requires")
-    fn pool_free(pool: *mut Pool)
+    unsafe fn pool_free(pool: *mut Pool)
 
 fn main():
     unsafe:  # SAFETY(ffi): the default pool lives as long as the library

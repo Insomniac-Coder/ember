@@ -13,7 +13,7 @@ class Counter:
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @safety("callers pass what the C function `forget` requires")
-    fn forget(handler: extern "C" fn(*mut void), data: *mut void)
+    unsafe fn forget(handler: extern "C" fn(*mut void), data: *mut void)
     @ffi(param(handler, callback(borrowed, user_data=data)))
     safe fn now(handler: extern "C" fn(*mut void), data: *mut void)
     @ffi(param(handler, callback(borrowed, user_data=data), threads(main)))

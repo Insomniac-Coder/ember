@@ -11,9 +11,9 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     @ffi(destroys(widget_free))
     type Widget
     @safety("callers pass what the C function `widget_new` requires")
-    fn widget_new(id: i32) -> *mut Widget
+    unsafe fn widget_new(id: i32) -> *mut Widget
     @safety("callers pass what the C function `widget_free` requires")
-    fn widget_free(widget: *mut Widget)
+    unsafe fn widget_free(widget: *mut Widget)
 
 fn twice():
     unsafe:  # SAFETY(ffi): the test adopts one widget twice

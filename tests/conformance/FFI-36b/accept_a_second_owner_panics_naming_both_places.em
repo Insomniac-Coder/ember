@@ -12,8 +12,8 @@ from std.ffi import adopt
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(destroys(widget_free))
     type Widget
-    fn widget_new(id: i32) -> *mut Widget
-    fn widget_free(widget: *mut Widget)
+    unsafe fn widget_new(id: i32) -> *mut Widget
+    unsafe fn widget_free(widget: *mut Widget)
 
 fn main():
     unsafe:  # SAFETY(ffi): the test adopts one widget twice

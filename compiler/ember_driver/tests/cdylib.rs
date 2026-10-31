@@ -718,7 +718,7 @@ fn libraries_link_by_path_and_name_in_declaration_order() {
     let two = archive("two", "int which_lib(void) { return 2; }\n");
     archive("counter", "int counter_start(void) { return 40; }\n");
     let (named, declaration, call) = if cfg!(windows) {
-        ("shlwapi", "unsafe extern \"system\":\n    fn StrToIntA(text: cstr) -> i32\n",
+        ("shlwapi", "unsafe extern \"system\":\n    unsafe fn StrToIntA(text: cstr) -> i32\n",
             "    # SAFETY(ffi): StrToIntA only reads the NUL-terminated literal.\n    unsafe:\n        println(StrToIntA(c\"42\"))\n")
     } else {
         ("counter", "unsafe extern \"C\":\n    safe fn counter_start() -> i32\n", "    println(counter_start() + 2)\n")

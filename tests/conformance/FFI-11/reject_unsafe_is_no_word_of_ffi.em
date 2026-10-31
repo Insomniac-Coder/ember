@@ -10,13 +10,13 @@
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(unsafe, link_name="abs")    #$ error[E0104]: `unsafe` is no contract word
     @safety("callers pass what the C function `raw_abs` requires")
-    fn raw_abs(x: i32) -> i32
+    unsafe fn raw_abs(x: i32) -> i32
     @ffi(param(p, unsafe))    #$ error[E0104]: `unsafe` is no contract word
     @safety("`p` must point at a live i32")
-    fn peek(p: *i32) -> i32
+    unsafe fn peek(p: *i32) -> i32
     @ffi(result(unsafe))    #$ error[E0104]: `unsafe` is no contract word
     @safety("the pointer it returns may be null")
-    fn first() -> *i32
+    unsafe fn first() -> *i32
 
 fn main():
     unsafe:  # SAFETY(ffi): `abs` reads its argument only

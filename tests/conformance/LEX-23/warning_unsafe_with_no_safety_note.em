@@ -9,7 +9,7 @@
 
 unsafe extern "C":    #$ warning[W3012]: this `unsafe` has no safety note
     @safety("callers pass what the C function `abs` requires")
-    fn abs(x: i32) -> i32
+    unsafe fn abs(x: i32) -> i32
 
 @safety("nothing: abs takes any i32")
 unsafe fn bare(x: i32) -> i32:

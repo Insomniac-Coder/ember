@@ -1,5 +1,25 @@
 # Ember — handoff
 
+> **2026-10-31, morning — AUTONOMOUS again ("back to autonomous mode 🙂"), solo.** The owner answered N23-N25:
+> N23 reversed (verdict 136: a plain `fn` in an `unsafe extern` block is refused, write `unsafe fn` or `safe fn`),
+> N24 and N25 approved (`2622f431`). The watcher (`power_wifi_hibernate.ps1`) still runs: end it when the owner is
+> back.
+> - **Committed, not pushed:** `2622f431` (the verdicts), `76775cba` (Hardened_7, `[FFI-10]` for verdict 136,
+>   frozen in `parts-0.9.15-h7`), and verdict 136 in the compiler: typeck's `E5002` "does not say whether it is
+>   safe to call" for a hand-written plain `fn` (not one `import c` reads from a header, `[DIA-18]`; not one with
+>   the retired `@ffi(unsafe)`, whose own migration rewrites it), `fmt --migrate` to `unsafe fn`, the importer's
+>   own thunks `unsafe fn`, every test and error page rewritten. decisions.md "How verdict 136 is built".
+> - **The push gate's first run** found D-936 (temporaries shared by one process's threads), D-937 (a Clang debug
+>   program held its cache's place, `[BLD-13]`), D-938 (the C warning sweeps swept nothing since the LLVM
+>   default) and D-939 (a reload build replaced the running program's runtime from another cache): all fixed, in
+>   the same commit (decisions.md "The defects the push gate found"). The second run: green three ways, every gate,
+>   the sweeps 0 warned of 2,551 (MSVC, Clang) and 2,550 (gcc).
+> - **The MSVC report** the owner asked for (D-933): `target/msvc-link-hang-report/` (`REPORT.md`, two zips).
+>   Its dumps are scrubbed copies; the originals in `target/m1/hang-caught` hold the session's environment,
+>   a token among it: never share those.
+> - **Next:** the bench gate both backends, push, one CI look; then M1
+>   on `m1` (merge `main`; piece 3's 41 failures).
+
 > **2026-10-31, night — AUTONOMOUS (owner asleep), solo. START HERE.** Owner: "back to autonomous mode,
 > monitor wifi and power status and if any of those get disconnected and stay that way for more than 5 minutes you
 > hibernate the laptop, I'll ask for ODRs in the morning", "and you go solo tonight". Watcher: scratchpad

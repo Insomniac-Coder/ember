@@ -611,6 +611,7 @@ unsafe extern \"C\":  # SAFETY(ffi): each declaration below matches its C defini
     fn peek(p: *i32) -> i32
     @ffi(result(unsafe))
     fn first() -> *i32
+    fn labs(x: i64) -> i64
 
 fn main():
     unsafe:  # SAFETY(ffi): `abs` reads its argument only
@@ -620,12 +621,14 @@ fn main():
     for line in [
         "    @ffi(link_name=\"abs\")\n    @safety(\"callers pass what the C function `raw_abs` requires\")\n    unsafe fn raw_abs(x: i32) -> i32\n",
         "    @safety(\"`p` must point at a live i32\")\n    unsafe fn peek(p: *i32) -> i32\n",
-        "    unsafe fn first() -> *i32\n",
+        "    unsafe fn first() -> *i32\n    unsafe fn labs(x: i64) -> i64\n",
     ] {
         assert!(migrated.stdout.contains(line), "missing {line:?}:\n{}\n{}", migrated.stdout, migrated.stderr);
     }
     assert!(!migrated.stdout.contains("unsafe)") && !migrated.stdout.contains("@ffi()"), "{}", migrated.stdout);
     assert_eq!(migrated.stderr.matches("`unsafe` in `@ffi(…)` to `unsafe fn`").count(), 3, "{}", migrated.stderr);
+    // `[FFI-10]` (verdict 136) — a plain `fn` says nothing, and is written `unsafe fn` once.
+    assert_eq!(migrated.stderr.matches("a plain `fn` in an `unsafe extern` block to `unsafe fn`").count(), 1, "{}", migrated.stderr);
     let overlay = directory.join(format!("lib.overlay.{}", ember_branding::SOURCE_EXT));
     std::fs::write(&overlay, "\
 unsafe overlay c \"lib.h\":  # SAFETY(ffi): each entry matches its declaration in the header
@@ -730,7 +733,7 @@ unsafe extern \"C\":
   # the C library's absolute value
   @ffi(effects=[], deterministic)
   safe fn abs(x: i32) -> i32
-  fn rand() -> i32
+  unsafe fn rand() -> i32
 
 extern class cpp.RageV.Layer:
   pass
@@ -748,7 +751,7 @@ fn main():
     let out = &once.stdout;
     assert!(out.contains("open class Base:\n    id: int = 0\n\n    fn get(self) -> int:\n        return self.id\n"), "{out}");
     assert!(out.contains("class Leaf(Base) implements Named:\n    extra: int = 1\n\n    fn name(self) -> int:\n        return self.extra\n"), "{out}");
-    assert!(out.contains("unsafe extern \"C\":\n    # the C library's absolute value\n    @ffi(effects=[], deterministic)\n    safe fn abs(x: i32) -> i32\n    fn rand() -> i32\n"), "{out}");
+    assert!(out.contains("unsafe extern \"C\":\n    # the C library's absolute value\n    @ffi(effects=[], deterministic)\n    safe fn abs(x: i32) -> i32\n    unsafe fn rand() -> i32\n"), "{out}");
     assert!(out.contains("extern class cpp.RageV.Layer:\n    pass\n"), "{out}");
     assert!(out.contains("comptime:\n    assert(1 + 1 == 2)\n"), "{out}");
     let scratch = directory.join(ember_branding::source_file("once"));
@@ -913,7 +916,7 @@ fn tcb_lists_each_category_and_audit_summarises() {
     let source = dir.join(format!("audit.{SOURCE_EXT}"));
     std::fs::write(
         &source,
-        "unsafe extern \"C\":\n    @ffi(effects=[], deterministic)\n    safe fn abs(x: i32) -> i32\n    fn rand() -> i32\n\n\
+        "unsafe extern \"C\":\n    @ffi(effects=[], deterministic)\n    safe fn abs(x: i32) -> i32\n    unsafe fn rand() -> i32\n\n\
          fn grow(mut xs: Array[int]):\n    xs.push(1)\n\n\
          fn noisy() -> i32:\n    unsafe:  # SAFETY(ffi): rand has no precondition\n        return rand()\n\n\
          fn main():\n    xs: Array[int] = []\n    grow(xs)\n    println(abs(-2), noisy())\n",
@@ -1492,11 +1495,20 @@ fn a_build_is_reproducible_and_named_by_its_inputs() {
     for profile in [Profile::Debug, Profile::Development, Profile::Release] {
         let mut ids = Vec::new();
         let mut programs = Vec::new();
-        for folder in &folders {
-            let built = ember_with_env(
-                &["build", &input, "--profile", profile.name(), "--out-dir", "out", "--build-id"],
-                folder, &no_cache, "1",
-            );
+        for (index, folder) in folders.iter().enumerate() {
+            // The second in a cache of its own: the cache is in another place for each user and
+            // machine, and the runtime's object from it is linked into the program.
+            let (mut command, _out) = test_command(&["build", &input, "--profile", profile.name(), "--out-dir", "out", "--build-id"], folder);
+            command.env(&no_cache, "1");
+            if index == 1 {
+                command.env(ember_branding::cache_dir_var(), directory.join("cache"));
+            }
+            let output = command.output().expect("the ember binary runs");
+            let built = Run {
+                stdout: String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+                stderr: String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+                exit: output.status.code().unwrap_or(-1),
+            };
             assert_eq!(built.exit, 0, "{}: {}", profile.name(), built.stderr);
             let id = built.stdout.lines().next().unwrap_or_default().to_string();
             assert!(id.len() == 64 && id.bytes().all(|byte| byte.is_ascii_hexdigit()), "{}: build id `{id}`", profile.name());
@@ -1555,7 +1567,7 @@ fn gcc_executables_keep_c_exports_and_discard_unreachable_native_bodies() {
         .expect("imported exports are writable");
     let entry = directory.join(ember_branding::source_file("entry"));
     std::fs::write(&entry,
-        "import exports\n@export(\"selected_root\", threads=any)\npub fn local_value() -> i32:\n    return 43\npub extern \"C\" fn plain_root() -> i32:\n    return 44\n@export(\"relaxed_root\", threads=any)\n@fp(contract)\npub fn relaxed_value(x: f64) -> f64:\n    return x * x + 1.0\nunsafe extern \"C\":\n    fn absent_foreign() -> i32\n@noinline\npub fn unused_native() -> i32:\n    return 99\nfn main():\n    println(7)\n")
+        "import exports\n@export(\"selected_root\", threads=any)\npub fn local_value() -> i32:\n    return 43\npub extern \"C\" fn plain_root() -> i32:\n    return 44\n@export(\"relaxed_root\", threads=any)\n@fp(contract)\npub fn relaxed_value(x: f64) -> f64:\n    return x * x + 1.0\nunsafe extern \"C\":\n    unsafe fn absent_foreign() -> i32\n@noinline\npub fn unused_native() -> i32:\n    return 99\nfn main():\n    println(7)\n")
         .expect("executable fixture is writable");
     let entry_arg = entry.to_string_lossy().into_owned();
     // A file cannot contain cache/runtime: this exercises the uncached runtime
@@ -1838,7 +1850,7 @@ fn adopted_foreign_objects_are_freed_by_their_destructor() {
         assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "2 1\nnone\n3 2\n3 1\n23 0\n1063 0\n1\n", "{profile:?}");
     }
 
-    let declarations = "from std.ffi import adopt, ForeignBox\nimport std.thread\n\nunsafe extern \"C\":\n    @ffi(destroys(widget_free))\n    type Widget\n    @ffi(destroys(gadget_close), threads(creator))\n    type Gadget\n    fn widget_new(id: i32) -> *mut Widget\n    fn widget_free(widget: *mut Widget)\n    fn gadget_new(id: i32) -> *mut Gadget\n    fn gadget_close(gadget: *mut Gadget) -> i32\n\n";
+    let declarations = "from std.ffi import adopt, ForeignBox\nimport std.thread\n\nunsafe extern \"C\":\n    @ffi(destroys(widget_free))\n    type Widget\n    @ffi(destroys(gadget_close), threads(creator))\n    type Gadget\n    unsafe fn widget_new(id: i32) -> *mut Widget\n    unsafe fn widget_free(widget: *mut Widget)\n    unsafe fn gadget_new(id: i32) -> *mut Gadget\n    unsafe fn gadget_close(gadget: *mut Gadget) -> i32\n\n";
     // `[FFI-36b]` — the second `adopt` of one live object, at line 23; the first is at 22.
     let twice = root.join(format!("tests/conformance/FFI-36b/accept_a_second_owner_panics_naming_both_places.{SOURCE_EXT}"));
     for profile in [Profile::Debug, Profile::Development] {
@@ -1945,7 +1957,7 @@ fn foreign_record_functions_exchange_values_with_c() {
     let imported = directory.join(ember_branding::source_file("imported"));
     let entry = directory.join(ember_branding::source_file("entry"));
     std::fs::write(&imported,
-        "pub struct ForeignPair:\n    pub left: i32\n    pub right: i32\nunsafe extern \"C\":\n    pub safe fn mutate_pair_copy(pair: ForeignPair) -> i32\n    @ffi(link_name=\"foreign_pair_weighted\")\n    pub fn weighted_pair(pair: ForeignPair, weight: i32) -> i32\n")
+        "pub struct ForeignPair:\n    pub left: i32\n    pub right: i32\nunsafe extern \"C\":\n    pub safe fn mutate_pair_copy(pair: ForeignPair) -> i32\n    @ffi(link_name=\"foreign_pair_weighted\")\n    pub unsafe fn weighted_pair(pair: ForeignPair, weight: i32) -> i32\n")
         .expect("foreign record module is writable");
     for (label, source) in [
         ("from_import", "from imported import ForeignPair, mutate_pair_copy, weighted_pair\nfn main():\n    pair = ForeignPair(left = 3, right = 4)\n    println(mutate_pair_copy(pair))\n    unsafe:  # SAFETY(ffi): each foreign item is used as its C declaration states\n        println(weighted_pair(pair, 2))\n"),
@@ -3329,7 +3341,7 @@ fn tcb_lists_every_foreign_fact_with_its_source_and_grade() {
     let helper = dir.join(format!("clib.{SOURCE_EXT}"));
     std::fs::write(
         &helper,
-        "unsafe extern \"C\":\n    @ffi(effects=[], deterministic)\n    pub safe fn abs(x: i32) -> i32\n    pub fn rand() -> i32\n",
+        "unsafe extern \"C\":\n    @ffi(effects=[], deterministic)\n    pub safe fn abs(x: i32) -> i32\n    pub unsafe fn rand() -> i32\n",
     )
     .expect("write the helper module");
     let source = dir.join(format!("trusted.{SOURCE_EXT}"));
@@ -3400,9 +3412,9 @@ unsafe extern \"C\":
     @ffi(param(text, borrowed, nul_terminated), effects=[])
     safe fn strlen(text: cstr) -> usize
     @ffi(effects=[])
-    fn malloc(size: usize) -> *mut void
+    unsafe fn malloc(size: usize) -> *mut void
     @ffi(effects=[Alloc])
-    fn free(block: *mut void)
+    unsafe fn free(block: *mut void)
 
 @test
 fn magnitudes():
@@ -3494,7 +3506,7 @@ fn calls_foreign_lists_what_an_item_reaches_with_each_contract() {
     let dir = temporary_directory("calls-foreign");
     std::fs::write(
         dir.join(format!("clib.{SOURCE_EXT}")),
-        "unsafe extern \"C\":\n    @ffi(effects=[], deterministic)\n    pub safe fn abs(x: i32) -> i32\n    pub fn rand() -> i32\n",
+        "unsafe extern \"C\":\n    @ffi(effects=[], deterministic)\n    pub safe fn abs(x: i32) -> i32\n    pub unsafe fn rand() -> i32\n",
     )
     .expect("write the helper module");
     let source = dir.join(format!("reach.{SOURCE_EXT}"));

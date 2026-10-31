@@ -26,7 +26,7 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     safe fn account_sum() -> i64
     safe fn table_sum() -> i32
     safe fn samples_sum() -> i32
-    fn bump_table_total() -> i32
+    unsafe fn bump_table_total() -> i32
 
 fn apply(f: extern "C" fn(i32) -> i32, x: i32) -> i32:
     return f(x)

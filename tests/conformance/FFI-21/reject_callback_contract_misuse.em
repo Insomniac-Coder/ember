@@ -11,9 +11,9 @@ from std.ffi import ForeignCallback
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @safety("callers pass what the C function `unregister` requires")
-    fn unregister(handler: extern "C" fn(*mut void, i32), data: *mut void)
+    unsafe fn unregister(handler: extern "C" fn(*mut void, i32), data: *mut void)
     @safety("callers pass what the C function `unregister_badly` requires")
-    fn unregister_badly(handler: extern "C" fn(*mut void, i32), data: *mut void, what: *mut i32)
+    unsafe fn unregister_badly(handler: extern "C" fn(*mut void, i32), data: *mut void, what: *mut i32)
 
     @ffi(param(handler, callback(borrowed)))
     safe fn call_plain(handler: extern "C" fn(i32) -> i32) -> i32

@@ -77,7 +77,7 @@ def sweep_one(cc, program, work, env):
     if wanted is not None and cc not in wanted:
         return program, None
     c_file = work / (program.relative_to(ROOT).as_posix().replace('/', '__') + '.c')
-    emitted = subprocess.run([str(EMBER), 'build', str(program), '--emit', 'c', '--profile', 'development', '--cc', cc],
+    emitted = subprocess.run([str(EMBER), 'build', str(program), '--backend', 'c', '--emit', 'c', '--profile', 'development', '--cc', cc],
                              capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=ROOT, env=env)
     if emitted.returncode != 0 or not emitted.stdout.strip():
         return program, None
@@ -139,7 +139,8 @@ def main():
     print(f'{cc}: {len(warned)} of {emitted} programs with C warn ({len(programs) - emitted} produced no C)')
     if '--keep' not in args:
         shutil.rmtree(work, ignore_errors=True)
-    sys.exit(1 if warned else 0)
+    # A sweep that emitted no C checked nothing (the LLVM backend the default, 2026-10-30, left it so).
+    sys.exit(1 if warned or not emitted else 0)
 
 
 if __name__ == '__main__':

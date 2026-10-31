@@ -9,7 +9,7 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @safety("callers pass what the C function `abs` requires")
-    fn abs(x: i32) -> i32
+    unsafe fn abs(x: i32) -> i32
 
 @safety("abs takes any i32 and touches no memory")
 unsafe fn magnitude(x: i32) -> i32:

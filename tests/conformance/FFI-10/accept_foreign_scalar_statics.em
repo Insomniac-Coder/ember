@@ -11,7 +11,7 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     @ffi(immutable, link_name="aliased_count")
     static renamed_count: i32
     safe fn read_changing_counter() -> i32
-    fn bump_changing_counter() -> i32
+    unsafe fn bump_changing_counter() -> i32
 
 fn main():
     unsafe:  # SAFETY(ffi): each foreign call matches its C declaration

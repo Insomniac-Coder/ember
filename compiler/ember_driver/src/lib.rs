@@ -4802,7 +4802,7 @@ pub(crate) fn write_default_manifest_in(folder: &Path) -> Result<(), String> {
     let name = folder.file_name().and_then(|name| name.to_str()).unwrap_or("program").replace(['"', '\\'], "");
     let path = folder.join(ember_branding::MANIFEST);
     let text = format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n");
-    let aside = folder.join(format!(".{}.{}", ember_branding::MANIFEST, std::process::id()));
+    let aside = folder.join(format!(".{}.{}", ember_branding::MANIFEST, ember_build::temp_suffix()));
     let linked = std::fs::write(&aside, &text).and_then(|()| std::fs::hard_link(&aside, &path));
     let _ = std::fs::remove_file(&aside);
     match linked {

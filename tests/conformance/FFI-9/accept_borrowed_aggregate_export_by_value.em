@@ -19,7 +19,7 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     safe fn call_exported_pair_score() -> i32
     safe fn call_exported_pair_mix() -> i32
     safe fn call_named_pair_export() -> i32
-    fn call_pair_callback(callback: extern "C" fn(ForeignPair) -> i32) -> i32
+    unsafe fn call_pair_callback(callback: extern "C" fn(ForeignPair) -> i32) -> i32
     safe fn exported_attach_calls() -> i32
 
 fn main():

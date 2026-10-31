@@ -20,14 +20,14 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     @ffi(immutable)
     static frozen_pair: ForeignPair
     safe fn read_pair_sum() -> i32
-    fn bump_pair_left() -> i32
+    unsafe fn bump_pair_left() -> i32
     static mut nested_pair: ForeignOuter
     @ffi(link_name="nested_pair")
     static mut aliased_nested: ForeignOuter
     @ffi(immutable)
     static frozen_nested: ForeignOuter
     safe fn read_nested_total() -> i32
-    fn bump_nested_other() -> i32
+    unsafe fn bump_nested_other() -> i32
 
 fn main():
     println(frozen_pair.left + frozen_pair.right)

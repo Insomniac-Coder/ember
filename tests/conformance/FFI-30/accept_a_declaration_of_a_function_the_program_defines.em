@@ -10,7 +10,7 @@ import helpers.exported
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @safety("`ffi30_add` adds two `i32`s")
-    fn ffi30_add(a: i32, b: i32) -> i32
+    unsafe fn ffi30_add(a: i32, b: i32) -> i32
 
 fn main():
     through_c: i32 = 0

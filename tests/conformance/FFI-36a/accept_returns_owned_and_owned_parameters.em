@@ -16,9 +16,9 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     type Widget
     @ffi(threads(creator))
     type Gadget
-    fn widget_free(widget: *mut Widget)
-    fn widget_id(widget: *mut Widget) -> i32
-    fn gadget_close(gadget: *mut Gadget) -> i32
+    unsafe fn widget_free(widget: *mut Widget)
+    unsafe fn widget_id(widget: *mut Widget) -> i32
+    unsafe fn gadget_close(gadget: *mut Gadget) -> i32
     @ffi(result(returns_owned(destructor=widget_free), one))
     safe fn widget_new(id: i32) -> ForeignBox[Widget]
     @ffi(result(returns_owned(destructor=widget_free), one, nullable), link_name="widget_maybe")

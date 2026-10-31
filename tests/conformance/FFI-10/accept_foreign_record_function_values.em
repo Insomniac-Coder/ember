@@ -15,10 +15,10 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     safe fn mutate_pair_copy(pair: ForeignPair) -> i32
     safe fn swap_pair(pair: ForeignPair) -> ForeignPair
     @ffi(link_name="foreign_pair_weighted")
-    fn weighted_pair(pair: ForeignPair, weight: i32) -> i32
+    unsafe fn weighted_pair(pair: ForeignPair, weight: i32) -> i32
     @ffi(param(data, borrowed, count(n)))
     safe fn pair_and_values(pair: ForeignPair, data: Span[i32], n: u8) -> i32
-    fn get_pair_callback() -> extern "C" fn(ForeignPair) -> i32
+    unsafe fn get_pair_callback() -> extern "C" fn(ForeignPair) -> i32
     safe fn transform_wide(value: ForeignWide) -> ForeignWide
 
 fn main():

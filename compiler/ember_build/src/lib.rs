@@ -965,11 +965,18 @@ fn file_stamp(file: &Path) -> Option<String> {
     Some(format!("{} {}", meta.len(), modified_nanos(&meta)))
 }
 
+/// A temporary name's suffix no other build shares: the process and its count of names, since the
+/// builds of one process (a test binary's threads, a language server) share its id.
+pub fn temp_suffix() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    format!("{}-{}", std::process::id(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
 /// Write a cache file whole or not at all: another build may be reading it.
 fn write_atomically(file: &Path, text: &str) {
     if let Some(dir) = file.parent() {
         let _ = std::fs::create_dir_all(dir);
-        let temp = file.with_extension(format!("tmp{}", std::process::id()));
+        let temp = file.with_extension(format!("tmp{}", temp_suffix()));
         if std::fs::write(&temp, text).is_ok() && std::fs::rename(&temp, file).is_err() {
             let _ = std::fs::remove_file(&temp);
         }
@@ -1642,7 +1649,7 @@ impl CachedProgram {
         if !program.is_file() {
             // Copied in under a temporary name: another build sees the whole
             // program or none.
-            let temp = self.dir.join(format!("{name}.tmp{}", std::process::id()));
+            let temp = self.dir.join(format!("{name}.tmp{}", temp_suffix()));
             if std::fs::copy(&request.output, &temp).is_err() || std::fs::rename(&temp, &program).is_err() {
                 let _ = std::fs::remove_file(&temp);
                 if !program.is_file() {
@@ -2151,7 +2158,7 @@ pub fn archive_objects(
     if let Some(parent) = output.parent() { std::fs::create_dir_all(parent)?; }
     if output.is_file() { std::fs::remove_file(output)?; }
     let file_name = output.file_name().and_then(|name| name.to_str()).unwrap_or("archive");
-    let temp = output.with_file_name(format!("{file_name}.tmp-{}", std::process::id()));
+    let temp = output.with_file_name(format!("{file_name}.tmp-{}", temp_suffix()));
     if temp.is_file() { std::fs::remove_file(&temp)?; }
     let mut command = match toolchain {
         Toolchain::Msvc { env, .. } => {
@@ -2617,11 +2624,15 @@ fn runtime_object_impl(
     let lto = build_lto(toolchain, profile, Link::Here);
     let extension = match toolchain {
         Toolchain::Msvc { cl, .. } if lto != Lto::Off && !is_clang_cl(cl) => return Ok(None),
-        Toolchain::Msvc { .. } => {
+        Toolchain::Msvc { cl, .. } => {
             // `/Z7` keeps the debug information inside the object; `/Zi`
             // would tie a shared object to a PDB file beside it.
             let flags = msvc_flags(profile).into_iter().map(|f| if f == "/Zi" { "/Z7" } else { f });
             command.args(flags).args(lto_compile_flags(toolchain, lto, Link::Here)).arg("/c");
+            // `[BLD-13]` — as for Clang below: `lld-link` hashes the object's own name into the program.
+            if is_clang_cl(cl) && profile != Profile::Release {
+                command.arg(format!("/clang:-object-file-name={}_rt.obj", ember_branding::SYMBOL_PREFIX));
+            }
             for dir in include_dirs {
                 command.arg(format!("/I{}", dir.display()));
             }
@@ -2635,7 +2646,12 @@ fn runtime_object_impl(
                 command.args(lto_compile_flags(toolchain, lto, Link::Here));
             }
             // `[BLD-13]` — one object wherever the program is built: a program database names it.
-            command.args(clang_windows_debug_flags(toolchain, profile).0);
+            // Its own name in its debug information is fixed too, not the cache's temporary file.
+            let debug_compile = clang_windows_debug_flags(toolchain, profile).0;
+            command.args(debug_compile);
+            if !debug_compile.is_empty() {
+                command.arg(format!("-object-file-name={}_rt.o", ember_branding::SYMBOL_PREFIX));
+            }
             command.args(folder_flags(&[source.to_path_buf()], include_dirs, false));
             for dir in include_dirs {
                 command.arg("-I").arg(dir);
@@ -2686,7 +2702,7 @@ fn runtime_object_impl(
     if object.is_file() {
         return Ok(Some(object));
     }
-    let temp = dir.join(format!("{name}.tmp{}.{extension}", std::process::id()));
+    let temp = dir.join(format!("{name}.tmp{}.{extension}", temp_suffix()));
     match toolchain {
         Toolchain::Msvc { .. } => command.arg(format!("/Fo{}", temp.display())),
         Toolchain::Clang(_) | Toolchain::Gcc(_) => command.arg("-o").arg(&temp),

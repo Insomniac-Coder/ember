@@ -3,4 +3,4 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @safety("the caller passes what `ffi30_add` takes")
-    pub fn ffi30_add(a: i64, b: i64) -> i64
+    pub unsafe fn ffi30_add(a: i64, b: i64) -> i64

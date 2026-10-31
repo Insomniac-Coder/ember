@@ -10,9 +10,9 @@ from std.ffi import ForeignBox
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     type Widget
     @safety("callers pass what the C function `widget_free` requires")
-    fn widget_free(widget: *mut Widget)
+    unsafe fn widget_free(widget: *mut Widget)
     @safety("callers pass what the C function `widget_count` requires")
-    fn widget_count(n: i32) -> i32
+    unsafe fn widget_count(n: i32) -> i32
     @ffi(param(widget, owned, one))
     safe fn lends(widget: ForeignBox[Widget])    #$ error[E5002]: `owned` contract for `widget` needs `owned widget: ForeignBox[T]`
     safe fn hidden(owned widget: ForeignBox[Widget])    #$ error[E5002]: a `ForeignBox` parameter crosses only as an object C takes

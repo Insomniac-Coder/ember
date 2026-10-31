@@ -65,7 +65,18 @@ pub fn build(toolchain: &Toolchain, program: &Program<'_>, retained: &[String], 
     // files are spelled from that folder (`from_dir`).
     let absolute = |path: &PathBuf| std::path::absolute(path).unwrap_or_else(|_| path.clone());
     let units: Vec<PathBuf> = program.units.iter().map(absolute).collect();
-    let linked: Vec<PathBuf> = program.objects.iter().map(absolute).collect();
+    // `[BLD-13]` — an object from the cache (the runtime's) is linked from the objects' folder, by
+    // its name, as the build's own are: the program database names each object as the link is
+    // given it, and `lld-link` hashes that into the program, while the cache is in another place
+    // for each user and machine. Its name is its contents' hash, so one there already is the same.
+    let cache = absolute(&crate::cache_root());
+    let dir = absolute(&program.dir);
+    let linked: Vec<PathBuf> = program.objects.iter().map(absolute).map(|object| {
+        let (true, Some(name)) = (object.starts_with(&cache), object.file_name()) else { return object };
+        let beside = dir.join(name);
+        let placed = beside.is_file() || std::fs::hard_link(&object, &beside).or_else(|_| std::fs::copy(&object, &beside).map(drop)).is_ok();
+        if placed { beside } else { object }
+    }).collect();
     let include_dirs: Vec<PathBuf> = program.include_dirs.iter().map(absolute).collect();
     // An image links against the shared runtime by its path; the image names the runtime by its
     // soname, so the absolute path reaches no output.

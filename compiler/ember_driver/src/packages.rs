@@ -290,7 +290,7 @@ fn git_checkout(url: &str, rev: &str) -> Result<PathBuf, String> {
         return Ok(checkout);
     }
     std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
-    let staging = root.join(format!("{}-{}.tmp{}", &key[..16], rev, std::process::id()));
+    let staging = root.join(format!("{}-{}.tmp{}", &key[..16], rev, ember_build::temp_suffix()));
     let _ = std::fs::remove_dir_all(&staging);
     let git = |args: &[&str], dir: Option<&Path>| -> Result<(), String> {
         let mut command = std::process::Command::new("git");

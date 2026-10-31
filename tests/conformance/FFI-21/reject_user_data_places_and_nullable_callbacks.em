@@ -18,9 +18,9 @@ class Counter:
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @safety("callers pass what the C function `forget` requires")
-    fn forget(id: c_int)
+    unsafe fn forget(id: c_int)
     @safety("callers pass what the C function `forget_wrongly` requires")
-    fn forget_wrongly(id: i64)
+    unsafe fn forget_wrongly(id: i64)
 
     @ffi(param(visit, callback(borrowed, user_data=data@3)))
     safe fn past_the_end(visit: extern "C" fn(*mut void, c_int), data: *mut void)    #$ error[E5002]: parameter 3 of the callback `visit` does not exist: it takes 2

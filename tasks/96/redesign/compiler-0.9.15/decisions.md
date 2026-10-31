@@ -452,6 +452,29 @@ are slowly aligning more and more, approved"). What worked: the owner's own exam
 133), the question in one sentence, the two answers one line each; two longer versions did not ("UH
 WHAT?", "I dont get it").
 
+**How verdict 136 is built (Hardened_7, `[FFI-10]`).** The type checker refuses a plain `fn` in a
+hand-written `unsafe extern` block with `E5002` ("`lib_step` does not say whether it is safe to call"),
+its help naming both lines to write; `ember fmt --migrate` writes `unsafe fn`. Not widened: a function
+`import c` reads from a header is not a hand-written declaration, so the importer still shows one with no
+overlay entry as a plain `fn` and its call keeps `[DIA-18]`'s error naming each missing fact; the thunks
+the importer writes itself (`@safety` lines it supplies) say `unsafe fn`, as any hand-written one must.
+A declaration with the retired `@ffi(unsafe)` keeps its own `E0104` and migration: it said `unsafe`, in
+the old spelling, and the two migrations inserting `unsafe ` at one `fn` wrote `unsafe unsafe fn`.
+
+**The defects the push gate found, 2026-10-31 (D-936 to D-939).** The CI-style run (Clang, the LLVM
+backend, Microsoft's linker forced, `EMBER_CACHE=target/ci-cache`, relative, so each folder its own cache):
+- D-936: 8 reload tests failed, two threads of the test binary building the shared runtime into one
+  temporary folder named by the process id. `ember_build::temp_suffix()` (process id and a count) names
+  all 11 such temporaries; the publish already copes with losing the race.
+- D-937: `a_build_is_reproducible_and_named_by_its_inputs` failed. Not the relative cache itself: the
+  runtime's object, linked from the cache by its absolute path and carrying its temporary name, reached
+  the program database, which `lld-link` hashes into the program (Microsoft's linker does not). Chosen:
+  link it from the objects' folder by its name, as Ninja already spells the build's own (`from_dir`),
+  and fix its object name at compile; not a path map in the linker (`lld-link` has none for module
+  names) nor compiling the runtime with each program (145 ms a build, the reason the cache exists).
+- D-938: the C warning sweeps had swept nothing since the LLVM default: `--emit c` is the C backend's.
+- D-939: the reload benchmark failed, the runtime beside the running program replaced from another cache (the host linked from the test's folder, a relative cache): compared by its inputs' key now, not its bytes.
+
 ### `a10_recursion` on the LLVM backend, 2026-10-30 (owner: "yes build it")
 
 The LLVM backend lost `a10_recursion` (1.71x C): not the backend's doing. The C backend built by clang

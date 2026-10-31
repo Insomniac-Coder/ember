@@ -771,7 +771,7 @@ impl Plan {
             let bytes = ember_span::codec::to_bytes(&record).map_err(|error| error.to_string())?;
             // Written aside, then renamed into place: a build reading it sees the old record or the new.
             let path = self.path(index);
-            let partial = path.with_extension(format!("{}.partial", std::process::id()));
+            let partial = path.with_extension(format!("{}.partial", ember_build::temp_suffix()));
             std::fs::write(&partial, bytes).map_err(|error| format!("cannot write `{}`: {error}", partial.display()))?;
             if std::fs::rename(&partial, &path).is_err() {
                 let _ = std::fs::remove_file(&partial);

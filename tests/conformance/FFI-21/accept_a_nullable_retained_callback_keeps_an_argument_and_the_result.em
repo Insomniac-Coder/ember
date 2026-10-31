@@ -22,7 +22,7 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     @ffi(param(hook, callback(retained, user_data=data), nullable), destroys(unsubscribe_on), link_name="subscribe_on")
     safe fn subscribe_on(channel: c_int, hook: Option[extern "C" fn(*mut void, c_int) -> c_int], data: *mut void) -> c_int
     @safety("callers pass what the C function `unsubscribe_on` requires")
-    fn unsubscribe_on(channel: c_int, id: c_int)
+    unsafe fn unsubscribe_on(channel: c_int, id: c_int)
     @ffi(link_name="tick")
     safe fn tick(channel: c_int, value: c_int) -> c_int
     @ffi(link_name="removed")

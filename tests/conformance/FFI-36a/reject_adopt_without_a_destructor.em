@@ -20,13 +20,13 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     @ffi(destroys(gone), shared)    #$ error[E0104]: this is not a foreign type's contract word
     type Odd
     @safety("callers pass what the C function `bare_new` requires")
-    fn bare_new() -> *mut Bare
+    unsafe fn bare_new() -> *mut Bare
     @safety("callers pass what the C function `counted_new` requires")
-    fn counted_new() -> *mut Counted
+    unsafe fn counted_new() -> *mut Counted
     @safety("callers pass what the C function `bare_count` requires")
-    fn bare_count(n: i32) -> i32
+    unsafe fn bare_count(n: i32) -> i32
     @safety("callers pass what the C function `widget_free` requires")
-    fn widget_free(widget: *mut Widget)
+    unsafe fn widget_free(widget: *mut Widget)
 
 fn main():
     unsafe:  # SAFETY(ffi): each pointer is fresh
