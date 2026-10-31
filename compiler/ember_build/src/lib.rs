@@ -1291,10 +1291,21 @@ fn end_process_tree(id: u32, stacks: Option<&Path>) {
         run_bounded(&mut command, helper_limit).unwrap_or_default()
     };
     // The tree, parents first, as WMI lists it while every one still runs.
-    let listed = powershell(format!(
+    let tree_of = format!(
         "$all = Get-CimInstance Win32_Process; $ids = @({id}); \
-         do {{ $more = @($all | Where-Object {{ $ids -contains $_.ParentProcessId -and $ids -notcontains $_.ProcessId }} | ForEach-Object {{ $_.ProcessId }}); $ids += $more }} while ($more.Count -gt 0); \
-         $all | Where-Object {{ $ids -contains $_.ProcessId }} | ForEach-Object {{ \"$($_.ProcessId)`t$($_.CommandLine)\" }}"
+         do {{ $more = @($all | Where-Object {{ $ids -contains $_.ParentProcessId -and $ids -notcontains $_.ProcessId }} | ForEach-Object {{ $_.ProcessId }}); $ids += $more }} while ($more.Count -gt 0); "
+    );
+    let terminate = "foreach ($p in $ids) { Get-CimInstance Win32_Process -Filter \"ProcessId=$p\" | Invoke-CimMethod -MethodName Terminate -Arguments @{ Reason = [uint32]1 } | Out-Null }";
+    let cdb = Path::new(r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe");
+    let Some(stacks) = stacks.filter(|_| cdb.is_file()) else {
+        // No stacks to take first: found and ended in one run, each PowerShell taking seconds on a
+        // loaded machine.
+        powershell(format!("{tree_of}{terminate}"));
+        let _ = Command::new("taskkill").args(["/T", "/F", "/PID", &id.to_string()]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        return;
+    };
+    let listed = powershell(format!(
+        "{tree_of}$all | Where-Object {{ $ids -contains $_.ProcessId }} | ForEach-Object {{ \"$($_.ProcessId)`t$($_.CommandLine)\" }}"
     ));
     let tree: Vec<(u32, String)> = listed
         .lines()
@@ -1303,9 +1314,6 @@ fn end_process_tree(id: u32, stacks: Option<&Path>) {
             pid.trim().parse().ok().map(|pid| (pid, command.trim().to_string()))
         })
         .collect();
-    let cdb = Path::new(r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe");
-    if let Some(stacks) = stacks
-        && cdb.is_file()
     {
         // Microsoft's public symbols name the linker's own functions; fetched once into the cache.
         let symbols = format!("srv*{}*https://msdl.microsoft.com/download/symbols", cache_root().join("symbols").display());
@@ -2782,19 +2790,21 @@ mod tests {
     /// gives its output.
     #[test]
     fn a_command_past_its_limit_is_ended_with_its_children() {
+        // Two minutes, ended after one second: the bound leaves the ending's own helpers time on a
+        // loaded machine (CI run 41175672013 took 28 s) and is still far from waiting it out.
         let mut waits = if cfg!(windows) {
             let mut command = std::process::Command::new("cmd");
-            command.args(["/c", "ping -n 30 127.0.0.1"]);
+            command.args(["/c", "ping -n 120 127.0.0.1"]);
             command
         } else {
             let mut command = std::process::Command::new("sh");
-            command.args(["-c", "sleep 30"]);
+            command.args(["-c", "sleep 120"]);
             command
         };
         let started = std::time::Instant::now();
         let ended = super::run_limited(&mut waits, std::time::Duration::from_secs(1), None).expect("the command starts");
         assert!(ended.is_none(), "a command past its limit was waited for");
-        assert!(started.elapsed() < std::time::Duration::from_secs(20), "the command was not ended at its limit: {:?}", started.elapsed());
+        assert!(started.elapsed() < std::time::Duration::from_secs(60), "the command was not ended at its limit: {:?}", started.elapsed());
         let mut quick = if cfg!(windows) {
             let mut command = std::process::Command::new("cmd");
             command.args(["/c", "echo done"]);
