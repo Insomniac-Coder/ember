@@ -52,7 +52,12 @@ placement, keeping and verifying land when a check needs them.
    step as file and line; a changed summary is an interface change, so dependants are checked again
    (`[BLD-14]`, `[EFF-4]`, `[MOD-9]`). Test: the `[EFF-4]` milestone test with a library's two lines
    swapped.
-6. **A9-11: the callable-type index (SD2).** Every function converted into each callable type, from
+6. **A9-11: the callable-type index (SD2).** *Mostly built with A4-1* (`targets.rs`: the place a value
+   is read from, verdicts 122, 128, 129, and every function stored into a callable type where nothing
+   can be followed; `plain_function_values` is gone). Left: the *loose* functions, those that become a
+   value where no callable type is known (a closure's captured state, an operand of an operator, an
+   argument of a built-in or of a function with no body here), which count for every callable type of
+   their shape; each such place's type is to be read from the operation itself. Every function converted into each callable type, from
    the function items' conversions (`Cast`/`Const::Fn`), replacing `plain_function_values`' guess by
    arity and result (`effects.rs`); the summary's calls through a function value read it. Tests: the
    three `EFF-1` tests of a call through a variable, with a callable parameter that is not a type

@@ -17,6 +17,10 @@
 >   the retired rules' folders; the second the math vectors' generator in 0.9.10 (`c1ad8eea`); the third
 >   E2118's page (`5fcb6314`). Then green three ways, every gate, the sweeps 0 warned of 2,558; the bench 25
 >   of 25 on both backends (LLVM with Clang, C with MSVC). Pushed on `7ea93438` (already on `origin`).
+> - **M2 begun** (`tasks/96/redesign/compiler-0.9.15/M2-plan.md`, local commits after the push): the
+>   summary's reshapes (§VII.1), its places inside a static (SD1's `Static`), and what a function only
+>   adds to (`[EFF-24]`), each printed by `--emit mir` and tested there. Two rulings in the plan: the
+>   summary goes into the pipeline with its first reader (M3), and `static mut` lands with `E7012`.
 > - **For the morning, one at a time:** N26-N28 (decisions.md "Rulings made on autopilot, night of 2026-10-31").
 >   Not ODRs, to report: `[LT-1a]`'s `from log` on a field that is not a view is not built (it needs the borrow
 >   check to tell one field's loans from another's); a verify workflow over the `built_for_0915` list when the
