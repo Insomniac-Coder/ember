@@ -33,7 +33,12 @@ placement, keeping and verifying land when a check needs them.
    (M3+). Tests: `--emit mir` output for `push`, `clear`, a chain through a call.
 3. **The abstract places SD1 adds:** `Static(symbol, path)` (with slice 7), `Captured(k, path)` mapped
    to the maker's variable, `HeldBy(i, path)` for function values stored under a parameter, `OwnState`.
-   `Linked` waits for M4's links (`shares`, `weakref`), which do not exist yet.
+   `Linked` waits for M4's links (`shares`, `weakref`), which do not exist yet. **`Static` built**
+   (2026-11-01): a fact's place starts at a parameter or a static (`Root`), a pointer the static
+   built-ins give points at the static, and a callee's facts about one reach the caller unchanged (a
+   function with no parameters recorded nothing of a static before). Open: a change made through a
+   read-only view of an `Atomic` or a `Cell` (interior mutability) is a read in the summary; whether
+   the rules reading it count it as a change is settled with them (`[THR-*]`, `[CELL-*]`).
 4. **Per-parameter facts:** which view parameters (`this` included) it uses after a line that may end
    or move what they view (`[BRW-21]`, `E3031`'s fact); what it reaches by other names while a `ref mut`
    parameter is live; "only adds" for a `ref mut` list parameter; the elements it touches; where it

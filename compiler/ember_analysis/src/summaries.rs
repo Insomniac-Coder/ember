@@ -39,10 +39,19 @@ pub enum Step {
     Deref,
 }
 
-/// A place a parameter (0-based; a method's `this` is 0) reaches.
+/// Where a fact's place starts: a parameter (0-based; a method's `this` is 0), or a `static`, the
+/// same place in every function (SD1's `Static(symbol, path)`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Root {
+    Param(usize),
+    /// The static's name and the type of its value.
+    Static(String, ember_types::Ty),
+}
+
+/// A place a parameter reaches, or a place inside a static.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Reach {
-    pub param: usize,
+    pub root: Root,
     pub path: Vec<Step>,
 }
 
@@ -69,18 +78,18 @@ pub struct Summary {
 impl Summary {
     /// Whether it may change the place `param`'s `path` reaches, or anything inside it or holding it.
     pub fn may_change(&self, param: usize, path: &[Step]) -> bool {
-        self.changes.iter().any(|fact| fact.reach.param == param && overlaps(&fact.reach.path, path))
+        self.changes.iter().any(|fact| fact.reach.root == Root::Param(param) && overlaps(&fact.reach.path, path))
     }
 
     /// Whether it may change anything parameter `param` reaches: for a method's `this`, whether it
     /// changes its object.
     pub fn changes_param(&self, param: usize) -> bool {
-        self.changes.iter().any(|fact| fact.reach.param == param)
+        self.changes.iter().any(|fact| fact.reach.root == Root::Param(param))
     }
 
     /// Whether it may move or free memory inside, or holding, the place `param`'s `path` reaches.
     pub fn may_reshape(&self, param: usize, path: &[Step]) -> bool {
-        self.reshapes.iter().any(|fact| fact.reach.param == param && overlaps(&fact.reach.path, path))
+        self.reshapes.iter().any(|fact| fact.reach.root == Root::Param(param) && overlaps(&fact.reach.path, path))
     }
 }
 
@@ -109,6 +118,8 @@ struct Spot {
 enum Target {
     /// `*local` is this place.
     At(Spot),
+    /// `*local` is this static's value.
+    Static(String, ember_types::Ty),
     /// Not followed: anything any parameter reaches.
     Anything,
 }
@@ -255,12 +266,17 @@ fn pointers_of(body: &Body, types: &TypeTable) -> HashMap<LocalId, HashSet<Targe
                 }
             }
         }
-        // A pointer a call returns points at what its pointer arguments do, or at anything.
-        if let Terminator::Call { args, dest, .. } = &block.terminator
+        // A pointer a call returns points at what its pointer arguments do, or at anything; one to a
+        // `static` at the static.
+        if let Terminator::Call { func, args, dest, .. } = &block.terminator
             && dest.projection.is_empty()
             && pointer(dest.local)
         {
             let into = map.entry(dest.local).or_default();
+            if let FuncRef::Builtin { which: Builtin::LazyStatic { name, ty, .. } | Builtin::ConstStatic { name, ty } | Builtin::ForeignStatic { symbol: name, ty, .. }, .. } = func {
+                into.insert(Target::Static(name.to_string(), *ty));
+                continue;
+            }
             let mut any = false;
             for operand in args {
                 if let Operand::Copy(from) | Operand::Move(from) = operand
@@ -288,7 +304,7 @@ fn reaches(body: &Body, pointers: &HashMap<LocalId, HashSet<Target>>, spot: &Spo
         if spot.steps.contains(&Step::Deref) {
             let mut path = spot.steps.clone();
             path.truncate(MAX_PATH);
-            out.push(Reach { param: index - 1, path });
+            out.push(Reach { root: Root::Param(index - 1), path });
         }
         return;
     }
@@ -309,6 +325,12 @@ fn reaches(body: &Body, pointers: &HashMap<LocalId, HashSet<Target>>, spot: &Spo
                 steps.extend_from_slice(&spot.steps[1..]);
                 reaches(body, pointers, &Spot { local: at.local, steps }, depth + 1, out);
             }
+            // The static's own place, then the steps past the pointer.
+            Target::Static(name, ty) => {
+                let mut path = spot.steps[1..].to_vec();
+                path.truncate(MAX_PATH);
+                out.push(Reach { root: Root::Static(name.clone(), *ty), path });
+            }
             Target::Anything => anything(body, out),
         }
     }
@@ -317,7 +339,7 @@ fn reaches(body: &Body, pointers: &HashMap<LocalId, HashSet<Target>>, spot: &Spo
 /// Anything any parameter reaches.
 fn anything(body: &Body, out: &mut Vec<Reach>) {
     for param in 0..body.arg_count {
-        out.push(Reach { param, path: vec![Step::Deref] });
+        out.push(Reach { root: Root::Param(param), path: vec![Step::Deref] });
     }
 }
 
@@ -449,7 +471,17 @@ fn body_facts(
             let summary = &summaries[callee];
             for (what, facts) in [(What::Change, &summary.changes), (What::Read, &summary.reads), (What::Reshape, &summary.reshapes), (What::End, &summary.ends)] {
                 for fact in facts {
-                    let Some(Operand::Copy(place) | Operand::Move(place)) = args.get(fact.reach.param) else { continue };
+                    let param = match &fact.reach.root {
+                        Root::Param(param) => *param,
+                        // A static is the same place here.
+                        Root::Static(..) => {
+                            let mut chain = vec![(callee, span)];
+                            chain.extend_from_slice(&fact.chain);
+                            found.push((what, Fact { reach: fact.reach.clone(), chain }));
+                            continue;
+                        }
+                    };
+                    let Some(Operand::Copy(place) | Operand::Move(place)) = args.get(param) else { continue };
                     let mut steps = steps_of(body, types, place);
                     steps.extend_from_slice(&fact.reach.path);
                     let mut out = Vec::new();
@@ -483,10 +515,15 @@ fn below(types: &TypeTable, class: ember_types::ClassId, owner: ember_types::Cla
 /// chain.
 pub fn render(summary: &Summary, body: &Body, bodies: &[Body], types: &TypeTable) -> String {
     let place = |reach: &Reach| {
-        let local = body.locals.get(reach.param + 1);
-        // A method's object is `this` in its text (`[FN-4]`).
-        let mut text = local.and_then(|local| local.name.clone()).map(|name| if name == "self" { "this".to_string() } else { name }).unwrap_or_else(|| format!("arg{}", reach.param));
-        let mut ty = local.map(|local| local.ty);
+        // A method's object is `this` in its text (`[FN-4]`); a static is its name.
+        let (mut text, mut ty) = match &reach.root {
+            Root::Param(param) => {
+                let local = body.locals.get(param + 1);
+                let name = local.and_then(|local| local.name.clone()).map(|name| if name == "self" { "this".to_string() } else { name });
+                (name.unwrap_or_else(|| format!("arg{param}")), local.map(|local| local.ty))
+            }
+            Root::Static(name, ty) => (name.rsplit('.').next().unwrap_or(name).to_string(), Some(*ty)),
+        };
         let mut variant = None;
         for step in &reach.path {
             let current = ty.map(|ty| types.kind(ty).clone());
@@ -505,6 +542,8 @@ pub fn render(summary: &Summary, body: &Body, bodies: &[Body], types: &TypeTable
                     Some(def) => (format!(".{}", def.name), Some(def.ty)),
                     None => (format!(".{field}"), None),
                 },
+                // A list's or a string's own fields (its length, its buffer) are the list.
+                (Step::Field(_), Some(TyKind::Vec { .. })) => (String::new(), ty),
                 (Step::Field(field) | Step::Column(field), _) => (format!(".{field}"), None),
                 (Step::Variant(at), Some(TyKind::Enum(id))) => {
                     variant = Some(*at);

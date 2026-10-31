@@ -7620,6 +7620,14 @@ fn reset(ref mut c: Counter):
 fn unlink(n: Node):
     n.next = None
 
+static LIMITS: Array[int] = [1, 2, 3]
+
+fn first_limit() -> int:
+    return LIMITS[0]
+
+fn twice_first() -> int:
+    return first_limit() * 2
+
 fn main():
     c = Counter(count = 0, seen = [])
     twice(c)
@@ -7629,6 +7637,7 @@ fn main():
     a.next = Some(Node())
     second(a)
     unlink(a)
+    println(twice_first())
     l: Node = Loud()
     poke_it(l)
 ").unwrap();
@@ -7653,6 +7662,10 @@ fn main():
         // number is not.
         ("reset", "changes c.count, c.seen\nreshapes c.seen\nends c.seen\n"),
         ("unlink", "changes n.next\nreshapes n.next\nends n.next\n"),
+        // SD1's `Static(symbol, path)`: a static is the same place in every function, a list's
+        // length and buffer the list.
+        ("first_limit", "reads LIMITS, LIMITS[_]\n"),
+        ("twice_first", "reads LIMITS (through first_limit), LIMITS[_] (through first_limit)\n"),
     ] {
         assert_eq!(summary(path), expected, "`{path}`'s summary");
     }
