@@ -268,7 +268,7 @@ LIVE_0915 = {'E0001': ('invalid UTF-8 in source', ['LEX-1']),
  'E4070': ('`@deterministic` function reaches a nondeterministic operation', ['DET-1']),
  'E4072': ('`@fastmath` or `@fp(allow_fma)` inside `@deterministic`', ['DET-5']),
  'E5001': ('imported type layout does not match', ['FFI-5']),
- 'E5002': ('a foreign declaration whose contract cannot stand: `safe fn` on a function whose contract is incomplete, '
+ 'E5002': ('a foreign declaration whose contract cannot stand: a hand declaration that says neither `safe fn` nor `unsafe fn`, or both; `safe fn` on a function whose contract is incomplete, '
            'or two destructors for one foreign type (a call of a function without a verified contract outside `unsafe` is '
            '`E3100`)',
            ['FFI-2', 'FFI-10', 'FFI-36a']),

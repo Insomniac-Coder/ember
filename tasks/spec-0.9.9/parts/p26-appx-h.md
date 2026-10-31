@@ -2309,3 +2309,22 @@ Generated: every rule whose text differs from 0.9.15_Hardened_5.
 | `[GRM-35]` | changed |
 | `[MAN-9]` | changed |
 | `[UNS-7]` | changed |
+
+## H.47 Changes in 0.9.15_Hardened_7 (from 0.9.15_Hardened_6)
+
+**0.9.15_Hardened_7** writes in the owner's verdict 136 from the review of 2026-10-31, morning
+(`tasks/96/redesign/JOB.md`; `tasks/96/redesign/compiler-0.9.15/decisions.md`, "Owner verdicts, 2026-10-31"):
+
+* Verdict 136: a function in an `unsafe extern` block says whether it is safe to call, `safe fn` or
+  `unsafe fn`; a plain `fn`, safe to call everywhere else in Ember, is `E5002` with the line to write, and
+  `ember fmt --migrate` writes it `unsafe fn`; `safe unsafe fn` is `E5002` (`[FFI-10]`, `[CLI-20]`). The
+  examples of Part XVI declare their unsafe functions `unsafe fn`, with their `@safety`.
+
+Generated: every rule whose text differs from 0.9.15_Hardened_6.
+
+| Rule | 0.9.15_Hardened_6 → 0.9.15_Hardened_7 |
+|---|---|
+| `[CLI-20]` | changed |
+| `[FFI-10]` | changed |
+| `[FFI-52]` | changed |
+| `[FFI-54]` | changed |

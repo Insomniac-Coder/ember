@@ -55,14 +55,18 @@ fn main():
 
 * `[FFI-10]` *(changed in 0.9.9)* *(changed in 0.9.15)* An `unsafe extern "C":` block declares foreign functions, statics
   and opaque types; `unsafe` records that the programmer asserts the signatures. The declared names
-  are items of the enclosing module. A function in the block is **safe to call** only when it is
-  declared `safe fn` (a contextual keyword, `[LEX-15]`) and every parameter and result is a scalar, a
-  `@layout(c)` value type, or a pointer whose contract is complete (given with `@ffi(…)` on the
-  declaration); `safe` on any other function is `E5002`, naming the fact that is missing. Every other
-  call is in `unsafe`. A declaration whose calls are to stay unsafe whatever its facts is written
-  `unsafe fn`, with `@safety("…")` above it saying what its callers must make true (`[UNS-7]`), as an
-  overlay entry is (`[GRM-35]`, verdict 133); a call of it outside unsafe code is `E3100`, as any
-  `unsafe fn`'s: "`raw_abs(-3)` (line 11) calls an `unsafe fn`, whose callers must make true what its
+  are items of the enclosing module. Each function in the block says whether it is safe to call
+  (verdict 136): `safe fn` (a contextual keyword, `[LEX-15]`), safe to call only when every parameter and
+  result is a scalar, a `@layout(c)` value type, or a pointer whose contract is complete (given with
+  `@ffi(…)` on the declaration), `safe` on any other function being `E5002`, naming the fact that is
+  missing; or `unsafe fn`, whose calls are in unsafe code, with `@safety("…")` above it saying what its
+  callers must make true (`[UNS-7]`), as an overlay entry is (`[GRM-35]`, verdict 133). A plain `fn`, which
+  everywhere else in Ember is safe to call, says neither and is `E5002`: "`lib_step` does not say whether
+  it is safe to call: write `unsafe fn lib_step`, with `@safety("…")` above it saying what its callers
+  must make true, or `safe fn lib_step` if a call within its contract cannot break memory safety", which
+  `ember fmt --migrate` rewrites to `unsafe fn` (`[CLI-20]`); `safe unsafe fn` is `E5002` too
+  ("`lib_step` is declared both `safe` and `unsafe`"). A call of an `unsafe fn` outside unsafe code is
+  `E3100`, as any `unsafe fn`'s: "`raw_abs(-3)` (line 11) calls an `unsafe fn`, whose callers must make true what its
   `@safety` says". `unsafe` is no word of `@ffi(…)`: `@ffi(unsafe)`, `param(p, unsafe)` and
   `result(unsafe)` are `E0104` ("`unsafe` is no contract word; write the declaration
   `unsafe fn peek(…)`, with `@safety("…")` above it saying what its callers must make true"), which
@@ -483,7 +487,8 @@ unsafe overlay c "vulkan/vulkan.h":
           this.score += 1
 
   unsafe extern "C":
-      fn unregister(cb: extern "C" fn(*mut void), ud: *mut void)
+      @safety("`cb` and `ud` are a pair `register_cb` was given")
+      unsafe fn unregister(cb: extern "C" fn(*mut void), ud: *mut void)
       @ffi(param(cb, callback(retained, user_data=ud), threads(creator)), destroys(unregister))
       safe fn register_cb(cb: extern "C" fn(*mut void), ud: *mut void)
       safe fn poll_events()
@@ -546,7 +551,7 @@ unsafe overlay c "vulkan/vulkan.h":
 * `[FFI-54]` *(new in 0.9.15)* **Giving an object to C.** A C function declared as keeping an object
   (`@ffi(param(widget, owns, one))` with `owns widget: owns Widget`) is given one by an ordinary
   hand-over, `widget_take(first)`: the name ends and Ember frees nothing, with no word. For a C function
-  whose declaration cannot say so (a plain pointer, `fn set_user_data(p: *mut Widget)`, or a function
+  whose declaration cannot say so (a plain pointer, `unsafe fn set_user_data(p: *mut Widget)`, or a function
   with `...`), `w.into_raw()` gives the address of a value Ember holds alone in its own block, an
   `owns T` (as a `*mut T`, or a `*mut u8` for an `owns dyn I`) or a class object with one owner (as an
   `ObjectPtr[C]`), and stops Ember freeing it, as C++'s `unique_ptr::release()` does; the name ends.
@@ -559,12 +564,14 @@ unsafe overlay c "vulkan/vulkan.h":
   unsafe extern "C":
       @ffi(destroys(widget_free))
       type Widget
-      fn widget_free(widget: *mut Widget)
+      @safety("`widget` is a widget C made, not freed yet")
+      unsafe fn widget_free(widget: *mut Widget)
       @ffi(result(returns_owned(destructor=widget_free), one))
       safe fn widget_new(id: i32) -> owns Widget
       @ffi(param(widget, owns, one))
       safe fn widget_take(owns widget: owns Widget)
-      fn set_user_data(p: *mut Widget)
+      @safety("`p` is a widget whose ownership C takes")
+      unsafe fn set_user_data(p: *mut Widget)
 
   fn address_for_c(owns w: owns Widget) -> *mut Widget:
       # SAFETY: the address goes to `set_user_data`, whose C side keeps the widget and frees it with `widget_free`

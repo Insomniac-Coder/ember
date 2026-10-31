@@ -74,7 +74,8 @@ ember --help | --version [--matrix]
   `for ref mut x in xs:`, and a declaration left unsafe to call by the word `unsafe` to `unsafe fn`:
   an overlay entry's `unsafe` contract words (verdict 130), and `@ffi(unsafe)`, `param(p, unsafe)` and
   `result(unsafe)` on a hand declaration (verdict 133), the word taken out and an `@ffi(…)` left
-  empty removed. It writes no `@safety` text: `L3015` asks for any that is missing (`[UNS-7]`). It does not rewrite what needs a choice the source does not say: `Shared[T]`
+  empty removed, and a plain `fn` in an `unsafe extern` block (verdict 136). It writes no `@safety`
+  text: `L3015` asks for any that is missing (`[UNS-7]`). It does not rewrite what needs a choice the source does not say: `Shared[T]`
   (`shares T` or `shares mut T`), `RefCell`, `SyncShared` and `@sync` classes (`thread_shared` with
   `guarded by` fields or `Atomic`), `owned fn` (the capture words), and `mem.forget`.
 * `[CLI-21]` *(new in 0.9.9)* `ember run --interp` runs a program on the compile-time evaluator instead

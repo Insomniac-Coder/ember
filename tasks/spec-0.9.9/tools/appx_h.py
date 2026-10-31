@@ -796,7 +796,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.15', 6)
+CURRENT = ('0.9.15', 7)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -838,6 +838,7 @@ V0915_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h2')
 V0915_H3_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h3')
 V0915_H4_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h4')
 V0915_H5_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h5')
+V0915_H6_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h6')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -1915,7 +1916,29 @@ Generated: every rule whose text differs from 0.9.15_Hardened_5.
 
 
 def v0915_h5_to_h6():
-    return H46_HEAD + rule_diff(V0915_H5_PARTS, os.path.join(HERE, '..', 'parts'))
+    return H46_HEAD + rule_diff(V0915_H5_PARTS, V0915_H6_PARTS)
+
+
+H47_HEAD = """
+## H.47 Changes in 0.9.15_Hardened_7 (from 0.9.15_Hardened_6)
+
+**0.9.15_Hardened_7** writes in the owner's verdict 136 from the review of 2026-10-31, morning
+(`tasks/96/redesign/JOB.md`; `tasks/96/redesign/compiler-0.9.15/decisions.md`, "Owner verdicts, 2026-10-31"):
+
+* Verdict 136: a function in an `unsafe extern` block says whether it is safe to call, `safe fn` or
+  `unsafe fn`; a plain `fn`, safe to call everywhere else in Ember, is `E5002` with the line to write, and
+  `ember fmt --migrate` writes it `unsafe fn`; `safe unsafe fn` is `E5002` (`[FFI-10]`, `[CLI-20]`). The
+  examples of Part XVI declare their unsafe functions `unsafe fn`, with their `@safety`.
+
+Generated: every rule whose text differs from 0.9.15_Hardened_6.
+
+| Rule | 0.9.15_Hardened_6 → 0.9.15_Hardened_7 |
+|---|---|
+"""
+
+
+def v0915_h6_to_h7():
+    return H47_HEAD + rule_diff(V0915_H6_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -1987,7 +2010,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n' + v0915_h3_to_h4() + '\n' + v0915_h4_to_h5() + '\n' + v0915_h5_to_h6() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n' + v0915_h3_to_h4() + '\n' + v0915_h4_to_h5() + '\n' + v0915_h5_to_h6() + '\n' + v0915_h6_to_h7() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

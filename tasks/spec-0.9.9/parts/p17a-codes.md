@@ -161,7 +161,7 @@ reused; retired codes are listed with the reason.
 | `E4070` | `@deterministic` function reaches a nondeterministic operation | `[DET-1]` |
 | `E4072` | `@fastmath` or `@fp(allow_fma)` inside `@deterministic` | `[DET-5]` |
 | `E5001` | imported type layout does not match | `[FFI-5]` |
-| `E5002` | a foreign declaration whose contract cannot stand: `safe fn` on a function whose contract is incomplete, or two destructors for one foreign type (a call of a function without a verified contract outside `unsafe` is `E3100`) | `[FFI-2]`, `[FFI-10]`, `[FFI-36a]` |
+| `E5002` | a foreign declaration whose contract cannot stand: a hand declaration that says neither `safe fn` nor `unsafe fn`, or both; `safe fn` on a function whose contract is incomplete, or two destructors for one foreign type (a call of a function without a verified contract outside `unsafe` is `E3100`) | `[FFI-2]`, `[FFI-10]`, `[FFI-36a]` |
 | `E5010` | overlay does not match the C declaration; a declaration an overlay describes differs from the one `ember.overlays` records, or the package has no record of the overlay; an entry outside a class section that names only members of classes | `[FFI-12]`, `[FFI-55]` |
 | `E5011` | one C identity imported with two different layouts | `[FFI-30]` |
 | `E5012` | pointer contract has no count | `[FFI-11]` |

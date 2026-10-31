@@ -1,8 +1,8 @@
 # Ember Programming Language — Specification
 
-**Version:** 0.9.15_Hardened_6
-**Supersedes:** 0.9.15_Hardened_5 (development target), 0.9.15_Hardened_4, 0.9.15_Hardened_3,
-0.9.15_Hardened_2, 0.9.15_Hardened_1 and every earlier file: 0.9.10_Hardened_1 to
+**Version:** 0.9.15_Hardened_7
+**Supersedes:** 0.9.15_Hardened_6 (development target), 0.9.15_Hardened_5, 0.9.15_Hardened_4,
+0.9.15_Hardened_3, 0.9.15_Hardened_2, 0.9.15_Hardened_1 and every earlier file: 0.9.10_Hardened_1 to
 0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3 and 0.8.5_Hardened_1
 (adopted). This document is the single specification of Ember; the earlier files are history.
 **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
@@ -19,7 +19,8 @@ the owner's verdicts 125 to 131 (`@safety` on imported C and C++ functions and o
 a package); **0.9.15_Hardened_6** the owner's verdicts 132 to 135 (an overlay entry without
 `@ffi(const)` makes its method one that changes its object; a hand-written C declaration unsafe to call
 is `unsafe fn`; one `L3015` naming every call; the default manifest's note), and states that the LLVM
-backend is the default (`[CG-LL-1]`). What a program means is written in
+backend is the default (`[CG-LL-1]`); **0.9.15_Hardened_7** the owner's verdict 136 (a hand-written C
+declaration says `safe fn` or `unsafe fn`, and a plain `fn` there is refused). What a program means is written in
 words on the thing it describes: one owner unless a line says `shares`; `owns` for a hand-over and a
 value held alone; `copy of` for a copy; `ref mut` on a name, and at the call, for a change of someone
 else's value; `weakref` for a link that does not keep its target alive; `this` for a method's object.
