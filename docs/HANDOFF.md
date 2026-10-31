@@ -11,8 +11,12 @@
 >   result is the body's summary, a plain view the first line's rule, a method's view of another source rule 3);
 >   `E3065` and `L3014` retired. M1-plan.md has what was built, what is left out and why (`built_for_0915`: 11
 >   rules; Overall 23% -> 24%).
-> - **Before the push:** gate3 (the suite three ways), the bench both backends, push `main` (with `64f74d67` and
->   `7ea93438` under it), one CI look.
+> - **The push gate** (gate3, three runs): the first found a kept module's methods decided from their empty
+>   bodies (`[EXC-15]`: std's `Split.next` read as only reading its object on a warm cache; each module's
+>   `Kept` record now holds what its methods do to their objects, `7b1abb9e`) and `rule_index.py` asking for
+>   the retired rules' folders; the second the math vectors' generator in 0.9.10 (`c1ad8eea`); the third
+>   E2118's page (`5fcb6314`). Then green three ways, every gate, the sweeps 0 warned of 2,558; the bench 25
+>   of 25 on both backends (LLVM with Clang, C with MSVC). Pushed on `7ea93438` (already on `origin`).
 > - **For the morning, one at a time:** N26-N28 (decisions.md "Rulings made on autopilot, night of 2026-10-31").
 >   Not ODRs, to report: `[LT-1a]`'s `from log` on a field that is not a view is not built (it needs the borrow
 >   check to tell one field's loans from another's); a verify workflow over the `built_for_0915` list when the
