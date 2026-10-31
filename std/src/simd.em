@@ -23,7 +23,7 @@
 ##   contraction (`[TYP-9]`). `==`, `!=`, `<`, `<=`, `>`, `>=` compare lane by lane into a mask.
 ## - `reduce_add`, `reduce_min`, `reduce_max` (lane 0 first, then each next lane in order, so the
 ##   answer is the same on every target), `shuffle([…])` with a constant list of lane numbers,
-##   `fma(b, c)` (`self * b + c` rounded once), `min`, `max`, `abs`, `sqrt`, and the approximations
+##   `fma(b, c)` (`this * b + c` rounded once), `min`, `max`, `abs`, `sqrt`, and the approximations
 ##   `rsqrt_approx` and `rcp_approx` (whose last bits depend on the target).
 ## - On a mask: `any()`, `all()`, `select(a, b)` (each lane from `a` where the mask is set, else
 ##   from `b`), `&`, `|`, `^`, `M.splat(b)` and `to_array()`.

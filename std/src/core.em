@@ -19,7 +19,7 @@ pub enum Ordering:
 pub interface Eq:
     fn eq(other: Self) -> bool
 
-## Part IV §8 declares `Ord: Eq` with `cmp(self, other: Self) -> Ordering`.
+## Part IV §8 declares `Ord: Eq` with `cmp(other: Self) -> Ordering`.
 ## `[TYP-9]` — `Ord` is deliberately **not** implemented for floats: `NaN`
 ## makes the ordering partial, so a float uses `PartialOrd` and the comparison
 ## operators, which return `false` on either side of a `NaN`.
@@ -2725,7 +2725,7 @@ interface Integer: needs (Hash, Default, Ord, Copy):
     ## The integer `n` after this one, which the type holds.
     fn forward_by(n: SpanCount) -> Self
 
-    ## How many integers from this one up to the type's top, both included: what `self..` holds
+    ## How many integers from this one up to the type's top, both included: what `this..` holds
     ## (D-526).
     fn count_to_top() -> FullCount
 
@@ -2839,7 +2839,7 @@ extend i64 implements Integer:
     fn predecessor() -> i64:
         return this - 1
 
-    ## G8-4 — `end - self` in 64 unsigned bits wraps to the gap exactly, which is at most
+    ## G8-4 — `end - this` in 64 unsigned bits wraps to the gap exactly, which is at most
     ## `u64.MAX`.
     @overflow(wrap)
     fn distance_to(end: i64) -> u64:
@@ -2873,7 +2873,7 @@ extend i128 implements Integer:
     fn predecessor() -> i128:
         return this - 1
 
-    ## G8-4 — `end - self` in 128 unsigned bits wraps to the gap exactly.
+    ## G8-4 — `end - this` in 128 unsigned bits wraps to the gap exactly.
     @overflow(wrap)
     fn distance_to(end: i128) -> u128:
         return (end as u128) - (this as u128)
@@ -2906,7 +2906,7 @@ extend isize implements Integer:
     fn predecessor() -> isize:
         return this - 1
 
-    ## G8-4 — `end - self` in 64 unsigned bits wraps to the gap exactly, which is at most
+    ## G8-4 — `end - this` in 64 unsigned bits wraps to the gap exactly, which is at most
     ## `u64.MAX`.
     @overflow(wrap)
     fn distance_to(end: isize) -> u64:

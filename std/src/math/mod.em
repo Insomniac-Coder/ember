@@ -314,7 +314,7 @@ pub struct Vec2:
             return Vec2.ZERO
         return this / length
 
-    ## `self * a + b` component by component, each rounded once, not
+    ## `this * a + b` component by component, each rounded once, not
     ## twice (`[STD-3]`).
     pub fn mul_add(a: Vec2, b: Vec2) -> Vec2:
         return Vec2(this.x.mul_add(a.x, b.x), this.y.mul_add(a.y, b.y))
@@ -433,7 +433,7 @@ pub struct Vec3:
             return Vec3.ZERO
         return this / length
 
-    ## `self * a + b` component by component, each rounded once, not
+    ## `this * a + b` component by component, each rounded once, not
     ## twice (`[STD-3]`).
     pub fn mul_add(a: Vec3, b: Vec3) -> Vec3:
         return Vec3(this.x.mul_add(a.x, b.x), this.y.mul_add(a.y, b.y), this.z.mul_add(a.z, b.z))
@@ -562,7 +562,7 @@ pub struct Vec4:
             return Vec4.ZERO
         return this / length
 
-    ## `self * a + b` component by component, each rounded once, not
+    ## `this * a + b` component by component, each rounded once, not
     ## twice (`[STD-3]`).
     pub fn mul_add(a: Vec4, b: Vec4) -> Vec4:
         return Vec4(this.x.mul_add(a.x, b.x), this.y.mul_add(a.y, b.y), this.z.mul_add(a.z, b.z), this.w.mul_add(a.w, b.w))

@@ -564,7 +564,7 @@ mod tests {
         let mut left = None;
         for _ in 0..8 {
             let mut map = ember_span::SourceMap::new();
-            let file = map.add("t.em", text.clone());
+            let file = map.add(ember_branding::source_file("t"), text.clone());
             let mut sink = ember_diag::Sink::new();
             let lexed = ember_lexer::lex(file, &text, &mut sink);
             let tokens = lexed.tokens.clone();

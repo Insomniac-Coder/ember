@@ -1,6 +1,6 @@
 ## `std.fmt` — what a written `Display` writes into (Part XV, `[STD-18]`).
 ##
-## `std.core` declares `Display` (Part IV §8): `fn fmt(self, mut f:
+## `std.core` declares `Display` (Part IV §8): `fn fmt(ref mut f:
 ## Formatter) -> Result[void, FmtError]`. A type that implements it writes its
 ## text through the `Formatter` it is given, and every place the language
 ## turns a value into text (`f"{x}"`, `print(x)`, `main`'s error) uses that
