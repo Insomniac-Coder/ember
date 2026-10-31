@@ -79,6 +79,24 @@ Each slice's facts are printed by `--emit mir` and tested there; no slice change
 compiles to or whether it compiles (slice 7 accepts a form 0.9.15 writes, and refuses one 0.9.15
 refuses, `[STA-1]`).
 
+## Design notes for slice 4's flow-sensitive facts
+
+**Used after a line that may end or move what it views** (`[BRW-21]`, `E3031`'s fact). Per view
+parameter `p` (`this` included), the places of the other parameters the body may reshape or end at a
+point after which `p`, or a view made from it, is still used. Built on the borrow check's regions, not
+beside them: `regions.rs` already knows, for each point, which region slots are live and which locals
+hold each parameter's regions (`local_regions`, `values_at`). For each point where the summary's
+facts say a reshape or an end happens (a statement's own, or a call's callee's facts mapped onto its
+arguments, as `body_facts` maps them), each view parameter whose region slots are live at that point
+gets the fact's place in its list. The caller's check (M3) refuses a call that passes, for `p`, a view
+into a place its list names. The fact is per parameter pair and place, so a recursive group's fixed
+point stays finite (paths are cut at `MAX_PATH`).
+
+**What it reaches by other names while a `ref mut` parameter is live.** Per `ref mut` parameter `q`,
+the places of other parameters (and statics) the body reads or changes while `q`'s region is live:
+the same points, the same liveness, the read and change facts in place of reshapes. Consumer: the
+call check of two arguments that may overlap (`[BRW-5]`, `[BRW-22]`'s noalias).
+
 ## Owner questions
 
 None expected: M2 builds facts the spec defines. A choice that changes what a program means (slice 7's
