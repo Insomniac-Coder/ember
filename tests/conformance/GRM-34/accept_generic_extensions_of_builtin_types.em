@@ -9,52 +9,53 @@
 # and `Sized.len(xs)` names the interface's.
 
 interface Sized:
-    fn len(self) -> int
+    fn len() -> int
 
 interface Describe:
-    fn describe(self) -> String
+    fn describe() -> String
 
 interface Check:
-    fn good(self) -> bool
+    fn good() -> bool
 
 struct Name:
     code: int
 
 extend Name implements Describe:
-    fn describe(self) -> String:
-        return f"name {self.code}"
+    fn describe() -> String:
+        return f"name {this.code}"
 
 extend[T] Array[T] implements Sized:
-    fn len(self) -> int:
-        return self.len() + 100
+    fn len() -> int:
+        return this.len() + 100
 
-extend[T: Describe] Array[T] implements Describe:
-    fn describe(self) -> String:
+extend[T: needs Describe] Array[T] implements Describe:
+    fn describe() -> String:
         out = String.from("[")
-        for x in self:
+        for x in this:
             out += x.describe()
             out += ";"
         out += "]"
         return out
 
-extend[T: Describe] Option[T] implements Describe:
-    fn describe(self) -> String:
-        match self:
+extend[T: needs Describe] Option[T] implements Describe:
+    fn describe() -> String:
+        match this:
             Some(x): return x.describe()
             None: return String.from("none")
 
 extend[T, E] Result[T, E] implements Check:
-    fn good(self) -> bool:
-        return self.is_ok()
+    fn good() -> bool:
+        return this.is_ok()
 
-fn show[D: Describe](d: D) -> String:
+[D: needs Describe]
+fn show(d: D) -> String:
     return d.describe()
 
 fn tell(d: ref dyn Describe) -> String:
     return d.describe()
 
 xs = [Name(1), Name(2)]
-r: Result[int, str] = Ok(3)
+r: Result[int, StrView] = Ok(3)
 some = Some(Name(5))
 none: Option[Name] = None
 println(xs.len(), Sized.len(xs), show(xs))

@@ -6,7 +6,8 @@
 # The callback is the only argument that mentions `R`; inference must read the
 # solved callable signature instead of solving only the hidden Callable binder.
 
-fn apply[T, R](value: T, transform: fn(T) -> R) -> R:
+[T, R]
+fn apply(value: T, transform: fn(T) -> R) -> R:
     return transform(value)
 
 fn increment(value: i32) -> i32:

@@ -7,28 +7,30 @@
 # then, before `extend int implements Counted` below was read, and reported as unmet.
 
 interface Counted:
-    fn of(n: int) -> Self
+    static fn of(n: int) -> Self
 
 interface Seq:
-    type Size: Counted = int
-    fn next(mut self) -> Option[int]
+    type Size: needs Counted = int
+    fn next() -> Option[int]
 
-struct Boxy[T]:
+[T]
+struct Boxy:
     x: T
 
 extend[T] Boxy[T] implements Seq:
-    fn next(mut self) -> Option[int]:
+    fn next() -> Option[int]:
         return None
 
-struct Holder[T]:
+[T]
+struct Holder:
     x: T
 
-extend[T: Copy] Holder[T]:
-    fn boxed(self) -> Boxy[T]:
-        return Boxy(self.x)
+extend[T: needs Copy] Holder[T]:
+    fn boxed() -> Boxy[T]:
+        return Boxy(this.x)
 
 extend int implements Counted:
-    fn of(n: int) -> int:
+    static fn of(n: int) -> int:
         return n
 
 fn main():

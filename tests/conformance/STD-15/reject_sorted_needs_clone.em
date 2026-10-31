@@ -10,16 +10,16 @@ struct Handle:
     id: int
 
 extend Handle:
-    fn drop(mut self):
+    fn drop():
         pass
 
 extend Handle implements Eq:
-    fn eq(self, other: Self) -> bool:
-        return self.id == other.id
+    fn eq(other: Self) -> bool:
+        return this.id == other.id
 
 extend Handle implements Ord:
-    fn cmp(self, other: Self) -> Ordering:
-        return self.id.cmp(other.id)
+    fn cmp(other: Self) -> Ordering:
+        return this.id.cmp(other.id)
 
 fn main():
     hs = [Handle(2), Handle(1)]

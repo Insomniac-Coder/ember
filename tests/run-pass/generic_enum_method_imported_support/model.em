@@ -1,5 +1,6 @@
-pub enum Message[T: Eq]:
+pub enum Message[T: needs Eq]:
     Empty
 
-    pub fn choose[U: Eq](self, value: U) -> U:
+    [U: needs Eq]
+    pub fn choose(value: U) -> U:
         return value

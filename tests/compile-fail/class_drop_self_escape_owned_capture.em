@@ -7,9 +7,9 @@ fn keep(token: Token):
     pass
 
 class Token:
-    fn drop(mut self):
-        copy = self
-        _task = owned fn() => keep(copy) #$ error[E3016]: `self` escapes its own drop
+    fn drop():
+        copy = this
+        _task = owned fn() => keep(copy) #$ error[E3016]: `this` escapes its own `drop`
 
 fn main():
     _token = Token()

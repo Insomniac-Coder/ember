@@ -5,22 +5,22 @@ struct Matrix:
     cols: int
     data: Array[float]
 
-    fn get(self, r: int, c: int) -> float:
-        return self.data[r * self.cols + c]
+    fn get(r: int, c: int) -> float:
+        return this.data[r * this.cols + c]
 
-    fn set(mut self, r: int, c: int, v: float):
-        self.data[r * self.cols + c] = v
+    fn set(r: int, c: int, v: float):
+        this.data[r * this.cols + c] = v
 
-    fn transpose(self) -> Matrix:
-        result = zeros(self.cols, self.rows)
-        for r in 0..self.rows:
-            for c in 0..self.cols:
-                result.set(c, r, self.get(r, c))
+    fn transpose() -> Matrix:
+        result = zeros(this.cols, this.rows)
+        for r in 0..this.rows:
+            for c in 0..this.cols:
+                result.set(c, r, this.get(r, c))
         return result
 
-    fn show(self):
-        for r in 0..self.rows:
-            row = [f"{self.get(r, c):7.2f}" for c in 0..self.cols]
+    fn show():
+        for r in 0..this.rows:
+            row = [f"{this.get(r, c):7.2f}" for c in 0..this.cols]
             println(f"[{row.join(" ")} ]")
 
 fn zeros(rows: int, cols: int) -> Matrix:

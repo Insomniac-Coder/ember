@@ -21,17 +21,17 @@
 class Node:
     v: int
 
-    fn poke(self, owned p: Parent):
+    fn poke(owns p: Parent):
         p.child = Node(9)
-        println("poke", self.v)
+        println("poke", this.v)
 
-    fn bump(mut self, owned p: Parent):
-        r = ref self.v
+    fn bump(owns p: Parent):
+        r = ref this.v
         p.child = Node(8)
         println("bump", r)
 
-    fn drop(mut self):
-        println("drop", self.v)
+    fn drop():
+        println("drop", this.v)
 
 class Parent:
     child: Node

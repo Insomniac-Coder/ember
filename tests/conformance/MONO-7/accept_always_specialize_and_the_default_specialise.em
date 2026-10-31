@@ -7,27 +7,29 @@
 ## computes.
 
 interface Shape:
-    fn area(self) -> f64
+    fn area() -> f64
 
 struct Square:
     side: f64
 
 extend Square implements Shape:
-    fn area(self) -> f64:
-        return self.side * self.side
+    fn area() -> f64:
+        return this.side * this.side
 
 struct Disc:
     r: f64
 
 extend Disc implements Shape:
-    fn area(self) -> f64:
-        return 3.0 * self.r * self.r
+    fn area() -> f64:
+        return 3.0 * this.r * this.r
 
-fn area_of[T: Shape](x: T) -> f64:
+[T: needs Shape]
+fn area_of(x: T) -> f64:
     return x.area()
 
 @always_specialize
-fn exact[T: Shape](x: T) -> f64:
+[T: needs Shape]
+fn exact(x: T) -> f64:
     return x.area()
 
 fn main():

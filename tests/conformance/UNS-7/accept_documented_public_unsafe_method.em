@@ -7,8 +7,8 @@ struct Counter:
 
 extend Counter:
     @safety("The caller guarantees the counter is live.")
-    pub unsafe fn next(self) -> i32:
-        return self.value + 1
+    pub unsafe fn next() -> i32:
+        return this.value + 1
 
 fn main():
     pass

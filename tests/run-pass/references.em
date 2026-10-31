@@ -16,7 +16,7 @@
 ## live across everything between it and the top — and the borrow checker said
 ## so.
 
-fn bump(mut n: i32):
+fn bump(ref mut n: i32):
     n = n + 1
 
 ## `[TYP-14]` — writing a `ref mut` local writes through to the referent.

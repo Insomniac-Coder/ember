@@ -15,47 +15,47 @@
 # has five, so its call only searches the table.
 
 interface Shape:
-    fn area(self) -> int
+    fn area() -> int
 
 open class Rect implements Shape:
     w: int
     h: int
 
-    virtual fn area(self) -> int:
-        return self.w * self.h
+    virtual fn area() -> int:
+        return this.w * this.h
 
 class Square(Rect):
-    override fn area(self) -> int:
-        return self.w * self.w + 1000
+    override fn area() -> int:
+        return this.w * this.w + 1000
 
 class Tri implements Shape:
     b: int
     h: int
 
-    fn area(self) -> int:
-        return self.b * self.h // 2
+    fn area() -> int:
+        return this.b * this.h // 2
 
 interface Named:
-    fn id(self) -> int
+    fn id() -> int
 
 class N1 implements Named:
-    fn id(self) -> int:
+    fn id() -> int:
         return 1
 
 class N2 implements Named:
-    fn id(self) -> int:
+    fn id() -> int:
         return 2
 
 class N3 implements Named:
-    fn id(self) -> int:
+    fn id() -> int:
         return 3
 
 class N4 implements Named:
-    fn id(self) -> int:
+    fn id() -> int:
         return 4
 
 class N5 implements Named:
-    fn id(self) -> int:
+    fn id() -> int:
         return 5
 
 fn main():

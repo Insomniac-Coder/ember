@@ -4,7 +4,8 @@
 # Plain has an owning field but no drop of its own. Dropping that field does
 # not read the unrelated borrowed field, even through a generic parameter.
 
-struct Plain[T]:
+[T]
+struct Plain:
     borrowed: ref i32
     payload: T
 

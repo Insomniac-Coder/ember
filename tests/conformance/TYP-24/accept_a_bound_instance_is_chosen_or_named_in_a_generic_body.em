@@ -7,57 +7,60 @@
 # names an interface. Each was `E2070`.
 
 interface Conv[T]:
-    fn conv(self) -> T
+    fn conv() -> T
 
 interface Scale[T]:
-    fn scale(self, by: T) -> int
+    fn scale(by: T) -> int
 
 interface A:
-    fn m(self) -> int
+    fn m() -> int
 
 interface B:
-    fn m(self) -> int
+    fn m() -> int
 
 struct Gadget:
     n: int
 
 extend Gadget implements Conv[bool]:
-    fn conv(self) -> bool:
+    fn conv() -> bool:
         return true
 
 extend Gadget implements Conv[int]:
-    fn conv(self) -> int:
+    fn conv() -> int:
         return 7
 
 extend Gadget implements Scale[int]:
-    fn scale(self, by: int) -> int:
-        return self.n * by
+    fn scale(by: int) -> int:
+        return this.n * by
 
 extend Gadget implements Scale[bool]:
-    fn scale(self, by: bool) -> int:
+    fn scale(by: bool) -> int:
         if by:
             return 1
         return 0
 
 extend Gadget implements A:
-    fn m(self) -> int:
+    fn m() -> int:
         return 1
 
 extend Gadget implements B:
-    fn m(self) -> int:
+    fn m() -> int:
         return 2
 
-fn named[C: Conv[bool] + Conv[int]](c: C) -> int:
+[C: needs (Conv[bool], Conv[int])]
+fn named(c: C) -> int:
     flag = Conv[bool].conv(c)
     n = Conv[int].conv(c)
     if flag:
         return n
     return 0
 
-fn chosen[C: Scale[int] + Scale[bool]](c: C) -> int:
+[C: needs (Scale[int], Scale[bool])]
+fn chosen(c: C) -> int:
     return c.scale(2) + c.scale(true)
 
-fn which[C: A + B](c: C) -> int:
+[C: needs (A, B)]
+fn which(c: C) -> int:
     return B.m(c) * 10 + A.m(c)
 
 fn main():

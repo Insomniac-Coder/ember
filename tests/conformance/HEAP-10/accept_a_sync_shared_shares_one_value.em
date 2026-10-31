@@ -18,14 +18,14 @@ from std.sync import SyncShared, Mutex, Atomic
 struct Loud:
     n: int
 
-    fn drop(mut self):
-        println("dropped", self.n)
+    fn drop():
+        println("dropped", this.n)
 
 @sync
 class Registry:
     names: SyncShared[Mutex[Array[String]]]
 
-fn add(r: SyncShared[Mutex[Array[String]]], name: str):
+fn add(r: SyncShared[Mutex[Array[String]]], name: StrView):
     with g = r.get().lock():
         g.push(name.to_string())
 

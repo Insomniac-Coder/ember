@@ -5,7 +5,7 @@
 # `[EXP-1]` — a `Copy` argument of `println` is read where it is written, so a
 # later argument that changes the variable does not change what is printed.
 
-fn bump(mut n: int) -> int:
+fn bump(ref mut n: int) -> int:
     n += 1
     return n
 

@@ -8,10 +8,11 @@
 class Token:
     value: i32
 
-    fn drop(mut self):
-        println(self.value)
+    fn drop():
+        println(this.value)
 
-class Holder[T]:
+[T]
+class Holder:
     value: T
 
 fn main():

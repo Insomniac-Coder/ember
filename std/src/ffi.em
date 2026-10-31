@@ -16,21 +16,21 @@ pub struct NulError:
 pub struct CString:
     bytes: String
 
-extend str:
+extend StrView:
     ## It allocates a new `String`.
-    pub fn to_cstring(self) -> Result[CString, NulError]:
-        match self.find("\0"):
+    pub fn to_cstring() -> Result[CString, NulError]:
+        match this.find("\0"):
             Some(index):
                 return Err(NulError(index as usize))
             None:
-                bytes = self.to_string()
+                bytes = this.to_string()
                 bytes.push('\0')
                 return Ok(CString(bytes))
 
 extend String:
     ## It allocates a new `String`.
-    pub fn to_cstring(self) -> Result[CString, NulError]:
-        return self.as_str().to_cstring()
+    pub fn to_cstring() -> Result[CString, NulError]:
+        return this.as_str().to_cstring()
 
 ## `[TXT-7]` — text is UTF-8 everywhere; `WideString` is UTF-16 for the APIs that need it
 ## (Windows' `W` functions), converted explicitly: `s.to_wide()` encodes a `str` (an interior NUL
@@ -41,15 +41,15 @@ pub struct WideString:
     units: Array[u16]
 
     ## The units, without the terminating 0.
-    pub fn units(self) -> Span[u16]:
-        return self.units[0..self.units.len() - 1]
+    pub fn units() -> Span[u16]:
+        return this.units[0..this.units.len() - 1]
 
     ## The first unit's address: the units and their terminating 0, for a foreign call.
-    pub fn as_ptr(self) -> *u16:
-        return self.units.as_span().as_ptr()
+    pub fn as_ptr() -> *u16:
+        return this.units.as_span().as_ptr()
 
     ## It allocates a new `Array`.
-    pub fn from_units(units: Span[u16]) -> WideString:
+    pub static fn from_units(units: Span[u16]) -> WideString:
         kept: Array[u16] = []
         for unit in units:
             if unit == 0:
@@ -59,9 +59,9 @@ pub struct WideString:
         return WideString(kept)
 
     ## It allocates a new `String`.
-    pub fn to_string(self) -> String:
+    pub fn to_string() -> String:
         out = String()
-        units = self.units()
+        units = this.units()
         i = 0
         while i < units.len():
             unit = units[i] as u32
@@ -79,11 +79,11 @@ pub struct WideString:
                     out.push('\u{FFFD}')
         return out
 
-extend str:
+extend StrView:
     ## It allocates a new `Array`.
-    pub fn to_wide(self) -> Result[WideString, NulError]:
+    pub fn to_wide() -> Result[WideString, NulError]:
         units: Array[u16] = []
-        for (at, c) in self.char_indices():
+        for (at, c) in this.char_indices():
             code = c as u32
             if code == 0:
                 return Err(NulError(at as usize))
@@ -128,7 +128,7 @@ pub type VaList = u8
 ## (`CppError`), or a C function's status other than its success (`[FFI-16]`'s error types, which
 ## the compiler makes implement this). `?` turns one into `std.hot.ReloadError.Foreign` inside a
 ## `migrate_from`.
-pub interface ForeignFailure: Error:
+pub interface ForeignFailure: needs Error:
     pass
 
 ## `[FFI-24]` — a C++ exception, caught by the thunk of the C++ function that threw it: the name
@@ -141,10 +141,10 @@ pub struct CppError:
 
 extend CppError implements Display:
     ## It allocates: it writes into the formatter's text (`[STD-1]`).
-    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
-        f.write_str(self.type_name)?
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
+        f.write_str(this.type_name)?
         f.write_str(": ")?
-        return f.write_str(self.what)
+        return f.write_str(this.what)
 
 extend CppError implements Error:
     pass
@@ -162,28 +162,29 @@ extend CppError implements ForeignFailure:
 ## contract says `threads(creator)` records the thread that made it and, in the debug profile,
 ## panics when it ends on another; that is what lets a box move between threads at all (it is
 ## `Send`): the thread rule is the contract's, checked where it can be.
-pub struct ForeignBox[T]:
+[T]
+pub struct ForeignBox:
     pointer: *mut T
     destructor: extern "C" fn(*mut T)
     creator: u32
 
     ## The object's address, for a call that borrows it.
-    pub fn as_ptr(self) -> *mut T:
-        return self.pointer
+    pub fn as_ptr() -> *mut T:
+        return this.pointer
 
     ## The object, given up: the box frees nothing, and its address leaves the runtime's record
     ## (`[FFI-36b]`), so foreign code may own it — what a parameter contracted `owned` does
     ## (`[FFI-11]`), and how a `std::unique_ptr` parameter takes its object (`[FFI-17a]`).
-    pub fn into_raw(owned self) -> *mut T:
-        pointer = self.pointer
-        foreign_release(self.pointer, self.creator)
-        mem.forget(self)
+    pub fn into_raw() owns this -> *mut T:
+        pointer = this.pointer
+        foreign_release(this.pointer, this.creator)
+        mem.forget(this)
         return pointer
 
-    fn drop(mut self):
-        foreign_release(self.pointer, self.creator)
-        destroy = self.destructor
-        destroy(self.pointer)
+    fn drop():
+        foreign_release(this.pointer, this.creator)
+        destroy = this.destructor
+        destroy(this.pointer)
 
 unsafe extend[T] ForeignBox[T] implements Send:  # SAFETY: a box's thread rule is its contract's: `threads(creator)` is checked at its end ([FFI-33b])
     pass
@@ -192,7 +193,8 @@ unsafe extend[T] ForeignBox[T] implements Send:  # SAFETY: a box's thread rule i
 ## destructor the declaration of `T` names (`@ffi(destroys(f))`). Compiler-known: the destructor
 ## is read from that declaration, and one that says `@ffi(adopt=false)` is `E5052`.
 @safety("`h` is a live foreign object of type `T` that nothing else owns, and `T`'s destructor frees it.")
-pub unsafe fn adopt[T](h: *mut T) -> ForeignBox[T]:
+[T]
+pub unsafe fn adopt(h: *mut T) -> ForeignBox[T]:
     pass
 
 ## `[FFI-23]` — `Retained[T]` is the only way to let foreign code keep Ember memory.
@@ -208,17 +210,18 @@ pub unsafe fn adopt[T](h: *mut T) -> ForeignBox[T]:
 ## holds: the runtime calls it with the old and the new address right after commit publishes the
 ## move and before reclaim, so foreign code can follow it (a `Box`'s value never moves). Without
 ## one, the object is pinned and a reload that would move it is refused.
-pub struct Retained[T]:
+[T]
+pub struct Retained:
     value: T
     ## The runtime's record of `on_relocate` (`0`: none), which the token's end takes out.
     relocation: u64
 
-    pub fn pin(owned value: T, on_relocate: Option[extern "C" fn(ObjectPtr[T], ObjectPtr[T])] = None) -> Retained[T]:
+    pub static fn pin(owns value: T, on_relocate: Option[extern "C" fn(ObjectPtr[T], ObjectPtr[T])] = None) -> Retained[T]:
         relocation = retained_pin(value, on_relocate)
         return Retained(value, relocation)
 
-    fn drop(mut self):
-        retained_unpin(self.relocation)
+    fn drop():
+        retained_unpin(this.relocation)
 
 ## `[FFI-21]` — what C keeps of a callback contracted `callback(retained, user_data=p)`: the
 ## callable, moved into an allocation of its own whose address C was given as the user data. Only
@@ -231,27 +234,29 @@ pub struct ForeignCallback:
 
     ## It allocates when the callable's own `drop` does: ending it is a call through a C function
     ## pointer, whose effects nothing declares (`[STD-1]`).
-    fn drop(mut self):
-        release = self.release
-        release(self.data)
+    fn drop():
+        release = this.release
+        release(this.data)
 
 ## `[FFI-23]` (ODR-132) — the address of a class object, for foreign code to keep or to be handed
 ## back: no count of its own, so it says nothing about how long the object lives (a `Retained`
 ## token keeps it alive). To C it is one pointer to the object. Two are equal when they are the
 ## address of one object.
 @derive(Copy)
-pub struct ObjectPtr[C]:
+[C]
+pub struct ObjectPtr:
     address: *mut u8
 
 extend[C] ObjectPtr[C] implements Eq:
     ## Equal when they are the address of one object.
-    fn eq(self, other: ObjectPtr[C]) -> bool:
-        return self.address == other.address
+    fn eq(other: ObjectPtr[C]) -> bool:
+        return this.address == other.address
 
 ## `[FFI-23]` — compiler-known: a class object's pinned flag is set, or with `on_relocate` its
 ## record made (`[HR-20]`), a `Box` needs nothing, and any other value is refused. The result is
 ## the record's number, `0` for none.
-fn retained_pin[T](value: T, on_relocate: Option[extern "C" fn(ObjectPtr[T], ObjectPtr[T])]) -> u64:
+[T]
+fn retained_pin(value: T, on_relocate: Option[extern "C" fn(ObjectPtr[T], ObjectPtr[T])]) -> u64:
     return 0
 
 ## `[HR-20]` — compiler-known: a token's `on_relocate` record goes.
@@ -261,7 +266,8 @@ fn retained_unpin(relocation: u64):
 
 ## `[FFI-36b]`, `[FFI-33b]` — a box's end: the address leaves the runtime's record, and a box
 ## that records its creator is checked to end on that thread (debug). Compiler-known.
-fn foreign_release[T](pointer: *mut T, creator: u32):
+[T]
+fn foreign_release(pointer: *mut T, creator: u32):
     pass
 
 
@@ -276,7 +282,8 @@ unsafe extern "C":
 ## `push_back` and its end are calls into C++, never inlined (`[FFI-17f]`). `span()` and
 ## `span_mut()` view the elements without copying and borrow the vector, so neither outlives it;
 ## `to_array()` copies them. Not `Copy`, `Send` or `Sync`: C++ makes a container no such promise.
-pub struct CppVector[T]:
+[T]
+pub struct CppVector:
     object: *mut u8
     data: unsafe extern "C" fn(*mut u8) -> *mut T
     size: unsafe extern "C" fn(*mut u8) -> usize
@@ -286,44 +293,44 @@ pub struct CppVector[T]:
     ## `[FFI-17a]` — the vector at `object`, with its element type's thunks: what `import cpp`
     ## makes of a `std::vector<T>`.
     @safety("`object` is a live `std::vector<T>` nothing else owns, and the functions are the thunks of its element type")
-    pub unsafe fn from_thunks(object: *mut u8, data: unsafe extern "C" fn(*mut u8) -> *mut T, size: unsafe extern "C" fn(*mut u8) -> usize, push: unsafe extern "C" fn(*mut u8, *T), destroy: unsafe extern "C" fn(*mut u8)) -> CppVector[T]:
+    pub unsafe static fn from_thunks(object: *mut u8, data: unsafe extern "C" fn(*mut u8) -> *mut T, size: unsafe extern "C" fn(*mut u8) -> usize, push: unsafe extern "C" fn(*mut u8, *T), destroy: unsafe extern "C" fn(*mut u8)) -> CppVector[T]:
         return CppVector(object, data, size, push, destroy)
 
     ## The `std::vector` itself, for a call into C++.
-    pub fn as_ptr(self) -> *mut u8:
-        return self.object
+    pub fn as_ptr() -> *mut u8:
+        return this.object
 
-    pub fn len(self) -> usize:
-        size = self.size
+    pub fn len() -> usize:
+        size = this.size
         unsafe:  # SAFETY(ffi): the vector's own thunk, on the vector it came with
-            return size(self.object)
+            return size(this.object)
 
-    pub fn span(self) -> Span[T]:
-        data = self.data
+    pub fn span() -> Span[T]:
+        data = this.data
         unsafe:  # SAFETY(ffi): the vector's elements, which the view borrows the vector for
-            return cpp_span(ref self, data(self.object), self.len())
+            return cpp_span(ref this, data(this.object), this.len())
 
-    pub fn span_mut(mut self) -> MutSpan[T]:
-        data = self.data
-        count = self.len()
+    pub fn span_mut() -> MutSpan[T]:
+        data = this.data
+        count = this.len()
         unsafe:  # SAFETY(ffi): the vector's elements, viewed exclusively while the vector is
-            return cpp_span_mut(ref mut self, data(self.object), count)
+            return cpp_span_mut(ref mut this, data(this.object), count)
 
-    pub fn push_back(mut self, value: T):
-        push = self.push
+    pub fn push_back(value: T):
+        push = this.push
         unsafe:  # SAFETY(ffi): the thunk copies the value into the vector
-            push(self.object, ref_to_ptr(ref value))
+            push(this.object, ref_to_ptr(ref value))
 
-    fn drop(mut self):
-        destroy = self.destroy
+    fn drop():
+        destroy = this.destroy
         unsafe:  # SAFETY(ffi): the vector's end, once
-            destroy(self.object)
+            destroy(this.object)
 
-extend[T: Copy] CppVector[T]:
+extend[T: needs Copy] CppVector[T]:
     ## The elements, copied into an `Array`.
-    pub fn to_array(self) -> Array[T]:
+    pub fn to_array() -> Array[T]:
         out: Array[T] = []
-        for item in self.span():
+        for item in this.span():
             out.push(item)
         return out
 
@@ -337,19 +344,19 @@ pub struct CppFunction:
 
     ## `[FFI-17a]` — the `std::function` at `object`, with its thunk: what `import cpp` makes of one.
     @safety("`object` is a live `std::function` nothing else owns, and `destroy` deletes it")
-    pub unsafe fn from_thunks(object: *mut u8, destroy: unsafe extern "C" fn(*mut u8)) -> CppFunction:
+    pub unsafe static fn from_thunks(object: *mut u8, destroy: unsafe extern "C" fn(*mut u8)) -> CppFunction:
         return CppFunction(object, destroy)
 
     ## The `std::function` itself, for a call into C++.
-    pub fn as_ptr(self) -> *mut u8:
-        return self.object
+    pub fn as_ptr() -> *mut u8:
+        return this.object
 
     ## It allocates when the `std::function`'s destructor does: a call into C++ through a function
     ## pointer, whose effects nothing declares (`[STD-1]`).
-    fn drop(mut self):
-        destroy = self.destroy
+    fn drop():
+        destroy = this.destroy
         unsafe:  # SAFETY(ffi): the function's end, once
-            destroy(self.object)
+            destroy(this.object)
 
 ## `[FFI-17a]`, `[FFI-17e]` — a C++ `std::string` Ember owns: its bytes in place. `bytes()` views
 ## them and `to_str()` views them as text when they are UTF-8 (`[TXT-2]`), each borrowing the
@@ -364,44 +371,44 @@ pub struct CppString:
     ## `[FFI-17a]` — the string at `object`, with its thunks: what `import cpp` makes of a
     ## `std::string`.
     @safety("`object` is a live `std::string` nothing else owns, and the functions are its thunks")
-    pub unsafe fn from_thunks(object: *mut u8, data: unsafe extern "C" fn(*mut u8) -> *u8, size: unsafe extern "C" fn(*mut u8) -> usize, destroy: unsafe extern "C" fn(*mut u8)) -> CppString:
+    pub unsafe static fn from_thunks(object: *mut u8, data: unsafe extern "C" fn(*mut u8) -> *u8, size: unsafe extern "C" fn(*mut u8) -> usize, destroy: unsafe extern "C" fn(*mut u8)) -> CppString:
         return CppString(object, data, size, destroy)
 
     ## The `std::string` itself, for a call into C++.
-    pub fn as_ptr(self) -> *mut u8:
-        return self.object
+    pub fn as_ptr() -> *mut u8:
+        return this.object
 
     ## It calls code whose effects are not declared, which may be code that allocates.
-    pub fn len(self) -> usize:
-        size = self.size
+    pub fn len() -> usize:
+        size = this.size
         unsafe:  # SAFETY(ffi): the string's own thunk
-            return size(self.object)
+            return size(this.object)
 
     ## It calls code whose effects are not declared, which may be code that allocates.
-    pub fn bytes(self) -> Span[u8]:
-        data = self.data
+    pub fn bytes() -> Span[u8]:
+        data = this.data
         unsafe:  # SAFETY(ffi): the string's bytes, which the view borrows the string for
-            return cpp_span(ref self, data(self.object), self.len())
+            return cpp_span(ref this, data(this.object), this.len())
 
     ## It calls code whose effects are not declared, which may be code that allocates.
-    pub fn to_str(self) -> Result[str, Utf8Error]:
-        return self.bytes().to_str()
+    pub fn to_str() -> Result[StrView, Utf8Error]:
+        return this.bytes().to_str()
 
     ## It calls code whose effects are not declared, which may be code that allocates.
-    fn drop(mut self):
-        destroy = self.destroy
+    fn drop():
+        destroy = this.destroy
         unsafe:  # SAFETY(ffi): the string's end, once
-            destroy(self.object)
+            destroy(this.object)
 
 extend String implements From[CppString]:
     ## It allocates a new `String`.
-    fn from(owned value: CppString) -> String:
+    static fn from(owns value: CppString) -> String:
         return cpp_string_copy(value)
 
 ## `[FFI-17a]` — `String.from(c)`: the bytes of a `std::string`, copied, each invalid sequence
 ## becoming U+FFFD. Compiler-known: `String.from` of a `CppString` is this.
 ## It allocates a new `String`.
-fn cpp_string_copy(owned value: CppString) -> String:
+fn cpp_string_copy(owns value: CppString) -> String:
     bytes = value.bytes()
     out = String()
     at = 0
@@ -432,7 +439,8 @@ fn cpp_string_copy(owned value: CppString) -> String:
 ## `get()` is the object it shares, borrowing the pointer; `clone()` and its end copy and destroy
 ## the `std::shared_ptr`, C++'s count changing in C++ (calls into C++, `[FFI-17f]`). Not `Copy`,
 ## `Send` or `Sync`.
-pub struct CppShared[T]:
+[T]
+pub struct CppShared:
     object: *mut u8
     pointee: unsafe extern "C" fn(*mut u8) -> *mut T
     copy: unsafe extern "C" fn(*mut u8) -> *mut u8
@@ -441,51 +449,52 @@ pub struct CppShared[T]:
     ## `[FFI-17a]` — the `std::shared_ptr` at `object`, with its thunks: what `import cpp` makes
     ## of one.
     @safety("`object` is a live `std::shared_ptr<T>` nothing else owns, and the functions are its thunks")
-    pub unsafe fn from_thunks(object: *mut u8, pointee: unsafe extern "C" fn(*mut u8) -> *mut T, copy: unsafe extern "C" fn(*mut u8) -> *mut u8, destroy: unsafe extern "C" fn(*mut u8)) -> CppShared[T]:
+    pub unsafe static fn from_thunks(object: *mut u8, pointee: unsafe extern "C" fn(*mut u8) -> *mut T, copy: unsafe extern "C" fn(*mut u8) -> *mut u8, destroy: unsafe extern "C" fn(*mut u8)) -> CppShared[T]:
         return CppShared(object, pointee, copy, destroy)
 
     ## The `std::shared_ptr` itself, for a call into C++.
-    pub fn as_ptr(self) -> *mut u8:
-        return self.object
+    pub fn as_ptr() -> *mut u8:
+        return this.object
 
     ## The object it shares; an empty one panics (`try_get` gives an `Option`).
-    pub fn get(self) -> ref T:
-        pointee = self.pointee
+    pub fn get() -> ref T:
+        pointee = this.pointee
         address = null[*mut T]()
         unsafe:  # SAFETY(ffi): the pointer's own thunk
-            address = pointee(self.object)
+            address = pointee(this.object)
         if address.is_null():
             panic("`CppShared.get`: the `std::shared_ptr` is empty; use .try_get() for an Option")
         # The object the pointer shares, which the reference borrows the pointer for.
-        return cpp_pointee(ref self, address)
+        return cpp_pointee(ref this, address)
 
     ## The object it shares, or `None` for an empty one (`get`'s twin, `[ERR-13]`).
-    pub fn try_get(self) -> Option[ref T]:
-        pointee = self.pointee
+    pub fn try_get() -> Option[ref T]:
+        pointee = this.pointee
         address = null[*mut T]()
         unsafe:  # SAFETY(ffi): the pointer's own thunk
-            address = pointee(self.object)
+            address = pointee(this.object)
         if address.is_null():
             return None
-        return Some(cpp_pointee(ref self, address))
+        return Some(cpp_pointee(ref this, address))
 
-    fn drop(mut self):
-        destroy = self.destroy
+    fn drop():
+        destroy = this.destroy
         unsafe:  # SAFETY(ffi): this `std::shared_ptr`'s end, once
-            destroy(self.object)
+            destroy(this.object)
 
 extend[T] CppShared[T] implements Clone:
-    fn clone(self) -> CppShared[T]:
-        copy = self.copy
+    fn clone() -> CppShared[T]:
+        copy = this.copy
         unsafe:  # SAFETY(ffi): a copy of the `std::shared_ptr`, which C++ counts
-            return CppShared(copy(self.object), self.pointee, self.copy, self.destroy)
+            return CppShared(copy(this.object), this.pointee, this.copy, this.destroy)
 
 ## `[FFI-17a]`, `[FFI-17e]` — a C++ `std::weak_ptr<T>` Ember holds, never a `Weak` (`[WK-14]`):
 ## `lock()` is a `CppShared[T]` of the object while C++'s count keeps it, `None` once it has gone,
 ## and `expired()` says which without making one. It carries the thunks of `std::shared_ptr<T>` for
 ## what `lock()` gives. Its copy (`clone()`) and its end are calls into C++ (`[FFI-17f]`). Not `Copy`,
 ## `Send` or `Sync`.
-pub struct CppWeak[T]:
+[T]
+pub struct CppWeak:
     object: *mut u8
     locker: unsafe extern "C" fn(*mut u8) -> *mut u8
     expiry: unsafe extern "C" fn(*mut u8) -> bool
@@ -498,48 +507,51 @@ pub struct CppWeak[T]:
     ## `[FFI-17a]` — the `std::weak_ptr` at `object`, with its thunks and those of the
     ## `std::shared_ptr` its `lock()` gives: what `import cpp` makes of one.
     @safety("`object` is a live `std::weak_ptr<T>` nothing else owns, and the functions are its thunks and those of `std::shared_ptr<T>`")
-    pub unsafe fn from_thunks(object: *mut u8, locker: unsafe extern "C" fn(*mut u8) -> *mut u8, expiry: unsafe extern "C" fn(*mut u8) -> bool, copy: unsafe extern "C" fn(*mut u8) -> *mut u8, destroy: unsafe extern "C" fn(*mut u8), pointee: unsafe extern "C" fn(*mut u8) -> *mut T, shared_copy: unsafe extern "C" fn(*mut u8) -> *mut u8, shared_destroy: unsafe extern "C" fn(*mut u8)) -> CppWeak[T]:
+    pub unsafe static fn from_thunks(object: *mut u8, locker: unsafe extern "C" fn(*mut u8) -> *mut u8, expiry: unsafe extern "C" fn(*mut u8) -> bool, copy: unsafe extern "C" fn(*mut u8) -> *mut u8, destroy: unsafe extern "C" fn(*mut u8), pointee: unsafe extern "C" fn(*mut u8) -> *mut T, shared_copy: unsafe extern "C" fn(*mut u8) -> *mut u8, shared_destroy: unsafe extern "C" fn(*mut u8)) -> CppWeak[T]:
         return CppWeak(object, locker, expiry, copy, destroy, pointee, shared_copy, shared_destroy)
 
     ## The `std::weak_ptr` itself, for a call into C++.
-    pub fn as_ptr(self) -> *mut u8:
-        return self.object
+    pub fn as_ptr() -> *mut u8:
+        return this.object
 
     ## The object, shared again while C++'s count keeps it; `None` once it has gone.
-    pub fn lock(self) -> Option[CppShared[T]]:
-        locker = self.locker
+    pub fn lock() -> Option[CppShared[T]]:
+        locker = this.locker
         shared = null[*mut u8]()
         unsafe:  # SAFETY(ffi): the pointer's own thunk
-            shared = locker(self.object)
+            shared = locker(this.object)
         if shared.is_null():
             return None
         unsafe:  # SAFETY: a `std::shared_ptr<T>` the thunk made for this value alone, with its thunks
-            return Some(CppShared.from_thunks(shared, self.pointee, self.shared_copy, self.shared_destroy))
+            return Some(CppShared.from_thunks(shared, this.pointee, this.shared_copy, this.shared_destroy))
 
     ## Whether the object has gone.
-    pub fn expired(self) -> bool:
-        expiry = self.expiry
+    pub fn expired() -> bool:
+        expiry = this.expiry
         unsafe:  # SAFETY(ffi): the pointer's own thunk
-            return expiry(self.object)
+            return expiry(this.object)
 
-    fn drop(mut self):
-        destroy = self.destroy
+    fn drop():
+        destroy = this.destroy
         unsafe:  # SAFETY(ffi): this `std::weak_ptr`'s end, once
-            destroy(self.object)
+            destroy(this.object)
 
 extend[T] CppWeak[T] implements Clone:
-    fn clone(self) -> CppWeak[T]:
-        copy = self.copy
+    fn clone() -> CppWeak[T]:
+        copy = this.copy
         unsafe:  # SAFETY(ffi): a copy of the `std::weak_ptr`, which C++ counts
-            return CppWeak(copy(self.object), self.locker, self.expiry, self.copy, self.destroy, self.pointee, self.shared_copy, self.shared_destroy)
+            return CppWeak(copy(this.object), this.locker, this.expiry, this.copy, this.destroy, this.pointee, this.shared_copy, this.shared_destroy)
 
 ## `[FFI-17e]` — compiler-known: a C++ container's elements as a view, and a smart pointer's
 ## object as a reference, each borrowing `owner`.
-fn cpp_span[O, T](owner: ref O, pointer: *mut T, count: usize) -> Span[T]:
+[O, T]
+fn cpp_span(owner: ref O, pointer: *mut T, count: usize) -> Span[T]:
     pass
 
-fn cpp_span_mut[O, T](owner: ref mut O, pointer: *mut T, count: usize) -> MutSpan[T]:
+[O, T]
+fn cpp_span_mut(ref mut owner: O, pointer: *mut T, count: usize) -> MutSpan[T]:
     pass
 
-fn cpp_pointee[O, T](owner: ref O, pointer: *mut T) -> ref T:
+[O, T]
+fn cpp_pointee(owner: ref O, pointer: *mut T) -> ref T:
     pass

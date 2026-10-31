@@ -7,17 +7,19 @@
 ## field then names `A`; it was `E1010`, "cannot find type `A`", as `A` was registered only once
 ## its methods were.
 
-struct A[T]:
+[T]
+struct A:
     n: T
 
-    fn b(mut self) -> B[T]:
-        return B[T](a=ref mut self)
+    fn b() -> B[T]:
+        return B[T](a=ref mut this)
 
-struct B[T]:
+[T]
+struct B:
     a: ref mut A[T]
 
-    fn get(self) -> T:
-        return self.a.n
+    fn get() -> T:
+        return this.a.n
 
 fn main():
     x = A[int](n=7)

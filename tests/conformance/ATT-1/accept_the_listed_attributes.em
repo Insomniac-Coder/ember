@@ -20,8 +20,7 @@ enum Level:
 struct Window:
     items: Span[int]
 
-@borrows(xs)
-fn pick_first(xs: Span[int], ys: Span[int]) -> Span[int]:
+fn pick_first(xs: Span[int], ys: Span[int]) -> Span[int] from xs:
     return xs
 
 fn main():

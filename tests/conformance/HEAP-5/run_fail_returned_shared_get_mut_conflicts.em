@@ -6,8 +6,7 @@
 struct Counter:
     value: i32
 
-@borrows(owner)
-fn borrow_counter(mut owner: Shared[Counter]) -> ref mut Counter:
+fn borrow_counter(ref mut owner: Shared[Counter]) -> ref mut Counter from owner:
     return owner.get_mut()
 
 fn main():

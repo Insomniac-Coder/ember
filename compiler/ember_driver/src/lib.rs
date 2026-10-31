@@ -10,6 +10,7 @@ mod comptime;
 mod cores;
 mod foreign;
 mod incremental;
+mod migrate;
 mod llvm;
 mod memory;
 mod packages;
@@ -296,7 +297,7 @@ fn retain_referenced_standard_bodies(
 fn report_float_mode_refused(sink: &mut Sink, bodies: &[ember_mir::Body], error: &ember_build::BuildError) -> bool {
     let ember_build::BuildError::FloatModeRefused { toolchain, flag, fast } = error else { return false };
     let (attribute, mode) =
-        if *fast { ("@fastmath", ember_types::FpMode::Fast) } else { ("@fp(contract)", ember_types::FpMode::Contract) };
+        if *fast { ("@fastmath", ember_types::FpMode::Fast) } else { ("@fp(allow_fma)", ember_types::FpMode::Contract) };
     let span = bodies.iter().find(|body| body.fp == mode && !body.span.is_dummy()).map_or(Span::DUMMY, |body| body.span);
     sink.emit(
         Diagnostic::error(codes::E9041, span, format!("`{toolchain}` cannot compile a function with `{attribute}` as written: it does not take `{flag}`"))
@@ -682,6 +683,17 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "bind" => cimport::bind(&args[1..]),
         // `[BLD-15]` — the guard a Ninja build runs each link under.
         "__link" => Ok(ExitCode::from(ember_build::link_guard_main(&args[1..]).clamp(0, 255) as u8)),
+        // The repository's own migration (`M1-plan.md`): `fmt --migrate --write` on each file, its
+        // layout kept, so the lines and columns the tests expect move with the text only.
+        "__migrate" => {
+            let mut code = ExitCode::SUCCESS;
+            for file in &args[1..] {
+                if migrate_file(Path::new(file.as_str()), true, false, true)? != ExitCode::SUCCESS {
+                    code = ExitCode::FAILURE;
+                }
+            }
+            Ok(code)
+        }
         "why" => why(&args[1..]),
         "test" => test_runner::command(&args[1..]),
         "bench" => bench::command(&args[1..]),
@@ -825,7 +837,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 if check_only {
                     return Err("`--migrate` and `--check` cannot be combined".to_string());
                 }
-                return migrate_file(Path::new(input), write, json);
+                return migrate_file(Path::new(input), write, json, false);
             }
             format_file(Path::new(input), check_only, write, json)
         }
@@ -1068,7 +1080,6 @@ fn cycle_analysis(
         &common,
         &mut sink,
         overflow_policy(Profile::Debug),
-        lint_settings.return_intersection,
         true,
         &ember_typeck::ComptimeAnswers::new(),
         lint_settings.realtime,
@@ -3314,20 +3325,25 @@ fn format_file(input: &Path, check_only: bool, write: bool, json: bool) -> Resul
     Ok(ExitCode::SUCCESS)
 }
 
-/// `[CLI-20]` — `ember fmt --migrate`: source written for 0.9.8 rewritten into 0.9.9 where the
-/// change is mechanical, then a list of what changed and of what could not be rewritten. Each
-/// rewrite is a migration suggestion on the diagnostic the old form meets (the parser's for `::`
-/// and `@latebound`, the checker's for integer `/`, `Box[dyn fn]`, a pair loop over a `Map` and
-/// `with_views`, the loader's for `std.borrow`); they are applied, and the file checked again,
-/// until none is left. `@view` meets no diagnostic on a view type: it is documentation since 0.9.9
-/// (`[TYP-34]`) and is removed outright. Only the named file is rewritten.
-fn migrate_file(input: &Path, write: bool, json: bool) -> Result<ExitCode, String> {
+/// `[CLI-20]` — `ember fmt --migrate`: source written for an earlier version rewritten into the
+/// current one where the change is mechanical, then a list of what changed and of what could not be
+/// rewritten. Each rewrite is a migration suggestion on the diagnostic the old form meets (the
+/// parser's for `::` and `@latebound`, the checker's for integer `/`, `Box[dyn fn]`, a pair loop
+/// over a `Map` and `with_views`, the loader's for `std.borrow`); they are applied, and the file
+/// checked again, until none is left. A function in a type body that lists no object, in a file
+/// that lists `self` elsewhere, meets none: 0.9.15 reads it as a method, so it is made `static fn`
+/// outright. `@view` is kept: it is checked again in 0.9.15 (`[ATT-2]`). Only the named file is
+/// rewritten. `repository`: the repository's own migration, whose every file is 0.9.10 source:
+/// 0.9.15's rewrites alone, with the file's own layout.
+fn migrate_file(input: &Path, write: bool, json: bool, repository: bool) -> Result<ExitCode, String> {
     const ROUNDS: usize = 8;
     let mut original = SourceMap::new();
     let original_file = original.load(input).map_err(|error| error.to_string())?;
     let mut text = original.file(original_file).text.clone();
     let mut changed: Vec<String> = Vec::new();
     let mut left: Vec<String> = Vec::new();
+    // What M1's spelling rewrites could not make, from the file as written (`migrate.rs`).
+    let mut left_as_written: Vec<String> = Vec::new();
     // Each round's applied edits, so a place in a later round's text is reported where it is in
     // the file as written.
     let mut rounds: Vec<Vec<(usize, usize, usize)>> = Vec::new();
@@ -3350,21 +3366,61 @@ fn migrate_file(input: &Path, write: bool, json: bool) -> Result<ExitCode, Strin
         }
         original.location(Span::new(original_file, at as u32, at as u32))
     };
-    for _ in 0..ROUNDS {
+    for round in 0..ROUNDS {
         let mut map = SourceMap::new();
         let file = map.add(input, text.clone());
         let mut sink = Sink::new();
         let lexed = ember_lexer::lex(file, &text, &mut sink);
+        let tokens = lexed.tokens.clone();
         let module = ember_parser::parse(file, &text, lexed.tokens, &mut sink);
         let mut edits: Vec<(Span, String)> = Vec::new();
-        // `[TYP-34]` — `@view` on a struct or an enum.
-        for item in &module.items {
-            for attr in item.attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("view")) {
-                edits.push((attr.span, String::new()));
-                changed.push(format!("{}: `@view` removed", located(attr.span, &rounds)));
+        // `[CLI-20]` — in a file written for 0.9.10, one that lists a method's object (`self`), a
+        // function in a type body that lists none has no object: `static fn`. 0.9.15 reads it as a
+        // method whose object is `this`.
+        // Made on the file as written only: once `self` is gone, a method lists no object either.
+        // The repository's own first migration (M1's piece 3) made these in every file; a file that
+        // lists no object now is in 0.9.15's methods, so running it again leaves its functions be.
+        if round == 0 && lists_an_object(&module) {
+            for decl in type_body_functions(&module) {
+                // One whose body uses `self` is a method that forgot to list it (Python's habit P14):
+                // its object is `this`, not none.
+                let uses_self = decl.body.as_ref().is_some_and(|body| tokens.iter().any(|token| {
+                    token.span.start >= body.span.start && token.span.end <= body.span.end
+                        && matches!(token.kind, ember_lexer::TokenKind::Keyword(ember_lexer::Kw::SelfValue))
+                }));
+                let implicit = !uses_self && decl.params.first().is_some_and(|param| {
+                    matches!(param.kind, ember_ast::ParamKind::Receiver { implicit: true, .. }) && param.mode != ember_ast::Mode::Owned
+                });
+                if let Some(at) = implicit.then(|| fn_keyword_at(&text, decl.name.span.start as usize)).flatten() {
+                    let span = Span::new(file, at as u32, at as u32);
+                    edits.push((span, "static ".to_string()));
+                    changed.push(format!("{}: `{}` has no object: `static fn`", located(decl.name.span, &rounds), decl.name.name));
+                }
+            }
+            // `[CLI-20]` — `self` to `this`, the object taken out of a method's parameters
+            // (`fn reset(mut self):` to `fn reset():`, `owned self` to `owns this` after them).
+            for decl in type_body_functions(&module) {
+                for edit in object_to_this(decl, &text, file, &tokens) {
+                    edits.push(edit);
+                }
+                if decl.params.first().is_some_and(|param| matches!(param.kind, ember_ast::ParamKind::Receiver { implicit: false, .. })) {
+                    changed.push(format!("{}: `{}`'s object is `this`", located(decl.name.span, &rounds), decl.name.name));
+                }
             }
         }
-        if !sink.has_errors() {
+        // `[CLI-20]` — M1's spelling rewrites (`migrate.rs`).
+        // Every round: each finds only old forms, and type parameters move once the rest is made.
+        // What they could not make is listed from the file as written.
+        let rewrites = migrate::spellings(&module, &text, file, &tokens);
+        changed.extend(rewrites.changed.iter().map(|(span, why)| format!("{}: {why}", located(*span, &rounds))));
+        if round == 0 {
+            left_as_written.extend(rewrites.left.iter().map(|(span, why)| format!("{}: {why}", located(*span, &rounds))));
+        }
+        edits.extend(rewrites.edits);
+        // The repository's own migration makes this version's rewrites only: a test may be written
+        // to meet an earlier version's refusal, which the checker's migrations would rewrite away.
+        // A round that rewrote spellings checks the rewritten text in the next.
+        if !sink.has_errors() && !repository && edits.is_empty() {
             let root_dir = package_source_root(input);
             let lints = manifest_lint_settings(&root_dir, &mut map, &mut sink);
             let modules = load_modules(module, &root_dir, &mut map, &mut sink);
@@ -3377,7 +3433,6 @@ fn migrate_file(input: &Path, write: bool, json: bool) -> Result<ExitCode, Strin
                     &common,
                     &mut sink,
                     overflow_policy(Profile::Debug),
-                    lints.return_intersection,
                     true,
                     &ember_typeck::ComptimeAnswers::new(),
                     lints.realtime,
@@ -3393,7 +3448,7 @@ fn migrate_file(input: &Path, write: bool, json: bool) -> Result<ExitCode, Strin
         }
         left.clear();
         for diagnostic in sink.diagnostics() {
-            let mut migrations = diagnostic.suggestions.iter().filter(|s| s.migration).peekable();
+            let mut migrations = diagnostic.suggestions.iter().filter(|s| s.migration && !repository).peekable();
             if migrations.peek().is_none() {
                 if diagnostic.severity == ember_diag::Severity::Error {
                     let at = if diagnostic.primary.span.file == file {
@@ -3425,9 +3480,10 @@ fn migrate_file(input: &Path, write: bool, json: bool) -> Result<ExitCode, Strin
     let mut sink = Sink::new();
     let lexed = ember_lexer::lex(file, &text, &mut sink);
     let module = ember_parser::parse(file, &text, lexed.tokens, &mut sink);
-    if !sink.has_errors() {
+    if !sink.has_errors() && !repository {
         text = ember_fmt::format(&module, &text, &lexed.comments);
     }
+    left.extend(left_as_written);
     if json {
         println!(
             "{}",
@@ -3442,11 +3498,98 @@ fn migrate_file(input: &Path, write: bool, json: bool) -> Result<ExitCode, Strin
         }
     }
     if write {
-        std::fs::write(input, &text).map_err(|e| e.to_string())?;
+        if !(repository && changed.is_empty()) {
+            std::fs::write(input, &text).map_err(|e| e.to_string())?;
+        }
     } else if !json {
         print!("{text}");
     }
     Ok(if left.is_empty() { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+}
+
+/// `[CLI-20]` — the edits that take a method's listed object out (`self`, `mut self`, `owned self`;
+/// one with a type, `self: Box[Self]`, is left) and spell it `this` in its body; `owned self` is
+/// `owns this` after the parameters. None for a function that lists no object.
+fn object_to_this(decl: &ember_ast::FnDecl, text: &str, file: ember_span::FileId, tokens: &[ember_lexer::Token]) -> Vec<(Span, String)> {
+    let Some(first) = decl.params.first() else { return Vec::new() };
+    let ember_ast::ParamKind::Receiver { ty: None, implicit: false } = &first.kind else { return Vec::new() };
+    let mut edits = Vec::new();
+    let removed_end = decl.params.get(1).map_or(first.span.end, |next| next.span.start);
+    edits.push((Span::new(file, first.span.start, removed_end), String::new()));
+    if first.mode == ember_ast::Mode::Owned {
+        let last = decl.params.last().map_or(first.span.end, |param| param.span.end) as usize;
+        if let Some(close) = text[last..].find(')') {
+            let at = (last + close + 1) as u32;
+            edits.push((Span::new(file, at, at), " owns this".to_string()));
+        }
+    }
+    if let Some(body) = &decl.body {
+        for token in tokens.iter().filter(|token| token.span.start >= body.span.start && token.span.end <= body.span.end) {
+            match &token.kind {
+                ember_lexer::TokenKind::Keyword(ember_lexer::Kw::SelfValue) => edits.push((token.span, "this".to_string())),
+                // An f-string is one token: each `self` of its `{…}` expressions, by its text.
+                ember_lexer::TokenKind::Lit(ember_lexer::Lit::FStr(parts)) => {
+                    for part in parts {
+                        let ember_lexer::FStrPart::Expr { span, .. } = part else { continue };
+                        let source = &text[span.start as usize..span.end as usize];
+                        let word = |c: char| c == '_' || c.is_alphanumeric();
+                        for (at, _) in source.match_indices("self") {
+                            let before = source[..at].chars().next_back();
+                            let after = source[at + 4..].chars().next();
+                            if !before.is_some_and(word) && !after.is_some_and(word) {
+                                let start = span.start + at as u32;
+                                edits.push((Span::new(file, start, start + 4), "this".to_string()));
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    edits
+}
+
+/// Whether a module lists a method's object among its parameters (`self`), as 0.9.10 did.
+fn lists_an_object(module: &ember_ast::Module) -> bool {
+    type_body_functions(module).any(|decl| {
+        decl.params.iter().any(|param| matches!(param.kind, ember_ast::ParamKind::Receiver { implicit: false, .. }))
+    })
+}
+
+/// The functions of a module's type bodies: its structs', classes', enums', interfaces' and
+/// `extend` blocks', an overlay's `extend` blocks among them (`[GRM-35]`).
+fn type_body_functions(module: &ember_ast::Module) -> impl Iterator<Item = &ember_ast::FnDecl> {
+    module.items.iter().flat_map(|item| {
+        let members: Vec<&[ember_ast::Member]> = match &item.kind {
+            ember_ast::ItemKind::Struct(decl) => vec![&decl.members],
+            ember_ast::ItemKind::Class(decl) => vec![&decl.members],
+            ember_ast::ItemKind::Enum(decl) => vec![&decl.members],
+            ember_ast::ItemKind::Interface(decl) => vec![&decl.members],
+            ember_ast::ItemKind::Extend(decl) => vec![&decl.members],
+            ember_ast::ItemKind::Overlay(decl) => decl
+                .items
+                .iter()
+                .filter_map(|entry| match &entry.kind {
+                    ember_ast::OverlayItemKind::Extend(decl) => Some(decl.members.as_slice()),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        members.into_iter().flatten().filter_map(|member| match &member.kind {
+            ember_ast::MemberKind::Fn(decl) => Some(decl),
+            _ => None,
+        })
+    })
+}
+
+/// Where the `fn` (or the `gen` before it) of the function named at `name` begins.
+fn fn_keyword_at(text: &str, name: usize) -> Option<usize> {
+    let before = text[..name].trim_end();
+    let fn_at = before.strip_suffix("fn")?.len();
+    let head = text[..fn_at].trim_end();
+    Some(head.strip_suffix("gen").filter(|rest| rest.ends_with(char::is_whitespace)).map_or(fn_at, str::len))
 }
 
 /// `[CLI-20]` — `edits` applied to `text`, in order where two share a place; one overlapping an
@@ -3471,6 +3614,9 @@ fn apply_migration_edits(text: &str, mut edits: Vec<(Span, String)>) -> (String,
         *span = Span::new(span.file, start as u32, end as u32);
     }
     edits.sort_by_key(|(span, _)| (span.start, span.end));
+    // One rewrite two diagnostics both ask for (`static` before a `fn` the file and a call each
+    // name) is made once.
+    edits.dedup_by(|(span, with), (kept, kept_with)| (span.start, span.end) == (kept.start, kept.end) && with == kept_with);
     let mut out = String::with_capacity(text.len());
     let mut applied = Vec::with_capacity(edits.len());
     let mut at = 0usize;
@@ -5310,7 +5456,6 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
             &common,
             &mut sink,
             overflow_policy(options.profile),
-            lint_settings.return_intersection,
             options.profile == Profile::Debug,
             &answers,
             lint_settings.realtime,
@@ -6983,7 +7128,6 @@ fn abnormal_end(status: &std::process::ExitStatus) -> Option<String> {
 /// unrelated invoking source file.
 #[derive(Copy, Clone, Default)]
 struct ManifestLintSettings {
-    return_intersection: bool,
     long_term_access_across_dynamic_call: bool,
     /// `[EFF-19]` — `[realtime] contracts`, when the manifest declares them.
     realtime: Option<ember_hir::Effects>,
@@ -7174,9 +7318,6 @@ fn manifest_lint_settings(
                                 location,
                                 format!("unknown lint `{key}` in `[lints]`"),
                             ));
-                        } else if key.eq_ignore_ascii_case("l3014") {
-                            settings.return_intersection |=
-                                matches!(value.trim().trim_matches('"'), "warn" | "deny");
                         } else if key.eq_ignore_ascii_case("l3013") {
                             settings.long_term_access_across_dynamic_call |=
                                 matches!(value.trim().trim_matches('"'), "warn" | "deny");
@@ -7365,8 +7506,9 @@ fn realtime_contracts(value: &str, location: Span, sink: &mut Sink) -> ember_hir
 /// the descriptive names the manifest examples establish. Configuration for a
 /// lint can therefore be validated before that lint has a producer.
 fn manifest_lint_is_known(key: &str) -> bool {
+    // A retired lint (`L3014`) is no lint any more.
     ember_diag::codes::lookup(key)
-        .is_some_and(|code| code.kind == ember_diag::codes::CodeKind::Lint)
+        .is_some_and(|code| code.kind == ember_diag::codes::CodeKind::Lint && !code.title.starts_with("retired"))
         || matches!(key, "unused" | "potential_cycle" | "large_copy")
 }
 
@@ -7392,8 +7534,8 @@ fn print_view_contracts(bodies: &[ember_mir::Body], types: &ember_types::TypeTab
         }
         let word = |mode: ember_mir::ParameterMode| match mode {
             ember_mir::ParameterMode::Borrow => "",
-            ember_mir::ParameterMode::Mut => "mut ",
-            ember_mir::ParameterMode::Owned => "owned ",
+            ember_mir::ParameterMode::Mut => "ref mut ",
+            ember_mir::ParameterMode::Owned => "owns ",
         };
         let shown: Vec<String> = params.iter().map(|(name, ty, mode)| format!("{}{name}: {}", word(*mode), types.display(*ty))).collect();
         println!("fn {}({}) -> {}", ember_analysis::effects::function_name(body, types), shown.join(", "), types.display(result));

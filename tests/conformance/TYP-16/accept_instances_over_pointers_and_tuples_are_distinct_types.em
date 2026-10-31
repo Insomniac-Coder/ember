@@ -11,10 +11,12 @@
 # `Pair[int, (int, int)]`, and `Option[*int]` and `Option[int]`. A type
 # declared with an instance's spelling (`Wrap_i64`) is a type of its own.
 
-struct Wrap[T]:
+[T]
+struct Wrap:
     x: T
 
-struct Pair[A, B]:
+[A, B]
+struct Pair:
     a: A
     b: B
 

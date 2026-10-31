@@ -19,7 +19,7 @@ fn main():
         pairs.push((i, x))
     println(pairs)
     println(xs.sum(), xs.max(), xs.count(), xs.skip(1).count(), xs.any(fn(x) => x > 8))
-    m: Map[str, int] = {"a": 1, "b": 2}
+    m: Map[StrView, int] = {"a": 1, "b": 2}
     s: Set[int] = {3, 4}
     println(m.count(), s.sum(), m.keys().last())
     view = xs.as_span()

@@ -2,14 +2,16 @@
 #$ rules: CLS-4
 #$ error[E2020]: concrete class `Square[bool]` does not implement abstract method `area`
 
-abstract class Shape[T]:
-    virtual fn area(self) -> i32
+[T]
+abstract class Shape:
+    virtual fn area() -> i32
 
-    fn init(mut self):
+    fn init():
         pass
 
-class Square[T](Shape[T]):
-    fn init(mut self):
+[T]
+class Square(Shape[T]):
+    fn init():
         super.init()
 
 fn main():

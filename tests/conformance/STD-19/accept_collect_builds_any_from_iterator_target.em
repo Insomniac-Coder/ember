@@ -19,7 +19,8 @@ struct Tally:
     counts: Map[int, int]
 
 extend Tally implements FromIterator[int]:
-    fn from_iter[I: Iterator[Item = int]](owned it: I) -> Tally:
+    [I: needs Iterator[Item = int]]
+    static fn from_iter(owns it: I) -> Tally:
         counts: Map[int, int] = Map()
         for x in it:
             if x in counts:
@@ -30,20 +31,20 @@ extend Tally implements FromIterator[int]:
 
 fn main():
     xs = [3, 1, 3, 2, 1, 3]
-    a = xs.iter().copied().collect[Array[int]]()
+    a = xs.iter().copy_each().collect[Array[int]]()
     println(a)
-    b: Array[int] = xs.iter().copied().map(fn(x: int) => x * 10).collect()
+    b: Array[int] = xs.iter().copy_each().map(fn(x: int) => x * 10).collect()
     println(b)
-    s: Set[int] = xs.iter().copied().collect()
+    s: Set[int] = xs.iter().copy_each().collect()
     println(s.len(), s.contains(2))
     pairs = [(1, 10), (2, 20), (1, 30)]
-    m: Map[int, int] = pairs.iter().copied().collect()
+    m: Map[int, int] = pairs.iter().copy_each().collect()
     println(m[1], m[2], m.len())
     cs = ['h', 'e', 'y']
-    word: String = cs.iter().copied().collect()
+    word: String = cs.iter().copy_each().collect()
     println(word)
     parts = ["ab".to_string(), "cd".to_string()]
-    joined: String = parts.iter().cloned().collect()
+    joined: String = parts.iter().copy_each().collect()
     println(joined)
-    t: Tally = xs.iter().copied().collect()
+    t: Tally = xs.iter().copy_each().collect()
     println(t.counts[3], t.counts[1], t.counts[2])

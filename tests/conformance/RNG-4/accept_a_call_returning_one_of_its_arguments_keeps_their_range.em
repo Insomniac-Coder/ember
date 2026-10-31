@@ -10,7 +10,8 @@
 # `x % 100003`'s ranges, and the running total keeps no check (ADR-101).
 # `larger` is called from two places, so no compiler's build inlines it.
 
-fn larger[T: Ord](a: T, b: T) -> T:
+[T: needs Ord]
+fn larger(a: T, b: T) -> T:
     if a > b:
         return a
     return b

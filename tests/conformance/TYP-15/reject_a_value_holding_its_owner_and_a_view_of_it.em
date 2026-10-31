@@ -9,7 +9,7 @@
 @view
 struct Parsed:
     text: String
-    head: str
+    head: StrView
 
 fn main():
     t = "hello world".to_string()

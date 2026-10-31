@@ -19,19 +19,19 @@ struct Disk:
     code: int
 
 extend Disk implements Display, Error:
-    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
-        return f.write_str(f"disk {self.code}")
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
+        return f.write_str(f"disk {this.code}")
 
 struct Load:
     cause: Disk
 
 extend Load implements Display:
-    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
         return f.write_str("load failed")
 
 extend Load implements Error:
-    fn source(self) -> Option[ref dyn Error]:
-        return Some(ref self.cause)
+    fn source() -> Option[ref dyn Error]:
+        return Some(ref this.cause)
 
 fn chain(e: ref dyn Error):
     println(f"{e} / {e!r}")

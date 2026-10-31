@@ -6,17 +6,18 @@
 # opaque type parameter shared by the receiver and builder bounds.
 
 interface Build[T]:
-    fn make(value: T) -> Self
+    static fn make(value: T) -> Self
 
 interface Source:
-    type Item: Copy
-    fn gather[C: Build[Item]](self) -> C
+    type Item: needs Copy
+    [C: needs Build[Item]]
+    fn gather() -> C
 
 struct Value:
     n: int
 
 extend Value implements Build[int]:
-    fn make(value: int) -> Value:
+    static fn make(value: int) -> Value:
         return Value(value)
 
 struct Numbers:
@@ -24,13 +25,16 @@ struct Numbers:
 
 extend Numbers implements Source:
     type Item = int
-    fn gather[C: Build[int]](self) -> C:
-        return C.make(self.n)
+    [C: needs Build[int]]
+    fn gather() -> C:
+        return C.make(this.n)
 
-fn fixed[S: Source[Item = int], C: Build[int]](s: S) -> C:
+[S: needs Source[Item = int], C: needs Build[int]]
+fn fixed(s: S) -> C:
     return s.gather[C]()
 
-fn open_item[T: Copy, S: Source[Item = T], C: Build[T]](s: S) -> C:
+[T: needs Copy, S: needs Source[Item = T], C: needs Build[T]]
+fn open_item(s: S) -> C:
     return s.gather[C]()
 
 fn main():

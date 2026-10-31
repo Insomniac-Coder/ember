@@ -12,7 +12,7 @@ fn main():
     xs = [1, 2, 3, 4, 5, 6]
     k = 10
     doubled = xs.iter().map(fn(x: ref int) => x * 2).to_array()
-    evens = xs.iter().filter(fn(x: ref int) => x % 2 == 0).copied().to_array()
+    evens = xs.iter().filter(fn(x: ref int) => x % 2 == 0).copy_each().to_array()
     small = xs.iter().take_while(fn(x: ref int) => x < 4).count()
     rest = xs.iter().skip_while(fn(x: ref int) => x < 4).count()
     halves = xs.iter().filter_map(fn(x: ref int) => Some(x // 2) if x % 2 == 0 else None).to_array()

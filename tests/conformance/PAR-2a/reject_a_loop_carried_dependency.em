@@ -5,7 +5,7 @@
 # index: `xs[i + 1]` is read by the iteration after the one that writes it, which may already have
 # run on another thread. The help names the ways out.
 
-fn shifts(mut xs: MutSpan[int]):
+fn shifts(ref mut xs: MutSpan[int]):
     @parallel
     for i in 0..xs.len() - 1:
         xs[i] = xs[i + 1]

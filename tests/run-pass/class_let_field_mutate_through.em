@@ -12,17 +12,17 @@
 class Counter:
     value: i32
 
-    fn bump(mut self):
-        self.value = self.value + 1
+    fn bump():
+        this.value = this.value + 1
 
 class Holder:
     let counter: Counter
 
-    fn init(mut self, value: i32):
-        self.counter = Counter(value)
+    fn init(value: i32):
+        this.counter = Counter(value)
 
-    fn bump_counter(mut self):
-        self.counter.bump()
+    fn bump_counter():
+        this.counter.bump()
 
 fn main():
     holder = Holder(41)

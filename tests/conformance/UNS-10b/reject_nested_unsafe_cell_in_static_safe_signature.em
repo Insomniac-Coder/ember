@@ -6,8 +6,8 @@ from std.mem import UnsafeCell
 struct Wrapper:
     cell: UnsafeCell[i32]
 
-@static_safe
-fn forbidden(owned wrapper: Wrapper) -> i32: #$ error[E3105]: `UnsafeCell` is not permitted in `@static_safe` code
+@no_alias_checks
+fn forbidden(owns wrapper: Wrapper) -> i32: #$ error[E3105]: `UnsafeCell` is not permitted in `@no_alias_checks` code
     return wrapper.cell.into_inner()
 
 fn main():

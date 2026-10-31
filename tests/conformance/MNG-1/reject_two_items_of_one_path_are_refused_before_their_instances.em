@@ -11,10 +11,11 @@
 
 import grid
 
-struct grid[T]:  #$ error[E1032]: item `grid` has the path of module `grid`
+[T]
+struct grid:  #$ error[E1032]: item `grid` has the path of module `grid`
     v: T
 
-    fn at(self) -> int:
+    fn at() -> int:
         return 1
 
 fn main():

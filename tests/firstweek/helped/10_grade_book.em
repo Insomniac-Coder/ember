@@ -4,15 +4,15 @@ struct Student:
     name: String
     scores: Array[int] = []
 
-    fn average(self) -> float:
-        if self.scores.len() == 0:
+    fn average() -> float:
+        if this.scores.len() == 0:
             return 0.0
-        return sum(self.scores) as float / self.scores.len() as float
+        return sum(this.scores) as float / this.scores.len() as float
 
-    fn best(self) -> int:
-        return self.scores.iter().max().unwrap()
+    fn best() -> int:
+        return this.scores.iter().max().unwrap()
 
-fn letter(avg: float) -> str:
+fn letter(avg: float) -> StrView:
     if avg >= 90.0:
         return "A"
     elif avg >= 80.0:
@@ -27,29 +27,29 @@ class GradeBook:
     course: String
     students: Map[String, Student] = {}
 
-    fn init(self, owned course: String):
-        self.course = course
+    fn init(owns course: String):
+        this.course = course
 
-    fn record(self, name: str, score: int):
+    fn record(name: StrView, score: int):
         if not 0 <= score <= 100:
             println(f"ignoring impossible score {score} for {name}")
             return
-        if name not in self.students:
-            self.students[name] = Student(name=name.to_string())
-        self.students[name].scores.push(score)
+        if name not in this.students:
+            this.students[name] = Student(name=name.to_string())
+        this.students[name].scores.push(score)
 
-    fn class_average(self) -> float:
-        averages = [s.average() for s in self.students.values()]
+    fn class_average() -> float:
+        averages = [s.average() for s in this.students.values()]
         return sum(averages) / averages.len() as float
 
-    fn ranking(self) -> Array[Student]:
-        result = [s.clone() for s in self.students.values()]
+    fn ranking() -> Array[Student]:
+        result = [s.clone() for s in this.students.values()]
         result.sort_by_key(fn(s) => -s.average())
         return result
 
-    fn histogram(self) -> Map[str, int]:
-        counts: Map[str, int] = {"A": 0, "B": 0, "C": 0, "D": 0, "F": 0}
-        for s in self.students.values():
+    fn histogram() -> Map[StrView, int]:
+        counts: Map[StrView, int] = {"A": 0, "B": 0, "C": 0, "D": 0, "F": 0}
+        for s in this.students.values():
             counts[letter(s.average())] += 1
         return counts
 

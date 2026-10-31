@@ -7,10 +7,10 @@ struct Words:
     names: Array[String]
     count: int = 0
 
-    fn bump(mut self):
-        touch(self)
+    fn bump():
+        touch(this)
 
-fn touch(mut w: Words):
+fn touch(ref mut w: Words):
     w.count += 1
 
 fn main():

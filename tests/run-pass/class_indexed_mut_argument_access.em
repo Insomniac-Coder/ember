@@ -10,10 +10,10 @@
 class Slot:
     value: i32
 
-fn increment(mut value: i32):
+fn increment(ref mut value: i32):
     value = value + 1
 
-fn next_index(mut value: usize) -> usize:
+fn next_index(ref mut value: usize) -> usize:
     value = value + 1
     return value - 1
 

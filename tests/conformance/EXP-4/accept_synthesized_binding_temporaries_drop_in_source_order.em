@@ -20,12 +20,12 @@
 struct Marker:
     pub n: int
 
-    fn drop(mut self):
-        println("drop", self.n)
+    fn drop():
+        println("drop", this.n)
 
 extend Marker implements Eq:
-    fn eq(self, other: Marker) -> bool:
-        return self.n % 10 == other.n % 10
+    fn eq(other: Marker) -> bool:
+        return this.n % 10 == other.n % 10
 
 fn number(marker: Marker) -> int:
     return marker.n

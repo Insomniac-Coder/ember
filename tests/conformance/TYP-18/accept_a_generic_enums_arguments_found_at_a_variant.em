@@ -35,7 +35,7 @@ fn deep(m: Maybe[Maybe[int]]) -> int:
         Maybe.Nothing:
             return 0
 
-fn side(e: Either[int, str]) -> String:
+fn side(e: Either[int, StrView]) -> String:
     match e:
         Either.Left(n):
             return f"left {n}"

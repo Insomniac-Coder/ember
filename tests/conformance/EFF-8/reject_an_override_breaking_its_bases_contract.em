@@ -6,11 +6,11 @@
 
 open class Shape:
     @noio
-    virtual fn area(self) -> int:
+    virtual fn area() -> int:
         return 0
 
 class Loud(Shape):
-    override fn area(self) -> int:
+    override fn area() -> int:
         println("loud")
         return 1
 

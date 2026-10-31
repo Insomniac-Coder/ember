@@ -13,49 +13,49 @@ class Account:
     frozen: bool = False
     history: Array[String] = []
 
-    fn init(self, number: int, owned owner: String):
-        self.number = number
-        self.owner = owner
+    fn init(number: int, owns owner: String):
+        this.number = number
+        this.owner = owner
 
-    fn deposit(self, amount: int) -> Result[int, BankError]:
+    fn deposit(amount: int) -> Result[int, BankError]:
         if amount <= 0:
             return Err(BankError.InvalidAmount(amount))
-        if self.frozen:
-            return Err(BankError.AccountFrozen(self.owner))
-        self.balance += amount
-        self.history.push(f"deposit {amount}")
-        return Ok(self.balance)
+        if this.frozen:
+            return Err(BankError.AccountFrozen(this.owner))
+        this.balance += amount
+        this.history.push(f"deposit {amount}")
+        return Ok(this.balance)
 
-    fn withdraw(self, amount: int) -> Result[int, BankError]:
+    fn withdraw(amount: int) -> Result[int, BankError]:
         if amount <= 0:
             return Err(BankError.InvalidAmount(amount))
-        if self.frozen:
-            return Err(BankError.AccountFrozen(self.owner))
-        if amount > self.balance:
-            return Err(BankError.InsufficientFunds(self.balance, amount))
-        self.balance -= amount
-        self.history.push(f"withdraw {amount}")
-        return Ok(self.balance)
+        if this.frozen:
+            return Err(BankError.AccountFrozen(this.owner))
+        if amount > this.balance:
+            return Err(BankError.InsufficientFunds(this.balance, amount))
+        this.balance -= amount
+        this.history.push(f"withdraw {amount}")
+        return Ok(this.balance)
 
 class Bank:
     accounts: Map[int, Account] = {}
     next_number: int = 1000
 
-    fn open(self, owner: str, initial: int) -> Result[Account, BankError]:
-        account = Account(self.next_number, owner)
-        self.next_number += 1
+    fn open(owner: StrView, initial: int) -> Result[Account, BankError]:
+        account = Account(this.next_number, owner)
+        this.next_number += 1
         account.deposit(initial)?
-        self.accounts[account.number] = account
+        this.accounts[account.number] = account
         return Ok(account)
 
-    fn find(self, number: int) -> Result[Account, BankError]:
-        if number in self.accounts:
-            return Ok(self.accounts[number])
+    fn find(number: int) -> Result[Account, BankError]:
+        if number in this.accounts:
+            return Ok(this.accounts[number])
         return Err(BankError.UnknownAccount(number))
 
-    fn transfer(self, src: int, dst: int, amount: int) -> Result[(), BankError]:
-        from_acc = self.find(src)?
-        to_acc = self.find(dst)?
+    fn transfer(src: int, dst: int, amount: int) -> Result[(), BankError]:
+        from_acc = this.find(src)?
+        to_acc = this.find(dst)?
         from_acc.withdraw(amount)?
         to_acc.deposit(amount)?
         return Ok(())
@@ -67,7 +67,7 @@ fn explain(e: BankError) -> String:
         AccountFrozen(owner) => f"{owner}'s account is frozen"
         UnknownAccount(number) => f"no account {number}"
 
-fn report(result: Result[(), BankError], what: str):
+fn report(result: Result[(), BankError], what: StrView):
     match result:
         Ok(_) => println(f"ok: {what}")
         Err(e) => println(f"failed: {what}: {explain(e)}")

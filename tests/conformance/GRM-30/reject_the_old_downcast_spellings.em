@@ -5,11 +5,11 @@
 # or `cast x if D` (`Some(d)` or `None`), and the error for the old spelling names the new one.
 
 open class Animal:
-    fn name(self) -> int:
+    fn name() -> int:
         return 0
 
 class Dog(Animal):
-    fn bark(self) -> int:
+    fn bark() -> int:
         return 1
 
 fn main():

@@ -16,8 +16,8 @@ struct Bag:
     n: int
 
 extend Bag:
-    fn iter(self) -> int:
-        return self.n + 1
+    fn iter() -> int:
+        return this.n + 1
 
 fn main():
     b = Bag(n = 2)

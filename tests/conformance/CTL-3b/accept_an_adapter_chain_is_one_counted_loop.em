@@ -33,7 +33,7 @@ fn main():
         line.push(f"{a},{b},{c}")
     println(line.join(" "))
     line.clear()
-    for p in xs.iter().copied().enumerate().skip(5):
+    for p in xs.iter().copy_each().enumerate().skip(5):
         line.push(f"{p}")
     println(line.join(" "))
     line.clear()

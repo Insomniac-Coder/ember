@@ -14,7 +14,7 @@ const DONE: bool = true
 const STAR: char = '*'
 const COMPUTED: int = LIMIT * 2
 
-fn kind(x: int) -> str:
+fn kind(x: int) -> StrView:
     match x:
         LIMIT:
             return "limit"

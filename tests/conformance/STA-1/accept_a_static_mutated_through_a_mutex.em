@@ -8,7 +8,7 @@ from std.sync import Mutex
 
 static REGISTRY: Mutex[Map[String, int]] = Mutex({})
 
-fn record(name: str, n: int):
+fn record(name: StrView, n: int):
     with r = REGISTRY.lock():
         r[name.to_string()] = n
 

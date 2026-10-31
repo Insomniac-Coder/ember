@@ -12,13 +12,12 @@ struct Counter:
     n: i32
 
     ## Rule 1: a borrowing receiver takes the return on its own.
-    fn peek(mut self) -> ref i32:
-        return ref self.n
+    fn peek() -> ref i32:
+        return ref this.n
 
 ## `[LT-1a]` — the attribute overrides rule 3, so the caller may keep using
 ## `a` while it holds the result.
-@borrows(other)
-fn pick(a: ref i32, other: ref i32) -> ref i32:
+fn pick(a: ref i32, other: ref i32) -> ref i32 from other:
     return other
 
 ## Rule 2: one view-typed parameter, so the return is tied to it with nothing

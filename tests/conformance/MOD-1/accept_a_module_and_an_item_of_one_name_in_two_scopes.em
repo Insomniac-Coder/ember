@@ -15,8 +15,8 @@ import paths.shapes
 struct grid:
     n: int
 
-    fn at(self, i: int) -> int:
-        return self.n + i
+    fn at(i: int) -> int:
+        return this.n + i
 
 fn path() -> int:
     return 4

@@ -9,10 +9,11 @@ import std.thread
 class Counter:
     n: int
 
-    fn init(mut self):
-        self.n = 0
+    fn init():
+        this.n = 0
 
-fn run_later[F: fn() -> int](owned task: F) -> int:
+[F: needs fn() -> int]
+fn run_later(owns task: F) -> int:
     h = thread.spawn(owned fn() -> int => task())  #$ error[E7004]: captures `task`, a `F`, which is not Send
     return h.join()
 

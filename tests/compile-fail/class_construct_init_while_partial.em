@@ -5,9 +5,9 @@
 class Holder:
     value: i32
 
-    fn init(mut self, ready: bool):
+    fn init(ready: bool):
         while ready:
-            self.value = 42
+            this.value = 42
 
 fn main():
     holder = Holder(true)

@@ -16,13 +16,13 @@ struct Pair:
     a: int
     b: int
 
-fn by_value(owned s: Samples) -> int:  #$ warning[L2002]: `s` is a 520-byte `Copy` value passed by value
+fn by_value(owns s: Samples) -> int:  #$ warning[L2002]: `s` is a 520-byte `Copy` value passed by value
     return s.count
 
 fn by_address(s: Samples) -> int:
     return s.count
 
-fn small(owned p: Pair) -> int:
+fn small(owns p: Pair) -> int:
     return p.a
 
 fn main():

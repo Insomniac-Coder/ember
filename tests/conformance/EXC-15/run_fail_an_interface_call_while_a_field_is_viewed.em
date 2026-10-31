@@ -6,16 +6,16 @@
 # the object; a live view of one through another handle is a conflict.
 
 interface Log:
-    fn add(mut self, x: int)
+    fn add(x: int)
 
 class Record implements Log:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = [0]
+    fn init():
+        this.items = [0]
 
-    fn add(mut self, x: int):
-        self.items.push(x)
+    fn add(x: int):
+        this.items.push(x)
 
 class Holder:
     log: Log

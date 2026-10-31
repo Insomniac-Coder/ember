@@ -8,7 +8,7 @@
 import std.fs
 import std.io
 
-fn load(path: str) -> Result[String]:
+fn load(path: StrView) -> Result[String]:
     text = fs.read_to_string(path)?
     return Ok(text)
 

@@ -12,8 +12,8 @@
 open class Base:
     n: int
 
-    fn bump(mut self):
-        self.n += 1
+    fn bump():
+        this.n += 1
 
 class Derived(Base):
     pass

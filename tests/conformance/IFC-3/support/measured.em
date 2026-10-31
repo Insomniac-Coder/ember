@@ -3,7 +3,7 @@
 
 pub interface Measured:
     type Unit
-    fn measure(self) -> Unit
+    fn measure() -> Unit
 
 pub fn touch(c: int) -> int:
     return c

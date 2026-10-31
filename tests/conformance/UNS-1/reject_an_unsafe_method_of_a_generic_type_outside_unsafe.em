@@ -1,14 +1,15 @@
 #$ test: compile-fail
 #$ rules: UNS-1
-#$ error[E3100]: `c.read_raw()` (line 16) calls an `unsafe fn`, whose callers must make true what its `@safety` says
+#$ error[E3100]: `c.read_raw()` (line 17) calls an `unsafe fn`, whose callers must make true what its `@safety` says
 # D-710 — an `unsafe fn` method of a generic type is `unsafe` in every instance: calling it
 # outside `unsafe` is refused, as for any other type.
 
-struct Cell2[T]:
+[T]
+struct Cell2:
     value: T
 
     @safety("the caller has checked the value")
-    unsafe fn read_raw(self) -> int:
+    unsafe fn read_raw() -> int:
         return 1
 
 fn main():

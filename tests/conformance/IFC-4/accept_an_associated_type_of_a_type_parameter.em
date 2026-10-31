@@ -7,31 +7,32 @@
 # have (`type Real: Halve`).
 
 interface Halve:
-    fn half(self) -> Self
+    fn half() -> Self
 
 interface Measure:
-    type Real: Halve
-    fn to_real(self) -> Real
+    type Real: needs Halve
+    fn to_real() -> Real
 
 extend f64 implements Halve:
-    fn half(self) -> f64:
-        return self / 2.0
+    fn half() -> f64:
+        return this / 2.0
 
 extend f32 implements Halve:
-    fn half(self) -> f32:
-        return self / 2.0
+    fn half() -> f32:
+        return this / 2.0
 
 extend i32 implements Measure:
     type Real = f64
-    fn to_real(self) -> f64:
-        return self as f64
+    fn to_real() -> f64:
+        return this as f64
 
 extend f32 implements Measure:
     type Real = f32
-    fn to_real(self) -> f32:
-        return self
+    fn to_real() -> f32:
+        return this
 
-fn half_of[T: Measure](x: T) -> T.Real:
+[T: needs Measure]
+fn half_of(x: T) -> T.Real:
     value: T.Real = x.to_real()
     return value.half()
 

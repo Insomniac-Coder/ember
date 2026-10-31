@@ -13,8 +13,8 @@
 class Tag:
     name: String
 
-    fn drop(mut self):
-        println(f"dropped {self.name}")
+    fn drop():
+        println(f"dropped {this.name}")
 
 struct P:
     x: int
@@ -22,21 +22,21 @@ struct P:
     tags: Array[String]
     scale: int = 2
 
-    fn init(mut self, x: int):
-        self.x = x
+    fn init(x: int):
+        this.x = x
         if x < 0:
-            self.label = "negative"
-            self.tags = []
+            this.label = "negative"
+            this.tags = []
         else:
-            self.label = "one"
-            self.tags = ["a"]
+            this.label = "one"
+            this.tags = ["a"]
 
 struct Holder:
     tag: Tag
 
-    fn init(mut self):
-        self.tag = Tag(name="first")
-        self.tag = Tag(name="second")
+    fn init():
+        this.tag = Tag(name="first")
+        this.tag = Tag(name="second")
 
 fn main():
     println(f"{P(1)!r}")

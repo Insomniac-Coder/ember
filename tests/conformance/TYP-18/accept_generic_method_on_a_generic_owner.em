@@ -1,14 +1,17 @@
 #$ test: run-pass
 #$ rules: TYP-16, TYP-18, MONO-1
 
-struct Holder[T]:
+[T]
+struct Holder:
     value: T
 
-    fn choose[U](self, other: U) -> U:
+    [U]
+    fn choose(other: U) -> U:
         return other
 
-    fn original[U](self, _ignored: U) -> T:
-        return self.value
+    [U]
+    fn original(_ignored: U) -> T:
+        return this.value
 
 fn main():
     holder = Holder[i32](1)

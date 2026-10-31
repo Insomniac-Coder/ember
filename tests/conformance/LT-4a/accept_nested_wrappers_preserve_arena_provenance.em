@@ -1,12 +1,10 @@
 #$ test: run-pass
 #$ rules: LT-4a, LT-4, LT-1a
 
-@borrows(arena)
-fn inner(arena: Arena) -> ref mut i32:
+fn inner(arena: Arena) -> ref mut i32 from arena:
     return arena.alloc(7)
 
-@borrows(arena)
-fn outer(arena: Arena) -> ref mut i32:
+fn outer(arena: Arena) -> ref mut i32 from arena:
     return inner(arena)
 
 fn main():

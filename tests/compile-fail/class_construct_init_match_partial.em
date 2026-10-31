@@ -11,12 +11,12 @@ class Pair:
     a: i32
     b: i32
 
-    fn init(mut self, kind: Kind):
+    fn init(kind: Kind):
         match kind:
             Kind.First:
-                self.a = 1
+                this.a = 1
             Kind.Second:
-                self.b = 2
+                this.b = 2
 
 fn main():
     pair = Pair(Kind.First)

@@ -8,7 +8,7 @@
 # `fn(str) -> int`, holds `first_len`'s address.)
 
 @noinline
-fn count_spaces(text: str, start: int) -> int:
+fn count_spaces(text: StrView, start: int) -> int:
     n = start
     for c in text.chars():
         if c == ' ':
@@ -16,24 +16,24 @@ fn count_spaces(text: str, start: int) -> int:
     return n
 
 @noinline
-fn double_all(mut xs: MutSpan[int], s: Span[int]):
+fn double_all(ref mut xs: MutSpan[int], s: Span[int]):
     for i in 0..xs.len():
         xs[i] = s[i] * 2
 
 @noinline
-fn digits(text: str) -> int:
+fn digits(text: StrView) -> int:
     if text.len() == 0:
         return 0
     return text.len() + digits(text[1..])
 
-fn first_len(text: str) -> int:
+fn first_len(text: StrView) -> int:
     return text.len()
 
 @noinline
-fn word_len(text: str) -> int:
+fn word_len(text: StrView) -> int:
     return text.len()
 
-fn apply(f: fn(str) -> int, text: str) -> int:
+fn apply(f: fn(StrView) -> int, text: StrView) -> int:
     return f(text)
 
 fn main():
@@ -41,5 +41,5 @@ fn main():
     a: Array[int] = [0, 0, 0]
     b: Array[int] = [1, 2, 3]
     double_all(a, b)
-    held: fn(str) -> int = first_len
+    held: fn(StrView) -> int = first_len
     println(count_spaces(words, 0), count_spaces("x y z w", 0), a, digits("abcdef"), apply(held, "hello"), apply(word_len, "hi"))

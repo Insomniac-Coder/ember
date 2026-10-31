@@ -8,7 +8,7 @@
 struct Packet:
     x: i32
 
-    fn drop(mut self):
+    fn drop():
         pass
 
 fn main():

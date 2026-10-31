@@ -1,4 +1,4 @@
-fn append_one(mut values: Array[i32]):
+fn append_one(ref mut values: Array[i32]):
     values.push(1)
 
 fn main():

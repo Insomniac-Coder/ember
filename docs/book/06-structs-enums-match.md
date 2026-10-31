@@ -12,9 +12,9 @@ struct Point:
     y: float
     label: String = "p"
 
-    fn distance_to(self, other: Point) -> float:
-        dx = self.x - other.x
-        dy = self.y - other.y
+    fn distance_to(other: Point) -> float:
+        dx = this.x - other.x
+        dy = this.y - other.y
         return (dx * dx + dy * dy).sqrt()
 
 fn main():
@@ -73,7 +73,7 @@ out is an error, which names it.
 Patterns also match numbers, ranges of them, text, tuples, and anything with `_`:
 
 ```ember
-fn classify(n: int) -> str:
+fn classify(n: int) -> StrView:
     match n:
         0:
             return "zero"
@@ -113,7 +113,7 @@ fn main():
     empty: Array[int] = []
     println(empty.first(), xs.first())
     position = "hay needle".find("needle")
-    if Some(at) = position:
+    if position exists as at:
         println("found at", at)
     println(position.unwrap_or(-1), "x".find("y").unwrap_or(-1))
     if empty.first() is None:

@@ -249,9 +249,9 @@ fn a_closure_holding_an_instance_follows_it_when_it_moves() {
     assert_eq!(run.stdout, "3\napplied, 1 migrated\n6\n9\n", "{}", run.stderr);
 
     let boxed = PARTICLES
-        .replace("@export(\"game_frame\")", "interface Speak:\n    fn speak(self) -> int\n\n\
+        .replace("@export(\"game_frame\")", "interface Speak:\n    fn speak() -> int\n\n\
                   class Mote implements Speak:\n    n: int = 0\n    keep: Option[Holder] = None\n\n    \
-                  fn speak(self) -> int:\n        return self.n\n\n\
+                  fn speak() -> int:\n        return this.n\n\n\
                   class Holder:\n    s: Box[dyn Speak]\n\n\
                   fn tie():\n    m = Mote()\n    keeper = m\n    boxed: Box[dyn Speak] = Box(m)\n    keeper.keep = Some(Holder(boxed))\n\n@export(\"game_frame\")")
         .replace("            for k in 0..3:\n", "            tie()\n            for k in 0..3:\n");
@@ -283,10 +283,10 @@ fn a_relaxed_function_is_reloaded() {
 #[test]
 fn a_layout_change_applies_at_a_checkpoint_the_old_frames_do_not_depend_on() {
     let v1 = "import std.hot\n\nclass Particle:\n    x: int = 0\n    spare: int = 7\n    step: int = 1\n\n    \
-              fn bump(mut self) -> int:\n        self.x = self.x + self.step\n        return self.x\n\n\
+              fn bump() -> int:\n        this.x = this.x + this.step\n        return this.x\n\n\
               fn tick(ps: Array[Particle]) -> int:\n    total = 0\n    for p in ps:\n        q = p\n        total += q.bump()\n    return total\n\n\
               fn main():\n    ps = [Particle(), Particle(), Particle()]\n    for i in 0..3:\n        println(tick(ps))\n        hot.checkpoint()\n";
-    let v2 = v1.replace("    spare: int = 7\n", "").replace("self.x = self.x + self.step", "self.x = self.x + self.step * 10");
+    let v2 = v1.replace("    spare: int = 7\n", "").replace("this.x = this.x + this.step", "this.x = this.x + this.step * 10");
     let (run, reloads) = reload_run("reload-checkpoint-layout", RELOAD_ALL, v1, &[&v2]);
     assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
     assert_eq!(run.exit, 0, "{}", run.stderr);
@@ -308,7 +308,7 @@ fn a_layout_change_applies_at_a_checkpoint_the_old_frames_do_not_depend_on() {
 /// many there are; the old code runs on with its instances.
 #[test]
 fn removing_a_class_with_live_instances_is_refused() {
-    let v1 = "import std.hot\n\nclass Particle:\n    x: int\n\n    fn init(self, x: int):\n        self.x = x\n\n\
+    let v1 = "import std.hot\n\nclass Particle:\n    x: int\n\n    fn init(x: int):\n        this.x = x\n\n\
               fn tick(n: int) -> int:\n    return n + 1\n\n\
               fn main():\n    ps = [Particle(1), Particle(2), Particle(3)]\n    println(tick(ps.len()))\n    hot.checkpoint()\n    \
               println(tick(ps[2].x))\n";
@@ -341,7 +341,7 @@ fn the_bodies_tier_admits_bodies_and_refuses_layouts() {
 /// `@reinit_on_reload` static runs its new initialiser instead and its old value is gone.
 #[test]
 fn a_static_initialiser_edit_needs_reinit_on_reload() {
-    let v1 = "import std.hot\n\nstatic LIMIT: int = 10\n\n@reinit_on_reload\nstatic LABEL: str = \"old\"\n\n\
+    let v1 = "import std.hot\n\nstatic LIMIT: int = 10\n\n@reinit_on_reload\nstatic LABEL: StrView = \"old\"\n\n\
               fn show() -> String:\n    return f\"{LIMIT} {LABEL}\"\n\n\
               fn main():\n    println(show())\n    hot.checkpoint()\n    println(show())\n";
     let refused = v1.replace("LIMIT: int = 10", "LIMIT: int = 20");
@@ -364,13 +364,13 @@ fn a_static_initialiser_edit_needs_reinit_on_reload() {
 /// run the new bodies.
 #[test]
 fn objects_made_before_a_reload_run_the_new_methods() {
-    let v1 = "import std.hot\n\nopen class Shape:\n    virtual fn area(self) -> int:\n        return 0\n\n\
+    let v1 = "import std.hot\n\nopen class Shape:\n    virtual fn area() -> int:\n        return 0\n\n\
               class Square(Shape):\n    side: int = 3\n\n    \
-              override fn area(self) -> int:\n        return self.side * self.side\n\n    \
-              fn drop(mut self):\n        println(\"square dropped\")\n\n\
+              override fn area() -> int:\n        return this.side * this.side\n\n    \
+              fn drop():\n        println(\"square dropped\")\n\n\
               fn measure(s: Shape) -> int:\n    return s.area()\n\n\
               fn main():\n    s = Square()\n    println(measure(s))\n    hot.checkpoint()\n    println(measure(s))\n";
-    let v2 = v1.replace("self.side * self.side", "self.side * 100").replace("square dropped", "square dropped by v2");
+    let v2 = v1.replace("this.side * this.side", "this.side * 100").replace("square dropped", "square dropped by v2");
     let (run, reloads) = reload_run("reload-methods", RELOAD_ALL, v1, &[&v2]);
     assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
     assert_eq!(run.exit, 0, "{}", run.stderr);
@@ -619,14 +619,14 @@ fn the_migration_table_by_name() {
     // Removed: the field's value is dropped in reclaim.
     let tracked = PARTICLES.replace(
         "@sync\nclass Particle:\n",
-        "@sync\nclass Tag:\n    id: int = 0\n\n    fn drop(self):\n        println(\"tag dropped\")\n\n@sync\nclass Particle:\n    tag: Tag = Tag()\n",
+        "@sync\nclass Tag:\n    id: int = 0\n\n    fn drop():\n        println(\"tag dropped\")\n\n@sync\nclass Particle:\n    tag: Tag = Tag()\n",
     );
     let untracked = tracked.replace("    tag: Tag = Tag()\n", "");
     let run = host_run("reload-removed", &tracked, &[&untracked], 2);
     assert_eq!(run.stdout, "3\ntag dropped\ntag dropped\ntag dropped\napplied, 3 migrated\n6\n", "{}", run.stderr);
 
     // Added with no default: refused, naming the field.
-    let undefaulted = PARTICLES.replace("    step: int = 1\n", "    step: int = 1\n    mass: Tag2\n\n    fn init(self):\n        self.mass = Tag2(w = 1)\n").replace(
+    let undefaulted = PARTICLES.replace("    step: int = 1\n", "    step: int = 1\n    mass: Tag2\n\n    fn init():\n        this.mass = Tag2(w = 1)\n").replace(
         "@sync\nclass Particle:\n",
         "struct Tag2:\n    w: int\n\n@sync\nclass Particle:\n",
     );
@@ -636,9 +636,9 @@ fn the_migration_table_by_name() {
     assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
 
     // Changed type with no `migrate_from`: refused, naming it.
-    let retyped = PARTICLES.replace("step: int = 1", "step: str = \"one\"").replace("p.x.fetch_add(p.step)", "p.x.fetch_add(p.step.len())");
+    let retyped = PARTICLES.replace("step: int = 1", "step: StrView = \"one\"").replace("p.x.fetch_add(p.step)", "p.x.fetch_add(p.step.len())");
     let run = host_run("reload-retyped", PARTICLES, &[&retyped], 2);
-    assert!(run.stdout.contains("field `step` of `Particle` changed type from `i64` to `str`; `Particle` can declare `migrate_from`"), "{}", run.stdout);
+    assert!(run.stdout.contains("field `step` of `Particle` changed type from `i64` to `StrView`; `Particle` can declare `migrate_from`"), "{}", run.stdout);
     assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
 }
 
@@ -648,12 +648,12 @@ fn the_migration_table_by_name() {
 #[test]
 fn a_field_added_whose_type_is_default_takes_its_default() {
     for (label, mass) in [
-        ("reload-default-written", "struct Mass:\n    w: int\n\nextend Mass implements Default:\n    fn default() -> Mass:\n        return Mass(w = 7)\n\n"),
+        ("reload-default-written", "struct Mass:\n    w: int\n\nextend Mass implements Default:\n    static fn default() -> Mass:\n        return Mass(w = 7)\n\n"),
         ("reload-default-derived", "@derive(Default)\nstruct Mass:\n    w: int = 7\n\n"),
     ] {
         let v2 = PARTICLES
             .replace("@sync\nclass Particle:\n", &format!("{mass}@sync\nclass Particle:\n"))
-            .replace("    step: int = 1\n", "    step: int = 1\n    mass: Mass\n\n    fn init(self):\n        self.mass = Mass(w = 1)\n")
+            .replace("    step: int = 1\n", "    step: int = 1\n    mass: Mass\n\n    fn init():\n        this.mass = Mass(w = 1)\n")
             .replace("total += p.x.load()", "total += p.x.load() + p.mass.w");
         let run = host_run(label, PARTICLES, &[&v2], 3);
         assert_eq!(run.exit, 0, "{label}: {}\n{}", run.stdout, run.stderr);
@@ -772,7 +772,7 @@ fn an_enum_payload_migrates_by_the_field_rows() {
     let tagged = v1
         .replace(
             "enum Shape:\n    Dot\n    Circle(r: i32)\n",
-            "@sync\nclass Tag:\n    id: int = 0\n\n    fn drop(self):\n        println(\"tag dropped\")\n\nenum Shape:\n    Dot\n    Circle(r: i32, tag: Tag)\n",
+            "@sync\nclass Tag:\n    id: int = 0\n\n    fn drop():\n        println(\"tag dropped\")\n\nenum Shape:\n    Dot\n    Circle(r: i32, tag: Tag)\n",
         )
         .replace("Shape.Circle(2)", "Shape.Circle(2, Tag())")
         .replace("        Shape.Circle(r):\n", "        Shape.Circle(r, tag):\n");
@@ -972,7 +972,7 @@ const WIDGETS_OVERLAY: &str = "unsafe overlay c \"widgets.h\":\n    @ffi(destroy
 fn a_foreign_object_ember_owns_is_carried_across() {
     let v1 = "import std.hot\nfrom std.ffi import ForeignBox\nimport c \"./widgets.c\" with (overlay = \"widgets_overlay.em\") as b\n\n\
               class Device:\n    w: ForeignBox[b.Widget]\n    n: int = 1\n    spare: int = 0\n\n    \
-              fn init(self, owned w: ForeignBox[b.Widget]):\n        self.w = w\n\n\
+              fn init(owns w: ForeignBox[b.Widget]):\n        this.w = w\n\n\
               fn tick(d: Device) -> int:\n    unsafe:  # SAFETY(ffi): the box keeps the widget alive for the call\n        \
               return b.widget_id(d.w.as_ptr() as *b.Widget) as int + d.n\n\n\
               fn main():\n    d = Device(b.widget_new(7))\n    for i in 0..2:\n        println(tick(d))\n        hot.checkpoint()\n    \
@@ -988,7 +988,7 @@ fn a_foreign_object_ember_owns_is_carried_across() {
     // The field holding it removed: reclaim drops the box, which frees the widget once, then.
     let removed = v1
         .replace("    w: ForeignBox[b.Widget]\n", "    other: int = 0\n")
-        .replace("        self.w = w\n", "        pass\n")
+        .replace("        this.w = w\n", "        pass\n")
         .replace("fn tick(d: Device) -> int:\n    unsafe:  # SAFETY(ffi): the box keeps the widget alive for the call\n        return b.widget_id(d.w.as_ptr() as *b.Widget) as int + d.n\n",
                  "fn tick(d: Device) -> int:\n    return d.n\n");
     let (run, reloads) = reload_run_with("reload-foreign-dropped", RELOAD_ALL, &files, v1, &[&removed]);
@@ -1007,7 +1007,7 @@ const SCALES_HPP: &str = "#pragma once\n#include <stdexcept>\n\
 fn scaled_particles(call: &str, attribute: &str) -> String {
     MIGRATED
         .replace("from std.hot import ReloadError\n", "from std.hot import ReloadError\nimport cpp \"scales.hpp\"\n")
-        .replace("    fn migrate_from(old: ref OldSelf)", &format!("    {attribute}fn migrate_from(old: ref OldSelf)"))
+        .replace("    static fn migrate_from(old: ref OldSelf)", &format!("    {attribute}static fn migrate_from(old: ref OldSelf)"))
         .replace(
             "return Ok(Particle(old.x.load() * 100, old.step * 10))",
             &format!("unsafe:  # SAFETY(ffi): a C++ call by value\n            return Ok(Particle(old.x.load(), {call} as int))"),
@@ -1094,8 +1094,8 @@ fn a_foreign_failure_in_migrate_from_is_foreign() {
 /// unit enum's variants while a value of it sits in a tuple a closure captured.
 #[test]
 fn value_data_a_reload_cannot_reach_is_refused() {
-    let v1 = "import std.hot\n\ninterface Speak:\n    fn speak(self) -> int\n\nstruct Point:\n    x: int = 7\n\n\
-              extend Point implements Speak:\n    fn speak(self) -> int:\n        return self.x\n\n\
+    let v1 = "import std.hot\n\ninterface Speak:\n    fn speak() -> int\n\nstruct Point:\n    x: int = 7\n\n\
+              extend Point implements Speak:\n    fn speak() -> int:\n        return this.x\n\n\
               fn tick(b: Box[dyn Speak]) -> int:\n    return b.speak()\n\n\
               fn main():\n    b: Box[dyn Speak] = Box(Point())\n    for i in 0..2:\n        println(tick(b))\n        hot.checkpoint()\n";
     let v2 = v1.replace("    x: int = 7\n", "    pad: int = 1000\n    x: int = 7\n");
@@ -1106,8 +1106,8 @@ fn value_data_a_reload_cannot_reach_is_refused() {
 
     // A unit enum's value made an interface value: its variants reordered would leave it the old
     // discriminant, read as another variant by the new code.
-    let modes = "import std.hot\n\ninterface Speak:\n    fn speak(self) -> int\n\nenum Mode:\n    Slow\n    Fast\n\n\
-                 extend Mode implements Speak:\n    fn speak(self) -> int:\n        match self:\n            Mode.Slow:\n                return 1\n            Mode.Fast:\n                return 10\n\n\
+    let modes = "import std.hot\n\ninterface Speak:\n    fn speak() -> int\n\nenum Mode:\n    Slow\n    Fast\n\n\
+                 extend Mode implements Speak:\n    fn speak() -> int:\n        match this:\n            Mode.Slow:\n                return 1\n            Mode.Fast:\n                return 10\n\n\
                  fn tick(b: Box[dyn Speak]) -> int:\n    return b.speak()\n\n\
                  fn main():\n    b: Box[dyn Speak] = Box(Mode.Fast)\n    for i in 0..2:\n        println(tick(b))\n        hot.checkpoint()\n";
     let reordered = modes.replace("enum Mode:\n    Slow\n    Fast\n", "enum Mode:\n    Fast\n    Slow\n");
@@ -1232,7 +1232,7 @@ fn the_failure_matrix() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "3\n6\n9\n");
 
     // A schema change with no defined outcome: refused in plan.
-    let undefined = PARTICLES.replace("step: int = 1", "step: str = \"one\"").replace("p.x.fetch_add(p.step)", "p.x.fetch_add(p.step.len())");
+    let undefined = PARTICLES.replace("step: int = 1", "step: StrView = \"one\"").replace("p.x.fetch_add(p.step)", "p.x.fetch_add(p.step.len())");
     let run = host_run("reload-matrix-plan", PARTICLES, &[&undefined], 2);
     assert!(run.stdout.contains("refused:") && run.stdout.ends_with("6\n"), "{}", run.stdout);
 
@@ -1245,7 +1245,7 @@ fn the_failure_matrix() {
     // aborts the process as any panic does.
     let tagged = PARTICLES.replace(
         "@sync\nclass Particle:\n",
-        "@sync\nclass Tag:\n    id: int = 0\n\n    fn drop(self):\n        panic(\"the tag would not go\")\n\n@sync\nclass Particle:\n    tag: Tag = Tag()\n",
+        "@sync\nclass Tag:\n    id: int = 0\n\n    fn drop():\n        panic(\"the tag would not go\")\n\n@sync\nclass Particle:\n    tag: Tag = Tag()\n",
     );
     let untagged = tagged.replace("    tag: Tag = Tag()\n", "");
     let run = host_run("reload-matrix-reclaim", &tagged, &[&untagged], 2);
@@ -1501,8 +1501,8 @@ fn an_instance_moves_only_where_its_references_are_found() {
 }
 
 const MIGRATED: &str = "from std.sync import Atomic, Mutex\nfrom std.hot import ReloadError\n\n@sync\nclass Particle:\n    x: Atomic[int] = Atomic(0)\n    speed: int = 10\n\n    \
-    fn init(self, x: int, speed: int):\n        self.x = Atomic(x)\n        self.speed = speed\n\n    \
-    fn migrate_from(old: ref OldSelf) -> Result[Self, ReloadError]:\n        return Ok(Particle(old.x.load() * 100, old.step * 10))\n\n\
+    fn init(x: int, speed: int):\n        this.x = Atomic(x)\n        this.speed = speed\n\n    \
+    static fn migrate_from(old: ref OldSelf) -> Result[Self, ReloadError]:\n        return Ok(Particle(old.x.load() * 100, old.step * 10))\n\n\
     static WORLD: Mutex[Array[Particle]] = Mutex([])\n\n\
     @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with world = WORLD.lock():\n        \
     if world.len() == 0:\n            for k in 0..3:\n                world.push(Particle(0, 1))\n        \
@@ -1516,7 +1516,7 @@ const MIGRATED: &str = "from std.sync import Atomic, Mutex\nfrom std.hot import 
 #[test]
 fn migrate_from_builds_the_new_instances() {
     let own = |source: &str| source.replace("@sync\nclass Particle:\n", "struct OldParticle:\n    note: int = 5\n\n@sync\nclass Particle:\n");
-    let dropping = own(PARTICLES).replace("    step: int = 1\n", "    step: int = 1\n\n    fn drop(self):\n        println(f\"dropped {self.x.load()}\")\n");
+    let dropping = own(PARTICLES).replace("    step: int = 1\n", "    step: int = 1\n\n    fn drop():\n        println(f\"dropped {this.x.load()}\")\n");
     let run = host_run("reload-migrate-from", &dropping, &[&own(MIGRATED)], 3);
     assert_eq!(run.stdout, "3\napplied, 3 migrated\n330\n360\n", "{}", run.stderr);
 }
@@ -1804,7 +1804,7 @@ fn removing_a_function_whose_address_is_held_is_refused() {
     assert!(run.stderr.contains("`helper` was removed while frames of the old code, which may call it, are live"), "{}", run.stderr);
 
     // A generic function named beyond ASCII: its instance's symbol is `em_u17gr_u00F6__u00DF_eG…`.
-    let v1 = "import std.hot\n\nfn größe[T](x: T) -> T:\n    return x\n\nfn main():\n    hot.checkpoint()\n    println(größe(1))\n";
+    let v1 = "import std.hot\n\n[T]\nfn größe(x: T) -> T:\n    return x\n\nfn main():\n    hot.checkpoint()\n    println(größe(1))\n";
     let (run, reloads) = reload_run("reload-removed-instance", RELOAD_ALL, v1, &[v2]);
     assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
     assert_eq!(run.stdout, "1\n", "{}", run.stderr);
@@ -1977,8 +1977,8 @@ fn the_reload_benchmark_times_three_edits() {
         .replace("from std.sync import Atomic, Mutex\n", "from std.sync import Atomic, Mutex\nfrom std.hot import ReloadError\n")
         .replace(
             "    step: int = 1\n    bonus: int = 3\n",
-            "    step: f64 = 1.0\n    bonus: int = 3\n\n    fn init(self, x: int, step: f64, bonus: int):\n        self.x = Atomic(x)\n        \
-             self.step = step\n        self.bonus = bonus\n\n    fn migrate_from(old: ref OldSelf) -> Result[Self, ReloadError]:\n        \
+            "    step: f64 = 1.0\n    bonus: int = 3\n\n    fn init(x: int, step: f64, bonus: int):\n        this.x = Atomic(x)\n        \
+             this.step = step\n        this.bonus = bonus\n\n    static fn migrate_from(old: ref OldSelf) -> Result[Self, ReloadError]:\n        \
              return Ok(Particle(old.x.load(), old.step as f64, old.bonus + 1))\n",
         )
         .replace("world.push(Particle())", "world.push(Particle(0, 1.0, 3))")
@@ -2067,7 +2067,7 @@ fn a_trampoline_reaches_an_edited_override_after_a_reload() {
     let root = workspace_root();
     let overlay = format!("engine_overlay.{}", ember_branding::SOURCE_EXT);
     let v1 = &(format!("import std.hot\nimport cpp \"engine.hpp\" with (overlay = \"{overlay}\")\n\n") + "\
-              class Mine(cpp.Layer):\n    override fn on_update(self, step: i32) -> i32:\n        return step * 10\n\n\
+              class Mine(cpp.Layer):\n    override fn on_update(step: i32) -> i32:\n        return step * 10\n\n\
               fn main():\n    layer = Mine()\n    unsafe:  # SAFETY(ffi): C++ calls the object's virtual while it lives\n        println(cpp.drive(layer))\n    \
               hot.checkpoint()\n    unsafe:  # SAFETY(ffi): as above\n        println(cpp.drive(layer))\n");
     let v2 = v1.replace("return step * 10", "return step * 1000");
@@ -2105,7 +2105,7 @@ fn a_changed_cpp_header_refuses_the_reload_and_an_overlay_does_not() {
     let root = workspace_root();
     let overlay = format!("engine_overlay.{}", ember_branding::SOURCE_EXT);
     let v1 = &(format!("import std.hot\nimport cpp \"engine.hpp\" with (overlay = \"{overlay}\")\n\n") + "\
-              class Mine(cpp.Layer):\n    override fn on_update(self, step: i32) -> i32:\n        return step * 10\n\n\
+              class Mine(cpp.Layer):\n    override fn on_update(step: i32) -> i32:\n        return step * 10\n\n\
               fn main():\n    layer = Mine()\n    unsafe:  # SAFETY(ffi): C++ calls the object's virtual while it lives\n        println(cpp.drive(layer))\n    \
               hot.checkpoint()\n    unsafe:  # SAFETY(ffi): as above\n        println(cpp.drive(layer))\n");
     let v2 = v1.replace("return step * 10", "return step * 1000");

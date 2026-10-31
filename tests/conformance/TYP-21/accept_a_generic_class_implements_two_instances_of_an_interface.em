@@ -10,45 +10,48 @@
 # and classes alike.
 
 interface Conv[T]:
-    fn conv(self) -> T
+    fn conv() -> T
 
-class Holder[T]:
+[T]
+class Holder:
     x: T
 
-extend[T: Copy] Holder[T] implements Conv[Array[T]]:
-    fn conv(self) -> Array[T]:
-        return [self.x]
+extend[T: needs Copy] Holder[T] implements Conv[Array[T]]:
+    fn conv() -> Array[T]:
+        return [this.x]
 
 extend[U] Holder[U] implements Conv[bool]:
-    fn conv(self) -> bool:
+    fn conv() -> bool:
         return true
 
-struct Pair2[T]:
+[T]
+struct Pair2:
     x: T
 
 extend[T] Pair2[T] implements Add[int]:
     type Output = int
-    fn add(self, other: int) -> int:
+    fn add(other: int) -> int:
         return other + 1
 
 extend[T] Pair2[T] implements Add[bool]:
     type Output = int
-    fn add(self, other: bool) -> int:
+    fn add(other: bool) -> int:
         if other:
             return 1
         return 0
 
-class Counter[T]:
+[T]
+class Counter:
     x: T
 
 extend[T] Counter[T] implements Add[int]:
     type Output = int
-    fn add(self, other: int) -> int:
+    fn add(other: int) -> int:
         return other + 1
 
 extend[T] Counter[T] implements Add[bool]:
     type Output = int
-    fn add(self, other: bool) -> int:
+    fn add(other: bool) -> int:
         if other:
             return 1
         return 0

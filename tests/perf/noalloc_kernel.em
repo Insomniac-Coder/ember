@@ -6,7 +6,7 @@
 
 @noalloc
 @overflow(wrap)
-fn mix(mut values: Array[int], seed: int) -> int:
+fn mix(ref mut values: Array[int], seed: int) -> int:
     acc = seed
     for i in 0..values.len():
         v = values[i] * 31 + acc

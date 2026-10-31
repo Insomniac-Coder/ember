@@ -1547,7 +1547,8 @@ impl Regions {
                         fact.merge(&source);
                     }
                 }
-                fact.imprecise |= destinations.len() > 1;
+                // `[LT-22]` — each of the result's region slots points into every argument the
+                // first line ties: the union, which a summary may carry on (it was `E3065`).
                 for destination in destinations {
                     result.insert(destination, fact.clone());
                 }

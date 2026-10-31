@@ -10,21 +10,21 @@
 struct Rng:
     state: int
 
-    fn next_float(mut self) -> float:
-        self.state = (self.state * 1103515245 + 12345) % 2147483648
-        return self.state as float / 2147483648.0
+    fn next_float() -> float:
+        this.state = (this.state * 1103515245 + 12345) % 2147483648
+        return this.state as float / 2147483648.0
 
-    fn range(mut self, low: float, high: float) -> float:
-        return low + (high - low) * self.next_float()
+    fn range(low: float, high: float) -> float:
+        return low + (high - low) * this.next_float()
 
 class Fountain:
     rng: Rng = Rng(state=7)
     count: int = 0
 
-    fn spawn(self, count: int):
+    fn spawn(count: int):
         for _ in 0..count:
-            if self.rng.range(-1.0, 1.0) < 2.0:
-                self.count += 1
+            if this.rng.range(-1.0, 1.0) < 2.0:
+                this.count += 1
 
 fn main():
     fountain = Fountain()

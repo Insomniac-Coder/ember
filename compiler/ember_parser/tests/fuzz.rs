@@ -162,8 +162,8 @@ struct Program<'a> {
 }
 
 const NAMES: &[&str] = &["a", "b", "count", "total", "xs", "item", "name", "p", "q", "value", "élan"];
-const TYPES: &[&str] = &["int", "i32", "u8", "float", "f32", "bool", "str", "String", "char", "Array[int]",
-    "Map[str, int]", "Option[int]", "Result[int, str]", "Span[u8]", "ref int", "ref mut Array[i32]", "(int, bool)",
+const TYPES: &[&str] = &["int", "i32", "u8", "float", "f32", "bool", "StrView", "String", "char", "Array[int]",
+    "Map[StrView, int]", "Option[int]", "Result[int, StrView]", "Span[u8]", "ref int", "Array[i32]", "(int, bool)",
     "fn(int) -> int", "[i32; 4]", "Box[dyn Shape]", "Self"];
 
 impl Program<'_> {
@@ -376,13 +376,19 @@ impl Program<'_> {
         match self.rng.below(7) {
             0 | 1 | 2 => {
                 let name = self.name();
-                let params: Vec<String> = (0..self.rng.below(3)).map(|i| format!("p{i}: {}", self.ty())).collect();
+                // `[GRM-13]` — a mode is a word before the name: `ref mut p: T`.
+                let params: Vec<String> = (0..self.rng.below(3))
+                    .map(|i| if self.rng.chance(20) { format!("ref mut p{i}: Array[i32]") } else { format!("p{i}: {}", self.ty()) })
+                    .collect();
                 let ret = if self.rng.chance(50) { format!(" -> {}", self.ty()) } else { String::new() };
                 if self.rng.chance(20) {
                     self.line(0, "@inline");
                 }
-                let generics = if self.rng.chance(20) { "[T: Eq + Hash]" } else { "" };
-                self.line(0, &format!("fn {name}{generics}({}){ret}:", params.join(", ")));
+                // `[GRM-40]` — type parameters are a line of their own above the function.
+                if self.rng.chance(20) {
+                    self.line(0, "[T: needs (Eq, Hash)]");
+                }
+                self.line(0, &format!("fn {name}({}){ret}:", params.join(", ")));
                 self.block(1, 3);
             }
             3 => {
@@ -408,13 +414,13 @@ impl Program<'_> {
                 self.line(0, &format!("class C{n}:"));
                 let ty = self.ty();
                 self.line(1, &format!("field: {ty} = 0"));
-                self.line(1, "fn method(mut self, other: int) -> int:");
+                self.line(1, "fn method(other: int) -> int:");
                 self.block(2, 2);
             }
             _ => {
                 let n = self.rng.below(100);
                 self.line(0, &format!("interface I{n}:"));
-                self.line(1, "fn area(self) -> float");
+                self.line(1, "fn area() -> float");
                 self.line(1, "type Item");
             }
         }

@@ -7,8 +7,8 @@
 struct Counter:
     hits: Cell[int]
 
-@borrows(c)    #$ error[E2031]: `@borrows` names `c`, which a result cannot borrow
-fn peek(c: Counter) -> ref Cell[int]:
+#$ error[E2031]: `from` names `c`, which a result cannot point into
+fn peek(c: Counter) -> ref Cell[int] from c:
     return ref c.hits
 
 fn main():

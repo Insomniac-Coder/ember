@@ -4,7 +4,7 @@
 # `[ARN-4]` — a growing `Arena` carries `Alloc` on its growth path.
 
 @noalloc
-fn place(mut arena: Arena, x: int) -> int:
+fn place(ref mut arena: Arena, x: int) -> int:
     r = arena.alloc(x)
     return r
 

@@ -12,8 +12,8 @@ struct S:
     tag: int
 
 extend S implements Eq:
-    fn eq(self, other: S) -> bool:
-        return self.x == other.x
+    fn eq(other: S) -> bool:
+        return this.x == other.x
 
 fn main():
     xs = [S(1, 0), S(2, 0)]

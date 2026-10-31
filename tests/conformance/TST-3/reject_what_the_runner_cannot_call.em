@@ -14,7 +14,8 @@ fn gives_a_value() -> int:
     return 1
 
 @test                       #$ error[E0104]: `@test` does not apply to this function: it has type parameters
-fn generic[T](value: T):
+[T]
+fn generic(value: T):
     pass
 
 @should_panic               #$ error[E0104]: `@should_panic` applies to a `@test` function
@@ -30,7 +31,7 @@ struct Counter:
 
 extend Counter:
     @test                   #$ error[E0104]: `@test` applies to a free function, not a method
-    fn method(self):
+    fn method():
         pass
 
 fn main():

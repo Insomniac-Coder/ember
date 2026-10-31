@@ -12,10 +12,10 @@
 # and drop there in reverse declaration order (`[DRP-2]`), whatever the program did with them.
 
 struct Noisy:
-    name: str
+    name: StrView
 
-    fn drop(mut self):
-        println(f"drop {self.name}")
+    fn drop():
+        println(f"drop {this.name}")
 
 fn peek(n: ref Noisy) -> int:
     return n.name.len()

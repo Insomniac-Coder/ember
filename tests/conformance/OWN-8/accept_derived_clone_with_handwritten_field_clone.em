@@ -9,8 +9,8 @@
 struct Leaf:
     value: i32
 
-    fn clone(self) -> Leaf:
-        return Leaf(self.value)
+    fn clone() -> Leaf:
+        return Leaf(this.value)
 
 @derive(Clone)
 struct Pair:

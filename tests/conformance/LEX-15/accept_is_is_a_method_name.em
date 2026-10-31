@@ -13,8 +13,8 @@ class Node:
 
 struct Flag:
     on: bool
-    fn is(self) -> bool:
-        return self.on
+    fn is() -> bool:
+        return this.on
 
 fn r#is() -> int:
     return 7

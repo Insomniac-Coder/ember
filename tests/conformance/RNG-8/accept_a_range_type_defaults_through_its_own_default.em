@@ -9,17 +9,18 @@
 type Level = i32 in 1 ..= 10
 
 extend Level implements Default:
-    fn default() -> Level:
+    static fn default() -> Level:
         return 5
 
 struct P:
     x: int
 
 extend P implements Default:
-    fn default() -> P:
+    static fn default() -> P:
         return P(x = 9)
 
-fn or_default[T: Default](owned o: Option[T]) -> T:
+[T: needs Default]
+fn or_default(owns o: Option[T]) -> T:
     return o.unwrap_or_default()
 
 fn main():

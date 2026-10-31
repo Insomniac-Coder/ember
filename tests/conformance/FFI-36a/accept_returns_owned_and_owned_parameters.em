@@ -25,10 +25,10 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     safe fn widget_or_none(id: i32) -> Option[ForeignBox[Widget]]
     @ffi(result(returns_owned(destructor=gadget_close), one))
     safe fn gadget_new(id: i32) -> ForeignBox[Gadget]
-    @ffi(param(widget, owned, one))
-    safe fn widget_take(owned widget: ForeignBox[Widget])
-    @ffi(param(widget, owned, one, nullable), link_name="widget_take")
-    safe fn widget_take_maybe(owned widget: Option[ForeignBox[Widget]])
+    @ffi(param(widget, owns, one))
+    safe fn widget_take(owns widget: ForeignBox[Widget])
+    @ffi(param(widget, owns, one, nullable), link_name="widget_take")
+    safe fn widget_take_maybe(owns widget: Option[ForeignBox[Widget]])
     @ffi(effects=[])
     safe fn objects_live() -> i32
     @ffi(effects=[])

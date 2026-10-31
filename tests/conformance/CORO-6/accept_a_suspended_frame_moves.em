@@ -21,7 +21,8 @@ gen fn growing() -> Generator[String]:
     s.push_str("b")
     yield s.clone()
 
-fn started[G: Iterator[Item = int]](owned g: G) -> G:
+[G: needs Iterator[Item = int]]
+fn started(owns g: G) -> G:
     println(g.next().unwrap())
     return g
 

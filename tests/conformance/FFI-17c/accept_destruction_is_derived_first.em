@@ -13,14 +13,14 @@ import cpp "nodes.hpp" with (overlay = "overlays/nodes.em")
 struct Marker:
     seen: i32 = 0
 
-    fn drop(mut self):
+    fn drop():
         unsafe:  # SAFETY(ffi): a scalar call
             cpp.record(2)
 
 class Leaf(cpp.Node):
     marker: Marker = Marker()
 
-    fn drop(mut self):
+    fn drop():
         unsafe:  # SAFETY(ffi): a scalar call
             cpp.record(1)
 

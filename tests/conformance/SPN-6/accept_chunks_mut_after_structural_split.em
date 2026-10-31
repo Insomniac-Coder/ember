@@ -14,12 +14,12 @@ fn main():
     right_chunks = right.chunks_mut(1)
     left_first = left_chunks.next()
     right_first = right_chunks.next()
-    match owned left_first:
+    match owns left_first:
         Some(chunk):
             chunk[0] = 10
         None:
             pass
-    match owned right_first:
+    match owns right_first:
         Some(chunk):
             chunk[0] = 30
         None:

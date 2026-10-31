@@ -6,7 +6,7 @@
 
 import std.jobs
 
-fn bump(mut xs: MutSpan[int]):
+fn bump(ref mut xs: MutSpan[int]):
     xs[0] += 1
 
 fn main():

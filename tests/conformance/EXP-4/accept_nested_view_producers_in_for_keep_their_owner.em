@@ -12,10 +12,10 @@ struct Source:
     pub text: String
     pub n: int
 
-    fn drop(mut self):
-        println("drop", self.n)
+    fn drop():
+        println("drop", this.n)
 
-fn viewed(source: Source) -> str:
+fn viewed(source: Source) -> StrView:
     return source.text.as_str()
 
 fn main():

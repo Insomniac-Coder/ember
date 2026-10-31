@@ -6,37 +6,39 @@
 # overlap was missed.
 
 interface Key[T]:
-    fn key(self) -> T
+    fn key() -> T
 
 interface Fetch[Q]:
-    fn fetch(self, q: Q) -> int
+    fn fetch(q: Q) -> int
 
 interface Mark:
-    fn mark(self) -> int
+    fn mark() -> int
 
 struct Gizmo:
     n: int
 
 extend Gizmo implements Key[int]:
-    fn key(self) -> int:
-        return self.n
+    fn key() -> int:
+        return this.n
 
-struct Holder[T]:
+[T]
+struct Holder:
     x: T
 
-extend[T, Q: Key[T]] Holder[T] implements Fetch[Q]:
-    fn fetch(self, q: Q) -> int:
+extend[T, Q: needs Key[T]] Holder[T] implements Fetch[Q]:
+    fn fetch(q: Q) -> int:
         return 1
 
-struct Crate[U]:
+[U]
+struct Crate:
     u: U
 
-extend[U: Fetch[Gizmo]] Crate[U] implements Mark:
-    fn mark(self) -> int:
+extend[U: needs Fetch[Gizmo]] Crate[U] implements Mark:
+    fn mark() -> int:
         return 1
 
 extend Crate[Holder[int]] implements Mark:   #$ error[E2041]: `Crate[Holder[i64]]` and `Crate[U]` can be one type, and both implement `Mark`
-    fn mark(self) -> int:
+    fn mark() -> int:
         return 2
 
 fn main():

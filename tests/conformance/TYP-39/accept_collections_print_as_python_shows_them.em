@@ -13,7 +13,7 @@
 # `[TYP-39]` — collections, tuples, `Option` and `Result` print as Python's
 # `str()` shows them, each element by its `Debug` (text quoted).
 
-fn parse(text: str) -> Result[int, str]:
+fn parse(text: StrView) -> Result[int, StrView]:
     if text == "1":
         return Ok(1)
     return Err("bad")

@@ -12,31 +12,31 @@ enum StockError:
 class Inventory:
     items: Map[String, Item] = {}
 
-    fn add(self, name: str, price: float, quantity: int):
-        if name in self.items:
-            self.items[name].quantity += quantity
+    fn add(name: StrView, price: float, quantity: int):
+        if name in this.items:
+            this.items[name].quantity += quantity
         else:
-            self.items[name] = Item(name=name, price=price, quantity=quantity)
+            this.items[name] = Item(name=name, price=price, quantity=quantity)
 
-    fn sell(self, name: str, quantity: int) -> Result[float, StockError]:
-        if name not in self.items:
+    fn sell(name: StrView, quantity: int) -> Result[float, StockError]:
+        if name not in this.items:
             return Err(StockError.UnknownItem(name))
-        item = self.items[name]
+        item = this.items[name]
         if item.quantity < quantity:
             return Err(StockError.NotEnough(name, quantity, item.quantity))
-        self.items[name].quantity -= quantity
+        this.items[name].quantity -= quantity
         return Ok(item.price * float(quantity))
 
-    fn total_value(self) -> float:
-        return sum(item.price * float(item.quantity) for item in self.items.values())
+    fn total_value() -> float:
+        return sum(item.price * float(item.quantity) for item in this.items.values())
 
-    fn low_stock(self, threshold: int) -> Array[String]:
-        return [name for name, item in self.items.items() if item.quantity < threshold]
+    fn low_stock(threshold: int) -> Array[String]:
+        return [name for name, item in this.items.items() if item.quantity < threshold]
 
-    fn report(self):
+    fn report():
         println("stock:")
-        for name in sorted(self.items.keys()):
-            item = self.items[name]
+        for name in sorted(this.items.keys()):
+            item = this.items[name]
             println(f"  {name:<8} {item.quantity:>4} x {item.price:.2f}")
 
 fn describe(err: StockError) -> String:

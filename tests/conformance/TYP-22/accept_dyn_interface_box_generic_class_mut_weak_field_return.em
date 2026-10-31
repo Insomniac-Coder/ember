@@ -14,19 +14,20 @@
 # closes at the call boundary while the returned observer remains independently
 # usable by the caller.
 interface Revise:
-    fn observer(mut self) -> Weak[Shared[Token]]
+    fn observer() -> Weak[Shared[Token]]
 
 struct Token:
     value: i32
 
-class Observer[T] implements Revise:
+[T]
+class Observer implements Revise:
     weak: Weak[Shared[Token]]
     marker: T
     count: i32
 
-    fn observer(mut self) -> Weak[Shared[Token]]:
-        self.count = self.count + 1
-        return self.weak
+    fn observer() -> Weak[Shared[Token]]:
+        this.count = this.count + 1
+        return this.weak
 
 fn main():
     strong = Shared(Token(7))

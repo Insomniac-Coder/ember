@@ -9,10 +9,11 @@
 class Player:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = [1]
+    fn init():
+        this.items = [1]
 
-    fn update(mut self, all: Array[Player]):
+    fn update(all: Array[Player]):
+        this.items.push(0)
         println(score(all))
 
 fn score(all: Array[Player]) -> int:

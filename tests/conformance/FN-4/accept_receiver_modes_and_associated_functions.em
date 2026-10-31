@@ -8,17 +8,17 @@
 struct Counter:
     n: int
 
-    fn zero() -> Counter:
+    static fn zero() -> Counter:
         return Counter(0)
 
-    fn get(self) -> int:
-        return self.n
+    fn get() -> int:
+        return this.n
 
-    fn bump(mut self):
-        self.n += 1
+    fn bump():
+        this.n += 1
 
-    fn into_count(owned self) -> int:
-        return self.n
+    fn into_count() owns this -> int:
+        return this.n
 
 fn main():
     c = Counter.zero()

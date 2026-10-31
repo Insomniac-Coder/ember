@@ -7,7 +7,7 @@
 # D-548 — an `owned` `args` is `main`'s to change; a `debug` run's leak check
 # finds nothing left over.
 
-fn main(owned args: Array[String]):
+fn main(owns args: Array[String]):
     args.push("extra".to_string())
     println(args.len())
     println(args[args.len() - 1])

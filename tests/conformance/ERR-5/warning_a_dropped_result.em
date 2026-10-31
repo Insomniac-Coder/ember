@@ -6,7 +6,7 @@
 # `[ERR-5]` — `Result` is `@must_use`: an expression statement that drops one is `W2190`, a call's
 # and a method's alike.
 
-fn parse(s: str) -> Result[int, str]:
+fn parse(s: StrView) -> Result[int, StrView]:
     if s == "x":
         return Err("bad")
     return Ok(1)

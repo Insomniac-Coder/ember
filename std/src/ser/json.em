@@ -11,130 +11,130 @@ pub struct JsonWriter:
     open: Array[(bool, bool)]
 
     ## It allocates a new `String`.
-    pub fn new() -> JsonWriter:
+    pub static fn new() -> JsonWriter:
         return JsonWriter(String(), [])
 
     ## The text written.
-    pub fn text(self) -> str:
-        return self.out.as_str()
+    pub fn text() -> StrView:
+        return this.out.as_str()
 
     ## A comma before an array's element after its first.
     ## It allocates as the `String` it writes to grows.
-    fn before_value(mut self):
-        n = len(self.open)
-        if n > 0 and self.open[n - 1].0:
-            if not self.open[n - 1].1:
-                self.out.push_str(",")
-            self.open[n - 1] = (true, false)
+    fn before_value():
+        n = len(this.open)
+        if n > 0 and this.open[n - 1].0:
+            if not this.open[n - 1].1:
+                this.out.push_str(",")
+            this.open[n - 1] = (true, false)
 
     ## It allocates as the `String` it writes to grows.
-    fn quoted(mut self, text: str):
-        self.out.push_str("\"")
+    fn quoted(text: StrView):
+        this.out.push_str("\"")
         for c in text.chars():
             if c == '"':
-                self.out.push_str("\\\"")
+                this.out.push_str("\\\"")
             elif c == '\\':
-                self.out.push_str("\\\\")
+                this.out.push_str("\\\\")
             elif c == '\n':
-                self.out.push_str("\\n")
+                this.out.push_str("\\n")
             elif c == '\r':
-                self.out.push_str("\\r")
+                this.out.push_str("\\r")
             elif c == '\t':
-                self.out.push_str("\\t")
+                this.out.push_str("\\t")
             elif (c as u32) < 32:
-                self.out.push_str(f"\\u{(c as u32):04x}")
+                this.out.push_str(f"\\u{(c as u32):04x}")
             else:
-                self.out.push(c)
-        self.out.push_str("\"")
+                this.out.push(c)
+        this.out.push_str("\"")
 
     ## It allocates as the `String` it writes to grows.
-    fn key(mut self, name: str):
-        n = len(self.open)
-        if n > 0 and not self.open[n - 1].1:
-            self.out.push_str(",")
+    fn key(name: StrView):
+        n = len(this.open)
+        if n > 0 and not this.open[n - 1].1:
+            this.out.push_str(",")
         if n > 0:
-            self.open[n - 1] = (false, false)
-        self.quoted(name)
-        self.out.push_str(":")
+            this.open[n - 1] = (false, false)
+        this.quoted(name)
+        this.out.push_str(":")
 
 extend JsonWriter implements Writer:
     ## It allocates as the `String` it writes to grows.
-    fn begin_struct(mut self, name: str, version: int) -> Result[void, SerError]:
-        self.before_value()
-        self.out.push_str("{")
-        self.open.push((false, true))
+    fn begin_struct(name: StrView, version: int) -> Result[void, SerError]:
+        this.before_value()
+        this.out.push_str("{")
+        this.open.push((false, true))
         if version > 0:
-            self.key("$version")
-            self.out.push_str(f"{version}")
+            this.key("$version")
+            this.out.push_str(f"{version}")
         return Ok(())
 
     ## It allocates as the `String` it writes to grows.
-    fn field(mut self, name: str) -> Result[void, SerError]:
-        self.key(name)
+    fn field(name: StrView) -> Result[void, SerError]:
+        this.key(name)
         return Ok(())
 
     ## It allocates as the `String` it writes to grows.
-    fn end_struct(mut self) -> Result[void, SerError]:
-        _ = self.open.pop()
-        self.out.push_str("}")
+    fn end_struct() -> Result[void, SerError]:
+        _ = this.open.pop()
+        this.out.push_str("}")
         return Ok(())
 
     ## It allocates as the `String` it writes to grows.
-    fn begin_variant(mut self, name: str) -> Result[void, SerError]:
-        self.before_value()
-        self.out.push_str("{")
-        self.open.push((false, true))
-        self.key("$variant")
-        self.quoted(name)
+    fn begin_variant(name: StrView) -> Result[void, SerError]:
+        this.before_value()
+        this.out.push_str("{")
+        this.open.push((false, true))
+        this.key("$variant")
+        this.quoted(name)
         return Ok(())
 
     ## It allocates as the `String` it writes to grows.
-    fn end_variant(mut self) -> Result[void, SerError]:
-        return self.end_struct()
+    fn end_variant() -> Result[void, SerError]:
+        return this.end_struct()
 
     ## It allocates as the `String` it writes to grows.
-    fn begin_list(mut self, count: int) -> Result[void, SerError]:
-        self.before_value()
-        self.out.push_str("[")
-        self.open.push((true, true))
+    fn begin_list(count: int) -> Result[void, SerError]:
+        this.before_value()
+        this.out.push_str("[")
+        this.open.push((true, true))
         return Ok(())
 
     ## It allocates as the `String` it writes to grows.
-    fn end_list(mut self) -> Result[void, SerError]:
-        _ = self.open.pop()
-        self.out.push_str("]")
+    fn end_list() -> Result[void, SerError]:
+        _ = this.open.pop()
+        this.out.push_str("]")
         return Ok(())
 
     ## It allocates as the `String` it writes to grows.
-    fn write_none(mut self) -> Result[void, SerError]:
-        self.before_value()
-        self.out.push_str("null")
+    fn write_none() -> Result[void, SerError]:
+        this.before_value()
+        this.out.push_str("null")
         return Ok(())
 
     ## It allocates a new `String`.
-    fn write_int(mut self, value: i64) -> Result[void, SerError]:
-        self.before_value()
-        self.out.push_str(f"{value}")
+    fn write_int(value: i64) -> Result[void, SerError]:
+        this.before_value()
+        this.out.push_str(f"{value}")
         return Ok(())
 
     ## It allocates a new `String`.
-    fn write_float(mut self, value: f64) -> Result[void, SerError]:
+    fn write_float(value: f64) -> Result[void, SerError]:
         if value != value or value - value != 0.0:
             return Err(SerError.Malformed(String.from("JSON has no NaN or infinity")))
-        self.before_value()
-        self.out.push_str(f"{value}")
+        this.before_value()
+        this.out.push_str(f"{value}")
         return Ok(())
 
     ## It allocates as the `String` it writes to grows.
-    fn write_bool(mut self, value: bool) -> Result[void, SerError]:
-        self.before_value()
-        self.out.push_str("true" if value else "false")
+    fn write_bool(value: bool) -> Result[void, SerError]:
+        this.before_value()
+        this.out.push_str("true" if value else "false")
         return Ok(())
 
     ## It allocates as the `String` it writes to grows.
-    fn write_str(mut self, value: str) -> Result[void, SerError]:
-        self.before_value()
-        self.quoted(value)
+    fn write_str(value: StrView) -> Result[void, SerError]:
+        this.before_value()
+        this.quoted(value)
         return Ok(())
 
 ## Reads JSON text.
@@ -145,49 +145,49 @@ pub struct JsonReader:
     lists: Array[bool]
 
     ## It allocates a new `String`.
-    pub fn new(text: str) -> JsonReader:
+    pub static fn new(text: StrView) -> JsonReader:
         return JsonReader(String.from(text), 0, [])
 
     ## It allocates the error's message when the input is malformed.
-    fn malformed(self, what: str) -> SerError:
-        return SerError.Malformed(f"{what} at byte {self.at}")
+    fn malformed(what: StrView) -> SerError:
+        return SerError.Malformed(f"{what} at byte {this.at}")
 
-    fn peek(mut self) -> int:
-        bytes = self.text.as_bytes()
-        while self.at < len(bytes) and (bytes[self.at] == 32 or bytes[self.at] == 10 or bytes[self.at] == 13 or bytes[self.at] == 9):
-            self.at += 1
-        if self.at < len(bytes):
-            return bytes[self.at] as int
+    fn peek() -> int:
+        bytes = this.text.as_bytes()
+        while this.at < len(bytes) and (bytes[this.at] == 32 or bytes[this.at] == 10 or bytes[this.at] == 13 or bytes[this.at] == 9):
+            this.at += 1
+        if this.at < len(bytes):
+            return bytes[this.at] as int
         return -1
 
     ## It allocates the error's message when the input is malformed.
-    fn expect(mut self, byte: int, what: str) -> Result[void, SerError]:
-        if self.peek() != byte:
-            return Err(self.malformed(f"expected {what}"))
-        self.at += 1
+    fn expect(byte: int, what: StrView) -> Result[void, SerError]:
+        if this.peek() != byte:
+            return Err(this.malformed(f"expected {what}"))
+        this.at += 1
         return Ok(())
 
-    fn word(mut self, w: str) -> bool:
-        _ = self.peek()
-        if self.text.as_str()[self.at..].starts_with(w):
-            self.at += w.as_bytes().len()
+    fn word(w: StrView) -> bool:
+        _ = this.peek()
+        if this.text.as_str()[this.at..].starts_with(w):
+            this.at += w.as_bytes().len()
             return true
         return false
 
     ## It allocates a new `String`.
-    fn string(mut self) -> Result[String, SerError]:
-        self.expect(34, "a string")?
+    fn string() -> Result[String, SerError]:
+        this.expect(34, "a string")?
         out = String()
-        bytes = self.text.as_bytes()
-        start = self.at
-        while self.at < len(bytes) and bytes[self.at] != 34:
-            if bytes[self.at] == 92:
-                out.push_str(self.text.as_str()[start..self.at])
-                self.at += 1
-                if self.at >= len(bytes):
+        bytes = this.text.as_bytes()
+        start = this.at
+        while this.at < len(bytes) and bytes[this.at] != 34:
+            if bytes[this.at] == 92:
+                out.push_str(this.text.as_str()[start..this.at])
+                this.at += 1
+                if this.at >= len(bytes):
                     break
-                e = bytes[self.at]
-                self.at += 1
+                e = bytes[this.at]
+                this.at += 1
                 if e == 110:
                     out.push('\n')
                 elif e == 116:
@@ -195,11 +195,11 @@ pub struct JsonReader:
                 elif e == 114:
                     out.push('\r')
                 elif e == 117:
-                    if self.at + 4 > len(bytes):
-                        return Err(self.malformed("a short \\u escape"))
+                    if this.at + 4 > len(bytes):
+                        return Err(this.malformed("a short \\u escape"))
                     code: u32 = 0
                     for k in 0..4:
-                        d = bytes[self.at + k] as u32
+                        d = bytes[this.at + k] as u32
                         digit: u32 = 99
                         if d >= 48 and d <= 57:
                             digit = d - 48
@@ -208,164 +208,166 @@ pub struct JsonReader:
                         elif d >= 65 and d <= 70:
                             digit = d - 55
                         if digit == 99:
-                            return Err(self.malformed("a \\u escape"))
+                            return Err(this.malformed("a \\u escape"))
                         code = code * 16 + digit
-                    self.at += 4
+                    this.at += 4
                     match char.from_u32(code):
                         Some(c):
                             out.push(c)
                         None:
-                            return Err(self.malformed("a \\u escape"))
+                            return Err(this.malformed("a \\u escape"))
                 else:
                     out.push(e as char)
-                start = self.at
+                start = this.at
             else:
-                self.at += 1
-        if self.at >= len(bytes):
-            return Err(self.malformed("an unterminated string"))
-        out.push_str(self.text.as_str()[start..self.at])
-        self.at += 1
+                this.at += 1
+        if this.at >= len(bytes):
+            return Err(this.malformed("an unterminated string"))
+        out.push_str(this.text.as_str()[start..this.at])
+        this.at += 1
         return Ok(out)
 
-    fn number(mut self) -> str:
-        _ = self.peek()
-        bytes = self.text.as_bytes()
-        start = self.at
-        while self.at < len(bytes) and (bytes[self.at] == 45 or bytes[self.at] == 43 or bytes[self.at] == 46 or bytes[self.at] == 101 or bytes[self.at] == 69 or (bytes[self.at] >= 48 and bytes[self.at] <= 57)):
-            self.at += 1
-        return self.text.as_str()[start..self.at]
+    fn number() -> StrView:
+        _ = this.peek()
+        bytes = this.text.as_bytes()
+        start = this.at
+        while this.at < len(bytes) and (bytes[this.at] == 45 or bytes[this.at] == 43 or bytes[this.at] == 46 or bytes[this.at] == 101 or bytes[this.at] == 69 or (bytes[this.at] >= 48 and bytes[this.at] <= 57)):
+            this.at += 1
+        return this.text.as_str()[start..this.at]
 
 extend JsonReader implements Reader:
     ## It allocates the error's message when the input is malformed.
-    fn begin_struct(mut self) -> Result[int, SerError]:
-        self.expect(123, "`{`")?
-        mark = self.at
-        if self.peek() == 34:
-            key = self.string()?
+    fn begin_struct() -> Result[int, SerError]:
+        this.expect(123, "`{`")?
+        mark = this.at
+        if this.peek() == 34:
+            key = this.string()?
             if key.as_str() == "$version":
-                self.expect(58, "`:`")?
-                version = self.read_int()?
-                if self.peek() == 44:
-                    self.at += 1
+                this.expect(58, "`:`")?
+                version = this.read_int()?
+                if this.peek() == 44:
+                    this.at += 1
                 return Ok(version)
-        self.at = mark
+        this.at = mark
         return Ok(0)
 
     ## It allocates a new `String`.
-    fn next_field(mut self) -> Result[Option[String], SerError]:
-        c = self.peek()
+    fn next_field() -> Result[Option[String], SerError]:
+        c = this.peek()
         if c == 125:
             return Ok(None)
         if c == 44:
-            self.at += 1
-        name = self.string()?
-        self.expect(58, "`:`")?
+            this.at += 1
+        name = this.string()?
+        this.expect(58, "`:`")?
         return Ok(Some(name))
 
     ## It allocates the error's message when the input is malformed.
-    fn end_struct(mut self) -> Result[void, SerError]:
-        return self.expect(125, "`}`")
+    fn end_struct() -> Result[void, SerError]:
+        return this.expect(125, "`}`")
 
     ## It allocates the error's message when the input is malformed.
-    fn begin_variant(mut self) -> Result[String, SerError]:
-        self.expect(123, "`{`")?
-        key = self.string()?
+    fn begin_variant() -> Result[String, SerError]:
+        this.expect(123, "`{`")?
+        key = this.string()?
         if key.as_str() != "$variant":
-            return Err(self.malformed("expected `\"$variant\"`"))
-        self.expect(58, "`:`")?
-        return self.string()
+            return Err(this.malformed("expected `\"$variant\"`"))
+        this.expect(58, "`:`")?
+        return this.string()
 
     ## It allocates the error's message when the input is malformed.
-    fn end_variant(mut self) -> Result[void, SerError]:
-        return self.expect(125, "`}`")
+    fn end_variant() -> Result[void, SerError]:
+        return this.expect(125, "`}`")
 
     ## It allocates as the `Array` it adds to grows.
-    fn begin_list(mut self) -> Result[void, SerError]:
-        self.expect(91, "`[`")?
-        self.lists.push(true)
+    fn begin_list() -> Result[void, SerError]:
+        this.expect(91, "`[`")?
+        this.lists.push(true)
         return Ok(())
 
     ## It allocates the error's message when the input is malformed.
-    fn next_element(mut self) -> Result[bool, SerError]:
-        if self.peek() == 93:
-            self.at += 1
-            _ = self.lists.pop()
+    fn next_element() -> Result[bool, SerError]:
+        if this.peek() == 93:
+            this.at += 1
+            _ = this.lists.pop()
             return Ok(false)
-        n = len(self.lists)
-        if n > 0 and not self.lists[n - 1]:
-            self.expect(44, "`,`")?
+        n = len(this.lists)
+        if n > 0 and not this.lists[n - 1]:
+            this.expect(44, "`,`")?
         if n > 0:
-            self.lists[n - 1] = false
+            this.lists[n - 1] = false
         return Ok(true)
 
-    fn read_none(mut self) -> Result[bool, SerError]:
-        return Ok(self.word("null"))
+    fn read_none() -> Result[bool, SerError]:
+        return Ok(this.word("null"))
 
     ## It allocates the error's message when the input is malformed.
-    fn read_int(mut self) -> Result[i64, SerError]:
-        match self.number().parse[i64]():
+    fn read_int() -> Result[i64, SerError]:
+        match this.number().parse[i64]():
             Ok(n):
                 return Ok(n)
             Err(_):
-                return Err(self.malformed("expected an integer"))
+                return Err(this.malformed("expected an integer"))
 
     ## It allocates the error's message when the input is malformed.
-    fn read_float(mut self) -> Result[f64, SerError]:
-        match self.number().parse[f64]():
+    fn read_float() -> Result[f64, SerError]:
+        match this.number().parse[f64]():
             Ok(x):
                 return Ok(x)
             Err(_):
-                return Err(self.malformed("expected a number"))
+                return Err(this.malformed("expected a number"))
 
     ## It allocates the error's message when the input is malformed.
-    fn read_bool(mut self) -> Result[bool, SerError]:
-        if self.word("true"):
+    fn read_bool() -> Result[bool, SerError]:
+        if this.word("true"):
             return Ok(true)
-        if self.word("false"):
+        if this.word("false"):
             return Ok(false)
-        return Err(self.malformed("expected `true` or `false`"))
+        return Err(this.malformed("expected `true` or `false`"))
 
     ## It allocates a new `String`.
-    fn read_str(mut self) -> Result[String, SerError]:
-        return self.string()
+    fn read_str() -> Result[String, SerError]:
+        return this.string()
 
     ## It allocates a new `String`.
-    fn skip_value(mut self) -> Result[void, SerError]:
-        c = self.peek()
+    fn skip_value() -> Result[void, SerError]:
+        c = this.peek()
         if c == 123:
-            self.at += 1
-            while self.peek() != 125:
-                if self.peek() == 44:
-                    self.at += 1
-                _ = self.string()?
-                self.expect(58, "`:`")?
-                self.skip_value()?
-            self.at += 1
+            this.at += 1
+            while this.peek() != 125:
+                if this.peek() == 44:
+                    this.at += 1
+                _ = this.string()?
+                this.expect(58, "`:`")?
+                this.skip_value()?
+            this.at += 1
             return Ok(())
         if c == 91:
-            self.at += 1
-            while self.peek() != 93:
-                if self.peek() == 44:
-                    self.at += 1
-                self.skip_value()?
-            self.at += 1
+            this.at += 1
+            while this.peek() != 93:
+                if this.peek() == 44:
+                    this.at += 1
+                this.skip_value()?
+            this.at += 1
             return Ok(())
         if c == 34:
-            _ = self.string()?
+            _ = this.string()?
             return Ok(())
-        if self.word("true") or self.word("false") or self.word("null"):
+        if this.word("true") or this.word("false") or this.word("null"):
             return Ok(())
-        if self.number().as_bytes().len() > 0:
+        if this.number().as_bytes().len() > 0:
             return Ok(())
-        return Err(self.malformed("expected a value"))
+        return Err(this.malformed("expected a value"))
 
 ## `value` as JSON text.
-pub fn to_string[T: Serialize](value: T) -> Result[String, SerError]:
+[T: needs Serialize]
+pub fn to_string(value: T) -> Result[String, SerError]:
     w = JsonWriter.new()
     value.serialize(w)?
     return Ok(String.from(w.text()))
 
 ## A `T` read from JSON text.
-pub fn from_str[T: Deserialize](text: str) -> Result[T, SerError]:
+[T: needs Deserialize]
+pub fn from_str(text: StrView) -> Result[T, SerError]:
     r = JsonReader.new(text)
     return T.deserialize(r)

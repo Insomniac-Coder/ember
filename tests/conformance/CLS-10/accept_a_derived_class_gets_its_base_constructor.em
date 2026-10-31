@@ -9,8 +9,8 @@ open class Script:
     name: String
     ticks: int = 0
 
-    fn init(mut self, owned name: String):
-        self.name = name
+    fn init(owns name: String):
+        this.name = name
 
 class Door(Script):
     is_open: bool = false

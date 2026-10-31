@@ -10,21 +10,21 @@
 class Bag:
     items: Array[int]
 
-    fn add(mut self, x: int):
-        self.items.push(x)
+    fn add(x: int):
+        this.items.push(x)
 
-@static_safe
-fn fill(mut b: Bag, mut other: Bag):
+@no_alias_checks
+fn fill(ref mut b: Bag, ref mut other: Bag):
     for i in 0..3:
-        b.add(i)    #$ error[E4030]: `@static_safe` function `fill` keeps an exclusivity check on a class object here
-        other.add(i)    #$ error[E4030]: `@static_safe` function `fill` keeps an exclusivity check on a class object here
+        b.add(i)    #$ error[E4030]: `@no_alias_checks` function `fill` keeps an exclusivity check on a class object here
+        other.add(i)    #$ error[E4030]: `@no_alias_checks` function `fill` keeps an exclusivity check on a class object here
 
 struct Holder:
     cell: RefCell[int]
 
-@static_safe
+@no_alias_checks
 fn peek(h: Holder) -> int:
-    with _g = h.cell.borrow():    #$ error[E4030]: `@static_safe` function `peek` keeps a `RefCell` borrow check here
+    with _g = h.cell.borrow():    #$ error[E4030]: `@no_alias_checks` function `peek` keeps a `RefCell` borrow check here
         return 1
 
 fn main():

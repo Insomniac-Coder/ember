@@ -10,12 +10,12 @@ struct Token:
 fn main():
     o: Option[int] = Some(1)
     t = Token(2)
-    taker = owned fn(owned x: int) -> int:
+    taker = owned fn(owns x: int) -> int:
         kept = t
         return x + kept.value
     first = o.map(taker)
     second = o.map(taker)  #$ error[E3040]: `taker` has been moved out of
-    keep = fn(owned x: int) -> int => x + 1
+    keep = fn(owns x: int) -> int => x + 1
     third = o.map(keep)
     fourth = o.map(keep)
     println(first, second, third, fourth)

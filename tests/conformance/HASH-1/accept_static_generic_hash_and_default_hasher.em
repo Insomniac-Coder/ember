@@ -9,58 +9,61 @@ struct Key:
 struct CountingHasher implements Hasher:
     state: u64
 
-    fn new() -> CountingHasher:
+    static fn new() -> CountingHasher:
         return CountingHasher(0)
 
-    fn write_bytes(mut self, bytes: Span[u8]):
+    fn write_bytes(bytes: Span[u8]):
         index = 0
         while index < bytes.len():
-            self.state = self.state ^ (bytes[index] as u64)
+            this.state = this.state ^ (bytes[index] as u64)
             index = index + 1
 
-    fn write_u8(mut self, x: u8):
-        self.state = self.state ^ (x as u64)
+    fn write_u8(x: u8):
+        this.state = this.state ^ (x as u64)
 
-    fn write_u16(mut self, x: u16):
-        self.state = self.state ^ (x as u64)
+    fn write_u16(x: u16):
+        this.state = this.state ^ (x as u64)
 
-    fn write_u32(mut self, x: u32):
-        self.state = self.state ^ (x as u64)
+    fn write_u32(x: u32):
+        this.state = this.state ^ (x as u64)
 
-    fn write_u64(mut self, x: u64):
-        self.state = self.state ^ x
+    fn write_u64(x: u64):
+        this.state = this.state ^ x
 
-    fn write_i8(mut self, x: i8):
-        self.state = self.state ^ (x as u64)
+    fn write_i8(x: i8):
+        this.state = this.state ^ (x as u64)
 
-    fn write_i16(mut self, x: i16):
-        self.state = self.state ^ (x as u64)
+    fn write_i16(x: i16):
+        this.state = this.state ^ (x as u64)
 
-    fn write_i32(mut self, x: i32):
-        self.state = self.state ^ (x as u64)
+    fn write_i32(x: i32):
+        this.state = this.state ^ (x as u64)
 
-    fn write_i64(mut self, x: i64):
-        self.state = self.state ^ (x as u64)
+    fn write_i64(x: i64):
+        this.state = this.state ^ (x as u64)
 
-    fn write_usize(mut self, x: usize):
-        self.state = self.state ^ (x as u64)
+    fn write_usize(x: usize):
+        this.state = this.state ^ (x as u64)
 
-    fn write_isize(mut self, x: isize):
-        self.state = self.state ^ (x as u64)
+    fn write_isize(x: isize):
+        this.state = this.state ^ (x as u64)
 
-    fn finish(owned self) -> u64:
-        return self.state
+    fn finish() owns this -> u64:
+        return this.state
 
 extend Key implements Hash:
-    fn hash[H: Hasher](self, mut h: H):
-        h.write_i32(self.value)
+    [H: needs Hasher]
+    fn hash(ref mut h: H):
+        h.write_i32(this.value)
 
-fn hash_value[T: Hash](value: T) -> u64:
+[T: needs Hash]
+fn hash_value(value: T) -> u64:
     hasher = DefaultHasher.new()
     value.hash(hasher)
     return hasher.finish()
 
-fn hash_with[T: Hash, H: Hasher](value: T, owned hasher: H) -> u64:
+[T: needs Hash, H: needs Hasher]
+fn hash_with(value: T, owns hasher: H) -> u64:
     value.hash(hasher)
     return hasher.finish()
 

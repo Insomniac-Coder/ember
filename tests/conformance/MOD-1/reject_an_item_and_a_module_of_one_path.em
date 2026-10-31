@@ -15,8 +15,8 @@ import inner.cells
 struct inventory:  #$ error[E1032]: item `inventory` has the path of module `inventory`
     n: int
 
-    fn count(self) -> int:
-        return self.n
+    fn count() -> int:
+        return this.n
 
 fn main():
     println(inventory(n = 1).count(), inner.cells(), cells.total())

@@ -12,17 +12,18 @@
 # and its final class owner without keeping either alive. The later upgrade must
 # take the expired path rather than reconstructing a class handle.
 interface Observe:
-    fn observer(self) -> Weak[Token]
+    fn observer() -> Weak[Token]
 
 class Token:
     value: i32
 
-class Holder[T] implements Observe:
+[T]
+class Holder implements Observe:
     weak: Weak[Token]
     marker: T
 
-    fn observer(self) -> Weak[Token]:
-        return self.weak
+    fn observer() -> Weak[Token]:
+        return this.weak
 
 fn expired() -> Weak[Token]:
     strong = Token(7)

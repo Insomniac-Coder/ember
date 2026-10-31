@@ -16,7 +16,7 @@ unsafe overlay cpp "texts.hpp":  # SAFETY(ffi): each entry matches its declarati
         @ffi(const)
         fn total()
         @ffi(const)
-        fn spot() -> borrowed one from(self)
+        fn spot() -> borrowed one from(this)
         fn parse(text: borrowed nul_terminated)
         @ffi(const)
         fn append(text, bytes: borrowed count(count), count)

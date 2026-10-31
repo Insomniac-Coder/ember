@@ -1,2 +1,2 @@
 pub interface Render:
-    fn render(self) -> i32
+    fn render() -> i32

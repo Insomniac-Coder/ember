@@ -13,7 +13,7 @@
 from std.mem import assert_disjoint
 
 @noinline
-fn scale(mut dst: MutSpan[f32], src: Span[f32], k: f32) -> str:
+fn scale(ref mut dst: MutSpan[f32], src: Span[f32], k: f32) -> StrView:
     match assert_disjoint(dst, src):
         Ok((d, s)):
             for i in 0..d.len():
@@ -25,13 +25,13 @@ fn scale(mut dst: MutSpan[f32], src: Span[f32], k: f32) -> str:
             return "overlap"
 
 @noinline
-fn halves(mut xs: MutSpan[int]):
+fn halves(ref mut xs: MutSpan[int]):
     (lo, hi) = xs.split_at(2)
     for i in 0..lo.len():
         lo[i] = hi[i] * 0 + (i + 1) * 10
 
 @noinline
-fn unproved(mut dst: MutSpan[f32], src: Span[f32]):
+fn unproved(ref mut dst: MutSpan[f32], src: Span[f32]):
     for i in 0..dst.len():
         dst[i] = src[i] * 3.0
 

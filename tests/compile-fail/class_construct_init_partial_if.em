@@ -5,9 +5,9 @@
 class Point:
     value: i32
 
-    fn init(mut self, choose: bool, value: i32):
+    fn init(choose: bool, value: i32):
         if choose:
-            self.value = value
+            this.value = value
 
 fn main():
     point = Point(false, 41)

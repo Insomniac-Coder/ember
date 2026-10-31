@@ -6,8 +6,8 @@
 class ReadOnly:
     value: i32
 
-    fn bad(self):
-        self.value = 1
+    fn bad():
+        this.value = 1
 
 fn main():
     value = ReadOnly(0)

@@ -3,7 +3,8 @@
 # D-406 — a bound is an interface or a callable type; anything else was
 # dropped without a word.
 
-fn first[T: (int, int)](x: T) -> T:      #$ error[E2020]: a bound is an interface or a callable type
+[T: needs ((int, int))]      #$ error[E2020]: a bound is an interface or a callable type
+fn first(x: T) -> T:
     return x
 
 fn main():

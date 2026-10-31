@@ -10,12 +10,12 @@
 class Bag:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = [1, 2, 3]
+    fn init():
+        this.items = [1, 2, 3]
 
-    fn grown_view(mut self) -> Span[int]:
-        self.items.push(0)
-        return self.items
+    fn grown_view() -> Span[int]:
+        this.items.push(0)
+        return this.items
 
 fn main():
     b = Bag()

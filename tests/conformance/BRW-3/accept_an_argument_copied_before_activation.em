@@ -4,7 +4,7 @@
 # `[BRW-3]`'s own example: `v[0]` is copied before the call activates the
 # `mut` borrow of `v`, so reading it is allowed.
 
-fn f(mut v: Array[int], x: int):
+fn f(ref mut v: Array[int], x: int):
     v.push(x)
 
 fn main():

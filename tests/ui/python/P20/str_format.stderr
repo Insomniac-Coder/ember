@@ -1,4 +1,4 @@
-error[E2072]: `str` has no method named `format`
+error[E2072]: `StrView` has no method named `format`
  --> tests/ui/python/P20/str_format.em:3:24
   |
 3 |     println("{} items".format(n))

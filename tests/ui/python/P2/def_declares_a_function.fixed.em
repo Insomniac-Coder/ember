@@ -1,4 +1,4 @@
-fn greet(name: str):
+fn greet(name: StrView):
     println(name)
 
 fn main():

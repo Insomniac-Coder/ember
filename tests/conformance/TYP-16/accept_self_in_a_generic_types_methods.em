@@ -5,20 +5,21 @@
 # call `Self(…)`. In a generic type, `Self` and the type's own name with its
 # parameters (`W[T]`) are the instance.
 
-struct W[T]:
+[T]
+struct W:
     x: T
 
-    fn make(v: T) -> W[T]:
+    static fn make(v: T) -> W[T]:
         return W[T](v)
 
-    fn again(self) -> Self:
-        return Self(self.x)
+    fn again() -> Self:
+        return Self(this.x)
 
 extend[T] W[T]:
-    fn make2(v: T) -> W[T]:
+    static fn make2(v: T) -> W[T]:
         return W[T](v)
 
-    fn make3(v: T) -> Self:
+    static fn make3(v: T) -> Self:
         return Self(v)
 
 fn main():

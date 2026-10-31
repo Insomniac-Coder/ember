@@ -5,7 +5,8 @@
 # ODR-042 — a bound brings its parents: `C: IndexMut[int]` reads through
 # `Index[int]` too, and `Output = f32` names the parent's `Output`.
 
-fn swap_first[C: IndexMut[int, Output = f32]](mut c: C) -> f32:
+[C: needs IndexMut[int, Output = f32]]
+fn swap_first(ref mut c: C) -> f32:
     old = c[1]
     c[1] = c[1] + 1.0
     return old

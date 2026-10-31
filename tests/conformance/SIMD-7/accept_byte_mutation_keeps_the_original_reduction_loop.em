@@ -8,7 +8,7 @@
 
 @noinline
 @overflow(wrap)
-fn increment_and_sum(mut xs: Array[u8]) -> u64:
+fn increment_and_sum(ref mut xs: Array[u8]) -> u64:
     total: u64 = 0
     for i in 0..xs.len():
         xs[i] = xs[i] + 1

@@ -14,7 +14,7 @@ pub struct Rng:
 
     ## The generator whose sequence `seed` fixes.
     @overflow(wrap)
-    pub fn seeded(seed: u64) -> Rng:
+    pub static fn seeded(seed: u64) -> Rng:
         x = seed + 0x9E3779B97F4A7C15
         a = split_mix(x)
         x = x + 0x9E3779B97F4A7C15
@@ -26,51 +26,52 @@ pub struct Rng:
         return Rng(s0 = a, s1 = b, s2 = c, s3 = d)
 
     ## A generator seeded from the operating system's: a different sequence on each run.
-    pub fn from_entropy() -> Rng:
+    pub static fn from_entropy() -> Rng:
         return Rng.seeded(entropy())
 
     ## The next 64 bits of the sequence.
     @overflow(wrap)
-    pub fn next_u64(mut self) -> u64:
-        result = rotate_left(self.s1 * 5, 7) * 9
-        t = self.s1 << 17
-        self.s2 = self.s2 ^ self.s0
-        self.s3 = self.s3 ^ self.s1
-        self.s1 = self.s1 ^ self.s2
-        self.s0 = self.s0 ^ self.s3
-        self.s2 = self.s2 ^ t
-        self.s3 = rotate_left(self.s3, 45)
+    pub fn next_u64() -> u64:
+        result = rotate_left(this.s1 * 5, 7) * 9
+        t = this.s1 << 17
+        this.s2 = this.s2 ^ this.s0
+        this.s3 = this.s3 ^ this.s1
+        this.s1 = this.s1 ^ this.s2
+        this.s0 = this.s0 ^ this.s3
+        this.s2 = this.s2 ^ t
+        this.s3 = rotate_left(this.s3, 45)
         return result
 
     ## An integer from `range.start` up to, not including, `range.end`, each equally likely. An
     ## empty range is the caller's bug.
     @overflow(wrap)
-    pub fn int_in(mut self, range: Range[int]) -> int:
+    pub fn int_in(range: Range[int]) -> int:
         assert(range.start < range.end, "`int_in` takes a range that is not empty")
         size = (range.end as u64) - (range.start as u64)
         # The draws below `floor` would make the low values likelier; they are drawn again.
         floor = (0 - size) % size
-        r = self.next_u64()
+        r = this.next_u64()
         while r < floor:
-            r = self.next_u64()
+            r = this.next_u64()
         return range.start + (r % size) as int
 
     ## A float in `[0, 1)`: 53 random bits, scaled exactly.
-    pub fn float(mut self) -> f64:
-        return (self.next_u64() >> 11) as f64 * 0.00000000000000011102230246251565
+    pub fn float() -> f64:
+        return (this.next_u64() >> 11) as f64 * 0.00000000000000011102230246251565
 
     ## One of `items`, each equally likely, or `None` when there are none.
-    @borrows(items)
-    pub fn choice[T](mut self, items: Span[T]) -> Option[ref T]:
+    [T]
+    pub fn choice(items: Span[T]) -> Option[ref T] from items:
         if items.len() == 0:
             return None
-        return Some(ref items[self.int_in(0..items.len())])
+        return Some(ref items[this.int_in(0..items.len())])
 
     ## `items` put in an order chosen uniformly at random (Fisher and Yates).
-    pub fn shuffle[T](mut self, mut items: MutSpan[T]):
+    [T]
+    pub fn shuffle(ref mut items: MutSpan[T]):
         i = items.len() - 1
         while i > 0:
-            j = self.int_in(0..i + 1)
+            j = this.int_in(0..i + 1)
             if j < i:
                 parts = items.split_at(i)
                 head = parts.0

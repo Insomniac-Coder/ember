@@ -14,11 +14,12 @@ struct Ticket:
     n: int
 
 extend Ticket implements Eq, Hash:
-    fn eq(self, other: Ticket) -> bool:
-        return self.n == other.n
+    fn eq(other: Ticket) -> bool:
+        return this.n == other.n
 
-    fn hash[H: Hasher](self, mut h: H):
-        h.write_i64(self.n)
+    [H: needs Hasher]
+    fn hash(ref mut h: H):
+        h.write_i64(this.n)
 
 fn main():
     m: Map[Ticket, int] = {}

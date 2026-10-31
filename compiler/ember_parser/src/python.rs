@@ -144,7 +144,7 @@ impl Parser<'_> {
     /// P12, P18 — Python's `raise`, `try`/`except`/`finally`, `global` and `nonlocal`, at the start
     /// of a statement. `Some` when the statement was one of them: what it is read as.
     pub(crate) fn python_statement(&mut self) -> Option<StmtKind> {
-        let starts_value = |kind: &TokenKind| matches!(kind, TokenKind::Ident(_) | TokenKind::RawIdent(_) | TokenKind::Lit(_) | TokenKind::Keyword(Kw::SelfValue));
+        let starts_value = |kind: &TokenKind| matches!(kind, TokenKind::Ident(_) | TokenKind::RawIdent(_) | TokenKind::Lit(_) | TokenKind::Keyword(Kw::SelfValue | Kw::This));
         if self.at_word(0, "raise") && starts_value(self.peek_at(1)) {
             return Some(self.python_raise());
         }
@@ -276,27 +276,55 @@ impl Parser<'_> {
         Some((pattern, Expr { id: self.next_id(), kind: ExprKind::Error, span: value.span }))
     }
 
-    /// P14 — a method of a type whose body uses `self` and whose parameters do not take it: Python's
-    /// `def m():` with `self` left out. The body's tokens are `body`; the receiver is added (borrowed),
-    /// so the method checks as the fixed one would.
+    /// P14 — `self` in a method, listed (`fn reset(self):`, Python's `def reset(self):`) or used
+    /// (`self.count = 0`): in 0.9.15 a method does not list its object, which its body names `this`
+    /// (`[FN-4]`). One `E1010` for the method, its help the first line without the object and `this`
+    /// for each use, one fix-it. A listed object stays in the tree, so the method checks as it meant.
     pub(crate) fn python_missing_self(&mut self, lparen: Span, params: &mut Vec<Param>, body: std::ops::Range<usize>) {
-        if params.iter().any(|param| matches!(param.kind, ParamKind::Receiver { .. })) {
-            return;
-        }
-        let Some(used) = self.tokens[body].iter().find(|token| matches!(token.kind, TokenKind::Keyword(Kw::SelfValue))).map(|token| token.span) else {
+        let listed = params.first().filter(|param| matches!(param.kind, ParamKind::Receiver { implicit: false, .. })).map(|param| (param.span, param.mode));
+        let used: Vec<Span> = self.tokens[body].iter().filter(|token| matches!(token.kind, TokenKind::Keyword(Kw::SelfValue))).map(|token| token.span).collect();
+        let Some(first) = listed.map(|(span, _)| span).or_else(|| used.first().copied()) else {
             return;
         };
-        let after = lparen.shrink_to_end();
-        let text = if params.is_empty() { "self" } else { "self, " };
+        let mut edits: Vec<(Span, Replacement)> = used.iter().map(|span| (*span, Replacement::Text("this".to_string()))).collect();
+        // The first use's line, in the program's own names (`[DIA-21]`).
+        let mut help = match used.as_slice() {
+            [] => String::new(),
+            [only] => format!("write `{}`", self.line_with(*only, "this")),
+            [first, ..] => format!("write `{}`, and `this` for each other `self`", self.line_with(*first, "this")),
+        };
+        if let Some((span, mode)) = listed {
+            // The object and the `, ` after it; `owns this` after the parameters for one taken over.
+            let next = params.get(1).map_or(span.end, |param| param.span.start);
+            let removed = Span::new(span.file, span.start, next);
+            edits.push((removed, Replacement::Text(String::new())));
+            let mut line = self.line_with(removed, "");
+            if mode == Mode::Owned {
+                if let Some(close) = line.find(')') {
+                    line.insert_str(close + 1, " owns this");
+                }
+                let after = params.last().map_or(span.end, |param| param.span.end) as usize;
+                if let Some(close) = self.src[after..].find(')') {
+                    let at = (after + close + 1) as u32;
+                    edits.push((Span::new(span.file, at, at), Replacement::Text(" owns this".to_string())));
+                }
+            }
+            help = if used.is_empty() { format!("write `{line}`") } else { format!("write `{line}`, and `this` for `self` in its body") };
+        }
         self.sink.emit(
-            Diagnostic::error(codes::E1010, used, "`self` in a method that does not take it")
+            Diagnostic::error(codes::E1010, first, "inside a method its object is `this`, and a method does not list it")
                 .habit(Habit::P14)
-                .secondary(lparen, "the parameters, without `self`")
-                .note("a method takes its receiver as its first parameter, `self`, as Python's does; one without it is an associated function [FN-4]")
-                .suggest("take `self`", after, text),
+                .note("`self` is Python's name for a method's object; Ember's is `this` [FN-4]")
+                .suggest_edits(help, edits),
         );
-        let id = self.next_id();
-        params.insert(0, Param { id, mode: Mode::Borrow, kind: ParamKind::Receiver { ty: None }, default: None, span: after });
+        if listed.is_some() {
+            return;
+        }
+        if !params.iter().any(|param| matches!(param.kind, ParamKind::Receiver { .. })) {
+            let id = self.next_id();
+            let after = lparen.shrink_to_end();
+            params.insert(0, Param { id, mode: Mode::Mut, is_const: false, kind: ParamKind::Receiver { ty: None, implicit: true }, default: None, span: after });
+        }
     }
 
     /// P17 — `case` before a `match` arm's pattern, which Ember writes bare: the word and the space

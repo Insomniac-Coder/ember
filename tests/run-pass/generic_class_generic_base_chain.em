@@ -3,18 +3,21 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 
-open class Base[T]:
+[T]
+open class Base:
     value: T
 
-    fn init(mut self, value: T):
-        self.value = value
+    fn init(value: T):
+        this.value = value
 
-open class Middle[T](Base[T]):
-    fn init(mut self, value: T):
+[T]
+open class Middle(Base[T]):
+    fn init(value: T):
         super.init(value)
 
-class Leaf[T](Middle[T]):
-    fn init(mut self, value: T):
+[T]
+class Leaf(Middle[T]):
+    fn init(value: T):
         super.init(value)
 
 fn main():

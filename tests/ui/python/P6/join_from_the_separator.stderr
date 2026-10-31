@@ -1,4 +1,4 @@
-error[E2072]: `str` has no method named `join`
+error[E2072]: `StrView` has no method named `join`
  --> tests/ui/python/P6/join_from_the_separator.em:3:18
   |
 3 |     println(", ".join(names))

@@ -12,23 +12,23 @@ struct Vec3:
 
 extend bool implements Add[bool]:    #$ error[E2121]: `bool` and `Add[bool]` are both another package's, so this package cannot implement one for the other
     type Output = bool
-    fn add(self, other: bool) -> bool:
-        return self or other
+    fn add(other: bool) -> bool:
+        return this or other
 
 extend Array[Vec3] implements Neg:    #$ error[E2121]: `Array[Vec3]` and `Neg` are both another package's, so this package cannot implement one for the other
     type Output = Array[Vec3]
-    fn neg(self) -> Array[Vec3]:
+    fn neg() -> Array[Vec3]:
         return []
 
 extend[T] Option[T] implements Neg:    #$ error[E2121]: `Option[T]` and `Neg` are both another package's, so this package cannot implement one for the other
     type Output = Option[T]
-    fn neg(self) -> Option[T]:
+    fn neg() -> Option[T]:
         return None
 
-extend[T: Copy] f32 implements Mul[T]:    #$ error[E2121]: `f32` and `Mul[T]` are both another package's, so this package cannot implement one for the other
+extend[T: needs Copy] f32 implements Mul[T]:    #$ error[E2121]: `f32` and `Mul[T]` are both another package's, so this package cannot implement one for the other
     type Output = f32
-    fn mul(self, other: T) -> f32:
-        return self
+    fn mul(other: T) -> f32:
+        return this
 
 fn main():
     println(1)

@@ -1,6 +1,6 @@
 # Find the shortest path through a grid maze with breadth-first search and draw it with stars.
 
-const MAZE: str = """
+const MAZE: StrView = """
 ##########
 #S.....#.#
 #.##.#.#.#
@@ -19,36 +19,36 @@ struct Pos:
     row: int
     col: int
 
-    fn neighbours(self) -> Array[Pos]:
-        return [Pos(self.row - 1, self.col), Pos(self.row + 1, self.col),
-                Pos(self.row, self.col - 1), Pos(self.row, self.col + 1)]
+    fn neighbours() -> Array[Pos]:
+        return [Pos(this.row - 1, this.col), Pos(this.row + 1, this.col),
+                Pos(this.row, this.col - 1), Pos(this.row, this.col + 1)]
 
 class Grid:
     cells: Array[Array[String]] = []
     start: Pos = Pos(0, 0)
     goal: Pos = Pos(0, 0)
 
-    fn init(self, text: str):
+    fn init(text: StrView):
         for line in text.trim().split("\n"):
             row: Array[String] = []
             for c in line:
                 if c == 'S':
-                    self.start = Pos(self.cells.len(), row.len())
+                    this.start = Pos(this.cells.len(), row.len())
                 elif c == 'E':
-                    self.goal = Pos(self.cells.len(), row.len())
+                    this.goal = Pos(this.cells.len(), row.len())
                 row.push(c.to_string())
-            self.cells.push(row)
+            this.cells.push(row)
 
-    fn rows(self) -> int:
-        return self.cells.len()
+    fn rows() -> int:
+        return this.cells.len()
 
-    fn cols(self) -> int:
-        return self.cells[0].len()
+    fn cols() -> int:
+        return this.cells[0].len()
 
-    fn is_open(self, p: Pos) -> bool:
-        if p.row < 0 or p.row >= self.rows() or p.col < 0 or p.col >= self.cols():
+    fn is_open(p: Pos) -> bool:
+        if p.row < 0 or p.row >= this.rows() or p.col < 0 or p.col >= this.cols():
             return false
-        return self.cells[p.row][p.col] != "#"
+        return this.cells[p.row][p.col] != "#"
 
 fn shortest_path(grid: Grid) -> Option[Array[Pos]]:
     came_from: Map[Pos, Pos] = {}

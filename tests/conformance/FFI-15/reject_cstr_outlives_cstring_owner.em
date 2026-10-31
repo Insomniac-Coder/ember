@@ -5,7 +5,7 @@
 
 import std.ffi
 
-fn dangling() -> cstr:
+fn dangling() -> CStrView:
     value = "hello".to_cstring().unwrap()
     return value.as_cstr()
 

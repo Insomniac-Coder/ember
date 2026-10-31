@@ -21,9 +21,9 @@ unsafe overlay cpp "views.hpp":  # SAFETY(ffi): each entry matches its declarati
     class Words:
         fn new()
         @ffi(const)
-        fn first() -> from(self)
+        fn first() -> from(this)
         @ffi(const)
-        fn scores() -> from(self)
-        fn scores_mut() -> from(self)
+        fn scores() -> from(this)
+        fn scores_mut() -> from(this)
         @ffi(const)
         fn total()

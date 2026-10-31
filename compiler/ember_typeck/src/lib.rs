@@ -22,6 +22,7 @@ mod serial;
 mod comptime;
 mod coroutines;
 mod habits;
+mod objects;
 
 pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
 pub use derives::component_registry_key;
@@ -348,6 +349,14 @@ pub struct CheckOutput {
     /// made in them), and of the generic instances only such functions asked for: what the checks
     /// after type checking pass by in a program with errors.
     pub failed: HashSet<String>,
+    /// `[FN-4]`, `[EXC-15]` — the symbols of the methods that do not list their object, whose
+    /// modes are worked out after lowering (`ember_analysis::objects`).
+    pub implicit_objects: HashSet<String>,
+    /// The read-only checks of the objects passed to those methods, by the span of the borrow that
+    /// passes each and the method's declaration (`Span::DUMMY` for a call through a `dyn` value): a
+    /// `for` loop's `iter()` and its iterator's `next()` are passed at one span. Reported when the
+    /// method may change its object.
+    pub deferred_objects: HashMap<(Span, Span), Vec<Diagnostic>>,
 }
 
 /// `[LEX-15a]` — a module's item-level aliases, to resolve: the generic ones first, since a plain
@@ -365,13 +374,18 @@ fn pending_type_aliases(module: &ast::Module) -> Vec<&ast::TypeAlias> {
     pending
 }
 
+/// Check `modules`. M1, `[STD-19]` — a method's implicit object is passed `ref mut` until every body
+/// is checked and what each method does to its object is worked out (`objects.rs`); the known-numbers
+/// rule takes such a method to read a name it relies on, and a round that finds one changes it is run
+/// again, from the same types, counting it a change. Each round adds a method, so the rounds end; a
+/// program none of whose methods changes such a name is checked once.
+#[allow(clippy::too_many_arguments)]
 pub fn check(
     modules: &[LoadedModule],
     types: &mut TypeTable,
     common: &CommonTypes,
     sink: &mut Sink,
     default_overflow: OverflowPolicy,
-    lint_return_intersection: bool,
     debug_assertions: bool,
     comptime_answers: &ComptimeAnswers,
     realtime: Option<hir::Effects>,
@@ -379,6 +393,38 @@ pub fn check(
     reload_if_default: &HashSet<Span>,
     reuse: Option<&Reuse>,
 ) -> CheckOutput {
+    let mark = sink.mark();
+    let start = types.clone();
+    let mut object_changers = HashSet::new();
+    loop {
+        let (output, misread) = check_round(
+            modules, types, common, sink, default_overflow, debug_assertions,
+            comptime_answers, realtime, exports, reload_if_default, reuse, &object_changers,
+        );
+        if misread.is_subset(&object_changers) {
+            return output;
+        }
+        sink.rollback(mark);
+        *types = start.clone();
+        object_changers.extend(misread);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_round(
+    modules: &[LoadedModule],
+    types: &mut TypeTable,
+    common: &CommonTypes,
+    sink: &mut Sink,
+    default_overflow: OverflowPolicy,
+    debug_assertions: bool,
+    comptime_answers: &ComptimeAnswers,
+    realtime: Option<hir::Effects>,
+    exports: &dyn ExportIndex,
+    reload_if_default: &HashSet<Span>,
+    reuse: Option<&Reuse>,
+    object_changers: &HashSet<Span>,
+) -> (CheckOutput, HashSet<Span>) {
     // `[FFI-16]` — a status enum's error type, `struct N(code: E)` implementing `Error`.
     let status_errors = errors::desugar_status_errors(modules);
     let modules: &[LoadedModule] = status_errors.as_deref().unwrap_or(modules);
@@ -410,6 +456,7 @@ pub fn check(
     let expanded_foreign = expand_extern_blocks(modules, sink);
     let modules: &[LoadedModule] = expanded_foreign.as_deref().unwrap_or(modules);
     let mut checker = Checker::new(types, common, sink);
+    checker.object_changers = object_changers.clone();
     checker.module_asts = modules.iter().map(|loaded| loaded.module.clone()).collect();
     checker.sources = modules.iter().map(|loaded| (loaded.module.span.file, SourceText::new(loaded.module.source.clone()))).collect();
     for (span, lift) in generators.iter().flat_map(|written| written.locals.iter()) {
@@ -420,7 +467,6 @@ pub fn check(
     checker.default_overflow = default_overflow;
     checker.active_overflow = default_overflow;
     checker.debug_assertions = debug_assertions;
-    checker.lint_return_intersection = lint_return_intersection;
     checker.comptime_answers = comptime_answers.clone();
     checker.derive_requests = derive_requests;
     checker.reload_if_default = reload_if_default.clone();
@@ -790,6 +836,8 @@ pub fn check(
     let kept_closures = std::mem::take(&mut checker.kept_closures);
     reused.extend(kept_closures.iter().map(|function| function.def));
     functions.extend(kept_closures);
+    // `[EXC-15]` — each method's object it does not list: its mode, from every body (`objects.rs`).
+    let misread = checker.decide_implicit_objects(&mut functions);
     // `[FFI-26]`/`[MNG-2]` — a stable C name is an asserted linker identity.
     // Diagnose collisions while both source locations are still available,
     // before a backend reports only a duplicate C definition.
@@ -885,7 +933,12 @@ pub fn check(
         functions.extend(std::mem::take(&mut checker.comptime_functions));
     }
     let failed = checker.failed_bodies(&functions);
-    CheckOutput {
+    let implicit_objects = functions
+        .iter()
+        .filter(|function| checker.signatures.get(function.def.0 as usize).is_some_and(|signature| signature.implicit_object))
+        .map(|function| function.symbol.clone())
+        .collect();
+    let output = CheckOutput {
         found,
         made_structs: checker.closure_env_spans.keys().map(|&id| (id, checker.made_call(id))).collect(),
         closure_names_unstable: checker.closure_names_unstable,
@@ -900,7 +953,10 @@ pub fn check(
         comptime,
         incomplete: std::mem::take(&mut checker.incomplete),
         failed,
-    }
+        implicit_objects,
+        deferred_objects: std::mem::take(&mut checker.deferred_objects),
+    };
+    (output, misread)
 }
 
 /// `[BLD-1]` — a record's types found so far (`Checker::find_again`), those being found, and those
@@ -1089,7 +1145,7 @@ impl ParallelWalk {
     fn condition(&mut self, checker: &Checker<'_>, cond: &ast::Condition) {
         match cond {
             ast::Condition::Expr(e) => self.expr(checker, e),
-            ast::Condition::Pattern { pattern, value } => {
+            ast::Condition::Pattern { pattern, value, .. } => {
                 self.expr(checker, value);
                 self.bind(pattern);
             }
@@ -1414,7 +1470,7 @@ impl ParallelWalk {
                 }
             }
             ast::ExprKind::Match { scrutinee, arms } => self.arms(checker, scrutinee, arms),
-            ast::ExprKind::RefOf { place, .. } => self.argument(checker, place),
+            ast::ExprKind::RefOf { place, .. } | ast::ExprKind::CopyOf(place) => self.argument(checker, place),
             // A lambda or a comprehension in the body is its own code: one that reaches a place the
             // loop writes cannot be read through.
             ast::ExprKind::Lambda(_) | ast::ExprKind::Comprehension { .. } => {}
@@ -1628,6 +1684,18 @@ struct SourceText {
     lines: Vec<u32>,
 }
 
+impl Checker<'_> {
+    /// Where the `fn` (or the `gen` before it) of the function whose name is at `name` begins.
+    fn fn_keyword_before(&self, name: Span) -> Option<u32> {
+        let text = &self.sources.get(&name.file)?.text;
+        let before = text.get(..name.start as usize)?.trim_end();
+        let fn_at = before.strip_suffix("fn")?.len();
+        let head = text[..fn_at].trim_end();
+        let at = head.strip_suffix("gen").filter(|rest| rest.ends_with(char::is_whitespace)).map_or(fn_at, str::len);
+        Some(at as u32)
+    }
+}
+
 impl SourceText {
     fn new(text: std::sync::Arc<str>) -> SourceText {
         let lines = std::iter::once(0).chain(text.match_indices('\n').map(|(at, _)| at as u32 + 1)).collect();
@@ -1714,6 +1782,10 @@ struct Signature {
     /// `[DIA-22]` — the function's name where it is declared, the secondary span of a diagnostic
     /// its signature causes at a call; `Span::DUMMY` for one the compiler made.
     decl: Span,
+    /// `[FN-4]`, `[EXC-15]` — a method that does not list its object (`this`), whose mode is worked
+    /// out from its body after lowering (`M1-plan.md`): it is `Mut` here, its calls pass the object
+    /// `ref mut`, and their read-only checks wait for the mode (`deferred_objects`).
+    implicit_object: bool,
 }
 
 /// Whether `inner` lies within `outer`, in one file.
@@ -1823,7 +1895,7 @@ const BUILT_IN_TYPES: [&str; 19] = [
 /// module's own `Box` resolves to; its diagnostics still say `Box`. Likewise
 /// the scalar names a declaration may shadow, `int`, `float` and `str` (D-860).
 fn root_qualified(name: Symbol) -> Symbol {
-    if COMPILER_KNOWN_TYPES.contains(&name.as_str()) || matches!(name.as_str(), "int" | "float" | "str") {
+    if COMPILER_KNOWN_TYPES.contains(&name.as_str()) || matches!(name.as_str(), "int" | "float" | "str" | "StrView") {
         Symbol::intern(&format!("root.{name}"))
     } else {
         name
@@ -2124,6 +2196,7 @@ fn clause_lambda(pattern: &ast::Pattern, body: ast::Expr, span: Span) -> ast::Ex
     let param = |name: ast::Ident| ast::Param {
         id: ast::NodeId::DUMMY,
         mode: ast::Mode::Borrow,
+        is_const: false,
         kind: ast::ParamKind::Named { name, ty: infer() },
         default: None,
         span: name.span,
@@ -2165,10 +2238,16 @@ fn clause_lambda(pattern: &ast::Pattern, body: ast::Expr, span: Span) -> ast::Ex
     }
 }
 
+/// `[TYP-9]` — `@fp(allow_fma)`, 0.9.10's `@fp(contract)`.
 fn fp_names_contract(attr: &ast::Attribute) -> bool {
     matches!(attr.args.as_slice(), [ast::AttrArg::Expr(ast::Expr {
         kind: ast::ExprKind::Path { segments }, ..
-    })] if segments.len() == 1 && segments[0].name.is("contract"))
+    })] if segments.len() == 1 && (segments[0].name.is("allow_fma") || segments[0].name.is("contract")))
+}
+
+/// `[EFF-6a]`, `[ATT-1]` — `@no_alias_checks`, 0.9.10's `@static_safe`.
+fn no_alias_checks(attrs: &[ast::Attribute]) -> bool {
+    has_attribute(attrs, "no_alias_checks") || has_attribute(attrs, "static_safe")
 }
 
 fn is_literal_argument(e: &Expr) -> bool {
@@ -2455,6 +2534,8 @@ struct GenericMethod {
     has_body: bool,
     /// `None` for an associated function on the generic type.
     receiver: Option<Mode>,
+    /// See `Signature::implicit_object`.
+    implicit_object: bool,
     /// The parameters after `self`. `self` itself is not here: its type is
     /// the instantiation, which does not exist until one is built.
     params: Vec<(Symbol, Ty, Mode, Span)>,
@@ -3500,7 +3581,16 @@ struct Checker<'a> {
     /// Import-visible member declarations collected from resolved source
     /// signatures. This is distinct from HIR/MIR bodies because interface and
     /// generic members can be semantically visible without an emitted body.
-    member_callable_declarations: Vec<CallableDeclaration>,
+    member_callable_declarations: Vec<(DefId, CallableDeclaration)>,
+    /// `[EXC-15]` — the opaque check's body of each generic owner's method that does not list its
+    /// object, by its place in the source: its object's mode is worked out from it, as an
+    /// instance's is from its own.
+    opaque_object_bodies: Vec<((usize, usize, usize), Function)>,
+    /// `[EXC-15]` — the methods not listing their object through which a call only reads it, as
+    /// worked out (`decide_implicit_objects`), and the generic owners' among them by their place in
+    /// the source: what a module's interface says of them.
+    object_reads: HashSet<DefId>,
+    object_reads_by_source: HashSet<(usize, usize, usize)>,
     /// Concrete generic-method instances waiting for body checking/emission.
     pending_generic_methods: Vec<(Instance, DefId)>,
     /// Generic methods on a newly instantiated generic owner must still be
@@ -3572,6 +3662,9 @@ struct Checker<'a> {
     defaults_not_met: HashSet<(Ty, Symbol)>,
     /// D-437 — `bound_call_signature`'s readings, by method, parameter, bound and caller.
     bound_call_signatures: HashMap<(DefId, Ty, Symbol, Vec<Ty>), DefId>,
+    /// `[DSP-5]` — each interface method a built-in type implements, and whether one of those
+    /// built-in implementations changes its object (`note_builtin_object`).
+    pub(crate) builtin_objects: HashMap<DefId, bool>,
     /// `[TYP-17]` — set once every implementation is collected. Before
     /// then a generic struct named with concrete arguments has its bounds
     /// checked later, from `pending_struct_bounds` (D-301).
@@ -3736,6 +3829,25 @@ struct Checker<'a> {
     /// (`lib_step`, a member's `Handle.new`); and those whose first call has said so (`L3015`), by that
     /// name, since two imports of one header declare one function (`[FFI-30]`).
     unstated_foreign: HashMap<Span, String>,
+    /// See `CheckOutput::deferred_objects`.
+    deferred_objects: HashMap<(Span, Span), Vec<Diagnostic>>,
+    /// `[MOD-3]` — the places a gone name was refused at, so a type resolved again is refused once.
+    refused_spellings: HashSet<Span>,
+    /// `[GRM-13]` — the names a pattern being checked writes `copy of v`: the view of the part, the
+    /// name, and the part's type, made by `take_pattern_copies` where the names come into scope.
+    pattern_copies: Vec<(LocalId, ast::Ident, Ty)>,
+    /// See `note_written`.
+    pub(crate) written_places: HashSet<Span>,
+    objects_deferred: bool,
+    /// M1, `[STD-19]` — the methods (by their declaration) an earlier round of `check` found change
+    /// the object a relied name was passed as (`written_in`), and those this round took to read it.
+    object_changers: HashSet<Span>,
+    pub(crate) assumed_object_reads: HashSet<DefId>,
+    /// The same, taken by a closure's capture probe, which reads the checker only.
+    probe_object_reads: std::cell::RefCell<Vec<DefId>>,
+    /// The method of each call through a `dyn` value, by its receiver's place: a capture probe asks
+    /// whether its object is implicit.
+    interface_call_methods: HashMap<Span, DefId>,
     /// Each such function's calls in unsafe code, by its name: its language, the line to write, and
     /// the calls. Recorded while checking and reported at the end, so a quiet check's rollback
     /// (`Sink::rollback`) loses none; one `L3015` each call, which `Sink::ordered` reports as one at
@@ -3793,7 +3905,7 @@ struct Checker<'a> {
     /// `[TYP-9]` — the float mode of the function being checked, which a
     /// lambda in it takes.
     active_fp: FpMode,
-    lint_return_intersection: bool,
+
     /// ODR-211 — set while an interface default's signature is read again for one implementing
     /// type: its `@borrows` was checked on the interface, and here applies only where this type
     /// makes the result and the named parameters views.
@@ -4055,6 +4167,9 @@ impl<'a> Checker<'a> {
             method_vis: HashMap::new(),
             routed_call: false,
             member_callable_declarations: Vec::new(),
+            opaque_object_bodies: Vec::new(),
+            object_reads: HashSet::new(),
+            object_reads_by_source: HashSet::new(),
             pending_generic_methods: Vec::new(),
             pending_generic_method_validations: Vec::new(),
             locals: Vec::new(),
@@ -4077,6 +4192,7 @@ impl<'a> Checker<'a> {
             default_copies: HashSet::new(),
             defaults_not_met: HashSet::new(),
             bound_call_signatures: HashMap::new(),
+            builtin_objects: HashMap::new(),
             bounds_known: false,
             unresolved_bounds: Vec::new(),
             reported_unresolved_bounds: HashSet::new(),
@@ -4138,6 +4254,15 @@ impl<'a> Checker<'a> {
             local_fn_values: HashSet::new(),
             undocumented_unsafe: HashSet::new(),
             unstated_foreign: HashMap::new(),
+            deferred_objects: HashMap::new(),
+            pattern_copies: Vec::new(),
+            refused_spellings: HashSet::new(),
+            written_places: HashSet::new(),
+            objects_deferred: false,
+            object_changers: HashSet::new(),
+            assumed_object_reads: HashSet::new(),
+            probe_object_reads: std::cell::RefCell::new(Vec::new()),
+            interface_call_methods: HashMap::new(),
             members_of: None,
             unstated_calls: HashMap::new(),
             imported_files: HashSet::new(),
@@ -4161,7 +4286,6 @@ impl<'a> Checker<'a> {
             once_fn_parameter: false,
             active_overflow: OverflowPolicy::default(),
             active_fp: FpMode::Strict,
-            lint_return_intersection: false,
             borrows_in_copy: false,
             reported_stmt_attrs: HashSet::new(),
             debug_assertions: true,
@@ -4215,39 +4339,62 @@ impl<'a> Checker<'a> {
     /// with the parameters that would have been valid listed — the attribute
     /// is a contract (`[VER-2]` makes widening it a breaking change), so a
     /// typo in it is worth catching loudly.
-    /// `[LT-1b]` — the opt-in `L3014`: rule 3 ties the result to more than one
-    /// source parameter, which `@borrows` can narrow.
-    fn lint_rule_3(&mut self, params: &[(Symbol, Ty, Mode, Span)], ret: Ty, borrows: &Option<Vec<hir::BorrowSource>>, span: Span) {
-        if !self.lint_return_intersection || borrows.is_some() || !self.types.is_view(ret) {
-            return;
-        }
-        let names: Vec<String> = self.sources_of(params).into_iter().map(|index| params[index].0.to_string()).collect();
-        if names.len() >= 2 {
-            self.sink.emit(
-                Diagnostic::lint(
-                    codes::L3014,
-                    span,
-                    format!("return region is the intersection of {} parameters", names.len()),
-                )
-                .help(format!(
-                    "the result borrows every one of {} (LT-1 rule 3); write `@borrows(…)` naming only those it points into",
-                    names.join(", ")
-                )),
-            );
-        }
-    }
 
+    /// `[LT-1a]` — what a returned view points into, as `-> T from name` (`[GRM-41]`) says: a
+    /// parameter, or a field of `this` written bare. 0.9.10's `@borrows(…)` is gone (`E0104`, which
+    /// says what to write); one naming one thing is read quietly, for what it means.
     fn check_borrows_attribute(
         &mut self,
         attrs: &[ast::Attribute],
+        from: Option<ast::Ident>,
         params: &[(Symbol, Ty, Mode, Span)],
         ret: Ty,
     ) -> Option<Vec<hir::BorrowSource>> {
-        let Some(attr) = attrs
-            .iter()
-            .find(|a| a.path.len() == 1 && a.path[0].name.is("borrows"))
-        else {
-            return None;
+        let written = attrs.iter().find(|a| a.path.len() == 1 && a.path[0].name.is("borrows"));
+        // `[ATT-1]` — `@borrows` is gone (`E0104`); one naming one parameter or field is checked as the
+        // `from` it is, for what it means.
+        let names_one = |attr: &ast::Attribute| matches!(attr.args.as_slice(),
+            [ast::AttrArg::Expr(ast::Expr { kind: ast::ExprKind::Path { .. } | ast::ExprKind::Field { .. } | ast::ExprKind::SelfExpr, .. })]);
+        let written = written.filter(|attr| names_one(attr));
+        let from_attr;
+        let attr = match (from, written) {
+            // A gone `@borrows` beside `from` is `E0104` alone.
+            (Some(from), _) => {
+                // A name that is no parameter is a field of `this`, when the function has an object.
+                let receiver = params.first().is_some_and(|(name, ..)| name.is("self"));
+                let is_field = receiver && self.receiver_fields(params[0].1).is_some_and(|fields| fields.iter().any(|(name, _)| *name == from.name));
+                let parameter = params.iter().find(|(name, ..)| *name == from.name);
+                // `[LT-1a]` — a name that is both could mean either.
+                if let Some(&(_, _, _, at)) = parameter.filter(|_| is_field) {
+                    let owner = match &self.recipe_fields {
+                        Some((recipe, _)) if params[0].1 == self.common.self_ty => recipe.as_str().rsplit('.').next().unwrap_or(recipe.as_str()).to_string(),
+                        _ => match *self.types.kind(params[0].1) {
+                            TyKind::Ref { inner, .. } => self.types.display(inner),
+                            _ => self.types.display(params[0].1),
+                        },
+                    };
+                    let name = from.name;
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2118, from.span, format!("`{name}` is both a parameter and a field of `{owner}`, so `from {name}` could mean either"))
+                            .secondary(at, format!("the parameter `{name}`"))
+                            .help(format!("rename the parameter: then `from {name}` names the field, and `from` with the new name names the parameter")),
+                    );
+                    return None;
+                }
+                let field = is_field && parameter.is_none();
+                let kind = if field {
+                    let this = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::SelfExpr, span: from.span };
+                    ast::ExprKind::Field { base: Box::new(this), name: from }
+                } else {
+                    ast::ExprKind::Path { segments: vec![from] }
+                };
+                let named = ast::Expr { id: ast::NodeId::DUMMY, kind, span: from.span };
+                let path = vec![ast::Ident { name: Symbol::intern("borrows"), span: from.span }];
+                from_attr = ast::Attribute { id: ast::NodeId::DUMMY, path, args: vec![ast::AttrArg::Expr(named)], span: from.span };
+                &from_attr
+            }
+            (None, Some(written)) => written,
+            (None, None) => return None,
         };
 
         // ODR-211 — a copy for one type: what the interface's check accepted, kept where this
@@ -4274,6 +4421,13 @@ impl<'a> Checker<'a> {
             });
             return kept;
         }
+        // `[ATT-1]` — a gone `@borrows`: `E0104` already says what to write.
+        if from.is_none() {
+            let quiet = self.sink.mark();
+            let named = self.check_borrows_attribute_in(attr, params, ret);
+            self.sink.rollback(quiet);
+            return named;
+        }
         self.check_borrows_attribute_in(attr, params, ret)
     }
 
@@ -4283,35 +4437,15 @@ impl<'a> Checker<'a> {
         params: &[(Symbol, Ty, Mode, Span)],
         ret: Ty,
     ) -> Option<Vec<hir::BorrowSource>> {
-        if attr.args.is_empty() {
-            self.sink.emit(
-                Diagnostic::error(
-                    codes::E2031,
-                    attr.span,
-                    "`@borrows` must name at least one parameter",
-                )
-                .primary_label("name one or more parameters the result borrows")
-                .help("name the parameter(s) that the returned view derives from"),
-            );
-            // Match the existing invalid-attribute paths above: report the
-            // source error, then let later checks use ordinary elision rather
-            // than manufacturing an empty provenance contract.
-            return None;
-        }
-
         // ODR-211 — a result some instance makes a view (`Option[I.Item]`) is checked in each
         // instance, as ODR-048 makes a parameter a source per instance.
         if !self.types.may_be_view(ret) {
             let shown = self.types.display(ret);
             self.sink.emit(
-                Diagnostic::error(
-                    codes::E2031,
-                    attr.span,
-                    "`@borrows` is only meaningful on a function that returns a view",
-                )
-                .primary_label(format!("this function returns `{shown}`"))
-                .help("remove the attribute, or return a `ref`, a `Span` or a `@view` struct")
-                .note("`@borrows` chooses which parameter the *returned* view borrows (LT-1a)"),
+                Diagnostic::error(codes::E2031, attr.span, "`from` is only meaningful on a function that returns a view")
+                    .primary_label(format!("this function returns `{shown}`"))
+                    .help("remove `from` and its name, or return a `ref`, a `Span` or a view struct")
+                    .note("`from` says what the *returned* view points into (LT-1a)"),
             );
             return None;
         }
@@ -4323,69 +4457,43 @@ impl<'a> Checker<'a> {
             .collect();
 
         let mut named_sources = Vec::new();
+        // What `from` names: a parameter, or a field of `this` (`from f` read as `this.f`); a gone
+        // `@borrows` reaching here names one of those or `this`, read quietly.
         for arg in &attr.args {
-            let (named, arg_span) = match arg {
-                ast::AttrArg::Expr(expr) => match &expr.kind {
-                    ast::ExprKind::Path { segments } if segments.len() == 1 => {
-                        (segments[0].name, expr.span)
+            let ast::AttrArg::Expr(expr) = arg else { continue };
+            let (named, arg_span) = match &expr.kind {
+                ast::ExprKind::Path { segments } if segments.len() == 1 => (segments[0].name, expr.span),
+                ast::ExprKind::SelfExpr => (Symbol::intern("self"), expr.span),
+                // `[LT-1a]` (ODR-196) — a field of `this`: what its view borrows, not `this`.
+                ast::ExprKind::Field { base, name } if matches!(base.kind, ast::ExprKind::SelfExpr) => {
+                    if let Some(field) = self.receiver_view_field(params, name.name, expr.span) {
+                        named_sources.push(hir::BorrowSource { parameter: 0, field: Some(field) });
                     }
-                    // `[LT-1a]` — "`self` names the receiver" (D-282).
-                    ast::ExprKind::SelfExpr => (Symbol::intern("self"), expr.span),
-                    // `[LT-1a]` (ODR-196) — `self.f`: what the receiver's view
-                    // field borrows, not the receiver.
-                    ast::ExprKind::Field { base, name } if matches!(base.kind, ast::ExprKind::SelfExpr) => {
-                        if let Some(field) = self.receiver_view_field(params, name.name, expr.span) {
-                            named_sources.push(hir::BorrowSource { parameter: 0, field: Some(field) });
-                        }
-                        continue;
-                    }
-                    _ => {
-                        self.sink.emit(
-                            Diagnostic::error(
-                                codes::E2031,
-                                expr.span,
-                                "each `@borrows` argument must be a parameter name",
-                            )
-                            .primary_label("expected one parameter name")
-                            .help("write `@borrows(parameter)` naming a parameter the result borrows (LT-1)"),
-                        );
-                        continue;
-                    }
-                },
-                ast::AttrArg::Named { name, .. } => {
-                    self.sink.emit(
-                        Diagnostic::error(
-                            codes::E2031,
-                            name.span,
-                            "each `@borrows` argument must be a parameter name",
-                        )
-                        .primary_label("named arguments are not valid here")
-                        .help("write `@borrows(parameter)` naming a parameter the result borrows (LT-1)"),
-                    );
                     continue;
                 }
+                _ => continue,
             };
             if let Some(position) = params.iter().position(|(name, _, _, _)| *name == named) {
                 named_sources.push(hir::BorrowSource::whole(position));
             }
             match params.iter().find(|(name, _, _, _)| *name == named) {
                 None => {
-                    let known = if provenance_sources.is_empty() {
-                        "this function has no parameter a result may borrow (LT-1)".to_string()
+                    // `from` names a parameter, or a view field of `this` bare.
+                    let mut names: Vec<String> = provenance_sources.iter().filter(|name| *name != "self").map(|name| format!("`{name}`")).collect();
+                    if let Some(&(_, receiver, ..)) = params.first().filter(|(name, ..)| name.is("self"))
+                        && let Some(fields) = self.receiver_fields(receiver)
+                    {
+                        names.extend(fields.iter().filter(|(_, ty)| self.types.may_be_view(*ty)).map(|(name, _)| format!("`{name}`")));
+                    }
+                    let known = if !names.is_empty() {
+                        format!("`from` may name {}", names.join(", "))
+                    } else if provenance_sources.is_empty() {
+                        "this function has no parameter a result may point into (LT-1)".to_string()
                     } else {
-                        format!(
-                            "the parameters a result may borrow are {}",
-                            provenance_sources.join(", ")
-                        )
+                        "a method's result points into `this` without `from`: remove it (LT-1)".to_string()
                     };
-                    self.sink.emit(
-                        Diagnostic::error(
-                            codes::E2031,
-                            arg_span,
-                            format!("`@borrows` names `{named}`, which is not a parameter"),
-                        )
-                        .help(known),
-                    );
+                    let message = format!("`from` names `{named}`, which is not a parameter or a field of `this`");
+                    self.sink.emit(Diagnostic::error(codes::E2031, arg_span, message).help(known));
                 }
                 Some((_, ty, mode, _)) if self.is_arena(*ty) && *mode != Mode::Owned => {
                     // `[LT-4a]` — body checking still has to prove that the
@@ -4407,21 +4515,14 @@ impl<'a> Checker<'a> {
                 Some((_, ty, mode, span)) if !self.types.is_view(*ty) => {
                     let shown = self.types.display(*ty);
                     let why = if *mode == Mode::Owned {
-                        format!("`{named}` is `owned`, so it dies with the call")
+                        format!("`{named}` is taken over (`owns`), so it dies with the call")
                     } else {
                         format!("`{named}` is a borrowed `{shown}`, which is `Copy` and may be passed as a copy (BRW-8)")
                     };
                     self.sink.emit(
-                        Diagnostic::error(
-                            codes::E2031,
-                            arg_span,
-                            format!("`@borrows` names `{named}`, which a result cannot borrow"),
-                        )
-                        .secondary(*span, why)
-                        .help(concat!(
-                            "name a parameter the return can point into, or drop the ",
-                            "attribute and let elision tie the region (LT-1)"
-                        )),
+                        Diagnostic::error(codes::E2031, arg_span, format!("`from` names `{named}`, which a result cannot point into"))
+                            .secondary(*span, why)
+                            .help("name a parameter the result can point into, or remove `from` and let the parameters decide (LT-1)"),
                     );
                 }
                 Some(_) => {}
@@ -4436,35 +4537,33 @@ impl<'a> Checker<'a> {
         Some(named_sources)
     }
 
-    /// `[LT-1a]` (ODR-196) — `@borrows(self.f)`: the index of `f`, a view
-    /// field of the receiver's type (a field whose type is a reference or
-    /// view); `E2031` when there is no receiver, or `f` is not one.
+    /// `[LT-1a]` (ODR-196) — `from f` naming a field of `this`: the index of `f`, a view field of
+    /// its type (a field whose type is a reference or view); `E2031` when there is no object, or `f`
+    /// is not one.
     fn receiver_view_field(&mut self, params: &[(Symbol, Ty, Mode, Span)], field: Symbol, span: Span) -> Option<usize> {
         let Some(&(_, receiver, _, _)) = params.first().filter(|(name, ..)| name.is("self")) else {
             self.sink.emit(
-                Diagnostic::error(codes::E2031, span, format!("`@borrows` names `self.{field}`, but this function has no receiver"))
-                    .primary_label("`self.f` names a field of the receiver")
-                    .help("name a parameter the result borrows (LT-1a)"),
+                Diagnostic::error(codes::E2031, span, format!("`from` names `{field}`, but this function has no object"))
+                    .help("name a parameter the result points into (LT-1a)"),
             );
             return None;
         };
         let shown = match &self.recipe_fields {
             Some((recipe, _)) if receiver == self.common.self_ty => format!("`{}`", recipe.as_str().rsplit('.').next().unwrap_or(recipe.as_str())),
-            _ if receiver == self.common.self_ty => "the receiver's type".to_string(),
+            _ if receiver == self.common.self_ty => "the type of `this`".to_string(),
             _ => format!("`{}`", self.types.display(receiver)),
         };
         let Some(fields) = self.receiver_fields(receiver) else {
             self.sink.emit(
-                Diagnostic::error(codes::E2031, span, format!("`@borrows` names `self.{field}`, but {shown} is not a struct"))
-                    .primary_label("`self.f` names a view field of a struct receiver")
-                    .help("name `self`, or another parameter the result borrows (LT-1a)"),
+                Diagnostic::error(codes::E2031, span, format!("`from` names `{field}`, but {shown} is not a struct"))
+                    .help("remove `from`, and the result points into `this` (LT-1a)"),
             );
             return None;
         };
         // ODR-211 — a field some instance makes a view (`inner: I`) counts, checked in each instance.
-        let views: Vec<String> = fields.iter().filter(|(_, ty)| self.types.may_be_view(*ty)).map(|(name, _)| format!("`self.{name}`")).collect();
+        let views: Vec<String> = fields.iter().filter(|(_, ty)| self.types.may_be_view(*ty)).map(|(name, _)| format!("`{name}`")).collect();
         let help = if views.is_empty() {
-            format!("{shown} has no view field: name `self` instead (LT-1a)")
+            format!("{shown} has no view field: remove `from`, and the result points into `this` (LT-1a)")
         } else {
             format!("the view fields of {shown} are {}", views.join(", "))
         };
@@ -4473,7 +4572,7 @@ impl<'a> Checker<'a> {
             Some(index) => {
                 let ty = self.types.display(fields[index].1);
                 self.sink.emit(
-                    Diagnostic::error(codes::E2031, span, format!("`@borrows` names `self.{field}`, which is not a view field"))
+                    Diagnostic::error(codes::E2031, span, format!("`from` names `{field}`, which is not a view field"))
                         .primary_label(format!("`{field}` is `{ty}`, which borrows nothing"))
                         .help(help),
                 );
@@ -4481,7 +4580,7 @@ impl<'a> Checker<'a> {
             }
             None => {
                 self.sink.emit(
-                    Diagnostic::error(codes::E2031, span, format!("`@borrows` names `self.{field}`, but {shown} has no field `{field}`"))
+                    Diagnostic::error(codes::E2031, span, format!("`from` names `{field}`, but {shown} has no field `{field}`"))
                         .help(help),
                 );
                 None
@@ -4528,6 +4627,16 @@ impl<'a> Checker<'a> {
     /// not at the region.
     fn reject_stored_view(&mut self, ty: Ty, span: Span, place: &str) {
         self.reject_stored_view_unless(ty, span, place, false)
+    }
+
+    /// `[BRW-8]`, `[FFI-11]` — a plain or `ref mut` parameter is passed by address, so one of a type
+    /// with no size of its own (`ref mut p: dyn I`, an opaque C++ class: "for an opaque type too") is
+    /// what 0.9.10 wrote `p: ref mut dyn I`, a parameter of the view type, as which it is checked.
+    fn passed_by_address(&mut self, ty: Ty, mode: Mode) -> (Ty, Mode) {
+        if mode == Mode::Owned || !matches!(self.types.kind(ty), TyKind::Dyn { .. } | TyKind::Opaque(_)) {
+            return (ty, mode);
+        }
+        (self.types.intern(TyKind::Ref { mutable: mode == Mode::Mut, inner: ty }), Mode::Borrow)
     }
 
     /// `[TYP-22]` — `dyn I` is unsized and may not be passed, returned, or
@@ -4611,7 +4720,7 @@ impl<'a> Checker<'a> {
             )
             .primary_label("stored here")
             .help(concat!(
-                "store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — ",
+                "store an owned copy — `String` for `StrView`, `Array[T]` for `Span[T]` — ",
                 "and note that costs one allocation per element; or store a `u32` index ",
                 "or a `Handle[T]` and name the container it indexes"
             ))
@@ -5397,7 +5506,20 @@ impl<'a> Checker<'a> {
     /// have already been name-resolved and parameter types already carry
     /// their opaque generic identities here.
     fn callable_declarations(&self, modules: &[LoadedModule]) -> Vec<CallableDeclaration> {
-        let mut declarations = self.member_callable_declarations.clone();
+        // `[EXC-15]` — a method not listing its object takes it as worked out from its body.
+        let mut declarations: Vec<CallableDeclaration> = self
+            .member_callable_declarations
+            .iter()
+            .map(|(def, declaration)| {
+                let mut declaration = declaration.clone();
+                if self.object_reads.contains(def)
+                    && let Some(object) = declaration.parameters.first_mut()
+                {
+                    object.mode = Mode::Borrow;
+                }
+                declaration
+            })
+            .collect();
         for (module_index, loaded) in modules.iter().enumerate() {
             let prefix = &self.prefixes[module_index];
             for item in &loaded.module.items {
@@ -5535,6 +5657,8 @@ impl<'a> Checker<'a> {
             let mut parameters =
                 Vec::with_capacity(method.params.len() + usize::from(method.receiver.is_some()));
             if let Some(mode) = method.receiver {
+                // `[EXC-15]` — one not listing its object takes it as its body works out.
+                let mode = if self.object_reads_by_source.contains(&method.source) { Mode::Borrow } else { mode };
                 parameters.push(CallableDeclarationParameter {
                     mode,
                     ty: CallableDeclarationType::Canonical(owner.clone()),
@@ -6936,8 +7060,8 @@ impl<'a> Checker<'a> {
                     ast::MemberKind::Fn(fn_decl) => {
                         for param in &fn_decl.params {
                             match &param.kind {
-                                ast::ParamKind::Named { ty, .. } | ast::ParamKind::Receiver { ty: Some(ty) } => mentioned.push(ty),
-                                ast::ParamKind::Receiver { ty: None } => {}
+                                ast::ParamKind::Named { ty, .. } | ast::ParamKind::Receiver { ty: Some(ty), .. } => mentioned.push(ty),
+                                ast::ParamKind::Receiver { ty: None, .. } => {}
                             }
                         }
                         mentioned.extend(fn_decl.ret.as_ref());
@@ -7000,6 +7124,7 @@ impl<'a> Checker<'a> {
                     ret: signature.ret,
                     generics: signature.generics,
                     borrows: signature.borrows,
+                    implicit_object: signature.implicit_object,
                     overflow: signature.overflow,
                     fp: signature.fp,
                     source: (self.current_module, item_index, member_index),
@@ -7090,6 +7215,7 @@ impl<'a> Checker<'a> {
                     ret: signature.ret,
                     generics: signature.generics,
                     borrows: signature.borrows,
+                    implicit_object: signature.implicit_object,
                     overflow: signature.overflow,
                     fp: signature.fp,
                     source: (self.current_module, item_index, member_index),
@@ -7216,6 +7342,7 @@ impl<'a> Checker<'a> {
                     ret: signature.ret,
                     generics: signature.generics,
                     borrows: signature.borrows,
+                    implicit_object: signature.implicit_object,
                     overflow: signature.overflow,
                     fp: signature.fp,
                     source: (self.current_module, item_index, member_index),
@@ -7804,8 +7931,8 @@ impl<'a> Checker<'a> {
                             for param in &fn_decl.params {
                                 match &param.kind {
                                     ast::ParamKind::Named { ty, .. } => named.push(ty),
-                                    ast::ParamKind::Receiver { ty: Some(ty) } => named.push(ty),
-                                    ast::ParamKind::Receiver { ty: None } => {}
+                                    ast::ParamKind::Receiver { ty: Some(ty), .. } => named.push(ty),
+                                    ast::ParamKind::Receiver { ty: None, .. } => {}
                                 }
                             }
                             named.extend(fn_decl.ret.as_ref());
@@ -7864,6 +7991,7 @@ impl<'a> Checker<'a> {
                     ret: signature.ret,
                     generics: signature.generics,
                     borrows: signature.borrows,
+                    implicit_object: signature.implicit_object,
                     overflow: signature.overflow,
                     fp: signature.fp,
                     source: (self.current_module, item_index, member_index),
@@ -8507,7 +8635,7 @@ impl<'a> Checker<'a> {
         let symbol = ember_branding::generated(&format!("comptime{number}"));
         let def = DefId(self.signatures.len() as u32);
         let ret = value.ty;
-        self.signatures.push(Signature { decl: Span::DUMMY,
+        self.signatures.push(Signature { decl: Span::DUMMY, implicit_object: false,
             params: Vec::new(),
             ret,
             abi: None,
@@ -8942,7 +9070,9 @@ impl<'a> Checker<'a> {
                 .map(|&(_, param, mode, _)| (self.substitute_ty(param, free), mode))
                 .collect();
             let actual_ret = self.substitute_ty(actual.ret, free);
-            if receiver != actual_receiver || actual_params != expected_params || actual_ret != expected_ret {
+            let objects_fit = receiver == actual_receiver
+                || (receiver.is_some() && actual_receiver.is_some() && (expected.implicit_object || actual.implicit_object));
+            if !objects_fit || actual_params != expected_params || actual_ret != expected_ret {
                 self.error(codes::E2040, blanket.span, format!("`{shown}.{method}` does not match the signature required by `{named}`"));
             }
         }
@@ -9248,7 +9378,11 @@ impl<'a> Checker<'a> {
             }
             self.current_generics.extend(own);
             let errors = self.sink.error_count();
-            let _ = self.check_one_method(owner, decl, block, def, &member.attrs, member.span);
+            let checked = self.check_one_method(owner, decl, block, def, &member.attrs, member.span);
+            // `[EXC-15]` — what the body does to an object it does not list, for the interface.
+            if let Some(function) = checked.filter(|_| self.signatures[def.0 as usize].implicit_object) {
+                self.opaque_object_bodies.push((method.source, function));
+            }
             let wrappers = self.some_wrappers_named(self.signatures[def.0 as usize].ret);
             self.complete_some_names(wrappers, self.sink.error_count() > errors);
             self.generically_checked.insert(method.source);
@@ -9650,7 +9784,7 @@ impl<'a> Checker<'a> {
             }
             param
         }));
-        let signature = Signature { decl: method.span,
+        let signature = Signature { decl: method.span, implicit_object: method.implicit_object,
             params,
             ret: self.substitute_self(ret, ty),
             abi: None,
@@ -10154,30 +10288,9 @@ impl<'a> Checker<'a> {
                     // `[TYP-34]` — a struct carrying a borrow is a view type;
                     // the compiler infers it, and `@view` is documentation.
                     // `@view` on a struct that carries none is `E2030`.
-                    let carries_a_borrow: Vec<(Symbol, Span)> = fields
-                        .iter()
-                        .filter(|f| self.types.is_view(f.ty))
-                        .map(|f| (f.name, f.span))
-                        .collect();
                     if has_attribute(&item.attrs, "view") {
                         let ty = self.named_types[&self.qualified(decl.name.name)];
                         self.pending_views.push((ty, decl.name.name, view_span(&item.attrs)));
-                    }
-                    if self.lint_return_intersection
-                        && has_attribute(&item.attrs, "view")
-                        && carries_a_borrow.len() >= 2
-                    {
-                        self.sink.emit(
-                            Diagnostic::lint(
-                                codes::L3014,
-                                item.span,
-                                format!(
-                                    "view region is the intersection of {} fields",
-                                    carries_a_borrow.len()
-                                ),
-                            )
-                            .help("split independent views when callers need separate lifetimes"),
-                        );
                     }
 
                     let def = self.types.struct_def_mut(id);
@@ -10410,7 +10523,7 @@ impl<'a> Checker<'a> {
                                     Diagnostic::error(codes::E5015, decl.ty.span,
                                         format!("`{shown}` has no foreign representation"))
                                         .primary_label("the type of this foreign static")
-                                        .note("a foreign static holds a value C lays out: a scalar, a pointer, a `cstr`, an array or record of those [FFI-8]"),
+                                        .note("a foreign static holds a value C lays out: a scalar, a pointer, a `CStrView`, an array or record of those [FFI-8]"),
                                 );
                             }
                             continue;
@@ -10531,8 +10644,10 @@ impl<'a> Checker<'a> {
                         .filter_map(|p| match &p.kind {
                             ast::ParamKind::Named { name, ty } => {
                                 let ty = self.callable_param_ty(ty, p.mode, &mut generics, 0);
+                                // A foreign declaration's parameters are C's, passed as C passes them.
+                                let (ty, mode) = if decl.is_foreign_decl { (ty, mode_of(p.mode)) } else { self.passed_by_address(ty, mode_of(p.mode)) };
                                 let ty = self.reject_unsized_by_value(ty, p.span, "a parameter");
-                                Some((name.name, ty, mode_of(p.mode), p.span))
+                                Some((name.name, ty, mode, p.span))
                             }
                             // A receiver outside a type body is meaningless;
                             // Phase 0 has no methods, so skip it.
@@ -10636,7 +10751,7 @@ impl<'a> Checker<'a> {
                     } else {
                         ret
                     };
-                    let explicit_borrows = self.check_borrows_attribute(&item.attrs, &params, ret);
+                    let explicit_borrows = self.check_borrows_attribute(&item.attrs, decl.from, &params, ret);
                     let borrows = if decl.is_foreign_decl && decl.is_safe {
                         let from = match ffi_result_contract(&item.attrs) {
                             Some(FfiResultContract::CStrStatic | FfiResultContract::NullableCStrStatic
@@ -10664,7 +10779,6 @@ impl<'a> Checker<'a> {
                     } else {
                         explicit_borrows
                     };
-                    self.lint_rule_3(&params, ret, &borrows, item.span);
                     self.type_params.clear();
                     self.projection_params.clear();
                     let def = DefId(self.signatures.len() as u32);
@@ -10735,7 +10849,7 @@ impl<'a> Checker<'a> {
                     }
                     let overflow = self.overflow_policy(&item.attrs, item.span);
                     let fp = self.fp_mode(&item.attrs);
-                    self.signatures.push(Signature { decl: decl.name.span, params, ret, abi, is_unsafe: decl.is_unsafe, overflow, fp, generics, borrows });
+                    self.signatures.push(Signature { decl: decl.name.span, implicit_object: false, params, ret, abi, is_unsafe: decl.is_unsafe, overflow, fp, generics, borrows });
                     self.record_defaults(def, decl);
                 }
                 _ => {}
@@ -11024,7 +11138,7 @@ impl<'a> Checker<'a> {
     fn not_a_view(&mut self, name: Symbol, span: Span) {
         self.sink.emit(
             Diagnostic::error(codes::E2030, span, format!("`@view` on `{name}`, which is not a view type"))
-                .help("remove `@view`; a type is a view when it holds a reference, a `Span`, a `MutSpan`, a `str` or another view")
+                .help("remove `@view`; a type is a view when it holds a reference, a `Span`, a `MutSpan`, a `StrView` or another view")
                 .note("`@view` documents what the compiler infers [TYP-34]"),
         );
     }
@@ -11350,10 +11464,26 @@ impl<'a> Checker<'a> {
 
     /// `[STD-19]` — `it.copied()` as `std.core.Copied[I, T]` over it, `it.cloned()`
     /// as `Cloned[I, T]`, for an iterator whose items are `ref T`, when `T` is
-    /// `Copy` or `Clone`.
+    /// `Copy` or `Clone`; 0.9.15's `it.copy_each()`, what `copy of` makes of each item, is the first
+    /// for a `Copy` item and the second for another.
     fn value_adapter(&mut self, receiver: Expr, inner: Ty, name: ast::Ident, span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        let copied = name.name.is("copied");
+        let copied = match name.name.as_str() {
+            "copied" => true,
+            "cloned" => false,
+            _ => self.types.is_copy(inner) || self.implements(inner, Symbol::intern("std.core.Copy")),
+        };
+        // `copy of` makes a new object of a class: as there (`copy_refused`), a copy of a handle,
+        // naming the same object, is no copy.
+        if name.name.is("copy_each") && self.holds_class_object(inner, &mut HashSet::new()) {
+            let shown = self.types.display(inner);
+            let message = format!("`copy_each` of `{shown}` items, which hold a class object, is not built by this compiler yet");
+            self.sink.emit(
+                Diagnostic::error(codes::E0900, name.span, message)
+                    .note("`copy_each` makes what `copy of` makes of each item, a new object of a class [OWN-8]; this compiler's `Clone` of a class object keeps the same one"),
+            );
+            return error;
+        }
         // D-735 — a parameter is `Copy` or `Clone` by its bounds (`T: Copy`), which the type table
         // does not know.
         let fits = if copied {
@@ -11869,28 +11999,35 @@ impl<'a> Checker<'a> {
                 && matches!(self.types.kind(ty), TyKind::Float(ember_types::FloatTy::F32 | ember_types::FloatTy::F64))
                 && self.builtin_float_method_fits(method, declaration)
             {
+                self.note_builtin_object(declaration, false);
                 continue;
             }
             // ODR-040 — a number's operators are built in, and are the
             // methods of the operator interfaces it implements.
             if implementation.is_none() && receiver.is_some() && self.builtin_operator_method_fits(ty, method, declaration, receiver) {
+                let assign = operator_method_named(method.as_str()).is_some_and(|(_, assign)| assign);
+                self.note_builtin_object(declaration, assign);
                 continue;
             }
             // `[STD-17]` — an `Array`'s and a view's indexing is built in, and
             // is its `Index.index` and `IndexMut.index_mut`.
             if implementation.is_none() && self.builtin_index_method_fits(ty, method, declaration, receiver) {
+                self.note_builtin_object(declaration, method.is("index_mut"));
                 continue;
             }
             // `[STD-19]` — a view iterator's `next` is built in (`[SPN-5]`),
             // and is its `Iterator.next`.
             if implementation.is_none() && method.is("next") && receiver == Some(Mode::Mut) && self.span_iterator(ty).is_some() {
+                self.note_builtin_object(declaration, true);
                 continue;
             }
             // ODR-091 — so are an element iterator's `next_back` and `len`.
             if implementation.is_none()
-                && ((method.is("next_back") && receiver == Some(Mode::Mut)) || (method.is("len") && receiver == Some(Mode::Borrow)))
+                && ((method.is("next_back") && self.object_mode_fits(declaration, receiver, Mode::Mut))
+                    || (method.is("len") && self.object_mode_fits(declaration, receiver, Mode::Borrow)))
                 && matches!(self.span_iterator(ty), Some((_, SpanIteratorKind::Elements { .. })))
             {
+                self.note_builtin_object(declaration, method.is("next_back"));
                 continue;
             }
             // D-379 — a default kept until a call names it is defined.
@@ -12046,7 +12183,7 @@ impl<'a> Checker<'a> {
         let ret = self.substitute_self(signature.ret, ty);
         let ret = self.resolve_assoc(ret, ty);
         signature.generics.is_empty()
-            && receiver == Some(wanted_receiver)
+            && self.object_mode_fits(declaration, receiver, wanted_receiver)
             && signature.params.len() == operands
             && signature.params.iter().all(|(_, param, _, _)| self.substitute_self(*param, ty) == ty)
             && ret == if assign { self.common.void } else { ty }
@@ -12072,7 +12209,7 @@ impl<'a> Checker<'a> {
         let wanted = self.types.intern(TyKind::Ref { mutable, inner: elem });
         let int = self.common.i64;
         signature.generics.is_empty()
-            && receiver == Some(wanted_receiver)
+            && self.object_mode_fits(declaration, receiver, wanted_receiver)
             && matches!(signature.params.as_slice(), [(_, index, _, _)] if *index == int)
             && ret == wanted
     }
@@ -12101,6 +12238,19 @@ impl<'a> Checker<'a> {
     /// `Default.default()` without source-level arguments, so accepting a
     /// same-named function with parameters or the wrong result type would
     /// turn a type-checking omission into invalid MIR.
+    /// `[FN-4]` (M1), `[DSP-5]` — a built-in implementation of an interface's method (a number's
+    /// operators, indexing, a view iterator's `next`): whether it changes its object, which a call
+    /// through a bound of the interface's method must take into account with the program's own.
+    fn note_builtin_object(&mut self, declaration: DefId, changes: bool) {
+        *self.builtin_objects.entry(declaration).or_insert(false) |= changes;
+    }
+
+    /// `[FN-4]` (M1) — whether a declaration's object is passed as `wanted`: an object the
+    /// declaration does not list has the mode its implementations work out, so any fits.
+    fn object_mode_fits(&self, declaration: DefId, receiver: Option<Mode>, wanted: Mode) -> bool {
+        receiver == Some(wanted) || (receiver.is_some() && self.signatures[declaration.0 as usize].implicit_object)
+    }
+
     fn implementation_signature_matches(
         &mut self,
         owner: Ty,
@@ -12109,7 +12259,11 @@ impl<'a> Checker<'a> {
         implementation: DefId,
         actual_receiver: Option<Mode>,
     ) -> bool {
-        if required_receiver != actual_receiver {
+        // `[FN-4]` (M1) — an object a method does not list has the mode its body works out, so its
+        // mode is not compared with the other side's, whichever side lists none: only that both
+        // have an object (`M1-plan.md`).
+        let implicit = self.signatures[declaration.0 as usize].implicit_object || self.signatures[implementation.0 as usize].implicit_object;
+        if required_receiver != actual_receiver && !(implicit && required_receiver.is_some() && actual_receiver.is_some()) {
             return false;
         }
 
@@ -12200,7 +12354,7 @@ impl<'a> Checker<'a> {
 
         let actual_written = if required_receiver.is_some() {
             let Some((self_ty, self_mode)) = actual_params.first() else { return false };
-            if *self_ty != owner || Some(*self_mode) != required_receiver {
+            if *self_ty != owner || (Some(*self_mode) != required_receiver && !implicit) {
                 return false;
             }
             &actual_params[1..]
@@ -12303,9 +12457,6 @@ impl<'a> Checker<'a> {
                         continue;
                     }
                     let outer_self = self.self_ty.replace(*ty);
-                    // The declaration already had its `L3014` (`[LT-1b]`); a
-                    // copy for each implementing type repeats no lint.
-                    let lint = std::mem::replace(&mut self.lint_return_intersection, false);
                     let scope = self.enter_default(interface, *ty);
                     // D-443 — a default whose `where` clause this type does
                     // not meet (`flatten`'s `Item: IntoIterator` over numbers)
@@ -12314,7 +12465,6 @@ impl<'a> Checker<'a> {
                     if !self.where_clauses_hold(&fn_decl.where_clause, *ty) {
                         self.defaults_not_met.insert((*ty, fn_decl.name.name));
                         self.leave_default(scope);
-                        self.lint_return_intersection = lint;
                         self.self_ty = outer_self;
                         continue;
                     }
@@ -12325,7 +12475,6 @@ impl<'a> Checker<'a> {
                     self.borrows_in_copy = false;
                     self.some_quiet = false;
                     self.leave_default(scope);
-                    self.lint_return_intersection = lint;
                     self.self_ty = outer_self;
                     let Some((receiver, signature)) = signature else {
                         continue;
@@ -12835,7 +12984,7 @@ impl<'a> Checker<'a> {
                         },
                     );
                 }
-                self.member_callable_declarations.push(self.callable_declaration(
+                self.member_callable_declarations.push((def, self.callable_declaration(
                     member.span,
                     member_declaration_symbol("interface", name, f.name.name),
                     parameters,
@@ -12845,7 +12994,7 @@ impl<'a> Checker<'a> {
                     f.is_unsafe,
                     f.abi.clone(),
                     signature.overflow,
-                ));
+                )));
             }
             methods.push((f.name.name, def, receiver, f.body.is_some()));
             // `[FN-5]` — a default method's parameter defaults, which each
@@ -13104,7 +13253,7 @@ impl<'a> Checker<'a> {
                 param
             }));
             let instance_declaration = DefId(self.signatures.len() as u32);
-            self.signatures.push(Signature { decl: signature.decl, params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, overflow: signature.overflow, fp: signature.fp, generics, borrows: signature.borrows });
+            self.signatures.push(Signature { decl: signature.decl, implicit_object: signature.implicit_object, params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, overflow: signature.overflow, fp: signature.fp, generics, borrows: signature.borrows });
             if own_base > 0 {
                 self.generic_prefix.insert(instance_declaration, prefix.clone());
             }
@@ -13715,8 +13864,9 @@ impl<'a> Checker<'a> {
                         &mut generics,
                         generic_index_base,
                     );
+                    let (ty, mode) = if decl.is_foreign_decl { (ty, mode_of(param.mode)) } else { self.passed_by_address(ty, mode_of(param.mode)) };
                     let ty = self.reject_unsized_by_value(ty, param.span, "a parameter");
-                    params.push((name.name, ty, mode_of(param.mode), param.span))
+                    params.push((name.name, ty, mode, param.span))
                 }
             }
         }
@@ -13741,18 +13891,17 @@ impl<'a> Checker<'a> {
             (None, Some(mode)) => {
                 let mut with_self = params.clone();
                 with_self.insert(0, (Symbol::intern("self"), self.common.self_ty, mode, span));
-                self.check_borrows_attribute(attrs, &with_self, ret)
+                self.check_borrows_attribute(attrs, decl.from, &with_self, ret)
             }
-            _ => self.check_borrows_attribute(attrs, &params, ret),
+            _ => self.check_borrows_attribute(attrs, decl.from, &params, ret),
         };
-        // `[LT-1]` rule 1 takes a borrowed receiver; rule 3 is for the rest.
-        if !matches!(receiver, Some(Mode::Borrow | Mode::Mut)) {
-            self.lint_rule_3(&params, ret, &borrows, span);
-        }
         self.type_params = saved_type_params;
         let overflow = self.overflow_policy(attrs, span);
         let fp = self.fp_mode(attrs);
-        Some((receiver, Signature { decl: decl.name.span, params, ret, abi: decl.abi.as_deref().map(Symbol::intern), is_unsafe: decl.is_unsafe, overflow, fp, generics, borrows }))
+        let implicit_object = decl.params.first().is_some_and(|param| {
+            matches!(param.kind, ast::ParamKind::Receiver { implicit: true, .. }) && param.mode != ast::Mode::Owned
+        });
+        Some((receiver, Signature { decl: decl.name.span, implicit_object, params, ret, abi: decl.abi.as_deref().map(Symbol::intern), is_unsafe: decl.is_unsafe, overflow, fp, generics, borrows }))
     }
 
     /// Register every method in a type body or `extend` block.
@@ -13887,7 +14036,7 @@ impl<'a> Checker<'a> {
             if owner_is_visible && member.vis.kind != ast::VisKind::Private {
                 if let Some(def) = registered {
                     let signature = &self.signatures[def.0 as usize];
-                    self.member_callable_declarations.push(self.callable_declaration(
+                    self.member_callable_declarations.push((def, self.callable_declaration(
                         member.span,
                         self.types.method_symbol(ty, None, decl.name.name.as_str(), None),
                         self.signature_parameters(signature),
@@ -13897,7 +14046,7 @@ impl<'a> Checker<'a> {
                         decl.is_unsafe,
                         decl.abi.clone(),
                         signature.overflow,
-                    ));
+                    )));
                 }
             }
         }
@@ -13995,11 +14144,14 @@ impl<'a> Checker<'a> {
     fn clone_method(&self, ty: Ty) -> Option<DefId> {
         let entry = self.methods.get(&(ty, Symbol::intern("clone")))?;
         let signature = self.signatures.get(entry.def.0 as usize)?;
-        (entry.receiver == Mode::Borrow
+        // M1 — an object not listed is `ref mut` until `objects.rs` works out what `clone` does to
+        // it; one that changes it is refused at the call that copies through a read-only name (`E3023`).
+        let borrowed = |mode: Mode| mode == Mode::Borrow || (signature.implicit_object && mode == Mode::Mut);
+        (borrowed(entry.receiver)
             && signature.generics.is_empty()
             && signature.params.len() == 1
             && signature.params[0].1 == ty
-            && signature.params[0].2 == Mode::Borrow
+            && borrowed(signature.params[0].2)
             && signature.ret == ty)
             .then_some(entry.def)
     }
@@ -14114,7 +14266,7 @@ impl<'a> Checker<'a> {
         self.assumed_cloneable.clear();
         let derived = std::mem::replace(&mut pending, settled);
         for (ty, span, explicit) in derived {
-            let signature = Signature { decl: span,
+            let signature = Signature { decl: span, implicit_object: false,
                 params: vec![(Symbol::intern("self"), ty, Mode::Borrow, span)],
                 ret: ty,
                 abi: None,
@@ -15093,6 +15245,16 @@ impl<'a> Checker<'a> {
                     return ty;
                 }
                 if let Some(ty) = self.scalar_in_scope(name) {
+                    // `[MOD-3]` — 0.9.10's `str` and `cstr`, where no type of the program's has the name.
+                    let now = if name.is("str") { Some("StrView") } else if name.is("cstr") { Some("CStrView") } else { None };
+                    if let Some(now) = now
+                        && self.refused_spellings.insert(segments[0].span)
+                    {
+                        self.sink.emit(
+                            Diagnostic::error(codes::E1010, segments[0].span, format!("`{name}` is gone from Ember: the view of text is `{now}`"))
+                                .help(format!("write `{now}`")),
+                        );
+                    }
                     return ty;
                 }
                 // `String` is a growable buffer of UTF-8 bytes: `Array[u8]`
@@ -20055,9 +20217,9 @@ impl<'a> Checker<'a> {
             };
             let shown = self.types.display(ty);
             self.sink.emit(
-                Diagnostic::error(codes::E4030, span, format!("a `@static_safe` function takes `{name}`, a `{shown}`: {what}"))
+                Diagnostic::error(codes::E4030, span, format!("a `@no_alias_checks` function takes `{name}`, a `{shown}`: {what}"))
                     .help("take the value itself, or a `ref mut` to it, so the access is proved when it compiles")
-                    .note("`@static_safe` keeps no check of who else holds the data, its callers' included [EFF-6a]"),
+                    .note("`@no_alias_checks` keeps no check of who else holds the data, its callers' included [EFF-6a]"),
             );
         }
     }
@@ -20071,10 +20233,10 @@ impl<'a> Checker<'a> {
             Diagnostic::error(
                 codes::E3105,
                 span,
-                "`UnsafeCell` is not permitted in `@static_safe` code",
+                "`UnsafeCell` is not permitted in `@no_alias_checks` code",
             )
             .note(concat!(
-                "`@static_safe` requires the relevant safety invariant to be established ",
+                "`@no_alias_checks` requires the relevant safety invariant to be established ",
                 "statically; `UnsafeCell` delegates it to unsafe implementation code [UNS-10b]"
             )),
         );
@@ -20529,7 +20691,7 @@ impl<'a> Checker<'a> {
     /// (`int`, `float`, `str`) that the program declares or imports a type of is that type, as
     /// D-305 made `Box` and `Cell` (a local declaration shadows a prelude name).
     fn scalar_in_scope(&self, name: Symbol) -> Option<Ty> {
-        if matches!(name.as_str(), "int" | "float" | "str") && self.names_program_type(name.as_str()) {
+        if matches!(name.as_str(), "int" | "float" | "str" | "StrView") && self.names_program_type(name.as_str()) {
             return None;
         }
         self.scalar_named(name.as_str())
@@ -20563,8 +20725,9 @@ impl<'a> Checker<'a> {
             "f64" => c.f64,
             // `[TYP-1]` table (0.9.9) -- `float` is a prelude alias of `f64`.
             "float" => c.f64,
-            "str" => c.str_,
-            "cstr" => c.cstr,
+            // `[TXT-1]`, `[TXT-3]` — 0.9.15's `StrView` and `CStrView`; `str` and `cstr` are 0.9.10's.
+            "StrView" | "str" => c.str_,
+            "CStrView" | "cstr" => c.cstr,
             "void" => c.void,
             _ => return None,
         })
@@ -20649,7 +20812,7 @@ impl<'a> Checker<'a> {
             if !self.signatures[def.0 as usize].generics.is_empty() {
                 let outer_static_safe = self.in_static_safe;
                 let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
-                self.in_static_safe = has_attribute(&item.attrs, "static_safe");
+                self.in_static_safe = no_alias_checks(&item.attrs);
                 self.static_safe_unsafe_cell_reported = false;
                 let generics = self.signatures[def.0 as usize].generics.clone();
                 self.type_params.clear();
@@ -20741,7 +20904,7 @@ impl<'a> Checker<'a> {
             self.ret_ty = self.signatures[def.0 as usize].ret;
             let outer_static_safe = self.in_static_safe;
             let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
-            self.in_static_safe = has_attribute(&item.attrs, "static_safe");
+            self.in_static_safe = no_alias_checks(&item.attrs);
             self.static_safe_unsafe_cell_reported = false;
 
             let mut params = Vec::new();
@@ -20803,13 +20966,13 @@ impl<'a> Checker<'a> {
             let overflow = self.signatures[def.0 as usize].overflow;
             let fp = self.signatures[def.0 as usize].fp;
             let ffi_counted = self.foreign_counted_metadata(def, decl, &item.attrs, &signature_params, self.ret_ty);
-            // `[FFI-8]` — a contract C is passed through unchanged (`cstr`, `ref T`, a nullable one)
+            // `[FFI-8]` — a contract C is passed through unchanged (`CStrView`, `ref T`, a nullable one)
             // is kept by the call itself; one that changes what C is passed needs a wrapper, which
             // cannot pass `...` on.
             if ffi_counted.is_some() && self.foreign_variadic.contains(&def) {
                 self.sink.emit(
                     Diagnostic::error(codes::E0104, decl.name.span, "a variadic C function's contract may not change what C is passed")
-                        .help("keep the parameters C is passed unchanged (`cstr`, `ref T`, `Option[…]`); a count, an `out` parameter, a status or a callback needs a wrapper")
+                        .help("keep the parameters C is passed unchanged (`CStrView`, `ref T`, `Option[…]`); a count, an `out` parameter, a status or a callback needs a wrapper")
                         .note("a wrapper cannot pass `...` on [FFI-8]"),
                 );
             }
@@ -20840,7 +21003,7 @@ impl<'a> Checker<'a> {
                 overflow,
                 fp,
                 inline: inline_hint(&item.attrs),
-                static_safe: has_attribute(&item.attrs, "static_safe"),
+                static_safe: no_alias_checks(&item.attrs),
                 contracts: hir::Contracts {
                     foreign: decl.is_foreign_decl.then(|| ffi_declared_effects(&item.attrs)),
                     foreign_threads: if decl.is_foreign_decl { ffi_function_threads(&item.attrs) } else { None },
@@ -21328,7 +21491,10 @@ impl<'a> Checker<'a> {
             let mut current = Some(class);
             while let Some(owner) = current {
                 let mut found: Vec<(Symbol, DefId)> = self.methods.iter()
-                    .filter(|((ty, _), entry)| matches!(self.types.kind(*ty), TyKind::Class(of) if *of == owner) && entry.from_interface.is_none() && entry.receiver == Mode::Borrow)
+                    // M1 — an object not listed is `ref mut` here, as checked: a `@sync` class's method
+                    // that changes it is `E7003`, so each exported one reads it.
+                    .filter(|((ty, _), entry)| matches!(self.types.kind(*ty), TyKind::Class(of) if *of == owner) && entry.from_interface.is_none()
+                        && (entry.receiver == Mode::Borrow || (entry.receiver == Mode::Mut && self.signatures[entry.def.0 as usize].implicit_object)))
                     .map(|((_, name), entry)| (*name, entry.def))
                     .collect();
                 found.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
@@ -21853,11 +22019,11 @@ impl<'a> Checker<'a> {
                 Some(FfiResultContract::CStrStatic | FfiResultContract::CStrFrom(_))
                     if ret != self.common.cstr =>
                     self.error(codes::E5002, decl.name.span,
-                        "`@ffi` NUL-terminated result contract needs `cstr`"),
+                        "`@ffi` NUL-terminated result contract needs `CStrView`"),
                 Some(FfiResultContract::NullableCStrStatic | FfiResultContract::NullableCStrFrom(_))
                     if !self.foreign_nullable_cstr(ret) =>
                     self.error(codes::E5002, decl.name.span,
-                        "`@ffi` nullable NUL-terminated result contract needs `Option[cstr]`"),
+                        "`@ffi` nullable NUL-terminated result contract needs `Option[CStrView]`"),
                 Some(FfiResultContract::SharedOneStatic | FfiResultContract::SharedOneFrom(_))
                     if !matches!(self.types.kind(ret), TyKind::Ref { mutable: false, inner }
                         if self.foreign_referent(*inner)) =>
@@ -22032,10 +22198,10 @@ impl<'a> Checker<'a> {
                 });
             } else if ret == self.common.cstr && result_contract.is_none() && unknown_result.is_empty() {
                 self.error(codes::E5002, decl.name.span,
-                    "`safe fn` needs an `@ffi` contract for its `cstr` result");
+                    "`safe fn` needs an `@ffi` contract for its `CStrView` result");
             } else if self.foreign_nullable_cstr(ret) && result_contract.is_none() && unknown_result.is_empty() {
                 self.error(codes::E5002, decl.name.span,
-                    "`safe fn` needs an `@ffi` contract for its `Option[cstr]` result");
+                    "`safe fn` needs an `@ffi` contract for its `Option[CStrView]` result");
             } else if matches!(self.types.kind(ret), TyKind::Ref { .. })
                 && result_contract.is_none() && unknown_result.is_empty() {
                 self.error(codes::E5002, decl.name.span,
@@ -22420,13 +22586,13 @@ impl<'a> Checker<'a> {
                 Some(&(_, nullable)) => {
                     if mode != Mode::Owned || foreign_box(self, ty, nullable).is_none() {
                         self.error(codes::E5002, span, format!(
-                            "`owned` contract for `{name}` needs `owned {name}: {}`",
+                            "`owns` contract for `{name}` needs `owns {name}: {}`",
                             if nullable { "Option[ForeignBox[T]]" } else { "ForeignBox[T]" }));
                     }
                 }
                 None if foreign_box(self, ty, false).or_else(|| foreign_box(self, ty, true)).is_some() => {
                     self.error(codes::E5002, span,
-                        format!("a `ForeignBox` parameter crosses only as an object C takes: `param({name}, owned, one)`"));
+                        format!("a `ForeignBox` parameter crosses only as an object C takes: `param({name}, owns, one)`"));
                 }
                 None => {}
             }
@@ -23391,7 +23557,7 @@ impl<'a> Checker<'a> {
         let outer_fp = std::mem::replace(&mut self.active_fp, self.signatures[def.0 as usize].fp);
         let outer_static_safe = self.in_static_safe;
         let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
-        self.in_static_safe = has_attribute(attrs, "static_safe");
+        self.in_static_safe = no_alias_checks(attrs);
         self.static_safe_unsafe_cell_reported = false;
 
         let signature_params: Vec<(Symbol, Ty, Mode, Span)> = self.signatures[def.0 as usize]
@@ -23467,7 +23633,7 @@ impl<'a> Checker<'a> {
             overflow,
             fp,
             inline: inline_hint(attrs),
-            static_safe: has_attribute(attrs, "static_safe"),
+            static_safe: no_alias_checks(attrs),
             // A parameter of a written `fn` type is a callable bound: its effects are the argument's,
             // as a type parameter's are (`[EFF-2]`).
             contracts: self.std_contracts(
@@ -23976,7 +24142,7 @@ impl<'a> Checker<'a> {
                 .collect();
             let ret = self.substitute_self(signature.ret, opaque_self);
             let opaque = DefId(self.signatures.len() as u32);
-            self.signatures.push(Signature { decl: signature.decl, params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, overflow: signature.overflow, fp: signature.fp, generics: signature.generics.clone(), borrows: signature.borrows.clone() });
+            self.signatures.push(Signature { decl: signature.decl, implicit_object: signature.implicit_object, params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, overflow: signature.overflow, fp: signature.fp, generics: signature.generics.clone(), borrows: signature.borrows.clone() });
             self.resolve_signature_assoc(opaque, opaque_self);
             // The body reads its callable parameters' bounds from here.
             let resolved_own = self.signatures[opaque.0 as usize].generics.clone();
@@ -24266,11 +24432,12 @@ impl<'a> Checker<'a> {
         if let TyKind::Class(id) = self.types.kind(owner)
             && self.types.class_def(*id).is_sync
             && !decl.name.name.is("init")
+            && !self.signatures[def.0 as usize].implicit_object
             && self.signatures[def.0 as usize].params.first()
                 .is_some_and(|(name, _, mode, _)| name.is("self") && *mode == Mode::Mut)
         {
             self.error(codes::E7003, decl.name.span,
-                format!("`@sync` class `{}` cannot declare a `mut self` method", self.types.display(owner)));
+                format!("`@sync` class `{}` cannot have a method that changes its object", self.types.display(owner)));
         }
         self.locals = Vec::new();
         self.begin_body_marks();
@@ -24286,7 +24453,7 @@ impl<'a> Checker<'a> {
         let outer_fp = std::mem::replace(&mut self.active_fp, self.signatures[def.0 as usize].fp);
         let outer_static_safe = self.in_static_safe;
         let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
-        self.in_static_safe = has_attribute(attrs, "static_safe");
+        self.in_static_safe = no_alias_checks(attrs);
         self.static_safe_unsafe_cell_reported = false;
 
         let signature_params: Vec<(Symbol, Ty, Mode, Span)> = self.signatures[def.0 as usize]
@@ -24494,7 +24661,7 @@ impl<'a> Checker<'a> {
             overflow,
             fp,
             inline: inline_hint(attrs),
-            static_safe: has_attribute(attrs, "static_safe"),
+            static_safe: no_alias_checks(attrs),
             contracts: {
                 // A parameter of a written `fn` type is a callable bound, whose effects are the
                 // argument's (`[EFF-2]`).
@@ -24630,6 +24797,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Unary { operand, .. }
             | ast::ExprKind::Try(operand)
             | ast::ExprKind::RefOf { place: operand, .. }
+            | ast::ExprKind::CopyOf(operand)
             | ast::ExprKind::Paren(operand)
             | ast::ExprKind::Owned(operand) => Self::class_init_uses_whole_self(operand),
             ast::ExprKind::Binary { lhs, rhs, .. }
@@ -24748,10 +24916,10 @@ impl<'a> Checker<'a> {
         if complete { return; }
         // `[CLS-11]` — a derived object is not whole until its base is.
         if before_base {
-            self.error(codes::E2102, span, "`self` is used before `super.init(...)`");
+            self.error(codes::E2102, span, "`this` is used before `super.init(...)`");
             return;
         }
-        self.error(codes::E2100, span, format!("`self` is used before all {word} fields are initialized"));
+        self.error(codes::E2100, span, format!("`this` is used before all {word} fields are initialized"));
     }
 
     fn report_missing_class_init_fields(&mut self, span: Span) {
@@ -26359,10 +26527,10 @@ impl<'a> Checker<'a> {
                     && self.class_handle_self(local)
                 {
                     self.sink.emit(
-                        Diagnostic::error(codes::E2103, target.span, "cannot assign to `self` in a class method")
-                            .primary_label("`self` names the object this method was called on")
-                            .help("to re-point a caller's handle, take it as a `mut` parameter [FN-9]")
-                            .note("a `mut self` method holds every field of its object until it returns [EXC-15]"),
+                        Diagnostic::error(codes::E2103, target.span, "cannot assign to `this` in a class method")
+                            .primary_label("`this` names the object this method was called on")
+                            .help("to re-point a caller's handle, take it as a `ref mut` parameter [FN-9]")
+                            .note("a method that changes its object holds every field of it until it returns [EXC-15]"),
                     );
                     return;
                 }
@@ -26749,7 +26917,7 @@ impl<'a> Checker<'a> {
             ast::StmtKind::If(if_stmt) => self.check_if(if_stmt, out),
             // `condition := pattern "=" expression` — `while p = e:` loops around a `match` of `e`
             // whose other arm runs the `else` block and leaves (D-763).
-            ast::StmtKind::While { label, cond: ast::Condition::Pattern { pattern, value }, body, else_block } => {
+            ast::StmtKind::While { label, cond: ast::Condition::Pattern { pattern, value, .. }, body, else_block } => {
                 let stmt = pattern_while_as_loop(*label, pattern, value, body, else_block.as_ref(), stmt.span);
                 self.check_stmt_attrs_and_kind(&stmt, attrs, out);
             }
@@ -27265,6 +27433,7 @@ impl<'a> Checker<'a> {
             let outer = std::mem::replace(&mut self.match_by_ref, by_ref);
             let pattern = self.check_pattern(&arm.pattern, scrutinee_ty);
             self.match_by_ref = outer;
+            let copies = self.take_pattern_copies();
             // D-295 — `ref mut x` in a pattern borrows the matched place
             // mutably: the same write as `ref mut e`, checked once.
             if by_ref && !written && binds_mut_ref(&pattern) {
@@ -27283,8 +27452,9 @@ impl<'a> Checker<'a> {
             });
             let body = match &arm.body {
                 ast::MatchArmBody::Block(block) => {
-                    let (block, scope) = self.check_block_scoped(block);
+                    let (mut block, scope) = self.check_block_scoped(block);
                     arm_scopes.push(Some(scope));
+                    block.stmts.splice(0..0, copies);
                     hir::MatchArmBody::Block(block)
                 }
                 // `[GRM-16]` — `Circle(r) => return PI * r * r`. A jump has
@@ -27292,7 +27462,7 @@ impl<'a> Checker<'a> {
                 // holding the control-flow statement, and settles no type.
                 ast::MatchArmBody::Expr(expr) if matches!(expr.kind, ast::ExprKind::Jump(_)) => {
                     let ast::ExprKind::Jump(jump) = &expr.kind else { unreachable!() };
-                    let mut stmts = Vec::new();
+                    let mut stmts = copies;
                     self.lower_jump(jump, expr.span, &mut stmts);
                     arm_scopes.push(None);
                     hir::MatchArmBody::Block(Block { stmts, span: expr.span })
@@ -27312,6 +27482,12 @@ impl<'a> Checker<'a> {
                     if result_ty.is_none() && value.ty != self.common.never {
                         result_ty = Some(value.ty);
                     }
+                    let value = if copies.is_empty() {
+                        value
+                    } else {
+                        let (ty, at) = (value.ty, value.span);
+                        Expr { ty, kind: ExprKind::Block { block: Block { stmts: copies, span: at }, value: Box::new(value) }, span: at }
+                    };
                     hir::MatchArmBody::Expr(value)
                 }
             };
@@ -28969,6 +29145,13 @@ impl<'a> Checker<'a> {
                 hir::Pattern { ty: expected, kind: hir::PatternKind::Bind { local, sub, by_ref }, span }
             }
 
+            ast::PatternKind::CopyOf { name } => {
+                let view = self.types.intern(TyKind::Ref { mutable: false, inner: expected });
+                let local = self.declare(None, view, span);
+                self.pattern_copies.push((local, *name, expected));
+                hir::Pattern { ty: expected, kind: hir::PatternKind::Bind { local, sub: None, by_ref: Some(false) }, span }
+            }
+
             ast::PatternKind::Path { segments } => {
                 match self.variant_named(segments, expected) {
                     Some((id, index)) => {
@@ -30183,8 +30366,9 @@ impl<'a> Checker<'a> {
             _ => return None,
         };
         let ExprKind::Call { args, arg_eval_order: None, default_arg_locals: None, .. } = &iterable.kind else { return None };
+        // The text is the method's object, passed through its borrow (`objects.rs`).
         match args.as_slice() {
-            [text] if text.ty == self.common.str_ => Some((iterator, text.clone())),
+            [text] if Self::object_argument(text).ty == self.common.str_ => Some((iterator, Self::object_argument(text).clone())),
             _ => None,
         }
     }
@@ -30973,6 +31157,16 @@ impl<'a> Checker<'a> {
     fn zip_argument(e: &Expr) -> &Expr {
         match &e.kind {
             ExprKind::Ref { place, mutable: false } if !is_place(&place.kind) => place,
+            _ => e,
+        }
+    }
+
+    /// `[STD-19]` — the object a method was called on, through the borrow it is passed by: `ref mut`
+    /// while what the method does to it is not yet worked out (`objects.rs`, `[CLS-7]`), a read-only
+    /// view after. What the known-numbers rule reads of it is the same either way.
+    fn object_argument(e: &Expr) -> &Expr {
+        match &e.kind {
+            ExprKind::Ref { place, .. } => place,
             _ => e,
         }
     }
@@ -32113,7 +32307,7 @@ impl<'a> Checker<'a> {
         let (bound, inclusive) = self.range_iterator(source_ty).expect("`fused_shape` accepted the source");
         let values = match &source.kind {
             ExprKind::Call { args, .. } if args.len() == 1 => self
-                .known_range(Self::zip_argument(&args[0]))
+                .known_range(Self::object_argument(&args[0]))
                 .map(|(start, end, inclusive)| (start.0, if inclusive { end.1 } else { end.1.saturating_sub(1) })),
             _ => None,
         };
@@ -32550,7 +32744,7 @@ impl<'a> Checker<'a> {
                     let mut diagnostic = Diagnostic::error(codes::E3013, element.span, "cannot move a borrowed item into the new collection")
                         .primary_label("each item is a reference into the collection, which still owns it")
                         .help(format!(
-                            "take the collection over, `for {name} in owned {collection}`: the items kept move into the new one, the rest are dropped, and `{collection}` cannot be used after"
+                            "take the collection over, `for {name} in owns {collection}`: the items kept move into the new one, the rest are dropped, and `{collection}` cannot be used after"
                         ))
                         .note("over a borrowed collection the items are references [GRM-27]");
                     if self.is_cloneable(inner) {
@@ -32778,7 +32972,9 @@ impl<'a> Checker<'a> {
             self.bind_borrowed_loop_pattern(pattern, bound, item_ty, &mut prologue);
             hir::Pattern { ty: item_ty, kind: hir::PatternKind::Bind { local: bound, sub: None, by_ref: None }, span: pattern.span }
         } else {
-            self.check_pattern(pattern, item_ty)
+            let checked = self.check_pattern(pattern, item_ty);
+            prologue.extend(self.take_pattern_copies());
+            checked
         };
         prologue.extend(self.gather_level(element, clauses, index + 1, gather, acc, loops, element_ty, span)?);
         let some_arm = hir::MatchArm {
@@ -32954,8 +33150,8 @@ impl<'a> Checker<'a> {
                 if value.ty != self.common.error {
                     let shown = self.types.display(value.ty);
                     self.sink.emit(
-                        Diagnostic::error(codes::E2226, span, format!("`str` does not implement `Contains[{shown}]`"))
-                            .note("a string contains `str` and `char` needles; for bytes, search `s.as_bytes()` [STD-8b]"),
+                        Diagnostic::error(codes::E2226, span, format!("`StrView` does not implement `Contains[{shown}]`"))
+                            .note("a string contains `StrView` and `char` needles; for bytes, search `s.as_bytes()` [STD-8b]"),
                     );
                 }
                 return error;
@@ -33576,18 +33772,18 @@ impl<'a> Checker<'a> {
         };
         let iterator = self.iterator_of(value, span)?;
         let method = |name: &str| ast::Ident { name: Symbol::intern(name), span };
-        let iterator = match lent {
-            Some(owned) => self.synth_method_on(iterator, span, method(owned), &[], &[], None, span),
+        // The checker's own adapter, made directly: a program's `.copied()` is refused by name.
+        let iterator = match (lent, self.referenced_item(iterator.ty)) {
+            (Some(owned), Some(inner)) => self.value_adapter(iterator, inner, method(owned), span),
+            (Some(owned), None) => self.synth_method_on(iterator, span, method(owned), &[], &[], None, span),
             // ODR-207 — an iterator that lends references (`m.keys()`) has them copied out, or
             // cloned, as a collection's elements are: an `Array` holds no view it does not own
             // (`[TYP-15]`), so `sorted(m.keys())` is an `Array[K]`, as `sorted(m)` is.
-            None => match self.referenced_item(iterator.ty) {
-                Some(inner) => {
-                    let owned = if self.types.is_copy(inner) { "copied" } else { "cloned" };
-                    self.synth_method_on(iterator, span, method(owned), &[], &[], None, span)
-                }
-                None => iterator,
-            },
+            (None, Some(inner)) => {
+                let owned = if self.types.is_copy(inner) { "copied" } else { "cloned" };
+                self.value_adapter(iterator, inner, method(owned), span)
+            }
+            (None, None) => iterator,
         };
         if iterator.ty == self.common.error {
             return None;
@@ -34625,6 +34821,7 @@ impl<'a> Checker<'a> {
                                     .map(|name| ast::Param {
                                         id: ast::NodeId::DUMMY,
                                         mode: ast::Mode::Borrow,
+                                        is_const: false,
                                         kind: ast::ParamKind::Named {
                                             name: ast::Ident { name: Symbol::intern(name), span },
                                             ty: ast::TypeExpr { id: ast::NodeId::DUMMY, kind: ast::TypeKind::Infer, span },
@@ -34817,6 +35014,19 @@ impl<'a> Checker<'a> {
                 self.locals[local.0 as usize].loop_borrowed_handle =
                     self.is_borrowed_counted_owner_handle(value.ty);
                 inner.push(Stmt::Let { local, init: Some(value) });
+            }
+            ast::PatternKind::CopyOf { name } => {
+                let Some(value) = self.borrowed_loop_pattern_source(item_local, item_ty, projection, pattern.span)
+                else {
+                    return;
+                };
+                let view = self.declare(None, value.ty, pattern.span);
+                inner.push(Stmt::Let { local: view, init: Some(value) });
+                let TyKind::Ref { inner: part, .. } = *self.types.kind(self.locals[view.0 as usize].ty) else {
+                    unreachable!("array-loop pattern source remains a reference")
+                };
+                self.pattern_copies.push((view, *name, part));
+                inner.extend(self.take_pattern_copies());
             }
             ast::PatternKind::Tuple(items) => {
                 let Some(value) = self.borrowed_loop_pattern_source(item_local, item_ty, projection, pattern.span)
@@ -35314,7 +35524,9 @@ impl<'a> Checker<'a> {
                 span: pattern.span,
             }
         } else {
-            self.check_pattern(pattern, item_ty)
+            let checked = self.check_pattern(pattern, item_ty);
+            prologue.extend(self.take_pattern_copies());
+            checked
         };
         self.loop_labels.push(label.map(|l| l.name));
         let checked_body = self.check_block(body);
@@ -35403,7 +35615,7 @@ impl<'a> Checker<'a> {
 
     fn check_if(&mut self, if_stmt: &ast::IfStmt, out: &mut Vec<Stmt>) {
         // `condition := pattern "=" expression` — `if p = e:` is a `match` of `e` (D-763).
-        if let ast::Condition::Pattern { pattern, value } = &if_stmt.cond {
+        if let ast::Condition::Pattern { pattern, value, .. } = &if_stmt.cond {
             let span = pattern.span.to(if_stmt.then_block.span);
             let stmt = pattern_if_as_match(pattern, value, &if_stmt.then_block, if_stmt.else_block.as_deref(), span);
             self.check_stmt_attrs_and_kind(&stmt, &[], out);
@@ -36453,7 +36665,7 @@ impl<'a> Checker<'a> {
         if expected == self.common.cstr && expr.ty == self.common.str_ {
             let span = expr.span;
             self.sink.emit(Diagnostic::error(codes::E5020, span,
-                "expected `cstr`, found `str`")
+                "expected `CStrView`, found `StrView`")
                 .help("use a `c\"…\"` literal, or handle `.to_cstring()` and pass the owned value's `.as_cstr()`"));
             return Expr { ty: expected, kind: ExprKind::Error, span };
         }
@@ -37862,24 +38074,7 @@ impl<'a> Checker<'a> {
                     self.error(codes::E2020, span, format!("`String.from` takes 1 argument(s), found {}", args.len()));
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
-                let str_ty = self.common.str_;
-                // `[FFI-17a]` — `String.from(c)` of a `CppString` copies its bytes.
-                if let Some(&copy) = self.fn_ids.get(&Symbol::intern("std.ffi.cpp_string_copy"))
-                    && !matches!(args[0].value.kind, ast::ExprKind::Lit(_) | ast::ExprKind::FString(_))
-                {
-                    let mark = self.sink.mark();
-                    let value = self.synth_committed(&args[0].value);
-                    if matches!(self.types.kind(value.ty), TyKind::Struct(id) if self.types.struct_def(*id).name.is("std.ffi.CppString")) {
-                        return Expr {
-                            ty: self.common.string,
-                            kind: ExprKind::Call { callee: copy, arg_eval_order: None, default_arg_locals: None, args: vec![value], latebound: false },
-                            span,
-                        };
-                    }
-                    self.sink.rollback(mark);
-                }
-                let text = self.check_expr(&args[0].value, str_ty);
-                self.to_string_of(text, span)
+                self.string_of_text(&args[0].value, span)
             }
 
             ast::ExprKind::MethodCall { recv, name, generic_args, args }
@@ -38298,6 +38493,7 @@ impl<'a> Checker<'a> {
                 }
             }
 
+            ast::ExprKind::CopyOf(operand) => self.synth_copy_of(operand, span),
             // `[BRW-*]` — `ref place` and `ref mut place`, the explicit forms.
             // They are needed only when initialising a `ref`-typed local or a
             // view struct's field; every other borrow is implicit in a
@@ -39174,6 +39370,10 @@ impl<'a> Checker<'a> {
             return Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields }, span };
         }
 
+        // `[TXT-5]` — `String(s)` makes a `String` of its own from the text `s`.
+        if name.is("String") && explicit.is_empty() && args.len() == 1 && args[0].name.is_none() {
+            return self.string_of_text(&args[0].value, span);
+        }
         // `Array[T]()` and `String()` — the compiler-known constructors.
         // `[TYP-18]`: written type arguments fix the instantiation, whatever
         // the context says; the context's type is then checked against it
@@ -40574,7 +40774,7 @@ impl<'a> Checker<'a> {
         }
         let ret = decl.ret.as_ref().map_or(self.common.void, |ty| self.resolve_type(ty));
         let def = DefId(self.signatures.len() as u32);
-        self.signatures.push(Signature { decl: decl.name.span,
+        self.signatures.push(Signature { decl: decl.name.span, implicit_object: false,
             params: decl
                 .params
                 .iter()
@@ -40659,7 +40859,7 @@ impl<'a> Checker<'a> {
             })
             .collect();
         let def = DefId(self.signatures.len() as u32);
-        self.signatures.push(Signature { decl: decl.name.span,
+        self.signatures.push(Signature { decl: decl.name.span, implicit_object: false,
             params: named.clone(),
             ret,
             abi: None,
@@ -40743,7 +40943,7 @@ impl<'a> Checker<'a> {
         let generic = DefId(self.signatures.len() as u32);
         let mut params = vec![(Symbol::intern("env"), env_ty, env_mode, span)];
         params.extend(named);
-        self.signatures.push(Signature { decl: decl.name.span,
+        self.signatures.push(Signature { decl: decl.name.span, implicit_object: false,
             params,
             ret,
             abi: None,
@@ -42125,7 +42325,7 @@ impl<'a> Checker<'a> {
             match &member.kind {
                 ast::MemberKind::Fn(fn_decl) => {
                     for param in &fn_decl.params {
-                        if let ast::ParamKind::Named { ty, .. } | ast::ParamKind::Receiver { ty: Some(ty) } = &param.kind {
+                        if let ast::ParamKind::Named { ty, .. } | ast::ParamKind::Receiver { ty: Some(ty), .. } = &param.kind {
                             uses(ty, &mut found);
                         }
                     }
@@ -42607,7 +42807,7 @@ impl<'a> Checker<'a> {
 
         let instance = DefId(self.signatures.len() as u32);
         let borrows = self.signatures[def.0 as usize].borrows.clone();
-        self.signatures.push(Signature { decl: self.signatures[def.0 as usize].decl,
+        self.signatures.push(Signature { decl: self.signatures[def.0 as usize].decl, implicit_object: self.signatures[def.0 as usize].implicit_object,
             params: concrete_params,
             ret: concrete_ret,
             abi: self.signatures[def.0 as usize].abi,
@@ -42768,7 +42968,7 @@ impl<'a> Checker<'a> {
             .collect();
         let concrete_ret = self.substitute_ty(ret, args);
         let instance = DefId(self.signatures.len() as u32);
-        self.signatures.push(Signature { decl: self.signatures[def.0 as usize].decl,
+        self.signatures.push(Signature { decl: self.signatures[def.0 as usize].decl, implicit_object: self.signatures[def.0 as usize].implicit_object,
             params: concrete_params,
             ret: concrete_ret,
             abi: self.signatures[def.0 as usize].abi,
@@ -43094,7 +43294,7 @@ impl<'a> Checker<'a> {
                 let shown = self.types.display(ty);
                 self.sink.emit(
                     Diagnostic::error(codes::E0104, span, format!("field `{name}` of an `@attribute` struct is a `{shown}`"))
-                        .note("an attribute's arguments are `int`, `float`, `str`, `String`, `bool` or `char` [RFL-3], ODR-158"),
+                        .note("an attribute's arguments are `int`, `float`, `StrView`, `String`, `bool` or `char` [RFL-3], ODR-158"),
                 );
             }
         }
@@ -43975,6 +44175,39 @@ impl<'a> Checker<'a> {
                 );
                 continue;
             }
+            // `[ATT-1]` — an attribute Ember no longer has, with the one to write.
+            let word = |arg: &ast::AttrArg| match arg {
+                ast::AttrArg::Expr(expr) => match &expr.kind {
+                    ast::ExprKind::Path { segments } if segments.len() == 1 => Some(segments[0].name.to_string()),
+                    ast::ExprKind::Field { base, name } if matches!(base.kind, ast::ExprKind::SelfExpr) => Some(name.name.to_string()),
+                    ast::ExprKind::SelfExpr => Some(String::new()),
+                    _ => None,
+                },
+                ast::AttrArg::Named { .. } => None,
+            };
+            let gone = match (name, attr.args.as_slice()) {
+                ("static_safe", _) => Some(("`@static_safe` is gone", "write `@no_alias_checks`: a function that keeps no check of who else holds its data".to_string())),
+                ("fp", [arg]) if word(arg).as_deref() == Some("contract") => Some(("`@fp(contract)` is gone", "write `@fp(allow_fma)`".to_string())),
+                ("no_runtime_checks", _) => Some(("`@no_runtime_checks` is gone", "no switch turns a safety check off; remove it [UNS-11]".to_string())),
+                // `[LT-1a]`, `[LT-22]` — what a result points into is the first line's rule, narrowed by
+                // the summary its body gives, or `from` naming one parameter or field.
+                ("borrows", args) => {
+                    let help = match args {
+                        [arg] => match word(arg) {
+                            Some(named) if named.is_empty() => "remove it: a method's result points into `this` (rule 1)".to_string(),
+                            Some(named) => format!("write `from {named}` after the result type: `-> T from {named}`"),
+                            None => "write `from p` after the result type, naming the parameter, or the field of `this`, the result points into".to_string(),
+                        },
+                        _ => "remove it: the result points into the sources its body gives it, which callers use (LT-22); `from p` narrows it to one".to_string(),
+                    };
+                    Some(("`@borrows` is gone", help))
+                }
+                _ => None,
+            };
+            if let Some((message, help)) = gone {
+                self.sink.emit(Diagnostic::error(codes::E0104, attr.span, message).help(help).note("[ATT-1]"));
+                continue;
+            }
             if RESERVED_ATTRIBUTES.contains(&name) {
                 self.sink.emit(Diagnostic::error(
                     codes::E0104,
@@ -44026,7 +44259,7 @@ impl<'a> Checker<'a> {
                 continue;
             }
             if name == "fp" && !fp_names_contract(attr) {
-                self.error(codes::E0104, attr.span, "`@fp` needs `contract`: `@fp(contract)`");
+                self.error(codes::E0104, attr.span, "`@fp` needs `allow_fma`: `@fp(allow_fma)`");
                 continue;
             }
             // `[EFF-5]` — the contracts take no arguments, but `@nopanic(explicit)` its one.
@@ -44440,11 +44673,20 @@ impl<'a> Checker<'a> {
         self.apply_universal_member(owner, name.name);
         let Some(&entry) = self.associated.get(&(owner, name.name)) else {
             let shown = self.types.display(owner);
-            self.error(
-                codes::E2020,
-                span,
-                format!("`{shown}` has no associated function `{}`", name.name),
-            );
+            let mut refused = Diagnostic::error(codes::E2020, span, format!("`{shown}` has no associated function `{}`", name.name));
+            // `[CLI-20]` — 0.9.10 read a function in a type body that lists no object as having none;
+            // 0.9.15 reads it as a method (`[FN-4]`), and `static fn` is the one called on the type.
+            if let Some(method) = self.methods.get(&(owner, name.name)).map(|entry| entry.def)
+                && self.signatures[method.0 as usize].implicit_object
+                && let Some(at) = self.fn_keyword_before(self.signatures[method.0 as usize].decl)
+            {
+                let decl = self.signatures[method.0 as usize].decl;
+                refused = refused
+                    .secondary(decl, "a method: its object is `this`")
+                    .note("a function in a type body is a method unless it is written `static fn`, which is called on the type [FN-4]")
+                    .migrate(format!("write `static fn {}`", name.name), Span::new(decl.file, at, at), "static ");
+            }
+            self.sink.emit(refused);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
         // D-440 — two instances of one generic interface may each give the
@@ -44948,6 +45190,16 @@ impl<'a> Checker<'a> {
     /// did not emit `const` would have mutated through a shared borrow in
     /// silence. It is rejected here, where the type alone answers the
     /// question and no flow analysis is needed.
+    /// `[EXC-15]` (M1) — a place the program writes (an assignment's target, what a built-in
+    /// changes: a view iterator's `next`, an `Array`'s `push`), which a built-in's arguments do not
+    /// say, recorded for the decision of what a method changes (`objects.rs`). Not while the object
+    /// of a method that does not list it is checked, whose mode is not known yet.
+    fn note_written(&mut self, place: &Expr) {
+        if !self.objects_deferred {
+            self.written_places.insert(place.span);
+        }
+    }
+
     fn reject_write_through_shared_ref(&mut self, place: &Expr, span: Span) -> bool {
         self.reject_shared_ref_access(place, span, false)
     }
@@ -44960,6 +45212,9 @@ impl<'a> Checker<'a> {
     }
 
     fn reject_shared_ref_access(&mut self, place: &Expr, span: Span, call: bool) -> bool {
+        if !call {
+            self.note_written(place);
+        }
         let mut current = place;
         loop {
             // D-747, `[FN-9]` — a class object's field is written through its handle, however the
@@ -45050,10 +45305,10 @@ impl<'a> Checker<'a> {
             return false;
         }
         self.sink.emit(
-            Diagnostic::error(codes::E2103, span, "cannot re-point `self` in a class method")
-                .primary_label("this could make `self` name another object")
-                .help("pass the object's fields, or take the handle as a `mut` parameter of a function [FN-9]")
-                .note("a `mut self` method holds every field of its object until it returns [EXC-15]"),
+            Diagnostic::error(codes::E2103, span, "cannot re-point `this` in a class method")
+                .primary_label("this could make `this` name another object")
+                .help("pass the object's fields, or take the handle as a `ref mut` parameter of a function [FN-9]")
+                .note("a method that changes its object holds every field of it until it returns [EXC-15]"),
         );
         true
     }
@@ -45111,6 +45366,11 @@ impl<'a> Checker<'a> {
 
         let decl = &self.locals[local.0 as usize];
         let name = decl.name.unwrap_or_else(|| Symbol::intern("parameter"));
+        // `[FN-4]` — a listed `self` is refused where it is listed (P14, `E1010`): its writes are the
+        // implicit object's once it is not.
+        if name.is("self") {
+            return true;
+        }
         let name = name.to_string();
         let declaration = decl.span;
         // The declared type, not the `ref T` it is passed as (`[BRW-8]`).
@@ -45124,15 +45384,15 @@ impl<'a> Checker<'a> {
         let rebinding = matches!(place.kind, ExprKind::Local(_)) && !self.callable_parameter_locals.contains(&local);
         let structural_help = if self.callable_parameter_locals.contains(&local) {
             format!(
-                "declare this callable parameter `mut {name}: fn(...) -> ...` so it receives a mutable closure place"
+                "declare this callable parameter `ref mut {name}: fn(...) -> ...` so it receives a mutable closure place"
             )
         } else if rebinding {
             format!(
-                "bind the new value to a new local (`new_{name} = …`) and use that from here on; declare the parameter `mut {name}: {shown}` only if the caller is to see the new value, as a single owner passing it `mut`"
+                "bind the new value to a new local (`new_{name} = …`) and use that from here on; declare the parameter `ref mut {name}: {shown}` only if the caller is to see the new value, as a single owner passing it `ref mut`"
             )
         } else {
             format!(
-                "restructure to a single owner and declare this parameter `mut {name}: {shown}`"
+                "restructure to a single owner and declare this parameter `ref mut {name}: {shown}`"
             )
         };
         let mut diagnostic = Diagnostic::error(
@@ -45163,7 +45423,7 @@ impl<'a> Checker<'a> {
                 .note(concat!(
                     "`RefCell` adds a one-word runtime borrow-state check in every profile ",
                     "(CELL-5, CELL-9); a class adds a heap allocation, a 24-byte header, ",
-                    "reference counting and dynamic exclusivity, and is not `@static_safe` ",
+                    "reference counting and dynamic exclusivity, and is not `@no_alias_checks` ",
                     "(OBJ-1, RC-1, EXC-1, EFF-13)"
                 ));
         }
@@ -45192,6 +45452,7 @@ impl<'a> Checker<'a> {
     }
 
     fn reject_readonly_write_inner(&mut self, place: &Expr, span: Span, assignment: bool) {
+        self.note_written(place);
         let mut current = place;
         loop {
             match &current.kind {
@@ -45213,7 +45474,7 @@ impl<'a> Checker<'a> {
                                     .unwrap_or((Symbol::intern("field"), "Mutex[T]".to_string()));
                                 self.sink.emit(
                                     Diagnostic::error(codes::E7003, span,
-                                        format!("cannot write field `{field}` of an `@sync` class after `init` or after using `self` as a whole"))
+                                        format!("cannot write field `{field}` of an `@sync` class after `init` or after using `this` as a whole"))
                                         .help(format!("wrap `{field}` in `{suggestion}` for mutation after `init`")),
                                 );
                                 return;
@@ -45633,7 +45894,7 @@ impl<'a> Checker<'a> {
         };
         let signature = self.signatures[entry.def.0 as usize].params.clone();
         if signature.first().is_none_or(|(_, _, mode, _)| *mode != Mode::Mut) {
-            self.error(codes::E1010, span, "the direct base constructor must declare `mut self`");
+            self.error(codes::E1010, span, "the direct base's `init` must be one that may change its object, `this`");
             if let Some(state) = self.class_init.as_mut() {
                 state.base_initialized = true;
             }
@@ -45886,7 +46147,7 @@ impl<'a> Checker<'a> {
         if !matches!(name.as_str(), "len" | "count") || args.len() != 1 || !self.types.is_integral(call.ty) {
             return call;
         }
-        let receiver = Self::zip_argument(&args[0]);
+        let receiver = Self::object_argument(&args[0]);
         if !self.implements(receiver.ty, iterator) || self.types.is_generic(receiver.ty) {
             return call;
         }
@@ -46090,7 +46351,7 @@ impl<'a> Checker<'a> {
                     && origin(self, e.ty).is_some_and(|o| o.is("std.core.RangeIter") || o.is("std.core.RangeInclusiveIter")) =>
             {
                 // `iter` borrows the range: a literal arrives as a borrow of a temporary.
-                if let Some((start, end, inclusive)) = self.known_range(Self::zip_argument(&args[0]))
+                if let Some((start, end, inclusive)) = self.known_range(Self::object_argument(&args[0]))
                     && let Some(gap) = end.1.checked_sub(start.0)
                 {
                     return Some(match (gap < 0, inclusive) {
@@ -46159,7 +46420,7 @@ impl<'a> Checker<'a> {
             {
                 return Some(self.list_items(&fields[0]).1);
             }
-            ExprKind::Ref { place, mutable: false } => return self.most_items(place),
+            ExprKind::Ref { place, .. } => return self.most_items(place),
             ExprKind::OverflowScope { expr, .. } => return self.most_items(expr),
             _ => {}
         }
@@ -46322,15 +46583,31 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[STD-19]` — the names `body` changes, and those it passes as the object of a method not known
+    /// to change it, with the method (`Written`).
+    fn written_in(&self, body: &Block) -> (HashSet<LocalId>, Vec<(LocalId, DefId)>) {
+        let implicit = |def: DefId| self.signatures.get(def.0 as usize).is_some_and(|signature| signature.implicit_object);
+        let changers = |def: DefId| self.signatures.get(def.0 as usize).is_some_and(|signature| self.object_changers.contains(&signature.decl));
+        let mut written = Written { locals: HashSet::new(), implicit: &implicit, changers: &changers, assumed: Vec::new() };
+        written_in_block(body, &mut written);
+        (written.locals, written.assumed)
+    }
+
     /// `[STD-19]` — the names this pass relied on that `body` changes, which
     /// are known no more; whether there was one (another pass is needed).
     fn forget_changed(&mut self, body: &Block) -> bool {
         if self.open.relied.is_empty() {
             return false;
         }
-        let mut written = HashSet::new();
-        written_in_block(body, &mut written);
-        let mut relied: Vec<LocalId> = written.intersection(&self.open.relied).copied().collect();
+        let written = self.written_in(body);
+        // M1 — a relied name passed as a method's object the method is taken only to read: `objects.rs`
+        // confirms it, or `check` runs again counting the method a change (`object_changers`).
+        for (local, callee) in &written.1 {
+            if self.open.relied.contains(local) {
+                self.assumed_object_reads.insert(*callee);
+            }
+        }
+        let mut relied: Vec<LocalId> = written.0.intersection(&self.open.relied).copied().collect();
         relied.sort_by_key(|local| local.0);
         let mut forgot = false;
         for local in relied {
@@ -46366,7 +46643,7 @@ impl<'a> Checker<'a> {
             return None;
         }
         // ODR-091 — and `rev`, `DoubleEndedIterator`'s: `(0..=n).rev()`.
-        let iterator_has = matches!(name.name.as_str(), "sum" | "product" | "copied" | "cloned" | "rev")
+        let iterator_has = matches!(name.name.as_str(), "sum" | "product" | "copy_each" | "copied" | "cloned" | "rev")
             || self.interfaces.get(&iterator).is_some_and(|def| def.methods.iter().any(|(method, ..)| *method == name.name));
         let iterable = self.lookup_method(receiver_ty, Symbol::intern("iter")).is_some()
             || matches!(self.types.kind(receiver_ty), TyKind::Vec { text: false, .. } | TyKind::Span { .. } | TyKind::Array { .. } | TyKind::ArrayN { .. });
@@ -46398,6 +46675,131 @@ impl<'a> Checker<'a> {
             span,
         };
         Some(self.synth(&call))
+    }
+
+    /// `[TXT-5]`, `[TXT-9]` — `String(s)` and `String.from(s)`: a new `String` holding a copy of the
+    /// text `s`; of a `CppString`, its bytes (`[FFI-17a]`).
+    fn string_of_text(&mut self, text: &ast::Expr, span: Span) -> Expr {
+        if let Some(&copy) = self.fn_ids.get(&Symbol::intern("std.ffi.cpp_string_copy"))
+            && !matches!(text.kind, ast::ExprKind::Lit(_) | ast::ExprKind::FString(_))
+        {
+            let mark = self.sink.mark();
+            let value = self.synth_committed(text);
+            if matches!(self.types.kind(value.ty), TyKind::Struct(id) if self.types.struct_def(*id).name.is("std.ffi.CppString")) {
+                return Expr {
+                    ty: self.common.string,
+                    kind: ExprKind::Call { callee: copy, arg_eval_order: None, default_arg_locals: None, args: vec![value], latebound: false },
+                    span,
+                };
+            }
+            self.sink.rollback(mark);
+        }
+        let str_ty = self.common.str_;
+        let text = self.check_expr(text, str_ty);
+        self.to_string_of(text, span)
+    }
+
+    /// `[GRM-13]` — the names written `copy of v` in the pattern just checked: each declared, a copy
+    /// of the part its view holds, as `v = copy of part` written first in the branch or loop body.
+    fn take_pattern_copies(&mut self) -> Vec<Stmt> {
+        let mut made = Vec::new();
+        for (view, name, part) in std::mem::take(&mut self.pattern_copies) {
+            let span = name.span;
+            let view_ty = self.locals[view.0 as usize].ty;
+            let read = self.read_through(Expr { ty: view_ty, kind: ExprKind::Local(view), span });
+            let copy = if self.copy_refused(part, &name.name.to_string(), span) {
+                Expr { ty: self.common.error, kind: ExprKind::Error, span }
+            } else {
+                self.synth_method_on(read, span, ast::Ident { name: Symbol::intern("clone"), span }, &[], &[], None, span)
+            };
+            let local = self.declare(Some(name.name), part, span);
+            made.push(Stmt::Let { local, init: Some(copy) });
+        }
+        made
+    }
+
+    /// `[OWN-8]` — `E2116` when `copy of` cannot copy a `ty` as itself, `text` the value as written:
+    /// a view, whose text or items are another's, or a type with no `Clone`. A value holding a class
+    /// object is `E0900` until a class object's `Clone` makes a new object (M4).
+    fn copy_refused(&mut self, ty: Ty, text: &str, span: Span) -> bool {
+        let shown = self.types.display(ty);
+        if self.types.is_view(ty) {
+            let help = if self.is_text(ty) {
+                format!("to make your own copy write `String({text})`")
+            } else {
+                format!("`{shown}` is a view: keep it as it is, `v = {text}`, or copy what it views into a container of your own")
+            };
+            let message = format!("`{text}` is a view of what another value holds, so `copy of` cannot copy it");
+            self.sink.emit(Diagnostic::error(codes::E2116, span, message).help(help));
+            return true;
+        }
+        // `copy of player` makes a new object; this compiler's `Clone` of a class object is still
+        // 0.9.10's, a copy of its handle naming the same object, which would be no copy at all.
+        if self.holds_class_object(ty, &mut HashSet::new()) {
+            let message = format!("`copy of` a `{shown}`, which holds a class object, is not built by this compiler yet");
+            self.sink.emit(
+                Diagnostic::error(codes::E0900, span, message)
+                    .note("`copy of` makes a new object [OWN-8]; this compiler's `Clone` of a class object keeps the same one"),
+            );
+            return true;
+        }
+        let has_clone = self.is_cloneable(ty) || self.implements(ty, Symbol::intern("std.core.Clone"));
+        if !has_clone {
+            let help = match self.types.kind(ty) {
+                TyKind::Struct(_) => format!("write `@derive(Clone)` above `struct {shown}`, or keep a view of it: `ref {text}`"),
+                TyKind::Enum(_) => format!("write `@derive(Clone)` above `enum {shown}`, or keep a view of it: `ref {text}`"),
+                _ => format!("keep a view of it: `ref {text}`"),
+            };
+            let message = format!("`{shown}` has no `Clone`, so `copy of` cannot make one");
+            self.sink.emit(Diagnostic::error(codes::E2116, span, message).help(help));
+        }
+        !has_clone
+    }
+
+    /// Whether a value of `ty` holds a class object as its own part: one itself, or a field, an
+    /// element or a payload that is one (not through a view or a pointer).
+    fn holds_class_object(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+        if !seen.insert(ty) {
+            return false;
+        }
+        match self.types.kind(ty) {
+            TyKind::Class(_) | TyKind::ClassInterface(_) => true,
+            TyKind::Struct(id) => {
+                let fields: Vec<Ty> = self.types.struct_def(*id).fields.iter().map(|field| field.ty).collect();
+                self.box_inner(ty).is_some_and(|inner| self.holds_class_object(inner, seen))
+                    || fields.into_iter().any(|field| self.holds_class_object(field, seen))
+            }
+            TyKind::Enum(id) => {
+                let fields: Vec<Ty> = self.types.enum_def(*id).variants.iter().flat_map(|variant| variant.fields.iter().map(|field| field.ty)).collect();
+                fields.into_iter().any(|field| self.holds_class_object(field, seen))
+            }
+            TyKind::Tuple(items) => items.clone().into_iter().any(|item| self.holds_class_object(item, seen)),
+            TyKind::Vec { elem, .. } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => {
+                let elem = *elem;
+                self.holds_class_object(elem, seen)
+            }
+            _ => false,
+        }
+    }
+
+    /// `[GRM-43]`, `[OWN-8]` — `copy of e` is `e`'s clone: a `Copy` value itself, a type with `Clone`
+    /// its `clone`. What it cannot copy as itself is refused (`copy_refused`).
+    fn synth_copy_of(&mut self, operand: &ast::Expr, span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let receiver = self.synth_committed(operand);
+        if receiver.ty == self.common.error {
+            return error;
+        }
+        // A read-only view's target is copied (`if this.keep exists as n:` then `copy of n`).
+        let copied = match *self.types.kind(receiver.ty) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => receiver.ty,
+        };
+        let text = self.written_line(operand.span).unwrap_or_else(|| "e".to_string());
+        if self.copy_refused(copied, &text, operand.span) {
+            return error;
+        }
+        self.synth_method_on(receiver, operand.span, ast::Ident { name: Symbol::intern("clone"), span }, &[], &[], None, span)
     }
 
     fn synth_method_call_on(
@@ -46558,13 +46960,20 @@ impl<'a> Checker<'a> {
             let f64_ty = self.common.f64;
             return self.synth_iterator_total(receiver, f64_ty, true, span);
         }
-        // `[STD-19]` — `copied()` / `cloned()` over an iterator of references.
-        if matches!(name.name.as_str(), "copied" | "cloned")
+        // `[STD-19]` — `copy_each()` over an iterator of references; 0.9.10's `copied()` and
+        // `cloned()` are refused with it (`E1010`), and checked as they meant.
+        if matches!(name.name.as_str(), "copy_each" | "copied" | "cloned")
             && args.is_empty()
             && generic_args.is_empty()
             && self.lookup_method(receiver.ty, name.name).is_none()
             && let Some(inner) = self.referenced_item(receiver.ty)
         {
+            if !name.name.is("copy_each") {
+                self.sink.emit(
+                    Diagnostic::error(codes::E1010, name.span, format!("`.{}()` is not Ember: what `copy of` makes of each item is `.copy_each()`", name.name))
+                        .help("write `.copy_each()`"),
+                );
+            }
             return self.value_adapter(receiver, inner, name, span);
         }
         let explicit = self.resolve_method_type_args(generic_args);
@@ -46773,12 +47182,15 @@ impl<'a> Checker<'a> {
                     // is recovered at the dynamic-call boundary.
                     receiver = self.pass_receiver_to(receiver, receiver_mode, def, recv_span);
                 } else if !matches!(self.types.kind(receiver.ty), TyKind::Ref { mutable: true, .. }) {
-                    self.error(
-                        codes::E2140,
-                        span,
-                        "a `mut self` interface method needs `ref mut dyn` access",
-                    );
-                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                    let refused = Diagnostic::error(codes::E2140, span, "an interface method that changes its object needs `ref mut dyn` access");
+                    // `[EXC-15]` — one that does not list its object changes it only if an
+                    // implementation the tables hold does (`objects.rs`).
+                    if self.signatures[def.0 as usize].implicit_object {
+                        self.deferred_objects.insert((receiver.span, Span::DUMMY), vec![refused]);
+                    } else {
+                        self.sink.emit(refused);
+                        return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                    }
                 }
             }
             let signature = self.signatures[def.0 as usize].clone();
@@ -46789,6 +47201,7 @@ impl<'a> Checker<'a> {
             let checked = self.check_bound_call_arguments(args, &signature.params, &slots, None);
             let modes = signature.params.iter().map(|(_, _, mode, _)| *mode).collect();
             let layout = self.dyn_vtable_layout(&interfaces);
+            self.interface_call_methods.insert(receiver.span, def);
             return Expr {
                 ty: signature.ret,
                 kind: ExprKind::InterfaceCall {
@@ -48800,6 +49213,7 @@ impl<'a> Checker<'a> {
                         };
                         self.signatures.push(Signature {
                             decl: call.decl,
+                            implicit_object: false,
                             params: call.params.iter().map(|(name, ty, param_mode, span)| (*name, *ty, mode(*param_mode), *span)).collect(),
                             ret: call.ret,
                             abi: None,
@@ -49235,10 +49649,10 @@ impl<'a> Checker<'a> {
                 )),
             );
             self.sink.rollback(quiet);
-            (
-                self.closure_body_mutated_capture_fields(&probe_body, LocalId(0)),
-                lambda.is_owned && self.closure_body_moves_capture(&probe_body, LocalId(0)),
-            )
+            let mutated = self.closure_body_mutated_capture_fields(&probe_body, LocalId(0));
+            let read = self.probe_object_reads.take();
+            self.assumed_object_reads.extend(read);
+            (mutated, lambda.is_owned && self.closure_body_moves_capture(&probe_body, LocalId(0)))
         };
         let requires_mut = !probe_once && !mutable_capture_fields.is_empty();
         // `[CLO-13]` — where an owned callable value is wanted, a lambda that
@@ -49550,8 +49964,8 @@ impl<'a> Checker<'a> {
             })
             .collect();
         body.stmts.splice(0..0, lets);
-        let mut written = HashSet::new();
-        written_in_block(&body, &mut written);
+        let (written, assumed) = self.written_in(&body);
+        self.assumed_object_reads.extend(assumed.into_iter().map(|(_, callee)| callee));
         let keys: Vec<(Span, Option<Symbol>)> = written.into_iter().map(|local| self.known_key(local)).collect();
         self.lambda_changed.entry(body_span).or_default().extend(keys);
         let locals = std::mem::replace(&mut self.locals, outer_locals);
@@ -49793,7 +50207,7 @@ impl<'a> Checker<'a> {
             }
         }
         let def = DefId(self.signatures.len() as u32);
-        self.signatures.push(Signature { decl: Span::DUMMY,
+        self.signatures.push(Signature { decl: Span::DUMMY, implicit_object: false,
             params: Vec::new(),
             ret: status_ty,
             abi: None,
@@ -49887,7 +50301,7 @@ impl<'a> Checker<'a> {
         }
         let is_unsafe = std::mem::take(&mut self.closure_made_unsafe)
             || reserved.is_some_and(|def| self.signatures.get(def.0 as usize).is_some_and(|signature| signature.is_unsafe));
-        let signature = Signature { decl: span,
+        let signature = Signature { decl: span, implicit_object: false,
             params: signature_params,
             ret,
             abi: None,
@@ -50063,6 +50477,50 @@ impl<'a> Checker<'a> {
         environment: LocalId,
         fields: &mut HashSet<usize>,
     ) {
+        // M1 — a capture passed as the implicit object of a method (`r.value()`, `ref mut` until
+        // `objects.rs` decides the method) is written only if the method changes its object: one
+        // not known to is taken to read it, and kept for `objects.rs` to confirm.
+        let object_of = |method: DefId, passed: &Expr| -> Option<usize> {
+            let signature = self.signatures.get(method.0 as usize)?;
+            if !signature.implicit_object {
+                return None;
+            }
+            let passed = match &passed.kind {
+                ExprKind::Deref(inner) => &**inner,
+                _ => passed,
+            };
+            let place = match &passed.kind {
+                ExprKind::Ref { place, mutable: true } => &**place,
+                ExprKind::Cast { expr, .. } => match &expr.kind {
+                    ExprKind::Ref { place, mutable: true } => &**place,
+                    _ => return None,
+                },
+                _ => return None,
+            };
+            let field = Self::closure_capture_field_index(place, environment)?;
+            if self.object_changers.contains(&signature.decl) {
+                return None;
+            }
+            self.probe_object_reads.borrow_mut().push(method);
+            Some(field)
+        };
+        match &expr.kind {
+            ExprKind::Call { callee, args, .. } if args.first().is_some_and(|object| object_of(*callee, object).is_some()) => {
+                for arg in &args[1..] {
+                    self.collect_mutated_capture_fields_expr(arg, environment, fields);
+                }
+                return;
+            }
+            ExprKind::InterfaceCall { receiver, args, .. }
+                if self.interface_call_methods.get(&receiver.span).is_some_and(|&method| object_of(method, receiver).is_some()) =>
+            {
+                for arg in args {
+                    self.collect_mutated_capture_fields_expr(arg, environment, fields);
+                }
+                return;
+            }
+            _ => {}
+        }
         if let ExprKind::Ref { place, mutable: true } = &expr.kind {
             if let Some(field) = Self::closure_capture_field_index(place, environment) {
                 fields.insert(field);
@@ -50488,10 +50946,10 @@ impl<'a> Checker<'a> {
             })
             .collect();
         let ret = signature.ret;
-        // `[LT-7]` — a call through a callable type borrows only its source
-        // parameters, and the type carries no `@borrows`. A function whose
-        // `@borrows` names another parameter (a `mut` `Copy` one) would lend
-        // its caller a result the call does not account for.
+        // `[LT-7]` — a call through a callable type points only into its source
+        // parameters, and the type says no `from`. A function whose `from`
+        // names another parameter (a `ref mut` `Copy` one) would lend its
+        // caller a result the call does not account for.
         let beyond: Vec<Symbol> = match &signature.borrows {
             Some(named) if self.types.is_view(ret) => {
                 let sources = self.sources_of(&signature.params);
@@ -50537,7 +50995,7 @@ impl<'a> Checker<'a> {
                 Diagnostic::error(
                     codes::E2020,
                     span,
-                    format!("`{name}` is not a value of type `{shown}`: its result borrows `{parameter}` (`@borrows`)"),
+                    format!("`{name}` is not a value of type `{shown}`: its result points into `{parameter}` (`from {parameter}`)"),
                 )
                 .primary_label(format!("`{name}` used as a value here"))
                 .help(format!("call `{name}` directly, or return a value instead of a view of `{parameter}`"))
@@ -52978,6 +53436,7 @@ impl<'a> Checker<'a> {
         let param = |text: &str, this: &Self| ast::Param {
             id: dummy,
             mode: ast::Mode::Borrow,
+            is_const: false,
             kind: ast::ParamKind::Named { name: name(text), ty: type_named(this, int) },
             default: None,
             span,
@@ -53114,6 +53573,7 @@ impl<'a> Checker<'a> {
         let param = |text: &str, this: &Self| ast::Param {
             id: dummy,
             mode: ast::Mode::Borrow,
+            is_const: false,
             kind: ast::ParamKind::Named { name: ident(text), ty: param_type(this) },
             default: None,
             span,
@@ -54726,7 +55186,8 @@ impl<'a> Checker<'a> {
 
     fn index_call_for_write(&mut self, call: Expr) -> Expr {
         let ExprKind::Call { callee, args, .. } = &call.kind else { return call };
-        let Some(ExprKind::Ref { place, mutable: false }) = args.first().map(|arg| &arg.kind) else { return call };
+        // The read's object: `ref`, or `ref mut` where `index` does not list it (M1).
+        let Some(ExprKind::Ref { place, .. }) = args.first().map(|arg| &arg.kind) else { return call };
         let owner = place.ty;
         if let TyKind::Param { index, .. } = *self.types.kind(owner) {
             return self.bound_index_call_for_write(call, index);
@@ -56953,7 +57414,79 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[EXC-15]`, B4 — the check of a method's object passed through a `for` loop's name of a class
+    /// object, which only reads it, held until the method is known to change it: `E3023`, with the
+    /// loop's line to write ("`tick` changes the `Checkout` it is called on, and `till` only reads
+    /// it; write `for till in tills.iter_mut():` in place of line 59").
+    fn loop_name_changed(&self, passed: &Expr, callee: DefId) -> Option<Diagnostic> {
+        let mut place = passed;
+        while let ExprKind::Ref { place: inner, .. } | ExprKind::Deref(inner) = &place.kind {
+            place = inner;
+        }
+        let ExprKind::Local(local) = place.kind else { return None };
+        let decl = self.locals.get(local.0 as usize)?;
+        if !decl.loop_borrowed_handle {
+            return None;
+        }
+        let name = decl.name?;
+        let object = match *self.types.kind(decl.ty) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => decl.ty,
+        };
+        let text = &self.sources.get(&decl.span.file)?.text;
+        let method_at = self.signatures[callee.0 as usize].decl;
+        let method = self.sources.get(&method_at.file)?.text.get(method_at.start as usize..method_at.end as usize)?;
+        let start = text.get(..decl.span.start as usize)?.rfind('\n').map_or(0, |at| at + 1);
+        let end = text.get(start..)?.find('\n').map_or(text.len(), |at| start + at);
+        let header = text.get(start..end)?.trim();
+        let written = format!("for {name} in");
+        let mut refused = Diagnostic::error(
+            codes::E3023,
+            passed.span,
+            format!("`{method}` changes the `{}` it is called on, and `{name}` only reads it", self.types.display(object)),
+        )
+        .secondary(decl.span, "the loop names each one read-only")
+        .note("a method that changes its object is not called through a name that only reads it [EXC-15]");
+        // The line to write: until M5 builds `for ref mut x in e:` (`[CTL-1]`, A2-6), the walk that
+        // names each element so that it may change it is `iter_mut()`'s.
+        if let Some(iterable) = header.strip_prefix(&written).and_then(|rest| rest.trim().strip_suffix(':')) {
+            let line = text.get(..start).map_or(1, |before| before.matches('\n').count() + 1);
+            refused = refused.help(format!("write `for {name} in {}.iter_mut():` in place of line {line}", iterable.trim()));
+        }
+        Some(refused)
+    }
+
     fn pass_receiver_to(&mut self, receiver: Expr, mode: Mode, callee: DefId, span: Span) -> Expr {
+        // `[EXC-15]` — the object of a method that does not list it is passed `ref mut`; whether it
+        // may be changed through the name it is reached by is asked once the method's mode is worked
+        // out (`M1-plan.md`), so the checks' diagnostics wait. A value that is not a place is a
+        // temporary of the statement (`[EXP-4]`), which the method may change.
+        if self.signatures.get(callee.0 as usize).is_some_and(|signature| signature.implicit_object) {
+            if receiver.ty == self.common.error || matches!(receiver.kind, ExprKind::Error) {
+                return receiver;
+            }
+            if !is_place(&receiver.kind) && !matches!(self.types.kind(receiver.ty), TyKind::Span { mutable: true, .. }) {
+                let ty = self.types.intern(TyKind::Ref { mutable: true, inner: receiver.ty });
+                return Expr { ty, kind: ExprKind::Ref { place: Box::new(receiver), mutable: true }, span };
+            }
+            let mark = self.sink.mark();
+            let deferred = std::mem::replace(&mut self.objects_deferred, true);
+            let passed = self.pass_receiver_as(receiver, Mode::Mut, callee, span);
+            self.objects_deferred = deferred;
+            if self.sink.mark() > mark {
+                let mut held = self.sink.diagnostics()[mark..].to_vec();
+                self.sink.rollback(mark);
+                if let Some(refused) = self.loop_name_changed(&passed, callee) {
+                    held = vec![refused];
+                }
+                self.deferred_objects.insert((passed.span, self.signatures[callee.0 as usize].decl), held);
+            }
+            return passed;
+        }
+        self.pass_receiver_as(receiver, mode, callee, span)
+    }
+
+    fn pass_receiver_as(&mut self, receiver: Expr, mode: Mode, callee: DefId, span: Span) -> Expr {
         if mode == Mode::Borrow && self.receiver_by_address(receiver.ty, callee) {
             let ty = receiver.ty;
             return self.borrow_argument(receiver, ty);
@@ -57020,7 +57553,7 @@ impl<'a> Checker<'a> {
             self.error(
                 codes::E2140,
                 span,
-                "a `mut self` method needs a variable to write through",
+                "a method that changes its object needs a variable to write through",
             );
             return receiver;
         }
@@ -57073,14 +57606,14 @@ impl<'a> Checker<'a> {
     /// structural repair.
     fn emit_mut_argument_place_error(&mut self, span: Span) {
         self.sink.emit_classified(
-            Diagnostic::error(codes::E3027, span, "a `mut` argument is not a mutable place")
+            Diagnostic::error(codes::E3027, span, "a `ref mut` argument is not a mutable place")
                 .primary_label("this value has no mutable storage for the callee to borrow")
                 .help(concat!(
                     "bind the value to a local first, or pass the owner place directly ",
                     "(`f(obj.field)` rather than `f(obj.get_field())`)"
                 ))
                 .note(concat!(
-                    "the callee's declared `mut` mode forms the mutable borrow; ",
+                    "the callee's declared `ref mut` mode forms the mutable borrow; ",
                     "the call site does not write a mode [FN-2a]"
                 )),
         );
@@ -57089,7 +57622,7 @@ impl<'a> Checker<'a> {
     /// `[FFI-8]` — a call of a variadic C function, in `unsafe`: its declared parameters as any
     /// call's, positionally, then each further argument with the type the program gives it (a
     /// literal's written, `5 as c_int`) and that C passes unchanged: a C `int` or wider integer up to
-    /// 64 bits, `f64`, `c_longdouble`, a raw pointer, `cstr` or an `extern fn`. A type C's default
+    /// 64 bits, `f64`, `c_longdouble`, a raw pointer, `CStrView` or an `extern fn`. A type C's default
     /// argument promotions change (`bool`, the integers narrower than `int`, `f32`) is `E5013`,
     /// which names only C's promotion, since what the C function reads is in C; any other is `E5015`:
     /// `va_arg` would read what was never passed.
@@ -57185,7 +57718,7 @@ impl<'a> Checker<'a> {
             _ => Some((
                 false,
                 format!("a `{shown}` is not passed as a further argument of a variadic C function"),
-                "pass a C integer of `int`'s width or wider (up to 64 bits), `f64`, `c_longdouble`, a raw pointer, `cstr` or an `extern fn`".to_string(),
+                "pass a C integer of `int`'s width or wider (up to 64 bits), `f64`, `c_longdouble`, a raw pointer, `CStrView` or an `extern fn`".to_string(),
             )),
         }
     }
@@ -57847,7 +58380,7 @@ impl<'a> Checker<'a> {
                 self.error(
                     codes::E1010,
                     span,
-                    format!("class `{name}` constructor must declare `mut self`"),
+                    format!("class `{name}`'s `init` must be one that may change its object, `this`"),
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
@@ -58081,7 +58614,7 @@ impl<'a> Checker<'a> {
                 self.error(
                     codes::E0900,
                     default.span,
-                    "this field default does float work, which a construction in a `@fastmath` or `@fp(contract)` function cannot keep strict yet",
+                    "this field default does float work, which a construction in a `@fastmath` or `@fp(allow_fma)` function cannot keep strict yet",
                 );
                 value = Expr { ty, kind: ExprKind::Error, span: default.span };
             } else {
@@ -58141,6 +58674,7 @@ impl<'a> Checker<'a> {
                 .map(|(name, _)| ast::Param {
                     id: ast::NodeId::DUMMY,
                     mode: ast::Mode::Borrow,
+                    is_const: false,
                     kind: ast::ParamKind::Named {
                         name: ident(*name),
                         ty: ast::TypeExpr { id: ast::NodeId::DUMMY, kind: ast::TypeKind::Infer, span },
@@ -59242,7 +59776,7 @@ impl<'a> Checker<'a> {
             let str_ty = self.common.str_;
             if lhs.ty == str_ty {
                 self.sink.emit(
-                    Diagnostic::error(codes::E2040, span, "`str` does not implement `Add`")
+                    Diagnostic::error(codes::E2040, span, "`StrView` does not implement `Add`")
                         .help("build the text with an f-string: `f\"{a}{b}\"`")
                         .note("`a + b` extends a `String` on the left, consuming it [TXT-11]"),
                 );
@@ -60222,9 +60756,9 @@ fn fn_param_mode_from_hir(mode: Mode) -> FnParamMode {
 
 fn fn_param_mode_name(mode: FnParamMode) -> &'static str {
     match mode {
-        FnParamMode::Borrow => "borrowed",
-        FnParamMode::Mut => "mut",
-        FnParamMode::Owned => "owned",
+        FnParamMode::Borrow => "ref",
+        FnParamMode::Mut => "ref mut",
+        FnParamMode::Owned => "owns",
     }
 }
 
@@ -60879,7 +61413,7 @@ impl ShareWalk<'_> {
     fn condition(&mut self, cond: &ast::Condition) {
         match cond {
             ast::Condition::Expr(expr) => self.expr(expr),
-            ast::Condition::Pattern { pattern, value } => {
+            ast::Condition::Pattern { pattern, value, .. } => {
                 self.pattern(pattern);
                 self.expr(value);
             }
@@ -60914,6 +61448,7 @@ impl ShareWalk<'_> {
                     self.pattern(sub);
                 }
             }
+            ast::PatternKind::CopyOf { name } => self.binding(name.name, name.span),
             ast::PatternKind::Constructor { fields, .. } => {
                 for field in fields {
                     self.pattern(&field.pattern);
@@ -61063,7 +61598,7 @@ impl ShareWalk<'_> {
                 self.ty(ty);
             }
             E::Try(inner) | E::Paren(inner) | E::Owned(inner) | E::Comptime(inner) | E::AssumeNoalloc(inner) => self.expr(inner),
-            E::RefOf { place, .. } => self.expr(place),
+            E::RefOf { place, .. } | E::CopyOf(place) => self.expr(place),
             E::OptChain { base, generic_args, args, .. } => {
                 self.expr(base);
                 for arg in generic_args {
@@ -61269,7 +61804,7 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["packed", "align"], &["struct", "enum"], true),
     (&["repr"], &["enum"], true),
     (&["gpu_layout"], &["struct"], false),
-    (&["static_safe"], &["fn"], true),
+    (&["no_alias_checks", "static_safe"], &["fn"], true),
     // `[EFF-5]` — checked over the call graph (`ember_analysis::check_effects_all`).
     (&["noalloc", "nosync", "noblock", "noio", "nolock", "nopanic", "realtime"], &["fn"], true),
     (&["deterministic"], &["fn", "module"], true),
@@ -61325,7 +61860,7 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
 /// `[FFI-11]` — the contract vocabulary: the five axes' words and the others, and `TODO`
 /// (`[FFI-11c]`).
 const FFI_CONTRACT_WORDS: &[&str] = &[
-    "borrowed", "owned", "returns_owned", "retained", "one", "count", "nul_terminated", "fixed",
+    "borrowed", "owns", "owned", "returns_owned", "retained", "one", "count", "nul_terminated", "fixed",
     "inout_count", "nullable", "from", "exclusive", "aliased", "out", "status", "handle", "callback",
     "threads", "destroys", "unsafe", "TODO",
 ];
@@ -61486,6 +62021,7 @@ fn takes_callable(decl: &ast::FnDecl) -> bool {
         matches!(&param.kind, ast::ParamKind::Named { ty, .. } if matches!(ty.kind, ast::TypeKind::Fn { abi: None, .. }))
     })
 }
+
 
 /// `[STR-5]` — what `Clone` a declaration asks for: `Some(true)` when it
 /// writes `@derive(Clone)`, `Some(false)` for a struct's or enum's implicit
@@ -62411,9 +62947,14 @@ fn ffi_ordered(args: &[ast::Arg], skip: usize) -> Vec<ast::Arg> {
     args[..skip].iter().cloned().chain(words).collect()
 }
 
+/// A contract word of `@ffi(…)`; `owns` (verdict 102) is read as 0.9.10's `owned`, its one meaning, and
+/// `this` in `from(this)` as the object, 0.9.10's `from(self)`.
 fn ffi_contract_word(expr: &ast::Expr) -> Option<Symbol> {
+    if matches!(expr.kind, ast::ExprKind::SelfExpr) {
+        return Some(Symbol::intern("self"));
+    }
     let ast::ExprKind::Path { segments } = &expr.kind else { return None };
-    (segments.len() == 1).then_some(segments[0].name)
+    (segments.len() == 1).then(|| if segments[0].name.is("owns") { Symbol::intern("owned") } else { segments[0].name })
 }
 
 fn ffi_count_target(expr: &ast::Expr) -> Option<Symbol> {
@@ -63330,13 +63871,23 @@ fn assignments_in_if(branch: &ast::IfStmt, loops: &mut Vec<Span>, out: &mut Vec<
     }
 }
 
-fn written_in_block(block: &Block, out: &mut HashSet<LocalId>) {
+/// `[STD-19]` — the names a body changes (`locals`), for the known-numbers rule. M1: the methods whose
+/// object is implicit (`implicit`), those of them known to change it (`changers`, from an earlier round
+/// of `check`), and the names passed to one of the others, taken to be read only (`assumed`).
+struct Written<'a> {
+    locals: HashSet<LocalId>,
+    implicit: &'a dyn Fn(DefId) -> bool,
+    changers: &'a dyn Fn(DefId) -> bool,
+    assumed: Vec<(LocalId, DefId)>,
+}
+
+fn written_in_block(block: &Block, out: &mut Written<'_>) {
     for stmt in &block.stmts {
         written_in_stmt(stmt, out);
     }
 }
 
-fn written_in_stmt(stmt: &Stmt, out: &mut HashSet<LocalId>) {
+fn written_in_stmt(stmt: &Stmt, out: &mut Written<'_>) {
     match stmt {
         Stmt::Let { init, .. } => {
             if let Some(init) = init {
@@ -63344,7 +63895,7 @@ fn written_in_stmt(stmt: &Stmt, out: &mut HashSet<LocalId>) {
             }
         }
         Stmt::Assign { place, value } => {
-            out.extend(written_root(place));
+            out.locals.extend(written_root(place));
             written_in_expr(place, out);
             written_in_expr(value, out);
         }
@@ -63354,7 +63905,7 @@ fn written_in_stmt(stmt: &Stmt, out: &mut HashSet<LocalId>) {
                 match binding {
                     DestructureBinding::Let { value, .. } => written_in_expr(value, out),
                     DestructureBinding::Assign { place, value } => {
-                        out.extend(written_root(place));
+                        out.locals.extend(written_root(place));
                         written_in_expr(place, out);
                         written_in_expr(value, out);
                     }
@@ -63389,8 +63940,8 @@ fn written_in_stmt(stmt: &Stmt, out: &mut HashSet<LocalId>) {
     }
 }
 
-fn written_in_expr(e: &Expr, out: &mut HashSet<LocalId>) {
-    let all = |items: &[Expr], out: &mut HashSet<LocalId>| {
+fn written_in_expr(e: &Expr, out: &mut Written<'_>) {
+    let all = |items: &[Expr], out: &mut Written<'_>| {
         for item in items {
             written_in_expr(item, out);
         }
@@ -63398,13 +63949,13 @@ fn written_in_expr(e: &Expr, out: &mut HashSet<LocalId>) {
     match &e.kind {
         ExprKind::Ref { place, mutable } => {
             if *mutable {
-                out.extend(written_root(place));
+                out.locals.extend(written_root(place));
             }
             written_in_expr(place, out);
         }
         ExprKind::Match { scrutinee, arms } => {
             if arms.iter().any(|arm| binds_by_mut_ref(&arm.pattern)) {
-                out.extend(written_root(scrutinee));
+                out.locals.extend(written_root(scrutinee));
             }
             written_in_expr(scrutinee, out);
             for arm in arms {
@@ -63418,6 +63969,25 @@ fn written_in_expr(e: &Expr, out: &mut HashSet<LocalId>) {
             }
         }
         ExprKind::Field { base, .. } | ExprKind::EnumField { base, .. } => written_in_expr(base, out),
+        // M1 — a method's implicit object is passed `ref mut` until `objects.rs` works out what the
+        // method does to it (`[CLS-7]`): it writes the object only if the method changes it. One not
+        // known to is taken to read it, and kept for `objects.rs` to confirm (`Written::assumed`).
+        ExprKind::Call { callee, args, .. }
+            if (out.implicit)(*callee)
+                && let Some(Expr { kind: ExprKind::Ref { mutable: true, place }, .. }) = args.first() =>
+        {
+            match written_root(place) {
+                Some(local) if (out.changers)(*callee) => {
+                    out.locals.insert(local);
+                }
+                Some(local) => out.assumed.push((local, *callee)),
+                None => {}
+            }
+            written_in_expr(place, out);
+            for arg in &args[1..] {
+                written_in_expr(arg, out);
+            }
+        }
         ExprKind::Call { args, .. }
         | ExprKind::StructLit { fields: args, .. }
         | ExprKind::TupleLit(args)

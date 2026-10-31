@@ -225,10 +225,13 @@ impl Printer {
             .map(|param| {
                 let mode = match param.mode {
                     Mode::Borrow => "",
+                    Mode::Mut if param.is_const => "const ref mut ",
                     Mode::Mut => "mut ",
                     Mode::Owned => "owned ",
                 };
                 match &param.kind {
+                    // A method's object it does not list (`[FN-4]`).
+                    ParamKind::Receiver { implicit: true, .. } => format!("{mode}this"),
                     ParamKind::Receiver { .. } => format!("{mode}self"),
                     ParamKind::Named { name, ty } => {
                         format!("{mode}{}: {}", name.name, type_str(ty))
@@ -237,6 +240,10 @@ impl Printer {
             })
             .collect();
         let ret = f.ret.as_ref().map(|t| format!(" -> {}", type_str(t))).unwrap_or_default();
+        let ret = match &f.from {
+            Some(from) => format!("{ret} from {}", from.name),
+            None => ret,
+        };
         let dispatch = match f.dispatch {
             Dispatch::Static => "",
             Dispatch::Virtual => "virtual ",
@@ -375,8 +382,9 @@ impl Printer {
     fn condition(&mut self, cond: &Condition) {
         match cond {
             Condition::Expr(e) => self.nest("Cond", |p| p.expr(e)),
-            Condition::Pattern { pattern, value } => {
-                self.nest(&format!("CondPattern {}", pattern_str(pattern)), |p| p.expr(value));
+            Condition::Pattern { pattern, value, exists } => {
+                let word = if *exists { "CondExists" } else { "CondPattern" };
+                self.nest(&format!("{word} {}", pattern_str(pattern)), |p| p.expr(value));
             }
         }
     }
@@ -560,6 +568,7 @@ impl Printer {
             }
             ExprKind::Paren(e) => self.expr(e),
             ExprKind::Owned(inner) => self.nest("Owned", |p| p.expr(inner)),
+            ExprKind::CopyOf(inner) => self.nest("CopyOf", |p| p.expr(inner)),
             ExprKind::Comptime(inner) => self.nest("Comptime", |p| p.expr(inner)),
             ExprKind::AssumeNoalloc(inner) => self.nest("AssumeNoalloc", |p| p.expr(inner)),
             ExprKind::Jump(jump) => match jump {
@@ -662,6 +671,7 @@ pub fn type_str(ty: &TypeExpr) -> String {
                 .map(|param| {
                     let mode = match param.mode {
                         Mode::Borrow => "",
+                        Mode::Mut if param.is_const => "const ref mut ",
                         Mode::Mut => "mut ",
                         Mode::Owned => "owned ",
                     };
@@ -696,6 +706,7 @@ pub fn pattern_str(pattern: &Pattern) -> String {
             let op = if *inclusive { "..=" } else { ".." };
             format!("{}{op}{}", pattern_literal_str(lo), pattern_literal_str(hi))
         }
+        PatternKind::CopyOf { name } => format!("copy of {}", name.name),
         PatternKind::Bind { name, by_ref, mutable, sub } => {
             let mut out = String::new();
             if *by_ref {

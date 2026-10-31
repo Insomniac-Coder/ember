@@ -8,7 +8,7 @@
 # `E2260`.
 
 interface Shape:
-    fn area(self) -> float
+    fn area() -> float
 
 struct Holder:
     shape: some Shape

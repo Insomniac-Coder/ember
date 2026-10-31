@@ -13,7 +13,8 @@ struct Cmd:
     cost: f32
 
 @derive(Zeroable)
-struct Wrap[T]:
+[T]
+struct Wrap:
     item: T
 
 fn build(frame: Arena, n: int) -> MutSpan[Cmd]:

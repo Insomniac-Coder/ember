@@ -14,10 +14,10 @@
 # destroys its independent observer after expiry; the sibling slot remains
 # callable and updates the base-class payload.
 interface Observe:
-    fn observe(self, owned weak: Weak[Shared[Token]]) -> i32
+    fn observe(owns weak: Weak[Shared[Token]]) -> i32
 
 interface Bump:
-    fn bump(mut self) -> i32
+    fn bump() -> i32
 
 struct Token:
     value: i32
@@ -25,23 +25,23 @@ struct Token:
 open class Base:
     count: i32
 
-    fn init(mut self):
-        self.count = 0
+    fn init():
+        this.count = 0
 
 class Pixel(Base) implements Observe, Bump:
-    fn init(mut self):
+    fn init():
         super.init()
 
-    fn observe(self, owned weak: Weak[Shared[Token]]) -> i32:
+    fn observe(owns weak: Weak[Shared[Token]]) -> i32:
         match weak.upgrade():
             Some(owner):
                 return owner.get().value
             None:
                 return 0
 
-    fn bump(mut self) -> i32:
-        self.count = self.count + 1
-        return self.count
+    fn bump() -> i32:
+        this.count = this.count + 1
+        return this.count
 
 fn expired() -> Weak[Shared[Token]]:
     strong = Shared(Token(7))

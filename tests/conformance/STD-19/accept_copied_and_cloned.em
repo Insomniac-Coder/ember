@@ -12,11 +12,11 @@
 
 fn main():
     xs: Array[int] = [4, 9, 2]
-    ys = xs.iter().copied().to_array()
+    ys = xs.iter().copy_each().to_array()
     ys.push(1)
-    println(ys, xs.copied().skip(1).to_array())
+    println(ys, xs.copy_each().skip(1).to_array())
     words: Array[String] = [String.from("a"), String.from("b")]
-    ws = words.iter().cloned().to_array()
-    println(ws, words.cloned().count())
-    m: Map[str, int] = {"k": 5}
-    println(m.values().copied().to_array())
+    ws = words.iter().copy_each().to_array()
+    println(ws, words.copy_each().count())
+    m: Map[StrView, int] = {"k": 5}
+    println(m.values().copy_each().to_array())

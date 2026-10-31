@@ -6,13 +6,13 @@
 #$ stdout: none
 # A ref dyn is a non-null data/vtable pair; None uses null data.
 interface Render:
-    fn render(self) -> i32
+    fn render() -> i32
 
 class Pixel implements Render:
     value: i32
 
-    fn render(self) -> i32:
-        return self.value
+    fn render() -> i32:
+        return this.value
 
 fn main():
     pixel = Pixel(42)

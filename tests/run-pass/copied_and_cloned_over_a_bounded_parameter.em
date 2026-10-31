@@ -7,15 +7,17 @@
 ## `Copy` or `Clone`, which knows nothing of `T`'s bounds: `T: Copy` was "`copied` needs `T` to be
 ## `Copy`".
 
-fn total[T: Copy + Add[Output = T]](xs: Span[T], zero: T) -> T:
+[T: needs (Copy, Add[Output = T])]
+fn total(xs: Span[T], zero: T) -> T:
     s = zero
-    for x in xs.iter().copied():
+    for x in xs.iter().copy_each():
         s = s + x
     return s
 
-fn count[T: Clone](xs: Span[T]) -> int:
+[T: needs Clone]
+fn count(xs: Span[T]) -> int:
     n = 0
-    for _ in xs.iter().cloned():
+    for _ in xs.iter().copy_each():
         n += 1
     return n
 

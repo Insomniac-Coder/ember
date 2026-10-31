@@ -10,8 +10,10 @@
 ## (`[TYP-17]`). `scaled` calls `each`, which it captures as a closure would. One inside a generic
 ## function is made for each of that function's instances, capturing `u` there.
 
-fn labelled[U: Display](u: U) -> String:
-    gen fn both[T: Display](t: T) -> Generator[String]:
+[U: needs Display]
+fn labelled(u: U) -> String:
+    [T: needs Display]
+    gen fn both(t: T) -> Generator[String]:
         yield f"{u}-{t}"
         yield f"{t}-{u}"
     got = [s for s in both(1)]
@@ -19,7 +21,8 @@ fn labelled[U: Display](u: U) -> String:
 
 fn main():
     scale = 1
-    gen fn each[T: Copy](xs: Array[T]) -> Generator[T]:
+    [T: needs Copy]
+    gen fn each(xs: Array[T]) -> Generator[T]:
         for x in xs:
             yield x
     gen fn scaled(xs: Array[int]) -> Generator[int]:

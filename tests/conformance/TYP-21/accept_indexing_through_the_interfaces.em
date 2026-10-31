@@ -16,19 +16,19 @@ struct Grid:
 extend Grid implements Index[(int, int)], IndexMut[(int, int)]:
     type Output = f32
 
-    fn index(self, at: (int, int)) -> ref f32:
-        return ref self.cells[at.0 * self.w + at.1]
+    fn index(at: (int, int)) -> ref f32:
+        return ref this.cells[at.0 * this.w + at.1]
 
-    fn index_mut(mut self, at: (int, int)) -> ref mut f32:
-        return ref mut self.cells[at.0 * self.w + at.1]
+    fn index_mut(at: (int, int)) -> ref mut f32:
+        return ref mut this.cells[at.0 * this.w + at.1]
 
 struct Log:
     lines: Array[String]
 
 extend Log implements IndexSet[int, String]:
-    fn index_set(mut self, i: int, owned v: String):
+    fn index_set(i: int, owns v: String):
         println(f"set {i}")
-        self.lines.push(v)
+        this.lines.push(v)
 
 fn main():
     g = Grid(w=2, cells=[1.0, 2.0, 3.0, 4.0])

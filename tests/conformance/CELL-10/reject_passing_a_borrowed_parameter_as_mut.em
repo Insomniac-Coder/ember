@@ -9,7 +9,7 @@
 struct Counter:
     pub value: i32
 
-fn increment(mut counter: Counter):
+fn increment(ref mut counter: Counter):
     counter.value = counter.value + 1
 
 fn forward(counter: Counter):

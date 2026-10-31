@@ -13,7 +13,7 @@
 # The two unconstrained totals remain checked.
 
 @noinline
-fn first_lengths(text: str, separator: str) -> (int, int):
+fn first_lengths(text: StrView, separator: StrView) -> (int, int):
     match text.split_once(separator):
         Some((before, after)):
             return (before.len(), after.len())
@@ -21,7 +21,7 @@ fn first_lengths(text: str, separator: str) -> (int, int):
             return (-1, -1)
 
 @noinline
-fn totals(text: str, separator: str) -> (int, int):
+fn totals(text: StrView, separator: StrView) -> (int, int):
     count = 0
     length = 0
     for part in text.split(separator):

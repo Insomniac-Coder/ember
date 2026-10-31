@@ -36,16 +36,17 @@ pub fn wait_frames(n: int) -> Wait:
     return Wait.Frames(n)
 
 ## Wait until `pred()` is `true`, asked once per frame.
-pub fn wait_until[F: fn() -> bool](owned pred: F) -> Wait:
+[F: needs fn() -> bool]
+pub fn wait_until(owns pred: F) -> Wait:
     return Wait.Until(owned fn() => pred())
 
 ## What a `Scheduler` resumes: any iterator of `Wait`s, a generator above all.
 pub interface Sequence:
-    fn resume(mut self) -> Option[Wait]
+    fn resume() -> Option[Wait]
 
-extend[G: Iterator[Item = Wait]] G implements Sequence:
-    fn resume(mut self) -> Option[Wait]:
-        return self.next()
+extend[G: needs Iterator[Item = Wait]] G implements Sequence:
+    fn resume() -> Option[Wait]:
+        return this.next()
 
 ## The sequences running, each with what it waits for. A sequence starts on
 ## the `update` after it is added.
@@ -55,49 +56,50 @@ pub struct Scheduler:
 
 extend Scheduler:
     ## It allocates a new `Array`.
-    pub fn new() -> Scheduler:
+    pub static fn new() -> Scheduler:
         return Scheduler([], [])
 
     ## Run `sequence` from the next `update`.
-    pub fn start[G: Sequence](mut self, owned sequence: G):
-        self.running.push(Box[dyn Sequence](sequence))
-        self.waiting.push(Wait.NextFrame)
+    [G: needs Sequence]
+    pub fn start(owns sequence: G):
+        this.running.push(Box[dyn Sequence](sequence))
+        this.waiting.push(Wait.NextFrame)
 
     ## How many sequences have not finished.
-    pub fn len(self) -> int:
-        return self.running.len()
+    pub fn len() -> int:
+        return this.running.len()
 
     ## One frame, `dt` seconds long: resume each sequence whose wait is over,
     ## and drop each that finishes.
     ## It calls code whose effects are not declared, which may be code that allocates.
-    pub fn update(mut self, dt: float):
+    pub fn update(dt: float):
         i = 0
-        while i < self.running.len():
-            if self.due(i, dt):
-                match self.running[i].resume():
+        while i < this.running.len():
+            if this.due(i, dt):
+                match this.running[i].resume():
                     Some(next):
-                        self.waiting[i] = next
+                        this.waiting[i] = next
                     None:
-                        self.running.remove(i)
-                        self.waiting.remove(i)
+                        this.running.remove(i)
+                        this.waiting.remove(i)
                         continue
             i += 1
 
     ## Whether sequence `i`'s wait is over, counting this frame against it.
     ## It calls code whose effects are not declared, which may be code that allocates.
-    fn due(mut self, i: int, dt: float) -> bool:
-        match self.waiting[i]:
+    fn due(i: int, dt: float) -> bool:
+        match this.waiting[i]:
             Wait.NextFrame:
                 return true
             Wait.Seconds(left):
                 if left <= dt:
                     return true
-                self.waiting[i] = Wait.Seconds(left - dt)
+                this.waiting[i] = Wait.Seconds(left - dt)
                 return false
             Wait.Frames(n):
                 if n <= 1:
                     return true
-                self.waiting[i] = Wait.Frames(n - 1)
+                this.waiting[i] = Wait.Frames(n - 1)
                 return false
             Wait.Until(ref mut pred):
                 return pred()

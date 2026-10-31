@@ -28,7 +28,7 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     @ffi(link_name="removed")
     safe fn removed() -> c_int
 
-fn release(owned token: Option[Retained[ForeignCallback]]):
+fn release(owns token: Option[Retained[ForeignCallback]]):
     pass
 
 fn main():

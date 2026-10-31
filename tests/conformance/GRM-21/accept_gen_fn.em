@@ -15,11 +15,11 @@ extern "C" gen fn foreign() -> Generator[int]:
     yield 4
 
 class C:
-    virtual gen fn walk(self) -> Generator[int]:
+    virtual gen fn walk() -> Generator[int]:
         yield 5
 
 enum E:
     A
 
-    gen fn each(self) -> Generator[int]:
+    gen fn each() -> Generator[int]:
         yield 6

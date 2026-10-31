@@ -9,8 +9,8 @@ class Counter:
     name: String
     count: int = 0
 
-    fn bump(mut self):
-        self.count += 1
+    fn bump():
+        this.count += 1
 
 fn main():
     a = Counter("clicks")
@@ -37,14 +37,14 @@ class Account:
     owner: String
     balance: int
 
-    fn init(self, owner: str, deposit: int):
-        self.owner = owner.to_string()
-        self.balance = deposit
+    fn init(owner: StrView, deposit: int):
+        this.owner = owner.to_string()
+        this.balance = deposit
 
-    fn withdraw(mut self, amount: int) -> bool:
-        if amount > self.balance:
+    fn withdraw(amount: int) -> bool:
+        if amount > this.balance:
             return false
-        self.balance -= amount
+        this.balance -= amount
         return true
 
 fn main():
@@ -65,14 +65,14 @@ method the base marks `virtual` is replaced by an `override`:
 open class Animal:
     name: String
 
-    virtual fn sound(self) -> String:
+    virtual fn sound() -> String:
         return "..."
 
-    fn speak(self) -> String:
-        return f"{self.name} says {self.sound()}"
+    fn speak() -> String:
+        return f"{this.name} says {this.sound()}"
 
 class Dog(Animal):
-    override fn sound(self) -> String:
+    override fn sound() -> String:
         return "woof"
 
 fn main():
@@ -108,8 +108,8 @@ fn main():
     kid.parent = Some(Weak(mum))
     mum.children.push(kid)
     for child in mum.children:
-        if Some(weak) = child.parent:
-            if Some(parent) = weak.upgrade():
+        if child.parent exists as weak:
+            if weak.upgrade() exists as parent:
                 println(f"{child.name} is {parent.name}'s")
 ```
 

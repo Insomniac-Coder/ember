@@ -10,10 +10,10 @@ struct Weak:
     n: int
 
 extend Weak:
-    fn make() -> Weak:
+    static fn make() -> Weak:
         return Weak(n = 4)
 
-    fn empty() -> Weak:
+    static fn empty() -> Weak:
         return Weak(n = 0)
 
 fn main():

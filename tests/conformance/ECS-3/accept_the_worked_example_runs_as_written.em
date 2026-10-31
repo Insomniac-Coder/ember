@@ -19,11 +19,11 @@ struct Velocity:
     value: Vec3
 
 @noalloc
-fn integrate(mut q: Query[(Mut[Position], Velocity)], dt: f32):
+fn integrate(ref mut q: Query[(Mut[Position], Velocity)], dt: f32):
     for pos, vel in q.iter_mut():           # pos: ref mut Position, vel: ref Velocity
         pos.value += vel.value * dt
 
-fn show(mut q: Query[(Position, Velocity)], unused: ()):
+fn show(ref mut q: Query[(Position, Velocity)], unused: ()):
     for pos, vel in q.iter():
         println(pos.value, vel.value)
 

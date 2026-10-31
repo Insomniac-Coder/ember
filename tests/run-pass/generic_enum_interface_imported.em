@@ -6,7 +6,8 @@
 from generic_enum_interface_imported_support.model import Signal
 from generic_enum_interface_imported_support.traits import Render
 
-fn call_render[T: Render](value: T) -> i32:
+[T: needs Render]
+fn call_render(value: T) -> i32:
     return value.render()
 
 fn main():

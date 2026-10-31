@@ -2,12 +2,12 @@ class Thing:
     a: Array[int]
     count: int
 
-    fn init(mut self):
-        self.a = []
-        self.count = 0
+    fn init():
+        this.a = []
+        this.count = 0
 
-    fn bump(mut self):
-        self.count += 1
+    fn bump():
+        this.count += 1
 
 fn main():
     things: Array[Thing] = []

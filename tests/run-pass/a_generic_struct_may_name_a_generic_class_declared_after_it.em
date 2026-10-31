@@ -4,15 +4,17 @@
 # A generic struct's field may name a generic class declared after it, as it may a generic
 # struct: the class is collected when the struct's field first names it (it was "cannot find
 # type" before). A struct holding a class handle reaches the class's fields through it.
-struct Holder[T]:
+[T]
+struct Holder:
     store: Store[T]
     at: int
 
-class Store[T]:
+[T]
+class Store:
     items: Array[T]
 
-    fn init(mut self):
-        self.items = []
+    fn init():
+        this.items = []
 
 struct Pos:
     x: int

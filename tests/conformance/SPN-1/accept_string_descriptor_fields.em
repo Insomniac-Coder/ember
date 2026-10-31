@@ -13,21 +13,21 @@
 # No filename, benchmark, literal-content, or loop-shape optimization gate.
 
 @noinline
-fn borrow_explicit(text: String) -> str:
+fn borrow_explicit(text: String) -> StrView:
     return text.as_str()
 
 @noinline
-fn borrow_implicit(text: String) -> str:
+fn borrow_implicit(text: String) -> StrView:
     return text
 
 @noinline
-fn descriptor_chain(text: String, keep: bool) -> Option[str]:
+fn descriptor_chain(text: String, keep: bool) -> Option[StrView]:
     if not keep:
         return None
     first = text.as_str()
     copied = first
-    slots: [Option[str]; 2] = [None, None]
-    slot_ref: ref mut [Option[str]; 2] = ref mut slots
+    slots: [Option[StrView]; 2] = [None, None]
+    slot_ref: ref mut [Option[StrView]; 2] = ref mut slots
     slot_ref[1] = Some(copied)
     through_projection = slot_ref[1]
     again = through_projection
@@ -38,7 +38,7 @@ fn descriptor_chain(text: String, keep: bool) -> Option[str]:
             return None
 
 @noinline
-fn next_index(mut reads: int) -> int:
+fn next_index(ref mut reads: int) -> int:
     reads += 1
     return 0
 

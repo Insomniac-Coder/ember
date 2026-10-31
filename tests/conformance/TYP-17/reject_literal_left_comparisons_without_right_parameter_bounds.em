@@ -7,40 +7,52 @@
 interface Holder:
     type Item
 
-fn direct_equal[T](x: T) -> bool:
+[T]
+fn direct_equal(x: T) -> bool:
     return 0 == x    #$ error[E2040]: Eq
 
-fn direct_unequal[T](x: T) -> bool:
+[T]
+fn direct_unequal(x: T) -> bool:
     return 0 != x    #$ error[E2040]: Eq
 
-fn direct_less[T](x: T) -> bool:
+[T]
+fn direct_less(x: T) -> bool:
     return 0 < x    #$ error[E2040]: Ord
 
-fn direct_less_equal[T](x: T) -> bool:
+[T]
+fn direct_less_equal(x: T) -> bool:
     return 0 <= x    #$ error[E2040]: Ord
 
-fn direct_greater[T](x: T) -> bool:
+[T]
+fn direct_greater(x: T) -> bool:
     return 0 > x    #$ error[E2040]: Ord
 
-fn direct_greater_equal[T](x: T) -> bool:
+[T]
+fn direct_greater_equal(x: T) -> bool:
     return 0 >= x    #$ error[E2040]: Ord
 
-fn projected_equal[H: Holder](x: H.Item) -> bool:
+[H: needs Holder]
+fn projected_equal(x: H.Item) -> bool:
     return 0 == x    #$ error[E2040]: Eq
 
-fn projected_unequal[H: Holder](x: H.Item) -> bool:
+[H: needs Holder]
+fn projected_unequal(x: H.Item) -> bool:
     return 0 != x    #$ error[E2040]: Eq
 
-fn projected_less[H: Holder](x: H.Item) -> bool:
+[H: needs Holder]
+fn projected_less(x: H.Item) -> bool:
     return 0 < x    #$ error[E2040]: Ord
 
-fn projected_less_equal[H: Holder](x: H.Item) -> bool:
+[H: needs Holder]
+fn projected_less_equal(x: H.Item) -> bool:
     return 0 <= x    #$ error[E2040]: Ord
 
-fn projected_greater[H: Holder](x: H.Item) -> bool:
+[H: needs Holder]
+fn projected_greater(x: H.Item) -> bool:
     return 0 > x    #$ error[E2040]: Ord
 
-fn projected_greater_equal[H: Holder](x: H.Item) -> bool:
+[H: needs Holder]
+fn projected_greater_equal(x: H.Item) -> bool:
     return 0 >= x    #$ error[E2040]: Ord
 
 fn main():

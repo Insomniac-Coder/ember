@@ -6,7 +6,7 @@
 # (`[PHIL-13]`): no profile accepts this.
 
 @noalloc
-fn grow(mut xs: Array[int], n: int):
+fn grow(ref mut xs: Array[int], n: int):
     if n > 0:
         xs.push(n)
 

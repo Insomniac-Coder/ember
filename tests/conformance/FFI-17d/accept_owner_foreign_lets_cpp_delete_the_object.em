@@ -17,17 +17,17 @@ import cpp "nodes.hpp" with (overlay = "overlays/foreign.em")
 struct Marker:
     seen: i32 = 0
 
-    fn drop(mut self):
+    fn drop():
         unsafe:  # SAFETY(ffi): a scalar call
             cpp.record(2)
 
 class Leaf(cpp.Node):
     marker: Marker = Marker()
 
-    override fn value(self) -> i32:
+    override fn value() -> i32:
         return 9
 
-    fn drop(mut self):
+    fn drop():
         unsafe:  # SAFETY(ffi): a scalar call
             cpp.record(1)
 

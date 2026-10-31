@@ -6,8 +6,8 @@
 class Cell:
     value: int
 
-    fn init(mut self, value: int):
-        self.value = value
+    fn init(value: int):
+        this.value = value
 
 @overflow(wrap)
 fn main():

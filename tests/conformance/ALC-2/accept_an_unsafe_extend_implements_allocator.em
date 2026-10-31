@@ -17,19 +17,20 @@ struct Counting:
 
 # SAFETY: every block comes from `Global`, whose promises it keeps; this only counts the calls.
 unsafe extend Counting implements Allocator:
-    fn allocate(self, layout: Layout) -> *mut u8:
-        self.calls.fetch_add(1)
+    fn allocate(layout: Layout) -> *mut u8:
+        this.calls.fetch_add(1)
         return Global().allocate(layout)
 
-    fn deallocate(self, p: *mut u8, layout: Layout):
-        self.calls.fetch_add(1)
+    fn deallocate(p: *mut u8, layout: Layout):
+        this.calls.fetch_add(1)
         Global().deallocate(p, layout)
 
-    fn reallocate(self, p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
-        self.calls.fetch_add(1)
+    fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
+        this.calls.fetch_add(1)
         return Global().reallocate(p, old, new_size)
 
-fn round_trip[A: Allocator](a: A) -> bool:
+[A: needs Allocator]
+fn round_trip(a: A) -> bool:
     p = a.allocate(Layout(16, 8))
     if p == null[*mut u8]():
         return false

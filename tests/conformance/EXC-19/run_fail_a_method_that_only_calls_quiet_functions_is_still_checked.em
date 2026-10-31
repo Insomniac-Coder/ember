@@ -10,12 +10,12 @@ class Counter:
     items: Array[int]
     count: int
 
-    fn init(mut self):
-        self.items = [1, 2, 3]
-        self.count = 0
+    fn init():
+        this.items = [1, 2, 3]
+        this.count = 0
 
-    fn bump(mut self):
-        self.count = step(self.count)
+    fn bump():
+        this.count = step(this.count)
 
 fn step(x: int) -> int:
     return x + 1

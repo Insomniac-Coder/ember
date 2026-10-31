@@ -5,36 +5,44 @@
 # nominal operator bound missing from this declaration.
 
 interface Lookalike:
-    fn add(self, rhs: Self) -> Self
-    fn neg(self) -> Self
-    fn pow(self, rhs: Self) -> Self
-    fn add_assign(mut self, rhs: Self)
+    fn add(rhs: Self) -> Self
+    fn neg() -> Self
+    fn pow(rhs: Self) -> Self
+    fn add_assign(rhs: Self)
 
 interface Holder:
-    type Item: Lookalike
+    type Item: needs Lookalike
 
-fn direct_add[T: Lookalike](a: T, b: T) -> T:
+[T: needs Lookalike]
+fn direct_add(a: T, b: T) -> T:
     return a + b    #$ error[E2040]: Add
 
-fn projected_add[H: Holder](a: H.Item, b: H.Item) -> H.Item:
+[H: needs Holder]
+fn projected_add(a: H.Item, b: H.Item) -> H.Item:
     return a + b    #$ error[E2040]: Add
 
-fn direct_negate[T: Lookalike](a: T) -> T:
+[T: needs Lookalike]
+fn direct_negate(a: T) -> T:
     return -a    #$ error[E2040]: Neg
 
-fn projected_negate[H: Holder](a: H.Item) -> H.Item:
+[H: needs Holder]
+fn projected_negate(a: H.Item) -> H.Item:
     return -a    #$ error[E2040]: Neg
 
-fn direct_power[T: Lookalike](a: T, b: T) -> T:
+[T: needs Lookalike]
+fn direct_power(a: T, b: T) -> T:
     return a ** b    #$ error[E2040]: Pow
 
-fn projected_power[H: Holder](a: H.Item, b: H.Item) -> H.Item:
+[H: needs Holder]
+fn projected_power(a: H.Item, b: H.Item) -> H.Item:
     return a ** b    #$ error[E2040]: Pow
 
-fn direct_assign[T: Lookalike](mut a: T, b: T):
+[T: needs Lookalike]
+fn direct_assign(ref mut a: T, b: T):
     a += b    #$ error[E2040]: Add
 
-fn projected_assign[H: Holder](mut a: H.Item, b: H.Item):
+[H: needs Holder]
+fn projected_assign(ref mut a: H.Item, b: H.Item):
     a += b    #$ error[E2040]: Add
 
 fn main():

@@ -19,7 +19,7 @@ fn shown(bytes: ref [u8; 32], length: c_int) -> String:
     return String.from(bytes[0..length as int].to_str().unwrap())
 
 ## What the logger calls with its arguments: they go on to `vsnprintf`.
-extern "C" fn sink(context: *mut void, format: *c_char, owned arguments: VaList):
+extern "C" fn sink(context: *mut void, format: *c_char, owns arguments: VaList):
     bytes: [u8; 32] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     length: c_int = 0
     unsafe:  # SAFETY(ffi): `bytes` holds 32, and `arguments` are what the format reads

@@ -4,7 +4,7 @@
 ## `[CTL-5]` — the first arm that matches runs, and an arm the arms above
 ## already cover is `W2091`: here a string literal already named above (D-815).
 
-fn code(word: str) -> int:
+fn code(word: StrView) -> int:
     match word:
         "yes" | "y":
             return 1

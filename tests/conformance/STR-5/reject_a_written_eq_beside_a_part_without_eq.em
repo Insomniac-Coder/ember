@@ -9,8 +9,8 @@ struct S:
     x: int
 
 extend S implements Eq:
-    fn eq(self, other: S) -> bool:
-        return self.x == other.x
+    fn eq(other: S) -> bool:
+        return this.x == other.x
 
 @no_derive(Eq)
 struct Tag:

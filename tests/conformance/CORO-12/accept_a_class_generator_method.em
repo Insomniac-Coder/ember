@@ -11,10 +11,10 @@
 class Door:
     open_angle: float = 0.0
 
-    gen fn swing_open(self, steps: int) -> Generator[float]:
+    gen fn swing_open(steps: int) -> Generator[float]:
         for _ in 0..steps:
-            self.open_angle += 1.5
-            yield self.open_angle
+            this.open_angle += 1.5
+            yield this.open_angle
 
 fn make() -> Door:
     return Door()

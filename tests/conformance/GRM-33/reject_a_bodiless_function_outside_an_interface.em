@@ -9,13 +9,13 @@ fn missing(x: int) -> int    #$ error[E0110]: `missing` is declared without a bo
 struct Point:
     x: int
 
-    fn get(self) -> int    #$ error[E0110]: `get` is declared without a body
+    fn get() -> int    #$ error[E0110]: `get` is declared without a body
 
 open class Shape:
-    fn area(self) -> f64    #$ error[E0110]: `area` is declared without a body
+    fn area() -> f64    #$ error[E0110]: `area` is declared without a body
 
 abstract class Solid:
-    fn volume(self) -> f64    #$ error[E0110]: `volume` is declared without a body
+    fn volume() -> f64    #$ error[E0110]: `volume` is declared without a body
 
 fn main():
     pass

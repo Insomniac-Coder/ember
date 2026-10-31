@@ -15,11 +15,11 @@
 class Tally:
     count: int
 
-    fn init(mut self):
-        self.count = 0
+    fn init():
+        this.count = 0
 
-    fn bump(mut self):
-        self.count += 1
+    fn bump():
+        this.count += 1
 
 fn total_of(xs: Array[int]) -> int:
     total = 0

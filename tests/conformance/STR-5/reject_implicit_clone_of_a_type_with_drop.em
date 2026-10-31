@@ -7,7 +7,7 @@
 struct Guard:
     id: int
 
-    fn drop(mut self):
+    fn drop():
         pass
 
 fn main():

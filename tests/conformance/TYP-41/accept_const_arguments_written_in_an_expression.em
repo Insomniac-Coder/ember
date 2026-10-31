@@ -6,20 +6,22 @@
 ## expression stands; inside a generic body, `View[N](…)` and `View(…)` name the same `View[N]` as
 ## the signature does, whichever way `N` was read.
 
-struct Pair[T, const N: int]:
+[T, const N: int]
+struct Pair:
     items: [T; N]
 
-    fn make() -> Pair[int, N]:
+    static fn make() -> Pair[int, N]:
         return Pair[int, N]([N; N])
 
-    fn view(self) -> View[T, N]:
-        return View[T, N](ref self)
+    fn view() -> View[T, N]:
+        return View[T, N](ref this)
 
-    fn inferred(self) -> View[T, N]:
-        return View(ref self)
+    fn inferred() -> View[T, N]:
+        return View(ref this)
 
 @view
-struct View[T, const N: int]:
+[T, const N: int]
+struct View:
     owner: ref Pair[T, N]
 
 fn main():

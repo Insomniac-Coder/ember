@@ -14,7 +14,8 @@
 # Stored items still number in `int`. The ranges are kept in variables, where their numbers are
 # not visible (the visible-numbers rule picks a smaller type where they are).
 
-fn first[I: Iterator](owned from: I, n: int) -> Array[I.Item]:
+[I: needs Iterator]
+fn first(owns from: I, n: int) -> Array[I.Item]:
     it = from
     out: Array[I.Item] = []
     while out.len() < n:
@@ -37,6 +38,6 @@ fn main():
     every = 0 as u128 ..= u128.MAX
     println(first(every.iter().enumerate().rev(), 1))
     xs: Array[int] = [10, 20, 30]
-    println(first(xs.iter().copied().enumerate(5).rev(), 3))
+    println(first(xs.iter().copy_each().enumerate(5).rev(), 3))
     three = 0 .. 3
     println(first(three.iter().enumerate(int.MAX - 1), 3))

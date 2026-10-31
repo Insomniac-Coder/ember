@@ -10,27 +10,27 @@
 # C backend's).
 
 interface Shape:
-    fn area(self) -> int
+    fn area() -> int
 
 struct Square:
     side: int
 
 extend Square implements Shape:
-    fn area(self) -> int:
-        return self.side * self.side
+    fn area() -> int:
+        return this.side * this.side
 
 class Tile:
     size: int
 
-    fn init(mut self, size: int):
-        self.size = size
+    fn init(size: int):
+        this.size = size
 
-    fn grow(mut self):
-        self.size = self.size + 1
+    fn grow():
+        this.size = this.size + 1
 
 extend Tile implements Shape:
-    fn area(self) -> int:
-        return self.size
+    fn area() -> int:
+        return this.size
 
 fn measure(s: ref dyn Shape) -> int:
     return s.area()

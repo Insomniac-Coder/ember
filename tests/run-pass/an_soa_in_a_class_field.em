@@ -8,36 +8,37 @@
 open class AnyStorage:
     len: int
 
-    fn init(mut self):
-        self.len = 0
+    fn init():
+        this.len = 0
 
-    virtual fn remove_at(mut self, i: int):
+    virtual fn remove_at(i: int):
         pass
 
-class Storage[T](AnyStorage):
+[T]
+class Storage(AnyStorage):
     dense: Array[T]
     columns: SoA[T]
     soa: bool
 
-    fn init(mut self, soa: bool):
-        self.dense = []
-        self.columns = SoA[T].with_capacity(0)
-        self.soa = soa
+    fn init(soa: bool):
+        this.dense = []
+        this.columns = SoA[T].with_capacity(0)
+        this.soa = soa
         super.init()
 
-    fn add(mut self, owned value: T):
-        if self.soa:
-            self.columns.push(value)
+    fn add(owns value: T):
+        if this.soa:
+            this.columns.push(value)
         else:
-            self.dense.push(value)
-        self.len += 1
+            this.dense.push(value)
+        this.len += 1
 
-    override fn remove_at(mut self, i: int):
-        if self.soa:
-            _gone = self.columns.swap_remove(i)
+    override fn remove_at(i: int):
+        if this.soa:
+            _gone = this.columns.swap_remove(i)
         else:
-            _gone2 = self.dense.swap_remove(i)
-        self.len -= 1
+            _gone2 = this.dense.swap_remove(i)
+        this.len -= 1
 
 @derive(Copy)
 struct Pos:

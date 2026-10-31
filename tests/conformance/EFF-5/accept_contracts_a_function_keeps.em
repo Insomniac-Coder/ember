@@ -4,7 +4,7 @@
 # `[EFF-5]` — a function that has none of the effects its contracts forbid is accepted; they
 # compose (`[EFF-14]`), and `panic("literal")` allocates nothing (`[PAN-2]`).
 
-@static_safe
+@no_alias_checks
 @noalloc
 @nosync
 @noio

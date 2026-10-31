@@ -5,7 +5,7 @@
 # address, so the `str` the coercion makes of it may be returned; the caller
 # keeps `s` borrowed while the result lives.
 
-fn borrow_text(text: String) -> str:
+fn borrow_text(text: String) -> StrView:
     return text
 
 fn main():

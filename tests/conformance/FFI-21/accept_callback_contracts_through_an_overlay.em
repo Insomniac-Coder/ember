@@ -33,5 +33,5 @@ fn main():
     end(two)
     println(reg.subscribers())
 
-fn end(owned token: Retained[ForeignCallback]):
+fn end(owns token: Retained[ForeignCallback]):
     pass

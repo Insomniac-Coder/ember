@@ -1,6 +1,6 @@
 # Summarise an inline CSV of sales: units, revenue and average sale per region, and the best-selling product.
 
-const DATA: str = """region,product,units,price
+const DATA: StrView = """region,product,units,price
 north,widget,12,2.50
 south,widget,7,2.50
 north,gadget,3,10.00
@@ -18,16 +18,16 @@ struct Sale:
     units: int
     price: float
 
-    fn revenue(self) -> float:
-        return self.units as float * self.price
+    fn revenue() -> float:
+        return this.units as float * this.price
 
 struct RegionTotals:
     units: int = 0
     revenue: float = 0.0
     rows: int = 0
 
-fn parse_line(line: str) -> Result[Sale]:
-    fields = line.split(",").collect[Array[str]]()
+fn parse_line(line: StrView) -> Result[Sale]:
+    fields = line.split(",").collect[Array[StrView]]()
     if fields.len() != 4:
         return Err(AnyError.msg(f"expected 4 fields, got {fields.len()}"))
     units = fields[2].trim().parse[int]()?

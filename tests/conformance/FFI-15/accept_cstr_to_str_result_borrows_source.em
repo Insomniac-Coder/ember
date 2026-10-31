@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: borrowed
 
-fn checked(text: cstr) -> str:
+fn checked(text: CStrView) -> StrView:
     match text.to_str():
         Ok(value):
             return value

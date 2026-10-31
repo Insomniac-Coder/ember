@@ -8,25 +8,27 @@
 # "`T` has no method `len`").
 
 interface Sized:
-    fn len(self) -> int
+    fn len() -> int
 
 struct Bag:
     n: int
 
-    fn len(self) -> int:
-        return self.n
+    fn len() -> int:
+        return this.n
 
 extend Bag implements Sized:
-    fn len(self) -> int:
-        return self.n + 100
+    fn len() -> int:
+        return this.n + 100
 
-struct Wrapper[T: Sized]:
+[T: needs Sized]
+struct Wrapper:
     item: T
 
-    fn size(self) -> int:
-        return self.item.len()
+    fn size() -> int:
+        return this.item.len()
 
-fn through[T: Sized](w: Wrapper[T]) -> int:
+[T: needs Sized]
+fn through(w: Wrapper[T]) -> int:
     return w.size()
 
 println(Wrapper(Bag(2)).size(), through(Wrapper(Bag(3))))

@@ -7,8 +7,8 @@
 class Shared:
     let cell: Cell[int] #$ error[E7001]: field `Shared.cell` has type `Cell[i64]`, which is not Sync
 
-    fn init(mut self):
-        self.cell = Cell(1)
+    fn init():
+        this.cell = Cell(1)
 
 fn main():
     pass

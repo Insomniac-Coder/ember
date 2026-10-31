@@ -11,21 +11,21 @@
 
 @derive(Copy)
 struct Words:
-    rest: str
+    rest: StrView
 
 extend Words implements Iterator:
-    type Item = str
+    type Item = StrView
 
-    fn next(mut self) -> Option[str]:
-        rest = self.rest
+    fn next() -> Option[StrView]:
+        rest = this.rest
         if rest.len() == 0:
             return None
         match rest.find(" "):
             Some(at):
-                self.rest = rest[at + 1..]
+                this.rest = rest[at + 1..]
                 return Some(rest[..at])
             None:
-                self.rest = rest[rest.len()..]
+                this.rest = rest[rest.len()..]
                 return Some(rest)
 
 fn main():

@@ -20,13 +20,13 @@ from std.sync import Once
 struct Noisy:
     value: int
 
-    fn drop(mut self):
-        println("dropped", self.value)
+    fn drop():
+        println("dropped", this.value)
 
 fn main():
     o: Option[int] = Some(3)
     calls = 0
-    inc = fn(owned x: int) -> int:
+    inc = fn(owns x: int) -> int:
         calls += 1
         return x + 1
     a = o.map(inc)
@@ -34,7 +34,7 @@ fn main():
     r: Result[int, int] = Ok(5)
     c = r.map(inc)
     e: Result[int, int] = Err(2)
-    d = e.unwrap_or_else(fn(owned s: int) -> int => s * 3)
+    d = e.unwrap_or_else(fn(owns s: int) -> int => s * 3)
     println(a, b, c, d, calls)
     n: Option[int] = None
     made = 0
@@ -50,8 +50,8 @@ fn main():
     once.call_once(work)
     println(ran)
     k = Noisy(1)
-    taker = owned fn(owned x: int) -> int:
+    taker = owned fn(owns x: int) -> int:
         kept = k
         return x + kept.value
     println(o.map(taker))
-    println(o.map(fn(owned x: int) -> int => x * 10))
+    println(o.map(fn(owns x: int) -> int => x * 10))

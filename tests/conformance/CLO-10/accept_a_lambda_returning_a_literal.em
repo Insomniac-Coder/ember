@@ -6,7 +6,8 @@
 # literal's default type (`i64`, `f64`): it was `fn() -> an integer`, which converted to no `fn`
 # type, and the compiler stopped on the large one.
 
-fn apply[R](owned f: fn() -> R) -> R:
+[R]
+fn apply(owns f: fn() -> R) -> R:
     return f()
 
 fn main():

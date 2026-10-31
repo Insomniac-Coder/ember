@@ -31,7 +31,7 @@ pub extern "C" fn color_of_c(n: i32) -> i32:
 pub extern "C" fn echo_c(c: i32) -> i32:
     return c
 
-fn name(c: Color) -> str:
+fn name(c: Color) -> StrView:
     match c:
         Color.Red:
             return "red"

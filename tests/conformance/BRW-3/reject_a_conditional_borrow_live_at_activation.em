@@ -1,7 +1,7 @@
 #$ test: compile-fail
 #$ rules: BRW-3, BCK-5, TYP-5
 
-fn append(mut values: Array[int], value: ref int):
+fn append(ref mut values: Array[int], value: ref int):
     values.push(value)
 
 fn main():

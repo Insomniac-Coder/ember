@@ -7,10 +7,10 @@
 #$ stdout: cleared
 
 open class Base:
-    fn value(self) -> i32:
+    fn value() -> i32:
         return 7
 
-    fn drop(mut self):
+    fn drop():
         println("drop")
 
 class Child(Base):

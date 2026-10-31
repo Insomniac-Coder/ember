@@ -8,32 +8,34 @@
 
 interface Producer:
     type Output
-    fn make(self) -> Output
+    fn make() -> Output
 
 struct V:
     x: int
 
 extend V implements Add[V]:
     type Output = int
-    fn add(self, other: V) -> int:
-        return self.x + other.x
+    fn add(other: V) -> int:
+        return this.x + other.x
 
 extend V implements Producer:
     type Output = bool
-    fn make(self) -> bool:
+    fn make() -> bool:
         return true
 
 type Level = i32 in 0 ..= 10
 
 extend Level implements Producer:
     type Output = bool
-    fn make(self) -> bool:
+    fn make() -> bool:
         return true
 
-fn plus[T: Add[T]](x: T, y: T) -> T.Output:
+[T: needs Add[T]]
+fn plus(x: T, y: T) -> T.Output:
     return x + y
 
-fn mk[T: Producer](x: T) -> T.Output:
+[T: needs Producer]
+fn mk(x: T) -> T.Output:
     return x.make()
 
 fn main():

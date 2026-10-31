@@ -6,9 +6,9 @@ class Bad:
     x: i32
     y: i32
 
-    fn init(mut self, x: i32):
-        self.x = self.y
-        self.y = x
+    fn init(x: i32):
+        this.x = this.y
+        this.y = x
 
 fn main():
     value = Bad(1)

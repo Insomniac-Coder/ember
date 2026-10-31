@@ -7,13 +7,15 @@
 # `init`'s parameters; one without takes them from its fields, by name
 # (D-237).
 
-class Box2[T]:
+[T]
+class Box2:
     items: Array[T]
 
-    fn init(mut self, first: T):
-        self.items = [first]
+    fn init(first: T):
+        this.items = [first]
 
-class Pt[T]:
+[T]
+class Pt:
     x: T
     y: T
 

@@ -22,12 +22,12 @@ enum Fail:
 struct P:
     x: int
     name: String
-    fn get(self) -> int:
-        return self.x * 2
-    fn find(self, k: int) -> Option[int]:
+    fn get() -> int:
+        return this.x * 2
+    fn find(k: int) -> Option[int]:
         return Some(k) if k > 0 else None
-    fn shout(self):
-        println(self.name)
+    fn shout():
+        println(this.name)
 
 fn through(o: ref Option[P]) -> Option[int]:
     return o?.x

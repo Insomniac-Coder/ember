@@ -6,44 +6,45 @@
 # or Tag[str], never the declaration's unsubstituted Tag[T].
 
 interface Tag[T]:
-    fn tag(self) -> int
+    fn tag() -> int
 
 interface Outer[T]:
-    type Member: Tag[T]
-    fn member(self) -> Member
+    type Member: needs Tag[T]
+    fn member() -> Member
 
 struct IntValue:
     n: int
 
 extend IntValue implements Tag[int]:
-    fn tag(self) -> int:
-        return self.n
+    fn tag() -> int:
+        return this.n
 
 struct TextValue:
     n: int
 
-extend TextValue implements Tag[str]:
-    fn tag(self) -> int:
-        return self.n
+extend TextValue implements Tag[StrView]:
+    fn tag() -> int:
+        return this.n
 
 struct IntOwner:
     n: int
 
 extend IntOwner implements Outer[int]:
     type Member = IntValue
-    fn member(self) -> IntValue:
-        return IntValue(self.n)
+    fn member() -> IntValue:
+        return IntValue(this.n)
 
 struct TextOwner:
     n: int
 
-extend TextOwner implements Outer[str]:
+extend TextOwner implements Outer[StrView]:
     type Member = TextValue
-    fn member(self) -> TextValue:
-        return TextValue(self.n)
+    fn member() -> TextValue:
+        return TextValue(this.n)
 
-fn read_tag[T, O: Outer[T]](o: O) -> int:
+[T, O: needs Outer[T]]
+fn read_tag(o: O) -> int:
     return o.member().tag()
 
 fn main():
-    println(read_tag[int, IntOwner](IntOwner(7)), read_tag[str, TextOwner](TextOwner(11)))
+    println(read_tag[int, IntOwner](IntOwner(7)), read_tag[StrView, TextOwner](TextOwner(11)))

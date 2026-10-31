@@ -11,31 +11,32 @@
 # The mut slot updates the original class, then the shared slot observes its
 # Weak[Shared[T]] field without creating an owner copy at the coercion boundary.
 interface Read:
-    fn read(self) -> i32
+    fn read() -> i32
 
 interface Bump:
-    fn bump(mut self) -> i32
+    fn bump() -> i32
 
 struct Token:
     value: i32
 
-class Counter[T] implements Read, Bump:
+[T]
+class Counter implements Read, Bump:
     weak: Weak[Shared[Token]]
     marker: T
     count: i32
 
-    fn read(self) -> i32:
-        match self.weak.upgrade():
+    fn read() -> i32:
+        match this.weak.upgrade():
             Some(owner):
-                return owner.get().value + self.count
+                return owner.get().value + this.count
             None:
-                return self.count
+                return this.count
 
-    fn bump(mut self) -> i32:
-        self.count = self.count + 1
-        return self.count
+    fn bump() -> i32:
+        this.count = this.count + 1
+        return this.count
 
-fn revise(value: ref mut dyn Read + Bump) -> i32:
+fn revise(ref mut value: dyn Read + Bump) -> i32:
     value.bump()
     return value.read()
 

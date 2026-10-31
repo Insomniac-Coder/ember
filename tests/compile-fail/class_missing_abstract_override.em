@@ -3,13 +3,13 @@
 #$ error[E2020]: concrete class `Square` does not implement abstract method `area`
 
 abstract class Shape:
-    virtual fn area(self) -> i32
+    virtual fn area() -> i32
 
-    fn init(mut self):
+    fn init():
         pass
 
 class Square(Shape):
-    fn init(mut self):
+    fn init():
         super.init()
 
 fn main():

@@ -9,11 +9,11 @@
 # ran before: only a generic extension's `drop` gave its type one.
 
 struct Noisy:
-    name: str
+    name: StrView
 
 extend Noisy:
-    fn drop(mut self):
-        println("drop", self.name)
+    fn drop():
+        println("drop", this.name)
 
 fn plain():
     first = Noisy("first")

@@ -5,14 +5,14 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(result(borrowed, nul_terminated, from(static)), link_name="get_word")
-    safe fn word() -> cstr
+    safe fn word() -> CStrView
 
-pub extern "C" fn get_word() -> cstr:
+pub extern "C" fn get_word() -> CStrView:
     return c"Ember"
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated))
-    safe fn strlen(text: cstr) -> usize
+    safe fn strlen(text: CStrView) -> usize
 
 fn main():
     println(strlen(word()))

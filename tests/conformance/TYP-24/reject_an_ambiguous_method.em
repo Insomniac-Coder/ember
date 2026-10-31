@@ -5,10 +5,10 @@
 # implement `I` names what is missing.
 
 interface A:
-    fn m(self) -> int
+    fn m() -> int
 
 interface B:
-    fn m(self) -> int
+    fn m() -> int
 
 struct S:
     n: int
@@ -17,11 +17,11 @@ struct T:
     n: int
 
 extend S implements A:
-    fn m(self) -> int:
+    fn m() -> int:
         return 1
 
 extend S implements B:
-    fn m(self) -> int:
+    fn m() -> int:
         return 2
 
 fn main():

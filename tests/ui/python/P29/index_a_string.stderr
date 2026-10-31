@@ -1,4 +1,4 @@
-error[E2020]: cannot index `str`
+error[E2020]: cannot index `StrView`
  --> tests/ui/python/P29/index_a_string.em:3:13
   |
 3 |     println(word[1])

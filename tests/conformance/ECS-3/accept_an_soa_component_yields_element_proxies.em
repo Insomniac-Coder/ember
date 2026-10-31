@@ -24,7 +24,7 @@ struct Weight:
 fn points_of(s: SoARef[Score]) -> int:
     return s.points
 
-fn score(mut q: Query[(Mut[Score], Weight)], bonus: int):
+fn score(ref mut q: Query[(Mut[Score], Weight)], bonus: int):
     for s, weight in q.iter_mut():
         if weight.w > 1.0:
             s.points += bonus
@@ -33,7 +33,7 @@ fn score(mut q: Query[(Mut[Score], Weight)], bonus: int):
     for s, _ in q.iter_mut():
         s.points *= 2
 
-fn show(mut q: Query[Score], unused: ()):
+fn show(ref mut q: Query[Score], unused: ()):
     for s in q.iter():
         println(s.name, s.points)
 

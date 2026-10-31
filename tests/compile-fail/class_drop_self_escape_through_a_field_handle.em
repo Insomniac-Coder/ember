@@ -10,8 +10,8 @@ class Keeper:
 class Item:
     keeper: Keeper
 
-    fn drop(mut self):
-        self.keeper.saved = Some(self) #$ error[E3016]: `self` escapes its own drop
+    fn drop():
+        this.keeper.saved = Some(this) #$ error[E3016]: `this` escapes its own `drop`
 
 fn main():
     _item = Item(Keeper())

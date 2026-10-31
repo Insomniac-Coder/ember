@@ -4,7 +4,8 @@
 # `[TYP-36]` — every number's `Default` is its zero: `i128`, `u128` and `f16`
 # too (D-332: those three had none, so a `T: Default` bound refused them).
 
-fn zero[T: Default]() -> T:
+[T: needs Default]
+fn zero() -> T:
     return T.default()
 
 fn main():

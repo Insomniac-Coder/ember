@@ -9,10 +9,11 @@ struct Pair:
     right: i32
 
 extend Pair:
-    fn encode(self, left: i32, right: i32) -> i32:
+    fn encode(left: i32, right: i32) -> i32:
         return left * 10 + right
 
-    fn choose[T](self, left: T, right: T) -> T:
+    [T]
+    fn choose(left: T, right: T) -> T:
         return left
 
 fn main():

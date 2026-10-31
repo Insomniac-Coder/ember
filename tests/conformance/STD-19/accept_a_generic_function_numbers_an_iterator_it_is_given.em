@@ -9,13 +9,15 @@
 # is there for a `for` and for a call, and two numbers compare and copy. It was refused: an
 # associated type's bound did not bring its parents.
 
-fn numbered[I: Iterator](owned it: I, start: int) -> int:
+[I: needs Iterator]
+fn numbered(owns it: I, start: int) -> int:
     total = 0
     for i, _x in it.enumerate(start=start):
         total += i.to_int()
     return total
 
-fn first_two_in_order[I: Iterator](owned it: I, start: int) -> bool:
+[I: needs Iterator]
+fn first_two_in_order(owns it: I, start: int) -> bool:
     e = it.enumerate(start=start)
     match e.next():
         Some((a, _x)):

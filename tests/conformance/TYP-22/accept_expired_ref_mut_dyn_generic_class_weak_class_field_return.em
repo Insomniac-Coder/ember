@@ -12,21 +12,22 @@
 # generic class, yet neither operation may retain the final Token owner. After
 # the helper exits, the returned observer takes the expired upgrade path.
 interface Revise:
-    fn observer(mut self) -> Weak[Token]
+    fn observer() -> Weak[Token]
 
 class Token:
     value: i32
 
-class Holder[T] implements Revise:
+[T]
+class Holder implements Revise:
     weak: Weak[Token]
     marker: T
     count: i32
 
-    fn observer(mut self) -> Weak[Token]:
-        self.count = self.count + 1
-        return self.weak
+    fn observer() -> Weak[Token]:
+        this.count = this.count + 1
+        return this.weak
 
-fn inspect(value: ref mut dyn Revise) -> Weak[Token]:
+fn inspect(ref mut value: dyn Revise) -> Weak[Token]:
     return value.observer()
 
 fn expired() -> Weak[Token]:

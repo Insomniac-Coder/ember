@@ -25,9 +25,9 @@ struct Count:
 extend Count implements Iterator:
     type Item = int
 
-    fn next(mut self) -> Option[int]:
-        self.n += 1
-        return Some(self.n)
+    fn next() -> Option[int]:
+        this.n += 1
+        return Some(this.n)
 
 fn main():
     println(Count(0).take(3).to_array(), Count(0).skip(2).take(3).to_array(), Count(0).step_by(3).take(4).to_array())
@@ -46,7 +46,7 @@ fn main():
         sums.push(a + b)
     println(sums)
 
-    m: Map[str, int] = {"a": 1, "b": 2, "c": 3}
+    m: Map[StrView, int] = {"a": 1, "b": 2, "c": 3}
     s: Set[int] = {4, 5}
     println(m.keys().count(), m.values().fold(0, fn(acc, v) => acc + v), s.iter().count())
     Count(0).take(3).for_each(fn(x) => print(x))

@@ -12,15 +12,16 @@
 # reused by the generic class implementation. The borrowed class receiver and
 # observer remain independent dynamic-interface capabilities.
 interface Observe:
-    fn observe(self, weak: Weak[Shared[Token]]) -> i32
+    fn observe(weak: Weak[Shared[Token]]) -> i32
 
 struct Token:
     value: i32
 
-class Reader[T] implements Observe:
+[T]
+class Reader implements Observe:
     marker: T
 
-    fn observe(self, weak: Weak[Shared[Token]]) -> i32:
+    fn observe(weak: Weak[Shared[Token]]) -> i32:
         match weak.upgrade():
             Some(owner):
                 return owner.get().value

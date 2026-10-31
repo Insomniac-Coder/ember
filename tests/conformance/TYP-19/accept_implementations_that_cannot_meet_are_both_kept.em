@@ -7,24 +7,26 @@
 # different shapes and different interface arguments never meet.
 
 interface Named:
-    fn name(self) -> str
+    fn name() -> StrView
 
 interface Kind:
-    fn kind(self) -> str
+    fn kind() -> StrView
 
-struct Pair[A, B]:
+[A, B]
+struct Pair:
     a: A
     b: B
 
-struct Wrap[T]:
+[T]
+struct Wrap:
     x: T
 
-extend[T: Copy] Pair[T, int] implements Named:
-    fn name(self) -> str:
+extend[T: needs Copy] Pair[T, int] implements Named:
+    fn name() -> StrView:
         return "copy"
 
 extend[U] Pair[String, U] implements Named:
-    fn name(self) -> str:
+    fn name() -> StrView:
         return "text"
 
 struct V:
@@ -32,20 +34,20 @@ struct V:
 
 extend V implements Add[int]:
     type Output = int
-    fn add(self, other: int) -> int:
-        return self.x + other
+    fn add(other: int) -> int:
+        return this.x + other
 
 extend V implements Add[V]:
     type Output = int
-    fn add(self, other: V) -> int:
-        return self.x + other.x + 1
+    fn add(other: V) -> int:
+        return this.x + other.x + 1
 
 extend[T] Wrap[Array[T]] implements Kind:
-    fn kind(self) -> str:
+    fn kind() -> StrView:
         return "array"
 
 extend[T] Wrap[Option[T]] implements Kind:
-    fn kind(self) -> str:
+    fn kind() -> StrView:
         return "option"
 
 fn main():

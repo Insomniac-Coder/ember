@@ -23,19 +23,24 @@ struct Version:
     major: int
     minor: int
 
-fn bigger[T: Ord](a: T, b: T) -> bool:
+[T: needs Ord]
+fn bigger(a: T, b: T) -> bool:
     return a > b
 
-fn order[T: Ord](a: T, b: T) -> Ordering:
+[T: needs Ord]
+fn order(a: T, b: T) -> Ordering:
     return a.cmp(b)
 
-fn same[T: Eq](a: T, b: T) -> bool:
+[T: needs Eq]
+fn same(a: T, b: T) -> bool:
     return a == b
 
-fn show[T: Display + Debug](a: T) -> String:
+[T: needs (Display, Debug)]
+fn show(a: T) -> String:
     return f"{a} {a!r}"
 
-fn digest[T: Hash](a: T) -> u64:
+[T: needs Hash]
+fn digest(a: T) -> u64:
     h = collections.DefaultHasher.new()
     a.hash(h)
     return h.finish()

@@ -6,7 +6,7 @@
 # jobs fit their slots, and its reductions' window is the caller's too; so it is `@noalloc`-clean.
 
 @noalloc
-fn total(mut xs: MutSpan[int]) -> int:
+fn total(ref mut xs: MutSpan[int]) -> int:
     sum = 0
     @parallel(chunk=1000, reduce=[sum: +])
     for i in 0..xs.len():

@@ -6,10 +6,10 @@ class Named:
     name: String
     size: int
 
-    fn init(self, owned name: String):
-        measure = fn() -> int => self.name.len() #$ error[E2100]: `self` is used before all class fields are initialized
-        self.name = name
-        self.size = measure()
+    fn init(owns name: String):
+        measure = fn() -> int => this.name.len() #$ error[E2100]: `this` is used before all class fields are initialized
+        this.name = name
+        this.size = measure()
 
 fn main():
     n = Named("x")

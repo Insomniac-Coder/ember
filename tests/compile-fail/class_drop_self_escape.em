@@ -6,9 +6,9 @@
 # container. The container could outlive the in-progress deinitialisation and
 # resurrect the object after the runtime's pre-drop count check.
 class Token:
-    fn drop(mut self):
+    fn drop():
         retained: Array[Token] = Array[Token]()
-        retained.push(self) #$ error[E3016]: `self` escapes its own drop
+        retained.push(this) #$ error[E3016]: `this` escapes its own `drop`
 
 fn main():
     _token = Token()

@@ -10,7 +10,8 @@ struct Meters:
 struct Feet:
     pass
 
-struct Length[Unit]:
+[Unit]
+struct Length:
     value: int
 
 fn add_meters(a: Length[Meters], b: Length[Meters]) -> Length[Meters]:

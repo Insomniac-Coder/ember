@@ -4,7 +4,7 @@
 # D-598 — a lambda that gives a captured view to a `mut` parameter writes through it, though no
 # `ref mut` is written: the closure borrows it mutably. It was `E3023` on the closure's environment.
 
-fn add_to(mut s: MutSpan[int], n: int):
+fn add_to(ref mut s: MutSpan[int], n: int):
     s[0] += n
 
 fn main():

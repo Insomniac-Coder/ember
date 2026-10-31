@@ -13,25 +13,26 @@
 # Weak[Shared[Token]] argument while both composed slots dispatch to one
 # payload. The weak observer is upgraded without copying the class owner.
 interface Observe:
-    fn observe(self, weak: Weak[Shared[Token]]) -> i32
+    fn observe(weak: Weak[Shared[Token]]) -> i32
 
 interface Bump:
-    fn bump(self) -> i32
+    fn bump() -> i32
 
 struct Token:
     value: i32
 
-class Reader[T] implements Observe, Bump:
+[T]
+class Reader implements Observe, Bump:
     marker: T
 
-    fn observe(self, weak: Weak[Shared[Token]]) -> i32:
+    fn observe(weak: Weak[Shared[Token]]) -> i32:
         match weak.upgrade():
             Some(owner):
                 return owner.get().value
             None:
                 return 0
 
-    fn bump(self) -> i32:
+    fn bump() -> i32:
         return 1
 
 fn inspect(value: ref dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:

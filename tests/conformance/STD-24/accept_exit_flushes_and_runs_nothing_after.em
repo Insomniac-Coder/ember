@@ -18,7 +18,7 @@ struct Noisy:
     value: int
 
 extend Noisy:
-    fn drop(mut self):
+    fn drop():
         println("dropped")
 
 fn main():

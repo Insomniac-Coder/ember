@@ -70,7 +70,7 @@ true true true
 ## `if`
 
 ```ember
-fn describe(n: int) -> str:
+fn describe(n: int) -> StrView:
     if n < 0:
         return "negative"
     elif n == 0:

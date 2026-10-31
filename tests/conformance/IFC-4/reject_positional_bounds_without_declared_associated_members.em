@@ -7,12 +7,14 @@ interface Source:
     type Item
 
 interface Build[T]:
-    fn make() -> Self
+    static fn make() -> Self
 
-fn absent[S: Source, C: Build[S.Absent]]():    #$ error[E2040]
+[S: needs Source, C: needs Build[S.Absent]]    #$ error[E2040]
+fn absent():
     pass
 
-fn unbounded[S, C: Build[S.Item]]():    #$ error[E2040]
+[S, C: needs Build[S.Item]]    #$ error[E2040]
+fn unbounded():
     pass
 
 fn main():

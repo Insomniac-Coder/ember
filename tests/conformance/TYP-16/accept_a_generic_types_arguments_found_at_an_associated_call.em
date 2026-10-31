@@ -7,14 +7,15 @@
 # are, from the arguments (a literal taking its default type) and from the
 # type the context expects (D-334: this was `E2020`).
 
-struct Pair[T]:
+[T]
+struct Pair:
     a: T
     b: T
 
-    fn make(v: T) -> Pair[T]:
+    static fn make(v: T) -> Pair[T]:
         return Pair(v, v)
 
-    fn with_second(first: T, second: T) -> Self:
+    static fn with_second(first: T, second: T) -> Self:
         return Pair(first, second)
 
 fn main():

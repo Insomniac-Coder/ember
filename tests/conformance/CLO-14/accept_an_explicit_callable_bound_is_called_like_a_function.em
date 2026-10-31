@@ -7,15 +7,17 @@
 # generic struct over `F` (`[CLO-11]`) are called like a function. The bound
 # was dropped, so each call was `E2020` (`F` cannot be called).
 
-fn apply[F: fn(int) -> int](f: F, x: int) -> int:
+[F: needs fn(int) -> int]
+fn apply(f: F, x: int) -> int:
     g = f
     return g(x) + f(x)
 
-struct Holder[F: fn(int) -> int]:
+[F: needs fn(int) -> int]
+struct Holder:
     f: F
 
-    fn call(self, x: int) -> int:
-        return self.f(x)
+    fn call(x: int) -> int:
+        return this.f(x)
 
 fn main():
     k = 10

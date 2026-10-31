@@ -10,7 +10,7 @@
 class Slot:
     value: i32
 
-fn increment(mut value: i32):
+fn increment(ref mut value: i32):
     value = value + 1
 
 fn main():

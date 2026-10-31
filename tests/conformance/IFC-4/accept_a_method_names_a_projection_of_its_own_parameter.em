@@ -7,27 +7,29 @@
 # interface and in the implementation alike.
 
 interface Walk:
-    fn first_of[U: Seq](self, u: U) -> Option[U.Elem]
+    [U: needs Seq]
+    fn first_of(u: U) -> Option[U.Elem]
 
 interface Seq:
     type Elem
-    fn first(self) -> Option[Elem]
+    fn first() -> Option[Elem]
 
 struct Nums:
     xs: Array[int]
 
 extend Nums implements Seq:
     type Elem = int
-    fn first(self) -> Option[int]:
-        if self.xs.len() == 0:
+    fn first() -> Option[int]:
+        if this.xs.len() == 0:
             return None
-        return Some(self.xs[0])
+        return Some(this.xs[0])
 
 struct W:
     n: int
 
 extend W implements Walk:
-    fn first_of[U: Seq](self, u: U) -> Option[U.Elem]:
+    [U: needs Seq]
+    fn first_of(u: U) -> Option[U.Elem]:
         return u.first()
 
 fn main():

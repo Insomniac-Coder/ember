@@ -5,7 +5,7 @@
 # `a.len()` evaluates in between, and the call compiles. `a` stays the
 # caller's afterwards: `[FN-1]` takes a borrow, not a move.
 
-fn set_first(mut a: Array[i32], v: i32):
+fn set_first(ref mut a: Array[i32], v: i32):
     a.push(v)
 
 fn main():

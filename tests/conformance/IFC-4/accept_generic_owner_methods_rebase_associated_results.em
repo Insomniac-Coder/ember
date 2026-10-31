@@ -6,23 +6,25 @@
 # substituted. This case contains no positional projection bound.
 
 interface Source:
-    type Item: Copy
-    fn get(self) -> Item
+    type Item: needs Copy
+    fn get() -> Item
 
 struct Numbers:
     value: int
 
 extend Numbers implements Source:
     type Item = int
-    fn get(self) -> int:
-        return self.value
+    fn get() -> int:
+        return this.value
 
-struct Holder[T]:
+[T]
+struct Holder:
     marker: T
 
-    fn item[S: Source](self, source: S) -> S.Item:
+    [S: needs Source]
+    fn item(source: S) -> S.Item:
         return source.get()
 
 fn main():
-    holder = Holder[str]("owner")
+    holder = Holder[StrView]("owner")
     println(holder.item[Numbers](Numbers(17)))

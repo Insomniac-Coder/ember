@@ -10,14 +10,14 @@
 #$ stdout: Some(12)
 #$ stdout: None false
 #$ stdout: 0 3
-#$ assert-c: contains("int64_t em_3std11collections3Map4findG54875261f53d3e41")
+#$ assert-c: contains("int64_t em_3std11collections3Map4findGe58d3b7b642b305f")
 # Lookup stays checked and uses the same probe path after removal and reinsertion.
 # Both owning and borrowed string keys exercise the general Map implementation.
 
 fn main():
     m: Map[String, int] = {"first": 10, "second": 20, "third": 30}
     owned_key = String.from("first")
-    borrowed_key: str = "third"
+    borrowed_key: StrView = "third"
     total = m[owned_key] + m["second"] + m[borrowed_key]
     removed = m.remove("second")
     missing = m.get("second")

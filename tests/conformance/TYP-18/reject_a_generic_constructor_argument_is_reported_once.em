@@ -3,7 +3,8 @@
 # `[DIA-14]` — one mistake, one error: a generic constructor's argument is
 # checked once, so an error in it is reported once (D-236).
 
-struct K[F]:
+[F]
+struct K:
     f: F
 
 fn main():

@@ -7,7 +7,7 @@
 # result to retain. The compiler's own check of the summary at the call
 # panicked ("names no source region slot") on every such call.
 
-fn pair(a: str, b: str) -> (str, str):
+fn pair(a: StrView, b: StrView) -> (StrView, StrView):
     return (a, b)
 
 fn main():

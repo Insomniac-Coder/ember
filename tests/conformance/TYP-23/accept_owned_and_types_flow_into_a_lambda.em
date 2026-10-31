@@ -9,18 +9,21 @@
 # owned. Generic inference reads `Option[T]` against `Option[String]`, and a
 # ternary branch `None` takes its type from the other branch.
 
-fn opt_map[T, U](owned o: Option[T], f: fn(owned T) -> U) -> Option[U]:
-    match owned o:
+[T, U]
+fn opt_map(owns o: Option[T], f: fn(owns T) -> U) -> Option[U]:
+    match owns o:
         Some(v):
             return Some(f(v))
         None:
             return None
 
-fn apply[T, U](owned x: T, f: fn(owned T) -> U) -> U:
+[T, U]
+fn apply(owns x: T, f: fn(owns T) -> U) -> U:
     return f(x)
 
-fn unwrap2[T](owned o: Option[T]) -> T:
-    match owned o:
+[T]
+fn unwrap2(owns o: Option[T]) -> T:
+    match owns o:
         Some(v):
             return v
         None:

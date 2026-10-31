@@ -4,10 +4,10 @@
 #$ assert-c: contains(int32_t (*slot1)(void*))
 
 interface Parent:
-    fn parent(self) -> i32
+    fn parent() -> i32
 
-interface Child: Parent:
-    fn child(self) -> i32
+interface Child: needs Parent:
+    fn child() -> i32
 
 fn take(x: ref dyn Child) -> i32:
     return x.child()

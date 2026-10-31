@@ -33,10 +33,12 @@ fn pick(c: bool) -> int:
 fn apply(f: fn(int) -> int, x: int) -> int:
     return f(x)
 
-fn twice[F: fn(int) -> int](f: F, x: int) -> int:
+[F: needs fn(int) -> int]
+fn twice(f: F, x: int) -> int:
     return f(f(x))
 
-fn either[T](a: T, b: T, first: bool) -> T:
+[T]
+fn either(a: T, b: T, first: bool) -> T:
     return a if first else b
 
 struct Holder:

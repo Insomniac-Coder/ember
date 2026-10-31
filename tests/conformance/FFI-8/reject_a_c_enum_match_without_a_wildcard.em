@@ -24,7 +24,7 @@ enum Shape:
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     safe fn shape_of(n: i32) -> Shape  #$ error[E5015]
 
-fn name(c: Color) -> str:
+fn name(c: Color) -> StrView:
     match c:  #$ error[E2090]
         Color.Red:
             return "red"

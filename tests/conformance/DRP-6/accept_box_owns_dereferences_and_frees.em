@@ -7,8 +7,8 @@
 struct Payload:
     pub n: i32
 
-    fn bump(mut self):
-        self.n = self.n + 1
+    fn bump():
+        this.n = this.n + 1
 
 fn main():
     b: Box[Payload] = Box(Payload(40))

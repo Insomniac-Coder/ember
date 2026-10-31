@@ -9,18 +9,18 @@
 #$ assert-c: contains(.data = ember_box_new_copy)
 
 interface Render:
-    fn render(self) -> i32
+    fn render() -> i32
 
 struct Token:
     value: i32
 
-    fn drop(mut self):
-        println(self.value)
+    fn drop():
+        println(this.value)
 
 enum Signal[T] implements Render:
     Ready(value: T)
 
-    fn render(self) -> i32:
+    fn render() -> i32:
         return 42
 
 fn main():

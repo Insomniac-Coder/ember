@@ -12,21 +12,22 @@
 # Weak[Token] field. The receiver remains borrowed and the copied weak observer
 # may upgrade only while the separate Token owner stays alive.
 interface Revise:
-    fn observer(mut self) -> Weak[Token]
+    fn observer() -> Weak[Token]
 
 class Token:
     value: i32
 
-class Holder[T] implements Revise:
+[T]
+class Holder implements Revise:
     weak: Weak[Token]
     marker: T
     count: i32
 
-    fn observer(mut self) -> Weak[Token]:
-        self.count = self.count + 1
-        return self.weak
+    fn observer() -> Weak[Token]:
+        this.count = this.count + 1
+        return this.weak
 
-fn inspect(value: ref mut dyn Revise) -> Weak[Token]:
+fn inspect(ref mut value: dyn Revise) -> Weak[Token]:
     return value.observer()
 
 fn main():

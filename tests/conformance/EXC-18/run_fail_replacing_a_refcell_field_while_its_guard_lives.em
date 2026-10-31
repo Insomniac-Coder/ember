@@ -10,11 +10,11 @@
 class Holder:
     cell: RefCell[Array[int]]
 
-    fn init(mut self):
-        self.cell = RefCell([1, 2, 3])
+    fn init():
+        this.cell = RefCell([1, 2, 3])
 
-    fn reset(self):
-        self.cell = RefCell([9])
+    fn reset():
+        this.cell = RefCell([9])
 
 fn main():
     b = Holder()

@@ -6,7 +6,7 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated, nullable))
-    safe fn wrong(text: cstr) -> usize
+    safe fn wrong(text: CStrView) -> usize
 
 fn main():
     pass

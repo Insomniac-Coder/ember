@@ -12,7 +12,8 @@
 # struct's, a class's or an enum's body, or in an `extend` block, a generic one's too; and an
 # `unsafe` one, `gen` coming right before `fn` (`fn_header`).
 
-gen fn items[T](xs: Span[T]) -> Generator[ref T]:
+[T]
+gen fn items(xs: Span[T]) -> Generator[ref T]:
     for x in xs:
         yield x
 
@@ -20,40 +21,41 @@ struct Pair:
     a: int
     b: int
 
-    gen fn both(self) -> Generator[int]:
-        yield self.a
-        yield self.b
+    gen fn both() -> Generator[int]:
+        yield this.a
+        yield this.b
 
 class Counter:
     n: int = 3
 
-    gen fn once(self) -> Generator[int]:
-        yield self.n
+    gen fn once() -> Generator[int]:
+        yield this.n
 
 enum Shape:
     Square(int)
     Line(int, int)
 
-    gen fn sides(self) -> Generator[int]:
-        match self:
+    gen fn sides() -> Generator[int]:
+        match this:
             Shape.Square(s):
                 yield s
             Shape.Line(x, y):
                 yield x
                 yield y
 
-struct Box2[T]:
+[T]
+struct Box2:
     first: T
     second: T
 
 extend[T] Box2[T]:
-    gen fn each(self) -> Generator[ref T]:
-        yield self.first
-        yield self.second
+    gen fn each() -> Generator[ref T]:
+        yield this.first
+        yield this.second
 
 extend Pair:
-    gen fn sum_only(self) -> Generator[int]:
-        yield self.a + self.b
+    gen fn sum_only() -> Generator[int]:
+        yield this.a + this.b
 
 @safety("nothing the caller must uphold; this shows `unsafe gen fn` parses.")
 unsafe gen fn raw_count() -> Generator[int]:

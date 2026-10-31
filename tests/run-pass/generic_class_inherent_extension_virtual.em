@@ -5,19 +5,21 @@
 #$ assert-c: contains(em_5Child5valueGda5cc12a188c7619)
 #$ assert-c: contains(->slot0)
 
-open class Base[T]:
-    virtual fn value(self) -> i32:
+[T]
+open class Base:
+    virtual fn value() -> i32:
         return 1
 
-    fn init(mut self):
+    fn init():
         pass
 
-class Child[T](Base[T]):
-    fn init(mut self):
+[T]
+class Child(Base[T]):
+    fn init():
         super.init()
 
 extend[T] Child[T]:
-    override fn value(self) -> i32:
+    override fn value() -> i32:
         return 42
 
 fn main():

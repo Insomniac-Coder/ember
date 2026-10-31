@@ -1,7 +1,7 @@
 struct Item:
     name: String
 
-fn make(name: str) -> Item:
+fn make(name: StrView) -> Item:
     return Item(name=name)
 
 fn main():

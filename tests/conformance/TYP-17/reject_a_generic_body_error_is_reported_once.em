@@ -5,10 +5,12 @@
 # message named the instance's types (`Wrap[String]` beside `Wrap[T]`),
 # which the check for a repeat compared.
 
-struct Wrap[T]:
+[T]
+struct Wrap:
     x: T
 
-fn f[T](w: Wrap[T]) -> int:
+[T]
+fn f(w: Wrap[T]) -> int:
     return w.nothing()    #$ error[E2072]: `Wrap[T]` has no method named `nothing`
 
 fn main():

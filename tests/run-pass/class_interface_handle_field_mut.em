@@ -16,14 +16,14 @@
 # class ([EXC-15]). (The table's `access` entry names the same runtime
 # functions for views a `dyn` call returns, `[EXC-18]`.)
 interface Accumulator:
-    fn bump(mut self) -> i32
+    fn bump() -> i32
 
 class Counter implements Accumulator:
     value: i32
 
-    fn bump(mut self) -> i32:
-        self.value = self.value + 1
-        return self.value
+    fn bump() -> i32:
+        this.value = this.value + 1
+        return this.value
 
 class Holder:
     value: Accumulator

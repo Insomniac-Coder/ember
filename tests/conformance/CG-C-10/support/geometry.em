@@ -4,8 +4,8 @@
 pub struct Grid:
     pub cells: Array[int]
 
-    pub fn at(self, i: int) -> int:
-        return self.cells[i]
+    pub fn at(i: int) -> int:
+        return this.cells[i]
 
 pub fn probe(g: Grid, i: int) -> int:
     return g.at(i) + g.at(0)

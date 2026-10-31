@@ -6,14 +6,14 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated, nullable), result(borrowed, nul_terminated, nullable, from(text)), link_name="optional_cstr_identity")
-    safe fn identity(text: Option[cstr]) -> Option[cstr]
+    safe fn identity(text: Option[CStrView]) -> Option[CStrView]
 
-pub extern "C" fn optional_cstr_identity(text: Option[cstr]) -> Option[cstr]:
+pub extern "C" fn optional_cstr_identity(text: Option[CStrView]) -> Option[CStrView]:
     return text
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated))
-    safe fn strlen(text: cstr) -> usize
+    safe fn strlen(text: CStrView) -> usize
 
 fn main():
     match identity(None):

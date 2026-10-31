@@ -7,18 +7,18 @@
 #$ assert-c: contains(em_vt_dyn_5Child_for_6Signal_slot1)
 
 interface Parent:
-    fn parent(self) -> i32
+    fn parent() -> i32
 
-interface Child: Parent:
-    fn child(self) -> i32
+interface Child: needs Parent:
+    fn child() -> i32
 
 enum Signal implements Parent, Child:
     Ready
 
-    fn parent(self) -> i32:
+    fn parent() -> i32:
         return 20
 
-    fn child(self) -> i32:
+    fn child() -> i32:
         return 22
 
 fn main():

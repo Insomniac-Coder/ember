@@ -6,7 +6,7 @@
 # nowhere to go, and the store panics naming it before writing anything.
 from std.simd import f64x4
 
-fn fill(mut out: MutSpan[f64]):
+fn fill(ref mut out: MutSpan[f64]):
     f64x4.splat(1.0).store(out[1..])
 
 fn main():

@@ -4,9 +4,9 @@
 #$ assert-c: contains(->slot0)
 
 interface Accumulator:
-    fn bump(mut self) -> i32
+    fn bump() -> i32
 
-fn take(x: ref mut dyn Accumulator) -> i32:
+fn take(ref mut x: dyn Accumulator) -> i32:
     return x.bump()
 
 fn main():

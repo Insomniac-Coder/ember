@@ -23,8 +23,8 @@ struct Size:
     const AREA_LIMIT: i32 = 100 * 100
     const SIDES = 4
 
-    fn doubled(self) -> Size:
-        return Size(self.w * Self.UNIT.w * 2, self.h * 2)
+    fn doubled() -> Size:
+        return Size(this.w * Self.UNIT.w * 2, this.h * 2)
 
 enum Mode:
     Fast

@@ -4,13 +4,16 @@
 # parameter is given, including the one a callable parameter carries
 # (`[CLO-3]`).
 
-fn id[T](x: T) -> T:
+[T]
+fn id(x: T) -> T:
     return x
 
-fn twice[T](f: fn(T) -> T, x: T) -> T:
+[T]
+fn twice(f: fn(T) -> T, x: T) -> T:
     return f(f(x))
 
-fn pair[A, B](a: A, b: B) -> A:
+[A, B]
+fn pair(a: A, b: B) -> A:
     return a
 
 fn main():

@@ -12,10 +12,10 @@
 class Counter:
     step: int = 3
 
-    fn steps(self, n: int) -> int:
+    fn steps(n: int) -> int:
         gen fn walk(k: int) -> Generator[int]:
             for i in 0..k:
-                yield i * self.step
+                yield i * this.step
         last = 0
         for v in walk(n):
             last = v

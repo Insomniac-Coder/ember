@@ -12,10 +12,10 @@ fn main():
     xs: Array[int] = [1, 2, 3]
     top = int.MAX - 1
     a: Array[(u64, int)] = []
-    for i, x in xs.iter().copied().enumerate(start=top).rev().rev().take(2):
+    for i, x in xs.iter().copy_each().enumerate(start=top).rev().rev().take(2):
         a.push((i, x))
     println(a)
     b: Array[(u64, int)] = []
-    for i, x in xs.iter().copied().enumerate(start=top).rev().skip(1).rev().take(1):
+    for i, x in xs.iter().copy_each().enumerate(start=top).rev().skip(1).rev().take(1):
         b.push((i, x))
     println(b)

@@ -8,15 +8,16 @@
 # A generic default uses the concrete parameter type inferred from written
 # arguments. Method defaults see the receiver and earlier parameter slots.
 
-fn mirror[T: Copy](value: T, other: T = value) -> T:
+[T: needs Copy]
+fn mirror(value: T, other: T = value) -> T:
     return other
 
 struct Meter:
     total: int
 
 extend Meter:
-    fn add(mut self, delta: int = self.total, twice: int = delta * 2):
-        self.total += twice
+    fn add(delta: int = this.total, twice: int = delta * 2):
+        this.total += twice
 
 fn main():
     println(mirror(7))

@@ -13,7 +13,7 @@
 
 from std.core import NonZero
 
-fn describe(o: Option[NonZero[i64]]) -> str:
+fn describe(o: Option[NonZero[i64]]) -> StrView:
     match o:
         Some(_):
             return "some"

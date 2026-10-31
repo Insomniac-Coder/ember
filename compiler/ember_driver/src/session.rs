@@ -287,17 +287,30 @@ impl Analysis {
     /// `fn name(a: T, …) -> R`, as checked.
     fn signature(&self, def: hir::DefId) -> String {
         let Some(function) = self.program.functions.iter().find(|f| f.def == def) else { return String::new() };
+        // As the first line is written: a method does not list its object, and one it takes
+        // over says `owns this` after its parameters (`[FN-4]`); a mode is a word before a name.
+        let mut owns_this = "";
         let params: Vec<String> = function
             .params
             .iter()
-            .map(|param| {
+            .filter_map(|param| {
                 let local = &function.locals[param.local.0 as usize];
+                if local.name.is_some_and(|name| name.is("self")) {
+                    if param.mode == hir::Mode::Owned {
+                        owns_this = " owns this";
+                    }
+                    return None;
+                }
                 let name = local.name.map_or_else(|| "_".to_string(), |name| name.to_string());
-                format!("{name}: {}", self.types.display(local.ty))
+                Some(match (param.mode, self.types.kind(local.ty)) {
+                    (hir::Mode::Mut, &TyKind::Ref { mutable: true, inner }) => format!("ref mut {name}: {}", self.types.display(inner)),
+                    (hir::Mode::Owned, _) => format!("owns {name}: {}", self.types.display(local.ty)),
+                    _ => format!("{name}: {}", self.types.display(local.ty)),
+                })
             })
             .collect();
         let ret = if matches!(self.types.kind(function.ret), TyKind::Void) { String::new() } else { format!(" -> {}", self.types.display(function.ret)) };
-        format!("fn {}({}){ret}", function.name, params.join(", "))
+        format!("fn {}({}){owns_this}{ret}", function.name, params.join(", "))
     }
 
     /// The type of the expression that ends at `end` (the one before a `.`), the widest such.
@@ -451,7 +464,6 @@ fn check(modules: &[ember_typeck::LoadedModule], types: &mut TypeTable, common: 
         common,
         sink,
         crate::overflow_policy(ember_build::Profile::Debug),
-        false,
         true,
         &ember_typeck::ComptimeAnswers::new(),
         None,

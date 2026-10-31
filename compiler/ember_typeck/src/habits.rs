@@ -568,7 +568,7 @@ impl Checker<'_> {
     /// that does not grow, and text grows in a `String`; the local is declared one, which a literal
     /// initialises (`[TXT-9]`).
     pub(crate) fn growing_a_str(&self, place: &Expr, diagnostic: Diagnostic) -> Diagnostic {
-        let diagnostic = diagnostic.habit(Habit::P26).note("a `str` is borrowed text and does not grow; `+=` appends to a `String` [TXT-11]");
+        let diagnostic = diagnostic.habit(Habit::P26).note("a `StrView` is borrowed text and does not grow; `+=` appends to a `String` [TXT-11]");
         if let ExprKind::Local(id) = place.kind
             && self.plain_declared.contains(&id)
             && let Some(local) = self.locals.get(id.0 as usize)
@@ -612,7 +612,7 @@ impl Checker<'_> {
         if string && found == self.common.str_ {
             return diagnostic
                 .habit(Habit::P26)
-                .note("a `str` value is borrowed text; a `String` owns its text, so keeping one copies it [TXT-9]")
+                .note("a `StrView` value is borrowed text; a `String` owns its text, so keeping one copies it [TXT-9]")
                 .suggest_edits("make a `String` of it: `.to_string()`", suffix_edits(expr.span, operand, ".to_string()"));
         }
         if (string || expected == self.common.str_) && matches!(self.types.kind(found), TyKind::Char) {

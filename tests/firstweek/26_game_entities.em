@@ -5,55 +5,55 @@ open class Entity:
     pub(read) health: int
     attack: int
 
-    fn init(self, owned name: String, health: int, attack: int):
-        self.name = name
-        self.health = health
-        self.attack = attack
+    fn init(owns name: String, health: int, attack: int):
+        this.name = name
+        this.health = health
+        this.attack = attack
 
-    fn alive(self) -> bool:
-        return self.health > 0
+    fn alive() -> bool:
+        return this.health > 0
 
-    fn take_damage(self, amount: int):
-        self.health = max(self.health - amount, 0)
-        println(f"    {self.name} takes {amount} damage ({self.health} left)")
+    fn take_damage(amount: int):
+        this.health = max(this.health - amount, 0)
+        println(f"    {this.name} takes {amount} damage ({this.health} left)")
 
-    virtual fn act(self, target: Entity):
-        target.take_damage(self.attack)
+    virtual fn act(target: Entity):
+        target.take_damage(this.attack)
 
-    virtual fn describe(self) -> String:
-        return f"{self.name} ({self.health} hp)"
+    virtual fn describe() -> String:
+        return f"{this.name} ({this.health} hp)"
 
 class Goblin(Entity):
-    override fn act(self, target: Entity):
-        println(f"  {self.name} stabs wildly")
-        target.take_damage(self.attack)
+    override fn act(target: Entity):
+        println(f"  {this.name} stabs wildly")
+        target.take_damage(this.attack)
 
 class Troll(Entity):
     resting: bool = False
 
-    override fn act(self, target: Entity):
-        if self.resting:
-            println(f"  {self.name} is catching its breath")
-            self.resting = False
+    override fn act(target: Entity):
+        if this.resting:
+            println(f"  {this.name} is catching its breath")
+            this.resting = False
             return
-        println(f"  {self.name} swings a club")
-        target.take_damage(self.attack * 2)
-        self.resting = True
+        println(f"  {this.name} swings a club")
+        target.take_damage(this.attack * 2)
+        this.resting = True
 
 class Hero(Entity):
     potions: int = 2
 
-    override fn act(self, target: Entity):
-        if self.health < 15 and self.potions > 0:
-            self.potions -= 1
-            self.health += 20
-            println(f"  {self.name} drinks a potion ({self.potions} left)")
+    override fn act(target: Entity):
+        if this.health < 15 and this.potions > 0:
+            this.potions -= 1
+            this.health += 20
+            println(f"  {this.name} drinks a potion ({this.potions} left)")
         else:
-            println(f"  {self.name} strikes {target.name}")
-            target.take_damage(self.attack)
+            println(f"  {this.name} strikes {target.name}")
+            target.take_damage(this.attack)
 
-    override fn describe(self) -> String:
-        return f"{self.name} the hero ({self.health} hp, {self.potions} potions)"
+    override fn describe() -> String:
+        return f"{this.name} the hero ({this.health} hp, {this.potions} potions)"
 
 fn main():
     hero = Hero("Ayla", 40, 7)

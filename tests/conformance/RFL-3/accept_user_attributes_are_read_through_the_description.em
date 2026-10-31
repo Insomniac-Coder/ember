@@ -16,7 +16,7 @@ struct Range:
 
 @attribute
 struct Label:
-    text: str
+    text: StrView
 
 @attribute
 struct Tag:

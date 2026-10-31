@@ -9,12 +9,12 @@ enum Kind:
 class Holder:
     value: i32
 
-    fn init(mut self, kind: Kind):
+    fn init(kind: Kind):
         match kind:
             Kind.Answer:
-                self.value = 42
+                this.value = 42
             Kind.Other:
-                self.value = 0
+                this.value = 0
 
 fn main():
     holder = Holder(Kind.Answer)

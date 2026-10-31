@@ -16,7 +16,7 @@
 fn make() -> Map[String, int]:
     return {"b": 2, "a": 1}
 
-fn find(want: str) -> bool:
+fn find(want: StrView) -> bool:
     for k in make():
         if k == want:
             return true

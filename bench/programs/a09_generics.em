@@ -1,4 +1,5 @@
-fn larger[T: Ord](a: T, b: T) -> T:
+[T: needs Ord]
+fn larger(a: T, b: T) -> T:
     if a > b:
         return a
     return b

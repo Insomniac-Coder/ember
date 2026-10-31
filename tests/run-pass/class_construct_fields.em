@@ -7,8 +7,8 @@ class Point:
     x: i32
     y: i32
 
-    fn sum(self) -> i32:
-        return self.x + self.y
+    fn sum() -> i32:
+        return this.x + this.y
 
 fn main():
     point = Point(19, 23)

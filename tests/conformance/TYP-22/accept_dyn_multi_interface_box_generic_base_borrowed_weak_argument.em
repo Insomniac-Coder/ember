@@ -14,36 +14,38 @@
 # concrete class inherits its state from a generic base. The base-typed payload
 # remains shared by both ordered interface slots.
 interface Observe:
-    fn observe(self, weak: Weak[Shared[Token]]) -> i32
+    fn observe(weak: Weak[Shared[Token]]) -> i32
 
 interface Bump:
-    fn bump(mut self) -> i32
+    fn bump() -> i32
 
 struct Token:
     value: i32
 
-open class Base[T]:
+[T]
+open class Base:
     marker: T
     count: i32
 
-    fn init(mut self, marker: T):
-        self.marker = marker
-        self.count = 0
+    fn init(marker: T):
+        this.marker = marker
+        this.count = 0
 
-class Holder[T](Base[T]) implements Observe, Bump:
-    fn init(mut self, marker: T):
+[T]
+class Holder(Base[T]) implements Observe, Bump:
+    fn init(marker: T):
         super.init(marker)
 
-    fn observe(self, weak: Weak[Shared[Token]]) -> i32:
+    fn observe(weak: Weak[Shared[Token]]) -> i32:
         match weak.upgrade():
             Some(owner):
                 return owner.get().value
             None:
                 return 0
 
-    fn bump(mut self) -> i32:
-        self.count = self.count + 1
-        return self.count
+    fn bump() -> i32:
+        this.count = this.count + 1
+        return this.count
 
 fn main():
     strong = Shared(Token(7))

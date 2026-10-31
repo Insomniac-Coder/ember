@@ -2,16 +2,19 @@
 #$ rules: TYP-17, TYP-18, TYP-22, MONO-1
 
 interface Identity:
-    fn keep[T](self, value: T) -> T
+    [T]
+    fn keep(value: T) -> T
 
 struct IdentityImpl:
     marker: i32
 
 extend IdentityImpl implements Identity:
-    fn keep[U](self, value: U) -> U:
+    [U]
+    fn keep(value: U) -> U:
         return value
 
-fn through_identity[I: Identity, T](identity: I, value: T) -> T:
+[I: needs Identity, T]
+fn through_identity(identity: I, value: T) -> T:
     return identity.keep(value)
 
 fn main():

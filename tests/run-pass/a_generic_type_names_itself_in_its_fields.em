@@ -9,7 +9,8 @@
 ## fields were resolved. It is registered first now, and an instance named meanwhile is filled once
 ## the declaration is whole.
 
-struct Node[T]:
+[T]
+struct Node:
     value: T
     next: Option[Box[Node[T]]]
 
@@ -17,13 +18,14 @@ enum List[T]:
     Nil
     Cons(T, Box[List[T]])
 
-class Tree[T]:
+[T]
+class Tree:
     value: T
     kids: Array[Weak[Tree[T]]]
 
-    fn init(mut self, value: T):
-        self.value = value
-        self.kids = Array[Weak[Tree[T]]]()
+    fn init(value: T):
+        this.value = value
+        this.kids = Array[Weak[Tree[T]]]()
 
 fn node_sum(n: Node[int]) -> int:
     match n.next:

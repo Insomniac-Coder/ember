@@ -11,14 +11,14 @@
 # and each of those only at `i` plus a constant; and no such place handed to a call, which might
 # write any element of it.
 
-fn leaves(mut xs: MutSpan[int]):
+fn leaves(ref mut xs: MutSpan[int]):
     @parallel
     for i in 0..xs.len():
         if xs[i] < 0:
             break
         xs[i] = 1
 
-fn gives_up(mut xs: MutSpan[int]) -> int:
+fn gives_up(ref mut xs: MutSpan[int]) -> int:
     @parallel
     for i in 0..xs.len():
         if xs[i] < 0:
@@ -33,21 +33,21 @@ fn counts(xs: Span[int]) -> int:
         seen += xs[i]
     return seen
 
-fn grows(mut xs: Array[int]):
+fn grows(ref mut xs: Array[int]):
     @parallel
     for i in 0..xs.len():
         xs[i] = 2
 
-fn scatters(mut xs: MutSpan[int], at: Span[int]):
+fn scatters(ref mut xs: MutSpan[int], at: Span[int]):
     @parallel
     for i in 0..xs.len():
         xs[at[i]] = 2
 
 @noinline
-fn fill(mut xs: MutSpan[int]):
+fn fill(ref mut xs: MutSpan[int]):
     xs[0] = 1
 
-fn hands_off(mut xs: MutSpan[int]):
+fn hands_off(ref mut xs: MutSpan[int]):
     @parallel
     for i in 0..xs.len():
         fill(xs)

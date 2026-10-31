@@ -5,13 +5,13 @@
 ## share: a class that is not `@sync` holds one and mutates through it.
 
 class Log:
-    lines: RefCell[Array[str]]
+    lines: RefCell[Array[StrView]]
 
-    fn init(mut self):
-        self.lines = RefCell(Array[str]())
+    fn init():
+        this.lines = RefCell(Array[StrView]())
 
-    fn add(self, line: str):
-        with lines = self.lines.borrow_mut():
+    fn add(line: StrView):
+        with lines = this.lines.borrow_mut():
             lines.push(line)
 
 fn main():

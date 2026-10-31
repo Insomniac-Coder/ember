@@ -40,5 +40,5 @@ fn main():
     n.volatile += 1
     println(n.volatile, n.register)
     o: Option[Settings] = Some(t)
-    if Some(v) = o:
+    if o exists as v:
         println(v.inline, Größe(7).maß)

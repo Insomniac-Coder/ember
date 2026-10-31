@@ -21,11 +21,11 @@ struct Count:
 extend Count implements Iterator:
     type Item = int
 
-    fn next(mut self) -> Option[int]:
-        if self.n >= self.limit:
+    fn next() -> Option[int]:
+        if this.n >= this.limit:
             return None
-        self.n += 1
-        return Some(self.n)
+        this.n += 1
+        return Some(this.n)
 
 fn main():
     println(Count(0, 5).max(), Count(0, 5).min(), Count(0, 0).max())

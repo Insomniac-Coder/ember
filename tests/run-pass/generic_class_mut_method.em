@@ -3,12 +3,13 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 
-class Counter[T]:
+[T]
+class Counter:
     value: i32
     marker: T
 
-    fn bump(mut self):
-        self.value = self.value + 1
+    fn bump():
+        this.value = this.value + 1
 
 fn main():
     counter = Counter[bool](41, false)

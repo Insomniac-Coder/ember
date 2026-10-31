@@ -9,7 +9,7 @@
 struct Guard:
     id: i32
 
-    fn drop(mut self):
+    fn drop():
         println("dropping")
         panic("a second panic")
 

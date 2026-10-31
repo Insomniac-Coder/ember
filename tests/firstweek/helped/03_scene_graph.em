@@ -8,29 +8,29 @@ class Node:
     children: Array[Node] = []
     parent: Option[Weak[Node]] = None
 
-    fn init(self, owned name: String, local: Vec3):
-        self.name = name
-        self.local = local
+    fn init(owns name: String, local: Vec3):
+        this.name = name
+        this.local = local
 
-    fn add_child(self, child: Node):
-        child.parent = Some(Weak(self))
-        self.children.push(child)
+    fn add_child(child: Node):
+        child.parent = Some(Weak(this))
+        this.children.push(child)
 
-    fn world_position(self) -> Vec3:
-        pos = self.local
-        current = self.parent
-        while Some(weak) = current:
-            if Some(p) = weak.upgrade():
+    fn world_position() -> Vec3:
+        pos = this.local
+        current = this.parent
+        while current exists as weak:
+            if weak.upgrade() exists as p:
                 pos = pos + p.local
                 current = p.parent
             else:
                 break
         return pos
 
-    fn depth(self) -> int:
+    fn depth() -> int:
         d = 0
-        current = self.parent
-        while Some(weak) = current:
+        current = this.parent
+        while current exists as weak:
             match weak.upgrade():
                 Some(p):
                     d += 1
@@ -39,11 +39,11 @@ class Node:
                     break
         return d
 
-    fn path(self) -> String:
-        if Some(weak) = self.parent:
-            if Some(p) = weak.upgrade():
-                return f"{p.path()}/{self.name}"
-        return self.name.clone()
+    fn path() -> String:
+        if this.parent exists as weak:
+            if weak.upgrade() exists as p:
+                return f"{p.path()}/{this.name}"
+        return this.name.clone()
 
 fn print_tree(node: Node):
     indent = "  ".repeat(node.depth())
@@ -53,11 +53,11 @@ fn print_tree(node: Node):
     for child in node.children:
         print_tree(child)
 
-fn find(node: Node, name: str) -> Option[Node]:
+fn find(node: Node, name: StrView) -> Option[Node]:
     if node.name == name:
         return Some(node)
     for child in node.children:
-        if Some(found) = find(child, name):
+        if find(child, name) exists as found:
             return Some(found)
     return None
 
@@ -81,12 +81,12 @@ fn main():
     print_tree(root)
     println(f"{count_nodes(root)} nodes")
 
-    if Some(n) = find(root, "chimney"):
+    if find(root, "chimney") exists as n:
         println(f"path of chimney: {n.path()}")
 
     # move the house: the roof and the chimney move with it
     house.local = house.local + Vec3(0, 0, 10)
-    if Some(n) = find(root, "chimney"):
+    if find(root, "chimney") exists as n:
         w = n.world_position()
         println(f"chimney after the move: ({w.x}, {w.y}, {w.z})")
 

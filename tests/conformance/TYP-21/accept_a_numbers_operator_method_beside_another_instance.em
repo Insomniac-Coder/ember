@@ -13,8 +13,8 @@ struct Steps:
 extend i64 implements Rem[Steps]:
     type Output = i64
 
-    fn rem(self, s: Steps) -> i64:
-        return self % s.n
+    fn rem(s: Steps) -> i64:
+        return this % s.n
 
 fn main():
     x: i64 = 7

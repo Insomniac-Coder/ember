@@ -8,13 +8,13 @@
 # `[OBJ-2]` keeps this erased class handle one pointer wide. `[DSP-3]` then
 # obtains Render's concrete implementation from Pixel's type information.
 interface Render:
-    fn render(self) -> i32
+    fn render() -> i32
 
 class Pixel implements Render:
     value: i32
 
-    fn render(self) -> i32:
-        return self.value
+    fn render() -> i32:
+        return this.value
 
 fn draw(value: Render) -> i32:
     return value.render()

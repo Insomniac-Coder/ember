@@ -7,20 +7,23 @@
 #$ stdout: 1
 #$ assert-c: contains(ember_downcast)
 
-open class Base[T]:
+[T]
+open class Base:
     value: i32
     marker: T
 
-    fn init(mut self, value: i32, marker: T):
-        self.value = value
-        self.marker = marker
+    fn init(value: i32, marker: T):
+        this.value = value
+        this.marker = marker
 
-class Child[T](Base[T]):
-    fn init(mut self, value: i32, marker: T):
+[T]
+class Child(Base[T]):
+    fn init(value: i32, marker: T):
         super.init(value, marker)
 
-class Other[T](Base[T]):
-    fn init(mut self, value: i32, marker: T):
+[T]
+class Other(Base[T]):
+    fn init(value: i32, marker: T):
         super.init(value, marker)
 
 fn main():

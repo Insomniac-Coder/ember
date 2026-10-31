@@ -63,7 +63,8 @@ pub fn shape_size(s: Shape) -> int:
         Nothing:
             return 0
 
-pub fn larger[T: Ord](a: T, b: T) -> T:
+[T: needs Ord]
+pub fn larger(a: T, b: T) -> T:
     if a > b:
         return a
     return b
@@ -99,14 +100,16 @@ pub fn fold_{n}(s: S{n}, rounds: int) -> int:
 def generic_block(index, block):
     """About 20 lines of generic code: a generic struct, its methods and a bounded function."""
     n = f"{index}_{block}"
-    return f"""pub struct Pair{n}[T: Copy]:
+    return f"""[T: needs Copy]
+pub struct Pair{n}:
     pub first: T
     pub second: T
 
-    pub fn swapped(self) -> Pair{n}[T]:
-        return Pair{n}[T](self.second, self.first)
+    pub fn swapped() -> Pair{n}[T]:
+        return Pair{n}[T](this.second, this.first)
 
-pub fn best_{n}[T: Ord + Copy](items: Array[T], start: T) -> T:
+[T: needs (Ord, Copy)]
+pub fn best_{n}(items: Array[T], start: T) -> T:
     best = start
     for x in items:
         best = larger(best, x)

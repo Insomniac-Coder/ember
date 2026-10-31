@@ -7,13 +7,13 @@
 #$ assert-c: !contains(ember_retain)
 
 interface Render:
-    fn render(self) -> i32
+    fn render() -> i32
 
 class Pixel implements Render:
     value: i32
 
-    fn render(self) -> i32:
-        return self.value
+    fn render() -> i32:
+        return this.value
 
 fn render_it(value: ref dyn Render) -> i32:
     return value.render()

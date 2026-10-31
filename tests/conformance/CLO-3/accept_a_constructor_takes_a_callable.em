@@ -11,8 +11,8 @@ fn neg(x: int) -> int:
 class B:
     n: int
 
-    fn init(mut self, f: fn(int) -> int, x: int):
-        self.n = f(x)
+    fn init(f: fn(int) -> int, x: int):
+        this.n = f(x)
 
 fn main():
     k = 10

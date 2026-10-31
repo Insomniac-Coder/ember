@@ -346,6 +346,9 @@ pub struct FnDecl {
     pub generics: Vec<GenericParam>,
     pub params: Vec<Param>,
     pub ret: Option<TypeExpr>,
+    /// `[GRM-41]`, `[LT-1a]` — `-> T from name`: the parameter, or the field of `this` written bare,
+    /// that a returned view points into.
+    pub from: Option<Ident>,
     pub where_clause: Vec<Bound>,
     /// `None` inside an `interface` or `extern` block.
     pub body: Option<Block>,
@@ -373,6 +376,9 @@ pub enum Mode {
 pub struct Param {
     pub id: NodeId,
     pub mode: Mode,
+    /// `[FN-1]` — `const ref mut`: a `Mut` parameter that is never given another ref (`[BRW-14]`).
+    /// Nothing gives a parameter another ref yet (A2-8), so it is checked as `ref mut` is.
+    pub is_const: bool,
     pub kind: ParamKind,
     pub default: Option<Expr>,
     pub span: Span,
@@ -380,8 +386,10 @@ pub struct Param {
 
 #[derive(Clone, Debug)]
 pub enum ParamKind {
-    /// `self`, `mut self`, `owned self`, or `self: Box[Self]`.
-    Receiver { ty: Option<TypeExpr> },
+    /// `self`, `mut self`, `owned self`, or `self: Box[Self]`; or (`implicit`) the object of a
+    /// method that does not list it (`[FN-4]`): `owns this` after the parameters (`Owned`), else one
+    /// whose mode is worked out from the body (`Mut` here, `[EXC-15]`, `M1-plan.md`).
+    Receiver { ty: Option<TypeExpr>, implicit: bool },
     Named { name: Ident, ty: TypeExpr },
 }
 
@@ -582,6 +590,8 @@ pub struct TypeExpr {
 #[derive(Clone, Debug)]
 pub struct CallableTypeParam {
     pub mode: Mode,
+    /// `[FN-6]` — `fn(const ref mut T)`: see `Param::is_const`.
+    pub is_const: bool,
     pub ty: TypeExpr,
     pub span: Span,
 }
@@ -694,11 +704,12 @@ pub enum ElseBranch {
     If(IfStmt),
 }
 
-/// `if cond:` or the pattern form `if Some(x) = opt:`.
+/// `if cond:` or the pattern form `if Ok(x) = r:`.
 #[derive(Clone, Debug)]
 pub enum Condition {
     Expr(Expr),
-    Pattern { pattern: Pattern, value: Expr },
+    /// `exists`: written `value exists as name` (`[GRM-44]`), whose pattern is `Some(name)`.
+    Pattern { pattern: Pattern, value: Expr, exists: bool },
 }
 
 #[derive(Clone, Debug)]
@@ -809,6 +820,8 @@ pub enum ExprKind {
     /// `ref place` / `ref mut place`, needed only when initialising a
     /// `ref`-typed local or a view struct field.
     RefOf { mutable: bool, place: Box<Expr> },
+    /// `[GRM-43]`, `[OWN-8]` — `copy of e`, a copy of the program's own made with `Clone`.
+    CopyOf(Box<Expr>),
     Paren(Box<Expr>),
     /// `[GRM-16]` — `return e`, `break label`, `continue label`. Type `!`,
     /// parsed at the lowest precedence and never as an atom, so a jump is
@@ -1049,6 +1062,9 @@ pub enum PatternKind {
     /// `[GRM-12]` — an identifier resolves to a unit variant or `const` if one
     /// is in scope, and is a fresh binding otherwise. Resolution decides.
     Bind { name: Ident, by_ref: bool, mutable: bool, sub: Option<Box<Pattern>> },
+    /// `[GRM-44]`, `[GRM-13]` — `copy of v`: a copy of the program's own of the part matched, as
+    /// `copy of` before a value makes one (`[OWN-8]`).
+    CopyOf { name: Ident },
     Path { segments: Vec<Ident> },
     /// `Shape.Circle(r)` / `Point(x=1, y=2)`.
     Constructor { path: Vec<Ident>, fields: Vec<FieldPattern>, has_rest: bool },

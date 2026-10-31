@@ -13,16 +13,16 @@
 # A fresh class owner transfers through its erased temporary into the list.
 # No count pair is needed, but the list still owns every object until clear.
 interface Value:
-    fn value(self) -> i32
+    fn value() -> i32
 
 class Token implements Value:
     id: i32
 
-    fn value(self) -> i32:
-        return self.id
+    fn value() -> i32:
+        return this.id
 
-    fn drop(mut self):
-        println("drop", self.id)
+    fn drop():
+        println("drop", this.id)
 
 fn main():
     tokens: Array[Value] = Array[Value]()

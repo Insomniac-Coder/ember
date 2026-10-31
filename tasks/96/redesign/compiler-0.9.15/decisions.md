@@ -475,6 +475,18 @@ backend, Microsoft's linker forced, `EMBER_CACHE=target/ci-cache`, relative, so 
 - D-938: the C warning sweeps had swept nothing since the LLVM default: `--emit c` is the C backend's.
 - D-939: the reload benchmark failed, the runtime beside the running program replaced from another cache (the host linked from the test's folder, a relative cache): compared by its inputs' key now, not its bytes.
 
+### Rulings made on autopilot, night of 2026-10-31 (lead, the owner asleep; for the morning)
+
+The owner, evening: build `[LT-22]` (A2-1's other half) in M1 so every `@borrows` can be refused ("building
+the dependencies first ... so build that too"); at night: "run autonomously ... ask for ODR updates" in the
+morning. Only language decisions are listed; each is put to the owner one at a time, with the code.
+
+| # | Rule | Ruling | Why |
+|---|---|---|---|
+| N26 | LT-22, LT-1, LT-34 | A result of a view type (`[TYP-34]`: a struct, enum or tuple holding views, `Option[StrView]` among them) points where the body's summary says, within the first line; a plain view result (`StrView`, `Span[T]`, `ref T`) is the first line's rule at the caller. So `Words.next() -> Option[StrView]` (a non-`Copy` struct holding `rest: StrView`) gives items that point into the text `rest` views, and a second `w.next()` while the first item lives compiles (`LT-22/accept_items_of_a_non_copy_iterator_point_into_what_it_reads`); the same method returning a plain `StrView` keeps `w` viewed (`LT-1/reject_a_view_a_non_copy_object_returns_keeps_it_viewed`, E3025). | `[LT-22]` says it of "a function returning a view type"; `[LT-1]` rule 3 "may view more than the function needs", so a plain view does not read the body. Without the summary for view types, std's adapters stop compiling once `@borrows(self.a, self.b)` is gone: `Filter.next ... from inner` over `Nested` or `Chain` (whose `next` names no field) is `E3062` (GRM-38, CTL-1). `gap/02` had planned E3021 for the `Option` iterator; the spec's words decide it the other way. |
+| N27 | LT-1, LT-22 | A method whose body returns a view of a source parameter other than `this` compiles; its callers then view `this` and every source parameter (rule 3). Only what `from` does not allow is `E3062`. | `[LT-22]`: "where the summary would need more than the first line allows, the result points into every source parameter (`[LT-1]` rule 3)". `[LT-1]`'s "a returned view that points into any other parameter is refused" read as any parameter that is not a source (a `Copy` value, an `owns` one). `gap/02` had planned `accept_an_owned_receiver_is_under_rule_3` as E3062 without `from a`; `[LT-22]`'s fallback is the later, more specific sentence. |
+| N28 | LT-1, LT-1a | A result that points into one of two `ref mut` parameters of a `Copy` type (`fn choose_mut(ref mut first: Shared[Counter], ref mut second: Shared[Counter], ...) -> ref mut Counter`, 0.9.10's `@borrows(first, second)`) has no 0.9.15 first line: `from` names one, and such parameters are not source parameters, so rule 3 leaves them out: `E3062`. HEAP-5's test now chooses in the caller (`open(first) if choose_first else open(second)`, each `-> ref mut Counter from owner`). | `[LT-1]` says it in so many words ("`from` is needed ... to let the result point into a `ref mut` parameter of a `Copy` type"; "a `Copy` parameter that is not a view is not a source parameter"). Asked because 0.9.10 could write it and 0.9.15 cannot: the other way is to make a `ref mut` parameter a source of rule 3 whatever its type. |
+
 ### `a10_recursion` on the LLVM backend, 2026-10-30 (owner: "yes build it")
 
 The LLVM backend lost `a10_recursion` (1.71x C): not the backend's doing. The C backend built by clang

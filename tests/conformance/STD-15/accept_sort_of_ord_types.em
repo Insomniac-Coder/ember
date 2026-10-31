@@ -15,24 +15,24 @@ struct Card:
     suit: String
 
 extend Card implements Eq:
-    fn eq(self, other: Self) -> bool:
-        return self.rank == other.rank
+    fn eq(other: Self) -> bool:
+        return this.rank == other.rank
 
 extend Card implements Ord:
-    fn cmp(self, other: Self) -> Ordering:
-        return self.rank.cmp(other.rank)
+    fn cmp(other: Self) -> Ordering:
+        return this.rank.cmp(other.rank)
 
 @derive(Copy)
 struct P:
     x: int
 
 extend P implements Eq:
-    fn eq(self, other: Self) -> bool:
-        return self.x == other.x
+    fn eq(other: Self) -> bool:
+        return this.x == other.x
 
 extend P implements Ord:
-    fn cmp(self, other: Self) -> Ordering:
-        return self.x.cmp(other.x)
+    fn cmp(other: Self) -> Ordering:
+        return this.x.cmp(other.x)
 
 fn main():
     cards = [Card(3, String.from("h")), Card(1, String.from("s")), Card(3, String.from("c")), Card(2, String.from("d"))]

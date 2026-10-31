@@ -5,7 +5,7 @@
 pub import cpp "../stages.hpp" as stages
 
 pub open class Timed(stages.Stage):
-    override fn label(self) -> i32:
+    override fn label() -> i32:
         return 5
 
 pub type Labelled = Timed

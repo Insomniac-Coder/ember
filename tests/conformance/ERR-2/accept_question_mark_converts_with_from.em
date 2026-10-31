@@ -19,7 +19,7 @@ enum HighError:
     Other
 
 extend HighError implements From[LowError]:
-    fn from(owned value: LowError) -> HighError:
+    static fn from(owns value: LowError) -> HighError:
         return HighError.Low(value)
 
 fn low(n: int) -> Result[int, LowError]:
@@ -35,11 +35,12 @@ fn same(n: int) -> Result[int, LowError]:
     v = low(n)?
     return Ok(v)
 
-fn generic[E, F: From[E]](owned r: Result[int, E]) -> Result[int, F]:
+[E, F: needs From[E]]
+fn generic(owns r: Result[int, E]) -> Result[int, F]:
     v = r?
     return Ok(v)
 
-fn report(r: Result[int, HighError], label: str):
+fn report(r: Result[int, HighError], label: StrView):
     match r:
         Ok(v):
             println(v)

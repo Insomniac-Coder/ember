@@ -10,24 +10,25 @@
 
 interface Source:
     type Item
-    fn get(mut self) -> Item
+    fn get() -> Item
 
-    fn wrapped(owned self) -> Wrap[Self, Item]:
-        return Wrap(self)
+    fn wrapped() owns this -> Wrap[Self, Item]:
+        return Wrap(this)
 
-struct Wrap[S, T]:
+[S, T]
+struct Wrap:
     s: S
 
-extend[T, S: Source[Item = T]] Wrap[S, T]:
-    fn first(mut self) -> T:
-        return self.s.get()
+extend[T, S: needs Source[Item = T]] Wrap[S, T]:
+    fn first() -> T:
+        return this.s.get()
 
 struct Ints implements Source:
     n: int
     type Item = int
 
-    fn get(mut self) -> int:
-        return self.n
+    fn get() -> int:
+        return this.n
 
 fn main():
     w = Ints(n = 3).wrapped()

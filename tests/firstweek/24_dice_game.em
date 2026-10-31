@@ -5,9 +5,9 @@ const TARGET: int = 100
 struct Dice:
     seed: int
 
-    fn roll(mut self) -> int:
-        self.seed = (self.seed * 1103515245 + 12345) % 2147483648
-        return (self.seed // 65536) % 6 + 1
+    fn roll() -> int:
+        this.seed = (this.seed * 1103515245 + 12345) % 2147483648
+        return (this.seed // 65536) % 6 + 1
 
 enum Strategy:
     HoldAt(limit: int)
@@ -19,16 +19,16 @@ class Player:
     score: int = 0
     turns: int = 0
 
-    fn init(self, owned name: String, strategy: Strategy):
-        self.name = name
-        self.strategy = strategy
+    fn init(owns name: String, strategy: Strategy):
+        this.name = name
+        this.strategy = strategy
 
-    fn wants_to_roll(self, turn_total: int, rolls: int) -> bool:
-        return match self.strategy:
+    fn wants_to_roll(turn_total: int, rolls: int) -> bool:
+        return match this.strategy:
             HoldAt(limit) => turn_total < limit
             RollTimes(count) => rolls < count
 
-fn play_turn(player: Player, mut dice: Dice) -> int:
+fn play_turn(player: Player, ref mut dice: Dice) -> int:
     turn_total = 0
     rolls = 0
     while player.wants_to_roll(turn_total, rolls):
@@ -64,7 +64,7 @@ fn main():
 
     for p in players:
         println(f"{p.name}: {p.score} points in {p.turns} turns")
-    if Some(w) = winner:
+    if winner exists as w:
         println(f"{w.name} wins!")
     else:
         println("no winner after 50 rounds")

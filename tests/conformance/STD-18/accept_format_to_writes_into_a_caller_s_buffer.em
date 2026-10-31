@@ -19,24 +19,24 @@ struct Point:
     y: int
 
 extend Point implements Display:
-    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
-        return f.write_str(f"({self.x}, {self.y})")
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
+        return f.write_str(f"({this.x}, {this.y})")
 
 struct Cell:
     id: int
     value: float
 
 extend Cell implements Display:
-    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
         bytes = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]
-        match format_to(bytes.as_mut_span(), "[", self.id, "]", sep = ""):
+        match format_to(bytes.as_mut_span(), "[", this.id, "]", sep = ""):
             Ok(label):
-                return f.write_str(f"{label}: {self.value}")
+                return f.write_str(f"{label}: {this.value}")
             Err(error):
                 return Err(error)
 
 @noalloc
-fn label(buf: MutSpan[u8], n: int, ratio: float) -> Result[str, FmtError]:
+fn label(buf: MutSpan[u8], n: int, ratio: float) -> Result[StrView, FmtError]:
     return format_to(buf, "n =", n, "ratio", ratio, end = "!")
 
 fn zeros(n: int) -> Array[u8]:

@@ -8,24 +8,27 @@
 # Two concrete classes implement `area`, so a call through `Shape[bool]` reads
 # the object's table ([DSP-2]); with one, it would be a direct call ([DSP-5]).
 
-abstract class Shape[T]:
-    virtual fn area(self) -> i32
+[T]
+abstract class Shape:
+    virtual fn area() -> i32
 
-    fn init(mut self):
+    fn init():
         pass
 
-class Square[T](Shape[T]):
-    fn init(mut self):
+[T]
+class Square(Shape[T]):
+    fn init():
         super.init()
 
-    override fn area(self) -> i32:
+    override fn area() -> i32:
         return 42
 
-class Circle[T](Shape[T]):
-    fn init(mut self):
+[T]
+class Circle(Shape[T]):
+    fn init():
         super.init()
 
-    override fn area(self) -> i32:
+    override fn area() -> i32:
         return 7
 
 fn main():

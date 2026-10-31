@@ -12,8 +12,8 @@ struct Counter:
 class Holder:
     shared: Shared[Counter]
 
-    fn init(mut self):
-        self.shared = Shared(Counter(1))
+    fn init():
+        this.shared = Shared(Counter(1))
 
 fn main():
     h = Holder()

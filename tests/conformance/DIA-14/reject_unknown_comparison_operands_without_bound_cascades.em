@@ -6,16 +6,20 @@
 interface Holder:
     type Item
 
-fn direct_left[T](x: T) -> bool:
+[T]
+fn direct_left(x: T) -> bool:
     return absent_left < x    #$ error[E1010]: cannot find `absent_left`
 
-fn direct_right[T](x: T) -> bool:
+[T]
+fn direct_right(x: T) -> bool:
     return x == absent_right    #$ error[E1010]: cannot find `absent_right`
 
-fn projected_left[H: Holder](x: H.Item) -> bool:
+[H: needs Holder]
+fn projected_left(x: H.Item) -> bool:
     return absent_projected_left != x    #$ error[E1010]: cannot find `absent_projected_left`
 
-fn projected_right[H: Holder](x: H.Item) -> bool:
+[H: needs Holder]
+fn projected_right(x: H.Item) -> bool:
     return x >= absent_projected_right    #$ error[E1010]: cannot find `absent_projected_right`
 
 fn main():

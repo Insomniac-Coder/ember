@@ -7,7 +7,7 @@
 # Direct invocation moves the environment into `call_once`, so the Array has
 # one owner and is destroyed exactly once.
 
-fn consume(owned values: Array[i32]) -> i32:
+fn consume(owns values: Array[i32]) -> i32:
     return values[0]
 
 fn main():

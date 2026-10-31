@@ -9,9 +9,9 @@ class Node:
     next: Option[Node] = None    #$ warning[L3001]: potential reference cycle
     previous: Weak[Node] = Weak[Node].empty()
 
-    fn link(mut self):
-        self.next = Some(self)
-        self.previous = Weak(self)
+    fn link():
+        this.next = Some(this)
+        this.previous = Weak(this)
 
 fn main():
     node = Node()

@@ -19,7 +19,7 @@ class Stats:
     words: Atomic[int] = Atomic(0)
     tags: Mutex[Array[String]] = Mutex([])
 
-fn scan(stats: Stats, text: str):
+fn scan(stats: Stats, text: StrView):
     for w in text.split_whitespace():
         stats.words.fetch_add(1)
         if w.starts_with("#"):
@@ -33,7 +33,7 @@ fn sum_halves(xs: Span[int]) -> int:
         b = scope.spawn(fn() => right.iter().sum())
         return a.join() + b.join()
 
-fn add_to(mut s: MutSpan[int], n: int):
+fn add_to(ref mut s: MutSpan[int], n: int):
     s[0] += n
 
 fn total(s: Span[int]) -> int:

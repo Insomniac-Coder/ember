@@ -16,7 +16,7 @@ fn main():
     xs = [1, 2, 3]
     pair = xs.get_pair_mut(0, 1)
     xs.push(4) #$ error[E3022]
-    match owned pair:
+    match owns pair:
         Some((a, _)):
             a = 5
         None:

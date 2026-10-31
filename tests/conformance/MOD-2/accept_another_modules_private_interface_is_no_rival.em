@@ -10,18 +10,18 @@
 from support.methods import Meter
 
 interface Mine:
-    fn hidden(self) -> int
+    fn hidden() -> int
 
 extend Meter implements Mine:
-    fn hidden(self) -> int:
-        return self.value * 10
+    fn hidden() -> int:
+        return this.value * 10
 
 interface Next:
-    fn successor(self) -> int
+    fn successor() -> int
 
 extend int implements Next:
-    fn successor(self) -> int:
-        return self * 2
+    fn successor() -> int:
+        return this * 2
 
 fn main():
     m = Meter.make(7)

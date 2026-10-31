@@ -7,9 +7,9 @@ class Holder:
     saved: Token
 
 class Token:
-    fn drop(mut self):
+    fn drop():
         _holder = Holder(Token())
-        _holder.saved = self #$ error[E3016]: `self` escapes its own drop
+        _holder.saved = this #$ error[E3016]: `this` escapes its own `drop`
 
 fn main():
     _token = Token()

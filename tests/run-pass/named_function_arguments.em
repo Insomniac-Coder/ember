@@ -8,10 +8,11 @@
 fn encode(left: i32, right: i32) -> i32:
     return left * 10 + right
 
-fn choose[T](left: T, right: T) -> T:
+[T]
+fn choose(left: T, right: T) -> T:
     return left
 
-fn bump(mut value: i32) -> i32:
+fn bump(ref mut value: i32) -> i32:
     value = value + 1
     return value
 

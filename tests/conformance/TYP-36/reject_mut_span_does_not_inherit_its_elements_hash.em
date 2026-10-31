@@ -5,7 +5,8 @@
 
 from std.collections import Hash
 
-fn requires_hash[T: Hash](value: T):
+[T: needs Hash]
+fn requires_hash(value: T):
     pass
 
 fn main():

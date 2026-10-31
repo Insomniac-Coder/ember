@@ -9,7 +9,7 @@
 # Temporary receivers are also safe when all returned views are consumed in
 # that same source statement. Partition and get exercise other wrappers.
 
-fn separator(mut text: str) -> String:
+fn separator(ref mut text: StrView) -> String:
     println("separator")
     text = "changed"
     return ":"
@@ -18,7 +18,7 @@ fn make() -> String:
     return "é:left"
 
 fn main():
-    text: str = "old:text"
+    text: StrView = "old:text"
     result = text.split_once(separator(text))
     println(result, text)
     println(make().split_once(":"), make().partition(":"), make().get(0..2))

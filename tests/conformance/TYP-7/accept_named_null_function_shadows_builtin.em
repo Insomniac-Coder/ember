@@ -3,7 +3,8 @@
 #$ profiles: debug, development, release
 #$ stdout: 5
 
-fn null[T](x: i32) -> i32:
+[T]
+fn null(x: i32) -> i32:
     return x + 1
 
 fn main():

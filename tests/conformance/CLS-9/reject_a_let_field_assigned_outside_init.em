@@ -5,11 +5,11 @@
 class Ledger:
     let id: int
 
-    fn init(self, id: int):
-        self.id = id
+    fn init(id: int):
+        this.id = id
 
-    fn renumber(self, id: int):
-        self.id = id #$ error[E2104]: cannot assign to `let` field `Ledger.id` outside its `init`
+    fn renumber(id: int):
+        this.id = id #$ error[E2104]: cannot assign to `let` field `Ledger.id` outside its `init`
 
 fn main():
     l = Ledger(7)

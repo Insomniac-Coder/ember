@@ -60,5 +60,5 @@ fn main():
     defer_hook(Some(shout))
     println(run_deferred(9))
 
-fn release(owned token: Option[Retained[ForeignCallback]]):
+fn release(owns token: Option[Retained[ForeignCallback]]):
     pass

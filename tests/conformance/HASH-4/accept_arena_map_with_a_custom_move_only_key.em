@@ -7,18 +7,20 @@ struct Key:
     value: i32
 
 extend Key implements Eq:
-    fn eq(self, other: Self) -> bool:
-        return self.value == other.value
+    fn eq(other: Self) -> bool:
+        return this.value == other.value
 
 extend Key implements Hash:
-    fn hash[H: Hasher](self, mut h: H):
-        h.write_i32(self.value)
+    [H: needs Hasher]
+    fn hash(ref mut h: H):
+        h.write_i32(this.value)
 
-@borrows(arena)
-fn reserve_map[K: Eq + Hash, V](arena: Arena, capacity: usize) -> ArenaMap[K, V]:
+[K: needs (Eq, Hash), V]
+fn reserve_map(arena: Arena, capacity: usize) -> ArenaMap[K, V] from arena:
     return ArenaMap[K, V].with_capacity(arena, capacity)
 
-fn has_key[K: Eq + Hash, V](values: ArenaMap[K, V], key: K) -> bool:
+[K: needs (Eq, Hash), V]
+fn has_key(values: ArenaMap[K, V], key: K) -> bool:
     return values.contains_key(key)
 
 fn hash_value(key: Key) -> u64:

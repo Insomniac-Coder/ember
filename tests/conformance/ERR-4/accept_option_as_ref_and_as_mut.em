@@ -8,14 +8,15 @@
 # is, whatever its type (`[GRM-13]` binds a `Copy` payload by value), so a
 # `peek` over a held `Option[T]` is written in Ember.
 
-struct Peek[T]:
+[T]
+struct Peek:
     peeked: Option[T]
 
 extend[T] Peek[T]:
-    fn peek(mut self) -> Option[ref T]:
-        return self.peeked.as_ref()
+    fn peek() -> Option[ref T]:
+        return this.peeked.as_ref()
 
-fn add_one(mut o: Option[int]):
+fn add_one(ref mut o: Option[int]):
     match o.as_mut():
         Some(x):
             x += 1

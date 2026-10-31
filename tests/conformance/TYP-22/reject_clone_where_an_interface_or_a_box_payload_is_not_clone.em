@@ -5,22 +5,22 @@
 ## `Clone` is not `Clone`, nor is a `Box[T]` whose `T` is not, so a struct asking to derive it over
 ## such a field is refused too.
 
-interface Shape: Clone:
-    fn area(self) -> float
+interface Shape: needs Clone:
+    fn area() -> float
 
 interface Plain:
-    fn area(self) -> float
+    fn area() -> float
 
 @no_derive(Clone)
 struct Unique:
     id: int
 
 extend Unique implements Shape:  #$ error[E2040]: `Shape` requires `Clone`, which `Unique` does not implement
-    fn area(self) -> float:
+    fn area() -> float:
         return 0.0
 
 extend Unique implements Plain:
-    fn area(self) -> float:
+    fn area() -> float:
         return 1.0
 
 @derive(Clone)

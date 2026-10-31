@@ -7,8 +7,8 @@ class Bag:
     n: int
 
     @noalloc
-    fn drop(mut self):
-        trail = [self.n]
+    fn drop():
+        trail = [this.n]
         println(trail.len())
 
 fn main():

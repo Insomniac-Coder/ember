@@ -22,11 +22,11 @@
 class Local:
     id: int
 
-    fn twice(self) -> int:
-        return self.id * 2
+    fn twice() -> int:
+        return this.id * 2
 
-    fn drop(mut self):
-        println(f"drop local {self.id}")
+    fn drop():
+        println(f"drop local {this.id}")
 
 class Kept:
     id: int
@@ -37,7 +37,7 @@ class Carried:
 fn read(p: Local) -> int:
     return p.twice()
 
-fn store(mut list: Array[Kept], k: Kept):
+fn store(ref mut list: Array[Kept], k: Kept):
     list.push(k)
 
 fn turns(n: int) -> int:

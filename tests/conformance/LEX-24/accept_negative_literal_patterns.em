@@ -6,25 +6,25 @@
 # literal, a signed type's least value included (`[LEX-24]`). A `u128` above
 # `i128`'s range and a `u64` above `i64`'s match by value too.
 
-fn describe(x: int) -> str:
+fn describe(x: int) -> StrView:
     match x:
         -9223372036854775808 => return "least"
         -5 => return "minus five"
         0 => return "zero"
         _ => return "other"
 
-fn top(b: u64) -> str:
+fn top(b: u64) -> StrView:
     match b:
         18446744073709551615 => return "top"
         _ => return "other"
 
-fn wide(x: i128) -> str:
+fn wide(x: i128) -> StrView:
     match x:
         -170141183460469231731687303715884105728 => return "least"
         -1 => return "minus one"
         _ => return "other"
 
-fn huge(x: u128) -> str:
+fn huge(x: u128) -> StrView:
     match x:
         340282366920938463463374607431768211455 => return "max"
         _ => return "other"

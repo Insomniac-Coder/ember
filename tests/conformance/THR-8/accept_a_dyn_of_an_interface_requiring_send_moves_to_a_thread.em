@@ -11,29 +11,29 @@
 
 import std.thread
 
-interface Shape: Send:
-    fn area(self) -> int
+interface Shape: needs Send:
+    fn area() -> int
 
 struct Square:
     side: int
 
 extend Square implements Shape:
-    fn area(self) -> int:
-        return self.side * self.side
+    fn area() -> int:
+        return this.side * this.side
 
 struct Bar:
     width: int
     height: int
 
 extend Bar implements Shape:
-    fn area(self) -> int:
-        return self.width * self.height
+    fn area() -> int:
+        return this.width * this.height
 
-interface Shared: Send + Sync:
+interface Shared: needs (Send, Sync):
     pass
 
-interface Reading: Shared:
-    fn value(self) -> int
+interface Reading: needs Shared:
+    fn value() -> int
 
 struct Gauge:
     level: int
@@ -42,8 +42,8 @@ extend Gauge implements Shared:
     pass
 
 extend Gauge implements Reading:
-    fn value(self) -> int:
-        return self.level
+    fn value() -> int:
+        return this.level
 
 fn main():
     shapes: Array[Box[dyn Shape]] = [Box(Square(3)), Box(Bar(2, 2))]

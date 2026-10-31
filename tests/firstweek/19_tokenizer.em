@@ -12,10 +12,10 @@ struct LexError:
     position: int
     found: String
 
-fn is_operator(c: str) -> bool:
+fn is_operator(c: StrView) -> bool:
     return c in ["+", "-", "*", "/", "^", "="]
 
-fn tokenize(source: str) -> Result[Array[Token], LexError]:
+fn tokenize(source: StrView) -> Result[Array[Token], LexError]:
     tokens: Array[Token] = []
     i = 0
     while i < source.len():

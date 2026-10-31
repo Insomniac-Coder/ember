@@ -6,7 +6,7 @@ enum Event:
     ScoreChanged(name: String, score: int)
     Chat(name: String, text: String)
 
-fn topic_of(e: Event) -> str:
+fn topic_of(e: Event) -> StrView:
     return match e:
         PlayerJoined(_) => "players"
         PlayerLeft(_) => "players"
@@ -17,40 +17,40 @@ class EventBus:
     subscribers: Map[String, Array[fn(Event)]] = {}
     delivered: int = 0
 
-    fn subscribe(self, topic: str, owned handler: fn(Event)):
-        if topic not in self.subscribers:
-            self.subscribers[topic] = []
-        self.subscribers[topic].push(handler)
+    fn subscribe(topic: StrView, owns handler: fn(Event)):
+        if topic not in this.subscribers:
+            this.subscribers[topic] = []
+        this.subscribers[topic].push(handler)
 
-    fn publish(self, event: Event):
+    fn publish(event: Event):
         topic = topic_of(event)
-        if topic not in self.subscribers:
+        if topic not in this.subscribers:
             println(f"(nobody listens to {topic})")
             return
-        for handler in self.subscribers[topic].iter_mut():
+        for handler in this.subscribers[topic].iter_mut():
             handler(event)
-            self.delivered += 1
+            this.delivered += 1
 
 class Scoreboard:
     scores: Map[String, int] = {}
 
-    fn on_event(self, e: Event):
+    fn on_event(e: Event):
         match e:
-            PlayerJoined(name): self.scores[name] = 0
-            PlayerLeft(name): self.scores.remove(name)
-            ScoreChanged(name, score): self.scores[name] = score
+            PlayerJoined(name): this.scores[name] = 0
+            PlayerLeft(name): this.scores.remove(name)
+            ScoreChanged(name, score): this.scores[name] = score
             _: pass
 
-    fn show(self):
-        for name, score in self.scores.items():
+    fn show():
+        for name, score in this.scores.items():
             println(f"  {name}: {score}")
 
 class ChatLog:
     lines: Array[String] = []
 
-    fn on_event(self, e: Event):
+    fn on_event(e: Event):
         if Chat(name, text) = e:
-            self.lines.push(f"<{name}> {text}")
+            this.lines.push(f"<{name}> {text}")
 
 fn main():
     bus = EventBus()

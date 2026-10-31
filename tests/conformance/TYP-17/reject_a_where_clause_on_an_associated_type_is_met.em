@@ -6,11 +6,13 @@
 struct Opaque:
     x: int
 
-fn show_all[I: Iterator](owned it: I) where I.Item: Display:
+[I: needs Iterator]
+fn show_all(owns it: I) where I.Item: needs Display:
     for x in it:
         println(f"{x}")
 
-fn fixed[I: Iterator[Item = Opaque]](owned it: I) where I.Item: Display:   #$ error[E2040]: `I.Item` is `Opaque`, which does not implement `Display`
+[I: needs Iterator[Item = Opaque]]
+fn fixed(owns it: I) where I.Item: needs Display:   #$ error[E2040]: `I.Item` is `Opaque`, which does not implement `Display`
     pass
 
 fn main():

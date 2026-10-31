@@ -12,17 +12,18 @@
 # exercises the class-owner weak family at the dynamic adapter boundary, where
 # the returned observer is separate from both the box and the live Token owner.
 interface Observe:
-    fn observer(self) -> Weak[Token]
+    fn observer() -> Weak[Token]
 
 class Token:
     value: i32
 
-class Holder[T] implements Observe:
+[T]
+class Holder implements Observe:
     weak: Weak[Token]
     marker: T
 
-    fn observer(self) -> Weak[Token]:
-        return self.weak
+    fn observer() -> Weak[Token]:
+        return this.weak
 
 fn main():
     strong = Token(7)

@@ -13,7 +13,7 @@ fn head(xs: Array[int]) -> Span[int]:
 fn all(xs: Array[int]) -> Span[int]:
     return xs
 
-fn name_of(s: String) -> str:
+fn name_of(s: String) -> StrView:
     return s
 
 fn make() -> Array[int]:

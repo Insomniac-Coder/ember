@@ -13,17 +13,17 @@
 open class Base:
     items: Array[int]
 
-    fn view(self) -> Span[int]:
-        return self.items[..]
+    fn view() -> Span[int]:
+        return this.items[..]
 
-    fn init(mut self):
-        self.items = [1, 2]
+    fn init():
+        this.items = [1, 2]
 
 class Derived(Base):
     extra: int
 
-    fn init(mut self):
-        self.extra = 3
+    fn init():
+        this.extra = 3
         super.init()
 
 fn main():

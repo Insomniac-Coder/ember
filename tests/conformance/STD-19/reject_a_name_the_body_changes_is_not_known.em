@@ -6,15 +6,15 @@
 # in a closure, or by `push`. So nothing is known of it, `(m .. 10)` may have more items than an `int` numbers, and
 # the numbers are `u64`s, which `total += i` cannot add to an `int`.
 
-fn bump(mut n: int):
+fn bump(ref mut n: int):
     n -= 1000
 
 interface Lower:
-    fn lower(mut self)
+    fn lower()
 
 extend int implements Lower:
-    fn lower(mut self):
-        self -= 1000
+    fn lower():
+        this -= 1000
 
 fn by_assignment_later_in_the_loop() -> int:
     m = -5

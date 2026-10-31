@@ -10,13 +10,12 @@ struct ValuesMut:
     owner: ref mut Array[int]
     at: int
 
-    @borrows(self.owner)
-    fn next(mut self) -> Option[ref mut int]:
-        if self.at >= self.owner.len():
+    fn next() -> Option[ref mut int] from owner:
+        if this.at >= this.owner.len():
             return None
-        i = self.at
-        self.at += 1
-        return Some(ref mut self.owner[i])    #$ error[E3062]: the returned view points into `self`, and `@borrows` names only what `self.owner` borrows
+        i = this.at
+        this.at += 1
+        return Some(ref mut this.owner[i])    #$ error[E3062]: the returned view points into `this`, but its first line says `from owner`
 
 fn main():
     ys = [1, 2]

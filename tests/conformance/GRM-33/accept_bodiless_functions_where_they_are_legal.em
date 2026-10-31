@@ -7,29 +7,29 @@
 ## an `extern` block and a `virtual` method of an `abstract class`.
 
 interface Measured:
-    fn size(self) -> int
+    fn size() -> int
 
 abstract class Solid:
-    fn init(mut self):
+    fn init():
         pass
 
-    virtual fn volume(self) -> f64
+    virtual fn volume() -> f64
 
 class Cube(Solid):
     side: f64
 
-    fn init(mut self, side: f64):
-        self.side = side
+    fn init(side: f64):
+        this.side = side
         super.init()
 
-    override fn volume(self) -> f64:
-        return self.side * self.side * self.side
+    override fn volume() -> f64:
+        return this.side * this.side * this.side
 
 struct Row implements Measured:
     n: int
 
-    fn size(self) -> int:
-        return self.n
+    fn size() -> int:
+        return this.n
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @safety("callers pass what the C function `abs` requires")

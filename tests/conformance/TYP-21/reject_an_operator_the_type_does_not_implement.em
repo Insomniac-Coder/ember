@@ -8,14 +8,14 @@ struct Meters:
     v: f64
 
 extend Meters:
-    fn add(self, other: Meters) -> Meters:
-        return Meters(v=self.v + other.v)
+    fn add(other: Meters) -> Meters:
+        return Meters(v=this.v + other.v)
 
-    fn neg(self) -> Meters:
-        return Meters(v=-self.v)
+    fn neg() -> Meters:
+        return Meters(v=-this.v)
 
-    fn pow(self, n: int) -> Meters:
-        return self
+    fn pow(n: int) -> Meters:
+        return this
 
 fn main():
     s: Set[int] = {1, 2}

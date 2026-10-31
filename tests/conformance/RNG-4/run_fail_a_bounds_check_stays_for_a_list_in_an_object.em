@@ -8,10 +8,10 @@
 class Bag:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = [1, 2, 3]
+    fn init():
+        this.items = [1, 2, 3]
 
-fn empty(mut b: Bag):
+fn empty(ref mut b: Bag):
     b.items.clear()
 
 fn main():

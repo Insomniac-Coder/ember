@@ -14,23 +14,25 @@
 class Token:
     value: i32
 
-open class Base[T]:
+[T]
+open class Base:
     weak: Weak[Token]
     marker: T
 
-    fn init(mut self, weak: Weak[Token], marker: T):
-        self.weak = weak
-        self.marker = marker
+    fn init(weak: Weak[Token], marker: T):
+        this.weak = weak
+        this.marker = marker
 
-    virtual fn observer(self) -> Weak[Token]:
-        return self.weak
+    virtual fn observer() -> Weak[Token]:
+        return this.weak
 
-class Derived[T](Base[T]):
-    fn init(mut self, weak: Weak[Token], marker: T):
+[T]
+class Derived(Base[T]):
+    fn init(weak: Weak[Token], marker: T):
         super.init(weak, marker)
 
-    override fn observer(self) -> Weak[Token]:
-        return self.weak
+    override fn observer() -> Weak[Token]:
+        return this.weak
 
 fn expired() -> Weak[Token]:
     strong = Token(7)

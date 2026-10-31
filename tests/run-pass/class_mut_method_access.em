@@ -11,8 +11,8 @@
 class Counter:
     value: i32
 
-    fn bump(mut self, amount: i32):
-        self.value = self.value + amount
+    fn bump(amount: i32):
+        this.value = this.value + amount
 
 fn main():
     counter = Counter(2)

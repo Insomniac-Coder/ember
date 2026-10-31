@@ -5,6 +5,6 @@
 
 fn main():
     m: Map[String, i64] = {"a": 1}
-    for k in owned m:
+    for k in owns m:
         println(k)
     println(m) #$ error[E3040]: `m` is borrowed after it has been moved out of

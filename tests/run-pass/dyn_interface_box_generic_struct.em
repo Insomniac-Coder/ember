@@ -6,12 +6,13 @@
 #$ assert-c: contains(static const struct em_vt_dyn_6Render em_vt_dyn_6Render_for_7PayloadG73498f1dbd18d400)
 
 interface Render:
-    fn render(self) -> i32
+    fn render() -> i32
 
-struct Payload[T] implements Render:
+[T]
+struct Payload implements Render:
     value: T
 
-    fn render(self) -> i32:
+    fn render() -> i32:
         return 42
 
 fn render_it(value: ref dyn Render) -> i32:

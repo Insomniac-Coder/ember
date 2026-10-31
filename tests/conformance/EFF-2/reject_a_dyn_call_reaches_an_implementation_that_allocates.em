@@ -5,7 +5,7 @@
 # reaches that allocation.
 
 interface Shape:
-    fn area(self) -> int
+    fn area() -> int
 
 struct Square:
     side: int
@@ -14,12 +14,12 @@ struct Ring:
     sides: int
 
 extend Square implements Shape:
-    fn area(self) -> int:
-        return self.side * self.side
+    fn area() -> int:
+        return this.side * this.side
 
 extend Ring implements Shape:
-    fn area(self) -> int:
-        return [self.sides, self.sides].len()
+    fn area() -> int:
+        return [this.sides, this.sides].len()
 
 @noalloc
 fn area_of(shape: ref dyn Shape) -> int:

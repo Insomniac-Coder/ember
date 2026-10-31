@@ -5,12 +5,12 @@ struct Reading:
     hour: int
     celsius: float
 
-const RAW: str = "mon 6 11.5, mon 14 19.0, mon 22 13.2, tue 6 10.1, tue 14 21.4, tue 22 15.0, wed 6 12.2, wed 14 22.8, wed 22 16.9, thu 6 13.0, thu 14 hot, thu 22 17.5, fri 6 14.4, fri 14 24.1, fri 22 18.3, sat 6 15.9, sat 14 23.0, sat 22, sun 6 11.0, sun 14 17.2, sun 22 12.6"
+const RAW: StrView = "mon 6 11.5, mon 14 19.0, mon 22 13.2, tue 6 10.1, tue 14 21.4, tue 22 15.0, wed 6 12.2, wed 14 22.8, wed 22 16.9, thu 6 13.0, thu 14 hot, thu 22 17.5, fri 6 14.4, fri 14 24.1, fri 22 18.3, sat 6 15.9, sat 14 23.0, sat 22, sun 6 11.0, sun 14 17.2, sun 22 12.6"
 
-fn parse_readings(text: str) -> Array[Reading]:
+fn parse_readings(text: StrView) -> Array[Reading]:
     readings: Array[Reading] = []
     for chunk in text.split(","):
-        parts = chunk.trim().split(" ").collect[Array[str]]()
+        parts = chunk.trim().split(" ").collect[Array[StrView]]()
         if parts.len() != 3:
             println(f"bad reading: '{chunk.trim()}'")
             continue

@@ -1,6 +1,6 @@
 # Count word frequencies in a paragraph, ignoring case and punctuation, and print the ten most common words.
 
-const TEXT: str = """
+const TEXT: StrView = """
 The river was low that summer, and the children walked along the river bed
 every morning. They found stones, and shells, and once a rusty key. The key
 opened nothing, but the children kept it anyway, because a key that opens
@@ -9,14 +9,14 @@ the stones they had not taken were under the water again. Nobody minded.
 The summer was long, the key was small, and the river did not care.
 """
 
-fn clean_word(word: str) -> String:
+fn clean_word(word: StrView) -> String:
     result = ""
     for c in word.lower():
         if c.isalpha() or c == "'":
             result += c
     return result
 
-fn count_words(text: str) -> Map[String, int]:
+fn count_words(text: StrView) -> Map[String, int]:
     counts: Map[String, int] = {}
     for raw in text.split():
         word = clean_word(raw)

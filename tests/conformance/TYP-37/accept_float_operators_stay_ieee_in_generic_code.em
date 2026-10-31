@@ -11,7 +11,8 @@
 # `binary_search` use `cmp` (total: `-0.0` before `0.0`); `contains` uses
 # `==` (so `-0.0` is found where `0.0` is).
 
-fn less[T: Ord](a: T, b: T) -> bool:
+[T: needs Ord]
+fn less(a: T, b: T) -> bool:
     return a < b
 
 fn main():

@@ -2,10 +2,10 @@
 #$ rules: TYP-22
 
 interface Drawable:
-    fn draw(self):
+    fn draw():
         pass
 
-fn take(x: ref dyn Drawable, owned boxed: Box[dyn Drawable]):
+fn take(x: ref dyn Drawable, owns boxed: Box[dyn Drawable]):
     pass
 
 fn main():

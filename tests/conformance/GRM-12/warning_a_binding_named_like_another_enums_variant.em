@@ -13,7 +13,7 @@ enum Light:
     Off
     On(int)
 
-fn describe(l: Light) -> str:
+fn describe(l: Light) -> StrView:
     return "bound"
 
 fn show(l: Light):

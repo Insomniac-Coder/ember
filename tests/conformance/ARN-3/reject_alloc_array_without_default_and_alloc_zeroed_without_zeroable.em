@@ -15,10 +15,11 @@ struct Seven:
     v: i32
 
 extend Seven implements Default:
-    fn default() -> Seven:
+    static fn default() -> Seven:
         return Seven(7)
 
-fn made[T: Zeroable](frame: Arena, n: int) -> MutSpan[T]:
+[T: needs Zeroable]
+fn made(frame: Arena, n: int) -> MutSpan[T]:
     return frame.alloc_array[T](n) #$ error[E2040]: `T` does not implement `Default`, which `alloc_array` needs
 
 fn main():

@@ -16,10 +16,10 @@ from std.ffi import Retained, ObjectPtr
 from std.sync import Atomic
 
 class Noisy:
-    name: str
+    name: StrView
 
-    fn drop(mut self):
-        println("dropped", self.name)
+    fn drop():
+        println("dropped", this.name)
 
 static CALLS: Atomic[i64] = Atomic(0)
 

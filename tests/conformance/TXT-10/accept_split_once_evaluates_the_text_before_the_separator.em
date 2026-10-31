@@ -6,12 +6,12 @@
 # The separator may repoint the source descriptor. The receiver's evaluated
 # view is preserved before that expression runs, and each runs once.
 
-fn separator(mut text: str) -> str:
+fn separator(ref mut text: StrView) -> StrView:
     println("separator")
     text = "changed"
     return ":"
 
 fn main():
-    text: str = "old:text"
+    text: StrView = "old:text"
     result = text.split_once(separator(text))
     println(result, text)

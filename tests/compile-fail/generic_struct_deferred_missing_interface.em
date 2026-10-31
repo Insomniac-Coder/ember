@@ -1,11 +1,13 @@
 #$ test: compile-fail
 #$ rules: TYP-19
 
-struct Payload[A] implements Missing:
+[A]
+struct Payload implements Missing:
     value: A
 
-struct Factory[A]:
-    fn make(self, payload: Payload[A]) -> i32:
+[A]
+struct Factory:
+    fn make(payload: Payload[A]) -> i32:
         return 0
 
 fn main():

@@ -11,7 +11,7 @@
 
 from std.mem import assert_disjoint
 
-fn blend(mut dst: MutSpan[f32], src: Span[f32]) -> str:
+fn blend(ref mut dst: MutSpan[f32], src: Span[f32]) -> StrView:
     match assert_disjoint(dst, src):
         Ok((d, s)):
             for i in 0..d.len():

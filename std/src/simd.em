@@ -30,7 +30,8 @@
 
 ## `[SIMD-1]` — the target's preferred lane count for `T`: its vector registers' width over `T`'s
 ## size. Every target of the C backend (x86-64 with SSE2, AArch64 with NEON) has 16-byte registers.
-pub fn native_lanes[T]() -> int:
+[T]
+pub fn native_lanes() -> int:
     return (16 // size_of[T]()) as int
 
 ## 4 `f32` lanes, 16 bytes (float).
@@ -41,11 +42,11 @@ pub struct f32x4:
     pub const LANES: int = 4
 
 extend f32x4:
-    pub fn from_array(lanes: [f32; 4]) -> f32x4:
+    pub static fn from_array(lanes: [f32; 4]) -> f32x4:
         return f32x4(lanes=lanes)
 
-    pub fn to_array(self) -> [f32; 4]:
-        return self.lanes
+    pub fn to_array() -> [f32; 4]:
+        return this.lanes
 
 ## 8 `f32` lanes, 32 bytes (float).
 @derive(Copy)
@@ -55,11 +56,11 @@ pub struct f32x8:
     pub const LANES: int = 8
 
 extend f32x8:
-    pub fn from_array(lanes: [f32; 8]) -> f32x8:
+    pub static fn from_array(lanes: [f32; 8]) -> f32x8:
         return f32x8(lanes=lanes)
 
-    pub fn to_array(self) -> [f32; 8]:
-        return self.lanes
+    pub fn to_array() -> [f32; 8]:
+        return this.lanes
 
 ## 16 `f32` lanes, 64 bytes (float).
 @derive(Copy)
@@ -69,11 +70,11 @@ pub struct f32x16:
     pub const LANES: int = 16
 
 extend f32x16:
-    pub fn from_array(lanes: [f32; 16]) -> f32x16:
+    pub static fn from_array(lanes: [f32; 16]) -> f32x16:
         return f32x16(lanes=lanes)
 
-    pub fn to_array(self) -> [f32; 16]:
-        return self.lanes
+    pub fn to_array() -> [f32; 16]:
+        return this.lanes
 
 ## 2 `f64` lanes, 16 bytes (float).
 @derive(Copy)
@@ -83,11 +84,11 @@ pub struct f64x2:
     pub const LANES: int = 2
 
 extend f64x2:
-    pub fn from_array(lanes: [f64; 2]) -> f64x2:
+    pub static fn from_array(lanes: [f64; 2]) -> f64x2:
         return f64x2(lanes=lanes)
 
-    pub fn to_array(self) -> [f64; 2]:
-        return self.lanes
+    pub fn to_array() -> [f64; 2]:
+        return this.lanes
 
 ## 4 `f64` lanes, 32 bytes (float).
 @derive(Copy)
@@ -97,11 +98,11 @@ pub struct f64x4:
     pub const LANES: int = 4
 
 extend f64x4:
-    pub fn from_array(lanes: [f64; 4]) -> f64x4:
+    pub static fn from_array(lanes: [f64; 4]) -> f64x4:
         return f64x4(lanes=lanes)
 
-    pub fn to_array(self) -> [f64; 4]:
-        return self.lanes
+    pub fn to_array() -> [f64; 4]:
+        return this.lanes
 
 ## 8 `f64` lanes, 64 bytes (float).
 @derive(Copy)
@@ -111,11 +112,11 @@ pub struct f64x8:
     pub const LANES: int = 8
 
 extend f64x8:
-    pub fn from_array(lanes: [f64; 8]) -> f64x8:
+    pub static fn from_array(lanes: [f64; 8]) -> f64x8:
         return f64x8(lanes=lanes)
 
-    pub fn to_array(self) -> [f64; 8]:
-        return self.lanes
+    pub fn to_array() -> [f64; 8]:
+        return this.lanes
 
 ## 16 `i8` lanes, 16 bytes (signed integer).
 @derive(Copy)
@@ -125,11 +126,11 @@ pub struct i8x16:
     pub const LANES: int = 16
 
 extend i8x16:
-    pub fn from_array(lanes: [i8; 16]) -> i8x16:
+    pub static fn from_array(lanes: [i8; 16]) -> i8x16:
         return i8x16(lanes=lanes)
 
-    pub fn to_array(self) -> [i8; 16]:
-        return self.lanes
+    pub fn to_array() -> [i8; 16]:
+        return this.lanes
 
 ## 32 `i8` lanes, 32 bytes (signed integer).
 @derive(Copy)
@@ -139,11 +140,11 @@ pub struct i8x32:
     pub const LANES: int = 32
 
 extend i8x32:
-    pub fn from_array(lanes: [i8; 32]) -> i8x32:
+    pub static fn from_array(lanes: [i8; 32]) -> i8x32:
         return i8x32(lanes=lanes)
 
-    pub fn to_array(self) -> [i8; 32]:
-        return self.lanes
+    pub fn to_array() -> [i8; 32]:
+        return this.lanes
 
 ## 64 `i8` lanes, 64 bytes (signed integer).
 @derive(Copy)
@@ -153,11 +154,11 @@ pub struct i8x64:
     pub const LANES: int = 64
 
 extend i8x64:
-    pub fn from_array(lanes: [i8; 64]) -> i8x64:
+    pub static fn from_array(lanes: [i8; 64]) -> i8x64:
         return i8x64(lanes=lanes)
 
-    pub fn to_array(self) -> [i8; 64]:
-        return self.lanes
+    pub fn to_array() -> [i8; 64]:
+        return this.lanes
 
 ## 16 `u8` lanes, 16 bytes (unsigned integer).
 @derive(Copy)
@@ -167,11 +168,11 @@ pub struct u8x16:
     pub const LANES: int = 16
 
 extend u8x16:
-    pub fn from_array(lanes: [u8; 16]) -> u8x16:
+    pub static fn from_array(lanes: [u8; 16]) -> u8x16:
         return u8x16(lanes=lanes)
 
-    pub fn to_array(self) -> [u8; 16]:
-        return self.lanes
+    pub fn to_array() -> [u8; 16]:
+        return this.lanes
 
 ## 32 `u8` lanes, 32 bytes (unsigned integer).
 @derive(Copy)
@@ -181,11 +182,11 @@ pub struct u8x32:
     pub const LANES: int = 32
 
 extend u8x32:
-    pub fn from_array(lanes: [u8; 32]) -> u8x32:
+    pub static fn from_array(lanes: [u8; 32]) -> u8x32:
         return u8x32(lanes=lanes)
 
-    pub fn to_array(self) -> [u8; 32]:
-        return self.lanes
+    pub fn to_array() -> [u8; 32]:
+        return this.lanes
 
 ## 64 `u8` lanes, 64 bytes (unsigned integer).
 @derive(Copy)
@@ -195,11 +196,11 @@ pub struct u8x64:
     pub const LANES: int = 64
 
 extend u8x64:
-    pub fn from_array(lanes: [u8; 64]) -> u8x64:
+    pub static fn from_array(lanes: [u8; 64]) -> u8x64:
         return u8x64(lanes=lanes)
 
-    pub fn to_array(self) -> [u8; 64]:
-        return self.lanes
+    pub fn to_array() -> [u8; 64]:
+        return this.lanes
 
 ## 8 `i16` lanes, 16 bytes (signed integer).
 @derive(Copy)
@@ -209,11 +210,11 @@ pub struct i16x8:
     pub const LANES: int = 8
 
 extend i16x8:
-    pub fn from_array(lanes: [i16; 8]) -> i16x8:
+    pub static fn from_array(lanes: [i16; 8]) -> i16x8:
         return i16x8(lanes=lanes)
 
-    pub fn to_array(self) -> [i16; 8]:
-        return self.lanes
+    pub fn to_array() -> [i16; 8]:
+        return this.lanes
 
 ## 16 `i16` lanes, 32 bytes (signed integer).
 @derive(Copy)
@@ -223,11 +224,11 @@ pub struct i16x16:
     pub const LANES: int = 16
 
 extend i16x16:
-    pub fn from_array(lanes: [i16; 16]) -> i16x16:
+    pub static fn from_array(lanes: [i16; 16]) -> i16x16:
         return i16x16(lanes=lanes)
 
-    pub fn to_array(self) -> [i16; 16]:
-        return self.lanes
+    pub fn to_array() -> [i16; 16]:
+        return this.lanes
 
 ## 32 `i16` lanes, 64 bytes (signed integer).
 @derive(Copy)
@@ -237,11 +238,11 @@ pub struct i16x32:
     pub const LANES: int = 32
 
 extend i16x32:
-    pub fn from_array(lanes: [i16; 32]) -> i16x32:
+    pub static fn from_array(lanes: [i16; 32]) -> i16x32:
         return i16x32(lanes=lanes)
 
-    pub fn to_array(self) -> [i16; 32]:
-        return self.lanes
+    pub fn to_array() -> [i16; 32]:
+        return this.lanes
 
 ## 8 `u16` lanes, 16 bytes (unsigned integer).
 @derive(Copy)
@@ -251,11 +252,11 @@ pub struct u16x8:
     pub const LANES: int = 8
 
 extend u16x8:
-    pub fn from_array(lanes: [u16; 8]) -> u16x8:
+    pub static fn from_array(lanes: [u16; 8]) -> u16x8:
         return u16x8(lanes=lanes)
 
-    pub fn to_array(self) -> [u16; 8]:
-        return self.lanes
+    pub fn to_array() -> [u16; 8]:
+        return this.lanes
 
 ## 16 `u16` lanes, 32 bytes (unsigned integer).
 @derive(Copy)
@@ -265,11 +266,11 @@ pub struct u16x16:
     pub const LANES: int = 16
 
 extend u16x16:
-    pub fn from_array(lanes: [u16; 16]) -> u16x16:
+    pub static fn from_array(lanes: [u16; 16]) -> u16x16:
         return u16x16(lanes=lanes)
 
-    pub fn to_array(self) -> [u16; 16]:
-        return self.lanes
+    pub fn to_array() -> [u16; 16]:
+        return this.lanes
 
 ## 32 `u16` lanes, 64 bytes (unsigned integer).
 @derive(Copy)
@@ -279,11 +280,11 @@ pub struct u16x32:
     pub const LANES: int = 32
 
 extend u16x32:
-    pub fn from_array(lanes: [u16; 32]) -> u16x32:
+    pub static fn from_array(lanes: [u16; 32]) -> u16x32:
         return u16x32(lanes=lanes)
 
-    pub fn to_array(self) -> [u16; 32]:
-        return self.lanes
+    pub fn to_array() -> [u16; 32]:
+        return this.lanes
 
 ## 4 `i32` lanes, 16 bytes (signed integer).
 @derive(Copy)
@@ -293,11 +294,11 @@ pub struct i32x4:
     pub const LANES: int = 4
 
 extend i32x4:
-    pub fn from_array(lanes: [i32; 4]) -> i32x4:
+    pub static fn from_array(lanes: [i32; 4]) -> i32x4:
         return i32x4(lanes=lanes)
 
-    pub fn to_array(self) -> [i32; 4]:
-        return self.lanes
+    pub fn to_array() -> [i32; 4]:
+        return this.lanes
 
 ## 8 `i32` lanes, 32 bytes (signed integer).
 @derive(Copy)
@@ -307,11 +308,11 @@ pub struct i32x8:
     pub const LANES: int = 8
 
 extend i32x8:
-    pub fn from_array(lanes: [i32; 8]) -> i32x8:
+    pub static fn from_array(lanes: [i32; 8]) -> i32x8:
         return i32x8(lanes=lanes)
 
-    pub fn to_array(self) -> [i32; 8]:
-        return self.lanes
+    pub fn to_array() -> [i32; 8]:
+        return this.lanes
 
 ## 16 `i32` lanes, 64 bytes (signed integer).
 @derive(Copy)
@@ -321,11 +322,11 @@ pub struct i32x16:
     pub const LANES: int = 16
 
 extend i32x16:
-    pub fn from_array(lanes: [i32; 16]) -> i32x16:
+    pub static fn from_array(lanes: [i32; 16]) -> i32x16:
         return i32x16(lanes=lanes)
 
-    pub fn to_array(self) -> [i32; 16]:
-        return self.lanes
+    pub fn to_array() -> [i32; 16]:
+        return this.lanes
 
 ## 4 `u32` lanes, 16 bytes (unsigned integer).
 @derive(Copy)
@@ -335,11 +336,11 @@ pub struct u32x4:
     pub const LANES: int = 4
 
 extend u32x4:
-    pub fn from_array(lanes: [u32; 4]) -> u32x4:
+    pub static fn from_array(lanes: [u32; 4]) -> u32x4:
         return u32x4(lanes=lanes)
 
-    pub fn to_array(self) -> [u32; 4]:
-        return self.lanes
+    pub fn to_array() -> [u32; 4]:
+        return this.lanes
 
 ## 8 `u32` lanes, 32 bytes (unsigned integer).
 @derive(Copy)
@@ -349,11 +350,11 @@ pub struct u32x8:
     pub const LANES: int = 8
 
 extend u32x8:
-    pub fn from_array(lanes: [u32; 8]) -> u32x8:
+    pub static fn from_array(lanes: [u32; 8]) -> u32x8:
         return u32x8(lanes=lanes)
 
-    pub fn to_array(self) -> [u32; 8]:
-        return self.lanes
+    pub fn to_array() -> [u32; 8]:
+        return this.lanes
 
 ## 16 `u32` lanes, 64 bytes (unsigned integer).
 @derive(Copy)
@@ -363,11 +364,11 @@ pub struct u32x16:
     pub const LANES: int = 16
 
 extend u32x16:
-    pub fn from_array(lanes: [u32; 16]) -> u32x16:
+    pub static fn from_array(lanes: [u32; 16]) -> u32x16:
         return u32x16(lanes=lanes)
 
-    pub fn to_array(self) -> [u32; 16]:
-        return self.lanes
+    pub fn to_array() -> [u32; 16]:
+        return this.lanes
 
 ## 2 `i64` lanes, 16 bytes (signed integer).
 @derive(Copy)
@@ -377,11 +378,11 @@ pub struct i64x2:
     pub const LANES: int = 2
 
 extend i64x2:
-    pub fn from_array(lanes: [i64; 2]) -> i64x2:
+    pub static fn from_array(lanes: [i64; 2]) -> i64x2:
         return i64x2(lanes=lanes)
 
-    pub fn to_array(self) -> [i64; 2]:
-        return self.lanes
+    pub fn to_array() -> [i64; 2]:
+        return this.lanes
 
 ## 4 `i64` lanes, 32 bytes (signed integer).
 @derive(Copy)
@@ -391,11 +392,11 @@ pub struct i64x4:
     pub const LANES: int = 4
 
 extend i64x4:
-    pub fn from_array(lanes: [i64; 4]) -> i64x4:
+    pub static fn from_array(lanes: [i64; 4]) -> i64x4:
         return i64x4(lanes=lanes)
 
-    pub fn to_array(self) -> [i64; 4]:
-        return self.lanes
+    pub fn to_array() -> [i64; 4]:
+        return this.lanes
 
 ## 8 `i64` lanes, 64 bytes (signed integer).
 @derive(Copy)
@@ -405,11 +406,11 @@ pub struct i64x8:
     pub const LANES: int = 8
 
 extend i64x8:
-    pub fn from_array(lanes: [i64; 8]) -> i64x8:
+    pub static fn from_array(lanes: [i64; 8]) -> i64x8:
         return i64x8(lanes=lanes)
 
-    pub fn to_array(self) -> [i64; 8]:
-        return self.lanes
+    pub fn to_array() -> [i64; 8]:
+        return this.lanes
 
 ## 2 `u64` lanes, 16 bytes (unsigned integer).
 @derive(Copy)
@@ -419,11 +420,11 @@ pub struct u64x2:
     pub const LANES: int = 2
 
 extend u64x2:
-    pub fn from_array(lanes: [u64; 2]) -> u64x2:
+    pub static fn from_array(lanes: [u64; 2]) -> u64x2:
         return u64x2(lanes=lanes)
 
-    pub fn to_array(self) -> [u64; 2]:
-        return self.lanes
+    pub fn to_array() -> [u64; 2]:
+        return this.lanes
 
 ## 4 `u64` lanes, 32 bytes (unsigned integer).
 @derive(Copy)
@@ -433,11 +434,11 @@ pub struct u64x4:
     pub const LANES: int = 4
 
 extend u64x4:
-    pub fn from_array(lanes: [u64; 4]) -> u64x4:
+    pub static fn from_array(lanes: [u64; 4]) -> u64x4:
         return u64x4(lanes=lanes)
 
-    pub fn to_array(self) -> [u64; 4]:
-        return self.lanes
+    pub fn to_array() -> [u64; 4]:
+        return this.lanes
 
 ## 8 `u64` lanes, 64 bytes (unsigned integer).
 @derive(Copy)
@@ -447,11 +448,11 @@ pub struct u64x8:
     pub const LANES: int = 8
 
 extend u64x8:
-    pub fn from_array(lanes: [u64; 8]) -> u64x8:
+    pub static fn from_array(lanes: [u64; 8]) -> u64x8:
         return u64x8(lanes=lanes)
 
-    pub fn to_array(self) -> [u64; 8]:
-        return self.lanes
+    pub fn to_array() -> [u64; 8]:
+        return this.lanes
 
 ## A mask of 4 lanes of 32 bits: a set lane is all ones, a clear one all zeros.
 @derive(Copy)
@@ -461,10 +462,10 @@ pub struct mask32x4:
     pub const LANES: int = 4
 
 extend mask32x4:
-    pub fn to_array(self) -> [bool; 4]:
+    pub fn to_array() -> [bool; 4]:
         out: [bool; 4] = [false; 4]
         for i in 0..4:
-            out[i] = self.lanes[i] != 0
+            out[i] = this.lanes[i] != 0
         return out
 
 ## A mask of 8 lanes of 32 bits: a set lane is all ones, a clear one all zeros.
@@ -475,10 +476,10 @@ pub struct mask32x8:
     pub const LANES: int = 8
 
 extend mask32x8:
-    pub fn to_array(self) -> [bool; 8]:
+    pub fn to_array() -> [bool; 8]:
         out: [bool; 8] = [false; 8]
         for i in 0..8:
-            out[i] = self.lanes[i] != 0
+            out[i] = this.lanes[i] != 0
         return out
 
 ## A mask of 16 lanes of 32 bits: a set lane is all ones, a clear one all zeros.
@@ -489,10 +490,10 @@ pub struct mask32x16:
     pub const LANES: int = 16
 
 extend mask32x16:
-    pub fn to_array(self) -> [bool; 16]:
+    pub fn to_array() -> [bool; 16]:
         out: [bool; 16] = [false; 16]
         for i in 0..16:
-            out[i] = self.lanes[i] != 0
+            out[i] = this.lanes[i] != 0
         return out
 
 ## A mask of 2 lanes of 64 bits: a set lane is all ones, a clear one all zeros.
@@ -503,10 +504,10 @@ pub struct mask64x2:
     pub const LANES: int = 2
 
 extend mask64x2:
-    pub fn to_array(self) -> [bool; 2]:
+    pub fn to_array() -> [bool; 2]:
         out: [bool; 2] = [false; 2]
         for i in 0..2:
-            out[i] = self.lanes[i] != 0
+            out[i] = this.lanes[i] != 0
         return out
 
 ## A mask of 4 lanes of 64 bits: a set lane is all ones, a clear one all zeros.
@@ -517,10 +518,10 @@ pub struct mask64x4:
     pub const LANES: int = 4
 
 extend mask64x4:
-    pub fn to_array(self) -> [bool; 4]:
+    pub fn to_array() -> [bool; 4]:
         out: [bool; 4] = [false; 4]
         for i in 0..4:
-            out[i] = self.lanes[i] != 0
+            out[i] = this.lanes[i] != 0
         return out
 
 ## A mask of 8 lanes of 64 bits: a set lane is all ones, a clear one all zeros.
@@ -531,10 +532,10 @@ pub struct mask64x8:
     pub const LANES: int = 8
 
 extend mask64x8:
-    pub fn to_array(self) -> [bool; 8]:
+    pub fn to_array() -> [bool; 8]:
         out: [bool; 8] = [false; 8]
         for i in 0..8:
-            out[i] = self.lanes[i] != 0
+            out[i] = this.lanes[i] != 0
         return out
 
 ## A mask of 16 lanes of 8 bits: a set lane is all ones, a clear one all zeros.
@@ -545,10 +546,10 @@ pub struct mask8x16:
     pub const LANES: int = 16
 
 extend mask8x16:
-    pub fn to_array(self) -> [bool; 16]:
+    pub fn to_array() -> [bool; 16]:
         out: [bool; 16] = [false; 16]
         for i in 0..16:
-            out[i] = self.lanes[i] != 0
+            out[i] = this.lanes[i] != 0
         return out
 
 ## A mask of 32 lanes of 8 bits: a set lane is all ones, a clear one all zeros.
@@ -559,10 +560,10 @@ pub struct mask8x32:
     pub const LANES: int = 32
 
 extend mask8x32:
-    pub fn to_array(self) -> [bool; 32]:
+    pub fn to_array() -> [bool; 32]:
         out: [bool; 32] = [false; 32]
         for i in 0..32:
-            out[i] = self.lanes[i] != 0
+            out[i] = this.lanes[i] != 0
         return out
 
 ## A mask of 64 lanes of 8 bits: a set lane is all ones, a clear one all zeros.
@@ -573,10 +574,10 @@ pub struct mask8x64:
     pub const LANES: int = 64
 
 extend mask8x64:
-    pub fn to_array(self) -> [bool; 64]:
+    pub fn to_array() -> [bool; 64]:
         out: [bool; 64] = [false; 64]
         for i in 0..64:
-            out[i] = self.lanes[i] != 0
+            out[i] = this.lanes[i] != 0
         return out
 
 ## A mask of 8 lanes of 16 bits: a set lane is all ones, a clear one all zeros.
@@ -587,10 +588,10 @@ pub struct mask16x8:
     pub const LANES: int = 8
 
 extend mask16x8:
-    pub fn to_array(self) -> [bool; 8]:
+    pub fn to_array() -> [bool; 8]:
         out: [bool; 8] = [false; 8]
         for i in 0..8:
-            out[i] = self.lanes[i] != 0
+            out[i] = this.lanes[i] != 0
         return out
 
 ## A mask of 16 lanes of 16 bits: a set lane is all ones, a clear one all zeros.
@@ -601,10 +602,10 @@ pub struct mask16x16:
     pub const LANES: int = 16
 
 extend mask16x16:
-    pub fn to_array(self) -> [bool; 16]:
+    pub fn to_array() -> [bool; 16]:
         out: [bool; 16] = [false; 16]
         for i in 0..16:
-            out[i] = self.lanes[i] != 0
+            out[i] = this.lanes[i] != 0
         return out
 
 ## A mask of 32 lanes of 16 bits: a set lane is all ones, a clear one all zeros.
@@ -615,8 +616,8 @@ pub struct mask16x32:
     pub const LANES: int = 32
 
 extend mask16x32:
-    pub fn to_array(self) -> [bool; 32]:
+    pub fn to_array() -> [bool; 32]:
         out: [bool; 32] = [false; 32]
         for i in 0..32:
-            out[i] = self.lanes[i] != 0
+            out[i] = this.lanes[i] != 0
         return out

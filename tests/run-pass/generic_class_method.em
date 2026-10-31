@@ -3,11 +3,12 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 
-class Holder[T]:
+[T]
+class Holder:
     value: T
 
-    fn get(self) -> T:
-        return self.value
+    fn get() -> T:
+        return this.value
 
 fn main():
     holder = Holder[i32](42)

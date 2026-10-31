@@ -10,7 +10,7 @@
 struct Token:
     value: i32
 
-fn first(owned tokens: Array[Shared[Token]]) -> Shared[Token]:
+fn first(owns tokens: Array[Shared[Token]]) -> Shared[Token]:
     for token in tokens:
         return token
     return Shared(Token(0))

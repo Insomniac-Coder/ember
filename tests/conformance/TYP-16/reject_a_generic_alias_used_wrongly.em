@@ -6,7 +6,7 @@
 # parameter's bounds.
 
 type Pair[T] = (T, T)
-type Index[K: Hash] = Map[K, int]
+type Index[K: needs Hash] = Map[K, int]
 
 fn main():
     a: Pair[int, int] = (1, 2)

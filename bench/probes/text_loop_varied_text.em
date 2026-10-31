@@ -2,13 +2,13 @@
 # 2 10000 short strings of 0-3 mixed words, 3 the same of ASCII words, 4 mixed without empty strings,
 # 5 10000 strings of 4-30 mixed words, 6 the same of ASCII words. C twin: text_loop_varied_text.c.
 @noinline
-fn reduce(text: str, initial: int) -> int:
+fn reduce(text: StrView, initial: int) -> int:
     total = initial
     for (i, c) in text.char_indices():
         total += i ^ (c as u32 as int)
     return total
 
-fn pick(seed: int, words: Array[str]) -> str:
+fn pick(seed: int, words: Array[StrView]) -> StrView:
     return words[(seed // 65536) % words.len()]
 
 fn main():

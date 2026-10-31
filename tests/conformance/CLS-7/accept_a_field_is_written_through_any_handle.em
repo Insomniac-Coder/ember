@@ -17,8 +17,8 @@ class Inner:
 class Outer:
     inner: Inner
 
-    fn bump(mut self):
-        self.inner.value = 1
+    fn bump():
+        this.inner.value = 1
 
 class Holder:
     values: Array[i32]

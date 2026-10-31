@@ -708,7 +708,7 @@ fn operand_is_drop_self(
 
 fn report_drop_self_escape(sink: &mut Sink, span: Span) {
     sink.emit_classified(
-        Diagnostic::error(codes::E3016, span, "`self` escapes its own drop")
+        Diagnostic::error(codes::E3016, span, "`this` escapes its own `drop`")
             .primary_label("published here")
             .note("a destructor may not publish a handle to the object being destroyed [CLS-7a]")
             .help("move the data out with `mem.take` instead"),
@@ -770,17 +770,17 @@ fn check_drop_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usize {
                 Diagnostic::error(
                     codes::E3010,
                     span,
-                    "cannot move a field out of `drop`'s `mut self`",
+                    "cannot move a field out of `this` in `drop`",
                 )
                 .primary_label("moved out here")
-                .note("a `drop` method's `mut self` may not move fields out [DRP-5]; the field is dropped again after `drop` returns [EXP-6]")
+                .note("a `drop` body may not take fields out of `this` [DRP-5]; the field is dropped again after `drop` returns [EXP-6]")
                 .help("use `mem.take`, `mem.replace` or `swap` to leave a value in its place"),
             );
         } else {
             sink.emit_classified(
-                Diagnostic::error(codes::E3013, span, "cannot move out of `drop`'s `mut self`")
+                Diagnostic::error(codes::E3013, span, "cannot move `this` out of `drop`")
                     .primary_label("moved out here")
-                    .note("a `drop` method's `mut self` may not be moved out of [DRP-5]; the value is dropped again after `drop` returns [EXP-6]")
+                    .note("a `drop` body may not take `this` over [DRP-5]; the value is dropped again after `drop` returns [EXP-6]")
                     .help("borrow it instead of moving it; use `mem.take`, `mem.replace` or `swap` to leave a value in a field's place"),
             );
         }
@@ -1083,7 +1083,7 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
                 Diagnostic::error(codes::E3013, span, "cannot move out of a borrowed parameter")
                     .primary_label("moved out here")
                     .note(note)
-                    .help("the caller keeps its value: borrow it, `ref`, or copy what is moved, `.clone()`; or take the parameter `owned`, or `mut` and move it out with `mem.take`, `mem.replace` or `swap`, leaving a value behind"),
+                    .help("the caller keeps its value: borrow it, `ref`, or copy what is moved, `.clone()`; or take the parameter `owns`, or `ref mut` and move it out with `mem.take`, `mem.replace` or `swap`, leaving a value behind"),
             );
             errors += 1;
         }

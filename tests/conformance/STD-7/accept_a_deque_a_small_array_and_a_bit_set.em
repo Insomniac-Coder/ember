@@ -23,7 +23,7 @@ fn main():
     s.push(String.from("b"))
     println(s.is_inline(), s.len())
     s.push(String.from("c"))
-    if Some(first) = s.get(0):
+    if s.get(0) exists as first:
         println(s.is_inline(), s.len(), first)
     println(s.pop(), s.len())
 

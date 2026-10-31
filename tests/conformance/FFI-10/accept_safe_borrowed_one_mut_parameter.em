@@ -5,7 +5,7 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(exponent, borrowed, one, exclusive))
-    safe fn frexp(x: f64, mut exponent: i32) -> f64
+    safe fn frexp(x: f64, ref mut exponent: i32) -> f64
 
 fn main():
     exponent: i32 = 0

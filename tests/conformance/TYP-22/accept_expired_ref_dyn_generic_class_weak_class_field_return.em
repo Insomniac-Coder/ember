@@ -11,17 +11,18 @@
 # borrowed generic class and its final Token owner leave the helper. The caller
 # observes the expired upgrade path without any class-owner resurrection.
 interface Observe:
-    fn observer(self) -> Weak[Token]
+    fn observer() -> Weak[Token]
 
 class Token:
     value: i32
 
-class Holder[T] implements Observe:
+[T]
+class Holder implements Observe:
     weak: Weak[Token]
     marker: T
 
-    fn observer(self) -> Weak[Token]:
-        return self.weak
+    fn observer() -> Weak[Token]:
+        return this.weak
 
 fn inspect(value: ref dyn Observe) -> Weak[Token]:
     return value.observer()

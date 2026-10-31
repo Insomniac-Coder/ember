@@ -12,7 +12,7 @@ class Plain(cpp.Task):
     pass
 
 class Busy(cpp.Task):
-    override fn step(self) -> i32:
+    override fn step() -> i32:
         return 5
 
 fn main():

@@ -17,7 +17,7 @@ struct Token:
 struct Entry:
     token: Shared[Token]
 
-fn consume(owned token: Shared[Token]) -> i32:
+fn consume(owns token: Shared[Token]) -> i32:
     value = token.get()
     return value.value
 

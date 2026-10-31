@@ -9,8 +9,8 @@
 class Bag:
     items: Array[int]
 
-    fn init(mut self, owned items: Array[int]):
-        self.items = items
+    fn init(owns items: Array[int]):
+        this.items = items
 
 ## The callee clears the list its parameter's element came from: the caller's loan of `b.items`
 ## holds a read access for the call (`[EXC-2]`), so the clear panics before freeing anything.

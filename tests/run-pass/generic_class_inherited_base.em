@@ -6,14 +6,15 @@
 open class Base:
     value: i32
 
-    fn init(mut self, value: i32):
-        self.value = value
+    fn init(value: i32):
+        this.value = value
 
-class Derived[T](Base):
+[T]
+class Derived(Base):
     marker: T
 
-    fn init(mut self, value: i32, marker: T):
-        self.marker = marker
+    fn init(value: i32, marker: T):
+        this.marker = marker
         super.init(value)
 
 fn main():

@@ -12,8 +12,8 @@
 # runtime and source-level construction/lowering path is still a later slice.
 open class Entity:
     id: i32
-    fn get_id(self) -> i32:
-        return self.id
+    fn get_id() -> i32:
+        return this.id
 
 class Player(Entity):
     score: i32 = 0
@@ -33,7 +33,7 @@ fn read_inherited_method(player: Player) -> i32:
 fn retain_copy(entity: Entity) -> Entity:
     return entity
 
-fn consume(owned entity: Entity):
+fn consume(owns entity: Entity):
     pass
 
 fn main():

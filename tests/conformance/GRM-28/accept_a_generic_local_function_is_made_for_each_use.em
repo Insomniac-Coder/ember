@@ -15,22 +15,28 @@
 ## closure in the block may call it, and one in a generic function is made for each of that
 ## function's instances (`pair`, in `labelled[int]` and `labelled[str]`).
 
-fn labelled[U: Display](u: U) -> String:
-    fn pair[T: Display](t: T) -> String:
+[U: needs Display]
+fn labelled(u: U) -> String:
+    [T: needs Display]
+    fn pair(t: T) -> String:
         return f"{u}:{t}"
     return pair(1) + " " + pair("x")
 
 fn main():
     base = 10
     calls = 0
-    fn ident[T](x: T) -> T:
+    [T]
+    fn ident(x: T) -> T:
         return x
-    fn tagged[T: Display](x: T) -> String:
+    [T: needs Display]
+    fn tagged(x: T) -> String:
         calls += 1
         return f"{x}@{base}"
-    fn first[T: Copy](xs: Array[T]) -> T:
+    [T: needs Copy]
+    fn first(xs: Array[T]) -> T:
         return xs[0]
-    fn count_down[T: Display](n: int, label: T) -> int:
+    [T: needs Display]
+    fn count_down(n: int, label: T) -> int:
         if n == 0:
             return base
         return count_down(n - 1, label)
@@ -41,7 +47,8 @@ fn main():
     later = fn(v: int) -> String => tagged(v + 1)
     println(later(41), calls)
     total = 0
-    fn add_all[T: Copy](xs: Array[T], weight: int) -> int:
+    [T: needs Copy]
+    fn add_all(xs: Array[T], weight: int) -> int:
         for _ in xs:
             total += weight
         return xs.len()

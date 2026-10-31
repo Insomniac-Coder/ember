@@ -10,21 +10,23 @@ struct Id:
     n: int
 
 extend Id implements Eq, Hash:
-    fn eq(self, other: Id) -> bool:
-        return self.n == other.n
+    fn eq(other: Id) -> bool:
+        return this.n == other.n
 
-    fn hash[H: Hasher](self, mut h: H):
-        h.write_i64(self.n)
+    [H: needs Hasher]
+    fn hash(ref mut h: H):
+        h.write_i64(this.n)
 
 struct Probe:
     n: int
 
 extend Probe implements Hash, AsKey[Id]:
-    fn hash[H: Hasher](self, mut h: H):
-        h.write_i64(self.n)
+    [H: needs Hasher]
+    fn hash(ref mut h: H):
+        h.write_i64(this.n)
 
-    fn is_key(self, key: Id) -> bool:
-        return self.n == key.n
+    fn is_key(key: Id) -> bool:
+        return this.n == key.n
 
 fn main():
     m: Map[Id, int] = {}

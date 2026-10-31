@@ -11,7 +11,7 @@
 from std.math import Float
 
 interface Holder:
-    type Item: Float
+    type Item: needs Float
 
 struct Doubles:
     unused: int
@@ -19,10 +19,12 @@ struct Doubles:
 extend Doubles implements Holder:
     type Item = f64
 
-fn direct[T: Float](x: T):
+[T: needs Float]
+fn direct(x: T):
     println(0 == x, 0 != x, 0 < x, 0 <= x, 0 > x, 0 >= x)
 
-fn projected[H: Holder](holder: H, x: H.Item):
+[H: needs Holder]
+fn projected(holder: H, x: H.Item):
     println(0.0 == x, 0.0 != x, 0.0 < x, 0.0 <= x, 0.0 > x, 0.0 >= x)
 
 fn main():

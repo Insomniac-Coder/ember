@@ -3,7 +3,8 @@
 # Without an owning destructor, the borrowed field has no later read at scope
 # exit; its source may end before the outer Option value.
 
-struct Plain[T]:
+[T]
+struct Plain:
     borrowed: ref i32
     marker: T
 

@@ -13,10 +13,10 @@
 # A borrowed weak argument crosses a composed dynamic box backed by an
 # inherited, non-generic class. Both interface slots use the one Pixel payload.
 interface Observe:
-    fn observe(self, weak: Weak[Shared[Token]]) -> i32
+    fn observe(weak: Weak[Shared[Token]]) -> i32
 
 interface Bump:
-    fn bump(mut self) -> i32
+    fn bump() -> i32
 
 struct Token:
     value: i32
@@ -24,23 +24,23 @@ struct Token:
 open class Base:
     count: i32
 
-    fn init(mut self):
-        self.count = 0
+    fn init():
+        this.count = 0
 
 class Pixel(Base) implements Observe, Bump:
-    fn init(mut self):
+    fn init():
         super.init()
 
-    fn observe(self, weak: Weak[Shared[Token]]) -> i32:
+    fn observe(weak: Weak[Shared[Token]]) -> i32:
         match weak.upgrade():
             Some(owner):
                 return owner.get().value
             None:
                 return 0
 
-    fn bump(mut self) -> i32:
-        self.count = self.count + 1
-        return self.count
+    fn bump() -> i32:
+        this.count = this.count + 1
+        return this.count
 
 fn main():
     strong = Shared(Token(7))

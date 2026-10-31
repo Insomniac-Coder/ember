@@ -12,11 +12,9 @@ struct Pair:
     left: Span[i32]
     right: Span[i32]
 
-@borrows(left, right)
 fn bundle(left: Span[i32], right: Span[i32]) -> Pair:
     return Pair(left, right)
 
-@borrows(left, right)
 fn swapped(left: Span[i32], right: Span[i32]) -> Pair:
     return Pair(right, left)
 

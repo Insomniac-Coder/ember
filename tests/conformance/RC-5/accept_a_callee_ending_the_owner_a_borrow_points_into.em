@@ -12,16 +12,16 @@ class Child:
     v: int
     name: String
 
-    fn init(mut self, v: int, owned name: String):
-        self.v = v
-        self.name = name
+    fn init(v: int, owns name: String):
+        this.v = v
+        this.name = name
 
-    fn drop(mut self):
-        println("drop", self.name)
+    fn drop():
+        println("drop", this.name)
 
 ## The callee ends the owner it was given while its other parameter borrows into the owner's
 ## object: the caller's loan keeps the object alive (`[RC-5]`) to the end of its statement.
-fn take(r: ref int, owned c: Child) -> int:
+fn take(r: ref int, owns c: Child) -> int:
     println("dropping")
     mem.drop(c)
     println("read", r)

@@ -909,6 +909,124 @@ pub fn visit_expr<'a>(expr: &'a Expr, f: &mut dyn FnMut(&'a Expr)) {
     }
 }
 
+/// `visit_block`'s order, each expression given to `f` to change before those inside it are.
+pub fn visit_block_mut(block: &mut Block, f: &mut dyn FnMut(&mut Expr)) {
+    for stmt in &mut block.stmts {
+        visit_stmt_mut(stmt, f);
+    }
+}
+
+pub fn visit_stmt_mut(stmt: &mut Stmt, f: &mut dyn FnMut(&mut Expr)) {
+    match stmt {
+        Stmt::Let { init, .. } => init.iter_mut().for_each(|init| visit_expr_mut(init, f)),
+        Stmt::Assign { place, value } => {
+            visit_expr_mut(place, f);
+            visit_expr_mut(value, f);
+        }
+        Stmt::Destructure { value, bindings, .. } => {
+            visit_expr_mut(value, f);
+            for binding in bindings {
+                match binding {
+                    DestructureBinding::Let { value, .. } => visit_expr_mut(value, f),
+                    DestructureBinding::Assign { place, value } => {
+                        visit_expr_mut(place, f);
+                        visit_expr_mut(value, f);
+                    }
+                }
+            }
+        }
+        Stmt::Expr(expr) => visit_expr_mut(expr, f),
+        Stmt::Return(value) => value.iter_mut().for_each(|value| visit_expr_mut(value, f)),
+        Stmt::If { cond, then_block, else_block } | Stmt::While { cond, body: then_block, else_block } => {
+            visit_expr_mut(cond, f);
+            visit_block_mut(then_block, f);
+            else_block.iter_mut().for_each(|block| visit_block_mut(block, f));
+        }
+        Stmt::ForRange { start, end, body, else_block, .. } => {
+            visit_expr_mut(start, f);
+            visit_expr_mut(end, f);
+            visit_block_mut(body, f);
+            else_block.iter_mut().for_each(|block| visit_block_mut(block, f));
+        }
+        Stmt::Block(block) | Stmt::Defer(block) => visit_block_mut(block, f),
+        Stmt::Break { .. } | Stmt::Continue { .. } => {}
+    }
+}
+
+pub fn visit_expr_mut(expr: &mut Expr, f: &mut dyn FnMut(&mut Expr)) {
+    f(expr);
+    match &mut expr.kind {
+        ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Str(_)
+        | ExprKind::CStr(_)
+        | ExprKind::Local(_)
+        | ExprKind::FnValue(_)
+        | ExprKind::Error => {}
+        ExprKind::Field { base, .. } | ExprKind::EnumField { base, .. } => visit_expr_mut(base, f),
+        ExprKind::Call { args, .. }
+        | ExprKind::Builtin { args, .. }
+        | ExprKind::StructLit { fields: args, .. }
+        | ExprKind::TupleLit(args)
+        | ExprKind::ArrayLit(args)
+        | ExprKind::EnumLit { fields: args, .. } => args.iter_mut().for_each(|arg| visit_expr_mut(arg, f)),
+        ExprKind::InterfaceCall { receiver, args, .. } => {
+            visit_expr_mut(receiver, f);
+            args.iter_mut().for_each(|arg| visit_expr_mut(arg, f));
+        }
+        ExprKind::CallIndirect { callee, args, .. } => {
+            visit_expr_mut(callee, f);
+            args.iter_mut().for_each(|arg| visit_expr_mut(arg, f));
+        }
+        ExprKind::InterfaceUpcast { expr: inner, .. }
+        | ExprKind::DynBoxNew { value: inner, .. }
+        | ExprKind::MakeCallable { env: inner, .. }
+        | ExprKind::ArrayRepeat { value: inner, .. }
+        | ExprKind::Ref { place: inner, .. }
+        | ExprKind::Deref(inner)
+        | ExprKind::Unary { operand: inner, .. }
+        | ExprKind::Cast { expr: inner, .. }
+        | ExprKind::Widen { expr: inner, .. }
+        | ExprKind::EraseRange(inner)
+        | ExprKind::OverflowScope { expr: inner, .. } => visit_expr_mut(inner, f),
+        ExprKind::Index { base, index } => {
+            visit_expr_mut(base, f);
+            visit_expr_mut(index, f);
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
+            visit_expr_mut(lhs, f);
+            visit_expr_mut(rhs, f);
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            visit_expr_mut(scrutinee, f);
+            for arm in arms {
+                arm.guard.iter_mut().for_each(|guard| visit_expr_mut(guard, f));
+                match &mut arm.body {
+                    MatchArmBody::Block(block) => visit_block_mut(block, f),
+                    MatchArmBody::Expr(body) => visit_expr_mut(body, f),
+                }
+            }
+        }
+        ExprKind::FString { parts, .. } => {
+            for part in parts {
+                match part {
+                    FStringPart::Text(_) => {}
+                    FStringPart::Value(value, _) | FStringPart::Write { value, .. } => visit_expr_mut(value, f),
+                }
+            }
+        }
+        ExprKind::Block { block, value } => {
+            visit_block_mut(block, f);
+            visit_expr_mut(value, f);
+        }
+        ExprKind::ClassNew { default_fields, args, .. } => {
+            default_fields.iter_mut().flatten().for_each(|field| visit_expr_mut(field, f));
+            args.iter_mut().for_each(|arg| visit_expr_mut(arg, f));
+        }
+    }
+}
+
 /// One piece of an f-string: literal text, or a value to format into it.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum FStringPart {

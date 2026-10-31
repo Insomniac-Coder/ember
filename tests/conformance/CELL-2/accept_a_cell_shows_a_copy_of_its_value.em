@@ -13,12 +13,12 @@ struct Temp:
     c: int
 
 extend Temp implements Display:
-    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
-        return f.write_str(f"{self.c}C")
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
+        return f.write_str(f"{this.c}C")
 
 extend Temp implements Debug:
-    fn fmt_debug(self, mut f: Formatter) -> Result[void, FmtError]:
-        return f.write_str(f"Temp<{self.c}>")
+    fn fmt_debug(ref mut f: Formatter) -> Result[void, FmtError]:
+        return f.write_str(f"Temp<{this.c}>")
 
 fn main():
     t = Cell(Temp(20))

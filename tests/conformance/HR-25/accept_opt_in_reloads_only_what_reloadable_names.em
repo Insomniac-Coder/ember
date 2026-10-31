@@ -21,12 +21,12 @@ fn helper(x: int) -> int:
 class Gauge:
     level: int = 4
 
-    fn read(self) -> int:
-        return self.level
+    fn read() -> int:
+        return this.level
 
     @noreload
-    fn reset(mut self):
-        self.level = 0
+    fn reset():
+        this.level = 0
 
 fn main():
     g = Gauge()

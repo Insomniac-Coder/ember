@@ -11,14 +11,15 @@ struct Money:
     cents: int
 
 extend Money implements Ord:
-    fn cmp(self, other: Money) -> Ordering:
-        if self.cents < other.cents:
+    fn cmp(other: Money) -> Ordering:
+        if this.cents < other.cents:
             return Ordering.Less
-        if self.cents > other.cents:
+        if this.cents > other.cents:
             return Ordering.Greater
         return Ordering.Equal
 
-fn biggest[T: Ord + Copy](a: T, b: T) -> T:
+[T: needs (Ord, Copy)]
+fn biggest(a: T, b: T) -> T:
     if a.cmp(b) == Ordering.Greater:
         return a
     return b

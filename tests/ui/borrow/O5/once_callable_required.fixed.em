@@ -1,4 +1,4 @@
-fn consume(owned values: Array[i32]) -> i32:
+fn consume(owns values: Array[i32]) -> i32:
     return values[0]
 
 fn invoke(f: once fn() -> i32) -> i32:

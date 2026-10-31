@@ -7,11 +7,11 @@ class LoopElseRead:
     first: i32
     second: i32
 
-    fn init(mut self):
+    fn init():
         while false:
-            self.first = 1
+            this.first = 1
         else:
-            self.second = self.first
+            this.second = this.first
 
 fn main():
     value = LoopElseRead()

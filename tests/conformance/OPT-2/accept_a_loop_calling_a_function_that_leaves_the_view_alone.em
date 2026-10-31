@@ -13,13 +13,13 @@
 class Bag:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = []
+    fn init():
+        this.items = []
 
 fn double(x: int) -> int:
     return x * 2
 
-fn unknown(mut xs: Array[int]):
+fn unknown(ref mut xs: Array[int]):
     pass
 
 fn main():

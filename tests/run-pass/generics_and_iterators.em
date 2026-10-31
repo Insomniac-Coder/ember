@@ -2,22 +2,22 @@
 #$ rules: TYP-16, TYP-17, TYP-18, IFC-4, CTL-1, CTL-4
 
 interface Shape:
-    fn area(self) -> f32
+    fn area() -> f32
 
 # `[IFC-4]` — an associated type: each implementer says what `Item` is.
 interface Iterator:
     type Item
-    fn next(mut self) -> Option[Item]
+    fn next() -> Option[Item]
 
 struct Square implements Shape:
     side: f32
-    fn area(self) -> f32:
-        return self.side * self.side
+    fn area() -> f32:
+        return this.side * this.side
 
 struct Circle implements Shape:
     r: f32
-    fn area(self) -> f32:
-        return self.r * self.r * 3.0
+    fn area() -> f32:
+        return this.r * this.r * 3.0
 
 struct Counting:
     at: i32
@@ -25,26 +25,29 @@ struct Counting:
 
 extend Counting implements Iterator:
     type Item = i32
-    fn next(mut self) -> Option[i32]:
-        if self.at >= self.stop:
+    fn next() -> Option[i32]:
+        if this.at >= this.stop:
             return None
-        v = self.at
-        self.at = self.at + 1
+        v = this.at
+        this.at = this.at + 1
         return Some(v)
 
 # `[TYP-16]`, `[TYP-18]` — one instantiation per type, inferred from the
 # arguments.
-fn identity[T](x: T) -> T:
+[T]
+fn identity(x: T) -> T:
     return x
 
-fn pick[T](a: T, b: T, first: bool) -> T:
+[T]
+fn pick(a: T, b: T, first: bool) -> T:
     if first:
         return a
     return b
 
 # `[TYP-17]` — only what the bound provides may be used, and `area` is
 # provided by `Shape`.
-fn total_area[T: Shape](a: T, b: T) -> f32:
+[T: needs Shape]
+fn total_area(a: T, b: T) -> f32:
     return a.area() + b.area()
 
 fn main():

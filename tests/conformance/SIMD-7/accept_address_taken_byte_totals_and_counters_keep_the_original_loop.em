@@ -9,12 +9,12 @@
 
 @noinline
 @overflow(wrap)
-fn touch_total(mut value: u64):
+fn touch_total(ref mut value: u64):
     value += 1
 
 @noinline
 @overflow(wrap)
-fn touch_counter(mut value: usize):
+fn touch_counter(ref mut value: usize):
     value += 1
 
 @noinline

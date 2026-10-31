@@ -9,8 +9,8 @@
 class Node:
     name: Option[String]
 
-    fn clear(mut self):
-        self.name = None
+    fn clear():
+        this.name = None
 
 fn take(a: Node) -> Option[String]:
     return a.name    #$ error[E3012]: cannot move out of a class field

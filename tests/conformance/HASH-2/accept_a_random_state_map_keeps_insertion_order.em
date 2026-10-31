@@ -9,7 +9,7 @@
 
 from std.collections import RandomState
 
-fn seeded(s: str) -> u64:
+fn seeded(s: StrView) -> u64:
     h = RandomState.new()
     s.hash(h)
     return h.finish()

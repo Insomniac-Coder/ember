@@ -4,17 +4,18 @@
 # instances whose arguments meet it: `Maybe[int]` is not `Describe`.
 
 interface Describe:
-    fn describe(self) -> str
+    fn describe() -> StrView
 
 enum Maybe[T]:
     Nothing
     Just(T)
 
-extend[U: Describe] Maybe[U] implements Describe:
-    fn describe(self) -> str:
+extend[U: needs Describe] Maybe[U] implements Describe:
+    fn describe() -> StrView:
         return "maybe"
 
-fn show[D: Describe](d: D) -> str:
+[D: needs Describe]
+fn show(d: D) -> StrView:
     return d.describe()
 
 println(show(Maybe[int].Nothing))   #$ error[E2040]: `Maybe[i64]` does not implement `Describe`, which `D` requires

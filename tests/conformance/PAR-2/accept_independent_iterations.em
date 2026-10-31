@@ -12,7 +12,7 @@ struct Particle:
     x: f32
     v: f32
 
-fn step(mut ps: SoA[Particle], dt: f32):
+fn step(ref mut ps: SoA[Particle], dt: f32):
     xs = ps.x
     vs = ps.v
     @parallel

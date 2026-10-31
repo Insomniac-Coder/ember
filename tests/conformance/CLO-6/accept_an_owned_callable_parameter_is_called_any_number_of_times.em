@@ -6,17 +6,17 @@
 # over and called any number of times, in a loop too (it was `E3040` for a second call and
 # `E3041` in a loop, as if it were `once fn`).
 
-fn twice(owned f: fn() -> i32) -> i32:
+fn twice(owns f: fn() -> i32) -> i32:
     first = f()
     return first + f()
 
-fn thrice(owned f: fn(i32) -> i32, x: i32) -> i32:
+fn thrice(owns f: fn(i32) -> i32, x: i32) -> i32:
     total: i32 = 0
     for _ in 0..3:
         total += f(x)
     return total
 
-fn count_calls(owned f: fn()) -> int:
+fn count_calls(owns f: fn()) -> int:
     calls = 0
     while calls < 6:
         f()

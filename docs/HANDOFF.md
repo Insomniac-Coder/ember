@@ -1,5 +1,23 @@
 # Ember — handoff
 
+> **2026-10-31, late night — AUTONOMOUS (owner asleep), solo. START HERE.** Owner: "run autonomously I'll check
+> progress in the morning and ask for ODR updates, no agents or workflow for now ... monitor the wifi and power
+> source like always" (a workflow to verify, or a helper, may be asked for once the limit resets). Watcher started
+> 23:02, pid 103856 (scratchpad `power_wifi_hibernate.ps1`): end it with WMI `Terminate` when the owner is back.
+> - **M1 squashed onto `main`** (one commit: the 0.9.15 grammar, every 0.9.10 spelling refused with the one to
+>   write, the repository migrated, `LANGUAGE_VERSION` "0.9.15"); the branch `m1` stays local (owner: keep it
+>   local), its wip commits ending `ad073339`. A2-1's other half was built in it (owner, 2026-10-31 evening:
+>   "building the dependencies first ... so build that too"): every `@borrows` refused; `[LT-22]` (a view type's
+>   result is the body's summary, a plain view the first line's rule, a method's view of another source rule 3);
+>   `E3065` and `L3014` retired. M1-plan.md has what was built, what is left out and why (`built_for_0915`: 11
+>   rules; Overall 23% -> 24%).
+> - **Before the push:** gate3 (the suite three ways), the bench both backends, push `main` (with `64f74d67` and
+>   `7ea93438` under it), one CI look.
+> - **For the morning, one at a time:** N26-N28 (decisions.md "Rulings made on autopilot, night of 2026-10-31").
+>   Not ODRs, to report: `[LT-1a]`'s `from log` on a field that is not a view is not built (it needs the borrow
+>   check to tell one field's loans from another's); a verify workflow over the `built_for_0915` list when the
+>   owner allows one.
+
 > **2026-10-31, morning — AUTONOMOUS again ("back to autonomous mode 🙂"), solo.** The owner answered N23-N25:
 > N23 reversed (verdict 136: a plain `fn` in an `unsafe extern` block is refused, write `unsafe fn` or `safe fn`),
 > N24 and N25 approved (`2622f431`). The watcher (`power_wifi_hibernate.ps1`) still runs: end it when the owner is

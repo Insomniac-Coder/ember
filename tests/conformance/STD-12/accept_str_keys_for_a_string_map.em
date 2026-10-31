@@ -9,7 +9,7 @@
 
 fn main():
     m: Map[String, int] = {"a": 1}
-    key: str = "a"
+    key: StrView = "a"
     found = m.get(key)
     println(found, key in m, m[key])
     println(m.remove("zz"))

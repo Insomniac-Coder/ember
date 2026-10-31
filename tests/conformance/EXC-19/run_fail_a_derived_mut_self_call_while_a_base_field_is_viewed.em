@@ -9,14 +9,14 @@
 open class Base:
     a: Array[int]
 
-    fn init(mut self):
-        self.a = [1]
+    fn init():
+        this.a = [1]
 
 class Derived(Base):
     b: Array[int] = []
 
-    fn grow(mut self):
-        self.b.push(len(self.b))
+    fn grow():
+        this.b.push(len(this.b))
 
 fn main():
     d = Derived()

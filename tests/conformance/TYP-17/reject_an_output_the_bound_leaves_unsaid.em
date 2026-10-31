@@ -3,13 +3,16 @@
 # ODR-040 — with `T: Add`, `a + b` is a `T.Output`, which only a signature
 # naming it can hold; a bound's binding is checked at each call.
 
-fn bare[T: Add](a: T, b: T) -> T:
+[T: needs Add]
+fn bare(a: T, b: T) -> T:
     return a + b    #$ error[E2040]: `add` on `T` returns a `T.Output`, and nothing here says what that is
 
-fn named[T: Add](a: T, b: T) -> T.Output:
+[T: needs Add]
+fn named(a: T, b: T) -> T.Output:
     return a + b
 
-fn sum[T: Add[Output = T] + Default](xs: Span[T]) -> T:
+[T: needs (Add[Output = T], Default)]
+fn sum(xs: Span[T]) -> T:
     total = T.default()
     for x in xs:
         total = total + x
@@ -22,10 +25,10 @@ struct R:
 extend R implements Add, Default:
     type Output = int
 
-    fn add(self, rhs: R) -> int:
-        return self.x + rhs.x
+    fn add(rhs: R) -> int:
+        return this.x + rhs.x
 
-    fn default() -> R:
+    static fn default() -> R:
         return R(x=0)
 
 fn main():

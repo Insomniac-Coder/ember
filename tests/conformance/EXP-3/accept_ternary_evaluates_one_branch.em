@@ -9,7 +9,7 @@
 # `x if c else y` evaluates `c`, then exactly one branch. It is
 # right-associative, and an untyped literal branch takes the other's type.
 
-fn loud(label: str, value: int) -> int:
+fn loud(label: StrView, value: int) -> int:
     println(label)
     return value
 

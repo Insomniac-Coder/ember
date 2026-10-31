@@ -10,11 +10,11 @@
 class Counter:
     value: i32
 
-    fn bump(mut self):
-        self.value = self.value + 1
+    fn bump():
+        this.value = this.value + 1
 
-@static_safe
-fn three(mut c: Counter):
+@no_alias_checks
+fn three(ref mut c: Counter):
     for i in 0..3:
         c.bump()
 

@@ -7,48 +7,62 @@ interface Holder:
     type Item
 
 interface EqualHolder:
-    type Item: Eq
+    type Item: needs Eq
 
-fn direct_equal[T](a: T, b: T) -> bool:
+[T]
+fn direct_equal(a: T, b: T) -> bool:
     return a == b    #$ error[E2040]: Eq
 
-fn direct_unequal[T](a: T, b: T) -> bool:
+[T]
+fn direct_unequal(a: T, b: T) -> bool:
     return a != b    #$ error[E2040]: Eq
 
-fn direct_less[T](a: T, b: T) -> bool:
+[T]
+fn direct_less(a: T, b: T) -> bool:
     return a < b    #$ error[E2040]: Ord
 
-fn direct_less_equal[T](a: T, b: T) -> bool:
+[T]
+fn direct_less_equal(a: T, b: T) -> bool:
     return a <= b    #$ error[E2040]: Ord
 
-fn direct_greater[T](a: T, b: T) -> bool:
+[T]
+fn direct_greater(a: T, b: T) -> bool:
     return a > b    #$ error[E2040]: Ord
 
-fn direct_greater_equal[T](a: T, b: T) -> bool:
+[T]
+fn direct_greater_equal(a: T, b: T) -> bool:
     return a >= b    #$ error[E2040]: Ord
 
-fn projected_equal[H: Holder](a: H.Item, b: H.Item) -> bool:
+[H: needs Holder]
+fn projected_equal(a: H.Item, b: H.Item) -> bool:
     return a == b    #$ error[E2040]: Eq
 
-fn projected_unequal[H: Holder](a: H.Item, b: H.Item) -> bool:
+[H: needs Holder]
+fn projected_unequal(a: H.Item, b: H.Item) -> bool:
     return a != b    #$ error[E2040]: Eq
 
-fn projected_less[H: Holder](a: H.Item, b: H.Item) -> bool:
+[H: needs Holder]
+fn projected_less(a: H.Item, b: H.Item) -> bool:
     return a < b    #$ error[E2040]: Ord
 
-fn projected_less_equal[H: Holder](a: H.Item, b: H.Item) -> bool:
+[H: needs Holder]
+fn projected_less_equal(a: H.Item, b: H.Item) -> bool:
     return a <= b    #$ error[E2040]: Ord
 
-fn projected_greater[H: Holder](a: H.Item, b: H.Item) -> bool:
+[H: needs Holder]
+fn projected_greater(a: H.Item, b: H.Item) -> bool:
     return a > b    #$ error[E2040]: Ord
 
-fn projected_greater_equal[H: Holder](a: H.Item, b: H.Item) -> bool:
+[H: needs Holder]
+fn projected_greater_equal(a: H.Item, b: H.Item) -> bool:
     return a >= b    #$ error[E2040]: Ord
 
-fn equality_is_not_ordering[T: Eq](a: T, b: T) -> bool:
+[T: needs Eq]
+fn equality_is_not_ordering(a: T, b: T) -> bool:
     return a < b    #$ error[E2040]: Ord
 
-fn projected_equality_is_not_ordering[H: EqualHolder](a: H.Item, b: H.Item) -> bool:
+[H: needs EqualHolder]
+fn projected_equality_is_not_ordering(a: H.Item, b: H.Item) -> bool:
     return a < b    #$ error[E2040]: Ord
 
 fn main():

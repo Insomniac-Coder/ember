@@ -2,12 +2,13 @@
 #$ rules: DRP-7
 # The Plain control differs only by a destructor that reads the borrowed view.
 
-struct Holder[T]:
-    borrowed: str
+[T]
+struct Holder:
+    borrowed: StrView
     marker: T
 
-    fn drop(mut self):
-        println(self.borrowed)
+    fn drop():
+        println(this.borrowed)
 
 fn main():
     _outer: Option[Holder[i32]] = None

@@ -8,28 +8,29 @@
 # signature, then `E2060`.
 
 interface Build[T]:
-    fn build_from(xs: Array[T]) -> Self
+    static fn build_from(xs: Array[T]) -> Self
 
 struct Bag:
     n: int
 
 extend Bag implements Build[int]:
-    fn build_from(xs: Array[int]) -> Bag:
+    static fn build_from(xs: Array[int]) -> Bag:
         return Bag(n = xs.len())
 
 interface Src:
     type Item
-    fn all(self) -> Array[Item]
-    fn gather[C: Build[Item]](self) -> C:
-        return C.build_from(self.all())
+    fn all() -> Array[Item]
+    [C: needs Build[Item]]
+    fn gather() -> C:
+        return C.build_from(this.all())
 
 struct S:
     xs: Array[int]
 
 extend S implements Src:
     type Item = int
-    fn all(self) -> Array[int]:
-        return self.xs.clone()
+    fn all() -> Array[int]:
+        return this.xs.clone()
 
 fn main():
     b: Bag = S(xs = [1, 2, 3]).gather()

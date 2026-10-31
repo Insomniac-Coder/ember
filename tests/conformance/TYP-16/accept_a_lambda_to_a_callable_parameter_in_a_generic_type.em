@@ -9,24 +9,26 @@
 # were numbered from 0 like the type's, so the two shared a slot: the
 # lambda's type was inferred into `T`'s and the call was E2020.
 
-struct Bag[T]:
+[T]
+struct Bag:
     items: Array[Option[T]] = []
 
-    fn compact(mut self):
-        self.items.retain(fn(e) => e.is_some())
+    fn compact():
+        this.items.retain(fn(e) => e.is_some())
 
-    fn count_where(self, keep: fn(ref Option[T]) -> bool) -> int:
+    fn count_where(keep: fn(ref Option[T]) -> bool) -> int:
         n = 0
-        for e in self.items:
+        for e in this.items:
             if keep(e):
                 n += 1
         return n
 
-    fn somes(self) -> int:
-        return self.count_where(fn(e) => e.is_some())
+    fn somes() -> int:
+        return this.count_where(fn(e) => e.is_some())
 
-    fn first_as[U](self, f: fn(ref T) -> U) -> Option[U]:
-        for e in self.items:
+    [U]
+    fn first_as(f: fn(ref T) -> U) -> Option[U]:
+        for e in this.items:
             match e:
                 Some(v):
                     return Some(f(v))

@@ -15,18 +15,18 @@ class Child:
     v: int
     name: String
 
-    fn init(mut self, v: int, owned name: String):
-        self.v = v
-        self.name = name
+    fn init(v: int, owns name: String):
+        this.v = v
+        this.name = name
 
-    fn drop(mut self):
-        println("drop", self.name)
+    fn drop():
+        println("drop", this.name)
 
 class Parent:
     child: Child
 
-    fn init(mut self, owned child: Child):
-        self.child = child
+    fn init(owns child: Child):
+        this.child = child
 
 ## The callee replaces the only field holding the object its parameter points into: the caller's
 ## borrow goes through a retained copy of the handle (`[RC-5]`), so the object outlives the call.

@@ -5,18 +5,19 @@
 # reported in `apply`'s body, and `xs.iter().map(takes_str)` inside
 # `Map.next` in `std/src/core.em`.
 
-fn apply[F: fn(int) -> int](f: F, x: int) -> int:
+[F: needs fn(int) -> int]
+fn apply(f: F, x: int) -> int:
     return f(x)
 
-fn takes_str(s: str) -> int:
+fn takes_str(s: StrView) -> int:
     return 1
 
 fn yes(v: int) -> bool:
     return true
 
 fn main():
-    println(apply(fn(v: str) => 1, 2))    #$ error[E2020]: `apply` cannot take `fn(str) -> i64` where it expects `fn(i64) -> i64`
+    println(apply(fn(v: StrView) => 1, 2))    #$ error[E2020]: `apply` cannot take `fn(StrView) -> i64` where it expects `fn(i64) -> i64`
     println(apply(yes, 2))    #$ error[E2020]: `apply` cannot take `fn(i64) -> bool` where it expects `fn(i64) -> i64`
     xs = [1, 2, 3]
-    for v in xs.iter().map(takes_str):    #$ error[E2020]: `map` cannot take `fn(str) -> i64` where it expects `fn(ref i64) -> i64`
+    for v in xs.iter().map(takes_str):    #$ error[E2020]: `map` cannot take `fn(StrView) -> i64` where it expects `fn(ref i64) -> i64`
         println(v)

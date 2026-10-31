@@ -6,7 +6,7 @@
 # taken over by the callee. A capturing closure proves this is a static generic callable
 # boundary, not a function-pointer-only special case; it may be called again (D-850).
 
-fn invoke(owned f: fn() -> i32) -> i32:
+fn invoke(owns f: fn() -> i32) -> i32:
     return f()
 
 fn main():

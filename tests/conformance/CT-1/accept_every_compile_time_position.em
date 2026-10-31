@@ -19,7 +19,8 @@ fn factorial(n: int) -> int:
 fn side() -> int:
     return 3
 
-fn zeros[const N: int]() -> [int; N]:
+[const N: int]
+fn zeros() -> [int; N]:
     return [0; N]
 
 const FIB: int = fib(10)

@@ -3,12 +3,13 @@
 #$ profiles: debug, development, release
 #$ stdout: 2
 
-class Envelope[Payload]:
+[Payload]
+class Envelope:
     value: Payload
 
 extend[Element] Envelope[Array[Element]]:
-    fn count(self) -> int:
-        return self.value.len()
+    fn count() -> int:
+        return this.value.len()
 
 fn main():
     values: Array[i32] = Array[i32]()

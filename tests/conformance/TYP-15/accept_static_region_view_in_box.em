@@ -5,6 +5,6 @@
 # the otherwise-valid Box[str] type.
 
 fn main():
-    greeting: Box[str] = Box("hello")
+    greeting: Box[StrView] = Box("hello")
     println(greeting.get())
 #$ stdout: hello

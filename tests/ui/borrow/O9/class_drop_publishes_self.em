@@ -2,15 +2,15 @@ struct Data:
     value: i32
 
 extend Data implements Default:
-    fn default() -> Data:
+    static fn default() -> Data:
         return Data(0)
 
 class Token:
     payload: Data
 
-    fn drop(mut self):
+    fn drop():
         retained: Array[Token] = Array[Token]()
-        retained.push(self)
+        retained.push(this)
 
 fn main():
     _token = Token(Data(7))

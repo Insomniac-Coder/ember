@@ -14,44 +14,44 @@ class Editor:
     undo_stack: Array[Edit] = []
     redo_stack: Array[Edit] = []
 
-    fn apply(self, e: Edit):
+    fn apply(e: Edit):
         match e:
             Insert(pos, text):
-                self.text = f"{self.text[..pos]}{text}{self.text[pos..]}"
+                this.text = f"{this.text[..pos]}{text}{this.text[pos..]}"
             Delete(pos, text):
-                self.text = f"{self.text[..pos]}{self.text[pos + text.len()..]}"
+                this.text = f"{this.text[..pos]}{this.text[pos + text.len()..]}"
 
-    fn insert(self, pos: int, text: str):
+    fn insert(pos: int, text: StrView):
         e = Edit.Insert(pos, text.to_string())
-        self.apply(e)
-        self.undo_stack.push(e)
-        self.redo_stack.clear()
+        this.apply(e)
+        this.undo_stack.push(e)
+        this.redo_stack.clear()
 
-    fn delete(self, pos: int, count: int):
-        removed = self.text[pos..pos + count]
+    fn delete(pos: int, count: int):
+        removed = this.text[pos..pos + count]
         e = Edit.Delete(pos, removed.to_string())
-        self.apply(e)
-        self.undo_stack.push(e)
-        self.redo_stack.clear()
+        this.apply(e)
+        this.undo_stack.push(e)
+        this.redo_stack.clear()
 
-    fn undo(self) -> bool:
-        match self.undo_stack.pop():
+    fn undo() -> bool:
+        match this.undo_stack.pop():
             Some(e):
-                self.apply(inverse(e))
-                self.redo_stack.push(e)
+                this.apply(inverse(e))
+                this.redo_stack.push(e)
                 return true
             None:
                 return false
 
-    fn redo(self) -> bool:
-        if Some(e) = self.redo_stack.pop():
-            self.apply(e)
-            self.undo_stack.push(e)
+    fn redo() -> bool:
+        if this.redo_stack.pop() exists as e:
+            this.apply(e)
+            this.undo_stack.push(e)
             return true
         return false
 
-    fn show(self, label: str):
-        println(f"{label:<10} |{self.text}|  undo={self.undo_stack.len()} redo={self.redo_stack.len()}")
+    fn show(label: StrView):
+        println(f"{label:<10} |{this.text}|  undo={this.undo_stack.len()} redo={this.redo_stack.len()}")
 
 fn main():
     ed = Editor()

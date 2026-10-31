@@ -6,7 +6,7 @@
 # D-709 — a `mut` argument is the caller's place: what the callee writes there is what the caller
 # reads after the call. A `bool` local known to be `false` before the call is not known after it.
 
-fn set(mut b: bool, mut n: int):
+fn set(ref mut b: bool, ref mut n: int):
     b = true
     n = 5
 

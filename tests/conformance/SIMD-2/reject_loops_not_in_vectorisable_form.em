@@ -4,7 +4,7 @@
 # "`E4020` names the first clause that fails, and for a remaining check its
 # reason (`[EFF-11]`)". Each loop here fails one clause of vectorisable form.
 
-fn gather(xs: Span[int], idx: Span[int], mut out: MutSpan[int]):
+fn gather(xs: Span[int], idx: Span[int], ref mut out: MutSpan[int]):
     @simd(assert)
     for i in 0..idx.len():  #$ error[E4020]: it reaches memory other than a local or a view at the loop counter plus a constant
         out[i] = xs[idx[i]]
@@ -25,7 +25,7 @@ fn first_negative(xs: Span[int]) -> int:
             break
     return found
 
-fn letters(t: str) -> int:
+fn letters(t: StrView) -> int:
     n = 0
     @simd(assert)
     for c in t.chars():  #$ error[E4020]: its trip count is not known before entry
@@ -34,17 +34,17 @@ fn letters(t: str) -> int:
     return n
 
 # A function value whose function is not known where the loop runs.
-fn through(xs: Span[int], mut out: MutSpan[int], f: fn(int) -> int):
+fn through(xs: Span[int], ref mut out: MutSpan[int], f: fn(int) -> int):
     @simd(assert)
     for i in 0..xs.len():  #$ error[E4020]: a call the analysis cannot read through
         out[i] = f(xs[i])
 
-fn divide(xs: Span[int], mut out: MutSpan[int], d: int):
+fn divide(xs: Span[int], ref mut out: MutSpan[int], d: int):
     @simd(assert)
     for i in 0..xs.len():  #$ error[E4020]: by a divisor that is not a constant
         out[i] = xs[i] // d
 
-fn shifted(mut xs: MutSpan[int]):
+fn shifted(ref mut xs: MutSpan[int]):
     @simd(assert)
     for i in 0..xs.len() - 1:  #$ error[E4020]: at more than one offset
         xs[i] = xs[i + 1]

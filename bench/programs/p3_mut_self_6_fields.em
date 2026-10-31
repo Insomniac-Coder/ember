@@ -7,17 +7,17 @@ class Thing:
     f: Array[int]
     count: int
 
-    fn init(mut self):
-        self.a = []
-        self.b = []
-        self.c = []
-        self.d = []
-        self.e = []
-        self.f = []
-        self.count = 0
+    fn init():
+        this.a = []
+        this.b = []
+        this.c = []
+        this.d = []
+        this.e = []
+        this.f = []
+        this.count = 0
 
-    fn bump(mut self):
-        self.count += 1
+    fn bump():
+        this.count += 1
 
 fn main():
     things: Array[Thing] = []

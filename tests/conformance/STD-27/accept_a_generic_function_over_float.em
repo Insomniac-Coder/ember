@@ -13,13 +13,16 @@
 
 from std.math import Float, sqrt
 
-fn norm[T: Float](x: T, y: T) -> T:
+[T: needs Float]
+fn norm(x: T, y: T) -> T:
     return (x * x + y * y).sqrt()
 
-fn halve_and_clamp[T: Float](x: T) -> T:
+[T: needs Float]
+fn halve_and_clamp(x: T) -> T:
     return clamp(x * 0.5, 0.0, 1.0)
 
-fn cube_of_half[T: Float](x: T) -> T:
+[T: needs Float]
+fn cube_of_half(x: T) -> T:
     half = x / 2
     return half ** 3
 

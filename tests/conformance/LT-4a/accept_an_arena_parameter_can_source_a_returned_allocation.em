@@ -3,8 +3,7 @@
 # Arena is not a view type. The narrow @borrows exception records that the
 # returned mutable reference points into storage owned by this parameter.
 
-@borrows(arena)
-fn allocate_one(arena: Arena, value: i32) -> ref mut i32:
+fn allocate_one(arena: Arena, value: i32) -> ref mut i32 from arena:
     return arena.alloc(value)
 
 fn main():

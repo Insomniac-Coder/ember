@@ -4,14 +4,17 @@
 #$ assert-c: contains(em_7Payload7projectG99f65fd6187c945d)
 
 interface Project:
-    fn project[T](self, value: T) -> T:
+    [T]
+    fn project(value: T) -> T:
         return value
 
-struct Payload[A] implements Project:
+[A]
+struct Payload implements Project:
     value: A
 
-struct Factory[A]:
-    fn project_default(self, payload: Payload[A], value: i32) -> i32:
+[A]
+struct Factory:
+    fn project_default(payload: Payload[A], value: i32) -> i32:
         return payload.project(value)
 
 fn main():

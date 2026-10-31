@@ -8,7 +8,7 @@
 struct Bin:
     items: Array[i32]
 
-fn grow(mut bins: Array[Bin], v: i32):
+fn grow(ref mut bins: Array[Bin], v: i32):
     bins[0].items.push(v)
 
 fn main():

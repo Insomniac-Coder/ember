@@ -7,11 +7,11 @@
 ## `Map[str, V]` its own key's: each instance of the map's methods calls through its own bounds,
 ## whichever is made first.
 
-static NAMES: Array[str] = ["ann", "bob"]
+static NAMES: Array[StrView] = ["ann", "bob"]
 
 fn main():
     owned_keys: Map[String, int] = {}
     owned_keys.insert(String.from("x"), 1)
     println(owned_keys.contains_key("x"), owned_keys.len())
-    index: Map[str, int] = {name: i for i, name in NAMES.iter().enumerate()}
+    index: Map[StrView, int] = {name: i for i, name in NAMES.iter().enumerate()}
     println(index.len(), index.contains_key("ann"), index.contains_key("cat"))

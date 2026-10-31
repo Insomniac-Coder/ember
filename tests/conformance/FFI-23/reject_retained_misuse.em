@@ -9,10 +9,10 @@
 from std.ffi import Retained, ObjectPtr
 
 class Noisy:
-    name: str
+    name: StrView
 
 class Quiet:
-    name: str
+    name: StrView
 
 fn address_of_another(token: Retained[Noisy]) -> ObjectPtr[Quiet]:
     return token.ptr()    #$ error[E2020]: expected `std.ffi.ObjectPtr[Quiet]`, found `std.ffi.ObjectPtr[Noisy]`

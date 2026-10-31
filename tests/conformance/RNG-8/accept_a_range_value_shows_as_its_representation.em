@@ -8,7 +8,8 @@
 type Unit = f64 in 0.0 ..= 1.0
 type Level = i32 in 0 ..= 10
 
-fn show[T: Display](x: T) -> String:
+[T: needs Display]
+fn show(x: T) -> String:
     return f"<{x}>"
 
 fn main():

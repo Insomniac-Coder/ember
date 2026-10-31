@@ -1,4 +1,4 @@
-fn take(owned xs: Array[i32]) -> i32:
+fn take(owns xs: Array[i32]) -> i32:
     return xs[0]
 
 fn main():

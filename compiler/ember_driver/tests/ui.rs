@@ -81,7 +81,7 @@ fn required_primary_fragments(shape: Shape) -> &'static [&'static str] {
         Shape::B3 => &["borrow"],
         Shape::B4 => &["single owner"],
         Shape::B5 => &["index", "Handle", "Weak"],
-        Shape::B6 => &["@borrows"],
+        Shape::B6 => &["from"],
         Shape::B7 => &["owned value"],
         Shape::B8 => &["separate parameters"],
         Shape::B9 => &["owned fn"],
@@ -89,7 +89,7 @@ fn required_primary_fragments(shape: Shape) -> &'static [&'static str] {
         Shape::B11 => &["assert_disjoint"],
         Shape::B12 => &["owned copy"],
         Shape::B13 => &["separate parameters"],
-        Shape::B14 => &["owned value", "separately", "@borrows"],
+        Shape::B14 => &["owned value", "separately"],
         Shape::B15 => &["expected callable signature", "supplied callable signature"],
         Shape::B16 => &["copy of"],
         Shape::B17 => &["weakref"],
@@ -572,7 +572,7 @@ fn unknown_type_suggests_visible_import_alias_and_corrected_type_compiles() {
     let model = ember_branding::source_file("model");
     std::fs::write(
         package.join(model),
-        "pub struct Point:\n    x: i32\n\npub struct Vector[T]:\n    value: T\n",
+        "pub struct Point:\n    x: i32\n\n[T]\npub struct Vector:\n    value: T\n",
     )
     .expect("candidate module is writable");
     let main = ember_branding::source_file("main");

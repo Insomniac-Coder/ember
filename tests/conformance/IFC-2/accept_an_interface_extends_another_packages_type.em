@@ -5,18 +5,18 @@
 # one's own, implemented for it (`[TYP-20]`).
 
 interface Twice:
-    fn twice(self) -> i64
+    fn twice() -> i64
 
 interface Second[T]:
-    fn second(self) -> T
+    fn second() -> T
 
 extend i64 implements Twice:
-    fn twice(self) -> i64:
-        return self * 2
+    fn twice() -> i64:
+        return this * 2
 
-extend[T: Copy] Array[T] implements Second[T]:
-    fn second(self) -> T:
-        return self[1]
+extend[T: needs Copy] Array[T] implements Second[T]:
+    fn second() -> T:
+        return this[1]
 
 x = 4
 println(x.twice(), [1, 2, 3].second())

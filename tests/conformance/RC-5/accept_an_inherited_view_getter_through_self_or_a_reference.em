@@ -9,18 +9,18 @@
 open class Base:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = [1, 2]
+    fn init():
+        this.items = [1, 2]
 
-    fn view(self) -> Span[int]:
-        return self.items[..]
+    fn view() -> Span[int]:
+        return this.items[..]
 
 class Derived(Base):
-    fn init(mut self):
+    fn init():
         super.init()
 
-    fn both(self) -> Span[int]:
-        return self.view()
+    fn both() -> Span[int]:
+        return this.view()
 
 fn main():
     d = Derived()

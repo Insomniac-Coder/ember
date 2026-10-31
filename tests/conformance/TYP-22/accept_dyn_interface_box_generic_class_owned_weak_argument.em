@@ -13,15 +13,16 @@
 # Shared owner remains separate while the dynamic callee upgrades and destroys
 # its owned argument copy.
 interface Observe:
-    fn observe(self, owned weak: Weak[Shared[Token]]) -> i32
+    fn observe(owns weak: Weak[Shared[Token]]) -> i32
 
 struct Token:
     value: i32
 
-class Reader[T] implements Observe:
+[T]
+class Reader implements Observe:
     marker: T
 
-    fn observe(self, owned weak: Weak[Shared[Token]]) -> i32:
+    fn observe(owns weak: Weak[Shared[Token]]) -> i32:
         match weak.upgrade():
             Some(owner):
                 return owner.get().value

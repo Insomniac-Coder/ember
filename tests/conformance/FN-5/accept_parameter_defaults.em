@@ -18,13 +18,13 @@ struct Meter:
     total: int
 
 extend Meter:
-    fn add(mut self, amount: int = 1, times: int = 1):
-        self.total += amount * times
+    fn add(amount: int = 1, times: int = 1):
+        this.total += amount * times
 
-    fn make(start: int = LIMIT) -> Meter:
+    static fn make(start: int = LIMIT) -> Meter:
         return Meter(total=start)
 
-fn greet(name: str, greeting: str = "hello", mark: String = "!") -> String:
+fn greet(name: StrView, greeting: StrView = "hello", mark: String = "!") -> String:
     return f"{greeting}, {name}{mark}"
 
 fn scale(x: f64, by: f64 = 0.5) -> f64:

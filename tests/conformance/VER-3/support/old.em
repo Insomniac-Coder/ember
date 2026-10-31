@@ -18,11 +18,11 @@ pub struct Size:
     pub h: int
 
     @deprecated(since="0.9", note="use `area` instead")
-    pub fn surface(self) -> int:
-        return self.w * self.h
+    pub fn surface() -> int:
+        return this.w * this.h
 
-    pub fn area(self) -> int:
-        return self.surface()
+    pub fn area() -> int:
+        return this.surface()
 
 @deprecated("0.7", "use `LIMIT` instead")
 pub const MAX: int = 10
@@ -36,10 +36,10 @@ pub enum Shape:
 
 @deprecated(since="0.9", note="use `Measured`")
 pub interface Sized2:
-    fn size(self) -> int
+    fn size() -> int
 
 pub interface Measured:
-    fn size(self) -> int
+    fn size() -> int
 
 @deprecated(since="0.6", note="count with `LIMIT`")
 pub static SEEN: int = 4
@@ -51,5 +51,5 @@ pub struct Maker:
     pub v: int
 
     @deprecated(since="0.9", note="use `Maker(v)`")
-    pub fn make(v: int) -> Maker:
+    pub static fn make(v: int) -> Maker:
         return Maker(v)

@@ -1,5 +1,6 @@
 pub struct Point:
     x: i32
 
-pub struct Vector[T]:
+[T]
+pub struct Vector:
     value: T

@@ -7,11 +7,12 @@ class Local:
     value: int = 1
 
 @sync
-class Holder[T]:
+[T]
+class Holder:
     value: T
 
-    fn init(mut self, value: T):
-        self.value = value
+    fn init(value: T):
+        this.value = value
 
 fn main():
     holder = Holder(Local())

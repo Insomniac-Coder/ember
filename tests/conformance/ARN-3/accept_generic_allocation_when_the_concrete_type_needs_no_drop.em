@@ -2,8 +2,8 @@
 #$ rules: ARN-3, TYP-16
 # The needs_drop verdict is made for the concrete monomorphisation.
 
-@borrows(arena)
-fn put[T](arena: Arena, owned value: T) -> ref mut T:
+[T]
+fn put(arena: Arena, owns value: T) -> ref mut T from arena:
     return arena.alloc(value)
 
 fn main():

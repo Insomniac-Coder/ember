@@ -19,16 +19,16 @@ struct Count:
 extend Count implements Iterator:
     type Item = int
 
-    fn next(mut self) -> Option[int]:
-        if self.n >= self.limit:
+    fn next() -> Option[int]:
+        if this.n >= this.limit:
             return None
-        self.n += 1
-        return Some(self.n)
+        this.n += 1
+        return Some(this.n)
 
 fn main():
     println(Count(0, 4).sum(), Count(0, 4).product(), Count(0, 0).sum(), Count(0, 0).product())
     xs: Array[int] = [4, 9, 2]
     fs: Array[f64] = [0.5, 0.25]
     println(xs.iter().sum(), xs.iter().skip(1).product(), fs.iter().sum())
-    m: Map[str, int] = {"a": 1, "b": 2}
+    m: Map[StrView, int] = {"a": 1, "b": 2}
     println(m.values().sum(), Count(0, 10).step_by(3).sum())

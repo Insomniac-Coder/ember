@@ -21,7 +21,7 @@
 ## expected values were computed by Python's UTF-8 decoding.
 
 @noinline
-fn sum(text: str) -> int:
+fn sum(text: StrView) -> int:
     total = 0
     for (i, c) in text.char_indices():
         total = total * 31 + (i ^ (c as u32 as int))
@@ -29,14 +29,14 @@ fn sum(text: str) -> int:
     return total
 
 @noinline
-fn count(text: str) -> int:
+fn count(text: StrView) -> int:
     n = 0
     for _c in text:
         n += 1
     return n
 
 @noinline
-fn last_wide(text: str) -> int:
+fn last_wide(text: StrView) -> int:
     at = -1
     for (i, c) in text.char_indices():
         if c as u32 >= 128:
@@ -44,13 +44,13 @@ fn last_wide(text: str) -> int:
     return at
 
 @noinline
-fn first_after(text: str, start: int) -> int:
+fn first_after(text: StrView, start: int) -> int:
     for (i, c) in text.char_indices():
         if i >= start and c as u32 >= 128:
             return i
     return -1
 
-fn build(head: str, body: str, n: int, tail: str) -> String:
+fn build(head: StrView, body: StrView, n: int, tail: StrView) -> String:
     out = String.from(head)
     for _k in 0..n:
         out.push_str(body)

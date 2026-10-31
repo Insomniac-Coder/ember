@@ -9,10 +9,10 @@
 from std.math import Float
 
 interface Small:
-    type Item: Float + Display
+    type Item: needs (Float, Display)
 
 interface Large:
-    type Item: Float + Display
+    type Item: needs (Float, Display)
 
 struct SmallOwner:
     marker: int
@@ -26,13 +26,16 @@ struct LargeOwner:
 extend LargeOwner implements Large:
     type Item = f64
 
-fn direct[T: Float + Display](a: T, b: T):
+[T: needs (Float, Display)]
+fn direct(a: T, b: T):
     println(a, b)
 
-fn projected[S: Small, L: Large](a: S.Item, b: L.Item):
+[S: needs Small, L: needs Large]
+fn projected(a: S.Item, b: L.Item):
     println(a, b)
 
-fn debug_text[T: Float + Debug](a: T, b: T):
+[T: needs (Float, Debug)]
+fn debug_text(a: T, b: T):
     println(a, b)
 
 fn main():

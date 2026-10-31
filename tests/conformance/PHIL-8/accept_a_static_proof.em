@@ -4,7 +4,7 @@
 # `[PHIL-8]` — where a property can be proved statically, it is: two mutable views of one array,
 # proved apart by `split_at`, are written with no run-time check of their overlap.
 
-fn set(mut s: MutSpan[int], v: int):
+fn set(ref mut s: MutSpan[int], v: int):
     s[0] = v
 
 fn main():

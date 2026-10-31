@@ -29,14 +29,14 @@ struct Rank:
     n: int
 
 extend Rank implements Eq:
-    fn eq(self, other: Self) -> bool:
-        return self.n == other.n
+    fn eq(other: Self) -> bool:
+        return this.n == other.n
 
 extend Rank implements Ord:
-    fn cmp(self, other: Self) -> Ordering:
-        return other.n.cmp(self.n)
+    fn cmp(other: Self) -> Ordering:
+        return other.n.cmp(this.n)
 
-fn descending(mut xs: Array[int], cmp: fn(int, int) -> Ordering):
+fn descending(ref mut xs: Array[int], cmp: fn(int, int) -> Ordering):
     xs.sort_by(cmp)
 
 fn noted(v: int) -> int:

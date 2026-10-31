@@ -11,9 +11,10 @@
 type Pair[T] = (T, T)
 type Table[K, V] = Map[K, Array[V]]
 type Numbers = Sorted[int]
-type Sorted[T: Ord] = Array[T]
+type Sorted[T: needs Ord] = Array[T]
 
-fn swap[T: Copy](p: Pair[T]) -> Pair[T]:
+[T: needs Copy]
+fn swap(p: Pair[T]) -> Pair[T]:
     return (p.1, p.0)
 
 fn total(xs: Numbers) -> int:

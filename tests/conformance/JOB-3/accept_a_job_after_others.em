@@ -9,7 +9,7 @@ from std.sync import Atomic
 
 static SUM: Atomic[int] = Atomic(0)
 
-fn scale(mut xs: MutSpan[int], k: int):
+fn scale(ref mut xs: MutSpan[int], k: int):
     for i in 0..xs.len():
         xs[i] *= k
 

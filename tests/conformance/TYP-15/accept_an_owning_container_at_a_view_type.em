@@ -10,11 +10,11 @@
 # bounded by their arena.
 
 fn main():
-    xs: Array[str] = Array[str]()
+    xs: Array[StrView] = Array[StrView]()
     xs.push("a")
-    view: Span[str] = xs.as_span()
-    m = Map[str, int]()
+    view: Span[StrView] = xs.as_span()
+    m = Map[StrView, int]()
     m["k"] = 2
-    s = Set[str]()
+    s = Set[StrView]()
     s.add("s")
     println(view.len(), xs, m, s)

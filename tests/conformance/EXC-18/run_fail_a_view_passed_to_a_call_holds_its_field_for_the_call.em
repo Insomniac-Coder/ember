@@ -9,11 +9,11 @@
 class Bag:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = [1, 2, 3]
+    fn init():
+        this.items = [1, 2, 3]
 
-    fn replace(self):
-        self.items = [7]
+    fn replace():
+        this.items = [7]
 
 fn show(v: Span[int], other: Bag):
     other.replace()

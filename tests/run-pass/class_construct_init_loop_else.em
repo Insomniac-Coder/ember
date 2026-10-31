@@ -8,16 +8,16 @@ class LoopElse:
     second: i32
     items: Array[i32]
 
-    fn init(mut self):
+    fn init():
         while false:
             pass
         else:
-            self.first = 7
-        self.items = Array()
-        for _item in self.items:
+            this.first = 7
+        this.items = Array()
+        for _item in this.items:
             pass
         else:
-            self.second = 9
+            this.second = 9
         for i in 0..0:
             pass
         else:

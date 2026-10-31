@@ -3,11 +3,13 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 
-class Holder[T]:
+[T]
+class Holder:
     value: T
 
 extend[T] Holder[T]:
-    fn replace[Value](self, value: Value) -> Value:
+    [Value]
+    fn replace(value: Value) -> Value:
         return value
 
 fn main():

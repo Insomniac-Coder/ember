@@ -11,24 +11,28 @@
 # view argument (`str`) made the receiver or `w` a view passed as a copy, and
 # only that instance failed, with `E3060`.
 
-struct Holder[T]:
+[T]
+struct Holder:
     item: T
 
-    fn first(self) -> ref T:
-        return ref self.item
+    fn first() -> ref T:
+        return ref this.item
 
-struct Wrap[T]:
+[T]
+struct Wrap:
     item: T
 
-fn inner[T](w: Wrap[T]) -> ref T:
+[T]
+fn inner(w: Wrap[T]) -> ref T:
     return ref w.item
 
 @derive(Copy)
-struct Pt[T]:
+[T]
+struct Pt:
     v: T
 
-    fn get(self) -> ref T:
-        return ref self.v
+    fn get() -> ref T:
+        return ref this.v
 
 fn main():
     h = Holder(5)

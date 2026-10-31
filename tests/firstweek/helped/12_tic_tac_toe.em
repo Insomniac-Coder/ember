@@ -11,7 +11,7 @@ static LINES: Array[(int, int, int)] = [
     (0, 4, 8), (2, 4, 6),
 ]
 
-fn symbol(m: Mark) -> str:
+fn symbol(m: Mark) -> StrView:
     return match m:
         Empty => "."
         X => "X"
@@ -20,26 +20,26 @@ fn symbol(m: Mark) -> str:
 struct Board:
     cells: Array[Mark] = [Mark.Empty for _ in 0..9]
 
-    fn show(self):
+    fn show():
         for row in 0..3:
-            println([symbol(self.cells[row * 3 + col]) for col in 0..3].join(" "))
+            println([symbol(this.cells[row * 3 + col]) for col in 0..3].join(" "))
 
-    fn place(mut self, pos: int, m: Mark) -> Result[(), String]:
+    fn place(pos: int, m: Mark) -> Result[(), String]:
         if pos < 0 or pos >= 9:
             return Err(f"square {pos} is off the board")
-        if self.cells[pos] != Mark.Empty:
+        if this.cells[pos] != Mark.Empty:
             return Err(f"square {pos} is taken")
-        self.cells[pos] = m
+        this.cells[pos] = m
         return Ok(())
 
-    fn winner(self) -> Option[Mark]:
+    fn winner() -> Option[Mark]:
         for a, b, c in LINES:
-            if self.cells[a] != Mark.Empty and self.cells[a] == self.cells[b] == self.cells[c]:
-                return Some(self.cells[a])
+            if this.cells[a] != Mark.Empty and this.cells[a] == this.cells[b] == this.cells[c]:
+                return Some(this.cells[a])
         return None
 
-    fn full(self) -> bool:
-        return all(c != Mark.Empty for c in self.cells)
+    fn full() -> bool:
+        return all(c != Mark.Empty for c in this.cells)
 
 fn other(m: Mark) -> Mark:
     return Mark.O if m == Mark.X else Mark.X
@@ -57,7 +57,7 @@ fn main():
                 pass
         println(f"{symbol(player)} plays {pos}")
         board.show()
-        if Some(w) = board.winner():
+        if board.winner() exists as w:
             println(f"{symbol(w)} wins!")
             return
         if board.full():

@@ -6,12 +6,12 @@
 class Holder:
     value: i32
 
-    fn show(self):
-        println(self.value)
+    fn show():
+        println(this.value)
 
-    fn init(mut self):
-        self.value = 42
-        self.show()
+    fn init():
+        this.value = 42
+        this.show()
 
 fn main():
     holder = Holder()

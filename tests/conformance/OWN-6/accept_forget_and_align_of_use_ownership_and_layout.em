@@ -10,14 +10,15 @@ import std.mem
 struct Resource:
     pub value: i32
 
-    fn drop(mut self):
-        println(self.value)
+    fn drop():
+        println(this.value)
 
 struct Padded:
     pub byte: u8
     pub wide: u64
 
-fn alignment[T]() -> usize:
+[T]
+fn alignment() -> usize:
     return mem.align_of[T]()
 
 fn main():

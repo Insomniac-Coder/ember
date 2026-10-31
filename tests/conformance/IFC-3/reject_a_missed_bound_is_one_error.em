@@ -4,10 +4,11 @@
 # brings too, and that is one mistake: `Plain` does not implement `Whole`,
 # said once, not again for `Default` and `Hash` (D-337).
 
-interface Whole: Default + Hash:
+interface Whole: needs (Default, Hash):
     pass
 
-fn zero_of[T: Whole](v: T) -> T:
+[T: needs Whole]
+fn zero_of(v: T) -> T:
     return T.default()
 
 struct Plain:

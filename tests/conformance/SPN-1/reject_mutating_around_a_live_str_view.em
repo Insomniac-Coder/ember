@@ -8,6 +8,6 @@
 fn main():
     s: String = String()
     s.push_str("hi")
-    v: str = s.as_str()
+    v: StrView = s.as_str()
     s.push_str("!")   #$ error[E3021]: `s` is borrowed here and mutably borrowed elsewhere
     println(v)

@@ -4,12 +4,12 @@
 ## `[GRM-1]` — a class names its one base class in parentheses.
 
 open class Script:
-    fn priority(self) -> int:
+    fn priority() -> int:
         return 1
 
 class Door(Script):
-    fn open_priority(self) -> int:
-        return self.priority() + 1
+    fn open_priority() -> int:
+        return this.priority() + 1
 
 fn main():
     println(Door().open_priority())

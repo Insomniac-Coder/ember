@@ -56,12 +56,14 @@
 
 from std.mem import UnsafeCell
 
-pub struct Mutex[T]:
+[T]
+pub struct Mutex:
     value: UnsafeCell[T]
     word: UnsafeCell[usize] = UnsafeCell(0)
 
 @view
-pub struct MutexGuard[T]:
+[T]
+pub struct MutexGuard:
     value: ref mut T
 
 pub enum MemoryOrder:
@@ -71,46 +73,53 @@ pub enum MemoryOrder:
     AcqRel
     SeqCst
 
-pub struct Atomic[T]:
+[T]
+pub struct Atomic:
     value: UnsafeCell[T]
 
-pub struct RwLock[T]:
+[T]
+pub struct RwLock:
     value: UnsafeCell[T]
     word: UnsafeCell[usize] = UnsafeCell(0)
 
 @view
-pub struct RwLockReadGuard[T]:
+[T]
+pub struct RwLockReadGuard:
     value: ref T
 
 @view
-pub struct RwLockWriteGuard[T]:
+[T]
+pub struct RwLockWriteGuard:
     value: ref mut T
 
 pub struct Once:
     state: Atomic[u32] = Atomic(0)
 
-    pub fn call_once[Call: once fn()](self, owned f: Call):
-        if self.state.load(MemoryOrder.Acquire) == ONCE_DONE:
+    [Call: needs once fn()]
+    pub fn call_once(owns f: Call):
+        if this.state.load(MemoryOrder.Acquire) == ONCE_DONE:
             return
-        if self.state.compare_exchange(ONCE_NEW, ONCE_RUNNING, MemoryOrder.Acquire).is_ok():
+        if this.state.compare_exchange(ONCE_NEW, ONCE_RUNNING, MemoryOrder.Acquire).is_ok():
             f()
-            self.state.store(ONCE_DONE, MemoryOrder.Release)
-            self.state.wake_all()
+            this.state.store(ONCE_DONE, MemoryOrder.Release)
+            this.state.wake_all()
             return
-        while self.state.load(MemoryOrder.Acquire) != ONCE_DONE:
-            self.state.wait(ONCE_RUNNING)
+        while this.state.load(MemoryOrder.Acquire) != ONCE_DONE:
+            this.state.wait(ONCE_RUNNING)
 
-    pub fn is_completed(self) -> bool:
-        return self.state.load(MemoryOrder.Acquire) == ONCE_DONE
+    pub fn is_completed() -> bool:
+        return this.state.load(MemoryOrder.Acquire) == ONCE_DONE
 
 const ONCE_NEW: u32 = 0
 const ONCE_RUNNING: u32 = 1
 const ONCE_DONE: u32 = 2
 
-pub struct SyncShared[T]:
+[T]
+pub struct SyncShared:
     value: *mut T
 
-pub struct SendError[T]:
+[T]
+pub struct SendError:
     ## The value that was not sent.
     pub value: T
     ## True once the receiver is gone; false when `try_send` found the queue full.
@@ -119,7 +128,8 @@ pub struct SendError[T]:
 ## A first-in, first-out ring of `slots`, `count` of them full from `head` on, and who is asleep on
 ## it: changed only under the channel's lock, so a value that finds nobody asleep costs the lock
 ## and nothing more. A bounded channel's ring is its capacity; an unbounded one's doubles when full.
-struct ChannelQueue[T]:
+[T]
+struct ChannelQueue:
     slots: Array[Option[T]]
     head: int
     count: int
@@ -127,40 +137,41 @@ struct ChannelQueue[T]:
     receiver_gone: bool
     senders_waiting: int
 
-    fn push(mut self, owned value: T):
-        if self.count == self.slots.len():
-            self.grow()
-        at = self.head + self.count
-        if at >= self.slots.len():
-            at -= self.slots.len()
-        self.slots[at] = Some(value)
-        self.count += 1
+    fn push(owns value: T):
+        if this.count == this.slots.len():
+            this.grow()
+        at = this.head + this.count
+        if at >= this.slots.len():
+            at -= this.slots.len()
+        this.slots[at] = Some(value)
+        this.count += 1
 
-    fn pop(mut self) -> Option[T]:
-        if self.count == 0:
+    fn pop() -> Option[T]:
+        if this.count == 0:
             return None
-        value = mem.replace(self.slots[self.head], None)
-        self.head += 1
-        if self.head == self.slots.len():
-            self.head = 0
-        self.count -= 1
+        value = mem.replace(this.slots[this.head], None)
+        this.head += 1
+        if this.head == this.slots.len():
+            this.head = 0
+        this.count -= 1
         return value
 
-    fn grow(mut self):
-        size = self.slots.len()
+    fn grow():
+        size = this.slots.len()
         bigger: Array[Option[T]] = []
-        for i in range(self.count):
-            at = self.head + i
+        for i in range(this.count):
+            at = this.head + i
             if at >= size:
                 at -= size
-            bigger.push(mem.replace(self.slots[at], None))
+            bigger.push(mem.replace(this.slots[at], None))
         wanted = 16 if size == 0 else size * 2
         while bigger.len() < wanted:
             bigger.push(None)
-        self.slots = bigger
-        self.head = 0
+        this.slots = bigger
+        this.head = 0
 
-struct ChannelState[T]:
+[T]
+struct ChannelState:
     queue: Mutex[ChannelQueue[T]]
     ## 0: no bound.
     capacity: int
@@ -170,11 +181,12 @@ struct ChannelState[T]:
     ## Bumped, under the lock, by a receive or the receiver's end that found senders asleep.
     departures: Atomic[u32]
 
-pub struct Sender[T]:
+[T]
+pub struct Sender:
     state: SyncShared[ChannelState[T]]
 
-    pub fn send(self, owned value: T) -> Result[void, SendError[T]]:
-        state = self.state.get()
+    pub fn send(owns value: T) -> Result[void, SendError[T]]:
+        state = this.state.get()
         waited = false
         while true:
             seen: u32 = 0
@@ -196,8 +208,8 @@ pub struct Sender[T]:
             state.departures.wait(seen)
         return Ok(())
 
-    pub fn try_send(self, owned value: T) -> Result[void, SendError[T]]:
-        state = self.state.get()
+    pub fn try_send(owns value: T) -> Result[void, SendError[T]]:
+        state = this.state.get()
         with q = state.queue.lock():
             if q.receiver_gone:
                 return Err(SendError(value, true))
@@ -210,8 +222,8 @@ pub struct Sender[T]:
                 return Ok(())
         return Err(SendError(value, false))
 
-    fn drop(mut self):
-        state = self.state.get()
+    fn drop():
+        state = this.state.get()
         if state.senders.fetch_sub(1) == 1:
             with q = state.queue.lock():
                 if q.receiver_waiting:
@@ -220,15 +232,16 @@ pub struct Sender[T]:
                     state.arrivals.wake_one()
 
 extend[T] Sender[T] implements Clone:
-    fn clone(self) -> Sender[T]:
-        self.state.get().senders.fetch_add(1, MemoryOrder.Relaxed)
-        return Sender(self.state)
+    fn clone() -> Sender[T]:
+        this.state.get().senders.fetch_add(1, MemoryOrder.Relaxed)
+        return Sender(this.state)
 
-pub struct Receiver[T]:
+[T]
+pub struct Receiver:
     state: SyncShared[ChannelState[T]]
 
-    pub fn recv(mut self) -> Option[T]:
-        state = self.state.get()
+    pub fn recv() -> Option[T]:
+        state = this.state.get()
         while true:
             seen: u32 = 0
             with q = state.queue.lock():
@@ -246,8 +259,8 @@ pub struct Receiver[T]:
             state.arrivals.wait(seen)
         return None
 
-    pub fn try_recv(mut self) -> Option[T]:
-        state = self.state.get()
+    pub fn try_recv() -> Option[T]:
+        state = this.state.get()
         with q = state.queue.lock():
             value = q.pop()
             if value.is_some() and q.senders_waiting > 0:
@@ -255,11 +268,11 @@ pub struct Receiver[T]:
                 state.departures.wake_one()
             return value
 
-    pub fn next(mut self) -> Option[T]:
-        return self.recv()
+    pub fn next() -> Option[T]:
+        return this.recv()
 
-    fn drop(mut self):
-        state = self.state.get()
+    fn drop():
+        state = this.state.get()
         with q = state.queue.lock():
             q.receiver_gone = true
             if q.senders_waiting > 0:
@@ -269,14 +282,17 @@ pub struct Receiver[T]:
 extend[T] Receiver[T] implements Iterator:
     type Item = T
 
-pub fn channel[T](capacity: int) -> (Sender[T], Receiver[T]):
+[T]
+pub fn channel(capacity: int) -> (Sender[T], Receiver[T]):
     assert(capacity >= 1, "a channel holds at least one value")
     return open_channel[T](capacity)
 
-pub fn channel_unbounded[T]() -> (Sender[T], Receiver[T]):
+[T]
+pub fn channel_unbounded() -> (Sender[T], Receiver[T]):
     return open_channel[T](0)
 
-fn open_channel[T](capacity: int) -> (Sender[T], Receiver[T]):
+[T]
+fn open_channel(capacity: int) -> (Sender[T], Receiver[T]):
     slots: Array[Option[T]] = []
     while slots.len() < capacity:
         slots.push(None)

@@ -4,7 +4,7 @@
 # `[EFF-6]` — only what the function reaches counts: `grow` allocates, but `measure` never calls
 # it.
 
-fn grow(mut xs: Array[int]):
+fn grow(ref mut xs: Array[int]):
     xs.push(0)
 
 @noalloc

@@ -12,28 +12,29 @@
 # `[TYP-17]` — `write` returns an `i32` field, not the `T` one: a generic
 # class's method must hold for every `T` (D-248).
 interface Read:
-    fn read(self) -> i32
+    fn read() -> i32
 
 interface Write:
-    fn write(self) -> i32
+    fn write() -> i32
 
 struct Token:
     value: i32
 
-class Pair[T] implements Read, Write:
+[T]
+class Pair implements Read, Write:
     weak: Weak[Shared[Token]]
     marker: T
     score: i32
 
-    fn read(self) -> i32:
-        match self.weak.upgrade():
+    fn read() -> i32:
+        match this.weak.upgrade():
             Some(owner):
                 return owner.get().value
             None:
                 return 0
 
-    fn write(self) -> i32:
-        return self.score
+    fn write() -> i32:
+        return this.score
 
 fn total(value: ref dyn Read + Write) -> i32:
     return value.read() + value.write()

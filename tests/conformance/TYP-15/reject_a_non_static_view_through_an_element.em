@@ -7,27 +7,28 @@
 # accepted before and read freed memory.
 
 struct P:
-    a: str
+    a: StrView
 
-fn put(mut x: str, v: str):
+fn put(ref mut x: StrView, v: StrView):
     x = v
 
-fn store[T](mut xs: Array[T], owned x: T):
+[T]
+fn store(ref mut xs: Array[T], owns x: T):
     xs.push(x)
 
 fn main():
     names = ["ann", "bob"]
     ps = [P("x")]
     s = String.from("zed")
-    ps[0].a = s.as_str() #$ error[E3063]: `str` is a view, so it may not be stored in an `Array` unless it is `static`
-    put(names[0], s.as_str()) #$ error[E3063]: `str` is a view, so it may not be stored in an `Array` unless it is `static`
-    old = mem.replace(names[1], s.as_str()) #$ error[E3063]: `str` is a view, so it may not be stored in an `Array` unless it is `static`
+    ps[0].a = s.as_str() #$ error[E3063]: `StrView` is a view, so it may not be stored in an `Array` unless it is `static`
+    put(names[0], s.as_str()) #$ error[E3063]: `StrView` is a view, so it may not be stored in an `Array` unless it is `static`
+    old = mem.replace(names[1], s.as_str()) #$ error[E3063]: `StrView` is a view, so it may not be stored in an `Array` unless it is `static`
     local = s.as_str()
-    mem.swap(names[0], local) #$ error[E3063]: `str` is a view, so it may not be stored in an `Array` unless it is `static`
+    mem.swap(names[0], local) #$ error[E3063]: `StrView` is a view, so it may not be stored in an `Array` unless it is `static`
     r = ref mut names[1]
-    r = s.as_str() #$ error[E3063]: `str` is a view, so it may not be stored in an `Array` unless it is `static`
-    parts = [s.as_str()] #$ error[E3063]: `str` is a view, so it may not be stored in an `Array` unless it is `static`
-    inline: [str; 1] = [s.as_str()]
-    names.extend(inline) #$ error[E3063]: `str` is a view, so it may not be stored in an `Array` unless it is `static`
-    store(names, s.as_str()) #$ error[E3063]: `str` is a view, so it may not be passed to `store`, which stores it where only a `static` view may go
+    r = s.as_str() #$ error[E3063]: `StrView` is a view, so it may not be stored in an `Array` unless it is `static`
+    parts = [s.as_str()] #$ error[E3063]: `StrView` is a view, so it may not be stored in an `Array` unless it is `static`
+    inline: [StrView; 1] = [s.as_str()]
+    names.extend(inline) #$ error[E3063]: `StrView` is a view, so it may not be stored in an `Array` unless it is `static`
+    store(names, s.as_str()) #$ error[E3063]: `StrView` is a view, so it may not be passed to `store`, which stores it where only a `static` view may go
     println(names, ps[0].a, old, parts)

@@ -14,7 +14,7 @@ class Player:
 
 fn first_even(xs: Array[int]) -> int:
     it = xs.iter()
-    while Some(x) = it.next():
+    while it.next() exists as x:
         if x % 2 == 0:
             return x
     else:
@@ -24,7 +24,7 @@ fn first_even(xs: Array[int]) -> int:
 fn count_until_three(xs: Array[int]) -> int:
     seen = 0
     it = xs.iter()
-    while Some(x) = it.next():
+    while it.next() exists as x:
         if x == 3:
             break
         seen += 1
@@ -34,13 +34,13 @@ fn count_until_three(xs: Array[int]) -> int:
 
 fn main():
     h: Option[Player] = Player()
-    if Some(p) = h:
+    if h exists as p:
         p.health -= 0.5
-    if Some(p) = h: p.health -= 0.25
+    if h exists as p: p.health -= 0.25
     n: Option[int] = None
-    if Some(v) = n:
+    if n exists as v:
         println(v)
-    elif Some(p) = h:
+    elif h exists as p:
         println(p.health)
     else:
         println("none")

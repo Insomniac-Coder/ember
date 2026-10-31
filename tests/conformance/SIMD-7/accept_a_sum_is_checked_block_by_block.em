@@ -12,7 +12,7 @@
 # Lent to `unknown`, the list holds values the range facts cannot know
 # (`[RNG-4]`): known (0 to 6), they prove the total small enough, and it
 # keeps no check at all (ADR-142, D-530).
-fn unknown(mut xs: Array[int]):
+fn unknown(ref mut xs: Array[int]):
     pass
 
 fn main():

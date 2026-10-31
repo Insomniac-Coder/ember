@@ -10,7 +10,8 @@
 # a recursive type through a `Box` derives `Eq` (the largest set whose fields are `Eq`, the type
 # taken as `Eq`). A held type's written `eq` is what decides.
 
-fn same[T: Eq](a: T, b: T) -> bool:
+[T: needs Eq]
+fn same(a: T, b: T) -> bool:
     return a == b
 
 @derive(Eq)
@@ -22,8 +23,8 @@ struct Node:
 struct Digit:
     n: int
 
-    fn eq(self, other: Digit) -> bool:
-        return self.n % 10 == other.n % 10
+    fn eq(other: Digit) -> bool:
+        return this.n % 10 == other.n % 10
 
 fn main():
     println(Box(3) == Box(3), Box(3) == Box(4), same(Box(3), Box(3)), same(Box(3), Box(4)))

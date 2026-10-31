@@ -4,7 +4,7 @@
 # The `if` branch puts the value back; the `else` branch moves without doing
 # so, and that move is `E3041`.
 
-fn consume(owned xs: Array[i32]) -> i32:
+fn consume(owns xs: Array[i32]) -> i32:
     return xs[0]
 
 fn main():

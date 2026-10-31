@@ -10,9 +10,9 @@
 class Counter:
     value: i32
 
-    fn bump(mut self, amount: i32):
-        self.value = self.value + amount
-        println(self.value)
+    fn bump(amount: i32):
+        this.value = this.value + amount
+        println(this.value)
 
 fn main():
     counter = Counter(2)

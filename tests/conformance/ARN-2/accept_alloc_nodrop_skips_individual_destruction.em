@@ -7,8 +7,8 @@ struct Resource:
     value: i32
 
 extend Resource:
-    fn drop(mut self):
-        println(self.value)
+    fn drop():
+        println(this.value)
 
 fn main():
     arena = Arena.with_capacity(64)

@@ -5,18 +5,20 @@
 #$ assert-c: contains(->slot0)
 #$ stdout: 42
 
-open class Base[T]:
-    virtual fn value(self) -> i32:
+[T]
+open class Base:
+    virtual fn value() -> i32:
         return 1
 
-    fn init(mut self):
+    fn init():
         pass
 
-class Derived[T](Base[T]):
-    fn init(mut self):
+[T]
+class Derived(Base[T]):
+    fn init():
         super.init()
 
-    override fn value(self) -> i32:
+    override fn value() -> i32:
         return 42
 
 fn main():

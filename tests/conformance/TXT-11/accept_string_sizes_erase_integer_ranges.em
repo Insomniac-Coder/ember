@@ -5,7 +5,7 @@
 
 type Size = i128 in 0 ..= 64
 
-fn reserve_from_ref(mut text: String, count: ref int):
+fn reserve_from_ref(ref mut text: String, count: ref int):
     text.reserve(count)
 
 fn main():

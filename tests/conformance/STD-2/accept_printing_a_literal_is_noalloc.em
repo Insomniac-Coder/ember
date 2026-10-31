@@ -6,7 +6,7 @@
 # `@noalloc`.
 
 @noalloc
-fn report(s: str, n: int):
+fn report(s: StrView, n: int):
     println(s)
     println(n)
 

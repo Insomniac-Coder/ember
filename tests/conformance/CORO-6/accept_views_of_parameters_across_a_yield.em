@@ -15,7 +15,7 @@ gen fn evens(xs: Span[int]) -> Generator[ref int]:
         if x % 2 == 0:
             yield x
 
-gen fn words(text: str) -> Generator[str]:
+gen fn words(text: StrView) -> Generator[StrView]:
     for w in text.split_whitespace():
         yield w
 
@@ -23,20 +23,20 @@ struct Bag:
     items: Array[int]
 
 extend Bag:
-    gen fn largest(self) -> Generator[int]:
+    gen fn largest() -> Generator[int]:
         best = 0
-        for x in self.items:
+        for x in this.items:
             if x > best:
                 best = x
         yield best
 
-    gen fn each(self) -> Generator[int]:
-        for x in self.items:
+    gen fn each() -> Generator[int]:
+        for x in this.items:
             yield x
 
 gen fn owned_list() -> Generator[int]:
     xs = [5, 6]
-    for x in owned xs:
+    for x in owns xs:
         yield x
 
 fn main():

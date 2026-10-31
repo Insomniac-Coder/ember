@@ -12,25 +12,27 @@
 # The adapter sees one derived payload while base initialization and teardown
 # retain and release the class-owner observer normally.
 interface Observe:
-    fn observer(self) -> Weak[Token]
+    fn observer() -> Weak[Token]
 
 class Token:
     value: i32
 
-open class Base[T]:
+[T]
+open class Base:
     weak: Weak[Token]
     marker: T
 
-    fn init(mut self, weak: Weak[Token], marker: T):
-        self.weak = weak
-        self.marker = marker
+    fn init(weak: Weak[Token], marker: T):
+        this.weak = weak
+        this.marker = marker
 
-class Holder[T](Base[T]) implements Observe:
-    fn init(mut self, weak: Weak[Token], marker: T):
+[T]
+class Holder(Base[T]) implements Observe:
+    fn init(weak: Weak[Token], marker: T):
         super.init(weak, marker)
 
-    fn observer(self) -> Weak[Token]:
-        return self.weak
+    fn observer() -> Weak[Token]:
+        return this.weak
 
 fn main():
     strong = Token(7)

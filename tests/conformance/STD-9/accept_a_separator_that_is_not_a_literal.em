@@ -9,7 +9,7 @@
 # `[STD-9]` — `sep` is any text, evaluated once where it is written, as every argument is
 # (`[EXP-1]`), and read between the values; `end` too.
 
-fn arrow(mut calls: int) -> String:
+fn arrow(ref mut calls: int) -> String:
     calls += 1
     return " -> "
 

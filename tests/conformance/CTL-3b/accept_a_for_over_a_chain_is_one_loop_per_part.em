@@ -67,7 +67,7 @@ fn main():
     println(turns)
 
     pairs: Array[(int, int)] = []
-    for (i, x) in xs.iter().copied().enumerate().chain(ys.iter().copied().enumerate(start=10)):
+    for (i, x) in xs.iter().copy_each().enumerate().chain(ys.iter().copy_each().enumerate(start=10)):
         pairs.push((i, x))
     println(pairs)
 
@@ -76,7 +76,7 @@ fn main():
         total += k
     println(total + 3)
 
-    println(xs.iter().copied().chain(ys.iter().copied()).to_array())
+    println(xs.iter().copy_each().chain(ys.iter().copy_each()).to_array())
 
     for x in xs.iter_mut().chain(ys.iter_mut()):
         x += 1
@@ -88,6 +88,6 @@ fn main():
     println(n)
 
     zipped: Array[(int, int)] = []
-    for (a, b) in xs.iter().copied().take(1).zip(ys.iter().copied()).chain(xs.iter().copied().skip(1).zip(ys.iter().copied().skip(1).chain(zs.iter().copied()))):
+    for (a, b) in xs.iter().copy_each().take(1).zip(ys.iter().copy_each()).chain(xs.iter().copy_each().skip(1).zip(ys.iter().copy_each().skip(1).chain(zs.iter().copy_each()))):
         zipped.push((a - 1, b - 1))
     println(zipped)

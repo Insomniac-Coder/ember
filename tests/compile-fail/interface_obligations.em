@@ -3,34 +3,34 @@
 #$ error[E2040]: `Missing` implements `Named` but does not define `label`
 #$ error[E2041]: `Twice` already implements `Named`
 #$ error[E2070]: `label` is offered by both
-#$ error[E3027]: a `mut` argument is not a mutable place
+#$ error[E3027]: a `ref mut` argument is not a mutable place
 
 interface Named:
-    fn label(self) -> i32
+    fn label() -> i32
 
 interface Tagged:
-    fn label(self) -> i32
+    fn label() -> i32
 
 struct Missing implements Named:
     x: i32
 
 struct Twice implements Named, Named:
     x: i32
-    fn label(self) -> i32:
+    fn label() -> i32:
         return 0
 
 struct Both:
     x: i32
 
 extend Both implements Named:
-    fn label(self) -> i32:
+    fn label() -> i32:
         return 1
 
 extend Both implements Tagged:
-    fn label(self) -> i32:
+    fn label() -> i32:
         return 2
 
-fn double(mut n: i32):
+fn double(ref mut n: i32):
     n = n + n
 
 fn main():

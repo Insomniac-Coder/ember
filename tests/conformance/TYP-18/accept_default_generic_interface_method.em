@@ -2,7 +2,8 @@
 #$ rules: TYP-17, TYP-18, MONO-1
 
 interface Identity:
-    fn keep[T](self, value: T) -> T:
+    [T]
+    fn keep(value: T) -> T:
         return value
 
 struct UsesDefault implements Identity:

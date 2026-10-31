@@ -11,10 +11,11 @@ struct Rod:
     n: int
 
 extend Rod implements Sized2:    #$ warning[W2192]: `support.old.Sized2` is deprecated since 0.9: use `Measured`
-    fn size(self) -> int:
-        return self.n
+    fn size() -> int:
+        return this.n
 
-fn measure[T: Sized2](t: T) -> int:    #$ warning[W2192]: `support.old.Sized2` is deprecated since 0.9
+[T: needs Sized2]    #$ warning[W2192]: `support.old.Sized2` is deprecated since 0.9
+fn measure(t: T) -> int:
     return t.size()
 
 fn measure_dyn(t: ref dyn Sized2) -> int:    #$ warning[W2192]: `support.old.Sized2` is deprecated since 0.9

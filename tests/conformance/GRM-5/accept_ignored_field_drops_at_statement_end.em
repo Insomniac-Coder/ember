@@ -13,8 +13,8 @@
 struct R:
     pub value: i32
 
-    fn drop(mut self):
-        println(self.value)
+    fn drop():
+        println(this.value)
 
 fn make() -> (R, R):
     return (R(1), R(2))

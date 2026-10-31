@@ -1,4 +1,4 @@
-error[E2020]: `*` cannot be applied to `str` and `i64`
+error[E2020]: `*` cannot be applied to `StrView` and `i64`
  --> tests/ui/python/P23/string_repetition.em:3:14
   |
 3 |     indent = "  " * depth

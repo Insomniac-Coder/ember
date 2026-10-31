@@ -18,8 +18,8 @@ struct Pin:
     tag: Tag
 
 extend Pin implements Debug:
-    fn fmt_debug(self, mut f: Formatter) -> Result[void, FmtError]:
-        return f.write_str(f"Pin({self.tag.name})")
+    fn fmt_debug(ref mut f: Formatter) -> Result[void, FmtError]:
+        return f.write_str(f"Pin({this.tag.name})")
 
 struct Holder:
     held: Cell[Pin]

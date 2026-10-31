@@ -6,13 +6,15 @@
 ## type, its field's length is computed from them, its methods read them, and
 ## `Matrix[N, N]` solves `N`.
 
-struct Matrix[const R: int, const C: int]:
+[const R: int, const C: int]
+struct Matrix:
     cells: [f32; R * C]
 
-    fn size(self) -> int:
+    fn size() -> int:
         return R * C
 
-fn trace[const N: int](m: Matrix[N, N]) -> int:
+[const N: int]
+fn trace(m: Matrix[N, N]) -> int:
     return N
 
 fn main():

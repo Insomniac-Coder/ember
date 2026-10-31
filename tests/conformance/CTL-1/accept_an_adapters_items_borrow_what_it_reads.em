@@ -16,7 +16,8 @@
 ## `@borrows(self)`: the item is the iterator's, not the predicate's, so a predicate that counts
 ## what it sees leaves its counter readable while the item lives.
 
-fn keep_last[I: Iterator](owned it: I) -> Option[I.Item]:
+[I: needs Iterator]
+fn keep_last(owns it: I) -> Option[I.Item]:
     last: Option[I.Item] = None
     for x in it:
         last = Some(x)

@@ -9,26 +9,27 @@
 # the view outlives where it goes: a `static` one anywhere, including through
 # a generic function that pushes its argument (its callers supply `static`
 # views), and a local's view in another local that it outlives, including
-# through a `mut` parameter, `mem.swap` or a `ref mut`. A view copied out of
+# through a `ref mut` parameter, `mem.swap` or a `ref mut`. A view copied out of
 # an `Array` of `static` views is `static` too.
 
 class Label:
-    text: str
+    text: StrView
 
 struct P:
-    a: str
-    b: str
+    a: StrView
+    b: StrView
 
-fn put(mut x: str, v: str):
+fn put(ref mut x: StrView, v: StrView):
     x = v
 
-fn advance(mut s: str):
+fn advance(ref mut s: StrView):
     s = s[1..]
 
-fn store[T](mut xs: Array[T], owned x: T):
+[T]
+fn store(ref mut xs: Array[T], owns x: T):
     xs.push(x)
 
-fn swap_fields(mut p: P):
+fn swap_fields(ref mut p: P):
     t = p.a
     p.a = p.b
     p.b = t

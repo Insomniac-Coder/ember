@@ -7,12 +7,13 @@
 
 interface Combine:
     type Out = Self
-    fn combine(self, other: Self) -> Out
+    fn combine(other: Self) -> Out
 
-    fn twice(self) -> Self:
-        return self.combine(self) #$ error[E2020]: expected `Self`, found `Self.Out`
+    fn twice() -> Self:
+        return this.combine(this) #$ error[E2020]: expected `Self`, found `Self.Out`
 
-fn assume[T: Combine](a: T, b: T) -> T:
+[T: needs Combine]
+fn assume(a: T, b: T) -> T:
     return a.combine(b) #$ error[E2020]: expected `T`, found `T.Out`
 
 fn main():

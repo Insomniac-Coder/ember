@@ -12,8 +12,8 @@
 class Leaf:
     name: String
 
-    fn drop(mut self):
-        println(f"drop {self.name}")
+    fn drop():
+        println(f"drop {this.name}")
 
 class Node:
     own: Leaf

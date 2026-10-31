@@ -1,6 +1,6 @@
 import std.fs
 
-fn first(path: str) -> Result[String]:
+fn first(path: StrView) -> Result[String]:
     with f = fs.File.open(path)?:
         return Ok("opened")
     return Ok("")

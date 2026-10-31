@@ -7,11 +7,11 @@
 class Holder:
     values: Array[i32]
 
-    fn init(mut self, owned values: Array[i32]):
-        self.values = values
+    fn init(owns values: Array[i32]):
+        this.values = values
 
-    fn drop(mut self):
-        println(self.values.len())
+    fn drop():
+        println(this.values.len())
 
 fn main():
     values: Array[i32] = Array()

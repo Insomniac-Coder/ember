@@ -32,7 +32,8 @@ enum Mode:
     Fast
     Slow
 
-struct Pair[T]:
+[T]
+struct Pair:
     left: T
     right: T
 

@@ -1,4 +1,4 @@
-error[E2020]: `%` cannot be applied to `str` and `i64`
+error[E2020]: `%` cannot be applied to `StrView` and `i64`
  --> tests/ui/python/P20/percent_format.em:3:13
   |
 3 |     println("%d items" % n)

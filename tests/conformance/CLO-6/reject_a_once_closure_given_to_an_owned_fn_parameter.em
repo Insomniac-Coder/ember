@@ -6,10 +6,10 @@
 # which is called any number of times, it is `E3030`, whose help names `once fn`. (This test said
 # the opposite while an `owned` callable parameter was taken as `once fn`.)
 
-fn consume(owned values: Array[i32]) -> i32:
+fn consume(owns values: Array[i32]) -> i32:
     return values[0]
 
-fn invoke(owned f: fn() -> i32) -> i32:
+fn invoke(owns f: fn() -> i32) -> i32:
     return f()
 
 fn invoke_once(f: once fn() -> i32) -> i32:

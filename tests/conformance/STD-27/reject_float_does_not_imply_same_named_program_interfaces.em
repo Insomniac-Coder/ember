@@ -6,25 +6,29 @@
 from std.math import Float
 
 interface Eq:
-    fn eq_marker(self) -> int
+    fn eq_marker() -> int
 
 interface Default:
-    fn default_marker(self) -> int
+    fn default_marker() -> int
 
 interface Holder:
-    type Item: Float
+    type Item: needs Float
 
-fn require_local_eq[U: Eq](x: U):
+[U: needs Eq]
+fn require_local_eq(x: U):
     pass
 
-fn require_local_default[U: Default](x: U):
+[U: needs Default]
+fn require_local_default(x: U):
     pass
 
-fn direct[T: Float](x: T):
+[T: needs Float]
+fn direct(x: T):
     require_local_eq(x)    #$ error[E2040]: Eq
     require_local_default(x)    #$ error[E2040]: Default
 
-fn projected[H: Holder](x: H.Item):
+[H: needs Holder]
+fn projected(x: H.Item):
     require_local_eq(x)    #$ error[E2040]: Eq
     require_local_default(x)    #$ error[E2040]: Default
 

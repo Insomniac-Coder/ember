@@ -8,10 +8,10 @@
 class Bag:
     items: Array[i32]
 
-    fn init(mut self):
-        self.items = []
+    fn init():
+        this.items = []
 
-fn set_first(mut b: Bag, v: i32):
+fn set_first(ref mut b: Bag, v: i32):
     b.items[0] = v
 
 fn main():

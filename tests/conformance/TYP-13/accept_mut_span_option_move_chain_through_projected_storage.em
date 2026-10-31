@@ -26,7 +26,7 @@ fn mutable_span_chain():
     taken = slot_ref.value.take()
     moved_option = taken
     forwarded = moved_option
-    match owned forwarded:
+    match owns forwarded:
         Some(view):
             view[0] = view[0] + 1
             view[1] = view[0] + 4
@@ -42,7 +42,7 @@ fn mutable_span_chain():
     empty_values: Array[int] = []
     empty: Option[MutSpan[int]] = None
     empty = Some(empty_values.as_mut_span())
-    match owned empty:
+    match owns empty:
         Some(view):
             println(view.len())
         None:

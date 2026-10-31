@@ -16,13 +16,13 @@ type Pair = (Token, Token)
 struct PairIter:
     done: bool
 
-    fn next(mut self) -> Option[Pair]:
-        if self.done:
+    fn next() -> Option[Pair]:
+        if this.done:
             return None
-        self.done = true
+        this.done = true
         return Some((Token(7), Token(8)))
 
-fn consume(owned token: Token) -> i32:
+fn consume(owns token: Token) -> i32:
     return token.value
 
 fn main():

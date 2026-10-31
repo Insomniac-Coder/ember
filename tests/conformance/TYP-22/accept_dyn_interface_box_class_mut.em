@@ -6,17 +6,17 @@
 #$ assert-c: !contains(ember_box_new_copy)
 
 interface Render:
-    fn render(self) -> i32
-    fn bump(mut self)
+    fn render() -> i32
+    fn bump()
 
 class Pixel implements Render:
     value: i32
 
-    fn render(self) -> i32:
-        return self.value
+    fn render() -> i32:
+        return this.value
 
-    fn bump(mut self):
-        self.value = self.value + 1
+    fn bump():
+        this.value = this.value + 1
 
 fn main():
     boxed: Box[dyn Render] = Box(Pixel(41))

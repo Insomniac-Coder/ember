@@ -6,12 +6,12 @@
 #$ assert-c: contains(return em_6Signal6render(*(em_6Signal*)_0);)
 
 interface Render:
-    fn render(self) -> i32
+    fn render() -> i32
 
 enum Signal implements Render:
     Ready
 
-    fn render(self) -> i32:
+    fn render() -> i32:
         return 42
 
 fn render_it(value: ref dyn Render) -> i32:

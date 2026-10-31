@@ -4,18 +4,18 @@
 #$ stdout: 6
 
 open class Base:
-    virtual fn tick(self) -> i32:
+    virtual fn tick() -> i32:
         return 1
 
-    fn init(mut self):
+    fn init():
         pass
 
 class Child(Base):
-    fn init(mut self):
+    fn init():
         super.init()
 
 extend Child:
-    override fn tick(self) -> i32:
+    override fn tick() -> i32:
         return 6
 
 fn main():

@@ -5,7 +5,7 @@
 class WithInit:
     value: i32
 
-    fn init(mut self):
+    fn init():
         pass
 
 fn main():

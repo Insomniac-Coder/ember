@@ -7,11 +7,11 @@
 #$ assert-c: contains(ember_box_new_copy(sizeof(bool), _Alignof(bool), &((bool){true}))
 
 interface Truth:
-    fn truth(self) -> bool
+    fn truth() -> bool
 
 extend bool implements Truth:
-    fn truth(self) -> bool:
-        return self
+    fn truth() -> bool:
+        return this
 
 fn main():
     boxed: Box[dyn Truth] = Box(true)

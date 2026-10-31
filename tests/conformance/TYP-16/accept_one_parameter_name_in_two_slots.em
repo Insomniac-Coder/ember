@@ -8,22 +8,26 @@
 # one, and a callable parameter's slot took the result's type: these
 # printed "not implemented" errors for an `Option` of a function type.
 
-fn wrap[U](x: int, f: fn(ref int) -> U) -> Option[U]:
+[U]
+fn wrap(x: int, f: fn(ref int) -> U) -> Option[U]:
     return Some(f(x))
 
 struct B:
     items: Array[int]
 
-    fn first_as[U](self, f: fn(ref int) -> U) -> Option[U]:
-        for v in self.items:
+    [U]
+    fn first_as(f: fn(ref int) -> U) -> Option[U]:
+        for v in this.items:
             return Some(f(v))
         return None
 
-struct G[T]:
+[T]
+struct G:
     items: Array[T]
 
-    fn apply[U](self, f: fn(ref T) -> U) -> U:
-        return f(self.items[0])
+    [U]
+    fn apply(f: fn(ref T) -> U) -> U:
+        return f(this.items[0])
 
 fn main():
     b = B([5])

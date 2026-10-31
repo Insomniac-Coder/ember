@@ -12,13 +12,16 @@
 type Level = i32 in 0 ..= 10
 type Unit = f64 in 0.0 ..= 1.0
 
-fn either[T: BitOr[T]](a: T, b: T) -> T.Output:
+[T: needs BitOr[T]]
+fn either(a: T, b: T) -> T.Output:
     return a | b
 
-fn flip[T: Not](a: T) -> T.Output:
+[T: needs Not]
+fn flip(a: T) -> T.Output:
     return ~a
 
-fn power[T: Pow[T]](a: T, b: T) -> T.Output:
+[T: needs Pow[T]]
+fn power(a: T, b: T) -> T.Output:
     return a ** b
 
 fn main():

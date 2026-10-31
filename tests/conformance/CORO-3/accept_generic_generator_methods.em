@@ -9,17 +9,19 @@
 # `[CORO-3]` — a generator method of a generic type, generic itself, with a `where` clause: its
 # frame is generic over both; and `Generator[Y, R]`'s result after the end.
 
-struct Wrap[T]:
+[T]
+struct Wrap:
     items: Array[T]
 
 extend[T] Wrap[T]:
-    gen fn pairs_with[U](self, other: U) -> Generator[(ref T, U)] where U: Copy:
-        for x in self.items:
+    [U]
+    gen fn pairs_with(other: U) -> Generator[(ref T, U)] where U: needs Copy:
+        for x in this.items:
             yield (x, other)
 
-    gen fn count_up(self) -> Generator[int, int]:
+    gen fn count_up() -> Generator[int, int]:
         n = 0
-        for _ in self.items:
+        for _ in this.items:
             n += 1
             yield n
         return n * 10

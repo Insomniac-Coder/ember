@@ -3,7 +3,7 @@
 from std.mem import assert_disjoint
 
 @noinline
-fn blend(mut dst: MutSpan[f32], src: Span[f32]) -> int:
+fn blend(ref mut dst: MutSpan[f32], src: Span[f32]) -> int:
     match assert_disjoint(dst, src):
         Ok((d, s)):
             for i in 0..d.len():

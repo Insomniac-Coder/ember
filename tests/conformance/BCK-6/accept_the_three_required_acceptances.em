@@ -10,7 +10,7 @@
 # that reach its `return`); and a loop that stores a borrow in a local declared outside it on one
 # iteration and writes the source on the iterations where it did not.
 
-fn first_even(mut xs: MutSpan[int]) -> ref mut int:
+fn first_even(ref mut xs: MutSpan[int]) -> ref mut int:
     for i in 0..xs.len():
         if xs[i] % 2 == 0:
             return ref mut xs[i]

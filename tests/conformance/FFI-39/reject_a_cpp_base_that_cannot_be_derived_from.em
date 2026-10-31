@@ -7,7 +7,7 @@
 import cpp "panels.hpp"
 
 class Deep(cpp.Flat):    #$ error[E5059]: `Deep` cannot derive from `Flat` of `panels.hpp`: `Flat` has no virtual destructor
-    override fn depth(self) -> i32:
+    override fn depth() -> i32:
         return 3
 
 fn main():

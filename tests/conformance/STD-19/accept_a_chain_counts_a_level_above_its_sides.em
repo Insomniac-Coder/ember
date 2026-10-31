@@ -19,10 +19,12 @@
 
 from std.core import ExactSizeIterator
 
-fn total[I: ExactSizeIterator, J: ExactSizeIterator[Item = I.Item]](owned a: I, owned b: J) -> int:
+[I: needs ExactSizeIterator, J: needs ExactSizeIterator[Item = I.Item]]
+fn total(owns a: I, owns b: J) -> int:
     return a.chain(b).len().to_int()
 
-fn first[I: Iterator](owned from: I, n: int) -> Array[I.Item]:
+[I: needs Iterator]
+fn first(owns from: I, n: int) -> Array[I.Item]:
     it = from
     out: Array[I.Item] = []
     while out.len() < n:
@@ -38,7 +40,7 @@ fn main():
     ys: Array[int] = [4, 5]
     small = 0 .. 3
     a: int = xs.iter().chain(ys.iter()).len()
-    b: int = xs.iter().copied().chain(small.iter()).len()
+    b: int = xs.iter().copy_each().chain(small.iter()).len()
     println(a, b)
     big = 0 as u64 .. u64.MAX
     every = 0 as u128 ..= u128.MAX
@@ -48,4 +50,4 @@ fn main():
     println(total(xs.iter(), ys.iter()), total(small.iter(), small.iter()))
     println(first(big.iter().chain(big.iter()).take(2).rev(), 2))
     println(first(big.iter().chain(big.iter()).enumerate().rev(), 1))
-    println(first(ys.iter().copied().chain(small.iter()), 5))
+    println(first(ys.iter().copy_each().chain(small.iter()), 5))

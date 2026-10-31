@@ -8,33 +8,36 @@
 # the type's own: the second `conv` was `E1030` and each `E2040`.
 
 interface Conv[T]:
-    fn conv(self) -> T
+    fn conv() -> T
 
-struct Wrap[T]:
+[T]
+struct Wrap:
     x: T
 
-extend[T: Copy] Wrap[T] implements Conv[Array[T]]:
-    fn conv(self) -> Array[T]:
-        return [self.x, self.x]
+extend[T: needs Copy] Wrap[T] implements Conv[Array[T]]:
+    fn conv() -> Array[T]:
+        return [this.x, this.x]
 
 extend[U] Wrap[U] implements Conv[bool]:
-    fn conv(self) -> bool:
+    fn conv() -> bool:
         return true
 
-extend[T: Copy] Wrap[T] implements Add[int]:
+extend[T: needs Copy] Wrap[T] implements Add[int]:
     type Output = int
-    fn add(self, other: int) -> int:
+    fn add(other: int) -> int:
         return other + 1
 
-extend[T: Copy] Wrap[T] implements Add[Wrap[T]]:
+extend[T: needs Copy] Wrap[T] implements Add[Wrap[T]]:
     type Output = int
-    fn add(self, other: Wrap[T]) -> int:
+    fn add(other: Wrap[T]) -> int:
         return 100
 
-fn as_list[C: Conv[Array[int]]](c: C) -> int:
+[C: needs Conv[Array[int]]]
+fn as_list(c: C) -> int:
     return c.conv().len()
 
-fn as_flag[C: Conv[bool]](c: C) -> bool:
+[C: needs Conv[bool]]
+fn as_flag(c: C) -> bool:
     return c.conv()
 
 fn main():

@@ -4,7 +4,8 @@
 # `[TYP-36]` — the `Default` column: zero, `0.0`, `false`, empty text, an
 # empty `Array` and `None`, through a `T: Default` bound.
 
-fn make[T: Default]() -> T:
+[T: needs Default]
+fn make() -> T:
     return T.default()
 
 fn main():

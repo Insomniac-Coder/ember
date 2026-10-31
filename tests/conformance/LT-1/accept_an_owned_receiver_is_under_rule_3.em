@@ -8,7 +8,7 @@
 struct V:
     r: Span[int]
 
-    fn m(owned self, a: Array[int]) -> Span[int]:
+    fn m(a: Array[int]) owns this -> Span[int]:
         return a
 
 fn main():

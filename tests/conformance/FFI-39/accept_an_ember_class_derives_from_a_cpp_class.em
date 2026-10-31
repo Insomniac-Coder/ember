@@ -18,20 +18,20 @@ import cpp "layers.hpp" with (overlay = "overlays/layers.em")
 class Counting(cpp.Layer):
     ticks: i32 = 0
 
-    fn init(self, id: i32):
+    fn init(id: i32):
         super.init(id)
 
-    override fn on_update(self, dt: f32):
-        self.ticks += 1
+    override fn on_update(dt: f32):
+        this.ticks += 1
 
-    override fn name(self) -> i32:
+    override fn name() -> i32:
         return 42
 
 class Plain(cpp.Layer):
     pass
 
 class Scaled(cpp.Layer):
-    fn init(self, scale: f64):
+    fn init(scale: f64):
         super.init(scale)
 
 fn main():

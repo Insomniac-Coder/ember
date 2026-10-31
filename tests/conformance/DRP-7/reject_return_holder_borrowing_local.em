@@ -2,12 +2,13 @@
 #$ rules: DRP-7
 # The returned Holder would run its destructor after this local String ends.
 
-struct Holder[T]:
-    borrowed: str
+[T]
+struct Holder:
+    borrowed: StrView
     marker: T
 
-    fn drop(mut self):
-        println(self.borrowed)
+    fn drop():
+        println(this.borrowed)
 
 fn make() -> Holder[i32]:
     source: String = "local"

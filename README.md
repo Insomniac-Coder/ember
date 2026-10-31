@@ -31,7 +31,7 @@ pages, and the records that keep them consistent.
 | Language decisions | Current owner decisions (ODRs) in [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md) |
 | CI | Linux (Clang, GCC) and Windows (MSVC, clang-cl); every push to `main` |
 
-How much of each phase's rules in 0.9.10 is fulfilled, computed by
+How much of each phase's rules in 0.9.15 is fulfilled, computed by
 [`tools/phase_progress.py`](tools/phase_progress.py) and never entered by hand: a rule counts only
 when a passing test exercises it and [`docs/phase-status.json`](docs/phase-status.json) does not
 record it unfinished, weighted by the size of each rule; CI fails if this table differs from what
@@ -39,8 +39,8 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 
 | Phase | Scope | Done |
 |---|---|---:|
-| 1 | Core language (Parts II–VI) | 29% |
-| 2 | Ownership, borrowing, regions | 14% |
+| 1 | Core language (Parts II–VI) | 31% |
+| 2 | Ownership, borrowing, regions | 15% |
 | 3 | Classes, reference counting, exclusivity | 2% |
 | 4 | Effects, compile time, reflection, derives | 28% |
 | 5 | C interoperability | 26% |
@@ -49,18 +49,19 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 | 7a | Iteration, determinism, cost control | 36% |
 | 8 | Hardening and 1.0 | 49% |
 | 9 | The LLVM backend (ODR-223) | 38% |
-| | Overall (1.0) | 23% |
+| | Overall (1.0) | 24% |
 | | After 1.0: the GPU host model (v0.6) | 0% |
 
 The latest language work is the memory-model rework, which makes the language 0.9.15
-(`docs/spec-source/Ember_v0.9.15_Hardened_3.md`; the owner's verdicts in
+(`docs/spec-source/Ember_v0.9.15_Hardened_7.md`; the owner's verdicts in
 [`tasks/96/redesign/JOB.md`](tasks/96/redesign/JOB.md), the build plan in
 [`tasks/96/redesign/compiler-0.9.15/MILESTONES.md`](tasks/96/redesign/compiler-0.9.15/MILESTONES.md)):
 ownership written in words (`owns`, `shares`, `ref mut`, `weakref`, `copy of`) and checked when
 compiling, `thread_shared` objects counted in two numbers, `needs (…)` for what a type parameter
-needs, typed variadic generics and functions (`[Ts...]`), and an EnTT-style ECS. The compiler on
-`main` still implements 0.9.10, which the paragraphs below describe; the 0.9.15 work starts with
-milestone M1.
+needs, typed variadic generics and functions (`[Ts...]`), and an EnTT-style ECS. Since milestone M1
+the compiler on `main` reads 0.9.15's grammar and spellings and refuses each 0.9.10 one with the one
+to write (`ember fmt --migrate` rewrites them); what the new words mean is built milestone by
+milestone, and the paragraphs below describe what is built.
 
 Before it, the owner's design G8-4 made the language 0.9.10
 ([`docs/MIGRATION-0.9.10.md`](docs/MIGRATION-0.9.10.md)): every iterator counts and numbers its items

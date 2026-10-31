@@ -6,14 +6,15 @@
 #$ assert-c: contains(static const struct em_vt_dyn_5Child em_vt_dyn_5Child_for_5PixelGda5cc12a188c7619)
 
 interface Parent:
-    fn parent(self) -> i32:
+    fn parent() -> i32:
         return 20
 
-interface Child: Parent:
-    fn child(self) -> i32:
+interface Child: needs Parent:
+    fn child() -> i32:
         return 22
 
-class Pixel[T] implements Parent, Child:
+[T]
+class Pixel implements Parent, Child:
     marker: T
 
 fn total(value: ref dyn Child) -> i32:

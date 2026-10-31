@@ -36,7 +36,7 @@ unsafe overlay c "vulkan/vulkan.h":  # SAFETY(ffi): each entry matches its decla
     hide vkAllocationFunction
 
     extend VkDevice:
-        fn idle(self) -> bool:
+        fn idle() -> bool:
             return true
 
 overlay cpp "engine/Layer.hpp":

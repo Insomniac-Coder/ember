@@ -1,6 +1,6 @@
 ## `[MOD-8]` — a second module, binding `describe` too.
-pub fn describe() -> str:
+pub fn describe() -> StrView:
     return "words"
 
-pub fn shout(s: str) -> str:
+pub fn shout(s: StrView) -> StrView:
     return s

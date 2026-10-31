@@ -14,9 +14,13 @@ enum Shape:
     Dot
     Square(int)
 
+enum Slot:
+    Empty
+    Held(Mode)
+
 fn main():
-    kept: Option[Mode] = Some(Mode.Fast)
-    if Some(Mode.Fast) = kept:
+    kept = Slot.Held(Mode.Fast)
+    if Slot.Held(Mode.Fast) = kept:
         println("fast")
     m = Mode.Slow
     count = 0

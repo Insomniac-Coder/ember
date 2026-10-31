@@ -4,17 +4,17 @@
 # a program are `E2041`, naming both." The error named only the second.
 
 interface Named:
-    fn name(self) -> str
+    fn name() -> StrView
 
 struct P:
     x: int
 
 extend P implements Named:
-    fn name(self) -> str:
+    fn name() -> StrView:
         return "one"
 
 extend P implements Named:                     #$ error[E2041]: the first implementation is here
-    fn name(self) -> str:
+    fn name() -> StrView:
         return "two"
 
 fn main():

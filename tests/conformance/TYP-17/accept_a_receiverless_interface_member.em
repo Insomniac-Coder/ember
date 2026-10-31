@@ -9,10 +9,11 @@ struct Pixel:
     value: i32
 
 extend Pixel implements Default:
-    fn default() -> Pixel:
+    static fn default() -> Pixel:
         return Pixel(17)
 
-fn make[T: Default]() -> T:
+[T: needs Default]
+fn make() -> T:
     return T.default()
 
 fn main():

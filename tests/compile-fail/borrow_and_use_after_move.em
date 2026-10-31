@@ -15,7 +15,7 @@ fn borrow_after_move() -> int:
 
 ## `[FN-1]` — `owned` consumes. Until the mode was threaded through argument
 ## lowering, every argument was borrowed and this compiled.
-fn take(owned zs: Array[i32]) -> int:
+fn take(owns zs: Array[i32]) -> int:
     return zs.len()
 
 fn use_after_owned_call() -> int:

@@ -6,14 +6,15 @@
 #$ assert-c: contains(static const struct em_vt_dyn_5Child em_vt_dyn_5Child_for_6HolderGda5cc12a188c7619)
 
 interface Parent:
-    fn parent(self) -> i32:
+    fn parent() -> i32:
         return 20
 
-interface Child: Parent:
-    fn child(self) -> i32:
+interface Child: needs Parent:
+    fn child() -> i32:
         return 22
 
-class Holder[T]:
+[T]
+class Holder:
     marker: T
 
 extend[T] Holder[T] implements Parent, Child:

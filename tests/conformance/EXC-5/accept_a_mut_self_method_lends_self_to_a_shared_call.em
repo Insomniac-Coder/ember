@@ -11,20 +11,20 @@ class Bag:
     items: Array[int]
     count: int
 
-    fn init(mut self):
-        self.items = []
-        self.count = 0
+    fn init():
+        this.items = []
+        this.count = 0
 
-    fn has(self, x: int) -> bool:
-        return self.items.contains(x)
+    fn has(x: int) -> bool:
+        return this.items.contains(x)
 
-    fn total(self) -> int:
-        return self.count + self.items.len()
+    fn total() -> int:
+        return this.count + this.items.len()
 
-    fn add(mut self, x: int):
-        if not self.has(x):
-            self.items.push(x)
-            self.count += size(self) - self.items.len() + 1
+    fn add(x: int):
+        if not this.has(x):
+            this.items.push(x)
+            this.count += size(this) - this.items.len() + 1
 
 fn size(b: Bag) -> int:
     return b.items.len()

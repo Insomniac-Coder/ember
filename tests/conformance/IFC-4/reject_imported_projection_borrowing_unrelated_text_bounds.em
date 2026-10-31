@@ -10,22 +10,25 @@ struct Numbers:
 
 extend Numbers implements OpaqueSource:
     type Item = int
-    fn get(self) -> int:
-        return self.value
+    fn get() -> int:
+        return this.value
 
-fn render_free[P: Display + Debug, S: OpaqueSource, Q: Display + Debug](prefix: P, source: S, suffix: Q):
+[P: needs (Display, Debug), S: needs OpaqueSource, Q: needs (Display, Debug)]
+fn render_free(prefix: P, source: S, suffix: Q):
     item = opaque_value(source)
     println(item.value)    #$ error[E2040]
 
-struct Renderer[P: Display + Debug]:
+[P: needs (Display, Debug)]
+struct Renderer:
     marker: P
 
-    fn render[S: OpaqueSource, Q: Display + Debug](self, source: S, suffix: Q):
+    [S: needs OpaqueSource, Q: needs (Display, Debug)]
+    fn render(source: S, suffix: Q):
         item = opaque_value(source)
         println(item.value)    #$ error[E2040]
         println(f"{item.value:>4}")    #$ error[E2040]
 
 fn main():
     render_free("prefix", Numbers(7), "suffix")
-    renderer = Renderer[str]("owner")
+    renderer = Renderer[StrView]("owner")
     renderer.render(Numbers(11), "suffix")

@@ -18,52 +18,49 @@ struct WordIter:
     owner: ref Array[String]
     at: int
 
-    @borrows(self.owner)
-    fn next(mut self) -> Option[ref String]:
-        if self.at >= self.owner.len():
+    fn next() -> Option[ref String] from owner:
+        if this.at >= this.owner.len():
             return None
-        i = self.at
-        self.at += 1
-        return Some(ref self.owner[i])
+        i = this.at
+        this.at += 1
+        return Some(ref this.owner[i])
 
 @view
-struct Each[T]:
+[T]
+struct Each:
     owner: ref Array[T]
     at: int
 
-    @borrows(self.owner)
-    fn next(mut self) -> Option[ref T]:
-        if self.at >= self.owner.len():
+    fn next() -> Option[ref T] from owner:
+        if this.at >= this.owner.len():
             return None
-        i = self.at
-        self.at += 1
-        return Some(ref self.owner[i])
+        i = this.at
+        this.at += 1
+        return Some(ref this.owner[i])
 
 @view
-struct Back[T]:
+[T]
+struct Back:
     owner: ref Array[T]
     at: int
 
 extend[T] Back[T]:
-    @borrows(self.owner)
-    fn next(mut self) -> Option[ref T]:
-        if self.at <= 0:
+    fn next() -> Option[ref T] from owner:
+        if this.at <= 0:
             return None
-        self.at -= 1
-        return Some(ref self.owner[self.at])
+        this.at -= 1
+        return Some(ref this.owner[this.at])
 
 @view
 struct Holder:
     owner: ref Array[String]
     at: int
 
-    @borrows(self.owner)
-    fn take(owned self) -> ref String:
-        return ref self.owner[self.at]
+    fn take() owns this -> ref String from owner:
+        return ref this.owner[this.at]
 
-    @borrows(self.owner)
-    fn peek(self) -> ref String:
-        return ref self.owner[self.at]
+    fn peek() -> ref String from owner:
+        return ref this.owner[this.at]
 
 # The item outlives `it`, a local of this function: it borrows `words`.
 fn first_long(words: ref Array[String]) -> Option[ref String]:

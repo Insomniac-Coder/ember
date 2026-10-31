@@ -8,7 +8,8 @@
 struct Pair:
     value: i32
 
-fn duplicate[T: Clone](value: T) -> T:
+[T: needs Clone]
+fn duplicate(value: T) -> T:
     return value.clone()
 
 fn main():

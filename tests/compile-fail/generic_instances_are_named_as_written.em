@@ -4,7 +4,8 @@
 # `Wrap[i64]`, never by the compiler's name for the instance.
 
 @no_derive(Debug)
-struct Wrap[T]:
+[T]
+struct Wrap:
     value: T
 
 fn main():

@@ -7,36 +7,36 @@ class Hangman:
     guessed: Set[String] = Set()
     misses: int = 0
 
-    fn init(self, secret: str):
-        self.secret = secret.lower()
+    fn init(secret: StrView):
+        this.secret = secret.lower()
 
-    fn masked(self) -> String:
-        return " ".join([c if c in self.guessed else "_" for c in self.secret])
+    fn masked() -> String:
+        return " ".join([c if c in this.guessed else "_" for c in this.secret])
 
-    fn guess(self, letter: str) -> String:
+    fn guess(letter: StrView) -> String:
         letter = letter.lower()
         if letter.len() != 1:
             return "one letter at a time"
-        if letter in self.guessed:
+        if letter in this.guessed:
             return f"you already tried '{letter}'"
-        self.guessed.add(letter)
-        if letter in self.secret:
-            return f"yes, {self.secret.count(letter)} of them"
-        self.misses += 1
+        this.guessed.add(letter)
+        if letter in this.secret:
+            return f"yes, {this.secret.count(letter)} of them"
+        this.misses += 1
         return f"no '{letter}'"
 
-    fn won(self) -> bool:
-        return all(c in self.guessed for c in self.secret)
+    fn won() -> bool:
+        return all(c in this.guessed for c in this.secret)
 
-    fn lost(self) -> bool:
-        return self.misses >= MAX_MISSES
+    fn lost() -> bool:
+        return this.misses >= MAX_MISSES
 
-    fn drawing(self) -> String:
+    fn drawing() -> String:
         body = ["O", "/", "|", "\\", "/", "\\"]
-        s = [body[i] if i < self.misses else " " for i in 0..6]
+        s = [body[i] if i < this.misses else " " for i in 0..6]
         return f"  +---+\n  |   {s[0]}\n  |  {s[1]}{s[2]}{s[3]}\n  |  {s[4]} {s[5]}\n -+-"
 
-fn play(secret: str, guesses: str):
+fn play(secret: StrView, guesses: StrView):
     game = Hangman(secret)
     println(f"new game: {game.masked()}")
     for letter in guesses:

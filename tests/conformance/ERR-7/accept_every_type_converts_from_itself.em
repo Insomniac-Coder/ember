@@ -17,10 +17,11 @@ struct B:
     v: int
 
 extend B implements From[A]:
-    fn from(owned value: A) -> B:
+    static fn from(owns value: A) -> B:
         return B(value.v + 1)
 
-fn convert[E, F: From[E]](owned e: E) -> F:
+[E, F: needs From[E]]
+fn convert(owns e: E) -> F:
     return F.from(e)
 
 fn main():

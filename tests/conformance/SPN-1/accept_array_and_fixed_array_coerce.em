@@ -11,7 +11,7 @@ fn total(xs: Span[i32]) -> i32:
         i = i + 1
     return sum
 
-fn fill(mut xs: MutSpan[i32], v: i32):
+fn fill(ref mut xs: MutSpan[i32], v: i32):
     i: int = 0
     while i < xs.len():
         xs[i] = v

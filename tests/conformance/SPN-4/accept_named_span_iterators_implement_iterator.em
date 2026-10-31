@@ -3,7 +3,8 @@
 
 from std.core import Iterator
 
-fn has_next[I: Iterator](mut iterator: I) -> bool:
+[I: needs Iterator]
+fn has_next(ref mut iterator: I) -> bool:
     match iterator.next():
         Some(_) => return true
         None => return false

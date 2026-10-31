@@ -10,14 +10,14 @@
 open class Person:
     name: String
 
-    fn init(mut self):
-        self.name = "ann"
+    fn init():
+        this.name = "ann"
 
-    virtual fn label(self) -> str:
-        return self.name
+    virtual fn label() -> StrView:
+        return this.name
 
-    fn rename(mut self):
-        self.name = "bob"
+    fn rename():
+        this.name = "bob"
 
 fn main():
     p = Person()

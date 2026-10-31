@@ -6,17 +6,15 @@
 struct Counter:
     value: i32
 
-@borrows(first, second)
-fn choose_mut(mut first: Shared[Counter], mut second: Shared[Counter], choose_first: bool) -> ref mut Counter:
-    if choose_first:
-        return first.get_mut()
-    return second.get_mut()
+fn open(ref mut owner: Shared[Counter]) -> ref mut Counter from owner:
+    return owner.get_mut()
 
 fn main():
     first = Shared(Counter(1))
     first_alias = first
     second = Shared(Counter(2))
-    chosen = choose_mut(first, second, true)
+    choose_first = true
+    chosen = open(first) if choose_first else open(second)
     # The selected owner is `first`; opening the unrelated `second` here would
     # be a false positive, while this alias must still conflict at runtime.
     conflicting = first_alias.get_mut()

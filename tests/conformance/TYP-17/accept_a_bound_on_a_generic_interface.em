@@ -9,32 +9,36 @@
 # bound provides; at a call the bound is checked with the arguments put in.
 
 interface Keyed[K]:
-    fn make_key(self) -> K
+    fn make_key() -> K
 
-extend str implements Keyed[String]:
-    fn make_key(self) -> String:
-        return String.from(self)
+extend StrView implements Keyed[String]:
+    fn make_key() -> String:
+        return String.from(this)
 
 extend String implements Keyed[String]:
-    fn make_key(self) -> String:
-        return self.clone()
+    fn make_key() -> String:
+        return this.clone()
 
-fn conv_concrete[Q: Keyed[String]](q: Q) -> String:
+[Q: needs Keyed[String]]
+fn conv_concrete(q: Q) -> String:
     return q.make_key()
 
-fn conv[K, Q: Keyed[K]](q: Q) -> K:
+[K, Q: needs Keyed[K]]
+fn conv(q: Q) -> K:
     return q.make_key()
 
-struct T2[K]:
+[K]
+struct T2:
     keys: Array[K] = []
 
-    fn has[Q: Keyed[K]](self, q: Q) -> bool:
+    [Q: needs Keyed[K]]
+    fn has(q: Q) -> bool:
         k = q.make_key()
-        return k in self.keys
+        return k in this.keys
 
 fn main():
     println(conv_concrete("a"), conv_concrete(String.from("b")))
-    s: String = conv[String, str]("c")
+    s: String = conv[String, StrView]("c")
     println(s)
     t = T2[String]()
     t.keys.push("b")

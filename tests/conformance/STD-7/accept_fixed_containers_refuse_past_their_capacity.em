@@ -12,7 +12,7 @@
 from std.collections import FixedArray, FixedString, RingBuffer
 
 @noalloc
-fn fill(mut a: FixedArray[int, 4]) -> int:
+fn fill(ref mut a: FixedArray[int, 4]) -> int:
     for i in 0..10:
         a.push_or_drop(i)
     return a.len()

@@ -11,7 +11,7 @@
 # and changes nothing; so is any pair of an empty array. Zero-sized elements
 # work as any other.
 
-fn swap_through(mut xs: Array[int], i: int, j: int):
+fn swap_through(ref mut xs: Array[int], i: int, j: int):
     match xs.get_pair_mut(i, j):
         Some((a, b)):
             t = a
@@ -20,7 +20,7 @@ fn swap_through(mut xs: Array[int], i: int, j: int):
         None:
             pass
 
-fn describe(pair: Option[(ref mut int, ref mut int)]) -> str:
+fn describe(pair: Option[(ref mut int, ref mut int)]) -> StrView:
     return "some" if pair.is_some() else "none"
 
 fn main():

@@ -15,7 +15,7 @@ class Token:
 class Holder:
     weak: Weak[Token]
 
-fn observe(owned weak: Weak[Token]) -> i32:
+fn observe(owns weak: Weak[Token]) -> i32:
     match weak.upgrade():
         Some(owner):
             return owner.value

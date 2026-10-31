@@ -5,7 +5,7 @@
 
 import std.ffi
 
-fn dangling_text() -> str:
+fn dangling_text() -> StrView:
     value = "hello".to_cstring().unwrap()
     match value.as_cstr().to_str():
         Ok(text):

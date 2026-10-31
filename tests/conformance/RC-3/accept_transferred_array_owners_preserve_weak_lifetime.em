@@ -11,8 +11,8 @@
 class Token:
     id: i32
 
-    fn drop(mut self):
-        println("drop", self.id)
+    fn drop():
+        println("drop", this.id)
 
 fn main():
     tokens: Array[Token] = Array[Token]()

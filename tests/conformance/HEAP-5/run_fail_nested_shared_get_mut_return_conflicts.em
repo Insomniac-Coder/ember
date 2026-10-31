@@ -6,12 +6,10 @@
 struct Counter:
     value: i32
 
-@borrows(owner)
-fn inner(mut owner: Shared[Counter]) -> ref mut Counter:
+fn inner(ref mut owner: Shared[Counter]) -> ref mut Counter from owner:
     return owner.get_mut()
 
-@borrows(owner)
-fn outer(mut owner: Shared[Counter]) -> ref mut Counter:
+fn outer(ref mut owner: Shared[Counter]) -> ref mut Counter from owner:
     return inner(owner)
 
 fn main():

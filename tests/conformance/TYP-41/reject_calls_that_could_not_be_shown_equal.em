@@ -10,7 +10,8 @@ fn square(x: int) -> int:
 fn cube(x: int) -> int:
     return x * x * x
 
-fn reshape[const N: int](g: [int; square(N)]) -> [int; cube(N)]:
+[const N: int]
+fn reshape(g: [int; square(N)]) -> [int; cube(N)]:
     return g
 
 fn main():

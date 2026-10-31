@@ -11,21 +11,21 @@
 # access violation) and began and ended the access on two different objects.
 
 interface Speak:
-    fn speak(self) -> int
+    fn speak() -> int
 
 class Mote implements Speak:
     n: int = 0
     keep: Option[Holder] = None
 
-    fn speak(self) -> int:
-        return self.n
+    fn speak() -> int:
+        return this.n
 
 struct Square:
     side: int
 
 extend Square implements Speak:
-    fn speak(self) -> int:
-        return self.side
+    fn speak() -> int:
+        return this.side
 
 class Holder:
     s: Box[dyn Speak]

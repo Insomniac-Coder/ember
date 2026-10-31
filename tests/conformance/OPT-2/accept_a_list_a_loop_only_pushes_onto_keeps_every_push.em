@@ -21,13 +21,13 @@
 class Log:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = []
+    fn init():
+        this.items = []
 
 fn count(log: Log) -> int:
     return len(log.items)
 
-fn fill(mut log: Log, start: int, stop: int, limit: int):
+fn fill(ref mut log: Log, start: int, stop: int, limit: int):
     for i in start..stop:
         if i == start + limit:
             break

@@ -7,8 +7,8 @@
 struct Bag:
     pub values: Array[i32]
 
-    fn drop(mut self):
-        println(self.values.len())
+    fn drop():
+        println(this.values.len())
 
 fn make(n: i32) -> Bag:
     values: Array[i32] = Array[i32]()

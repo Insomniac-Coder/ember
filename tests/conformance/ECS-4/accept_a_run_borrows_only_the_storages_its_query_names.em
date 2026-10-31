@@ -20,15 +20,15 @@ struct Shield:
 
 @derive(Copy, Component)
 struct Name:
-    s: str
+    s: StrView
 
-fn guard(mut q: Query[(Entity, Mut[Hp], Name)], w: World):
+fn guard(ref mut q: Query[(Entity, Mut[Hp], Name)], w: World):
     for e, hp, name in q.iter_mut():
         hp.n += 1
         println(name.s, w.has[Name](e), w.has[Shield](e))
         w.add(e, Shield())
 
-fn report(mut q: Query[Hp], w: World):
+fn report(ref mut q: Query[Hp], w: World):
     totals: Array[int] = []
     for hp in q.iter():
         totals.push(hp.n)

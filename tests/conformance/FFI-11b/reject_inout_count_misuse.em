@@ -11,7 +11,7 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     safe fn by_value(count: u32, items: Option[MutSpan[i32]])    #$ error[E5002]: `inout_count(items)` needs `mut count` of an integer type
 
     @ffi(param(count, inout_count(items)), param(items, borrowed, count(count), exclusive))
-    safe fn not_nullable(mut count: u32, items: MutSpan[i32])    #$ error[E5002]: `inout_count(items)` needs `param(items, borrowed, count(count), nullable, exclusive)`
+    safe fn not_nullable(ref mut count: u32, items: MutSpan[i32])    #$ error[E5002]: `inout_count(items)` needs `param(items, borrowed, count(count), nullable, exclusive)`
 
 fn main():
     pass

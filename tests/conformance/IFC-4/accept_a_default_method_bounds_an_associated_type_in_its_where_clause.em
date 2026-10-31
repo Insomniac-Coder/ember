@@ -7,9 +7,9 @@
 
 interface Shower:
     type Item
-    fn get(self) -> Item
-    fn shown(self) -> String where Item: Display:
-        v = self.get()
+    fn get() -> Item
+    fn shown() -> String where Item: needs Display:
+        v = this.get()
         return f"[{v}]"
 
 struct N:
@@ -17,16 +17,16 @@ struct N:
 
 extend N implements Shower:
     type Item = int
-    fn get(self) -> int:
-        return self.n
+    fn get() -> int:
+        return this.n
 
 struct T:
     s: String
 
 extend T implements Shower:
     type Item = String
-    fn get(self) -> String:
-        return self.s.clone()
+    fn get() -> String:
+        return this.s.clone()
 
 fn main():
     println(N(n = 3).shown(), T(s = "x".to_string()).shown())

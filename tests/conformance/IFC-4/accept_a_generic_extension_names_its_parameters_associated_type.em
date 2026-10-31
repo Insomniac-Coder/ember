@@ -9,18 +9,19 @@
 
 from std.core import Iterator
 
-struct Take[I]:
+[I]
+struct Take:
     inner: I
     left: int
 
-extend[I: Iterator] Take[I] implements Iterator:
+extend[I: needs Iterator] Take[I] implements Iterator:
     type Item = I.Item
 
-    fn next(mut self) -> Option[I.Item]:
-        if self.left <= 0:
+    fn next() -> Option[I.Item]:
+        if this.left <= 0:
             return None
-        self.left -= 1
-        return self.inner.next()
+        this.left -= 1
+        return this.inner.next()
 
 struct Count:
     n: int
@@ -28,11 +29,12 @@ struct Count:
 extend Count implements Iterator:
     type Item = int
 
-    fn next(mut self) -> Option[int]:
-        self.n += 1
-        return Some(self.n)
+    fn next() -> Option[int]:
+        this.n += 1
+        return Some(this.n)
 
-fn first_of[I: Iterator](owned it: I) -> Option[I.Item]:
+[I: needs Iterator]
+fn first_of(owns it: I) -> Option[I.Item]:
     one = Take(it, 1)
     return one.next()
 

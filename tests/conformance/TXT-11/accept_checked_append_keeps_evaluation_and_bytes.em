@@ -11,7 +11,7 @@ fn receiver_index() -> int:
     println("receiver")
     return 0
 
-fn piece() -> str:
+fn piece() -> StrView:
     println("piece")
     return "é\0🙂"
 

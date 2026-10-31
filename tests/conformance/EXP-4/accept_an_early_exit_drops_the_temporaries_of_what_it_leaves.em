@@ -28,8 +28,8 @@
 struct Marker:
     pub n: int
 
-    fn drop(mut self):
-        println("drop", self.n)
+    fn drop():
+        println("drop", this.n)
 
 fn number(marker: Marker) -> int:
     return marker.n

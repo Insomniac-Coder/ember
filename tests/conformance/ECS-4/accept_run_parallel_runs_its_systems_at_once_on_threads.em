@@ -40,13 +40,13 @@ fn other_started(flag: ref Atomic[int]) -> bool:
         time.sleep(time.Duration.from_millis(1))
     return flag.load() == 1
 
-fn left(mut q: Query[(Entity, Pos)]):
+fn left(ref mut q: Query[(Entity, Pos)]):
     LEFT.store(1)
     LEFT_SAW_RIGHT.store(other_started(ref RIGHT))
     for e, p in q.iter():
         q.commands().add(e, Mark(p.x))
 
-fn right(mut q: Query[(Entity, Mut[Vel])]):
+fn right(ref mut q: Query[(Entity, Mut[Vel])]):
     RIGHT.store(1)
     RIGHT_SAW_LEFT.store(other_started(ref LEFT))
     cmds = q.commands()
@@ -71,9 +71,9 @@ fn main():
     for e in marked:
         marks.push(e.index() as int)
     seen: Array[int] = []
-    w.run(fn(mut q: Query[Mark], unused: ()): seen.extend([m.by for m in q.iter()]), ())
+    w.run(fn(ref mut q: Query[Mark], unused: ()): seen.extend([m.by for m in q.iter()]), ())
     println(marks, seen)
     tally = Tally()
-    counted = system(owned fn(mut q: Query[Vel]): tally.total.fetch_add(q.iter().map(fn(v: ref Vel) => v.x).sum()), "counted")
-    w.run_parallel([counted, system(owned fn(mut q: Query[Pos]): TWO.store(q.iter().count()), "two")])
+    counted = system(owned fn(ref mut q: Query[Vel]): tally.total.fetch_add(q.iter().map(fn(v: ref Vel) => v.x).sum()), "counted")
+    w.run_parallel([counted, system(owned fn(ref mut q: Query[Pos]): TWO.store(q.iter().count()), "two")])
     println(tally.total.load(), TWO.load(), w.has[Mark](a))

@@ -4,13 +4,14 @@
 # arguments put in: `i32` implements `Keyed[i64]`, not `Keyed[String]`.
 
 interface Keyed[K]:
-    fn make_key(self) -> K
+    fn make_key() -> K
 
 extend i32 implements Keyed[i64]:
-    fn make_key(self) -> i64:
-        return self as i64
+    fn make_key() -> i64:
+        return this as i64
 
-fn conv[K, Q: Keyed[K]](q: Q) -> K:
+[K, Q: needs Keyed[K]]
+fn conv(q: Q) -> K:
     return q.make_key()
 
 fn main():

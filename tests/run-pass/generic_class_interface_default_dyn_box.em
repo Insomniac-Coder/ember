@@ -6,10 +6,11 @@
 #$ assert-c: contains(static const struct em_vt_dyn_6Answer em_vt_dyn_6Answer_for_5PixelG73498f1dbd18d400)
 
 interface Answer:
-    fn answer(self) -> i32:
+    fn answer() -> i32:
         return 42
 
-class Pixel[T] implements Answer:
+[T]
+class Pixel implements Answer:
     value: T
 
 fn answer_it(value: ref dyn Answer) -> i32:

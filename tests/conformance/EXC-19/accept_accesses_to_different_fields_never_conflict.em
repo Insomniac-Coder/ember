@@ -9,13 +9,13 @@ class Bag:
     items: Array[int]
     log: Array[int]
 
-    fn init(mut self):
-        self.items = [1, 2, 3]
-        self.log = []
+    fn init():
+        this.items = [1, 2, 3]
+        this.log = []
 
-    fn copy_items(mut self):
-        for x in self.items:
-            self.log.push(x)
+    fn copy_items():
+        for x in this.items:
+            this.log.push(x)
 
 fn main():
     b = Bag()

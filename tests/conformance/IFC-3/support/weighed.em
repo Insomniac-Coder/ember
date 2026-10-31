@@ -3,8 +3,8 @@
 
 from support.measured import Measured
 
-pub interface Weighed: Measured:
-    fn heaviest(self) -> Unit
+pub interface Weighed: needs Measured:
+    fn heaviest() -> Unit
 
 pub struct Crate:
     pub weight: int
@@ -12,9 +12,9 @@ pub struct Crate:
 extend Crate implements Measured:
     type Unit = int
 
-    fn measure(self) -> int:
-        return self.weight
+    fn measure() -> int:
+        return this.weight
 
 extend Crate implements Weighed:
-    fn heaviest(self) -> int:
-        return self.weight * 3
+    fn heaviest() -> int:
+        return this.weight * 3

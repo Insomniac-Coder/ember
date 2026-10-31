@@ -1,7 +1,7 @@
 #$ test: parse-pass
 #$ rules: FFI-9, FFI-26, FFI-33, FFI-33c
 
-#! language "0.9.10"
+#! language "0.9.15"
 #! threads creator
 
 struct HeaderLeaf:
@@ -44,5 +44,5 @@ pub fn main_score() -> i32:
 fn private_callback_factory() -> extern "C" fn(i32) -> i32:
     return fn(value: i32) -> i32 => value + 1
 
-fn private_str_length(value: str) -> i32:
+fn private_str_length(value: StrView) -> i32:
     return 0

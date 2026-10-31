@@ -7,8 +7,8 @@ struct EqOnly:
     value: i32
 
 extend EqOnly implements Eq:
-    fn eq(self, other: Self) -> bool:
-        return self.value == other.value
+    fn eq(other: Self) -> bool:
+        return this.value == other.value
 
 fn main():
     arena = Arena.with_capacity(1024)

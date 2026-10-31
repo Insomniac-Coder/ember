@@ -9,7 +9,7 @@ struct Pair:
     a: String
     b: String
 
-fn both(owned x: String, owned y: String) -> int:
+fn both(owns x: String, owns y: String) -> int:
     return x.len() + y.len()
 
 fn main():

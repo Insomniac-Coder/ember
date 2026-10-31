@@ -8,13 +8,13 @@
 struct Resource:
     value: i32
 
-    fn drop(mut self):
-        println(self.value)
+    fn drop():
+        println(this.value)
 
-fn consume(owned resource: Resource):
+fn consume(owns resource: Resource):
     _value = resource.value
 
 fn main():
-    operation: fn(owned Resource) = consume
+    operation: fn(owns Resource) = consume
     resource = Resource(7)
     operation(resource)

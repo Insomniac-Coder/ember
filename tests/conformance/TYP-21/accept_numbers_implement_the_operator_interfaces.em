@@ -7,10 +7,12 @@
 # has, in `std.core`, so a bound on them takes numbers, and the interface's
 # method is the operator: `3.add(4)` is `3 + 4`.
 
-fn masked_shift[T: BitAnd[Output = T] + Shl[Output = T] + Copy](x: T, mask: T, by: T) -> T:
+[T: needs (BitAnd[Output = T], Shl[Output = T], Copy)]
+fn masked_shift(x: T, mask: T, by: T) -> T:
     return (x & mask) << by
 
-fn bump[T: AddAssign + Copy](x: T, by: T) -> T:
+[T: needs (AddAssign, Copy)]
+fn bump(x: T, by: T) -> T:
     y = x
     y += by
     return y

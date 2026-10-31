@@ -8,14 +8,14 @@
 ## ending in a zero byte panicked "invalid downcast" there (and the compiled program ran on).
 
 open class Animal:
-    fn name(self) -> int:
+    fn name() -> int:
         return 0
 
 class Dog(Animal):
     tag: int = 0
 
-    fn bark(self) -> int:
-        return self.tag
+    fn bark() -> int:
+        return this.tag
 
 fn main():
     animals: Array[Animal] = []

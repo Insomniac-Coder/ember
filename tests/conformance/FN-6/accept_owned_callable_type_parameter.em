@@ -5,12 +5,12 @@
 struct Packet:
     value: i32
 
-fn consume(owned packet: Packet) -> i32:
+fn consume(owns packet: Packet) -> i32:
     return packet.value
 
-fn apply(f: fn(owned Packet) -> i32, owned packet: Packet) -> i32:
+fn apply(f: fn(owns Packet) -> i32, owns packet: Packet) -> i32:
     return f(packet)
 
 fn main():
-    operation: fn(owned Packet) -> i32 = consume
+    operation: fn(owns Packet) -> i32 = consume
     println(apply(operation, Packet(9)))

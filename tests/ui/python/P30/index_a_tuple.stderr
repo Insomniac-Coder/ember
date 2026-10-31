@@ -1,4 +1,4 @@
-error[E2020]: cannot index `(str, i64)`
+error[E2020]: cannot index `(StrView, i64)`
  --> tests/ui/python/P30/index_a_tuple.em:3:13
   |
 3 |     println(pair[1])

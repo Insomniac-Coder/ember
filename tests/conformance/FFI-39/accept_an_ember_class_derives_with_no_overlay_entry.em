@@ -22,17 +22,17 @@ import cpp "stages.hpp"
 class Counting(cpp.Stage):
     ticks: i32 = 0
 
-    fn init(self, id: i32):
+    fn init(id: i32):
         super.init(id)
 
-    override fn tick(self, dt: i32):
-        self.ticks += dt
+    override fn tick(dt: i32):
+        this.ticks += dt
 
-    override fn label(self) -> i32:
+    override fn label() -> i32:
         return 42
 
 class Heavy(cpp.Stage):
-    override fn weight(self) -> i32:
+    override fn weight() -> i32:
         return 9
 
 class Plain(cpp.Stage):
@@ -41,8 +41,8 @@ class Plain(cpp.Stage):
 class Square(cpp.Shape):
     side: i32 = 3
 
-    override fn area(self) -> i32:
-        return self.side * self.side
+    override fn area() -> i32:
+        return this.side * this.side
 
 fn main():
     counting = Counting(7)

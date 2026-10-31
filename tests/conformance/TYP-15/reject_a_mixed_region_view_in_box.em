@@ -6,7 +6,7 @@
 
 @view
 struct Pair:
-    label: str
+    label: StrView
     values: Span[i32]
 
 fn main():

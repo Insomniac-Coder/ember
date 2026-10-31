@@ -10,9 +10,9 @@
 # forbidden" while `[LT-3]` said a literal may be stored in a class field. Both
 # were normative and `[TYP-15]`'s own principle sided with `[LT-3]`.
 
-static GREETING: str = "hi"
+static GREETING: StrView = "hi"
 
-fn pick() -> str:
+fn pick() -> StrView:
     return GREETING
 
 fn main():

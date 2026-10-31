@@ -7,7 +7,7 @@
 import std.mem
 
 class Token:
-    fn drop(mut self):
+    fn drop():
         println("dropped")
 
 fn main():

@@ -10,7 +10,7 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     @safety("`text` points to a C string, read up to its zero byte")
     unsafe fn strlen(text: *u8) -> usize  #$ warning[L5001]: `strlen` is an `unsafe extern` declaration with no contract
     @ffi(param(text, borrowed, nul_terminated), link_name="strlen")
-    safe fn c_length(text: cstr) -> usize
+    safe fn c_length(text: CStrView) -> usize
     @safety("callers pass what the C function `abs` requires")
     unsafe fn abs(n: i32) -> i32
 

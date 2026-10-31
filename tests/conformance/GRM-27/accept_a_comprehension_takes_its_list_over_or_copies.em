@@ -21,18 +21,18 @@ struct Shape:
     name: String
     size: int
 
-    fn drop(mut self):
-        println(f"dropped {self.name}")
+    fn drop():
+        println(f"dropped {this.name}")
 
 fn shapes() -> Array[Shape]:
     return [Shape("small", 1), Shape("mid", 4), Shape("big", 7)]
 
 fn main():
     all = shapes()
-    kept = [s for s in owned all if s.size > 2]
+    kept = [s for s in owns all if s.size > 2]
     println(f"kept {len(kept)}: {kept[0].name} {kept[1].name}")
     names = [s.name.clone() for s in kept if s.size > 5]
     println(f"copied {len(names)}, still {len(kept)}")
-    biggest = {s.name.clone() for s in owned kept if s.size > 5}
-    total = sum(s.size for s in owned shapes() if s.size > 5)
+    biggest = {s.name.clone() for s in owns kept if s.size > 5}
+    total = sum(s.size for s in owns shapes() if s.size > 5)
     println(biggest, total)

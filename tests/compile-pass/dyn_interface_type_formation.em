@@ -2,7 +2,7 @@
 #$ rules: TYP-22
 
 interface Drawable:
-    fn draw(self):
+    fn draw():
         pass
 
 fn take(x: ref dyn Drawable):

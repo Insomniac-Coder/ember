@@ -9,11 +9,11 @@ struct Name:
     s: String
 
 extend Name implements Display:
-    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
-        return f.write_str(self.s)
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
+        return f.write_str(this.s)
 
 extend Name implements Debug:
-    fn fmt_debug(self, mut f: Formatter) -> Result[void, FmtError]:
+    fn fmt_debug(ref mut f: Formatter) -> Result[void, FmtError]:
         return f.write_str("N")
 
 

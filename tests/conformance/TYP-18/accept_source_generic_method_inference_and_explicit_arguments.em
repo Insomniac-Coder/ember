@@ -4,7 +4,8 @@
 struct Picker:
     marker: i32
 
-    fn pick[T](self, value: T) -> T:
+    [T]
+    fn pick(value: T) -> T:
         return value
 
 fn main():

@@ -93,7 +93,7 @@ const RECEIVER: &str = "__self";
 /// its obligation (`[UNS-7]`). The rest describe the function a caller calls.
 const BODY_ATTRIBUTES: &[&str] = &[
     "noalloc", "nosync", "noblock", "noio", "nolock", "nopanic", "realtime", "deterministic", "overflow", "fastmath", "fp",
-    "static_safe", "inline", "noinline", "cold", "hot", "safety",
+    "no_alias_checks", "static_safe", "inline", "noinline", "cold", "hot", "safety",
 ];
 
 pub(crate) fn desugar_generators(modules: &[LoadedModule], sink: &mut Sink) -> Option<Desugared> {
@@ -144,7 +144,7 @@ pub(crate) fn desugar_generators(modules: &[LoadedModule], sink: &mut Sink) -> O
                     writer.members(&mut decl.members, &owner);
                 }
                 ast::ItemKind::Class(decl) => {
-                    let owner = Owner::named(decl.name, &decl.generics, &decl.where_clause);
+                    let owner = Owner::named(decl.name, &decl.generics, &decl.where_clause).class();
                     writer.members(&mut decl.members, &owner);
                 }
                 ast::ItemKind::Enum(decl) => {
@@ -157,6 +157,7 @@ pub(crate) fn desugar_generators(modules: &[LoadedModule], sink: &mut Sink) -> O
                         ty: decl.target.clone(),
                         generics: decl.generics.clone(),
                         where_clause: decl.where_clause.clone(),
+                        class: false,
                     };
                     writer.members(&mut decl.members, &owner);
                 }
@@ -189,11 +190,17 @@ struct Owner {
     ty: ast::TypeExpr,
     generics: Vec<ast::GenericParam>,
     where_clause: Vec<ast::Bound>,
+    /// A class's body: its object is a handle (an `extend`'s target is not known here).
+    class: bool,
 }
 
 impl Owner {
     fn named(name: ast::Ident, generics: &[ast::GenericParam], where_clause: &[ast::Bound]) -> Owner {
-        Owner { name: name.name, ty: generic_type(name.name, generics, name.span), generics: generics.to_vec(), where_clause: where_clause.to_vec() }
+        Owner { name: name.name, ty: generic_type(name.name, generics, name.span), generics: generics.to_vec(), where_clause: where_clause.to_vec(), class: false }
+    }
+
+    fn class(self) -> Owner {
+        Owner { class: true, ..self }
     }
 }
 
@@ -234,7 +241,7 @@ impl Writer<'_> {
         let (members, owner) = match &mut item.kind {
             ast::ItemKind::Fn(decl) => return self.lift_in_fn(decl, &Enclosing::default()),
             ast::ItemKind::Struct(decl) => (&mut decl.members, Some(Owner::named(decl.name, &decl.generics, &decl.where_clause))),
-            ast::ItemKind::Class(decl) => (&mut decl.members, Some(Owner::named(decl.name, &decl.generics, &decl.where_clause))),
+            ast::ItemKind::Class(decl) => (&mut decl.members, Some(Owner::named(decl.name, &decl.generics, &decl.where_clause).class())),
             ast::ItemKind::Enum(decl) => (&mut decl.members, Some(Owner::named(decl.name, &decl.generics, &[]))),
             ast::ItemKind::Extend(decl) => {
                 let owner = Owner {
@@ -242,6 +249,7 @@ impl Writer<'_> {
                     ty: decl.target.clone(),
                     generics: decl.generics.clone(),
                     where_clause: decl.where_clause.clone(),
+                    class: false,
                 };
                 (&mut decl.members, Some(owner))
             }
@@ -393,7 +401,8 @@ impl Writer<'_> {
             | ast::ExprKind::Comptime(base)
             | ast::ExprKind::AssumeNoalloc(base)
             | ast::ExprKind::Unary { operand: base, .. }
-            | ast::ExprKind::RefOf { place: base, .. } => self.lift_expr(base, enclosing),
+            | ast::ExprKind::RefOf { place: base, .. }
+            | ast::ExprKind::CopyOf(base) => self.lift_expr(base, enclosing),
             ast::ExprKind::IndexOrInstantiate { base, args } => {
                 self.lift_expr(base, enclosing);
                 for arg in args {
@@ -555,6 +564,7 @@ impl Writer<'_> {
                     ast::Param {
                         id: ast::NodeId::DUMMY,
                         mode: ast::Mode::Owned,
+                        is_const: false,
                         kind: ast::ParamKind::Named {
                             name: ast::Ident { name: Symbol::intern(LOCAL_ENV_PARAM), span },
                             ty: named_type(LOCAL_ENV_TYPE, span),
@@ -630,7 +640,7 @@ impl Writer<'_> {
                     .note("each `gen fn` has a frame type of its own [CORO-3], so an override would return another type than the method it replaces"),
             );
         }
-        let typed_receiver = decl.params.iter().any(|param| matches!(param.kind, ast::ParamKind::Receiver { ty: Some(_) }));
+        let typed_receiver = decl.params.iter().any(|param| matches!(param.kind, ast::ParamKind::Receiver { ty: Some(_), .. }));
         if typed_receiver {
             self.sink.emit(Diagnostic::error(codes::E0900, span, "a generator method with a typed receiver (`self: Box[Self]`) is not supported yet"));
         }
@@ -694,7 +704,14 @@ impl Writer<'_> {
                 }
                 ast::ParamKind::Named { name, ty } => (*name, name.name, substitute_self(ty, owner_ty), path(name.name, name.span)),
             };
-            let (field_ty, mode) = match param.mode {
+            // M1 (`[CORO-12]`, until M6b removes the run-time checks) — a class's object, not listed,
+            // is held as 0.9.10's `self` held it, each access in the body checked on its own: the body
+            // runs after the call returns, so the call cannot hold the object's write for it.
+            let param_mode = match param.kind {
+                ast::ParamKind::Receiver { implicit: true, .. } if owner.is_some_and(|owner| owner.class) && param.mode == ast::Mode::Mut => ast::Mode::Borrow,
+                _ => param.mode,
+            };
+            let (field_ty, mode) = match param_mode {
                 ast::Mode::Owned => (ty.clone(), FrameParam::Owned),
                 ast::Mode::Borrow => (reference(ty.clone(), false), FrameParam::Borrowed),
                 ast::Mode::Mut => (reference(ty.clone(), true), FrameParam::Mut),
@@ -710,7 +727,7 @@ impl Writer<'_> {
             });
             modes.push(mode);
             args.push(value);
-            body_params.push(ast::Param { id: ast::NodeId::DUMMY, mode: param.mode, kind: ast::ParamKind::Named { name, ty }, default: None, span: param.span });
+            body_params.push(ast::Param { id: ast::NodeId::DUMMY, mode: param_mode, is_const: param.is_const, kind: ast::ParamKind::Named { name, ty }, default: None, span: param.span });
         }
         self.frames.push((Symbol::intern(&qualified), modes));
         // `[CORO-3]` — a frame is move-only, and what a copy, a comparison or
@@ -1070,7 +1087,7 @@ impl Rewriter<'_> {
     fn condition(&mut self, cond: &mut ast::Condition) {
         match cond {
             ast::Condition::Expr(e) => self.expr(e, Place::Operand),
-            ast::Condition::Pattern { pattern, value } => {
+            ast::Condition::Pattern { pattern, value, .. } => {
                 self.pattern(pattern);
                 self.expr(value, Place::Operand);
             }
@@ -1198,7 +1215,8 @@ impl Rewriter<'_> {
             | ast::ExprKind::Comptime(base)
             | ast::ExprKind::AssumeNoalloc(base)
             | ast::ExprKind::Unary { operand: base, .. }
-            | ast::ExprKind::RefOf { place: base, .. } => self.expr(base, Place::Operand),
+            | ast::ExprKind::RefOf { place: base, .. }
+            | ast::ExprKind::CopyOf(base) => self.expr(base, Place::Operand),
             ast::ExprKind::IndexOrInstantiate { base, args } => {
                 self.expr(base, Place::Operand);
                 for arg in args {
@@ -1336,7 +1354,7 @@ fn reference(ty: ast::TypeExpr, mutable: bool) -> ast::TypeExpr {
 }
 
 fn receiver(mode: ast::Mode, span: Span) -> ast::Param {
-    ast::Param { id: ast::NodeId::DUMMY, mode, kind: ast::ParamKind::Receiver { ty: None }, default: None, span }
+    ast::Param { id: ast::NodeId::DUMMY, mode, is_const: false, kind: ast::ParamKind::Receiver { ty: None, implicit: false }, default: None, span }
 }
 
 /// `fn name(params) [-> ret]: body`.
@@ -1359,6 +1377,7 @@ fn method(name: &str, params: Vec<ast::Param>, ret: Option<ast::TypeExpr>, body:
             generics: Vec::new(),
             params,
             ret,
+            from: None,
             where_clause: Vec::new(),
             body: Some(body),
         }),

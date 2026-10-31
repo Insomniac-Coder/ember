@@ -5,16 +5,18 @@
 #$ assert-c: contains(static const struct em_vt_dyn_6Answer em_vt_dyn_6Answer_for_7PayloadG73498f1dbd18d400)
 
 interface Answer:
-    fn answer(self) -> i32:
+    fn answer() -> i32:
         return 42
 
-struct Payload[T] implements Answer:
+[T]
+struct Payload implements Answer:
     value: T
 
-struct Factory[T]:
+[T]
+struct Factory:
     value: T
 
-    fn run(self):
+    fn run():
         boxed: Box[dyn Answer] = Box(Payload(0))
         println(boxed.answer())
 

@@ -4,22 +4,24 @@
 #$ error[E2040]: `Plain` does not implement `Shape`
 
 interface Shape:
-    fn area(self) -> f32
+    fn area() -> f32
 
 struct Square implements Shape:
     side: f32
-    fn area(self) -> f32:
-        return self.side * self.side
+    fn area() -> f32:
+        return this.side * this.side
 
 struct Plain:
     x: i32
 
 # `[TYP-17]` — no bound, so `area` is not available here. There is no duck
 # typing, even though every caller happens to pass something that has one.
-fn unbounded[T](a: T) -> f32:
+[T]
+fn unbounded(a: T) -> f32:
     return a.area()
 
-fn bounded[T: Shape](a: T) -> f32:
+[T: needs Shape]
+fn bounded(a: T) -> f32:
     return a.area()
 
 fn main():

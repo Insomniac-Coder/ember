@@ -8,5 +8,5 @@ fn main():
     a = 2 ** -1             #$ error[E2151]: an integer `**` with a negative exponent
     x = 3
     b = x ** 0.5            #$ error[E2020]: an integer `**` takes an integer exponent, not `f64`
-    c = "s" ** 2            #$ error[E2020]: `**` takes a number, not `str`
+    c = "s" ** 2            #$ error[E2020]: `**` takes a number, not `StrView`
     d = x ** (-2)           #$ error[E2151]: an integer `**` with a negative exponent

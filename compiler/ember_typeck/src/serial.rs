@@ -249,7 +249,7 @@ fn read_fields(fields: &[SerField], span: Span) -> (Vec<ast::Stmt>, Vec<ast::Exp
     stmts.push(stmt(
         ast::StmtKind::While {
             label: None,
-            cond: ast::Condition::Pattern { pattern: some_name, value: next },
+            cond: ast::Condition::Pattern { pattern: some_name, value: next, exists: false },
             body: crate::errors::block(body, span),
             else_block: None,
         },

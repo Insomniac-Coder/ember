@@ -9,7 +9,7 @@
 #$ stdout: Circle 1 1 8
 #$ stdout: Rect 2 2 12
 #$ stdout: Node Class 2 value
-#$ stdout: (i64, str) Tuple 2
+#$ stdout: (i64, StrView) Tuple 2
 #$ stdout: f64 Float 8
 ## `[RFL-1]` — `reflect[T]()` describes a type while compiling: its name, kind, size and
 ## alignment, its fields (name, type, offset, attributes), its variants and its attributes. A
@@ -35,7 +35,7 @@ class Node:
 static POINT: TypeDesc = reflect[Point]()
 static SHAPE: TypeDesc = reflect[Shape]()
 static NODE: TypeDesc = reflect[Node]()
-static PAIR: TypeDesc = reflect[(int, str)]()
+static PAIR: TypeDesc = reflect[(int, StrView)]()
 
 fn main():
     println(POINT.name, POINT.kind == TypeKind.Struct, POINT.size, POINT.align, len(POINT.fields))

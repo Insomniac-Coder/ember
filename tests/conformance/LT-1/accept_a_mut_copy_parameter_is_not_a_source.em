@@ -6,7 +6,7 @@
 # be returned instead of viewed, so the result borrows only `src` and the
 # caller may read `pos` while the token lives.
 
-fn next_token(mut pos: int, src: str) -> str:
+fn next_token(ref mut pos: int, src: StrView) -> StrView:
     pos += 1
     return src[0..1]
 

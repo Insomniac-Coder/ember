@@ -7,7 +7,7 @@
 # `consume`; the resulting closure is therefore one-shot and consumes its
 # environment at the call.
 
-fn consume(owned values: Array[i32]) -> int:
+fn consume(owns values: Array[i32]) -> int:
     return values.len()
 
 fn main():

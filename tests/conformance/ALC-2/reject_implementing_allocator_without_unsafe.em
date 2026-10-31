@@ -10,33 +10,33 @@ struct Plain:
     pass
 
 extend Plain implements Allocator:    #$ error[E3100]: implementing `std.mem.Allocator` is `unsafe`
-    fn allocate(self, layout: Layout) -> *mut u8:
+    fn allocate(layout: Layout) -> *mut u8:
         return Global().allocate(layout)
 
-    fn deallocate(self, p: *mut u8, layout: Layout):
+    fn deallocate(p: *mut u8, layout: Layout):
         Global().deallocate(p, layout)
 
-    fn reallocate(self, p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
+    fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
         return Global().reallocate(p, old, new_size)
 
 struct Header implements Allocator:    #$ error[E3100]: implementing `std.mem.Allocator` is `unsafe`
     n: int
 
-    fn allocate(self, layout: Layout) -> *mut u8:
+    fn allocate(layout: Layout) -> *mut u8:
         return Global().allocate(layout)
 
-    fn deallocate(self, p: *mut u8, layout: Layout):
+    fn deallocate(p: *mut u8, layout: Layout):
         Global().deallocate(p, layout)
 
-    fn reallocate(self, p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
+    fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
         return Global().reallocate(p, old, new_size)
 
 interface Named:
-    fn name(self) -> str
+    fn name() -> StrView
 
 # SAFETY: it keeps the promises the interface states
 unsafe extend Plain implements Named:    #$ error[E2040]: `unsafe extend` writes `Send` or `Sync` by hand, or an `unsafe interface`
-    fn name(self) -> str:
+    fn name() -> StrView:
         return "plain"
 
 fn main():

@@ -25,8 +25,8 @@
 struct Noisy:
     n: int
 
-    fn drop(mut self):
-        println("drop", self.n)
+    fn drop():
+        println("drop", this.n)
 
 fn make() -> Array[int]:
     return [3, 4]

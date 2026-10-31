@@ -8,15 +8,16 @@
 struct Tag:
     n: int
 
-struct Store[K, H = Tag]:
+[K, H = Tag]
+struct Store:
     k: K
 
 extend[K] Store[K]:
-    fn name(self) -> int:
+    fn name() -> int:
         return 1
 
 extend Store[int]:
-    fn size(self) -> int:
+    fn size() -> int:
         return 2
 
 fn main():

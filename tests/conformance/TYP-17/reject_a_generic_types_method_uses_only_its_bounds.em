@@ -6,22 +6,23 @@
 # compiled.
 
 interface Sized:
-    fn len(self) -> int
+    fn len() -> int
 
 struct Bag:
     n: int
 
-    fn frob(self) -> int:
-        return self.n * 7
+    fn frob() -> int:
+        return this.n * 7
 
 extend Bag implements Sized:
-    fn len(self) -> int:
-        return self.n
+    fn len() -> int:
+        return this.n
 
-struct Wrapper[T: Sized]:
+[T: needs Sized]
+struct Wrapper:
     item: T
 
-    fn size(self) -> int:
-        return self.item.frob()   #$ error[E2040]: `T` has no method `frob`; its bounds do not provide one
+    fn size() -> int:
+        return this.item.frob()   #$ error[E2040]: `T` has no method `frob`; its bounds do not provide one
 
 println(Wrapper(Bag(2)).size())

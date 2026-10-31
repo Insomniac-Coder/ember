@@ -3,8 +3,8 @@
 
 from std.mem import UnsafeCell
 
-@static_safe
-fn forbidden(owned cell: UnsafeCell[i32]) -> i32: #$ error[E3105]: `UnsafeCell` is not permitted in `@static_safe` code
+@no_alias_checks
+fn forbidden(owns cell: UnsafeCell[i32]) -> i32: #$ error[E3105]: `UnsafeCell` is not permitted in `@no_alias_checks` code
     return cell.into_inner()
 
 fn main():

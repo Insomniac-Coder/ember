@@ -19,13 +19,14 @@ struct Pair:
     a: ref int
     b: ref int
 
-fn name_of(p: ref Person) -> str:
+fn name_of(p: ref Person) -> StrView:
     return p.name
 
 fn age_of(p: ref Person) -> ref int:
     return p.age
 
-fn same[T: Copy](x: ref T) -> T:
+[T: needs Copy]
+fn same(x: ref T) -> T:
     return x
 
 fn main():

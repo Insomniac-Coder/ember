@@ -19,25 +19,25 @@ struct A:
 struct B:
     pass
 
-fn ab(mut q: Query[(Entity, A, B)], unused: ()):
+fn ab(ref mut q: Query[(Entity, A, B)], unused: ()):
     seen: Array[u32] = []
     for e, _, _ in q.iter():
         seen.push(e.index())
     println(seen)
 
-fn ba(mut q: Query[(B, Entity, A)], unused: ()):
+fn ba(ref mut q: Query[(B, Entity, A)], unused: ()):
     seen: Array[u32] = []
     for _, e, _ in q.iter():
         seen.push(e.index())
     println(seen)
 
-fn a_maybe_b(mut q: Query[(Entity, A, Option[B])], unused: ()):
+fn a_maybe_b(ref mut q: Query[(Entity, A, Option[B])], unused: ()):
     seen: Array[u32] = []
     for e, _, _ in q.iter():
         seen.push(e.index())
     println(seen)
 
-fn a_not_b(mut q: Query[(Entity, A, Not[B])], unused: ()):
+fn a_not_b(ref mut q: Query[(Entity, A, Not[B])], unused: ()):
     seen: Array[u32] = []
     for e, _, _ in q.iter():
         seen.push(e.index())

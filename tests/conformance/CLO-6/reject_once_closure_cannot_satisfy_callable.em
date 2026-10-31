@@ -4,7 +4,7 @@
 # A plain `f: fn(...)` carries `Callable`, not `CallableOnce`; accepting this
 # closure would promise two safe calls after the body has moved its Array.
 
-fn consume(owned values: Array[i32]) -> i32:
+fn consume(owns values: Array[i32]) -> i32:
     return values[0]
 
 fn twice(f: fn() -> i32) -> i32:

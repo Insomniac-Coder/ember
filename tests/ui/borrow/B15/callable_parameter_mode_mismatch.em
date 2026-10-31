@@ -1,4 +1,4 @@
-fn apply(f: fn(mut i32) -> i32, mut value: i32) -> i32:
+fn apply(f: fn(ref mut i32) -> i32, ref mut value: i32) -> i32:
     return f(value)
 
 fn main():

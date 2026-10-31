@@ -22,8 +22,8 @@ fn make_label(n: int) -> String:
 class Holder:
     text: String
 
-    fn init(mut self):
-        self.text = String()
+    fn init():
+        this.text = String()
 
 fn main():
     println(count_down(49))

@@ -30,7 +30,7 @@ fn main():
     x += 5
     x -= 1
     println(x)
-    counts: Map[u256, str] = Map()
+    counts: Map[u256, StrView] = Map()
     every = 0 as u128 ..= u128.MAX
     counts[every.iter().len()] = "whole"
     counts[big] = "half"

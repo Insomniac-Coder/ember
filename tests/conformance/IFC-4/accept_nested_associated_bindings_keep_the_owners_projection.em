@@ -7,20 +7,21 @@
 
 interface Inner:
     type Item
-    fn item(self) -> Item
+    fn item() -> Item
 
 interface Outer:
-    type Atom: Copy
-    type Wrapped: Inner[Item = Option[Atom]]
-    fn wrapped(self) -> Wrapped
+    type Atom: needs Copy
+    type Wrapped: needs Inner[Item = Option[Atom]]
+    fn wrapped() -> Wrapped
 
-struct Held[T: Copy]:
+[T: needs Copy]
+struct Held:
     value: Option[T]
 
-extend[T: Copy] Held[T] implements Inner:
+extend[T: needs Copy] Held[T] implements Inner:
     type Item = Option[T]
-    fn item(self) -> Option[T]:
-        return self.value
+    fn item() -> Option[T]:
+        return this.value
 
 struct IntOwner:
     value: Option[int]
@@ -28,8 +29,8 @@ struct IntOwner:
 extend IntOwner implements Outer:
     type Atom = int
     type Wrapped = Held[int]
-    fn wrapped(self) -> Held[int]:
-        return Held[int](self.value)
+    fn wrapped() -> Held[int]:
+        return Held[int](this.value)
 
 struct FloatOwner:
     value: float
@@ -37,10 +38,11 @@ struct FloatOwner:
 extend FloatOwner implements Outer:
     type Atom = float
     type Wrapped = Held[float]
-    fn wrapped(self) -> Held[float]:
-        return Held[float](Some(self.value))
+    fn wrapped() -> Held[float]:
+        return Held[float](Some(this.value))
 
-fn through[O: Outer](o: O) -> Option[O.Atom]:
+[O: needs Outer]
+fn through(o: O) -> Option[O.Atom]:
     return o.wrapped().item()
 
 fn main():

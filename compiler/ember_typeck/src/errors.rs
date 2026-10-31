@@ -607,8 +607,8 @@ pub(crate) fn members_name(decl: &ast::InterfaceDecl, name: Symbol) -> bool {
         ast::MemberKind::Fn(f) => {
             f.ret.as_ref().is_some_and(mentions)
                 || f.params.iter().any(|param| match &param.kind {
-                    ast::ParamKind::Named { ty, .. } | ast::ParamKind::Receiver { ty: Some(ty) } => mentions(ty),
-                    ast::ParamKind::Receiver { ty: None } => false,
+                    ast::ParamKind::Named { ty, .. } | ast::ParamKind::Receiver { ty: Some(ty), .. } => mentions(ty),
+                    ast::ParamKind::Receiver { ty: None, .. } => false,
                 })
         }
         _ => false,
@@ -774,6 +774,7 @@ impl<'a> Checker<'a> {
                 ret: signature.ret,
                 generics: signature.generics,
                 borrows: signature.borrows,
+                implicit_object: signature.implicit_object,
                 overflow: signature.overflow,
                 fp: signature.fp,
                 source: (self.current_module, item_index, member_index),
@@ -1433,17 +1434,18 @@ pub(crate) fn fn_decl(span: Span) -> ast::FnDecl {
         generics: Vec::new(),
         params: Vec::new(),
         ret: None,
+        from: None,
         where_clause: Vec::new(),
         body: None,
     }
 }
 
 pub(crate) fn receiver(span: Span) -> ast::Param {
-    ast::Param { id: ast::NodeId::DUMMY, mode: ast::Mode::Borrow, kind: ast::ParamKind::Receiver { ty: None }, default: None, span }
+    ast::Param { id: ast::NodeId::DUMMY, mode: ast::Mode::Borrow, is_const: false, kind: ast::ParamKind::Receiver { ty: None, implicit: false }, default: None, span }
 }
 
 pub(crate) fn named_param(name: Symbol, mode: ast::Mode, ty: ast::TypeExpr, span: Span) -> ast::Param {
-    ast::Param { id: ast::NodeId::DUMMY, mode, kind: ast::ParamKind::Named { name: ast::Ident { name, span }, ty }, default: None, span }
+    ast::Param { id: ast::NodeId::DUMMY, mode, is_const: false, kind: ast::ParamKind::Named { name: ast::Ident { name, span }, ty }, default: None, span }
 }
 
 pub(crate) fn member(mut decl: ast::FnDecl, body: ast::Block, span: Span) -> ast::Member {

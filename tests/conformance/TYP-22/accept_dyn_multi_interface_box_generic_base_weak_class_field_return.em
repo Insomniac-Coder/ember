@@ -15,34 +15,36 @@
 # its generic base and then mutate a separate inherited counter. Both ordered
 # slots share the one derived payload without copying the box or class owner.
 interface Observe:
-    fn observer(self) -> Weak[Token]
+    fn observer() -> Weak[Token]
 
 interface Bump:
-    fn bump(mut self) -> i32
+    fn bump() -> i32
 
 class Token:
     value: i32
 
-open class Base[T]:
+[T]
+open class Base:
     weak: Weak[Token]
     marker: T
     count: i32
 
-    fn init(mut self, weak: Weak[Token], marker: T):
-        self.weak = weak
-        self.marker = marker
-        self.count = 0
+    fn init(weak: Weak[Token], marker: T):
+        this.weak = weak
+        this.marker = marker
+        this.count = 0
 
-class Holder[T](Base[T]) implements Observe, Bump:
-    fn init(mut self, weak: Weak[Token], marker: T):
+[T]
+class Holder(Base[T]) implements Observe, Bump:
+    fn init(weak: Weak[Token], marker: T):
         super.init(weak, marker)
 
-    fn observer(self) -> Weak[Token]:
-        return self.weak
+    fn observer() -> Weak[Token]:
+        return this.weak
 
-    fn bump(mut self) -> i32:
-        self.count = self.count + 1
-        return self.count
+    fn bump() -> i32:
+        this.count = this.count + 1
+        return this.count
 
 fn main():
     strong = Token(7)

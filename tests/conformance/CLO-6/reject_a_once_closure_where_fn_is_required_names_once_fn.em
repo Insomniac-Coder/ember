@@ -5,7 +5,7 @@
 # `[CLO-6]` — a closure that moves a capture out satisfies `once fn` but not `fn`: supplying it
 # where `fn` is required is `E3030`, whose help is the `once fn` the callee could take.
 
-fn consume(owned s: String) -> int:
+fn consume(owns s: String) -> int:
     return s.len()
 
 fn many(f: fn() -> int) -> int:

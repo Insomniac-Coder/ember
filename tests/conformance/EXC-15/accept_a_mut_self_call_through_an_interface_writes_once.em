@@ -8,16 +8,16 @@
 # none: a class with a non-`Copy` field is not locked twice (which would panic).
 
 interface Log:
-    fn add(mut self, x: int)
+    fn add(x: int)
 
 class Record implements Log:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = []
+    fn init():
+        this.items = []
 
-    fn add(mut self, x: int):
-        self.items.push(x)
+    fn add(x: int):
+        this.items.push(x)
 
 class Holder:
     log: Log

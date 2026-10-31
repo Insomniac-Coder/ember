@@ -7,7 +7,7 @@ struct Pixel:
     value: i32
 
 extend Pixel implements Default:
-    fn default(seed: i32) -> Pixel:
+    static fn default(seed: i32) -> Pixel:
         return Pixel(seed)
 
 #$ error[E2040]: `Pixel.default` does not match the signature required by `Default`

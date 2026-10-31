@@ -12,24 +12,25 @@
 # copied for the generic class implementation. The mutable dynamic receiver
 # closes its write interval while the callee upgrades and destroys its copy.
 interface Observe:
-    fn observe(mut self, owned weak: Weak[Shared[Token]]) -> i32
+    fn observe(owns weak: Weak[Shared[Token]]) -> i32
 
 struct Token:
     value: i32
 
-class Reader[T] implements Observe:
+[T]
+class Reader implements Observe:
     marker: T
     count: i32
 
-    fn observe(mut self, owned weak: Weak[Shared[Token]]) -> i32:
-        self.count = self.count + 1
+    fn observe(owns weak: Weak[Shared[Token]]) -> i32:
+        this.count = this.count + 1
         match weak.upgrade():
             Some(owner):
                 return owner.get().value
             None:
                 return 0
 
-fn inspect(value: ref mut dyn Observe, weak: Weak[Shared[Token]]) -> i32:
+fn inspect(ref mut value: dyn Observe, weak: Weak[Shared[Token]]) -> i32:
     return value.observe(weak)
 
 fn main():

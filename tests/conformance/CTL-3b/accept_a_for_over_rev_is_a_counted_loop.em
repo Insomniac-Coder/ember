@@ -41,7 +41,7 @@ fn main():
         f.push((i, x))
     println(f)
     g: Array[int] = []
-    for x in xs.iter().copied().skip(2).step_by(2).rev():
+    for x in xs.iter().copy_each().skip(2).step_by(2).rev():
         g.push(x)
     h: Array[(int, int)] = []
     for p, q in xs.iter().zip(ys.iter()).rev():

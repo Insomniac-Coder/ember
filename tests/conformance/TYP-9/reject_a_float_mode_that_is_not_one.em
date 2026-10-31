@@ -1,8 +1,8 @@
 #$ test: compile-fail
 #$ rules: TYP-9, TYP-9b, ATT-6
 #$ profiles: debug
-#$ error[E0104]: `@fp` needs `contract`: `@fp(contract)`
-#$ error[E0104]: `@fp` needs `contract`: `@fp(contract)`
+#$ error[E0104]: `@fp` needs `allow_fma`: `@fp(allow_fma)`
+#$ error[E0104]: `@fp` needs `allow_fma`: `@fp(allow_fma)`
 #$ error[E0104]: `@fastmath` takes no arguments
 # `@fp` names one mode, `contract` (`[TYP-9b]`), and `@fastmath` takes none:
 # anything else is an attribute with no meaning, which `[ATT-6]` never lets

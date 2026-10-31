@@ -4,7 +4,7 @@
 # into `s`, performs no allocation or copy, and remains usable while `s` is
 # unchanged.
 
-fn show(text: str):
+fn show(text: StrView):
     println(text)
 
 fn main():
@@ -13,7 +13,7 @@ fn main():
     show(s)
     # The temporary call borrow ends at the call's last use.
     s.push_str("!")
-    view: str = s
+    view: StrView = s
     show(view)
 #$ stdout: ember
 #$ ember!

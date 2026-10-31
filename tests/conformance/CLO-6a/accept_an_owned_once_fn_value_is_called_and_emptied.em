@@ -21,7 +21,7 @@ struct Task:
     name: String
     run: once fn() -> int
 
-fn consume(owned s: String) -> int:
+fn consume(owns s: String) -> int:
     return s.len()
 
 fn call_given(f: once fn() -> int) -> int:

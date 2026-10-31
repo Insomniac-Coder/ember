@@ -238,7 +238,7 @@ impl Interp<'_, '_> {
     /// The class's name as the type information gives it.
     pub(crate) fn object_name(&self, object: u64) -> R<String> {
         Ok(match self.object_info(object)? {
-            Info::Class(id) => self.types.class_def(id).name.to_string(),
+            Info::Class(id) => self.types.class_display_name(id),
             Info::Shared(id) => self.types.display(self.types.find(&TyKind::Struct(id)).unwrap_or(self.common.void)),
         })
     }
@@ -850,7 +850,7 @@ impl Interp<'_, '_> {
         // `field_name`: the type information's name and the field's.
         let name = |interp: &Self, index: usize| {
             let field = interp.types.class_field_at(id, index).map(|f| f.name.to_string()).unwrap_or_default();
-            format!("{}.{field}", interp.types.class_def(id).name)
+            format!("{}.{field}", interp.types.class_display_name(id))
         };
         // Every word is checked before any is changed, as the runtime does.
         for &(index, word) in &words {

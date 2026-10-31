@@ -6,13 +6,15 @@
 # match the signature required by `Fill[T]`").
 
 interface Fill[T]:
-    fn fill[I: Iterator[Item = T]](mut self, owned it: I, extra: T)
+    [I: needs Iterator[Item = T]]
+    fn fill(owns it: I, extra: T)
 
-extend[T: Copy] Array[T] implements Fill[T]:
-    fn fill[I: Iterator[Item = T]](mut self, owned it: I, extra: T):
+extend[T: needs Copy] Array[T] implements Fill[T]:
+    [I: needs Iterator[Item = T]]
+    fn fill(owns it: I, extra: T):
         for x in it:
-            self.push(x)
-        self.push(extra)
+            this.push(x)
+        this.push(extra)
 
 fn main():
     a: Array[int] = []

@@ -8,6 +8,6 @@ from std.ecs import Query, Mut, Component
 struct Count:
     n: int
 
-fn reset(mut q: Query[Mut[Count]], unused: ()):
+fn reset(ref mut q: Query[Mut[Count]], unused: ()):
     for count in q.iter():
         count.n = 0  #$ error[E3021]: cannot write through a shared reference

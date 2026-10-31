@@ -14,13 +14,15 @@ struct Seven:
     v: i32
 
 extend Seven implements Default:
-    fn default() -> Seven:
+    static fn default() -> Seven:
         return Seven(7)
 
-fn made[T: Default](frame: Arena, n: int) -> MutSpan[T]:
+[T: needs Default]
+fn made(frame: Arena, n: int) -> MutSpan[T]:
     return frame.alloc_array[T](n)
 
-fn zeros[T: Zeroable](frame: Arena, n: int) -> MutSpan[T]:
+[T: needs Zeroable]
+fn zeros(frame: Arena, n: int) -> MutSpan[T]:
     return frame.alloc_zeroed[T](n)
 
 fn main():

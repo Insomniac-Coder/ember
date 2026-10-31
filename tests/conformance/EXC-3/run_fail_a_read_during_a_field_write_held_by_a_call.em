@@ -9,10 +9,10 @@
 class Player:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = [1]
+    fn init():
+        this.items = [1]
 
-fn grow(mut items: Array[int], other: Player):
+fn grow(ref mut items: Array[int], other: Player):
     items.push(len(other.items))
 
 fn main():

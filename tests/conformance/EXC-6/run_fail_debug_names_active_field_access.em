@@ -6,11 +6,11 @@
 class Bag:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = [1]
+    fn init():
+        this.items = [1]
 
-    fn replace(self):
-        self.items = [2]
+    fn replace():
+        this.items = [2]
 
 fn main():
     b = Bag()

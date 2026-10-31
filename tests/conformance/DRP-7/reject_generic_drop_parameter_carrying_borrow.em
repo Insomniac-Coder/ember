@@ -4,14 +4,15 @@
 # carries the short-lived view and must remain valid through the generic drop.
 
 struct Borrowed:
-    text: str
+    text: StrView
 
-struct Holder[T]:
+[T]
+struct Holder:
     payload: T
-    witness: str
+    witness: StrView
 
-    fn drop(mut self):
-        println(self.witness)
+    fn drop():
+        println(this.witness)
 
 fn main():
     stable: String = "stable"

@@ -8,17 +8,18 @@
 # Generic interface specialization must survive the `mut I[T]` borrow-before-
 # erase boundary, including its concrete one-word dynamic dispatch table.
 interface Accumulator[T]:
-    fn bump(mut self) -> i32
+    fn bump() -> i32
 
-class Counter[T] implements Accumulator[T]:
+[T]
+class Counter implements Accumulator[T]:
     value: i32
     marker: T
 
-    fn bump(mut self) -> i32:
-        self.value = self.value + 1
-        return self.value
+    fn bump() -> i32:
+        this.value = this.value + 1
+        return this.value
 
-fn bump_it(mut value: Accumulator[i32]) -> i32:
+fn bump_it(ref mut value: Accumulator[i32]) -> i32:
     return value.bump()
 
 fn main():

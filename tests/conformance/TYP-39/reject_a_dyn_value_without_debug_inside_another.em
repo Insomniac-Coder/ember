@@ -9,7 +9,7 @@ struct Sq:
     s: int
 
 extend Sq implements Display:
-    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
         return f.write_str("sq")
 
 fn main():

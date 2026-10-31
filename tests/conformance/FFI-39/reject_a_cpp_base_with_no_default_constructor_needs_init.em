@@ -9,7 +9,7 @@ class Wide(cpp.Panel):    #$ error[E5058]: class `Wide` declares no `init`, and 
     pass
 
 class Narrow(cpp.Panel):
-    fn init(self):
+    fn init():
         super.init(3)
 
 fn main():

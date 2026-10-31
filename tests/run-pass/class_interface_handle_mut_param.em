@@ -10,16 +10,16 @@
 # A `mut I` parameter is an inout borrow of the same one-word class-interface
 # handle. The method call must keep the concrete class access interval.
 interface Accumulator:
-    fn bump(mut self) -> i32
+    fn bump() -> i32
 
 class Counter implements Accumulator:
     value: i32
 
-    fn bump(mut self) -> i32:
-        self.value = self.value + 1
-        return self.value
+    fn bump() -> i32:
+        this.value = this.value + 1
+        return this.value
 
-fn bump_it(mut value: Accumulator) -> i32:
+fn bump_it(ref mut value: Accumulator) -> i32:
     return value.bump()
 
 fn main():

@@ -7,7 +7,7 @@
 import math
 
 fn main():
-    println(math.sqrt("hi"))    #$ error[E2040]: `str` does not implement `std.math.Number`, which `T` requires
+    println(math.sqrt("hi"))    #$ error[E2040]: `StrView` does not implement `std.math.Number`, which `T` requires
     n: i32 = 9
     narrow: f32 = math.sqrt(n)    #$ error[E2020]: expected `f32`, found `f64`
     println(narrow)

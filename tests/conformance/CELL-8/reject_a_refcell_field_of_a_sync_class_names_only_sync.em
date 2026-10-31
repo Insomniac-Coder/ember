@@ -8,8 +8,8 @@
 class Shared:
     let cell: RefCell[int] #$ error[E7001]: field `Shared.cell` has type `RefCell[i64]`, which is not Sync
 
-    fn init(mut self):
-        self.cell = RefCell(1)
+    fn init():
+        this.cell = RefCell(1)
 
 fn main():
     pass

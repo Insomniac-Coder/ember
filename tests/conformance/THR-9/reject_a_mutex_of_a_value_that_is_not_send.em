@@ -9,8 +9,8 @@ from std.sync import Mutex
 class Holder:
     held: Mutex[Shared[int]]
 
-    fn init(mut self, owned value: Shared[int]):
-        self.held = Mutex(value)
+    fn init(owns value: Shared[int]):
+        this.held = Mutex(value)
 
 fn main():
     h = Holder(Shared(1))

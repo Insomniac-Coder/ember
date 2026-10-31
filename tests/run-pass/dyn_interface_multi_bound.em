@@ -6,20 +6,20 @@
 #$ assert-c: contains(static const struct em_vt_dyn_4Left_5Right em_vt_dyn_4Left_5Right_for_4Pair)
 
 interface Left:
-    fn left(self) -> i32
+    fn left() -> i32
 
 interface Right:
-    fn right(self) -> i32
+    fn right() -> i32
 
 struct Pair implements Left, Right:
     first: i32
     second: i32
 
-    fn left(self) -> i32:
-        return self.first
+    fn left() -> i32:
+        return this.first
 
-    fn right(self) -> i32:
-        return self.second
+    fn right() -> i32:
+        return this.second
 
 fn print_both(value: ref dyn Left + Right):
     println(value.left())

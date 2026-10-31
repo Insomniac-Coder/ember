@@ -8,7 +8,7 @@
 # through Ord, record equality, and IEEE float comparisons through a bound.
 
 interface OrderedHolder:
-    type Item: Ord
+    type Item: needs Ord
 
 struct Ints:
     unused: int
@@ -25,16 +25,20 @@ extend Floats implements OrderedHolder:
 struct Record:
     value: int
 
-fn same[T: Eq](a: T, b: T) -> bool:
+[T: needs Eq]
+fn same(a: T, b: T) -> bool:
     return a == b
 
-fn direct[T: Ord](a: T, b: T):
+[T: needs Ord]
+fn direct(a: T, b: T):
     println(a == a, a != a, a < b, a <= b, a > b, a >= b)
 
-fn projected[H: OrderedHolder](holder: H, a: H.Item, b: H.Item):
+[H: needs OrderedHolder]
+fn projected(holder: H, a: H.Item, b: H.Item):
     println(a == a, a != a, a < b, a <= b, a > b, a >= b)
 
-fn projected_less[H: OrderedHolder](holder: H, a: H.Item, b: H.Item) -> bool:
+[H: needs OrderedHolder]
+fn projected_less(holder: H, a: H.Item, b: H.Item) -> bool:
     return a < b
 
 fn main():

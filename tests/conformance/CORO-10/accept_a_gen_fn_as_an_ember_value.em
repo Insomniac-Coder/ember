@@ -9,7 +9,8 @@ gen fn upto(n: int) -> Generator[int]:
     for i in 1..=n:
         yield i
 
-fn total_of[G: Iterator[Item = int]](make: fn(int) -> G) -> int:
+[G: needs Iterator[Item = int]]
+fn total_of(make: fn(int) -> G) -> int:
     t = 0
     for x in make(3):
         t += x

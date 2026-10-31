@@ -6,7 +6,7 @@
 
 import std.thread
 
-fn add_to(mut s: MutSpan[int], n: int):
+fn add_to(ref mut s: MutSpan[int], n: int):
     s[0] += n
 
 fn main():

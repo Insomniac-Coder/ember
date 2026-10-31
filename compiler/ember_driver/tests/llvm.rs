@@ -188,7 +188,7 @@ fn sum(p: ref Pair) -> i64:
     return p.a + p.b
 
 @noinline
-fn bump(mut p: Pair):
+fn bump(ref mut p: Pair):
     p.a += 1
 
 @noinline

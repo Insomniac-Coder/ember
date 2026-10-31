@@ -30,7 +30,7 @@ fn as_small(n: int) -> Small:
         return n
     return 0
 
-@fp(contract)
+@fp(allow_fma)
 fn as_unit_contract(value: f32) -> Unit:
     if value > 0.0 and value < 1.0:
         return value

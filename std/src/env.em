@@ -3,7 +3,7 @@
 ## `[STD-24]` — the value of the environment variable `name`, or `None` when it is not set. A value
 ## that is not UTF-8 has each invalid sequence replaced by U+FFFD.
 ## It allocates a new `String`.
-pub fn var(name: str) -> Option[String]:
+pub fn var(name: StrView) -> Option[String]:
     value = String()
     if lookup(name, value):
         return Some(value)
@@ -11,5 +11,5 @@ pub fn var(name: str) -> Option[String]:
 
 ## The runtime's own (`ember_hir::RuntimeFn`): whether `name` is set, its value appended to `out`.
 ## This staging body never runs.
-fn lookup(name: str, mut out: String) -> bool:
+fn lookup(name: StrView, ref mut out: String) -> bool:
     return false

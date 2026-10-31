@@ -12,15 +12,16 @@
 # valid non-owning observer after its Shared target expires. The generic class
 # implementation must take the None path without copying at dispatch.
 interface Observe:
-    fn observe(self, weak: Weak[Shared[Token]]) -> i32
+    fn observe(weak: Weak[Shared[Token]]) -> i32
 
 struct Token:
     value: i32
 
-class Reader[T] implements Observe:
+[T]
+class Reader implements Observe:
     marker: T
 
-    fn observe(self, weak: Weak[Shared[Token]]) -> i32:
+    fn observe(weak: Weak[Shared[Token]]) -> i32:
         match weak.upgrade():
             Some(owner):
                 return owner.get().value

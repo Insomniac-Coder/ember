@@ -15,26 +15,30 @@
 # nor is taken for a different signature.
 
 # The default equality method requires Eq even when every call uses int.
-interface Pair[T: Eq]:
-    fn first(self) -> T
-    fn again(self) -> T:
-        x: T = self.first()
+interface Pair[T: needs Eq]:
+    fn first() -> T
+    fn again() -> T:
+        x: T = this.first()
         return x
-    fn near[U](self, other: U, answer: bool) -> bool:
+    [U]
+    fn near(other: U, answer: bool) -> bool:
         return answer
-    fn same[U: Pair[T]](self, other: U) -> bool:
-        return self.first() == other.first()
-    fn matches[U: Pair[T]](self, other: U) -> bool
+    [U: needs Pair[T]]
+    fn same(other: U) -> bool:
+        return this.first() == other.first()
+    [U: needs Pair[T]]
+    fn matches(other: U) -> bool
 
 struct P:
     a: int
 
 extend P implements Pair[int]:
-    fn first(self) -> int:
-        return self.a
+    fn first() -> int:
+        return this.a
 
-    fn matches[U: Pair[int]](self, other: U) -> bool:
-        return self.a == other.first()
+    [U: needs Pair[int]]
+    fn matches(other: U) -> bool:
+        return this.a == other.first()
 
 fn main():
     println(P(4).again())

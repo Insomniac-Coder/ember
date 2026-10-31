@@ -4,19 +4,21 @@
 # the help; naming an interface the bounds do not include is `E2040`.
 
 interface A:
-    fn m(self) -> int
+    fn m() -> int
 
 interface B:
-    fn m(self) -> int
+    fn m() -> int
 
 interface D:
-    fn m(self) -> int
+    fn m() -> int
 
-fn both[C: A + B](c: C) -> int:
+[C: needs (A, B)]
+fn both(c: C) -> int:
     return c.m()    #$ error[E2070]: `m` is offered by both `A` and `B`
     #$ help: name the one to call: `B.m(…)` with the receiver first
 
-fn missing[C: A](c: C) -> int:
+[C: needs A]
+fn missing(c: C) -> int:
     return D.m(c)    #$ error[E2040]: `C` has no `m` from `D`; its bounds do not include it
 
 fn main():

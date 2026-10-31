@@ -17,10 +17,10 @@ from std.mem import drop
 import cpp "widgets.hpp" with (overlay = "overlays/widgets.em")
 
 class Button(cpp.Widget):
-    fn drop(mut self):
+    fn drop():
         println("dropped")
 
-    override fn draw(self) -> i32:
+    override fn draw() -> i32:
         return 7
 
 fn main():

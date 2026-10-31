@@ -4,7 +4,7 @@
 #$ error[E5002]: `safe fn` needs an `@ffi` contract for mutable parameter `exponent`
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
-    safe fn frexp(x: f64, mut exponent: i32) -> f64
+    safe fn frexp(x: f64, ref mut exponent: i32) -> f64
 
 fn main():
     pass

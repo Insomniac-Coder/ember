@@ -8,33 +8,35 @@
 open class AnyStore:
     n: int
 
-    fn init(mut self):
-        self.n = 0
+    fn init():
+        this.n = 0
 
-    virtual fn remove(mut self, i: int) -> bool:
+    virtual fn remove(i: int) -> bool:
         return false
 
-class Store[T](AnyStore):
+[T]
+class Store(AnyStore):
     items: Array[T]
 
-    fn init(mut self):
-        self.items = []
+    fn init():
+        this.items = []
         super.init()
 
-    override fn remove(mut self, i: int) -> bool:
+    override fn remove(i: int) -> bool:
         return true
 
 interface Held:
     type State
-    fn state() -> State
+    static fn state() -> State
 
-struct Marker[T]:
+[T]
+struct Marker:
     pass
 
 extend[T] Marker[T] implements Held:
     type State = Option[Store[T]]
 
-    fn state() -> Option[Store[T]]:
+    static fn state() -> Option[Store[T]]:
         return Some(Store[T]())
 
 fn main():

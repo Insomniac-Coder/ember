@@ -6,8 +6,9 @@
 # (`scaled[int]`'s and `scaled[float]`'s maps differ in their item and their lambda), and the
 # caller of each sees the `I` its arguments make, `Iterator[Item = int]` or `[Item = float]`.
 
-fn scaled[T: Copy + Mul[Output = T]](xs: Span[T], k: T) -> some Iterator[Item = T]:
-    return xs.iter().copied().map(owned fn(x) => x * k)
+[T: needs (Copy, Mul[Output = T])]
+fn scaled(xs: Span[T], k: T) -> some Iterator[Item = T]:
+    return xs.iter().copy_each().map(owned fn(x) => x * k)
 
 fn main():
     a = [1, 2, 3]

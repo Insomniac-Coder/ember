@@ -444,30 +444,30 @@ pub struct Pair:
 pub open class World:
     people: Atomic[i32] = Atomic(0)
 
-    pub fn population(self) -> i32:
-        return self.people.load(MemoryOrder.Acquire)
+    pub fn population() -> i32:
+        return this.people.load(MemoryOrder.Acquire)
 
-    pub fn grow(self, by: i32) -> i32:
-        return self.people.fetch_add(by, MemoryOrder.AcqRel) + by
+    pub fn grow(by: i32) -> i32:
+        return this.people.fetch_add(by, MemoryOrder.AcqRel) + by
 
-    pub fn named(self, name: str) -> usize:
+    pub fn named(name: StrView) -> usize:
         return name.len()
 
-    pub fn sum(self, pair: ref Pair) -> i32:
+    pub fn sum(pair: ref Pair) -> i32:
         return pair.a + pair.b
 
-    pub fn merged(self, other: World) -> i32:
-        return self.population() + other.population()
+    pub fn merged(other: World) -> i32:
+        return this.population() + other.population()
 
-    pub fn adopt(self, owned other: World) -> i32:
+    pub fn adopt(owns other: World) -> i32:
         return other.kind() * 10
 
-    pub virtual fn kind(self) -> i32:
+    pub virtual fn kind() -> i32:
         return 1
 
 @sync
 pub class Moon(World):
-    pub override fn kind(self) -> i32:
+    pub override fn kind() -> i32:
         return 2
 
 @export(\"make_world\")

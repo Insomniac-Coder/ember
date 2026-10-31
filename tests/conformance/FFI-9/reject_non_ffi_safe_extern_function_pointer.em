@@ -4,4 +4,4 @@
 #$ error[E5015]: an `extern "C" fn` pointer needs FFI-safe parameters and result
 
 fn main():
-    callback: extern "C" fn(str) -> i32
+    callback: extern "C" fn(StrView) -> i32

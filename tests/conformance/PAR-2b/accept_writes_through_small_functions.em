@@ -7,13 +7,13 @@
 # were written in the loop: `triple` and `put` write `xs` at `i`, and `bump_next` reads and writes
 # it at `i + 1` (its `at + 1`, given the caller's `i`), one offset, so each loop is independent.
 
-fn put(mut xs: MutSpan[int], at: int, value: int):
+fn put(ref mut xs: MutSpan[int], at: int, value: int):
     xs[at] = value
 
-fn triple(mut xs: MutSpan[int], at: int):
+fn triple(ref mut xs: MutSpan[int], at: int):
     put(xs, at, at * 3)
 
-fn bump_next(mut xs: MutSpan[int], at: int):
+fn bump_next(ref mut xs: MutSpan[int], at: int):
     if xs.len() > at + 1:
         xs[at + 1] = xs[at + 1] + 1
 

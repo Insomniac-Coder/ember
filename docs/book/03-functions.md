@@ -7,7 +7,7 @@ returns nothing.
 fn area(width: float, height: float) -> float:
     return width * height
 
-fn greet(name: str):
+fn greet(name: StrView):
     println(f"hello, {name}")
 
 fn main():
@@ -25,7 +25,7 @@ hello, Grace
 A parameter may have a default, and any argument may be passed by name:
 
 ```ember
-fn connect(host: str, port: int = 80, secure: bool = false) -> String:
+fn connect(host: StrView, port: int = 80, secure: bool = false) -> String:
     scheme = "https" if secure else "http"
     return f"{scheme}://{host}:{port}"
 

@@ -2,7 +2,7 @@
 ## it (`accept_a_default_method_reaches_an_implementation_in_a_later_module.em`).
 
 pub interface Named:
-    fn name(self) -> str
+    fn name() -> StrView
 
-    fn greeting(self) -> String:
-        return f"hello, {self.name()}"
+    fn greeting() -> String:
+        return f"hello, {this.name()}"

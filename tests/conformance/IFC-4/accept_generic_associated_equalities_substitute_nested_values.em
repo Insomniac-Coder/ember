@@ -8,11 +8,11 @@
 
 interface Element:
     type Item
-    fn get(self) -> Item
+    fn get() -> Item
 
 interface Outer[T]:
-    type Value: Element[Item = Option[T]]
-    fn value(self) -> Value
+    type Value: needs Element[Item = Option[T]]
+    fn value() -> Value
 
 @derive(Copy)
 struct IntElement:
@@ -20,46 +20,49 @@ struct IntElement:
 
 extend IntElement implements Element:
     type Item = Option[int]
-    fn get(self) -> Option[int]:
-        return self.item
+    fn get() -> Option[int]:
+        return this.item
 
 @derive(Copy)
 struct TextElement:
-    item: Option[str]
+    item: Option[StrView]
 
 extend TextElement implements Element:
-    type Item = Option[str]
-    fn get(self) -> Option[str]:
-        return self.item
+    type Item = Option[StrView]
+    fn get() -> Option[StrView]:
+        return this.item
 
 struct IntOwner:
     item: Option[int]
 
 extend IntOwner implements Outer[int]:
     type Value = IntElement
-    fn value(self) -> IntElement:
-        return IntElement(self.item)
+    fn value() -> IntElement:
+        return IntElement(this.item)
 
 struct TextOwner:
-    item: Option[str]
+    item: Option[StrView]
 
-extend TextOwner implements Outer[str]:
+extend TextOwner implements Outer[StrView]:
     type Value = TextElement
-    fn value(self) -> TextElement:
-        return TextElement(self.item)
+    fn value() -> TextElement:
+        return TextElement(this.item)
 
-fn through[T, O: Outer[T]](o: O) -> Option[T]:
+[T, O: needs Outer[T]]
+fn through(o: O) -> Option[T]:
     return o.value().get()
 
-fn integers[O: Outer[int]](o: O) -> Option[int]:
+[O: needs Outer[int]]
+fn integers(o: O) -> Option[int]:
     return o.value().get()
 
-fn texts[O: Outer[str]](o: O) -> Option[str]:
+[O: needs Outer[StrView]]
+fn texts(o: O) -> Option[StrView]:
     return o.value().get()
 
 fn main():
     println(through[int, IntOwner](IntOwner(Some(7))).unwrap(),
-            through[str, TextOwner](TextOwner(Some("text"))).unwrap())
+            through[StrView, TextOwner](TextOwner(Some("text"))).unwrap())
     println(integers(IntOwner(Some(11))).unwrap(), texts(TextOwner(Some("word"))).unwrap())
     println(through[int, IntOwner](IntOwner(None)).is_none(),
-            through[str, TextOwner](TextOwner(None)).is_none())
+            through[StrView, TextOwner](TextOwner(None)).is_none())

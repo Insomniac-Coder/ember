@@ -12,7 +12,7 @@
 struct Token:
     value: i32
 
-fn consume(owned token: Shared[Token]) -> i32:
+fn consume(owns token: Shared[Token]) -> i32:
     value = token.get()
     return value.value
 

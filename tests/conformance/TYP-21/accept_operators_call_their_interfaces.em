@@ -27,38 +27,38 @@ struct Mat2:
 extend Vec2 implements Add, AddAssign, Sub, Neg, Mul[f64]:
     type Output = Vec2
 
-    fn add(self, rhs: Vec2) -> Vec2:
-        return Vec2(x=self.x + rhs.x, y=self.y + rhs.y)
+    fn add(rhs: Vec2) -> Vec2:
+        return Vec2(x=this.x + rhs.x, y=this.y + rhs.y)
 
-    fn add_assign(mut self, rhs: Vec2):
+    fn add_assign(rhs: Vec2):
         println("add_assign")
-        self.x += rhs.x
-        self.y += rhs.y
+        this.x += rhs.x
+        this.y += rhs.y
 
-    fn sub(self, rhs: Vec2) -> Vec2:
-        return Vec2(x=self.x - rhs.x, y=self.y - rhs.y)
+    fn sub(rhs: Vec2) -> Vec2:
+        return Vec2(x=this.x - rhs.x, y=this.y - rhs.y)
 
-    fn neg(self) -> Vec2:
-        return Vec2(x=-self.x, y=-self.y)
+    fn neg() -> Vec2:
+        return Vec2(x=-this.x, y=-this.y)
 
-    fn mul(self, k: f64) -> Vec2:
-        return Vec2(x=self.x * k, y=self.y * k)
+    fn mul(k: f64) -> Vec2:
+        return Vec2(x=this.x * k, y=this.y * k)
 
 extend Mat2 implements Mul[Vec2]:
     type Output = Vec2
 
-    fn mul(self, v: Vec2) -> Vec2:
-        return Vec2(x=self.a * v.x + self.b * v.y, y=self.c * v.x + self.d * v.y)
+    fn mul(v: Vec2) -> Vec2:
+        return Vec2(x=this.a * v.x + this.b * v.y, y=this.c * v.x + this.d * v.y)
 
 extend Mat2 implements Mul[Mat2]:
     type Output = Mat2
 
-    fn mul(self, n: Mat2) -> Mat2:
+    fn mul(n: Mat2) -> Mat2:
         return Mat2(
-            a=self.a * n.a + self.b * n.c,
-            b=self.a * n.b + self.b * n.d,
-            c=self.c * n.a + self.d * n.c,
-            d=self.c * n.b + self.d * n.d,
+            a=this.a * n.a + this.b * n.c,
+            b=this.a * n.b + this.b * n.d,
+            c=this.c * n.a + this.d * n.c,
+            d=this.c * n.b + this.d * n.d,
         )
 
 # The bit operators, `~`, `<<` and `**` on a program's type.
@@ -69,23 +69,23 @@ struct Flags:
 extend Flags implements BitAnd, BitOr, BitXor, Not, Shl[int], Pow[int]:
     type Output = Flags
 
-    fn bitand(self, rhs: Flags) -> Flags:
-        return Flags(bits=self.bits & rhs.bits)
+    fn bitand(rhs: Flags) -> Flags:
+        return Flags(bits=this.bits & rhs.bits)
 
-    fn bitor(self, rhs: Flags) -> Flags:
-        return Flags(bits=self.bits | rhs.bits)
+    fn bitor(rhs: Flags) -> Flags:
+        return Flags(bits=this.bits | rhs.bits)
 
-    fn bitxor(self, rhs: Flags) -> Flags:
-        return Flags(bits=self.bits ^ rhs.bits)
+    fn bitxor(rhs: Flags) -> Flags:
+        return Flags(bits=this.bits ^ rhs.bits)
 
-    fn not(self) -> Flags:
-        return Flags(bits=~self.bits)
+    fn not() -> Flags:
+        return Flags(bits=~this.bits)
 
-    fn shl(self, n: int) -> Flags:
-        return Flags(bits=self.bits << n)
+    fn shl(n: int) -> Flags:
+        return Flags(bits=this.bits << n)
 
-    fn pow(self, n: int) -> Flags:
-        return Flags(bits=self.bits ** n)
+    fn pow(n: int) -> Flags:
+        return Flags(bits=this.bits ** n)
 
 fn main():
     v = Vec2(x=1.0, y=2.0)

@@ -5,5 +5,5 @@
 # `[ERR-4]` — `unwrap` on an `Err` panics with the error's text.
 
 fn main():
-    opened: Result[int, str] = Err("no such file")
+    opened: Result[int, StrView] = Err("no such file")
     println(opened.unwrap())

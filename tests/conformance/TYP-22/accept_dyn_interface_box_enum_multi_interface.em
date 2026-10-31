@@ -9,18 +9,18 @@
 #$ assert-c: contains(em_vt_dyn_5Write_for_6Signal_slot0)
 
 interface Read:
-    fn read(self) -> i32
+    fn read() -> i32
 
 interface Write:
-    fn write(self) -> i32
+    fn write() -> i32
 
 enum Signal implements Read, Write:
     Ready
 
-    fn read(self) -> i32:
+    fn read() -> i32:
         return 20
 
-    fn write(self) -> i32:
+    fn write() -> i32:
         return 22
 
 fn main():

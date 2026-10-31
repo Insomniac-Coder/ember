@@ -10,14 +10,14 @@
 # operates on the one-word owning handle.  The concrete method owns the
 # long-term object access interval; no fat `dyn` carrier is introduced.
 interface Accumulator:
-    fn bump(mut self) -> i32
+    fn bump() -> i32
 
 class Counter implements Accumulator:
     value: i32
 
-    fn bump(mut self) -> i32:
-        self.value = self.value + 1
-        return self.value
+    fn bump() -> i32:
+        this.value = this.value + 1
+        return this.value
 
 fn main():
     counter: Accumulator = Counter(41)

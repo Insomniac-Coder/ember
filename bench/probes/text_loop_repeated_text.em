@@ -1,7 +1,7 @@
 # D-498 probe: one fixed text, `reduce` called <count> times. Input: `<text 0-5> <count>`.
 # 0 empty, 1 "a", 2 "aé🙂", 3 English (58 chars, 2 wide), 4 Chinese, 5 accented Latin.
 @noinline
-fn reduce(text: str, initial: int) -> int:
+fn reduce(text: StrView, initial: int) -> int:
     total = initial
     for (i, c) in text.char_indices():
         total += i ^ (c as u32 as int)

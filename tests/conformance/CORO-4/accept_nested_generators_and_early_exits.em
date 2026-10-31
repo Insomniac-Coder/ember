@@ -23,12 +23,12 @@ gen fn with_defer() -> Generator[int]:
     yield 2
     yield 3
 
-fn parse(s: str) -> Option[int]:
+fn parse(s: StrView) -> Option[int]:
     if s == "x":
         return None
     return Some(s.len())
 
-gen fn parsed(words: Span[str]) -> Generator[int, Option[int]]:
+gen fn parsed(words: Span[StrView]) -> Generator[int, Option[int]]:
     total = 0
     for w in words:
         n = parse(w)?

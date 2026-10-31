@@ -1,7 +1,7 @@
 #$ test: compile-fail
 #$ rules: LT-2, LT-1a, LT-5, TYP-14
 #$ error[E3060]: `n` does not live long enough
-#$ error[E3062]: the returned view points into `b`, which `@borrows` does not name
+#$ error[E3062]: the returned view points into `b`, but its first line says `from a`
 #$ error[E3021]: `k` cannot be written while it is borrowed
 
 ## `[LT-2]` — a view struct has one region, and a view-typed field's region is
@@ -21,8 +21,7 @@ fn escaping() -> Cursor:
 
 ## `[LT-1a]` reaches through the struct: the returned view points into `b`
 ## whatever it is wrapped in.
-@borrows(a)
-fn wrapped(a: ref i32, b: ref i32) -> Cursor:
+fn wrapped(a: ref i32, b: ref i32) -> Cursor from a:
     return Cursor(b)
 
 ## And the caller holds the borrow for as long as it holds the struct.

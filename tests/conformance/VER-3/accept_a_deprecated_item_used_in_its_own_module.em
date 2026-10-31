@@ -21,8 +21,8 @@ struct Point:
     x: int
 
     @deprecated(since="1.2", note="read `x`")
-    fn get(self) -> int:
-        return self.x
+    fn get() -> int:
+        return this.x
 
 fn main():
     p = Pair(1, 2)

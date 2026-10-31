@@ -10,8 +10,8 @@
 struct Token:
     value: i32
 
-    fn drop(mut self):
-        println(self.value)
+    fn drop():
+        println(this.value)
 
 fn main():
     first = Shared(Token(7))

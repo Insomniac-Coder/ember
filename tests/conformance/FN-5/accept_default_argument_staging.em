@@ -12,9 +12,9 @@ struct Counter:
     total: int
 
 extend Counter:
-    fn next(mut self) -> int:
-        self.total += 1
-        return self.total
+    fn next() -> int:
+        this.total += 1
+        return this.total
 
 struct Payload:
     a: int
@@ -24,7 +24,7 @@ struct Payload:
 fn compose(a: int, b: int = a * 10, c: int = b + a) -> int:
     return a + b + c
 
-fn double(mut value: Payload, amount: int = value.b):
+fn double(ref mut value: Payload, amount: int = value.b):
     value.b += amount
 
 fn same_field(value: Payload, selected: ref int = ref value.b) -> bool:

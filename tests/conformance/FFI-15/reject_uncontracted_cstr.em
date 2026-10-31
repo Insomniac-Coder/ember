@@ -4,7 +4,7 @@
 #$ error[E5002]: `safe fn` needs an `@ffi` NUL-terminated contract for `text`
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
-    safe fn strlen(text: cstr) -> usize
+    safe fn strlen(text: CStrView) -> usize
 
 fn main():
     pass

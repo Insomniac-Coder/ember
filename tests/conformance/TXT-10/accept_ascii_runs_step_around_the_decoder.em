@@ -27,7 +27,7 @@
 ## loop body that leaves early or skips.
 
 @noinline
-fn sum(text: str) -> int:
+fn sum(text: StrView) -> int:
     total = 0
     for (i, c) in text.char_indices():
         total = total * 31 + (i ^ (c as u32 as int))
@@ -35,21 +35,21 @@ fn sum(text: str) -> int:
     return total
 
 @noinline
-fn count(text: str) -> int:
+fn count(text: StrView) -> int:
     n = 0
     for _c in text:
         n += 1
     return n
 
 @noinline
-fn first_wide(text: str) -> int:
+fn first_wide(text: StrView) -> int:
     for (i, c) in text.char_indices():
         if c as u32 >= 128:
             return i
     return -1
 
 @noinline
-fn skip_spaces(text: str) -> String:
+fn skip_spaces(text: StrView) -> String:
     out = String.from("")
     for c in text.chars():
         if c == ' ':
@@ -58,7 +58,7 @@ fn skip_spaces(text: str) -> String:
     return out
 
 @noinline
-fn pairs(a: str, b: str) -> int:
+fn pairs(a: StrView, b: StrView) -> int:
     total = 0
     for (i, x) in a.char_indices():
         for (j, y) in b.char_indices():

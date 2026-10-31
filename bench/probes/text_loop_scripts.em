@@ -22,18 +22,18 @@
 #   19: emoji in English, 10000 strings of 0-3 words
 #   20: emoji in English, 10000 strings of 4-30 words
 @noinline
-fn reduce(text: str, initial: int) -> int:
+fn reduce(text: StrView, initial: int) -> int:
     total = initial
     for (i, c) in text.char_indices():
         total += i ^ (c as u32 as int)
     return total
 
-fn pick(seed: int, words: Array[str]) -> str:
+fn pick(seed: int, words: Array[StrView]) -> StrView:
     return words[(seed // 65536) % words.len()]
 
 fn main():
     ascii_words = ["the", "quick", "brown", "fox", "jumps", "over", "a", "lazy", "dog", "and", "runs", "far", "away", "from", "home", "today", "while", "it", "rains", "in", "spring", "I"]
-    scripts: Array[Array[str]] = [
+    scripts: Array[Array[StrView]] = [
         ["привет", "мир", "быстрый", "лиса", "собака", "дом", "река", "лес", "друг", "вода"],
         ["γεια", "κόσμος", "γρήγορη", "αλεπού", "σκύλος", "σπίτι", "ποτάμι", "δάσος", "φίλος", "νερό"],
         ["مرحبا", "عالم", "سريع", "ثعلب", "كلب", "بيت", "نهر", "غابة", "صديق", "ماء"],

@@ -2,8 +2,9 @@
 #$ rules: DRP-7, LT-3
 # The source ends after the Plain value's last ordinary use; Plain has no drop.
 
-struct Plain[T]:
-    borrowed: str
+[T]
+struct Plain:
+    borrowed: StrView
     marker: T
 
 fn main():

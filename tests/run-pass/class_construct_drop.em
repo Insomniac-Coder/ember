@@ -7,8 +7,8 @@
 class Holder:
     values: Array[i32]
 
-    fn drop(mut self):
-        println(self.values.len())
+    fn drop():
+        println(this.values.len())
 
 fn main():
     values: Array[i32] = Array()

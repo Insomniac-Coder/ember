@@ -9,11 +9,11 @@ struct Saved:
     next: Option[int]
 
 extend Saved:
-    fn peek(self) -> Option[ref int]:
-        return self.next.as_ref()
+    fn peek() -> Option[ref int]:
+        return this.next.as_ref()
 
-    fn bump(mut self):
-        match self.next.as_mut():
+    fn bump():
+        match this.next.as_mut():
             Some(v):
                 v += 1
             None:

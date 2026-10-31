@@ -3,8 +3,7 @@
 # The exception is tied to the named Arena only. Other ordinary value
 # parameters remain ordinary values and need no artificial region.
 
-@borrows(arena)
-fn allocate(arena: Arena, count: usize) -> ref mut usize:
+fn allocate(arena: Arena, count: usize) -> ref mut usize from arena:
     return arena.alloc(count)
 
 fn main():

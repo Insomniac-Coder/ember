@@ -8,13 +8,14 @@
 class Counter:
     log: Array[int]
 
-    fn init(mut self):
-        self.log = []
+    fn init():
+        this.log = []
 
-    fn bump(mut self):
-        self.log.push(1)
+    fn bump():
+        this.log.push(1)
 
-    fn bump_other(mut self, other: Counter):
+    fn bump_other(other: Counter):
+        this.log.push(0)
         alias = other
         alias.bump()
 

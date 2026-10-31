@@ -6,17 +6,17 @@
 # w.conv()` was a type mismatch against `Conv[bool]`'s `conv`.
 
 interface Conv[T]:
-    fn conv(self) -> T
+    fn conv() -> T
 
 struct W:
     x: int
 
 extend W implements Conv[Array[int]]:
-    fn conv(self) -> Array[int]:
-        return [self.x]
+    fn conv() -> Array[int]:
+        return [this.x]
 
 extend W implements Conv[bool]:
-    fn conv(self) -> bool:
+    fn conv() -> bool:
         return true
 
 fn main():

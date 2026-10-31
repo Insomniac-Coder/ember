@@ -5,7 +5,7 @@
 # only once) and one that does not; it is a bound like any callable parameter (`[CLO-3]`), so a
 # lambda that borrows the caller's locals is accepted too, and calling `f` consumes it.
 
-fn consume(owned s: String) -> int:
+fn consume(owns s: String) -> int:
     return s.len()
 
 fn call_once(f: once fn() -> int) -> int:
@@ -15,14 +15,14 @@ fn apply(f: once fn(int) -> int, x: int) -> int:
     return f(x)
 
 interface Runner:
-    fn run(self, f: once fn() -> int) -> int
+    fn run(f: once fn() -> int) -> int
 
 struct Plus:
     n: int
 
 extend Plus implements Runner:
-    fn run(self, f: once fn() -> int) -> int:
-        return f() + self.n
+    fn run(f: once fn() -> int) -> int:
+        return f() + this.n
 
 fn main():
     s = "hello".to_string()

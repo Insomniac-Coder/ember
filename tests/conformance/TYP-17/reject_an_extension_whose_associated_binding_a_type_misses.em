@@ -6,21 +6,22 @@
 # `extend[T: Iterator[Item = int]] Holder[T] implements Mark`.
 
 interface Mark:
-    fn mark(self) -> int
+    fn mark() -> int
 
 struct Words:
     n: int
 
 extend Words implements Iterator:
-    type Item = str
-    fn next(mut self) -> Option[str]:
+    type Item = StrView
+    fn next() -> Option[StrView]:
         return None
 
-struct Holder[T]:
+[T]
+struct Holder:
     x: T
 
-extend[T: Iterator[Item = int]] Holder[T] implements Mark:
-    fn mark(self) -> int:
+extend[T: needs Iterator[Item = int]] Holder[T] implements Mark:
+    fn mark() -> int:
         return 1
 
 fn main():

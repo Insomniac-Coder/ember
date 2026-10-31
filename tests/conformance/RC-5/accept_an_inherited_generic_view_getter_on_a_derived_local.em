@@ -10,14 +10,15 @@
 open class Base:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = [1, 2, 3]
+    fn init():
+        this.items = [1, 2, 3]
 
-    fn pick[T](self, tag: T) -> Span[int]:
-        return self.items[..]
+    [T]
+    fn pick(tag: T) -> Span[int]:
+        return this.items[..]
 
 class Derived(Base):
-    fn init(mut self):
+    fn init():
         super.init()
 
 fn main():

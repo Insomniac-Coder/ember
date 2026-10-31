@@ -1,11 +1,11 @@
 class Bag:
     items: Array[int]
 
-    fn add(mut self, x: int):
-        self.items.push(x)
+    fn add(x: int):
+        this.items.push(x)
 
-@static_safe
-fn fill(mut b: Bag):
+@no_alias_checks
+fn fill(ref mut b: Bag):
     for i in 0..3:
         b.add(i)
 

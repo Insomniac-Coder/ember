@@ -5,14 +5,14 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated), result(borrowed, nul_terminated, from(text)), link_name="echo_cstr")
-    safe fn echo(text: cstr) -> cstr
+    safe fn echo(text: CStrView) -> CStrView
 
-pub extern "C" fn echo_cstr(text: cstr) -> cstr:
+pub extern "C" fn echo_cstr(text: CStrView) -> CStrView:
     return text
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated))
-    safe fn strlen(text: cstr) -> usize
+    safe fn strlen(text: CStrView) -> usize
 
 fn main():
     println(strlen(echo(c"Ember!")))

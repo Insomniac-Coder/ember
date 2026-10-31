@@ -15,4 +15,4 @@ fn main():
     xs: Array[int] = [1, 2, 3]
     for i, x in xs.iter().enumerate(9223372036854775806).rev():
         println(i, x)
-    println(xs.iter().copied().enumerate(9223372036854775806).rev().to_array())
+    println(xs.iter().copy_each().enumerate(9223372036854775806).rev().to_array())

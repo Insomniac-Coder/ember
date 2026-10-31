@@ -9,8 +9,9 @@ struct HashOnly:
     value: i32
 
 extend HashOnly implements Hash:
-    fn hash[H: Hasher](self, mut h: H):
-        h.write_i32(self.value)
+    [H: needs Hasher]
+    fn hash(ref mut h: H):
+        h.write_i32(this.value)
 
 fn main():
     arena = Arena.with_capacity(1024)

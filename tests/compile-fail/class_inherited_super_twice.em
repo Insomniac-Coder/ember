@@ -5,14 +5,14 @@
 open class Base:
     value: i32
 
-    fn init(mut self, value: i32):
-        self.value = value
+    fn init(value: i32):
+        this.value = value
 
 class Derived(Base):
     extra: i32
 
-    fn init(mut self, value: i32, extra: i32):
-        self.extra = extra
+    fn init(value: i32, extra: i32):
+        this.extra = extra
         super.init(value)
         super.init(value)
 

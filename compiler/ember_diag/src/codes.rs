@@ -295,7 +295,7 @@ codes! {
     E2225 = (Error, 2225, Types, "[HR-35]", "`migrate_from` may not panic");
     E2226 = (Error, 2226, Types, "[STD-8]", "`in` on a type that does not implement `Contains`");
     E2227 = (Error, 2227, Types, "[HR-39]", "a `noexcept` foreign call in `migrate_from` may terminate the process");
-    E2229 = (Error, 2229, Types, "[CORO-12]", "class generator method takes `mut self` or holds an access across `yield`");
+    E2229 = (Error, 2229, Types, "[CORO-12]", "class generator method holds an access to its object across `yield`");
     E2231 = (Error, 2231, Types, "[CORO-13]", "`yield` while a `@must_drop` value is live");
 
     // --- ownership, borrows, regions, exclusivity, drops --------------------
@@ -313,7 +313,7 @@ codes! {
     E3022 = (Error, 3022, Ownership, "[BRW-1], [BRW-11]", "one place changed through two names: two changeable arguments of one call naming one place, other than one whole variable proved when compiling (a function value that changes it counts as one); a function value stored in a place that a variable it changes owns; a `ref mut` name's place changed through another name while it is still used, a reshape of a `ref mut` address included");
     E3023 = (Error, 3023, Ownership, "[BRW-14], [BRW-15], [STA-1]", "a change the name does not allow: a change through a name that only reads (a plain parameter; a loop, pattern, opened or part name; a plain name holding a `MutSpan`; a value made when compiling); `=` on a name that keeps its place for its scope (a parameter; a loop, pattern or opened name, one opened `exists as copy of` excepted; a `const ref mut` name given another ref); a read-only `ref` given to a `ref mut` name; a method that may change its object, or a stored function that may change its own state, called through a read-only name; an owner that may change made from one that only reads (a plain parameter of a `shares mut` type included); `=` on a `static` (`HOOK = v`)");
     E3024 = (Error, 3024, Ownership, "[TYP-15]", "a struct field would point into another field of the same struct (shape B5)");
-    E3025 = (Error, 3025, Ownership, "[BRW-10]", "a method takes all of `self` (shape B8)");
+    E3025 = (Error, 3025, Ownership, "[BRW-10]", "a method takes all of `this` (shape B8)");
     E3026 = (Error, 3026, Ownership, "[CLO-4]", "a function value that may outlive a place it uses and does not own: a returned function that changes its maker's local without `owns`; a task or thread given a loop's name with no word, or with `ref` where it may outlive the element");
     E3027 = (Error, 3027, Ownership, "[FN-2a]", "`ref mut` before something this function may not change: an argument, a loop or pattern name over something it only reads, or a place reached through a read-only name");
     E3028 = (Error, 3028, Ownership, "[FN-2a]", "a call's word does not match its parameter: no `ref mut` (or no `const` for a `const ref mut` parameter) before an argument for a `ref mut` parameter, a `MutSpan` one included, or `ref mut` before one for a parameter that is not `ref mut` (shape B10)");
@@ -328,7 +328,7 @@ codes! {
     E3042 = (Error, 3042, Ownership, "[EXP-6]", "partial move then use of the whole value");
     E3063 = (Error, 3063, Ownership, "[LT-45], [BRW-19], [ALC-1]", "a view, or a value holding views, kept or returned where it would outlive what it points into: a view of a temporary, a view out of a lock's `with` block, a view of the callee's own locals put into the caller's view through `ref mut`, a kept view outliving its target; and a value made in a memory manager's instance, or one holding such a value, kept or returned where it would outlive that instance");
     E3064 = (Error, 3064, Ownership, "[LT-2]", "two independent regions in one view struct");
-    E3065 = (Error, 3065, Ownership, "[LT-35]", "multi-region result provenance cannot be inferred");
+    E3065 = (Error, 3065, Ownership, "[LT-35]", "retired: a result points into every view argument it may come from, or into what `from` names; nothing is left to infer");
     E3095 = (Error, 3095, Ownership, "[DSJ-4]", "two single-object references given to `assert_disjoint`");
     E3096 = (Error, 3096, Ownership, "[ARN-6]", "arena is scoped here");
     E3050 = (Error, 3050, Ownership, "[BRW-7]", "a view of an uninitialised place");
@@ -418,7 +418,7 @@ codes! {
     // --- concurrency ----------------------------------------------------------
     E7001 = (Error, 7001, Concurrency, "[THR-1]", "`@sync` class with a field that is not `Sync`, or a non-`@sync` base or derived class");
     E7002 = (Error, 7002, Concurrency, "[STA-1]", "`static` of a type that is not `ThreadShared`");
-    E7003 = (Error, 7003, Concurrency, "[THR-1]", "write to a field of a `@sync` class after `init`, or a `mut self` method on one");
+    E7003 = (Error, 7003, Concurrency, "[THR-1]", "write to a field of a `@sync` class after `init`, or a method on one that changes its object");
     E7004 = (Error, 7004, Concurrency, "[THR-17], [THR-10], [FFI-21]", "an unscoped thread or a kept callback uses a name with no capture word (a loop's name included)");
     E7005 = (Error, 7005, Concurrency, "[THR-11]", "value shared with a task is not `Sync`");
     E7006 = (Error, 7006, Concurrency, "[THR-14]", "memory order an atomic operation does not support");
@@ -491,7 +491,7 @@ codes! {
     L1002 = (Lint, 1002, Resolve, "[LNT-2]", "assignment declares a new binding");
     L3011 = (Lint, 3011, Ownership, "[CELL-7]", "`RefCell` guard held across a call");
     L3013 = (Lint, 3013, Ownership, "[EXC-7]", "long-term access held across a call");
-    L3014 = (Lint, 3014, Ownership, "[LT-1b]", "return region is the intersection of several parameters");
+    L3014 = (Lint, 3014, Ownership, "[LT-1b]", "retired: a result points into every view argument it may come from (as `E3065`)");
     L2001 = (Lint, 2001, Types, "[LNT-6]", "unnecessary `copy of`");
     L2002 = (Lint, 2002, Types, "[LNT-6]", "large `Copy` value passed by value");
     L3001 = (Lint, 3001, Ownership, "[WK-1]", "potential reference cycle");

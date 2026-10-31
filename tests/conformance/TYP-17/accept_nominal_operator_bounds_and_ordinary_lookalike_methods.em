@@ -6,15 +6,15 @@
 # concrete values. A lookalike is callable by its method name, not as `+`.
 
 interface Lookalike:
-    fn add(self, rhs: Self) -> Self
+    fn add(rhs: Self) -> Self
 
 @derive(Copy)
 struct Ordinary:
     value: int
 
 extend Ordinary implements Lookalike:
-    fn add(self, rhs: Ordinary) -> Ordinary:
-        return Ordinary(self.value + rhs.value)
+    fn add(rhs: Ordinary) -> Ordinary:
+        return Ordinary(this.value + rhs.value)
 
 @derive(Copy)
 struct Sum:
@@ -22,11 +22,11 @@ struct Sum:
 
 extend Sum implements Add:
     type Output = Sum
-    fn add(self, rhs: Sum) -> Sum:
-        return Sum(self.value + rhs.value)
+    fn add(rhs: Sum) -> Sum:
+        return Sum(this.value + rhs.value)
 
 interface Holder:
-    type Item: Add[int]
+    type Item: needs Add[int]
 
 struct Ints:
     unused: int
@@ -34,13 +34,16 @@ struct Ints:
 extend Ints implements Holder:
     type Item = int
 
-fn named[T: Lookalike](a: T, b: T) -> T:
+[T: needs Lookalike]
+fn named(a: T, b: T) -> T:
     return a.add(b)
 
-fn direct[T: Add[Output = T]](a: T, b: T) -> T:
+[T: needs Add[Output = T]]
+fn direct(a: T, b: T) -> T:
     return a + b
 
-fn projected[H: Holder](holder: H, a: H.Item, b: int) -> H.Item.Output:
+[H: needs Holder]
+fn projected(holder: H, a: H.Item, b: int) -> H.Item.Output:
     return a + b
 
 fn main():

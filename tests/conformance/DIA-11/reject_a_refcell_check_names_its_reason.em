@@ -4,7 +4,7 @@
 ## `[DIA-11]` — a `RefCell`'s borrow check is `requested_by_type` (`[EFF-11]`): the type was chosen
 ## to check at run time, so the suggestion is to change the type.
 
-@static_safe
+@no_alias_checks
 fn peek(cell: ref RefCell[int]) -> int:
     with g = cell.borrow():  #$ error[E4030]: the check's reason is `requested_by_type`
         return g

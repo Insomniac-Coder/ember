@@ -16,20 +16,20 @@
 struct Marker:
     pub n: int
 
-    fn drop(mut self):
-        println("drop", self.n)
+    fn drop():
+        println("drop", this.n)
 
 fn take(marker: Marker) -> int:
     return marker.n
 
 fn main():
     value: Option[Marker] = Some(Marker(3))
-    match owned value:
+    match owns value:
         Some(inner):
             moved = inner
             wrapped = Some(moved)
             kept = Marker(7)
-            match owned wrapped:
+            match owns wrapped:
                 Some(last):
                     println(take(last))
                 None:

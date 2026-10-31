@@ -11,16 +11,16 @@ class Grid:
     rows: int
     spare: int = 0
 
-    fn init(self, width: int):
+    fn init(width: int):
         bump = fn(v: int) -> int:
             return v + 1
         total = width * width
-        self.cells = total
-        self.rows = 1
+        this.cells = total
+        this.rows = 1
         if width > 2:
-            self.rows += 1
+            this.rows += 1
             return
-        self.spare = bump(6)
+        this.spare = bump(6)
 
 fn main():
     g = Grid(3)

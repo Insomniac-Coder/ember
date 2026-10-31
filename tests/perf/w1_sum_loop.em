@@ -4,8 +4,8 @@
 class Bag:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = []
+    fn init():
+        this.items = []
 
 @overflow(wrap)
 fn main():

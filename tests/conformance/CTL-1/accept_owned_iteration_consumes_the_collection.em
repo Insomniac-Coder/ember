@@ -21,25 +21,25 @@
 struct Noisy:
     name: String
 
-    fn drop(mut self):
-        println("drop", self.name)
+    fn drop():
+        println("drop", this.name)
 
 fn main():
     m: Map[String, Noisy] = Map()
     m["a"] = Noisy("va")
     m["b"] = Noisy("vb")
     kept: Array[String] = []
-    for k in owned m:
+    for k in owns m:
         println("key", k)
         kept.push(k)
     println(kept)
     s: Set[String] = {"y", "z"}
     seen: Array[String] = []
-    for e in owned s:
+    for e in owns s:
         seen.push(e)
     println(seen[0], seen[1])
     xs = [Noisy("x1"), Noisy("x2"), Noisy("x3")]
-    for x in owned xs:
+    for x in owns xs:
         println("got", x.name)
         if x.name == "x2":
             break

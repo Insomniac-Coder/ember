@@ -6,10 +6,10 @@
 class Named:
     name: String
 
-    fn init(self, owned name: String, skip: bool):
+    fn init(owns name: String, skip: bool):
         if skip:
             return #$ error[E2100]: field `name` is not definitely initialized by class `init`
-        self.name = name
+        this.name = name
 
 fn main():
     n = Named("x", true)

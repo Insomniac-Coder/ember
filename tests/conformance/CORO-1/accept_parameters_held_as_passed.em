@@ -15,7 +15,7 @@
 class Tracker:
     count: int = 0
 
-    fn drop(mut self):
+    fn drop():
         println("released")
 
 gen fn letters(s: String, n: int) -> Generator[String]:
@@ -25,11 +25,11 @@ gen fn counting(start: int) -> Generator[int]:
     yield start + 1
     yield start + 2
 
-gen fn appending(mut xs: Array[int], x: int) -> Generator[int]:
+gen fn appending(ref mut xs: Array[int], x: int) -> Generator[int]:
     xs.push(x)
     yield xs.len()
 
-gen fn consuming(owned s: String) -> Generator[String]:
+gen fn consuming(owns s: String) -> Generator[String]:
     s.push_str("!")
     yield s
 

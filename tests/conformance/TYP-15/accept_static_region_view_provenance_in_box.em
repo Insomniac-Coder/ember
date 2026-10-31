@@ -3,16 +3,16 @@
 # Static provenance is a region fact, not an expression-shape exception. It
 # survives a local binding, a named static, and a call with no borrowed input.
 
-static NAMED: str = "named"
+static NAMED: StrView = "named"
 
-fn produced(_selector: i32) -> str:
+fn produced(_selector: i32) -> StrView:
     return "produced"
 
 fn main():
-    local: str = "local"
-    from_local: Box[str] = Box(local)
-    from_static: Box[str] = Box(NAMED)
-    from_call: Box[str] = Box(produced(1))
+    local: StrView = "local"
+    from_local: Box[StrView] = Box(local)
+    from_static: Box[StrView] = Box(NAMED)
+    from_call: Box[StrView] = Box(produced(1))
     println(from_local.get())
     println(from_static.get())
     println(from_call.get())

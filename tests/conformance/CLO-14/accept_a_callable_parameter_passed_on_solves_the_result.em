@@ -7,13 +7,15 @@
 # in the explicit form and in the parameter form, and through a second
 # generic function.
 
-fn relay[G: fn(int) -> int](g: G) -> int:
+[G: needs fn(int) -> int]
+fn relay(g: G) -> int:
     return (0..3).map(g).sum()
 
 fn relay_form(g: fn(int) -> int) -> int:
     return (0..4).map(g).sum()
 
-fn pass_on[F: fn(int) -> int](f: F) -> int:
+[F: needs fn(int) -> int]
+fn pass_on(f: F) -> int:
     return relay(f)
 
 fn double(x: int) -> int:

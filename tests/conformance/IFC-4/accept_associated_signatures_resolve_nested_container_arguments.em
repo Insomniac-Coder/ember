@@ -7,67 +7,77 @@
 enum Packet[T]:
     Value(T)
 
-class Handle[T]:
+[T]
+class Handle:
     value: T
 
-struct Record[T]:
+[T]
+struct Record:
     value: T
 
 interface Source:
-    type Item: Copy
-    fn packet(self) -> Packet[Item]
-    fn handle(self) -> Handle[Item]
-    fn boxed(self) -> Box[Item]
-    fn cell(self) -> Cell[Item]
-    fn record(self) -> Record[Item]
-    fn fixed(self) -> [Item; 2]
-    fn tuple(self) -> (Item, Option[Item])
-    fn array(self) -> Array[Item]
+    type Item: needs Copy
+    fn packet() -> Packet[Item]
+    fn handle() -> Handle[Item]
+    fn boxed() -> Box[Item]
+    fn cell() -> Cell[Item]
+    fn record() -> Record[Item]
+    fn fixed() -> [Item; 2]
+    fn tuple() -> (Item, Option[Item])
+    fn array() -> Array[Item]
 
 struct Numbers:
     n: int
 
 extend Numbers implements Source:
     type Item = int
-    fn packet(self) -> Packet[int]:
-        return Packet[int].Value(self.n)
-    fn handle(self) -> Handle[int]:
-        return Handle[int](self.n)
-    fn boxed(self) -> Box[int]:
-        return Box(self.n)
-    fn cell(self) -> Cell[int]:
-        return Cell(self.n)
-    fn record(self) -> Record[int]:
-        return Record[int](self.n)
-    fn fixed(self) -> [int; 2]:
-        return [self.n; 2]
-    fn tuple(self) -> (int, Option[int]):
-        return (self.n, Some(self.n + 1))
-    fn array(self) -> Array[int]:
-        return [self.n]
+    fn packet() -> Packet[int]:
+        return Packet[int].Value(this.n)
+    fn handle() -> Handle[int]:
+        return Handle[int](this.n)
+    fn boxed() -> Box[int]:
+        return Box(this.n)
+    fn cell() -> Cell[int]:
+        return Cell(this.n)
+    fn record() -> Record[int]:
+        return Record[int](this.n)
+    fn fixed() -> [int; 2]:
+        return [this.n; 2]
+    fn tuple() -> (int, Option[int]):
+        return (this.n, Some(this.n + 1))
+    fn array() -> Array[int]:
+        return [this.n]
 
-fn packet[S: Source](s: S) -> Packet[S.Item]:
+[S: needs Source]
+fn packet(s: S) -> Packet[S.Item]:
     return s.packet()
 
-fn handle[S: Source](s: S) -> Handle[S.Item]:
+[S: needs Source]
+fn handle(s: S) -> Handle[S.Item]:
     return s.handle()
 
-fn boxed[S: Source](s: S) -> Box[S.Item]:
+[S: needs Source]
+fn boxed(s: S) -> Box[S.Item]:
     return s.boxed()
 
-fn cell[S: Source](s: S) -> Cell[S.Item]:
+[S: needs Source]
+fn cell(s: S) -> Cell[S.Item]:
     return s.cell()
 
-fn record[S: Source](s: S) -> Record[S.Item]:
+[S: needs Source]
+fn record(s: S) -> Record[S.Item]:
     return s.record()
 
-fn fixed[S: Source](s: S) -> [S.Item; 2]:
+[S: needs Source]
+fn fixed(s: S) -> [S.Item; 2]:
     return s.fixed()
 
-fn tuple[S: Source](s: S) -> (S.Item, Option[S.Item]):
+[S: needs Source]
+fn tuple(s: S) -> (S.Item, Option[S.Item]):
     return s.tuple()
 
-fn array[S: Source](s: S) -> Array[S.Item]:
+[S: needs Source]
+fn array(s: S) -> Array[S.Item]:
     return s.array()
 
 fn main():

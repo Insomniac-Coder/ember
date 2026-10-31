@@ -3,18 +3,18 @@
 #$ error[E2110]: override of a method that is not virtual
 
 open class Base:
-    fn init(mut self):
+    fn init():
         pass
 
-    fn tick(self):
+    fn tick():
         pass
 
 class Child(Base):
-    fn init(mut self):
+    fn init():
         super.init()
 
 extend Child:
-    override fn tick(self):
+    override fn tick():
         pass
 
 fn main():

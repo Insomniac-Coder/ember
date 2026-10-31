@@ -16,24 +16,24 @@ import support.stage_kinds
 from support.stage_kinds import Timed, Labelled
 
 class Weighted(stage_kinds.Timed):
-    override fn weight(self) -> i32:
+    override fn weight() -> i32:
         return 3
 
 class Ticking(Timed):
     ticks: i32 = 0
 
-    override fn tick(self, dt: i32):
-        self.ticks += dt
+    override fn tick(dt: i32):
+        this.ticks += dt
 
-    override fn label(self) -> i32:
+    override fn label() -> i32:
         return 7
 
 class Heavier(Labelled):
-    override fn weight(self) -> i32:
+    override fn weight() -> i32:
         return 1
 
 class Direct(stage_kinds.stages.Stage):
-    override fn weight(self) -> i32:
+    override fn weight() -> i32:
         return 4
 
 fn main():

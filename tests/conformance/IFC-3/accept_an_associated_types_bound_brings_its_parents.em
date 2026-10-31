@@ -6,25 +6,25 @@
 # `Thing: Named` is a `Shape` too, so `h.get().area()` needs no bound of its own.
 
 interface Shape:
-    fn area(self) -> int
+    fn area() -> int
 
-interface Named: Shape:
-    fn name(self) -> str
+interface Named: needs Shape:
+    fn name() -> StrView
 
 interface Holder:
-    type Thing: Named
-    fn get(self) -> Thing
+    type Thing: needs Named
+    fn get() -> Thing
 
 @derive(Copy)
 struct Square:
     side: int
 
 extend Square implements Shape:
-    fn area(self) -> int:
-        return self.side * self.side
+    fn area() -> int:
+        return this.side * this.side
 
 extend Square implements Named:
-    fn name(self) -> str:
+    fn name() -> StrView:
         return "square"
 
 struct Crate:
@@ -33,10 +33,11 @@ struct Crate:
 extend Crate implements Holder:
     type Thing = Square
 
-    fn get(self) -> Square:
-        return self.inside
+    fn get() -> Square:
+        return this.inside
 
-fn area_inside[H: Holder](h: H) -> int:
+[H: needs Holder]
+fn area_inside(h: H) -> int:
     return h.get().area()
 
 fn main():

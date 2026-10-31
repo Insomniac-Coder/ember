@@ -11,5 +11,5 @@ fn main():
     xs: Array[int] = [1, 2]
     for i, x in xs.iter().enumerate(9223372036854775806).rev():
         println(i, x)
-    pairs: Array[(int, int)] = xs.iter().copied().enumerate(9223372036854775806).rev().to_array()
+    pairs: Array[(int, int)] = xs.iter().copy_each().enumerate(9223372036854775806).rev().to_array()
     println(pairs)

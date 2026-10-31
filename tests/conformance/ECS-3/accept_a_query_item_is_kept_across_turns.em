@@ -12,7 +12,7 @@ from std.ecs import World, Query, Component
 struct Health:
     hp: int
 
-fn strongest(mut q: Query[Health], unused: ()):
+fn strongest(ref mut q: Query[Health], unused: ()):
     best: Option[ref Health] = None
     for h in q.iter():
         match best:
@@ -23,7 +23,7 @@ fn strongest(mut q: Query[Health], unused: ()):
                 best = Some(h)
     println(best.unwrap().hp)
 
-fn first_two(mut q: Query[Health], unused: ()):
+fn first_two(ref mut q: Query[Health], unused: ()):
     it = q.iter()
     a = it.next()
     b = it.next()

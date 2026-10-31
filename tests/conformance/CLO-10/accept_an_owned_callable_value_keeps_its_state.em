@@ -17,8 +17,8 @@
 class Token:
     name: String
 
-    fn drop(mut self):
-        println(f"drop {self.name}")
+    fn drop():
+        println(f"drop {this.name}")
 
 fn counter() -> fn() -> int:
     n = 0

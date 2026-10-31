@@ -7,18 +7,18 @@
 # A mutable holder may replace its interface field between calls, so its two
 # lookups must remain distinct rather than reuse the immutable-field cache.
 interface Render:
-    fn render(self) -> i32
+    fn render() -> i32
 
 class Pixel implements Render:
     value: i32
 
-    fn render(self) -> i32:
-        return self.value
+    fn render() -> i32:
+        return this.value
 
 class Holder:
     value: Render
 
-fn render_after_replace(mut holder: Holder) -> i32:
+fn render_after_replace(ref mut holder: Holder) -> i32:
     first = holder.value.render()
     holder.value = Pixel(22)
     return first + holder.value.render()

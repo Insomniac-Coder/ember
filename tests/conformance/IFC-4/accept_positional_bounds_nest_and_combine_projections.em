@@ -7,53 +7,55 @@
 # keep projections of two different parameters in distinct hidden slots.
 
 interface Source:
-    type Item: Copy
-    fn get(self) -> Item
+    type Item: needs Copy
+    fn get() -> Item
 
 interface Build[T]:
-    fn make(value: T) -> Self
+    static fn make(value: T) -> Self
 
 struct IntSource:
     value: int
 
 extend IntSource implements Source:
     type Item = int
-    fn get(self) -> int:
-        return self.value
+    fn get() -> int:
+        return this.value
 
 struct TextSource:
-    value: str
+    value: StrView
 
 extend TextSource implements Source:
-    type Item = str
-    fn get(self) -> str:
-        return self.value
+    type Item = StrView
+    fn get() -> StrView:
+        return this.value
 
 struct IntOption:
     value: Option[int]
 
 extend IntOption implements Build[Option[int]]:
-    fn make(value: Option[int]) -> IntOption:
+    static fn make(value: Option[int]) -> IntOption:
         return IntOption(value)
 
 struct TextOption:
-    value: Option[str]
+    value: Option[StrView]
 
-extend TextOption implements Build[Option[str]]:
-    fn make(value: Option[str]) -> TextOption:
+extend TextOption implements Build[Option[StrView]]:
+    static fn make(value: Option[StrView]) -> TextOption:
         return TextOption(value)
 
 struct Pair:
-    value: (int, str)
+    value: (int, StrView)
 
-extend Pair implements Build[(int, str)]:
-    fn make(value: (int, str)) -> Pair:
+extend Pair implements Build[(int, StrView)]:
+    static fn make(value: (int, StrView)) -> Pair:
         return Pair(value)
 
-fn optional[S: Source, C: Build[Option[S.Item]]](source: S) -> C:
+[S: needs Source, C: needs Build[Option[S.Item]]]
+fn optional(source: S) -> C:
     return C.make(Some(source.get()))
 
-fn pair[L: Source, R: Source, C: Build[(L.Item, R.Item)]](left: L, right: R) -> C:
+[L: needs Source, R: needs Source, C: needs Build[(L.Item, R.Item)]]
+fn pair(left: L, right: R) -> C:
     return C.make((left.get(), right.get()))
 
 fn main():

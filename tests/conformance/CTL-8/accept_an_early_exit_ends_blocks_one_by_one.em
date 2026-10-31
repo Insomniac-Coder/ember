@@ -25,8 +25,8 @@ struct Marker:
     n: int
 
 extend Marker:
-    fn drop(mut self):
-        println("drop", self.n)
+    fn drop():
+        println("drop", this.n)
 
 fn f(early: bool) -> int:
     defer:

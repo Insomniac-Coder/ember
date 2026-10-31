@@ -7,8 +7,8 @@ struct V:
     x: int
 
 extend V implements Add[Output = V]:    #$ error[E2020]: `Output = …` binds an associated type only in a bound
-    fn add(self, rhs: V) -> V:
-        return self
+    fn add(rhs: V) -> V:
+        return this
 
 fn main():
     pass

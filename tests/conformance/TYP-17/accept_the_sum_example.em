@@ -7,13 +7,15 @@
 # implement `Add` and `Default` as a program's type does (ODR-040), so one
 # `sum` takes all three, and inside it `total + x` is a `T`.
 
-fn sum[T: Add[Output = T] + Default](xs: Span[T]) -> T:
+[T: needs (Add[Output = T], Default)]
+fn sum(xs: Span[T]) -> T:
     total = T.default()
     for x in xs:
         total = total + x
     return total
 
-fn negate[T: Neg[Output = T]](x: T) -> T:
+[T: needs Neg[Output = T]]
+fn negate(x: T) -> T:
     return -x
 
 @derive(Copy)
@@ -24,13 +26,13 @@ struct V:
 extend V implements Add, Neg, Default:
     type Output = V
 
-    fn add(self, rhs: V) -> V:
-        return V(x=self.x + rhs.x, y=self.y + rhs.y)
+    fn add(rhs: V) -> V:
+        return V(x=this.x + rhs.x, y=this.y + rhs.y)
 
-    fn neg(self) -> V:
-        return V(x=-self.x, y=-self.y)
+    fn neg() -> V:
+        return V(x=-this.x, y=-this.y)
 
-    fn default() -> V:
+    static fn default() -> V:
         return V(x=0, y=0)
 
 fn main():

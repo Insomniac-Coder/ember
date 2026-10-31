@@ -13,38 +13,40 @@
 # carrier with an owned weak argument. The mutable Observe slot updates the
 # inherited counter and the Bump slot observes that same payload.
 interface Observe:
-    fn observe(mut self, owned weak: Weak[Shared[Token]]) -> i32
+    fn observe(owns weak: Weak[Shared[Token]]) -> i32
 
 interface Bump:
-    fn bump(mut self) -> i32
+    fn bump() -> i32
 
 struct Token:
     value: i32
 
-open class Base[T]:
+[T]
+open class Base:
     marker: T
     count: i32
 
-    fn init(mut self, marker: T):
-        self.marker = marker
-        self.count = 0
+    fn init(marker: T):
+        this.marker = marker
+        this.count = 0
 
-class Holder[T](Base[T]) implements Observe, Bump:
-    fn init(mut self, marker: T):
+[T]
+class Holder(Base[T]) implements Observe, Bump:
+    fn init(marker: T):
         super.init(marker)
 
-    fn observe(mut self, owned weak: Weak[Shared[Token]]) -> i32:
-        self.count = self.count + 1
+    fn observe(owns weak: Weak[Shared[Token]]) -> i32:
+        this.count = this.count + 1
         match weak.upgrade():
             Some(owner):
                 return owner.get().value
             None:
                 return 0
 
-    fn bump(mut self) -> i32:
-        return self.count
+    fn bump() -> i32:
+        return this.count
 
-fn inspect(value: ref mut dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
+fn inspect(ref mut value: dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
     return value.observe(weak) + value.bump()
 
 fn main():

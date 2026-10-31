@@ -18,11 +18,11 @@ enum Event:
 class Bus:
     handlers: Array[fn(Event)] = []
 
-    fn subscribe(self, owned handler: fn(Event)):
-        self.handlers.push(handler)
+    fn subscribe(owns handler: fn(Event)):
+        this.handlers.push(handler)
 
-    fn publish(self, e: Event):
-        for h in self.handlers.iter_mut():
+    fn publish(e: Event):
+        for h in this.handlers.iter_mut():
             h(e)
 
 fn report(e: Event):
@@ -32,7 +32,7 @@ fn report(e: Event):
         Pong(n):
             println("pong", n)
 
-fn keep(owned f: fn(int) -> int) -> fn(int) -> int:
+fn keep(owns f: fn(int) -> int) -> fn(int) -> int:
     return f
 
 fn main():

@@ -6,12 +6,14 @@
 # arguments or from the type the context expects, each constructor argument
 # is checked against its field's type, so `[]` and `None` need no annotation.
 
-struct Table[K, V]:
+[K, V]
+struct Table:
     keys: Array[K]
     values: Array[V]
     live: int
 
-struct Slot[T]:
+[T]
+struct Slot:
     items: Array[T]
     first: Option[T]
 

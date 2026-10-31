@@ -9,13 +9,16 @@
 struct Point:
     x: int
 
-fn show[T: Display](x: T) -> String:
+[T: needs Display]
+fn show(x: T) -> String:
     return f"<{x}>"
 
-fn debug[T: Debug](x: T) -> String:
+[T: needs Debug]
+fn debug(x: T) -> String:
     return f"{x!r}"
 
-fn copy_of[T: Copy](x: T) -> T:
+[T: needs Copy]
+fn copy_of(x: T) -> T:
     return x
 
 println(show(3), show([1, 2]), show("a"), debug(Point(1)), copy_of(5), [1, 2].join(", "))

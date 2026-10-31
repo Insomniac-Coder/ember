@@ -12,13 +12,13 @@ import cpp "stages.hpp" with (overlay = "overlays/stages.em")
 class Counting(cpp.Stage):
     ticks: i32 = 0
 
-    override fn tick(self, dt: i32):
-        self.ticks += dt
+    override fn tick(dt: i32):
+        this.ticks += dt
 
-    override fn label(self) -> i32:
+    override fn label() -> i32:
         return 42
 
-    override fn weight(self) -> i32:
+    override fn weight() -> i32:
         return 5
 
 fn main():

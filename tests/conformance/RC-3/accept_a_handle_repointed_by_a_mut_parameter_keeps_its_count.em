@@ -11,10 +11,10 @@
 class Node:
     v: int
 
-    fn drop(mut self):
-        println("drop", self.v)
+    fn drop():
+        println("drop", this.v)
 
-fn replace(mut h: Node):
+fn replace(ref mut h: Node):
     h = Node(9)
 
 fn main():

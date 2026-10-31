@@ -10,9 +10,9 @@
 struct Counter:
     n: int
 
-    fn total(self, extra: int) -> int:
+    fn total(extra: int) -> int:
         fn plus(k: int) -> int:
-            return self.n + k
+            return this.n + k
         return plus(extra)
 
 fn main():

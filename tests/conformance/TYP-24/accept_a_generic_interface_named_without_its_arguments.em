@@ -7,24 +7,24 @@
 # `conv` from `Conv`.
 
 interface Conv[T]:
-    fn conv(self) -> T
+    fn conv() -> T
 
 interface Scale[T]:
-    fn scale(self, by: T) -> int
+    fn scale(by: T) -> int
 
 struct W:
     x: int
 
 extend W implements Conv[bool]:
-    fn conv(self) -> bool:
+    fn conv() -> bool:
         return true
 
 extend W implements Scale[int]:
-    fn scale(self, by: int) -> int:
-        return self.x * by
+    fn scale(by: int) -> int:
+        return this.x * by
 
 extend W implements Scale[bool]:
-    fn scale(self, by: bool) -> int:
+    fn scale(by: bool) -> int:
         return 0
 
 fn main():

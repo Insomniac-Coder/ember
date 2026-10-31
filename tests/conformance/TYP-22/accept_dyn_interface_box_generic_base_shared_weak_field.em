@@ -11,25 +11,27 @@
 # Box[dyn Render] adapter. Base layout and super.init retain/drop the weak
 # observer normally; dynamic dispatch still observes the payload via get().
 interface Render:
-    fn render(self) -> i32
+    fn render() -> i32
 
 struct Token:
     value: i32
 
-open class Base[T]:
+[T]
+open class Base:
     weak: Weak[Shared[Token]]
     marker: T
 
-    fn init(mut self, weak: Weak[Shared[Token]], marker: T):
-        self.weak = weak
-        self.marker = marker
+    fn init(weak: Weak[Shared[Token]], marker: T):
+        this.weak = weak
+        this.marker = marker
 
-class Pixel[T](Base[T]) implements Render:
-    fn init(mut self, weak: Weak[Shared[Token]], marker: T):
+[T]
+class Pixel(Base[T]) implements Render:
+    fn init(weak: Weak[Shared[Token]], marker: T):
         super.init(weak, marker)
 
-    fn render(self) -> i32:
-        match self.weak.upgrade():
+    fn render() -> i32:
+        match this.weak.upgrade():
             Some(owner):
                 return owner.get().value
             None:

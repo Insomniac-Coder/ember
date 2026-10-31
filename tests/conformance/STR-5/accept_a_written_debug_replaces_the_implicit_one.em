@@ -14,7 +14,7 @@ from std.fmt import Formatter, FmtError
 struct Secret implements Debug:
     key: int
 
-    fn fmt_debug(self, mut f: Formatter) -> Result[void, FmtError]:
+    fn fmt_debug(ref mut f: Formatter) -> Result[void, FmtError]:
         return f.write_str("Secret(***)")
 
 struct Holder:

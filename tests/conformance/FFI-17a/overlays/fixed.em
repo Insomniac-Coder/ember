@@ -7,5 +7,5 @@ unsafe overlay cpp "fixed.hpp":  # SAFETY(ffi): each entry matches its declarati
     class Grid:
         fn new()
         @ffi(const)
-        fn cells() -> from(self)
-        fn cells_mut() -> from(self)
+        fn cells() -> from(this)
+        fn cells_mut() -> from(this)

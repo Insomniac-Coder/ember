@@ -11,17 +11,18 @@
 # generic class field. The erased carrier borrows the class handle, while the
 # returned weak observer remains valid after the ref dyn call ends.
 interface Observe:
-    fn observer(self) -> Weak[Shared[Token]]
+    fn observer() -> Weak[Shared[Token]]
 
 struct Token:
     value: i32
 
-class Observer[T] implements Observe:
+[T]
+class Observer implements Observe:
     weak: Weak[Shared[Token]]
     marker: T
 
-    fn observer(self) -> Weak[Shared[Token]]:
-        return self.weak
+    fn observer() -> Weak[Shared[Token]]:
+        return this.weak
 
 fn inspect(value: ref dyn Observe) -> Weak[Shared[Token]]:
     return value.observer()

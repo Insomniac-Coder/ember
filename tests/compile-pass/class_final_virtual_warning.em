@@ -3,7 +3,7 @@
 #$ warning[W2111]: `virtual` has no effect in a final class
 
 class FinalThing:
-    virtual fn tick(self):
+    virtual fn tick():
         pass
 
 fn main():

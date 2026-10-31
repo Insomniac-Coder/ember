@@ -152,17 +152,17 @@ fn a_struct_with_fields() {
 #[test]
 fn a_function_records_parameter_modes() {
     // [FN-1] — borrowed by default, `mut` for inout, `owned` to consume.
-    let out = dump("fn f(a: i32, mut b: Array[i32], owned c: String) -> i32:\n    return a\n");
+    let out = dump("fn f(a: i32, ref mut b: Array[i32], owns c: String) -> i32:\n    return a\n");
     assert!(out.contains("Fn f(a: i32, mut b: Array[i32], owned c: String) -> i32"), "{out}");
 }
 
 #[test]
 fn receivers_take_the_same_modes() {
-    // [FN-4]
-    let out = dump("struct S:\n    fn a(self): pass\n    fn b(mut self): pass\n    fn c(owned self): pass\n");
-    assert!(out.contains("Fn a(self)"), "{out}");
-    assert!(out.contains("Fn b(mut self)"), "{out}");
-    assert!(out.contains("Fn c(owned self)"), "{out}");
+    // [FN-4] — a method does not list its object: it is `this`, read as `mut` until the body works
+    // out its mode (`[EXC-15]`); `owns this` after the parameters takes it over.
+    let out = dump("struct S:\n    fn a(): pass\n    fn c() owns this: pass\n");
+    assert!(out.contains("Fn a(mut this)"), "{out}");
+    assert!(out.contains("Fn c(owned this)"), "{out}");
 }
 
 #[test]
@@ -199,25 +199,25 @@ fn read_visibility_on_an_item_is_e1051() {
 #[test]
 fn an_enum_separates_variants_from_methods() {
     let out = dump(
-        "enum Shape:\n    Circle(radius: f32)\n    Rect(w: f32, h: f32)\n    Empty\n\n    fn area(self) -> f32:\n        return 0.0\n",
+        "enum Shape:\n    Circle(radius: f32)\n    Rect(w: f32, h: f32)\n    Empty\n\n    fn area() -> f32:\n        return 0.0\n",
     );
     assert!(out.contains("Variant Circle"), "{out}");
     assert!(out.contains("Variant Rect"), "{out}");
     assert!(out.contains("Variant Empty"), "{out}");
-    assert!(out.contains("Fn area(self) -> f32"), "{out}");
+    assert!(out.contains("Fn area(mut this) -> f32"), "{out}");
 }
 
 #[test]
 fn an_interface_carries_supertraits_and_default_bodies() {
     // [IFC-3]
-    let out = dump("interface Ord: Eq:\n    fn cmp(self, other: Self) -> Ordering\n");
+    let out = dump("interface Ord: needs Eq:\n    fn cmp(other: Self) -> Ordering\n");
     assert!(out.contains("Interface Ord"), "{out}");
     assert!(out.contains("(no body)"), "{out}");
 }
 
 #[test]
 fn extend_attaches_methods_to_a_type() {
-    let out = dump("extend Mesh implements Drawable:\n    fn bounds(self) -> AABB:\n        return self.aabb\n");
+    let out = dump("extend Mesh implements Drawable:\n    fn bounds() -> AABB:\n        return this.aabb\n");
     assert!(out.contains("Extend Mesh"), "{out}");
 }
 
@@ -307,9 +307,9 @@ fn a_for_header_accepts_an_unparenthesized_tuple_pattern() {
 
 #[test]
 fn a_pattern_condition_parses() {
-    // `if Some(p) = h:` — condition := pattern "=" expression
-    let out = dump("fn f():\n    if Some(p) = h:\n        pass\n");
-    assert!(out.contains("CondPattern Some(p)"), "{out}");
+    // `[GRM-44]` — `if h exists as p:` binds what `h` holds.
+    let out = dump("fn f():\n    if h exists as p:\n        pass\n");
+    assert!(out.contains("CondExists Some(p)"), "{out}");
 }
 
 #[test]
@@ -472,10 +472,10 @@ fn an_f_string_keeps_its_format_spec() {
 #[test]
 fn type_forms_all_parse() {
     let out = dump(
-        "fn f(a: ref i32, b: ref mut Vec3, c: *mut u8, d: (i32, f32), e: dyn Drawable, g: [f32; 16], h: extern \"C\" fn(i32) -> i32) -> Result[void, E]:\n    pass\n",
+        "fn f(a: ref i32, ref mut b: Vec3, c: *mut u8, d: (i32, f32), e: dyn Drawable, g: [f32; 16], h: extern \"C\" fn(i32) -> i32) -> Result[void, E]:\n    pass\n",
     );
     assert!(out.contains("a: ref i32"), "{out}");
-    assert!(out.contains("b: ref mut Vec3"), "{out}");
+    assert!(out.contains("mut b: Vec3"), "{out}");
     assert!(out.contains("c: *mut u8"), "{out}");
     assert!(out.contains("d: (i32, f32)"), "{out}");
     assert!(out.contains("e: dyn Drawable"), "{out}");
@@ -485,7 +485,7 @@ fn type_forms_all_parse() {
 
 #[test]
 fn generics_with_bounds_and_where_clauses_parse() {
-    let out = dump("fn sum[T: Numeric + Copy](xs: Span[T]) -> T where T: Default:\n    pass\n");
+    let out = dump("[T: needs (Numeric, Copy)]\nfn sum(xs: Span[T]) -> T where T: needs Default:\n    pass\n");
     assert!(out.contains("Fn sum(xs: Span[T]) -> T"), "{out}");
 }
 
@@ -562,20 +562,20 @@ class Emitter:
     particles: Array[Particle]
     spawn_rate: f32 = 100.0
 
-    fn init(mut self, name: String):
-        self.name = name
-        self.particles = Array[Particle]()
+    fn init(name: String):
+        this.name = name
+        this.particles = Array[Particle]()
 
-    fn spawn(mut self, count: usize):
+    fn spawn(count: usize):
         for i in 0..count:
-            self.particles.push(Particle(
+            this.particles.push(Particle(
                 position=Vec3.ZERO,
                 velocity=Vec3(0, 9.8, 0),
                 lifetime=2.0))
 
 @noalloc
 @simd
-fn integrate(mut particles: MutSpan[Particle], dt: f32):
+fn integrate(ref mut particles: MutSpan[Particle], dt: f32):
     for p in particles.iter_mut():
         p.velocity.y -= 9.81 * dt
         p.position += p.velocity * dt
@@ -700,7 +700,7 @@ fn gen_comes_right_before_fn() {
     // `[GRM-21]`, D-660 — `fn_header := ["extern" STRING] ["unsafe"] ["virtual" | "override"]
     // ["gen"] "fn" …`, in an enum's body as anywhere else.
     let out = dump(
-        "extern \"C\" gen fn a() -> Generator[int]:\n    yield 1\n\nunsafe gen fn b() -> Generator[int]:\n    yield 2\n\nclass C:\n    virtual gen fn c(self) -> Generator[int]:\n        yield 3\n\nenum E:\n    A\n\n    gen fn d(self) -> Generator[int]:\n        yield 4\n",
+        "extern \"C\" gen fn a() -> Generator[int]:\n    yield 1\n\nunsafe gen fn b() -> Generator[int]:\n    yield 2\n\nclass C:\n    virtual gen fn c() -> Generator[int]:\n        yield 3\n\nenum E:\n    A\n\n    gen fn d() -> Generator[int]:\n        yield 4\n",
     );
     for name in ["gen Fn a", "gen Fn b", "virtual gen Fn c", "gen Fn d"] {
         assert!(out.contains(name), "{name}: {out}");
@@ -775,7 +775,7 @@ fn a_doc_comment_above_an_import_does_not_swallow_a_later_one() {
 /// …:` was broken as an assignment, its `:` inside the parentheses, which did not parse.
 #[test]
 fn formatting_the_formatters_output_changes_nothing() {
-    let source = "fn f(m: Map[str, int]):\n    if true:\n        if true:\n            if true:\n                if true:\n                    value([alpha * (f\"{total} and {alpha + 1}\") for name in ((1) % total) if (xs - true)], (false?)?, (total(xs)) in (q as f64), b=false as int)\n                    record(m?.lookup(\"first key of several\", \"second key of several\", \"third key\")?.value, {k: v for k, v in m.items() if v > 0}, sum(x * x for x in xs))\n                    with handle = (first_value_of_the_left_side if condition else other) < limit <= upper_bound_of_the_range:\n                        pass\n                    q = fn(a) => [98.68 for b in values if (f\"{value} and {total + 1}\")] < (elan, f\"{value}\") <= (fn(v) => 256)\n";
+    let source = "fn f(m: Map[StrView, int]):\n    if true:\n        if true:\n            if true:\n                if true:\n                    value([alpha * (f\"{total} and {alpha + 1}\") for name in ((1) % total) if (xs - true)], (false?)?, (total(xs)) in (q as f64), b=false as int)\n                    record(m?.lookup(\"first key of several\", \"second key of several\", \"third key\")?.value, {k: v for k, v in m.items() if v > 0}, sum(x * x for x in xs))\n                    with handle = (first_value_of_the_left_side if condition else other) < limit <= upper_bound_of_the_range:\n                        pass\n                    q = fn(a) => [98.68 for b in values if (f\"{value} and {total + 1}\")] < (elan, f\"{value}\") <= (fn(v) => 256)\n";
     let format = |text: &str| {
         let mut map = SourceMap::new();
         let file = map.add("<fmt>", text.to_string());

@@ -12,23 +12,24 @@ enum Tree[T]:
     Leaf(value: T)
     Empty
 
-    fn leaf(v: T) -> Tree[T]:
+    static fn leaf(v: T) -> Tree[T]:
         return Tree[T].Leaf(v)
 
-    fn nothing() -> Tree[T]:
+    static fn nothing() -> Tree[T]:
         return Tree[T].Empty
 
-    fn same_shape(self, other: Tree[T]) -> bool:
+    fn same_shape(other: Tree[T]) -> bool:
         return true
 
-class Slot[T]:
+[T]
+class Slot:
     value: T
 
-    fn make(v: T) -> Slot[T]:
+    static fn make(v: T) -> Slot[T]:
         return Slot[T](value=v)
 
 fn main():
     t = Tree[int].leaf(3)
     println(t, t.same_shape(Tree[int].nothing()))
     s = Slot[int].make(4)
-    println(s.value, Tree[str].nothing())
+    println(s.value, Tree[StrView].nothing())

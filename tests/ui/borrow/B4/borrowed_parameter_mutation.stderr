@@ -6,6 +6,6 @@ error[E3023]: cannot mutate borrowed parameter `values`
 2 |     values.push(1)
   |     ^^^^^^^^^^^^^^ this write needs mutable access
   |
-  = help: restructure to a single owner and declare this parameter `mut values: Array[i32]`
+  = help: restructure to a single owner and declare this parameter `ref mut values: Array[i32]`
 
 error: could not compile due to 1 error(s)

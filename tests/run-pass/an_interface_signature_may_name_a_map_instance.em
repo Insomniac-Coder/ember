@@ -10,17 +10,17 @@
 
 interface Ops:
     type Fetch
-    fn fetch(storages: Map[u64, int], key: u64) -> Fetch
-    fn seen(ids: Set[u64], id: u64) -> bool
+    static fn fetch(storages: Map[u64, int], key: u64) -> Fetch
+    static fn seen(ids: Set[u64], id: u64) -> bool
 
 struct Store:
     n: int
 
 extend Store implements Ops:
     type Fetch = int
-    fn fetch(storages: Map[u64, int], key: u64) -> int:
+    static fn fetch(storages: Map[u64, int], key: u64) -> int:
         return storages.get_or(key, 0)
-    fn seen(ids: Set[u64], id: u64) -> bool:
+    static fn seen(ids: Set[u64], id: u64) -> bool:
         return ids.contains(id)
 
 fn main():

@@ -5,9 +5,9 @@
 class Holder:
     value: i32
 
-    fn init(mut self):
+    fn init():
         for i in 0..1:
-            self.value = 42
+            this.value = 42
 
 fn main():
     holder = Holder()

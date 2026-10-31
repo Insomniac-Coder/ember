@@ -12,8 +12,8 @@ class Node:
     v: int
     items: Array[int]
 
-    fn inc(mut self):
-        self.v += 1
+    fn inc():
+        this.v += 1
 
 fn set(n: Node):
     n.v = 5

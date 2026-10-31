@@ -3,9 +3,9 @@
 import std.math
 
 interface Shape:
-    fn area(self) -> float
-    fn perimeter(self) -> float
-    fn name(self) -> String
+    fn area() -> float
+    fn perimeter() -> float
+    fn name() -> String
 
 struct Circle:
     radius: float
@@ -20,31 +20,31 @@ struct Triangle:
     c: float
 
 extend Circle implements Shape:
-    fn area(self) -> float:
-        return math.PI * self.radius ** 2
-    fn perimeter(self) -> float:
-        return 2.0 * math.PI * self.radius
-    fn name(self) -> String:
-        return f"circle r={self.radius}"
+    fn area() -> float:
+        return math.PI * this.radius ** 2
+    fn perimeter() -> float:
+        return 2.0 * math.PI * this.radius
+    fn name() -> String:
+        return f"circle r={this.radius}"
 
 extend Rectangle implements Shape:
-    fn area(self) -> float:
-        return self.width * self.height
-    fn perimeter(self) -> float:
-        return 2.0 * (self.width + self.height)
-    fn name(self) -> String:
-        if self.width == self.height:
-            return f"square {self.width}"
-        return f"rectangle {self.width}x{self.height}"
+    fn area() -> float:
+        return this.width * this.height
+    fn perimeter() -> float:
+        return 2.0 * (this.width + this.height)
+    fn name() -> String:
+        if this.width == this.height:
+            return f"square {this.width}"
+        return f"rectangle {this.width}x{this.height}"
 
 extend Triangle implements Shape:
-    fn area(self) -> float:
-        s = self.perimeter() / 2.0
-        return (s * (s - self.a) * (s - self.b) * (s - self.c)).sqrt()
-    fn perimeter(self) -> float:
-        return self.a + self.b + self.c
-    fn name(self) -> String:
-        return f"triangle {self.a}/{self.b}/{self.c}"
+    fn area() -> float:
+        s = this.perimeter() / 2.0
+        return (s * (s - this.a) * (s - this.b) * (s - this.c)).sqrt()
+    fn perimeter() -> float:
+        return this.a + this.b + this.c
+    fn name() -> String:
+        return f"triangle {this.a}/{this.b}/{this.c}"
 
 fn describe(s: Shape):
     println(f"{s.name():<20} area {s.area():8.2f}  perimeter {s.perimeter():8.2f}")

@@ -7,7 +7,7 @@
 # `is_empty`, `contains`, `index_of`, and `get`, `first`, `last`, which answer
 # `None` rather than panic.
 
-fn shown(found: Option[ref int]) -> str:
+fn shown(found: Option[ref int]) -> StrView:
     match found:
         Some(v):
             return "some" if v > 0 else "zero"

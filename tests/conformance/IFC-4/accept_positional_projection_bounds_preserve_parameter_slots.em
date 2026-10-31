@@ -7,39 +7,42 @@
 # method also keeps its enclosing type's prefix distinct from both of them.
 
 interface Source:
-    type Item: Copy
-    fn get(self) -> Item
+    type Item: needs Copy
+    fn get() -> Item
 
 interface Build[T]:
-    fn make(value: T) -> Self
+    static fn make(value: T) -> Self
 
 struct IntSource:
     value: int
 
 extend IntSource implements Source:
     type Item = int
-    fn get(self) -> int:
-        return self.value
+    fn get() -> int:
+        return this.value
 
 struct IntValue:
     value: int
 
 extend IntValue implements Build[int]:
-    fn make(value: int) -> IntValue:
+    static fn make(value: int) -> IntValue:
         return IntValue(value)
 
-fn later[S: Source, C: Build[S.Item], U: Copy](source: S, extra: U) -> (C, U):
+[S: needs Source, C: needs Build[S.Item], U: needs Copy]
+fn later(source: S, extra: U) -> (C, U):
     return (C.make(source.get()), extra)
 
-struct Holder[T: Copy]:
+[T: needs Copy]
+struct Holder:
     marker: T
 
-    fn assemble[S: Source, C: Build[S.Item], U: Copy](self, source: S, extra: U) -> (T, C, U):
-        return (self.marker, C.make(source.get()), extra)
+    [S: needs Source, C: needs Build[S.Item], U: needs Copy]
+    fn assemble(source: S, extra: U) -> (T, C, U):
+        return (this.marker, C.make(source.get()), extra)
 
 fn main():
     a = later[IntSource, IntValue, bool](IntSource(7), true)
-    holder = Holder[str]("owner")
+    holder = Holder[StrView]("owner")
     b = holder.assemble[IntSource, IntValue, float](IntSource(9), 2.5)
     println(a.0.value, a.1)
     println(b.0, b.1.value, b.2)

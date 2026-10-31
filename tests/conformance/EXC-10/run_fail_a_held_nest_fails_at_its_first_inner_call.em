@@ -3,18 +3,19 @@
 #$ profiles: debug, development, release
 #$ panics: exclusivity violation: write access to Counter.log while a write access to Counter.log is active
 
-# `[EXC-10]`, `[EXC-9]` — `run` holds `self` for writing, and `other` is the same
-# object: the nest's one check fails at the inner call, where the first
+# `[EXC-10]`, `[EXC-9]` — `run` changes its object (`this.log.push(0)`), so its call holds it
+# for writing, and `other` is the same object: the nest's one check fails at the inner call, where the first
 # per-call check failed before.
 
 class Counter:
     value: i32
     log: Array[int]
 
-    fn bump(mut self):
-        self.value = self.value + 1
+    fn bump():
+        this.value = this.value + 1
 
-    fn run(mut self, mut other: Counter):
+    fn run(ref mut other: Counter):
+        this.log.push(0)
         for r in 0..2:
             for i in 0..2:
                 other.bump()

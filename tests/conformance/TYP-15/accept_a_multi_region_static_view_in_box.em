@@ -8,8 +8,8 @@
 
 @view
 struct Pair:
-    left: str
-    right: str
+    left: StrView
+    right: StrView
 
 fn main():
     pair = Pair("left", "right")

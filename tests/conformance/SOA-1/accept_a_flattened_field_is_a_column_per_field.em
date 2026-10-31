@@ -24,12 +24,12 @@ struct Particle:
     vel: Vec3
     life: f32
 
-fn drift(mut xs: MutSpan[f32], vs: Span[Vec3], dt: f32):
+fn drift(ref mut xs: MutSpan[f32], vs: Span[Vec3], dt: f32):
     for i in 0..xs.len():
         xs[i] += vs[i].x * dt
 
 # Two columns of one flattened field are two places: both borrowed mutably at once.
-fn swap_xy(mut xs: MutSpan[f32], mut ys: MutSpan[f32]):
+fn swap_xy(ref mut xs: MutSpan[f32], ref mut ys: MutSpan[f32]):
     for i in 0..xs.len():
         t = xs[i]
         xs[i] = ys[i]

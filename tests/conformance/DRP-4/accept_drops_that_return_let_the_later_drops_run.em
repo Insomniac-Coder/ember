@@ -9,8 +9,8 @@
 struct Guard:
     id: i32
 
-    fn drop(mut self):
-        println(f"dropping {self.id}")
+    fn drop():
+        println(f"dropping {this.id}")
 
 fn main():
     first = Guard(1)

@@ -13,7 +13,8 @@
 # `skip`, `nth` and `rev` over the whole `0 as u64 .. u64.MAX`, a range of 18 billion billion
 # values, finish at once. Each of these stepped through the range one value at a time.
 
-fn first[I: Iterator](owned from: I, n: int) -> Array[I.Item]:
+[I: needs Iterator]
+fn first(owns from: I, n: int) -> Array[I.Item]:
     it = from
     out: Array[I.Item] = []
     while out.len() < n:

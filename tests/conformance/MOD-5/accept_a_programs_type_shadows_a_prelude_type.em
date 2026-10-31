@@ -8,16 +8,18 @@
 # the compiler's `Cell`, a declared `Box` shared the compiler's instances, and
 # a declared `Option` broke `std`'s own).
 
-class Cell[T]:
+[T]
+class Cell:
     value: T
 
-    fn make(v: T) -> Cell[T]:
+    static fn make(v: T) -> Cell[T]:
         return Cell(value=v)
 
-    fn get(self) -> T:
-        return self.value
+    fn get() -> T:
+        return this.value
 
-struct Box[T]:
+[T]
+struct Box:
     item: T
 
 enum Option[T]:

@@ -6,29 +6,32 @@
 
 interface Source:
     type Item
-    fn success(self) -> Result[Item, int]
-    fn failure(self) -> Result[int, Item]
-    fn nested(self) -> Option[Result[Item, int]]
+    fn success() -> Result[Item, int]
+    fn failure() -> Result[int, Item]
+    fn nested() -> Option[Result[Item, int]]
 
 struct Numbers:
     n: int
 
 extend Numbers implements Source:
     type Item = int
-    fn success(self) -> Result[int, int]:
-        return Ok(self.n)
-    fn failure(self) -> Result[int, int]:
-        return Err(self.n)
-    fn nested(self) -> Option[Result[int, int]]:
-        return Some(Ok(self.n))
+    fn success() -> Result[int, int]:
+        return Ok(this.n)
+    fn failure() -> Result[int, int]:
+        return Err(this.n)
+    fn nested() -> Option[Result[int, int]]:
+        return Some(Ok(this.n))
 
-fn success[S: Source](s: S) -> Result[S.Item, int]:
+[S: needs Source]
+fn success(s: S) -> Result[S.Item, int]:
     return s.success()
 
-fn failure[S: Source](s: S) -> Result[int, S.Item]:
+[S: needs Source]
+fn failure(s: S) -> Result[int, S.Item]:
     return s.failure()
 
-fn nested[S: Source](s: S) -> Option[Result[S.Item, int]]:
+[S: needs Source]
+fn nested(s: S) -> Option[Result[S.Item, int]]:
     return s.nested()
 
 fn main():

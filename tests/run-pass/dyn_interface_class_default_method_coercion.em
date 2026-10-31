@@ -6,7 +6,7 @@
 #$ assert-c: contains(slot0)
 
 interface Answer:
-    fn answer(self) -> i32:
+    fn answer() -> i32:
         return 42
 
 class Pixel implements Answer:

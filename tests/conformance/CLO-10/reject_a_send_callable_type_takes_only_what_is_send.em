@@ -11,14 +11,14 @@ import std.thread
 class Counter:
     n: int
 
-    fn init(mut self):
-        self.n = 0
+    fn init():
+        this.n = 0
 
-fn later(owned f: fn() -> int + Send) -> int:
+fn later(owns f: fn() -> int + Send) -> int:
     h = thread.spawn(owned fn() -> int => f())
     return h.join()
 
-fn widen(owned f: fn() -> int) -> fn() -> int + Send:
+fn widen(owns f: fn() -> int) -> fn() -> int + Send:
     return f  #$ error[E7004]: this callable parameter may hold anything
 
 fn main():

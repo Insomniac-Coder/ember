@@ -5,19 +5,22 @@
 # Items may appear in any order: a generic struct's field and method may name
 # a generic type declared after it, as a plain struct's may (D-279).
 
-struct A[T]:
+[T]
+struct A:
     b: Array[B[T]] = []
 
-    fn make(self, v: T) -> B[T]:
+    fn make(v: T) -> B[T]:
         return B[T](v)
 
-struct B[T]:
+[T]
+struct B:
     v: T
 
 enum E[T]:
     One(c: C[T])
 
-struct C[T]:
+[T]
+struct C:
     w: T
 
 fn main():

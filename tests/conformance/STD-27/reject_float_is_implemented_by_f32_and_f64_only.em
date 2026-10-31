@@ -10,10 +10,11 @@ struct Money:
     cents: int
 
 extend Money implements Float:    #$ error[E2042]: `Money` cannot implement `Float`
-    fn sqrt(self) -> Money:
-        return self
+    fn sqrt() -> Money:
+        return this
 
-fn twice[T: Float](x: T) -> T:
+[T: needs Float]
+fn twice(x: T) -> T:
     return x * 2
 
 fn main():

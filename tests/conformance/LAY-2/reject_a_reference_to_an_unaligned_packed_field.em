@@ -9,8 +9,8 @@
 struct Big:
     words: [u64; 4]
 
-    fn first(self) -> u64:
-        return self.words[0]
+    fn first() -> u64:
+        return this.words[0]
 
 @packed
 struct Record:
@@ -19,7 +19,7 @@ struct Record:
     big: Big
     items: Array[int]
 
-fn bump(mut n: u32):
+fn bump(ref mut n: u32):
     n += 1
 
 fn total(b: Big) -> u64:

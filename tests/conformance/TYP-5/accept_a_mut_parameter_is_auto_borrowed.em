@@ -10,20 +10,21 @@
 struct Person:
     age: int
 
-    fn bump(mut self) -> int:
-        self.age = self.age + 1
-        return inner(self)
+    fn bump() -> int:
+        this.age = this.age + 1
+        return inner(this)
 
-    fn look(self) -> int:
-        return inner(self)
+    fn look() -> int:
+        return inner(this)
 
 fn inner(r: ref Person) -> int:
     return r.age
 
-fn same[T: Copy](x: ref T) -> T:
+[T: needs Copy]
+fn same(x: ref T) -> T:
     return x
 
-fn via_mut(mut x: int) -> int:
+fn via_mut(ref mut x: int) -> int:
     return same(x)
 
 fn main():

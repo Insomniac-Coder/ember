@@ -13,14 +13,14 @@
 open class Base:
     value: i32
 
-    fn init(mut self, value: i32):
-        self.value = value
+    fn init(value: i32):
+        this.value = value
 
-    fn bump(mut self, amount: i32):
-        self.value = self.value + amount
+    fn bump(amount: i32):
+        this.value = this.value + amount
 
 class Derived(Base):
-    fn init(mut self, value: i32):
+    fn init(value: i32):
         super.init(value)
 
 class Holder:

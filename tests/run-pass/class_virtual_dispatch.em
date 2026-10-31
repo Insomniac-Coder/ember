@@ -6,23 +6,23 @@
 #$ stdout: 4
 
 open class Base:
-    virtual fn tick(self) -> i32:
+    virtual fn tick() -> i32:
         return 1
 
-    virtual fn label(self) -> i32:
+    virtual fn label() -> i32:
         return 3
 
-    fn init(mut self):
+    fn init():
         pass
 
 class Child(Base):
-    override fn tick(self) -> i32:
+    override fn tick() -> i32:
         return 2
 
-    virtual fn extra(self) -> i32:    #$ warning[W2111]: has no effect in a final class
+    virtual fn extra() -> i32:    #$ warning[W2111]: has no effect in a final class
         return 4
 
-    fn init(mut self):
+    fn init():
         super.init()
 
 fn main():

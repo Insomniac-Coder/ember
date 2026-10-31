@@ -5,7 +5,7 @@
 # updated is the caller's), returns early with the guard live, and the guard's
 # drop runs on the return path. The caller then borrows cleanly.
 
-fn foo(mut c: RefCell[i32]) -> i32:
+fn foo(ref mut c: RefCell[i32]) -> i32:
     with _g = c.borrow():
         return 7
     return 8

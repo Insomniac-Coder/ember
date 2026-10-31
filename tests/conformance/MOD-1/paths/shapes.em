@@ -6,5 +6,5 @@
 pub struct grid:
     pub n: int
 
-    pub fn at(self, i: int) -> int:
-        return self.n + i
+    pub fn at(i: int) -> int:
+        return this.n + i

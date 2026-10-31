@@ -205,10 +205,12 @@ fn operand_derives_from_place(
 }
 
 fn access_name(body: &Body, place: &Place) -> String {
-    body.local(place.local)
-        .name
-        .clone()
-        .unwrap_or_else(|| "this class object".to_string())
+    let name = body.local(place.local).name.clone();
+    // `[CLS-7]` — a method's object is `this` in its text.
+    if place.local.0 == 1 && body.arg_count > 0 && name.as_deref() == Some("self") {
+        return "this".to_string();
+    }
+    name.unwrap_or_else(|| "this class object".to_string())
 }
 
 pub(crate) fn successors(terminator: &Terminator) -> Vec<usize> {

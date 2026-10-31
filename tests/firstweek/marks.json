@@ -65,9 +65,9 @@
     "helps": ["R1:P1", "R1:P27", "R1:P6"]
   },
   "14_queue_simulation.em": {
-    "mark": "rejected", "shape": "P1", "codes": ["E1010", "E2020"], "after_helps": "accepted",
-    "shapes": ["P3", "P5", "P1"],
-    "helps": ["R1:P3", "R1:P5", "R1:P1"]
+    "mark": "rejected", "shape": "P1", "codes": ["E1010", "E2020", "E3023"], "after_helps": "accepted",
+    "shapes": ["P3", "P5", "P1", "B4"],
+    "helps": ["R1:P3", "R1:P5", "R1:P1", "R1:B4"]
   },
   "15_library_catalogue.em": {
     "mark": "rejected", "shape": "B3", "codes": ["E2020", "E2072", "E3013", "E3021"], "after_helps": "accepted",
@@ -125,9 +125,9 @@
     "helps": ["R1:P6", "R1:P1", "R2:N1"]
   },
   "26_game_entities.em": {
-    "mark": "rejected", "shape": "P1", "codes": ["E1010"], "after_helps": "accepted",
-    "shapes": ["P1"],
-    "helps": ["R1:P1"]
+    "mark": "rejected", "shape": "P1", "codes": ["E1010", "E3023"], "after_helps": "accepted",
+    "shapes": ["P1", "B4"],
+    "helps": ["R1:P1", "R1:B4"]
   },
   "27_vending_machine.em": {
     "mark": "rejected", "shape": "P26", "codes": ["E2020"], "after_helps": "accepted",

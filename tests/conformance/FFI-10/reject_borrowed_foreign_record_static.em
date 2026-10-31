@@ -6,10 +6,10 @@
 
 @derive(Copy)
 struct HasView:
-    text: str
+    text: StrView
 
 struct HasCText:
-    name: cstr
+    name: CStrView
     width: i32
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition

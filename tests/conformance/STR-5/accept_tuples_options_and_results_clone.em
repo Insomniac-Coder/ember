@@ -13,8 +13,8 @@ struct Holder:
 class Node:
     name: Option[String]
 
-    fn clear(mut self):
-        self.name = None
+    fn clear():
+        this.name = None
 
 fn main():
     x: Option[String] = Some("a")

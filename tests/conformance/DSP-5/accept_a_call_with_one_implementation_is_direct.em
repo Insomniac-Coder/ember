@@ -12,33 +12,33 @@
 # `the_optimization_report_lists_each_direct_call` reads this program's report.
 
 open class Shape:
-    virtual fn sides(self) -> int:
+    virtual fn sides() -> int:
         return 0
 
-    virtual fn name(self) -> int:
+    virtual fn name() -> int:
         return 1
 
-    fn init(mut self):
+    fn init():
         pass
 
 class Square(Shape):
-    override fn name(self) -> int:
+    override fn name() -> int:
         return 4
 
-    fn init(mut self):
+    fn init():
         super.init()
 
 abstract class Animal:
-    virtual fn legs(self) -> int
+    virtual fn legs() -> int
 
-    fn init(mut self):
+    fn init():
         pass
 
 class Dog(Animal):
-    override fn legs(self) -> int:
+    override fn legs() -> int:
         return 4
 
-    fn init(mut self):
+    fn init():
         super.init()
 
 fn describe(s: Shape) -> (int, int):

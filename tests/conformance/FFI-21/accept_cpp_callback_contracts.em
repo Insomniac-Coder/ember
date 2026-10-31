@@ -32,5 +32,5 @@ fn main():
     panel = cpp.Panel.new()
     println(panel.get().on_resize(None, 3), panel.get().on_resize(Some(fn(size: c_int) -> c_int => size * 6), 7))
 
-fn end(owned token: Option[Retained[ForeignCallback]]):
+fn end(owns token: Option[Retained[ForeignCallback]]):
     pass

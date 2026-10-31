@@ -3,12 +3,13 @@
 # This differs from the Plain control only by its destructor, which reads the
 # borrowed field at scope exit after the inner source has ended.
 
-struct Holder[T]:
+[T]
+struct Holder:
     borrowed: ref i32
     marker: T
 
-    fn drop(mut self):
-        println(self.borrowed)
+    fn drop():
+        println(this.borrowed)
 
 fn main():
     _outer: Option[Holder[i32]] = None

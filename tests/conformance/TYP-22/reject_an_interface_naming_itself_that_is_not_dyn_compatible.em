@@ -5,8 +5,8 @@
 # then be `dyn`-compatible once its methods are known.
 
 interface Node:    #$ error[E2050]: interface `Node` names itself in its methods, but is not `dyn`-compatible
-    fn copy(self) -> Self
-    fn next(self) -> Option[ref dyn Node]
+    fn copy() -> Self
+    fn next() -> Option[ref dyn Node]
 
 fn main():
     println(1)

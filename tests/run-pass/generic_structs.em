@@ -3,25 +3,29 @@
 
 # `[TYP-16]` â€” a generic struct. One declaration; one instantiation per
 # argument list, chosen by inference at the constructor.
-struct Pair[A, B]:
+[A, B]
+struct Pair:
     first: A
     second: B
-    fn left(self) -> A:
-        return self.first
+    fn left() -> A:
+        return this.first
 
 # A growable collection written in Ember rather than known to the compiler.
 # This is what block D builds on: `Array[T]` is this with a nicer surface and
 # a `drop`.
-struct Buffer[T]:
+[T]
+struct Buffer:
     ptr: *mut T
     len: usize
     cap: usize
 
-fn make[T](cap: usize) -> Buffer[T]:
+[T]
+fn make(cap: usize) -> Buffer[T]:
     unsafe:  # SAFETY: this test sets up what the operation requires
         return Buffer(alloc[T](cap), 0, cap)
 
-fn grow[T](mut b: Buffer[T]):
+[T]
+fn grow(ref mut b: Buffer[T]):
     bigger: usize = b.cap * 2
     fresh: *mut T
     i: usize = 0
@@ -34,18 +38,21 @@ fn grow[T](mut b: Buffer[T]):
     b.ptr = fresh
     b.cap = bigger
 
-fn push[T](mut b: Buffer[T], v: T):
+[T]
+fn push(ref mut b: Buffer[T], v: T):
     if b.len == b.cap:
         grow(b)
     unsafe:  # SAFETY: this test sets up what the operation requires
         write(b.ptr, b.len, v)
     b.len = b.len + 1
 
-fn at[T](b: Buffer[T], i: usize) -> T:
+[T]
+fn at(b: Buffer[T], i: usize) -> T:
     unsafe:  # SAFETY: this test sets up what the operation requires
         return read(b.ptr, i)
 
-fn release[T](mut b: Buffer[T]):
+[T]
+fn release(ref mut b: Buffer[T]):
     unsafe:  # SAFETY: this test sets up what the operation requires
         free(b.ptr, b.cap)
     b.cap = 0

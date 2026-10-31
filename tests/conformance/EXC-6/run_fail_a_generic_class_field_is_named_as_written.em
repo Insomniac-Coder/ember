@@ -7,14 +7,15 @@
 # its arguments (`Bag[i64].items`), not by the instance's C name
 # (`Bag_i64.items`; D-461).
 
-class Bag[T]:
+[T]
+class Bag:
     items: Array[T]
 
-    fn init(mut self, x: T):
-        self.items = [x]
+    fn init(x: T):
+        this.items = [x]
 
-    fn grow(self, x: T):
-        self.items.push(x)
+    fn grow(x: T):
+        this.items.push(x)
 
 fn main():
     b = Bag[int](1)

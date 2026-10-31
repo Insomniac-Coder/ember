@@ -16,7 +16,7 @@
 # behaviour rather than changing it — which is why D5 closes as "the compiler
 # was right" and no code moved.
 
-fn normalize(mut s: MutSpan[i32]):
+fn normalize(ref mut s: MutSpan[i32]):
     i: int = 0
     while i < s.len():
         s[i] = s[i] * 2

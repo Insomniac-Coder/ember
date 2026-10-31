@@ -25,44 +25,46 @@ from std.fmt import Formatter, FmtError
 struct Thing implements Display:
     v: int
 
-    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
-        return f.write_str(f"thing {self.v}")
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
+        return f.write_str(f"thing {this.v}")
 
 enum Color:
     Red
     Custom(name: String)
 
 extend Color implements Display:
-    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
-        match self:
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
+        match this:
             Color.Red:
                 return f.write_str("red")
             Color.Custom(name):
                 f.write_str("custom ")?
                 return f.write_str(name)
 
-struct Pair[T]:
+[T]
+struct Pair:
     a: T
     b: T
 
-extend[T: Display] Pair[T] implements Display:
-    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
-        return f.write_str(f"({self.a} & {self.b})")
+extend[T: needs Display] Pair[T] implements Display:
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
+        return f.write_str(f"({this.a} & {this.b})")
 
 class Node implements Display:
     id: int
 
-    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
-        return f.write_str(f"node#{self.id}")
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
+        return f.write_str(f"node#{this.id}")
 
 @derive(Copy)
 struct Temp implements Display:
     c: int
 
-    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
-        return f.write_str(f"{self.c} C")
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
+        return f.write_str(f"{this.c} C")
 
-fn show[T: Display](x: T) -> String:
+[T: needs Display]
+fn show(x: T) -> String:
     return f"<{x}>"
 
 fn by_ref(t: ref Thing) -> String:

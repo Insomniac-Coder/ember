@@ -34,5 +34,5 @@ fn main():
     end(token)
     println(cpp.emit(2), cpp.listening())
 
-fn end(owned token: Retained[ForeignCallback]):
+fn end(owns token: Retained[ForeignCallback]):
     pass

@@ -3,7 +3,8 @@ pub struct Point:
     pub x: int
     pub y: int
 
-pub struct Pair[T]:
+[T]
+pub struct Pair:
     pub first: T
     pub second: T
 

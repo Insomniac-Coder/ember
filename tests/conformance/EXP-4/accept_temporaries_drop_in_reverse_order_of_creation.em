@@ -9,17 +9,17 @@
 # slots were taken, the `String` dropped first and the program was `E3060`.
 
 struct Holder:
-    borrowed: str
+    borrowed: StrView
     marker: i32
 
 extend Holder:
-    fn drop(mut self):
-        println(self.borrowed)
+    fn drop():
+        println(this.borrowed)
 
 fn text() -> String:
     return String.from("still live")
 
-fn hold(s: str) -> Holder:
+fn hold(s: StrView) -> Holder:
     return Holder(s, 0)
 
 fn width(h: Holder) -> int:

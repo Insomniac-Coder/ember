@@ -6,8 +6,8 @@ struct Pair:
     left: Span[i32]
     right: Span[i32]
 
-    fn right_value(self) -> i32:
-        return self.right[0]
+    fn right_value() -> i32:
+        return this.right[0]
 
 fn main():
     left: Array[i32] = Array[i32]()

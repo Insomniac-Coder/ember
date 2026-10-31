@@ -7,7 +7,7 @@
 struct Marker:
     pub n: int
 
-fn consume(owned marker: Marker) -> int:
+fn consume(owns marker: Marker) -> int:
     return marker.n
 
 fn main():

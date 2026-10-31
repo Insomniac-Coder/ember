@@ -11,18 +11,18 @@ struct Words:
     names: Array[String]
     count: int = 0
 
-    fn bump(mut self):
-        self.add(1)
+    fn bump():
+        this.add(1)
 
-    fn add(mut self, n: int):
-        self.count += n
+    fn add(n: int):
+        this.count += n
 
 struct Pair:
     a: Array[int]
     b: Array[int]
 
-    fn first_a(self) -> ref int:
-        return self.a[0]
+    fn first_a() -> ref int:
+        return this.a[0]
 
 fn main():
     w = Words(["a", "bb", "ccc"])

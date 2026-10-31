@@ -6,23 +6,23 @@
 # result is a view, and returning the receiver's other field `keep`, whose view `@borrows` does
 # not name, is `E3062` in that instance.
 
-struct Pick[I, T]:
+[I, T]
+struct Pick:
     inner: I
     keep: T
 
-extend[T: Copy, I: Iterator[Item = T]] Pick[I, T]:
-    @borrows(self.inner)
-    fn first(mut self) -> Option[T]:
-        match self.inner.next():
+extend[T: needs Copy, I: needs Iterator[Item = T]] Pick[I, T]:
+    fn first() -> Option[T] from inner:
+        match this.inner.next():
             Some(x):
                 return Some(x)
             None:
-                return Some(self.keep)    #$ error[E3062]: `@borrows` names only what `self.inner` borrows
+                return Some(this.keep)    #$ error[E3062]: the returned view points into `this`, but its first line says `from inner`
 
 fn main():
     numbers = [1, 2]
-    p = Pick(numbers.iter().copied(), 7)
+    p = Pick(numbers.iter().copy_each(), 7)
     println(p.first())
     names = ["a", "b"]
-    q = Pick(names.iter().copied(), "z")
+    q = Pick(names.iter().copy_each(), "z")
     println(q.first())

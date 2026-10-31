@@ -5,7 +5,7 @@
 # `[RNG-4]` — `k < xs.len()` held before the call, but `shrink` is lent the
 # list and empties it: the length is forgotten at the call.
 
-fn shrink(mut xs: Array[int]):
+fn shrink(ref mut xs: Array[int]):
     xs.clear()
 
 fn main():

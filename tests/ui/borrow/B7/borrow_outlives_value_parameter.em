@@ -1,4 +1,4 @@
-fn borrow_text(owned text: String) -> str:
+fn borrow_text(owns text: String) -> StrView:
     return text
 
 fn main():

@@ -6,21 +6,21 @@
 # `cast animals[0] as Dog`, and `cast a if Dog` as a comprehension's element.
 
 open class Animal:
-    fn name(self) -> int:
+    fn name() -> int:
         return 0
 
 class Dog(Animal):
-    fn bark(self) -> int:
+    fn bark() -> int:
         return 1
 
 class Owner:
     pet: Animal
 
-    fn init(mut self, pet: Animal):
-        self.pet = pet
+    fn init(pet: Animal):
+        this.pet = pet
 
-    fn bark(self) -> int:
-        match cast self.pet if Dog:
+    fn bark() -> int:
+        match cast this.pet if Dog:
             Some(dog):
                 return dog.bark()
             None:

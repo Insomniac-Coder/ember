@@ -8,17 +8,18 @@
 #$ assert-c: contains(NULL,)
 
 interface Factory:
-    fn clone(self) -> Self where Self: Sized:
-        return self
+    fn clone() -> Self where Self: needs Sized:
+        return this
 
-    fn draw(self) -> i32
+    fn draw() -> i32
 
-class Pixel[T] implements Factory:
+[T]
+class Pixel implements Factory:
     value: i32
     marker: T
 
-    fn draw(self) -> i32:
-        return self.value
+    fn draw() -> i32:
+        return this.value
 
 fn draw_it(value: ref dyn Factory) -> i32:
     return value.draw()

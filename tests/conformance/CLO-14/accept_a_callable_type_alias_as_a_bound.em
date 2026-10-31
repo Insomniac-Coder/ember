@@ -7,7 +7,8 @@
 
 type Op = fn(int) -> int
 
-fn h[F: Op](f: F, x: int) -> int:
+[F: needs Op]
+fn h(f: F, x: int) -> int:
     return f(x)
 
 fn k(f: Op, x: int) -> int:

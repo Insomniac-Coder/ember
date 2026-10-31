@@ -1,7 +1,8 @@
 #$ test: run-pass
 #$ rules: TYP-5, TYP-18, MONO-1
 
-fn identity[T](value: T) -> T:
+[T]
+fn identity(value: T) -> T:
     return value
 
 fn main():

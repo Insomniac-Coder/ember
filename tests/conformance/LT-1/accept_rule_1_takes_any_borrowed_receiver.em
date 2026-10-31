@@ -9,16 +9,16 @@
 struct Person:
     name: String
 
-    fn name_of(self) -> str:
-        return self.name
+    fn name_of() -> StrView:
+        return this.name
 
 @derive(Copy)
 struct Pair:
     a: int
     b: int
 
-    fn first(self) -> ref int:
-        return ref self.a
+    fn first() -> ref int:
+        return ref this.a
 
 fn main():
     p = Person(name="ann")

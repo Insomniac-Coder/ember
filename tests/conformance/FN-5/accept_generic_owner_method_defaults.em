@@ -4,13 +4,15 @@
 # Defaults on a generic owner's methods use substituted owner and method type
 # parameters and may read the bound receiver or an earlier parameter.
 
-struct Holder[T: Copy]:
+[T: needs Copy]
+struct Holder:
     value: T
 
-    fn choose(self, other: T = self.value) -> T:
+    fn choose(other: T = this.value) -> T:
         return other
 
-    fn mirror[U: Copy](self, seed: U, other: U = seed) -> U:
+    [U: needs Copy]
+    fn mirror(seed: U, other: U = seed) -> U:
         return other
 
 fn main():

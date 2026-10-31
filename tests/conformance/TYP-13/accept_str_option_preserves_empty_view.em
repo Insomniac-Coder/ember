@@ -8,20 +8,20 @@
 # Empty text remains Some even when its backing String has no buffer.
 fn main():
     empty = String()
-    println(mem.size_of[Option[str]](), mem.size_of[str]())
-    first: Option[str] = Some(empty.as_str())
+    println(mem.size_of[Option[StrView]](), mem.size_of[StrView]())
+    first: Option[StrView] = Some(empty.as_str())
     match first:
         Some(view):
             println(view == "")
         None:
             println("unexpected")
-    second: Option[str] = Some("ok")
+    second: Option[StrView] = Some("ok")
     match second:
         Some(view):
             println(view)
         None:
             println("unexpected")
-    absent: Option[str] = None
+    absent: Option[StrView] = None
     match absent:
         Some(_):
             println("unexpected")

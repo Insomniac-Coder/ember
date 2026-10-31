@@ -9,7 +9,7 @@
 # aggregate printing. Container elements carry Debug, as the contract requires.
 
 interface Holder:
-    type Item: Debug
+    type Item: needs Debug
 
 struct Integers:
     unused: int
@@ -17,25 +17,32 @@ struct Integers:
 extend Integers implements Holder:
     type Item = int
 
-struct Wrapper[T]:
+[T]
+struct Wrapper:
     item: T
 
-fn direct[T: Display](x: T) -> String:
+[T: needs Display]
+fn direct(x: T) -> String:
     return f"[{x:>8}]"
 
-fn text[T: Debug](x: T) -> String:
+[T: needs Debug]
+fn text(x: T) -> String:
     return x.to_string()
 
-fn aggregates[T: Debug](xs: Array[T], choice: Option[T], pair: (int, T), wrapper: Wrapper[T]):
+[T: needs Debug]
+fn aggregates(xs: Array[T], choice: Option[T], pair: (int, T), wrapper: Wrapper[T]):
     println(xs, choice, pair, wrapper)
 
-fn projected[H: Holder](holder: H, xs: Array[H.Item], nested: Option[Array[H.Item]]):
+[H: needs Holder]
+fn projected(holder: H, xs: Array[H.Item], nested: Option[Array[H.Item]]):
     println(xs, nested)
 
-fn projected_fstring[H: Holder](holder: H, x: H.Item) -> String:
+[H: needs Holder]
+fn projected_fstring(holder: H, x: H.Item) -> String:
     return f"[{x:>8}]"
 
-fn projected_text[H: Holder](holder: H, x: H.Item) -> String:
+[H: needs Holder]
+fn projected_text(holder: H, x: H.Item) -> String:
     return x.to_string()
 
 fn main():

@@ -3,7 +3,7 @@
 #$ assert-c: contains(&em_ti_5Empty))
 
 class Empty:
-    fn answer(self) -> i32:
+    fn answer() -> i32:
         return 42
 
 fn main():

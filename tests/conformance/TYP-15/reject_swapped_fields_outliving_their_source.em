@@ -6,10 +6,10 @@
 # `p.a` is used.
 
 struct P:
-    a: str
-    b: str
+    a: StrView
+    b: StrView
 
-fn swap_fields(mut p: P):
+fn swap_fields(ref mut p: P):
     t = p.a
     p.a = p.b
     p.b = t

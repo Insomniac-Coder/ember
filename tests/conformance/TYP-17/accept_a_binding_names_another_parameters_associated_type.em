@@ -10,31 +10,34 @@
 # method may be bounded by that same interface with a binding: `Walk`'s
 # `joined` (D-389, which overflowed the compiler's stack).
 
-struct Both[I, J]:
+[I, J]
+struct Both:
     first: I
     other: J
     done: bool
 
-extend[I: Iterator, J: Iterator[Item = I.Item]] Both[I, J] implements Iterator:
+extend[I: needs Iterator, J: needs Iterator[Item = I.Item]] Both[I, J] implements Iterator:
     type Item = I.Item
 
-    fn next(mut self) -> Option[I.Item]:
-        if not self.done:
-            match self.first.next():
+    fn next() -> Option[I.Item]:
+        if not this.done:
+            match this.first.next():
                 Some(x):
                     return Some(x)
                 None:
-                    self.done = true
-        return self.other.next()
+                    this.done = true
+        return this.other.next()
 
-fn both[I: Iterator, J: Iterator[Item = I.Item]](owned a: I, owned b: J) -> Both[I, J]:
+[I: needs Iterator, J: needs Iterator[Item = I.Item]]
+fn both(owns a: I, owns b: J) -> Both[I, J]:
     return Both(a, b, false)
 
 interface Walk:
     type Step
-    fn steps(self) -> int
-    fn joined[W: Walk[Step = Step]](self, other: W) -> int:
-        return self.steps() + other.steps()
+    fn steps() -> int
+    [W: needs Walk[Step = Step]]
+    fn joined(other: W) -> int:
+        return this.steps() + other.steps()
 
 struct Short:
     n: int
@@ -42,8 +45,8 @@ struct Short:
 extend Short implements Walk:
     type Step = int
 
-    fn steps(self) -> int:
-        return self.n
+    fn steps() -> int:
+        return this.n
 
 fn main():
     xs: Array[int] = [1, 2]

@@ -2,8 +2,8 @@
 struct Guard:
     id: int
 
-    fn drop(mut self):
-        println(f"released {self.id}")
+    fn drop():
+        println(f"released {this.id}")
 
 fn main():
     g = Guard(1)

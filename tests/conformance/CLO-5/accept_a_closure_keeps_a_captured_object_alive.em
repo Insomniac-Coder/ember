@@ -7,8 +7,8 @@
 class Counter:
     value: int
 
-    fn init(mut self, v: int):
-        self.value = v
+    fn init(v: int):
+        this.value = v
 
 fn make() -> fn() -> int:
     c = Counter(5)

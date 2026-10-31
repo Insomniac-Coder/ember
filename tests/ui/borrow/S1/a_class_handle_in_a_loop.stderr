@@ -1,4 +1,4 @@
-error[E4030]: `@static_safe` function `fill` keeps an exclusivity check on a class object here
+error[E4030]: `@no_alias_checks` function `fill` keeps an exclusivity check on a class object here
   --> tests/ui/borrow/S1/a_class_handle_in_a_loop.em:10:9
    |
 10 |         b.add(i)

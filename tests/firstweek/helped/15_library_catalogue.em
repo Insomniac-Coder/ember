@@ -25,37 +25,37 @@ class Library:
     loans: Array[Loan] = []
     today: int = 0
 
-    fn add(self, owned book: Book):
-        if book.isbn in self.books:
-            self.books[book.isbn].copies += book.copies
+    fn add(owns book: Book):
+        if book.isbn in this.books:
+            this.books[book.isbn].copies += book.copies
         else:
-            self.books[book.isbn.clone()] = book
+            this.books[book.isbn.clone()] = book
 
-    fn search(self, text: str) -> Array[Book]:
+    fn search(text: StrView) -> Array[Book]:
         needle = text.to_lower()
-        return [b.clone() for b in self.books.values() if needle in b.title.to_lower() or needle in b.author.to_lower()]
+        return [b.clone() for b in this.books.values() if needle in b.title.to_lower() or needle in b.author.to_lower()]
 
-    fn available(self, isbn: str) -> int:
-        lent = self.loans.iter().filter(fn(l) => l.isbn == isbn).count()
-        return self.books[isbn].copies - lent
+    fn available(isbn: StrView) -> int:
+        lent = this.loans.iter().filter(fn(l) => l.isbn == isbn).count()
+        return this.books[isbn].copies - lent
 
-    fn lend(self, isbn: str, member: str) -> Result[Loan, LendError]:
-        if isbn not in self.books:
+    fn lend(isbn: StrView, member: StrView) -> Result[Loan, LendError]:
+        if isbn not in this.books:
             return Err(LendError.NoSuchBook)
-        if self.available(isbn) == 0:
-            return Err(LendError.NoCopiesLeft(self.books[isbn].title.clone()))
-        held = [l.clone() for l in self.loans if l.member == member]
+        if this.available(isbn) == 0:
+            return Err(LendError.NoCopiesLeft(this.books[isbn].title.clone()))
+        held = [l.clone() for l in this.loans if l.member == member]
         if held.len() >= MAX_LOANS:
             return Err(LendError.TooManyLoans(member.to_string(), MAX_LOANS))
-        loan = Loan(isbn=isbn.to_string(), member=member.to_string(), due_day=self.today + LOAN_DAYS)
-        self.loans.push(loan.clone())
+        loan = Loan(isbn=isbn.to_string(), member=member.to_string(), due_day=this.today + LOAN_DAYS)
+        this.loans.push(loan.clone())
         return Ok(loan)
 
-    fn give_back(self, isbn: str, member: str) -> Option[int]:
-        for i, loan in self.loans.iter().enumerate():
+    fn give_back(isbn: StrView, member: StrView) -> Option[int]:
+        for i, loan in this.loans.iter().enumerate():
             if loan.isbn == isbn and loan.member == member:
-                late = self.today - loan.due_day
-                self.loans.remove(i)
+                late = this.today - loan.due_day
+                this.loans.remove(i)
                 return Some(max(late, 0))
         return None
 

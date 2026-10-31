@@ -13,30 +13,33 @@ struct Numbers:
 
 extend Numbers implements TextSource:
     type Item = int
-    fn get(self) -> int:
-        return self.value
+    fn get() -> int:
+        return this.value
 
 struct Words:
-    value: str
+    value: StrView
 
 extend Words implements TextSource:
-    type Item = str
-    fn get(self) -> str:
-        return self.value
+    type Item = StrView
+    fn get() -> StrView:
+        return this.value
 
-fn render[P: Copy, S: TextSource, Q: Copy](prefix: P, source: S, suffix: Q) -> String:
+[P: needs Copy, S: needs TextSource, Q: needs Copy]
+fn render(prefix: P, source: S, suffix: Q) -> String:
     item = text_value(source)
     return f"<{item.value}>|{item.value!r}|{item.value:>4}|{item.padded()}"
 
-struct Renderer[P: Copy]:
+[P: needs Copy]
+struct Renderer:
     marker: P
 
-    fn render[S: TextSource, Q: Copy](self, source: S, suffix: Q) -> String:
+    [S: needs TextSource, Q: needs Copy]
+    fn render(source: S, suffix: Q) -> String:
         item = text_value(source)
         return f"<{item.value}>|{item.value!r}|{item.value:>4}|{item.padded()}"
 
 fn main():
     println(render(true, Numbers(7), 2.5))
     println(render(2.5, Words("word"), false))
-    renderer = Renderer[str]("owner")
+    renderer = Renderer[StrView]("owner")
     println(renderer.render(Numbers(11), false))

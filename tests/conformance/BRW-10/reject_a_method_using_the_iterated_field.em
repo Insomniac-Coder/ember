@@ -7,12 +7,12 @@ struct Words:
     names: Array[String]
     count: int = 0
 
-    fn rename(mut self):
-        self.names.push("x")
+    fn rename():
+        this.names.push("x")
 
-    fn bump(mut self):
-        self.count += 1
-        self.rename()
+    fn bump():
+        this.count += 1
+        this.rename()
 
 fn main():
     w = Words(["a", "bb"])

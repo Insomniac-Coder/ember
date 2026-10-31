@@ -9,10 +9,10 @@
 # `e`'s region slot's path already ends in the dereference.
 
 struct Pair:
-    a: str
-    b: str
+    a: StrView
+    b: StrView
 
-fn both(p: ref Pair) -> (ref str, ref str):
+fn both(p: ref Pair) -> (ref StrView, ref StrView):
     e: ref Pair = p
     return (ref e.a, ref e.b)
 

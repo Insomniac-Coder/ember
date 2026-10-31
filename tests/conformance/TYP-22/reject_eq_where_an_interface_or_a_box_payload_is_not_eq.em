@@ -5,26 +5,26 @@
 # it.
 
 interface Plain:
-    fn size(self) -> int
+    fn size() -> int
 
-interface Compared: Eq:
-    fn size(self) -> int
+interface Compared: needs Eq:
+    fn size() -> int
 
 @derive(Eq)
 struct Block:
     n: int
 
 extend Block implements Plain:
-    fn size(self) -> int:
-        return self.n
+    fn size() -> int:
+        return this.n
 
 @no_derive(Eq)
 struct Opaque:
     n: int
 
 extend Opaque implements Compared:  #$ error[E2040]: `Compared` requires `Eq`, which `Opaque` does not implement
-    fn size(self) -> int:
-        return self.n
+    fn size() -> int:
+        return this.n
 
 fn main():
     a: Box[dyn Plain] = Box(Block(1))

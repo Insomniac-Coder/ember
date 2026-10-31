@@ -4,7 +4,7 @@
 # admit: `Label` is `Tag[T]` for a `T: Display`, and `Point` has no `Display`.
 
 interface Tag[T]:
-    fn tag(self, t: T) -> String
+    fn tag(t: T) -> String
 
 struct Label:
     name: String
@@ -12,11 +12,12 @@ struct Label:
 struct Point:
     x: int
 
-extend[T: Display] Label implements Tag[T]:
-    fn tag(self, t: T) -> String:
-        return f"{self.name}={t}"
+extend[T: needs Display] Label implements Tag[T]:
+    fn tag(t: T) -> String:
+        return f"{this.name}={t}"
 
-fn show[L: Tag[Point]](l: L) -> String:
+[L: needs Tag[Point]]
+fn show(l: L) -> String:
     return l.tag(Point(x=1))
 
 fn main():

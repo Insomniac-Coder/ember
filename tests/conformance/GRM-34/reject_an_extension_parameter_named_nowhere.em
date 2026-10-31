@@ -4,10 +4,10 @@
 # one an implemented interface names; another means nothing and is refused.
 
 interface Tag:
-    fn tag(self) -> int
+    fn tag() -> int
 
 extend[T, U] T implements Tag:    #$ error[E2020]: `U` is named by neither the type extended nor an interface it implements
-    fn tag(self) -> int:
+    fn tag() -> int:
         return 1
 
 fn main():

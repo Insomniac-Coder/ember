@@ -7,10 +7,12 @@ struct Key:
     value: i32
 
 extend Key implements Hash:
-    fn hash[H: Hasher](self, mut h: H):
-        h.write_i32(self.value)
+    [H: needs Hasher]
+    fn hash(ref mut h: H):
+        h.write_i32(this.value)
 
-fn accepts_hash[T: Hash](value: T) -> u64:
+[T: needs Hash]
+fn accepts_hash(value: T) -> u64:
     hasher = DefaultHasher.new()
     value.hash(hasher)
     return hasher.finish()

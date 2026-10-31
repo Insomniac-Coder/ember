@@ -10,13 +10,13 @@
 
 interface Source:
     type Item
-    fn get(self, i: int) -> Item
-    fn size(self) -> int
+    fn get(i: int) -> Item
+    fn size() -> int
 
-    fn kept(self, keep: fn(Item) -> bool) -> Array[Item]:
+    fn kept(keep: fn(Item) -> bool) -> Array[Item]:
         out: Array[Item] = []
-        for i in 0..self.size():
-            x = self.get(i)
+        for i in 0..this.size():
+            x = this.get(i)
             if keep(x):
                 out.push(x)
         return out
@@ -27,11 +27,11 @@ struct Evens:
 extend Evens implements Source:
     type Item = int
 
-    fn get(self, i: int) -> int:
+    fn get(i: int) -> int:
         return 2 * i
 
-    fn size(self) -> int:
-        return self.n
+    fn size() -> int:
+        return this.n
 
 struct Words:
     words: Array[String]
@@ -39,11 +39,11 @@ struct Words:
 extend Words implements Source:
     type Item = String
 
-    fn get(self, i: int) -> String:
-        return self.words[i].clone()
+    fn get(i: int) -> String:
+        return this.words[i].clone()
 
-    fn size(self) -> int:
-        return self.words.len()
+    fn size() -> int:
+        return this.words.len()
 
 fn main():
     e = Evens(5)

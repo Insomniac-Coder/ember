@@ -7,7 +7,7 @@
 import cpp "stages.hpp"
 
 class Blank(cpp.Shape):    #$ error[E2020]: concrete class `Blank` does not implement abstract method `area`
-    override fn sides(self) -> i32:
+    override fn sides() -> i32:
         return 4
 
 fn main():

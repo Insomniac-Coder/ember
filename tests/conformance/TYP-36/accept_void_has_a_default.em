@@ -6,7 +6,8 @@
 # be extended in source, so the compiler answers it, as it does `void`'s
 # `Eq`, `Hash` and `Debug`.
 
-fn made[T: Default]() -> T:
+[T: needs Default]
+fn made() -> T:
     return T.default()
 
 fn main():

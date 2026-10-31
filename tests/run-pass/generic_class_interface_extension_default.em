@@ -6,10 +6,11 @@
 #$ assert-c: contains(static const struct em_vt_dyn_6Answer em_vt_dyn_6Answer_for_6HolderGda5cc12a188c7619)
 
 interface Answer:
-    fn answer(self) -> i32:
+    fn answer() -> i32:
         return 42
 
-class Holder[T]:
+[T]
+class Holder:
     marker: T
 
 extend[T] Holder[T] implements Answer:

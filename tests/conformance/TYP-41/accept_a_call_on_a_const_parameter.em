@@ -9,14 +9,17 @@
 fn square(x: int) -> int:
     return x * x
 
-fn grid[const N: int](fill: int) -> [int; square(N)]:
+[const N: int]
+fn grid(fill: int) -> [int; square(N)]:
     out: [int; square(N)] = [fill; square(N)]
     return out
 
-fn last[const N: int](g: [int; square(N)]) -> int:
+[const N: int]
+fn last(g: [int; square(N)]) -> int:
     return g[square(N) - 1] + N
 
-struct Board[const N: int]:
+[const N: int]
+struct Board:
     cells: [int; square(N)]
 
 fn main():

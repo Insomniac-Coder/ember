@@ -6,16 +6,17 @@
 # A bound supplies the method, while the caller supplies a shared reference.
 # Method resolution must read through `ref T` before consulting T's bounds.
 interface Scored:
-    fn score(self) -> i32
+    fn score() -> i32
 
 struct Good:
     value: i32
 
 extend Good implements Scored:
-    fn score(self) -> i32:
-        return self.value
+    fn score() -> i32:
+        return this.value
 
-fn read_score[T: Scored](value: ref T) -> i32:
+[T: needs Scored]
+fn read_score(value: ref T) -> i32:
     return value.score()
 
 fn main():

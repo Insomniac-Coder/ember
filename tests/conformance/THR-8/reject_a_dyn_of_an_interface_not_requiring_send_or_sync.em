@@ -8,31 +8,31 @@
 import std.thread
 
 interface Loose:
-    fn value(self) -> int
+    fn value() -> int
 
-interface Sendable: Send:
-    fn value(self) -> int
+interface Sendable: needs Send:
+    fn value() -> int
 
 struct Plain:
     n: int
 
 extend Plain implements Loose:
-    fn value(self) -> int:
-        return self.n
+    fn value() -> int:
+        return this.n
 
 extend Plain implements Sendable:
-    fn value(self) -> int:
-        return self.n
+    fn value() -> int:
+        return this.n
 
 class Handle:
     n: int
 
-    fn init(mut self, n: int):
-        self.n = n
+    fn init(n: int):
+        this.n = n
 
 extend Handle implements Sendable:  #$ error[E2040]: `Sendable` requires `Send`, which `Handle` does not implement
-    fn value(self) -> int:
-        return self.n
+    fn value() -> int:
+        return this.n
 
 fn main():
     loose: Box[dyn Loose] = Box(Plain(1))

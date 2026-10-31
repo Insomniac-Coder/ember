@@ -16,7 +16,7 @@ from std.ecs import World, Query, Component, Entity
 struct P:
     pass
 
-fn order(mut q: Query[(Entity, P)], unused: ()):
+fn order(ref mut q: Query[(Entity, P)], unused: ()):
     seen: Array[u32] = []
     for e, _ in q.iter():
         seen.push(e.index())

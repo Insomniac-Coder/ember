@@ -3,7 +3,7 @@
 #$ profiles: debug
 #$ error[E0104]: `@fastmath` applies to a method with a body
 #$ error[E0104]: `@fp` applies to a method with a body
-#$ error[E0104]: `@fp` needs `contract`: `@fp(contract)`
+#$ error[E0104]: `@fp` needs `allow_fma`: `@fp(allow_fma)`
 # A float mode governs the body it is written on (`[TYP-9]`): on an interface
 # method with none it would be ignored, which `[ATT-6]` never allows; each
 # implementation carries its own. A wrong `@fp` on an interface's default is
@@ -12,15 +12,15 @@
 
 interface Shader:
     @fastmath
-    fn shade(self, x: f64) -> f64
+    fn shade(x: f64) -> f64
 
 interface Lit:
-    @fp(contract)
-    fn light(self) -> f64
+    @fp(allow_fma)
+    fn light() -> f64
 
 interface Shape:
     @fp(fast)
-    fn area(self) -> f64:
+    fn area() -> f64:
         return 0.0
 
 class Circle implements Shape:

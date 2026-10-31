@@ -9,16 +9,16 @@ struct Holder:
     f: fn(int) -> int
 
 interface Op:
-    fn apply(x: int) -> int
+    static fn apply(x: int) -> int
 
 interface HasOp:
-    type O: Op
+    type O: needs Op
 
 struct Twice:
     pass
 
 extend Twice implements Op:
-    fn apply(x: int) -> int:
+    static fn apply(x: int) -> int:
         return x * 2
 
 struct Pick:
@@ -27,10 +27,12 @@ struct Pick:
 extend Pick implements HasOp:
     type O = Twice
 
-fn make[P: HasOp]() -> Holder:
+[P: needs HasOp]
+fn make() -> Holder:
     return Holder(f=owned fn(x: int) => P.O.apply(x))
 
-fn direct[P: HasOp](x: int) -> int:
+[P: needs HasOp]
+fn direct(x: int) -> int:
     return P.O.apply(x)
 
 fn main():

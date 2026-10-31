@@ -5,7 +5,7 @@
 ## `[SOA-1]` (D-761) — an `SoA[T]` named in a signature above `T`'s declaration has `T`'s columns:
 ## the declaration order of a module's items does not matter.
 
-fn integrate(mut p: SoA[Particle], dt: f32):
+fn integrate(ref mut p: SoA[Particle], dt: f32):
     for i in 0..p.len():
         p.velocity[i] += 9.8 * dt
 

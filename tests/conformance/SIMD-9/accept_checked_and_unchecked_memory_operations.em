@@ -10,7 +10,7 @@
 # The unchecked forms do the same with no check, in `unsafe`.
 from std.simd import f32x4, i64x4, u32x4
 
-fn shifted(xs: Span[f32], mut out: MutSpan[f32]):
+fn shifted(xs: Span[f32], ref mut out: MutSpan[f32]):
     (f32x4.load(xs[1..]) - f32x4.splat(2.0) + f32x4.load(xs[1..5])).store(out[1..])
 
 fn main():

@@ -5,10 +5,10 @@
 # `[TYP-5]` rule 7) and a borrowed `String` passed by address (`[BRW-8]`) are
 # such a borrow; `refill` would clear the element `r` points to.
 
-fn f(mut v: Array[int], x: ref int):
+fn f(ref mut v: Array[int], x: ref int):
     v.push(x)
 
-fn refill(mut dst: Array[String], r: String):
+fn refill(ref mut dst: Array[String], r: String):
     dst.clear()
     println(r)
 

@@ -12,8 +12,8 @@
 class Node:
     v: int
 
-    fn drop(mut self):
-        println("drop", self.v)
+    fn drop():
+        println("drop", this.v)
 
 @derive(Copy)
 struct Pair:

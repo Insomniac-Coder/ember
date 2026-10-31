@@ -8,7 +8,7 @@
 # `dyn` value, whose effects nothing declares").
 
 interface Shape:
-    fn area(self) -> int
+    fn area() -> int
 
 struct Square:
     side: int
@@ -17,12 +17,12 @@ struct Strip:
     long: int
 
 extend Square implements Shape:
-    fn area(self) -> int:
-        return self.side * self.side
+    fn area() -> int:
+        return this.side * this.side
 
 extend Strip implements Shape:
-    fn area(self) -> int:
-        return self.long
+    fn area() -> int:
+        return this.long
 
 @noalloc
 fn area_of(shape: ref dyn Shape) -> int:

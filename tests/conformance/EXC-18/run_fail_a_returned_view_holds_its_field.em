@@ -10,17 +10,17 @@
 class Person:
     name: String
 
-    fn init(mut self):
-        self.name = "ann"
+    fn init():
+        this.name = "ann"
 
-    fn get_name(self) -> str:
-        return self.name
+    fn get_name() -> StrView:
+        return this.name
 
-    fn relay(self) -> str:
-        return self.get_name()
+    fn relay() -> StrView:
+        return this.get_name()
 
-    fn rename(mut self):
-        self.name = "bob"
+    fn rename():
+        this.name = "bob"
 
 fn main():
     p = Person()

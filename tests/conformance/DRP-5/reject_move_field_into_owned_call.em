@@ -7,17 +7,17 @@
 struct Inner:
     pub n: i32
 
-    fn drop(mut self):
-        println(self.n)
+    fn drop():
+        println(this.n)
 
 struct Outer:
     pub inner: Inner
 
-    fn drop(mut self):
-        y = take(self.inner)         #$ error[E3010]: cannot move a field out of `drop`'s `mut self`
+    fn drop():
+        y = take(this.inner)         #$ error[E3010]: cannot move a field out of `this` in `drop`
         println(y)
 
-fn take(owned x: Inner) -> i32:
+fn take(owns x: Inner) -> i32:
     return x.n
 
 fn main():

@@ -16,19 +16,19 @@ class Holder:
     values: Array[f64] = []
     k: f64 = 0.5
 
-fn bump(h: Holder, mut slot: f64 = h.values[(h.k * 0.8125 + 0.6) as int]):
+fn bump(h: Holder, ref mut slot: f64 = h.values[(h.k * 0.8125 + 0.6) as int]):
     slot += 1.0
 
 @fastmath
-fn bump_fast(h: Holder, mut slot: f64 = h.values[(h.k * 0.6875 + 0.7) as int]):
+fn bump_fast(h: Holder, ref mut slot: f64 = h.values[(h.k * 0.6875 + 0.7) as int]):
     slot += 2.0
 
 struct Meter:
     k: f64
     total: f64 = 0.0
 
-    fn add(mut self, x: f64 = self.k * 0.40625 + 1.0):
-        self.total += x
+    fn add(x: f64 = this.k * 0.40625 + 1.0):
+        this.total += x
 
 @fastmath
 fn fast(h: Holder) -> f64:

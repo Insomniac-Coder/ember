@@ -18,10 +18,10 @@
 class Node:
     v: int
 
-    fn drop(mut self):
-        println("drop", self.v)
+    fn drop():
+        println("drop", this.v)
 
-fn take(owned n: Node):
+fn take(owns n: Node):
     println("took", n.v)
 
 fn main():

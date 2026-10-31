@@ -12,7 +12,7 @@ import std.ffi
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated))
-    safe fn strlen(text: cstr) -> usize
+    safe fn strlen(text: CStrView) -> usize
 
 fn main():
     value = "hello".to_cstring().unwrap()  #$ warning[L5002]: `to_cstring` copies its argument for a foreign call

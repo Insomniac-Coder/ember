@@ -241,7 +241,8 @@ fn emit_class(m: &mut Module<'_>, id: ClassId) -> Result<()> {
         ));
         (global_name(&symbol), words.len())
     };
-    let name = m.bytes(def.name.as_str().as_bytes());
+    // The class as the program writes it (`Bag[i64]`, D-941), as the C backend names it.
+    let name = m.bytes(m.ty.table.class_display_name(id).as_bytes());
     let flags = if def.is_sync { 1 } else { 0 };
     let vtable = crate::dispatch::class_vtable(m, id)?;
     let (itables, itable_count) = crate::dispatch::class_itables(m, id)?;

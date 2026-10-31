@@ -7,10 +7,12 @@
 
 from std.collections import Hasher, DefaultHasher
 
-struct Inner[K]:
+[K]
+struct Inner:
     keys: Array[K] = []
 
-struct B[K, H: Hasher + Default]:
+[K, H: needs (Hasher, Default)]
+struct B:
     keys: Array[K] = []
     seed: H = H.default()
     inner: Inner[K] = Inner[K]()

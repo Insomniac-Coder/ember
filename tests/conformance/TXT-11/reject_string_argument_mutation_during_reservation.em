@@ -1,7 +1,7 @@
 #$ test: compile-fail
 #$ rules: TXT-11, BRW-3, BCK-5
 
-fn erase(mut text: String) -> int:
+fn erase(ref mut text: String) -> int:
     text.clear()
     return 0
 

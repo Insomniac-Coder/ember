@@ -9,13 +9,13 @@
 class Bus:
     handlers: Array[fn(int)] = []
 
-    fn subscribe(self, owned handler: fn(int)):
-        self.handlers.push(handler)
+    fn subscribe(owns handler: fn(int)):
+        this.handlers.push(handler)
 
-    fn lend(self, handler: fn(int)):
-        self.handlers.push(handler)    #$ error[E2020]: expected `fn(i64) -> void`
+    fn lend(handler: fn(int)):
+        this.handlers.push(handler)    #$ error[E2020]: expected `fn(i64) -> void`
 
-fn consume(owned s: String):
+fn consume(owns s: String):
     println(s)
 
 fn main():

@@ -24,12 +24,12 @@ struct Card:
     tag: int
 
 extend Card implements Eq:
-    fn eq(self, other: Self) -> bool:
-        return self.rank == other.rank
+    fn eq(other: Self) -> bool:
+        return this.rank == other.rank
 
 extend Card implements Ord:
-    fn cmp(self, other: Self) -> Ordering:
-        return self.rank.cmp(other.rank)
+    fn cmp(other: Self) -> Ordering:
+        return this.rank.cmp(other.rank)
 
 fn ascending(xs: Array[int]) -> bool:
     for i in 1..xs.len():

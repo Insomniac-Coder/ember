@@ -4,16 +4,16 @@
 # `[ERR-5]` — a `Result` is used when it is bound, returned, passed, matched, has `?` or a method
 # applied; `_ = …` drops one on purpose. None of these warns.
 
-fn parse(s: str) -> Result[int, str]:
+fn parse(s: StrView) -> Result[int, StrView]:
     if s == "x":
         return Err("bad")
     return Ok(1)
 
-fn twice(s: str) -> Result[int, str]:
+fn twice(s: StrView) -> Result[int, StrView]:
     n = parse(s)?
     return Ok(n * 2)
 
-fn show(r: Result[int, str]) -> str:
+fn show(r: Result[int, StrView]) -> StrView:
     match r:
         Ok(_):
             return "ok"

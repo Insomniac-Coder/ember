@@ -6,7 +6,7 @@
 # caller cannot see, so what its elements hold is not known and the sum keeps
 # its check.
 
-fn put_big(mut xs: Array[int]):
+fn put_big(ref mut xs: Array[int]):
     xs[0] = 9223372036854775807
 
 fn main():

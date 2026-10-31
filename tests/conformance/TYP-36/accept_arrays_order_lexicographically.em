@@ -13,7 +13,8 @@
 ## `<`, `cmp`, `sort`, `sorted`, `min`, `max` and a `T: Ord` bound take them (it was `E2040`,
 ## D-854). Floats order by totalOrder inside them, as `cmp` does (`[TYP-37]`).
 
-fn bigger[T: Ord](a: T, b: T) -> bool:
+[T: needs Ord]
+fn bigger(a: T, b: T) -> bool:
     return a > b
 
 fn main():

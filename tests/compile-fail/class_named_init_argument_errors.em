@@ -9,9 +9,9 @@ class Point:
     x: i32
     y: i32
 
-    fn init(mut self, x: i32, y: i32):
-        self.x = x
-        self.y = y
+    fn init(x: i32, y: i32):
+        this.x = x
+        this.y = y
 
 fn main():
     Point(missing=1, y=2)

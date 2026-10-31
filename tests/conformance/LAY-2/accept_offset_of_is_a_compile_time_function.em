@@ -13,14 +13,16 @@ struct Header:
     length: u32
     flags: u16
 
-struct Pair[T]:
+[T]
+struct Pair:
     a: u8
     b: T
 
 const FLAGS_AT: usize = offset_of[Header](flags)
 const HEADER_BYTES: usize = size_of[Header]() + align_of[Header]() - 1
 
-fn second_at[T]() -> usize:
+[T]
+fn second_at() -> usize:
     return offset_of[Pair[T]](b)
 
 fn main():

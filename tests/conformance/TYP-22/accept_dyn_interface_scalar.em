@@ -10,11 +10,11 @@
 #$ assert-c: contains(ember_box_new_copy(sizeof(int32_t), _Alignof(int32_t), &((int32_t){42}))
 
 interface Inspect:
-    fn inspect(self) -> i32
+    fn inspect() -> i32
 
 extend i32 implements Inspect:
-    fn inspect(self) -> i32:
-        return self
+    fn inspect() -> i32:
+        return this
 
 fn inspect_ref(value: ref dyn Inspect) -> i32:
     return value.inspect()

@@ -11,15 +11,16 @@ struct Tally:
     extend: i64
 
 extend Tally:
-    fn extend(mut self, by: i64):
-        self.extend = self.extend + by
+    fn extend(by: i64):
+        this.extend = this.extend + by
 
-class Holder[T]:
+[T]
+class Holder:
     value: T
 
 extend[T] Holder[T]:
-    fn get(self) -> T:
-        return self.value
+    fn get() -> T:
+        return this.value
 
 t = Tally(1)
 t.extend(2)

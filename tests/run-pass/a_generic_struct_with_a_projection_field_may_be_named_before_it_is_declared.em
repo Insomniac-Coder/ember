@@ -7,15 +7,17 @@
 # A generic struct a signature names before its declaration is now collected first.
 interface P:
     type State
-    fn state() -> State
+    static fn state() -> State
 
-struct Maker[Q: P]:
+[Q: needs P]
+struct Maker:
     n: int
 
-    fn make(self) -> Holder[Q]:
-        return Holder[Q](state=Q.state(), at=self.n)
+    fn make() -> Holder[Q]:
+        return Holder[Q](state=Q.state(), at=this.n)
 
-struct Holder[Q: P]:
+[Q: needs P]
+struct Holder:
     state: Q.State
     at: int
 
@@ -25,7 +27,7 @@ struct One:
 extend One implements P:
     type State = int
 
-    fn state() -> int:
+    static fn state() -> int:
         return 2
 
 fn main():

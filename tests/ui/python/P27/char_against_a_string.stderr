@@ -1,4 +1,4 @@
-error[E2020]: `==` cannot be applied to `char` and `str`
+error[E2020]: `==` cannot be applied to `char` and `StrView`
  --> tests/ui/python/P27/char_against_a_string.em:3:12
   |
 3 |         if c == "S":

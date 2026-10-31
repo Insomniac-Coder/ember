@@ -18,7 +18,7 @@ class Person:
 struct Pet:
     name: String
 
-fn greet(owned who: String) -> String:
+fn greet(owns who: String) -> String:
     return who
 
 fn title() -> String:

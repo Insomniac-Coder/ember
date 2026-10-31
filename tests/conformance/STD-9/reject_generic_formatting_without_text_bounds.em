@@ -7,52 +7,68 @@
 interface Holder:
     type Item
 
-struct Wrapper[T]:
+[T]
+struct Wrapper:
     item: T
 
-fn direct_fstring[T](x: T) -> String:
+[T]
+fn direct_fstring(x: T) -> String:
     return f"{x}"    #$ error[E2040]
 
-fn direct_debug_fstring[T](x: T) -> String:
+[T]
+fn direct_debug_fstring(x: T) -> String:
     return f"{x!r}"    #$ error[E2040]
 
-fn direct_spec[T](x: T) -> String:
+[T]
+fn direct_spec(x: T) -> String:
     return f"{x:>8}"    #$ error[E2040]
 
-fn direct_array[T](xs: Array[T]):
+[T]
+fn direct_array(xs: Array[T]):
     println(xs)    #$ error[E2040]
 
-fn direct_option[T](x: Option[T]):
+[T]
+fn direct_option(x: Option[T]):
     println(x)    #$ error[E2040]
 
-fn direct_tuple[T](x: (int, T)):
+[T]
+fn direct_tuple(x: (int, T)):
     println(x)    #$ error[E2040]
 
-fn direct_wrapper[T](x: Wrapper[T]):
+[T]
+fn direct_wrapper(x: Wrapper[T]):
     println(x)    #$ error[E2040]
 
-fn direct_to_string[T](x: T) -> String:
+[T]
+fn direct_to_string(x: T) -> String:
     return x.to_string()    #$ error[E2040]
 
-fn projected_fstring[H: Holder](x: H.Item) -> String:
+[H: needs Holder]
+fn projected_fstring(x: H.Item) -> String:
     return f"{x}"    #$ error[E2040]
 
-fn projected_spec[H: Holder](x: H.Item) -> String:
+[H: needs Holder]
+fn projected_spec(x: H.Item) -> String:
     return f"{x:>8}"    #$ error[E2040]
 
-fn projected_array[H: Holder](xs: Array[H.Item]):
+[H: needs Holder]
+fn projected_array(xs: Array[H.Item]):
     println(xs)    #$ error[E2040]
 
-fn projected_nested[H: Holder](x: Option[Array[H.Item]]):
+[H: needs Holder]
+fn projected_nested(x: Option[Array[H.Item]]):
     println(x)    #$ error[E2040]
 
-fn projected_to_string[H: Holder](x: H.Item) -> String:
+[H: needs Holder]
+fn projected_to_string(x: H.Item) -> String:
     return x.to_string()    #$ error[E2040]
 
-fn transparent_box[T](x: Box[T]):
+[T]
+fn transparent_box(x: Box[T]):
     println(x)    #$ error[E2040]: requires `Display` or `Debug`
 
-fn transparent_cell[T: Copy](x: Cell[T]):
+[T: needs Copy]
+fn transparent_cell(x: Cell[T]):
     println(x)    #$ error[E2040]: requires `Display` or `Debug`
 
 fn main():

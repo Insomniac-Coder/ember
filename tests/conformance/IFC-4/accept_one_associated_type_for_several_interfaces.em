@@ -14,16 +14,17 @@ struct N:
 extend N implements Add, Sub, Mul:
     type Output = int
 
-    fn add(self, rhs: N) -> int:
-        return self.v + rhs.v
+    fn add(rhs: N) -> int:
+        return this.v + rhs.v
 
-    fn sub(self, rhs: N) -> int:
-        return self.v - rhs.v
+    fn sub(rhs: N) -> int:
+        return this.v - rhs.v
 
-    fn mul(self, rhs: N) -> int:
-        return self.v * rhs.v
+    fn mul(rhs: N) -> int:
+        return this.v * rhs.v
 
-fn apply[T: Add[Output = int] + Sub[Output = int] + Mul[Output = int] + Copy](a: T, b: T) -> (int, int, int):
+[T: needs (Add[Output = int], Sub[Output = int], Mul[Output = int], Copy)]
+fn apply(a: T, b: T) -> (int, int, int):
     return (a + b, a - b, a * b)
 
 fn main():

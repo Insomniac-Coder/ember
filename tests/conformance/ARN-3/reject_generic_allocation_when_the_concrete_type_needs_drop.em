@@ -3,7 +3,8 @@
 # Opaque T is checked again after substitution; a concrete owning Array must
 # not bypass E3090 merely because the generic definition could not decide.
 
-fn put[T](arena: Arena, owned value: T):
+[T]
+fn put(arena: Arena, owns value: T):
     saved = arena.alloc(value) #$ error[E3090]: `Array[i32]` needs `drop` and cannot be allocated with `Arena.alloc`
 
 fn main():

@@ -3,11 +3,11 @@
 #$ error[E2110]: override of a method that is not virtual
 
 open class Base:
-    fn tick(self):
+    fn tick():
         pass
 
 class Child(Base):
-    override fn tick(self):
+    override fn tick():
         pass
 
 fn main():

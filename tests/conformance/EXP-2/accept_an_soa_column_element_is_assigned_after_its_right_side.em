@@ -10,7 +10,7 @@
 struct Particle:
     velocity: f32
 
-fn step(mut p: SoA[Particle], dt: f32):
+fn step(ref mut p: SoA[Particle], dt: f32):
     for i in 0..p.len():
         p.velocity[i] = p.velocity[i] + dt
     p.velocity[0] += dt

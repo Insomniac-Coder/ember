@@ -12,13 +12,13 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(v, out, one), link_name="seven_c")
-    safe fn seven(mut v: i32)
+    safe fn seven(ref mut v: i32)
 
     @ffi(param(w, out, one), param(h, out, one), link_name="size_c")
-    safe fn size(mut w: i32, id: i32, mut h: i32)
+    safe fn size(ref mut w: i32, id: i32, ref mut h: i32)
 
     @ffi(param(v, out, one), link_name="half_c")
-    safe fn half(n: f64, mut v: f64) -> i32
+    safe fn half(n: f64, ref mut v: f64) -> i32
 
 pub extern "C" fn seven_c(v: *mut i32):
     unsafe:  # SAFETY(ffi): C's contract: `v` is valid

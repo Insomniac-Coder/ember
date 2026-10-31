@@ -8,11 +8,11 @@ class Ledger:
     let id: int
     let entries: Array[int] = []
 
-    fn init(self, id: int):
-        self.id = id
+    fn init(id: int):
+        this.id = id
 
-    fn record(self, v: int):
-        self.entries.push(v)
+    fn record(v: int):
+        this.entries.push(v)
 
 fn main():
     l = Ledger(7)

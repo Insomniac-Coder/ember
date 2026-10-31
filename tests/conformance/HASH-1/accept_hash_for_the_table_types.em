@@ -34,12 +34,14 @@ enum Color:
     Red
     Blue
 
-fn hash_of[K: Hash](k: K) -> u64:
+[K: needs Hash]
+fn hash_of(k: K) -> u64:
     h = DefaultHasher.new()
     k.hash(h)
     return h.finish()
 
-fn hash_with[K: Hash, H: Hasher + Default](k: K) -> u64:
+[K: needs Hash, H: needs (Hasher, Default)]
+fn hash_with(k: K) -> u64:
     h = H.default()
     k.hash(h)
     return h.finish()

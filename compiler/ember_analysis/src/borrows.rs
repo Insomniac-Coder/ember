@@ -148,12 +148,10 @@ pub fn check_all_with_installed_callable_regions(
 }
 
 /// `[BLD-1]`, `[BLD-2]` — what borrow checking infers of each body for its callers' checks: what it
-/// stores where its caller's regions do not reach (D-352), and whether its result is one no
-/// caller's regions can follow.
+/// stores where its caller's regions do not reach (D-352).
 #[derive(Clone, Debug, Default)]
 pub struct BorrowFacts {
     pub stores: HashMap<String, crate::regions::StoreSummary>,
-    pub invalid: HashSet<String>,
 }
 
 /// `[DIA-8]` — one loan as the checker holds it (`[BCK-1]`): the place it borrows, whether mutably,
@@ -199,7 +197,7 @@ fn run_checks(
     // Borrow checking consumes the installed MIR/interface metadata, not the
     // temporary inference table. That makes the artifact a real producer /
     // consumer boundary rather than a duplicate cache beside the analysis.
-    let summaries = contracts_from_metadata(bodies, &signatures);
+    let summaries = contracts_from_metadata(bodies, types);
     let base_contract = |func: &FuncRef| contract_for(func, &summaries, &signatures);
     let capture_contracts = closure_capture_contracts(bodies, &summaries);
     // `[TYP-15]` (D-352) — what each callee stores where its caller's regions
@@ -257,8 +255,6 @@ fn run_checks(
         .filter_map(|body| body.closure_environment)
         .filter(|environment| !scoped_task_environments.contains(environment))
         .collect();
-    let invalid_result_bodies =
-        infer_invalid_result_bodies(bodies, types, &call_contract, &capture_contracts, &kept.invalid);
     let is_method = |func: &FuncRef| match func {
         FuncRef::Direct { symbol, .. } => methods.contains(symbol.as_str()),
         FuncRef::Interface { .. } | FuncRef::Virtual { .. } => true,
@@ -278,7 +274,6 @@ fn run_checks(
                 &call_contract,
                 &capture_paths,
                 &owned_closure_environments,
-                &invalid_result_bodies,
                 &is_method,
                 dynamic.contains(&body.symbol),
                 &names,
@@ -299,7 +294,6 @@ fn run_checks(
                 &call_contract,
                 &capture_paths,
                 &owned_closure_environments,
-                &invalid_result_bodies,
                 &is_method,
                 dynamic.contains(&body.symbol),
                 &names,
@@ -310,7 +304,7 @@ fn run_checks(
         });
         ranges.extend(done);
     }
-    (ranges, BorrowFacts { stores: store_summaries, invalid: invalid_result_bodies })
+    (ranges, BorrowFacts { stores: store_summaries })
 }
 
 /// `[HEAP-4]`, `[HEAP-5]`, `[RC-5]`, `[EXC-1]` — materialize the dynamic
@@ -329,7 +323,7 @@ pub fn insert_shared_accesses_all(bodies: &mut [Body], types: &TypeTable) -> usi
         .iter()
         .map(|body| (body.symbol.clone(), elision_of(body, types)))
         .collect();
-    let summaries = contracts_from_metadata(bodies, &signatures);
+    let summaries = contracts_from_metadata(bodies, types);
     let call_contract = |func: &FuncRef| contract_for(func, &summaries, &signatures);
     let capture_contracts = closure_capture_contracts(bodies, &summaries);
     // The bodies that implement each virtual slot, by the class declaring them.
@@ -2046,7 +2040,7 @@ fn metadata_from_contract(contract: &CallRegionContract) -> CallableRegionMetada
 
 fn contracts_from_metadata(
     bodies: &[Body],
-    signatures: &HashMap<String, Elision>,
+    types: &TypeTable,
 ) -> HashMap<String, CallRegionContract> {
     bodies
         .iter()
@@ -2055,15 +2049,9 @@ fn contracts_from_metadata(
                 .callable_regions
                 .as_ref()
                 .expect("borrow checking requires installed callable-region metadata");
+            // No summary within the first line: every source parameter (`callers_result`).
             let result = metadata.result.clone().map_or_else(
-                || {
-                    CallResultContract::Legacy(
-                        signatures
-                            .get(body.symbol.as_str())
-                            .cloned()
-                            .unwrap_or(Elision::Everything),
-                    )
-                },
+                || CallResultContract::Legacy(elision_over(body, types, widened_parameters(body, types))),
                 CallResultContract::Fields,
             );
             (
@@ -2532,7 +2520,7 @@ pub fn verify_callable_regions_all(
             .as_ref()
             .is_some_and(CallableRegionMetadata::fingerprint_is_valid)
     }) {
-        let installed = contracts_from_metadata(bodies, &signatures);
+        let installed = contracts_from_metadata(bodies, types);
         let call_contract = |func: &FuncRef| contract_for(func, &installed, &signatures);
         let capture_contracts = closure_capture_contracts(bodies, &installed);
         for body in bodies {
@@ -2701,18 +2689,20 @@ fn contract_for(
         && let Some(summary) = summaries.get(symbol.as_str())
     {
         let latebound = matches!(func, FuncRef::Direct { latebound: true, .. });
-        // Ordinary one-region calls retain `[LT-1]`'s conservative elision:
-        // every view-typed parameter may be the returned view. A one-field
-        // summary is consumed precisely only at an explicit `@latebound`
-        // boundary, where it distinguishes a static-independent callback
-        // result from a result derived from one of the invocation views.
-        if !latebound
-            && matches!(&summary.result, CallResultContract::Fields(result)
-                if result.fields.len() == 1
-                    && result.fields.iter().any(|field| !field.sources.is_empty()))
-        {
-            return conservative_contract(legacy_elision(func, signatures), false);
+        let tied = legacy_elision(func, signatures);
+        // `[LT-1]` — a result that is itself a view (a `ref`, a `Span`, a `StrView`: a region slot at
+        // the value itself) keeps its first line's rule: every source parameter may be the returned
+        // view, more than the body may need. Its summary is consumed precisely only at an explicit
+        // `@latebound` boundary, where it distinguishes a static-independent callback result from
+        // one derived from an invocation view.
+        let plain_view = matches!(&summary.result, CallResultContract::Fields(result)
+            if result.fields.iter().any(|field| field.result_projection.is_empty() && !field.sources.is_empty()));
+        if !latebound && plain_view {
+            return conservative_contract(tied, false);
         }
+        // `[LT-22]` — a view type's result (`[TYP-34]`: `Option[ref T]`, a struct of views): callers
+        // use the summary the body gives of which result field points into which argument, so an
+        // adapter's items point into what the iterator it wraps reads (`callers_result`).
         let mut summary = summary.clone();
         summary.latebound = latebound;
         return summary;
@@ -2878,12 +2868,26 @@ fn inferred_callable_summary(
 
     CallRegionContract {
         access: CallAccessContract::Fields(accesses),
-        result: match inferred_result_summary(body, types, regions) {
-            Some(summary) => CallResultContract::Fields(summary),
-            None => CallResultContract::Legacy(elision_of(body, types)),
-        },
+        result: callers_result(body, types, regions),
         latebound: false,
         stores: Default::default(),
+    }
+}
+
+/// `[LT-1]`, `[LT-22]` — what a call's result points into, from this body: its summary, within
+/// the first line's rule; where the body needs more (a method's view of a source parameter other
+/// than `this`), or no summary can be made, every source parameter (rule 3).
+fn callers_result(body: &Body, types: &TypeTable, regions: &Regions) -> CallResultContract {
+    let first_line = elision_of(body, types);
+    match inferred_result_summary(body, types, regions) {
+        Some(summary)
+            if summary.fields.iter().flat_map(|field| field.sources.iter()).all(|source| match source {
+                ResultRegionSource::View { argument, .. } | ResultRegionSource::Arena { argument } => first_line.ties(*argument),
+            }) =>
+        {
+            CallResultContract::Fields(summary)
+        }
+        _ => CallResultContract::Legacy(elision_over(body, types, widened_parameters(body, types))),
     }
 }
 
@@ -2940,111 +2944,48 @@ fn inferred_result_summary(
     Some(ResultProvenanceSummary { fields })
 }
 
-/// Find bodies whose result summary is invalid because they transitively
-/// depend on a genuinely opaque multi-region result. Diagnostics are emitted
-/// at the first opaque boundary; callers of an already-invalid body are not
-/// flooded with the same recovery error. A direct recursive cycle with no
-/// opaque root is deliberately not included and remains diagnosable.
-/// `[BLD-1]` — a kept body is invalid as `kept_invalid` says (its regions are not inferred again).
-fn infer_invalid_result_bodies(
-    bodies: &[Body],
-    types: &TypeTable,
-    call_contract: &(dyn Fn(&FuncRef) -> CallRegionContract + Sync),
-    capture_contracts: &CaptureContracts,
-    kept_invalid: &HashSet<String>,
-) -> HashSet<String> {
-    let known: HashSet<&str> = bodies.iter().map(|body| body.symbol.as_str()).collect();
-    let bodies: Vec<&Body> = bodies.iter().filter(|body| !body.kept).collect();
-    // Each body's calls whose result no caller's regions can follow, its regions inferred on the
-    // driver's threads (`[BLD-7]`); what follows reads only these.
-    let calls: Vec<Vec<FuncRef>> = crate::parallel::each(&bodies, &mut ember_diag::Sink::new(), |body, _| {
-        let capture_paths = capture_borrow_paths(body, capture_contracts);
-        let regions = Regions::infer_with_capture_borrow_paths(body, types, call_contract, &capture_paths);
-        unresolved_multi_result_calls(body, &regions, call_contract).cloned().collect()
-    })
-    .into_iter()
-    .map(|(calls, _)| calls)
-    .collect();
-    let mut invalid = kept_invalid.clone();
 
-    for (body, calls) in bodies.iter().zip(&calls) {
-        if calls.iter().any(|func| {
-            !matches!(
-                func,
-                FuncRef::Direct { symbol, .. } if known.contains(symbol.as_str())
-            )
-        }) {
-            invalid.insert(body.symbol.clone());
-        }
-    }
-
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for (body, calls) in bodies.iter().zip(&calls) {
-            if invalid.contains(&body.symbol) {
-                continue;
-            }
-            if calls.iter().any(|func| {
-                matches!(
-                    func,
-                FuncRef::Direct { symbol, .. } if invalid.contains(symbol.as_str())
-                )
-            }) {
-                invalid.insert(body.symbol.clone());
-                changed = true;
-            }
-        }
-    }
-    invalid
-}
-
-fn unresolved_multi_result_calls<'a>(
-    body: &'a Body,
-    regions: &'a Regions,
-    call_contract: &'a dyn Fn(&FuncRef) -> CallRegionContract,
-) -> impl Iterator<Item = &'a FuncRef> + 'a {
-    body.blocks.iter().filter_map(move |block| {
-        let Terminator::Call { func, dest, .. } = &block.terminator else {
-            return None;
-        };
-        (regions.independent_regions(dest) >= 2
-            && matches!(call_contract(func).result, CallResultContract::Legacy(_)))
-        .then_some(func)
-    })
-}
-
-/// `[LT-1]` — what a call to this function ties its result to.
+/// `[LT-1]` — what a call to this function ties its result to by its first line.
 ///
-/// Rule 1 first: a view-typed `self` receiver takes the return on its own, and
-/// a method whose result points into an argument instead has to say so with
-/// `@borrows` — which is `[LT-1a]`, and which overrides all three rules. Rules
-/// 2 and 3 are the same answer written twice: every view-typed parameter, the
-/// difference between them being which parameters exist rather than what the
-/// caller must assume.
+/// Rule 1 for every method: its result points into `this`, an object taken over or passed as a
+/// copy too (into what it holds, its own storage ending with the call). `from` (`[LT-1a]`)
+/// overrides all three rules. Rules 2 and 3 are the same answer written twice: every source
+/// parameter, the difference between them being which parameters exist rather than what the
+/// caller must assume. Where a method's body needs more, its callers get rule 3 (`[LT-22]`,
+/// `callers_result`).
 ///
 /// The permissiveness here is only sound because the *body* is checked against
 /// the same set: `check_return_regions` rejects a return that points into a
 /// parameter this said it would not.
 fn elision_of(body: &Body, types: &TypeTable) -> Elision {
+    let arguments = if body.borrows.is_some() {
+        named_parameters(body)
+    } else if is_method_body(body) {
+        vec![0]
+    } else {
+        source_parameters(body, types)
+    };
+    elision_over(body, types, arguments)
+}
+
+/// `[LT-22]` — a method's `this` and every source parameter (rule 3); what `from` names stays.
+fn widened_parameters(body: &Body, types: &TypeTable) -> Vec<usize> {
+    if body.borrows.is_some() { named_parameters(body) } else { method_or_source_parameters(body, types) }
+}
+
+/// A view result tied to `arguments`, each through what it views where that is the rule.
+fn elision_over(body: &Body, types: &TypeTable, arguments: Vec<usize>) -> Elision {
     if !types.is_view(body.return_ty()) {
         return Elision::Nothing;
     }
-    // `[LT-1a]` (ODR-196) — `@borrows(self.f)` ties the result to what the
-    // receiver's field `f` borrows, not to the receiver.
+    // `[LT-1a]` (ODR-196) — `from f` ties the result to what the field `f` of `this` points
+    // into, not to `this`.
     let mut through: Vec<(usize, Vec<Projection>)> = body
         .borrows
         .iter()
         .flatten()
         .filter_map(|source| Some((source.parameter, vec![Projection::Field(source.field?)])))
         .collect();
-    let arguments = if body.borrows.is_some() {
-        named_parameters(body)
-    } else if receiver_is_a_view(body, types) {
-        vec![0]
-    } else {
-        source_parameters(body, types)
-    };
     for &index in &arguments {
         if !through.iter().any(|(tied, _)| *tied == index) && tied_through(body, types, index) {
             through.push((index, Vec::new()));
@@ -3115,14 +3056,6 @@ fn is_method_body(body: &Body) -> bool {
     body.arg_count > 0 && body.local(LocalId(1)).name.as_deref() == Some("self")
 }
 
-/// `[LT-1]` rule 1 — a borrowed receiver (`self` or `mut self`) that is
-/// itself a borrow. An `owned self` is not one: rule 3 takes it with the rest.
-fn receiver_is_a_view(body: &Body, types: &TypeTable) -> bool {
-    body.arg_count > 0
-        && body.local(LocalId(1)).name.as_deref() == Some("self")
-        && body.param_modes.first() != Some(&ParameterMode::Owned)
-        && types.is_view(body.local(LocalId(1)).ty)
-}
 
 /// `[LT-1]` and `[LT-1a]`, the body half: the parameters a returned view is
 /// allowed to point into, as locals.
@@ -3130,10 +3063,18 @@ fn allowed_origins(body: &Body, types: &TypeTable) -> Vec<LocalId> {
     if body.borrows.is_some() {
         return named_parameters(body).into_iter().map(|i| LocalId(i as u32 + 1)).collect();
     }
-    if receiver_is_a_view(body, types) {
-        return vec![LocalId(1)];
+    method_or_source_parameters(body, types).into_iter().map(|index| LocalId(index as u32 + 1)).collect()
+}
+
+/// `[LT-1]`, `[LT-22]` — what a result with no `from` may point into: a method's object (rule 1)
+/// and, where the body needs more, every source parameter (rule 3); a function's source parameters.
+/// `E3062` is what `from` does not name (shape B6), never a source.
+fn method_or_source_parameters(body: &Body, types: &TypeTable) -> Vec<usize> {
+    let mut allowed = source_parameters(body, types);
+    if is_method_body(body) && !allowed.contains(&0) {
+        allowed.insert(0, 0);
     }
-    source_parameters(body, types).into_iter().map(|index| LocalId(index as u32 + 1)).collect()
+    allowed
 }
 
 /// `E3062`'s offenders: the view parameters a returned view points into
@@ -3262,47 +3203,45 @@ fn check_return_regions(
     for local in offenders {
         let span = returned_at(local);
         let decl = body.local(local);
-        let name = decl.name.clone().unwrap_or_else(|| format!("_{}", local.0));
+        // A method's object is `this` in its text (`[CLS-7]`).
+        let written = |name: &str| if name == "self" { "this".to_string() } else { name.to_string() };
+        let name = written(&decl.name.clone().unwrap_or_else(|| format!("_{}", local.0)));
         let allowed_names: Vec<String> = allowed
             .iter()
             .map(|l| match &body.local(*l).name {
-                Some(name) => format!("`{name}`"),
+                Some(name) => format!("`{}`", written(name)),
                 None => format!("`_{}`", l.0),
             })
             .collect();
-        let fields = narrowed.iter().find(|(named, ..)| *named == local).map(|(_, names, _)| {
-            names.iter().map(|field| format!("`{name}.{field}`")).collect::<Vec<_>>().join(" and ")
-        });
-        let (message, help) = if let Some(fields) = fields {
+        let field_names = narrowed.iter().find(|(named, ..)| *named == local).map(|(_, names, _)| names.clone());
+        // `[LT-1a]` — what `from` says, and the line that says otherwise: `-> T from name`.
+        let (message, help) = if let Some(field_names) = field_names {
+            // `from` names one field.
+            let field = field_names.join(", ");
             (
-                format!("the returned view points into `{name}`, and `@borrows` names only what {fields} borrows"),
-                format!(
-                    "return a view of what {fields} borrows, or name `{name}` in `@borrows`; a view read through a \
-                     `ref mut` field borrows `{name}` as well"
-                ),
+                format!("the returned view points into `{name}`, but its first line says `from {field}`"),
+                format!("return a view of what `{field}` points into; a view read through a `ref mut` field points into `{name}` as well"),
             )
         } else if body.borrows.is_some() {
+            let named: Vec<String> = allowed.iter().map(|l| body.local(*l).name.as_deref().map_or_else(|| format!("_{}", l.0), written)).collect();
             (
-                format!("the returned view points into `{name}`, which `@borrows` does not name"),
+                format!("the returned view points into `{name}`, but its first line says `from {}`", named.join(", ")),
                 match allowed_names.len() {
-                    0 => "add `{name}` to `@borrows`".replace("{name}", &name),
-                    _ => format!(
-                        "add `{name}` to `@borrows`, or return a view of {}",
-                        allowed_names.join(" or ")
-                    ),
+                    0 => format!("write `from {name}` after the result type"),
+                    _ => format!("return a view of {}, or write `from {name}` after the result type", allowed_names.join(" or ")),
                 },
             )
-        } else if receiver_is_a_view(body, types) {
+        } else if is_method_body(body) {
             (
-                format!("the returned view points into `{name}` rather than into `self`"),
-                format!("write `@borrows({name})` above the declaration, which overrides rule 1"),
+                format!("the returned view points into `{name}` rather than into `this`"),
+                format!("write `from {name}` after the result type, which replaces rule 1"),
             )
         } else {
             // `[LT-1]` (ODR-024) — a `mut` parameter of a `Copy` type is not
             // a source: its value can be returned instead.
             (
-                format!("the returned view points into `{name}`, which the result does not borrow"),
-                format!("write `@borrows({name})` above the declaration, or return the value instead of a view of it"),
+                format!("the returned view points into `{name}`, which the result does not point into"),
+                format!("write `from {name}` after the result type, or return the value instead of a view of it"),
             )
         };
         // `[LT-1a]` — `@borrows` may name only a source parameter or a `mut`
@@ -3311,9 +3250,9 @@ fn check_return_regions(
         let index = (local.0 as usize).wrapping_sub(1);
         let nameable = body.param_modes.get(index) == Some(&ParameterMode::Mut) || body.sources.contains(&index);
         let help = if body.is_lambda {
-            // A lambda carries no `@borrows` (C4).
+            // A lambda carries no `from` (C4).
             "return a value, or a view of one of the lambda's parameters or captures: a lambda \
-             cannot carry `@borrows`"
+             cannot say `from`"
                 .to_string()
         } else if nameable {
             help
@@ -3341,60 +3280,10 @@ fn check_return_regions(
                     format!("`{name}` is the parameter it points into"),
                 )
                 .help(help)
-                .note("`@borrows` is what ties a return to a parameter elision would not (LT-1a)"),
+                .note("`from` is what ties a result to a parameter its first line's rule would not (LT-1a)"),
         );
     }
 }
-
-/// `[LT-22]`, shape B14 — every call producing a multi-region result must have
-/// an exact field-to-input provenance relation. An opaque/recursive result
-/// edge is rejected at that boundary rather than widened to the legacy
-/// intersection or treated as static.
-fn check_multi_result_summary(
-    body: &Body,
-    types: &TypeTable,
-    regions: &Regions,
-    call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
-    invalid_result_bodies: &HashSet<String>,
-    sink: &mut Sink,
-) {
-    for block in &body.blocks {
-        let Terminator::Call { func, dest, .. } = &block.terminator else {
-            continue;
-        };
-        if regions.independent_regions(dest) < 2
-            || matches!(call_contract(func).result, CallResultContract::Fields(_))
-            || matches!(
-                func,
-                FuncRef::Direct { symbol, .. } if invalid_result_bodies.contains(symbol.as_str())
-            )
-        {
-            continue;
-        }
-        let result = types.display(place_ty(body, types, dest));
-        sink.emit_classified(
-            Diagnostic::error(
-                codes::E3065,
-                block.terminator_span,
-                format!(
-                    "the returned `{result}` has field provenance that cannot be inferred soundly"
-                ),
-            )
-            .primary_label("multi-region result returned here")
-            .secondary(
-                body.span,
-                "this function must expose one source relation per borrowed result field",
-            )
-            .help(
-                "return an owned value, return the views separately, or use an applicable existing `@borrows` contract",
-            )
-            .note(
-                "the compiler will not force an intersection or invent a `static` region (LT-22)",
-            ),
-        );
-    }
-}
-
 
 /// `[LT-42]` with `[TYP-15]` — an `owned fn` environment owns its captures and
 /// can therefore escape the frame that constructed it. A captured view is
@@ -3467,7 +3356,6 @@ pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
         &|_| conservative_contract(Elision::Everything, false),
         &HashMap::new(),
         &HashSet::new(),
-        &HashSet::new(),
         &is_method,
         false,
         &HashMap::new(),
@@ -3482,7 +3370,6 @@ fn check_body(
     call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
     capture_paths: &HashMap<Point, Vec<Vec<Projection>>>,
     owned_closure_environments: &HashSet<StructId>,
-    invalid_result_bodies: &HashSet<String>,
     is_method: &dyn Fn(&FuncRef) -> bool,
     dynamic: bool,
     names: &HashMap<String, String>,
@@ -3511,14 +3398,6 @@ fn check_body(
     }
     let own_slot = own_slot_returns(body, types, &loans);
     check_return_regions(body, types, &regions, &own_slot, sink);
-    check_multi_result_summary(
-        body,
-        types,
-        &regions,
-        call_contract,
-        invalid_result_bodies,
-        sink,
-    );
     if loans.is_empty() {
         return;
     }
@@ -3831,7 +3710,7 @@ fn check_escapes(
         let storage = if own_view_slot {
             format!("`{owner}` is a view passed as a copy; a reference to the view itself points into this frame")
         } else if owned_parameter {
-            format!("`{owner}` is `owned`, so it is the callee's own and its storage ends with the frame")
+            format!("`{owner}` is taken over (`owns`), so it is the callee's own and its storage ends with the frame")
         } else if is_parameter {
             format!("`{owner}` is passed as a copy, so the copy's storage ends with the frame")
         } else {
@@ -3847,11 +3726,11 @@ fn check_escapes(
         } else if own_view_slot {
             format!("return a view of what `{owner}` points to, or an owned value")
         } else if owned_parameter {
-            format!("borrow `{owner}` instead of taking it `owned`, or return an owned value")
+            format!("borrow `{owner}` instead of taking it over (`owns`), or return an owned value")
         } else if is_parameter {
-            format!("take `{owner}` as a view (`Span[T]`, `str` or `ref T`), or return an owned value")
+            format!("take `{owner}` as a view (`Span[T]`, `StrView` or `ref T`), or return an owned value")
         } else {
-            "return an owned value, take the destination as a `mut` parameter, or borrow something the caller owns"
+            "return an owned value, take the destination as a `ref mut` parameter, or borrow something the caller owns"
                 .to_string()
         };
         let is_arena = arena_owner.is_some();
@@ -3864,9 +3743,9 @@ fn check_escapes(
                         "`{owner_name}` is a parameter, but the signature does not tie the return to it"
                     ),
                     format!(
-                        "write `@borrows({owner_name})` above the wrapper, or return an owned value"
+                        "write `from {owner_name}` after the wrapper's result type, or return an owned value"
                     ),
-                    "an Arena parameter is a return-provenance source only when `@borrows` names it (LT-4a)",
+                    "an Arena parameter is a source of the result only when `from` names it (LT-4a)",
                 )
             } else {
                 (
@@ -5197,10 +5076,13 @@ fn overlaps(a: &Place, b: &Place) -> bool {
 /// `p.0`. A tuple keeps its number, because that is what the source says too.
 fn place_name(body: &Body, types: &TypeTable, place: &Place) -> String {
     let decl = body.local(place.local);
-    let mut out = decl
-        .name
-        .clone()
-        .unwrap_or_else(|| format!("_{}", place.local.0));
+    // `[CLS-7]` — a method's object is `this` in its text, and reached without a `*`.
+    let object = place.local == LocalId(1) && body.arg_count > 0 && decl.name.as_deref() == Some("self");
+    let mut out = if object {
+        "this".to_string()
+    } else {
+        decl.name.clone().unwrap_or_else(|| format!("_{}", place.local.0))
+    };
     let mut ty = decl.ty;
     let mut at = 0;
     while at < place.projection.len() {
@@ -5245,7 +5127,9 @@ fn place_name(body: &Body, types: &TypeTable, place: &Place) -> String {
                 ty = element_ty(types, ty).unwrap_or(ty);
             }
             Projection::Deref => {
-                out = format!("*{out}");
+                if !(object && at == 0) {
+                    out = format!("*{out}");
+                }
                 ty = pointee_ty(types, ty).unwrap_or(ty);
             }
             _ => {}

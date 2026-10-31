@@ -13,7 +13,7 @@ from std.sync import Once
 
 static INIT: Once = Once()
 
-fn setup(tag: str):
+fn setup(tag: StrView):
     INIT.call_once(fn() => println("setting up for", tag))
 
 fn main():

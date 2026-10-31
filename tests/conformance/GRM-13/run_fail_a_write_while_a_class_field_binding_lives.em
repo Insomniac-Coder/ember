@@ -10,11 +10,11 @@
 class Bag:
     name: Option[String]
 
-    fn init(mut self):
-        self.name = Some("ann")
+    fn init():
+        this.name = Some("ann")
 
-    fn clear_name(self):
-        self.name = None
+    fn clear_name():
+        this.name = None
 
 fn main():
     b = Bag()

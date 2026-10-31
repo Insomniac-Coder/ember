@@ -10,16 +10,20 @@
 # `Map` meets `Index[str]` (any key `Q: AsKey[K]`, `[STD-12]`), an `Array` and
 # a `Span` `Index[int]` (ODR-042).
 
-fn lookup[C: Index[str, Output = int]](c: C, k: str) -> int:
+[C: needs Index[StrView, Output = int]]
+fn lookup(c: C, k: StrView) -> int:
     return c[k]
 
-fn put[C: IndexSet[str, int]](mut c: C, k: str):
+[C: needs IndexSet[StrView, int]]
+fn put(ref mut c: C, k: StrView):
     c[k] = 7
 
-fn first[C: Index[int, Output = f32]](c: C) -> f32:
+[C: needs Index[int, Output = f32]]
+fn first(c: C) -> f32:
     return c[0]
 
-fn bump[C: IndexMut[int, Output = f32]](mut c: C):
+[C: needs IndexMut[int, Output = f32]]
+fn bump(ref mut c: C):
     c[1] += 1.0
 
 fn main():

@@ -4,7 +4,7 @@ from support.ring_child import Ranked
 
 pub interface Scored:
     type Score
-    fn score(self) -> Score
+    fn score() -> Score
 
 pub fn top(r: int) -> int:
     return r

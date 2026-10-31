@@ -13,16 +13,20 @@
 struct P:
     x: int
 
-fn bigger[T: Ord](owned a: T, owned b: T) -> T:
+[T: needs Ord]
+fn bigger(owns a: T, owns b: T) -> T:
     return b if a < b else a
 
-fn twice[T: Clone](x: T) -> (T, T):
+[T: needs Clone]
+fn twice(x: T) -> (T, T):
     return (x.clone(), x.clone())
 
-fn same[T: Eq](a: T, b: T) -> bool:
+[T: needs Eq]
+fn same(a: T, b: T) -> bool:
     return a == b
 
-fn order[T: Ord](a: T, b: T) -> Ordering:
+[T: needs Ord]
+fn order(a: T, b: T) -> Ordering:
     return a.cmp(b)
 
 one = 1

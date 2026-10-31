@@ -5,10 +5,12 @@
 #$ assert-c: contains(em_6Holder7projectG572e1ef4d9565eac)
 
 interface Project:
-    fn project[U](self, value: U) -> U:
+    [U]
+    fn project(value: U) -> U:
         return value
 
-class Holder[T]:
+[T]
+class Holder:
     marker: T
 
 extend[T] Holder[T] implements Project:

@@ -5,10 +5,10 @@
 # error is at the call that would store it.
 
 fn main():
-    labels: Map[str, int] = {"start": 1}
-    colours: Set[str] = Set[str]()
+    labels: Map[StrView, int] = {"start": 1}
+    colours: Set[StrView] = Set[StrView]()
     s = String.from("zed")
-    labels.insert(s.as_str(), 2) #$ error[E3063]: `str` is a view, so it may not be passed to `insert`
-    labels[s.as_str()] = 3 #$ error[E3063]: `str` is a view, so it may not be passed to `index_set`
-    colours.add(s.as_str()) #$ error[E3063]: `str` is a view, so it may not be passed to `add`
+    labels.insert(s.as_str(), 2) #$ error[E3063]: `StrView` is a view, so it may not be passed to `insert`
+    labels[s.as_str()] = 3 #$ error[E3063]: `StrView` is a view, so it may not be passed to `index_set`
+    colours.add(s.as_str()) #$ error[E3063]: `StrView` is a view, so it may not be passed to `add`
     println(labels, colours)

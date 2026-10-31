@@ -4,22 +4,24 @@
 #$ stdout: 42
 #$ stdout: base
 
-open class Base[T]:
+[T]
+open class Base:
     value: i32
     marker: T
 
-    fn init(mut self, value: i32, marker: T):
-        self.value = value
-        self.marker = marker
+    fn init(value: i32, marker: T):
+        this.value = value
+        this.marker = marker
 
-    fn drop(mut self):
+    fn drop():
         println("base")
 
-class Derived[T](Base[T]):
+[T]
+class Derived(Base[T]):
     flag: bool
 
-    fn init(mut self, value: i32, marker: T, flag: bool):
-        self.flag = flag
+    fn init(value: i32, marker: T, flag: bool):
+        this.flag = flag
         super.init(value, marker)
 
 fn main():

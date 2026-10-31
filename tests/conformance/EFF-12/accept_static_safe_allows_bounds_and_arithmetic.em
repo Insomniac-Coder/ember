@@ -6,7 +6,7 @@
 # `[EFF-12]` — `@static_safe` permits bounds and arithmetic checks: indexing a
 # view and adding with overflow checks stay.
 
-@static_safe
+@no_alias_checks
 fn total(xs: Span[int]) -> int:
     t = 0
     for i in 0..xs.len():

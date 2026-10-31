@@ -4,7 +4,8 @@
 struct Factory:
     marker: i32
 
-    fn identity[T](value: T) -> T:
+    [T]
+    static fn identity(value: T) -> T:
         return value
 
 fn main():

@@ -8,12 +8,12 @@
 
 from std.collections import DefaultHasher, RandomState
 
-fn fixed(s: str) -> u64:
+fn fixed(s: StrView) -> u64:
     h = DefaultHasher.new()
     s.hash(h)
     return h.finish()
 
-fn seeded(s: str) -> u64:
+fn seeded(s: StrView) -> u64:
     h = RandomState.new()
     s.hash(h)
     return h.finish()

@@ -11,17 +11,18 @@
 # erased into Box[dyn Render]. Dynamic dispatch upgrades its weak field through
 # the explicit Shared.get() boundary; the box later uses class field-drop glue.
 interface Render:
-    fn render(self) -> i32
+    fn render() -> i32
 
 struct Token:
     value: i32
 
-class Observer[T] implements Render:
+[T]
+class Observer implements Render:
     weak: Weak[Shared[Token]]
     marker: T
 
-    fn render(self) -> i32:
-        match self.weak.upgrade():
+    fn render() -> i32:
+        match this.weak.upgrade():
             Some(owner):
                 return owner.get().value
             None:

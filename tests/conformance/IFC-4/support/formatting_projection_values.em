@@ -1,34 +1,40 @@
 from std.math import Float
 
 pub interface TextSource:
-    type Item: Copy + Display + Debug
-    fn get(self) -> Item
+    type Item: needs (Copy, Display, Debug)
+    fn get() -> Item
 
-pub struct TextValue[S: TextSource]:
+[S: needs TextSource]
+pub struct TextValue:
     pub value: S.Item
 
-    pub fn padded(self) -> String:
-        return f"{self.value:>4}"
+    pub fn padded() -> String:
+        return f"{this.value:>4}"
 
-pub fn text_value[S: TextSource](source: S) -> TextValue[S]:
+[S: needs TextSource]
+pub fn text_value(source: S) -> TextValue[S]:
     return TextValue[S](source.get())
 
 pub interface DecimalSource:
-    type Item: Float + Display
-    fn get(self) -> Item
+    type Item: needs (Float, Display)
+    fn get() -> Item
 
-pub struct DecimalValue[S: DecimalSource]:
+[S: needs DecimalSource]
+pub struct DecimalValue:
     pub value: S.Item
 
-pub fn decimal_value[S: DecimalSource](source: S) -> DecimalValue[S]:
+[S: needs DecimalSource]
+pub fn decimal_value(source: S) -> DecimalValue[S]:
     return DecimalValue[S](source.get())
 
 pub interface OpaqueSource:
-    type Item: Copy
-    fn get(self) -> Item
+    type Item: needs Copy
+    fn get() -> Item
 
-pub struct OpaqueValue[S: OpaqueSource]:
+[S: needs OpaqueSource]
+pub struct OpaqueValue:
     pub value: S.Item
 
-pub fn opaque_value[S: OpaqueSource](source: S) -> OpaqueValue[S]:
+[S: needs OpaqueSource]
+pub fn opaque_value(source: S) -> OpaqueValue[S]:
     return OpaqueValue[S](source.get())

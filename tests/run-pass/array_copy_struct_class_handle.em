@@ -12,7 +12,7 @@ class Thing:
 struct Wrapped:
     thing: Thing
 
-fn populate(mut items: Array[Wrapped]):
+fn populate(ref mut items: Array[Wrapped]):
     item = Wrapped(Thing(7))
     items.push(item)
 

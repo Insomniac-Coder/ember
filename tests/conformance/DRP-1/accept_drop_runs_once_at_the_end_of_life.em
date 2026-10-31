@@ -6,8 +6,8 @@
 struct R:
     pub n: i32
 
-    fn drop(mut self):
-        println(self.n)
+    fn drop():
+        println(this.n)
 
 fn main():
     r = R(5)

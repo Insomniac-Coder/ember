@@ -5,7 +5,7 @@
 
 fn main():
     xs: Array[String] = ["a", "bb", "c"]
-    best: str = ""
+    best: StrView = ""
     for i in 0..xs.len():
         if xs[i].len() > best.len():
             best = xs[i]

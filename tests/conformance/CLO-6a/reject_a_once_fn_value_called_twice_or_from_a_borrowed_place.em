@@ -11,10 +11,10 @@ struct Task:
 class Holder:
     cb: once fn() -> int
 
-    fn fire(self) -> int:
-        return self.cb()    #$ error[E3012]: cannot move out of a class field
+    fn fire() -> int:
+        return this.cb()    #$ error[E3012]: cannot move out of a class field
 
-fn consume(owned s: String) -> int:
+fn consume(owns s: String) -> int:
     return s.len()
 
 fn through_borrow(t: Task) -> int:

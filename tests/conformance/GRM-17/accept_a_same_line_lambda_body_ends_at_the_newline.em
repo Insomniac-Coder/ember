@@ -11,7 +11,8 @@
 ## parse: the body took the newline, and the assignment found the next line's first token (D-852).
 ## The loop's lambda writes one capture and reads another: the second was not found (`E1010`).
 
-fn feed[F: fn(int)](owned f: F, n: int):
+[F: needs fn(int)]
+fn feed(owns f: F, n: int):
     for i in range(n):
         f(i)
 

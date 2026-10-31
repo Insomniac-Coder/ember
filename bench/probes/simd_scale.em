@@ -2,7 +2,7 @@
 # `f32x8`, 200 thousand times, the C twin's plain loop against it.
 from std.simd import f32x8
 
-fn scale(xs: Span[f32], mut out: MutSpan[f32], k: f32):
+fn scale(xs: Span[f32], ref mut out: MutSpan[f32], k: f32):
     assert(xs.len() == out.len() and xs.len() % 8 == 0)
     kv = f32x8.splat(k)
     for i in (0..xs.len()).step_by(8):

@@ -4,7 +4,7 @@ error[E2072]: `std.string.Split` has no method named `len`
 4 |     println(parts.len())
   |                   ^^^
   |
-  = help: collect the items into a list: `.collect[Array[str]]()`
+  = help: collect the items into a list: `.collect[Array[StrView]]()`
   = note: an iterator gives its items one at a time; a list of them is collected once [STD-19]
 
 error: could not compile due to 1 error(s)

@@ -3,11 +3,13 @@
 #$ stdout: 1
 
 @view
-struct Pair[T]:
+[T]
+struct Pair:
     left: Span[T]
     right: Span[T]
 
-fn left_len[T](pair: Pair[T]) -> int:
+[T]
+fn left_len(pair: Pair[T]) -> int:
     return pair.left.len()
 
 fn main():

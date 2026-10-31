@@ -20,12 +20,12 @@ class Bag:
     items: Array[int]
     log: Array[int]
 
-    fn init(mut self):
-        self.items = [1, 2, 3]
-        self.log = [7]
+    fn init():
+        this.items = [1, 2, 3]
+        this.log = [7]
 
-    fn grow(self):
-        self.items.push(9)
+    fn grow():
+        this.items.push(9)
 
 fn main():
     b = Bag()

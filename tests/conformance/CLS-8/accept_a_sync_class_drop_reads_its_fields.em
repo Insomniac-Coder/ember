@@ -10,8 +10,8 @@
 class Tag:
     id: int = 7
 
-    fn drop(self):
-        println(f"dropped {self.id}")
+    fn drop():
+        println(f"dropped {this.id}")
 
 fn main():
     t = Tag()

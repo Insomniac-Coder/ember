@@ -164,7 +164,7 @@ class Player:
     hp: int = 10
     inventory: Array[String] = []
 
-fn roll(mut rng: random.Rng) -> int:
+fn roll(ref mut rng: random.Rng) -> int:
     return rng.int_in(1..7)
 
 rng = random.Rng.seeded(42)

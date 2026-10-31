@@ -8,7 +8,7 @@
 from generic_enum_mut_interface_imported_support.model import Signal
 from generic_enum_mut_interface_imported_support.traits import Bump
 
-fn bump_it(value: ref mut dyn Bump) -> i32:
+fn bump_it(ref mut value: dyn Bump) -> i32:
     return value.bump()
 
 fn main():

@@ -8,10 +8,11 @@
 # holding the closure lives no longer than the closure's captures. Until
 # ODR-100 this was refused at the call (`E3063`), whatever the callee did.
 
-fn invoke(owned f: fn() -> i32) -> i32:
+fn invoke(owns f: fn() -> i32) -> i32:
     return f()
 
-fn keep[F: fn() -> i32](owned f: F) -> F:
+[F: needs fn() -> i32]
+fn keep(owns f: F) -> F:
     return f
 
 fn main():

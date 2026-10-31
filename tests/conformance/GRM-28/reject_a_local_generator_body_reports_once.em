@@ -7,7 +7,7 @@
 
 fn main():
     gen fn bad(n: int) -> Generator[int]:
-        yield n + "a"    #$ error[E2020]: `+` cannot be applied to `i64` and `str`
+        yield n + "a"    #$ error[E2020]: `+` cannot be applied to `i64` and `StrView`
     for v in bad(1):
         println(v)
     for v in bad(2):

@@ -15,42 +15,42 @@ struct Particle:
 struct Rng:
     state: int
 
-    fn next_float(mut self) -> float:
-        self.state = (self.state * 1103515245 + 12345) % 2147483648
-        return self.state as float / 2147483648.0
+    fn next_float() -> float:
+        this.state = (this.state * 1103515245 + 12345) % 2147483648
+        return this.state as float / 2147483648.0
 
-    fn range(mut self, low: float, high: float) -> float:
-        return low + (high - low) * self.next_float()
+    fn range(low: float, high: float) -> float:
+        return low + (high - low) * this.next_float()
 
 class Fountain:
     particles: Array[Particle] = []
     rng: Rng = Rng(state=7)
     bounces: int = 0
 
-    fn spawn(self, count: int):
+    fn spawn(count: int):
         for _ in 0..count:
-            vx = self.rng.range(-1.0, 1.0)
-            vy = self.rng.range(8.0, 12.0)
-            vz = self.rng.range(-1.0, 1.0)
-            self.particles.push(Particle(
+            vx = this.rng.range(-1.0, 1.0)
+            vy = this.rng.range(8.0, 12.0)
+            vz = this.rng.range(-1.0, 1.0)
+            this.particles.push(Particle(
                 position=Vec3.ZERO,
                 velocity=Vec3(vx as f32, vy as f32, vz as f32),
-                lifetime=self.rng.range(1.0, 3.0)))
+                lifetime=this.rng.range(1.0, 3.0)))
 
-    fn update(self, dt: float):
-        for p in self.particles.iter_mut():
+    fn update(dt: float):
+        for p in this.particles.iter_mut():
             p.velocity.y += (GRAVITY * dt) as f32
             p.position += p.velocity * dt as f32
             if p.position.y < 0.0:
                 p.position.y = 0.0
                 p.velocity.y = -p.velocity.y * 0.5
-                self.bounces += 1
+                this.bounces += 1
             p.age += dt
-        self.particles.retain(fn(p) => p.age < p.lifetime)
+        this.particles.retain(fn(p) => p.age < p.lifetime)
 
-    fn highest(self) -> float:
+    fn highest() -> float:
         best: f32 = 0.0
-        for p in self.particles:
+        for p in this.particles:
             if p.position.y > best:
                 best = p.position.y
         return best

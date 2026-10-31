@@ -4,6 +4,7 @@
 
 from std.core import Ord
 
-fn call[T](x: T) -> T:
+[T]
+fn call(x: T) -> T:
     return x.cmp(x)      #$ error[E2040]: `T` has no method `cmp`
 fn main(): pass

@@ -14,7 +14,7 @@ fn widen(x: int) -> int:
     return [x, x].len()
 
 @noalloc
-fn fire(mut b: Bus) -> int:
+fn fire(ref mut b: Bus) -> int:
     return (b.handlers[0])(1)    #$ error[E4001]: `@noalloc` function `fire` reaches an allocation
 
 fn main():

@@ -548,6 +548,7 @@ pub enum MarkerArg {
 }
 
 /// The interner and type table for one compilation.
+#[derive(Clone)]
 pub struct TypeTable {
     kinds: Vec<TyKind>,
     lookup: HashMap<TyKind, Ty>,
@@ -3037,8 +3038,9 @@ impl TypeTable {
             .into(),
             TyKind::Void => "void".into(),
             TyKind::Never => "!".into(),
-            TyKind::Str => "str".into(),
-            TyKind::CStr => "cstr".into(),
+            // `[TXT-1]`, `[TXT-3]` — 0.9.15's names of the text views.
+            TyKind::Str => "StrView".into(),
+            TyKind::CStr => "CStrView".into(),
             TyKind::Span { elem, mutable } => {
                 let name = if *mutable { "MutSpan" } else { "Span" };
                 format!("{name}[{}]", self.render(*elem, user))
@@ -3124,8 +3126,8 @@ impl TypeTable {
                     .map(|param| {
                         let mode = match param.mode {
                             FnParamMode::Borrow => "",
-                            FnParamMode::Mut => "mut ",
-                            FnParamMode::Owned => "owned ",
+                            FnParamMode::Mut => "ref mut ",
+                            FnParamMode::Owned => "owns ",
                         };
                         format!("{mode}{}", self.render(param.ty, user))
                     })
@@ -3478,7 +3480,7 @@ impl TypeTable {
     /// `[MNG-1]` — the canonical spelling of a type as a generic argument: a declared type by its
     /// path (never by the instance name the checker gave it, which depends on what else it named),
     /// an instance with its arguments, a compiler-made generic as the prelude's
-    /// (`std.core.Option[i64]`), the rest as written (`(i64, str)`, `ref mut [u8; 4]`).
+    /// (`std.core.Option[i64]`), the rest as written (`(i64, StrView)`, `ref mut [u8; 4]`).
     pub fn spelling(&self, ty: Ty) -> String {
         let mut out = String::new();
         self.spell(ty, &mut out);
@@ -3575,8 +3577,8 @@ impl TypeTable {
                     }
                     out.push_str(match param.mode {
                         FnParamMode::Borrow => "",
-                        FnParamMode::Mut => "mut ",
-                        FnParamMode::Owned => "owned ",
+                        FnParamMode::Mut => "ref mut ",
+                        FnParamMode::Owned => "owns ",
                     });
                     self.spell(param.ty, out);
                 }
@@ -3619,11 +3621,11 @@ pub const COMPILER_GENERICS: [&str; 20] = [
 /// compiler-made generic's bare name (`Option`) is the prelude's `std.core.Option`, and a root
 /// module's type named like one (`root.Box`, D-305) is the root module's `Box`.
 pub fn item_path(name: &str) -> std::borrow::Cow<'_, str> {
-    // D-305, D-860 — the root module's own `Box`, `int`, `float` or `str`, which the checker keys
-    // `root.<name>`: its path is the name, the root package having no component of its own; the
-    // built-in's is under `std.core` (ODR-215), so the two never share a symbol.
+    // D-305, D-860 — the root module's own `Box`, `int`, `float` or `StrView` (0.9.10's `str`), which
+    // the checker keys `root.<name>`: its path is the name, the root package having no component of
+    // its own; the built-in's is under `std.core` (ODR-215), so the two never share a symbol.
     if let Some(own) = name.strip_prefix("root.")
-        && (COMPILER_GENERICS.contains(&own) || matches!(own, "int" | "float" | "str"))
+        && (COMPILER_GENERICS.contains(&own) || matches!(own, "int" | "float" | "str" | "StrView"))
     {
         return std::borrow::Cow::Borrowed(own);
     }
@@ -4160,11 +4162,11 @@ mod tests {
             table.arguments_spelling(&[i64_ty, string, array, span, option]),
             "[i64, std.core.String, std.core.Array[i64], std.core.MutSpan[i64], std.core.Option[i64]]"
         );
-        assert_eq!(table.arguments_spelling(&[pair, bytes_ref, param, function]), "[(i64, str), ref mut [u8; 4], $T0, fn(i64) -> i64]");
+        assert_eq!(table.arguments_spelling(&[pair, bytes_ref, param, function]), "[(i64, StrView), ref mut [u8; 4], $T0, fn(i64) -> i64]");
         // `[MNG-1]` (ODR-215) — a built-in type's own path is under `std.core`, a scalar's keyword
         // staying its spelling as an argument.
         assert_eq!(table.method_symbol(i64_ty, None, "of", None), format!("{}3std4core3i642of", ember_branding::mangle_prefix()));
-        assert_eq!(table.method_symbol(str_ty, None, "chars", None), format!("{}3std4core3str5chars", ember_branding::mangle_prefix()));
+        assert_eq!(table.method_symbol(str_ty, None, "chars", None), format!("{}3std4core7StrView5chars", ember_branding::mangle_prefix()));
         assert_eq!(item_path("root.str"), "str");
     }
 

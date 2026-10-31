@@ -7,7 +7,7 @@ struct World:
     cells: Array[Array[bool]]
     generation: int = 0
 
-    fn alive_neighbours(self, row: int, col: int) -> int:
+    fn alive_neighbours(row: int, col: int) -> int:
         count = 0
         for dr in -1..=1:
             for dc in -1..=1:
@@ -15,33 +15,33 @@ struct World:
                     continue
                 r = (row + dr + HEIGHT) % HEIGHT
                 c = (col + dc + WIDTH) % WIDTH
-                if self.cells[r][c]:
+                if this.cells[r][c]:
                     count += 1
         return count
 
-    fn step(self) -> World:
+    fn step() -> World:
         next = new_world()
         for r in 0..HEIGHT:
             for c in 0..WIDTH:
-                n = self.alive_neighbours(r, c)
-                alive = self.cells[r][c]
+                n = this.alive_neighbours(r, c)
+                alive = this.cells[r][c]
                 next.cells[r][c] = n == 3 or (alive and n == 2)
-        next.generation = self.generation + 1
+        next.generation = this.generation + 1
         return next
 
-    fn population(self) -> int:
-        return sum(1 for row in self.cells for cell in row if cell)
+    fn population() -> int:
+        return sum(1 for row in this.cells for cell in row if cell)
 
-    fn show(self):
-        println(f"generation {self.generation}, population {self.population()}")
-        for row in self.cells:
+    fn show():
+        println(f"generation {this.generation}, population {this.population()}")
+        for row in this.cells:
             println("".join(["#" if cell else "." for cell in row]))
         println("")
 
 fn new_world() -> World:
     return World(cells=[[False for _ in 0..WIDTH] for _ in 0..HEIGHT])
 
-fn from_pattern(pattern: Array[str], top: int, left: int) -> World:
+fn from_pattern(pattern: Array[StrView], top: int, left: int) -> World:
     world = new_world()
     for r, line in pattern.iter().enumerate():
         for c, ch in line.chars().enumerate():

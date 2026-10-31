@@ -15,8 +15,8 @@ struct Point:
     x: f64
     y: f64
 
-    fn norm(self) -> f64:
-        return self.x * self.x + self.y * self.y
+    fn norm() -> f64:
+        return this.x * this.x + this.y * this.y
 
 fn parse_error() -> int:
     total = (1 +
@@ -77,8 +77,8 @@ fn queries_keep_working_in_a_file_with_errors_of_every_stage() {
     assert_eq!(hover(&mut session, &path, 18, 5), "flag: <error>");
     // And in the rest: a parameter, a method call, a declaration, a local.
     assert_eq!(hover(&mut session, &path, 24, 12), "p: ref Point");
-    assert_eq!(hover(&mut session, &path, 24, 14), "fn norm(self: ref Point) -> f64");
-    assert_eq!(hover(&mut session, &path, 5, 8), "fn norm(self) -> f64");
+    assert_eq!(hover(&mut session, &path, 24, 14), "fn norm() -> f64");
+    assert_eq!(hover(&mut session, &path, 5, 8), "fn norm() -> f64");
     assert_eq!(hover(&mut session, &path, 27, 5), "origin: Point");
 
     // Completion: a value's fields and methods, and the names in scope.
@@ -122,7 +122,7 @@ static TABLE: Array[int] = table(4)
 struct Q:
     arr: Array[int]
 
-fn first(mut h: Q) -> ref mut int:
+fn first(ref mut h: Q) -> ref mut int:
     return ref mut h.arr[0]
 
 fn main():

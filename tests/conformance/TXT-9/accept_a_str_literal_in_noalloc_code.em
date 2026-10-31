@@ -5,7 +5,7 @@
 
 @noalloc
 fn named() -> int:
-    s: str = "text"
+    s: StrView = "text"
     return s.len()
 
 fn main():

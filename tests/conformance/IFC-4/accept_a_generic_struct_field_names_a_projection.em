@@ -8,15 +8,17 @@
 # `E2040`, "`U` has no associated type `Iter`": generic structs are collected
 # before interfaces.
 
-struct Each[U: IntoIterator]:
+[U: needs IntoIterator]
+struct Each:
     it: U.Iter
 
-fn each[U: IntoIterator](owned u: U) -> Each[U]:
+[U: needs IntoIterator]
+fn each(owns u: U) -> Each[U]:
     return Each(it = u.into_iter())
 
-extend[U: IntoIterator] Each[U]:
-    fn next_one(mut self) -> Option[U.Item]:
-        return self.it.next()
+extend[U: needs IntoIterator] Each[U]:
+    fn next_one() -> Option[U.Item]:
+        return this.it.next()
 
 fn main():
     xs: Array[int] = [1, 2]

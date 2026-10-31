@@ -7,10 +7,10 @@
 # by the interface says what each returns.
 
 interface Listing:
-    fn items(self) -> some Iterator[Item = int]
+    fn items() -> some Iterator[Item = int]
 
-    fn firsts(self) -> some Iterator[Item = int]:
-        return self.items()
+    fn firsts() -> some Iterator[Item = int]:
+        return this.items()
 
 fn main():
     pass

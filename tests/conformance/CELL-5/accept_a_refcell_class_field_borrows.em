@@ -13,11 +13,11 @@
 class Holder:
     cell: RefCell[Array[int]]
 
-    fn init(mut self):
-        self.cell = RefCell([1, 2, 3])
+    fn init():
+        this.cell = RefCell([1, 2, 3])
 
-    fn add(self, x: int):
-        with g = self.cell.borrow_mut():
+    fn add(x: int):
+        with g = this.cell.borrow_mut():
             g.push(x)
 
 fn main():

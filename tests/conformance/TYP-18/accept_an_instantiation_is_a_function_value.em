@@ -6,7 +6,8 @@
 # `[TYP-18]` — `id[int]` names one instantiation of a generic function, and
 # that is a function value (`[FN-6]`): passed, stored, called (D-221).
 
-fn id[T](x: T) -> T:
+[T]
+fn id(x: T) -> T:
     return x
 
 fn apply(f: fn(int) -> int, v: int) -> int:

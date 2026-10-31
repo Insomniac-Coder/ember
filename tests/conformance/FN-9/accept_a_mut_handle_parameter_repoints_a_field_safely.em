@@ -20,16 +20,16 @@
 class Node:
     v: int
 
-    fn drop(mut self):
-        println("drop", self.v)
+    fn drop():
+        println("drop", this.v)
 
 class Parent:
     child: Node
 
-fn repoint(mut n: Node):
+fn repoint(ref mut n: Node):
     n = Node(42)
 
-fn swap_in(mut n: Node, owned p: Parent):
+fn swap_in(ref mut n: Node, owns p: Parent):
     r = ref n.v
     p.child = Node(9)
     println("r", r)

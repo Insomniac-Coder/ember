@@ -1,11 +1,12 @@
 #$ test: compile-fail
 #$ rules: TYP-18, LT-1a, BRW-1
 
-struct Holder[T]:
+[T]
+struct Holder:
     value: T
 
-    @borrows(view)
-    fn passthrough[U](self, view: Span[U]) -> Span[U]:
+    [U]
+    fn passthrough(view: Span[U]) -> Span[U] from view:
         return view
 
 fn main():

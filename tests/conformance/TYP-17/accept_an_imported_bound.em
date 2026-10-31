@@ -11,16 +11,17 @@ struct Version:
     major: i32
 
 extend Version implements Eq:
-    fn eq(self, other: Self) -> bool:
-        return self.major == other.major
+    fn eq(other: Self) -> bool:
+        return this.major == other.major
 
 extend Version implements Ord:
-    fn cmp(self, other: Self) -> Ordering:
-        if self.major < other.major: return Ordering.Less
-        if self.major > other.major: return Ordering.Greater
+    fn cmp(other: Self) -> Ordering:
+        if this.major < other.major: return Ordering.Less
+        if this.major > other.major: return Ordering.Greater
         return Ordering.Equal
 
-fn newer[T: Ord](a: T, b: T) -> T:
+[T: needs Ord]
+fn newer(a: T, b: T) -> T:
     match a.cmp(b):
         Greater => return a
         _ => return b

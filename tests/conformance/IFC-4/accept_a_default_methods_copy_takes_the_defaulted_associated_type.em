@@ -8,46 +8,47 @@
 # the default, `E2020` (D-516). An implementation that states its own (`B`,
 # `u64`) and a generic caller (`total`) see theirs.
 
-interface Counting: Copy + Ord:
-    fn of(n: int) -> Self
-    fn plus(self, other: Self) -> Self
+interface Counting: needs (Copy, Ord):
+    static fn of(n: int) -> Self
+    fn plus(other: Self) -> Self
 
 extend int implements Counting:
-    fn of(n: int) -> int:
+    static fn of(n: int) -> int:
         return n
-    fn plus(self, other: int) -> int:
-        return self + other
+    fn plus(other: int) -> int:
+        return this + other
 
 extend u64 implements Counting:
-    fn of(n: int) -> u64:
+    static fn of(n: int) -> u64:
         return n as u64
-    fn plus(self, other: u64) -> u64:
-        return self + other
+    fn plus(other: u64) -> u64:
+        return this + other
 
 interface Thing:
-    type Count: Counting = int
-    fn size(self) -> Count
-    fn twice(self) -> Count:
-        return self.size().plus(self.size())
-    fn one_more(self) -> Count:
-        return self.size().plus(Count.of(1))
+    type Count: needs Counting = int
+    fn size() -> Count
+    fn twice() -> Count:
+        return this.size().plus(this.size())
+    fn one_more() -> Count:
+        return this.size().plus(Count.of(1))
 
 struct A:
     n: int
 
 extend A implements Thing:
-    fn size(self) -> int:
-        return self.n
+    fn size() -> int:
+        return this.n
 
 struct B:
     n: u64
 
 extend B implements Thing:
     type Count = u64
-    fn size(self) -> u64:
-        return self.n
+    fn size() -> u64:
+        return this.n
 
-fn total[T: Thing](t: T) -> T.Count:
+[T: needs Thing]
+fn total(t: T) -> T.Count:
     return t.twice()
 
 fn main():

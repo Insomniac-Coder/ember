@@ -12,15 +12,16 @@
 # a control-block observer after its Shared target expires. The generic class
 # receives and destroys its independent copy while upgrade() takes None.
 interface Observe:
-    fn observe(self, owned weak: Weak[Shared[Token]]) -> i32
+    fn observe(owns weak: Weak[Shared[Token]]) -> i32
 
 struct Token:
     value: i32
 
-class Reader[T] implements Observe:
+[T]
+class Reader implements Observe:
     marker: T
 
-    fn observe(self, owned weak: Weak[Shared[Token]]) -> i32:
+    fn observe(owns weak: Weak[Shared[Token]]) -> i32:
         match weak.upgrade():
             Some(owner):
                 return owner.get().value

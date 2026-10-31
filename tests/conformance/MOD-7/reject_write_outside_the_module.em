@@ -7,7 +7,7 @@
 
 from support.health import make
 
-fn bump(mut n: i32):
+fn bump(ref mut n: i32):
     n = n + 1
 
 fn main():

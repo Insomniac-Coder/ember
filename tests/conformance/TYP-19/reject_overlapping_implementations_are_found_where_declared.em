@@ -8,72 +8,75 @@
 # then reported there, at a use, once per instance.
 
 interface First:
-    fn first(self) -> int
+    fn first() -> int
 
 interface Second:
-    fn second(self) -> int
+    fn second() -> int
 
 interface Third:
-    fn third(self) -> int
+    fn third() -> int
 
 interface Fourth:
-    fn fourth(self) -> int
+    fn fourth() -> int
 
 interface Fifth:
-    fn fifth(self) -> int
+    fn fifth() -> int
 
-struct Wrap[T]:
+[T]
+struct Wrap:
     x: T
 
-struct Pair[A, B]:
+[A, B]
+struct Pair:
     a: A
     b: B
 
-struct Box[T] implements Fourth:
+[T]
+struct Box implements Fourth:
     x: T
 
-    fn fourth(self) -> int:
+    fn fourth() -> int:
         return 1
 
 # Two parameters of different names, bounded apart: `Wrap[int]` is both.
-extend[T: Copy] Wrap[T] implements First:
-    fn first(self) -> int:
+extend[T: needs Copy] Wrap[T] implements First:
+    fn first() -> int:
         return 1
 
-extend[U: Clone] Wrap[U] implements First:     #$ error[E2041]: `Wrap[U]` and `Wrap[T]` can be one type, and both implement `First`
-    fn first(self) -> int:
+extend[U: needs Clone] Wrap[U] implements First:     #$ error[E2041]: `Wrap[U]` and `Wrap[T]` can be one type, and both implement `First`
+    fn first() -> int:
         return 2
 
 # Neither is an instance of the other, and `Pair[str, int]` is both.
 extend[T] Pair[T, int] implements Second:
-    fn second(self) -> int:
+    fn second() -> int:
         return 1
 
-extend[U] Pair[str, U] implements Second:      #$ error[E2041]: the other implementation is here
-    fn second(self) -> int:
+extend[U] Pair[StrView, U] implements Second:      #$ error[E2041]: the other implementation is here
+    fn second() -> int:
         return 2
 
 # A nested instance.
 extend[T] Wrap[T] implements Third:
-    fn third(self) -> int:
+    fn third() -> int:
         return 1
 
 extend[T] Wrap[Wrap[T]] implements Third:      #$ error[E2041]: `Wrap[Wrap[T]]` and `Wrap[T]` can be one type
-    fn third(self) -> int:
+    fn third() -> int:
         return 2
 
 # A type's own `implements` and an extension of it.
 extend[U] Box[U] implements Fourth:            #$ error[E2041]: `Box[U]` and `Box[T]` can be one type, and both implement `Fourth`
-    fn fourth(self) -> int:
+    fn fourth() -> int:
         return 2
 
 # A generic implementation and a concrete one no program uses.
 extend[T] Pair[T, T] implements Fifth:
-    fn fifth(self) -> int:
+    fn fifth() -> int:
         return 1
 
 extend Pair[bool, bool] implements Fifth:      #$ error[E2041]: `Pair[bool, bool]` and `Pair[T, T]` can be one type
-    fn fifth(self) -> int:
+    fn fifth() -> int:
         return 2
 
 fn main():

@@ -9,15 +9,15 @@
 # the bounds are checked against (a review found the length read before the
 # bound and the pointer after it: an out-of-bounds read).
 
-fn shrink(mut v: Span[int]) -> int:
+fn shrink(ref mut v: Span[int]) -> int:
     v = v[7..]
     return 8
 
-fn cut(mut v: Span[int]) -> int:
+fn cut(ref mut v: Span[int]) -> int:
     v = v[5..]
     return 3
 
-fn swap_text(mut s: str) -> int:
+fn swap_text(ref mut s: StrView) -> int:
     s = "abcdefgh"
     return 2
 
@@ -28,5 +28,5 @@ fn main():
     println(w.len(), w)
     u: Span[int] = xs
     println(u[cut(u)..])
-    s: str = "hello"
+    s: StrView = "hello"
     println(s[0..swap_text(s)])

@@ -13,13 +13,13 @@
 # coexist across later calls, a trailing empty item, and repeated exhaustion.
 
 @noinline
-fn split_view(text: str, separator: str) -> Option[(str, str)]:
+fn split_view(text: StrView, separator: StrView) -> Option[(StrView, StrView)]:
     return text.split_once(separator)
 
 fn main():
     text = String.from("left:right")
     view = text.as_str()
-    pair: Option[(str, str)] = None
+    pair: Option[(StrView, StrView)] = None
     if true:
         separator = String.from(":")
         pair = split_view(view, separator.as_str())

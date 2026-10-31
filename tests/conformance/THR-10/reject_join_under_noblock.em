@@ -6,7 +6,7 @@
 import std.thread
 
 @noblock
-fn finish(owned h: thread.JoinHandle[int]) -> int:
+fn finish(owns h: thread.JoinHandle[int]) -> int:
     return h.join()
 
 fn main():

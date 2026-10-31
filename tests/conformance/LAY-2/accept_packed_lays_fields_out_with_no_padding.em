@@ -52,7 +52,8 @@ struct Record:
     items: Array[int]
 
 @packed
-struct Pair[T]:
+[T]
+struct Pair:
     a: u8
     b: T
 

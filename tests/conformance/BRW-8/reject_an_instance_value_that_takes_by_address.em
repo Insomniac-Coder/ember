@@ -5,11 +5,13 @@
 # `fn(Wrap[str]) -> ref str` would take `w` as a copy (a `Wrap[str]` is a
 # view), so the instance is not a value of that type; it is called directly.
 
-struct Wrap[T]:
+[T]
+struct Wrap:
     item: T
 
-fn inner[T](w: Wrap[T]) -> ref T:
+[T]
+fn inner(w: Wrap[T]) -> ref T:
     return ref w.item
 
 fn main():
-    _f: fn(Wrap[str]) -> ref str = inner[str] #$ error[E2020]: `inner` is not a value of type `fn(Wrap[str]) -> ref str`: it takes `w` by address
+    _f: fn(Wrap[StrView]) -> ref StrView = inner[StrView] #$ error[E2020]: `inner` is not a value of type `fn(Wrap[StrView]) -> ref StrView`: it takes `w` by address

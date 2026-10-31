@@ -3,17 +3,19 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 
-open class Base[T]:
+[T]
+open class Base:
     value: T
 
-    fn init(mut self, value: T):
-        self.value = value
+    fn init(value: T):
+        this.value = value
 
-class Derived[T](Base[T]):
+[T]
+class Derived(Base[T]):
     marker: bool
 
-    fn init(mut self, value: T, marker: bool):
-        self.marker = marker
+    fn init(value: T, marker: bool):
+        this.marker = marker
         super.init(value)
 
 fn main():

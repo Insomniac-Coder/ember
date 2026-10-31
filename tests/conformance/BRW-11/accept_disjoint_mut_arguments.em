@@ -6,7 +6,7 @@ struct Pair:
     pub left: i32
     pub right: i32
 
-fn update_both(mut left: i32, mut right: i32):
+fn update_both(ref mut left: i32, ref mut right: i32):
     left = 1
     right = 2
 

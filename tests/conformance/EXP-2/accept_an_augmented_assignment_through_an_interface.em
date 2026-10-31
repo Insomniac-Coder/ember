@@ -11,9 +11,9 @@ struct A:
     n: int
 
 extend A implements AddAssign:
-    fn add_assign(mut self, rhs: A):
+    fn add_assign(rhs: A):
         print("add_assign ")
-        self.n += rhs.n
+        this.n += rhs.n
 
 @derive(Copy)
 struct B:
@@ -22,8 +22,8 @@ struct B:
 extend B implements Add:
     type Output = B
 
-    fn add(self, rhs: B) -> B:
-        return B(n=self.n + rhs.n)
+    fn add(rhs: B) -> B:
+        return B(n=this.n + rhs.n)
 
 fn index() -> int:
     print("index ")

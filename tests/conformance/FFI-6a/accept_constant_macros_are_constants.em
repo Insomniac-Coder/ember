@@ -16,7 +16,8 @@ import c "constants.h"
 from std.mem import size_of
 
 # The width of the type a value was given.
-fn width[T](value: T) -> usize:
+[T]
+fn width(value: T) -> usize:
     return size_of[T]()
 
 fn main():

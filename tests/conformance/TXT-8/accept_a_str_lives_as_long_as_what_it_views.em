@@ -6,15 +6,15 @@
 # inside a struct holding it.
 
 struct Holder:
-    view: str
+    view: StrView
 
-fn label() -> str:
+fn label() -> StrView:
     return "fixed"
 
-fn same(text: str) -> str:
+fn same(text: StrView) -> StrView:
     return text
 
-fn wrap(text: str) -> Holder:
+fn wrap(text: StrView) -> Holder:
     return Holder(text)
 
 fn main():

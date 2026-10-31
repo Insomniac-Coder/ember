@@ -7,19 +7,22 @@
 #$ assert-c: contains(em_7Payload7projectG99f65fd6187c945d)
 
 interface Project:
-    fn project[T](self, value: T) -> T:
+    [T]
+    fn project(value: T) -> T:
         return value
 
-class Payload[A] implements Project:
+[A]
+class Payload implements Project:
     value: A
 
-class Factory[A]:
+[A]
+class Factory:
     value: A
 
-    fn project_default(self, payload: Payload[A], value: i32) -> i32:
+    fn project_default(payload: Payload[A], value: i32) -> i32:
         return payload.project(value)
 
-    fn round_trip(self, payload: Payload[A]) -> Payload[A]:
+    fn round_trip(payload: Payload[A]) -> Payload[A]:
         return payload
 
 fn main():

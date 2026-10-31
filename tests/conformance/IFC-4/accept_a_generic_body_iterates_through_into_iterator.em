@@ -7,7 +7,8 @@
 # method `next`"). The bound is kept, and its binding says `U.Iter`'s `Item`
 # is `U.Item`.
 
-fn first[U: IntoIterator](owned u: U) -> Option[U.Item]:
+[U: needs IntoIterator]
+fn first(owns u: U) -> Option[U.Item]:
     it = u.into_iter()
     return it.next()
 

@@ -12,14 +12,14 @@ struct Vec3:
 
 extend f32 implements Mul[Vec3]:
     type Output = Vec3
-    fn mul(self, v: Vec3) -> Vec3:
-        return Vec3(x = self * v.x)
+    fn mul(v: Vec3) -> Vec3:
+        return Vec3(x = this * v.x)
 
 interface Size:
-    fn size(self) -> int
+    fn size() -> int
 
 extend bool implements Size:
-    fn size(self) -> int:
+    fn size() -> int:
         return 2
 
 fn main():

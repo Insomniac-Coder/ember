@@ -11,7 +11,7 @@
 # is that grouped copy, with no check left in it, that the pragma leads. The program's other loops
 # (pushing, printing) are not in vectorisable form and get no pragma.
 
-fn scale(xs: Span[int], mut out: MutSpan[int], k: int):
+fn scale(xs: Span[int], ref mut out: MutSpan[int], k: int):
     @simd(assert)
     for i in 0..xs.len():
         out[i] = xs[i] * k

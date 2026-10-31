@@ -414,7 +414,7 @@ fn local_name(body: &Body, local: LocalId) -> Option<String> {
     Some(if name == ember_types::JOB_ARENA_ANCHOR { "jobs.local_arena()".to_string() } else { name })
 }
 
-const OWNED_COPY_HELP: &str = "store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note \
+const OWNED_COPY_HELP: &str = "store an owned copy — `String` for `StrView`, `Array[T]` for `Span[T]` — and note \
      that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the \
      container it indexes";
 
@@ -503,7 +503,7 @@ fn caller_place_error(
             (
                 format!("a view of `{what}` is stored in {parameter}, which {owner} owns, so it would outlive `{what}`"),
                 format!(
-                    "a `mut` parameter is the caller's place: a `{shown}` stored in it must outlive the call, and `{what}` ends with it (TYP-15, FN-1)"
+                    "a `ref mut` parameter is the caller's place: a `{shown}` stored in it must outlive the call, and `{what}` ends with it (TYP-15, FN-1)"
                 ),
             )
         }
@@ -521,6 +521,6 @@ fn caller_place_error(
     };
     Diagnostic::error(codes::E3063, span, message)
         .primary_label("stored here")
-        .help("return the view instead, or store an owned copy (`String` for `str`)")
+        .help("return the view instead, or store an owned copy (`String` for `StrView`)")
         .note(note)
 }

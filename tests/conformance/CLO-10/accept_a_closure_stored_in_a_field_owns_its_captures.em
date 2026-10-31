@@ -17,8 +17,8 @@ class Particle:
 class Ticker:
     f: fn() -> int
 
-    fn tick(self) -> int:
-        return self.f()
+    fn tick() -> int:
+        return this.f()
 
 fn make() -> Ticker:
     p = Particle()

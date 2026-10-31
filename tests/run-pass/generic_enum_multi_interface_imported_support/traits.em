@@ -1,5 +1,5 @@
 pub interface Read:
-    fn read(self) -> i32
+    fn read() -> i32
 
 pub interface Write:
-    fn write(self) -> i32
+    fn write() -> i32

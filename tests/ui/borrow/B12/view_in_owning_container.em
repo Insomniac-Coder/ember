@@ -1,5 +1,5 @@
 fn main():
     text = String.from("ann")
-    values: Array[str] = Array[str]()
+    values: Array[StrView] = Array[StrView]()
     values.push(text.as_str())
     println(values.len())

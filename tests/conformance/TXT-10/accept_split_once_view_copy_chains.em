@@ -8,8 +8,8 @@
 # The C shape assertions accompany this fixture in milestones.rs.
 
 @noinline
-fn first_view(text: str, separator: str) -> Option[str]:
-    found: Option[str] = None
+fn first_view(text: StrView, separator: StrView) -> Option[StrView]:
+    found: Option[StrView] = None
     match text.split_once(separator):
         Some((before, after)):
             if after.is_empty():

@@ -20,7 +20,7 @@ from std.simd import f32x4, f32x8, f32x16, f64x2, f64x4, f64x8, i8x16, i8x32, i8
 from std.simd import u8x16, u8x32, u8x64, u16x8, u16x16, u16x32, u32x4, u32x8, u32x16, u64x2, u64x4, u64x8, mask32x4
 import std.simd
 
-fn scale(xs: Span[f32], mut out: MutSpan[f32], k: f32):
+fn scale(xs: Span[f32], ref mut out: MutSpan[f32], k: f32):
     assert(xs.len() == out.len() and xs.len() % 8 == 0)
     kv = f32x8.splat(k)
     for i in (0..xs.len()).step_by(8):

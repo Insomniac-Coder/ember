@@ -5,7 +5,7 @@
 # but its interface gives it no `Debug`.
 
 fn evens(xs: Span[int]) -> some Iterator[Item = int]:
-    return xs.iter().copied().filter(fn(x) => x % 2 == 0)
+    return xs.iter().copy_each().filter(fn(x) => x % 2 == 0)
 
 fn main():
     a = [1, 2]

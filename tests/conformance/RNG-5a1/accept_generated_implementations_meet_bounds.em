@@ -11,19 +11,24 @@
 type Unit = f64 in 0.0 ..= 1.0
 type Level = i32 in 0 ..= 10
 
-fn twice[T: Add[T]](x: T) -> T.Output:
+[T: needs Add[T]]
+fn twice(x: T) -> T.Output:
     return x + x
 
-fn plus_repr[T: Add[f64]](x: T) -> T.Output:
+[T: needs Add[f64]]
+fn plus_repr(x: T) -> T.Output:
     return x + 0.5
 
-fn repr_plus[R: Add[Unit]](r: R, u: Unit) -> R.Output:
+[R: needs Add[Unit]]
+fn repr_plus(r: R, u: Unit) -> R.Output:
     return r + u
 
-fn negate[T: Neg](x: T) -> T.Output:
+[T: needs Neg]
+fn negate(x: T) -> T.Output:
     return -x
 
-fn biggest[T: Ord + Copy](a: T, b: T) -> T:
+[T: needs (Ord, Copy)]
+fn biggest(a: T, b: T) -> T:
     if a > b:
         return a
     return b

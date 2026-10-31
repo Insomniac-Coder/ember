@@ -5,7 +5,8 @@
 
 # `Holder[Child]` remains a strong instantiated edge, while the closing
 # `Child.parent` field is weak. Substitution must preserve that distinction.
-class Holder[T]:
+[T]
+class Holder:
     value: T
 
 class Parent:

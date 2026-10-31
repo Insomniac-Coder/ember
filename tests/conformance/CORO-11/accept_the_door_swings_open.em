@@ -17,10 +17,10 @@ from std.coroutine import Scheduler, Wait, wait, wait_frames, wait_until
 class Door:
     open_angle: float = 0.0
 
-    gen fn swing_open(self) -> Generator[Wait]:
+    gen fn swing_open() -> Generator[Wait]:
         yield wait(0.5)
         for _ in 0..2:
-            self.open_angle += 1.5
+            this.open_angle += 1.5
             yield Wait.NextFrame
 
 class Counter:

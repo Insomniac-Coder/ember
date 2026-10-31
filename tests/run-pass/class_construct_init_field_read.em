@@ -6,9 +6,9 @@
 class Point:
     value: i32
 
-    fn init(mut self, value: i32):
-        self.value = value
-        println(self.value)
+    fn init(value: i32):
+        this.value = value
+        println(this.value)
 
 fn main():
     point = Point(42)

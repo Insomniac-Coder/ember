@@ -4,12 +4,13 @@
 #$ stdout: 42
 #$ assert-c: contains(em_6Marker4dropGda5cc12a188c7619)
 
-class Marker[T]:
+[T]
+class Marker:
     value: i32
     payload: T
 
-    fn drop(mut self):
-        println(self.value)
+    fn drop():
+        println(this.value)
 
 fn main():
     _marker = Marker[bool](42, false)

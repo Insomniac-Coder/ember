@@ -1975,7 +1975,7 @@ impl Writer {
                 let written = clang_getArgType(ty, index);
                 // `[FFI-8]` — a `va_list`, which only its written name tells from what it is.
                 if written_va_list(written) {
-                    params.push("owned VaList".to_string());
+                    params.push("owns VaList".to_string());
                     continue;
                 }
                 params.push(self.parameter_type(written)?);
@@ -2497,7 +2497,7 @@ impl Writer {
                 }
                 let _ = write!(
                     accessors,
-                    "    ## `[FFI-8]` — the first `n` elements of the flexible array member `{field}`, which follow the struct.\n    @safety(\"the allocation holding this struct holds at least `n` elements of `{field}` after it\")\n    {visibility}unsafe fn tail(self, n: usize) -> Span[{element}]:\n        address = ref_to_ptr(ref self) as usize + {offset}\n        return {}_cpp_span(ref self, address as *{element}, n)\n",
+                    "    ## `[FFI-8]` — the first `n` elements of the flexible array member `{field}`, which follow the struct.\n    @safety(\"the allocation holding this struct holds at least `n` elements of `{field}` after it\")\n    {visibility}unsafe fn tail(n: usize) -> Span[{element}]:\n        address = ref_to_ptr(ref this) as usize + {offset}\n        return {}_cpp_span(ref this, address as *{element}, n)\n",
                     ember_branding::SYMBOL_PREFIX
                 );
             }
@@ -3118,16 +3118,16 @@ impl Writer {
                     "## `[FFI-42]` — a `for` loop over a `{spelled}`, through its `begin()` and `end()`: each element a\n\
                      ## `ref` to it. `[FFI-42a]` — the loop borrows the `{spelled}` mutably.\n\
                      pub struct {walker}:\n    range: *mut u8\n    owner: ref mut {owner}\n\n\
-                     \x20   pub fn next(mut self) -> Option[ref {mapped}]:\n\
+                     \x20   pub fn next() -> Option[ref {mapped}]:\n\
                      \x20       item = null[*mut {mapped}]()\n\
                      \x20       unsafe:  # SAFETY(ffi): the range's own thunk, while the iterator holds its container\n\
-                     \x20           item = {ops}_next(self.range)\n\
+                     \x20           item = {ops}_next(this.range)\n\
                      \x20       if item.is_null():\n            return None\n\
                      \x20       unsafe:  # SAFETY(ffi): an element of the container the iterator holds\n\
                      \x20           return Some({prefix}_cpp_ref(item))\n\n\
-                     \x20   fn drop(mut self):\n\
+                     \x20   fn drop():\n\
                      \x20       unsafe:  # SAFETY(ffi): the range's end, once\n\
-                     \x20           {ops}_end(self.range)\n\n\
+                     \x20           {ops}_end(this.range)\n\n\
                      unsafe extern \"C\":\n\
                      \x20   @ffi(link_name=\"{ops}_next\")\n    @safety(\"{THUNK_SAFETY}\")\n    unsafe fn {ops}_next(range: *mut u8) -> *mut {mapped}\n\
                      \x20   @ffi(link_name=\"{ops}_end\")\n    @safety(\"{THUNK_SAFETY}\")\n    unsafe fn {ops}_end(range: *mut u8)\n"
@@ -3138,7 +3138,7 @@ impl Writer {
                 pointee: Some((walker.clone(), false)),
                 char_pointer: false,
                 c: ADDRESS.to_string(),
-                mode: format!("bridge {walker}(range = @ as *mut u8, owner = ref mut self)"),
+                mode: format!("bridge {walker}(range = @ as *mut u8, owner = ref mut this)"),
                 opaque: false,
                 function: None,
             };
@@ -3273,7 +3273,7 @@ impl Writer {
                         Kind::Class,
                         format!(
                             "## `[FFI-17a]` (ODR-199) — `{spelled}` as an Ember callable: its call is the thunk's, its capture the `std::function`, deleted with it.\n\
-                             fn {ops}_callable(owned holder: CppFunction) -> {callable}:\n    return owned fn({}){returned} => {ops}_invoke(holder{})\n\n\
+                             fn {ops}_callable(owns holder: CppFunction) -> {callable}:\n    return owned fn({}){returned} => {ops}_invoke(holder{})\n\n\
                              fn {ops}_invoke(holder: ref CppFunction{}){returned}:\n    unsafe:  # SAFETY(ffi): the holder owns a live `{spelled}` of this signature\n        {}{ops}_call(holder.as_ptr(){})\n",
                             params.join(", "),
                             comma(&forwarded),
@@ -3629,12 +3629,12 @@ impl Writer {
                 let construct = format!("{prefix}_raw_{class}_make_{j}");
                 let mut raw_params = vec!["object: *mut u8".to_string(), "deleted: extern \"C\" fn(*mut u8)".to_string()];
                 raw_params.extend(fn_types.iter().enumerate().map(|(k, ty)| format!("v{k}: Option[{ty}]")));
-                raw_params.extend(params.iter().map(|(param, ty, _, _)| if wrapped(ty) { format!("{param}: {}", ty.ember) } else { format!("{}{param}: {}", ty.mode, ty.ember) }));
+                raw_params.extend(params.iter().map(|(param, ty, _, _)| if wrapped(ty) { format!("{param}: {}", ty.ember) } else { format!("{}{param}: {}", written_mode(&ty.mode), ty.ember) }));
                 let _ = writeln!(raw, "    @ffi(link_name=\"{thunk}\")\n    @safety(\"{THUNK_SAFETY}\")\n    unsafe fn {construct}({}) -> *mut {opaque}", raw_params.join(", "));
                 let init = if j == init_at { "init".to_string() } else { format!("{prefix}_cpp_init_{j}") };
                 let wrapper_params: Vec<String> = params.iter().map(|(param, ty, _, _)| wrapper_param(param, ty)).collect();
                 let arguments: String = params.iter().map(|(param, ty, _, _)| format!(", {}", wrapper_argument(param, ty))).collect();
-                let receiver = if wrapper_params.is_empty() { "mut self".to_string() } else { format!("mut self, {}", wrapper_params.join(", ")) };
+                let receiver = wrapper_params.join(", ");
                 // ODR-221 — the entries of the virtuals the object's own class overrides, exactly: a
                 // pure virtual every class implements.
                 let given: String = entries
@@ -3643,12 +3643,12 @@ impl Writer {
                     .map(|(entry, slot)| if slot.pure {
                         format!(", Some({entry})")
                     } else {
-                        format!(", Some({entry}) if {prefix}_cpp_overrides[{class}](self, \"{}\") else None", ident(&slot.name))
+                        format!(", Some({entry}) if {prefix}_cpp_overrides[{class}](this, \"{}\") else None", ident(&slot.name))
                     })
                     .collect();
                 let _ = write!(
                     body,
-                    "\n    pub fn {init}({receiver}):\n        unsafe:  # SAFETY: the C++ constructor takes this function's own arguments, and the object's address, which the trampoline keeps without a count\n            self.{prefix}_cpp_base = {prefix}_cpp_base_{class}(object = {construct}({prefix}_cpp_address(self), {deleted}{given}{arguments}))\n"
+                    "\n    pub fn {init}({receiver}):\n        unsafe:  # SAFETY: the C++ constructor takes this function's own arguments, and the object's address, which the trampoline keeps without a count\n            this.{prefix}_cpp_base = {prefix}_cpp_base_{class}(object = {construct}({prefix}_cpp_address(this), {deleted}{given}{arguments}))\n"
                 );
             }
             // The named virtuals: Ember's virtual methods, and the entries the trampoline calls.
@@ -3657,7 +3657,7 @@ impl Writer {
                 let wrapper_params: Vec<String> = slot.params.iter().map(|param| wrapper_param(&param.name, &param.ty)).collect();
                 let names: Vec<String> = slot.params.iter().map(|param| param.name.clone()).collect();
                 let result = slot.result.as_ref().map(|ty| format!(" -> {}", ty.ember)).unwrap_or_default();
-                let receiver = if wrapper_params.is_empty() { "self".to_string() } else { format!("self, {}", wrapper_params.join(", ")) };
+                let receiver = wrapper_params.join(", ");
                 let name = ident(&slot.name);
                 if slot.pure {
                     // A pure virtual: each Ember class deriving from the class implements it.
@@ -3666,7 +3666,7 @@ impl Writer {
                     let helper = format!("{prefix}_cpp_base_{}", slot.name);
                     let _ = write!(
                         body,
-                        "\n    pub virtual fn {name}({receiver}){result}:\n        unsafe:  # SAFETY: the C++ class's own implementation; the overlay's trampoline entry asserts its virtuals\n            {}self.{helper}({})\n",
+                        "\n    pub virtual fn {name}({receiver}){result}:\n        unsafe:  # SAFETY: the C++ class's own implementation; the overlay's trampoline entry asserts its virtuals\n            {}this.{helper}({})\n",
                         if slot.result.is_some() { "return " } else { "" },
                         names.join(", ")
                     );
@@ -3742,7 +3742,7 @@ impl Writer {
             let mut item = String::new();
             let _ = write!(
                 item,
-                "## `[FFI-39]`, `[FFI-17c]` — the C++ object a `{class}` owns, deleted when its Ember fields have been dropped.\nstruct {prefix}_cpp_base_{class}:\n    object: *mut {opaque}\n\n    fn drop(mut self):\n        if not self.object.is_null():\n            unsafe:  # SAFETY: the C++ object this Ember object made, deleted once\n                {destroy}(self.object)\n\n"
+                "## `[FFI-39]`, `[FFI-17c]` — the C++ object a `{class}` owns, deleted when its Ember fields have been dropped.\nstruct {prefix}_cpp_base_{class}:\n    object: *mut {opaque}\n\n    fn drop():\n        if not this.object.is_null():\n            unsafe:  # SAFETY: the C++ object this Ember object made, deleted once\n                {destroy}(this.object)\n\n"
             );
             // A class with a pure virtual is abstract (`[CLS-4]`): what derives from it implements it.
             let openness = if slots.iter().any(|slot| slot.pure) { "abstract" } else { "open" };
@@ -4615,7 +4615,7 @@ impl Writer {
                 CXEval_StrLiteral => {
                     let bytes = CStr::from_ptr(clang_EvalResult_getAsStr(result)).to_bytes();
                     match std::str::from_utf8(bytes) {
-                        Ok(string) => Ok(("cstr".to_string(), format!("c\"{}\"", escape(string)))),
+                        Ok(string) => Ok(("CStrView".to_string(), format!("c\"{}\"", escape(string)))),
                         Err(_) => Err("a string that is not UTF-8".to_string()),
                     }
                 }
@@ -5261,8 +5261,8 @@ fn bit_field_members(name: &str, plain: &[Plain], bits: &[BitField], size: u64, 
         let mask: u64 = if field.width >= 64 { u64::MAX } else { (1 << field.width) - 1 };
         let read: Vec<String> = (first..=last)
             .map(|byte| match byte - first {
-                0 => format!("(self._bits{run}[{}] as u64)", byte - start),
-                j => format!("((self._bits{run}[{}] as u64) << {})", byte - start, 8 * j),
+                0 => format!("(this._bits{run}[{}] as u64)", byte - start),
+                j => format!("((this._bits{run}[{}] as u64) << {})", byte - start, 8 * j),
             })
             .collect();
         let (f, ty, width) = (&field.name, &field.ty, field.width);
@@ -5281,7 +5281,7 @@ fn bit_field_members(name: &str, plain: &[Plain], bits: &[BitField], size: u64, 
         };
         let _ = write!(
             methods,
-            "    ## The {width}-bit field `{f}`.\n    {visibility}fn get_{f}(self) -> {ty}:\n        bits: u64 = {}\n        value = (bits >> {shift}) & {mask:#x}\n        return {value}\n\n",
+            "    ## The {width}-bit field `{f}`.\n    {visibility}fn get_{f}() -> {ty}:\n        bits: u64 = {}\n        value = (bits >> {shift}) & {mask:#x}\n        return {value}\n\n",
             read.join(" | ")
         );
         let input = if field.boolean {
@@ -5291,14 +5291,14 @@ fn bit_field_members(name: &str, plain: &[Plain], bits: &[BitField], size: u64, 
         } else {
             "bits: u64 = value as u64".to_string()
         };
-        let _ = write!(methods, "    ## Writes the {width}-bit field `{f}`: its low {width} bits.\n    {visibility}fn set_{f}(mut self, value: {ty}):\n        {input}\n        bits = (bits & {mask:#x}) << {shift}\n");
+        let _ = write!(methods, "    ## Writes the {width}-bit field `{f}`: its low {width} bits.\n    {visibility}fn set_{f}(value: {ty}):\n        {input}\n        bits = (bits & {mask:#x}) << {shift}\n");
         for byte in first..=last {
             let j = byte - first;
             let part = ((mask << shift) >> (8 * j)) & 0xff;
             let keep = !part & 0xff;
             let _ = writeln!(
                 methods,
-                "        self._bits{run}[{0}] = (((self._bits{run}[{0}] as u64) & {keep:#x}) | ((bits >> {1}) & {part:#x})) as u8",
+                "        this._bits{run}[{0}] = (((this._bits{run}[{0}] as u64) & {keep:#x}) | ((bits >> {1}) & {part:#x})) as u8",
                 byte - start,
                 8 * j
             );
@@ -6589,7 +6589,25 @@ fn entry_named<'a>(applied: &'a Applied, name: &str) -> Option<&'a Entry> {
 
 /// The word of a contract word as written: `count` of `count(n)`.
 fn word(written: &str) -> &str {
-    written.split('(').next().unwrap_or(written).trim()
+    let word = written.split('(').next().unwrap_or(written).trim();
+    // `owns` (verdict 102) is 0.9.10's `owned`, its one meaning.
+    if word == "owns" { "owned" } else { word }
+}
+
+/// An overlay entry's contract word as the importer reads it: `from(this)`, the object a result
+/// points into, is its `from(self)`.
+fn entry_word(written: String) -> String {
+    if written.replace(' ', "") == "from(this)" { "from(self)".to_string() } else { written }
+}
+
+/// The word a parameter mode the importer works with is written as in the Ember it writes: `owns`
+/// and `ref mut` (`[FN-1]`); the others are what they say.
+fn written_mode(mode: &str) -> &str {
+    match mode {
+        "owned " => "owns ",
+        "mut " => "ref mut ",
+        other => other,
+    }
 }
 
 /// `[FFI-30c]` (ODR-149) — take the entry of `category` for `name` for the overlay at `layer`: a later
@@ -6663,7 +6681,7 @@ fn c_spelling(ty: &ast::TypeExpr, imported: &Imported, behind_pointer: bool) -> 
                 "f32" => "float",
                 "f64" => "double",
                 "bool" => "_Bool",
-                "cstr" => "char const *",
+                "CStrView" | "cstr" => "char const *",
                 _ => {
                     let opaque = imported.items.iter().any(|item| ident(&item.name) == name && item.kind == Kind::Opaque);
                     if opaque && !behind_pointer {
@@ -6811,7 +6829,7 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                 if function.result.as_ref().is_some_and(|ty| ty.mode.starts_with("view") || ty.mode.starts_with("fixed ")) && !lifetime {
                     sink.emit(
                         Diagnostic::error(codes::E5002, name.span, format!("`{}` returns a view (a `std::string_view` or a `std::span`), whose lifetime only its entry states", name.name))
-                            .help(format!("write what the view borrows: `fn {}(…) -> from(self)`, `from(<parameter>)` or `from(static)`", name.name))
+                            .help(format!("write what the view borrows: `fn {}(…) -> from(this)`, `from(<parameter>)` or `from(static)`", name.name))
                             .note("a result's lifetime is never derived from a header [FFI-11], [FFI-17a]"),
                     );
                     continue;
@@ -6827,14 +6845,14 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                 }
                 // `[GRM-35]` (verdict 130) — an `unsafe fn` entry leaves its calls unsafe: the word the
                 // declaration writer reads for that.
-                let mut result: Vec<String> = result.iter().map(|word| snippet(word.span)).collect();
+                let mut result: Vec<String> = result.iter().map(|word| entry_word(snippet(word.span))).collect();
                 if *is_unsafe {
                     result.push("unsafe".to_string());
                 }
                 applied.functions.insert(
                     key,
                     Entry {
-                        params: params.iter().map(|param| param.contract.iter().map(|word| snippet(word.span)).collect()).collect(),
+                        params: params.iter().map(|param| param.contract.iter().map(|word| entry_word(snippet(word.span))).collect()).collect(),
                         result,
                         arguments,
                         std_function,
@@ -6869,7 +6887,7 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                     if spelled.is_none() {
                         sink.emit(
                             Diagnostic::error(codes::E5015, ty.span, format!("`{}` has no C type for the wrapper of macro `{}`", snippet(ty.span), name.name))
-                                .note("a macro's wrapper takes and returns scalars, `cstr`, the header's types and raw pointers [FFI-6b]"),
+                                .note("a macro's wrapper takes and returns scalars, `CStrView`, the header's types and raw pointers [FFI-6b]"),
                         );
                         matched = false;
                     }
@@ -7067,12 +7085,12 @@ fn safe_parameter(name: &str, ty: &CType, words: &[String]) -> String {
     }
     let Some((inner, constant)) = &ty.pointee else { return raw };
     if has("out") || has("inout_count") {
-        return format!("mut {name}: {inner}");
+        return format!("ref mut {name}: {inner}");
     }
     let nullable = has("nullable");
     let optional = |base: String| if nullable { format!("Option[{base}]") } else { base };
     if has("owned") {
-        return format!("owned {name}: {}", optional(format!("ForeignBox[{inner}]")));
+        return format!("owns {name}: {}", optional(format!("ForeignBox[{inner}]")));
     }
     if !has("borrowed") {
         return raw;
@@ -7080,7 +7098,7 @@ fn safe_parameter(name: &str, ty: &CType, words: &[String]) -> String {
     let mutable = !constant && !has("aliased");
     let fixed = words.iter().find_map(|written| written.strip_prefix("fixed(").and_then(|rest| rest.strip_suffix(')')));
     let base = if has("nul_terminated") && ty.char_pointer {
-        "cstr".to_string()
+        "CStrView".to_string()
     } else if has("count") {
         format!("{}[{inner}]", if mutable { "MutSpan" } else { "Span" })
     } else if let Some(length) = fixed {
@@ -7089,7 +7107,7 @@ fn safe_parameter(name: &str, ty: &CType, words: &[String]) -> String {
         // `[TYP-22]` — an incomplete type takes no parameter mode: its exclusive borrow is a
         // `ref mut`.
         if mutable && !nullable && !ty.opaque {
-            return format!("mut {name}: {inner}");
+            return format!("ref mut {name}: {inner}");
         }
         format!("ref {}{inner}", if mutable { "mut " } else { "" })
     } else {
@@ -7157,7 +7175,7 @@ fn safe_result(ty: &CType, words: &[String]) -> String {
     } else if !has("borrowed") {
         return ty.ember.clone();
     } else if has("nul_terminated") && ty.char_pointer {
-        "cstr".to_string()
+        "CStrView".to_string()
     } else if has("count") {
         format!("{}[{inner}]", if exclusive { "MutSpan" } else { "Span" })
     } else if let Some(length) = fixed {
@@ -7182,7 +7200,7 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
     let name = ident(renamed.unwrap_or(&function.name));
     let link = function.link_name.clone().or_else(|| renamed.map(|_| function.name.clone()));
     let mut arguments = Vec::new();
-    let mut params: Vec<String> = function.params.iter().map(|(name, ty)| format!("{}{name}: {}", ty.mode, ty.ember)).collect();
+    let mut params: Vec<String> = function.params.iter().map(|(name, ty)| format!("{}{name}: {}", written_mode(&ty.mode), ty.ember)).collect();
     let mut result = function.result.as_ref().map(|ty| ty.ember.clone());
     let mut safe = false;
     // `[FFI-10]` (verdict 133) — an entry that leaves the calls unsafe makes an `unsafe fn`; a header's
@@ -7209,7 +7227,7 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
         }
         arguments.extend(entry.arguments.iter().cloned());
         if safe {
-            params = function.params.iter().zip(&entry.params).map(|((param, ty), words)| safe_parameter(&format!("{}{param}", ty.mode), ty, words)).collect();
+            params = function.params.iter().zip(&entry.params).map(|((param, ty), words)| safe_parameter(&format!("{}{param}", written_mode(&ty.mode)), ty, words)).collect();
             result = function.result.as_ref().map(|ty| safe_result(ty, &entry.result));
         }
     }
@@ -7419,17 +7437,17 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
     if catching {
         let prefix = ember_branding::SYMBOL_PREFIX;
         for part in ["type", "what"] {
-            member("C", format!("    @ffi(link_name=\"{prefix}_cpp_{stem}_error_{part}\", result(borrowed, nul_terminated, from(static)))\n    safe fn {prefix}_cpp_error_{part}() -> cstr\n"));
+            member("C", format!("    @ffi(link_name=\"{prefix}_cpp_{stem}_error_{part}\", result(borrowed, nul_terminated, from(static)))\n    safe fn {prefix}_cpp_error_{part}() -> CStrView\n"));
         }
         let _ = write!(
             wrappers,
-            "fn {prefix}_cpp_text(text: cstr) -> String:\n    match text.to_str():\n        Ok(read):\n            return read.to_string()\n        Err(_):\n            return \"(not UTF-8)\".to_string()\n\n\
+            "fn {prefix}_cpp_text(text: CStrView) -> String:\n    match text.to_str():\n        Ok(read):\n            return read.to_string()\n        Err(_):\n            return \"(not UTF-8)\".to_string()\n\n\
              ## `[FFI-24]` — the exception the last catching thunk caught on this thread.\n\
              fn {prefix}_cpp_error() -> CppError:\n    return CppError(type_name = {prefix}_cpp_text({prefix}_cpp_error_type()), what = {prefix}_cpp_text({prefix}_cpp_error_what()))\n\n\
              ## `[FFI-24]` — a catching call's value, or the exception its thunk caught.\n\
-             fn {prefix}_cpp_result[T](owned value: T, failed: c_int) -> Result[T, CppError]:\n    if failed != 0:\n        return Err({prefix}_cpp_error())\n    return Ok(value)\n\n\
+             [T]\nfn {prefix}_cpp_result(owns value: T, failed: c_int) -> Result[T, CppError]:\n    if failed != 0:\n        return Err({prefix}_cpp_error())\n    return Ok(value)\n\n\
              ## `[FFI-24b]` — a call an overlay asserts `noexcept`: a throw panics, naming the declaration.\n\
-             fn {prefix}_cpp_value[T](owned value: T, failed: c_int, name: str) -> T:\n    if failed != 0:\n        error = {prefix}_cpp_error()\n        panic(f\"`{{name}}` threw `{{error.type_name}}` ({{error.what}}), though its overlay asserts it `noexcept` [FFI-24b]\")\n    return value\n\n"
+             [T]\nfn {prefix}_cpp_value(owns value: T, failed: c_int, name: StrView) -> T:\n    if failed != 0:\n        error = {prefix}_cpp_error()\n        panic(f\"`{{name}}` threw `{{error.type_name}}` ({{error.what}}), though its overlay asserts it `noexcept` [FFI-24b]\")\n    return value\n\n"
         );
     }
     // `[FFI-6b]` — each declared macro, bound to its wrapper in the shim.
@@ -7488,9 +7506,11 @@ fn operator_interface(interface: &str, owner: &str, wrapper: &str) -> Option<(St
     let line = line.strip_prefix("pub ").unwrap_or(line).strip_prefix("fn ")?;
     let (params, output) = line.split_once('(')?.1.rsplit_once(')')?;
     let output = output.trim_end_matches(':').trim().strip_prefix("-> ").unwrap_or("");
+    // The object is not listed (`[FN-4]`): the parameters are the operands. A method that changes
+    // its object is the interface's to say (`IndexMut`, an `…Assign`), and a `static fn` is none.
     let params: Vec<&str> = if params.is_empty() { Vec::new() } else { params.split(", ").collect() };
     // The operand: a plain value parameter (an opaque class's `ref T` is no interface's `Rhs`).
-    let operand = match params.get(1) {
+    let operand = match params.first() {
         Some(param) => match param.split_once(": ") {
             Some((name, ty)) if !name.contains(' ') && !ty.starts_with("ref ") => Some(ty),
             _ => return None,
@@ -7498,16 +7518,16 @@ fn operator_interface(interface: &str, owner: &str, wrapper: &str) -> Option<(St
         None => None,
     };
     let assign = interface.ends_with("Assign");
-    match (interface, params.first().copied(), operand, params.len()) {
-        ("Neg" | "Not", Some("self"), None, 1) if !output.is_empty() => Some((interface.to_string(), format!("type Output = {output}"))),
-        ("Eq", Some("self"), Some(ty), 2) if ty == owner && output == "bool" => Some(("Eq".to_string(), String::new())),
-        ("Index", Some("self"), Some(ty), 2) => {
+    match (interface, operand, params.len()) {
+        ("Neg" | "Not", None, 0) if !output.is_empty() => Some((interface.to_string(), format!("type Output = {output}"))),
+        ("Eq", Some(ty), 1) if ty == owner && output == "bool" => Some(("Eq".to_string(), String::new())),
+        ("Index", Some(ty), 1) => {
             output.strip_prefix("ref ").filter(|inner| !inner.starts_with("mut ")).map(|inner| (format!("Index[{ty}]"), format!("type Output = {inner}")))
         }
-        ("IndexMut", Some("mut self"), Some(ty), 2) => output.strip_prefix("ref mut ").map(|inner| (format!("IndexMut[{ty}]"), format!("type Output = {inner}"))),
+        ("IndexMut", Some(ty), 1) => output.strip_prefix("ref mut ").map(|inner| (format!("IndexMut[{ty}]"), format!("type Output = {inner}"))),
         ("Neg" | "Not" | "Eq" | "Index" | "IndexMut", ..) => None,
-        (_, Some("mut self"), Some(ty), 2) if assign && output.is_empty() => Some((format!("{interface}[{ty}]"), String::new())),
-        (_, Some("self"), Some(ty), 2) if !assign && !output.is_empty() => Some((format!("{interface}[{ty}]"), format!("type Output = {output}"))),
+        (_, Some(ty), 1) if assign && output.is_empty() => Some((format!("{interface}[{ty}]"), String::new())),
+        (_, Some(ty), 1) if !assign && !output.is_empty() => Some((format!("{interface}[{ty}]"), format!("type Output = {output}"))),
         _ => None,
     }
 }
@@ -7522,16 +7542,18 @@ fn wrapped(ty: &CType) -> bool {
 /// `[FFI-40]`, `[FFI-39]` — a wrapper's parameter as Ember code writes it.
 fn wrapper_param(param: &str, ty: &CType) -> String {
     match &ty.pointee {
-        Some((inner, _)) if ty.mode == "owned " => format!("owned {param}: ForeignBox[{inner}]"),
+        Some((inner, _)) if ty.mode == "owned " => format!("owns {param}: ForeignBox[{inner}]"),
         Some((inner, _)) if ty.mode == "tramp " => format!("{param}: {inner}"),
         // `[FFI-17a]` — a bridge value, as the C++ parameter takes it.
         Some((inner, _)) if ty.mode == "bridged " => format!("{param}: {inner}"),
-        Some((inner, _)) if ty.mode == "bridged mut " => format!("mut {param}: {inner}"),
-        Some((inner, _)) if ty.mode == "bridged owned " => format!("owned {param}: {inner}"),
+        Some((inner, _)) if ty.mode == "bridged mut " => format!("ref mut {param}: {inner}"),
+        Some((inner, _)) if ty.mode == "bridged owned " => format!("owns {param}: {inner}"),
         // `[FFI-39c]` (ODR-156) — a `retained` one: the token the program pinned and keeps.
         Some((inner, _)) if ty.mode == "token " => format!("{param}: Retained[{inner}]"),
+        // `[GRM-41]` — the mode on the name: `ref mut other: Bag`.
+        Some((inner, _)) if ty.mode == "ref mut " => format!("ref mut {param}: {inner}"),
         Some((inner, _)) if wrapped(ty) => format!("{param}: {}{inner}", ty.mode),
-        _ => format!("{}{param}: {}", ty.mode, ty.ember),
+        _ => format!("{}{param}: {}", written_mode(&ty.mode), ty.ember),
     }
 }
 
@@ -7602,11 +7624,11 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     let mut call_unsafe = !contracted;
     // The receiver: the object `self` is, or the C++ object a trampoline class's object owns.
     let receiver = match (member, trampoline) {
-        (Some(Member::Method), None) => Some((owner, false, "ref self".to_string(), format!("(ref self) as *{owner}"))),
-        (Some(Member::MutMethod), None) => Some((owner, true, "ref mut self".to_string(), format!("(ref mut self) as *mut {owner}"))),
+        (Some(Member::Method), None) => Some((owner, false, "ref this".to_string(), format!("(ref this) as *{owner}"))),
+        (Some(Member::MutMethod), None) => Some((owner, true, "ref mut this".to_string(), format!("(ref mut this) as *mut {owner}"))),
         (Some(Member::Destructor), _) => Some((owner, true, String::new(), String::new())),
-        (Some(Member::Method), Some(opaque)) => Some((opaque, false, deref(format!("self.{prefix}_cpp_base.object"), true), format!("self.{prefix}_cpp_base.object as *{opaque}"))),
-        (Some(Member::MutMethod), Some(opaque)) => Some((opaque, true, deref(format!("self.{prefix}_cpp_base.object"), false), format!("self.{prefix}_cpp_base.object"))),
+        (Some(Member::Method), Some(opaque)) => Some((opaque, false, deref(format!("this.{prefix}_cpp_base.object"), true), format!("this.{prefix}_cpp_base.object as *{opaque}"))),
+        (Some(Member::MutMethod), Some(opaque)) => Some((opaque, true, deref(format!("this.{prefix}_cpp_base.object"), false), format!("this.{prefix}_cpp_base.object"))),
         _ => None,
     };
     if let Some((object, mutable, reference, address)) = receiver {
@@ -7651,9 +7673,9 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
             // A pointer the entry's words contract, a scalar, a value, and a C++ reference to a
             // type by value (`[FFI-40]`: `mut p: T`, `owned p: T`).
             let (text, contract_words) = if contracted {
-                (safe_parameter(&format!("{}{param}", ty.mode), &ty, &words[index]), words[index].clone())
+                (safe_parameter(&format!("{}{param}", written_mode(&ty.mode)), &ty, &words[index]), words[index].clone())
             } else {
-                (format!("{}{param}: {}", ty.mode, ty.ember), Vec::new())
+                (format!("{}{param}: {}", written_mode(&ty.mode), ty.ember), Vec::new())
             };
             if has(&contract_words, "out") {
                 outs.push(inner.clone());
@@ -7676,7 +7698,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
                     // ODR-253 — a `nullable` one is an `Option` of a callable value, taken over
                     // where C keeps it.
                     Some(if has(&contract_words, "nullable") {
-                        format!("{}{param}: Option[{callable}]", if kept { "owned " } else { "" })
+                        format!("{}{param}: Option[{callable}]", if kept { "owns " } else { "" })
                     } else {
                         format!("{param}: {callable}")
                     })
@@ -7691,8 +7713,12 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
             "view " => format!("{param}: Span[{inner}]"),
             "view mut " => format!("{param}: MutSpan[{inner}]"),
             "optional " => format!("{param}: Option[{inner}]"),
-            "unique " => format!("owned {param}: ForeignBox[{inner}]"),
-            fixed if fixed.starts_with("fixed ") => format!("{param}: ref {}", fixed_array(fixed, &inner).1),
+            "unique " => format!("owns {param}: ForeignBox[{inner}]"),
+            // `[GRM-41]` — a mutable one's mode on the name: `ref mut values: [c_int; 2]`.
+            fixed if fixed.starts_with("fixed ") => match fixed_array(fixed, &inner).1.strip_prefix("mut ") {
+                Some(array) => format!("ref mut {param}: {array}"),
+                None => format!("{param}: ref {}", fixed_array(fixed, &inner).1),
+            },
             // ODR-198 — a variant: its enum.
             variant if variant.starts_with("variant ") => format!("{param}: {}", variant.trim().rsplit(' ').next().unwrap_or_default()),
             _ => wrapper_param(param, &ty),
@@ -7760,7 +7786,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
                 (format!("{param}: {pointer}"), Vec::new(), format!("ref_to_ptr({}{param}) as {pointer}", if mutable { "ref mut " } else { "ref " }))
             }
             // `[FFI-17a]` — a `std::unique_ptr<T>` parameter: the box is given up (`owned`).
-            ("unique ", true) => (format!("owned {param}: ForeignBox[{inner}]"), vec!["owned".to_string(), "one".to_string()], param.clone()),
+            ("unique ", true) => (format!("owns {param}: ForeignBox[{inner}]"), vec!["owns".to_string(), "one".to_string()], param.clone()),
             ("unique ", false) => (format!("{param}: {}", ty.ember), Vec::new(), format!("{param}.into_raw()")),
             (_, _) => (format!("{param}: {}", ty.ember), Vec::new(), wrapper_argument(param, &ty)),
         };
@@ -7785,7 +7811,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     if let Some((what, ty)) = &written {
         let name = format!("{prefix}_{what}");
         if contracted {
-            slots.push((name.clone(), format!("mut {name}: {ty}"), vec!["out".to_string(), "one".to_string()], None));
+            slots.push((name.clone(), format!("ref mut {name}: {ty}"), vec!["out".to_string(), "one".to_string()], None));
         } else if what == "size" {
             locals.push(format!("{name}: usize = 0"));
             slots.push((name.clone(), format!("{name}: *mut usize"), Vec::new(), Some(format!("(ref mut {name}) as *mut usize"))));
@@ -7798,7 +7824,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         let failed = format!("{prefix}_failed");
         locals.push(format!("{failed}: c_int = 0"));
         if contracted {
-            slots.push((failed.clone(), format!("mut {failed}: c_int"), one(true), Some(failed.clone())));
+            slots.push((failed.clone(), format!("ref mut {failed}: c_int"), one(true), Some(failed.clone())));
         } else {
             slots.push((failed.clone(), format!("{failed}: *mut c_int"), Vec::new(), Some(format!("(ref mut {failed}) as *mut c_int"))));
         }
@@ -7914,7 +7940,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
                 let span_of = format!("{prefix}_cpp_span{}", if mutable { "_mut" } else { "" });
                 let made = match lifetime.as_deref() {
                     Some("static") | None => format!("{span_of}({data}, {size})"),
-                    Some("self") => format!("{span_of}(ref {}self, {data}, {size})", if mutable { "mut " } else { "" }),
+                    Some("self") => format!("{span_of}(ref {}this, {data}, {size})", if mutable { "mut " } else { "" }),
                     Some(source) => format!("{span_of}({source}, {data}, {size})"),
                 };
                 (Some(made), Some(format!("{span}[{pointee}]")), true)
@@ -7998,8 +8024,15 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         let safety = entry.and_then(|entry| entry.safety.as_deref()).unwrap_or(UNCONTRACTED);
         let _ = writeln!(text, "@safety(\"{}\")", escaped(safety));
     }
-    if let Some(from) = &borrows {
-        let _ = writeln!(text, "@borrows({from})");
+    // `[LT-1a]` — what the result points into: one name is `from` after the result type; a method's
+    // object, or several sources, go unsaid: the result points into every one it may come from
+    // (`[LT-1]`, `[LT-22]`).
+    let mut returned = returned;
+    if let Some(from) = &borrows
+        && let [one] = from.split(", ").collect::<Vec<_>>().as_slice()
+        && *one != "self"
+    {
+        returned.push_str(&format!(" from {one}"));
     }
     let public = if hidden { "" } else { "pub " };
     // `[FFI-11f]` — a lifetime the header's `[[clang::lifetimebound]]` states is asserted where the
@@ -8012,7 +8045,12 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         ),
         (false, None) => "  # SAFETY: the caller keeps what the header does not state".to_string(),
     };
-    let _ = writeln!(text, "{public}{}fn {name}({}){returned}:{note}", if safe { "" } else { "unsafe " }, params.join(", "));
+    // A member with no object is a `static fn` of its class's Ember type (`[FN-4]`).
+    let static_word = if matches!(member, Some(Member::Static | Member::Constructor | Member::BoxedConstructor)) { "static " } else { "" };
+    // A method's object, listed for the operators' shapes (`operator_interface`), is not written: it
+    // is `this` (`[FN-4]`).
+    let written: Vec<&str> = params.iter().map(String::as_str).filter(|param| !matches!(*param, "self" | "mut self")).collect();
+    let _ = writeln!(text, "{public}{}{static_word}fn {name}({}){returned}:{note}", if safe { "" } else { "unsafe " }, written.join(", "));
     for local in locals.iter().chain(&given).chain(&prelude) {
         let _ = writeln!(text, "    {local}");
     }

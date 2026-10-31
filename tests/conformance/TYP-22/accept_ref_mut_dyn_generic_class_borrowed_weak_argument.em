@@ -13,24 +13,25 @@
 # reused by the generic class implementation while the receiver's write
 # interval remains scoped to the dynamic call.
 interface Observe:
-    fn observe(mut self, weak: Weak[Shared[Token]]) -> i32
+    fn observe(weak: Weak[Shared[Token]]) -> i32
 
 struct Token:
     value: i32
 
-class Reader[T] implements Observe:
+[T]
+class Reader implements Observe:
     marker: T
     count: i32
 
-    fn observe(mut self, weak: Weak[Shared[Token]]) -> i32:
-        self.count = self.count + 1
+    fn observe(weak: Weak[Shared[Token]]) -> i32:
+        this.count = this.count + 1
         match weak.upgrade():
             Some(owner):
                 return owner.get().value
             None:
                 return 0
 
-fn inspect(value: ref mut dyn Observe, weak: Weak[Shared[Token]]) -> i32:
+fn inspect(ref mut value: dyn Observe, weak: Weak[Shared[Token]]) -> i32:
     return value.observe(weak)
 
 # `program` holds the test, so its values die before `main`'s last

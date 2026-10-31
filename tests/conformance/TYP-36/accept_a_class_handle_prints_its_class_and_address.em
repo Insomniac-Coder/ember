@@ -13,21 +13,21 @@
 open class Animal:
     legs: int
 
-    fn init(mut self):
-        self.legs = 4
+    fn init():
+        this.legs = 4
 
 class Dog(Animal):
-    fn init(mut self):
+    fn init():
         super.init()
 
 interface Named:
-    fn label(self) -> int
+    fn label() -> int
 
 class Token implements Named:
     id: int
 
-    fn label(self) -> int:
-        return self.id
+    fn label() -> int:
+        return this.id
 
 fn main():
     token = Token(id=1)

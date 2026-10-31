@@ -3,19 +3,21 @@
 #$ profiles: debug, development, release
 #$ error[E2110]: override of a method that is not virtual
 
-open class Base[T]:
-    fn tick(self):
+[T]
+open class Base:
+    fn tick():
         pass
 
-    fn init(mut self):
+    fn init():
         pass
 
-class Child[T](Base[T]):
-    fn init(mut self):
+[T]
+class Child(Base[T]):
+    fn init():
         super.init()
 
 extend[T] Child[T]:
-    override fn tick(self):
+    override fn tick():
         pass
 
 fn main():

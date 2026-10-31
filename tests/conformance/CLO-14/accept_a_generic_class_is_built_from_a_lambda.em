@@ -11,11 +11,12 @@
 # only `static` views), even a local holding a string literal: the capture is
 # a reference to the local.
 
-class Holder[F: fn(int)]:
+[F: needs fn(int)]
+class Holder:
     f: F
 
-    fn init(mut self, owned f: F):
-        self.f = f
+    fn init(owns f: F):
+        this.f = f
 
 fn main():
     total = "abcdefghij".to_string()

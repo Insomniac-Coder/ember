@@ -12,7 +12,7 @@ from std.collections import Map
 
 fn main():
     println(math.sqrt(16.0), math.PI > 3.14)
-    counts: Map[str, int] = {}
+    counts: Map[StrView, int] = {}
     counts["a"] = 1
     println(counts)
 ```

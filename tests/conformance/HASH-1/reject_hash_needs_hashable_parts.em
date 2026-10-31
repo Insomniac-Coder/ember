@@ -14,7 +14,8 @@ struct Sample:
 struct Plain:
     x: int
 
-fn hash_of[K: Hash](k: K) -> u64:
+[K: needs Hash]
+fn hash_of(k: K) -> u64:
     h = DefaultHasher.new()
     k.hash(h)
     return h.finish()

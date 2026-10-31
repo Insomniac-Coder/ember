@@ -13,10 +13,10 @@ class Token:
     value: i32
 
 interface Consume:
-    fn consume(self, owned token: Token) -> i32
+    fn consume(owns token: Token) -> i32
 
 class Worker implements Consume:
-    fn consume(self, owned token: Token) -> i32:
+    fn consume(owns token: Token) -> i32:
         return token.value
 
 fn main():

@@ -19,7 +19,7 @@ fn main():
     whole = (0 as u64 ..= u64.MAX).iter()
     println(whole.nth_back(u64.MAX as u128), whole.next())
     xs: Array[int] = [10, 20, 30, 40]
-    stored = xs.iter().copied()
+    stored = xs.iter().copy_each()
     println(stored.nth_back(1), stored.nth_back(0))
     small = (1 as u8 ..= 3 as u8).iter()
     println(small.nth_back(2), small.next())

@@ -3,10 +3,12 @@
 ## `[TYP-41]` rule 1 — a const argument is evaluated as its parameter's type
 ## evaluates; one that does not fit overflows, `E6004`, where it is written.
 
-fn small[const N: u8]() -> int:
+[const N: u8]
+fn small() -> int:
     return 1
 
-struct Tiny[const N: u8]:
+[const N: u8]
+struct Tiny:
     x: int
 
 fn main():

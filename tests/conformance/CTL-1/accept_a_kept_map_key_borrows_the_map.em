@@ -23,15 +23,14 @@ struct WordIter:
 extend WordIter implements Iterator:
     type Item = ref String
 
-    @borrows(self.owner)
-    fn next(mut self) -> Option[ref String]:
-        if self.at >= self.owner.len():
+    fn next() -> Option[ref String] from owner:
+        if this.at >= this.owner.len():
             return None
-        i = self.at
-        self.at += 1
-        return Some(ref self.owner[i])
+        i = this.at
+        this.at += 1
+        return Some(ref this.owner[i])
 
-fn longest_key(m: ref Map[String, int]) -> str:
+fn longest_key(m: ref Map[String, int]) -> StrView:
     best = ""
     for k in m.keys():
         if k.len() > best.len():

@@ -67,7 +67,7 @@ pub fn check_static_safe_all(bodies: &[Body], sink: &mut Sink) -> usize {
                 Diagnostic::error(
                     codes::E4030,
                     span,
-                    format!("`@static_safe` function `{}` keeps {what} here", body.name),
+                    format!("`@no_alias_checks` function `{}` keeps {what} here", body.name),
                 )
                 .primary_label("checked at run time")
                 .note(format!("the check's reason is {reason} [EFF-11]"))

@@ -8,7 +8,8 @@ struct Meters:
 struct Feet:
     pass
 
-struct Length[Unit]:
+[Unit]
+struct Length:
     value: int
 
 fn take(a: Length[Meters]) -> int:

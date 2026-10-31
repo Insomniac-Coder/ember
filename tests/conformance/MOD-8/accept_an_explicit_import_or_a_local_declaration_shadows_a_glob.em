@@ -9,7 +9,7 @@ from support.shapes import *
 from support.words import *
 from support.words import describe
 
-fn shout(s: str) -> str:
+fn shout(s: StrView) -> StrView:
     return "loud"
 
 fn main():

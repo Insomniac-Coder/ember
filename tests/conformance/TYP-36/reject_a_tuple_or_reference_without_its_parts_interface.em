@@ -9,7 +9,8 @@ import std.collections
 struct Point:
     x: int
 
-fn digest[T: Hash](a: T) -> u64:
+[T: needs Hash]
+fn digest(a: T) -> u64:
     h = collections.DefaultHasher.new()
     a.hash(h)
     return h.finish()

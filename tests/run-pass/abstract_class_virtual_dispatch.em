@@ -9,23 +9,23 @@
 # object's table ([DSP-2]); with one, it would be a direct call ([DSP-5]).
 
 abstract class Shape:
-    virtual fn area(self) -> i32
+    virtual fn area() -> i32
 
-    fn init(mut self):
+    fn init():
         pass
 
 class Square(Shape):
-    fn init(mut self):
+    fn init():
         super.init()
 
-    override fn area(self) -> i32:
+    override fn area() -> i32:
         return 42
 
 class Circle(Shape):
-    fn init(mut self):
+    fn init():
         super.init()
 
-    override fn area(self) -> i32:
+    override fn area() -> i32:
         return 7
 
 fn main():

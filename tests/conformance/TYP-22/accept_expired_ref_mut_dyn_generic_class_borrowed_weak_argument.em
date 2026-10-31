@@ -13,17 +13,18 @@
 # remains a valid observer after expiry. The mutable generic class closes its
 # write interval while upgrade() takes None without copying at dispatch.
 interface Observe:
-    fn observe(mut self, weak: Weak[Shared[Token]]) -> i32
+    fn observe(weak: Weak[Shared[Token]]) -> i32
 
 struct Token:
     value: i32
 
-class Reader[T] implements Observe:
+[T]
+class Reader implements Observe:
     marker: T
     count: i32
 
-    fn observe(mut self, weak: Weak[Shared[Token]]) -> i32:
-        self.count = self.count + 1
+    fn observe(weak: Weak[Shared[Token]]) -> i32:
+        this.count = this.count + 1
         match weak.upgrade():
             Some(owner):
                 return owner.get().value
@@ -34,7 +35,7 @@ fn expired() -> Weak[Shared[Token]]:
     strong = Shared(Token(7))
     return Weak(strong)
 
-fn inspect(value: ref mut dyn Observe, weak: Weak[Shared[Token]]) -> i32:
+fn inspect(ref mut value: dyn Observe, weak: Weak[Shared[Token]]) -> i32:
     return value.observe(weak)
 
 # `program` holds the test, so its values die before `main`'s last

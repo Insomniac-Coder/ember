@@ -5,7 +5,8 @@
 
 import cpp "templates.hpp"
 
-fn widest[T](a: T, b: T) -> T:
+[T]
+fn widest(a: T, b: T) -> T:
     unsafe:  # SAFETY(ffi): never compiled
         return cpp.biggest(a, b)    #$ error[E5055]: a C++ template
 

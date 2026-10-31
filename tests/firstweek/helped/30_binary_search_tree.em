@@ -6,25 +6,25 @@ class TreeNode:
     left: Option[TreeNode] = None
     right: Option[TreeNode] = None
 
-    fn init(self, owned key: String):
-        self.key = key
+    fn init(owns key: String):
+        this.key = key
 
-fn insert_into(node: TreeNode, key: str) -> bool:
+fn insert_into(node: TreeNode, key: StrView) -> bool:
     if key == node.key:
         node.count += 1
         return false
     if key < node.key:
-        if Some(left) = node.left:
+        if node.left exists as left:
             return insert_into(left, key)
         node.left = Some(TreeNode(key.to_string()))
         return true
-    if Some(right) = node.right:
+    if node.right exists as right:
         return insert_into(right, key)
     node.right = Some(TreeNode(key.to_string()))
     return true
 
-fn in_order(node: Option[TreeNode], mut out: Array[String]):
-    if Some(n) = node:
+fn in_order(node: Option[TreeNode], ref mut out: Array[String]):
+    if node exists as n:
         in_order(n.left, out)
         out.push(n.key.clone())
         in_order(n.right, out)
@@ -38,26 +38,26 @@ class Tree:
     root: Option[TreeNode] = None
     size: int = 0
 
-    fn insert(self, key: str):
-        match self.root:
+    fn insert(key: StrView):
+        match this.root:
             Some(r):
                 if insert_into(r, key):
-                    self.size += 1
+                    this.size += 1
             None:
-                self.root = Some(TreeNode(key.to_string()))
-                self.size = 1
+                this.root = Some(TreeNode(key.to_string()))
+                this.size = 1
 
-    fn find(self, key: str) -> Option[TreeNode]:
-        current = self.root
-        while Some(n) = current:
+    fn find(key: StrView) -> Option[TreeNode]:
+        current = this.root
+        while current exists as n:
             if key == n.key:
                 return Some(n)
             current = n.left if key < n.key else n.right
         return None
 
-    fn words(self) -> Array[String]:
+    fn words() -> Array[String]:
         out: Array[String] = []
-        in_order(self.root, out)
+        in_order(this.root, out)
         return out
 
 fn main():

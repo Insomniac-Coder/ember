@@ -10,16 +10,18 @@
 class Counter:
     value: i32
 
-    fn bump(mut self):
-        self.value = self.value + 1
+    fn bump():
+        this.value = this.value + 1
 
-    fn print_plus(mut self, extra: i32):
-        println(self.value + extra)
+    fn print_plus(extra: i32):
+        this.value += extra
+        println(this.value)
 
-# `report` holds a `Counter` while other code (the printing) runs, so a check
+# `report` holds a `Counter` while other code (the printing) runs (`print_plus` changes its
+# object, so its call holds it), so a check
 # on a `Counter` can fail somewhere and each stays (`[EXC-3]`, ODR-085);
 # without it they would all be removed and this loop would show no check.
-fn report(mut counter: Counter, extra: i32):
+fn report(ref mut counter: Counter, extra: i32):
     counter.print_plus(extra)
 
 fn main():

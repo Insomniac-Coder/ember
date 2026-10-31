@@ -8,7 +8,7 @@
 import cpp "tasks.hpp" with (overlay = "overlays/tasks.em")
 
 class Lazy(cpp.Task):
-    override fn step(self) -> i32:
+    override fn step() -> i32:
         panic("no step today")
 
 fn main():

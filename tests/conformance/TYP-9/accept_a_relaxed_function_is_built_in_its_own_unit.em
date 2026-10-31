@@ -26,24 +26,24 @@
 # Every value here is exact, so it is the same whichever way it is computed.
 
 interface Area:
-    fn area(self) -> f64
+    fn area() -> f64
 
 class Square implements Area:
     side: f64
 
-    fn area(self) -> f64:
-        return self.side * self.side
+    fn area() -> f64:
+        return this.side * this.side
 
 class Circle implements Area:
     r: f64
 
-    fn area(self) -> f64:
-        return self.r * self.r * 3.0
+    fn area() -> f64:
+        return this.r * this.r * 3.0
 
 fn inc(x: int) -> int:
     return x + 1
 
-@fp(contract)
+@fp(allow_fma)
 fn fused(a: f64, b: f64, c: f64) -> f64:
     return a * b + c
 

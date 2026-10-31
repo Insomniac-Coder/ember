@@ -110,15 +110,16 @@ pub struct Pt:
 pub fn offset(x: int) -> int:
     return x + 1
 
-pub fn larger[T: Ord](a: T, b: T) -> T:
+[T: needs Ord]
+pub fn larger(a: T, b: T) -> T:
     if a > b:
         return a
     return b
 
-pub fn first(a: str, b: str) -> str:
+pub fn first(a: StrView, b: StrView) -> StrView:
     return a
 
-pub fn pick(a: str, b: str) -> str:
+pub fn pick(a: StrView, b: StrView) -> StrView:
     return first(a, b)
 
 pub fn work(seed: int) -> int:
@@ -141,8 +142,8 @@ import geom
 pub open class Shape:
     pub size: int
 
-    pub virtual fn area(self) -> int:
-        return self.size
+    pub virtual fn area() -> int:
+        return this.size
 
 pub fn apply(xs: Array[int], f: fn(int) -> int) -> Array[int]:
     out: Array[int] = []
@@ -156,7 +157,7 @@ pub fn total(p: geom.Pt) -> int:
     s = Shape(geom.larger(ys[0], ys[1]))
     return s.area() + geom.score(p)
 
-pub fn label(name: str) -> str:
+pub fn label(name: StrView) -> StrView:
     return geom.first(name, "shape")
 "#;
 
@@ -207,7 +208,7 @@ fn an_edited_package_checks_as_a_clean_one_does_and_checks_again_what_the_edit_r
 
     // A body that changes what a caller's borrows read of it: its callers in its module and in its
     // importers are checked again, and nothing else.
-    let geom = geom.replace("pub fn first(a: str, b: str) -> str:\n    return a", "pub fn first(a: str, b: str) -> str:\n    return b");
+    let geom = geom.replace("pub fn first(a: StrView, b: StrView) -> StrView:\n    return a", "pub fn first(a: StrView, b: StrView) -> StrView:\n    return b");
     write(&dir, &source("geom"), &geom);
     assert_eq!(
         agree(&dir, "a borrow fact", true),
@@ -224,7 +225,7 @@ fn an_edited_package_checks_as_a_clean_one_does_and_checks_again_what_the_edit_r
     assert_eq!(agree(&dir, "a type", true).0, sources(&["geom", "main", "shapes"]));
 
     // A subclass overriding a virtual method: every module sees the class hierarchy.
-    write(&dir, &source("main"), &format!("{MAIN}\nclass Square(shapes.Shape):\n    override fn area(self) -> int:\n        return self.size * self.size\n"));
+    write(&dir, &source("main"), &format!("{MAIN}\nclass Square(shapes.Shape):\n    override fn area() -> int:\n        return this.size * this.size\n"));
     assert_eq!(agree(&dir, "a subclass", true).0, all);
 
     write(&dir, &source("main"), MAIN);
@@ -413,7 +414,8 @@ const ITEMS_LIB: &str = r#"
 pub fn offset(x: int) -> int:
     return x + 1
 
-pub fn twice[F: fn(int) -> int](f: F, x: int) -> int:
+[F: needs fn(int) -> int]
+pub fn twice(f: F, x: int) -> int:
     return f(f(x))
 
 pub fn doubled(xs: Span[int]) -> int:

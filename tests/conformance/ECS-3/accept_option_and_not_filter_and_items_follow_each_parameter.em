@@ -13,7 +13,7 @@ from std.ecs import World, Query, Mut, Not, Component, Entity
 
 @derive(Copy, Component)
 struct Name:
-    text: str
+    text: StrView
 
 @derive(Copy, Component)
 struct Count:
@@ -31,7 +31,7 @@ struct Frozen:
 fn yields_nothing(item: ()):
     pass
 
-fn bump(mut q: Query[(Name, Mut[Count], Option[Tag], Not[Frozen])], by: int):
+fn bump(ref mut q: Query[(Name, Mut[Count], Option[Tag], Not[Frozen])], by: int):
     for name, count, tag, _ in q.iter():
         match tag:
             Some(t):
@@ -42,7 +42,7 @@ fn bump(mut q: Query[(Name, Mut[Count], Option[Tag], Not[Frozen])], by: int):
         count.n += by
         yields_nothing(nothing)
 
-fn show(mut q: Query[(Name, Count, Not[Frozen])], unused: ()):
+fn show(ref mut q: Query[(Name, Count, Not[Frozen])], unused: ()):
     for name, count, _ in q.iter():
         println(name.text, count.n)
 

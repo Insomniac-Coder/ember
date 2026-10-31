@@ -4,7 +4,7 @@
 # `[BCK-2]` — the loan `r` carries is live only while `r` is used later: its last use comes before
 # the push, so the push conflicts with nothing.
 
-fn pick(mut xs: MutSpan[int]) -> ref mut int:
+fn pick(ref mut xs: MutSpan[int]) -> ref mut int:
     return ref mut xs[0]
 
 fn main():

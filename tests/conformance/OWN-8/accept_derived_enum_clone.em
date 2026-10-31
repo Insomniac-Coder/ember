@@ -10,15 +10,16 @@
 struct Leaf:
     value: i32
 
-    fn clone(self) -> Leaf:
-        return Leaf(self.value)
+    fn clone() -> Leaf:
+        return Leaf(this.value)
 
 @derive(Clone)
 enum Entry:
     Value(Leaf)
     Empty
 
-fn duplicate[T: Clone](value: T) -> T:
+[T: needs Clone]
+fn duplicate(value: T) -> T:
     return value.clone()
 
 fn main():

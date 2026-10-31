@@ -543,7 +543,7 @@ pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) -> usize {
             && matches!(types.kind(body.local(receiver).ty), TyKind::Ref { mutable: true, inner } if matches!(types.kind(*inner), TyKind::Class(_)))
         {
             sink.emit(
-                Diagnostic::error(codes::E2229, body.span, "a class's generator method takes `self`, not `mut self`")
+                Diagnostic::error(codes::E2229, body.span, "a class's generator method may not hold its object for writing across `yield`")
                     .note("a suspended generator would keep a write access to the whole object open between its steps; each access inside the body is checked on its own instead [CORO-12]"),
             );
             errors += 1;
@@ -606,7 +606,7 @@ pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) -> usize {
                                 Diagnostic::error(codes::E2221, point.span, message)
                                     .primary_label("the generator suspends here")
                                     .note("a suspended frame is a value that may move, which would leave the borrow pointing where the local was [CORO-6]")
-                                    .help("iterate the collection `owned` (`for x in owned xs:`), or by index; borrows of the generator's parameters may be held"),
+                                    .help("iterate the collection taken over (`for x in owns xs:`), or by index; borrows of the generator's parameters may be held"),
                             );
                             errors += 1;
                         }

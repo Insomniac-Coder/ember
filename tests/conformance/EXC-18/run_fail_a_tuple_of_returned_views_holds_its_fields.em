@@ -12,15 +12,15 @@ class Person:
     first: String
     last: String
 
-    fn init(mut self):
-        self.first = "ann"
-        self.last = "lee"
+    fn init():
+        this.first = "ann"
+        this.last = "lee"
 
-    fn names(self) -> (str, str):
-        return (self.first.as_str(), self.last.as_str())
+    fn names() -> (StrView, StrView):
+        return (this.first.as_str(), this.last.as_str())
 
-    fn rename(mut self):
-        self.first = "bob"
+    fn rename():
+        this.first = "bob"
 
 fn main():
     p = Person()

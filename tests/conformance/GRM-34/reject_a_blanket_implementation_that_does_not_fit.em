@@ -5,26 +5,28 @@
 # and each associated type is given.
 
 interface Tag[T]:
-    fn tag(self, t: T) -> String
+    fn tag(t: T) -> String
 
 struct Label:
     name: String
 
-extend[T: Display] Label implements Tag[T]:    #$ error[E2040]: `Label.tag` does not match the signature required by `Tag[i64]`
-    fn tag(self, t: T) -> int:
+extend[T: needs Display] Label implements Tag[T]:    #$ error[E2040]: `Label.tag` does not match the signature required by `Tag[i64]`
+    fn tag(t: T) -> int:
         return 1
 
 struct Rows:
     data: Array[int]
 
-extend[I: Copy] Rows implements Index[I]:    #$ error[E2040]: `Rows` implements `Index[bool]` but does not say what `Output` is
-    fn index(self, i: I) -> ref int:
-        return ref self.data[0]
+extend[I: needs Copy] Rows implements Index[I]:    #$ error[E2040]: `Rows` implements `Index[bool]` but does not say what `Output` is
+    fn index(i: I) -> ref int:
+        return ref this.data[0]
 
-fn show[L: Tag[int]](l: L) -> int:
+[L: needs Tag[int]]
+fn show(l: L) -> int:
     return 0
 
-fn row[R: Index[bool, Output = int]](r: R) -> int:
+[R: needs Index[bool, Output = int]]
+fn row(r: R) -> int:
     return 0
 
 fn main():

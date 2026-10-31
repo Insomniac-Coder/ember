@@ -27,19 +27,19 @@ struct Vel:
 struct Hp:
     n: int
 
-fn movement(mut q: Query[(Mut[Pos], Vel)]):
+fn movement(ref mut q: Query[(Mut[Pos], Vel)]):
     for p, v in q.iter_mut():
         p.x += v.x
 
-fn regen(mut q: Query[Mut[Hp]]):
+fn regen(ref mut q: Query[Mut[Hp]]):
     for h in q.iter_mut():
         h.n += 1
 
-fn report(mut q: Query[(Pos, Hp)]):
+fn report(ref mut q: Query[(Pos, Hp)]):
     for p, h in q.iter():
         REPORTED.store(p.x * 100 + h.n)
 
-fn audit(mut q: Query[(Hp, Pos)]):
+fn audit(ref mut q: Query[(Hp, Pos)]):
     for h, p in q.iter():
         AUDITED.store(p.x * 100 + h.n)
 

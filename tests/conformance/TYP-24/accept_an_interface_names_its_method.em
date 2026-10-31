@@ -7,28 +7,28 @@
 # ordinary call.
 
 interface A:
-    fn m(self) -> int
+    fn m() -> int
 
 interface B:
-    fn m(self) -> int
+    fn m() -> int
 
 interface Sized2:
-    fn area(self, scale: int) -> int
+    fn area(scale: int) -> int
 
 struct S:
     n: int
 
 extend S implements A:
-    fn m(self) -> int:
+    fn m() -> int:
         return 1
 
 extend S implements B:
-    fn m(self) -> int:
+    fn m() -> int:
         return 2
 
 extend S implements Sized2:
-    fn area(self, scale: int) -> int:
-        return self.n * scale
+    fn area(scale: int) -> int:
+        return this.n * scale
 
 fn via_a(x: ref dyn A) -> int:
     return x.m()

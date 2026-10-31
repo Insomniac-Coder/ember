@@ -12,16 +12,20 @@
 
 from std.core import Add, Sub, Neg, AddAssign
 
-fn twice[T: Add[Output = T] + Copy](x: T) -> T:
+[T: needs (Add[Output = T], Copy)]
+fn twice(x: T) -> T:
     return x + x
 
-fn less[T: Sub[Output = T] + Copy](x: T, y: T) -> T:
+[T: needs (Sub[Output = T], Copy)]
+fn less(x: T, y: T) -> T:
     return x - y
 
-fn flip[T: Neg[Output = T]](x: T) -> T:
+[T: needs Neg[Output = T]]
+fn flip(x: T) -> T:
     return -x
 
-fn grow[T: AddAssign + Copy](x: T) -> T:
+[T: needs (AddAssign, Copy)]
+fn grow(x: T) -> T:
     y = x
     y += x
     return y

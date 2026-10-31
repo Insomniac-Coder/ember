@@ -1,5 +1,5 @@
 pub interface Parent:
-    fn parent(self) -> i32
+    fn parent() -> i32
 
-pub interface Child: Parent:
-    fn child(self) -> i32
+pub interface Child: needs Parent:
+    fn child() -> i32

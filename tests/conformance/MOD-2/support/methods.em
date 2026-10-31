@@ -2,39 +2,40 @@
 ## and `accept_a_pub_method_and_an_interface_method_anywhere.em`.
 
 pub interface Shown:
-    fn shown(self) -> int
+    fn shown() -> int
 
 interface Hidden:
-    fn hidden(self) -> int
+    fn hidden() -> int
 
 pub struct Meter:
     pub value: int
 
-    pub fn read(self) -> int:
-        return self.twice() // 2
+    pub fn read() -> int:
+        return this.twice() // 2
 
-    fn twice(self) -> int:
-        return self.value * 2
+    fn twice() -> int:
+        return this.value * 2
 
-    pub fn make(v: int) -> Meter:
+    pub static fn make(v: int) -> Meter:
         return Meter(v)
 
-    fn raw(v: int) -> Meter:
+    static fn raw(v: int) -> Meter:
         return Meter(v)
 
 extend Meter implements Shown:
-    fn shown(self) -> int:
-        return self.value + 1
+    fn shown() -> int:
+        return this.value + 1
 
 extend Meter implements Hidden:
-    fn hidden(self) -> int:
-        return self.value + 2
+    fn hidden() -> int:
+        return this.value + 2
 
-pub struct Box2[T]:
+[T]
+pub struct Box2:
     pub item: T
 
-    pub fn get(self) -> T:
-        return self.item
+    pub fn get() -> T:
+        return this.item
 
-    fn peek(self) -> T:
-        return self.item
+    fn peek() -> T:
+        return this.item

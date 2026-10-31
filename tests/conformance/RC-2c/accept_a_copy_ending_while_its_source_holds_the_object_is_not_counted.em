@@ -19,8 +19,8 @@
 class Leaf:
     v: int
 
-    fn drop(mut self):
-        println("drop", self.v)
+    fn drop():
+        println("drop", this.v)
 
 fn total_of(leaf: Leaf) -> int:
     return leaf.v

@@ -8,19 +8,22 @@
 # `last` takes the numbers whether it is an `int` or a `u64` (`[TYP-5]` rule 12); from `int.MAX - 1`
 # the numbers pass `int`'s top and are `u64`s.
 
-fn labels_u64[T: Copy](xs: Array[T]) -> u64:
+[T: needs Copy]
+fn labels_u64(xs: Array[T]) -> u64:
     last: u64 = 0
     for i, _x in enumerate(xs, start=2):
         last = i
     return last
 
-fn labels_int[T: Copy](xs: Array[T]) -> int:
+[T: needs Copy]
+fn labels_int(xs: Array[T]) -> int:
     last: int = 0
     for i, _x in enumerate(xs, start=2):
         last = i
     return last
 
-fn labels_near_the_top[T: Copy](xs: Array[T]) -> u64:
+[T: needs Copy]
+fn labels_near_the_top(xs: Array[T]) -> u64:
     last: u64 = 0
     for i, _x in enumerate(xs, start=int.MAX - 1):
         last = i

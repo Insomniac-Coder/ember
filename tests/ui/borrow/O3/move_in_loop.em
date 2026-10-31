@@ -1,4 +1,4 @@
-fn consume(owned xs: Array[i32]) -> i32:
+fn consume(owns xs: Array[i32]) -> i32:
     return xs[0]
 
 fn main():

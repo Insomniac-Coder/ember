@@ -11,7 +11,7 @@ fn add_one(value: i32) -> i32:
 fn factory() -> extern "C" fn(i32) -> i32:
     return add_one
 
-fn native_text(value: str) -> str:
+fn native_text(value: StrView) -> StrView:
     return value
 
 fn main():
@@ -24,5 +24,5 @@ fn main():
             println(present(41))
         None:
             panic("missing callback")
-    ordinary: fn(str) -> str = native_text
+    ordinary: fn(StrView) -> StrView = native_text
     println(ordinary("native-only"))

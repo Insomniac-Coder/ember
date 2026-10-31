@@ -5,7 +5,7 @@
 #$ panics: integer overflow in `+`
 
 @noinline
-fn effectful(text: str, initial: int) -> int:
+fn effectful(text: StrView, initial: int) -> int:
     total = initial
     for (i, c) in text.char_indices():
         println("seen", i)

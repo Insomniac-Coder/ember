@@ -8,23 +8,25 @@
 # generic type's parameters were declared before any interface had parents
 # to bring).
 
-interface Whole: Default + Eq:
+interface Whole: needs (Default, Eq):
     pass
 
 extend i32 implements Whole:
     pass
 
-fn zero_of[T: Whole](v: T) -> T:
+[T: needs Whole]
+fn zero_of(v: T) -> T:
     return T.default()
 
-struct Tally[T: Whole]:
+[T: needs Whole]
+struct Tally:
     v: T
 
-    fn zero(self) -> T:
+    fn zero() -> T:
         return T.default()
 
-    fn is_zero(self) -> bool:
-        return self.v == T.default()
+    fn is_zero() -> bool:
+        return this.v == T.default()
 
 fn main():
     five: i32 = 5

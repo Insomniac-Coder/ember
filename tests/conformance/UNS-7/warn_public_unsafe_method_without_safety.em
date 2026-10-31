@@ -7,8 +7,8 @@ struct Counter:
     value: i32
 
 extend Counter:
-    pub unsafe fn next(self) -> i32:
-        return self.value + 1
+    pub unsafe fn next() -> i32:
+        return this.value + 1
 
 fn main():
     pass

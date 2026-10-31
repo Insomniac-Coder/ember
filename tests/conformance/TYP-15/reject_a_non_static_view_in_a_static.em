@@ -8,10 +8,10 @@
 # which is B7 ("a borrowed value does not live long enough"). `[LT-3]` used to
 # name `E3060` here; the two are different shapes and the owner reconciled it.
 
-fn pick(s: str) -> str:
+fn pick(s: StrView) -> StrView:
     return s
 
-static BAD: str = pick("x")    #$ error[E3063]: `str` is a view, so it may not be stored in a `static`
+static BAD: StrView = pick("x")    #$ error[E3063]: `StrView` is a view, so it may not be stored in a `static`
 
 fn main():
     println(1)

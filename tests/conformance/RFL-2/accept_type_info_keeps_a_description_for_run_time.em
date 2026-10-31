@@ -19,7 +19,8 @@ struct Point:
     y: f64
 
 @reflect
-struct Pair[T]:
+[T]
+struct Pair:
     first: T
     second: T
 
@@ -35,7 +36,8 @@ open class Animal:
 class Dog(Animal):
     tricks: int = 0
 
-fn describe[T: Reflect]() -> int:
+[T: needs Reflect]
+fn describe() -> int:
     return len(type_info[T]().fields)
 
 fn main():

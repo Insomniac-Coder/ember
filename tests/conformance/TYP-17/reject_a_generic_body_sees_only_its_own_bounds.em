@@ -6,14 +6,16 @@
 # own methods were checked with, `T: Copy` in scope. Named `Q`, it was
 # refused; named `T`, it was accepted and failed only at an instance.
 
-struct Wrap[T]:
+[T]
+struct Wrap:
     x: T
 
-extend[T: Copy] Wrap[T]:
-    fn dup(self) -> int:
+extend[T: needs Copy] Wrap[T]:
+    fn dup() -> int:
         return 1
 
-fn f[T](w: Wrap[T]) -> int:
+[T]
+fn f(w: Wrap[T]) -> int:
     return w.dup()    #$ error[E2072]: `Wrap[T]` has no method named `dup`
 
 fn main():

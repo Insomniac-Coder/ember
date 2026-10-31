@@ -26,11 +26,11 @@ fn pick() -> fn() -> int:
 fn make(step: int) -> fn(int) -> int + Send:
     return owned fn(x: int) -> int => x + step
 
-fn later(owned f: fn() -> int + Send) -> int:
+fn later(owns f: fn() -> int + Send) -> int:
     h = thread.spawn(owned fn() -> int => f())
     return h.join()
 
-fn on_a_thread(owned job: Job, x: int) -> int:
+fn on_a_thread(owns job: Job, x: int) -> int:
     h = thread.spawn(owned fn() -> int => job.work(x))
     return h.join()
 

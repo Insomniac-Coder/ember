@@ -9,15 +9,15 @@
 # D-394: a parent collected after its child was not known, and `Item` was
 # "cannot find type".
 
-interface Backwards: Iterator:
-    fn next_back(mut self) -> Option[Item]
+interface Backwards: needs Iterator:
+    fn next_back() -> Option[Item]
 
-interface Weighed: Measured:
-    fn heaviest(self) -> Unit
+interface Weighed: needs Measured:
+    fn heaviest() -> Unit
 
 interface Measured:
     type Unit
-    fn measure(self) -> Unit
+    fn measure() -> Unit
 
 struct Count:
     at: int
@@ -26,18 +26,18 @@ struct Count:
 extend Count implements Iterator:
     type Item = int
 
-    fn next(mut self) -> Option[int]:
-        if self.at < self.end:
-            here = self.at
-            self.at += 1
+    fn next() -> Option[int]:
+        if this.at < this.end:
+            here = this.at
+            this.at += 1
             return Some(here)
         return None
 
 extend Count implements Backwards:
-    fn next_back(mut self) -> Option[int]:
-        if self.at < self.end:
-            self.end -= 1
-            return Some(self.end)
+    fn next_back() -> Option[int]:
+        if this.at < this.end:
+            this.end -= 1
+            return Some(this.end)
         return None
 
 struct Crate:
@@ -46,12 +46,12 @@ struct Crate:
 extend Crate implements Measured:
     type Unit = int
 
-    fn measure(self) -> int:
-        return self.weight
+    fn measure() -> int:
+        return this.weight
 
 extend Crate implements Weighed:
-    fn heaviest(self) -> int:
-        return self.weight * 3
+    fn heaviest() -> int:
+        return this.weight * 3
 
 fn main():
     c = Count(at = 1, end = 4)

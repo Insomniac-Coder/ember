@@ -5,7 +5,7 @@ pub struct Square:
 pub fn area(s: Square) -> int:
     return s.side * s.side
 
-pub fn describe() -> str:
+pub fn describe() -> StrView:
     return "shapes"
 
 fn hidden() -> int:

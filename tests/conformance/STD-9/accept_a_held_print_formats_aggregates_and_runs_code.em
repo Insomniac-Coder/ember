@@ -20,8 +20,8 @@ struct Loud:
     n: int
 
 extend Loud implements Display:
-    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
-        return f.write_str(f"Loud {self.n}")
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
+        return f.write_str(f"Loud {this.n}")
 
 fn noisy() -> int:
     println("inner")

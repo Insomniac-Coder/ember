@@ -1,8 +1,8 @@
 #$ test: run-pass
 #$ rules: TYP-18, SPN-1, LT-1a
 
-@borrows(view)
-fn identity[T](view: Span[T]) -> Span[T]:
+[T]
+fn identity(view: Span[T]) -> Span[T] from view:
     return view
 
 fn main():

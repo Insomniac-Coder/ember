@@ -11,15 +11,15 @@
 # keeps owning `String` keys (`[TYP-38]`).
 
 fn main():
-    labels: Map[str, int] = {"start": 1, "stop": 2}
+    labels: Map[StrView, int] = {"start": 1, "stop": 2}
     labels["go"] = 3
     labels.entry("stop").or_insert(9)
     println(labels, labels.get("stop"), "go" in labels)
-    colours: Set[str] = Set[str]()
+    colours: Set[StrView] = Set[StrView]()
     colours.add("red")
     colours.add("green")
     println(colours, "red" in colours)
-    keys: Array[str] = Array[str]()
+    keys: Array[StrView] = Array[StrView]()
     total = 0
     for k, v in labels.items():
         keys.push(k)

@@ -9,7 +9,8 @@ fn odd_name() -> i32:
     return 1
 
 @export("identity") #$ error[E2060]: `identity` is generic, so its type parameters cannot be inferred for one C symbol
-fn identity[T](value: T) -> T:
+[T]
+fn identity(value: T) -> T:
     return value
 
 fn main():

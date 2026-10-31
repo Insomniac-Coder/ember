@@ -10,7 +10,7 @@ struct Pixel:
     value: i32
 
 extend Pixel implements Default:
-    fn default() -> Pixel:
+    static fn default() -> Pixel:
         println("before default panic")
         numerator: i32 = 1
         denominator: i32 = 0

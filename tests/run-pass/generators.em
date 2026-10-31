@@ -23,8 +23,8 @@ gen fn evens(xs: Span[int]) -> Generator[int]:
 struct Grid:
     cells: Array[int]
 
-    gen fn scaled(self, k: int) -> Generator[int]:
-        for c in self.cells:
+    gen fn scaled(k: int) -> Generator[int]:
+        for c in this.cells:
             yield c * k
 
 gen fn fibonacci() -> Generator[int]:

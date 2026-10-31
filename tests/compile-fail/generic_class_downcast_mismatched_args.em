@@ -3,7 +3,8 @@
 #$ profiles: debug, development, release
 #$ error[E2020]: cannot downcast `Child[bool]` to unrelated class `Child[i32]`
 
-class Child[T]:
+[T]
+class Child:
     value: T
 
 fn main():

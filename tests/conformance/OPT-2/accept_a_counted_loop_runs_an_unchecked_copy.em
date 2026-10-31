@@ -23,13 +23,14 @@
 class Bag:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = []
+    fn init():
+        this.items = []
 
 # Lent to a function, a list holds values the range facts cannot know
 # (`[RNG-4]`; a field's lists too, ADR-142), so the checks this test looks at
 # stay.
-fn unknown[T](mut xs: Array[T]):
+[T]
+fn unknown(ref mut xs: Array[T]):
     pass
 
 fn main():

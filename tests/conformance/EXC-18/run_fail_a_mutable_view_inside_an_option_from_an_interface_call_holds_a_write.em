@@ -9,16 +9,16 @@
 # freed (D-452).
 
 interface Slots:
-    fn slot(mut self, i: int) -> Option[ref mut int]
+    fn slot(i: int) -> Option[ref mut int]
 
 class Bag implements Slots:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = [1, 2, 3]
+    fn init():
+        this.items = [1, 2, 3]
 
-    fn slot(mut self, i: int) -> Option[ref mut int]:
-        return Some(ref mut self.items[i])
+    fn slot(i: int) -> Option[ref mut int]:
+        return Some(ref mut this.items[i])
 
 fn main():
     b = Bag()
@@ -26,7 +26,7 @@ fn main():
     h: Slots = b
     r = h.slot(0)
     println(len(c.items))
-    match owned r:
+    match owns r:
         Some(x):
             x = 5
         None:

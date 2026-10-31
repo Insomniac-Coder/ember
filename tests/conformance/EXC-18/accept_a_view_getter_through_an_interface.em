@@ -9,19 +9,19 @@
 # `dyn` box, whose adapter passes the receiver the same way (F3: it crashed).
 
 interface Named:
-    fn name(self) -> str
+    fn name() -> StrView
 
 class Person implements Named:
     label: String
 
-    fn init(mut self):
-        self.label = "ann"
+    fn init():
+        this.label = "ann"
 
-    fn name(self) -> str:
-        return self.label
+    fn name() -> StrView:
+        return this.label
 
-    fn rename(mut self):
-        self.label = "bob"
+    fn rename():
+        this.label = "bob"
 
 fn show(n: Named):
     println(n.name())

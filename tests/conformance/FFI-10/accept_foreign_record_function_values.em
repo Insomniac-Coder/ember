@@ -11,7 +11,7 @@ struct ForeignWide:
     c: i64
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
-    safe fn add_pairs(owned a: ForeignPair, owned b: ForeignPair) -> ForeignPair
+    safe fn add_pairs(owns a: ForeignPair, owns b: ForeignPair) -> ForeignPair
     safe fn mutate_pair_copy(pair: ForeignPair) -> i32
     safe fn swap_pair(pair: ForeignPair) -> ForeignPair
     @ffi(link_name="foreign_pair_weighted")

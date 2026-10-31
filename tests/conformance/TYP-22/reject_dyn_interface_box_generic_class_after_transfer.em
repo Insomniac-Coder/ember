@@ -3,14 +3,15 @@
 #$ profiles: debug, development, release
 
 interface Render:
-    fn render(self) -> i32
+    fn render() -> i32
 
-class Pixel[T] implements Render:
+[T]
+class Pixel implements Render:
     value: i32
     marker: T
 
-    fn render(self) -> i32:
-        return self.value
+    fn render() -> i32:
+        return this.value
 
 fn main():
     pixel = Pixel[bool](42, false)

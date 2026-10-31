@@ -5,8 +5,7 @@
 # parameter, so `q` would stay borrowed; `@borrows(a)` says the result comes
 # from `a` alone, and `q` is free the moment the call returns.
 
-@borrows(a)
-fn first(a: Span[i32], b: Span[i32]) -> Span[i32]:
+fn first(a: Span[i32], b: Span[i32]) -> Span[i32] from a:
     return a
 
 fn main():

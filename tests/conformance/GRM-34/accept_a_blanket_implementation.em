@@ -8,16 +8,17 @@
 # `T: Display`, and `tag` is generic over it.
 
 interface Tag[T]:
-    fn tag(self, t: T) -> String
+    fn tag(t: T) -> String
 
 struct Label:
     name: String
 
-extend[T: Display] Label implements Tag[T]:
-    fn tag(self, t: T) -> String:
-        return f"{self.name}={t}"
+extend[T: needs Display] Label implements Tag[T]:
+    fn tag(t: T) -> String:
+        return f"{this.name}={t}"
 
-fn show[L: Tag[int]](l: L) -> String:
+[L: needs Tag[int]]
+fn show(l: L) -> String:
     return l.tag(5)
 
 fn main():

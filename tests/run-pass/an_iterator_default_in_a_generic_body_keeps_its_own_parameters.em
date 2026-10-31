@@ -7,7 +7,8 @@
 ## read as `R`: "`map` cannot take `fn(ref R) -> T` where it expects `fn(ref R) -> R`". Its own
 ## parameters now come after the caller's, as a generic type's methods' do (D-280).
 
-fn scaled[T: Copy + Mul[Output = T]](xs: Span[T], k: T) -> Array[T]:
+[T: needs (Copy, Mul[Output = T])]
+fn scaled(xs: Span[T], k: T) -> Array[T]:
     return xs.iter().map(fn(x) => x * k).to_array()
 
 fn main():

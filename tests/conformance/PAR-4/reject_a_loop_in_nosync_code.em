@@ -7,13 +7,13 @@
 # breaks `@noalloc`.
 
 @nosync
-fn doubles(mut xs: MutSpan[int]):
+fn doubles(ref mut xs: MutSpan[int]):
     @parallel
     for i in 0..xs.len():
         xs[i] = xs[i] * 2
 
 @noalloc
-fn pushes(mut xs: MutSpan[int]):
+fn pushes(ref mut xs: MutSpan[int]):
     @parallel
     for i in 0..xs.len():
         names: Array[int] = [i]

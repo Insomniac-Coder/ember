@@ -18,5 +18,5 @@ fn parse(data: Span[u8]) -> Option[u32]:
 
 fn main():
     bytes: Array[u8] = [1, 0, 0, 0]
-    if Some(v) = parse(bytes.as_span()):
+    if parse(bytes.as_span()) exists as v:
         println(v)

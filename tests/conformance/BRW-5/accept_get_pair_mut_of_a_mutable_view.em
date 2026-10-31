@@ -7,7 +7,7 @@
 # (`xs.as_mut_span()`) may be the receiver, as `[FN-1a]` lets it be any
 # `mut` argument of a view type (D-350).
 
-fn bump_pair(mut view: MutSpan[int]):
+fn bump_pair(ref mut view: MutSpan[int]):
     match view.get_pair_mut(3, 1):
         Some((a, b)):
             b = b + a

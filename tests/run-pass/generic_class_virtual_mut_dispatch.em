@@ -5,23 +5,25 @@
 #$ assert-c: contains(->slot0)
 #$ stdout: 42
 
-open class Base[T]:
+[T]
+open class Base:
     value: i32
 
-    virtual fn bump(mut self) -> i32:
-        self.value = self.value + 1
-        return self.value
+    virtual fn bump() -> i32:
+        this.value = this.value + 1
+        return this.value
 
-    fn init(mut self):
-        self.value = 1
+    fn init():
+        this.value = 1
 
-class Derived[T](Base[T]):
-    fn init(mut self):
+[T]
+class Derived(Base[T]):
+    fn init():
         super.init()
 
-    override fn bump(mut self) -> i32:
-        self.value = self.value + 41
-        return self.value
+    override fn bump() -> i32:
+        this.value = this.value + 41
+        return this.value
 
 fn main():
     derived = Derived[bool]()

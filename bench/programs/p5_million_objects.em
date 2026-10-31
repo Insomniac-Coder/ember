@@ -3,10 +3,10 @@ class Player:
     items: Array[int]
     hp: int
 
-    fn init(mut self, hp: int):
-        self.name = ""
-        self.items = []
-        self.hp = hp
+    fn init(hp: int):
+        this.name = ""
+        this.items = []
+        this.hp = hp
 
 fn main():
     players: Array[Player] = []

@@ -16,18 +16,18 @@ enum Light:
 fn main():
     flags: Array[bool] = []
     letters: Array[char] = []
-    words: Array[str] = []
+    words: Array[StrView] = []
     lights: Array[Light] = []
     println(flags.pop(), letters.pop(), words.pop(), lights.pop())
     n = 0
-    for b in owned [true, false]:
+    for b in owns [true, false]:
         if b or not b:
             n += 1
     m = 0
-    for w in owned ["only"]:
+    for w in owns ["only"]:
         m += w.len() - 3
     k = 0
-    for c in owned ['x']:
+    for c in owns ['x']:
         if c == 'x':
             k += 1
     println(n, m, k)

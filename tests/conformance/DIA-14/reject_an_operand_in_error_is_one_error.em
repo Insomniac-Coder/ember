@@ -6,7 +6,7 @@
 
 fn main():
     row = ["a", "b"]
-    s = "[" + " ".join(row) + " ]"    #$ error[E2072]: `str` has no method named `join`
+    s = "[" + " ".join(row) + " ]"    #$ error[E2072]: `StrView` has no method named `join`
     println(s)
     parts = "a b".split(" ")
     match parts[0]:    #$ error[E2020]: cannot index `std.string.Split`

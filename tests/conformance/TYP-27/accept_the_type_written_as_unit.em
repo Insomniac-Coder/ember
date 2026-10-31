@@ -8,7 +8,7 @@
 fn nothing() -> ():
     pass
 
-fn ok() -> Result[(), str]:
+fn ok() -> Result[(), StrView]:
     return Ok(())
 
 fn main():

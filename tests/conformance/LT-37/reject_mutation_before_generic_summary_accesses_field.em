@@ -2,11 +2,13 @@
 #$ rules: LT-35, LT-36, LT-37, BRW-1, TST-19
 
 @view
-struct Pair[T]:
+[T]
+struct Pair:
     left: Span[T]
     right: Span[T]
 
-fn right_len[T](pair: Pair[T]) -> int:
+[T]
+fn right_len(pair: Pair[T]) -> int:
     return pair.right.len()
 
 fn main():

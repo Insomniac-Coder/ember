@@ -10,12 +10,13 @@
 
 interface Src:
     type Item
-    fn get(mut self) -> Option[Item]
+    fn get() -> Option[Item]
 
-    fn wrap(owned self) -> W[Self, Item] where Item: Copy:
-        return W(self, None)
+    fn wrap() owns this -> W[Self, Item] where Item: needs Copy:
+        return W(this, None)
 
-struct W[S, T: Copy]:
+[S, T: needs Copy]
+struct W:
     s: S
     last: Option[T]
 
@@ -25,8 +26,8 @@ struct Ints:
 extend Ints implements Src:
     type Item = int
 
-    fn get(mut self) -> Option[int]:
-        return Some(self.n)
+    fn get() -> Option[int]:
+        return Some(this.n)
 
 struct Words:
     w: String
@@ -34,8 +35,8 @@ struct Words:
 extend Words implements Src:
     type Item = String
 
-    fn get(mut self) -> Option[String]:
-        return Some(self.w.clone())
+    fn get() -> Option[String]:
+        return Some(this.w.clone())
 
 fn main():
     w = Ints(n = 3).wrap()

@@ -18,7 +18,8 @@
 from std.ffi import c_int, CppError, CppString
 import cpp "texts.hpp" with (overlay = "overlays/texts.em")
 
-fn shown[T](owned result: Result[T, CppError]) -> String:
+[T]
+fn shown(owns result: Result[T, CppError]) -> String:
     match result:
         Ok(_):
             return "ok"

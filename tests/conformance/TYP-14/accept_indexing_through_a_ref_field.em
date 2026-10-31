@@ -6,7 +6,8 @@
 # `ref Array` field indexes and slices as a `ref Array` local does, and a
 # `ref mut Array` field is written through.
 
-struct View[K]:
+[K]
+struct View:
     owner: ref Array[K]
 
 struct Edit:

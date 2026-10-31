@@ -13,9 +13,9 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     @ffi(param(value, nullable, borrowed, one), link_name="ordered_or_zero")
     safe fn or_zero(value: Option[ref i32]) -> i32
     @ffi(param(v, one, out), link_name="ordered_three")
-    safe fn three(mut v: i32)
+    safe fn three(ref mut v: i32)
     @ffi(result(from(static), nul_terminated, borrowed), link_name="ordered_name")
-    safe fn name() -> cstr
+    safe fn name() -> CStrView
 
 pub extern "C" fn ordered_sum(values: *i32, n: usize) -> i32:
     total: i32 = 0
@@ -36,7 +36,7 @@ pub extern "C" fn ordered_three(v: *mut i32):
     unsafe:  # SAFETY(ffi): C's contract: `v` is one element to write
         write(v, 0, 3)
 
-pub extern "C" fn ordered_name() -> cstr:
+pub extern "C" fn ordered_name() -> CStrView:
     return c"ember"
 
 fn main():

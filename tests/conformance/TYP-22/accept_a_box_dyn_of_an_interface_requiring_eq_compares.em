@@ -10,27 +10,27 @@
 # `==` (`Loose`'s written `eq`). An `Array` of them compares element by element, and the table
 # still dispatches the interface's own methods.
 
-interface Shape: Eq:
-    fn area(self) -> int
+interface Shape: needs Eq:
+    fn area() -> int
 
 @derive(Eq)
 struct Square:
     side: int
 
 extend Square implements Shape:
-    fn area(self) -> int:
-        return self.side * self.side
+    fn area() -> int:
+        return this.side * this.side
 
 ## Equal when the last digits are.
 struct Loose:
     n: int
 
-    fn eq(self, other: Loose) -> bool:
-        return self.n % 10 == other.n % 10
+    fn eq(other: Loose) -> bool:
+        return this.n % 10 == other.n % 10
 
 extend Loose implements Shape:
-    fn area(self) -> int:
-        return self.n
+    fn area() -> int:
+        return this.n
 
 fn main():
     a: Box[dyn Shape] = Box(Square(2))

@@ -7,5 +7,5 @@
 class Shared:
     let cell: Cell[int]
 
-    fn init(mut self):
-        self.cell = Cell(1)
+    fn init():
+        this.cell = Cell(1)

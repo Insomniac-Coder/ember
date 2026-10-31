@@ -666,7 +666,7 @@ pub fn inject(
             }
             let wrapper = helper("__reload_migrate", ident.as_str(), "");
             source.push_str(&format!(
-                "\nfn {wrapper}(old: ref {old_name}, mut report: String) -> Option[{ident}]:\n    match {ident}.migrate_from(old):\n        Ok(value):\n            return Some(value)\n        Err(error):\n            match error:\n                \
+                "\nfn {wrapper}(old: ref {old_name}, ref mut report: String) -> Option[{ident}]:\n    match {ident}.migrate_from(old):\n        Ok(value):\n            return Some(value)\n        Err(error):\n            match error:\n                \
                  {error}.SchemaRefused(type_name, reason):\n                    report.push_str(f\"SchemaRefused({{type_name}}, {{reason}})\")\n                \
                  {error}.Migration(type_name, instance, message):\n                    report.push_str(f\"Migration({{type_name}}, {{instance}}, {{message}})\")\n                \
                  {error}.Allocation:\n                    report.push_str(\"Allocation\")\n                \

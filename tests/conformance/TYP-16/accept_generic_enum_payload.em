@@ -9,15 +9,15 @@
 enum Message[T]:
     Value(value: T)
 
-    fn into_value(owned self) -> T:
-        match owned self:
+    fn into_value() owns this -> T:
+        match owns this:
             Message.Value(value): return value
 
 struct Token:
     value: i32
 
-    fn drop(mut self):
-        println(self.value)
+    fn drop():
+        println(this.value)
 
 fn main():
     message: Message[i32] = Message[i32].Value(42)

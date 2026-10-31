@@ -10,8 +10,8 @@ struct Report:
     count: int
     rows: Array[int] = []
 
-    fn renamed(self) -> Report:
-        return Report(title=self.title, count=1)    #$ error[E3013]: cannot move out of a borrowed parameter
+    fn renamed() -> Report:
+        return Report(title=this.title, count=1)    #$ error[E3013]: cannot move out of a borrowed parameter
 
 fn main():
     r = Report(title="a", count=1)

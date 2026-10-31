@@ -7,24 +7,27 @@
 # against the other's signature, and the C had one function twice.
 
 interface Make[T]:
-    fn make(x: T) -> Self
-    fn make_with[U](x: T, y: U) -> Self
+    static fn make(x: T) -> Self
+    [U]
+    static fn make_with(x: T, y: U) -> Self
 
 struct S:
     n: int
 
 extend S implements Make[int]:
-    fn make(x: int) -> S:
+    static fn make(x: int) -> S:
         return S(n = x)
 
-    fn make_with[U](x: int, y: U) -> S:
+    [U]
+    static fn make_with(x: int, y: U) -> S:
         return S(n = x + 1)
 
 extend S implements Make[bool]:
-    fn make(x: bool) -> S:
+    static fn make(x: bool) -> S:
         return S(n = 0)
 
-    fn make_with[U](x: bool, y: U) -> S:
+    [U]
+    static fn make_with(x: bool, y: U) -> S:
         return S(n = -1)
 
 fn main():

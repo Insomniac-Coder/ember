@@ -4,7 +4,8 @@
 #$ stdout: 42
 #$ assert-c: contains(&em_ti_6HolderG2c2a47066b4fc729))
 
-class Holder[T]:
+[T]
+class Holder:
     value: T
 
 fn main():

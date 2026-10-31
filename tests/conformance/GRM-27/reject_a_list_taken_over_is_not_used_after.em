@@ -9,5 +9,5 @@ struct Shape:
 
 fn main():
     others = [Shape("a", 1)]
-    taken = [s for s in owned others if s.size > 0]
+    taken = [s for s in owns others if s.size > 0]
     println(len(others), len(taken))  #$ error[E3040]: `others` has been moved out of

@@ -6,32 +6,33 @@
 # so its view holds every field an override reachable from the static class
 # borrows: `Nick.label` borrows `alias`, so writing `alias` through another
 # handle while the view lives panics, though `Person.label` borrows `name`
-# (D-467).
+# (D-467). The write is the field's own (a method that changes its object, as
+# `realias` does, holds every field for its call until M6b, `name` too).
 
 open class Person:
     name: String
     alias: String
 
-    fn init(mut self):
-        self.name = "ann"
-        self.alias = "zed"
+    fn init():
+        this.name = "ann"
+        this.alias = "zed"
 
-    virtual fn label(self) -> str:
-        return self.name
+    virtual fn label() -> StrView:
+        return this.name
 
-    fn realias(self):
-        self.alias = "kit"
+    fn realias():
+        this.alias = "kit"
 
 class Nick(Person):
-    fn init(mut self):
+    fn init():
         super.init()
 
-    override fn label(self) -> str:
-        return self.alias
+    override fn label() -> StrView:
+        return this.alias
 
 fn main():
     k: Person = Nick()
     r = k
     m = k.label()
-    r.realias()
+    r.alias = "kit"
     println(m)

@@ -6,7 +6,7 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(data, borrowed, TODO(count), TODO(nullable)))
-    safe fn inspect(mut data: i32) -> i32
+    safe fn inspect(ref mut data: i32) -> i32
 
 fn main():
     pass

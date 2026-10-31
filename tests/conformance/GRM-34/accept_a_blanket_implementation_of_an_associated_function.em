@@ -9,31 +9,32 @@
 # is the type's, generic over `T`, as a blanket method is.
 
 interface Conv[T]:
-    fn conv(owned value: T) -> Self
+    static fn conv(owns value: T) -> Self
 
 interface Named:
-    fn name(self) -> int
+    fn name() -> int
 
 struct A implements Named:
     v: int
 
-    fn name(self) -> int:
-        return self.v
+    fn name() -> int:
+        return this.v
 
 struct C implements Named:
     w: int
 
-    fn name(self) -> int:
-        return self.w * 10
+    fn name() -> int:
+        return this.w * 10
 
 struct B:
     v: int
 
-extend[T: Named] B implements Conv[T]:
-    fn conv(owned value: T) -> B:
+extend[T: needs Named] B implements Conv[T]:
+    static fn conv(owns value: T) -> B:
         return B(value.name() + 1)
 
-fn up[E, F: Conv[E]](owned e: E) -> F:
+[E, F: needs Conv[E]]
+fn up(owns e: E) -> F:
     return F.conv(e)
 
 fn main():

@@ -8,10 +8,12 @@
 struct Point:
     x: int
 
-fn show[T: Display](x: T) -> String:
+[T: needs Display]
+fn show(x: T) -> String:
     return f"<{x}>"
 
-fn copy_of[T: Copy](x: T) -> T:
+[T: needs Copy]
+fn copy_of(x: T) -> T:
     return x
 
 println(show(Point(1)))   #$ error[E2040]: `Point` does not implement `Display`, which `T` requires

@@ -16,13 +16,13 @@
 struct Guard:
     id: int
 
-    fn drop(mut self):
-        println(f"released {self.id}")
+    fn drop():
+        println(f"released {this.id}")
 
 fn look(g: Guard) -> int:
     return g.id
 
-fn consume(owned g: Guard) -> Guard:
+fn consume(owns g: Guard) -> Guard:
     return g
 
 fn main():

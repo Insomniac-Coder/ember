@@ -7,14 +7,14 @@
 struct Part:
     pub n: i32
 
-    fn drop(mut self):
-        println(self.n)
+    fn drop():
+        println(this.n)
 
 struct Whole:
     pub a: Part
     pub b: Part
 
-    fn drop(mut self):
+    fn drop():
         println(0)
 
 fn main():

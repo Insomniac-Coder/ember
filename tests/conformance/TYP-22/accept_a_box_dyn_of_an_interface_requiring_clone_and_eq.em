@@ -10,43 +10,43 @@
 # clones as its handle, and an `Array` of such boxes clones and compares element by element (the
 # LLVM backend's port of D-909, tried against the C backend's).
 
-interface Shape: Clone + Eq:
-    fn area(self) -> int
-    fn sides(self) -> int
-    fn scaled(self, k: int) -> int
+interface Shape: needs (Clone, Eq):
+    fn area() -> int
+    fn sides() -> int
+    fn scaled(k: int) -> int
 
 @derive(Eq)
 struct Square:
     side: int
 
 extend Square implements Shape:
-    fn area(self) -> int:
-        return self.side * self.side
+    fn area() -> int:
+        return this.side * this.side
 
-    fn sides(self) -> int:
+    fn sides() -> int:
         return 4
 
-    fn scaled(self, k: int) -> int:
-        return self.side * k
+    fn scaled(k: int) -> int:
+        return this.side * k
 
 class Tile:
     size: int
 
-    fn init(mut self, size: int):
-        self.size = size
+    fn init(size: int):
+        this.size = size
 
-    fn eq(self, other: Tile) -> bool:
-        return self.size == other.size
+    fn eq(other: Tile) -> bool:
+        return this.size == other.size
 
 extend Tile implements Shape:
-    fn area(self) -> int:
-        return self.size
+    fn area() -> int:
+        return this.size
 
-    fn sides(self) -> int:
+    fn sides() -> int:
         return 3
 
-    fn scaled(self, k: int) -> int:
-        return self.size + k
+    fn scaled(k: int) -> int:
+        return this.size + k
 
 fn main():
     a: Box[dyn Shape] = Box(Square(2))

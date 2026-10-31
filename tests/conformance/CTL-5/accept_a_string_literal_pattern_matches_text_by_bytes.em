@@ -13,15 +13,15 @@
 ## literal all work. A longer or shorter text with the same start, one with a
 ## NUL inside and one that differs only by case match nothing (D-815).
 
-const QUIT: str = "quit"
+const QUIT: StrView = "quit"
 
-fn direction(word: str) -> int:
+fn direction(word: StrView) -> int:
     return match word:
         "north" | "n" => 1
         "south" | "s" => 2
         _ => 0
 
-fn special(word: str) -> int:
+fn special(word: StrView) -> int:
     match word:
         "":
             return 3
@@ -30,7 +30,7 @@ fn special(word: str) -> int:
         _:
             return 0
 
-fn unit(word: str) -> String:
+fn unit(word: StrView) -> String:
     return match word:
         "g" => "gram"
         "l" => "litre"

@@ -25,95 +25,103 @@
 
 ## `f32` and `f64`, each with its deterministic functions.
 interface Deterministic:
-    fn det_sin(self) -> Self
-    fn det_cos(self) -> Self
-    fn det_tan(self) -> Self
-    fn det_exp(self) -> Self
-    fn det_log(self) -> Self
-    fn det_pow(self, e: Self) -> Self
-    fn det_atan2(self, x: Self) -> Self
-    fn det_sqrt(self) -> Self
+    fn det_sin() -> Self
+    fn det_cos() -> Self
+    fn det_tan() -> Self
+    fn det_exp() -> Self
+    fn det_log() -> Self
+    fn det_pow(e: Self) -> Self
+    fn det_atan2(x: Self) -> Self
+    fn det_sqrt() -> Self
 
 extend f64 implements Deterministic:
-    fn det_sin(self) -> f64:
-        return sin64(self)
+    fn det_sin() -> f64:
+        return sin64(this)
 
-    fn det_cos(self) -> f64:
-        return cos64(self)
+    fn det_cos() -> f64:
+        return cos64(this)
 
-    fn det_tan(self) -> f64:
-        return tan64(self)
+    fn det_tan() -> f64:
+        return tan64(this)
 
-    fn det_exp(self) -> f64:
-        return exp64(self)
+    fn det_exp() -> f64:
+        return exp64(this)
 
-    fn det_log(self) -> f64:
-        return log64(self)
+    fn det_log() -> f64:
+        return log64(this)
 
-    fn det_pow(self, e: f64) -> f64:
-        return pow64(self, e)
+    fn det_pow(e: f64) -> f64:
+        return pow64(this, e)
 
-    fn det_atan2(self, x: f64) -> f64:
-        return atan2_64(self, x)
+    fn det_atan2(x: f64) -> f64:
+        return atan2_64(this, x)
 
-    fn det_sqrt(self) -> f64:
-        return self.sqrt()
+    fn det_sqrt() -> f64:
+        return this.sqrt()
 
 extend f32 implements Deterministic:
-    fn det_sin(self) -> f32:
-        return sin64(self as f64) as f32
+    fn det_sin() -> f32:
+        return sin64(this as f64) as f32
 
-    fn det_cos(self) -> f32:
-        return cos64(self as f64) as f32
+    fn det_cos() -> f32:
+        return cos64(this as f64) as f32
 
-    fn det_tan(self) -> f32:
-        return tan64(self as f64) as f32
+    fn det_tan() -> f32:
+        return tan64(this as f64) as f32
 
-    fn det_exp(self) -> f32:
-        return exp64(self as f64) as f32
+    fn det_exp() -> f32:
+        return exp64(this as f64) as f32
 
-    fn det_log(self) -> f32:
-        return log64(self as f64) as f32
+    fn det_log() -> f32:
+        return log64(this as f64) as f32
 
-    fn det_pow(self, e: f32) -> f32:
-        return pow64(self as f64, e as f64) as f32
+    fn det_pow(e: f32) -> f32:
+        return pow64(this as f64, e as f64) as f32
 
-    fn det_atan2(self, x: f32) -> f32:
-        return atan2_64(self as f64, x as f64) as f32
+    fn det_atan2(x: f32) -> f32:
+        return atan2_64(this as f64, x as f64) as f32
 
-    fn det_sqrt(self) -> f32:
-        return self.sqrt()
+    fn det_sqrt() -> f32:
+        return this.sqrt()
 
 ## The sine of `x`, in radians.
-pub fn sin[T: Deterministic](x: T) -> T:
+[T: needs Deterministic]
+pub fn sin(x: T) -> T:
     return x.det_sin()
 
 ## The cosine of `x`, in radians.
-pub fn cos[T: Deterministic](x: T) -> T:
+[T: needs Deterministic]
+pub fn cos(x: T) -> T:
     return x.det_cos()
 
 ## The tangent of `x`, in radians.
-pub fn tan[T: Deterministic](x: T) -> T:
+[T: needs Deterministic]
+pub fn tan(x: T) -> T:
     return x.det_tan()
 
 ## e to the power `x`.
-pub fn exp[T: Deterministic](x: T) -> T:
+[T: needs Deterministic]
+pub fn exp(x: T) -> T:
     return x.det_exp()
 
 ## The natural logarithm of `x`: `nan` below 0, `-inf` at 0.
-pub fn log[T: Deterministic](x: T) -> T:
+[T: needs Deterministic]
+pub fn log(x: T) -> T:
     return x.det_log()
 
 ## `x` to the power `e`, as C's `pow` defines each special case.
-pub fn pow[T: Deterministic](x: T, e: T) -> T:
+[T: needs Deterministic]
+pub fn pow(x: T, e: T) -> T:
     return x.det_pow(e)
 
 ## The angle of the point `(x, y)` from the positive x axis, in `[-π, π]`.
-pub fn atan2[T: Deterministic](y: T, x: T) -> T:
+[T: needs Deterministic]
+pub fn atan2(y: T, x: T) -> T:
     return y.det_atan2(x)
 
 ## The square root, correctly rounded (IEEE 754 requires it of every target).
-pub fn sqrt[T: Deterministic](x: T) -> T:
+[T: needs Deterministic]
+pub fn sqrt(x: T) -> T:
     return x.det_sqrt()
 
 ## -- exact powers of two, and exponents ------------------------------------------

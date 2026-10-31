@@ -9,7 +9,8 @@
 
 # Lent to a function, a list holds values the range facts cannot know
 # (`[RNG-4]`), so the checks this test looks at stay.
-fn unknown[T](mut xs: Array[T]):
+[T]
+fn unknown(ref mut xs: Array[T]):
     pass
 
 fn main():

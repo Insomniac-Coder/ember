@@ -6,43 +6,44 @@
 # earlier parameter. Its hidden projection must exist before the bound is read.
 
 interface Source:
-    type Item: Copy
-    fn get(self) -> Item
+    type Item: needs Copy
+    fn get() -> Item
 
 interface Build[T]:
-    fn make(value: T) -> Self
+    static fn make(value: T) -> Self
 
 struct IntSource:
     value: int
 
 extend IntSource implements Source:
     type Item = int
-    fn get(self) -> int:
-        return self.value
+    fn get() -> int:
+        return this.value
 
 struct TextSource:
-    value: str
+    value: StrView
 
 extend TextSource implements Source:
-    type Item = str
-    fn get(self) -> str:
-        return self.value
+    type Item = StrView
+    fn get() -> StrView:
+        return this.value
 
 struct IntValue:
     value: int
 
 extend IntValue implements Build[int]:
-    fn make(value: int) -> IntValue:
+    static fn make(value: int) -> IntValue:
         return IntValue(value)
 
 struct TextValue:
-    value: str
+    value: StrView
 
-extend TextValue implements Build[str]:
-    fn make(value: str) -> TextValue:
+extend TextValue implements Build[StrView]:
+    static fn make(value: StrView) -> TextValue:
         return TextValue(value)
 
-fn build[S: Source, C: Build[S.Item]](source: S) -> C:
+[S: needs Source, C: needs Build[S.Item]]
+fn build(source: S) -> C:
     return C.make(source.get())
 
 fn main():

@@ -5,7 +5,7 @@
 #$ panics: integer overflow in `+`
 
 @noinline
-fn reduce(text: str, initial: int) -> int:
+fn reduce(text: StrView, initial: int) -> int:
     total = initial
     for (i, c) in text.char_indices():
         total += i ^ (c as u32 as int)

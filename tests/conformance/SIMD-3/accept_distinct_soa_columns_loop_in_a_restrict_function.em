@@ -11,7 +11,7 @@ struct Particle:
     v: f32
 
 @noinline
-fn step(mut ps: SoA[Particle], dt: f32):
+fn step(ref mut ps: SoA[Particle], dt: f32):
     xs = ps.x
     vs = ps.v
     for i in 0..xs.len():

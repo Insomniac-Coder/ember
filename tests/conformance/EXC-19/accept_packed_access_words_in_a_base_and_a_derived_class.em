@@ -11,11 +11,11 @@ open class Base:
     a: Array[int]
     n: int = 0
 
-    fn init(mut self):
-        self.a = [1, 2]
+    fn init():
+        this.a = [1, 2]
 
-    fn set_n(mut self, value: int):
-        self.n = value
+    fn set_n(value: int):
+        this.n = value
 
 class Derived(Base):
     b: Array[int] = []

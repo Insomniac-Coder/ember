@@ -6,14 +6,14 @@
 #$ stdout: none
 
 fn main():
-    println(mem.size_of[Option[cstr]](), mem.size_of[cstr]())
-    present: Option[cstr] = Some(c"present")
+    println(mem.size_of[Option[CStrView]](), mem.size_of[CStrView]())
+    present: Option[CStrView] = Some(c"present")
     match present:
         Some(_):
             println("present")
         None:
             println("unexpected")
-    absent: Option[cstr] = None
+    absent: Option[CStrView] = None
     match absent:
         Some(_):
             println("unexpected")

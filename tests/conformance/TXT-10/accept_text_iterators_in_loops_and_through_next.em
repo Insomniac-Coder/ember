@@ -15,7 +15,7 @@
 # adapter's, is driven by `next`. Both give the same items, and `[CTL-4]`'s
 # `else`, `break` and `continue` work in either.
 
-fn joined(parts: Array[str]) -> String:
+fn joined(parts: Array[StrView]) -> String:
     out = String.from("")
     for part in parts:
         out += f"[{part}]"
@@ -42,15 +42,15 @@ fn main():
         total += b as int
     println(total, s.bytes().count(), s.bytes().to_array())
     text = "one\ntwo\r\n\nthree"
-    lines: Array[str] = []
+    lines: Array[StrView] = []
     for line in text.lines():
         lines.push(line)
     println(joined(lines), "x\n".lines().count(), "".lines().count(), text.lines().nth(1))
-    parts: Array[str] = []
+    parts: Array[StrView] = []
     for part in "a,,b,,c,".split(","):
         parts.push(part)
     println(joined(parts), "1é2é3".split("é").to_array(), "".split(",").count())
-    words: Array[str] = []
+    words: Array[StrView] = []
     for word in "  a \t b\u{3000}c  ".split_whitespace():
         words.push(word)
     println(joined(words), "   ".split_whitespace().count())

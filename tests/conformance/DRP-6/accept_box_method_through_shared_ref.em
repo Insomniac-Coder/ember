@@ -8,8 +8,8 @@
 struct Token:
     value: i32
 
-    fn read(self) -> i32:
-        return self.value
+    fn read() -> i32:
+        return this.value
 
 fn read_boxed(value: ref Box[Token]) -> i32:
     return value.read()

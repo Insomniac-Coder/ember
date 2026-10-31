@@ -6,8 +6,8 @@
 open class Script:
     name: String
 
-    fn init(mut self, owned name: String):
-        self.name = name
+    fn init(owns name: String):
+        this.name = name
 
 class Bad(Script):
     width: int              #$ error[E2101]: class `Bad` adds a field `width` with no default, so it must declare `init`

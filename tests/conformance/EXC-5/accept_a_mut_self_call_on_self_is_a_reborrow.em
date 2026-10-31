@@ -10,19 +10,19 @@ class Counter:
     n: int
     log: Array[int]
 
-    fn init(mut self):
-        self.n = 0
-        self.log = []
+    fn init():
+        this.n = 0
+        this.log = []
 
-    fn bump(mut self):
-        self.n += 1
-        self.log.push(self.n)
+    fn bump():
+        this.n += 1
+        this.log.push(this.n)
 
-    fn twice(mut self):
-        self.bump()
-        self.bump()
+    fn twice():
+        this.bump()
+        this.bump()
 
-fn touch(mut c: Counter):
+fn touch(ref mut c: Counter):
     c.bump()
 
 fn main():

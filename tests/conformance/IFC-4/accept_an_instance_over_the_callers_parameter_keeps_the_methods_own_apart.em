@@ -8,13 +8,15 @@
 # needs `I`").
 
 interface Gather[T]:
-    fn gather[I: Iterator[Item = T]](owned it: I) -> Self
+    [I: needs Iterator[Item = T]]
+    static fn gather(owns it: I) -> Self
 
 struct Bag:
     total: int
 
 extend Bag implements Gather[int]:
-    fn gather[I: Iterator[Item = int]](owned it: I) -> Bag:
+    [I: needs Iterator[Item = int]]
+    static fn gather(owns it: I) -> Bag:
         t = 0
         for x in it:
             t += x
@@ -27,13 +29,14 @@ struct Count:
 extend Count implements Iterator:
     type Item = int
 
-    fn next(mut self) -> Option[int]:
-        if self.n >= self.stop:
+    fn next() -> Option[int]:
+        if this.n >= this.stop:
             return None
-        self.n += 1
-        return Some(self.n)
+        this.n += 1
+        return Some(this.n)
 
-fn build[T, C: Gather[T], I: Iterator[Item = T]](owned it: I) -> C:
+[T, C: needs Gather[T], I: needs Iterator[Item = T]]
+fn build(owns it: I) -> C:
     return C.gather(it)
 
 fn main():

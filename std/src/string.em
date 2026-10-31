@@ -16,8 +16,8 @@ pub enum ParseError:
 ## (`s.parse[int]()?` in a function returning `Result[T]`), and its text says why.
 extend ParseError implements Display:
     ## It allocates as the `String` it writes to grows.
-    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
-        return match self:
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
+        return match this:
             Empty => f.write_str("the text is empty")
             Invalid => f.write_str("the text is not a value of this type")
             Overflow => f.write_str("the value is outside this type's range")
@@ -38,27 +38,26 @@ pub enum Utf8Error:
 ## two in a row; an empty `sep` panics, as Python raises), and
 ## `s.split_whitespace()` the runs of non-white-space characters (Python's
 ## `split()` with no argument).
-extend str:
-    pub fn chars(self) -> Chars:
-        return Chars(text = self, at = 0)
+extend StrView:
+    pub fn chars() -> Chars:
+        return Chars(text = this, at = 0)
 
-    pub fn char_indices(self) -> CharIndices:
-        return CharIndices(text = self, at = 0)
+    pub fn char_indices() -> CharIndices:
+        return CharIndices(text = this, at = 0)
 
-    pub fn bytes(self) -> Bytes:
-        return Bytes(text = self, at = 0)
+    pub fn bytes() -> Bytes:
+        return Bytes(text = this, at = 0)
 
-    pub fn lines(self) -> Lines:
-        return Lines(rest = self)
+    pub fn lines() -> Lines:
+        return Lines(rest = this)
 
-    @borrows(self, sep)
-    pub fn split(self, sep: str) -> Split:
+    pub fn split(sep: StrView) -> Split:
         if sep.len() == 0:
             panic("split: the separator is empty")
-        return Split(rest = self, sep = sep, done = false)
+        return Split(rest = this, sep = sep, done = false)
 
-    pub fn split_whitespace(self) -> SplitWhitespace:
-        return SplitWhitespace(rest = self)
+    pub fn split_whitespace() -> SplitWhitespace:
+        return SplitWhitespace(rest = this)
 
 ## Python's white space for `str.split()`: the characters `str.isspace()`
 ## accepts. `@inline`: `split_whitespace` asks it of every character, and
@@ -83,41 +82,41 @@ fn is_wide_split_space(code: u32) -> bool:
 ## ASCII character is decided here; the tables past it are the runtime's (`tools/unicode_case.py`).
 extend char:
     ## A letter: Unicode's categories Lu, Ll, Lt, Lm and Lo (Python's `isalpha`).
-    pub fn is_alphabetic(self) -> bool:
-        code = self as u32
+    pub fn is_alphabetic() -> bool:
+        code = this as u32
         if code < 0x80:
             return (code | 0x20) >= 0x61 and (code | 0x20) <= 0x7A
-        return char_class(self, 0)
+        return char_class(this, 0)
 
     ## A digit of any script, superscripts included (Python's `isdigit`): `'7'`, `'٣'`, `'²'`.
-    pub fn is_digit(self) -> bool:
-        code = self as u32
+    pub fn is_digit() -> bool:
+        code = this as u32
         if code < 0x80:
             return code >= 0x30 and code <= 0x39
-        return char_class(self, 1)
+        return char_class(this, 1)
 
     ## A letter or a number of any kind (Python's `isalnum`): alphabetic, or numeric (`'½'`).
-    pub fn is_alphanumeric(self) -> bool:
-        code = self as u32
+    pub fn is_alphanumeric() -> bool:
+        code = this as u32
         if code < 0x80:
             return (code >= 0x30 and code <= 0x39) or ((code | 0x20) >= 0x61 and (code | 0x20) <= 0x7A)
-        return char_class(self, 0) or char_class(self, 2)
+        return char_class(this, 0) or char_class(this, 2)
 
     ## White space, as `split_whitespace` splits at (Python's `isspace`).
-    pub fn is_whitespace(self) -> bool:
-        return is_split_space(self)
+    pub fn is_whitespace() -> bool:
+        return is_split_space(this)
 
-    pub fn is_ascii_alphabetic(self) -> bool:
-        return (self as u32) < 0x80 and self.is_alphabetic()
+    pub fn is_ascii_alphabetic() -> bool:
+        return (this as u32) < 0x80 and this.is_alphabetic()
 
-    pub fn is_ascii_digit(self) -> bool:
-        return (self as u32) < 0x80 and self.is_digit()
+    pub fn is_ascii_digit() -> bool:
+        return (this as u32) < 0x80 and this.is_digit()
 
-    pub fn is_ascii_alphanumeric(self) -> bool:
-        return (self as u32) < 0x80 and self.is_alphanumeric()
+    pub fn is_ascii_alphanumeric() -> bool:
+        return (this as u32) < 0x80 and this.is_alphanumeric()
 
-    pub fn is_ascii_whitespace(self) -> bool:
-        return (self as u32) < 0x80 and is_split_space(self)
+    pub fn is_ascii_whitespace() -> bool:
+        return (this as u32) < 0x80 and is_split_space(this)
 
 ## The runtime's own (`ember_hir::RuntimeFn`): whether `c`, past ASCII, is alphabetic (`which` 0),
 ## a digit (1) or numeric (2). This staging body never runs.
@@ -126,7 +125,7 @@ fn char_class(c: char, which: int) -> bool:
 
 @derive(Copy)
 pub struct Chars:
-    text: str
+    text: StrView
     at: int
 
 extend Chars implements Iterator:
@@ -134,97 +133,94 @@ extend Chars implements Iterator:
 
     ## `next_char` decodes the character at `at` and moves `at` past it;
     ## `at` stays on a boundary.
-    fn next(mut self) -> Option[char]:
-        if self.at >= self.text.len():
+    fn next() -> Option[char]:
+        if this.at >= this.text.len():
             return None
-        return Some(self.text.next_char(self.at))
+        return Some(this.text.next_char(this.at))
 
 @derive(Copy)
 pub struct CharIndices:
-    text: str
+    text: StrView
     at: int
 
 extend CharIndices implements Iterator:
     type Item = (int, char)
 
-    fn next(mut self) -> Option[(int, char)]:
-        if self.at >= self.text.len():
+    fn next() -> Option[(int, char)]:
+        if this.at >= this.text.len():
             return None
-        here = self.at
-        return Some((here, self.text.next_char(self.at)))
+        here = this.at
+        return Some((here, this.text.next_char(this.at)))
 
 @derive(Copy)
 pub struct Bytes:
-    text: str
+    text: StrView
     at: int
 
 extend Bytes implements Iterator:
     type Item = u8
 
-    fn next(mut self) -> Option[u8]:
-        if self.at >= self.text.len():
+    fn next() -> Option[u8]:
+        if this.at >= this.text.len():
             return None
-        b = self.text.as_bytes()[self.at]
-        self.at += 1
+        b = this.text.as_bytes()[this.at]
+        this.at += 1
         return Some(b)
 
 @derive(Copy)
 pub struct Lines:
-    rest: str
+    rest: StrView
 
 extend Lines implements Iterator:
-    type Item = str
+    type Item = StrView
 
     ## The text is copied out of the field first, so a line borrows the
     ## text, not this iterator.
-    @borrows(self.rest)
-    fn next(mut self) -> Option[str]:
-        rest = self.rest
+    fn next() -> Option[StrView] from rest:
+        rest = this.rest
         if rest.len() == 0:
             return None
         match rest.find("\n"):
             Some(at):
                 line = rest[..at]
-                self.rest = rest[at + 1..]
+                this.rest = rest[at + 1..]
                 if line.ends_with("\r"):
                     return Some(line[..line.len() - 1])
                 return Some(line)
             None:
-                self.rest = rest[rest.len()..]
+                this.rest = rest[rest.len()..]
                 return Some(rest)
 
 @derive(Copy)
 pub struct Split:
-    rest: str
-    sep: str
+    rest: StrView
+    sep: StrView
     done: bool
 
 extend Split implements Iterator:
-    type Item = str
+    type Item = StrView
 
-    @borrows(self.rest)
-    fn next(mut self) -> Option[str]:
-        if self.done:
+    fn next() -> Option[StrView] from rest:
+        if this.done:
             return None
-        rest = self.rest
-        match rest.split_once(self.sep):
+        rest = this.rest
+        match rest.split_once(this.sep):
             Some((part, remaining)):
-                self.rest = remaining
+                this.rest = remaining
                 return Some(part)
             None:
-                self.done = true
+                this.done = true
                 return Some(rest)
 
 @derive(Copy)
 pub struct SplitWhitespace:
-    rest: str
+    rest: StrView
 
 extend SplitWhitespace implements Iterator:
-    type Item = str
+    type Item = StrView
 
-    @borrows(self.rest)
-    fn next(mut self) -> Option[str]:
-        rest = self.rest
+    fn next() -> Option[StrView] from rest:
+        rest = this.rest
         n = rest.len()
         start = 0
         while start < n:
@@ -233,7 +229,7 @@ extend SplitWhitespace implements Iterator:
                 break
             start = at
         if start >= n:
-            self.rest = rest[n..]
+            this.rest = rest[n..]
             return None
         end = start
         while end < n:
@@ -241,5 +237,5 @@ extend SplitWhitespace implements Iterator:
             if is_split_space(rest.next_char(at)):
                 break
             end = at
-        self.rest = rest[end..]
+        this.rest = rest[end..]
         return Some(rest[start..end])

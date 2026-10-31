@@ -631,7 +631,7 @@ fn contract_diagnostic(
 ) -> Diagnostic {
     let (code, contract, what) = match effect {
         Effects::NONDET if relaxed => {
-            (codes::E4072, "@deterministic", "reaches relaxed floating point (`@fastmath`, `@fp(contract)`)")
+            (codes::E4072, "@deterministic", "reaches relaxed floating point (`@fastmath`, `@fp(allow_fma)`)")
         }
         Effects::ALLOC => (codes::E4001, "@noalloc", "reaches an allocation"),
         Effects::SYNC => (codes::E4002, "@nosync", "reaches a synchronising operation"),
@@ -1321,7 +1321,7 @@ fn own(effects: Effects, span: Span, operation: &'static str, sites: &mut Vec<Si
 }
 
 /// `[DET-5]` — a relaxed function reached from a `@deterministic` one is `E4072`.
-const RELAXED: &str = "a function with `@fastmath` or `@fp(contract)`";
+const RELAXED: &str = "a function with `@fastmath` or `@fp(allow_fma)`";
 
 fn drop_description(effects: Effects) -> &'static str {
     if effects == Effects::SYNC {

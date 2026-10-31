@@ -6,7 +6,7 @@
 # `[ERR-4]` (ODR-025) — the `Option`/`Result` methods that take a function call it at most once, so
 # they take a `once fn`: a closure may give away what it captured (D6, `N3`, formerly refused).
 
-fn join(owned a: String, tail: str) -> String:
+fn join(owns a: String, tail: StrView) -> String:
     a.push_str(tail)
     return a
 

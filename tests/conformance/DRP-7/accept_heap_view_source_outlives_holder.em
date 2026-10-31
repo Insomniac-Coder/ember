@@ -2,12 +2,13 @@
 #$ rules: DRP-7
 # Declare the String first so the Holder's destructor runs before its source.
 
-struct Holder[T]:
-    borrowed: str
+[T]
+struct Holder:
+    borrowed: StrView
     marker: T
 
-    fn drop(mut self):
-        println(self.borrowed)
+    fn drop():
+        println(this.borrowed)
 
 fn main():
     source: String = "still live"

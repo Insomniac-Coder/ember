@@ -3,15 +3,15 @@
 struct Rng:
     state: int
 
-    fn next(mut self) -> int:
-        self.state = (self.state * 1103515245 + 12345) % 2147483648
-        return self.state
+    fn next() -> int:
+        this.state = (this.state * 1103515245 + 12345) % 2147483648
+        return this.state
 
-    fn chance(mut self, percent: int) -> bool:
-        return self.next() % 100 < percent
+    fn chance(percent: int) -> bool:
+        return this.next() % 100 < percent
 
-    fn between(mut self, low: int, high: int) -> int:
-        return low + self.next() % (high - low + 1)
+    fn between(low: int, high: int) -> int:
+        return low + this.next() % (high - low + 1)
 
 struct Customer:
     id: int
@@ -24,23 +24,23 @@ class Checkout:
     remaining: int = 0
     served: int = 0
 
-    fn init(self, owned name: String):
-        self.name = name
+    fn init(owns name: String):
+        this.name = name
 
-    fn is_free(self) -> bool:
-        return self.serving is None
+    fn is_free() -> bool:
+        return this.serving is None
 
-    fn start(self, owned customer: Customer):
-        self.remaining = customer.items
-        self.serving = Some(customer)
+    fn start(owns customer: Customer):
+        this.remaining = customer.items
+        this.serving = Some(customer)
 
-    fn tick(self) -> bool:
-        if self.serving is None:
+    fn tick() -> bool:
+        if this.serving is None:
             return false
-        self.remaining -= 1
-        if self.remaining <= 0:
-            self.serving = None
-            self.served += 1
+        this.remaining -= 1
+        if this.remaining <= 0:
+            this.serving = None
+            this.served += 1
             return true
         return false
 
@@ -56,7 +56,7 @@ fn main():
         if rng.chance(45):
             queue.push(Customer(id=next_id, arrived=minute, items=rng.between(1, 6)))
             next_id += 1
-        for till in tills:
+        for till in tills.iter_mut():
             till.tick()
             if till.is_free() and queue.len() > 0:
                 customer = queue.remove(0)

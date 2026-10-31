@@ -10,9 +10,9 @@
 struct Guard:
     id: i32
 
-    fn drop(mut self):
-        println(f"dropping {self.id}")
-        if self.id == 2:
+    fn drop():
+        println(f"dropping {this.id}")
+        if this.id == 2:
             panic("drop failed")
 
 fn main():

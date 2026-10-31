@@ -10,7 +10,7 @@
 # the two slice-end checks are left only in the checked copy, which runs when the test fails.
 from std.simd import f32x8
 
-fn scale(xs: Span[f32], mut out: MutSpan[f32], k: f32):
+fn scale(xs: Span[f32], ref mut out: MutSpan[f32], k: f32):
     kv = f32x8.splat(k)
     for i in (0..xs.len() - 7).step_by(8):
         (f32x8.load(xs[i..i + 8]) * kv).store(out[i..i + 8])

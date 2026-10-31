@@ -13,30 +13,31 @@
 # carrier gets its independent observer copy. The mutable Observe slot updates
 # the generic class, then the Bump slot observes that same payload.
 interface Observe:
-    fn observe(mut self, owned weak: Weak[Shared[Token]]) -> i32
+    fn observe(owns weak: Weak[Shared[Token]]) -> i32
 
 interface Bump:
-    fn bump(mut self) -> i32
+    fn bump() -> i32
 
 struct Token:
     value: i32
 
-class Reader[T] implements Observe, Bump:
+[T]
+class Reader implements Observe, Bump:
     marker: T
     count: i32
 
-    fn observe(mut self, owned weak: Weak[Shared[Token]]) -> i32:
-        self.count = self.count + 1
+    fn observe(owns weak: Weak[Shared[Token]]) -> i32:
+        this.count = this.count + 1
         match weak.upgrade():
             Some(owner):
                 return owner.get().value
             None:
                 return 0
 
-    fn bump(mut self) -> i32:
-        return self.count
+    fn bump() -> i32:
+        return this.count
 
-fn inspect(value: ref mut dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
+fn inspect(ref mut value: dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
     return value.observe(weak) + value.bump()
 
 fn main():

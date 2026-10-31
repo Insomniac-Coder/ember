@@ -7,7 +7,7 @@ struct Pixel:
     value: i32
 
 extend Pixel implements Default:
-    fn default() -> Pixel:
+    static fn default() -> Pixel:
         return Pixel(23)
 
 fn main():

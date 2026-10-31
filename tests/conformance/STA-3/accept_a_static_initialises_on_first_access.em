@@ -16,7 +16,7 @@ fn compute() -> int:
     return 41
 
 static ANSWER: int = compute() + 1
-static NAMES: Array[str] = ["a", "b", "c"]
+static NAMES: Array[StrView] = ["a", "b", "c"]
 static TOTAL: int = ANSWER + NAMES.len()
 
 fn main():

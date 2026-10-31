@@ -13,27 +13,29 @@
 struct Token:
     value: i32
 
-open class Base[T]:
+[T]
+open class Base:
     weak: Weak[Shared[Token]]
     marker: T
 
-    fn init(mut self, weak: Weak[Shared[Token]], marker: T):
-        self.weak = weak
-        self.marker = marker
+    fn init(weak: Weak[Shared[Token]], marker: T):
+        this.weak = weak
+        this.marker = marker
 
-    virtual fn value(self) -> i32:
-        match self.weak.upgrade():
+    virtual fn value() -> i32:
+        match this.weak.upgrade():
             Some(owner):
                 return owner.get().value
             None:
                 return 0
 
-class Derived[T](Base[T]):
-    fn init(mut self, weak: Weak[Shared[Token]], marker: T):
+[T]
+class Derived(Base[T]):
+    fn init(weak: Weak[Shared[Token]], marker: T):
         super.init(weak, marker)
 
-    override fn value(self) -> i32:
-        match self.weak.upgrade():
+    override fn value() -> i32:
+        match this.weak.upgrade():
             Some(owner):
                 return owner.get().value + 1
             None:

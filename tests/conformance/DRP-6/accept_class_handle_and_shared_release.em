@@ -14,11 +14,11 @@
 # way its last release, at scope exit, runs its `drop`.)
 
 class Handle:
-    fn drop(mut self):
+    fn drop():
         println("handle")
 
 struct Token:
-    fn drop(mut self):
+    fn drop():
         println("shared")
 
 fn main():

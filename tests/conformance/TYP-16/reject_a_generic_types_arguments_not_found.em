@@ -3,10 +3,11 @@
 # `[TYP-16]` — when neither the arguments nor the expected type say what a
 # generic struct's parameter is, the call names the fix: write the arguments.
 
-struct Stack[T]:
+[T]
+struct Stack:
     items: Array[T]
 
-    fn empty() -> Stack[T]:
+    static fn empty() -> Stack[T]:
         return Stack(Array())
 
 fn main():

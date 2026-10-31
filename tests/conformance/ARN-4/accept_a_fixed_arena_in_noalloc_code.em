@@ -5,7 +5,7 @@
 # `@noalloc` code.
 
 @noalloc
-fn place(mut fixed: FixedArena, x: i32) -> i32:
+fn place(ref mut fixed: FixedArena, x: i32) -> i32:
     slot: ref mut i32 = fixed.alloc(x)
     slot += 1
     return slot

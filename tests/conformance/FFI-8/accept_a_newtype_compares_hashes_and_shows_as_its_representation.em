@@ -20,7 +20,7 @@ fn main():
     b = 7 as fd_t
     c = 9 as fd_t
     println(a == b, a != c)
-    names: Map[fd_t, str] = {a: "seven", c: "nine"}
+    names: Map[fd_t, StrView] = {a: "seven", c: "nine"}
     println(names.len(), names[b])
     seen = {a, b, c}
     println(seen.len())

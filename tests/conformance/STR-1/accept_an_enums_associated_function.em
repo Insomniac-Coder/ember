@@ -9,10 +9,10 @@ enum Shape:
     Circle(r: int)
     Dot
 
-    fn unit() -> Shape:
+    static fn unit() -> Shape:
         return Shape.Circle(1)
 
-    fn point() -> Self:
+    static fn point() -> Self:
         return Shape.Dot
 
 fn main():

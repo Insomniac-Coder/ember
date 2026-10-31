@@ -32,7 +32,7 @@ fn outer(n: int, calls: ref Cell[int]) -> Result[int]:
     v = load(n).with_context(fn() => message(name, calls))?
     return Ok(v * 10)
 
-fn message(name: str, calls: ref Cell[int]) -> String:
+fn message(name: StrView, calls: ref Cell[int]) -> String:
     calls.set(calls.get() + 1)
     return f"loading {name}"
 

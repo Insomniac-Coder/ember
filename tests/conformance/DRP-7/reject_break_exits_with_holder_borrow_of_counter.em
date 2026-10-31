@@ -7,8 +7,8 @@ struct CounterHolder:
     borrowed: ref i32
     marker: i32
 
-    fn drop(mut self):
-        println(self.borrowed)
+    fn drop():
+        println(this.borrowed)
 
 fn main():
     _outer: Option[CounterHolder] = None

@@ -3,8 +3,7 @@
 # Arena is a narrow non-view provenance source, not static storage. Its result
 # must remain bounded by the Arena even after passing through a wrapper.
 
-@borrows(arena)
-fn allocate(arena: Arena) -> ref mut i32:
+fn allocate(arena: Arena) -> ref mut i32 from arena:
     return arena.alloc(9)
 
 fn main():

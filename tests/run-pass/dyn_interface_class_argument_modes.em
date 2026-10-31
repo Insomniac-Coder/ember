@@ -6,14 +6,14 @@
 #$ assert-c: contains(return em_8Adjuster6adjust((struct em_obj_8Adjuster*)_0, _1, _2);)
 
 interface Adjust:
-    fn adjust(self, amount: i32, mut value: i32) -> i32
+    fn adjust(amount: i32, ref mut value: i32) -> i32
 
 class Adjuster implements Adjust:
-    fn adjust(self, amount: i32, mut value: i32) -> i32:
+    fn adjust(amount: i32, ref mut value: i32) -> i32:
         value = value + amount
         return value
 
-fn adjust_it(source: ref dyn Adjust, mut value: i32) -> i32:
+fn adjust_it(source: ref dyn Adjust, ref mut value: i32) -> i32:
     return source.adjust(value = value, amount = 2)
 
 fn main():

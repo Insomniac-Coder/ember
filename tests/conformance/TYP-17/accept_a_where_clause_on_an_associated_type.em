@@ -6,7 +6,8 @@
 # parameter itself does (D-644): `where I.Item: Display` lets the body format an item. The clause was
 # read nowhere, so the body was E2040 and no call had to meet it.
 
-fn show_all[I: Iterator](owned it: I) where I.Item: Display:
+[I: needs Iterator]
+fn show_all(owns it: I) where I.Item: needs Display:
     for x in it:
         println(f"{x}")
 

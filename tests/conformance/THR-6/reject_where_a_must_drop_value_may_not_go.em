@@ -12,8 +12,8 @@ import std.mem
 struct Guard:
     id: int
 
-    fn drop(mut self):
-        println(f"released {self.id}")
+    fn drop():
+        println(f"released {this.id}")
 
 class Holder:
     g: Guard    #$ error[E3015]: `Guard` holds a `@must_drop` value, which may not be stored in the class field `g`

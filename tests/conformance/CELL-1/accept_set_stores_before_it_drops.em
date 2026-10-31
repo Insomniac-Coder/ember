@@ -23,8 +23,8 @@
 struct Bag:
     pub v: Array[i32]
 
-    fn drop(mut self):
-        println(self.v.len())
+    fn drop():
+        println(this.v.len())
 
 fn make(n: i32) -> Bag:
     xs: Array[i32] = Array[i32]()

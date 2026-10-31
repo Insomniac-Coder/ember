@@ -12,21 +12,22 @@
 # and returns an independent Weak[Shared[T]] copy. The mutable dynamic access
 # ends with the call while the caller may still upgrade the returned observer.
 interface Revise:
-    fn observer(mut self) -> Weak[Shared[Token]]
+    fn observer() -> Weak[Shared[Token]]
 
 struct Token:
     value: i32
 
-class Observer[T] implements Revise:
+[T]
+class Observer implements Revise:
     weak: Weak[Shared[Token]]
     marker: T
     count: i32
 
-    fn observer(mut self) -> Weak[Shared[Token]]:
-        self.count = self.count + 1
-        return self.weak
+    fn observer() -> Weak[Shared[Token]]:
+        this.count = this.count + 1
+        return this.weak
 
-fn inspect(value: ref mut dyn Revise) -> Weak[Shared[Token]]:
+fn inspect(ref mut value: dyn Revise) -> Weak[Shared[Token]]:
     return value.observer()
 
 fn main():

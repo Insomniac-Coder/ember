@@ -8,6 +8,6 @@ fn main():
         xs.push(i % 1000)
     total = 0
     for round in 0..300:
-        for (i, x) in xs.iter().copied().enumerate().skip(round):
+        for (i, x) in xs.iter().copy_each().enumerate().skip(round):
             total ^= i | x
     println(total)

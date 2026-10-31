@@ -7,18 +7,19 @@
 # `f64` implemented nowhere (E2040 at the `extend`) and which gave a generic body no `+` (E2040).
 
 interface Shape:
-    type Scalar: Add[Output = Scalar]
-    fn width(self) -> Scalar
+    type Scalar: needs Add[Output = Scalar]
+    fn width() -> Scalar
 
 struct Box2:
     w: f64
 
 extend Box2 implements Shape:
     type Scalar = f64
-    fn width(self) -> f64:
-        return self.w
+    fn width() -> f64:
+        return this.w
 
-fn twice[S: Shape](s: S) -> S.Scalar:
+[S: needs Shape]
+fn twice(s: S) -> S.Scalar:
     return s.width() + s.width()
 
 fn main():

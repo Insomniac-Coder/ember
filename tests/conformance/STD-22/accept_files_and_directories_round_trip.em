@@ -36,7 +36,7 @@ fn scratch() -> String:
     rng = random.Rng.from_entropy()
     return f"{base}/ember_std22_{rng.next_u64()}"
 
-fn copy_lines(path: str) -> Result[void, io.Error]:
+fn copy_lines(path: StrView) -> Result[void, io.Error]:
     out = BufWriter.new(File.create(path)?)
     out.write("x\r\ny\n".as_bytes())?
     out.flush()?

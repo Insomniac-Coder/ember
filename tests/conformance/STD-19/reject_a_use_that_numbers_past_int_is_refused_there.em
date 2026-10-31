@@ -5,7 +5,8 @@
 # `int`s, `last = i` takes every number; used with a list of `u8`s, whose list could hold so many
 # items that numbering from 2 passes `int`'s top, it does not, and that use is refused, naming it.
 
-fn labels[T: Copy](xs: Array[T]) -> int:
+[T: needs Copy]
+fn labels(xs: Array[T]) -> int:
     last: int = 0
     for i, _x in enumerate(xs, start=2):
         last = i                    #$ error[E2020]: in `labels` used with `T` = `u8`

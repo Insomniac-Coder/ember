@@ -5,7 +5,7 @@
 ## `_` or a binding (D-815). A string literal does not match a `char` or an
 ## integer.
 
-fn code(word: str) -> int:
+fn code(word: StrView) -> int:
     return match word:    #$ error[E2090]: `_` not covered
         "north" => 1
         "south" => 2

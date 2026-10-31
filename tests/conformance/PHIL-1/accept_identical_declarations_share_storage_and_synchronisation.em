@@ -17,7 +17,7 @@ struct Point:
     x: i64
     y: i64
 
-fn nudge(mut p: Point):
+fn nudge(ref mut p: Point):
     p.x += 1
 
 @sync

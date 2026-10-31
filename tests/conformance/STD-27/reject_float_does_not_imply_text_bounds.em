@@ -6,19 +6,23 @@
 from std.math import Float
 
 interface Holder:
-    type Item: Float
+    type Item: needs Float
 
-fn require_display[U: Display](x: U):
+[U: needs Display]
+fn require_display(x: U):
     pass
 
-fn require_debug[U: Debug](x: U):
+[U: needs Debug]
+fn require_debug(x: U):
     pass
 
-fn direct[T: Float](x: T):
+[T: needs Float]
+fn direct(x: T):
     require_display(x)    #$ error[E2040]
     require_debug(x)    #$ error[E2040]
 
-fn projected[H: Holder](x: H.Item):
+[H: needs Holder]
+fn projected(x: H.Item):
     require_display(x)    #$ error[E2040]
     require_debug(x)    #$ error[E2040]
 

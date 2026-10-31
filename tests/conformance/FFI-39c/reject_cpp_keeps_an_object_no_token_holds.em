@@ -6,11 +6,11 @@
 import cpp "widgets.hpp" with (overlay = "overlays/widgets.em")
 
 class Button(cpp.Widget):
-    override fn draw(self) -> i32:
+    override fn draw() -> i32:
         return 7
 
-    fn attach(self):
-        cpp.add_widget(self)    #$ error[E5060]: C++ keeps this object, and nothing here holds the `Retained` token
+    fn attach():
+        cpp.add_widget(this)    #$ error[E5060]: C++ keeps this object, and nothing here holds the `Retained` token
 
 fn main():
     Button().attach()

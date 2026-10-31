@@ -10,12 +10,13 @@ struct Payload:
     value: i32
 
 extend Key implements Eq:
-    fn eq(self, other: Self) -> bool:
-        return self.value == other.value
+    fn eq(other: Self) -> bool:
+        return this.value == other.value
 
 extend Key implements Hash:
-    fn hash[H: Hasher](self, mut h: H):
-        h.write_i32(self.value)
+    [H: needs Hasher]
+    fn hash(ref mut h: H):
+        h.write_i32(this.value)
 
 fn replaced(value: Result[Option[Payload], CapacityError]) -> i32:
     match value:

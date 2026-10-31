@@ -16,7 +16,7 @@ struct Task:
     status: Status = Status.Open
     tags: Array[String] = []
 
-fn priority_label(p: Priority) -> str:
+fn priority_label(p: Priority) -> StrView:
     return match p:
         Low => "low"
         Medium => "medium"
@@ -32,27 +32,27 @@ class TodoList:
     tasks: Array[Task] = []
     next_id: int = 1
 
-    fn add(self, title: str, priority: Priority, tags: Array[String] = []) -> int:
-        id = self.next_id
-        self.next_id += 1
-        self.tasks.push(Task(id=id, title=title.to_string(), priority=priority, tags=tags.clone()))
+    fn add(title: StrView, priority: Priority, tags: Array[String] = []) -> int:
+        id = this.next_id
+        this.next_id += 1
+        this.tasks.push(Task(id=id, title=title.to_string(), priority=priority, tags=tags.clone()))
         return id
 
-    fn complete(self, id: int) -> bool:
-        for task in self.tasks.iter_mut():
+    fn complete(id: int) -> bool:
+        for task in this.tasks.iter_mut():
             if task.id == id:
                 task.status = Status.Done
                 return true
         return false
 
-    fn open_tasks(self) -> Array[Task]:
-        return [t.clone() for t in self.tasks if t.status == Status.Open]
+    fn open_tasks() -> Array[Task]:
+        return [t.clone() for t in this.tasks if t.status == Status.Open]
 
-    fn with_tag(self, tag: str) -> Array[Task]:
-        return [t.clone() for t in self.tasks if tag.to_string() in t.tags]
+    fn with_tag(tag: StrView) -> Array[Task]:
+        return [t.clone() for t in this.tasks if tag.to_string() in t.tags]
 
-    fn print(self):
-        sorted_tasks = self.tasks.clone()
+    fn print():
+        sorted_tasks = this.tasks.clone()
         sorted_tasks.sort_by_key(fn(t) => priority_rank(t.priority))
         for t in sorted_tasks:
             mark = "x" if t.status == Status.Done else " "

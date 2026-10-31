@@ -4,7 +4,7 @@
 # next iteration on every path". It is, so the second iteration finds a value
 # there and this runs.
 
-fn consume(owned xs: Array[i32]) -> i32:
+fn consume(owns xs: Array[i32]) -> i32:
     return xs[0]
 
 fn main():

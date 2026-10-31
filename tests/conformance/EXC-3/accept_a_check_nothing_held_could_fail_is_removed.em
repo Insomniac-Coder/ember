@@ -9,10 +9,10 @@
 class Player:
     items: Array[int]
 
-    fn init(mut self, n: int):
-        self.items = []
+    fn init(n: int):
+        this.items = []
         for i in 0..n:
-            self.items.push(i)
+            this.items.push(i)
 
 fn main():
     players: Array[Player] = []

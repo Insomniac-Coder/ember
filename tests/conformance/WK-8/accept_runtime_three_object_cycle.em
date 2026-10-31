@@ -5,8 +5,8 @@
 class Node:
     next: Option[Node] = None    #$ warning[L3001]: potential reference cycle
 
-    fn link(mut self, other: Node):
-        self.next = Some(other)
+    fn link(other: Node):
+        this.next = Some(other)
 
 fn make_cycle():
     first = Node()

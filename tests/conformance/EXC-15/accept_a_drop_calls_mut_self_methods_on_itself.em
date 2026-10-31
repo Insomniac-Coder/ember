@@ -11,31 +11,31 @@
 open class Base:
     log: Array[int]
 
-    fn init(mut self):
-        self.log = [1]
+    fn init():
+        this.log = [1]
 
-    fn note(mut self, x: int):
-        self.log.push(x)
+    fn note(x: int):
+        this.log.push(x)
 
-    fn drop(mut self):
-        self.note(9)
-        println(f"base {self.log}")
+    fn drop():
+        this.note(9)
+        println(f"base {this.log}")
 
 class Bag(Base):
     items: Array[int]
 
-    fn init(mut self):
-        self.items = [1, 2, 3]
+    fn init():
+        this.items = [1, 2, 3]
         super.init()
 
-    fn grow(mut self):
-        self.items.push(4)
+    fn grow():
+        this.items.push(4)
 
-    fn drop(mut self):
-        self.grow()
-        self.note(8)
-        v = self.items[..]
-        println(f"bag {v} {self.log}")
+    fn drop():
+        this.grow()
+        this.note(8)
+        v = this.items[..]
+        println(f"bag {v} {this.log}")
 
 fn main():
     b = Bag()

@@ -7,22 +7,22 @@ interface Element:
     type Item
 
 interface Holder:
-    type Value: Element[Item = int]
+    type Value: needs Element[Item = int]
 
 interface NestedHolder:
-    type Value: Element[Item = Option[int]]
+    type Value: needs Element[Item = Option[int]]
 
 struct Wrong:
     unused: int
 
 extend Wrong implements Element:
-    type Item = str
+    type Item = StrView
 
 struct WrongNested:
     unused: int
 
 extend WrongNested implements Element:
-    type Item = Option[str]
+    type Item = Option[StrView]
 
 struct Owner:
     unused: int
@@ -37,7 +37,7 @@ extend NestedOwner implements NestedHolder:    #$ error[E2040]
     type Value = WrongNested
 
 interface DefaultHolder:
-    type Value: Element[Item = int] = Wrong
+    type Value: needs Element[Item = int] = Wrong
 
 struct DefaultOwner:
     unused: int

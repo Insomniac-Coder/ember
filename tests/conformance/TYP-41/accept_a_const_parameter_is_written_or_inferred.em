@@ -7,13 +7,15 @@
 ## (`zeros[3]()`), or inferred from an argument's length, and inside the body
 ## `N` is its value.
 
-fn total[const N: int](xs: [int; N]) -> int:
+[const N: int]
+fn total(xs: [int; N]) -> int:
     sum = 0
     for x in xs:
         sum += x
     return sum + N
 
-fn zeros[const N: int]() -> [f32; N]:
+[const N: int]
+fn zeros() -> [f32; N]:
     return [0.0; N]
 
 fn main():

@@ -7,7 +7,7 @@
 # `Array[i32]()` holds `i32` (F-029), and `String()` takes none (D-456).
 
 fn main():
-    words = Array[str]()
+    words = Array[StrView]()
     words.push("a")
     words.push("b")
     xs = Array[i32]()

@@ -10,5 +10,5 @@ class Local:
 class Shared:
     item: Local
 
-    fn init(mut self, item: Local):
-        self.item = item
+    fn init(item: Local):
+        this.item = item

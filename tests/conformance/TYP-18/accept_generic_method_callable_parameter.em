@@ -4,7 +4,8 @@
 struct Apply:
     marker: i32
 
-    fn call[T](self, value: T, transform: fn(T) -> T) -> T:
+    [T]
+    fn call(value: T, transform: fn(T) -> T) -> T:
         return transform(value)
 
 fn main():

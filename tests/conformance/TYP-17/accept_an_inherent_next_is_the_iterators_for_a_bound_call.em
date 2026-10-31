@@ -11,11 +11,11 @@
 struct Countdown:
     left: int
 
-    fn next(mut self) -> Option[int]:
-        if self.left == 0:
+    fn next() -> Option[int]:
+        if this.left == 0:
             return None
-        self.left -= 1
-        return Some(self.left)
+        this.left -= 1
+        return Some(this.left)
 
 extend Countdown implements Iterator:
     type Item = int
@@ -26,4 +26,4 @@ fn main():
         seen.push(n)
     println(seen)
     xs: Array[int] = [4, 9, 2]
-    println(Countdown(left = 4).skip(1).to_array(), xs.copied().skip(1).to_array())
+    println(Countdown(left = 4).skip(1).to_array(), xs.copy_each().skip(1).to_array())

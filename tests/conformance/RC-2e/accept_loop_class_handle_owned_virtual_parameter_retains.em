@@ -15,20 +15,20 @@ class Token:
     value: i32
 
 open class Consumer:
-    fn init(mut self):
+    fn init():
         pass
 
-    virtual fn consume(self, owned token: Token) -> i32:
+    virtual fn consume(owns token: Token) -> i32:
         return token.value
 
 class Worker(Consumer):
-    fn init(mut self):
+    fn init():
         super.init()
 
-    override fn consume(self, owned token: Token) -> i32:
+    override fn consume(owns token: Token) -> i32:
         return token.value
 
-fn dispatch(consumer: Consumer, owned tokens: Array[Token]):
+fn dispatch(consumer: Consumer, owns tokens: Array[Token]):
     for token in tokens:
         println(consumer.consume(token))
 

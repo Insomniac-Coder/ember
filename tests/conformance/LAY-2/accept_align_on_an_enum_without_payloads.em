@@ -39,6 +39,6 @@ fn main():
                 fast += 1
             Mode.Slow:
                 pass
-    if Some(Mode.Fast) = kept:
+    if kept == Some(Mode.Fast):
         fast += 1
     println(fast, kept == Some(Mode.Fast))

@@ -11,8 +11,8 @@ from std.ecs import World, Query, Component, Entity
 class Texture:
     id: int
 
-    fn init(mut self, id: int):
-        self.id = id
+    fn init(id: int):
+        this.id = id
 
 @derive(Component)
 struct Sprite:
@@ -22,11 +22,11 @@ struct Sprite:
 struct Pos:
     x: int
 
-fn decorate(mut q: Query[(Entity, Pos)]):
+fn decorate(ref mut q: Query[(Entity, Pos)]):
     for e, p in q.iter():
         q.commands().add(e, Sprite(Texture(p.x)))
 
-fn decorate_now(mut q: Query[(Entity, Pos)], unused: ()):
+fn decorate_now(ref mut q: Query[(Entity, Pos)], unused: ()):
     for e, p in q.iter():
         q.commands().add(e, Sprite(Texture(p.x)))
 

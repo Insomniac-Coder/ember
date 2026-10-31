@@ -4,11 +4,12 @@
 # The mistake is in the generic method, so it is reported once, against
 # `Version[T]` ([TYP-17], D-248), not per instance.
 
-class Version[T]:
+[T]
+class Version:
     let value: T
 
-    fn replace(mut self, value: T):
-        self.value = value      #$ error[E2104]: cannot assign to `let` field `Version[T].value` outside its `init`
+    fn replace(value: T):
+        this.value = value      #$ error[E2104]: cannot assign to `let` field `Version[T].value` outside its `init`
 
 fn main():
     version = Version[i32](1)

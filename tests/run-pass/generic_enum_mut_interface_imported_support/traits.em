@@ -1,2 +1,2 @@
 pub interface Bump:
-    fn bump(mut self) -> i32
+    fn bump() -> i32

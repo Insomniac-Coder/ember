@@ -7,14 +7,14 @@ class Player:
     f: Array[int]
     hp: int
 
-    fn init(mut self, hp: int):
-        self.a = []
-        self.b = []
-        self.c = []
-        self.d = []
-        self.e = []
-        self.f = []
-        self.hp = hp
+    fn init(hp: int):
+        this.a = []
+        this.b = []
+        this.c = []
+        this.d = []
+        this.e = []
+        this.f = []
+        this.hp = hp
 
 fn main():
     players: Array[Player] = []

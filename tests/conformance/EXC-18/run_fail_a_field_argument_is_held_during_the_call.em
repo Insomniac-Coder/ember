@@ -8,8 +8,8 @@
 class Bag:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = [1, 2, 3]
+    fn init():
+        this.items = [1, 2, 3]
 
 fn use_view(v: Span[int], other: Bag) -> int:
     alias = other

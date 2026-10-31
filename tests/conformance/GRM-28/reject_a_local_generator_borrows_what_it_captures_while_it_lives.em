@@ -7,8 +7,8 @@
 
 fn main():
     total = 0
-    gen fn running(owned xs: Array[int]) -> Generator[int]:
-        for x in owned xs:
+    gen fn running(owns xs: Array[int]) -> Generator[int]:
+        for x in owns xs:
             total += x
             yield total
     g = running([1, 2])

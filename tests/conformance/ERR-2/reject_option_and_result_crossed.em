@@ -6,7 +6,7 @@
 # `Result` in a function returning an `Option`, is `E2181`, whose fix-its are
 # `.ok_or(err)?` and `.ok()?`.
 
-fn parse(text: str) -> Result[int, String]:
+fn parse(text: StrView) -> Result[int, String]:
     if text == "1":
         return Ok(1)
     return Err(String.from("not one"))
@@ -20,7 +20,7 @@ fn first(n: int) -> Result[int, String]:
     v = maybe(n)?    #$ error[E2181]: `?` on an `Option[i64]` in a function returning `Result[i64, String]`
     return Ok(v)
 
-fn parsed(text: str) -> Option[int]:
+fn parsed(text: StrView) -> Option[int]:
     v = parse(text)?    #$ error[E2181]: `?` on a `Result[i64, String]` in a function returning `Option[i64]`
     return Some(v)
 

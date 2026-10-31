@@ -10,10 +10,10 @@
 struct Node:
     weak: Weak[Shared[Node]]
 
-    fn drop(mut self):
+    fn drop():
         # The final strong release has started deinitialisation, so this
         # upgrade must fail rather than resurrecting the payload.
-        match self.weak.upgrade():
+        match this.weak.upgrade():
             Some(_):
                 println(0)
             None:

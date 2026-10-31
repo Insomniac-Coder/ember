@@ -3,8 +3,8 @@
 
 from std.collections import ArenaArray
 
-@borrows(arena)
-fn reserve[T](arena: Arena, capacity: usize) -> ArenaArray[T]:
+[T]
+fn reserve(arena: Arena, capacity: usize) -> ArenaArray[T] from arena:
     return ArenaArray[T].with_capacity(arena, capacity)
 
 fn main():

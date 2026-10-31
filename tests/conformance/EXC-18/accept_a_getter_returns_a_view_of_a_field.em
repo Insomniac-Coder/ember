@@ -12,24 +12,24 @@ open class Person:
     name: String
     tags: Array[int]
 
-    fn init(mut self):
-        self.name = "ann"
-        self.tags = [1, 2]
+    fn init():
+        this.name = "ann"
+        this.tags = [1, 2]
 
-    fn get_name(self) -> str:
-        return self.name
+    fn get_name() -> StrView:
+        return this.name
 
-    fn relay(self) -> str:
-        return self.get_name()
+    fn relay() -> StrView:
+        return this.get_name()
 
-    virtual fn label(self) -> str:
-        return self.name
+    virtual fn label() -> StrView:
+        return this.name
 
-    fn first_tags(self) -> Span[int]:
-        return self.tags[..1]
+    fn first_tags() -> Span[int]:
+        return this.tags[..1]
 
-    fn rename(mut self):
-        self.name = "bob"
+    fn rename():
+        this.name = "bob"
 
 fn main():
     p = Person()

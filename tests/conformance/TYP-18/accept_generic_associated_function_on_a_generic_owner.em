@@ -1,10 +1,12 @@
 #$ test: run-pass
 #$ rules: TYP-16, TYP-18, MONO-1
 
-struct Holder[T]:
+[T]
+struct Holder:
     value: T
 
-    fn keep[U](value: U) -> U:
+    [U]
+    static fn keep(value: U) -> U:
         return value
 
 fn main():

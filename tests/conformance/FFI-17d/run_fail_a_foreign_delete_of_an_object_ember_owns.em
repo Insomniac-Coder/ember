@@ -9,7 +9,7 @@
 import cpp "nodes.hpp" with (overlay = "overlays/ember.em")
 
 class Leaf(cpp.Node):
-    override fn value(self) -> i32:
+    override fn value() -> i32:
         return 9
 
 fn main():

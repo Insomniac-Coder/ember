@@ -6,23 +6,24 @@
 #$ assert-c: !contains(ember_box_new_copy)
 
 interface Render:
-    fn render(self) -> i32
+    fn render() -> i32
 
 open class Base:
     value: i32
 
-    fn init(mut self, value: i32):
-        self.value = value
+    fn init(value: i32):
+        this.value = value
 
-class Pixel[T](Base) implements Render:
+[T]
+class Pixel(Base) implements Render:
     marker: T
 
-    fn init(mut self, value: i32, marker: T):
-        self.marker = marker
+    fn init(value: i32, marker: T):
+        this.marker = marker
         super.init(value)
 
-    fn render(self) -> i32:
-        return self.value
+    fn render() -> i32:
+        return this.value
 
 fn main():
     boxed: Box[dyn Render] = Box(Pixel[bool](42, false))

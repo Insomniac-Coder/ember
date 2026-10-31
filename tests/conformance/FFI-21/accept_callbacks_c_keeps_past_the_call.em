@@ -45,8 +45,8 @@ fn main():
     keep(again)
     println(ev.listening())
 
-fn drop_both(owned a: Retained[ForeignCallback], owned b: Retained[ForeignCallback]):
+fn drop_both(owns a: Retained[ForeignCallback], owns b: Retained[ForeignCallback]):
     pass
 
-fn keep(owned token: Retained[ForeignCallback]):
+fn keep(owns token: Retained[ForeignCallback]):
     pass

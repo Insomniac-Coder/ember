@@ -14,7 +14,8 @@ fn add_one(x: int) -> int:
 fn make_list(x: int) -> int:
     return [x, x].len()
 
-fn twice[F: fn(int) -> int](f: F, x: int) -> int:
+[F: needs fn(int) -> int]
+fn twice(f: F, x: int) -> int:
     return f(f(x))
 
 @noalloc

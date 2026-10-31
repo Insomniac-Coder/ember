@@ -32,7 +32,7 @@ fn main():
     xs.push(4)
     name: String = "ember"
     text = f"node {node.value}"
-    ages: Map[str, int] = Map()
+    ages: Map[StrView, int] = Map()
     ages["ada"] = 36
     seen: Set[int] = {1, 2}
     boxed = Box(5)

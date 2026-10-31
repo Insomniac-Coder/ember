@@ -28,7 +28,7 @@ struct Pair:
     a: i128
     b: u128
 
-fn describe(x: i128) -> str:
+fn describe(x: i128) -> StrView:
     match x:
         0 => return "zero"
         170141183460469231731687303715884105727 => return "max"

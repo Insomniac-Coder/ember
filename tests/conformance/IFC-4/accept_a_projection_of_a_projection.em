@@ -5,18 +5,19 @@
 # `Item` of `S`'s `Item`. It was `E1010`, "`S` is not a module in scope".
 
 interface Source:
-    type Item: IntoIterator
-    fn get(self) -> Item
+    type Item: needs IntoIterator
+    fn get() -> Item
 
 struct Nums:
     xs: Array[int]
 
 extend Nums implements Source:
     type Item = Array[int]
-    fn get(self) -> Array[int]:
-        return self.xs.clone()
+    fn get() -> Array[int]:
+        return this.xs.clone()
 
-fn first_of[S: Source](s: S) -> Option[S.Item.Item]:
+[S: needs Source]
+fn first_of(s: S) -> Option[S.Item.Item]:
     it = s.get().into_iter()
     return it.next()
 

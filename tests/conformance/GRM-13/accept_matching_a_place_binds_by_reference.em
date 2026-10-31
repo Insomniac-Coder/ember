@@ -20,7 +20,7 @@ fn length(o: Option[String]) -> int:
         Some(s): return s.len()
         None: return 0
 
-fn take(owned s: String) -> String:
+fn take(owns s: String) -> String:
     return s + "!"
 
 fn make() -> Option[String]:
@@ -40,7 +40,7 @@ fn main():
         Some(ref mut s): s += "y"
         None: pass
     println(b)
-    match owned a:
+    match owns a:
         Some(s): println(take(s))
         None: pass
     match make():

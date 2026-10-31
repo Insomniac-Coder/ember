@@ -26,15 +26,15 @@ enum Status:
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     # C: `void squares_with_max(uint32_t* count, int32_t* items, int32_t* max)`.
     @ffi(param(count, inout_count(items)), param(items, borrowed, count(count), nullable, exclusive), param(max, out, one), link_name="squares_with_max_c")
-    safe fn squares_with_max(mut count: u32, items: Option[MutSpan[i32]], mut max: i32)
+    safe fn squares_with_max(ref mut count: u32, items: Option[MutSpan[i32]], ref mut max: i32)
 
     # C: `int32_t list_squares(int32_t busy, uint32_t* count, int32_t* items)`, a status.
     @ffi(param(count, inout_count(items)), param(items, borrowed, count(count), nullable, exclusive), result(status), link_name="list_squares_c")
-    safe fn list_squares(busy: i32, mut count: u32, items: Option[MutSpan[i32]]) -> Status
+    safe fn list_squares(busy: i32, ref mut count: u32, items: Option[MutSpan[i32]]) -> Status
 
     # C: `const char* tagged(int32_t* tag, uint32_t* count, int32_t* items)`.
     @ffi(param(tag, out, one), param(count, inout_count(items)), param(items, borrowed, count(count), nullable, exclusive), result(borrowed, nul_terminated, from(static)), link_name="tagged_c")
-    safe fn tagged(mut tag: i32, mut count: u32, items: Option[MutSpan[i32]]) -> cstr
+    safe fn tagged(ref mut tag: i32, ref mut count: u32, items: Option[MutSpan[i32]]) -> CStrView
 
 fn fill(count: *mut u32, items: *mut i32) -> u32:
     total: u32 = 3
@@ -65,7 +65,7 @@ pub extern "C" fn list_squares_c(busy: i32, count: *mut u32, items: *mut i32) ->
     fill(count, items)
     return 0
 
-pub extern "C" fn tagged_c(tag: *mut i32, count: *mut u32, items: *mut i32) -> cstr:
+pub extern "C" fn tagged_c(tag: *mut i32, count: *mut u32, items: *mut i32) -> CStrView:
     fill(count, items)
     unsafe:  # SAFETY(ffi): C's contract: `tag` is valid
         write(tag, 0, 7)

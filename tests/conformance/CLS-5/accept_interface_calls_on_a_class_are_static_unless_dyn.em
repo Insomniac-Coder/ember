@@ -11,21 +11,22 @@
 # boxed `Cat`'s call is the one call through a slot.
 
 interface Speak:
-    fn speak(self) -> int
+    fn speak() -> int
 
 class Dog implements Speak:
     n: int
 
-    fn speak(self) -> int:
-        return self.n
+    fn speak() -> int:
+        return this.n
 
 class Cat implements Speak:
     n: int
 
-    fn speak(self) -> int:
-        return self.n * 10
+    fn speak() -> int:
+        return this.n * 10
 
-fn via_generic[T: Speak](x: T) -> int:
+[T: needs Speak]
+fn via_generic(x: T) -> int:
     return x.speak()
 
 

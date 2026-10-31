@@ -4,12 +4,13 @@
 #$ stdout: 42
 #$ assert-c: contains(em_6Holder3getG2c2a47066b4fc729)
 
-class Holder[T]:
+[T]
+class Holder:
     value: T
 
 extend[T] Holder[T]:
-    fn get(self) -> T:
-        return self.value
+    fn get() -> T:
+        return this.value
 
 fn main():
     holder = Holder[i32](42)

@@ -7,7 +7,8 @@
 
 from std.collections import SpanIter, MutSpanIter, SpanChunks, MutSpanChunks
 
-fn named_shared[T](span: Span[T]) -> int:
+[T]
+fn named_shared(span: Span[T]) -> int:
     iterator: SpanIter[T] = span.iter()
     chunks: SpanChunks[T] = span.chunks(2)
     seen: int = 0
@@ -23,7 +24,8 @@ fn named_shared[T](span: Span[T]) -> int:
             pass
     return seen
 
-fn named_mut[T](mut span: MutSpan[T]) -> int:
+[T]
+fn named_mut(ref mut span: MutSpan[T]) -> int:
     iterator: MutSpanIter[T] = span.iter_mut()
     match iterator.next():
         Some(_item):

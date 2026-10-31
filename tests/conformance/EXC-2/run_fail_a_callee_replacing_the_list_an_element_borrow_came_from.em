@@ -9,8 +9,8 @@
 class Bag:
     items: Array[int]
 
-    fn init(mut self, owned items: Array[int]):
-        self.items = items
+    fn init(owns items: Array[int]):
+        this.items = items
 
 ## The callee replaces the list its parameter's element came from: as clearing it, a write while
 ## the caller's read access holds (`[EXC-2]`).

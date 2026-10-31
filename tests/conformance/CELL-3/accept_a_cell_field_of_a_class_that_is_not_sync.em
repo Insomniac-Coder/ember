@@ -8,11 +8,11 @@
 class Counter:
     hits: Cell[int]
 
-    fn init(mut self):
-        self.hits = Cell(0)
+    fn init():
+        this.hits = Cell(0)
 
-    fn hit(self):
-        self.hits.set(self.hits.get() + 1)
+    fn hit():
+        this.hits.set(this.hits.get() + 1)
 
 fn main():
     counter = Counter()

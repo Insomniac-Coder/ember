@@ -17,7 +17,7 @@ struct H:
 fn from_span(h: H) -> ref int:
     return ref h.s[0]
 
-fn from_array(owned h: H) -> ref int:
+fn from_array(owns h: H) -> ref int:
     return ref h.arr[0]    #$ error[E3060]: `h.arr[0]` does not live long enough
 
 fn from_box(h: H) -> ref int:

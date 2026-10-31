@@ -2,7 +2,7 @@
 #$ rules: EXC-3, DIA-2
 #$ not-help: entries
 # `[EXC-3]`, `[DIA-2]` (D-822) — a conflict on a `Map` field of an object names the field as the
-# program writes it, `self.items`, never the map's private storage behind it.
+# program writes it, `this.items`, never the map's private storage behind it.
 
 struct Item:
     price: float
@@ -11,9 +11,9 @@ struct Item:
 class Inventory:
     items: Map[String, Item] = {}
 
-    fn sell(self, name: str, quantity: int) -> float:
-        item = ref self.items[name]
-        self.items[name].quantity -= quantity    #$ error[E3080]: `self.items` is borrowed here and mutably borrowed elsewhere
+    fn sell(name: StrView, quantity: int) -> float:
+        item = ref this.items[name]
+        this.items[name].quantity -= quantity    #$ error[E3080]: `this.items` is borrowed here and mutably borrowed elsewhere
         return item.price * quantity as float
 
 fn main():

@@ -28,13 +28,13 @@ enum Status:
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(out, out, one), result(status), link_name="make_c")
-    safe fn make(n: i32, mut out: i32) -> Status
+    safe fn make(n: i32, ref mut out: i32) -> Status
 
     @ffi(result(status), link_name="check_c")
     safe fn check(n: i32) -> Status
 
     @ffi(param(a, out, one), param(b, out, one), result(status), link_name="pair_c")
-    safe fn pair(mut a: i32, n: i32, mut b: i64) -> Status
+    safe fn pair(ref mut a: i32, n: i32, ref mut b: i64) -> Status
 
 pub extern "C" fn make_c(n: i32, out: *mut i32) -> i32:
     if n < 0:

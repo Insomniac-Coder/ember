@@ -12,8 +12,8 @@
 struct Token:
     value: i32
 
-    fn drop(mut self):
-        println(self.value)
+    fn drop():
+        println(this.value)
 
 fn expired_copy() -> Weak[Shared[Token]]:
     first = Shared(Token(7))

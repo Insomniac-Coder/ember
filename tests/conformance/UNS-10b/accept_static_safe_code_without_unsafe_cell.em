@@ -3,7 +3,7 @@
 
 from std.mem import UnsafeCell
 
-@static_safe
+@no_alias_checks
 fn add_one(value: i32) -> i32:
     return value + 1
 

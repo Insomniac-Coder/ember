@@ -9,17 +9,17 @@
 open class Counter:
     value: i32
 
-    virtual fn bump(mut self):
-        self.value = self.value + 1
+    virtual fn bump():
+        this.value = this.value + 1
 
-    fn init(mut self):
-        self.value = 0
+    fn init():
+        this.value = 0
 
 class Derived(Counter):
-    override fn bump(mut self):
-        self.value = self.value + 1
+    override fn bump():
+        this.value = this.value + 1
 
-    fn init(mut self):
+    fn init():
         super.init()
 
 fn main():

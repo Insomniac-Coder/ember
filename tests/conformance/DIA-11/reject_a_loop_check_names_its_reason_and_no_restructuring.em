@@ -9,10 +9,10 @@
 class Counter:
     value: i32
 
-    fn bump(mut self):
-        self.value = self.value + 1
+    fn bump():
+        this.value = this.value + 1
 
-@static_safe
+@no_alias_checks
 fn run(n: int) -> i32:
     counter = Counter(0)
     alias = counter

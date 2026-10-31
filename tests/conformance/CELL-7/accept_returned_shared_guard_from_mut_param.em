@@ -6,7 +6,7 @@
 # contents, 41) and drops it at the block end. No `L3011` here: the guard's
 # loan lives in the callee, and the caller's `println` cannot reach the cell.
 
-fn get(mut c: RefCell[i32]) -> Ref[i32]:
+fn get(ref mut c: RefCell[i32]) -> Ref[i32]:
     return c.borrow()
 
 fn main():

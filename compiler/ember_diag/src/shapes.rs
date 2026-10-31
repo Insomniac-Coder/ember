@@ -123,7 +123,7 @@ impl Shape {
             Shape::B16 => "a call that hands the callee a part of what its body may end or move before its last use of that parameter",
             Shape::B17 => "a loop of owners that nothing opens again before its objects lose their last owner from outside",
             Shape::X1 => "two overlapping long-term accesses through one handle local",
-            Shape::S1 => "a `@static_safe` function carries a dynamic aliasing check",
+            Shape::S1 => "a `@no_alias_checks` function carries a dynamic aliasing check",
             Shape::A1 => "an arena view outliving its arena",
         }
     }

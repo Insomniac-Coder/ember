@@ -4,7 +4,7 @@
 #$ error[E5002]: `safe fn` needs an `@ffi` nullable NUL-terminated contract for `text`
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
-    safe fn undocumented(text: Option[cstr]) -> usize
+    safe fn undocumented(text: Option[CStrView]) -> usize
 
 fn main():
     pass

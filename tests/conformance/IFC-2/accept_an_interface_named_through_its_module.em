@@ -11,7 +11,7 @@ struct Blob:
     n: int
 
 extend Blob implements core.Default:
-    fn default() -> Blob:
+    static fn default() -> Blob:
         return Blob(n=7)
 
 fn main():

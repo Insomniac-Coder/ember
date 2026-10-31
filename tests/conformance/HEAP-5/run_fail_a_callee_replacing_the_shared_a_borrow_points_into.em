@@ -8,8 +8,8 @@
 class Holder:
     shared: Shared[int]
 
-    fn init(mut self, owned shared: Shared[int]):
-        self.shared = shared
+    fn init(owns shared: Shared[int]):
+        this.shared = shared
 
 ## The callee replaces the only owner of the `Shared` its parameter points into: the caller's
 ## borrow holds the payload's access (`[HEAP-5]`) for the call, so the replacement panics.

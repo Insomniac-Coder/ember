@@ -5,12 +5,12 @@
 class Bag:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = [1]
+    fn init():
+        this.items = [1]
 
-    fn replace(self):
-        self.items = [2]
-        self.items.push(3)
+    fn replace():
+        this.items = [2]
+        this.items.push(3)
 
 fn main():
     b = Bag()

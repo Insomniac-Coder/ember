@@ -15,23 +15,25 @@
 struct Token:
     value: i32
 
-open class Base[T]:
+[T]
+open class Base:
     weak: Weak[Shared[Token]]
     marker: T
 
-    fn init(mut self, weak: Weak[Shared[Token]], marker: T):
-        self.weak = weak
-        self.marker = marker
+    fn init(weak: Weak[Shared[Token]], marker: T):
+        this.weak = weak
+        this.marker = marker
 
-    virtual fn observer(self) -> Weak[Shared[Token]]:
-        return self.weak
+    virtual fn observer() -> Weak[Shared[Token]]:
+        return this.weak
 
-class Derived[T](Base[T]):
-    fn init(mut self, weak: Weak[Shared[Token]], marker: T):
+[T]
+class Derived(Base[T]):
+    fn init(weak: Weak[Shared[Token]], marker: T):
         super.init(weak, marker)
 
-    override fn observer(self) -> Weak[Shared[Token]]:
-        return self.weak
+    override fn observer() -> Weak[Shared[Token]]:
+        return this.weak
 
 fn main():
     strong = Shared(Token(7))

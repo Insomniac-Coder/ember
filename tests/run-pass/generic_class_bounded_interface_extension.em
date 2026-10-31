@@ -5,23 +5,24 @@
 #$ assert-c: contains(static const struct em_vt_dyn_7Measure em_vt_dyn_7Measure_for_6HolderGe6a28f706a47f67f)
 
 interface Display:
-    fn score(self) -> i32
+    fn score() -> i32
 
 interface Measure:
-    fn measure(self) -> i32
+    fn measure() -> i32
 
 struct Pixel implements Display:
     value: i32
 
-    fn score(self) -> i32:
-        return self.value
+    fn score() -> i32:
+        return this.value
 
-class Holder[T]:
+[T]
+class Holder:
     value: T
 
-extend[T: Display] Holder[T] implements Measure:
-    fn measure(self) -> i32:
-        return self.value.score()
+extend[T: needs Display] Holder[T] implements Measure:
+    fn measure() -> i32:
+        return this.value.score()
 
 fn measure(value: ref dyn Measure) -> i32:
     return value.measure()

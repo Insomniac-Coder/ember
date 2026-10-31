@@ -14,7 +14,7 @@ struct H:
     f: fn(int) -> int
     g: fn(int) -> int
 
-    fn g(self, x: int) -> int:
+    fn g(x: int) -> int:
         return 1000
 
 fn double(x: int) -> int:
@@ -31,14 +31,14 @@ fn pick(b: bool) -> fn(int) -> int:
 
 # `[CLO-2]` — a callable field is an owned callable value, called from a
 # mutable place (ODR-102).
-fn through(mut h: H, x: int) -> int:
+fn through(ref mut h: H, x: int) -> int:
     return h.f(x) + 1
 
 class Button:
     on_click: fn(int) -> int
 
-    fn init(mut self):
-        self.on_click = neg
+    fn init():
+        this.on_click = neg
 
 h = H(f=double, g=neg)
 println(h.f(6), h.g(5), (h.g)(5), through(h, 3))

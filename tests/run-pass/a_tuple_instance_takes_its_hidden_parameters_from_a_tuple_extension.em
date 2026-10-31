@@ -14,14 +14,15 @@
 # method call, so nothing said its `State` (a projection now gives a concrete instance the
 # extensions it lacks); and `make[Q]()`'s `Query[Q]` kept `make`'s own `Q.State` in `run`'s body
 # (substituting an instance now substitutes its hidden arguments too).
-struct Mut[T]:
+[T]
+struct Mut:
     pass
 
 interface Param:
     type Item
     type State
-    fn open() -> State
-    fn get(mut s: State, i: int) -> Item
+    static fn open() -> State
+    static fn get(ref mut s: State, i: int) -> Item
 
 struct Pos:
     x: int
@@ -32,65 +33,69 @@ struct Vel:
 extend Pos implements Param:
     type Item = int
     type State = Array[int]
-    fn open() -> Array[int]:
+    static fn open() -> Array[int]:
         return [1, 2, 3]
-    fn get(mut s: Array[int], i: int) -> int:
+    static fn get(ref mut s: Array[int], i: int) -> int:
         return s[i]
 
 extend Vel implements Param:
     type Item = int
     type State = Array[int]
-    fn open() -> Array[int]:
+    static fn open() -> Array[int]:
         return [10, 20, 30]
-    fn get(mut s: Array[int], i: int) -> int:
+    static fn get(ref mut s: Array[int], i: int) -> int:
         return s[i]
 
-extend[T: Param] Mut[T] implements Param:
+extend[T: needs Param] Mut[T] implements Param:
     type Item = T.Item
     type State = T.State
-    fn open() -> T.State:
+    static fn open() -> T.State:
         return T.open()
-    fn get(mut s: T.State, i: int) -> T.Item:
+    static fn get(ref mut s: T.State, i: int) -> T.Item:
         return T.get(s, i)
 
-extend[A: Param, B: Param] (A, B) implements Param:
+extend[A: needs Param, B: needs Param] (A, B) implements Param:
     type Item = (A.Item, B.Item)
     type State = (A.State, B.State)
-    fn open() -> (A.State, B.State):
+    static fn open() -> (A.State, B.State):
         return (A.open(), B.open())
-    fn get(mut s: (A.State, B.State), i: int) -> (A.Item, B.Item):
+    static fn get(ref mut s: (A.State, B.State), i: int) -> (A.Item, B.Item):
         return (A.get(s.0, i), B.get(s.1, i))
 
-struct Query[Q: Param]:
+[Q: needs Param]
+struct Query:
     state: Q.State
     n: int
 
-    fn iter_mut(mut self) -> QueryIter[Q]:
-        return QueryIter[Q](state=ref mut self.state, n=self.n, at=0)
+    fn iter_mut() -> QueryIter[Q]:
+        return QueryIter[Q](state=ref mut this.state, n=this.n, at=0)
 
-struct QueryIter[Q: Param]:
+[Q: needs Param]
+struct QueryIter:
     state: ref mut Q.State
     n: int
     at: int
 
-    fn next(mut self) -> Option[Q.Item]:
-        if self.at >= self.n:
+    fn next() -> Option[Q.Item]:
+        if this.at >= this.n:
             return None
-        i = self.at
-        self.at += 1
-        return Some(Q.get(self.state, i))
+        i = this.at
+        this.at += 1
+        return Some(Q.get(this.state, i))
 
-extend[Q: Param] QueryIter[Q] implements Iterator:
+extend[Q: needs Param] QueryIter[Q] implements Iterator:
     type Item = Q.Item
 
-fn make[Q: Param]() -> Query[Q]:
+[Q: needs Param]
+fn make() -> Query[Q]:
     return Query[Q](state=Q.open(), n=3)
 
-fn system(mut q: Query[(Mut[Pos], Vel)], k: int):
+fn system(ref mut q: Query[(Mut[Pos], Vel)], k: int):
     for a, b in q.iter_mut():
         println(a + b + k)
 
-fn run[Q: Param, A](f: fn(mut Query[Q], A), arg: A):
+[Q: needs Param, A]
+fn run(f: fn(ref mut Query[Q], A), arg: A):
     q = make[Q]()
     f(q, arg)
 

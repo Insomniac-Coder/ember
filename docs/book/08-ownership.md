@@ -48,7 +48,7 @@ fn main():
 A parameter marked `mut` can change what it is given, and the caller writes nothing extra:
 
 ```ember
-fn add_tax(mut prices: Array[float], rate: float):
+fn add_tax(ref mut prices: Array[float], rate: float):
     for i in range(len(prices)):
         prices[i] = prices[i] * (1.0 + rate)
 
@@ -69,8 +69,8 @@ That is how a value is stored somewhere that outlives the call:
 struct Inbox:
     messages: Array[String] = []
 
-    fn deliver(mut self, owned message: String):
-        self.messages.push(message)
+    fn deliver(owns message: String):
+        this.messages.push(message)
 
 fn main():
     inbox = Inbox()

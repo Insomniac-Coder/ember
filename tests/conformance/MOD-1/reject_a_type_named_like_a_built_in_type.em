@@ -18,7 +18,7 @@ class f64:  #$ error[E1032]: type `f64` has the name of a built-in type
     x: int
 
 interface char:  #$ error[E1032]: type `char` has the name of a built-in type
-    fn code(self) -> int
+    fn code() -> int
 
 type usize = int  #$ error[E1032]: type `usize` has the name of a built-in type
 

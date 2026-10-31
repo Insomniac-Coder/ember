@@ -24,7 +24,8 @@ struct S:
     n: int = 3
     name: String = "x"
 
-struct W[U]:
+[U]
+struct W:
     v: U
     n: int = 7
     tags: Array[String] = []

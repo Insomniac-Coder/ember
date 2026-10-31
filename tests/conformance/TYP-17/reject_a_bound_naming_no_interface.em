@@ -5,10 +5,12 @@
 # misspelt `Hash` or an interface never imported (`Hasher` is not a prelude
 # name, `[MOD-5]`) silently bounded nothing.
 
-struct S[T: Nope]:              #$ error[E1010]: cannot find interface `Nope` in this scope
+[T: needs Nope]              #$ error[E1010]: cannot find interface `Nope` in this scope
+struct S:
     x: T
 
-fn g[T: Hashr + Eq](x: T) -> T:     #$ error[E1010]: cannot find interface `Hashr` in this scope
+[T: needs (Hashr, Eq)]     #$ error[E1010]: cannot find interface `Hashr` in this scope
+fn g(x: T) -> T:
     return x
 
 fn main():

@@ -12,17 +12,18 @@
 # both the box payload and its last Shared owner leave scope. It retains only
 # the control block, so the later upgrade must take the None arm.
 interface Observe:
-    fn observer(self) -> Weak[Shared[Token]]
+    fn observer() -> Weak[Shared[Token]]
 
 struct Token:
     value: i32
 
-class Observer[T] implements Observe:
+[T]
+class Observer implements Observe:
     weak: Weak[Shared[Token]]
     marker: T
 
-    fn observer(self) -> Weak[Shared[Token]]:
-        return self.weak
+    fn observer() -> Weak[Shared[Token]]:
+        return this.weak
 
 fn expired() -> Weak[Shared[Token]]:
     strong = Shared(Token(7))

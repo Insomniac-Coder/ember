@@ -10,13 +10,13 @@ fn area(w: int, h: int) -> int:
 
 struct Rect:
     w: int
-    fn scale(self, k: int) -> int:
-        return self.w * k
+    fn scale(k: int) -> int:
+        return this.w * k
 
 fn main():
     println(area(1))    #$ error[E2020]: `area` takes 2 arguments, found 1
-    println(area(1, "x"))    #$ error[E2020]: expected `i64`, found `str`
+    println(area(1, "x"))    #$ error[E2020]: expected `i64`, found `StrView`
     r = Rect(2)
     println(r.scale(1, 2))    #$ error[E2020]: `scale` takes 1 argument, found 2
-    println(r.scale("k"))    #$ error[E2020]: expected `i64`, found `str`
+    println(r.scale("k"))    #$ error[E2020]: expected `i64`, found `StrView`
     println(area(w=1, depth=2))    #$ error[E2020]: `area` has no parameter `depth`

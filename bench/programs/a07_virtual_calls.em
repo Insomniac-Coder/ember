@@ -1,17 +1,17 @@
 interface Shape:
-    fn area(self) -> float
+    fn area() -> float
 
 class Circle implements Shape:
     r: float
 
-    fn area(self) -> float:
-        return 3.0 * self.r * self.r
+    fn area() -> float:
+        return 3.0 * this.r * this.r
 
 class Square implements Shape:
     s: float
 
-    fn area(self) -> float:
-        return self.s * self.s
+    fn area() -> float:
+        return this.s * this.s
 
 fn main():
     shapes: Array[Shape] = []

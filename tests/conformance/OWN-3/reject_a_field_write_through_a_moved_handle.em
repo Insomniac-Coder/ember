@@ -6,13 +6,13 @@
 # give the moved handle a value again, and the end of its scope released the object a second time.)
 
 interface Speak:
-    fn speak(self) -> int
+    fn speak() -> int
 
 class Mote implements Speak:
     n: int = 0
 
-    fn speak(self) -> int:
-        return self.n
+    fn speak() -> int:
+        return this.n
 
 fn main():
     m = Mote()

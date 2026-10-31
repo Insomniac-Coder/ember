@@ -18,8 +18,8 @@
 class Leaf:
     v: int
 
-    fn drop(mut self):
-        println("drop", self.v)
+    fn drop():
+        println("drop", this.v)
 
 class Tree:
     leaf: Leaf

@@ -10,8 +10,8 @@ from std.ecs import World, Query, Mut, Component, system
 class Texture:
     id: int
 
-    fn init(mut self, id: int):
-        self.id = id
+    fn init(id: int):
+        this.id = id
 
 @derive(Component)
 struct Sprite:
@@ -25,13 +25,13 @@ struct Gauge:
 struct Pos:
     x: int
 
-fn draw(mut q: Query[Sprite]):
+fn draw(ref mut q: Query[Sprite]):
     pass
 
-fn read_gauge(mut q: Query[Gauge]):
+fn read_gauge(ref mut q: Query[Gauge]):
     pass
 
-fn read_gauge_too(mut q: Query[(Gauge, Pos)]):
+fn read_gauge_too(ref mut q: Query[(Gauge, Pos)]):
     pass
 
 fn main():
@@ -39,5 +39,5 @@ fn main():
     w.run_parallel([draw])  #$ error[E7004]: the system `draw`'s query uses `Sprite`, which is not Send
     w.run_parallel([read_gauge, read_gauge_too])  #$ error[E7005]: systems `read_gauge` and `read_gauge_too` cannot run at once: both read `Gauge`, which is not Sync
     shared = Texture(1)
-    by_value = system(owned fn(mut q: Query[Pos]): println(shared.id), "by_value")  #$ error[E7004]: the system `by_value` captures `shared`, a `Texture`, which is not Send
+    by_value = system(owned fn(ref mut q: Query[Pos]): println(shared.id), "by_value")  #$ error[E7004]: the system `by_value` captures `shared`, a `Texture`, which is not Send
     w.run_parallel([by_value])

@@ -4,7 +4,7 @@ Ember has no exceptions. A function that can fail says so in its result: `Result
 `Ok(value)` or `Err(error)`, and the caller must look at which.
 
 ```ember
-fn parse_age(text: str) -> Result[int, String]:
+fn parse_age(text: StrView) -> Result[int, String]:
     match text.trim().parse[int]():
         Ok(age):
             if age < 0:
@@ -35,13 +35,13 @@ Most of the time a function that meets an error gives it back to its own caller.
 once.
 
 ```ember
-fn parse_age(text: str) -> Result[int, String]:
+fn parse_age(text: StrView) -> Result[int, String]:
     age = text.trim().parse[int]().map_err(fn(e) => f"`{text}`: {e}")?
     if age < 0:
         return Err(f"{age} is negative")
     return Ok(age)
 
-fn total_age(texts: Array[str]) -> Result[int, String]:
+fn total_age(texts: Array[StrView]) -> Result[int, String]:
     total = 0
     for text in texts:
         total += parse_age(text)?

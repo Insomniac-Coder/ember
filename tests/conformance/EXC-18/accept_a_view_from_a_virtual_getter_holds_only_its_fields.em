@@ -13,20 +13,20 @@ open class Person:
     alias: String
     tags: Array[int]
 
-    fn init(mut self):
-        self.name = "ann"
-        self.alias = "zed"
-        self.tags = [1]
+    fn init():
+        this.name = "ann"
+        this.alias = "zed"
+        this.tags = [1]
 
-    virtual fn label(self) -> str:
-        return self.name
+    virtual fn label() -> StrView:
+        return this.name
 
 class Nick(Person):
-    fn init(mut self):
+    fn init():
         super.init()
 
-    override fn label(self) -> str:
-        return self.alias
+    override fn label() -> StrView:
+        return this.alias
 
 fn main():
     p = Person()

@@ -11,14 +11,14 @@
 # `ref Box[Square]` where a `Square` is.
 
 interface Shape:
-    fn area(self) -> float
+    fn area() -> float
 
 struct Square:
     side: float
 
 extend Square implements Shape:
-    fn area(self) -> float:
-        return self.side * self.side
+    fn area() -> float:
+        return this.side * this.side
 
 fn measure(s: ref dyn Shape) -> float:
     return s.area()

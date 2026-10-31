@@ -8,15 +8,15 @@
 # constructor (`[CLS-10]`).
 
 open class A:
-    virtual fn speak(self) -> int:
+    virtual fn speak() -> int:
         return 1
 
 open class B(A):
-    override fn speak(self) -> int:
+    override fn speak() -> int:
         return 2
 
 class C(B):
-    override fn speak(self) -> int:
+    override fn speak() -> int:
         return 3
 
 open class P:

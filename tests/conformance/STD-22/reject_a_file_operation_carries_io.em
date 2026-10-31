@@ -6,7 +6,7 @@
 import std.fs
 
 @noio
-fn size(path: str) -> int:
+fn size(path: StrView) -> int:
     match fs.metadata(path):
         Ok(meta):
             return meta.len

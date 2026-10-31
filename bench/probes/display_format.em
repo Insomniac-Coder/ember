@@ -8,8 +8,8 @@ struct Point implements Display:
     x: int
     y: int
 
-    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
-        return f.write_str(f"({self.x}, {self.y})")
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
+        return f.write_str(f"({this.x}, {this.y})")
 
 fn main():
     total = 0

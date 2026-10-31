@@ -8,14 +8,14 @@
 class Bag:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = []
+    fn init():
+        this.items = []
 
 class Emptier:
     target: Bag
 
-    fn drop(mut self):
-        self.target.items.clear()
+    fn drop():
+        this.target.items.clear()
 
 fn main():
     bag = Bag()

@@ -8,11 +8,11 @@
 class Bag:
     items: Array[int]
 
-    fn add(mut self, x: int):
-        self.items.push(x)
+    fn add(x: int):
+        this.items.push(x)
 
-@static_safe
-fn fill(mut b: Bag, mut other: Bag):
+@no_alias_checks
+fn fill(ref mut b: Bag, ref mut other: Bag):
     for i in 0..3:
         b.add(i)  #$ error[E4030]: the check's reason is `not_proven_by_analysis`
         other.add(i)  #$ error[E4030]: the check's reason is `not_proven_by_analysis`

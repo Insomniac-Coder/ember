@@ -8,13 +8,13 @@
 struct Inner:
     pub n: i32
 
-    fn drop(mut self):
-        println(self.n)
+    fn drop():
+        println(this.n)
 
 struct Outer:
     pub inner: Inner
 
-fn take(owned x: Inner) -> i32:
+fn take(owns x: Inner) -> i32:
     return x.n
 
 fn via_call(o: Outer) -> i32:

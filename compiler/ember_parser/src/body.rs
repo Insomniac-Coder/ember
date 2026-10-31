@@ -140,6 +140,16 @@ impl Parser<'_> {
         // `outer: for …`.
         // `[EFF-7]` — `@assume_noalloc(…)` begins an expression, not an attribute.
         let attrs = if self.at_assume_noalloc() { Vec::new() } else { self.parse_attributes() };
+        // `[GRM-40]` — above a local function.
+        self.parse_type_params_line();
+        if self.type_params_line.is_some() && !(self.at_kw(Kw::Fn) || self.at_kw(Kw::Unsafe) || self.at_kw(Kw::Extern) || self.at_gen_fn()) {
+            if let Some((_, span)) = self.type_params_line.take() {
+                self.report(
+                    Diagnostic::error(codes::E0100, span, "a type-parameter line in a body goes directly above a local function")
+                        .help("declare the struct or class outside the function"),
+                );
+            }
+        }
 
         let start = self.span();
         let id = self.next_id();
@@ -448,6 +458,43 @@ impl Parser<'_> {
     fn parse_condition(&mut self) -> Condition {
         let start = self.span();
         let expr = self.parse_expr_no_block();
+        // `[GRM-44]` — `if cam.target exists as p:` opens an `Option`: its pattern is `Some(p)`, the
+        // name declared with its words as a pattern name is (`[GRM-13]`).
+        if self.at_contextual("exists") && self.at_kw_at(1, Kw::As) {
+            self.bump();
+            self.bump();
+            let name = self.parse_pattern();
+            let span = name.span;
+            let field = FieldPattern { name: None, pattern: name, span };
+            let some = Ident { name: "Some".into(), span };
+            let kind = PatternKind::Constructor { path: vec![some], fields: vec![field], has_rest: false };
+            let pattern = Pattern { id: self.next_id(), kind, span };
+            return Condition::Pattern { pattern, value: expr, exists: true };
+        }
+        // `[GRM-45]` — `if s is Circle as c:`, a kind test naming what it found, arrives as `s is
+        // (Circle as c)`. What it means is the kind tests' (milestone M11).
+        if let ExprKind::Binary { op: BinOp::Is, rhs, .. } = &expr.kind
+            && let ExprKind::Cast { ty, .. } = &rhs.kind
+        {
+            self.report(
+                Diagnostic::error(codes::E0900, expr.span, "a kind test that names what it finds is not built by this compiler yet")
+                    .note("`if s is Circle as c:` runs its block when `s` is a `Circle`, naming it `c` there [GRM-45]"),
+            );
+            // The name, bound to nothing known, so its uses in the block are not refused again.
+            let mut named = ty;
+            while let TypeKind::Ref { inner, .. } = &named.kind {
+                named = inner;
+            }
+            let value = Expr { id: self.next_id(), kind: ExprKind::Error, span: expr.span };
+            return match &named.kind {
+                TypeKind::Path { segments, args } if segments.len() == 1 && args.is_empty() => {
+                    let kind = PatternKind::Bind { name: segments[0], by_ref: false, mutable: false, sub: None };
+                    let pattern = Pattern { id: self.next_id(), kind, span: named.span };
+                    Condition::Pattern { pattern, value, exists: false }
+                }
+                _ => Condition::Expr(value),
+            };
+        }
         if self.at_punct(Punct::Eq) {
             self.bump();
             let pattern = self.expr_to_pattern(expr);
@@ -473,7 +520,28 @@ impl Parser<'_> {
                 }
                 self.report(diagnostic);
             }
-            return Condition::Pattern { pattern, value };
+            // `[GRM-19]`, `[GRM-44]` — an `Option` is opened with `exists as`, never `Some(...)` in a
+            // header: names inside it are `exists as`'s, anything else a comparison.
+            if let PatternKind::Constructor { path, fields, .. } = &pattern.kind
+                && path.len() == 1
+                && path[0].name.is("Some")
+                && let [field] = fields.as_slice()
+            {
+                let text = |span: ember_span::Span| self.src.get(span.start as usize..span.end as usize).unwrap_or("e").to_string();
+                let (inner, value_text) = (text(field.pattern.span), text(value.span));
+                let names = matches!(&field.pattern.kind, PatternKind::Bind { sub: None, .. } | PatternKind::Wild | PatternKind::Tuple(_));
+                let help = if names {
+                    let inner = inner.strip_prefix("mut ").map_or(inner.clone(), |name| format!("copy of {name}"));
+                    format!("write `{value_text} exists as {inner}`")
+                } else {
+                    format!("compare it: `{value_text} == Some({inner})`, or open it in a `match`")
+                };
+                self.report(
+                    Diagnostic::error(codes::E0115, pattern.span, "an `Option` is opened with `exists as`, not `Some(...)` in a header")
+                        .help(help),
+                );
+            }
+            return Condition::Pattern { pattern, value, exists: false };
         }
         Condition::Expr(expr)
     }
@@ -519,10 +587,28 @@ impl Parser<'_> {
         TypeOrExpr::Expr(self.parse_expr())
     }
 
+    /// `[GRM-15]` — `owns e` (0.9.10's `owned e`) before a `for` iterable or a `match` scrutinee.
+    fn at_value_owns(&self) -> bool {
+        self.at_kw(Kw::Owns) || (self.at_kw(Kw::Owned) && !self.at_kw_at(1, Kw::Fn))
+    }
+
+    /// `[MOD-3]` — 0.9.10's `owned` before a value, the current token, refused with `owns` (`E1010`)
+    /// and taken past, so the value is checked as written.
+    fn bump_value_word(&mut self) {
+        if self.at_kw(Kw::Owned) {
+            let span = self.span();
+            self.report(
+                Diagnostic::error(codes::E1010, span, "`owned` is gone from Ember: the word that hands a value over is `owns`")
+                    .help(format!("write `{}`", self.line_with(span, "owns"))),
+            );
+        }
+        self.bump();
+    }
+
     fn parse_consumable_expr(&mut self) -> Expr {
-        if self.at_kw(Kw::Owned) && !self.at_kw_at(1, Kw::Fn) {
+        if self.at_value_owns() {
             let start = self.span();
-            self.bump();
+            self.bump_value_word();
             let inner = self.parse_expr_no_block();
             return Expr {
                 id: self.next_id(),
@@ -1057,9 +1143,19 @@ impl Parser<'_> {
         // `[TYP-6]` (ODR-280) — `cast x as D` and `cast x if D`; `cast` is a keyword only here,
         // directly before a name (`[LEX-15]`).
         if self.at_contextual("cast")
-            && matches!(self.peek_at(1), TokenKind::Ident(_) | TokenKind::RawIdent(_) | TokenKind::Keyword(Kw::SelfValue))
+            && matches!(self.peek_at(1), TokenKind::Ident(_) | TokenKind::RawIdent(_) | TokenKind::Keyword(Kw::SelfValue | Kw::This))
         {
             return self.parse_cast(start, allow_block_lambda);
+        }
+
+        // `[GRM-43]` — `copy of e` binds as a prefix `-` does; `copy` is a keyword only directly
+        // before `of`.
+        if self.at_contextual("copy") && matches!(self.peek_at(1), TokenKind::Ident(of) if of.is("of")) {
+            self.bump();
+            self.bump();
+            let operand = self.parse_expr_bp(BP_UNARY + 1, allow_block_lambda);
+            let id = self.next_id();
+            return Expr { id, kind: ExprKind::CopyOf(Box::new(operand)), span: start.to(self.prev_span()) };
         }
 
         if self.at_kw(Kw::Ref) {
@@ -1140,7 +1236,9 @@ impl Parser<'_> {
                 self.bump();
                 ExprKind::Lit(Literal::Bool(false))
             }
-            TokenKind::Keyword(Kw::SelfValue) => {
+            // `[FN-4]` — inside a method its object is `this`; 0.9.10's `self` is read too until M1's
+            // migration has respelled every use (`M1-plan.md`, step 4).
+            TokenKind::Keyword(Kw::SelfValue | Kw::This) => {
                 self.bump();
                 ExprKind::SelfExpr
             }
@@ -1181,14 +1279,15 @@ impl Parser<'_> {
                 self.bump();
                 ExprKind::Path { segments: vec![Ident { name: "static".into(), span }] }
             }
-            // `[FFI-11]` — `owned` and `unsafe` are contract words inside `@ffi(…)`; `const`, of a
-            // method's entry, asserts that it only reads its object (`[FFI-40a]`).
-            TokenKind::Keyword(keyword @ (Kw::Owned | Kw::Unsafe | Kw::Const))
+            // `[FFI-11]` — `owns` (0.9.10's `owned`, verdict 102) and `unsafe` are contract words inside
+            // `@ffi(…)`; `const`, of a method's entry, asserts that it only reads its object (`[FFI-40a]`).
+            TokenKind::Keyword(keyword @ (Kw::Owns | Kw::Owned | Kw::Unsafe | Kw::Const))
                 if self.in_ffi_attribute && !self.at_kw_at(1, Kw::Fn) =>
             {
                 let span = self.span();
                 self.bump();
                 let word = match keyword {
+                    Kw::Owns => "owns",
                     Kw::Owned => "owned",
                     Kw::Unsafe => "unsafe",
                     _ => "const",
@@ -1229,22 +1328,31 @@ impl Parser<'_> {
                     ExprKind::Error
                 }
             }
-            // `[GRM-15]` — `owned` reaching expression position here means it
-            // is not a `for` iterable, a `match` scrutinee or an `owned fn`,
-            // which are the only three places it may appear.
+            // `[MOD-3]` — 0.9.10's `owned` before any other value (`owned fn` is the closures').
             TokenKind::Keyword(Kw::Owned) => {
+                self.bump_value_word();
+                // `[IDE-3]` — the value it marks, which is checked as written.
+                self.parse_expr_bp(BP_CAST, allow_block_lambda).kind
+            }
+            // `[GRM-15]` — `owns` before `fn` is `E0109`: what a function takes over is said on each
+            // name it keeps, after its brackets.
+            TokenKind::Keyword(Kw::Owns) if self.at_kw_at(1, Kw::Fn) => {
                 let span = self.span();
                 self.bump();
                 self.report(
-                    Diagnostic::error(
-                        codes::E0109,
-                        span,
-                        "`owned` is not permitted in expression position",
-                    )
-                    .help(
-                        "`owned` marks a parameter, a receiver, a closure or a consumed \
-                         scrutinee; to move a value, pass it to an `owned` parameter",
-                    ),
+                    Diagnostic::error(codes::E0109, span, "`owns` is not written before `fn`")
+                        .help("say what the function takes over after its brackets, on each name it keeps: `fn() owns report:`"),
+                );
+                ExprKind::Lambda(self.parse_lambda(allow_block_lambda))
+            }
+            // `[GRM-15]` — `owns` before any other value hands it to a place that owns it alone,
+            // which ownership in types builds (milestone M3).
+            TokenKind::Keyword(Kw::Owns) => {
+                let span = self.span();
+                self.bump();
+                self.report(
+                    Diagnostic::error(codes::E0900, span, "`owns` before a value here is not built by this compiler yet")
+                        .note("it is taken before a `for` loop's iterable, a comprehension's and a `match`'s scrutinee [GRM-15]"),
                 );
                 // `[IDE-3]` — the value it marks, which is checked as written.
                 self.parse_expr_bp(BP_CAST, allow_block_lambda).kind
@@ -1621,10 +1729,10 @@ impl Parser<'_> {
             if self.eat_kw(Kw::For) {
                 let pattern = self.parse_for_target();
                 self.expect_kw(Kw::In);
-                // `[GRM-15]` (ODR-236) — `owned xs` takes the collection over, as a `for` does.
-                let iter = if self.at_kw(Kw::Owned) && !self.at_kw_at(1, Kw::Fn) {
+                // `[GRM-15]` (ODR-236) — `owns xs` takes the collection over, as a `for` does.
+                let iter = if self.at_value_owns() {
                     let start = self.span();
-                    self.bump();
+                    self.bump_value_word();
                     let inner = self.parse_expr_bp(BP_TERNARY + 1, false);
                     Expr { id: self.next_id(), kind: ExprKind::Owned(Box::new(inner)), span: start.to(self.prev_span()) }
                 } else {
@@ -1690,6 +1798,68 @@ impl Parser<'_> {
         args
     }
 
+    /// `[GRM-42]` — the words after a lambda's brackets naming what it keeps: `fn() copy of score:`,
+    /// `fn() owns players:`, `fn() shares mut count:`, `fn() thread_shared log:`, `fn() weakref this:`,
+    /// `fn() ref t:`. Their meaning is the closures area's, which this compiler does not build yet
+    /// (`E0900`); `with` before them is `E0100`, and `ref mut` is no capture word (`E0120`).
+    fn parse_capture_words(&mut self) {
+        let start = self.span();
+        if self.at_kw(Kw::With) {
+            self.bump();
+            self.report(
+                Diagnostic::error(codes::E0100, start, "a function's captures follow its brackets with no `with`")
+                    .help("write `fn() copy of score:`"),
+            );
+        }
+        let mut words = Vec::new();
+        loop {
+            let at = self.span();
+            let word = if self.at_contextual("copy") && matches!(self.peek_at(1), TokenKind::Ident(of) if of.is("of")) {
+                self.bump();
+                self.bump();
+                "copy of"
+            } else if self.eat_kw(Kw::Owns) {
+                "owns"
+            } else if self.eat_kw(Kw::Shares) {
+                if self.eat_kw(Kw::Mut) { "shares mut" } else { "shares" }
+            } else if self.eat_kw(Kw::ThreadShared) {
+                "thread_shared"
+            } else if self.eat_kw(Kw::Weakref) {
+                "weakref"
+            } else if self.at_kw(Kw::Ref) && !matches!(self.peek_at(1), TokenKind::Punct(_)) {
+                self.bump();
+                if self.eat_kw(Kw::Mut) {
+                    let at_name = self.span();
+                    let name = self.src.get(at_name.start as usize..at_name.end as usize).unwrap_or("x").to_string();
+                    self.report(
+                        Diagnostic::error(codes::E0120, at.to(self.span()), format!("remove `ref mut {name}`: it is not a capture word"))
+                            .help(format!("without a word the function already uses the real `{name}`, and may change it: `fn(): {name} += 1`")),
+                    );
+                    "ref mut"
+                } else {
+                    "ref"
+                }
+            } else {
+                break;
+            };
+            words.push(word);
+            // The name kept: a variable, or `this`.
+            if !self.eat_kw(Kw::This) {
+                self.expect_ident();
+            }
+            if !self.eat_punct(Punct::Comma) {
+                break;
+            }
+        }
+        if words.iter().any(|word| *word != "ref mut") {
+            let span = start.to(self.prev_span());
+            self.report(
+                Diagnostic::error(codes::E0900, span, "a function's capture words are not built by this compiler yet")
+                    .note("without a word, a lambda uses the real variable it names [GRM-42], [CLO-2]"),
+            );
+        }
+    }
+
     fn parse_lambda(&mut self, allow_block_lambda: bool) -> Lambda {
         let is_owned = self.eat_kw(Kw::Owned);
         self.expect_kw(Kw::Fn);
@@ -1698,17 +1868,16 @@ impl Parser<'_> {
         while !self.at_punct(Punct::RParen) && !self.at_eof() {
             let start = self.span();
             let id = self.next_id();
-            let mode = if self.eat_kw(Kw::Mut) {
-                Mode::Mut
-            } else if self.eat_kw(Kw::Owned) {
-                Mode::Owned
-            } else {
-                Mode::Borrow
-            };
+            let before_word = self.pos;
+            let (mut mode, is_const) = self.parse_param_word(false);
+            let worded = self.pos != before_word;
             let name = self.expect_ident();
             // A lambda parameter's type is optional; it is inferred from the
             // expected function type (`[TYP-23]` rule 4).
             let ty = if self.eat_punct(Punct::Colon) {
+                if !worded && self.refuse_mode_in_type(name) {
+                    mode = Mode::Mut;
+                }
                 self.parse_type()
             } else {
                 TypeExpr { id: self.next_id(), kind: TypeKind::Infer, span: name.span }
@@ -1716,6 +1885,7 @@ impl Parser<'_> {
             params.push(Param {
                 id,
                 mode,
+                is_const,
                 kind: ParamKind::Named { name, ty },
                 default: None,
                 span: start.to(self.prev_span()),
@@ -1725,6 +1895,7 @@ impl Parser<'_> {
             }
         }
         self.expect_punct(Punct::RParen);
+        self.parse_capture_words();
         let ret = self.eat_punct(Punct::Arrow).then(|| self.parse_type());
 
         let body = if self.eat_punct(Punct::FatArrow) {
@@ -1918,9 +2089,22 @@ impl Parser<'_> {
                 let name = self.expect_ident();
                 PatternKind::Bind { name, by_ref: true, mutable, sub: None }
             }
+            // `[GRM-13]` — `copy of v`, a copy of one's own; `copy` is a keyword only before `of`.
+            TokenKind::Ident(copy) if copy.is("copy") && matches!(self.peek_at(1), TokenKind::Ident(of) if of.is("of")) => {
+                self.bump();
+                self.bump();
+                PatternKind::CopyOf { name: self.expect_ident() }
+            }
+            // `[GRM-13]` — `mut` alone on a pattern name is `E0113`: one that changes the part is
+            // `ref mut`, a copy of one's own `copy of`.
             TokenKind::Keyword(Kw::Mut) => {
+                let span = self.span();
                 self.bump();
                 let name = self.expect_ident();
+                self.report(
+                    Diagnostic::error(codes::E0113, span, "`mut` alone is no word for a name a pattern declares")
+                        .help(format!("to change the part matched write `ref mut {0}`; for a copy of your own, `copy of {0}`", name.name)),
+                );
                 PatternKind::Bind { name, by_ref: false, mutable: true, sub: None }
             }
             TokenKind::Punct(Punct::LParen) => {

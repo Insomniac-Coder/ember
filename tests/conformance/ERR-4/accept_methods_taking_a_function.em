@@ -18,7 +18,7 @@
 # a lambda needs no mode, and captures stay borrowed (`suffix` is still
 # usable after `map`).
 
-fn parse(s: str) -> Result[int, String]:
+fn parse(s: StrView) -> Result[int, String]:
     if s == "1":
         return Ok(1)
     return Err(f"bad {s}")

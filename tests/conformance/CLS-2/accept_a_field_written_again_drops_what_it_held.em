@@ -18,21 +18,21 @@
 class Tag:
     name: String
 
-    fn drop(mut self):
-        println(f"dropped {self.name}")
+    fn drop():
+        println(f"dropped {this.name}")
 
 class Pair:
     left: Tag
     right: Tag
     count: i32
 
-    fn init(mut self, rewrite: bool, count: i32):
-        self.left = Tag(name="first")
-        self.left = Tag(name="second")
+    fn init(rewrite: bool, count: i32):
+        this.left = Tag(name="first")
+        this.left = Tag(name="second")
         if rewrite:
-            self.right = Tag(name="draft")
-        self.right = Tag(name="final")
-        self.count = count
+            this.right = Tag(name="draft")
+        this.right = Tag(name="final")
+        this.count = count
 
 fn report(p: Pair):
     println(p.left.name, p.right.name, p.count)

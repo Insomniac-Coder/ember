@@ -1,13 +1,13 @@
 #$ test: compile-fail
 #$ rules: FFI-15, TYP-5
 #$ profiles: debug
-#$ error[E2020]: expected `cstr`, found `std.ffi.CString`
+#$ error[E2020]: expected `CStrView`, found `std.ffi.CString`
 
 import std.ffi
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated))
-    safe fn strlen(text: cstr) -> usize
+    safe fn strlen(text: CStrView) -> usize
 
 fn main():
     value = "hello".to_cstring().unwrap()

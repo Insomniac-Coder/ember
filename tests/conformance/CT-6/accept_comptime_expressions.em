@@ -7,7 +7,8 @@
 fn cube(x: int) -> int:
     return x * x * x
 
-fn scaled[const N: int](x: int) -> int:
+[const N: int]
+fn scaled(x: int) -> int:
     return x * comptime(cube(N))
 
 const TWO: int = 2

@@ -7,7 +7,7 @@ struct Bag:
     values: Array[i32]
 
 extend Bag implements Default:
-    fn default() -> Bag:
+    static fn default() -> Bag:
         return Bag(Array[i32]())
 
 fn make_bag() -> Bag:

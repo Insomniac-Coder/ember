@@ -6,10 +6,11 @@
 struct Leaf implements Clone:
     value: i32
 
-    fn clone(self) -> Self:
-        return Leaf(self.value)
+    fn clone() -> Self:
+        return Leaf(this.value)
 
-fn duplicate[T: Clone](value: T) -> T:
+[T: needs Clone]
+fn duplicate(value: T) -> T:
     return value.clone()
 
 fn main():

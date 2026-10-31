@@ -5,12 +5,14 @@
 from std.math import Float
 
 interface Holder:
-    type Item: Float
+    type Item: needs Float
 
-fn direct[T: Float](x: T):
+[T: needs Float]
+fn direct(x: T):
     println(x)    #$ error[E2040]
 
-fn projected[H: Holder](x: H.Item):
+[H: needs Holder]
+fn projected(x: H.Item):
     println(x)    #$ error[E2040]
 
 fn main():

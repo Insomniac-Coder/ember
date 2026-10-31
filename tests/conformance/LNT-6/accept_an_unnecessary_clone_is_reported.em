@@ -5,7 +5,7 @@
 ## `[LNT-6]` — `L2001`: a clone of a value the function owns and never uses again; moving it
 ## costs nothing. A clone of a value used afterwards, or of a borrowed parameter, is no lint.
 
-fn take(owned s: String) -> int:
+fn take(owns s: String) -> int:
     return s.len()
 
 fn measure(s: String) -> int:

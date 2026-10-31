@@ -6,5 +6,5 @@ pub struct Circle:
     pub radius: int
 
 extend Circle implements named.Named:
-    fn name(self) -> str:
+    fn name() -> StrView:
         return "circle"

@@ -1,8 +1,7 @@
 #$ test: compile-fail
 #$ rules: LT-4, LT-4a
 
-@borrows(arena)
-fn allocate_one(arena: Arena) -> ref mut i32:
+fn allocate_one(arena: Arena) -> ref mut i32 from arena:
     return arena.alloc(1)
 
 fn escaped() -> ref mut i32:

@@ -239,6 +239,7 @@ pub fn format(module: &ast::Module, source: &str, comments: &[Comment]) -> Strin
         next_comment: 0,
         out: String::new(),
         depth: 0,
+        object_word: "this",
     };
     printer.module(module);
     printer.finish()
@@ -252,6 +253,9 @@ struct Printer<'a> {
     next_comment: usize,
     out: String,
     depth: usize,
+    /// How the body being printed names its object: `self` in a method whose receiver is written
+    /// (0.9.10, accepted until M1 refuses it), `this` otherwise (`[CLS-7]`).
+    object_word: &'static str,
 }
 
 impl Printer<'_> {
@@ -299,8 +303,7 @@ impl Printer<'_> {
         let parts: Vec<String> = clauses
             .iter()
             .map(|clause| {
-                let bounds: Vec<String> = clause.bounds.iter().map(|bound| self.type_expr(bound)).collect();
-                format!("{}: {}", self.type_expr(&clause.subject), bounds.join(" + "))
+                format!("{}: {}", self.type_expr(&clause.subject), self.needs(&clause.bounds))
             })
             .collect();
         format!(" where {}", parts.join(", "))
@@ -542,7 +545,7 @@ impl Printer<'_> {
         }
         let vis = visibility(&item.vis);
         match &item.kind {
-            ast::ItemKind::Fn(decl) => self.function(&vis, decl),
+            ast::ItemKind::Fn(decl) => self.function(&vis, decl, false),
             ast::ItemKind::Struct(decl) => {
                 let header = self.type_header(&vis, "struct", decl.name, &decl.generics, &decl.implements, &decl.where_clause);
                 self.line(&header);
@@ -560,8 +563,8 @@ impl Printer<'_> {
                     ast::Openness::Open => "open class",
                     ast::Openness::Abstract => "abstract class",
                 };
-                let params = self.generics(&decl.generics);
-                let mut header = format!("{vis}{keyword} {}{params}", self.name(decl.name));
+                self.type_parameters_line(&decl.generics);
+                let mut header = format!("{vis}{keyword} {}", self.name(decl.name));
                 if let Some(base) = &decl.base {
                     header.push_str(&format!("({})", self.type_expr(base)));
                 }
@@ -604,9 +607,7 @@ impl Printer<'_> {
                 let unsafe_word = if decl.is_unsafe { "unsafe " } else { "" };
                 let mut header = format!("{vis}{unsafe_word}interface {}{params}", self.name(decl.name));
                 if !decl.supertraits.is_empty() {
-                    let names: Vec<String> =
-                        decl.supertraits.iter().map(|t| self.type_expr(t)).collect();
-                    header.push_str(&format!(": {}", names.join(" + ")));
+                    header.push_str(&format!(": {}", self.needs(&decl.supertraits)));
                 }
                 header.push_str(&self.where_clause(&decl.where_clause));
                 header.push(':');
@@ -684,9 +685,7 @@ impl Printer<'_> {
                 }
                 let mut text = self.name(param.name);
                 if !param.bounds.is_empty() {
-                    let bounds: Vec<String> =
-                        param.bounds.iter().map(|b| self.type_expr(b)).collect();
-                    text.push_str(&format!(": {}", bounds.join(" + ")));
+                    text.push_str(&format!(": {}", self.needs(&param.bounds)));
                 }
                 if let Some(default) = &param.default {
                     text.push_str(&format!(" = {}", self.type_expr(default)));
@@ -695,6 +694,24 @@ impl Printer<'_> {
             })
             .collect();
         format!("[{}]", printed.join(", "))
+    }
+
+    /// `[GRM-40]` — a function's, struct's or class's type parameters, on the line above it.
+    fn type_parameters_line(&mut self, params: &[ast::GenericParam]) {
+        if !params.is_empty() {
+            let line = self.generics(params);
+            self.line(&line);
+        }
+    }
+
+    /// `[TYP-17]` — what a type needs: `needs A`, or `needs (A, B)` for several (a tuple is one).
+    fn needs(&self, bounds: &[ast::TypeExpr]) -> String {
+        let printed: Vec<String> = bounds.iter().map(|bound| self.type_expr(bound)).collect();
+        match printed.as_slice() {
+            [one] if one.starts_with('(') => format!("needs ({one})"),
+            [one] => format!("needs {one}"),
+            _ => format!("needs ({})", printed.join(", ")),
+        }
     }
 
     fn type_header(
@@ -706,7 +723,12 @@ impl Printer<'_> {
         implements: &[ast::TypeExpr],
         where_clause: &[ast::Bound],
     ) -> String {
-        let params = self.generics(generics);
+        let params = if keyword == "struct" {
+            self.type_parameters_line(generics);
+            String::new()
+        } else {
+            self.generics(generics)
+        };
         let mut header = format!("{vis}{keyword} {}{params}", self.name(name));
         if !implements.is_empty() {
             let names: Vec<String> = implements.iter().map(|t| self.type_expr(t)).collect();
@@ -717,16 +739,26 @@ impl Printer<'_> {
         header
     }
 
-    fn function(&mut self, vis: &str, decl: &ast::FnDecl) {
-        let params: Vec<String> = decl.params.iter().map(|p| self.param(p)).collect();
+    /// `in_type_body`: a function there is a method unless written `static fn` (`[FN-4]`).
+    fn function(&mut self, vis: &str, decl: &ast::FnDecl, in_type_body: bool) {
+        // A method's object is not listed (`[FN-4]`): `owns this` follows the parameters.
+        let implicit = decl.params.first().filter(|param| matches!(param.kind, ast::ParamKind::Receiver { implicit: true, .. }));
+        let params: Vec<String> = decl.params.iter().skip(usize::from(implicit.is_some())).map(|p| self.param(p)).collect();
+        let owns_this = if implicit.is_some_and(|param| param.mode == ast::Mode::Owned) { " owns this" } else { "" };
         let ret = decl
             .ret
             .as_ref()
-            .map(|t| format!(" -> {}", self.type_expr(t)))
-            .unwrap_or_default();
+            .map(|t| format!("{owns_this} -> {}", self.type_expr(t)))
+            .unwrap_or_else(|| owns_this.to_string());
+        let ret = match &decl.from {
+            Some(from) => format!("{ret} from {}", self.name(*from)),
+            None => ret,
+        };
         // `safe fn`, a hand-written foreign declaration's (`[FFI-10]`).
         let unsafe_ = if decl.is_unsafe { "unsafe " } else if decl.is_safe { "safe " } else { "" };
+        let no_object = !decl.params.iter().any(|param| matches!(param.kind, ast::ParamKind::Receiver { .. }));
         let dispatch = match decl.dispatch {
+            ast::Dispatch::Static if in_type_body && no_object => "static ",
             ast::Dispatch::Static => "",
             ast::Dispatch::Virtual => "virtual ",
             ast::Dispatch::Override => "override ",
@@ -734,10 +766,11 @@ impl Printer<'_> {
         // `[GRM-21]` (D-662) — `gen` comes right before `fn`; it was dropped,
         // so a generator came back as an ordinary function.
         let dispatch = format!("{dispatch}{}", if decl.is_gen { "gen " } else { "" });
-        let generics = self.generics(&decl.generics);
+        // `[GRM-40]` — its type parameters are the line above it.
+        self.type_parameters_line(&decl.generics);
         let ret = format!("{ret}{}", self.where_clause(&decl.where_clause));
         let header = format!(
-            "{vis}{unsafe_}{dispatch}fn {}{generics}({}){ret}:",
+            "{vis}{unsafe_}{dispatch}fn {}({}){ret}:",
             self.name(decl.name),
             params.join(", ")
         );
@@ -748,7 +781,7 @@ impl Printer<'_> {
                 // list breaks one per line with a trailing comma.
                 if header.len() + self.depth * INDENT.len() > LINE_WIDTH && !params.is_empty() {
                     self.line(&format!(
-                        "{vis}{unsafe_}{dispatch}fn {}{generics}(",
+                        "{vis}{unsafe_}{dispatch}fn {}(",
                         self.name(decl.name)
                     ));
                     self.depth += 1;
@@ -760,7 +793,10 @@ impl Printer<'_> {
                 } else {
                     self.line(&header);
                 }
+                let written = decl.params.iter().any(|param| matches!(param.kind, ast::ParamKind::Receiver { implicit: false, .. }));
+                let outer = std::mem::replace(&mut self.object_word, if written { "self" } else { "this" });
                 self.block(body);
+                self.object_word = outer;
             }
             // An interface method has no body, so the colon would open a block
             // that never comes.
@@ -776,10 +812,11 @@ impl Printer<'_> {
         let once = matches!(&param.kind, ast::ParamKind::Named { ty, .. } if matches!(ty.kind, ast::TypeKind::Fn { once: true, .. }));
         let mode = match param.mode {
             ast::Mode::Borrow => "",
-            ast::Mode::Mut => "mut ",
-            // `[CLO-6]` — a `once fn` parameter is taken over; the parser implies `owned`.
+            ast::Mode::Mut if param.is_const => "const ref mut ",
+            ast::Mode::Mut => "ref mut ",
+            // `[CLO-6]` — a `once fn` parameter is taken over; the parser implies `owns`.
             ast::Mode::Owned if once => "",
-            ast::Mode::Owned => "owned ",
+            ast::Mode::Owned => "owns ",
         };
         match &param.kind {
             ast::ParamKind::Receiver { .. } => format!("{mode}self"),
@@ -837,7 +874,7 @@ impl Printer<'_> {
                 let let_kw = if field.is_let { "let " } else { "" };
                 self.line(&format!("{vis}{let_kw}{}: {ty}{default}", self.name(field.name)));
             }
-            ast::MemberKind::Fn(decl) => self.function(&vis, decl),
+            ast::MemberKind::Fn(decl) => self.function(&vis, decl, true),
             ast::MemberKind::Const(decl) => {
                 let ty = decl
                     .ty
@@ -1020,7 +1057,7 @@ impl Printer<'_> {
             }
             // `[GRM-28]` — printed as any function is; the catch-all would
             // flatten its body as it once did `unsafe:`'s.
-            ast::StmtKind::LocalFn(decl) => self.function("", decl),
+            ast::StmtKind::LocalFn(decl) => self.function("", decl, false),
             // `[CT-7]` — as `unsafe:`. Every statement has an arm: copying one
             // through with its lines trimmed flattened a block's body out of it.
             ast::StmtKind::Comptime(block) => {
@@ -1048,7 +1085,14 @@ impl Printer<'_> {
     fn condition(&mut self, cond: &ast::Condition) -> String {
         match cond {
             ast::Condition::Expr(expr) => self.expr(expr),
-            ast::Condition::Pattern { pattern, value } => {
+            // `[GRM-44]` — the name inside `Some(...)` is what `exists as` declares.
+            ast::Condition::Pattern { pattern, value, exists: true } => match &pattern.kind {
+                ast::PatternKind::Constructor { fields, .. } => {
+                    format!("{} exists as {}", self.expr(value), self.pattern(&fields[0].pattern))
+                }
+                _ => unreachable!("the parser makes `Some(name)`"),
+            },
+            ast::Condition::Pattern { pattern, value, exists: false } => {
                 format!("{} = {}", self.pattern(pattern), self.expr(value))
             }
         }
@@ -1095,7 +1139,8 @@ impl Printer<'_> {
             // here whether it was written as a statement or inside a `match`
             // arm. It must have a rule of its own: the catch-all copies text
             // through with each line trimmed and would flatten a nested block.
-            ast::ExprKind::Owned(inner) => format!("owned {}", self.expr_pure(inner)),
+            ast::ExprKind::Owned(inner) => format!("owns {}", self.expr_pure(inner)),
+            ast::ExprKind::CopyOf(inner) => format!("copy of {}", self.expr_pure(inner)),
             ast::ExprKind::Comptime(inner) => format!("comptime({})", self.expr_pure(inner)),
             ast::ExprKind::AssumeNoalloc(inner) => format!("@assume_noalloc({})", self.expr_pure(inner)),
             ast::ExprKind::Jump(jump) => match jump {
@@ -1111,7 +1156,7 @@ impl Printer<'_> {
                 },
             },
             ast::ExprKind::Path { segments } => self.dotted(segments),
-            ast::ExprKind::SelfExpr => "self".to_string(),
+            ast::ExprKind::SelfExpr => self.object_word.to_string(),
             ast::ExprKind::Field { base, name } => {
                 format!("{}.{}", self.expr_pure(base), self.member_name(*name))
             }
@@ -1376,8 +1421,9 @@ impl Printer<'_> {
                     .map(|param| {
                         let mode = match param.mode {
                             ast::Mode::Borrow => "",
-                            ast::Mode::Mut => "mut ",
-                            ast::Mode::Owned => "owned ",
+                            ast::Mode::Mut if param.is_const => "const ref mut ",
+                            ast::Mode::Mut => "ref mut ",
+                            ast::Mode::Owned => "owns ",
                         };
                         format!("{mode}{}", self.type_expr(&param.ty))
                     })
@@ -1399,8 +1445,9 @@ impl Printer<'_> {
     fn lambda_param(&self, param: &ast::Param) -> String {
         let mode = match param.mode {
             ast::Mode::Borrow => "",
-            ast::Mode::Mut => "mut ",
-            ast::Mode::Owned => "owned ",
+            ast::Mode::Mut if param.is_const => "const ref mut ",
+            ast::Mode::Mut => "ref mut ",
+            ast::Mode::Owned => "owns ",
         };
         match &param.kind {
             ast::ParamKind::Receiver { .. } => format!("{mode}self"),
@@ -1412,6 +1459,7 @@ impl Printer<'_> {
     fn pattern(&self, pattern: &ast::Pattern) -> String {
         match &pattern.kind {
             ast::PatternKind::Wild => "_".to_string(),
+            ast::PatternKind::CopyOf { name } => format!("copy of {}", self.name(*name)),
             ast::PatternKind::Bind { name, by_ref, mutable, sub } => {
                 let by_ref = if *by_ref { "ref " } else { "" };
                 let mutable = if *mutable { "mut " } else { "" };

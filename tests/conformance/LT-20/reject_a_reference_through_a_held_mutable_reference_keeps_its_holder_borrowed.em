@@ -8,10 +8,10 @@
 
 struct Slots:
     xs: ref mut Array[int]
-    name: str
+    name: StrView
 
-    fn take(mut self) -> (ref mut int, str):
-        return (ref mut self.xs[0], self.name)
+    fn take() -> (ref mut int, StrView):
+        return (ref mut this.xs[0], this.name)
 
 fn main():
     xs = [1, 2, 3]

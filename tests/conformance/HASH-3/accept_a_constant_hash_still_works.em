@@ -10,7 +10,8 @@ struct Id:
     n: int
 
 extend Id implements Hash:
-    fn hash[H: Hasher](self, mut h: H):
+    [H: needs Hasher]
+    fn hash(ref mut h: H):
         h.write_u8(7)
 
 fn main():

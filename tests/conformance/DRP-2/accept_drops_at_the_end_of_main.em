@@ -14,23 +14,23 @@
 # `exit_drops_that_only_free_memory_go_in_release` reads the C.
 
 interface Named:
-    fn n(self) -> int
+    fn n() -> int
 
 class Quiet implements Named:
     k: int
     items: Array[int]
 
-    fn n(self) -> int:
-        return self.k
+    fn n() -> int:
+        return this.k
 
 class Loud implements Named:
     k: int
 
-    fn n(self) -> int:
-        return self.k
+    fn n() -> int:
+        return this.k
 
-    fn drop(mut self):
-        println(f"loud {self.k} dropped")
+    fn drop():
+        println(f"loud {this.k} dropped")
 
 fn main():
     quiet: Array[Quiet] = []

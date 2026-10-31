@@ -16,28 +16,28 @@
 class Noisy:
     name: String
 
-    fn init(mut self, owned name: String):
-        self.name = name
+    fn init(owns name: String):
+        this.name = name
 
-    fn drop(mut self):
-        println("drop", self.name)
+    fn drop():
+        println("drop", this.name)
 
 ## A callable holding the only handle of a `Noisy`, which ends with it.
-fn make(owned name: String) -> fn() -> int:
+fn make(owns name: String) -> fn() -> int:
     n = Noisy(name)
     return owned fn() -> int => n.name.len()
 
-fn make_once(owned name: String) -> once fn() -> int:
+fn make_once(owns name: String) -> once fn() -> int:
     n = Noisy(name)
     return owned fn() -> int => n.name.len()
 
-fn call_box(owned b: Box[fn() -> int]) -> int:
+fn call_box(owns b: Box[fn() -> int]) -> int:
     return b()
 
-fn call_once_box(owned b: Box[once fn() -> int]) -> int:
+fn call_once_box(owns b: Box[once fn() -> int]) -> int:
     return b()
 
-fn call_once(owned f: once fn() -> int) -> int:
+fn call_once(owns f: once fn() -> int) -> int:
     return f()
 
 fn main():

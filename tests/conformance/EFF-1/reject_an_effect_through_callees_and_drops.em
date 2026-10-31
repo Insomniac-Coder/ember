@@ -9,8 +9,8 @@
 class Node:
     v: int
 
-    fn drop(mut self):
-        println("drop", self.v)
+    fn drop():
+        println("drop", this.v)
 
 @noio
 fn drops_one(n: int) -> int:

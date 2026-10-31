@@ -17,11 +17,11 @@ from std.core import Default
 struct Item:
     pub value: i32
 
-    fn drop(mut self):
-        println(self.value)
+    fn drop():
+        println(this.value)
 
 extend Item implements Default:
-    fn default() -> Item:
+    static fn default() -> Item:
         return Item(0)
 
 fn main():

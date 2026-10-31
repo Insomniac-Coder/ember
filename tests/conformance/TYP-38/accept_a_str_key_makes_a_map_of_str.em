@@ -11,14 +11,14 @@
 fn main():
     pairs = [(1, "one"), (2, "three")]
     sizes = {name: name.char_count() for _, name in pairs}
-    first: str = pairs[0].1
+    first: StrView = pairs[0].1
     mixed = {first: 2, "two": 3}
     seen = {name for _, name in pairs}
     by_number = {k: name for k, name in pairs}
     literals = {"a": 1}
-    of_str: Map[str, int] = sizes
-    also: Map[str, int] = mixed
-    set_of_str: Set[str] = seen
-    values: Map[int, str] = by_number
+    of_str: Map[StrView, int] = sizes
+    also: Map[StrView, int] = mixed
+    set_of_str: Set[StrView] = seen
+    values: Map[int, StrView] = by_number
     owned_text: Map[String, int] = literals
     println(of_str, also, set_of_str.len(), values[2], owned_text)

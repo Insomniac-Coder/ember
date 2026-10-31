@@ -3,7 +3,7 @@
 #$ rules: TYP-16, TYP-22
 
 interface Factory[T]:
-    fn clone(self) -> Self where Self: Sized:
+    fn clone() -> Self where Self: needs Sized:
         todo()
 
 fn take(x: ref dyn Factory[i32]):

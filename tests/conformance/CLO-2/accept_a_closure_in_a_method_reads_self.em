@@ -9,29 +9,29 @@
 class Counter:
     n: int = 3
 
-    fn total(mut self) -> int:
-        f = fn() -> int => self.n * 10
+    fn total() -> int:
+        f = fn() -> int => this.n * 10
         return f()
 
-    fn later(self) -> int:
-        g = fn(k: int) -> int => self.n + k
+    fn later() -> int:
+        g = fn(k: int) -> int => this.n + k
         return g(5)
 
 struct Pt:
     x: int
 
-    fn scaled(self, k: int) -> int:
-        f = fn() -> int => self.x * k
+    fn scaled(k: int) -> int:
+        f = fn() -> int => this.x * k
         return f()
 
 class Named:
     name: String
     size: int
 
-    fn init(self, owned name: String):
-        self.name = name
-        self.size = 2
-        measure = fn() -> int => self.name.len() * self.size
+    fn init(owns name: String):
+        this.name = name
+        this.size = 2
+        measure = fn() -> int => this.name.len() * this.size
         println(measure())
 
 fn main():

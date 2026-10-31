@@ -8,7 +8,8 @@
 
 from std.collections import Hash, Hasher, DefaultHasher
 
-fn hash_value[T: Hash](value: T) -> u64:
+[T: needs Hash]
+fn hash_value(value: T) -> u64:
     h = DefaultHasher.new()
     value.hash(h)
     return h.finish()

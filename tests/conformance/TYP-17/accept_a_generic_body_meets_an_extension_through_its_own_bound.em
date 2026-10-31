@@ -7,27 +7,30 @@
 # `Conv[Array[T]]` needs `T: Copy`, and the call was a false `E2070`.
 
 interface Conv[T]:
-    fn conv(self) -> T
+    fn conv() -> T
 
-struct Wrap[T]:
+[T]
+struct Wrap:
     x: T
 
-extend[T: Copy] Wrap[T]:
-    fn dup(self) -> int:
+extend[T: needs Copy] Wrap[T]:
+    fn dup() -> int:
         return 1
 
-extend[T: Copy] Wrap[T] implements Conv[Array[T]]:
-    fn conv(self) -> Array[T]:
-        return [self.x, self.x, self.x]
+extend[T: needs Copy] Wrap[T] implements Conv[Array[T]]:
+    fn conv() -> Array[T]:
+        return [this.x, this.x, this.x]
 
 extend[U] Wrap[U] implements Conv[bool]:
-    fn conv(self) -> bool:
+    fn conv() -> bool:
         return true
 
-fn g[T: Copy](w: Wrap[T]) -> int:
+[T: needs Copy]
+fn g(w: Wrap[T]) -> int:
     return w.dup()
 
-fn flag[T](w: Wrap[T]) -> bool:
+[T]
+fn flag(w: Wrap[T]) -> bool:
     return w.conv()
 
 fn main():

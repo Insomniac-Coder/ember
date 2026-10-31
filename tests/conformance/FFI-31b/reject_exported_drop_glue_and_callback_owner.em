@@ -7,7 +7,7 @@
 struct Ticket:
     id: i32
 
-    fn drop(mut self):
+    fn drop():
         pass
 
 pub extern "C" fn inspect_ticket(ticket: *Ticket) -> i32:

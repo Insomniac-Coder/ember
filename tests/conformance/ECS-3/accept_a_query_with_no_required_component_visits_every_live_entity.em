@@ -19,7 +19,7 @@ from std.ecs import World, Query, Entity, Component
 struct Tag:
     on: bool
 
-fn show(mut q: Query[(Entity, Option[Tag])], _: ()):
+fn show(ref mut q: Query[(Entity, Option[Tag])], _: ()):
     for e, tag in q.iter():
         match tag:
             Some(_):

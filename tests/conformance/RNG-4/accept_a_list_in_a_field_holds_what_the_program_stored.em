@@ -12,8 +12,8 @@
 class Bag:
     items: Array[int]
 
-    fn init(mut self):
-        self.items = []
+    fn init():
+        this.items = []
 
 fn main():
     bags: Array[Bag] = []

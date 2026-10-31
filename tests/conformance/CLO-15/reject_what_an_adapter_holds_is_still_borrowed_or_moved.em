@@ -7,10 +7,12 @@
 # (D-422: it duplicated the mutable borrow, which `other = bump` refuses); and a
 # named iterator given to `zip` is moved, not copied.
 
-fn steal[F: fn(int)](f: F) -> F:
+[F: needs fn(int)]
+fn steal(f: F) -> F:
     return f  #$ error[E3013]: cannot move out of a borrowed parameter
 
-fn keep[F: fn(int)](owned f: F) -> F:
+[F: needs fn(int)]
+fn keep(owns f: F) -> F:
     return f
 
 fn main():

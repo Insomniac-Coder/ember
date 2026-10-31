@@ -15,7 +15,8 @@ fn total(xs: Span[i32]) -> i32:
         t += x
     return t
 
-fn first[T: Copy](xs: Span[T]) -> T:
+[T: needs Copy]
+fn first(xs: Span[T]) -> T:
     return xs[0]
 
 fn main():

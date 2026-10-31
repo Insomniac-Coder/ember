@@ -7,7 +7,8 @@
 # when `T` is `String`, so rule 2 ties the result to `xs` alone and the caller
 # may assign `s` while `r` lives.
 
-fn pick[T](xs: Array[T], x: T) -> ref T:
+[T]
+fn pick(xs: Array[T], x: T) -> ref T:
     return ref xs[0]
 
 fn main():

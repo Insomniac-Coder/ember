@@ -16,7 +16,8 @@ fn add_one(value: i32) -> i32:
 fn add_two(value: i32) -> i32:
     return value + 2
 
-fn forward[T](owned value: T) -> T:
+[T]
+fn forward(owns value: T) -> T:
     return value
 
 fn main():

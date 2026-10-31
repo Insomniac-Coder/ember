@@ -22,7 +22,7 @@ fn load(n: int) -> Result[int]:
     v = disk(n)?
     return Ok(v * 2)
 
-fn same(owned r: Result[int]) -> Result[int, AnyError]:
+fn same(owns r: Result[int]) -> Result[int, AnyError]:
     return r
 
 fn plain(n: int) -> Result[int, int]:

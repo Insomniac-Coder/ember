@@ -6,5 +6,5 @@ pub open class ClassHealth:
 pub fn make(v: i32) -> ClassHealth:
     return ClassHealth(v)
 
-pub fn heal(mut h: ClassHealth, by: i32):
+pub fn heal(ref mut h: ClassHealth, by: i32):
     h.value = h.value + by

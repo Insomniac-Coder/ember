@@ -5,20 +5,21 @@
 # argument count.
 
 interface Named:
-    fn name(self) -> int
+    fn name() -> int
 
 struct Tag:
     n: int
 
-struct Store[K, H = Tag]:
+[K, H = Tag]
+struct Store:
     k: K
 
 extend[K] Store[K] implements Named:
-    fn name(self) -> int:
+    fn name() -> int:
         return 1
 
 extend Store[int] implements Named:   #$ error[E2041]: `Store[i64, Tag]` and `Store[K, Tag]` can be one type, and both implement `Named`
-    fn name(self) -> int:
+    fn name() -> int:
         return 2
 
 fn main():

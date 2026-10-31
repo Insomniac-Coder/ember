@@ -4,13 +4,13 @@
 # `[EFF-6]` — a contract is checked over the whole reachable call graph, and a violation names
 # the chain from the function down to the offending operation.
 
-fn collect_visible(xs: Span[int], mut out: Array[int]):
+fn collect_visible(xs: Span[int], ref mut out: Array[int]):
     for x in xs:
         if x > 0:
             out.push(x)
 
 @noalloc
-fn cull(xs: Span[int], mut out: Array[int]) -> int:
+fn cull(xs: Span[int], ref mut out: Array[int]) -> int:
     collect_visible(xs, out)
     return out.len()
 

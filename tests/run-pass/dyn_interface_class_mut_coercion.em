@@ -7,16 +7,16 @@
 #$ assert-c: !contains(ember_retain)
 
 interface Accumulator:
-    fn bump(mut self) -> i32
+    fn bump() -> i32
 
 class Counter implements Accumulator:
     value: i32
 
-    fn bump(mut self) -> i32:
-        self.value = self.value + 1
-        return self.value
+    fn bump() -> i32:
+        this.value = this.value + 1
+        return this.value
 
-fn bump_it(value: ref mut dyn Accumulator) -> i32:
+fn bump_it(ref mut value: dyn Accumulator) -> i32:
     return value.bump()
 
 fn main():

@@ -8,15 +8,16 @@ struct Pair:
     right: Span[i32]
 
 interface PairReader:
-    fn read(self, pair: Pair) -> i32
+    fn read(pair: Pair) -> i32
 
 struct LeftReader implements PairReader:
     marker: i32
 
-    fn read(self, pair: Pair) -> i32:
-        return pair.left[0] + self.marker
+    fn read(pair: Pair) -> i32:
+        return pair.left[0] + this.marker
 
-fn apply[R: PairReader](reader: R, pair: Pair) -> i32:
+[R: needs PairReader]
+fn apply(reader: R, pair: Pair) -> i32:
     return reader.read(pair)
 
 fn main():

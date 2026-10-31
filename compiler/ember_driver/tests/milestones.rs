@@ -483,8 +483,9 @@ fn ember_with_input(args: &[&str], root: &Path, input: &[u8]) -> Run {
 }
 
 /// `[CLI-20]`, `[VER-9]`, `[FMT-1]` — `ember fmt --migrate` rewrites source written for 0.9.8 into
-/// 0.9.9 where the change is mechanical — `::` to `.`, integer `/` to `//`, `@view` and `with_views`
-/// removal, `Box[dyn fn]` to an owned callable type, a pair loop over a `Map` to `m.items()` — and
+/// 0.9.9 where the change is mechanical — `::` to `.`, integer `/` to `//`, `with_views` removal,
+/// `Box[dyn fn]` to an owned callable type, a pair loop over a `Map` to `m.items()` — and keeps
+/// `@view`, which 0.9.15 checks again (`[TYP-34]`); it
 /// lists what it changed, where the file has it; the result checks and is in the canonical layout.
 #[test]
 fn fmt_migrate_rewrites_the_mechanical_forms_of_0_9_8() {
@@ -538,13 +539,13 @@ fn main():
     ] {
         assert!(migrated.stdout.contains(wanted), "the migration lacks {wanted:?}:\n{}", migrated.stdout);
     }
-    for gone in ["::", "@view", "@latebound", "with_views", "Box[dyn", "std.borrow"] {
+    assert!(migrated.stdout.contains("@view\nstruct Window:"), "the migration dropped `@view`:\n{}", migrated.stdout);
+    for gone in ["::", "@latebound", "with_views", "Box[dyn", "std.borrow"] {
         assert!(!migrated.stdout.contains(gone), "the migration kept {gone:?}:\n{}", migrated.stdout);
     }
     // What changed, at the line and column of the file as written.
     for change in [
         ":1:1: `with_views` import removed",
-        ":7:1: `@view` removed",
         ":11:21: `Box[dyn fn]` to an owned callable type",
         ":15:12: `with_views` call to a call of its callback",
         ":17:12: `@latebound` removed",
@@ -716,18 +717,18 @@ fn fmt_lays_out_classes_extern_blocks_and_comptime_items() {
     let source = directory.join(ember_branding::source_file("items"));
     std::fs::write(&source, "\
 interface Named:
-  fn name(self) -> int
+  fn name() -> int
 
 open class Base:
   id: int = 0
 
-  fn get(self) -> int:
-        return self.id
+  fn get() -> int:
+        return this.id
 
 class Leaf(Base) implements Named:
   extra: int = 1
-  fn name(self) -> int:
-        return self.extra
+  fn name() -> int:
+        return this.extra
 
 unsafe extern \"C\":
   # the C library's absolute value
@@ -749,8 +750,8 @@ fn main():
     let once = ember(&["fmt", &path], &root);
     assert_eq!(once.exit, 0, "{}", once.stderr);
     let out = &once.stdout;
-    assert!(out.contains("open class Base:\n    id: int = 0\n\n    fn get(self) -> int:\n        return self.id\n"), "{out}");
-    assert!(out.contains("class Leaf(Base) implements Named:\n    extra: int = 1\n\n    fn name(self) -> int:\n        return self.extra\n"), "{out}");
+    assert!(out.contains("open class Base:\n    id: int = 0\n\n    fn get() -> int:\n        return this.id\n"), "{out}");
+    assert!(out.contains("class Leaf(Base) implements Named:\n    extra: int = 1\n\n    fn name() -> int:\n        return this.extra\n"), "{out}");
     assert!(out.contains("unsafe extern \"C\":\n    # the C library's absolute value\n    @ffi(effects=[], deterministic)\n    safe fn abs(x: i32) -> i32\n    unsafe fn rand() -> i32\n"), "{out}");
     assert!(out.contains("extern class cpp.RageV.Layer:\n    pass\n"), "{out}");
     assert!(out.contains("comptime:\n    assert(1 + 1 == 2)\n"), "{out}");
@@ -773,7 +774,7 @@ fn ember_doc_presents_each_view_contract() {
     let dir = temporary_directory("ember-doc");
     let file = dir.join(ember_branding::source_file("main"));
     let source = [
-        "fn pick(a: str, b: str, first: bool) -> str:",
+        "fn pick(a: StrView, b: StrView, first: bool) -> StrView:",
         "    if first:",
         "        return a",
         "    return b",
@@ -784,10 +785,10 @@ fn ember_doc_presents_each_view_contract() {
         "        t += x",
         "    return t",
         "",
-        "fn shout(text: str) -> String:",
+        "fn shout(text: StrView) -> String:",
         "    return f\"{text}!\"",
         "",
-        "fn fill(mut buf: MutSpan[int], v: int):",
+        "fn fill(ref mut buf: MutSpan[int], v: int):",
         "    for i in 0..buf.len():",
         "        buf[i] = v",
         "",
@@ -807,10 +808,10 @@ fn ember_doc_presents_each_view_contract() {
     assert_eq!(doc.exit, 0, "{}", doc.stderr);
     let text = doc.stdout.replace("\r\n", "\n");
     for block in [
-        "fn pick(a: str, b: str, first: bool) -> str\n    `a`: a view, read for the call\n    `b`: a view, read for the call\n    `first`: borrowed for the call\n    the result borrows `a` and `b`, and lives no longer than any of them\n    effects: none\n    allocates: no\n",
+        "fn pick(a: StrView, b: StrView, first: bool) -> StrView\n    `a`: a view, read for the call\n    `b`: a view, read for the call\n    `first`: borrowed for the call\n    the result borrows `a` and `b`, and lives no longer than any of them\n    effects: none\n    allocates: no\n",
         "fn total(xs: Span[i64]) -> i64\n    `xs`: a view, read for the call\n    the result is a value of its own, borrowing nothing\n",
-        "fn shout(text: str) -> String\n    `text`: a view, read for the call\n    the result is a value of its own, borrowing nothing\n    effects: Alloc, Panic(Explicit)\n    allocates: yes\n",
-        "fn fill(mut buf: MutSpan[i64], v: i64) -> void\n    `buf`: borrowed mutably for the call (in-out)\n    `v`: borrowed for the call\n    it returns nothing\n",
+        "fn shout(text: StrView) -> String\n    `text`: a view, read for the call\n    the result is a value of its own, borrowing nothing\n    effects: Alloc, Panic(Explicit)\n    allocates: yes\n",
+        "fn fill(ref mut buf: MutSpan[i64], v: i64) -> void\n    `buf`: borrowed mutably for the call (in-out)\n    `v`: borrowed for the call\n    it returns nothing\n",
     ] {
         assert!(text.contains(block), "missing:\n{block}\nin:\n{text}");
     }
@@ -827,24 +828,27 @@ fn inspect_reports_whether_each_generic_is_shared_or_specialised() {
     let file = dir.join(ember_branding::source_file("main"));
     let source = [
         "interface Shape:",
-        "    fn area(self) -> f64",
+        "    fn area() -> f64",
         "",
         "struct Square:",
         "    side: f64",
         "",
         "extend Square implements Shape:",
-        "    fn area(self) -> f64:",
-        "        return self.side * self.side",
+        "    fn area() -> f64:",
+        "        return this.side * this.side",
         "",
         "@never_specialize",
-        "fn shared[T: Shape](x: T) -> f64:",
+        "[T: needs Shape]",
+        "fn shared(x: T) -> f64:",
         "    return x.area()",
         "",
         "@always_specialize",
-        "fn exact[T: Shape](x: T) -> f64:",
+        "[T: needs Shape]",
+        "fn exact(x: T) -> f64:",
         "    return x.area()",
         "",
-        "fn plain[T: Shape](x: T) -> f64:",
+        "[T: needs Shape]",
+        "fn plain(x: T) -> f64:",
         "    return x.area()",
         "",
         "fn main():",
@@ -881,8 +885,8 @@ fn instantiations_are_reported_and_a_ceiling_warns() {
         .expect("the manifest is writable");
     std::fs::write(
         directory.join("src").join(ember_branding::source_file("main")),
-        "fn pick[T](a: T, b: T) -> T:\n    return b\n\n\
-         struct Wrap[T]:\n    value: T\n\n\
+        "[T]\nfn pick(a: T, b: T) -> T:\n    return b\n\n\
+         [T]\nstruct Wrap:\n    value: T\n\n\
          fn main():\n    println(pick(1, 2), pick(1.5, 2.5), pick(\"a\", \"b\"))\n\
          \x20   w = Wrap[int](value = 3)\n    v = Wrap[bool](value = true)\n    println(w.value, v.value)\n",
     )
@@ -892,10 +896,10 @@ fn instantiations_are_reported_and_a_ceiling_warns() {
     let built = ember(&["build", "--report=instantiations", &package, "--out-dir", &out], &root);
     assert_eq!(built.exit, 0, "{}", built.stderr);
     assert!(built.stdout.contains("  pick: 3 instance(s), "), "{}", built.stdout);
-    assert!(built.stdout.contains("    pick[i64]\n    pick[f64]\n    pick[str]\n"), "{}", built.stdout);
+    assert!(built.stdout.contains("    pick[i64]\n    pick[f64]\n    pick[StrView]\n"), "{}", built.stdout);
     assert!(built.stdout.contains("  Wrap: 2 instance(s), ") && built.stdout.contains("    Wrap[i64]\n    Wrap[bool]\n"), "{}", built.stdout);
     assert!(built.stderr.contains("warning[W2220]: `pick` has 3 instances, more than `max_instantiations = 2`"), "{}", built.stderr);
-    assert!(built.stderr.contains("its newest: pick[str], pick[f64], pick[i64]"), "{}", built.stderr);
+    assert!(built.stderr.contains("its newest: pick[StrView], pick[f64], pick[i64]"), "{}", built.stderr);
     assert_eq!(built.stderr.matches("warning[W2220]").count(), 1, "only the program's own generics: {}", built.stderr);
     std::fs::write(directory.join(MANIFEST), "[package]\nname = \"mono\"\n\n[build]\nmax_instantiations = 0\n")
         .expect("the manifest is writable");
@@ -917,7 +921,7 @@ fn tcb_lists_each_category_and_audit_summarises() {
     std::fs::write(
         &source,
         "unsafe extern \"C\":\n    @ffi(effects=[], deterministic)\n    safe fn abs(x: i32) -> i32\n    unsafe fn rand() -> i32\n\n\
-         fn grow(mut xs: Array[int]):\n    xs.push(1)\n\n\
+         fn grow(ref mut xs: Array[int]):\n    xs.push(1)\n\n\
          fn noisy() -> i32:\n    unsafe:  # SAFETY(ffi): rand has no precondition\n        return rand()\n\n\
          fn main():\n    xs: Array[int] = []\n    grow(xs)\n    println(abs(-2), noisy())\n",
     )
@@ -960,10 +964,10 @@ fn inspect_cost_reports_each_row_by_site() {
     std::fs::write(
         &source,
         "from std.collections import Set\n\n\
-         interface Shape:\n    fn area(self) -> int\n\n\
+         interface Shape:\n    fn area() -> int\n\n\
          struct Square:\n    side: int\n\n\
-         extend Square implements Shape:\n    fn area(self) -> int:\n        return self.side * self.side\n\n\
-         class Counter:\n    n: int = 0\n\n    fn bump(mut self):\n        self.n += 1\n\n\
+         extend Square implements Shape:\n    fn area() -> int:\n        return this.side * this.side\n\n\
+         class Counter:\n    n: int = 0\n\n    fn bump():\n        this.n += 1\n\n\
          fn bump_all(counters: Array[Counter]):\n    for c in counters:\n        keep = c\n        keep.bump()\n\n\
          fn measure(shape: ref dyn Shape) -> int:\n    return shape.area()\n\n\
          fn get(xs: Array[int], i: int) -> int:\n    return xs[i]\n\n\
@@ -1046,7 +1050,7 @@ fn the_engine_report_summarises_the_build_and_changes_nothing() {
     let root = workspace_root();
     let directory = temporary_directory("engine-report");
     let file = directory.join(ember_branding::source_file("engine"));
-    std::fs::write(&file, "class Counter:\n    count: int\n\n    fn init(mut self):\n        self.count = 0\n\n    fn bump(mut self):\n        self.count += 1\n\nunsafe extern \"C\":\n    @ffi(param(xs, borrowed, count(n)), link_name=\"sum_c\")\n    safe fn sum(xs: Span[i32], n: usize) -> i32\n\npub extern \"C\" fn sum_c(xs: *i32, n: usize) -> i32:\n    total: i32 = 0\n    i: usize = 0\n    while i < n:\n        unsafe:  # SAFETY(ffi): C's contract: `xs` holds `n` elements\n            total += read(xs, i)\n        i += 1\n    return total\n\nfn pick(xs: Array[int], i: int) -> int:\n    return xs[i]\n\n@noinline\nfn twice(x: int) -> int:\n    return x * 2\n\nfn main():\n    xs: Array[int] = [1, 2, 3]\n    ys: Array[i32] = [4, 5, 6]\n    c = Counter()\n    for _x in xs:\n        c.bump()\n    println(pick(xs, 1), twice(c.count), sum(ys.as_span()))\n").expect("the program is writable");
+    std::fs::write(&file, "class Counter:\n    count: int\n\n    fn init():\n        this.count = 0\n\n    fn bump():\n        this.count += 1\n\nunsafe extern \"C\":\n    @ffi(param(xs, borrowed, count(n)), link_name=\"sum_c\")\n    safe fn sum(xs: Span[i32], n: usize) -> i32\n\npub extern \"C\" fn sum_c(xs: *i32, n: usize) -> i32:\n    total: i32 = 0\n    i: usize = 0\n    while i < n:\n        unsafe:  # SAFETY(ffi): C's contract: `xs` holds `n` elements\n            total += read(xs, i)\n        i += 1\n    return total\n\nfn pick(xs: Array[int], i: int) -> int:\n    return xs[i]\n\n@noinline\nfn twice(x: int) -> int:\n    return x * 2\n\nfn main():\n    xs: Array[int] = [1, 2, 3]\n    ys: Array[i32] = [4, 5, 6]\n    c = Counter()\n    for _x in xs:\n        c.bump()\n    println(pick(xs, 1), twice(c.count), sum(ys.as_span()))\n").expect("the program is writable");
     let file = file.to_string_lossy().into_owned();
     let out = directory.join("out").to_string_lossy().into_owned();
     // `[PRF-3]` (ODR-259) — the inlining decisions and removed checks are a rewriting build's.
@@ -1099,7 +1103,7 @@ fn explain_view_names_each_view_in_use_and_the_use_that_keeps_it() {
     std::fs::write(&shared, "fn total(xs: Span[int]) -> int:\n    sum = 0\n    for x in xs:\n        sum += x\n    return sum\n\nfn main():\n    v: Array[int] = [1, 2, 3]\n    s = v.as_span()\n    n = v.len()\n    w = total(s)\n    println(w, n)\n")
         .expect("the program is writable");
     let exclusive = directory.join(ember_branding::source_file("exclusive"));
-    std::fs::write(&exclusive, "fn bump(mut xs: Array[int]):\n    xs.push(4)\n\nfn main():\n    v: Array[int] = [1, 2, 3]\n    r = ref mut v\n    r.push(9)\n    bump(r)\n    println(v.len())\n")
+    std::fs::write(&exclusive, "fn bump(ref mut xs: Array[int]):\n    xs.push(4)\n\nfn main():\n    v: Array[int] = [1, 2, 3]\n    r = ref mut v\n    r.push(9)\n    bump(r)\n    println(v.len())\n")
         .expect("the program is writable");
     let explain = |file: &Path, line: u32| {
         let run = ember(&["explain", "--view", &format!("{}:{line}", file.display())], &root);
@@ -1146,7 +1150,7 @@ fn build_writes_debugger_visualisers_beside_the_program() {
         &source,
         "enum Shape:\n    Circle(r: f64)\n    Empty\n\nstruct Bag:\n    items: Array[int]\n    label: String\n    shape: Shape\n\n\
          class Node:\n    value: int\n\nfn first(b: Bag) -> Option[int]:\n    if b.items.len() > 0:\n        return Some(b.items[0])\n    return None\n\n\
-         fn main():\n    b = Bag([1, 2], \"hi\", Shape.Circle(1.0))\n    n = Node(3)\n    t: str = \"text\"\n    held: Array[int] = [4, 5, 6]\n    word = \"local\".to_string()\n    println(first(b), n.value, t, b.label, held.len(), word)\n",
+         fn main():\n    b = Bag([1, 2], \"hi\", Shape.Circle(1.0))\n    n = Node(3)\n    t: StrView = \"text\"\n    held: Array[int] = [4, 5, 6]\n    word = \"local\".to_string()\n    println(first(b), n.value, t, b.label, held.len(), word)\n",
     )
     .expect("write the program");
     let out = dir.join("out");
@@ -1567,7 +1571,7 @@ fn gcc_executables_keep_c_exports_and_discard_unreachable_native_bodies() {
         .expect("imported exports are writable");
     let entry = directory.join(ember_branding::source_file("entry"));
     std::fs::write(&entry,
-        "import exports\n@export(\"selected_root\", threads=any)\npub fn local_value() -> i32:\n    return 43\npub extern \"C\" fn plain_root() -> i32:\n    return 44\n@export(\"relaxed_root\", threads=any)\n@fp(contract)\npub fn relaxed_value(x: f64) -> f64:\n    return x * x + 1.0\nunsafe extern \"C\":\n    unsafe fn absent_foreign() -> i32\n@noinline\npub fn unused_native() -> i32:\n    return 99\nfn main():\n    println(7)\n")
+        "import exports\n@export(\"selected_root\", threads=any)\npub fn local_value() -> i32:\n    return 43\npub extern \"C\" fn plain_root() -> i32:\n    return 44\n@export(\"relaxed_root\", threads=any)\n@fp(allow_fma)\npub fn relaxed_value(x: f64) -> f64:\n    return x * x + 1.0\nunsafe extern \"C\":\n    unsafe fn absent_foreign() -> i32\n@noinline\npub fn unused_native() -> i32:\n    return 99\nfn main():\n    println(7)\n")
         .expect("executable fixture is writable");
     let entry_arg = entry.to_string_lossy().into_owned();
     // A file cannot contain cache/runtime: this exercises the uncached runtime
@@ -2101,7 +2105,7 @@ fn random_state_is_keyed_per_process() {
     std::fs::write(&program,
         "from std.collections import RandomState
 
-fn seeded(s: str) -> u64:
+fn seeded(s: StrView) -> u64:
     h = RandomState.new()
     s.hash(h)
     return h.finish()
@@ -2169,10 +2173,10 @@ fn exported_thread_contracts_hold_in_every_profile() {
     let creator_imported = directory.join(ember_branding::source_file("creator_defaults"));
     let entry = directory.join(ember_branding::source_file("entry"));
     std::fs::write(&imported,
-        "#! language \"0.9.10\"\n#! threads main\n@export(\"default_score\")\npub fn default_value() -> i32:\n    return 43\n@export(\"override_score\", threads=any)\npub fn override_value() -> i32:\n    return 44\n")
+        "#! language \"0.9.15\"\n#! threads main\n@export(\"default_score\")\npub fn default_value() -> i32:\n    return 43\n@export(\"override_score\", threads=any)\npub fn override_value() -> i32:\n    return 44\n")
         .expect("default policy module is writable");
     std::fs::write(&creator_imported,
-        "#! language \"0.9.10\"\n#! threads creator\n@export(\"creator_default_score\")\npub fn default_value() -> i32:\n    return 46\n@export(\"creator_override_score\", threads=any)\npub fn override_value() -> i32:\n    return 47\n")
+        "#! language \"0.9.15\"\n#! threads creator\n@export(\"creator_default_score\")\npub fn default_value() -> i32:\n    return 46\n@export(\"creator_override_score\", threads=any)\npub fn override_value() -> i32:\n    return 47\n")
         .expect("creator default policy module is writable");
     std::fs::write(&entry,
         "import thread_defaults\nimport creator_defaults\n@export(\"main_score\", threads=main, on_panic=abort)\npub fn main_value() -> i32:\n    return 41\n@export(\"creator_score\", threads=creator)\npub fn creator_value() -> i32:\n    return 45\n@export(\"any_score\", threads=any)\npub fn any_value() -> i32:\n    return 42\n")
@@ -2623,7 +2627,7 @@ fn known_manifest_lints_are_accepted() {
     let source = package.join(ember_branding::source_file("main"));
     std::fs::write(
         package.join(MANIFEST),
-        "[lints]\nl3013 = \"warn\"\nl3014 = \"warn\"\nunused = \"warn\"\npotential_cycle = \"warn\"\nlarge_copy = { level = \"warn\", threshold = 256 }\n",
+        "[lints]\nl3013 = \"warn\"\nunused = \"warn\"\npotential_cycle = \"warn\"\nlarge_copy = { level = \"warn\", threshold = 256 }\n",
     )
     .expect("manifest is writable");
     std::fs::write(&source, "fn main():\n    pass\n").expect("source is writable");
@@ -2651,7 +2655,7 @@ fn ember_lint_reports_its_lints_at_the_levels_the_manifest_gives() {
         "    a: int",
         "    b: int",
         "",
-        "fn first(owned p: Pair) -> int:",
+        "fn first(owns p: Pair) -> int:",
         "    return p.a",
         "",
         "fn main():",
@@ -2963,7 +2967,7 @@ fn enabled_l3013_warns_for_live_class_access_across_virtual_call() {
     .expect("manifest is writable");
     std::fs::write(
         &source,
-        "open class Base:\n    value: i32\n\n    fn init(mut self):\n        self.value = 7\n\n    virtual fn ping(self) -> i32:\n        return self.value\n\n    virtual fn relay(mut self) -> i32:\n        return self.ping()\n\nclass Derived(Base):\n    fn init(mut self):\n        super.init()\n\n    override fn ping(self) -> i32:\n        return self.value\n\nfn main():\n    derived = Derived()\n    base: Base = derived\n    println(base.relay())\n",
+        "open class Base:\n    value: i32\n\n    fn init():\n        this.value = 7\n\n    virtual fn ping() -> i32:\n        return this.value\n\n    virtual fn relay() -> i32:\n        this.value += 1\n        return this.ping()\n\nclass Derived(Base):\n    fn init():\n        super.init()\n\n    override fn ping() -> i32:\n        return this.value\n\nfn main():\n    derived = Derived()\n    base: Base = derived\n    println(base.relay())\n",
     )
     .expect("source is writable");
 
@@ -2978,7 +2982,7 @@ fn enabled_l3013_warns_for_live_class_access_across_virtual_call() {
         checked.stderr
     );
     assert!(
-        rendered.contains("long-term access to `self` is live across this call"),
+        rendered.contains("long-term access to `this` is live across this call"),
         "L3013 did not identify the live class access and call:\n{}",
         checked.stderr
     );
@@ -2994,7 +2998,7 @@ fn l3013_is_disabled_without_a_manifest_setting() {
     let source = package.join(ember_branding::source_file("main"));
     std::fs::write(
         &source,
-        "open class Base:\n    value: i32\n\n    fn init(mut self):\n        self.value = 7\n\n    virtual fn ping(self) -> i32:\n        return self.value\n\n    virtual fn relay(mut self) -> i32:\n        return self.ping()\n\nclass Derived(Base):\n    fn init(mut self):\n        super.init()\n\n    override fn ping(self) -> i32:\n        return self.value\n\nfn main():\n    derived = Derived()\n    base: Base = derived\n    println(base.relay())\n",
+        "open class Base:\n    value: i32\n\n    fn init():\n        this.value = 7\n\n    virtual fn ping() -> i32:\n        return this.value\n\n    virtual fn relay() -> i32:\n        this.value += 1\n        return this.ping()\n\nclass Derived(Base):\n    fn init():\n        super.init()\n\n    override fn ping() -> i32:\n        return this.value\n\nfn main():\n    derived = Derived()\n    base: Base = derived\n    println(base.relay())\n",
     )
     .expect("source is writable");
 
@@ -3024,7 +3028,7 @@ fn l3013_ignores_virtual_calls_in_a_final_class() {
     .expect("manifest is writable");
     std::fs::write(
         &source,
-        "class FinalThing:\n    value: i32\n\n    fn init(mut self):\n        self.value = 7\n\n    virtual fn ping(self) -> i32:\n        return self.value\n\n    virtual fn relay(mut self) -> i32:\n        return self.ping()\n\nfn main():\n    thing = FinalThing()\n    println(thing.relay())\n",
+        "class FinalThing:\n    value: i32\n\n    fn init():\n        this.value = 7\n\n    virtual fn ping() -> i32:\n        return this.value\n\n    virtual fn relay() -> i32:\n        this.value += 1\n        return this.ping()\n\nfn main():\n    thing = FinalThing()\n    println(thing.relay())\n",
     )
     .expect("source is writable");
 
@@ -3053,7 +3057,7 @@ fn l3013_ignores_dynamic_calls_from_a_final_class() {
     .expect("manifest is writable");
     std::fs::write(
         &source,
-        "interface Probe:\n    fn read(self) -> i32\n\nclass FinalThing implements Probe:\n    value: i32\n\n    fn init(mut self):\n        self.value = 7\n\n    fn read(self) -> i32:\n        return self.value\n\n    fn relay(mut self) -> i32:\n        probe: ref dyn Probe = ref self\n        return probe.read()\n\nfn main():\n    thing = FinalThing()\n    println(thing.relay())\n",
+        "interface Probe:\n    fn read() -> i32\n\nclass FinalThing implements Probe:\n    value: i32\n\n    fn init():\n        this.value = 7\n\n    fn read() -> i32:\n        return this.value\n\n    fn relay() -> i32:\n        this.value += 1\n        probe: ref dyn Probe = ref this\n        return probe.read()\n\nfn main():\n    thing = FinalThing()\n    println(thing.relay())\n",
     )
     .expect("source is writable");
 
@@ -3350,7 +3354,7 @@ fn tcb_lists_every_foreign_fact_with_its_source_and_grade() {
         "import clib\n\n\
          unsafe extern \"C\":\n\
          \x20   @ffi(param(text, borrowed, nul_terminated), threads(main), link_name=\"strlen\")\n\
-         \x20   safe fn length(text: cstr) -> usize\n\
+         \x20   safe fn length(text: CStrView) -> usize\n\
          \x20   @ffi(immutable)\n    static frozen: i32\n\n\
          fn main():\n    println(clib.abs(-3), length(c\"abc\"))\n\
          \x20   unsafe:  # SAFETY(ffi): rand has no precondition\n        println(clib.rand() >= 0)\n",
@@ -3410,7 +3414,7 @@ unsafe extern \"C\":
     @ffi(effects=[])
     safe fn imaxabs(x: i64) -> i64
     @ffi(param(text, borrowed, nul_terminated), effects=[])
-    safe fn strlen(text: cstr) -> usize
+    safe fn strlen(text: CStrView) -> usize
     @ffi(effects=[])
     unsafe fn malloc(size: usize) -> *mut void
     @ffi(effects=[Alloc])
@@ -3515,13 +3519,13 @@ fn calls_foreign_lists_what_an_item_reaches_with_each_contract() {
         "import clib\n\n\
          unsafe extern \"C\":\n\
          \x20   @ffi(param(text, borrowed, nul_terminated), link_name=\"strlen\")\n\
-         \x20   safe fn length(text: cstr) -> usize\n\
+         \x20   safe fn length(text: CStrView) -> usize\n\
          \x20   @ffi(effects=[])\n    safe fn labs(x: i64) -> i64\n\
          \x20   safe fn imaxabs(x: i64) -> i64\n\n\
-         interface Shape:\n    fn area(self) -> i64\n\n\
+         interface Shape:\n    fn area() -> i64\n\n\
          struct Square:\n    side: i64\n\n\
-         extend Square implements Shape:\n    fn area(self) -> i64:\n        return labs(self.side * self.side)\n\n\
-         class Counter:\n    count: i32\n\n    fn bump(mut self) -> i32:\n        self.count += clib.abs(-1)\n        return self.count\n\n\
+         extend Square implements Shape:\n    fn area() -> i64:\n        return labs(this.side * this.side)\n\n\
+         class Counter:\n    count: i32\n\n    fn bump() -> i32:\n        this.count += clib.abs(-1)\n        return this.count\n\n\
          fn noisy() -> i32:\n    unsafe:  # SAFETY(ffi): rand has no precondition\n        return clib.rand()\n\n\
          fn measure(shape: ref dyn Shape) -> i64:\n    return shape.area()\n\n\
          fn main():\n    counter = Counter(count = 0)\n    println(counter.bump(), length(c\"abc\"), noisy())\n\
@@ -3565,9 +3569,9 @@ fn why_prints_the_shortest_chain_to_an_effect() {
     let source = dir.join(format!("why.{SOURCE_EXT}"));
     std::fs::write(
         &source,
-        "fn grow(mut xs: Array[int]):\n    xs.push(1)\n\n\
-         fn deep(mut xs: Array[int]):\n    grow(xs)\n\n\
-         fn shallow(mut xs: Array[int]):\n    xs.push(2)\n\n\
+        "fn grow(ref mut xs: Array[int]):\n    xs.push(1)\n\n\
+         fn deep(ref mut xs: Array[int]):\n    grow(xs)\n\n\
+         fn shallow(ref mut xs: Array[int]):\n    xs.push(2)\n\n\
          fn pure(x: int) -> int:\n    return x * 2\n\n\
          @safety(\"`n` is at least 1\")\n\
          unsafe fn first(p: *mut int, n: int) -> int:  # SAFETY: slot 0 exists, as `n` says\n    unsafe:  # SAFETY: slot 0 exists, as `n` says\n        return read(p, 0)\n\n\
@@ -4703,7 +4707,7 @@ fn cycle_explanation_covers_standalone_generic_dynamic_and_stale_roots() {
     let dynamic = directory.join(ember_branding::source_file("dynamic"));
     std::fs::write(
         &dynamic,
-        "interface Link:\n    fn ping(self)\n\nclass Node:\n    next: Box[dyn Link]\n\nfn main():\n    return\n",
+        "interface Link:\n    fn ping()\n\nclass Node:\n    next: Box[dyn Link]\n\nfn main():\n    return\n",
     )
     .expect("dynamic-cycle source is writable");
     let dynamic_arg = dynamic.to_string_lossy().into_owned();
@@ -5228,7 +5232,7 @@ fn std_functions_are_noalloc_unless_documented() {
     );
     let documented = with("core", &format!("## It allocates the text it gives back.\n{leaky}"));
     assert_eq!(documented.exit, 0, "a documented allocation was refused:\n{}", documented.stderr);
-    let generic = with("core", "pub fn leaky_list[T](owned x: T) -> Array[T]:\n    return [x]\n");
+    let generic = with("core", "[T]\npub fn leaky_list(owns x: T) -> Array[T]:\n    return [x]\n");
     assert_eq!(generic.exit, 0, "a generic function was held to it:\n{}", generic.stderr);
     let elsewhere = with("thread", leaky);
     assert!(
@@ -5316,7 +5320,12 @@ fn std_panics_name_their_twins_and_allocations_are_documented() {
         let text = std::fs::read_to_string(path).expect("a std file reads");
         let lines: Vec<&str> = text.lines().collect();
         for (at, line) in lines.iter().enumerate() {
-            let Some(start) = line.find("panic(") else { continue };
+            // A call of `panic`, not a name ending in it (`fn assert_disjoint_or_panic(`).
+            let call = line
+                .match_indices("panic(")
+                .map(|(at, _)| at)
+                .find(|&at| !line[..at].ends_with(|c: char| c.is_alphanumeric() || c == '_'));
+            let Some(start) = call else { continue };
             let message = &line[start..];
             // A body the compiler or the runtime replaces never runs.
             if message.contains("is the compiler's") || message.contains("the runtime's") {
@@ -6195,12 +6204,12 @@ fn formatter_keeps_a_raw_reserved_name_raw() {
     let root = workspace_root();
     let directory = temporary_directory("fmt-raw-names");
     let scratch = directory.join(ember_branding::source_file("main"));
-    std::fs::write(&scratch, "struct Rec:\n    r#type: int\n    r#is: bool\n    r#plain: int\n    fn is(self) -> bool:\n        return self.r#is\n\nfn r#is() -> int:\n    return 1\n\nfn r#match(r#type: int) -> int:\n    r#let = r#type + 1\n    return r#let\n\nfn main():\n    rec = Rec(r#type=2, r#is=true, r#plain=3)\n    o: Option[Rec] = Some(Rec(r#type=5, r#is=false, r#plain=6))\n    println(rec.r#type, rec.is(), o?.is(), o?.r#type, r#is(), r#match(4))\n").expect("the fixture is writable");
+    std::fs::write(&scratch, "struct Rec:\n    r#type: int\n    r#is: bool\n    r#plain: int\n    fn is() -> bool:\n        return this.r#is\n\nfn r#is() -> int:\n    return 1\n\nfn r#match(r#type: int) -> int:\n    r#let = r#type + 1\n    return r#let\n\nfn main():\n    rec = Rec(r#type=2, r#is=true, r#plain=3)\n    o: Option[Rec] = Some(Rec(r#type=5, r#is=false, r#plain=6))\n    println(rec.r#type, rec.is(), o?.is(), o?.r#type, r#is(), r#match(4))\n").expect("the fixture is writable");
     let path = scratch.to_string_lossy().into_owned();
     let before = ember(&["build", &path, "--emit", "ast"], &root);
     let once = ember(&["fmt", &path], &root);
     assert_eq!(once.exit, 0, "{}", once.stderr);
-    assert_eq!(once.stdout, "struct Rec:\n    r#type: int\n    r#is: bool\n    plain: int\n\n    fn is(self) -> bool:\n        return self.is\n\n\nfn r#is() -> int:\n    return 1\n\n\nfn r#match(r#type: int) -> int:\n    r#let = r#type + 1\n    return r#let\n\n\nfn main():\n    rec = Rec(r#type=2, r#is=true, plain=3)\n    o: Option[Rec] = Some(Rec(r#type=5, r#is=false, plain=6))\n    println(rec.r#type, rec.is(), o?.is(), o?.r#type, r#is(), r#match(4))\n", "[LEX-14]");
+    assert_eq!(once.stdout, "struct Rec:\n    r#type: int\n    r#is: bool\n    plain: int\n\n    fn is() -> bool:\n        return this.is\n\n\nfn r#is() -> int:\n    return 1\n\n\nfn r#match(r#type: int) -> int:\n    r#let = r#type + 1\n    return r#let\n\n\nfn main():\n    rec = Rec(r#type=2, r#is=true, plain=3)\n    o: Option[Rec] = Some(Rec(r#type=5, r#is=false, plain=6))\n    println(rec.r#type, rec.is(), o?.is(), o?.r#type, r#is(), r#match(4))\n", "[LEX-14]");
     std::fs::write(&scratch, &once.stdout).expect("the formatted fixture is writable");
     let twice = ember(&["fmt", &path], &root);
     assert_eq!(once.stdout, twice.stdout, "[FMT-1] fmt(fmt(x)) differs from fmt(x)");
@@ -6208,6 +6217,21 @@ fn formatter_keeps_a_raw_reserved_name_raw() {
     assert_eq!(before.stdout, after.stdout, "[FMT-1] parse(fmt(x)) differs from parse(x)");
     let checked = ember(&["check", &path], &root);
     assert_eq!(checked.exit, 0, "[LEX-14] the formatted program does not check:\n{}", checked.stderr);
+}
+
+/// `[CLS-7]`, `[FMT-1]` — a method's object is printed as its body names it: `this` in a method
+/// whose object is implicit, `self` in one whose receiver is written (0.9.10's, accepted until M1
+/// refuses it), so neither comes back mixed.
+#[test]
+fn formatter_names_the_object_as_its_method_does() {
+    let root = workspace_root();
+    let directory = temporary_directory("fmt-object-word");
+    let scratch = directory.join(ember_branding::source_file("main"));
+    let program = "struct Pair:\n    a: int\n    b: int\n\n    static fn sum() -> int:\n        return this.a + this.b\n\n    fn first() -> int:\n        return this.a\n";
+    std::fs::write(&scratch, program).expect("the fixture is writable");
+    let once = ember(&["fmt", &scratch.to_string_lossy()], &root);
+    assert_eq!(once.exit, 0, "{}", once.stderr);
+    assert_eq!(once.stdout, program);
 }
 
 /// `[DIA-22]` — a diagnostic a callee's signature causes is at the call, with the callee's
@@ -6241,11 +6265,11 @@ fn formatter_keeps_where_clauses() {
     let root = workspace_root();
     let directory = temporary_directory("fmt-where");
     let scratch = directory.join(ember_branding::source_file("main"));
-    std::fs::write(&scratch, "interface Show:\n    fn show(self) -> int\n\nfn f[T](x: T) -> int where T: Show:\n    return x.show()\n\nstruct W[T]:\n    v: T\n\nextend[T] W[T] implements Show where T: Show:\n    fn show(self) -> int:\n        return self.v.show()\n\nfn main():\n    pass\n").expect("the fixture is writable");
+    std::fs::write(&scratch, "interface Show:\n    fn show() -> int\n\n[T]\nfn f(x: T) -> int where T: needs Show:\n    return x.show()\n\n[T]\nstruct W:\n    v: T\n\nextend[T] W[T] implements Show where T: needs Show:\n    fn show() -> int:\n        return this.v.show()\n\nfn main():\n    pass\n").expect("the fixture is writable");
     let path = scratch.to_string_lossy().into_owned();
     let once = ember(&["fmt", &path], &root);
     assert_eq!(once.exit, 0, "{}", once.stderr);
-    for header in ["fn f[T](x: T) -> int where T: Show:", "extend[T] W[T] implements Show where T: Show:"] {
+    for header in ["[T]\nfn f(x: T) -> int where T: needs Show:","extend[T] W[T] implements Show where T: needs Show:"] {
         assert!(once.stdout.contains(header), "[FMT-1] the formatter dropped a where clause, wanted {header:?}:\n{}", once.stdout);
     }
     std::fs::write(&scratch, &once.stdout).expect("the formatted fixture is writable");
@@ -6261,7 +6285,7 @@ fn module_attributes_format_from_the_parsed_tree() {
     let directory = temporary_directory("module-attr-fmt");
     let scratch = directory.join(ember_branding::source_file("main"));
     std::fs::write(&scratch,
-        "#! language \"0.9.10\"\n#! module overflow(wrap)\n#! threads any\n\nfn add(a: i8, b: i8) -> i8:\n    return a + b\n")
+        "#! language \"0.9.15\"\n#! module overflow(wrap)\n#! threads any\n\nfn add(a: i8, b: i8) -> i8:\n    return a + b\n")
         .expect("module attribute fixture is writable");
     let path = scratch.to_string_lossy();
     let once = ember(&["fmt", &path], &root);
@@ -6550,7 +6574,7 @@ fn imported_module_overflow_policy_invalidates_callers_interface_key() {
     let _ = std::fs::remove_dir_all(&test_root);
     std::fs::create_dir_all(&test_root).expect("create overflow-interface package");
     let helper_source = |policy: &str| format!(
-        "#! module overflow({policy})\n\npub fn defaulted(value: i8, next: i8 = value + 1i8) -> i8:\n    return next\n\npub fn generic[T](tag: T, value: i8) -> i8:\n    return value + 1i8\n"
+        "#! module overflow({policy})\n\npub fn defaulted(value: i8, next: i8 = value + 1i8) -> i8:\n    return next\n\n[T]\npub fn generic(tag: T, value: i8) -> i8:\n    return value + 1i8\n"
     );
     std::fs::write(test_root.join(&helper), helper_source("wrap"))
         .expect("write initial helper");
@@ -6600,7 +6624,7 @@ fn callable_signature_modes_unsafe_and_abi_cross_the_interface_boundary() {
     std::fs::create_dir_all(&test_root).expect("create callable-signature package");
     std::fs::write(
         test_root.join(&source),
-        "pub fn replace(mut value: i32, owned replacement: i32) -> i32:\n    value = replacement\n    return value\n\npub unsafe extern \"C\" fn native_boundary(value: i32) -> i32:\n    return value\n\nfn main():\n    println(1)\n",
+        "pub fn replace(ref mut value: i32, owns replacement: i32) -> i32:\n    value = replacement\n    return value\n\npub unsafe extern \"C\" fn native_boundary(value: i32) -> i32:\n    return value\n\nfn main():\n    println(1)\n",
     )
     .expect("write callable-signature source");
 
@@ -6649,7 +6673,7 @@ fn generic_callable_bounds_invalidate_importers_without_an_emitted_declaration_b
     std::fs::create_dir_all(&test_root).expect("create generic-interface package");
     std::fs::write(
         test_root.join(&helper),
-        "pub fn identity[T: Eq](value: T) -> T:\n    return value\n",
+        "[T: needs Eq]\npub fn identity(value: T) -> T:\n    return value\n",
     )
     .expect("write initial generic helper");
     std::fs::write(
@@ -6682,7 +6706,7 @@ fn generic_callable_bounds_invalidate_importers_without_an_emitted_declaration_b
 
     std::fs::write(
         test_root.join(&helper),
-        "pub fn identity[T: Hash](value: T) -> T:\n    return value\n",
+        "[T: needs Hash]\npub fn identity(value: T) -> T:\n    return value\n",
     )
     .expect("change generic bound");
     check("after generic bound change");
@@ -6719,12 +6743,12 @@ fn generic_callable_parameter_modes_cross_the_interface_boundary() {
     std::fs::create_dir_all(&test_root).expect("create callable-mode package");
     std::fs::write(
         test_root.join(&helper),
-        "pub fn apply(f: fn(mut i32) -> i32, mut value: i32) -> i32:\n    return f(value)\n",
+        "pub fn apply(f: fn(ref mut i32) -> i32, ref mut value: i32) -> i32:\n    return f(value)\n",
     )
     .expect("write initial callable-mode helper");
     std::fs::write(
         test_root.join(&main),
-        "from helper import apply\n\nfn increment(mut value: i32) -> i32:\n    value = value + 1\n    return value\n\nfn main():\n    value: i32 = 4\n    println(apply(increment, value))\n",
+        "from helper import apply\n\nfn increment(ref mut value: i32) -> i32:\n    value = value + 1\n    return value\n\nfn main():\n    value: i32 = 4\n    println(apply(increment, value))\n",
     )
     .expect("write callable-mode importer");
 
@@ -6756,7 +6780,7 @@ fn generic_callable_parameter_modes_cross_the_interface_boundary() {
 
     std::fs::write(
         test_root.join(&helper),
-        "pub fn apply(f: fn(i32) -> i32, mut value: i32) -> i32:\n    return f(value)\n",
+        "pub fn apply(f: fn(i32) -> i32, ref mut value: i32) -> i32:\n    return f(value)\n",
     )
     .expect("change callable-mode helper");
     std::fs::write(
@@ -6794,7 +6818,7 @@ fn visible_member_declarations_preserve_generic_owner_interface_identity() {
     std::fs::create_dir_all(&test_root).expect("create member-interface package");
     std::fs::write(
         test_root.join(&helper),
-        "from std.core import Eq\nfrom std.collections import Hash\n\npub struct Holder[T: Eq]:\n    value: T\n\n    pub fn mirror[U: Eq](self, value: U) -> U:\n        return value\n\npub struct Meter:\n    value: i32\n\nextend Meter:\n    pub fn current(self) -> i32:\n        return self.value\n\n    fn hidden(self) -> i32:\n        return self.value\n\npub interface Identity:\n    pub fn keep[U: Eq](self, value: U) -> U\n",
+        "from std.core import Eq\nfrom std.collections import Hash\n\n[T: needs Eq]\npub struct Holder:\n    value: T\n\n    [U: needs Eq]\n    pub fn mirror(value: U) -> U:\n        return value\n\npub struct Meter:\n    value: i32\n\nextend Meter:\n    pub fn current() -> i32:\n        return this.value\n\n    fn hidden() -> i32:\n        return this.value\n\npub interface Identity:\n    [U: needs Eq]\n    pub fn keep(value: U) -> U\n",
     )
     .expect("write initial member helper");
     std::fs::write(
@@ -6865,7 +6889,7 @@ fn visible_member_declarations_preserve_generic_owner_interface_identity() {
 
     std::fs::write(
         test_root.join(&helper),
-        "from std.core import Eq\nfrom std.collections import Hash\n\npub struct Holder[T: Eq]:\n    value: T\n\n    pub fn mirror[U: Eq](self, value: U) -> U:\n        return value\n\npub struct Meter:\n    value: i32\n\nextend Meter:\n    pub fn current(self) -> i32:\n        return self.value\n\n    fn hidden(self) -> i32:\n        return 0\n\npub interface Identity:\n    pub fn keep[U: Eq](self, value: U) -> U\n",
+        "from std.core import Eq\nfrom std.collections import Hash\n\n[T: needs Eq]\npub struct Holder:\n    value: T\n\n    [U: needs Eq]\n    pub fn mirror(value: U) -> U:\n        return value\n\npub struct Meter:\n    value: i32\n\nextend Meter:\n    pub fn current() -> i32:\n        return this.value\n\n    fn hidden() -> i32:\n        return 0\n\npub interface Identity:\n    [U: needs Eq]\n    pub fn keep(value: U) -> U\n",
     )
     .expect("change private member body");
     check("after private member body change");
@@ -6876,7 +6900,7 @@ fn visible_member_declarations_preserve_generic_owner_interface_identity() {
 
     std::fs::write(
         test_root.join(&helper),
-        "from std.core import Eq\nfrom std.collections import Hash\n\npub struct Holder[T: Hash]:\n    value: T\n\n    pub fn mirror[U: Eq](self, value: U) -> U:\n        return value\n\npub struct Meter:\n    value: i32\n\nextend Meter:\n    pub fn current(self) -> i32:\n        return self.value\n\n    fn hidden(self) -> i32:\n        return 0\n\npub interface Identity:\n    pub fn keep[U: Eq](self, value: U) -> U\n",
+        "from std.core import Eq\nfrom std.collections import Hash\n\n[T: needs Hash]\npub struct Holder:\n    value: T\n\n    [U: needs Eq]\n    pub fn mirror(value: U) -> U:\n        return value\n\npub struct Meter:\n    value: i32\n\nextend Meter:\n    pub fn current() -> i32:\n        return this.value\n\n    fn hidden() -> i32:\n        return 0\n\npub interface Identity:\n    [U: needs Eq]\n    pub fn keep(value: U) -> U\n",
     )
     .expect("change generic owner bound");
     check("after generic owner bound change");
@@ -6912,7 +6936,7 @@ fn visible_generic_enum_member_declarations_invalidate_importers() {
     std::fs::create_dir_all(&test_root).expect("create generic-enum interface package");
     std::fs::write(
         test_root.join(&helper),
-        "from std.core import Eq\n\npub enum Message[T: Eq]:\n    Value(value: T)\n\n    pub fn mirror[U: Eq](self, value: U) -> U:\n        return value\n",
+        "from std.core import Eq\n\npub enum Message[T: needs Eq]:\n    Value(value: T)\n\n    [U: needs Eq]\n    pub fn mirror(value: U) -> U:\n        return value\n",
     )
     .expect("write initial generic-enum helper");
     std::fs::write(
@@ -6955,7 +6979,7 @@ fn visible_generic_enum_member_declarations_invalidate_importers() {
 
     std::fs::write(
         test_root.join(&helper),
-        "from std.core import Eq\nfrom std.collections import Hash\n\npub enum Message[T: Hash]:\n    Value(value: T)\n\n    pub fn mirror[U: Eq](self, value: U) -> U:\n        return value\n",
+        "from std.core import Eq\nfrom std.collections import Hash\n\npub enum Message[T: needs Hash]:\n    Value(value: T)\n\n    [U: needs Eq]\n    pub fn mirror(value: U) -> U:\n        return value\n",
     )
     .expect("change generic-enum owner bound");
     check("after generic-enum owner bound change");
@@ -6998,12 +7022,14 @@ fn programs_sharing_a_folder_share_its_interface_cache() {
     std::fs::write(
         test_root.join(&bounded),
         "interface Keyed[K]:
-    fn make_key(self) -> K
+    fn make_key() -> K
 
-struct Keys[K]:
+[K]
+struct Keys:
     keys: Array[K] = []
 
-    fn has[Q: Keyed[K]](self, q: Q) -> bool:
+    [Q: needs Keyed[K]]
+    fn has(q: Q) -> bool:
         return false
 
 fn main():
@@ -7455,7 +7481,7 @@ fn inline_header_functions_and_inline_attributes_reach_the_c() {
     let (chars, next) = (ember_branding::item_symbol("std.string.Chars"), ember_branding::item_symbol("std.string.Chars.next"));
     let option_char = ember_branding::instance_symbol("std.core.Option", Some("[char]"));
     assert!(c.stdout.contains(&format!("EMBER_INLINED EMBER_MAYBE_UNUSED {option_char} {next}(")), "`Chars.next` is not forced inline:\n{}", c.stdout);
-    assert!(c.stdout.contains(&format!("static inline EMBER_MAYBE_UNUSED {chars} {}(", ember_branding::item_symbol("std.core.str.chars"))), "`str.chars` is not static inline:\n{}", c.stdout);
+    assert!(c.stdout.contains(&format!("static inline EMBER_MAYBE_UNUSED {chars} {}(", ember_branding::item_symbol("std.core.StrView.chars"))), "`StrView.chars` is not static inline:\n{}", c.stdout);
     let attributes = format!("tests/conformance/CG-C-3a/accept_inline_noinline_cold_and_hot.{SOURCE_EXT}");
     for cc in ["msvc", "clang"] {
         let c = ember(&["build", &attributes, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", cc], &root);
@@ -7539,24 +7565,24 @@ struct Counter:
     seen: Array[int]
 
 extend Counter:
-    fn bump(mut self):
-        self.count += 1
+    fn bump():
+        this.count += 1
 
-    fn total(self) -> int:
-        return self.count
+    fn total() -> int:
+        return this.count
 
-    fn note(mut self, x: int):
-        self.seen.push(x)
-        self.bump()
+    fn note(x: int):
+        this.seen.push(x)
+        this.bump()
 
-fn twice(mut c: Counter):
+fn twice(ref mut c: Counter):
     c.note(1)
     c.note(2)
 
 fn reads_only(c: Counter) -> int:
     return c.total() + c.seen.len()
 
-fn depth(n: int, mut c: Counter) -> int:
+fn depth(n: int, ref mut c: Counter) -> int:
     if n == 0:
         c.bump()
         return 0
@@ -7566,15 +7592,15 @@ open class Node:
     value: int = 0
     next: Option[Node] = None
 
-    fn set(mut self, v: int):
-        self.value = v
+    fn set(v: int):
+        this.value = v
 
-    virtual fn poke(mut self):
+    virtual fn poke():
         pass
 
 class Loud(Node):
-    override fn poke(mut self):
-        self.value = 9
+    override fn poke():
+        this.value = 9
 
 fn second(n: Node):
     match n.next:
@@ -7583,7 +7609,7 @@ fn second(n: Node):
         None:
             pass
 
-fn poke_it(mut n: Node):
+fn poke_it(ref mut n: Node):
     n.poke()
 
 fn main():
@@ -8037,15 +8063,7 @@ fn the_three_versions_are_separate() {
         .find_map(|line| line.strip_prefix("**Version:** "))
         .expect("the document states its version");
     let language = version.split("_Hardened").next().expect("a version");
-    // `[TST-29]` — known until M1 moves the compiler's language to the target's (the owner, 2026-10-28:
-    // `tasks/96/redesign/compiler-0.9.15/MILESTONES.md`); once it has, this fails until the mark is out.
-    const KNOWN_UNTIL_M1: (&str, &str) = ("0.9.10", "0.9.15");
-    if (ember_parser::LANGUAGE_VERSION, language) == KNOWN_UNTIL_M1 {
-        println!("[TST-29] baselined until M1: the compiler's language is {}, the document's {language}", ember_parser::LANGUAGE_VERSION);
-    } else {
-        assert_ne!(ember_parser::LANGUAGE_VERSION, KNOWN_UNTIL_M1.1, "M1 has moved the language: take the KNOWN_UNTIL_M1 mark out");
-        assert_eq!(ember_parser::LANGUAGE_VERSION, language, "the compiler's language is not the document's");
-    }
+    assert_eq!(ember_parser::LANGUAGE_VERSION, language, "the compiler's language is not the document's");
 
     let run = ember(&["--version"], &root);
     assert_eq!(run.exit, 0);
@@ -8259,7 +8277,7 @@ fn ember_test_quarantines_a_test_that_fails_intermittently() {
     let package = test_package("flaky", "lib", "\
 unsafe extern \"C\":
     @ffi(param(path, borrowed, nul_terminated))
-    safe fn remove(path: cstr) -> i32
+    safe fn remove(path: CStrView) -> i32
 
 @test
 fn steady():
@@ -8396,7 +8414,7 @@ fn main():
 # E9041
 
 ```ember,fails,toolchain
-@fp(contract)
+@fp(allow_fma)
 fn dot(a: f64, b: f64, c: f64, d: f64) -> f64:
     return a * b + c * d
 
@@ -8880,19 +8898,19 @@ pub class World:
     people: Atomic[i32] = Atomic(0)
     seed: i32 = 0
 
-    fn init(self, seed: i32):
-        self.seed = seed
+    fn init(seed: i32):
+        this.seed = seed
 
-    pub fn population(self) -> i32:
-        return self.people.load(MemoryOrder.Acquire)
+    pub fn population() -> i32:
+        return this.people.load(MemoryOrder.Acquire)
 
-    pub fn grow(self, by: i32) -> i32:
-        return self.people.fetch_add(by, MemoryOrder.AcqRel) + by
+    pub fn grow(by: i32) -> i32:
+        return this.people.fetch_add(by, MemoryOrder.AcqRel) + by
 
-    pub fn named(self, name: str) -> usize:
+    pub fn named(name: StrView) -> usize:
         return name.len()
 
-    pub fn label(self) -> String:
+    pub fn label() -> String:
         return \"world\"
 
 @export(\"make_world\")
@@ -9160,40 +9178,25 @@ fn every_example_of_the_specification_checks() {
     const BASELINE: &[(&str, usize, &str)] = &[
         ("I.5 A complete small program", 1, WRITTEN_IN_0915),
         ("IV.6a The words in a type: who owns a value, and where its memory comes from", 1, WRITTEN_IN_0915),
-        ("IV.9 Existential and opaque types", 1, WRITTEN_IN_0915),
-        ("V.2 Functions", 1, WRITTEN_IN_0915),
-        ("V.3 Structs", 1, WRITTEN_IN_0915),
-        ("V.4 Enums", 1, WRITTEN_IN_0915),
-        ("V.5 Classes", 1, WRITTEN_IN_0915),
-        ("V.6 Interfaces and `extend`", 1, WRITTEN_IN_0915),
         ("V.7 Constants and statics", 1, WRITTEN_IN_0915),
         ("VI.5 Lambdas and function values", 1, WRITTEN_IN_0915),
-        ("VI.5a Generators", 1, WRITTEN_IN_0915),
-        ("VII.6 Regions and their inference", 1, WRITTEN_IN_0915),
         ("Views with several regions", 1, WRITTEN_IN_0915),
         ("VII.7 Views over containers: `Span` and `MutSpan`", 1, WRITTEN_IN_0915),
-        ("VII.9 What a newcomer sees", 1, WRITTEN_IN_0915),
         ("Part VIII — Classes, Shared Owners and Links", 1, WRITTEN_IN_0915),
         ("VIII.5 `weakref` links, parent links and loops of owners", 1, WRITTEN_IN_0915),
         ("IX.2 Arenas", 1, WRITTEN_IN_0915),
         ("IX.3 Memory managers: `using` and `Allocator`", 1, WRITTEN_IN_0915),
-        ("IX.7 `Cell`, and changes checked when compiling", 1, WRITTEN_IN_0915),
         ("IX.8 Establishing disjointness", 1, WRITTEN_IN_0915),
         ("Part XI — Concurrency and Parallelism", 1, WRITTEN_IN_0915),
         ("XI.2 Threads and synchronisation (`std.thread`, `std.sync`)", 1, WRITTEN_IN_0915),
         ("XI.3 Scoped tasks", 1, WRITTEN_IN_0915),
         ("XI.4 Parallel loops", 1, WRITTEN_IN_0915),
-        ("XI.5 The job system (`std.jobs`)", 1, WRITTEN_IN_0915),
         ("XII.1 `SoA[T]`", 1, WRITTEN_IN_0915),
         ("XII.2 SIMD", 1, WRITTEN_IN_0915),
         ("XII.3 ECS (`std.ecs`)", 1, WRITTEN_IN_0915),
-        ("Part XIII — Error Handling", 1, WRITTEN_IN_0915),
         ("Part XVI — Calling C", 1, WRITTEN_IN_0915),
         ("XVI.7 Exporting Ember to C", 1, WRITTEN_IN_0915),
         ("Annex A — Syntax Quick Reference", 1, WRITTEN_IN_0915),
-        ("Annex D — GPU Host Model (`std.gpu`)", 1, WRITTEN_IN_0915),
-        ("D.1 Recording and access states", 1, WRITTEN_IN_0915),
-        ("E.4 One program, side by side", 1, WRITTEN_IN_0915),
     ];
     let mut failing_under: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     let root = workspace_root();

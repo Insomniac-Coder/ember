@@ -4,8 +4,9 @@
 struct Marker:
     value: i32
 
-    fn number[T](self) -> i32:
-        return self.value
+    [T]
+    fn number() -> i32:
+        return this.value
 
 fn main():
     marker = Marker(52)

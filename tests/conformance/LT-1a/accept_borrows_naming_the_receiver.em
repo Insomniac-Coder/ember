@@ -8,18 +8,17 @@
 struct Name:
     text: String
 
-    @borrows(self, other)
-    fn longer(self, other: Name) -> ref String:
-        if other.text.len() > self.text.len():
+    fn longer(other: Name) -> ref String:
+        if other.text.len() > this.text.len():
             return ref other.text
-        return ref self.text
+        return ref this.text
 
-struct Cell2[T]:
+[T]
+struct Cell2:
     value: T
 
-    @borrows(self)
-    fn get(self) -> ref T:
-        return ref self.value
+    fn get() -> ref T:
+        return ref this.value
 
 fn main():
     a = Name("a")

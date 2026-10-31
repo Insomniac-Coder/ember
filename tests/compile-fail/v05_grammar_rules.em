@@ -2,7 +2,7 @@
 #$ rules: GRM-15, GRM-18, GRM-19, ATT-2, ATT-3
 #$ error[E0105]: `;` is not a statement separator
 #$ error[E2036]: this pattern always matches
-#$ error[E0109]: `owned` is not permitted in expression position
+#$ error[E0109]: `owns` is not written before `fn`
 #$ error[E0108]: must precede a compound statement
 #$ error[E0104]: is not permitted on a statement
 
@@ -14,9 +14,10 @@ fn main():
     if x = a:
         println(x)
 
-    ## `[GRM-15]` — `owned` marks a parameter, a receiver, a closure or a
-    ## consumed scrutinee, and nothing else.
-    c: i32 = owned b
+    ## `[GRM-15]` — `owns` is never written before `fn`: what a function takes
+    ## over is said on each name it keeps.
+    f = owns fn() => b
+    c: i32 = b
 
     ## `[ATT-3]` — a statement attribute attaches to a compound statement.
     @simd

@@ -3,7 +3,7 @@
 
 from std.collections import DefaultHasher
 
-fn feed(mut hasher: DefaultHasher, bytes: Span[u8]):
+fn feed(ref mut hasher: DefaultHasher, bytes: Span[u8]):
     hasher.write_bytes(bytes)
     hasher.write_u8(1)
     hasher.write_u16(2)

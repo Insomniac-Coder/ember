@@ -11,23 +11,24 @@
 struct Bag:
     items: Array[int]
 
-    fn evens(self) -> some Iterator[Item = int]:
-        return self.items.iter().copied().filter(fn(x) => x % 2 == 0)
+    fn evens() -> some Iterator[Item = int]:
+        return this.items.iter().copy_each().filter(fn(x) => x % 2 == 0)
 
 extend Bag:
-    fn odds(self) -> some Iterator[Item = int]:
-        return self.items.iter().copied().filter(fn(x) => x % 2 == 1)
+    fn odds() -> some Iterator[Item = int]:
+        return this.items.iter().copy_each().filter(fn(x) => x % 2 == 1)
 
-struct Shelf[T]:
+[T]
+struct Shelf:
     items: Array[T]
 
-    fn each(self) -> some Iterator[Item = ref T]:
-        return self.items.iter()
+    fn each() -> some Iterator[Item = ref T]:
+        return this.items.iter()
 
 fn main():
     b = Bag(items=[1, 2, 3, 4, 5])
     println(b.evens().to_array())
     println(b.odds().to_array())
-    s = Shelf[str](items=["a", "b"])
+    s = Shelf[StrView](items=["a", "b"])
     for x in s.each():
         println(x)

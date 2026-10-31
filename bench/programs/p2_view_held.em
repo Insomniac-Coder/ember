@@ -2,9 +2,9 @@ class Bag:
     items: Array[int]
     log: Array[int]
 
-    fn init(mut self):
-        self.items = []
-        self.log = []
+    fn init():
+        this.items = []
+        this.log = []
 
 fn main():
     bags: Array[Bag] = []

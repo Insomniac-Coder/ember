@@ -1,8 +1,8 @@
 struct Bag:
     items: Array[int]
 
-@static_safe
-fn fill(mut b: Bag):
+@no_alias_checks
+fn fill(ref mut b: Bag):
     for i in 0..3:
         b.items.push(i)
 

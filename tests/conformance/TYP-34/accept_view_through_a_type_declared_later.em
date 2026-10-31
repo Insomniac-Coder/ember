@@ -16,7 +16,7 @@ enum Wrapped:
     Empty
 
 struct Inner:
-    text: str
+    text: StrView
 
 fn main():
     o = Outer(Inner("hi"))

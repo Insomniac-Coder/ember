@@ -7,8 +7,8 @@ struct Pair:
     a: Array[int]
     b: Array[int]
 
-    fn first_a(self) -> ref int:
-        return self.a[0]
+    fn first_a() -> ref int:
+        return this.a[0]
 
 fn main():
     p = Pair([1], [2])

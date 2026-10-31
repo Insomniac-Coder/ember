@@ -5,8 +5,8 @@
 # `'a` with no closing quote is an unterminated literal (`E0008`), whose note
 # names what to write instead.
 
-fn longest['a](x: str) -> str:     #$ error[E0008]: unterminated character literal
-    return x
-
+['a](x: str) -> str:     #$ error[E0008]: unterminated character literal
+    return x]
+fn longest
 fn main():
     println(1)

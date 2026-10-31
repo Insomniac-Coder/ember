@@ -4,7 +4,7 @@
 #$ stdout: 7 1 2
 #$ stdout: aλé
 
-fn append(mut values: Array[int], value: int):
+fn append(ref mut values: Array[int], value: int):
     values.push(value)
 
 fn main():

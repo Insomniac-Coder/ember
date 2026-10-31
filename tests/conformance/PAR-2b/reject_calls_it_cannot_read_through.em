@@ -7,30 +7,30 @@
 # call that comes back to a function being read through is not read through, nor is a function
 # the inline header does not hold (`@noinline`), and either, given the place, defeats the proof.
 
-fn put_next(mut xs: MutSpan[int], at: int):
+fn put_next(ref mut xs: MutSpan[int], at: int):
     xs[at + 1] = 1
 
-fn shifts(mut xs: MutSpan[int]):
+fn shifts(ref mut xs: MutSpan[int]):
     @parallel
     for i in 0..xs.len() - 1:
         xs[i] = 0
         put_next(xs, i)
 
-fn zero_from(mut xs: MutSpan[int], at: int):
+fn zero_from(ref mut xs: MutSpan[int], at: int):
     if at < xs.len():
         xs[at] = 0
         zero_from(xs, at + 1)
 
-fn recurses(mut xs: MutSpan[int]):
+fn recurses(ref mut xs: MutSpan[int]):
     @parallel
     for i in 0..xs.len():
         zero_from(xs, i)
 
 @noinline
-fn opaque(mut xs: MutSpan[int], at: int):
+fn opaque(ref mut xs: MutSpan[int], at: int):
     xs[at] = 1
 
-fn hides(mut xs: MutSpan[int]):
+fn hides(ref mut xs: MutSpan[int]):
     @parallel
     for i in 0..xs.len():
         opaque(xs, i)

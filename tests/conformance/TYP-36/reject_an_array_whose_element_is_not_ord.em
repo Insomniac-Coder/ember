@@ -6,7 +6,8 @@
 struct Point:
     x: int
 
-fn bigger[T: Ord](a: T, b: T) -> bool:
+[T: needs Ord]
+fn bigger(a: T, b: T) -> bool:
     return a > b
 
 fn main():

@@ -12,10 +12,10 @@ from std.ecs import World, Query, Component, System
 struct Gauge:
     level: Cell[int]
 
-fn first(mut q: Query[Gauge]):
+fn first(ref mut q: Query[Gauge]):
     println("first ran")
 
-fn second(mut q: Query[Gauge]):
+fn second(ref mut q: Query[Gauge]):
     println("second ran")
 
 fn main():

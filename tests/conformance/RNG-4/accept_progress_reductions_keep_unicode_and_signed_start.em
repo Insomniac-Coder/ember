@@ -9,14 +9,14 @@
 #$ stdout: 129020
 
 @noinline
-fn reduce(text: str, initial: int) -> int:
+fn reduce(text: StrView, initial: int) -> int:
     total = initial
     for (i, c) in text.char_indices():
         total += i ^ (c as u32 as int)
     return total
 
 @noinline
-fn reduce_skipping_nul(text: str) -> int:
+fn reduce_skipping_nul(text: StrView) -> int:
     total = 0
     for (i, c) in text.char_indices():
         if c == '\0':

@@ -13,7 +13,7 @@ from std.hot import ReloadError
 class Gauge:
     level: int = 3
 
-    fn migrate_from(old: ref OldSelf) -> Result[Self, ReloadError]:
+    static fn migrate_from(old: ref OldSelf) -> Result[Self, ReloadError]:
         if old.level < 0:
             return Err(ReloadError.Migration("Gauge".to_string(), 0, "a negative level".to_string()))
         g = Gauge()

@@ -13,11 +13,11 @@
 class Log:
     text: String = String()
 
-fn val(log: Log, name: str, v: int) -> int:
+fn val(log: Log, name: StrView, v: int) -> int:
     log.text += name
     return v
 
-fn word(log: Log, w: str) -> String:
+fn word(log: Log, w: StrView) -> String:
     log.text += w
     return w.to_string()
 

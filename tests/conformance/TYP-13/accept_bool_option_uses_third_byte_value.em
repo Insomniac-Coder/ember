@@ -4,7 +4,7 @@
 #$ stdout: 1 1
 #$ stdout: false true none
 # bool has only two valid values, leaving byte value 2 for None.
-fn show(value: Option[bool]) -> str:
+fn show(value: Option[bool]) -> StrView:
     match value:
         Some(flag):
             return "true" if flag else "false"

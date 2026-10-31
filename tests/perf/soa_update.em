@@ -5,7 +5,7 @@ struct Particle:
     x: float
     v: float
 
-fn advance(mut xs: MutSpan[float], vs: Span[float]):
+fn advance(ref mut xs: MutSpan[float], vs: Span[float]):
     for i in 0..xs.len():
         xs[i] += vs[i]
 

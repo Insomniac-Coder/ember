@@ -17,16 +17,16 @@ struct Pos:
 struct Hp:
     n: int
 
-fn regen(mut q: Query[Mut[Hp]]):
+fn regen(ref mut q: Query[Mut[Hp]]):
     for h in q.iter_mut():
         h.n += 1
         println("regen ran")
 
-fn movement(mut q: Query[Mut[Pos]]):
+fn movement(ref mut q: Query[Mut[Pos]]):
     for p in q.iter_mut():
         p.x += 1
 
-fn report(mut q: Query[Pos]):
+fn report(ref mut q: Query[Pos]):
     for p in q.iter():
         println(p.x)
 

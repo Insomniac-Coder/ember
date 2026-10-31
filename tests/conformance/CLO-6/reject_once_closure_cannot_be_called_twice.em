@@ -4,7 +4,7 @@
 # Calling a concrete `CallableOnce` closure moves its environment at the
 # first call. The ordinary moved-value diagnostic enforces the second call.
 
-fn consume(owned values: Array[i32]) -> i32:
+fn consume(owns values: Array[i32]) -> i32:
     return values[0]
 
 fn main():

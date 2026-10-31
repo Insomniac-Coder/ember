@@ -4,65 +4,65 @@ class Node:
     value: int
     next: Option[Node] = None
 
-    fn init(self, value: int):
-        self.value = value
+    fn init(value: int):
+        this.value = value
 
 class LinkedList:
     head: Option[Node] = None
     size: int = 0
 
-    fn push_front(self, value: int):
+    fn push_front(value: int):
         node = Node(value)
-        node.next = self.head
-        self.head = Some(node)
-        self.size += 1
+        node.next = this.head
+        this.head = Some(node)
+        this.size += 1
 
-    fn pop_front(self) -> Option[int]:
-        if Some(node) = self.head:
-            self.head = node.next
-            self.size -= 1
+    fn pop_front() -> Option[int]:
+        if this.head exists as node:
+            this.head = node.next
+            this.size -= 1
             return Some(node.value)
         return None
 
-    fn push_back(self, value: int):
+    fn push_back(value: int):
         node = Node(value)
-        if self.head is None:
-            self.head = Some(node)
+        if this.head is None:
+            this.head = Some(node)
         else:
-            current = self.head.unwrap()
-            while Some(n) = current.next:
+            current = this.head.unwrap()
+            while current.next exists as n:
                 current = n
             current.next = Some(node)
-        self.size += 1
+        this.size += 1
 
-    fn contains(self, value: int) -> bool:
-        current = self.head
-        while Some(node) = current:
+    fn contains(value: int) -> bool:
+        current = this.head
+        while current exists as node:
             if node.value == value:
                 return true
             current = node.next
         return false
 
-    fn reverse(self):
+    fn reverse():
         prev: Option[Node] = None
-        current = self.head
-        while Some(node) = current:
+        current = this.head
+        while current exists as node:
             current = node.next
             node.next = prev
             prev = Some(node)
-        self.head = prev
+        this.head = prev
 
-    fn to_array(self) -> Array[int]:
+    fn to_array() -> Array[int]:
         result: Array[int] = []
-        current = self.head
-        while Some(node) = current:
+        current = this.head
+        while current exists as node:
             result.push(node.value)
             current = node.next
         return result
 
-    fn show(self):
-        parts = [v.to_string() for v in self.to_array()]
-        println(parts.join(" -> ") + f"  (size {self.size})")
+    fn show():
+        parts = [v.to_string() for v in this.to_array()]
+        println(parts.join(" -> ") + f"  (size {this.size})")
 
 fn main():
     list = LinkedList()
@@ -76,7 +76,7 @@ fn main():
     println(f"contains 4: {list.contains(4)}, contains 7: {list.contains(7)}")
 
     while list.size > 3:
-        if Some(v) = list.pop_front():
+        if list.pop_front() exists as v:
             println(f"popped {v}")
     list.show()
 

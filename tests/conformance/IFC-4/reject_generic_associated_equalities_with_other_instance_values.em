@@ -7,7 +7,7 @@ interface Element:
     type Item
 
 interface Outer[T]:
-    type Value: Element[Item = Option[T]]
+    type Value: needs Element[Item = Option[T]]
 
 struct IntElement:
     unused: int
@@ -19,7 +19,7 @@ struct TextElement:
     unused: int
 
 extend TextElement implements Element:
-    type Item = Option[str]
+    type Item = Option[StrView]
 
 struct WrongIntOwner:
     unused: int
@@ -30,7 +30,7 @@ extend WrongIntOwner implements Outer[int]:    #$ error[E2040]
 struct WrongTextOwner:
     unused: int
 
-extend WrongTextOwner implements Outer[str]:    #$ error[E2040]
+extend WrongTextOwner implements Outer[StrView]:    #$ error[E2040]
     type Value = IntElement
 
 fn main():

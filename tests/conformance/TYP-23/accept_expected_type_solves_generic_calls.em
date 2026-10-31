@@ -16,13 +16,16 @@
 # (`[MNG-1]`: an instance's symbol ends with `G` and its arguments' hash, `2c2a47066b4fc729` for
 # `[i32]` and `73498f1dbd18d400` for `[i64]`.)
 
-struct Holder[T]:
+[T]
+struct Holder:
     value: T
 
-fn id[T](x: T) -> T:
+[T]
+fn id(x: T) -> T:
     return x
 
-fn pick[T](a: T, b: T) -> T:
+[T]
+fn pick(a: T, b: T) -> T:
     return b
 
 fn main():

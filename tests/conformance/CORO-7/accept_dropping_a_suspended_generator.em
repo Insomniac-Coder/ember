@@ -16,11 +16,11 @@
 import std.mem
 
 struct Noisy:
-    name: str
+    name: StrView
 
 extend Noisy:
-    fn drop(mut self):
-        println("drop", self.name)
+    fn drop():
+        println("drop", this.name)
 
 gen fn two() -> Generator[int]:
     first = Noisy("first")
@@ -29,7 +29,7 @@ gen fn two() -> Generator[int]:
     yield 2
     println(first.name, second.name)
 
-gen fn holds(owned n: Noisy) -> Generator[int]:
+gen fn holds(owns n: Noisy) -> Generator[int]:
     yield 1
     println(n.name)
 

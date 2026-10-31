@@ -9,6 +9,6 @@
 
 fn main():
     ys: Array[f32] = [16777216.0, 1.0, 1.0]
-    println(ys.iter().copied().sum(), ys.iter().copied().sum_f64())
+    println(ys.iter().copy_each().sum(), ys.iter().copy_each().sum_f64())
     none: Array[f32] = []
-    println(none.iter().copied().sum_f64())
+    println(none.iter().copy_each().sum_f64())

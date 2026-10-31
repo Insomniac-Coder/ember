@@ -9,13 +9,16 @@ type Unit = f64 in 0.0 ..= 1.0
 type Other = f64 in 0.0 ..= 1.0
 type Level = i32 in 0 ..= 10
 
-fn zero[T: Default]() -> T:
+[T: needs Default]
+fn zero() -> T:
     return T.default()
 
-fn mix[B, A: Add[B]](a: A, b: B) -> A.Output:
+[B, A: needs Add[B]]
+fn mix(a: A, b: B) -> A.Output:
     return a + b
 
-fn divide[T: Div[T]](a: T, b: T) -> T.Output:
+[T: needs Div[T]]
+fn divide(a: T, b: T) -> T.Output:
     return a / b
 
 fn main():

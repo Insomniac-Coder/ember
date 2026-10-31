@@ -59,7 +59,7 @@ fn main():
         joins += 1
         return a + b
     folded = xs.iter().fold(0, add)
-    reduced = xs.iter().copied().reduce(plus)
+    reduced = xs.iter().copy_each().reduce(plus)
     println(folded, steps, reduced, joins)
     keys = 0
     key = fn(x: int) -> int:
@@ -69,10 +69,10 @@ fn main():
     order = fn(a: int, b: int) -> Ordering:
         compared += 1
         return a.cmp(b)
-    most = xs.iter().copied().max_by_key(key)
-    least = xs.iter().copied().min_by_key(key)
-    largest = xs.iter().copied().max_by(order)
-    smallest = xs.iter().copied().min_by(order)
+    most = xs.iter().copy_each().max_by_key(key)
+    least = xs.iter().copy_each().min_by_key(key)
+    largest = xs.iter().copy_each().max_by(order)
+    smallest = xs.iter().copy_each().min_by(order)
     println(most, least, keys, largest, smallest, compared + 2)
     kept = 0
     keep = fn(x: int) -> bool:

@@ -3,7 +3,8 @@
 #$ profiles: debug, development, release
 #$ error[E2020]: `is` requires related class handles, found `Child[bool]` and `Child[i32]`
 
-class Child[T]:
+[T]
+class Child:
     value: T
 
 fn main():

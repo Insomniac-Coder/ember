@@ -14,10 +14,10 @@
 import std.mem
 
 struct Noisy:
-    name: str
+    name: StrView
 
-    fn drop(mut self):
-        println("drop", self.name)
+    fn drop():
+        println("drop", this.name)
 
 gen fn finishing() -> Generator[int, Noisy]:
     yield 1
@@ -33,7 +33,8 @@ gen fn deferring() -> Generator[int]:
         println("deferred", local.name)
     yield 3
 
-fn print_all[G: Iterator[Item = int]](mut g: G):
+[G: needs Iterator[Item = int]]
+fn print_all(ref mut g: G):
     while true:
         match g.next():
             Some(x):

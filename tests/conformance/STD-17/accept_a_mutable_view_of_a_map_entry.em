@@ -18,7 +18,7 @@ fn main():
         v += i
     for c in m["x"].chunks_mut(1):
         c[0] += 100
-    if Some(p) = m["x"].get_mut(0):
+    if m["x"].get_mut(0) exists as p:
         p += 1000
     println(m["x"])
     ps: Map[int, Pair] = {1: Pair([5])}

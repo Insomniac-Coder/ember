@@ -5,7 +5,7 @@
 # The loop clears its own `mut` parameter: it keeps every check and panics on
 # the second pass.
 
-fn sum_and_empty(mut xs: Array[int]) -> int:
+fn sum_and_empty(ref mut xs: Array[int]) -> int:
     total = 0
     for i in 0..4:
         total = total + xs[i]

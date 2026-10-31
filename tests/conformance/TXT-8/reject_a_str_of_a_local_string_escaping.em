@@ -6,9 +6,9 @@
 # `String` cannot leave the function, by itself or inside a struct that holds it.
 
 struct Holder:
-    view: str
+    view: StrView
 
-fn bad() -> str:
+fn bad() -> StrView:
     s: String = "abc"
     return s.as_str()
 

@@ -9,68 +9,72 @@
 # pair was `E2041`.
 
 interface Conv[T]:
-    fn conv(self) -> T
+    fn conv() -> T
 
 interface Mark:
-    fn mark(self) -> int
+    fn mark() -> int
 
 interface Tagged:
-    fn tag(self) -> int
+    fn tag() -> int
 
 interface Foo:
-    fn foo(self) -> int
+    fn foo() -> int
 
 struct Gadget:
     n: int
 
 extend Gadget implements Conv[bool]:
-    fn conv(self) -> bool:
+    fn conv() -> bool:
         return true
 
-struct Pair[A, B]:
+[A, B]
+struct Pair:
     a: A
     b: B
 
-extend[T, U: Conv[T]] Pair[T, U] implements Mark:
-    fn mark(self) -> int:
+extend[T, U: needs Conv[T]] Pair[T, U] implements Mark:
+    fn mark() -> int:
         return 1
 
 extend Pair[int, Gadget] implements Mark:
-    fn mark(self) -> int:
+    fn mark() -> int:
         return 2
 
 struct Words:
     n: int
 
 extend Words implements Iterator:
-    type Item = str
-    fn next(mut self) -> Option[str]:
+    type Item = StrView
+    fn next() -> Option[StrView]:
         return None
 
-struct Holder[T]:
+[T]
+struct Holder:
     x: T
 
-extend[T: Iterator[Item = int]] Holder[T] implements Tagged:
-    fn tag(self) -> int:
+extend[T: needs Iterator[Item = int]] Holder[T] implements Tagged:
+    fn tag() -> int:
         return 1
 
 extend Holder[Words] implements Tagged:
-    fn tag(self) -> int:
+    fn tag() -> int:
         return 2
 
-struct Wrap[T]:
+[T]
+struct Wrap:
     x: T
 
-struct Two[A, B]:
+[A, B]
+struct Two:
     a: A
     b: B
 
-extend[T: Foo] Two[T, int] implements Mark:
-    fn mark(self) -> int:
+extend[T: needs Foo] Two[T, int] implements Mark:
+    fn mark() -> int:
         return 1
 
 extend[V] Two[Wrap[V], V] implements Mark:
-    fn mark(self) -> int:
+    fn mark() -> int:
         return 3
 
 fn main():

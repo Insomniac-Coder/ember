@@ -6,7 +6,7 @@
 ## `[ERR-8]` (D-764) — `?` carries a failed `parse` into an `AnyError`: `ParseError` is an error type
 ## (`[ERR-3]`), and its text says why the parse failed.
 
-fn parse_one(s: str) -> Result[int]:
+fn parse_one(s: StrView) -> Result[int]:
     return Ok(s.trim().parse[int]()?)
 
 fn main():

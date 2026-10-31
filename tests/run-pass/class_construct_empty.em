@@ -4,7 +4,7 @@
 #$ stdout: 42
 
 class Empty:
-    fn answer(self) -> i32:
+    fn answer() -> i32:
         return 42
 
 fn main():

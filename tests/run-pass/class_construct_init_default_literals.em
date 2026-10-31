@@ -11,9 +11,9 @@ class Defaults:
     retries: i32 = 3
     enabled: bool = true
 
-    fn init(mut self, retries: i32):
-        println(self.enabled)
-        self.retries = retries
+    fn init(retries: i32):
+        println(this.enabled)
+        this.retries = retries
 
 fn main():
     value = Defaults(5)

@@ -11,7 +11,8 @@
 # `Array[T]` takes it. The two were one type in the compiler, so bytes sliced as text and printed
 # quoted (D-201).
 
-fn total[T: Add[Output = T] + Default + Copy](xs: Array[T]) -> T:
+[T: needs (Add[Output = T], Default, Copy)]
+fn total(xs: Array[T]) -> T:
     s = T.default()
     for x in xs:
         s = s + x

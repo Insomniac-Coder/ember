@@ -11,11 +11,11 @@
 open class Animal:
     legs: int
 
-    virtual fn sound(self) -> str:
+    virtual fn sound() -> StrView:
         return "..."
 
 class Dog(Animal):
-    override fn sound(self) -> str:
+    override fn sound() -> StrView:
         return "woof"
 
 fn main():

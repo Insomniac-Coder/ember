@@ -5,23 +5,25 @@
 
 interface Make:
     type Out
-    fn make(owned self) -> Out
+    fn make() owns this -> Out
 
-struct Inner[K, V]:
+[K, V]
+struct Inner:
     k: K
     v: V
 
-extend[K: Eq, V] Inner[K, V] implements Make:
+extend[K: needs Eq, V] Inner[K, V] implements Make:
     type Out = K
 
-    fn make(owned self) -> K:
-        return self.k
+    fn make() owns this -> K:
+        return this.k
 
-struct Outer[T]:
+[T]
+struct Outer:
     i: Inner[T, bool]
 
-    fn get(owned self) -> T:
-        return self.i.make() #$ error[E2072]: `Inner[T, bool]` has no method named `make`
+    fn get() owns this -> T:
+        return this.i.make() #$ error[E2072]: `Inner[T, bool]` has no method named `make`
 
 fn main():
     o = Outer(Inner[i64, bool](5, true))

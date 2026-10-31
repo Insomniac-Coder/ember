@@ -11,7 +11,7 @@
 # indirect index, a float total no reduction declares, a text loop, an early
 # exit) all run as written; only `@simd(assert)` makes failure an error.
 
-fn scale(xs: Span[int], mut out: MutSpan[int], k: int):
+fn scale(xs: Span[int], ref mut out: MutSpan[int], k: int):
     @simd
     for i in 0..xs.len():
         out[i] = xs[i] * k
@@ -30,7 +30,7 @@ fn total(xs: Span[float]) -> float:
         s += x
     return s
 
-fn count(t: str, wanted: char) -> int:
+fn count(t: StrView, wanted: char) -> int:
     n = 0
     @simd
     for c in t.chars():

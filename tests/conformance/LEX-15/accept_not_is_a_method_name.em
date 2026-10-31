@@ -12,8 +12,8 @@ struct Bits:
 extend Bits implements Not:
     type Output = Bits
 
-    fn not(self) -> Bits:
-        return Bits(v=~self.v)
+    fn not() -> Bits:
+        return Bits(v=~this.v)
 
 fn main():
     b = Bits(v=5)

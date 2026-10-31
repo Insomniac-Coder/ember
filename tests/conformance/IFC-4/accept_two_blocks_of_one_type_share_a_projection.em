@@ -9,24 +9,25 @@
 interface Seq:
     type Item
     type Size = int
-    fn next(mut self) -> Option[Item]
+    fn next() -> Option[Item]
 
-interface Measured: Seq:
-    fn size(self) -> Size
+interface Measured: needs Seq:
+    fn size() -> Size
 
-struct Wrap[I]:
+[I]
+struct Wrap:
     inner: I
 
-extend[I: Seq] Wrap[I] implements Seq:
+extend[I: needs Seq] Wrap[I] implements Seq:
     type Item = I.Item
     type Size = I.Size
 
-    fn next(mut self) -> Option[I.Item]:
-        return self.inner.next()
+    fn next() -> Option[I.Item]:
+        return this.inner.next()
 
-extend[I: Measured] Wrap[I] implements Measured:
-    fn size(self) -> I.Size:
-        return self.inner.size()
+extend[I: needs Measured] Wrap[I] implements Measured:
+    fn size() -> I.Size:
+        return this.inner.size()
 
 struct Down:
     n: int
@@ -34,15 +35,15 @@ struct Down:
 extend Down implements Seq:
     type Item = int
 
-    fn next(mut self) -> Option[int]:
-        if self.n == 0:
+    fn next() -> Option[int]:
+        if this.n == 0:
             return None
-        self.n -= 1
-        return Some(self.n)
+        this.n -= 1
+        return Some(this.n)
 
 extend Down implements Measured:
-    fn size(self) -> int:
-        return self.n
+    fn size() -> int:
+        return this.n
 
 fn main():
     w = Wrap(Down(3))

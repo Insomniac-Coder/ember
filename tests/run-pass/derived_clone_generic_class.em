@@ -5,14 +5,16 @@
 #$ assert-c: contains(ember_retain)
 
 @derive(Clone)
-class Counter[T]:
+[T]
+class Counter:
     value: i32
     payload: T
 
-    fn bump(mut self):
-        self.value = self.value + 1
+    fn bump():
+        this.value = this.value + 1
 
-fn duplicate[T: Clone](value: T) -> T:
+[T: needs Clone]
+fn duplicate(value: T) -> T:
     return value.clone()
 
 struct Marker:

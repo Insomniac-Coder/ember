@@ -17,24 +17,26 @@ struct Token:
 class Holder:
     weak: Weak[Shared[Token]]
 
-open class Base[T]:
+[T]
+open class Base:
     marker: T
 
-    fn init(mut self, marker: T):
-        self.marker = marker
+    fn init(marker: T):
+        this.marker = marker
 
-    virtual fn observe(self, owned weak: Weak[Shared[Token]]) -> i32:
+    virtual fn observe(owns weak: Weak[Shared[Token]]) -> i32:
         match weak.upgrade():
             Some(owner):
                 return owner.get().value
             None:
                 return 0
 
-class Derived[T](Base[T]):
-    fn init(mut self, marker: T):
+[T]
+class Derived(Base[T]):
+    fn init(marker: T):
         super.init(marker)
 
-    override fn observe(self, owned weak: Weak[Shared[Token]]) -> i32:
+    override fn observe(owns weak: Weak[Shared[Token]]) -> i32:
         match weak.upgrade():
             Some(owner):
                 return owner.get().value

@@ -6,38 +6,38 @@
 pub struct Duration:
     pub nanos: int
 
-    pub fn from_nanos(n: int) -> Duration:
+    pub static fn from_nanos(n: int) -> Duration:
         return Duration(nanos = n)
 
-    pub fn from_micros(n: int) -> Duration:
+    pub static fn from_micros(n: int) -> Duration:
         return Duration(nanos = n * 1000)
 
-    pub fn from_millis(n: int) -> Duration:
+    pub static fn from_millis(n: int) -> Duration:
         return Duration(nanos = n * 1000000)
 
-    pub fn from_secs(n: int) -> Duration:
+    pub static fn from_secs(n: int) -> Duration:
         return Duration(nanos = n * 1000000000)
 
-    pub fn as_nanos(self) -> int:
-        return self.nanos
+    pub fn as_nanos() -> int:
+        return this.nanos
 
-    pub fn as_millis(self) -> int:
-        return self.nanos // 1000000
+    pub fn as_millis() -> int:
+        return this.nanos // 1000000
 
-    pub fn as_secs_f64(self) -> f64:
-        return self.nanos as f64 / 1000000000.0
+    pub fn as_secs_f64() -> f64:
+        return this.nanos as f64 / 1000000000.0
 
 extend Duration implements Add:
     type Output = Duration
 
-    fn add(self, rhs: Duration) -> Duration:
-        return Duration(nanos = self.nanos + rhs.nanos)
+    fn add(rhs: Duration) -> Duration:
+        return Duration(nanos = this.nanos + rhs.nanos)
 
 extend Duration implements Sub:
     type Output = Duration
 
-    fn sub(self, rhs: Duration) -> Duration:
-        return Duration(nanos = self.nanos - rhs.nanos)
+    fn sub(rhs: Duration) -> Duration:
+        return Duration(nanos = this.nanos - rhs.nanos)
 
 ## `[STD-23]` — a point on the monotonic clock, which never goes back. Reading the clock is
 ## `Nondet` (`[DET-2]`).
@@ -46,16 +46,16 @@ pub struct Instant:
     nanos: int
 
     ## Now.
-    pub fn now() -> Instant:
+    pub static fn now() -> Instant:
         return Instant(nanos = monotonic_now())
 
     ## The time from `earlier` to this instant.
-    pub fn duration_since(self, earlier: Instant) -> Duration:
-        return Duration(nanos = self.nanos - earlier.nanos)
+    pub fn duration_since(earlier: Instant) -> Duration:
+        return Duration(nanos = this.nanos - earlier.nanos)
 
     ## The time since this instant.
-    pub fn elapsed(self) -> Duration:
-        return Instant.now().duration_since(self)
+    pub fn elapsed() -> Duration:
+        return Instant.now().duration_since(this)
 
 ## `[STD-23]` — waits at least `d`; it carries `Block`.
 pub fn sleep(d: Duration):

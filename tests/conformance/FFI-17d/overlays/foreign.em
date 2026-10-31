@@ -4,4 +4,4 @@
 unsafe overlay cpp "nodes.hpp":  # SAFETY(ffi): each entry matches its declaration in the header
     @ffi(trampoline, virtuals=["value"], owner="foreign")
     type Node
-    fn keep(node: owned)
+    fn keep(node: owns)

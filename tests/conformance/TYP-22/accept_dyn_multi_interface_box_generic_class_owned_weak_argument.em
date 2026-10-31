@@ -14,25 +14,26 @@
 # its independent observer copy in the generic class implementation. Dispatch
 # through the second interface slot still uses the original boxed payload.
 interface Observe:
-    fn observe(self, owned weak: Weak[Shared[Token]]) -> i32
+    fn observe(owns weak: Weak[Shared[Token]]) -> i32
 
 interface Bump:
-    fn bump(self) -> i32
+    fn bump() -> i32
 
 struct Token:
     value: i32
 
-class Reader[T] implements Observe, Bump:
+[T]
+class Reader implements Observe, Bump:
     marker: T
 
-    fn observe(self, owned weak: Weak[Shared[Token]]) -> i32:
+    fn observe(owns weak: Weak[Shared[Token]]) -> i32:
         match weak.upgrade():
             Some(owner):
                 return owner.get().value
             None:
                 return 0
 
-    fn bump(self) -> i32:
+    fn bump() -> i32:
         return 1
 
 fn main():

@@ -7,17 +7,17 @@
 # its body was compiled under the inherent one's C symbol.
 
 interface Sized:
-    fn len(self) -> int
+    fn len() -> int
 
 struct Bag:
     n: int
 
-    fn len(self) -> int:
-        return self.n
+    fn len() -> int:
+        return this.n
 
 extend Bag implements Sized:
-    fn len(self) -> int:
-        return self.n + 100
+    fn len() -> int:
+        return this.n + 100
 
 fn tell(s: ref dyn Sized) -> int:
     return s.len()

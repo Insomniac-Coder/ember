@@ -19,7 +19,8 @@ fn main():
     twice = 5
     later = fn() -> int => twice + 1
     println(later(), shown(1))
-    fn shown[T: Display](x: T) -> String:
+    [T: needs Display]
+    fn shown(x: T) -> String:
         return f"{x}"
     call = fn() -> String => shown("local")
     println(call(), shown(2.5), later())

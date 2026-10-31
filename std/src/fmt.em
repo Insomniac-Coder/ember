@@ -24,8 +24,8 @@ pub enum FmtError:
 extend Formatter:
     ## Appends `s` to the text being built.
     ## It allocates as the `String` it writes to grows.
-    pub fn write_str(mut self, s: str) -> Result[void, FmtError]:
-        self.out.push_str(s)
+    pub fn write_str(s: StrView) -> Result[void, FmtError]:
+        this.out.push_str(s)
         return Ok(())
 
 ## `[STD-18]` — `format_to(buf, a, b, …, sep=" ", end="")`: the arguments'
@@ -35,32 +35,36 @@ extend Formatter:
 ## if a value's written `Display` does (`[EFF-1]`). Compiler-known, with any
 ## number of arguments after `buf` (`[TYP-26]`, ODR-060). `format(value,
 ## spec)`, the prelude's, is `f"{value:spec}"` (`[MOD-5]`).
-pub fn format_to(buf: MutSpan[u8]) -> Result[str, FmtError]:
+pub fn format_to(buf: MutSpan[u8]) -> Result[StrView, FmtError]:
     unreachable()  # a call is the compiler's: this body never runs
 
 ## `[LEX-19]`, `[STD-9]` — how the compiler writes a value whose type has a
 ## written `Display` into text it is building (an f-string's, or `print`'s
 ## argument): the value's `fmt`, given a `Formatter` over that text. Nothing
 ## is allocated beyond what `fmt` itself writes.
-fn write_display[T: Display](value: T, mut out: String):
+[T: needs Display]
+fn write_display(value: T, ref mut out: String):
     f = Formatter(ref mut out)
     _ = value.fmt(f)
 
 ## `[STR-5]` — the same for a written `Debug`, which the compiler calls
 ## wherever the value is formatted, alone or inside another value.
-fn write_debug[T: Debug](value: T, mut out: String):
+[T: needs Debug]
+fn write_debug(value: T, ref mut out: String):
     f = Formatter(ref mut out)
     _ = value.fmt_debug(f)
 
 ## `[STR-5]` — `value`'s `Debug` text appended to `out`, as `f"{value!r}"`
 ## writes it. Compiler-known.
-fn append_debug[T: Debug](value: T, out: ref mut String):
+[T: needs Debug]
+fn append_debug(value: T, ref mut out: String):
     pass
 
 ## `[STR-5]` — a type's own field-wise `Debug` as its `fmt_debug`, for the
 ## table of a `dyn` interface needing `Debug` (`dyn Error`) when the type
 ## writes none, and for `@derive(Display)` on a struct (`[DRV-1]`). It writes
 ## into the `Formatter`'s text directly (ADR-191).
-pub fn implicit_fmt_debug[T: Debug](value: T, mut f: Formatter) -> Result[void, FmtError]:
+[T: needs Debug]
+pub fn implicit_fmt_debug(value: T, ref mut f: Formatter) -> Result[void, FmtError]:
     append_debug(value, f.out)
     return Ok(())

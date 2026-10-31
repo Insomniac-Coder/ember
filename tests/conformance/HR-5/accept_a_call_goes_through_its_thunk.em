@@ -30,7 +30,7 @@ fn apply(f: fn(int) -> int, x: int) -> int:
     return f(x)
 
 open class Shape:
-    virtual fn area(self) -> int:
+    virtual fn area() -> int:
         return 7
 
 fn measure(s: Shape) -> int:

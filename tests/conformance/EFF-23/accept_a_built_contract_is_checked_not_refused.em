@@ -5,7 +5,7 @@
 # built now: `@static_safe` here is accepted and checked, and its bounds checks are allowed
 # (`[EFF-12]`).
 
-@static_safe
+@no_alias_checks
 fn total(xs: Span[int]) -> int:
     sum = 0
     for i in 0..xs.len():

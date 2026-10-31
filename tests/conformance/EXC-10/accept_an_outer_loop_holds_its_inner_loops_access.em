@@ -17,8 +17,8 @@ class Counter:
     value: i32
     log: Array[int]
 
-    fn bump(mut self):
-        self.value = self.value + 1
+    fn bump():
+        this.value = this.value + 1
 
 fn main():
     counter = Counter(0, [])

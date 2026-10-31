@@ -6,16 +6,17 @@
 # The `ref mut T` receiver reads through to T for bound lookup while preserving
 # the mutable receiver adjustment required by the selected method.
 interface Bump:
-    fn bump(mut self)
+    fn bump()
 
 struct Counter:
     value: i32
 
 extend Counter implements Bump:
-    fn bump(mut self):
-        self.value = self.value + 1
+    fn bump():
+        this.value = this.value + 1
 
-fn bump_once[T: Bump](mut value: ref mut T):
+[T: needs Bump]
+fn bump_once(ref mut value: ref mut T):
     value.bump()
 
 fn main():

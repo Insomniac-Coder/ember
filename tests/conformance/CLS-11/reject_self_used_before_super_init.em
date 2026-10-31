@@ -4,7 +4,7 @@
 open class Base:
     name: String = "base"
 
-    fn init(self):
+    fn init():
         pass
 
 fn show(b: Base):
@@ -13,9 +13,9 @@ fn show(b: Base):
 class Derived(Base):
     tag: int
 
-    fn init(self, tag: int):
-        self.tag = tag
-        show(self) #$ error[E2102]: `self` is used before `super.init(...)`
+    fn init(tag: int):
+        this.tag = tag
+        show(this) #$ error[E2102]: `this` is used before `super.init(...)`
         super.init()
 
 fn main():

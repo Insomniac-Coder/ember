@@ -4,7 +4,7 @@
 ## (here strings) add no "cannot match a value of type `<error>`" per arm, as they did (D2 of the
 ## first-week corpus, `tests/firstweek/23_recipe_scaler.em`).
 
-fn unit(word: str) -> int:
+fn unit(word: StrView) -> int:
     return match missing.trim():    #$ error[E1010]: cannot find `missing`
         "g" => 1
         "ml" => 2

@@ -20,11 +20,11 @@ from std.sync import Atomic, MemoryOrder
 pub class Counter:
     hits: Atomic[i32] = Atomic(0)
 
-    pub fn bump(self) -> i32:
-        return self.hits.fetch_add(1, MemoryOrder.AcqRel) + 1
+    pub fn bump() -> i32:
+        return this.hits.fetch_add(1, MemoryOrder.AcqRel) + 1
 
-    pub fn total(self) -> i32:
-        return self.hits.load(MemoryOrder.Acquire)
+    pub fn total() -> i32:
+        return this.hits.load(MemoryOrder.Acquire)
 
 @export("make_counter")
 pub fn make_counter() -> Counter:
@@ -37,12 +37,12 @@ pub fn bump_twice(counter: Counter) -> i32:
 
 @sync
 pub open class Shape:
-    pub virtual fn sides(self) -> i32:
+    pub virtual fn sides() -> i32:
         return 0
 
 @sync
 pub class Square(Shape):
-    pub override fn sides(self) -> i32:
+    pub override fn sides() -> i32:
         return 4
 
 @export("make_square")

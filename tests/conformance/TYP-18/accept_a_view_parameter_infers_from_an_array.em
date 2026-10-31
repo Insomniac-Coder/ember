@@ -7,10 +7,12 @@
 # argument is read off the element type. `pick(ys)` was `E2060`, cannot tell
 # what `T` is.
 
-fn pick[T: Copy](xs: Span[T]) -> T:
+[T: needs Copy]
+fn pick(xs: Span[T]) -> T:
     return xs[0]
 
-fn bump[T: Copy + Add[T, Output = T]](mut xs: MutSpan[T], by: T):
+[T: needs (Copy, Add[T, Output = T])]
+fn bump(ref mut xs: MutSpan[T], by: T):
     for i in range(xs.len()):
         xs[i] = xs[i] + by
 

@@ -7,17 +7,18 @@
 # `Option[Self]` and `Array[Self]` (D-333: only a bare `Self` was replaced, so
 # `Option[Self]` stayed unresolved).
 
-struct Cell2[T]:
+[T]
+struct Cell2:
     v: T
 
-    fn maybe(v: T, keep: bool) -> Option[Self]:
+    static fn maybe(v: T, keep: bool) -> Option[Self]:
         if keep:
             return Some(Cell2(v))
         return None
 
-    fn pair(self, other: Self) -> Array[Self]:
+    fn pair(other: Self) -> Array[Self]:
         out: Array[Self] = Array()
-        out.push(self)
+        out.push(this)
         out.push(other)
         return out
 

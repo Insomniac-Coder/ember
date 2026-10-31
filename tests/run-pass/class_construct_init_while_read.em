@@ -5,10 +5,10 @@
 class Holder:
     value: i32
 
-    fn init(mut self):
-        self.value = 42
+    fn init():
+        this.value = 42
         while false:
-            println(self.value)
+            println(this.value)
 
 fn main():
     holder = Holder()

@@ -8,7 +8,8 @@
 # drops it. Its frame is an ordinary move-only value, kept in a field of a struct and in a list.
 # `[CORO-8]` — the generator's effects are its body's.
 
-struct Holder[G]:
+[G]
+struct Holder:
     source: G
 
 @noalloc

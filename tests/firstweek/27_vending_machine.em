@@ -30,42 +30,42 @@ class Machine:
     coins: Map[int, int] = {10: 5, 20: 5, 50: 2, 100: 0}
     sales: int = 0
 
-    fn insert(self, c: Coin):
+    fn insert(c: Coin):
         value = coin_value(c)
-        self.inserted += value
-        self.coins[value] += 1
+        this.inserted += value
+        this.coins[value] += 1
 
-    fn make_change(self, amount: int) -> Result[Array[int], VendError]:
+    fn make_change(amount: int) -> Result[Array[int], VendError]:
         change: Array[int] = []
         left = amount
         for value in [100, 50, 20, 10]:
-            while left >= value and self.coins[value] > 0:
-                self.coins[value] -= 1
+            while left >= value and this.coins[value] > 0:
+                this.coins[value] -= 1
                 left -= value
                 change.push(value)
         if left != 0:
             for c in change:
-                self.coins[c] += 1
+                this.coins[c] += 1
             return Err(VendError.CannotMakeChange(amount))
         return Ok(change)
 
-    fn choose(self, code: str) -> Result[(String, Array[int]), VendError]:
-        if code not in self.slots:
+    fn choose(code: StrView) -> Result[(String, Array[int]), VendError]:
+        if code not in this.slots:
             return Err(VendError.UnknownSlot(code))
-        slot = self.slots[code]
+        slot = this.slots[code]
         if slot.stock == 0:
             return Err(VendError.SoldOut(slot.product))
-        if self.inserted < slot.price:
-            return Err(VendError.NotEnoughMoney(slot.price, self.inserted))
-        change = self.make_change(self.inserted - slot.price)?
-        self.slots[code].stock -= 1
-        self.inserted = 0
-        self.sales += slot.price
+        if this.inserted < slot.price:
+            return Err(VendError.NotEnoughMoney(slot.price, this.inserted))
+        change = this.make_change(this.inserted - slot.price)?
+        this.slots[code].stock -= 1
+        this.inserted = 0
+        this.sales += slot.price
         return Ok((slot.product, change))
 
-    fn refund(self) -> int:
-        amount = self.inserted
-        self.inserted = 0
+    fn refund() -> int:
+        amount = this.inserted
+        this.inserted = 0
         return amount
 
 fn main():
@@ -74,7 +74,7 @@ fn main():
     m.slots["A2"] = Slot(product="chocolate", price=85, stock=1)
     m.slots["B1"] = Slot(product="water", price=100, stock=0)
 
-    orders: Array[(Array[Coin], str)] = [
+    orders: Array[(Array[Coin], StrView)] = [
         ([Coin.Fifty, Coin.Twenty], "A1"),
         ([Coin.Pound], "A2"),
         ([Coin.Pound], "B1"),

@@ -4,7 +4,8 @@
 # inside the compiler (D-305), and a diagnostic still writes it as the program
 # does: `Box[i64]`.
 
-struct Box[T]:
+[T]
+struct Box:
     item: T
 
 fn main():

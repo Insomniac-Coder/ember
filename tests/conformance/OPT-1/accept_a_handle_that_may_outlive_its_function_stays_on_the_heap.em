@@ -20,8 +20,8 @@ class Passed:
 class Returned:
     v: int
 
-    fn same(self) -> Returned:
-        return self
+    fn same() -> Returned:
+        return this
 
 class Weakened:
     v: int

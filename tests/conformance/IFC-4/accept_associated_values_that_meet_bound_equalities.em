@@ -7,15 +7,15 @@
 
 interface Element:
     type Item
-    fn get(self) -> Item
+    fn get() -> Item
 
 interface Holder:
-    type Value: Element[Item = int]
-    fn value(self) -> Value
+    type Value: needs Element[Item = int]
+    fn value() -> Value
 
 interface NestedHolder:
-    type Value: Element[Item = Option[int]]
-    fn value(self) -> Value
+    type Value: needs Element[Item = Option[int]]
+    fn value() -> Value
 
 @derive(Copy)
 struct Scalar:
@@ -23,8 +23,8 @@ struct Scalar:
 
 extend Scalar implements Element:
     type Item = int
-    fn get(self) -> int:
-        return self.number
+    fn get() -> int:
+        return this.number
 
 @derive(Copy)
 struct Nested:
@@ -32,27 +32,27 @@ struct Nested:
 
 extend Nested implements Element:
     type Item = Option[int]
-    fn get(self) -> Option[int]:
-        return Some(self.number)
+    fn get() -> Option[int]:
+        return Some(this.number)
 
 struct Owner:
     number: int
 
 extend Owner implements Holder:
     type Value = Scalar
-    fn value(self) -> Scalar:
-        return Scalar(self.number)
+    fn value() -> Scalar:
+        return Scalar(this.number)
 
 struct NestedOwner:
     number: int
 
 extend NestedOwner implements NestedHolder:
     type Value = Nested
-    fn value(self) -> Nested:
-        return Nested(self.number)
+    fn value() -> Nested:
+        return Nested(this.number)
 
 interface DefaultHolder:
-    type Value: Element[Item = int] = Scalar
+    type Value: needs Element[Item = int] = Scalar
 
 struct DefaultOwner:
     unused: int
@@ -60,13 +60,16 @@ struct DefaultOwner:
 extend DefaultOwner implements DefaultHolder:
     pass
 
-fn scalar[H: Holder](holder: H) -> int:
+[H: needs Holder]
+fn scalar(holder: H) -> int:
     return holder.value().get()
 
-fn nested[H: NestedHolder](holder: H) -> Option[int]:
+[H: needs NestedHolder]
+fn nested(holder: H) -> Option[int]:
     return holder.value().get()
 
-fn defaulted[H: DefaultHolder](holder: H) -> int:
+[H: needs DefaultHolder]
+fn defaulted(holder: H) -> int:
     return 1
 
 fn main():

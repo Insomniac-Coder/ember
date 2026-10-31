@@ -4,7 +4,7 @@
 #$ assert-c: contains(->slot0)
 
 interface Drawable:
-    fn draw(self) -> i32
+    fn draw() -> i32
 
 fn take(x: ref dyn Drawable) -> i32:
     return x.draw()

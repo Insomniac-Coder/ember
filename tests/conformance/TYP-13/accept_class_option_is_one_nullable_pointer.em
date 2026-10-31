@@ -9,7 +9,7 @@
 class Token:
     value: int
 
-    fn drop(mut self):
+    fn drop():
         println("dropped")
 
 fn main():

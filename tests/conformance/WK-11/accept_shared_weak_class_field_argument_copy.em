@@ -16,7 +16,7 @@ struct Token:
 class Holder:
     weak: Weak[Shared[Token]]
 
-fn observe(owned weak: Weak[Shared[Token]]) -> i32:
+fn observe(owns weak: Weak[Shared[Token]]) -> i32:
     match weak.upgrade():
         Some(owner):
             return owner.get().value

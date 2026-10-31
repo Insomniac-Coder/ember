@@ -3,11 +3,12 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 
-class Holder[T]:
+[T]
+class Holder:
     value: T
 
-    fn init(mut self, value: T):
-        self.value = value
+    fn init(value: T):
+        this.value = value
 
 fn main():
     holder = Holder[i32](42)

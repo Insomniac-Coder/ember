@@ -7,7 +7,7 @@
 
 fn main():
     xs: Array[String] = ["a", "bb", "c"]
-    best: str = ""
+    best: StrView = ""
     for x in xs:
         if x.len() > best.len():
             best = x

@@ -8,7 +8,7 @@
 struct Resource:
     id: i32
 
-    fn drop(mut self):
+    fn drop():
         pass
 
 @derive(Clone)
@@ -16,15 +16,16 @@ struct Bag:
     item: Resource #$ error[E2040]: field `item` has type `Resource`, which does not implement `Clone`
 
 interface Weigh[W]:
-    fn weigh(self, w: W) -> i32
+    fn weigh(w: W) -> i32
 
 @derive(Clone)
-struct Tag[T]:
+[T]
+struct Tag:
     v: T
 
 extend i32 implements Weigh[Tag[i32]]:
-    fn weigh(self, w: Tag[i32]) -> i32:
-        return self + w.v
+    fn weigh(w: Tag[i32]) -> i32:
+        return this + w.v
 
 fn main():
     _bag = Bag(Resource(1))

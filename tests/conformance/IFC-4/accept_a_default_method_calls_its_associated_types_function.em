@@ -10,14 +10,14 @@
 from std.core import Default
 
 interface Source:
-    type Item: Default
-    fn get(self, i: int) -> Item
-    fn size(self) -> int
+    type Item: needs Default
+    fn get(i: int) -> Item
+    fn size() -> int
 
-    fn first_or_default(self) -> Item:
-        if self.size() == 0:
+    fn first_or_default() -> Item:
+        if this.size() == 0:
             return Item.default()
-        return self.get(0)
+        return this.get(0)
 
 struct Nums:
     xs: Array[int]
@@ -25,11 +25,11 @@ struct Nums:
 extend Nums implements Source:
     type Item = int
 
-    fn get(self, i: int) -> int:
-        return self.xs[i]
+    fn get(i: int) -> int:
+        return this.xs[i]
 
-    fn size(self) -> int:
-        return self.xs.len()
+    fn size() -> int:
+        return this.xs.len()
 
 fn main():
     println(Nums([7, 8]).first_or_default(), Nums([]).first_or_default())

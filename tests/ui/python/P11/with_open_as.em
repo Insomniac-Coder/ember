@@ -1,4 +1,4 @@
-fn first(path: str) -> Result[String]:
+fn first(path: StrView) -> Result[String]:
     with open(path) as f:
         return Ok("opened")
     return Ok("")

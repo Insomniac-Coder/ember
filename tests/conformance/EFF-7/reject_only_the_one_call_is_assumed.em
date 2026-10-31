@@ -4,13 +4,13 @@
 # `[EFF-7]` — the override covers that one call: the second call of `collect_visible`, not
 # written `@assume_noalloc(…)`, still carries `Alloc` and breaks the contract.
 
-fn collect_visible(xs: Span[int], mut out: Array[int]):
+fn collect_visible(xs: Span[int], ref mut out: Array[int]):
     for x in xs:
         if x > 0:
             out.push(x)
 
 @noalloc
-fn cull(xs: Span[int], mut out: Array[int]) -> int:
+fn cull(xs: Span[int], ref mut out: Array[int]) -> int:
     unsafe:  # SAFETY: the caller reserved room for every element, so the pushes never grow `out`
         @assume_noalloc(collect_visible(xs, out))
     collect_visible(xs, out)

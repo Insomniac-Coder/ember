@@ -6,8 +6,8 @@ from std.mem import UnsafeCell
 struct Bag:
     pub values: Array[i32]
 
-    fn drop(mut self):
-        println(self.values.len())
+    fn drop():
+        println(this.values.len())
 
 fn make() -> Bag:
     values: Array[i32] = Array[i32]()
@@ -15,7 +15,8 @@ fn make() -> Bag:
     values.push(2)
     return Bag(values)
 
-fn extract[T](owned cell: UnsafeCell[T]) -> T:
+[T]
+fn extract(owns cell: UnsafeCell[T]) -> T:
     return cell.into_inner()
 
 fn discard():

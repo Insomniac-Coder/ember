@@ -36,7 +36,7 @@ fn pair_sum(value: Pair) -> i32:
 fn large_sum(value: Large) -> i64:
     return value.first + value.second + value.third
 
-fn pair_change(mut value: Pair) -> i32:
+fn pair_change(ref mut value: Pair) -> i32:
     value.left += 10
     return value.left + value.right
 
@@ -75,7 +75,7 @@ fn large_callback() -> extern "C" fn(Large) -> i64:
     return large_sum
 
 @export("make_mut")
-fn mut_callback() -> extern "C" fn(mut Pair) -> i32:
+fn mut_callback() -> extern "C" fn(ref mut Pair) -> i32:
     return pair_change
 
 @export("make_returned")

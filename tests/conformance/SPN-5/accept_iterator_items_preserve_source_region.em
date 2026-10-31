@@ -1,7 +1,8 @@
 #$ test: run-pass
 #$ rules: SPN-5, LT-1, TST-25
 
-fn first[T](span: Span[T]) -> ref T:
+[T]
+fn first(span: Span[T]) -> ref T:
     iterator = span.iter()
     match iterator.next():
         Some(item):
@@ -10,7 +11,8 @@ fn first[T](span: Span[T]) -> ref T:
             unsafe:  # SAFETY: this test sets up what the operation requires
                 return span.get_unchecked(0)
 
-fn first_mut[T](mut span: MutSpan[T]) -> ref mut T:
+[T]
+fn first_mut(ref mut span: MutSpan[T]) -> ref mut T:
     iterator = span.iter_mut()
     match iterator.next():
         Some(item):

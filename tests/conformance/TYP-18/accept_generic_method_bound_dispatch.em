@@ -2,19 +2,20 @@
 #$ rules: TYP-17, TYP-18, MONO-1
 
 interface Scored:
-    fn score(self) -> i32
+    fn score() -> i32
 
 struct Good:
     value: i32
 
 extend Good implements Scored:
-    fn score(self) -> i32:
-        return self.value
+    fn score() -> i32:
+        return this.value
 
 struct Reader:
     marker: i32
 
-    fn read[T: Scored](self, value: T) -> i32:
+    [T: needs Scored]
+    fn read(value: T) -> i32:
         return value.score()
 
 fn main():

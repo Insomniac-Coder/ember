@@ -9,33 +9,33 @@
 # called.)
 
 interface Greet:
-    fn hello(self) -> int:
+    fn hello() -> int:
         return 1
 
 interface Named:
-    fn name(self) -> int
+    fn name() -> int
 
 struct S:
     v: int
 
 extend S implements Greet:
-    fn hello(self) -> int:
+    fn hello() -> int:
         return 2
 
 struct T:
     v: int
 
 extend T implements Named, Greet:
-    fn name(self) -> int:
+    fn name() -> int:
         return 5
 
-    fn hello(self) -> int:
+    fn hello() -> int:
         return 3
 
 struct U implements Greet:
     v: int
 
-    fn hello(self) -> int:
+    fn hello() -> int:
         return 4
 
 struct V implements Greet:

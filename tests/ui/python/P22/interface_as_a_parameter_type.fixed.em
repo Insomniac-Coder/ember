@@ -1,13 +1,14 @@
 interface Shape:
-    fn area(self) -> float
+    fn area() -> float
 
 struct Circle implements Shape:
     r: float
 
-    fn area(self) -> float:
-        return 3.14 * self.r * self.r
+    fn area() -> float:
+        return 3.14 * this.r * this.r
 
-fn describe[T: Shape](s: T) -> float:
+[T: needs Shape]
+fn describe(s: T) -> float:
     return s.area()
 
 fn main():

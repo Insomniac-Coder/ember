@@ -9,5 +9,5 @@
 fn main():
     xs = [1, 2]
     println(f"[{xs!r:>10}]", f"[{xs!s:<9}|]", f"[{xs!r:.4}]", f"[{xs}]")
-    o: Option[str] = Some("hi")
+    o: Option[StrView] = Some("hi")
     println(f"[{o!r:^12}]")

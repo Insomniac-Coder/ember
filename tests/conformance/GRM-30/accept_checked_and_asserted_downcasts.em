@@ -6,11 +6,11 @@
 ## `cast a as Dog` one that panics on failure (ODR-280).
 
 open class Animal:
-    fn name(self) -> int:
+    fn name() -> int:
         return 0
 
 class Dog(Animal):
-    fn bark(self) -> int:
+    fn bark() -> int:
         return 7
 
 fn main():

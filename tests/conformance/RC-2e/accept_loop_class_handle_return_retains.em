@@ -10,7 +10,7 @@
 class Token:
     value: i32
 
-fn first(owned tokens: Array[Token]) -> Token:
+fn first(owns tokens: Array[Token]) -> Token:
     for token in tokens:
         return token
     return Token(0)

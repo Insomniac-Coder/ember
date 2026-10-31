@@ -10,7 +10,7 @@
 
 @view
 struct Holder:
-    pub name: str
+    pub name: StrView
 
 fn main():
     h = Holder("hello")

@@ -13,27 +13,27 @@
 # overrides.
 
 open class Base:
-    virtual fn tick(self) -> i32:
+    virtual fn tick() -> i32:
         return 1
 
-    virtual fn label(self) -> i32:
+    virtual fn label() -> i32:
         return 3
 
-    fn init(mut self):
+    fn init():
         pass
 
 class Child(Base):
-    override fn tick(self) -> i32:
+    override fn tick() -> i32:
         return 2
 
-    fn init(mut self):
+    fn init():
         super.init()
 
 class Other(Base):
-    override fn label(self) -> i32:
+    override fn label() -> i32:
         return 5
 
-    fn init(mut self):
+    fn init():
         super.init()
 
 fn main():

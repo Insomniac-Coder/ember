@@ -251,6 +251,7 @@ impl Parser<'_> {
         match self.peek() {
             TokenKind::DocComment(_) | TokenKind::Reserved(_) => true,
             TokenKind::Punct(Punct::At) => true,
+            TokenKind::Punct(Punct::LBracket) => self.at_type_params_line(),
             TokenKind::Keyword(
                 Kw::Pub
                 | Kw::Extern
@@ -300,6 +301,7 @@ impl Parser<'_> {
         }
         let _ = doc_span;
         let attrs = self.parse_attributes();
+        self.parse_type_params_line();
         let start = self.span();
         let (vis, read) = self.parse_visibility();
         if read {
@@ -413,6 +415,8 @@ impl Parser<'_> {
             TokenKind::Keyword(Kw::Fn | Kw::Unsafe | Kw::Virtual | Kw::Override) => {
                 Some(ItemKind::Fn(self.parse_fn()))
             }
+            // `static fn` outside a type body, refused by `parse_fn_decl` (`E2115`).
+            TokenKind::Keyword(Kw::Static) if self.at_static_fn() => Some(ItemKind::Fn(self.parse_fn())),
             // `[GRM-21]` — a `gen fn` is admitted wherever `fn_decl` is.
             TokenKind::Ident(_) if self.at_gen_fn() => Some(ItemKind::Fn(self.parse_fn())),
             TokenKind::Ident(s) if s.is("safe") && (self.at_fn_at(1) || (self.at_kw_at(1, Kw::Unsafe) && self.at_fn_at(2))) => {
@@ -508,10 +512,7 @@ impl Parser<'_> {
         let generics = self.parse_generic_params();
         let mut bounds = Vec::new();
         if self.eat_punct(Punct::Colon) {
-            bounds.push(self.parse_bound());
-            while self.eat_punct(Punct::Plus) {
-                bounds.push(self.parse_bound());
-            }
+            bounds = self.parse_needs();
         }
         let value = self.eat_punct(Punct::Eq).then(|| self.parse_type());
         let range = self.parse_range_clause(&name, at_item_level, &generics);
@@ -870,8 +871,9 @@ impl Parser<'_> {
         loop {
             let word = match self.peek() {
                 TokenKind::Ident(_) | TokenKind::RawIdent(_) => self.expect_ident(),
-                // `unsafe` and `owned` are keywords elsewhere and contract words here (`[FFI-11]`).
-                &TokenKind::Keyword(keyword @ (Kw::Unsafe | Kw::Owned)) => {
+                // `unsafe` and `owns` (0.9.10's `owned`) are keywords elsewhere and contract words here
+                // (`[FFI-11]`).
+                &TokenKind::Keyword(keyword @ (Kw::Unsafe | Kw::Owns | Kw::Owned)) => {
                     let span = self.span();
                     self.bump();
                     Ident { name: keyword.as_str().into(), span }
@@ -967,6 +969,11 @@ impl Parser<'_> {
     }
 
     /// A function standing alone (an item or a local function): its name is an identifier.
+    /// `static fn` or `static gen fn`.
+    pub(crate) fn at_static_fn(&self) -> bool {
+        self.at_kw(Kw::Static) && (self.at_kw_at(1, Kw::Fn) || self.at_gen_fn_at(1))
+    }
+
     pub(crate) fn parse_fn(&mut self) -> FnDecl {
         self.parse_fn_decl(false)
     }
@@ -994,6 +1001,19 @@ impl Parser<'_> {
         } else {
             None
         };
+        // `[GRM-41]`, `[FN-4]` — `static fn`: a function of a type body with no object, called on the type.
+        let static_span = self.span();
+        let is_static = self.at_static_fn();
+        if is_static {
+            self.bump();
+            if !method {
+                self.report(
+                    Diagnostic::error(codes::E2115, static_span, "`static fn` is a function of a type body")
+                        .primary_label("not in a type body")
+                        .help("remove `static`: a function outside a type body has no object"),
+                );
+            }
+        }
         let dispatch = if self.eat_kw(Kw::Virtual) {
             Dispatch::Virtual
         } else if self.eat_kw(Kw::Override) {
@@ -1011,7 +1031,7 @@ impl Parser<'_> {
         self.expect_kw(Kw::Fn);
         let signature_start = self.pos;
         let name = if method { self.expect_member_name() } else { self.expect_fn_name() };
-        let generics = self.parse_generic_params();
+        let generics = self.parse_declared_generics();
 
         let lparen = self.span();
         self.expect_punct(Punct::LParen);
@@ -1024,7 +1044,42 @@ impl Parser<'_> {
         }
         self.expect_punct(Punct::RParen);
 
+        // `[GRM-41]`, `[FN-4]` — `owns this` after the parameters: the method takes its object over.
+        let owns_this_span = self.span();
+        let owns_this = self.at_kw(Kw::Owns) && self.at_kw_at(1, Kw::This);
+        if owns_this {
+            self.bump();
+            self.bump();
+        }
+        let explicit_receiver = params.iter().any(|param| matches!(param.kind, ParamKind::Receiver { .. }));
+        if is_static && explicit_receiver {
+            let span = params[0].span;
+            self.report(
+                Diagnostic::error(codes::E1010, span, format!("`{}` is a `static fn`: it has no object", name.name))
+                    .help("remove the object from its parameters, or `static` to make it a method"),
+            );
+        }
+        if owns_this && (!method || is_static || explicit_receiver) {
+            let span = owns_this_span.to(self.prev_span());
+            let why = if !method || is_static { "has no object" } else { "takes its object in its parameters" };
+            self.report(Diagnostic::error(codes::E1010, span, format!("`owns this` on a function that {why}")).help("remove `owns this`"));
+        }
+        // A method that does not list its object: it is `this`, its mode worked out from the body
+        // (`[EXC-15]`). 0.9.10 read such a function as one with no object; M1's migration writes
+        // `static` before those (`M1-plan.md`).
+        if method && !is_static && !explicit_receiver {
+            let id = self.next_id();
+            let mode = if owns_this { Mode::Owned } else { Mode::Mut };
+            let kind = ParamKind::Receiver { ty: None, implicit: true };
+            params.insert(0, Param { id, mode, is_const: false, kind, default: None, span: name.span });
+        }
+
         let ret = self.eat_punct(Punct::Arrow).then(|| self.parse_type());
+        // `[GRM-41]` — `from` and what the result points into come after its type.
+        let from = (ret.is_some() && self.at_contextual("from")).then(|| {
+            self.bump();
+            self.expect_ident()
+        });
         let where_clause = self.parse_where_clause();
 
         // A body is present unless this is an interface or extern signature.
@@ -1035,8 +1090,8 @@ impl Parser<'_> {
         }
         let body_start = self.pos;
         let body = if self.eat_punct(Punct::Colon) { Some(self.parse_block()) } else { None };
-        // `[DIA-21]` P14 — a method whose body uses `self` it does not take.
-        if method && body.is_some() {
+        // `[DIA-21]` P14 — `self` in a method, listed or used; an interface's method lists it too.
+        if method {
             let body_end = self.pos;
             self.python_missing_self(lparen, &mut params, body_start..body_end);
         }
@@ -1050,7 +1105,7 @@ impl Parser<'_> {
             self.expect_newline();
         }
 
-        FnDecl { name, is_unsafe, is_safe, is_foreign_decl: false, written_unsafe: is_unsafe, abi, is_gen, dispatch, generics, params, ret, where_clause, body }
+        FnDecl { name, is_unsafe, is_safe, is_foreign_decl: false, written_unsafe: is_unsafe, abi, is_gen, dispatch, generics, params, ret, from, where_clause, body }
     }
 
     fn parse_param(&mut self) -> Param {
@@ -1058,13 +1113,9 @@ impl Parser<'_> {
         self.python_star_param();
         let start = self.span();
         let id = self.next_id();
-        let mode = if self.eat_kw(Kw::Mut) {
-            Mode::Mut
-        } else if self.eat_kw(Kw::Owned) {
-            Mode::Owned
-        } else {
-            Mode::Borrow
-        };
+        let before_word = self.pos;
+        let (mode, is_const) = self.parse_param_word(false);
+        let worded = self.pos != before_word;
 
         // `[FN-4]` — the receiver follows the same modes as any parameter.
         if self.at_kw(Kw::SelfValue) {
@@ -1073,7 +1124,8 @@ impl Parser<'_> {
             return Param {
                 id,
                 mode,
-                kind: ParamKind::Receiver { ty },
+                is_const,
+                kind: ParamKind::Receiver { ty, implicit: false },
                 default: None,
                 span: start.to(self.prev_span()),
             };
@@ -1081,6 +1133,7 @@ impl Parser<'_> {
 
         let name = self.expect_ident();
         self.expect_punct(Punct::Colon);
+        let mode = if !worded && self.refuse_mode_in_type(name) { Mode::Mut } else { mode };
         let ty = self.parse_type();
         let default = self.eat_punct(Punct::Eq).then(|| self.parse_expr());
         // `[CLO-6]` — calling a `once fn` parameter consumes it, so it is taken over as an
@@ -1089,16 +1142,88 @@ impl Parser<'_> {
         Param {
             id,
             mode,
+            is_const,
             kind: ParamKind::Named { name, ty },
             default,
             span: start.to(self.prev_span()),
         }
     }
 
+    /// `[FN-1]` — the word before a parameter: `ref` (reads, the default, which may be left out),
+    /// `ref mut`, `const ref mut` or `owns`, and whether it is `const ref mut`. 0.9.10's `mut` and
+    /// `owned` are read too until M1's migration has respelled every use (`M1-plan.md`, step 4).
+    /// In a callable type (`in_type`) a `ref` without `mut` is left to the type: `fn(ref K)` keeps
+    /// 0.9.10's reference type, which reads as the word does.
+    /// `[GRM-41]` — `c: ref mut Counter`, the mode written in the type, after `name:`: `E0117`, the
+    /// line with the mode on the name. The type is read as written, so the parameter checks as it meant.
+    /// In a foreign declaration, `x: ref mut T` is the pointer C takes, which its contract describes
+    /// (`[FFI-11]`): a type, not a mode.
+    /// Refused, the words are taken and the parameter is read as the line written right is (`ref mut
+    /// c: Counter`), so what is checked after is what was meant: whether it was.
+    /// Called for a name with no word before it: `ref mut x: ref mut T` is a parameter of a view type.
+    pub(crate) fn refuse_mode_in_type(&mut self, name: Ident) -> bool {
+        if !(self.at_kw(Kw::Ref) && self.at_kw_at(1, Kw::Mut)) || self.in_extern_block {
+            return false;
+        }
+        let words = self.span().to(self.tokens[self.pos + 1].span);
+        let written = ember_span::Span::new(name.span.file, name.span.start, self.tokens[self.pos + 2].span.start);
+        let line = self.line_with(written, &format!("ref mut {}: ", name.name));
+        self.report(
+            Diagnostic::error(codes::E0117, words, "the mode goes on the name, not in its type")
+                .help(format!("write `{line}`")),
+        );
+        self.bump();
+        self.bump();
+        true
+    }
+
+    pub(crate) fn parse_param_word(&mut self, in_type: bool) -> (Mode, bool) {
+        if self.at_kw(Kw::Const) && self.at_kw_at(1, Kw::Ref) && self.at_kw_at(2, Kw::Mut) {
+            self.bump();
+            self.bump();
+            self.bump();
+            return (Mode::Mut, true);
+        }
+        if self.at_kw(Kw::Ref) && self.at_kw_at(1, Kw::Mut) {
+            self.bump();
+            self.bump();
+            return (Mode::Mut, false);
+        }
+        if !in_type && self.eat_kw(Kw::Ref) {
+            return (Mode::Borrow, false);
+        }
+        if self.eat_kw(Kw::Owns) {
+            return (Mode::Owned, false);
+        }
+        // `[MOD-3]` — 0.9.10's `owned` is `owns`.
+        if self.at_kw(Kw::Owned) {
+            let span = self.span();
+            self.bump();
+            self.report(
+                Diagnostic::error(codes::E1010, span, "`owned` is gone from Ember: the word that hands a value over is `owns`")
+                    .help(format!("write `{}`", self.line_with(span, "owns"))),
+            );
+            return (Mode::Owned, false);
+        }
+        // `[GRM-41]` — `mut` alone says nothing of what is passed: `ref mut`.
+        if self.at_kw(Kw::Mut) {
+            let span = self.span();
+            self.bump();
+            if !self.at_kw(Kw::SelfValue) {
+                self.report(
+                    Diagnostic::error(codes::E0113, span, "`mut` alone is no word for a parameter: one the function may change is `ref mut`")
+                        .help(format!("write `{}`", self.line_with(span, "ref mut"))),
+                );
+            }
+            return (Mode::Mut, false);
+        }
+        (Mode::Borrow, false)
+    }
+
     fn parse_struct(&mut self) -> StructDecl {
         self.expect_kw(Kw::Struct);
         let name = self.expect_ident();
-        let generics = self.parse_generic_params();
+        let generics = self.parse_declared_generics();
         let implements = self.parse_implements();
         let where_clause = self.parse_where_clause();
         self.expect_punct(Punct::Colon);
@@ -1118,7 +1243,7 @@ impl Parser<'_> {
         };
         self.expect_kw(Kw::Class);
         let name = self.expect_ident();
-        let generics = self.parse_generic_params();
+        let generics = self.parse_declared_generics();
         // `[GRM-1]` — the base class is written in parentheses, at most one.
         let base = if self.eat_punct(Punct::LParen) {
             let base = self.parse_type();
@@ -1225,12 +1350,7 @@ impl Parser<'_> {
         let mut supertraits = Vec::new();
         if self.at_punct(Punct::Colon) && !self.at_newline_at(1) {
             self.bump();
-            loop {
-                supertraits.push(self.parse_bound());
-                if !self.eat_punct(Punct::Plus) {
-                    break;
-                }
-            }
+            supertraits = self.parse_needs();
         }
         let where_clause = self.parse_where_clause();
         self.expect_punct(Punct::Colon);
@@ -1301,16 +1421,135 @@ impl Parser<'_> {
             let start = self.span();
             let subject = self.parse_type();
             self.expect_punct(Punct::Colon);
-            let mut list = vec![self.parse_bound()];
-            while self.eat_punct(Punct::Plus) {
-                list.push(self.parse_bound());
-            }
+            let list = self.parse_needs();
             bounds.push(Bound { subject, bounds: list, span: start.to(self.prev_span()) });
             if !self.eat_punct(Punct::Comma) {
                 break;
             }
         }
         bounds
+    }
+
+    /// `[GRM-40]` — whether this line holds type parameters: it begins with `[`, and the line after it
+    /// begins a function, struct or class declaration, with `pub`, `open`, `abstract`, `static`,
+    /// `virtual`, `override`, `gen`, `unsafe` or `extern` before it, or none. The one place the
+    /// parser looks past a line's end.
+    pub(crate) fn at_type_params_line(&self) -> bool {
+        if !self.at_punct(Punct::LBracket) {
+            return false;
+        }
+        let mut depth = 0usize;
+        let mut n = 0;
+        loop {
+            match self.peek_at(n) {
+                TokenKind::Punct(p) if p.is_open_bracket() => depth += 1,
+                TokenKind::Punct(p) if p.is_close_bracket() => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent | TokenKind::Eof => return false,
+                _ => {}
+            }
+            n += 1;
+        }
+        if !matches!(self.peek_at(n + 1), TokenKind::Newline) {
+            return false;
+        }
+        n += 2;
+        loop {
+            match self.peek_at(n) {
+                TokenKind::Keyword(Kw::Fn | Kw::Struct | Kw::Class) => return true,
+                TokenKind::Keyword(Kw::Static | Kw::Virtual | Kw::Override | Kw::Unsafe) => n += 1,
+                TokenKind::Keyword(Kw::Pub) => {
+                    n += 1;
+                    // `pub(package)`, `pub(package, read)`
+                    if matches!(self.peek_at(n), TokenKind::Punct(Punct::LParen)) {
+                        while !matches!(self.peek_at(n), TokenKind::Punct(Punct::RParen) | TokenKind::Newline | TokenKind::Eof) {
+                            n += 1;
+                        }
+                        n += 1;
+                    }
+                }
+                TokenKind::Keyword(Kw::Extern) => {
+                    n += 1;
+                    if matches!(self.peek_at(n), TokenKind::Lit(ember_lexer::Lit::Str(_))) {
+                        n += 1;
+                    }
+                }
+                TokenKind::Ident(s) if s.is("open") || s.is("abstract") || s.is("gen") || s.is("safe") => n += 1,
+                _ => return false,
+            }
+        }
+    }
+
+    /// `[GRM-40]` — reads a type-parameter line, if this is one, for the declaration under it.
+    pub(crate) fn parse_type_params_line(&mut self) {
+        if !self.at_type_params_line() {
+            return;
+        }
+        let start = self.span();
+        let params = self.parse_generic_params();
+        let span = start.to(self.prev_span());
+        self.expect_newline();
+        self.type_params_line = Some((params, span));
+    }
+
+    /// The type parameters of a function, struct or class: those of the line above it (`[GRM-40]`).
+    /// 0.9.10's brackets after its name are `E0100`, its help the two lines to write, and read so the
+    /// declaration checks as it meant.
+    fn parse_declared_generics(&mut self) -> Vec<GenericParam> {
+        let open = self.span();
+        let outer = std::mem::replace(&mut self.misplaced_generics, true);
+        let after_name = self.parse_generic_params();
+        self.misplaced_generics = outer;
+        let Some((line, span)) = self.type_params_line.take() else {
+            if !after_name.is_empty() {
+                let brackets = open.to(self.prev_span());
+                let written = self.type_params_written(&after_name);
+                let declaration = self.line_with(brackets, "");
+                self.report(
+                    Diagnostic::error(codes::E0100, brackets, "type parameters go on a line of their own, above the declaration")
+                        .help(format!("write `{written}` on the line above `{declaration}`"))
+                        .note("a function's, struct's or class's type parameters are not written after its name [GRM-40]"),
+                );
+            }
+            return after_name;
+        };
+        if !after_name.is_empty() {
+            self.report(
+                Diagnostic::error(codes::E0100, span, "type parameters are written twice")
+                    .help("keep the line above the declaration and remove the brackets after its name"),
+            );
+        }
+        line
+    }
+
+    /// `[GRM-40]`, `[TYP-17]` — type parameters as their line is written: `[T: needs (A, B) = D]`.
+    fn type_params_written(&self, params: &[GenericParam]) -> String {
+        let text = |span: ember_span::Span| self.src.get(span.start as usize..span.end as usize).unwrap_or("T").to_string();
+        let written: Vec<String> = params
+            .iter()
+            .map(|param| {
+                if let Some(ty) = &param.const_ty {
+                    return format!("const {}: {}", param.name.name, text(ty.span));
+                }
+                let mut out = param.name.name.to_string();
+                let bounds: Vec<String> = param.bounds.iter().map(|bound| text(bound.span)).collect();
+                match bounds.as_slice() {
+                    [] => {}
+                    // A tuple is one bound: `needs ((int, int))`.
+                    [one] if !one.starts_with('(') => out.push_str(&format!(": needs {one}")),
+                    _ => out.push_str(&format!(": needs ({})", bounds.join(", "))),
+                }
+                if let Some(default) = &param.default {
+                    out.push_str(&format!(" = {}", text(default.span)));
+                }
+                out
+            })
+            .collect();
+        format!("[{}]", written.join(", "))
     }
 
     fn parse_generic_params(&mut self) -> Vec<GenericParam> {
@@ -1344,10 +1583,7 @@ impl Parser<'_> {
             let name = self.expect_ident();
             let mut bounds = Vec::new();
             if self.eat_punct(Punct::Colon) {
-                bounds.push(self.parse_bound());
-                while self.eat_punct(Punct::Plus) {
-                    bounds.push(self.parse_bound());
-                }
+                bounds = self.parse_needs();
             }
             let default = self.eat_punct(Punct::Eq).then(|| self.parse_type());
             params.push(GenericParam {
@@ -1423,6 +1659,7 @@ impl Parser<'_> {
         doc: Option<String>,
         attrs: Vec<Attribute>,
     ) -> Option<Member> {
+        self.parse_type_params_line();
         // `[DIA-21]` P2 — `def m(self):` in a type's body is a method.
         self.python_def();
         let start = self.span();
@@ -1433,6 +1670,7 @@ impl Parser<'_> {
             TokenKind::Keyword(Kw::Fn | Kw::Unsafe | Kw::Virtual | Kw::Override) => {
                 MemberKind::Fn(self.parse_method())
             }
+            TokenKind::Keyword(Kw::Static) if self.at_static_fn() => MemberKind::Fn(self.parse_method()),
             TokenKind::Ident(_) if self.at_gen_fn() => MemberKind::Fn(self.parse_method()),
             TokenKind::Keyword(Kw::Const) => MemberKind::Const(self.parse_const()),
             TokenKind::Keyword(Kw::Type) => MemberKind::TypeAlias(self.parse_type_alias(false)),
@@ -1484,6 +1722,44 @@ impl Parser<'_> {
         let ty = self.parse_type_nested(suffix);
         self.leave_nesting();
         ty
+    }
+
+    /// What a type parameter, an interface, an associated type or a `where` subject needs, after
+    /// its `:` (`[TYP-17]`): `needs B`, or several in round brackets, `needs (A, B)`. 0.9.10's `A + B`
+    /// is `E0100`, its help the bound as written after `needs`, and read so the bound checks as meant.
+    fn parse_needs(&mut self) -> Vec<TypeExpr> {
+        if !self.at_contextual("needs") {
+            let mut bounds = vec![self.parse_bound()];
+            while self.eat_punct(Punct::Plus) {
+                bounds.push(self.parse_bound());
+            }
+            let span = bounds[0].span.to(self.prev_span());
+            // Inside brackets after a name, the one refusal of those writes the whole line.
+            if self.misplaced_generics {
+                return bounds;
+            }
+            let texts: Vec<&str> = bounds.iter().map(|bound| self.src.get(bound.span.start as usize..bound.span.end as usize).unwrap_or("B")).collect();
+            let needs = if texts.len() == 1 { format!("needs {}", texts[0]) } else { format!("needs ({})", texts.join(", ")) };
+            self.report(
+                Diagnostic::error(codes::E0100, span, "what a type needs is written after `needs`")
+                    .help(format!("write `{needs}`"))
+                    .note("several are listed in round brackets: `T: needs (Add, Default)` [TYP-17]"),
+            );
+            return bounds;
+        }
+        self.bump();
+        if !self.eat_punct(Punct::LParen) {
+            return vec![self.parse_bound()];
+        }
+        let mut bounds = Vec::new();
+        while !self.at_punct(Punct::RParen) && !self.at_eof() {
+            bounds.push(self.parse_bound());
+            if !self.eat_punct(Punct::Comma) {
+                break;
+            }
+        }
+        self.expect_punct(Punct::RParen);
+        bounds
     }
 
     /// One bound of a list (`T: A + B`, `dyn A + B`), where `+` separates bounds: `F: fn() +
@@ -1623,16 +1899,11 @@ impl Parser<'_> {
                 let mut params = Vec::new();
                 while !self.at_punct(Punct::RParen) && !self.at_eof() {
                     let param_start = self.span();
-                    let mode = if self.eat_kw(Kw::Mut) {
-                        Mode::Mut
-                    } else if self.eat_kw(Kw::Owned) {
-                        Mode::Owned
-                    } else {
-                        Mode::Borrow
-                    };
+                    let (mode, is_const) = self.parse_param_word(true);
                     let ty = self.parse_type();
                     params.push(CallableTypeParam {
                         mode,
+                        is_const,
                         span: param_start.to(ty.span),
                         ty,
                     });

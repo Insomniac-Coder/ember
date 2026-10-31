@@ -15,19 +15,21 @@ struct Count:
 extend Count implements Iterator:
     type Item = int
 
-    fn next(mut self) -> Option[int]:
-        if self.n >= self.limit:
+    fn next() -> Option[int]:
+        if this.n >= this.limit:
             return None
-        self.n += 1
-        return Some(self.n)
+        this.n += 1
+        return Some(this.n)
 
-fn tally[I: Iterator](owned it: I) -> int:
+[I: needs Iterator]
+fn tally(owns it: I) -> int:
     n = 0
     for _ in it:
         n += 1
     return n
 
-fn sum_of[I: Iterator[Item = int]](owned it: I) -> int:
+[I: needs Iterator[Item = int]]
+fn sum_of(owns it: I) -> int:
     s = 0
     for x in it:
         s += x

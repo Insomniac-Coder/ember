@@ -8,8 +8,8 @@ struct Counter:
 
 extend Counter:
     @safety("this test sets up what the operation requires")
-    unsafe fn next(self) -> i32:
-        return self.value + 1
+    unsafe fn next() -> i32:
+        return this.value + 1
 
 fn main():
     counter = Counter(41)

@@ -4,7 +4,8 @@
 ## divides by zero is `E6004` at the use that makes that instance, never a
 ## type mismatch.
 
-fn bad[const N: int]() -> [int; N // (N - 3)]:
+[const N: int]
+fn bad() -> [int; N // (N - 3)]:
     return [0; N // (N - 3)]
 
 fn main():

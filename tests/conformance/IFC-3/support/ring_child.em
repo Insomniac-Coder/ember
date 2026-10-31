@@ -3,5 +3,5 @@
 
 from support.ring_parent import Scored
 
-pub interface Ranked: Scored:
-    fn best(self) -> Score
+pub interface Ranked: needs Scored:
+    fn best() -> Score

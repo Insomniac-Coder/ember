@@ -6,20 +6,21 @@
 # reported its `E2070` twice (checked opaquely, then for the instance).
 
 interface Conv[T]:
-    fn conv(self) -> T
+    fn conv() -> T
 
 struct Gadget:
     n: int
 
 extend Gadget implements Conv[bool]:
-    fn conv(self) -> bool:
+    fn conv() -> bool:
         return true
 
 extend Gadget implements Conv[Array[int]]:
-    fn conv(self) -> Array[int]:
-        return [self.n]
+    fn conv() -> Array[int]:
+        return [this.n]
 
-fn pick[T](g: Gadget, x: T) -> bool:
+[T]
+fn pick(g: Gadget, x: T) -> bool:
     return g.conv()    #$ error[E2070]: `conv` is offered by both `Conv[bool]` and `Conv[Array[i64]]`
 
 fn main():

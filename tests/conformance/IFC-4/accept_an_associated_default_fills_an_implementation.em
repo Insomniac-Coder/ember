@@ -8,43 +8,45 @@
 
 interface Combine:
     type Out = Self
-    fn combine(self, other: Self) -> Out
+    fn combine(other: Self) -> Out
 
 struct Meters:
     v: int
 
 extend Meters implements Combine:
-    fn combine(self, other: Meters) -> Meters:
-        return Meters(self.v + other.v)
+    fn combine(other: Meters) -> Meters:
+        return Meters(this.v + other.v)
 
 struct Pair:
     v: int
 
 extend Pair implements Combine:
     type Out = int
-    fn combine(self, other: Pair) -> int:
-        return self.v + other.v
+    fn combine(other: Pair) -> int:
+        return this.v + other.v
 
 interface Source:
     type Item
     type Key = Item
-    fn first(self) -> Item
-    fn key(self) -> Key
+    fn first() -> Item
+    fn key() -> Key
 
 struct Nums:
     n: int
 
 extend Nums implements Source:
     type Item = int
-    fn first(self) -> int:
-        return self.n
-    fn key(self) -> int:
-        return self.n * 10
+    fn first() -> int:
+        return this.n
+    fn key() -> int:
+        return this.n * 10
 
-fn both[T: Combine](a: T, b: T) -> T.Out:
+[T: needs Combine]
+fn both(a: T, b: T) -> T.Out:
     return a.combine(b)
 
-fn keyed[S: Source[Key = int]](s: S) -> int:
+[S: needs Source[Key = int]]
+fn keyed(s: S) -> int:
     return s.key()
 
 fn main():

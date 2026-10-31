@@ -370,9 +370,9 @@ fn a_binary_package_replaces_the_global_allocator() {
                 pub struct Plain:\n    pub n: int\n\npub static PLAIN: Plain = Plain(1)\n\n\
                 # SAFETY: every block is `System`'s, whose promises it keeps; this only counts them.\n\
                 unsafe extend Counting implements Allocator:\n    \
-                fn allocate(self, layout: Layout) -> *mut u8:\n        self.blocks.fetch_add(1)\n        return System().allocate(layout)\n\n    \
-                fn deallocate(self, p: *mut u8, layout: Layout):\n        System().deallocate(p, layout)\n\n    \
-                fn reallocate(self, p: *mut u8, old: Layout, new_size: usize) -> *mut u8:\n        self.blocks.fetch_add(1)\n        return System().reallocate(p, old, new_size)\n";
+                fn allocate(layout: Layout) -> *mut u8:\n        this.blocks.fetch_add(1)\n        return System().allocate(layout)\n\n    \
+                fn deallocate(p: *mut u8, layout: Layout):\n        System().deallocate(p, layout)\n\n    \
+                fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:\n        this.blocks.fetch_add(1)\n        return System().reallocate(p, old, new_size)\n";
     let main = "import heap\n\nfn main():\n    words: Array[String] = []\n    for i in 0..50:\n        words.push(f\"word {i}\")\n    \
                 println(words.len(), heap.COUNTING.blocks.load() >= 50)\n";
     let manifest = |kind: &str, named: &str| format!("[package]\nname = \"app\"\nkind = \"{kind}\"\n\n[build]\nglobal_allocator = \"{named}\"\n");

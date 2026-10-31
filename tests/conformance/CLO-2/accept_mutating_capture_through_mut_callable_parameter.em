@@ -6,7 +6,7 @@
 # The closure's mutable-capture capability is carried by the existing outer
 # parameter mode: `mut f` receives a mutable callable place and may invoke it.
 
-fn invoke(mut f: fn() -> i32) -> i32:
+fn invoke(ref mut f: fn() -> i32) -> i32:
     return f()
 
 fn main():

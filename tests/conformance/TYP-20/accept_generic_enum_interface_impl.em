@@ -3,15 +3,16 @@
 #$ stdout: 42
 
 interface Render:
-    fn render(self) -> i32
+    fn render() -> i32
 
 enum Message[T] implements Render:
     Value(value: T)
 
-    fn render(self) -> i32:
+    fn render() -> i32:
         return 42
 
-fn call_render[T: Render](value: T) -> i32:
+[T: needs Render]
+fn call_render(value: T) -> i32:
     return value.render()
 
 fn main():

@@ -8,12 +8,12 @@ class Door:
     name: String
     opened: int = 0
 
-    fn init(self, owned name: String):
-        self.name = name
-        self.opened += 1
+    fn init(owns name: String):
+        this.name = name
+        this.opened += 1
 
-    fn swing(self):
-        self.opened += 1
+    fn swing():
+        this.opened += 1
 
 fn main():
     door = Door("front")

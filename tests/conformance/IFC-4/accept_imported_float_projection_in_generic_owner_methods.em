@@ -11,24 +11,26 @@ struct Small:
 
 extend Small implements DecimalSource:
     type Item = f32
-    fn get(self) -> f32:
-        return self.value
+    fn get() -> f32:
+        return this.value
 
 struct Large:
     value: f64
 
 extend Large implements DecimalSource:
     type Item = f64
-    fn get(self) -> f64:
-        return self.value
+    fn get() -> f64:
+        return this.value
 
-struct Calculator[P: Copy]:
+[P: needs Copy]
+struct Calculator:
     marker: P
 
-    fn increases[S: DecimalSource, Q: Copy](self, source: S, suffix: Q) -> bool:
+    [S: needs DecimalSource, Q: needs Copy]
+    fn increases(source: S, suffix: Q) -> bool:
         item = decimal_value(source)
         return item.value + 1.0 > item.value
 
 fn main():
-    calculator = Calculator[str]("owner")
+    calculator = Calculator[StrView]("owner")
     println(calculator.increases(Small(9.0f32), false), calculator.increases(Large(16.0f64), true))

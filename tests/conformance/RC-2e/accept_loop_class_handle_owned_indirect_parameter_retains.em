@@ -12,11 +12,11 @@
 class Token:
     value: i32
 
-fn consume(owned token: Token) -> i32:
+fn consume(owns token: Token) -> i32:
     return token.value
 
 fn main():
-    operation: fn(owned Token) -> i32 = consume
+    operation: fn(owns Token) -> i32 = consume
     tokens: Array[Token] = Array[Token]()
     tokens.push(Token(7))
     for token in tokens:

@@ -20,7 +20,7 @@
 pub struct JobHandle:
     id: u64
 
-pub fn submit(owned f: fn()) -> JobHandle:
+pub fn submit(owns f: fn()) -> JobHandle:
     panic("`jobs.submit` is the compiler's")
 
 pub fn wait(h: JobHandle):

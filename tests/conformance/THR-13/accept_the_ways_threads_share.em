@@ -14,7 +14,7 @@ class Stats:
 
 static TOTAL: Atomic[int] = Atomic(0)
 
-fn bump(mut s: MutSpan[int], at: int, by: int):
+fn bump(ref mut s: MutSpan[int], at: int, by: int):
     s[at] += by
 
 fn main():

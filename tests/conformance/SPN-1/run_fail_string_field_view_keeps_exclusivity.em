@@ -7,11 +7,11 @@
 class TextBox:
     text: String
 
-    fn init(mut self):
-        self.text = String.from("valid UTF-8")
+    fn init():
+        this.text = String.from("valid UTF-8")
 
-    fn clear_text(mut self):
-        self.text.clear()
+    fn clear_text():
+        this.text.clear()
 
 fn main():
     box = TextBox()

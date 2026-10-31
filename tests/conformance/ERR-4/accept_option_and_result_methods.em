@@ -10,7 +10,7 @@
 # `[ERR-4]` — the tests look without consuming; `ok()`/`err()` keep one side
 # as an `Option`; `ok_or` turns an `Option` into a `Result`.
 
-fn parse(text: str) -> Result[int, String]:
+fn parse(text: StrView) -> Result[int, String]:
     if text == "42":
         return Ok(42)
     return Err(f"`{text}` is not a number")

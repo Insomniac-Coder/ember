@@ -21,12 +21,12 @@ fn main():
         w.add(e, Hp(n))
     seen = 0
     runs = 0
-    count = fn(mut q: Query[Hp], step: int):
+    count = fn(ref mut q: Query[Hp], step: int):
         runs += step
         for _ in q.iter():
             seen += 1
     w.run(count, 1)
     w.run(count, 1)
     println(runs, w.len(), seen)
-    w.run(fn(mut q: Query[Hp], step: int): runs += step, 5)
+    w.run(fn(ref mut q: Query[Hp], step: int): runs += step, 5)
     println(runs)

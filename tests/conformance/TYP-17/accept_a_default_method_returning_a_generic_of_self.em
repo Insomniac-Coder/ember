@@ -10,25 +10,26 @@
 # `doubled` is never made.
 
 interface Counter:
-    fn next(mut self) -> int
+    fn next() -> int
 
-    fn doubled(owned self) -> Doubled[Self]:
-        return Doubled(self)
+    fn doubled() owns this -> Doubled[Self]:
+        return Doubled(this)
 
-struct Doubled[C]:
+[C]
+struct Doubled:
     inner: C
 
-extend[C: Counter] Doubled[C] implements Counter:
-    fn next(mut self) -> int:
-        return 2 * self.inner.next()
+extend[C: needs Counter] Doubled[C] implements Counter:
+    fn next() -> int:
+        return 2 * this.inner.next()
 
 struct Up:
     n: int
 
 extend Up implements Counter:
-    fn next(mut self) -> int:
-        self.n += 1
-        return self.n
+    fn next() -> int:
+        this.n += 1
+        return this.n
 
 fn main():
     d = Up(0).doubled().doubled()

@@ -10,20 +10,21 @@
 # instance of `shown`, the bound says `Wrap[Labelled]`).
 
 interface Wrap[U]:
-    fn wrap(self) -> U
+    fn wrap() -> U
 
 struct Labelled:
     text: String
 
-extend[T: Display, U: From[String]] T implements Wrap[U]:
-    fn wrap(self) -> U:
-        return U.from(f"<{self}>")
+extend[T: needs Display, U: needs From[String]] T implements Wrap[U]:
+    fn wrap() -> U:
+        return U.from(f"<{this}>")
 
 extend Labelled implements From[String]:
-    fn from(owned value: String) -> Labelled:
+    static fn from(owns value: String) -> Labelled:
         return Labelled(value)
 
-fn shown[T: Wrap[Labelled]](value: T) -> String:
+[T: needs Wrap[Labelled]]
+fn shown(value: T) -> String:
     return value.wrap().text
 
 fn main():

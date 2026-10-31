@@ -19,10 +19,12 @@
 ## a packet holding the function and its result, and the runtime starts, joins and detaches the
 ## thread. The declarations give them their names.
 
-pub struct JoinHandle[R]:
+[R]
+pub struct JoinHandle:
     thread: *mut u8
 
-pub fn spawn[R](owned f: fn() -> R) -> JoinHandle[R]:
+[R]
+pub fn spawn(owns f: fn() -> R) -> JoinHandle[R]:
     pass
 
 @must_drop
@@ -35,6 +37,7 @@ pub fn scope() -> Scope:
     panic("`thread.scope` is the compiler's")
 
 @view
-pub struct ScopedJoinHandle[R]:
+[R]
+pub struct ScopedJoinHandle:
     anchor: ref u8
     thread: *mut u8

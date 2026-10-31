@@ -8,12 +8,13 @@
 
 interface Src:
     type Item
-    fn get(mut self) -> Option[Item]
+    fn get() -> Option[Item]
 
-    fn wrap(owned self) -> P[Self]:
-        return P(self, None)
+    fn wrap() owns this -> P[Self]:
+        return P(this, None)
 
-struct P[I: Src]:
+[I: needs Src]
+struct P:
     inner: I
     saved: Option[I.Item]
 
@@ -23,8 +24,8 @@ struct Ints:
 extend Ints implements Src:
     type Item = int
 
-    fn get(mut self) -> Option[int]:
-        return Some(self.n)
+    fn get() -> Option[int]:
+        return Some(this.n)
 
 fn main():
     w = Ints(n = 3).wrap()

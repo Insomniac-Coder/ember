@@ -7,9 +7,9 @@ struct Packet:
     x: i32
     y: i32
 
-pub extern "C" fn add(owned packet: Packet) -> i32:
+pub extern "C" fn add(owns packet: Packet) -> i32:
     return packet.x + packet.y
 
 fn main():
-    callback: extern "C" fn(owned Packet) -> i32 = add
+    callback: extern "C" fn(owns Packet) -> i32 = add
     println(callback(Packet(20, 22)))

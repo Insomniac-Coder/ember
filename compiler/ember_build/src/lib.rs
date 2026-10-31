@@ -689,7 +689,7 @@ impl std::fmt::Display for BuildError {
             ),
             BuildError::LinkTimedOut(message) => f.write_str(message),
             BuildError::FloatModeRefused { toolchain, flag, fast } => {
-                let attribute = if *fast { "@fastmath" } else { "@fp(contract)" };
+                let attribute = if *fast { "@fastmath" } else { "@fp(allow_fma)" };
                 write!(f, "`{toolchain}` does not take `{flag}`, which `{attribute}` needs")
             }
         }

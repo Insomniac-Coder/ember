@@ -244,7 +244,7 @@ fn component(name: ast::Ident, qualified: &str, hash: u64, soa: bool, span: Span
     let members = vec![
         alias("Read", ops("Read")),
         alias("Write", ops("Write")),
-        constant("component_name", "str", ast::Literal::Str(qualified.to_string())),
+        constant("component_name", "StrView", ast::Literal::Str(qualified.to_string())),
         constant("component_hash", "u64", ast::Literal::Int { value: u128::from(hash), suffix: None }),
         constant("component_soa", "bool", ast::Literal::Bool(soa)),
     ];

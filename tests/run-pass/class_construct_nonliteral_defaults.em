@@ -12,9 +12,9 @@ fn default_value() -> i32:
 class Defaults:
     value: i32 = default_value()
 
-    fn init(mut self):
-        println(self.value)
-        self.value = self.value + 4
+    fn init():
+        println(this.value)
+        this.value = this.value + 4
 
 class Memberwise:
     value: i32 = default_value()

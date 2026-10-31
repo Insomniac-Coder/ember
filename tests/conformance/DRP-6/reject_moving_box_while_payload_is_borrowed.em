@@ -2,7 +2,7 @@
 #$ rules: DRP-6, BRW-1, OWN-3
 # `get` is a real borrow of the Box owner, not a detached raw pointer.
 
-fn consume(owned value: Box[i32]):
+fn consume(owns value: Box[i32]):
     println(value.get())
 
 fn main():

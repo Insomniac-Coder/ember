@@ -8,8 +8,8 @@
 struct Handle:
     pub fd: i32
 
-    fn drop(mut self):
-        println(self.fd)
+    fn drop():
+        println(this.fd)
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     static mut current: Handle

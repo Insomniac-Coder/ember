@@ -3,7 +3,8 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 
-class Holder[T]:
+[T]
+class Holder:
     value: T = 42
 
 fn main():

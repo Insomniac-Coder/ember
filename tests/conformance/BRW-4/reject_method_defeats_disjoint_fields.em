@@ -9,8 +9,8 @@
 struct P:
     pub x: i32
     pub y: i32
-    fn set_x(mut self, v: i32):
-        self.x = v
+    fn set_x(v: i32):
+        this.x = v
 
 fn main():
     p = P(1, 2)

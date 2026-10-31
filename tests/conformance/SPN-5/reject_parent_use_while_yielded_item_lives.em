@@ -1,7 +1,8 @@
 #$ test: compile-fail
 #$ rules: SPN-5, BRW-1, LT-1, TST-25
 
-fn first_mut[T](mut span: MutSpan[T]) -> Option[ref mut T]:
+[T]
+fn first_mut(ref mut span: MutSpan[T]) -> Option[ref mut T]:
     iterator = span.iter_mut()
     item = iterator.next()
     _again = span.reborrow() #$ error[E3022]: `span` is already mutably borrowed

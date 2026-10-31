@@ -19,10 +19,10 @@ struct Recipe:
     servings: int
     ingredients: Array[Ingredient] = []
 
-    fn scaled(self, servings: int) -> Recipe:
-        factor = float(servings) / float(self.servings)
-        result = Recipe(title=self.title, servings=servings)
-        for ing in self.ingredients:
+    fn scaled(servings: int) -> Recipe:
+        factor = float(servings) / float(this.servings)
+        result = Recipe(title=this.title, servings=servings)
+        for ing in this.ingredients:
             result.ingredients.push(Ingredient(name=ing.name, amount=ing.amount * factor, unit=ing.unit))
         return result
 
@@ -52,7 +52,7 @@ fn format_amount(amount: float, unit: Unit) -> String:
         Tablespoon => f"{a:.1f} tbsp"
         Piece => f"{a.ceil():.0f}"
 
-fn parse_ingredient(line: str) -> Result[Ingredient]:
+fn parse_ingredient(line: StrView) -> Result[Ingredient]:
     parts = line.split(";")
     if parts.len() != 3:
         return Err(f"expected 'name; amount; unit'")
@@ -67,7 +67,7 @@ fn parse_ingredient(line: str) -> Result[Ingredient]:
         other => return Err(f"unknown unit '{other}'")
     return Ok(Ingredient(name=name, amount=amount, unit=unit))
 
-const PANCAKES: str = """flour; 250; g
+const PANCAKES: StrView = """flour; 250; g
 milk; 500; ml
 eggs; 2; pc
 sugar; 2; tsp

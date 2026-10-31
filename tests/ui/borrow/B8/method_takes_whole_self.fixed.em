@@ -2,9 +2,9 @@ struct Pair:
     pub x: i32
     pub y: i32
 
-    fn set_y(mut self, value: i32):
-        self.y = value
-        show(self)
+    fn set_y(value: i32):
+        this.y = value
+        show(this)
 
 fn show(p: Pair):
     println(p.y)

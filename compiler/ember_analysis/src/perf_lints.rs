@@ -210,7 +210,7 @@ impl Lint<'_> {
             self.emit(
                 Diagnostic::lint(codes::L2002, decl.span, format!("`{name}` is a {size}-byte `Copy` value passed by value"))
                     .primary_label("copied in by every call")
-                    .help(format!("take `{name}` borrowed (without `owned`): it is then passed by address and read in place"))
+                    .help(format!("take `{name}` borrowed (without `owns`): it is then passed by address and read in place"))
                     .note(format!(
                         "the lint reports `Copy` values larger than `large_copy = {{ threshold = N }}` bytes in `[lints]`, here {}",
                         self.settings.large_copy_threshold
@@ -656,6 +656,8 @@ fn upcast_source(body: &Body, mut local: LocalId) -> Option<Ty> {
                 return Some(*concrete);
             }
             Rvalue::Use(Operand::Copy(from) | Operand::Move(from)) if from.projection.is_empty() => local = from.local,
+            // A view of the local holding it (`_10 = &_3`): M1 passes a method's object that way.
+            Rvalue::Ref { place: from, .. } if from.projection.is_empty() => local = from.local,
             _ => return None,
         }
     }

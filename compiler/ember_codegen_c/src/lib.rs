@@ -717,7 +717,7 @@ struct UnitNames {
 /// `@fp(contract)` (the build also passes the flag); `@fastmath`'s are all
 /// flags.
 pub const FP_CONTRACT: [&str; 6] = [
-    "/* [CG-C-11] @fp(contract): a multiply and an add may be fused ([TYP-9b]). */",
+    "/* [CG-C-11] @fp(allow_fma): a multiply and an add may be fused ([TYP-9b]). */",
     "#if defined(__clang__)",
     "#pragma STDC FP_CONTRACT ON",
     "#elif defined(_MSC_VER)",
@@ -5040,7 +5040,9 @@ impl Emitter<'_> {
             // `[THR-1]`, `[RC-4]`: the runtime selects atomic counts for
             // explicitly synchronized classes using this type-info flag.
             self.line(if def.is_sync { "    EMBER_TI_SYNC," } else { "    UINT32_C(0)," });
-            self.line(&format!("    {},", c_string_literal(&def.name.to_string())));
+            // The class as the program writes it (`Bag[i64]`, D-941): the run time names it in its
+            // messages and a handle's `Debug`.
+            self.line(&format!("    {},", c_string_literal(&self.types.class_display_name(id))));
             self.line(&format!("    {base},"));
             // Field-drop glue is installed below when the object has fields
             // that need destruction. Virtual tables are compiler-owned and
@@ -8245,8 +8247,17 @@ impl Emitter<'_> {
         // holds is named with a `Deref` after the field; the field's own place
         // is its access word (`[EXC-19]`), which a store into the field takes
         // (through the table it read the box before the store wrote it).
+        // A carrier reached through a reference to it (`*_10`, a `ref mut Box[dyn I]`) is the
+        // carrier itself; only a place that is not one names what is behind the carrier before it.
+        let carries = |ty: Ty| match self.types.kind(ty) {
+            TyKind::Dyn { .. } => true,
+            TyKind::Struct(id) => self.box_inner_id(*id).is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. })),
+            _ => false,
+        };
         let (carrier, behind) = match place.projection.split_last() {
-            Some((Projection::Deref, prefix)) => (Place { local: place.local, projection: prefix.to_vec() }, true),
+            Some((Projection::Deref, prefix)) if !carries(self.place_ty(place, body)) => {
+                (Place { local: place.local, projection: prefix.to_vec() }, true)
+            }
             _ => (place.clone(), false),
         };
         let dyn_place = match self.types.kind(self.place_ty(&carrier, body)) {
@@ -13426,9 +13437,11 @@ fn interface_cache_parameter_root(body: &Body, receiver: &Place) -> Option<usize
     }
     for block in &body.blocks {
         for statement in &block.stmts {
+            // The reborrow of a `mut I` parameter (`&mut *value`), or, M1, the view of the parameter
+            // a call of a method that only reads its object passes (`&value`).
             let StmtKind::Assign {
                 place,
-                rvalue: Rvalue::Ref { place: source, mutable: true },
+                rvalue: Rvalue::Ref { place: source, mutable },
             } = &statement.kind
             else {
                 continue;
@@ -13436,7 +13449,7 @@ fn interface_cache_parameter_root(body: &Body, receiver: &Place) -> Option<usize
             if !place.projection.is_empty() || place.local.0 as usize != local {
                 continue;
             }
-            if !matches!(source.projection.as_slice(), [Projection::Deref]) {
+            if !(*mutable && matches!(source.projection.as_slice(), [Projection::Deref]) || !*mutable && source.projection.is_empty()) {
                 continue;
             }
             let root = source.local.0 as usize;

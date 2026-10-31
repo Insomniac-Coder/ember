@@ -11,7 +11,7 @@ struct Scaler:
     by: fn(int) -> int
 
 @noalloc
-fn scaled(mut s: Scaler, x: int) -> int:
+fn scaled(ref mut s: Scaler, x: int) -> int:
     return s.by(x)
 
 fn main():

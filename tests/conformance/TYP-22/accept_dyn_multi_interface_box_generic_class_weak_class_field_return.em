@@ -15,25 +15,26 @@
 # then invoke its mutable slot on the same generic class payload. The observer
 # remains separate from the box and upgrades only against the live Token owner.
 interface Observe:
-    fn observer(self) -> Weak[Token]
+    fn observer() -> Weak[Token]
 
 interface Bump:
-    fn bump(mut self) -> i32
+    fn bump() -> i32
 
 class Token:
     value: i32
 
-class Holder[T] implements Observe, Bump:
+[T]
+class Holder implements Observe, Bump:
     weak: Weak[Token]
     marker: T
     count: i32
 
-    fn observer(self) -> Weak[Token]:
-        return self.weak
+    fn observer() -> Weak[Token]:
+        return this.weak
 
-    fn bump(mut self) -> i32:
-        self.count = self.count + 1
-        return self.count
+    fn bump() -> i32:
+        this.count = this.count + 1
+        return this.count
 
 fn main():
     strong = Token(7)

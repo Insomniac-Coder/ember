@@ -7,8 +7,8 @@
 struct Resource:
     value: i32
 
-    fn drop(mut self):
-        println(self.value + 100)
+    fn drop():
+        println(this.value + 100)
 
 fn main():
     values: Array[Resource] = Array[Resource]()

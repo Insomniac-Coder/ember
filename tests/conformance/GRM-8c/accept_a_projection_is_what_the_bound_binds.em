@@ -8,13 +8,16 @@
 # made a hidden parameter of its own while the body read the binding, so `a + b` (a `T`) did not
 # match the declared `T.Output` (E2020), and `x + 1` on an `I.Item` had no `+` (E2040).
 
-fn sum2[T: Add[Output = T]](a: T, b: T) -> T.Output:
+[T: needs Add[Output = T]]
+fn sum2(a: T, b: T) -> T.Output:
     return a + b
 
-fn first[I: Iterator[Item = int]](owned it: I) -> I.Item:
+[I: needs Iterator[Item = int]]
+fn first(owns it: I) -> I.Item:
     return it.next().unwrap_or(0)
 
-fn bump[I: Iterator[Item = int]](owned it: I, x: I.Item) -> int:
+[I: needs Iterator[Item = int]]
+fn bump(owns it: I, x: I.Item) -> int:
     return x + 1
 
 fn main():

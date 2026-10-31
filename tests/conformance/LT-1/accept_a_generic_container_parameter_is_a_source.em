@@ -5,7 +5,8 @@
 # The source set comes from the declared signature, so a generic container
 # parameter is a source for every instantiation.
 
-fn first_of[T](xs: Array[T]) -> ref T:
+[T]
+fn first_of(xs: Array[T]) -> ref T:
     return ref xs[0]
 
 fn main():

@@ -25,7 +25,7 @@ class Gain:
 struct Scale:
     k: f64
 
-    fn apply(self, x: f64, y: f64 = x * self.k + 0.0625) -> f64:
+    fn apply(x: f64, y: f64 = x * this.k + 0.0625) -> f64:
         return y
 
 fn near(a: f64, eps: f64 = a * 0.001 + 1.0) -> f64:

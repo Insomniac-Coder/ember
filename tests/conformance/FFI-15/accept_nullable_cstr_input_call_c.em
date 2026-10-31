@@ -6,9 +6,9 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated, nullable), link_name="length_if_present")
-    safe fn length(text: Option[cstr]) -> usize
+    safe fn length(text: Option[CStrView]) -> usize
 
-pub extern "C" fn length_if_present(text: Option[cstr]) -> usize:
+pub extern "C" fn length_if_present(text: Option[CStrView]) -> usize:
     match text:
         None:
             return 0
@@ -17,7 +17,7 @@ pub extern "C" fn length_if_present(text: Option[cstr]) -> usize:
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated))
-    safe fn strlen(text: cstr) -> usize
+    safe fn strlen(text: CStrView) -> usize
 
 fn main():
     println(length(None))

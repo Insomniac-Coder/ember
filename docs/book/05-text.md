@@ -5,7 +5,7 @@ program). A `String` owns its text and can grow. `to_string()` makes a `String` 
 a `String` is used wherever a `str` is asked for:
 
 ```ember
-fn shout(text: str) -> String:
+fn shout(text: StrView) -> String:
     return text.to_upper() + "!"
 
 fn main():

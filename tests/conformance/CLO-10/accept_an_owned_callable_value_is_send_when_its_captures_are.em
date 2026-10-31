@@ -9,7 +9,8 @@
 
 import std.thread
 
-fn run_later[F: fn() -> int + Send](owned task: F) -> int:
+[F: needs (fn() -> int, Send)]
+fn run_later(owns task: F) -> int:
     h = thread.spawn(owned fn() -> int => task())
     return h.join()
 

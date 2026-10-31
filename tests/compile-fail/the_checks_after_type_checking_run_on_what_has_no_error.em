@@ -5,7 +5,7 @@
 # is in, and report what they find there. A function with an error, and the instance of a generic
 # made only for its wrong argument, are not checked further: nothing is reported twice.
 
-fn consume(owned values: Array[i32]) -> i32:
+fn consume(owns values: Array[i32]) -> i32:
     return values[0]
 
 fn twice(f: fn() -> i32) -> i32:
@@ -20,7 +20,7 @@ fn reads_nothing():
     k = 3  #$ warning[L1001]: `k` is never read
 
 fn wrong_type() -> int:
-    return "three"  #$ error[E2020]: expected `i64`, found `str`
+    return "three"  #$ error[E2020]: expected `i64`, found `StrView`
 
 fn main():
     values: Array[i32] = Array[i32]()

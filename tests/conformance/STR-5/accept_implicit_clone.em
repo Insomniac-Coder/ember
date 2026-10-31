@@ -20,13 +20,13 @@ enum Shape:
 struct Custom:
     n: int
 
-    fn clone(self) -> Custom:
-        return Custom(n=self.n + 100)
+    fn clone() -> Custom:
+        return Custom(n=this.n + 100)
 
 struct Resource:
     id: int
 
-    fn drop(mut self):
+    fn drop():
         pass
 
 struct Holder:

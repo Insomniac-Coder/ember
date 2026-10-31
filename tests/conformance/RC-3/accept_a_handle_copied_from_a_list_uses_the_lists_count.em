@@ -15,11 +15,11 @@
 class Node:
     v: int
 
-    fn bump(mut self):
-        self.v += 1
+    fn bump():
+        this.v += 1
 
-    fn drop(mut self):
-        println("drop", self.v)
+    fn drop():
+        println("drop", this.v)
 
 fn value_of(n: Node) -> int:
     return n.v

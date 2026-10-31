@@ -9,19 +9,23 @@
 fn apply(x: int, f: fn(int) -> int) -> int:
     return f(x)
 
-fn g[T](t: T) -> int:
+[T]
+fn g(t: T) -> int:
     k = 1
     return apply(2, fn(v) => v + k)
 
-fn shift[T](x: T, by: int) -> int:
+[T]
+fn shift(x: T, by: int) -> int:
     return apply(1, fn(v) => v + by)
 
-fn keep[T](x: T) -> int:
+[T]
+fn keep(x: T) -> int:
     k = 1
     h = fn(v: int) -> int => v + k
     return h(1)
 
-fn twice[T](x: T) -> int:
+[T]
+fn twice(x: T) -> int:
     return apply(3, fn(v) => v * 2) + apply(3, fn(v) => v * 2)
 
 fn main():

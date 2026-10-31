@@ -228,12 +228,13 @@ keywords! { Kw,
     Fn => "fn", For => "for", If => "if", Implements => "implements",
     Import => "import", In => "in", Interface => "interface", Is => "is",
     Let => "let", Match => "match", Mut => "mut", Not => "not",
-Or => "or", Override => "override", Owned => "owned",
+Or => "or", Override => "override", Owned => "owned", Owns => "owns",
     Pass => "pass", Pub => "pub", Ref => "ref", Return => "return",
-    SelfValue => "self", SelfType => "Self", Static => "static",
-    Struct => "struct", Super => "super", True => "true", Type => "type",
-    Unsafe => "unsafe", Virtual => "virtual", Void => "void", Where => "where",
-    While => "while", With => "with", Yield => "yield",
+    SelfValue => "self", SelfType => "Self", Shares => "shares", Sharedref => "sharedref",
+    Static => "static", Struct => "struct", Super => "super", This => "this",
+    ThreadShared => "thread_shared", True => "true", Type => "type",
+    Unsafe => "unsafe", Using => "using", Virtual => "virtual", Void => "void",
+    Weakref => "weakref", Where => "where", While => "while", With => "with", Yield => "yield",
 }
 
 // Reserved for future use: lexed as keywords, `E0005` if used. `[LEX-15]` (changed in 0.9.9)
@@ -345,10 +346,11 @@ mod tests {
 
     #[test]
     fn the_v1_keyword_list_is_the_one_in_the_spec() {
-        // Part II §4 lists 48: seven on each of six rows and six on the
-        // seventh, `yield` included (ERR-025) and `extend` not (ODR-030). A
-        // count that drifts means the table and this enum disagree.
-        assert_eq!(Kw::ALL.len(), 47);
+        // `[LEX-14]` (0.9.15) lists 52, `yield` included (ERR-025) and `extend` not (ODR-030), with
+        // `owns`, `shares`, `sharedref`, `this`, `thread_shared`, `using` and `weakref`; `owned` and
+        // `self` are lexed besides until M1's migration has respelled every use (M1-plan.md, step 4).
+        // A count that drifts means the table and this enum disagree.
+        assert_eq!(Kw::ALL.len(), 52 + 2);
         assert_eq!(Kw::from_str("yield"), Some(Kw::Yield), "[LEX-15b]");
         assert_eq!(Reserved::from_str("yield"), None, "[LEX-15b], errata ERR-025");
         // `[LEX-15]` (0.9.9): `async`, `await` and `macro` only (D-642).

@@ -6,11 +6,11 @@ from std.core import Default
 struct Bag:
     values: Array[i32]
 
-    fn drop(mut self):
-        println(self.values.len())
+    fn drop():
+        println(this.values.len())
 
 extend Bag implements Default:
-    fn default() -> Bag:
+    static fn default() -> Bag:
         return Bag(Array[i32]())
 
 fn make_bag(count: int) -> Bag:

@@ -3,7 +3,8 @@
 #$ profiles: debug, development, release
 #$ stdout: true
 
-fn empty[T]() -> *mut T:
+[T]
+fn empty() -> *mut T:
     return null[*mut T]()
 
 fn main():

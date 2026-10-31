@@ -99,7 +99,7 @@ pub fn surviving_count_operations(bodies: &[Body], types: &TypeTable) -> Vec<Cou
                         note(
                             data.terminator_span,
                             true,
-                            format!("{} is passed to an `owned` parameter, which ends its own count", described(body, place)),
+                            format!("{} is passed to an `owns` parameter, which ends its own count", described(body, place)),
                         );
                     }
                 }

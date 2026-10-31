@@ -8,9 +8,10 @@
 # specification's own example, iterated, and handed to a generic function bounded by `I`.
 
 fn evens(xs: Span[int]) -> some Iterator[Item = int]:
-    return xs.iter().copied().filter(fn(x) => x % 2 == 0)
+    return xs.iter().copy_each().filter(fn(x) => x % 2 == 0)
 
-fn total[I: Iterator[Item = int]](owned it: I) -> int:
+[I: needs Iterator[Item = int]]
+fn total(owns it: I) -> int:
     s = 0
     for x in it:
         s += x

@@ -149,11 +149,10 @@ impl Part {
 #[derive(Serialize, Deserialize, Default)]
 struct Form {
     bodies: Vec<Body>,
-    /// Each body's region contract, what it stores where its callers' regions do not reach, and
-    /// whether no caller's regions can follow its result (`ember_analysis::BorrowFacts`).
+    /// Each body's region contract, and what it stores where its callers' regions do not reach
+    /// (`ember_analysis::BorrowFacts`).
     contracts: Vec<(String, CallRegionContract)>,
     stores: Vec<(String, StoreSummary)>,
-    invalid: Vec<String>,
     /// What its bodies asked of the program.
     kept: Kept,
     /// The warnings the type check of its bodies reported, and those the checks of their MIR
@@ -545,7 +544,6 @@ impl Plan {
             }
             let mut contracts: HashMap<String, CallRegionContract> = form.contracts.into_iter().collect();
             let mut stores: HashMap<String, StoreSummary> = form.stores.into_iter().collect();
-            let invalid: HashSet<String> = form.invalid.into_iter().collect();
             for mut body in form.bodies {
                 if instance.is_none() {
                     self.kept_functions.insert(body.symbol.clone());
@@ -559,9 +557,6 @@ impl Plan {
                 }
                 if let Some(summary) = stores.remove(&body.symbol) {
                     facts.borrow.stores.insert(body.symbol.clone(), summary);
-                }
-                if invalid.contains(&body.symbol) {
-                    facts.borrow.invalid.insert(body.symbol.clone());
                 }
                 bodies.push(body);
             }
@@ -668,7 +663,6 @@ impl Plan {
                     .collect(),
                 contracts: symbols.iter().filter_map(|symbol| contracts.get(symbol).map(|contract| (symbol.clone(), contract.clone()))).collect(),
                 stores: symbols.iter().filter_map(|symbol| borrow.stores.get(symbol).map(|summary| (symbol.clone(), summary.clone()))).collect(),
-                invalid: symbols.iter().filter(|symbol| borrow.invalid.contains(*symbol)).cloned().collect(),
                 kept,
                 diagnostics,
                 body_diagnostics,
@@ -847,11 +841,11 @@ impl Plan {
     }
 }
 
-/// A body's facts (`[BLD-2]`): its region contract, what it stores where its callers' regions do
-/// not reach, and whether its result can be followed, hashed. These name parameters and paths into
+/// A body's facts (`[BLD-2]`): its region contract and what it stores where its callers' regions do
+/// not reach, hashed. These name parameters and paths into
 /// them, never a type or a place.
 fn facts_of(symbol: &str, contracts: &HashMap<String, CallRegionContract>, borrow: &BorrowFacts) -> Hash {
-    let facts = (contracts.get(symbol), borrow.stores.get(symbol), borrow.invalid.contains(symbol));
+    let facts = (contracts.get(symbol), borrow.stores.get(symbol));
     hash(&ember_span::codec::to_bytes(&facts).expect("facts are written"))
 }
 

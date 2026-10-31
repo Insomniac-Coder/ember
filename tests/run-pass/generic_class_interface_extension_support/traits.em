@@ -1,2 +1,2 @@
 pub interface Measure:
-    fn measure(self) -> i32
+    fn measure() -> i32

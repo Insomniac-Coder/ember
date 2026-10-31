@@ -9,9 +9,11 @@ struct Plain:
     v: int
 
 fn main():
-    fn shown[T: Display](x: T) -> String:
+    [T: needs Display]
+    fn shown(x: T) -> String:
         return f"{x}"
-    fn bumped[T](x: T) -> T:
+    [T]
+    fn bumped(x: T) -> T:
         return x + 1    #$ error[E2040]: `T`'s bounds do not provide a matching `Add` operator
     held = shown    #$ error[E2060]: `shown` is generic, so it is not one function
     typed: fn(int) -> String = shown    #$ error[E2060]: `shown` is generic, so it is not one function

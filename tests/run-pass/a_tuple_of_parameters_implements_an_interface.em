@@ -5,35 +5,37 @@
 # (`extend[A: Param, B: Param] (A, B) implements Params:`): every tuple of that arity whose
 # elements meet the bounds takes it, as an instance of a generic type takes its extensions. A tuple
 # is no package's own, so such an extension implements an interface (`[IFC-2]`).
-struct Mut[T]:
+[T]
+struct Mut:
     pass
 
 interface Param:
-    fn describe() -> String
+    static fn describe() -> String
 
 extend[T] Mut[T] implements Param:
-    fn describe() -> String:
+    static fn describe() -> String:
         return "mut"
 
 struct Pos:
     x: int
 
 extend Pos implements Param:
-    fn describe() -> String:
+    static fn describe() -> String:
         return "read"
 
 interface Params:
-    fn names() -> Array[String]
+    static fn names() -> Array[String]
 
-extend[A: Param, B: Param] (A, B) implements Params:
-    fn names() -> Array[String]:
+extend[A: needs Param, B: needs Param] (A, B) implements Params:
+    static fn names() -> Array[String]:
         return [A.describe(), B.describe()]
 
-extend[A: Param, B: Param, C: Param] (A, B, C) implements Params:
-    fn names() -> Array[String]:
+extend[A: needs Param, B: needs Param, C: needs Param] (A, B, C) implements Params:
+    static fn names() -> Array[String]:
         return [A.describe(), B.describe(), C.describe()]
 
-fn names_of[Q: Params]() -> Array[String]:
+[Q: needs Params]
+fn names_of() -> Array[String]:
     return Q.names()
 
 fn main():

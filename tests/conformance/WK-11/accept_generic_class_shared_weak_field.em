@@ -12,7 +12,8 @@
 struct Token:
     value: i32
 
-class Holder[T]:
+[T]
+class Holder:
     weak: Weak[Shared[Token]]
     marker: T
 

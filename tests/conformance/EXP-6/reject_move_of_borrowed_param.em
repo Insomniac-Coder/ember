@@ -8,8 +8,8 @@
 struct Inner:
     pub n: i32
 
-    fn drop(mut self):
-        println(self.n)
+    fn drop():
+        println(this.n)
 
 fn steal(o: Inner):
     x = o                        #$ error[E3013]: cannot move out of a borrowed parameter

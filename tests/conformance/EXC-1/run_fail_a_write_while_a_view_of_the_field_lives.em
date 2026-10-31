@@ -10,12 +10,12 @@ class Bag:
     items: Array[int]
     log: Array[int]
 
-    fn init(mut self):
-        self.items = [1, 2, 3]
-        self.log = []
+    fn init():
+        this.items = [1, 2, 3]
+        this.log = []
 
-    fn bump(mut self):
-        self.items.push(len(self.items) + 1)
+    fn bump():
+        this.items.push(len(this.items) + 1)
 
 fn main():
     b = Bag()

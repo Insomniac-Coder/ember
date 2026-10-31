@@ -14,10 +14,10 @@ import std.mem
 class Token:
     id: i32
 
-    fn drop(mut self):
-        println("drop", self.id)
+    fn drop():
+        println("drop", this.id)
 
-fn consume(owned value: Token):
+fn consume(owns value: Token):
     println("inside")
     mem.drop(value)
     println("after callee drop")

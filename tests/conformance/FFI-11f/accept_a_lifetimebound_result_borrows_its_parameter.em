@@ -27,8 +27,7 @@ fn second(values: CppVector[c_int]) -> ref c_int:
     unsafe:  # SAFETY(ffi): `values` is a live vector of three
         return cpp.pick(values, 1)
 
-@borrows(a, b)
-fn bigger(mut a: i32, mut b: i32) -> ref mut i32:
+fn bigger(ref mut a: i32, ref mut b: i32) -> ref mut i32:
     unsafe:  # SAFETY(ffi): two numbers the caller lends
         return cpp.larger(a, b)
 

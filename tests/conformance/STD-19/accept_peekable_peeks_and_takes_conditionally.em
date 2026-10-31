@@ -13,7 +13,7 @@
 
 fn main():
     xs = [5, 6, 7]
-    p = xs.iter().copied().peekable()
+    p = xs.iter().copy_each().peekable()
     match p.peek():
         Some(v):
             println("peek", v)
@@ -27,13 +27,13 @@ fn main():
             pass
     println(p.next(), p.next())
     ys = [1, 2, 5, 6]
-    q = ys.iter().copied().peekable()
+    q = ys.iter().copy_each().peekable()
     println(q.next_if(fn(x: ref int) => x < 3), q.next_if(fn(x: ref int) => x < 3), q.next_if(fn(x: ref int) => x < 3), q.next())
     zs = [4, 4, 9]
-    r = zs.iter().copied().peekable()
+    r = zs.iter().copy_each().peekable()
     println(r.next_if_eq(4), r.next_if_eq(4), r.next_if_eq(4), r.next())
     words = ["a".to_string(), "b".to_string()]
-    w = words.iter().cloned().peekable()
+    w = words.iter().copy_each().peekable()
     match w.peek():
         Some(s):
             println("peek", s)

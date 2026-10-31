@@ -39,7 +39,8 @@ struct Twice:
     a: u32
 
 @align(32)
-struct Cell32[T]:
+[T]
+struct Cell32:
     value: T
 
 fn off(p: *Line) -> int:

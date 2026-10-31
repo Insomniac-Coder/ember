@@ -18,10 +18,10 @@ struct Pos:
 struct Vel:
     x: int
 
-fn left(mut q: Query[(Entity, Pos)]):
+fn left(ref mut q: Query[(Entity, Pos)]):
     pass
 
-fn right(mut q: Query[(Entity, Mut[Vel])]):
+fn right(ref mut q: Query[(Entity, Mut[Vel])]):
     pass
 
 @sync
@@ -36,6 +36,6 @@ fn main():
     w.add(b, Vel(4))
     w.run_parallel([left, right])
     tally = Tally()
-    counted = system(owned fn(mut q: Query[Vel]): tally.total.fetch_add(1), "counted")
-    w.run_parallel([counted, system(owned fn(mut q: Query[Pos]): tally.total.fetch_add(2), "two")])
+    counted = system(owned fn(ref mut q: Query[Vel]): tally.total.fetch_add(1), "counted")
+    w.run_parallel([counted, system(owned fn(ref mut q: Query[Pos]): tally.total.fetch_add(2), "two")])
     println(tally.total.load())

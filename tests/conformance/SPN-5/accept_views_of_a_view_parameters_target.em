@@ -15,11 +15,11 @@ struct H:
     s: MutSpan[int]
     arr: Array[int]
 
-fn tail(mut s: MutSpan[int]) -> MutSpan[int]:
+fn tail(ref mut s: MutSpan[int]) -> MutSpan[int]:
     parts = s.split_at(1)
     return parts.1
 
-fn items(owned h: H) -> MutSpanIter[int]:
+fn items(owns h: H) -> MutSpanIter[int]:
     return h.s.iter_mut()
 
 fn main():

@@ -7,7 +7,7 @@
 struct Q:
     arr: Array[int]
 
-fn first(mut h: Q) -> ref mut int:
+fn first(ref mut h: Q) -> ref mut int:
     return ref mut h.arr[0]
 
 fn main():

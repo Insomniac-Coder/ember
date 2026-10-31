@@ -8,8 +8,8 @@ struct Bag:
     items: Array[int]
 
 extend Bag:
-    fn index(self, i: int) -> ref int:
-        return ref self.items[i]
+    fn index(i: int) -> ref int:
+        return ref this.items[i]
 
 struct Ro:
     items: Array[int]
@@ -17,8 +17,8 @@ struct Ro:
 extend Ro implements Index[int]:
     type Output = int
 
-    fn index(self, i: int) -> ref int:
-        return ref self.items[i]
+    fn index(i: int) -> ref int:
+        return ref this.items[i]
 
 fn main():
     b = Bag(items=[1])

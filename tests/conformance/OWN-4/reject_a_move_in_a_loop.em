@@ -13,7 +13,7 @@
 # its own use round a back edge leaves it *maybe* moved at the loop head,
 # because the entry state joins "not yet moved" with "moved last time".
 
-fn consume(owned xs: Array[i32]) -> i32:
+fn consume(owns xs: Array[i32]) -> i32:
     return xs[0]
 
 fn main():

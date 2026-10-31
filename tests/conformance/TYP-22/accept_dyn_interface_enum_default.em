@@ -7,7 +7,7 @@
 #$ assert-c: contains(em_vt_dyn_6Answer_for_6Signal_slot0)
 
 interface Answer:
-    fn answer(self) -> i32:
+    fn answer() -> i32:
         return 42
 
 enum Signal implements Answer:

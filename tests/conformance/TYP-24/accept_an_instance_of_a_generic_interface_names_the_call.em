@@ -6,17 +6,17 @@
 # Arguments that fit one instance choose it, by method or operator (D-313).
 
 interface Conv[T]:
-    fn conv(self) -> T
+    fn conv() -> T
 
 struct W:
     x: int
 
 extend W implements Conv[Array[int]]:
-    fn conv(self) -> Array[int]:
-        return [self.x]
+    fn conv() -> Array[int]:
+        return [this.x]
 
 extend W implements Conv[bool]:
-    fn conv(self) -> bool:
+    fn conv() -> bool:
         return true
 
 struct V:
@@ -24,13 +24,13 @@ struct V:
 
 extend V implements Add[int]:
     type Output = int
-    fn add(self, other: int) -> int:
-        return self.x + other
+    fn add(other: int) -> int:
+        return this.x + other
 
 extend V implements Add[V]:
     type Output = int
-    fn add(self, other: V) -> int:
-        return self.x + other.x + 100
+    fn add(other: V) -> int:
+        return this.x + other.x + 100
 
 fn main():
     w = W(x = 5)

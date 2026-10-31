@@ -11,11 +11,11 @@ import cpp "widgets.hpp" with (overlay = "overlays/widgets.em")
 class Button(cpp.Widget):
     codes: Array[i32] = []
 
-    override fn on_event(self, code: i32):
-        self.codes.push(code)
+    override fn on_event(code: i32):
+        this.codes.push(code)
 
-    fn press(self):
-        cpp.fire(self, 4)
+    fn press():
+        cpp.fire(this, 4)
 
 fn main():
     button = Button()

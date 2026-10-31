@@ -13,7 +13,7 @@
 class Token:
     value: i32
 
-    fn drop(mut self):
+    fn drop():
         println(7)
 
 fn expired() -> Weak[Token]:

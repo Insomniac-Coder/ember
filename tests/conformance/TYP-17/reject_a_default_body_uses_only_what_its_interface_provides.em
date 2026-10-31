@@ -7,20 +7,20 @@
 # no type implemented was never checked at all.
 
 interface Named:
-    fn name(self) -> str
+    fn name() -> StrView
 
-    fn shout(self) -> int:
-        return self.secret() #$ error[E2040]: `Self` has no method `secret`; its bounds do not provide one
+    fn shout() -> int:
+        return this.secret() #$ error[E2040]: `Self` has no method `secret`; its bounds do not provide one
 
 struct Dog:
     n: int
 
 extend Dog:
-    fn secret(self) -> int:
-        return self.n
+    fn secret() -> int:
+        return this.n
 
 extend Dog implements Named:
-    fn name(self) -> str:
+    fn name() -> StrView:
         return "dog"
 
 fn main():

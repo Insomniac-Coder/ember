@@ -4,19 +4,20 @@
 # `Thing: Named` is a `Shape`, not a `Colored`.
 
 interface Shape:
-    fn area(self) -> int
+    fn area() -> int
 
 interface Colored:
-    fn color(self) -> int
+    fn color() -> int
 
-interface Named: Shape:
-    fn name(self) -> str
+interface Named: needs Shape:
+    fn name() -> StrView
 
 interface Holder:
-    type Thing: Named
-    fn get(self) -> Thing
+    type Thing: needs Named
+    fn get() -> Thing
 
-fn tint[H: Holder](h: H) -> int:
+[H: needs Holder]
+fn tint(h: H) -> int:
     return h.get().color() #$ error[E2040]: `H.Thing` has no method `color`; its bounds do not provide one
 
 fn main():

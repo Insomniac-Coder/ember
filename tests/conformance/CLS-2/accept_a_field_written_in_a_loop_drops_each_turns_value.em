@@ -11,16 +11,16 @@
 class Tag:
     n: int
 
-    fn drop(mut self):
-        println(f"dropped {self.n}")
+    fn drop():
+        println(f"dropped {this.n}")
 
 class Holder:
     tag: Tag
 
-    fn init(mut self, turns: int):
-        self.tag = Tag(n=0)
+    fn init(turns: int):
+        this.tag = Tag(n=0)
         for i in range(1, turns):
-            self.tag = Tag(n=i)
+            this.tag = Tag(n=i)
 
 fn main():
     h = Holder(3)

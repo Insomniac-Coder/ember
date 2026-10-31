@@ -7,7 +7,7 @@
 struct Resource:
     id: i32
 
-    fn drop(mut self):
+    fn drop():
         pass
 
 @derive(Clone)

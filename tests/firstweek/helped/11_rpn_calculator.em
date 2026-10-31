@@ -9,14 +9,14 @@ enum CalcError:
 class Calculator:
     stack: Array[float] = []
 
-    fn pop(self, op: str) -> Result[float, CalcError]:
-        match self.stack.pop():
+    fn pop(op: StrView) -> Result[float, CalcError]:
+        match this.stack.pop():
             Some(v) => return Ok(v)
             None => return Err(CalcError.StackUnderflow(op.to_string()))
 
-    fn apply(self, op: str) -> Result[(), CalcError]:
-        b = self.pop(op)?
-        a = self.pop(op)?
+    fn apply(op: StrView) -> Result[(), CalcError]:
+        b = this.pop(op)?
+        a = this.pop(op)?
         if op == "/" and b == 0.0:
             return Err(CalcError.DivisionByZero)
         result = match op:
@@ -26,30 +26,30 @@ class Calculator:
             "/" => a / b
             "^" => a ** b
             _ => return Err(CalcError.UnknownToken(op.to_string()))
-        self.stack.push(result)
+        this.stack.push(result)
         return Ok(())
 
-    fn evaluate(self, line: str) -> Result[float, CalcError]:
-        self.stack.clear()
+    fn evaluate(line: StrView) -> Result[float, CalcError]:
+        this.stack.clear()
         for token in line.split_whitespace():
             if token in ["+", "-", "*", "/", "^"]:
-                self.apply(token)?
+                this.apply(token)?
             elif token == "dup":
-                v = self.pop("dup")?
-                self.stack.push(v)
-                self.stack.push(v)
+                v = this.pop("dup")?
+                this.stack.push(v)
+                this.stack.push(v)
             elif token == "swap":
-                b = self.pop("swap")?
-                a = self.pop("swap")?
-                self.stack.push(b)
-                self.stack.push(a)
+                b = this.pop("swap")?
+                a = this.pop("swap")?
+                this.stack.push(b)
+                this.stack.push(a)
             else:
                 match token.parse[float]():
-                    Ok(v) => self.stack.push(v)
+                    Ok(v) => this.stack.push(v)
                     Err(_) => return Err(CalcError.UnknownToken(token.to_string()))
-        if self.stack.len() != 1:
-            return Err(CalcError.LeftoverValues(self.stack.len()))
-        return Ok(self.stack[0])
+        if this.stack.len() != 1:
+            return Err(CalcError.LeftoverValues(this.stack.len()))
+        return Ok(this.stack[0])
 
 fn describe(e: CalcError) -> String:
     return match e:

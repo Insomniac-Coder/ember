@@ -4,8 +4,7 @@
 # `[LT-1a]` (ODR-024) — `@borrows` may name a `mut` parameter, which is the
 # caller's place, even of a `Copy` type.
 
-@borrows(n)
-fn slot(mut n: int) -> ref int:
+fn slot(ref mut n: int) -> ref int from n:
     return ref n
 
 fn main():

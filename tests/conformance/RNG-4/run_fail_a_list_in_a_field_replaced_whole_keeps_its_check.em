@@ -8,8 +8,8 @@
 class Bag:
     items: Array[i32]
 
-    fn init(mut self):
-        self.items = []
+    fn init():
+        this.items = []
 
 fn big_list(top: i32) -> Array[i32]:
     xs: Array[i32] = []

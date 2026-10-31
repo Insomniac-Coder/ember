@@ -5,7 +5,7 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(data, borrowed, count(n)))
-    safe fn inspect(data: Span[u8], mut n: usize) -> i32
+    safe fn inspect(data: Span[u8], ref mut n: usize) -> i32
 
 fn main():
     pass

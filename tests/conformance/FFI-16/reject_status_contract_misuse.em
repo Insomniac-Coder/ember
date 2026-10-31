@@ -34,7 +34,7 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     safe fn plain_result(n: i32) -> i32
 
     @ffi(param(v, out))  #$ error[E5012]
-    safe fn no_count(mut v: i32) -> Real
+    safe fn no_count(ref mut v: i32) -> Real
 
 fn main():
     println(plain_result(1))

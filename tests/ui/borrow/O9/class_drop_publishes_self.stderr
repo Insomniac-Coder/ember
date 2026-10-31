@@ -1,7 +1,7 @@
-error[E3016]: `self` escapes its own drop
+error[E3016]: `this` escapes its own `drop`
   --> tests/ui/borrow/O9/class_drop_publishes_self.em:13:23
    |
-13 |         retained.push(self)
+13 |         retained.push(this)
    |                       ^^^^ published here
    |
    = help: move the data out with `mem.take` instead

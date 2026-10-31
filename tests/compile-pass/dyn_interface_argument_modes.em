@@ -3,7 +3,7 @@
 #$ assert-c: contains(int32_t (*slot0)(void*, int32_t, int32_t*))
 
 interface Adjust:
-    fn adjust(self, amount: i32, mut value: i32) -> i32
+    fn adjust(amount: i32, ref mut value: i32) -> i32
 
 fn take(x: ref dyn Adjust) -> i32:
     value: i32 = 1

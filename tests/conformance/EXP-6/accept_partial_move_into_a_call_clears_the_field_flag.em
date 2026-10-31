@@ -7,14 +7,14 @@
 struct Part:
     pub n: i32
 
-    fn drop(mut self):
-        println(self.n)
+    fn drop():
+        println(this.n)
 
 struct Pair:
     pub first: Part
     pub second: Part
 
-fn consume(owned part: Part):
+fn consume(owns part: Part):
     println(10)
 
 fn exercise(move_first: bool):

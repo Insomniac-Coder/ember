@@ -37,7 +37,8 @@ gen fn fizzbuzz(n: int) -> Generator[String]:
         else:
             yield f"{i}"
 
-fn take[I: Iterator[Item = int]](owned g: I, n: int) -> Array[int]:
+[I: needs Iterator[Item = int]]
+fn take(owns g: I, n: int) -> Array[int]:
     result: Array[int] = []
     for x in g:
         if result.len() >= n:

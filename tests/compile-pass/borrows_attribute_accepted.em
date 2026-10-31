@@ -5,8 +5,7 @@
 ## attribute saying which one the result points into, so the caller may keep
 ## using the other.
 
-@borrows(a)
-fn pick(a: ref i32, b: ref i32) -> ref i32:
+fn pick(a: ref i32, b: ref i32) -> ref i32 from a:
     return a
 
 fn main():

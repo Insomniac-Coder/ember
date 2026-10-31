@@ -12,7 +12,8 @@ struct Bad:
     r: ref int #$ error[E2080]: field `r` has type `ref i64`, which is not Zeroable
 
 @derive(Zeroable)
-struct Wrap[T]:
+[T]
+struct Wrap:
     item: T
 
 @derive(Zeroable)

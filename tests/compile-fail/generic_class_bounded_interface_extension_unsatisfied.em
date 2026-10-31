@@ -3,20 +3,21 @@
 #$ error[E2020]: expected `ref dyn Measure`, found `ref Holder[Plain]`
 
 interface Display:
-    fn score(self) -> i32
+    fn score() -> i32
 
 interface Measure:
-    fn measure(self) -> i32
+    fn measure() -> i32
 
 struct Plain:
     value: i32
 
-class Holder[T]:
+[T]
+class Holder:
     value: T
 
-extend[T: Display] Holder[T] implements Measure:
-    fn measure(self) -> i32:
-        return self.value.score()
+extend[T: needs Display] Holder[T] implements Measure:
+    fn measure() -> i32:
+        return this.value.score()
 
 fn measure(value: ref dyn Measure) -> i32:
     return value.measure()

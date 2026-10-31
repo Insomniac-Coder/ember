@@ -9,8 +9,8 @@
 
 interface Seq:
     type Item
-    type Size: Ord = int
-    fn next(mut self) -> Option[Item]
+    type Size: needs Ord = int
+    fn next() -> Option[Item]
 
 struct Down:
     n: int
@@ -19,26 +19,27 @@ extend Down implements Seq:
     type Item = int
     type Size = u64
 
-    fn next(mut self) -> Option[int]:
-        if self.n == 0:
+    fn next() -> Option[int]:
+        if this.n == 0:
             return None
-        self.n -= 1
-        return Some(self.n)
+        this.n -= 1
+        return Some(this.n)
 
-struct Peek[I: Seq]:
+[I: needs Seq]
+struct Peek:
     inner: I
     held: Option[I.Item]
 
-extend[I: Seq] Peek[I] implements Seq:
+extend[I: needs Seq] Peek[I] implements Seq:
     type Item = I.Item
     type Size = I.Size
 
-    fn next(mut self) -> Option[I.Item]:
-        return self.inner.next()
+    fn next() -> Option[I.Item]:
+        return this.inner.next()
 
-extend[I: Seq] Peek[I]:
-    fn again(mut self) -> Option[I.Item]:
-        return self.next()
+extend[I: needs Seq] Peek[I]:
+    fn again() -> Option[I.Item]:
+        return this.next()
 
 fn main():
     p: Peek[Down] = Peek(Down(3), None)

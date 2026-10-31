@@ -10,10 +10,12 @@
 
 from std.collections import DefaultHasher
 
-struct Holder[K, H = DefaultHasher]:
+[K, H = DefaultHasher]
+struct Holder:
     k: K
 
-struct Pair[A, B = A]:
+[A, B = A]
+struct Pair:
     a: A
     b: B
 

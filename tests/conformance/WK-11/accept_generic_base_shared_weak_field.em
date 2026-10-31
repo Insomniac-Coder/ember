@@ -11,19 +11,21 @@
 struct Token:
     value: i32
 
-open class Base[T]:
+[T]
+open class Base:
     weak: Weak[Shared[Token]]
     marker: T
 
-    fn init(mut self, weak: Weak[Shared[Token]], marker: T):
-        self.weak = weak
-        self.marker = marker
+    fn init(weak: Weak[Shared[Token]], marker: T):
+        this.weak = weak
+        this.marker = marker
 
-class Derived[T](Base[T]):
+[T]
+class Derived(Base[T]):
     flag: bool
 
-    fn init(mut self, weak: Weak[Shared[Token]], marker: T, flag: bool):
-        self.flag = flag
+    fn init(weak: Weak[Shared[Token]], marker: T, flag: bool):
+        this.flag = flag
         super.init(weak, marker)
 
 fn main():

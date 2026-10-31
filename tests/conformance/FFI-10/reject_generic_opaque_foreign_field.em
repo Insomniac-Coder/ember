@@ -6,7 +6,8 @@
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     type Handle
 
-struct Holder[T]:
+[T]
+struct Holder:
     value: T
 
 fn main():

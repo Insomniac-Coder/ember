@@ -6,11 +6,11 @@
 ## tuple or an array built only of string literals and values with no region.
 
 struct Named:
-    name: str
+    name: StrView
     age: int
 
 static FIRST: Named = Named("ann", 2)
-static PAIR: (int, str) = (1, "x")
+static PAIR: (int, StrView) = (1, "x")
 static NAMES: Array[Named] = [Named("bob", 3)]
 
 fn main():

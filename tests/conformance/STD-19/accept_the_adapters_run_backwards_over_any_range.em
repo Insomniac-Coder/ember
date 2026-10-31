@@ -16,7 +16,8 @@
 # and `len()` answers, step by step through std's adapters and as `for` loops. Each panicked
 # before ("a range of more than int.MAX values has no length", or an overflow).
 
-fn first[I: Iterator](owned from: I, n: int) -> Array[I.Item]:
+[I: needs Iterator]
+fn first(owns from: I, n: int) -> Array[I.Item]:
     it = from
     out: Array[I.Item] = []
     while out.len() < n:

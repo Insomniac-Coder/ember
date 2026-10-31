@@ -4,7 +4,7 @@
 # `[BCK-2]` — a result carries the loans of the arguments it borrows from, and a loan is live
 # while a value carrying it is used later: `r` is used after the push, so the push conflicts.
 
-fn pick(mut xs: MutSpan[int]) -> ref mut int:
+fn pick(ref mut xs: MutSpan[int]) -> ref mut int:
     return ref mut xs[0]
 
 fn main():

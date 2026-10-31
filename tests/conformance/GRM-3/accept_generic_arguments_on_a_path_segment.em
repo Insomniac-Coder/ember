@@ -4,10 +4,11 @@
 ## `[GRM-3]` — library and user generic types are ordinary paths, and generic
 ## arguments may sit on any segment: `Wrap[int].make`.
 
-struct Wrap[T]:
+[T]
+struct Wrap:
     value: T
 
-    fn make(v: T) -> Wrap[T]:
+    static fn make(v: T) -> Wrap[T]:
         return Wrap[T](v)
 
 fn main():

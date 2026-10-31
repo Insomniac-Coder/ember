@@ -10,8 +10,8 @@
 ## value's type: a struct, an enum, a scalar, and a class (whose clone is its handle, the object
 ## shared). So an array of them clones, and a struct with a `Box[dyn Shape]` field derives `Clone`.
 
-interface Shape: Clone:
-    fn area(self) -> float
+interface Shape: needs Clone:
+    fn area() -> float
 
 struct Square:
     side: float
@@ -23,26 +23,26 @@ enum Rect:
 class Tile:
     size: float
 
-    fn init(mut self, size: float):
-        self.size = size
+    fn init(size: float):
+        this.size = size
 
 extend Square implements Shape:
-    fn area(self) -> float:
-        return self.side * self.side
+    fn area() -> float:
+        return this.side * this.side
 
 extend Rect implements Shape:
-    fn area(self) -> float:
-        match self:
+    fn area() -> float:
+        match this:
             Rect.Sized(w, h):
                 return w * h
 
 extend float implements Shape:
-    fn area(self) -> float:
-        return self
+    fn area() -> float:
+        return this
 
 extend Tile implements Shape:
-    fn area(self) -> float:
-        return self.size
+    fn area() -> float:
+        return this.size
 
 struct Scene:
     shape: Box[dyn Shape]

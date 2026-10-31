@@ -9,15 +9,15 @@ class Counter:
     value: int
     log: Array[int]
 
-    fn init(mut self, value: int):
-        self.value = value
-        self.log = []
+    fn init(value: int):
+        this.value = value
+        this.log = []
 
-    fn reset(mut self):
-        self.value = 0
-        self.log.push(1)
+    fn reset():
+        this.value = 0
+        this.log.push(1)
 
-fn replace(mut c: Counter):
+fn replace(ref mut c: Counter):
     c = Counter(7)
 
 fn main():

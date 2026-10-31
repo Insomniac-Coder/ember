@@ -23,23 +23,23 @@
 struct Noisy:
     value: i32
 
-    fn drop(mut self):
-        println("dropped", self.value)
+    fn drop():
+        println("dropped", this.value)
 
 fn make(n: i32) -> fn(i32) -> i32:
     noisy = Noisy(n)
     return owned fn(x: i32) -> i32 => x + noisy.value
 
-fn call_owned(owned f: fn(i32) -> i32, x: i32) -> i32:
+fn call_owned(owns f: fn(i32) -> i32, x: i32) -> i32:
     return f(x)
 
 struct Holder:
     f: fn(i32) -> i32
 
-fn keep(owned f: fn(i32) -> i32) -> Holder:
+fn keep(owns f: fn(i32) -> i32) -> Holder:
     return Holder(f)
 
-fn finish(owned h: Holder):
+fn finish(owns h: Holder):
     pass
 
 fn call_once(f: once fn(i32) -> i32, x: i32) -> i32:
@@ -48,7 +48,8 @@ fn call_once(f: once fn(i32) -> i32, x: i32) -> i32:
 fn never_call(f: once fn(i32) -> i32):
     pass
 
-fn call_generic[F: fn(i32) -> i32](owned f: F, x: i32) -> i32:
+[F: needs fn(i32) -> i32]
+fn call_generic(owns f: F, x: i32) -> i32:
     return f(x)
 
 fn main():

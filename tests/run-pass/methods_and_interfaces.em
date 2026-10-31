@@ -2,25 +2,25 @@
 #$ rules: IFC-1, IFC-3, TYP-20, TYP-21, TYP-24
 
 interface Shape:
-    fn area(self) -> f32
+    fn area() -> f32
     # A default body: an implementer that says nothing gets this one.
-    fn sides(self) -> i32:
+    fn sides() -> i32:
         return 0
 
 struct Square implements Shape:
     side: f32
 
-    fn area(self) -> f32:
-        return self.side * self.side
+    fn area() -> f32:
+        return this.side * this.side
 
-    fn sides(self) -> i32:
+    fn sides() -> i32:
         return 4
 
 struct Circle implements Shape:
     r: f32
 
-    fn area(self) -> f32:
-        return self.r * self.r * 3.0
+    fn area() -> f32:
+        return this.r * this.r * 3.0
 
 struct Vec2:
     x: f32
@@ -28,32 +28,32 @@ struct Vec2:
 
 # `[IFC-1]` — `extend T:` adds inherent methods from outside the type body.
 extend Vec2:
-    fn length_squared(self) -> f32:
-        return self.x * self.x + self.y * self.y
+    fn length_squared() -> f32:
+        return this.x * this.x + this.y * this.y
 
 # `[TYP-21]` — an operator on a non-scalar is a call of the prelude's
 # operator interface (`[MOD-5]`), here `Add`.
 extend Vec2 implements Add:
     type Output = Vec2
 
-    fn add(self, rhs: Vec2) -> Vec2:
-        return Vec2(self.x + rhs.x, self.y + rhs.y)
+    fn add(rhs: Vec2) -> Vec2:
+        return Vec2(this.x + rhs.x, this.y + rhs.y)
 
 # A `mut self` method writes through to the caller's value.
 struct Counter:
     value: i32
 
-    fn get(self) -> i32:
-        return self.value
+    fn get() -> i32:
+        return this.value
 
-    fn bump(mut self):
-        self.value = self.value + 1
+    fn bump():
+        this.value = this.value + 1
 
-    fn advance(mut self, by: i32):
-        self.value = self.value + by
+    fn advance(by: i32):
+        this.value = this.value + by
 
 # A `mut` parameter is an inout, not a copy.
-fn double(mut n: i32):
+fn double(ref mut n: i32):
     n = n + n
 
 fn main():

@@ -16,7 +16,7 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(count, inout_count(items)), param(items, borrowed, count(count), nullable, exclusive), link_name="list_squares")
-    safe fn squares(mut count: u32, items: Option[MutSpan[i32]])
+    safe fn squares(ref mut count: u32, items: Option[MutSpan[i32]])
 
 pub extern "C" fn list_squares(count: *mut u32, items: *mut i32):
     total: u32 = 4

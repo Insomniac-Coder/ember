@@ -13,19 +13,19 @@ fn main():
     first = chunks.next()
     second = chunks.next()
     third = chunks.next()
-    match owned first:
+    match owns first:
         Some(a):
             a[0] = 10
             println(a.len())
         None:
             pass
-    match owned second:
+    match owns second:
         Some(b):
             b[0] = 30
             println(b.len())
         None:
             pass
-    match owned third:
+    match owns third:
         Some(c):
             c[0] = 50
             println(c.len())

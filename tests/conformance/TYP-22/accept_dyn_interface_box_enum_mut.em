@@ -5,12 +5,12 @@
 #$ assert-c: contains(em_vt_dyn_4Bump_for_6Signal_slot0)
 
 interface Bump:
-    fn bump(mut self) -> i32
+    fn bump() -> i32
 
 enum Signal implements Bump:
     Ready
 
-    fn bump(mut self) -> i32:
+    fn bump() -> i32:
         return 42
 
 fn main():

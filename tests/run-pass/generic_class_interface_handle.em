@@ -7,13 +7,14 @@
 # A generic interface application in handle position materializes its checked
 # contract before the class is erased to the one-word interface handle.
 interface Project[T]:
-    fn project(self) -> T
+    fn project() -> T
 
-class Pixel[T] implements Project[T]:
+[T]
+class Pixel implements Project[T]:
     value: T
 
-    fn project(self) -> T:
-        return self.value
+    fn project() -> T:
+        return this.value
 
 fn project(value: Project[i32]) -> i32:
     return value.project()

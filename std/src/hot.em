@@ -28,8 +28,8 @@ pub enum ReloadError:
     Foreign(error: String)
     Timeout
 
-extend[E: ForeignFailure] ReloadError implements From[E]:
-    fn from(owned value: E) -> ReloadError:
+extend[E: needs ForeignFailure] ReloadError implements From[E]:
+    static fn from(owns value: E) -> ReloadError:
         return ReloadError.Foreign(f"{value}")
 
 pub fn checkpoint():

@@ -10,7 +10,7 @@ from std.mem import assert_disjoint
 
 @noalloc
 @nosync
-@static_safe
+@no_alias_checks
 fn first_sum(a: Span[f32], b: Span[f32]) -> f32:
     match assert_disjoint(a, b):
         Ok((x, y)):

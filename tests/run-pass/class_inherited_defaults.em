@@ -14,15 +14,15 @@ fn derived_default() -> i32:
 open class Base:
     value: i32 = base_default()
 
-    fn init(mut self):
-        self.value = self.value + 1
+    fn init():
+        this.value = this.value + 1
 
 class Derived(Base):
     extra: i32 = derived_default()
 
-    fn init(mut self):
+    fn init():
         super.init()
-        self.extra = self.extra + 2
+        this.extra = this.extra + 2
 
 fn main():
     item = Derived()

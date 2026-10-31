@@ -20,25 +20,25 @@ struct Pair:
     y: int
 
 extend Pair:
-    fn sum(self) -> int:
-        return self.x + self.y
+    fn sum() -> int:
+        return this.x + this.y
 
 fn helper(x: int) -> int:
     return x * 2 + 1
 
 # Called from two places in one loop, so it is not simply folded into the
 # caller as a function called once is.
-fn calls(xs: Span[int], mut out: MutSpan[int]):
+fn calls(xs: Span[int], ref mut out: MutSpan[int]):
     @simd(assert)
     for i in 0..xs.len():
         out[i] = helper(xs[i]) + helper(xs[i] - 1)
 
-fn moved(mut ps: MutSpan[Vec3], vs: Span[Vec3], dt: f32):
+fn moved(ref mut ps: MutSpan[Vec3], vs: Span[Vec3], dt: f32):
     @simd(assert)
     for i in 0..ps.len():
         ps[i] += vs[i] * dt
 
-fn sums(ps: Span[Pair], mut out: MutSpan[int]):
+fn sums(ps: Span[Pair], ref mut out: MutSpan[int]):
     @simd(assert)
     for i in 0..ps.len():
         out[i] = ps[i].sum()

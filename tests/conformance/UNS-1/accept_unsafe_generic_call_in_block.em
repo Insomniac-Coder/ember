@@ -4,7 +4,8 @@
 #$ stdout: 42
 
 @safety("this test sets up what the operation requires")
-unsafe fn same[T](x: T) -> T:
+[T]
+unsafe fn same(x: T) -> T:
     return x
 
 fn main():

@@ -25,14 +25,14 @@ struct Point:
     xpos: i32
     ypos: i32
 
-    fn length_squared(self) -> i32:
-        return self.xpos * self.xpos + self.ypos * self.ypos
+    fn length_squared() -> i32:
+        return this.xpos * this.xpos + this.ypos * this.ypos
 
 struct Vector:
     dx: i32
 
-    fn scale(self) -> i32:
-        return self.dx
+    fn scale() -> i32:
+        return this.dx
 
 fn guard(lock: Mutex[i32]):
     pass

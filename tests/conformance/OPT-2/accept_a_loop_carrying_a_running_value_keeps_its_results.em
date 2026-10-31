@@ -38,7 +38,7 @@ fn main():
 
     mean = 0.0
     for round in 0..4:
-        for y in ys.iter().copied():
+        for y in ys.iter().copy_each():
             mean += y as float
     println(mean / 4000.0)
 

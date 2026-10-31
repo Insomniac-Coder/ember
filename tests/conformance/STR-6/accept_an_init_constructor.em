@@ -9,10 +9,10 @@ struct Grid:
     width: int = 0
     cells: Array[int] = []
 
-    fn init(mut self, width: int = 0):
-        self.width = width
+    fn init(width: int = 0):
+        this.width = width
         for _ in range(width):
-            self.cells.push(0)
+            this.cells.push(0)
 
 fn main():
     g = Grid(3)

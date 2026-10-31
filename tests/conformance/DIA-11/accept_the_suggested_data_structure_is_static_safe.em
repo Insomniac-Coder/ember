@@ -7,8 +7,8 @@
 struct Counter:
     value: i32
 
-@static_safe
-fn run(mut counter: Counter, n: int):
+@no_alias_checks
+fn run(ref mut counter: Counter, n: int):
     for i in 0..n:
         counter.value = counter.value + 1
 

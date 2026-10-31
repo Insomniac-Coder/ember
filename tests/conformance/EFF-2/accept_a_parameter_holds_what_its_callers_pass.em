@@ -12,11 +12,11 @@ struct Scaler:
 struct Logger:
     format: fn(int) -> int
 
-fn apply(mut f: fn(int) -> int, x: int) -> int:
+fn apply(ref mut f: fn(int) -> int, x: int) -> int:
     return f(x)
 
 @noalloc
-fn scaled(mut s: Scaler, x: int) -> int:
+fn scaled(ref mut s: Scaler, x: int) -> int:
     return apply(s.by, x)
 
 fn main():

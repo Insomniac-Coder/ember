@@ -5,16 +5,16 @@
 # `dyn` value's are: a `@noalloc` function may not compare two (`E4001`). Two `Box[int]` compare
 # their numbers and allocate nothing.
 
-interface Shape: Eq:
-    fn area(self) -> int
+interface Shape: needs Eq:
+    fn area() -> int
 
 @derive(Eq)
 struct Square:
     side: int
 
 extend Square implements Shape:
-    fn area(self) -> int:
-        return self.side
+    fn area() -> int:
+        return this.side
 
 @noalloc
 fn same(a: Box[dyn Shape], b: Box[dyn Shape]) -> bool:

@@ -9,7 +9,7 @@ struct Particle:
     vel: Vec3
     life: f32
 
-fn integrate(mut pos: MutSpan[Vec3], vel: Span[Vec3], dt: f32):
+fn integrate(ref mut pos: MutSpan[Vec3], vel: Span[Vec3], dt: f32):
     for i in 0..pos.len():
         pos[i] += vel[i] * dt
 

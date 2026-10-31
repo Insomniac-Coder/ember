@@ -19,7 +19,7 @@ fn widen(x: int) -> int:
     return [x, x].len()
 
 @noalloc
-fn scaled(owned s: Scaler, x: int) -> int:
+fn scaled(owns s: Scaler, x: int) -> int:
     f = s.by
     return f(x)
 

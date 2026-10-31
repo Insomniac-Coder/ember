@@ -25,7 +25,7 @@ struct Dead:
 struct Shield:
     pass
 
-fn judge(mut q: Query[(Entity, Hp)], unused: ()):
+fn judge(ref mut q: Query[(Entity, Hp)], unused: ()):
     saw = 0
     for e, hp in q.iter():
         saw += 1
@@ -37,7 +37,7 @@ fn judge(mut q: Query[(Entity, Hp)], unused: ()):
             q.commands().remove[Shield](e)
     println("saw", saw, "queued", q.commands().len())
 
-fn heal(mut q: Query[(Entity, Mut[Hp], Option[Dead])], amount: int):
+fn heal(ref mut q: Query[(Entity, Mut[Hp], Option[Dead])], amount: int):
     cmds = q.commands()
     saw = 0
     for e, hp, dead in q.iter_mut():

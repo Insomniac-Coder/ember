@@ -9,11 +9,13 @@
 # written in the constructor is one closure (D-236). An expected type still
 # gives a literal its type.
 
-struct P[A, B]:
+[A, B]
+struct P:
     a: A
     b: B
 
-struct K[F]:
+[F]
+struct K:
     f: F
     n: int
 

@@ -18,7 +18,7 @@ mod python;
 /// one. A source file does not select a version; a `#! language` directive is
 /// accepted only when it names this one. Selectable versions begin at 1.0
 /// (`[VER-2]`).
-pub const LANGUAGE_VERSION: &str = "0.9.10";
+pub const LANGUAGE_VERSION: &str = "0.9.15";
 
 /// Parse one file's token stream into a [`Module`].
 ///
@@ -68,6 +68,12 @@ pub(crate) struct Parser<'a> {
     /// ODR-264 — the next type read may not end in `+ Send`: it is a bound in a list, where `+`
     /// separates bounds, or a callable type's return type, whose `+ Send` is the callable's.
     no_send_suffix: bool,
+    /// `[GRM-40]` — the type parameters read from the line above the function, struct or class
+    /// being parsed, taken by it right after its name.
+    type_params_line: Option<(Vec<ember_ast::GenericParam>, Span)>,
+    /// `[GRM-40]` — reading 0.9.10's brackets after a name, whose one refusal writes the whole line
+    /// above, bounds after `needs` included.
+    misplaced_generics: bool,
 }
 
 pub use ember_ast::NESTING_LIMIT;
@@ -95,6 +101,8 @@ impl<'a> Parser<'a> {
             fs_imported: false,
             import_at: None,
             no_send_suffix: false,
+            type_params_line: None,
+            misplaced_generics: false,
         }
     }
 
@@ -207,6 +215,15 @@ impl<'a> Parser<'a> {
 
     fn at_ident(&self) -> bool {
         matches!(self.peek(), TokenKind::Ident(_) | TokenKind::RawIdent(_))
+    }
+
+    /// The line `span` is on, as written and trimmed, with `span`'s text replaced by `with`: the
+    /// line a help gives, in the program's own names (`[DIA-21]`).
+    fn line_with(&self, span: Span, with: &str) -> String {
+        let (start, end) = (span.start as usize, span.end as usize);
+        let line_start = self.src[..start].rfind('\n').map_or(0, |at| at + 1);
+        let line_end = self.src[end..].find('\n').map_or(self.src.len(), |at| end + at);
+        format!("{}{with}{}", &self.src[line_start..start], &self.src[end..line_end]).trim().trim_end_matches('\r').to_string()
     }
 
     /// `[LEX-15]` — a contextual keyword is an ordinary identifier that the
@@ -630,6 +647,7 @@ impl<'a> Parser<'a> {
                 generics: Vec::new(),
                 params: Vec::new(),
                 ret: None,
+                from: None,
                 where_clause: Vec::new(),
                 body: Some(body),
             };

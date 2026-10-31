@@ -9,19 +9,19 @@
 # first view's last use; the second while the second view lives.
 
 interface Named:
-    fn name(self) -> str
+    fn name() -> StrView
 
 class Person implements Named:
     label: String
 
-    fn init(mut self):
-        self.label = "ann"
+    fn init():
+        this.label = "ann"
 
-    fn name(self) -> str:
-        return self.label
+    fn name() -> StrView:
+        return this.label
 
-    fn rename(mut self):
-        self.label = "bob"
+    fn rename():
+        this.label = "bob"
 
 fn main():
     p = Person()

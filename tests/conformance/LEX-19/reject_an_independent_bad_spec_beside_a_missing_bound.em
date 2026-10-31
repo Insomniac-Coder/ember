@@ -4,7 +4,8 @@
 # A malformed specification is invalid without knowing the value's type.
 # It remains an independent error alongside the missing formatting bound.
 
-fn format_unknown[T](x: T) -> String:
+[T]
+fn format_unknown(x: T) -> String:
     return f"{x:>>q}"    #$ error[E2040]
 
 fn main():

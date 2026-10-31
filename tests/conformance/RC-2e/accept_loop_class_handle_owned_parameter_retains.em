@@ -12,7 +12,7 @@
 class Token:
     value: i32
 
-fn consume(owned token: Token) -> i32:
+fn consume(owns token: Token) -> i32:
     return token.value
 
 fn main():

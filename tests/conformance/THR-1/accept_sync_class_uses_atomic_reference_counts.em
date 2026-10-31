@@ -8,8 +8,8 @@
 class Token:
     value: int
 
-    fn init(mut self):
-        self.value = 42
+    fn init():
+        this.value = 42
 
 fn main():
     token = Token()

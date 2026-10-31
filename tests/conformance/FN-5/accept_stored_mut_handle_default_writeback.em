@@ -10,7 +10,7 @@ class Node:
 class Parent:
     child: Node
 
-fn replace(mut node: Node, next: int = node.value + 1):
+fn replace(ref mut node: Node, next: int = node.value + 1):
     node = Node(next)
 
 fn main():

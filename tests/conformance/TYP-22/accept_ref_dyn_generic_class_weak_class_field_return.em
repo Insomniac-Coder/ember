@@ -11,17 +11,18 @@
 # Weak[Token] field. The dynamic call copies only the weak observer; it does
 # not create an additional class owner before the caller upgrades the result.
 interface Observe:
-    fn observer(self) -> Weak[Token]
+    fn observer() -> Weak[Token]
 
 class Token:
     value: i32
 
-class Holder[T] implements Observe:
+[T]
+class Holder implements Observe:
     weak: Weak[Token]
     marker: T
 
-    fn observer(self) -> Weak[Token]:
-        return self.weak
+    fn observer() -> Weak[Token]:
+        return this.weak
 
 fn inspect(value: ref dyn Observe) -> Weak[Token]:
     return value.observer()

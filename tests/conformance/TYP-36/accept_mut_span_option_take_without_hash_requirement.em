@@ -12,7 +12,7 @@ fn main():
     values = [5, 7]
     option: Option[MutSpan[int]] = Some(values.as_mut_span())
     taken = option.take()
-    match owned taken:
+    match owns taken:
         Some(view):
             view[0] = view[0] + 1
             println(view.len(), view[0], view[1])

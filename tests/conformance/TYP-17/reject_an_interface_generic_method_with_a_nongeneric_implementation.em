@@ -2,13 +2,14 @@
 #$ rules: IFC-1, TYP-17, TYP-18
 
 interface Identity:
-    fn keep[T](self, value: T) -> T
+    [T]
+    fn keep(value: T) -> T
 
 struct BadIdentity:
     marker: i32
 
 extend BadIdentity implements Identity: #$ error[E2040]: `BadIdentity.keep` does not match the signature required by `Identity`
-    fn keep(self, value: i32) -> i32:
+    fn keep(value: i32) -> i32:
         return value
 
 fn main():

@@ -4,4 +4,4 @@
 
 fn main():
     s = String()
-    s.insert(0, "é")  #$ error[E2020]: expected `char`, found `str`
+    s.insert(0, "é")  #$ error[E2020]: expected `char`, found `StrView`

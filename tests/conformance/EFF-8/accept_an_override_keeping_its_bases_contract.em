@@ -5,14 +5,14 @@
 
 open class Shape:
     @noio
-    virtual fn area(self) -> int:
+    virtual fn area() -> int:
         return 0
 
 class Square(Shape):
     side: int = 3
 
-    override fn area(self) -> int:
-        return self.side * self.side
+    override fn area() -> int:
+        return this.side * this.side
 
 fn main():
     s: Shape = Square()

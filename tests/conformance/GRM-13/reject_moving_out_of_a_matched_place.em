@@ -4,7 +4,7 @@
 # reference, and the place still owns it: moving it out is `E3013`
 # (`[EXP-6]`). `match owned a:` is how to take it.
 
-fn take(owned s: String) -> int:
+fn take(owns s: String) -> int:
     return s.len()
 
 fn main():

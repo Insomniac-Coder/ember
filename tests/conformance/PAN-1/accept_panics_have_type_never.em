@@ -14,7 +14,7 @@ fn sign(x: int) -> int:
         return -1
     unreachable()
 
-fn describe(x: int) -> str:
+fn describe(x: int) -> StrView:
     return "positive" if x > 0 else panic("not positive")
 
 fn later() -> int:

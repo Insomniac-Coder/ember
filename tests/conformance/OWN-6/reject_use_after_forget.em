@@ -7,7 +7,7 @@ import std.mem
 struct Resource:
     pub value: i32
 
-    fn drop(mut self):
+    fn drop():
         pass
 
 fn main():

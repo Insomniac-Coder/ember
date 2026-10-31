@@ -3,10 +3,12 @@
 #$ stdout: true <   7>
 # Valid operands still undergo ordinary bound and format-spec checking.
 
-fn same[T: Eq](a: T, b: T) -> bool:
+[T: needs Eq]
+fn same(a: T, b: T) -> bool:
     return a == b
 
-fn show[T: Display](x: T) -> String:
+[T: needs Display]
+fn show(x: T) -> String:
     return f"<{x:>4}>"
 
 fn main():

@@ -8,15 +8,16 @@ struct BorrowedKey:
     value: ref i32
 
 extend BorrowedKey implements Eq:
-    fn eq(self, other: Self) -> bool:
+    fn eq(other: Self) -> bool:
         return true
 
 extend BorrowedKey implements Hash:
-    fn hash[H: Hasher](self, mut h: H):
+    [H: needs Hasher]
+    fn hash(ref mut h: H):
         h.write_u8(0)
 
-@borrows(arena)
-fn reserve[K: Eq + Hash, V](arena: Arena, capacity: usize) -> ArenaMap[K, V]:
+[K: needs (Eq, Hash), V]
+fn reserve(arena: Arena, capacity: usize) -> ArenaMap[K, V] from arena:
     return ArenaMap[K, V].with_capacity(arena, capacity) #$ error[E2130]: an ArenaMap cannot store a view key or value
 
 fn main():

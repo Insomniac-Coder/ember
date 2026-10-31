@@ -5,7 +5,8 @@
 # prelude's own (`[ERR-7]`). And converting into it needs `E: Error`
 # (`[ERR-1]`): an `int` error does not convert.
 
-fn report[E: Error](e: E):
+[E: needs Error]
+fn report(e: E):
     println(f"{e}")
 
 fn number(n: int) -> Result[int, int]:

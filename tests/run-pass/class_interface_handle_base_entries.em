@@ -12,20 +12,20 @@
 # list), and the adapter calls the virtual `id` through the object's own
 # class table, so Child's override runs (D-375).
 interface Named:
-    fn id(self) -> i32
+    fn id() -> i32
 
 open class Base implements Named:
-    fn init(mut self):
+    fn init():
         pass
 
-    virtual fn id(self) -> i32:
+    virtual fn id() -> i32:
         return 1
 
 class Child(Base):
-    fn init(mut self):
+    fn init():
         super.init()
 
-    override fn id(self) -> i32:
+    override fn id() -> i32:
         return 2
 
 fn show(value: Named):

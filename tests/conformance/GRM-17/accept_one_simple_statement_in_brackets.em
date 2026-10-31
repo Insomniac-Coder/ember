@@ -20,7 +20,8 @@ fn show(x: int):
 fn apply(f: fn(i32) -> i32, v: i32) -> i32:
     return f(v)
 
-fn feed[F: fn(int)](owned f: F, n: int):
+[F: needs fn(int)]
+fn feed(owns f: F, n: int):
     for i in range(n):
         f(i)
 

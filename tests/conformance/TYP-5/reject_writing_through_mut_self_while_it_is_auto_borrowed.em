@@ -6,9 +6,9 @@
 struct Person:
     age: int
 
-    fn bump(mut self) -> int:
-        r = age_of(self)
-        self.age = 9    #$ error[E3021]: cannot be written while it is borrowed
+    fn bump() -> int:
+        r = age_of(this)
+        this.age = 9    #$ error[E3021]: cannot be written while it is borrowed
         return r
 
 fn age_of(p: ref Person) -> ref int:

@@ -12,6 +12,6 @@ fn main():
     parities = {x % 2 for x in xs}
     println(squares, parities)
     words = ["b", "a", "b", "a", "a"]
-    counts: Map[str, int] = {w: i + 1 for i, w in enumerate(words) if i > 0}
+    counts: Map[StrView, int] = {w: i + 1 for i, w in enumerate(words) if i > 0}
     owned_keys = {w.to_string(): i for i, w in enumerate(words)}
     println(counts, owned_keys)

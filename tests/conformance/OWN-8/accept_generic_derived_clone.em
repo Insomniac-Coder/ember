@@ -5,10 +5,12 @@
 #$ stdout: 42
 
 @derive(Clone)
-struct Wrapper[T]:
+[T]
+struct Wrapper:
     value: T
 
-fn duplicate[T: Clone](value: T) -> T:
+[T: needs Clone]
+fn duplicate(value: T) -> T:
     return value.clone()
 
 fn main():

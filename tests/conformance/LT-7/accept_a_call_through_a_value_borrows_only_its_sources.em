@@ -8,12 +8,12 @@
 # parameters. A `mut int` is not one, so the caller reads `pos` while the
 # token lives; a lambda's `Array` parameter is one, so its result may view it.
 
-fn next_token(mut pos: int, src: str) -> str:
+fn next_token(ref mut pos: int, src: StrView) -> StrView:
     pos += 1
     return src[0..1]
 
 fn main():
-    g: fn(mut int, str) -> str = next_token
+    g: fn(ref mut int, StrView) -> StrView = next_token
     pos = 0
     token = g(pos, "abc")
     println(pos)

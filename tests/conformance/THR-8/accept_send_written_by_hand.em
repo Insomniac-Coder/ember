@@ -17,20 +17,24 @@ struct Raw:
 unsafe extend Raw implements Send:  # SAFETY: the pointer is never read; only `n` is
     pass
 
-struct Pair[T]:
+[T]
+struct Pair:
     a: T
     p: *mut int
 
-unsafe extend[T: Send] Pair[T] implements Send:  # SAFETY: as `Raw`
+unsafe extend[T: needs Send] Pair[T] implements Send:  # SAFETY: as `Raw`
     pass
 
-fn need_send[T: Send](x: T) -> T:
+[T: needs Send]
+fn need_send(x: T) -> T:
     return x
 
-fn need_sync[T: Sync](x: T) -> T:
+[T: needs Sync]
+fn need_sync(x: T) -> T:
     return x
 
-fn need_copy[T: Copy](x: T) -> T:
+[T: needs Copy]
+fn need_copy(x: T) -> T:
     return x
 
 fn main():

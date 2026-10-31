@@ -5,7 +5,7 @@ unsafe overlay c "widgets.h":  # SAFETY(ffi): each entry matches its declaration
     type Widget
 
     fn widget_new(id) -> returns_owned(destructor=widget_free) one
-    fn widget_take(widget: owned one)
+    fn widget_take(widget: owns one)
     fn widget_sum(items: borrowed count(n), n)
     fn widget_fill(items: borrowed count(n), n, value)
     fn widget_label(id) -> borrowed nul_terminated from(static)
@@ -18,5 +18,5 @@ unsafe overlay c "widgets.h":  # SAFETY(ffi): each entry matches its declaration
     hide widget_free
 
     extend Size:
-        pub fn area(self) -> i32:
-            return self.w * self.h
+        pub fn area() -> i32:
+            return this.w * this.h

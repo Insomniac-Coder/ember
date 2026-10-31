@@ -7,16 +7,16 @@
 #$ assert-c: !contains(ember_box_new_copy)
 
 interface Render:
-    fn render(self) -> i32
+    fn render() -> i32
 
 class Pixel implements Render:
     value: i32
 
-    fn render(self) -> i32:
-        return self.value
+    fn render() -> i32:
+        return this.value
 
-    fn drop(mut self):
-        println(self.value)
+    fn drop():
+        println(this.value)
 
 fn main():
     boxed: Box[dyn Render] = Box(Pixel(42))

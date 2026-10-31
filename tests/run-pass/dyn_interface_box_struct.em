@@ -8,16 +8,16 @@
 #$ assert-c-order: "em_7Payload4drop(&(*(em_7Payload*)_0));" then "ember_free("
 
 interface Render:
-    fn render(self) -> i32
+    fn render() -> i32
 
 struct Payload implements Render:
     value: i32
 
-    fn render(self) -> i32:
-        return self.value
+    fn render() -> i32:
+        return this.value
 
-    fn drop(mut self):
-        println(self.value)
+    fn drop():
+        println(this.value)
 
 fn main():
     boxed: Box[dyn Render] = Box(Payload(42))

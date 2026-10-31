@@ -14,34 +14,35 @@
 # expiry. The mutable generic class still updates its count for the second
 # interface slot.
 interface Observe:
-    fn observe(mut self, weak: Weak[Shared[Token]]) -> i32
+    fn observe(weak: Weak[Shared[Token]]) -> i32
 
 interface Bump:
-    fn bump(mut self) -> i32
+    fn bump() -> i32
 
 struct Token:
     value: i32
 
-class Reader[T] implements Observe, Bump:
+[T]
+class Reader implements Observe, Bump:
     marker: T
     count: i32
 
-    fn observe(mut self, weak: Weak[Shared[Token]]) -> i32:
-        self.count = self.count + 1
+    fn observe(weak: Weak[Shared[Token]]) -> i32:
+        this.count = this.count + 1
         match weak.upgrade():
             Some(owner):
                 return owner.get().value
             None:
                 return 0
 
-    fn bump(mut self) -> i32:
-        return self.count
+    fn bump() -> i32:
+        return this.count
 
 fn expired() -> Weak[Shared[Token]]:
     strong = Shared(Token(7))
     return Weak(strong)
 
-fn inspect(value: ref mut dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
+fn inspect(ref mut value: dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
     return value.observe(weak) + value.bump()
 
 # `program` holds the test, so its values die before `main`'s last

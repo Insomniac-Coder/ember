@@ -3,12 +3,13 @@
 # Continue ends this iteration's String while the outer Holder remains; the
 # next iteration would also replace the still-borrowed source local.
 
-struct Holder[T]:
-    borrowed: str
+[T]
+struct Holder:
+    borrowed: StrView
     marker: T
 
-    fn drop(mut self):
-        println(self.borrowed)
+    fn drop():
+        println(this.borrowed)
 
 fn main():
     _outer: Option[Holder[i32]] = None

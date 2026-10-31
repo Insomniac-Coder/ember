@@ -13,7 +13,7 @@ from std.sync import Atomic, Mutex
 static HITS: Atomic[int] = Atomic(0)
 static NAMES: Mutex[Map[String, int]] = Mutex({})
 
-fn hit(name: str):
+fn hit(name: StrView):
     HITS.fetch_add(1)
     with names = NAMES.lock():
         names[name.to_string()] = HITS.load()
