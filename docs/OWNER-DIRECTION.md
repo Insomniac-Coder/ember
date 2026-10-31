@@ -211,6 +211,16 @@ Also from the review:
   would see (it builds, or this error); two builds in a row for an incremental bug; both options as full
   code side by side.
 
+## Where my rulings and the owner's differed (ODR review of 2026-10-31, morning)
+
+| ODR | What I ruled | What the owner chose | Why his was right | The lesson |
+|---|---|---|---|---|
+| N23 (verdict 136) | A plain `fn` in an `unsafe extern` block stays: unsafe to call, as `unsafe fn` is, its call's error asking for the facts. | Refused: write `unsafe fn` (or `safe fn`). | A plain `fn` is safe to call everywhere else in Ember; here it meant unsafe without saying so, a second spelling of `unsafe fn` (checklist 11, 15, 16). I saw it myself on the second look and recommended it. | Read a ruling against the same word elsewhere in the language before ruling: a word that means one thing in one place must not mean its opposite in another. |
+
+Also: N24 and N25 approved as ruled. Explaining: the first two versions of N23 failed ("UH WHAT?", "I dont
+get it"); the one that worked began from his own verdict's example (`unsafe fn lib_step`), asked one
+sentence ("what if someone leaves out the word"), and gave two answers of one line each.
+
 ## What is never mine to decide
 
 - **Any change to what the language does.** It goes to the owner, with real code, one question at a

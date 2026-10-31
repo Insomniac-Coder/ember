@@ -445,6 +445,13 @@ language decisions are listed here; each is put to the owner one at a time, with
 | N24 | FFI-10 | `safe unsafe fn` on one declaration is `E5002` ("declared both `safe` and `unsafe`"), with both lines to write. | It was a parse error with no place; `safe` with `@ffi(unsafe)` was `E5002` before verdict 133. |
 | N25 | FFI-40a (verdict 132) | A free C++ operator function Ember imports as a class's method (`operator+(const Money&, const Money&)` as `Money.add`) is a method like any other: its entry without `@ffi(const)` makes it changing, though C++ passes the object by `const&`. | Verdict 132's words ("its method"); an entry means what it says. |
 
+**Owner verdicts, 2026-10-31 (morning).** N23 reversed: a plain `fn` in an `unsafe extern` block is refused
+(JOB.md verdict 136; the lead recommended it when the question was put a third time, plainly: a plain `fn`
+is safe to call everywhere else). N24 approved ("perfect, I like this decision"). N25 approved ("damn we
+are slowly aligning more and more, approved"). What worked: the owner's own example (`lib_step`, verdict
+133), the question in one sentence, the two answers one line each; two longer versions did not ("UH
+WHAT?", "I dont get it").
+
 ### `a10_recursion` on the LLVM backend, 2026-10-30 (owner: "yes build it")
 
 The LLVM backend lost `a10_recursion` (1.71x C): not the backend's doing. The C backend built by clang

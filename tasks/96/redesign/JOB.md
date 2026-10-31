@@ -1065,6 +1065,11 @@ verdicts, 2026-10-29", items 1 to 18, with the review's other answers):
     the error to show all the occurrences too?", then "yes" ([UNS-7]; D-931).
 135. **The default manifest's note reads `note: created `<path>`: every program needs one, and this
     folder had none`.** Owner: "yes" ([MAN-9]).
+136. **A hand-written C declaration says whether it is safe to call: `safe fn` or `unsafe fn`; a plain
+    `fn` in an `unsafe extern` block is refused**, with the line to write ("write `unsafe fn lib_step`").
+    Owner, of N23 (2026-10-31, morning), shown `fn lib_step` with the word left out and the two answers
+    (accept it as `unsafe fn`, the lead's ruling; refuse it): "yes good" to refusing it, the lead's
+    recommendation on a second look (a plain `fn` is safe to call everywhere else in Ember) ([FFI-10]).
 
 ## Error messages are part of readability (owner, 2026-10-24)
 
