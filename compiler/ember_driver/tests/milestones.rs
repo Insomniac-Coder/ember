@@ -7550,9 +7550,10 @@ fn msvc_loops_copy_a_standard_step_and_skip_its_answer() {
     assert!(c_definition(&clang.stdout, &ember_branding::entry_symbol()).contains(&next("Split")), "clang's loop lost its call");
 }
 
-/// `[EFF-24]` (A4-2) — each function's summary, as `--emit mir` prints it: what it changes and reads
-/// of what its parameters reach, `this` included, and the first call of the chain that makes it: a
-/// method's own line, a callee two calls down, a recursive function, an object reached through a
+/// `[EFF-24]` (A4-2) — each function's summary, as `--emit mir` prints it: what it changes, reads,
+/// reshapes (§VII.1: a list grown or replaced, an enum's variant changed; not a number written) and
+/// ends of what its parameters reach, `this` included, and the first call of the chain that makes it:
+/// a method's own line, a callee two calls down, a recursive function, an object reached through a
 /// link (a field of a class object, reached through its handle), and a `virtual` call, whose
 /// override's change counts.
 #[test]
@@ -7612,13 +7613,22 @@ fn second(n: Node):
 fn poke_it(ref mut n: Node):
     n.poke()
 
+fn reset(ref mut c: Counter):
+    c.seen = []
+    c.count = 0
+
+fn unlink(n: Node):
+    n.next = None
+
 fn main():
     c = Counter(count = 0, seen = [])
     twice(c)
+    reset(c)
     println(reads_only(c), depth(3, c))
     a = Node()
     a.next = Some(Node())
     second(a)
+    unlink(a)
     l: Node = Loud()
     poke_it(l)
 ").unwrap();
@@ -7631,14 +7641,18 @@ fn main():
         rest.lines().take_while(|line| line.starts_with("  ")).map(|line| format!("{}\n", line.trim())).collect()
     };
     for (path, expected) in [
-        ("Counter.bump", "changes self.count\nreads self.count\n"),
-        ("Counter.total", "reads self.count\n"),
-        ("Counter.note", "changes self.count (through bump), self.seen\nreads self.count (through bump)\n"),
-        ("twice", "changes c.count (through note), c.seen (through note)\nreads c.count (through note)\n"),
+        ("Counter.bump", "changes this.count\nreads this.count\n"),
+        ("Counter.total", "reads this.count\n"),
+        ("Counter.note", "changes this.count (through bump), this.seen\nreads this.count (through bump)\nreshapes this.seen\n"),
+        ("twice", "changes c.count (through note), c.seen (through note)\nreads c.count (through note)\nreshapes c.seen (through note)\n"),
         ("reads_only", "reads c.count (through total), c.seen\n"),
         ("depth", "changes c.count (through bump)\nreads c.count (through bump)\n"),
         ("second", "changes n.next as Some._0.value (through set)\nreads n.next, n.next as Some._0\n"),
         ("poke_it", "changes n.value (through poke)\n"),
+        // §VII.1 — replacing a value that owns memory, or an enum's variant, is a reshape; writing a
+        // number is not.
+        ("reset", "changes c.count, c.seen\nreshapes c.seen\nends c.seen\n"),
+        ("unlink", "changes n.next\nreshapes n.next\nends n.next\n"),
     ] {
         assert_eq!(summary(path), expected, "`{path}`'s summary");
     }

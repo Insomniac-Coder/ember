@@ -17,7 +17,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use ember_mir::{Body, FuncRef, LocalId, Operand, Place, Projection, Rvalue, StmtKind, Terminator};
+use ember_mir::{Body, Builtin, FuncRef, LocalId, Operand, Place, Projection, Rvalue, SoAOp, StmtKind, Terminator};
 use ember_span::Span;
 use ember_types::{TyKind, TypeTable};
 
@@ -54,11 +54,15 @@ pub struct Fact {
     pub chain: Vec<(usize, Span)>,
 }
 
-/// `[EFF-24]` — what a function may change, read and end.
+/// `[EFF-24]` — what a function may change, read, reshape and end.
 #[derive(Clone, Debug, Default)]
 pub struct Summary {
     pub changes: Vec<Fact>,
     pub reads: Vec<Fact>,
+    /// A change that may move or free memory (§VII.1's **reshape**): replacing a value that owns
+    /// memory or changing an enum's variant, a list's or a string's elements added, removed,
+    /// reordered or replaced. Each is a change too.
+    pub reshapes: Vec<Fact>,
     pub ends: Vec<Fact>,
 }
 
@@ -73,6 +77,11 @@ impl Summary {
     pub fn changes_param(&self, param: usize) -> bool {
         self.changes.iter().any(|fact| fact.reach.param == param)
     }
+
+    /// Whether it may move or free memory inside, or holding, the place `param`'s `path` reaches.
+    pub fn may_reshape(&self, param: usize, path: &[Step]) -> bool {
+        self.reshapes.iter().any(|fact| fact.reach.param == param && overlaps(&fact.reach.path, path))
+    }
 }
 
 /// Whether one path lies inside the other.
@@ -84,6 +93,7 @@ fn overlaps(a: &[Step], b: &[Step]) -> bool {
 enum What {
     Change,
     Read,
+    Reshape,
     End,
 }
 
@@ -122,6 +132,7 @@ pub fn summarize(bodies: &[Body], types: &TypeTable) -> Vec<Summary> {
                     let list = match what {
                         What::Change => &mut summaries[at].changes,
                         What::Read => &mut summaries[at].reads,
+                        What::Reshape => &mut summaries[at].reshapes,
                         What::End => &mut summaries[at].ends,
                     };
                     list.push(fact);
@@ -133,7 +144,7 @@ pub fn summarize(bodies: &[Body], types: &TypeTable) -> Vec<Summary> {
         }
     }
     for summary in &mut summaries {
-        for list in [&mut summary.changes, &mut summary.reads, &mut summary.ends] {
+        for list in [&mut summary.changes, &mut summary.reads, &mut summary.reshapes, &mut summary.ends] {
             list.sort_by(|a, b| a.reach.cmp(&b.reach));
         }
     }
@@ -160,6 +171,56 @@ fn steps_of(body: &Body, types: &TypeTable, place: &Place) -> Vec<Step> {
         ty = project_type(types, ty, projection, &mut variant);
     }
     steps
+}
+
+/// §VII.1 — whether writing a value of this type is a reshape: it owns memory the write may free or
+/// move (a list, a string, a box, an object's handle, a `dyn` value, or anything holding one), or it
+/// is an enum whose variant the write may change. A number, a `bool`, a view or a pointer is not.
+fn reshaped_by_write(types: &TypeTable, ty: ember_types::Ty, depth: usize) -> bool {
+    if depth > 8 {
+        return true;
+    }
+    match types.kind(ty) {
+        TyKind::Vec { .. } | TyKind::Class(_) | TyKind::Dyn { .. } | TyKind::ClassInterface(_) => true,
+        TyKind::Struct(id) => types.struct_def(*id).fields.iter().any(|field| reshaped_by_write(types, field.ty, depth + 1)),
+        TyKind::Enum(id) => types.enum_def(*id).variants.iter().any(|variant| !variant.fields.is_empty()),
+        TyKind::Tuple(items) => items.iter().any(|item| reshaped_by_write(types, *item, depth + 1)),
+        TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => reshaped_by_write(types, *elem, depth + 1),
+        _ => false,
+    }
+}
+
+/// §VII.1 — a built-in that adds, removes, reorders or replaces the elements of the list, string or
+/// table its first argument points at, or replaces the value it points at.
+fn reshaping_builtin(types: &TypeTable, which: &Builtin) -> bool {
+    match which {
+        Builtin::ArrayPush
+        | Builtin::ArrayInsert
+        | Builtin::ArrayExtend
+        | Builtin::ArrayPop { .. }
+        | Builtin::ArrayRemove
+        | Builtin::ArraySwapRemove
+        | Builtin::ArrayDrain
+        | Builtin::ArrayClear
+        | Builtin::ArrayTruncate
+        | Builtin::ArrayReserve
+        | Builtin::ArrayReserveHint { .. }
+        | Builtin::ArraySort
+        | Builtin::ArrayReverse
+        | Builtin::ArraySwap
+        | Builtin::StringPush
+        | Builtin::StringPushChar
+        | Builtin::StringInsert
+        | Builtin::StringRemove
+        | Builtin::StringTruncate
+        | Builtin::ArenaReset => true,
+        Builtin::MemReplace { elem } | Builtin::MemTake { elem, .. } | Builtin::MemSwap { elem } => reshaped_by_write(types, *elem, 0),
+        Builtin::SoA { op, .. } => matches!(
+            op,
+            SoAOp::Push | SoAOp::TryPush | SoAOp::TakeLast | SoAOp::Clear | SoAOp::Reserve | SoAOp::SwapRemove | SoAOp::Swap | SoAOp::Truncate | SoAOp::MoveSlot | SoAOp::DropAt | SoAOp::SetLen
+        ),
+        _ => false,
+    }
 }
 
 /// Whether a value of this type points at memory the function may reach through it.
@@ -287,6 +348,9 @@ fn body_facts(
             match &stmt.kind {
                 StmtKind::Assign { place, rvalue } => {
                     own(What::Change, place, &mut found);
+                    if reshaped_by_write(types, place_type(body, types, place), 0) {
+                        own(What::Reshape, place, &mut found);
+                    }
                     match rvalue {
                         Rvalue::Use(operand) | Rvalue::Cast { operand, .. } | Rvalue::UnaryOp { operand, .. } | Rvalue::Repeat { value: operand, .. } => {
                             read(operand, &mut own, &mut found);
@@ -342,8 +406,21 @@ fn body_facts(
                 .map(|(callee, _)| callee)
                 .collect(),
             FuncRef::Interface { interfaces, slot, .. } => targets.of_dyn(interfaces, *slot).to_vec(),
-            // A builtin changes what its `ref mut` arguments view and reads what its others view.
-            FuncRef::Builtin { .. } => {
+            // A builtin changes what its `ref mut` arguments view and reads what its others view; one
+            // that reshapes, what its first argument (both, for `mem.swap`) points at.
+            FuncRef::Builtin { which, .. } => {
+                if reshaping_builtin(types, which) {
+                    let reshaped = if matches!(which, Builtin::MemSwap { .. }) { 2 } else { 1 };
+                    for operand in args.iter().take(reshaped) {
+                        if let Operand::Copy(place) | Operand::Move(place) = operand
+                            && points(types, place_type(body, types, place))
+                        {
+                            let mut through = place.clone();
+                            through.projection.push(Projection::Deref);
+                            own(What::Reshape, &through, &mut found);
+                        }
+                    }
+                }
                 for operand in args {
                     if let Operand::Copy(place) | Operand::Move(place) = operand {
                         let ty = place_type(body, types, place);
@@ -370,7 +447,7 @@ fn body_facts(
         // The callee's facts, mapped onto the arguments: its parameter `i` is argument `i`.
         for callee in callees {
             let summary = &summaries[callee];
-            for (what, facts) in [(What::Change, &summary.changes), (What::Read, &summary.reads), (What::End, &summary.ends)] {
+            for (what, facts) in [(What::Change, &summary.changes), (What::Read, &summary.reads), (What::Reshape, &summary.reshapes), (What::End, &summary.ends)] {
                 for fact in facts {
                     let Some(Operand::Copy(place) | Operand::Move(place)) = args.get(fact.reach.param) else { continue };
                     let mut steps = steps_of(body, types, place);
@@ -402,12 +479,13 @@ fn below(types: &TypeTable, class: ember_types::ClassId, owner: ember_types::Cla
 }
 
 /// `ember build --emit mir` — a body's summary, one line for each kind of fact: each place written
-/// from the parameter's name and its fields' (`self.count`, `items[_]`), and the first callee of its
+/// from the parameter's name and its fields' (`this.count`, `items[_]`), and the first callee of its
 /// chain.
 pub fn render(summary: &Summary, body: &Body, bodies: &[Body], types: &TypeTable) -> String {
     let place = |reach: &Reach| {
         let local = body.locals.get(reach.param + 1);
-        let mut text = local.and_then(|local| local.name.clone()).unwrap_or_else(|| format!("arg{}", reach.param));
+        // A method's object is `this` in its text (`[FN-4]`).
+        let mut text = local.and_then(|local| local.name.clone()).map(|name| if name == "self" { "this".to_string() } else { name }).unwrap_or_else(|| format!("arg{}", reach.param));
         let mut ty = local.map(|local| local.ty);
         let mut variant = None;
         for step in &reach.path {
@@ -455,5 +533,5 @@ pub fn render(summary: &Summary, body: &Body, bodies: &[Body], types: &TypeTable
         }
         if items.is_empty() { String::new() } else { format!("  {label} {}\n", items.join(", ")) }
     };
-    format!("{}{}{}", line("changes", &summary.changes), line("reads", &summary.reads), line("ends", &summary.ends))
+    format!("{}{}{}{}", line("changes", &summary.changes), line("reads", &summary.reads), line("reshapes", &summary.reshapes), line("ends", &summary.ends))
 }
