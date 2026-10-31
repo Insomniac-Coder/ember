@@ -531,3 +531,54 @@ fn a_c_function_called_with_nothing_stated_is_warned_of_once_whatever_is_kept() 
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+const CURSOR: &str = r#"
+pub struct Cursor:
+    pub rest: StrView
+
+extend Cursor implements Iterator:
+    type Item = StrView
+
+    fn next() -> Option[StrView] from rest:
+        rest = this.rest
+        match rest.find(" "):
+            Some(at):
+                this.rest = rest[at + 1..]
+                return Some(rest[..at])
+            None:
+                if rest.len() == 0:
+                    return None
+                this.rest = rest[rest.len()..]
+                return Some(rest)
+"#;
+
+/// `[EXC-15]`, `[BLD-1]` — a method that does not list its object changes it as its body says, and a
+/// module kept by a later check has no bodies to say it: its record does. `Cursor.next` and std's
+/// `Split.next` change their objects; a check that keeps them (after an edit of `main` only) takes
+/// them as changing, as the clean check does, and the adapters over them are checked alike. Read
+/// from the empty bodies of the kept modules, they were taken to only read, and the MIR made of the
+/// calls disagreed with the cached bodies.
+#[test]
+fn a_kept_modules_methods_change_their_objects_as_their_bodies_said() {
+    let dir = scratch();
+    std::fs::write(dir.join(ember_branding::MANIFEST), "[package]\nname = \"cursor\"\nversion = \"0.1.0\"\n").expect("manifest");
+    write(&dir, &source("cursor"), CURSOR);
+    let main = |n: usize| {
+        format!(
+            "from cursor import Cursor\n\nfn split(line: StrView) -> Array[String]:\n    return line.trim().to_lower().split(\" \").map(fn(w) => w.to_string()).collect[Array[String]]()\n\nfn main():\n    words = Cursor(rest = \"a b c\").map(fn(w) => w.to_string()).collect[Array[String]]()\n    println(words.len() + split(\"Go North\").len() + {n})\n"
+        )
+    };
+    write(&dir, &source("main"), &main(0));
+    let first = check(&dir, "target-incremental", false);
+    assert!(first.ok, "{}", first.report);
+    for n in 1..3 {
+        write(&dir, &source("main"), &main(n));
+        let incremental = check(&dir, "target-incremental", false);
+        let clean = check(&dir, "target-clean", true);
+        assert!(incremental.ok && clean.ok, "edit {n}:\nincremental:\n{}\nclean:\n{}", incremental.report, clean.report);
+        assert_eq!(incremental.report, clean.report, "edit {n}: what the checks report");
+        let kept = incremental.modules.expect("an incremental check says what it checked");
+        assert!(!kept.contains(&source("cursor")), "edit {n}: `cursor` is kept: {kept:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -336,6 +336,16 @@ class DevelopmentTargetBridge(unittest.TestCase):
         self.assertEqual(1, len(failures))
         self.assertIn("neither the adopted specification", failures[0])
 
+    def test_rules_no_longer_defined_are_read_from_appendix_h3(self):
+        text = (
+            "## H.3 Rule identifiers no longer defined\n\n"
+            "| Family | Identifiers | Why |\n|---|---|---|\n"
+            "| LT | LT-1b, LT-2, LT-2a | `with_views*` removed (`[LT-1]` says it) |\n"
+            "| LEX | LEX-14a | folded into `[LEX-14]` |\n\n"
+            "## H.4 Next\n\n| LT | LT-99 | not this table |\n"
+        )
+        self.assertEqual({"LT-1b", "LT-2", "LT-2a", "LEX-14a"}, rule_index.rules_no_longer_defined(text))
+
     def test_manifest_path_cannot_escape_repository(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

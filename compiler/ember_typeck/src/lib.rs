@@ -241,6 +241,10 @@ pub struct Reuse<'a> {
 pub struct Kept {
     pub requests: Vec<KeptRequest>,
     pub holders: Vec<Ty>,
+    /// `[EXC-15]` — whether each of its methods not listing its object changes it, as worked out
+    /// from its body: a later build that keeps the module has no bodies to work it out from.
+    #[serde(default)]
+    pub object_changes: Vec<(String, bool)>,
 }
 
 /// One instance a module's bodies asked for: the generic — a function as `KeptFunction` names it,
@@ -733,7 +737,10 @@ fn check_round(
                 Err(_) => continue,
             };
             match read {
-                Ok(kept) => asks.push((index, kept)),
+                Ok(kept) => {
+                    checker.kept_object_changes.extend(kept.object_changes.iter().cloned());
+                    asks.push((index, kept));
+                }
                 Err(why) => *result = Err(why),
             }
         }
@@ -838,6 +845,16 @@ fn check_round(
     functions.extend(kept_closures);
     // `[EXC-15]` — each method's object it does not list: its mode, from every body (`objects.rs`).
     let misread = checker.decide_implicit_objects(&mut functions);
+    // For a later build that keeps a module: what each of its methods does to its object.
+    for check in module_checks.iter_mut().flatten() {
+        if let Some(kept) = &mut check.kept {
+            kept.object_changes = check
+                .functions
+                .iter()
+                .filter_map(|symbol| checker.object_changes.get(symbol).map(|&changes| (symbol.clone(), changes)))
+                .collect();
+        }
+    }
     // `[FFI-26]`/`[MNG-2]` — a stable C name is an asserted linker identity.
     // Diagnose collisions while both source locations are still available,
     // before a backend reports only a duplicate C definition.
@@ -3591,6 +3608,10 @@ struct Checker<'a> {
     /// the source: what a module's interface says of them.
     object_reads: HashSet<DefId>,
     object_reads_by_source: HashSet<(usize, usize, usize)>,
+    /// `[EXC-15]`, `[BLD-1]` — what the kept modules' records say each of their methods not listing
+    /// its object does to it, and what this build worked out of each it checked, by symbol.
+    kept_object_changes: HashMap<String, bool>,
+    pub(crate) object_changes: HashMap<String, bool>,
     /// Concrete generic-method instances waiting for body checking/emission.
     pending_generic_methods: Vec<(Instance, DefId)>,
     /// Generic methods on a newly instantiated generic owner must still be
@@ -4170,6 +4191,8 @@ impl<'a> Checker<'a> {
             opaque_object_bodies: Vec::new(),
             object_reads: HashSet::new(),
             object_reads_by_source: HashSet::new(),
+            kept_object_changes: HashMap::new(),
+            object_changes: HashMap::new(),
             pending_generic_methods: Vec::new(),
             pending_generic_method_validations: Vec::new(),
             locals: Vec::new(),

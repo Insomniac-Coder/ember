@@ -313,6 +313,11 @@ impl Checker<'_> {
             {
                 continue;
             }
+            // A kept module's method has no body here: its record says what the body did.
+            if let Some(&changes) = self.kept_object_changes.get(&function.symbol) {
+                decided.insert(function.def, (changes, Vec::new()));
+                continue;
+            }
             let handle = matches!(self.types.kind(function.local(param.local).ty), TyKind::Class(_));
             let mut scan = Scan { object: param.local, implicit: &implicit, signatures: &self.signatures, types: self.types, written: &self.written_places, handle, changes: false, reached: Vec::new() };
             scan.block(&function.body);
@@ -481,6 +486,12 @@ impl Checker<'_> {
             .collect();
         flipped.retain(|def| !kept_form.contains(def));
         flipped.extend(from_cpp.iter().copied());
+        // What each body was worked out to do to its object, for the record of its module.
+        self.object_changes = functions
+            .iter()
+            .filter(|function| decided.contains_key(&function.def))
+            .map(|function| (function.symbol.clone(), changing.contains(&function.def)))
+            .collect();
         for function in functions.iter_mut().filter(|function| flipped.contains(&function.def)) {
             let object = function.params[0].local;
             function.params[0].mode = Mode::Borrow;

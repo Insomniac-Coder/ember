@@ -496,6 +496,7 @@ impl Plan {
             if instance.is_none() {
                 kept.requests.extend(part.kept.requests.iter().cloned());
                 kept.holders.extend(part.kept.holders.iter().copied());
+                kept.object_changes.extend(part.kept.object_changes.iter().cloned());
             }
         }
         self.read.lock().unwrap_or_else(|e| e.into_inner())[n] = Some(parts);
@@ -930,9 +931,14 @@ impl Checks {
             .map(|(index, check)| {
                 let check = check.as_ref()?;
                 let kept = check.kept.clone()?;
-                let slice = |requests: &Range<usize>, holders: &Range<usize>| Kept {
+                // `[EXC-15]` — what the methods among `functions` do to their objects.
+                let changes_of = |functions: &[String]| -> Vec<(String, bool)> {
+                    kept.object_changes.iter().filter(|(symbol, _)| functions.contains(symbol)).cloned().collect()
+                };
+                let slice = |requests: &Range<usize>, holders: &Range<usize>, functions: &[String]| Kept {
                     requests: kept.requests[requests.clone()].to_vec(),
                     holders: kept.holders[holders.clone()].to_vec(),
+                    object_changes: changes_of(functions),
                 };
                 let shape = &plan.shapes[index];
                 let body_piece = |span: Span| shape.bodies.binary_search(&(span.start, span.end)).ok().map(|body| body as u32 * 2 + 1);
@@ -954,7 +960,7 @@ impl Checks {
                         diagnostics.extend(unneeded.get(&index).into_iter().flatten().filter(|(span, _)| span.start >= part.body.start && span.end <= part.body.end).map(|(_, at)| *at));
                         Checked {
                             functions: functions.clone(),
-                            kept: slice(&part.requests, &part.holders),
+                            kept: slice(&part.requests, &part.holders, &functions),
                             diagnostics,
                             body_diagnostics: body_diagnostics(&functions),
                         }
@@ -979,6 +985,7 @@ impl Checks {
                 let module_kept = Kept {
                     requests: outside_all(&requests_in, kept.requests.len()).into_iter().map(|at| kept.requests[at].clone()).collect(),
                     holders: outside_all(&holders_in, kept.holders.len()).into_iter().map(|at| kept.holders[at]).collect(),
+                    object_changes: changes_of(&module_functions),
                 };
                 let module_part = Checked {
                     body_diagnostics: body_diagnostics(&module_functions),

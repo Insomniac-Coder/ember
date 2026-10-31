@@ -336,6 +336,20 @@ def retired_codes(text):
     return {m.group(1) for m in re.finditer(r"^\|\s*`([EWL]\d{4})`", table.group(1), re.M)}
 
 
+RULES_NO_LONGER_DEFINED = re.compile(r"^## H\.3 Rule identifiers no longer defined\s*\n((?:.*\n)*?)(?=^## )", re.M)
+
+
+def rules_no_longer_defined(text):
+    """The rule ids a document lists under "Rule identifiers no longer defined" (its Appendix H.3)."""
+    section = RULES_NO_LONGER_DEFINED.search(text)
+    if not section:
+        return set()
+    removed = set()
+    for row in re.finditer(r"^\|[^|]*\|([^|]*)\|", section.group(1), re.M):
+        removed.update(re.findall(r"\b[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+[a-z]?\b", row.group(1)))
+    return removed
+
+
 def load_development_target(manifest_path=DEVELOPMENT_TARGET_MANIFEST, root=ROOT):
     """Load and authenticate the optional frozen development target.
 
@@ -389,6 +403,7 @@ def load_development_target(manifest_path=DEVELOPMENT_TARGET_MANIFEST, root=ROOT
         "rules": set(all_rule_ids(text)),
         "codes": set(codes_named_in_spec(text)),
         "retired": retired_codes(text),
+        "removed": rules_no_longer_defined(text),
     }
 
 
@@ -506,7 +521,9 @@ def main():
 
     # --- 7. a registered code no test asserts ------------------------------
     asserted = codes_asserted_by_tests()
-    untested = sorted(c for c in registry_entries() if c not in asserted)
+    # A code the development target retires is never emitted, so no test can assert it.
+    retired_now = development_target["retired"] if development_target else set()
+    untested = sorted(c for c in registry_entries() if c not in asserted and c not in retired_now)
 
     # --- 7. every rule reference resolves ----------------------------------
     seen = set()
@@ -519,7 +536,10 @@ def main():
     # --- 3. every rule has a conformance directory (`[TST-4]`) -------------
     rules = all_rule_ids(text)
     have = {p.name for p in CONFORMANCE.iterdir()} if CONFORMANCE.exists() else set()
-    missing_tests = sorted(r for r in rules if r not in have)
+    # `[TST-4]` — a rule the development target no longer defines (its Appendix H.3) needs no
+    # directory once its tests are retired with it, as a code it retires needs no registry entry.
+    removed = development_target["removed"] if development_target else set()
+    missing_tests = sorted(r for r in rules if r not in have and r not in removed)
 
     # --- 4/5/6. codes ------------------------------------------------------
     registry = registry_entries()
