@@ -7628,6 +7628,21 @@ fn first_limit() -> int:
 fn twice_first() -> int:
     return first_limit() * 2
 
+fn log(ref mut out: Array[int], x: int):
+    out.push(x)
+
+fn log_twice(ref mut out: Array[int]):
+    log(out, 1)
+    log(out, 2)
+
+fn log_and_peek(ref mut out: Array[int]) -> int:
+    out.push(3)
+    return out[0]
+
+fn log_and_clear(ref mut out: Array[int]):
+    out.push(4)
+    out.clear()
+
 fn main():
     c = Counter(count = 0, seen = [])
     twice(c)
@@ -7638,6 +7653,10 @@ fn main():
     second(a)
     unlink(a)
     println(twice_first())
+    xs: Array[int] = []
+    log_twice(xs)
+    println(log_and_peek(xs))
+    log_and_clear(xs)
     l: Node = Loud()
     poke_it(l)
 ").unwrap();
@@ -7652,8 +7671,8 @@ fn main():
     for (path, expected) in [
         ("Counter.bump", "changes this.count\nreads this.count\n"),
         ("Counter.total", "reads this.count\n"),
-        ("Counter.note", "changes this.count (through bump), this.seen\nreads this.count (through bump)\nreshapes this.seen\n"),
-        ("twice", "changes c.count (through note), c.seen (through note)\nreads c.count (through note)\nreshapes c.seen (through note)\n"),
+        ("Counter.note", "changes this.count (through bump), this.seen\nreads this.count (through bump)\nreshapes this.seen\nadds to this.seen\nonly adds to this.seen\n"),
+        ("twice", "changes c.count (through note), c.seen (through note)\nreads c.count (through note)\nreshapes c.seen (through note)\nadds to c.seen (through note)\nonly adds to c.seen (through note)\n"),
         ("reads_only", "reads c.count (through total), c.seen\n"),
         ("depth", "changes c.count (through bump)\nreads c.count (through bump)\n"),
         ("second", "changes n.next as Some._0.value (through set)\nreads n.next, n.next as Some._0\n"),
@@ -7666,6 +7685,12 @@ fn main():
         // length and buffer the list.
         ("first_limit", "reads LIMITS, LIMITS[_]\n"),
         ("twice_first", "reads LIMITS (through first_limit), LIMITS[_] (through first_limit)\n"),
+        // `[EFF-24]` — only adding to the end of a `ref mut` list, through calls too: not when it
+        // reads an element already there, or clears the list.
+        ("log", "changes out\nreshapes out\nadds to out\nonly adds to out\n"),
+        ("log_twice", "changes out (through log)\nreshapes out (through log)\nadds to out (through log)\nonly adds to out (through log)\n"),
+        ("log_and_peek", "changes out\nreads out, out[_]\nreshapes out\nadds to out\n"),
+        ("log_and_clear", "changes out\nreshapes out\nadds to out\n"),
     ] {
         assert_eq!(summary(path), expected, "`{path}`'s summary");
     }

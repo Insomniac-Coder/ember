@@ -72,6 +72,11 @@ pub struct Summary {
     /// memory or changing an enum's variant, a list's or a string's elements added, removed,
     /// reordered or replaced. Each is a change too.
     pub reshapes: Vec<Fact>,
+    /// A list or string it adds to the end of (`push`, `extend`): each is a reshape too.
+    pub adds: Vec<Fact>,
+    /// Every other reshape: elements removed, reordered or replaced, or the value replaced, which
+    /// may move or free what is already there.
+    pub removes: Vec<Fact>,
     pub ends: Vec<Fact>,
 }
 
@@ -91,6 +96,18 @@ impl Summary {
     pub fn may_reshape(&self, param: usize, path: &[Step]) -> bool {
         self.reshapes.iter().any(|fact| fact.reach.root == Root::Param(param) && overlaps(&fact.reach.path, path))
     }
+
+    /// `[EFF-24]` — whether all it does to the list at `reach` is add to its end (`push`, `extend`),
+    /// reading or writing no element already in it: it adds there, every reshape there is an add,
+    /// and nothing reads, changes or ends an element of it, or ends or reshapes what holds it.
+    pub fn only_adds(&self, reach: &Reach) -> bool {
+        let at = |fact: &Fact| fact.reach.root == reach.root;
+        let element = |fact: &Fact| at(fact) && fact.reach.path.len() > reach.path.len() && fact.reach.path.starts_with(&reach.path) && fact.reach.path[reach.path.len()] == Step::Elements;
+        self.adds.iter().any(|fact| fact.reach == *reach)
+            && !self.removes.iter().any(|fact| at(fact) && overlaps(&fact.reach.path, &reach.path))
+            && !self.reads.iter().chain(&self.changes).chain(&self.ends).any(element)
+            && !self.ends.iter().any(|fact| at(fact) && reach.path.starts_with(&fact.reach.path))
+    }
 }
 
 /// Whether one path lies inside the other.
@@ -103,6 +120,8 @@ enum What {
     Change,
     Read,
     Reshape,
+    Add,
+    Remove,
     End,
 }
 
@@ -144,6 +163,8 @@ pub fn summarize(bodies: &[Body], types: &TypeTable) -> Vec<Summary> {
                         What::Change => &mut summaries[at].changes,
                         What::Read => &mut summaries[at].reads,
                         What::Reshape => &mut summaries[at].reshapes,
+                        What::Add => &mut summaries[at].adds,
+                        What::Remove => &mut summaries[at].removes,
                         What::End => &mut summaries[at].ends,
                     };
                     list.push(fact);
@@ -155,7 +176,7 @@ pub fn summarize(bodies: &[Body], types: &TypeTable) -> Vec<Summary> {
         }
     }
     for summary in &mut summaries {
-        for list in [&mut summary.changes, &mut summary.reads, &mut summary.reshapes, &mut summary.ends] {
+        for list in [&mut summary.changes, &mut summary.reads, &mut summary.reshapes, &mut summary.adds, &mut summary.removes, &mut summary.ends] {
             list.sort_by(|a, b| a.reach.cmp(&b.reach));
         }
     }
@@ -232,6 +253,21 @@ fn reshaping_builtin(types: &TypeTable, which: &Builtin) -> bool {
         ),
         _ => false,
     }
+}
+
+/// `[EFF-24]` — a built-in that only adds to the end of the list or string its first argument points
+/// at, or makes room there.
+fn adding_builtin(which: &Builtin) -> bool {
+    matches!(
+        which,
+        Builtin::ArrayPush
+            | Builtin::ArrayExtend
+            | Builtin::ArrayReserve
+            | Builtin::ArrayReserveHint { .. }
+            | Builtin::StringPush
+            | Builtin::StringPushChar
+            | Builtin::SoA { op: SoAOp::Push | SoAOp::TryPush | SoAOp::Reserve, .. }
+    )
 }
 
 /// Whether a value of this type points at memory the function may reach through it.
@@ -372,6 +408,7 @@ fn body_facts(
                     own(What::Change, place, &mut found);
                     if reshaped_by_write(types, place_type(body, types, place), 0) {
                         own(What::Reshape, place, &mut found);
+                        own(What::Remove, place, &mut found);
                     }
                     match rvalue {
                         Rvalue::Use(operand) | Rvalue::Cast { operand, .. } | Rvalue::UnaryOp { operand, .. } | Rvalue::Repeat { value: operand, .. } => {
@@ -440,6 +477,7 @@ fn body_facts(
                             let mut through = place.clone();
                             through.projection.push(Projection::Deref);
                             own(What::Reshape, &through, &mut found);
+                            own(if adding_builtin(which) { What::Add } else { What::Remove }, &through, &mut found);
                         }
                     }
                 }
@@ -469,7 +507,7 @@ fn body_facts(
         // The callee's facts, mapped onto the arguments: its parameter `i` is argument `i`.
         for callee in callees {
             let summary = &summaries[callee];
-            for (what, facts) in [(What::Change, &summary.changes), (What::Read, &summary.reads), (What::Reshape, &summary.reshapes), (What::End, &summary.ends)] {
+            for (what, facts) in [(What::Change, &summary.changes), (What::Read, &summary.reads), (What::Reshape, &summary.reshapes), (What::Add, &summary.adds), (What::Remove, &summary.removes), (What::End, &summary.ends)] {
                 for fact in facts {
                     let param = match &fact.reach.root {
                         Root::Param(param) => *param,
@@ -572,5 +610,15 @@ pub fn render(summary: &Summary, body: &Body, bodies: &[Body], types: &TypeTable
         }
         if items.is_empty() { String::new() } else { format!("  {label} {}\n", items.join(", ")) }
     };
-    format!("{}{}{}{}", line("changes", &summary.changes), line("reads", &summary.reads), line("reshapes", &summary.reshapes), line("ends", &summary.ends))
+    // `[EFF-24]` — of the places it adds to, those it only adds to.
+    let only: Vec<Fact> = summary.adds.iter().filter(|fact| summary.only_adds(&fact.reach)).cloned().collect();
+    format!(
+        "{}{}{}{}{}{}",
+        line("changes", &summary.changes),
+        line("reads", &summary.reads),
+        line("reshapes", &summary.reshapes),
+        line("adds to", &summary.adds),
+        line("only adds to", &only),
+        line("ends", &summary.ends)
+    )
 }

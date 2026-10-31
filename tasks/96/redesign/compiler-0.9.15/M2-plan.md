@@ -44,7 +44,9 @@ placement, keeping and verifying land when a check needs them.
    parameter is live; "only adds" for a `ref mut` list parameter; the elements it touches; where it
    keeps a view or function-value parameter (the `StoreSummary` of `regions.rs` folded in, A2-9's
    facts, C2); whether it lets `this` out and which fields of `this` it reads; whether a function
-   value's body may end its own state and use it after. Slots, empty until their milestones: area 3's
+   value's body may end its own state and use it after. **"Only adds" built** (2026-11-01): the
+   facts *adds* (`push`, `extend`) and *removes* (every other reshape), and `Summary::only_adds`.
+   Slots, empty until their milestones: area 3's
    "sets the parent link before reading it", area 5's locks taken and needed (`[THR-18]`).
 5. **A4-3: summaries in interface files.** `.emif` schema 15: each callable's summary with each chain
    step as file and line; a changed summary is an interface change, so dependants are checked again
