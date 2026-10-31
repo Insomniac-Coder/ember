@@ -2624,15 +2624,11 @@ fn runtime_object_impl(
     let lto = build_lto(toolchain, profile, Link::Here);
     let extension = match toolchain {
         Toolchain::Msvc { cl, .. } if lto != Lto::Off && !is_clang_cl(cl) => return Ok(None),
-        Toolchain::Msvc { cl, .. } => {
+        Toolchain::Msvc { .. } => {
             // `/Z7` keeps the debug information inside the object; `/Zi`
             // would tie a shared object to a PDB file beside it.
             let flags = msvc_flags(profile).into_iter().map(|f| if f == "/Zi" { "/Z7" } else { f });
             command.args(flags).args(lto_compile_flags(toolchain, lto, Link::Here)).arg("/c");
-            // `[BLD-13]` — as for Clang below: `lld-link` hashes the object's own name into the program.
-            if is_clang_cl(cl) && profile != Profile::Release {
-                command.arg(format!("/clang:-object-file-name={}_rt.obj", ember_branding::SYMBOL_PREFIX));
-            }
             for dir in include_dirs {
                 command.arg(format!("/I{}", dir.display()));
             }
@@ -2646,12 +2642,7 @@ fn runtime_object_impl(
                 command.args(lto_compile_flags(toolchain, lto, Link::Here));
             }
             // `[BLD-13]` — one object wherever the program is built: a program database names it.
-            // Its own name in its debug information is fixed too, not the cache's temporary file.
-            let debug_compile = clang_windows_debug_flags(toolchain, profile).0;
-            command.args(debug_compile);
-            if !debug_compile.is_empty() {
-                command.arg(format!("-object-file-name={}_rt.o", ember_branding::SYMBOL_PREFIX));
-            }
+            command.args(clang_windows_debug_flags(toolchain, profile).0);
             command.args(folder_flags(&[source.to_path_buf()], include_dirs, false));
             for dir in include_dirs {
                 command.arg("-I").arg(dir);
@@ -2692,6 +2683,8 @@ fn runtime_object_impl(
         }
     }
     key.compiler_file(toolchain);
+    // How it is compiled below, apart from the command: its own folder (D-937).
+    key.part(b"compiled in a folder of its own");
 
     let dir = cache.join("runtime");
     if std::fs::create_dir_all(&dir).is_err() {
@@ -2702,21 +2695,42 @@ fn runtime_object_impl(
     if object.is_file() {
         return Ok(Some(object));
     }
-    let temp = dir.join(format!("{name}.tmp{}.{extension}", temp_suffix()));
+    // `[BLD-13]` (D-937) — compiled in a folder of its own, under one name, its compilation folder
+    // written `.`: its debug information names neither the cache, in another place for each user and
+    // machine, nor the folder the first build to want it ran in. None of it changes what the object
+    // holds, so none of it is in the key.
+    let staging = dir.join(format!("{name}.tmp{}", temp_suffix()));
+    std::fs::create_dir_all(&staging)?;
+    let built = format!("{}_rt.{extension}", ember_branding::SYMBOL_PREFIX);
+    // Its folder named `.`, as Ninja names a program's objects' folder (`ninja.rs`): clang-cl writes an
+    // object's name absolute, as MSVC does, whatever the compilation folder.
+    let own_folder = folder_flags(&[staging.join(&built)], &[], false);
     match toolchain {
-        Toolchain::Msvc { .. } => command.arg(format!("/Fo{}", temp.display())),
-        Toolchain::Clang(_) | Toolchain::Gcc(_) => command.arg("-o").arg(&temp),
-    };
-    if let Err(error) = run(command) {
-        let _ = std::fs::remove_file(&temp);
-        return Err(error);
+        Toolchain::Msvc { cl, .. } => {
+            if is_clang_cl(cl) {
+                command.arg("/Brepro");
+                if profile != Profile::Release {
+                    command.args(["/clang:-gno-codeview-command-line", "/clang:-fdebug-compilation-dir=."]);
+                    command.args(own_folder.iter().map(|flag| format!("/clang:{flag}")));
+                }
+            }
+            command.arg(format!("/Fo{built}"));
+        }
+        Toolchain::Clang(_) => {
+            command.arg("-fdebug-compilation-dir=.").args(&own_folder).arg("-o").arg(&built);
+        }
+        Toolchain::Gcc(_) => {
+            command.arg(format!("-fdebug-prefix-map={}=.", staging.display())).arg("-o").arg(&built);
+        }
     }
-    if let Err(error) = publish_once(&temp, &object)
-        && !object.is_file()
-    {
-        return Err(error.into());
-    }
-    Ok(Some(object))
+    command.current_dir(&staging);
+    let temp = staging.join(&built);
+    let published = run(command).and_then(|()| match publish_once(&temp, &object) {
+        Err(error) if !object.is_file() => Err(error.into()),
+        _ => Ok(()),
+    });
+    let _ = std::fs::remove_dir_all(&staging);
+    published.map(|()| Some(object))
 }
 
 /// D-903 — moves `temp` to `object` unless a copy is already there, which

@@ -17,7 +17,12 @@
 > - **The MSVC report** the owner asked for (D-933): `target/msvc-link-hang-report/` (`REPORT.md`, two zips).
 >   Its dumps are scrubbed copies; the originals in `target/m1/hang-caught` hold the session's environment,
 >   a token among it: never share those.
-> - **Next:** the bench gate both backends, push, one CI look; then M1
+> - **Pushed** `627b62a1` (bench 25 of 25 both backends). Its CI (run 41167074849): 4 jobs red, all
+>   `a_build_is_reproducible_and_named_by_its_inputs`, whose second folder now has a cache of its own: D-937's
+>   rest (Linux's DWARF compilation folder; clang-cl's absolute object name, the runner's Clang without
+>   `-object-file-name`). Fixed: the runtime's object compiled in a folder of its own, named `.`; checked on
+>   Windows (the 18) and Linux (WSL: gcc, Clang, LLVM).
+> - **Next:** the gate for that fix, the bench both backends, push, one CI look; then M1
 >   on `m1` (merge `main`; piece 3's 41 failures).
 
 > **2026-10-31, night — AUTONOMOUS (owner asleep), solo. START HERE.** Owner: "back to autonomous mode,
