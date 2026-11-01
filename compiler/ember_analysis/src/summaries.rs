@@ -17,7 +17,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use ember_mir::{Body, Builtin, FuncRef, LocalId, Operand, Place, Projection, Rvalue, SoAOp, StmtKind, Terminator};
+use ember_mir::{Body, Builtin, Const, FuncRef, LocalId, Operand, Place, Projection, Rvalue, SoAOp, StmtKind, Terminator};
 use ember_span::Span;
 use ember_types::{TyKind, TypeTable};
 
@@ -88,6 +88,10 @@ pub struct Summary {
     /// a call is checked against), through its own lines and the same fact of the functions it calls.
     pub read_while: Vec<(usize, Fact)>,
     pub changed_while: Vec<(usize, Fact)>,
+    /// `[CLS-2]` — a method's ways of letting `this` out, which `init` may call only once every field is
+    /// set: `this` as a whole (or a copy or view of all of it) passed, stored, captured or returned, or
+    /// a method called on it that lets it out. The fields of `this` it reads are its reads of `this`.
+    pub lets_this_out: Vec<Fact>,
 }
 
 impl Summary {
@@ -138,6 +142,8 @@ enum What {
     /// A read, or a change, while the `ref mut` parameter of this index is still used.
     ReadWhile(usize),
     ChangedWhile(usize),
+    /// `this` let out.
+    LetsThisOut,
 }
 
 /// Where a place is, in a body's own terms: a local and the steps from it.
@@ -187,6 +193,7 @@ pub fn summarize(bodies: &[Body], types: &TypeTable) -> Vec<Summary> {
                         What::UsedAfter(param) => summary.used_after.push((param, fact)),
                         What::ReadWhile(param) => summary.read_while.push((param, fact)),
                         What::ChangedWhile(param) => summary.changed_while.push((param, fact)),
+                        What::LetsThisOut => summary.lets_this_out.push(fact),
                     }
                 }
             }
@@ -441,6 +448,10 @@ fn body_facts(
     };
     // `[BRW-21]` — the view parameters (those whose value carries a region), and whether one is still
     // used at a point: its regions are live there.
+    // `[CLS-2]` — the locals holding `this` as a whole, and an operand that is one of them.
+    let aliases = this_aliases(body);
+    let whole = |operand: &Operand| matches!(operand, Operand::Copy(place) | Operand::Move(place) if whole_place(&aliases, place));
+    let let_out = Fact { reach: Reach { root: Root::Param(0), path: Vec::new() }, chain: Vec::new() };
     let views: Vec<usize> = match regions {
         Some(regions) => (0..body.arg_count).filter(|&param| !regions.local_regions(LocalId(param as u32 + 1)).is_empty()).collect(),
         None => Vec::new(),
@@ -509,6 +520,20 @@ fn body_facts(
                 }
                 StmtKind::Drop { place, .. } => own(What::End, place, &mut found),
                 _ => {}
+            }
+            // `[CLS-2]` — `this` stored (into a field, an element, a struct or a closure's state) or
+            // returned; a copy or view of it in another local is not yet a use.
+            if let StmtKind::Assign { place, rvalue } = &stmt.kind {
+                let uses = match rvalue {
+                    Rvalue::Use(operand) | Rvalue::Cast { operand, .. } => whole(operand),
+                    Rvalue::Ref { place: lent, .. } => whole_place(&aliases, lent),
+                    Rvalue::Aggregate { operands, .. } => operands.iter().any(&whole),
+                    _ => false,
+                };
+                let copied = place.projection.is_empty() && place.local != ember_mir::RETURN_LOCAL && aliases.contains(&place.local) && !matches!(rvalue, Rvalue::Aggregate { .. });
+                if uses && !copied {
+                    found.push((What::LetsThisOut, let_out.clone()));
+                }
             }
             per_parameter(start, Point { block: at_block, index: at_stmt }, Point { block: at_block, index: at_stmt + 1 }, &mut found);
         }
@@ -588,6 +613,42 @@ fn body_facts(
                 }
             }
         }
+        // `[CLS-2]` — `this` passed: to a method called on it, as that method lets it out; anywhere
+        // else, let out here.
+        for (position, argument) in args.iter().enumerate() {
+            if !whole(argument) {
+                continue;
+            }
+            let on_it = position == 0
+                && matches!(func, FuncRef::Direct { .. } | FuncRef::Virtual { .. } | FuncRef::Interface { .. })
+                && !callees.is_empty()
+                && callees.iter().all(|&callee| is_method(&bodies[callee]));
+            if !on_it {
+                found.push((What::LetsThisOut, let_out.clone()));
+                continue;
+            }
+            for &callee in &callees {
+                if let Some(fact) = summaries[callee].lets_this_out.first() {
+                    let mut chain = vec![(callee, span)];
+                    chain.extend_from_slice(&fact.chain);
+                    found.push((What::LetsThisOut, Fact { reach: let_out.reach.clone(), chain }));
+                }
+            }
+        }
+        // `[THR-11]`, `[PAR-4]`, `[JOB-1]` (verdict 30) — a function a built-in runs itself (a scoped or
+        // pooled task, a `@parallel` loop's chunks and combiner) does what its body does, from here.
+        if matches!(func, FuncRef::Builtin { .. }) {
+            for operand in args {
+                let Operand::Const(Const::Fn(symbol)) = operand else { continue };
+                let Some(&task) = index.get(symbol.as_str()) else { continue };
+                let summary = &summaries[task];
+                for (what, facts) in [(What::Change, &summary.changes), (What::Read, &summary.reads), (What::Reshape, &summary.reshapes), (What::Add, &summary.adds), (What::Remove, &summary.removes), (What::End, &summary.ends)] {
+                    for fact in facts {
+                        found.extend(task_mapped(body, types, pointers, args, &bodies[task], task, span, fact).into_iter().map(|fact| (what, fact)));
+                    }
+                }
+            }
+        }
         let call = Point { block: at_block, index: block.stmts.len() };
         // What a call reads and changes is read or changed while a parameter is used when it is still
         // used after the call; one the call is its last use of is passed to the callee, whose own
@@ -641,6 +702,121 @@ fn mapped(body: &Body, types: &TypeTable, pointers: &HashMap<LocalId, HashSet<Ta
     let mut out = Vec::new();
     reaches(body, pointers, &Spot { local: place.local, steps }, 0, &mut out);
     out.into_iter().map(|reach| Fact { reach, chain: chain() }).collect()
+}
+
+/// A fact of a function a built-in runs (`task`), from the call: its captured state is the call's
+/// argument of the closure's environment type, each field the operand the environment was built from;
+/// any other parameter may be anything the call's arguments point at; a static is the same place.
+/// Where the environment cannot be followed, anything a parameter reaches.
+#[allow(clippy::too_many_arguments)]
+fn task_mapped(body: &Body, types: &TypeTable, pointers: &HashMap<LocalId, HashSet<Target>>, args: &[Operand], task_body: &Body, task: usize, span: Span, fact: &Fact) -> Vec<Fact> {
+    let mut out = Vec::new();
+    match (&fact.reach.root, task_body.closure_environment) {
+        (Root::Static(..), _) => out.push(fact.reach.clone()),
+        (Root::Param(0), Some(environment)) => {
+            let place = args.iter().find_map(|operand| match operand {
+                Operand::Copy(place) | Operand::Move(place) if matches!(types.kind(place_type(body, types, place)), TyKind::Struct(id) if *id == environment) => Some(place),
+                _ => None,
+            });
+            // The task's state is its parameter, given by reference or by value: past the reference.
+            let path = match fact.reach.path.split_first() {
+                Some((Step::Deref, rest)) if matches!(task_body.locals.get(1).map(|local| types.kind(local.ty)), Some(TyKind::Ref { .. } | TyKind::Ptr { .. })) => rest,
+                _ => &fact.reach.path[..],
+            };
+            match (place.and_then(|place| environment_fields(body, place, environment, 0)), path.split_first()) {
+                (Some(fields), Some((Step::Field(field), rest))) => {
+                    // A captured view: what the task does through it, it does to what the view points at;
+                    // a captured value is the task's own.
+                    if let Some(Operand::Copy(captured) | Operand::Move(captured)) = fields.get(*field) {
+                        let mut steps = steps_of(body, types, captured);
+                        steps.extend_from_slice(rest);
+                        reaches(body, pointers, &Spot { local: captured.local, steps }, 0, &mut out);
+                    }
+                }
+                (Some(_), _) => {}
+                (None, _) => anything(body, &mut out),
+            }
+        }
+        (Root::Param(_), _) => {
+            for operand in args {
+                if let Operand::Copy(place) | Operand::Move(place) = operand
+                    && points(types, place_type(body, types, place))
+                {
+                    let mut steps = steps_of(body, types, place);
+                    steps.push(Step::Deref);
+                    reaches(body, pointers, &Spot { local: place.local, steps }, 0, &mut out);
+                }
+            }
+        }
+    }
+    let mut chain = vec![(task, span)];
+    chain.extend_from_slice(&fact.chain);
+    out.into_iter().map(|reach| Fact { reach, chain: chain.clone() }).collect()
+}
+
+/// The operands a closure's environment held in `place` was built from, field by field: the struct
+/// written into it (through copies of it); `None` when it is not one.
+fn environment_fields(body: &Body, place: &Place, environment: ember_types::StructId, depth: usize) -> Option<Vec<Operand>> {
+    if !place.projection.is_empty() || depth > 8 {
+        return None;
+    }
+    let mut found = None;
+    for stmt in body.blocks.iter().flat_map(|block| &block.stmts) {
+        let StmtKind::Assign { place: written, rvalue } = &stmt.kind else { continue };
+        if written.local != place.local || !written.projection.is_empty() {
+            continue;
+        }
+        let fields = match rvalue {
+            Rvalue::Aggregate { kind: ember_mir::AggregateKind::Struct(id), operands } if *id == environment => Some(operands.clone()),
+            Rvalue::Use(Operand::Copy(from) | Operand::Move(from)) => environment_fields(body, from, environment, depth + 1),
+            _ => None,
+        };
+        // Written once, by one struct; any other write and it cannot be followed.
+        match (fields, &found) {
+            (Some(fields), None) => found = Some(fields),
+            _ => return None,
+        }
+    }
+    found
+}
+
+/// A method: its first parameter is its object, `this` (`self` in MIR).
+fn is_method(body: &Body) -> bool {
+    body.arg_count > 0 && body.locals.get(1).and_then(|local| local.name.as_deref()) == Some("self")
+}
+
+/// `[CLS-2]` — a method's locals holding its object as a whole: `this`, and each local given a copy
+/// or a view of a whole one.
+fn this_aliases(body: &Body) -> HashSet<LocalId> {
+    let mut aliases = HashSet::new();
+    if !is_method(body) {
+        return aliases;
+    }
+    aliases.insert(LocalId(1));
+    loop {
+        let before = aliases.len();
+        for stmt in body.blocks.iter().flat_map(|block| &block.stmts) {
+            let StmtKind::Assign { place, rvalue } = &stmt.kind else { continue };
+            if !place.projection.is_empty() || place.local == ember_mir::RETURN_LOCAL {
+                continue;
+            }
+            let source = match rvalue {
+                Rvalue::Use(Operand::Copy(from) | Operand::Move(from)) | Rvalue::Cast { operand: Operand::Copy(from) | Operand::Move(from), .. } | Rvalue::Ref { place: from, .. } => Some(from),
+                _ => None,
+            };
+            if source.is_some_and(|from| whole_place(&aliases, from)) {
+                aliases.insert(place.local);
+            }
+        }
+        if aliases.len() == before {
+            return aliases;
+        }
+    }
+}
+
+/// Whether `place` is a whole object one of `aliases` holds: the local, or what it points at.
+fn whole_place(aliases: &HashSet<LocalId>, place: &Place) -> bool {
+    aliases.contains(&place.local) && place.projection.iter().all(|projection| matches!(projection, Projection::Deref))
 }
 
 /// `[BRW-1]` — whether a fact's place is the parameter's own: reached through its own reference and
@@ -738,14 +914,21 @@ pub fn render(summary: &Summary, body: &Body, bodies: &[Body], types: &TypeTable
             per_parameter.push_str(&line(&label.replace("{}", &name), &facts));
         }
     }
+    // `[CLS-2]` — one way it lets `this` out is enough to say so.
+    let lets_out = match summary.lets_this_out.first().map(|fact| fact.chain.first()) {
+        Some(Some((callee, _))) => format!("  lets this out (through {})\n", bodies[*callee].name),
+        Some(None) => "  lets this out\n".to_string(),
+        None => String::new(),
+    };
     format!(
-        "{}{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{}{}",
         line("changes", &summary.changes),
         line("reads", &summary.reads),
         line("reshapes", &summary.reshapes),
         line("adds to", &summary.adds),
         line("only adds to", &only),
         line("ends", &summary.ends),
-        per_parameter
+        per_parameter,
+        lets_out
     )
 }

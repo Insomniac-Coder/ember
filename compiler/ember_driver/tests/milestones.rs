@@ -7561,6 +7561,8 @@ fn the_summary_says_what_each_function_changes_and_reads() {
     let dir = temporary_directory("summaries");
     let source = dir.join(ember_branding::source_file("main"));
     std::fs::write(&source, "\
+import std.thread
+
 struct Counter:
     count: int
     seen: Array[int]
@@ -7689,6 +7691,36 @@ fn push_both(ref mut out: Array[int], ref mut other: Array[int]):
     other.push(1)
     out.push(2)
 
+fn grow_in_a_task(ref mut xs: Array[int]):
+    with scope = thread.scope():
+        scope.spawn(fn(): xs.push(1))
+
+class Member:
+    id: int = 0
+    tag: int = 0
+
+    fn label() -> int:
+        return this.id
+
+    fn give():
+        keep(this)
+
+    fn give_on():
+        this.give()
+
+    fn copy_of_me() -> Member:
+        return this
+
+    fn bump():
+        this.id += 1
+        this.bump_tag()
+
+    fn bump_tag():
+        this.tag += 1
+
+fn keep(m: Member):
+    println(m.id)
+
 fn main():
     c = Counter(count = 0, seen = [])
     twice(c)
@@ -7718,6 +7750,14 @@ fn main():
     fill_on(xs)
     zs: Array[int] = []
     push_both(xs, zs)
+    grow_in_a_task(xs)
+    m = Member()
+    println(m.label())
+    m.give()
+    m.give_on()
+    other = m.copy_of_me()
+    m.bump()
+    println(other.id)
 ").unwrap();
     let mir = ember(&["build", &source.to_string_lossy(), "--emit", "mir"], &dir);
     assert_eq!(mir.exit, 0, "MIR failed:\n{}", mir.stderr);
@@ -7771,9 +7811,24 @@ fn main():
         ("fill", "changes out\nreads LIMITS\nreshapes out\nadds to out\nonly adds to out\nwhile it uses out, reads LIMITS\n"),
         ("fill_on", "changes out (through fill)\nreads LIMITS (through fill)\nreshapes out (through fill)\nadds to out (through fill)\nonly adds to out (through fill)\nwhile it uses out, reads LIMITS (through fill)\n"),
         ("push_both", "changes out, other\nreshapes out, other\nadds to out, other\nonly adds to out, other\nuses out after it may reshape or end other\nwhile it uses out, changes other\n"),
+        // `[CLS-2]` — what `init` may call before every field is set: a method that only reads `this`
+        // (and which fields it reads), not one that passes `this` on, returns it, or calls one that does.
+        ("Member.label", "reads this.id\n"),
+        ("Member.give", "reads this.id (through keep)\nlets this out\n"),
+        ("Member.give_on", "reads this.id (through give)\nlets this out (through give)\n"),
+        ("Member.copy_of_me", "lets this out\n"),
+        ("Member.bump", "changes this.id, this.tag (through bump_tag)\nreads this.id, this.tag (through bump_tag)\n"),
     ] {
         assert_eq!(summary(path), expected, "`{path}`'s summary");
     }
+    // Verdict 30, `[THR-11]` — what a task does is done by the function that starts it: a scoped task
+    // pushing to the list a captured view points at.
+    let task = format!("{}closure_14grow_in_a_task_c0", ember_branding::mangle_prefix());
+    assert_eq!(
+        summary("grow_in_a_task"),
+        format!("changes xs (through {task})\nreshapes xs (through {task})\nadds to xs (through {task})\nonly adds to xs (through {task})\n"),
+        "`grow_in_a_task`'s summary"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -61,13 +61,29 @@ placement, keeping and verifying land when a check needs them.
    place is what its leading reference and handle reach (every `Deref` before its first field, element
    or variant step), so a `ref mut n: Node`'s own object is its own. While 0.9.10's run-time access
    brackets stand (M6b), an `end_access_write` after a call keeps a parameter live a line longer.
+   **Not folded yet:** where it keeps a view or function-value parameter stays the borrow check's
+   `StoreSummary` (what the checks read today) until slice 1 puts the summary on the body; it moves then,
+   not copied before. **Found while building it, D-944:** a task a built-in runs (a scoped or pooled
+   task, a `@parallel` loop's chunks) was not followed; its facts are now the starting function's.
+   **"Lets `this` out" built** (2026-11-01, `[CLS-2]`'s `init` check, A4-12's input):
+   `Summary::lets_this_out`, a method's object as a whole (or a copy or view of all of it) passed,
+   stored into a field, an element, a struct or a closure's state, or returned; a method called on it
+   lets it out as that method does. **"Fields of `this` read"** are the summary's reads of `this` (its
+   paths' first field), so nothing new is stored. **"A function value's body may end its own state and
+   use it after"** is `used_after` of a closure's environment parameter: what the caller checks it
+   against (the place it is called from) is the call check's, M6a.
    Slots, empty until their milestones: area 3's
    "sets the parent link before reading it", area 5's locks taken and needed (`[THR-18]`).
 5. **A4-3: summaries in interface files.** `.emif` schema 15: each callable's summary with each chain
    step as file and line; a changed summary is an interface change, so dependants are checked again
    (`[BLD-14]`, `[EFF-4]`, `[MOD-9]`). Test: the `[EFF-4]` milestone test with a library's two lines
    swapped.
-6. **A9-11: the callable-type index (SD2).** *Mostly built with A4-1* (`targets.rs`: the place a value
+6. **A9-11: the callable-type index (SD2).** *Measured 2026-11-01:* of 3,293 test programs, 102 make a
+   loose function value: a closure a built-in runs itself (a scoped task, `run_staged`'s, a `@parallel`
+   loop's), a C function given an `extern "C"` type, a C++ bridge function. None is a value of an Ember
+   callable type, so none should count for one; but a loose value reaches a check only where a value
+   cannot be followed at all (a read through a raw pointer), and no program here shows the difference
+   yet: the change waits for a test that fails without it. *Mostly built with A4-1* (`targets.rs`: the place a value
    is read from, verdicts 122, 128, 129, and every function stored into a callable type where nothing
    can be followed; `plain_function_values` is gone). Left: the *loose* functions, those that become a
    value where no callable type is known (a closure's captured state, an operand of an operator, an
