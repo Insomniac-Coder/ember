@@ -1220,6 +1220,11 @@ verdicts, 2026-10-29", items 1 to 18, with the review's other answers):
     for a value made for an `owns` place (verdicts 74, 85, 97: `Entity(mesh=owns Mesh(...))`). Owner
     (2026-11-01), shown `Words(names=xs)` beside `Words(names=owns xs)`: "b".
 
+160. **A value made with `shares` or `weakref` in the call takes no `owns` before it**: with `fn
+    setup(owns game: shares mut Game):`, the call stays `setup(shares mut game)`, and a list of links takes
+    `ROSTER.push(weakref this)`; the word that makes the value says what is given. Owner (2026-11-01), shown
+    `setup(owns shares mut game)` and `ROSTER.push(owns weakref this)` beside them: "yes go with b".
+
 ## Messages and tests: the lead's to settle (owner, 2026-11-01 evening)
 
 "your error messages are okay it's the language implementation part that concerns me most of the time so

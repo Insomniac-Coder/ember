@@ -79,3 +79,5 @@ decisions.md, the next hardening, the build.
     println(x))`, `filter(owns fn ...)`, `map(owns fn ...)`; a named one stays `for_each(h)` (owner: "a"). JOB.md 158.
 20. A constructor argument takes no word, as `=`: `Words(names=xs)` hands `xs` over (owner: "b"). JOB.md 159.
     Read by the lead to cover an enum variant's constructor the same way (`Some(t)`), told to the owner.
+21. A value made with `shares`/`weakref` in the call takes no `owns`: `setup(shares mut game)`,
+    `ROSTER.push(weakref this)` (owner: "yes go with b"). JOB.md 160.
