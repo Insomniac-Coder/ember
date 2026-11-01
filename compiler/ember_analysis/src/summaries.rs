@@ -270,9 +270,18 @@ fn adding_builtin(which: &Builtin) -> bool {
     )
 }
 
-/// Whether a value of this type points at memory the function may reach through it.
+/// Whether a value of this type points at memory the function may reach through it: a `StrView` and a
+/// C string at their text, too.
 fn points(types: &TypeTable, ty: ember_types::Ty) -> bool {
-    matches!(types.kind(ty), TyKind::Ref { .. } | TyKind::Ptr { .. } | TyKind::Class(_) | TyKind::Span { .. } | TyKind::Vec { .. } | TyKind::Dyn { .. } | TyKind::ClassInterface(_))
+    matches!(
+        types.kind(ty),
+        TyKind::Ref { .. } | TyKind::Ptr { .. } | TyKind::Class(_) | TyKind::Span { .. } | TyKind::Vec { .. } | TyKind::Dyn { .. } | TyKind::ClassInterface(_) | TyKind::Str | TyKind::CStr
+    )
+}
+
+/// A built-in whose result is memory it has just made, which nothing the function had reaches.
+fn fresh_builtin(which: &Builtin) -> bool {
+    matches!(which, Builtin::ArrayNew | Builtin::StringNew | Builtin::Input)
 }
 
 /// What each local holding a pointer may point at, over the whole body (flow-insensitive: every
@@ -311,6 +320,11 @@ fn pointers_of(body: &Body, types: &TypeTable) -> HashMap<LocalId, HashSet<Targe
             let into = map.entry(dest.local).or_default();
             if let FuncRef::Builtin { which: Builtin::LazyStatic { name, ty, .. } | Builtin::ConstStatic { name, ty } | Builtin::ForeignStatic { symbol: name, ty, .. }, .. } = func {
                 into.insert(Target::Static(name.to_string(), *ty));
+                continue;
+            }
+            if let FuncRef::Builtin { which, .. } = func
+                && fresh_builtin(which)
+            {
                 continue;
             }
             let mut any = false;
@@ -486,7 +500,7 @@ fn body_facts(
                         let ty = place_type(body, types, place);
                         let what = match types.kind(ty) {
                             TyKind::Ref { mutable: true, .. } | TyKind::Ptr { mutable: true, .. } => Some(What::Change),
-                            TyKind::Ref { .. } | TyKind::Ptr { .. } | TyKind::Span { .. } | TyKind::Vec { .. } | TyKind::Class(_) => Some(What::Read),
+                            TyKind::Ref { .. } | TyKind::Ptr { .. } | TyKind::Span { .. } | TyKind::Vec { .. } | TyKind::Class(_) | TyKind::Str | TyKind::CStr => Some(What::Read),
                             _ => None,
                         };
                         if let Some(what) = what {

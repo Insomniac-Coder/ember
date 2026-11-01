@@ -7643,6 +7643,13 @@ fn log_and_clear(ref mut out: Array[int]):
     out.push(4)
     out.clear()
 
+fn note_text(s: StrView):
+    println(s)
+
+fn fresh_then_print(s: StrView, ref mut out: Array[String]):
+    out.push(String(\"x\"))
+    println(s)
+
 fn main():
     c = Counter(count = 0, seen = [])
     twice(c)
@@ -7659,6 +7666,9 @@ fn main():
     log_and_clear(xs)
     l: Node = Loud()
     poke_it(l)
+    words: Array[String] = []
+    note_text(\"a\")
+    fresh_then_print(\"b\", words)
 ").unwrap();
     let mir = ember(&["build", &source.to_string_lossy(), "--emit", "mir"], &dir);
     assert_eq!(mir.exit, 0, "MIR failed:\n{}", mir.stderr);
@@ -7691,6 +7701,10 @@ fn main():
         ("log_twice", "changes out (through log)\nreshapes out (through log)\nadds to out (through log)\nonly adds to out (through log)\n"),
         ("log_and_peek", "changes out\nreads out, out[_]\nreshapes out\nadds to out\n"),
         ("log_and_clear", "changes out\nreshapes out\nadds to out\n"),
+        // A `StrView` points at its text, which printing it reads; a string just made is memory no
+        // parameter reaches, so pushing it reads nothing of the caller's.
+        ("note_text", "reads s\n"),
+        ("fresh_then_print", "changes out\nreads s\nreshapes out\nadds to out\nonly adds to out\n"),
     ] {
         assert_eq!(summary(path), expected, "`{path}`'s summary");
     }

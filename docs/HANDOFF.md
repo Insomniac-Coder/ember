@@ -1,7 +1,7 @@
 # Ember — handoff
 
 > **2026-11-01, day — AUTONOMOUS from 08:22 ("now go autonomous mode and do not break the protocol"),
-> solo. START HERE.** Watcher started 08:22, pid 39940 (scratchpad `power_wifi_hibernate.ps1`): end it with WMI
+> solo. START HERE.** Watcher (power only, owner 10:55: "not for wifi") pid 97472 (scratchpad `power_only_hibernate.ps1`): end it with WMI
 > `Terminate` when the owner is back. **The protocol, restated by the owner today:** the compiler follows the spec
 > word for word; anything the spec does not say is an ODR (a wording change too: "this also needs to go through a
 > minor change ODR"); a verdict changes the spec first (a hardening), and is built after; every changed test is
