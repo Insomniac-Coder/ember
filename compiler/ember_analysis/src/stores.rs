@@ -110,7 +110,7 @@ pub fn infer_store_summaries(
     types: &TypeTable,
     kept: &HashMap<String, StoreSummary>,
     base: &dyn Fn(&FuncRef) -> CallRegionContract,
-    capture_paths: &dyn Fn(&Body) -> HashMap<Point, Vec<Vec<Projection>>>,
+    capture_paths: &dyn Fn(&Body) -> HashMap<Point, crate::regions::NarrowedBorrow>,
     dynamic: &HashSet<String>,
 ) -> HashMap<String, StoreSummary> {
     let index: HashMap<&str, usize> =

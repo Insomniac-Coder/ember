@@ -46,7 +46,7 @@ use ember_types::{ClassId, StructId, Ty, TyKind, TypeTable};
 use crate::facts::{
     AccessPermission, BorrowCapability, EscapeConstraint, ProvenanceRoot, ReferenceKind, StorageIdentity,
 };
-use crate::regions::{CallRegionContract, CallResultContract, Elision, Origin, Point, RegionVid, Regions};
+use crate::regions::{CallRegionContract, CallResultContract, Elision, NarrowedBorrow, Origin, Point, RegionVid, Regions};
 use crate::stores;
 
 /// One borrow, recorded where it is created (`[GLOSSARY]` "loan").
@@ -2103,6 +2103,9 @@ struct CaptureContracts {
     /// `[BRW-10]` — for each method a call to which borrows only the fields of
     /// its receiver its body uses, those fields.
     methods: HashMap<String, Vec<Vec<Projection>>>,
+    /// `[LT-1]` — those of them whose result points into the object itself, which stays viewed
+    /// whole while the result lives.
+    into_receiver: HashSet<String>,
 }
 
 /// `[BRW-10]` — for each method a call to which borrows only the fields its
@@ -2294,6 +2297,7 @@ fn closure_capture_contracts(
     contracts: &HashMap<String, CallRegionContract>,
 ) -> CaptureContracts {
     let methods = receiver_fields(bodies);
+    let into_receiver = methods.keys().filter(|symbol| contracts.get(*symbol).is_some_and(result_into_receiver)).cloned().collect();
     let mut result = HashMap::new();
     for body in bodies {
         let Some(environment) = body.closure_environment else { continue };
@@ -2307,7 +2311,22 @@ fn closure_capture_contracts(
             result.remove(&environment);
         }
     }
-    CaptureContracts { closures: result, methods }
+    CaptureContracts { closures: result, methods, into_receiver }
+}
+
+/// `[LT-1]` — whether a call's result points into its first argument itself (a method's object), not
+/// only into what a view field of it points into (`from buf`, whose call's view of the object ends
+/// with the call).
+fn result_into_receiver(contract: &CallRegionContract) -> bool {
+    match &contract.result {
+        CallResultContract::Legacy(elision) => elision.ties(0) && elision.through(0).is_empty(),
+        CallResultContract::Fields(summary) => summary.fields.iter().any(|field| {
+            field.sources.iter().any(|source| {
+                matches!(source, ResultRegionSource::View { argument: 0, projection }
+                    if !projection.iter().any(|step| matches!(step, Projection::Field(_))))
+            })
+        }),
+    }
 }
 
 /// Locate synthetic capture borrows in a closure creator. A borrow is exact
@@ -2318,7 +2337,7 @@ fn closure_capture_contracts(
 fn capture_borrow_paths(
     body: &Body,
     contracts: &CaptureContracts,
-) -> HashMap<Point, Vec<Vec<Projection>>> {
+) -> HashMap<Point, NarrowedBorrow> {
     let mut result = HashMap::new();
     for (block_index, block) in body.blocks.iter().enumerate() {
         for (index, stmt) in block.stmts.iter().enumerate() {
@@ -2333,21 +2352,22 @@ fn capture_borrow_paths(
                 continue;
             }
             let uses = capture_temporary_uses(body, Point { block: block_index, index }, destination.local);
-            let paths = match uses.as_slice() {
+            let borrow = match uses.as_slice() {
                 [CaptureTemporaryUse::Environment { environment, field }] if !mutable => {
                     let Some(contract) = contracts.closures.get(environment) else { continue };
                     let Some(paths) = capture_field_paths(contract, *field) else { continue };
-                    paths
+                    NarrowedBorrow { paths, whole_view: false }
                 }
                 // `[BRW-10]` — the receiver of one call to a method that
-                // borrows only the fields its body uses.
+                // borrows only the fields its body uses; `[LT-1]` — and views
+                // the whole object while a result pointing into it lives.
                 [CaptureTemporaryUse::Receiver(symbol)] => {
                     let Some(paths) = contracts.methods.get(symbol) else { continue };
-                    paths.clone()
+                    NarrowedBorrow { paths: paths.clone(), whole_view: contracts.into_receiver.contains(symbol) }
                 }
                 _ => continue,
             };
-            result.insert(Point { block: block_index, index }, paths);
+            result.insert(Point { block: block_index, index }, borrow);
         }
     }
     result
@@ -3512,7 +3532,7 @@ fn check_body(
     body: &Body,
     types: &TypeTable,
     call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
-    capture_paths: &HashMap<Point, Vec<Vec<Projection>>>,
+    capture_paths: &HashMap<Point, NarrowedBorrow>,
     owned_closure_environments: &HashSet<StructId>,
     is_method: &dyn Fn(&FuncRef) -> bool,
     dynamic: bool,
@@ -4151,16 +4171,21 @@ fn collect_loans(
             let paths: &[Vec<Projection>] = regions
                 .capture_borrow_paths(created_at)
                 .unwrap_or(&[]);
-            let borrowed_places: Vec<Place> = if paths.is_empty() {
-                vec![borrowed.clone()]
+            let mut borrowed_places: Vec<(Place, AccessPermission)> = if paths.is_empty() {
+                vec![(borrowed.clone(), permission)]
             } else {
-                paths.iter().map(|path| project_place(borrowed, path)).collect()
+                paths.iter().map(|path| (project_place(borrowed, path), permission)).collect()
             };
+            // `[LT-1]` — a result pointing into the object views it whole, read-only, while the
+            // call itself holds only the fields its body uses (`[BRW-10]`).
+            if regions.whole_view(created_at) {
+                borrowed_places.push((borrowed.clone(), AccessPermission::Shared));
+            }
             // D-217 — a loan of a span taken only to hand it to a built-in
             // (`&mut span` fed to `reborrow` or `split_at`) gives out what the
             // span points to, not its slot, so the slot's storage obligation
             // does not apply. The loan still conflicts with every other use.
-            for borrowed in borrowed_places {
+            for (borrowed, permission) in borrowed_places {
                 let feeds_reborrow = borrower_feeds_span_builtin(body, types, place.local, &borrowed);
                 let storage_root = borrowed.local;
                 let mut capability = BorrowCapability::statically_checked_reference(

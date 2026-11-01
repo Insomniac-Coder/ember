@@ -180,6 +180,16 @@ pub struct CallerPlaceFact {
     pub origins: HashSet<Origin>,
 }
 
+/// `[BRW-10]`, `[LT-42]` — a borrow narrowed to some paths of its place: the fields a method's body
+/// uses, or what a closure keeps. `whole_view`: the method's result points into its object, which a
+/// call's result points into whole (`[LT-1]`), so the whole place is also viewed, read-only, for as
+/// long as the borrow lives, while the call itself holds only the paths.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NarrowedBorrow {
+    pub paths: Vec<Vec<Projection>>,
+    pub whole_view: bool,
+}
+
 /// The complete region information available at one call boundary.
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct CallRegionContract {
@@ -245,7 +255,7 @@ pub struct Regions {
     /// ordinary borrow of the complete place. This compiler-only fact keeps
     /// `[LT-42]` precision at the closure boundary without changing reference
     /// layout or granting any general projection-narrowing escape hatch.
-    capture_borrow_paths: HashMap<Point, Vec<Vec<Projection>>>,
+    capture_borrow_paths: HashMap<Point, NarrowedBorrow>,
     /// The possible value roots in every local region slot immediately before
     /// each MIR point. This is compile-time-only `[LT-21]` provenance; it is
     /// deliberately absent from layout, ABI, and generated code.
@@ -362,7 +372,7 @@ impl Regions {
         body: &Body,
         types: &TypeTable,
         call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
-        capture_borrow_paths: &HashMap<Point, Vec<Vec<Projection>>>,
+        capture_borrow_paths: &HashMap<Point, NarrowedBorrow>,
     ) -> Regions {
         let mut local_regions = Vec::with_capacity(body.locals.len());
         let mut next = 0;
@@ -455,7 +465,13 @@ impl Regions {
     /// The exact field paths of a compiler-generated closure capture borrow.
     /// `None` means this is an ordinary whole-place borrow.
     pub fn capture_borrow_paths(&self, point: Point) -> Option<&[Vec<Projection>]> {
-        self.capture_borrow_paths.get(&point).map(Vec::as_slice)
+        self.capture_borrow_paths.get(&point).map(|borrow| borrow.paths.as_slice())
+    }
+
+    /// Whether the narrowed borrow at `point` also views its whole place, read-only, for as long as
+    /// it lives (`NarrowedBorrow::whole_view`).
+    pub fn whole_view(&self, point: Point) -> bool {
+        self.capture_borrow_paths.get(&point).is_some_and(|borrow| borrow.whole_view)
     }
 
     /// The region of the borrow expression at `point`, if there is one.
@@ -1901,6 +1917,9 @@ impl Regions {
                     for path in paths {
                         events.push((point, project_place(place, path), operation));
                     }
+                    if self.whole_view(point) {
+                        events.push((point, place.clone(), RegionAccessKind::BorrowShared));
+                    }
                 } else {
                     events.push((point, place.clone(), operation));
                 }
@@ -2266,6 +2285,9 @@ impl Regions {
                 if let Some(paths) = self.capture_borrow_paths(point) {
                     for path in paths {
                         self.read_place_liveness(&project_place(place, path), live);
+                    }
+                    if self.whole_view(point) {
+                        self.read_place_liveness(place, live);
                     }
                 } else {
                     self.read_place_liveness(place, live);

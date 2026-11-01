@@ -77,13 +77,14 @@
 >   parameter; `E3062`'s help for a view of the whole object. Phase 2's six owner questions: what a `dyn`/`virtual`
 >   call's result points into; `[T]` lines not directly above (x2); `E0005` vs `E0100` for a keyword as a name;
 >   whether `Array.push` ends a number; whether a `Hasher` may be `Copy`.
-> - **Next:** the rest of the confirmed list: a struct method's returned view narrowed to the fields it uses
->   (call-results 2: `[BRW-10]` narrows what the call changes, `[LT-1]` points the result into the whole object;
->   one borrow serves both today, so the fix is two: the call's, narrowed, ending with it, and the result's, the
->   whole object, read-only; dropping the narrowing for such methods would refuse `w.push_and_get(1)` in a loop
->   over `w.names`, which `[BRW-10]` allows); `implements Copy` ignored (new, TYP-43); then A1-3, A1-4; the push gate
+> - **Next:** A1-3 (the hand-over messages: the spec words only its examples, OWN-3's `=`, OWN-11's `push`, three
+>   `E3013` texts; the general forms are ODRs to bring with N30-N36), A1-4; the push gate
 >   before any push (owner, afternoon: a game is downloading, no benchmarking for at least an hour, so no push before
 >   then).
+> - **Done after `d658b503`:** D-965 (a method's result points into its whole object: a second, read-only loan
+>   while it lives; the call still changes only what its body changes, `[BRW-10]`). A test change for the owner:
+>   `BRW-10/accept_a_method_borrows_only_the_fields_it_uses` lost its `p.first_a()` half, which asserted the old rule;
+>   it is now `LT-1/reject_changing_another_field_while_a_methods_view_lives.em`.
 > - **Done after `61928b83`:** D-962 (a number handed over out of a view is `E3013`/`E3011`, as a `String`; `m[k] = v`
 >   gives `v` as `=` does; no test's verdict changed), D-963 (a function value is lent only to the standard library's
 >   functions, ODR-240; OPEN ODR N36 asks whether `[STD-19]`'s 0.9.15 text replaces that).
