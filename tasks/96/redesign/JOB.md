@@ -1070,6 +1070,15 @@ verdicts, 2026-10-29", items 1 to 18, with the review's other answers):
     Owner, of N23 (2026-10-31, morning), shown `fn lib_step` with the word left out and the two answers
     (accept it as `unsafe fn`, the lead's ruling; refuse it): "yes good" to refusing it, the lead's
     recommendation on a second look (a plain `fn` is safe to call everywhere else in Ember) ([FFI-10]).
+137. **What a call's result is a view of is read from the called function's code, for every result type**:
+    a plain `StrView`, `Span`, `ref T` as well as a struct, enum or tuple holding views. The caller locks
+    exactly what the code shows the result points into (`fn pick(a: Span[int], b: Span[int]) ->
+    Span[int]: return a` locks only `a`). What a body may return is unchanged; the first line's rules
+    (`[LT-1]` rules 1 to 3) decide a call only where there is no code to read (a function value, a `dyn`
+    or `virtual` call, a C function). Owner, of N26 (2026-11-01, morning), after asking why Ember read the
+    code of a method returning `Option[StrView]` and not of one returning `StrView`: "why the fuck is
+    reading the code an issue if it breaks, if it is breaking it is clearly because some rule was broken
+    right?", then, asked "read the code everywhere?": "yes" ([LT-1], [LT-22], [LT-34]).
 
 ## Error messages are part of readability (owner, 2026-10-24)
 

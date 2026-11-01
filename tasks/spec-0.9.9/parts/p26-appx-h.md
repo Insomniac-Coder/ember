@@ -2328,3 +2328,22 @@ Generated: every rule whose text differs from 0.9.15_Hardened_6.
 | `[FFI-10]` | changed |
 | `[FFI-52]` | changed |
 | `[FFI-54]` | changed |
+
+## H.48 Changes in 0.9.15_Hardened_8 (from 0.9.15_Hardened_7)
+
+**0.9.15_Hardened_8** writes in the owner's verdict 137 from the review of 2026-11-01, morning
+(`tasks/96/redesign/JOB.md`):
+
+* Verdict 137: what a call's result is a view of is read from the called function's code, for every
+  result type, a plain view as well as a view type: the caller keeps viewed exactly the arguments the
+  code shows the result points into (`fn pick(a: Span[int], b: Span[int]) -> Span[int]:` returning `a`
+  keeps only `a` viewed). The first line's rules decide a call only where there is no code to read: a
+  function value, a `dyn` or `virtual` method, a function with no Ember body (`[LT-1]`, `[LT-22]`). What
+  a body may return is unchanged.
+
+Generated: every rule whose text differs from 0.9.15_Hardened_7.
+
+| Rule | 0.9.15_Hardened_7 → 0.9.15_Hardened_8 |
+|---|---|
+| `[LT-1]` | changed |
+| `[LT-22]` | changed |

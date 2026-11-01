@@ -532,9 +532,12 @@ it must be valid, and the compiler infers every region.
   For a function whose result is a view:
   1. if it is a method, the result points into `this`;
   2. else, if exactly one parameter is a source parameter, the result points into it;
-  3. else, the result points into **all** source parameters together (the caller keeps all of them
-     viewed while the result lives).
-  Rule 3 always type-checks; it may view more than the function needs. Pointing into an argument means
+  3. else, the result points into **all** source parameters together.
+  At a call, the caller keeps viewed, while the result lives, exactly the arguments the called
+  function's code shows the result points into: its summary (`[LT-22]`), read for every result type, so
+  `fn pick(a: Span[int], b: Span[int]) -> Span[int]:` whose body is `return a` keeps only `a` viewed.
+  The three rules decide a call where there is no code to read: a call through a function value
+  (`[LT-7]`), a `dyn` or `virtual` method, a function with no Ember body. Pointing into an argument means
   pointing into it and into everything it owns (**into**, §VII.1), so a reshape of anything it owns ends
   the view and any other change of it while the view is used is refused (`[BRW-1]`). A returned view
   that points into any other parameter is refused: `E3063` when that parameter is `owns` or is passed as
@@ -708,11 +711,13 @@ fn main():
 * `[LT-21]` Assigning a new view into a field recomputes that field's region; the old source is
   released on that path and the new one constrained. Merges of control flow keep every region that may
   reach a field.
-* `[LT-22]` *(changed in 0.9.15)* A function returning a view type gets, from its body, a summary of
-  which result field points into which parameter (and which parameter fields each call uses,
-  `[LT-35]`). Callers use the summary; source never states it. Where the summary would need more than
-  the first line allows, the result points into every source parameter (`[LT-1]` rule 3), or into what
-  `from` names.
+* `[LT-22]` *(changed in 0.9.15)* A function returning a view, or a view type, gets from its body a
+  summary of which part of the result points into which parameter (a plain view's one part is the
+  view itself; a view type's are its fields), and which parameter fields each call uses (`[LT-35]`).
+  Callers use the summary; source never states it. A body may give a result that needs more than the
+  first line allows, pointing into any source parameter (`[LT-1]` rule 3), and its summary says which;
+  with `from`, the result points into what `from` names. Where no summary can be made (a view read
+  through a raw pointer), a caller takes the result to point into every source parameter.
 * `[LT-23]` *(changed in 0.9.15)* With `from` on a function returning a multi-region view, every field
   of the result points into what `from` names; a field that points into anything else is `E3062`.
 * `[LT-24]` A region slot ends at the last use of its own field, not of the whole value.

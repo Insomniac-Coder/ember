@@ -908,7 +908,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[LT-18]` | VII | *(changed in 0.9.15)* Every view field is an ordinary view under … |
 | `[LT-20]` | VII | Moving, copying, destructuring, passing and returning a view … |
 | `[LT-21]` | VII | Assigning a new view into a field recomputes that field's region; the … |
-| `[LT-22]` | VII | *(changed in 0.9.15)* A function returning a view type gets, from its … |
+| `[LT-22]` | VII | *(changed in 0.9.15)* A function returning a view, or a view type, … |
 | `[LT-23]` | VII | *(changed in 0.9.15)* With `from` on a function returning a … |
 | `[LT-24]` | VII | A region slot ends at the last use of its own field, not of the whole … |
 | `[LT-25]` | VII | *(changed in 0.9.15)* A view field may not point into another field … |
