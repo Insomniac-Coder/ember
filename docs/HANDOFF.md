@@ -4,32 +4,31 @@
 > helper agents to help you with coding, make sure you follow all the autonomous md file rules and run the power source
 > watcher, I'll see you in the morning"). START HERE.** Watcher: power only, pid 97416 (scratchpad
 > `power_only_hibernate.ps1`; end it with WMI `Terminate` when the owner is back). **Hardened_10** `09a5e033` (verdicts
-> 145-160; 158-160 asked and answered during the cut). OPEN ODRs for the morning: N38 (`runtime` for a class value), N39
-> (a local whose kind is chosen while running), N40 (`owns` precedence: `m.insert(owns (i * 7), owns i)` as built).
-> - **Built, uncommitted, quick check 0-4 failing while the last respelling runs:** A1-8 (`ref mut` at the call) and
->   `owns` at the call (147-149, 158; 145, 146, 148): `check_call_word`/`missing_owns_word` in typeck. Call words are
->   checked only for a written call's own arguments (`written_call`; a call or argument the compiler makes, id `DUMMY`,
->   inside a map literal, a comprehension, a `yield`, a `?`; a constructor's argument, verdict 159, class `init` too; and
->   the files an `import c`/`cpp` module is written into, `generated_files`). `owns` binds as `-` does, so a compound
->   argument takes brackets (N40). Generic inference reads the place under a word; lambdas bare or `owns` wait for their
->   hint (`lambda_of`). `Array`'s built-in `push` takes `owns` (149). `runtime` reaches HIR
->   (`Program::runtime_params`, all three body loops). Std, tests, bench and docs respelled by scratchpad `add_owns.py`
->   (edits only where the line writes the argument named; it once inserted `owns` at compiler-made calls: undone with
->   `revert_owns.py` and redone), the Rust tests' programs by `add_words_rs.py` (never `migrate.rs`, whose inputs are
->   0.9.10 programs).
-> - **Helpers:** parser (done: `[GRM-40]` x2, `[LEX-14]` E0005, `runtime` parsed, `owns fn` as `Owned(Lambda)`, the
->   `extend` help, keywords the grammar expects stay E0100); analysis (verdicts 151-152, design
->   `tasks/96/redesign/compiler-0.9.15/dyn-per-kind-design.md`: per-kind checks, per-instance summaries, the incremental
->   re-check (the record keeps `kinds`, SCHEMA 5), the `runtime` check `DynKindIs` in MIR and three backends). A
->   read-only reviewer found 8 issues in the analysis work (soundness: kinds changed through `ref mut`, per-unit tables
->   in multi-module builds, guards on the wrong value, `defer` copies, generators, a cycle never checked): the analysis
->   helper is fixing them. **Do not commit the analysis work before those are fixed and verified.**
-> - **Next:** the respelling's last pass (lambdas for std callables), the quick check, `regen_ui.py` for the UI
->   `.stderr`, the milestone/incremental/unit suites, `spec_check --emit-appendix` (Annex A's fixture
->   `docs/spec-source/appendix-a.em` is respelled), then commits in three parts (parser; typeck and the respelling;
->   analysis after review). The spec example `tx.send(owns i * i)` in p11 needs brackets (an in-place example fix to
->   Hardened_10, re-pin). The upgrader's N30 rule (`owns copy of` where 0.9.10 code reuses a handed-over value) is
->   still to build in `migrate.rs`'s rounds.
+> 145-160). **OPEN ODRs for the morning, one at a time** (decisions.md): N38 (`runtime` for a class value: `fn show(a:
+> runtime A):`?), N39 (a local whose kind is chosen while running, no parameter in between), N40 (`owns` binds as `-`,
+> so `m.insert(owns (i * 7), owns i)` as built: should a call's `owns` cover the whole argument?).
+> - **Built and committed, LOCAL, unpushed** (17 commits on origin/main before the N30 commit):
+>   - `2b2f977d` parser: `[GRM-40]` (154, 155), `[LEX-14]` E0005 (156), `runtime` before `dyn` (152), `owns fn` as
+>     `Owned(Lambda)` (158); `owns`/`shares`/`thread_shared`/`weakref`/`sharedref` before a type, and the value words
+>     where they are not built, are E0900 (N50).
+>   - `cdd60dfa` typeck call words (A1-8 `ref mut` and 145-150, 158-160: `check_call_word`, `missing_owns_word`,
+>     `taken_value` for built-in `push`/`submit`/`spawn`), `dyn` checked per kind and `runtime` checked while running
+>     (151-152: `dyn_kinds.rs`, `DynKindIs` in MIR, C, LLVM, interpreter; design
+>     `tasks/96/redesign/compiler-0.9.15/dyn-per-kind-design.md`, reviewed: 8 findings fixed), the repository
+>     respelled, `docs/errors/E3028.md`, the spec_check baseline 24 to 10 (the respelled blocks' old hashes left).
+>   - `be4f005f` README: phase 4 27% (EFF-26, not done, +2 words; floored).
+>   - Then N30: `ember fmt --migrate` gives a number 0.9.10 copied and the program uses again `owns copy of`
+>     (`Body::handed_at`; the migrator runs drop elaboration once the file type-checks; decisions.md N51).
+> - **Checked:** quick check 0 failing; the 12 gates exit 0; full workspace suite on `be4f005f`: 694 passed, 1 failed
+>   (`adopted_foreign_objects_are_freed_by_their_destructor`: a `format!` program still wrote
+>   `thread.spawn(owned fn() ...)`; now `owns owned fn`, as the 83 other sites), rerun green with the N30 tests.
+> - **Traps found tonight:** `tools/spec_check.py` took `target/debug/ember.exe` first, a build from the morning: it
+>   now takes release first, as `error_pages.py` does. A compiler run in a folder with no `ember.toml` writes one
+>   (four were left in `docs/` and the fixtures; removed, never commit them).
+> - **Next:** the push gate (gate3, then the bench on mains, P-cores) before any push; then the OPEN ODRs with the
+>   owner. Still open: `owned fn` stays the built stand-in for capture words (`owns fn() owns x:` is E0900 until they
+>   are built; `[CLO-1]` makes `owned fn` E1010 then); docs/book prose respelling; helper 2's notes (another
+>   module's kind named qualified in the run-time stop).
 
 > **2026-11-01, evening — attended (owner here), solo. START HERE.** Watcher pid 97472 ended (owner back).
 > **The ODR round is done:** owner verdicts 145-157 (`46ecdc5b`, JOB.md), each in his words, with the quotes in

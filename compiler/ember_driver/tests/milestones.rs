@@ -518,7 +518,7 @@ fn main():
     y = x / 2
     y /= 2
     m: Map[str, int] = Map()
-    m.insert(owns \"a\", owns 1)
+    m.insert(\"a\", 1)
     for k, v in m:
         println(k, v)
     xs: Array[int] = [1, 2]
@@ -535,6 +535,7 @@ fn main():
         "_c = Color.Red",
         "y = x // 2",
         "y //= 2",
+        "m.insert(owns \"a\", owns 1)",
         "for (k, v) in m.items():",
     ] {
         assert!(migrated.stdout.contains(wanted), "the migration lacks {wanted:?}:\n{}", migrated.stdout);
@@ -591,6 +592,47 @@ fn main():
     assert!(migrated.stderr.contains(":1:22: `Box[dyn fn]` to an owned callable type"), "{}", migrated.stderr);
     let left: Vec<&str> = migrated.stderr.lines().filter(|line| line.starts_with("not rewritten: ")).collect();
     assert!(left.len() == 1 && left[0].contains(":2:"), "the boxed lambda is not listed:\n{}", migrated.stderr);
+}
+
+/// `[CLI-20]` (N30) — 0.9.10 copied a number given to an `owned` parameter, and 0.9.15 hands it over
+/// (`[OWN-9]`): the migration says `owns` at each such call (`[FN-2a]`, verdict 147), and gives the
+/// call a copy where the number is used again, after the call or on the loop's next pass, so the
+/// program prints what it did.
+#[test]
+fn fmt_migrate_gives_a_number_used_again_a_copy() {
+    let root = workspace_root();
+    let directory = temporary_directory("migrate");
+    let old = directory.join(ember_branding::source_file("old"));
+    std::fs::write(&old, "\
+fn twice(owned n: int) -> int:
+    return n * 2
+
+fn main():
+    a = 3
+    b = 4
+    println(twice(a))
+    println(twice(b), b)
+    total = 0
+    c = 5
+    for _ in 0..3:
+        total += twice(c)
+    println(total)
+").expect("the old source is writable");
+    let migrated = ember(&["fmt", "--migrate", &old.to_string_lossy()], &root);
+    assert_eq!(migrated.exit, 0, "{}\n{}", migrated.stderr, migrated.stdout);
+    for wanted in [
+        "fn twice(owns n: int) -> int:",
+        "println(twice(owns a))",
+        "println(twice(owns copy of b), b)",
+        "total += twice(owns copy of c)",
+    ] {
+        assert!(migrated.stdout.contains(wanted), "the migration lacks {wanted:?}:\n{}", migrated.stdout);
+    }
+    let new = directory.join(ember_branding::source_file("new"));
+    std::fs::write(&new, &migrated.stdout).expect("the new source is writable");
+    let run = ember(&["run", &new.to_string_lossy()], &root);
+    assert_eq!(run.exit, 0, "{}\n{}", run.stderr, migrated.stdout);
+    assert_eq!(run.stdout, "6\n8 4\n30\n", "{}", migrated.stdout);
 }
 
 /// `[CLI-20]` (verdicts 130, 133) — a declaration left unsafe to call by the word `unsafe` becomes an
@@ -1870,7 +1912,7 @@ fn adopted_foreign_objects_are_freed_by_their_destructor() {
     }
 
     let elsewhere = directory.join(format!("elsewhere.{SOURCE_EXT}"));
-    std::fs::write(&elsewhere, format!("{declarations}fn make() -> ForeignBox[Gadget]:\n    unsafe:  # SAFETY(ffi): a fresh gadget\n        return adopt(gadget_new(2))\n\nfn main():\n    gadget = make()\n    worker = thread.spawn(owned fn() => gadget.as_ptr() == gadget.as_ptr())\n    println(worker.join())\n")).expect("program is writable");
+    std::fs::write(&elsewhere, format!("{declarations}fn make() -> ForeignBox[Gadget]:\n    unsafe:  # SAFETY(ffi): a fresh gadget\n        return adopt(gadget_new(2))\n\nfn main():\n    gadget = make()\n    worker = thread.spawn(owns owned fn() => gadget.as_ptr() == gadget.as_ptr())\n    println(worker.join())\n")).expect("program is writable");
     let program = link_with_fixture(&elsewhere, "foreign_objects.c", Profile::Debug, &directory, "elsewhere_debug");
     let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
     let stderr = String::from_utf8_lossy(&run.stderr);

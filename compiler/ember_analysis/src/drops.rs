@@ -25,7 +25,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use ember_diag::{Diagnostic, Sink, codes};
+use ember_diag::{Diagnostic, Replacement, Sink, codes};
 use ember_mir::{
     Body, FuncRef, LocalDecl, LocalId, LocalKind, Operand, Place, Projection, Rvalue, Stmt, StmtKind,
     Terminator,
@@ -1693,6 +1693,7 @@ impl Reporter<'_> {
                 Some(_) => diagnostic.secondary(span, "and used here on the next iteration"),
                 None => diagnostic,
             };
+            let diagnostic = self.kept_by_copy(diagnostic, body, local, again.then_some(span));
             diagnostic
             .primary_label("moved here, and the loop comes back")
             .note(concat!(
@@ -1713,9 +1714,30 @@ impl Reporter<'_> {
                 .primary_label("used here after the move")
                 .note("a move gives the value away; the old owner cannot use it again")
                 .help("clone the value, or borrow it instead of moving it");
+            let diagnostic = self.kept_by_copy(diagnostic, body, local, again.then_some(span));
             self.moved_from(diagnostic, body, local, span)
         };
         self.sink.emit_classified(diagnostic);
+    }
+
+    /// `[CLI-20]` (N30) — 0.9.10 copied a number given to an `owned` parameter; 0.9.15 hands it over
+    /// (`[OWN-9]`). Where such a value is used again, `ember fmt --migrate` gives each call that
+    /// handed it over a copy (`take(owns copy of n)`), so the program does what it did; no message
+    /// changes. `instruction`: the use's own instruction, when an earlier operand of it moved the value.
+    fn kept_by_copy(&self, diagnostic: Diagnostic, body: &Body, local: LocalId, instruction: Option<Span>) -> Diagnostic {
+        let moves: Vec<Span> = moves_reaching(body, local, self.point).into_iter().chain(instruction).collect();
+        let mut edits: Vec<(Span, Replacement)> = Vec::new();
+        for (handed, at) in &body.handed_at {
+            let within = moves.iter().any(|moved| moved.file == at.file && moved.start <= at.start && at.end <= moved.end);
+            let insert = Span::new(at.file, at.start, at.start);
+            if *handed == local && within && !edits.iter().any(|(span, _)| *span == insert) {
+                edits.push((insert, Replacement::Text("copy of ".to_string())));
+            }
+        }
+        if edits.is_empty() {
+            return diagnostic;
+        }
+        diagnostic.migrate_edits("a copy where 0.9.10 copied the number (`owns copy of`)", edits)
     }
 
     /// `[OWN-3]` — a use after a move is labelled at the move as well; and a collection's, with the
@@ -1767,6 +1789,7 @@ impl Reporter<'_> {
             .primary_label("borrowed here after the move")
             .note(note)
             .help("borrow before the move, or clone the value so the move takes the copy");
+        let diagnostic = self.kept_by_copy(diagnostic, body, local, None);
         let diagnostic = self.moved_from(diagnostic, body, local, span);
         self.sink.emit_classified(diagnostic);
     }

@@ -600,7 +600,7 @@ mod tests {
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
             restrict_views: false,
-            stack_buffers: Vec::new(), frame_objects: Vec::new(), loop_notes: Default::default(), kept: false, runtime_params: Vec::new(),
+            stack_buffers: Vec::new(), frame_objects: Vec::new(), loop_notes: Default::default(), kept: false, runtime_params: Vec::new(), handed_at: Vec::new(),
         }
     }
 

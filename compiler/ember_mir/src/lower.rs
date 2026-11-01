@@ -345,6 +345,8 @@ struct Builder<'a> {
     /// `[CLS-2]` — per field of a class `init` that needs dropping, the flag that says a value is
     /// there: a field written twice, or after a write on only some paths, drops what it holds.
     class_init_flags: std::collections::HashMap<usize, LocalId>,
+    /// `Body::handed_at`.
+    handed_at: Vec<(LocalId, ember_span::Span)>,
 }
 
 impl<'a> Builder<'a> {
@@ -495,6 +497,7 @@ impl<'a> Builder<'a> {
             class_init_default_fields: function.class_init_default_fields.clone(),
             class_access,
             class_init_flags: std::collections::HashMap::new(),
+            handed_at: Vec::new(),
         }
     }
 
@@ -598,6 +601,7 @@ impl<'a> Builder<'a> {
                 positions.sort_unstable();
                 positions
             },
+            handed_at: self.handed_at,
         }
     }
 
@@ -7548,7 +7552,15 @@ impl<'a> Builder<'a> {
     /// `[OWN-9]` — an argument for an `owns` parameter: handed over (`lent`, `handed`).
     fn lower_operand_handed(&mut self, expr: &'a hir::Expr, lent: bool) -> Operand {
         let operand = self.lower_operand(expr);
-        self.handed(operand, expr.ty, lent)
+        let copied = matches!(operand, Operand::Copy(_));
+        let handed = self.handed(operand, expr.ty, lent);
+        if copied
+            && let Operand::Move(place) = &handed
+            && place.projection.is_empty()
+        {
+            self.handed_at.push((place.local, expr.span));
+        }
+        handed
     }
 
     /// A class handle, whose object the borrow checker cannot see other

@@ -207,6 +207,12 @@ pub struct Body {
     /// `[LT-48]` — the parameters written `runtime` before their `dyn` type, by position.
     #[serde(default)]
     pub runtime_params: Vec<usize>,
+    /// `[OWN-9]`, `[CLI-20]` (N30) — each argument a call hands over that `Copy` would have copied
+    /// (a number given to an `owns` parameter): its local and the argument's own span. A call's move
+    /// is spanned by the whole call; this is where in it the value is written, for the migration
+    /// that gives such a call a copy where the value is used again.
+    #[serde(default)]
+    pub handed_at: Vec<(LocalId, Span)>,
 }
 
 /// `[SIMD-2]`, `[SIMD-5]` — what a body's loop attributes ask of the loop

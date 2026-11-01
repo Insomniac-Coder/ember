@@ -15062,7 +15062,7 @@ mod string_descriptor_view_parts_tests {
             removed_checks: Vec::new(),
             restrict_views: false,
             stack_buffers: Vec::new(), frame_objects: Vec::new(), loop_notes: Default::default(),
-            runtime_params: Vec::new(),
+            runtime_params: Vec::new(), handed_at: Vec::new(),
         }
     }
 

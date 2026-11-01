@@ -3332,7 +3332,10 @@ fn format_file(input: &Path, check_only: bool, write: bool, json: bool) -> Resul
 /// over a `Map` and `with_views`, the loader's for `std.borrow`); they are applied, and the file
 /// checked again, until none is left. A function in a type body that lists no object, in a file
 /// that lists `self` elsewhere, meets none: 0.9.15 reads it as a method, so it is made `static fn`
-/// outright. `@view` is kept: it is checked again in 0.9.15 (`[ATT-2]`). Only the named file is
+/// outright. `@view` is kept: it is checked again in 0.9.15 (`[ATT-2]`). A call says `owns` and
+/// `ref mut` with its parameters' words (`[FN-2a]`); a number 0.9.10 copied into an `owned`
+/// parameter and used again is given a copy (`owns copy of n`, N30), from drop elaboration's
+/// `E3040` and `E3041`, which run once the file type-checks. Only the named file is
 /// rewritten. `repository`: the repository's own migration, whose every file is 0.9.10 source:
 /// 0.9.15's rewrites alone, with the file's own layout.
 fn migrate_file(input: &Path, write: bool, json: bool, repository: bool) -> Result<ExitCode, String> {
@@ -3427,7 +3430,7 @@ fn migrate_file(input: &Path, write: bool, json: bool, repository: bool) -> Resu
             if !sink.has_errors() {
                 let (mut types, common) = TypeTable::new();
                 let mark = sink.mark();
-                let checked = ember_typeck::check(
+                let mut checked = ember_typeck::check(
                     &modules,
                     &mut types,
                     &common,
@@ -3443,6 +3446,10 @@ fn migrate_file(input: &Path, write: bool, json: bool, repository: bool) -> Resu
                 // What a compile-time evaluation would answer is not this command's.
                 if !checked.comptime.is_empty() {
                     sink.rollback(mark);
+                } else if !sink.has_errors() {
+                    // N30 — the moves: a value used after a call took it over (`E3040`, `E3041`).
+                    let mut bodies = ember_mir::lower_with(&mut checked.program, &types, &common, &map, &std::collections::HashSet::new());
+                    ember_analysis::elaborate_drops_all(&mut bodies, &types, &mut sink);
                 }
             }
         }
