@@ -1214,6 +1214,12 @@ verdicts, 2026-10-29", items 1 to 18, with the review's other answers):
     `for_each(h)`, borrowed. Owner (2026-11-01), shown the three lines and (b) no word for a function written
     in the call: "a".
 
+159. **A constructor's argument takes no word: it works as `=` does** (verdict 147 does not reach a
+    constructor): with `struct Words:` holding `names: Array[String]`, `w = Words(names=xs)` hands `xs` over
+    (a later use is `E3040`), as `snapshot = items` does, and `Point(x=a)` copies a number; `owns` stays
+    for a value made for an `owns` place (verdicts 74, 85, 97: `Entity(mesh=owns Mesh(...))`). Owner
+    (2026-11-01), shown `Words(names=xs)` beside `Words(names=owns xs)`: "b".
+
 ## Messages and tests: the lead's to settle (owner, 2026-11-01 evening)
 
 "your error messages are okay it's the language implementation part that concerns me most of the time so

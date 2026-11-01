@@ -77,3 +77,5 @@ decisions.md, the next hardening, the build.
 
 19. A function written in a call to a std function says `owns` (verdict 147 applied): `for_each(owns fn(x: int):
     println(x))`, `filter(owns fn ...)`, `map(owns fn ...)`; a named one stays `for_each(h)` (owner: "a"). JOB.md 158.
+20. A constructor argument takes no word, as `=`: `Words(names=xs)` hands `xs` over (owner: "b"). JOB.md 159.
+    Read by the lead to cover an enum variant's constructor the same way (`Some(t)`), told to the owner.
