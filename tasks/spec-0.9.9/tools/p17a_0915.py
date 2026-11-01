@@ -6,7 +6,8 @@ LIVE_0915 = {'E0001': ('invalid UTF-8 in source', ['LEX-1']),
  'E0002': ('tab used for indentation', ['LEX-4']),
  'E0003': ('inconsistent dedent', ['LEX-5']),
  'E0004': ('expected an indented block', ['LEX-9']),
- 'E0005': ('reserved keyword used as an identifier', ['LEX-14']),
+ 'E0005': ('a keyword used as a name, any keyword (`type = 3`: "`type` is a keyword", help "write `r#type` to use '
+           'the word as a name"), or a word reserved for a future version', ['LEX-14', 'LEX-15']),
  'E0006': ('a `#!` language directive names a version other than the current one', ['VER-8']),
  'E0008': ('unterminated character literal', ['LEX-22']),
  'E0009': ('malformed literal', ['LEX-26']),
@@ -14,8 +15,9 @@ LIVE_0915 = {'E0001': ('invalid UTF-8 in source', ['LEX-1']),
            "message gives the declaration to write: `static mut FRAME: int = 0`), a bound written without `needs` or "
            "joined with `+` (whose message gives the line with `needs`), and a clause after a function's "
            'brackets that Ember does not have (`changes FRAME`, `reads renderer`, `with` before the captures), whose '
-           'message gives the first line to write',
-           ['GRM-2', 'TYP-17']),
+           'message gives the first line to write, and a line that begins with `[` and is not directly above a '
+           'function, struct or class',
+           ['GRM-2', 'TYP-17', 'GRM-40']),
  'E0101': ('unclosed delimiter or literal', ['LEX-6']),
  'E0102': ('membership test chained (`a in b in c`)', ['GRM-23']),
  'E0103': ('match arms mix statement and expression form', ['GRM-10']),
@@ -28,7 +30,7 @@ LIVE_0915 = {'E0001': ('invalid UTF-8 in source', ['LEX-1']),
  'E0107': ('a jump expression may not be an operand', ['GRM-16']),
  'E0108': ('attribute is not permitted on this statement', ['GRM-20']),
  'E0109': ('`owns` before a name whose place already hands the value over with no word (`e.mesh = m`; `b = a` for a '
-           'value that is not a number; an argument; `return a`), or before `fn`',
+           'value `=` hands over), after `return`, or before `fn` anywhere but an argument for an `owns` parameter',
            ['OWN-9', 'GRM-15']),
  'E0110': ('function declared without a body outside an interface, extern block or abstract class', ['GRM-33']),
  'E0111': ('`ref` of an expression that is not a place', ['GRM-36']),
@@ -194,10 +196,11 @@ LIVE_0915 = {'E0001': ('invalid UTF-8 in source', ['LEX-1']),
            'thread changes, a scoped task started in the walk, a foreign call by what the callbacks C keeps change, '
            'the end of an object by what its `drop` changes); a removal inside a counting loop',
            ['BRW-18', 'CTL-2']),
- 'E3021': ('a read and a change of one place overlap: a change of what a read-only name reads while it is still used; '
-           "a `ref mut` name's place read through another name while it is still used; an argument that may reach into "
-           'a changeable argument of the same call',
-           ['BRW-1', 'BRW-11']),
+ 'E3021': ('a read and a change of one place overlap: a change of what a read-only name reads while it is still used, '
+           'a view a `dyn` call may give included where the kind is known only while running (help: `runtime` on the '
+           "parameter); a `ref mut` name's place read through another name while it is still used; an argument that "
+           'may reach into a changeable argument of the same call',
+           ['BRW-1', 'BRW-11', 'LT-1', 'LT-48']),
  'E3022': ('one place changed through two names: two changeable arguments of one call naming one place, other than one '
            'whole variable proved when compiling (a function value that changes it counts as one); a function value '
            "stored in a place that a variable it changes owns; a `ref mut` name's place changed through another name "
@@ -221,7 +224,8 @@ LIVE_0915 = {'E0001': ('invalid UTF-8 in source', ['LEX-1']),
            ['FN-2a']),
  'E3028': ("a call's word does not match its parameter: no `ref mut` (or no `const` for a `const ref mut` parameter) "
            'before an argument for a `ref mut` parameter, a `MutSpan` one included, or `ref mut` before one for a '
-           'parameter that is not `ref mut` (shape B10)',
+           'parameter that is not `ref mut`; no `owns` before an argument for an `owns` parameter, or `owns` before one '
+           'for a parameter that is not `owns` (shape B10)',
            ['FN-2a']),
  'E3031': ("a call whose argument the callee's body reaches by another name in a way its parameter cannot allow: a "
            'part of what the callee may end or move before its last use of that parameter (a plain, `Span` or `ref '

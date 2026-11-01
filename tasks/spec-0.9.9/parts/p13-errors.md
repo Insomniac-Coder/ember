@@ -101,7 +101,7 @@ fn main() -> Result[void]:
   Err(AnyError.msg(f"no such file: {p}"))`.
 * `[ERR-10]` *(new in 0.9.9)* `r.context(msg)` on a `Result[T, E]` whose `E` converts into `AnyError`
   (`AnyError: From[E]`, `[ERR-8]`) returns a `Result[T, AnyError]`
-  whose error, if any, displays as `msg: <original>`; `r.with_context(fn() => …)` builds the message
+  whose error, if any, displays as `msg: <original>`; `r.with_context(owns fn() => …)` builds the message
   only on failure. Context messages stack.
 * `[ERR-11]` *(new in 0.9.9)* **The cost of `AnyError`.** Converting an error into `AnyError`
   allocates, once, on the failure path; that path carries `Alloc` (`[EFF-1]`). A concrete error type

@@ -87,15 +87,20 @@ These words are used with these meanings throughout the specification.
   argument the callee may change (`[FN-2a]`): `mem.take(ref mut this.items)`. There is no
   `mem.forget`: it is `E1010`, "`mem.forget` is gone: a value always ends with its clean-up; to give
   the widget to a C function that keeps it, hand it to a parameter its declaration says it takes
-  (`widget_take(first)`), or, inside `unsafe:`, give it `first.into_raw()`".
+  (`widget_take(owns first)`), or, inside `unsafe:`, give it `first.into_raw()`".
 * `[OWN-9]` *(new in 0.9.15)* **`owns` hands over, for every type, numbers included.** An argument for
-  an `owns` parameter is handed over with no word: `f(n)` ends `n` when `f` takes `owns x: int`, and
-  `f(copy of n)` keeps the caller's own. `return a` hands `a` over too. A number given with `=` is
-  copied, so `b = owns n` is how `=` hands a number over: `n` ends there, and a later use is `E3040`.
-  `owns` is not written before a name whose place already hands the value over, nor before `fn`
+  an `owns` parameter says `owns` at the call (`[FN-2a]`): `f(owns n)` ends `n` when `f` takes
+  `owns x: int`, and `f(owns copy of n)` keeps the caller's own. `return a` hands `a` over with no word,
+  and so does a constructor's argument, as `=` does: `w = Words(names=xs)` hands `xs` over, `Point(x=a)`
+  copies `a`. A value `=` copies (a number, a `bool`, a `char`, a `StrView`, a `ref T`, a `Span[T]`, a
+  struct made only of these) is copied with `=` too, so `b = owns n` is how `=` hands one over: `n` ends
+  there, and a later use is `E3040` (`f = owns flag` ends `flag`). `owns` is not written before a name
+  whose place already hands the value over, after `return`, nor before `fn` written on its own
   (`E0109`: "`e.mesh = m` already hands `m` over; remove `owns`"; "`b = a` already hands `a` over; remove
-  `owns`"; "`owns fn` does not say what the function takes or copies; name it on each captured name:
-  `fn() owns report:`").
+  `owns`"; "`return` always hands the value over; remove `owns`: `return xs`"; "`owns fn` does not say
+  what the function takes or copies; name it on each captured name: `fn() owns report:`"); before a
+  function written as an argument for an `owns` parameter it is the call's word
+  (`xs.iter().for_each(owns fn(x: int): println(x))`).
 * `[OWN-10]` *(new in 0.9.15)* **`owns` on the line that makes a value for a place that owns it
   alone.** An `owns` field, an `Option[owns T]` and a list of `owns` values each hold their value in a
   block of its own, and the line that makes a value for such a place says `owns`, at first and later:
@@ -111,15 +116,15 @@ These words are used with these meanings throughout the specification.
   `E2114` ("a `Player` object always lives in its own block; remove `owns`: `p: Player`").
 * `[OWN-11]` *(new in 0.9.15)* **A part handed over on its own.** A part of a struct value stored
   somewhere else (`push`, `return`, a field, an `owns` argument) is handed over on its own: for a struct
-  value `p`, `names.push(p.name)` moves `p`'s name into the list, and `p.hp` stays usable; `p.name`,
+  value `p`, `names.push(owns p.name)` moves `p`'s name into the list, and `p.hp` stays usable; `p.name`,
   and `p` used whole, are `E3040` until `p.name` is given a new value (`p.name = String("")`): "`p.name`
   was handed over to `names` on line 4; give it a new value first, or keep a copy:
-  `names.push(copy of p.name)`". A field of a class object is not handed out this way, since other names
+  `names.push(owns copy of p.name)`". A field of a class object is not handed out this way, since other names
   may reach the object and would see the hole (`E3013`: "`q` is a `Player` object, which other names
   may reach, so `q.name` cannot be taken out and leave a hole; take it and leave a value in its place:
-  `names.push(mem.take(ref mut q.name))`"). A hand-over out of a name or place that does not own the
-  value is `E3013` too: "`v.push(template)` would hand over the caller's player, but `template` only
-  reads it; to put a player of your own in the list write `v.push(copy of template)`".
+  `names.push(owns mem.take(ref mut q.name))`"). A hand-over out of a name or place that does not own the
+  value is `E3013` too: "`v.push(owns template)` would hand over the caller's player, but `template` only
+  reads it; to put a player of your own in the list write `v.push(owns copy of template)`".
 * `[OWN-12]` *(new in 0.9.15)* **Giving an object to C.** A C function whose declaration says it keeps
   the object it is given (`[FFI-11]`) takes it by an ordinary hand-over, `widget_take(first)`: the name
   ends and Ember frees nothing. For a C function whose declaration cannot say so (a plain pointer
@@ -240,7 +245,7 @@ view hands nothing over and makes no copy.
   through a name that only reads it, is `E3023` too (`[EXC-15]`). The types made to be shared between
   threads are used through any name, a plain one included, by their own operations: a `Mutex`,
   `RwLock`, `Atomic` or channel end, and the `guarded by` fields of an object under their lock
-  (`with g = m.lock():`; `with log.lock: log.lines.push(...)`; `total.fetch_add(n)`; `tx.send(v)`;
+  (`with g = m.lock():`; `with log.lock: log.lines.push(...)`; `total.fetch_add(n)`; `tx.send(owns v)`;
   `rx.recv()`). Each orders its own change (the lock's block, an atomic instruction), and handed to a
   call it takes no word (`[FN-2a]`, Part XI).
 * `[BRW-1]` *(changed in 0.9.15)* **One name changes, or any number read.** At every point of the
@@ -274,10 +279,10 @@ view hands nothing over and makes no copy.
     owner is an owner, not a view: it sees the changes the value's other owners make (`[RC-1]`).
 * `[BRW-2]` *(changed in 0.9.15)* **Liveness.** A view is in use from where it is made to the last use
   of anything made from it: the view itself, a view made from it, a value returned from a call it was
-  given to. Scope does not matter: `n = v.len(); v.push(n)` is legal.
+  given to. Scope does not matter: `n = v.len(); v.push(owns n)` is legal.
 * `[BRW-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Reading before the call.** For a method call
   whose object is a place, or an argument given to a `ref mut` parameter, the place may be read while
-  the call's arguments are evaluated, and values computed from it may be passed (`v.push(v.len())`); a
+  the call's arguments are evaluated, and values computed from it may be passed (`v.push(owns v.len())`); a
   view of the place still in use at the call, because it is itself an argument or is held by one,
   overlaps the changeable argument and is `E3021` (`[BRW-11]`). For
   `fn f(ref mut v: Array[String], s: StrView)` the call `f(ref mut v, v[0])` is therefore refused; for
@@ -300,8 +305,8 @@ view hands nothing over and makes no copy.
   `blend(ref mut tracks[dst_name].as_mut_span(), old.as_span())`"). A function value given to a call
   that changes the call's object is refused likewise ("`LOG.retain(keep)` changes `LOG` while it walks
   it, and `keep` adds to `LOG` too (its line 3); drop the lines first and push the notes after:
-  `before = LOG.len()`, `LOG.retain(fn(s) => s != "")`, `dropped = before - LOG.len()`, then
-  `for k in 0..dropped: LOG.push(String("dropped an empty line"))`"). Two exceptions:
+  `before = LOG.len()`, `LOG.retain(owns fn(s) => s != "")`, `dropped = before - LOG.len()`, then
+  `for k in 0..dropped: LOG.push(owns String("dropped an empty line"))`"). Two exceptions:
   1. **The same whole variable under two names.** Where the compiler proves when compiling that two
      `ref mut` arguments, or a `ref mut` argument and a variable the callee uses by its own name (a
      module variable), are one whole variable, the call is allowed and compiled against a copy of the
@@ -369,8 +374,8 @@ view hands nothing over and makes no copy.
 * `[BRW-10]` *(new in 0.9.9)* *(changed in 0.9.15)* **What a method does to its object is worked out
   from its body,** for every method, private or `pub` (`[EXC-15]`): a call `w.bump()` changes only the
   fields `bump`'s body changes, and those its callees' bodies change, so it may be called while a loop
-  walks `w.names` if `bump` touches only `w.count`. `fn note(msg: String):` whose body is
-  `this.log.push(msg)` changes `this.log`, so `this.note(...)` inside a loop over `this.log` is refused
+  walks `w.names` if `bump` touches only `w.count`. `fn note(owns msg: String):` whose body is
+  `this.log.push(owns msg)` changes `this.log`, so `this.note(...)` inside a loop over `this.log` is refused
   (`E3020`) and inside a loop over `this.players` is allowed. Across a package's edge the fact is
   recorded in the package's interface file (`[EFF-4]`), so a change to a `pub` method's body that
   changes what it touches is reported as a change of its interface.
@@ -441,10 +446,10 @@ view hands nothing over and makes no copy.
   (`[BRW-21]`). Adding to a list moves only what it stores inline: a view of a class object (a link, a
   kept view, or an address reached through a link), which lives in its own block, is not ended by a
   `push` or an `extend` of the list that owns it (with `players: Array[Player]` and
-  `w = Watcher(target=sharedref mut players[0])`, `w.target.hp -= 1` after `players.push(Player())` is
+  `w = Watcher(target=sharedref mut players[0])`, `w.target.hp -= 1` after `players.push(owns Player())` is
   allowed); one to a value stored inline in the list (a struct element) is. Removing, clearing or
   replacing still ends every view of what it may end.
-  For keys viewed across a change of their map: E3060 ("`m.insert(String("z"), 1)` (line 8) changes `m`, whose keys `ks` (line 7) still views on line 9; use `ks` before line 8, or keep your own strings: write `ks = sorted(m.keys().copy_each())` in place of line 7").
+  For keys viewed across a change of their map: E3060 ("`m.insert(owns String("z"), owns 1)` (line 8) changes `m`, whose keys `ks` (line 7) still views on line 9; use `ks` before line 8, or keep your own strings: write `ks = sorted(m.keys().copy_each())` in place of line 7").
 * `[BRW-18]` *(new in 0.9.15)* **Loops, generators included.** While a `for` loop walks a collection (a
   list, a map, a set or a string), or a generator that walks it (a `gen fn` paused in the middle of it,
   `[LT-1]`) will still be used, nothing changes the collection, whatever the change: nothing is added or
@@ -456,15 +461,15 @@ view hands nothing over and makes no copy.
   end of an object whose `drop` changes it, `[DRP-8]`). It is `E3020`, at the change:
   "`enemies.push(...)` adds to `enemies`, which this loop walks (line 3); collect the new enemies in a
   list of your own: write `spawned: Array[Enemy] = []` before the loop,
-  `spawned.push(Enemy(hp=5, splits=false))` in place of this line, and `enemies.extend(spawned)` after
+  `spawned.push(owns Enemy(hp=5, splits=false))` in place of this line, and `enemies.extend(spawned)` after
   the loop"; "`counts.insert(...)` (line 4) adds to `counts`, whose keys this loop walks (line 3);
   collect the new keys in a list of your own: write `upper: Array[String] = []` before the loop,
-  `upper.push(k.to_upper())` in place of this line, and `for u in owns upper: counts.insert(u, 0)` after
+  `upper.push(owns k.to_upper())` in place of this line, and `for u in owns upper: counts.insert(owns u, owns 0)` after
   the loop"; "`b.click()` (line 17) adds to `LOG` (through `click`, which runs the handler stored on
   line 9, `log_click`, which pushes to `LOG`) while this loop walks `LOG` (line 16); click after the
-  loop: move line 17, `b.click()`, below the loop"; "`d.log.push("open")` (line 3) changes `d.log`,
+  loop: move line 17, `b.click()`, below the loop"; "`d.log.push(owns "open")` (line 3) changes `d.log`,
   which `g` walks (`g = d.replay()`, line 1), and `g` is used again on line 4; push after `g`'s last use:
-  move `d.log.push("open")` below line 4". **The loop's own handle may change the item it is on**:
+  move `d.log.push(owns "open")` below line 4". **The loop's own handle may change the item it is on**:
   `for ref mut x in xs: x = 5` gives `[5, 5, 5]`; `for k, ref mut v in counts: v *= 2`;
   `for k, ref mut v in names: v = String("bob")`; and the message gives that line: "`xs[0] = 5` (line
   3) writes an element of `xs`, which this loop walks (line 2); to change the element the loop is on,
@@ -476,7 +481,7 @@ view hands nothing over and makes no copy.
   may write its elements and add to it, but not remove from it (`E3020`: "`enemies.remove(i)` (line 4)
   shortens `enemies`, which `for i in 0..enemies.len():` (line 2) counts over with an end fixed when it
   started; remove after the loop: instead of `if enemies[i].hp <= 0:` (line 3) and line 4, write
-  `enemies.retain(fn(e) => e.hp > 0)` after the loop (and remove the `for` line if nothing is left in
+  `enemies.retain(owns fn(e) => e.hp > 0)` after the loop (and remove the `for` line if nothing is left in
   it)"). A `while` loop that tests its position against the list's current length at every step may
   add and remove: it is not a walk, and each index is checked. A call through a function value that may
   take a lock this thread holds, inside a walk under that lock, is `E7018`, not `E3020` (§XI.2):
@@ -527,7 +532,7 @@ it must be valid, and the compiler infers every region.
   `Tree[StrView].leaf(v: T)` may return a view of what `v` views, and its callers, which call that
   instance, know it (ODR-048). Where rule 1 below ties the result to `this`, such a parameter is a
   source alongside it when its declared type names a type parameter the declared result names too: the
-  result's type says it can hold one, so `Map[StrView, V].entry(k) -> MapEntry[K, V, H]` returns an
+  result's type says it can hold one, so `Map[StrView, V].entry(owns k) -> MapEntry[K, V, H]` returns an
   entry holding `k`, while `get(q) -> Option[ref V]` points only into the map (ODR-069).
   For a function whose result is a view:
   1. if it is a method, the result points into `this`;
@@ -537,7 +542,17 @@ it must be valid, and the compiler infers every region.
   function's code shows the result points into: its summary (`[LT-22]`), read for every result type, so
   `fn pick(a: Span[int], b: Span[int]) -> Span[int]:` whose body is `return a` keeps only `a` viewed.
   The three rules decide a call where there is no code to read: a call through a function value
-  (`[LT-7]`), a `dyn` or `virtual` method, a function with no Ember body. Pointing into an argument means
+  (`[LT-7]`), a function with no Ember body. A `dyn` or `virtual` method's call is decided by the code of
+  each kind that may reach it, the types the program gives to the function, followed through its names
+  and calls: with `interface Picker: fn pick(other: Array[int]) -> Span[int]`, `Mine.pick` returning
+  `this.items` and `Yours.pick` returning `other`, `fn show(p: dyn Picker):` doing `r = p.pick(xs)`,
+  `xs.push(owns 3)`, `println(r)` compiles for `show(Mine(items=[9]))`, which prints `[9]`, and is
+  refused at `xs.push(owns 3)` for `show(Yours(items=[9]))` (`E3021`). Where which kind reaches it is
+  known only while the program runs (`p: dyn Picker = Mine(items=[9]) if input() == "m" else
+  Yours(items=[9])`, then `show(p)`), what one of them makes unsafe is `E3021` ("`xs` changes while `r`
+  may still look at it: `p` may be a `Yours`, and which kind it is is only known while running", with
+  the help "to check it while running, write `runtime` on the parameter:
+  `fn show(p: runtime dyn Picker):`"), unless the parameter says `runtime` (`[LT-48]`). Pointing into an argument means
   pointing into it and into everything it owns (**into**, §VII.1), so a reshape of anything it owns ends
   the view and any other change of it while the view is used is refused (`[BRW-1]`). A returned view
   may point into `this` and into any source parameter, a method's as well as a function's, with nothing
@@ -545,7 +560,7 @@ it must be valid, and the compiler infers every region.
   keep `other` viewed. A returned view that points into any other parameter is refused: `E3063` when
   that parameter is `owns` or is passed as a copy (`[BRW-8]`), whose storage ends with the call, and
   `E3062` otherwise. A call whose result type
-  is `ref mut T` or `ref T` is a place (`first(ref mut xs) += 1`; `counts.entry(k).or_default() += 1`),
+  is `ref mut T` or `ref T` is a place (`first(ref mut xs) += 1`; `counts.entry(owns k).or_default() += 1`),
   and a name bound to it follows `[BRW-12]` (`r = ref mut first_even(ref mut xs)`). A generator method's
   result is such a view, and it walks what it views: after `g = d.replay()`, the list it walks
   (`d.log`) does not change while `g` will still be used (`[BRW-18]`, `E3020`), however `replay` walks
@@ -561,7 +576,10 @@ it must be valid, and the compiler infers every region.
   names and of another parameter too (`-> Pair from a` over `return make(a, b)`, `make` a function
   value), naming the other would be as wrong, and the help says to remove `from`: `E3062` ("the returned
   view points into `b`, but its first line says `from a`"; help: "remove `from a`: the result may point
-  into `a` and `b`, and with no `from` it points into each of them"). A named parameter is a source parameter
+  into `a` and `b`, and with no `from` it points into each of them"). Where the body gives a view of the
+  object itself, which no `from` names (`return ref this.at` under `-> ref int from owner`, `at` a
+  number), the help gives both ways out: "return a view of `owner`, or remove `from owner`", since with
+  no `from` a method's result points into `this` (rule 1). A named parameter is a source parameter
   (`[LT-1]`) or a `ref mut` parameter; naming a plain `Copy` parameter, or an `owns` parameter that is
   not a view, is `E2031`. A bare field name names any field of `this`, whatever the method does with its
   object (`owns this`, or passed as a copy, `[BRW-8]`): for a field whose type is a view, the result
@@ -576,8 +594,9 @@ it must be valid, and the compiler infers every region.
   is no `this`, or a field of neither kind, is `E2031`; a name that is both a parameter and a field of
   `this` is `E2118` ("`src` is both a parameter of `next_word` and a field of `Parser`, so `from src`
   could mean either; rename the parameter: for a view of the field write
-  `fn next_word(line: StrView) -> StrView from src:`, for a view of the parameter
-  `fn next_word(line: StrView) -> StrView from line:`"). The standard library's iterators that read
+  `fn next_word(src_param: StrView) -> StrView from src:`, for a view of the parameter
+  `fn next_word(src_param: StrView) -> StrView from src_param:`"; the new name is the parameter's with
+  `_param` after it). The standard library's iterators that read
   through a read-only field say so on `next`, and its iterator adapters on the iterator they wrap, so
   `for k in m:` and `m.keys()` give views that point into the map (`[CTL-1]`), which a program may keep
   across rounds and after the loop. `from` is needed only where rule 1 or 3 points into more than the
@@ -680,7 +699,19 @@ fn main():
   `mine` ends with `pick_longer`; put a view of what the caller gave there (`best = other`), or return a
   list of your own: `-> Array[int]`"). A use of such a view after one of the call's arguments changed is
   `E3060`.
-  Its message: E3060 ("`bag.items.push(k)` (line 15) may move the list that `h.view` points into (`pick` may have put a view of `bag` there on line 13), and `h.view` is used on line 16; use `h.view` before line 15").
+  Its message: E3060 ("`bag.items.push(owns k)` (line 15) may move the list that `h.view` points into (`pick` may have put a view of `bag` there on line 13), and `h.view` is used on line 16; use `h.view` before line 15").
+
+* `[LT-48]` *(new in 0.9.15)* **`runtime`: a `dyn` parameter's kind checked while the program runs.**
+  `runtime` before a parameter's `dyn` type lets the function do what one of the kinds that may reach it
+  would make unsafe (`[LT-1]`), where which kind it is is known only while the program runs: the
+  function checks the kind at the line that would be unsafe, and stops the program there if it is that
+  kind. With `[LT-1]`'s `Picker`, `fn show(p: runtime dyn Picker):` and `p: dyn Picker = Mine(items=[9])
+  if input() == "m" else Yours(items=[9])`, `show(p)` prints `[9]` for a `Mine`, and for a `Yours` stops
+  at `xs.push(owns 3)`: "panic at main.em:17:5: `xs` changes while `r` looks at it: `p` is a `Yours`,
+  whose `pick` gives back the list it was handed". Where the kind is known when compiling, the word
+  changes nothing: given `show(Yours(items=[9]))`, `show` is refused at `xs.push(owns 3)` when compiling,
+  as without it (`E3021`). `runtime` is a word only after a parameter's `:` before `dyn` (`[LEX-15]`); it
+  costs one type-id compare at each line it guards (§X.4).
 
 ### Views with several regions
 
@@ -803,7 +834,7 @@ fn main():
 
 * `[DRP-1]` *(changed in 0.9.15)* `fn drop():` runs exactly once per value, at the end of its life.
   It changes its own object as a given, since it ends it, and its first line says nothing about that.
-  Calling it explicitly is `E3070`; `mem.drop(x)` ends a value early.
+  Calling it explicitly is `E3070`; `mem.drop(owns x)` ends a value early.
 * `[DRP-2]` Locals drop at the end of their block in reverse declaration order; fields after their
   owner's `drop`, in reverse declaration order; collection elements in index order; the active variant
   of an enum; tuple elements in reverse order.
@@ -858,12 +889,12 @@ fn main():
     ps: Array[Player] = [Player("a"), Player("b")]
     println(total_health(ps))
     heal_all(ref mut ps)
-    n = take(ps)
+    n = take(owns ps)
     println(n)
 ```
 
 Each name says what it is: `players` in `total_health` reads the caller's list, `ref mut players` in
 `heal_all` may change it, and `owns players` in `take` takes it over. The call `heal_all(ref mut ps)`
-says that `ps` may be changed; `take(ps)` hands `ps` over, and using `ps` after it is `E3040`,
+says that `ps` may be changed; `take(owns ps)` hands `ps` over, and using `ps` after it is `E3040`,
 labelled at the hand-over. Nothing in this program names a lifetime, and nothing in it is checked while
 it runs.

@@ -54,7 +54,7 @@ class Node:                                     # one owner unless a line says `
     mesh: Option[owns Mesh] = None              # held alone, in a block of its own
     fn add(owns child: Node):                   # `owns`: handed over
         child.parent = weakref this
-        this.children.push(child)
+        this.children.push(owns child)
 
 struct Watcher:                                 # holds a view: lives no longer than its target
     target: sharedref mut Node                  # may change it; other holders may too
@@ -64,7 +64,7 @@ class Log:                                      # may be made `thread_shared`
     lines: Array[String] guarded by lock = []   # read and changed only under `lock`
     fn push(s: StrView):
         with this.lock:
-            this.lines.push(String(s))
+            this.lines.push(owns String(s))
 
 enum Shape:                                     # tagged union
     Circle(r: float)
@@ -107,7 +107,7 @@ gen fn countdown(n: int) -> Generator[int]:     # generator
         yield i
 
 fn evens(xs: Span[int]) -> some Iterator[Item = int]:    # opaque return type
-    return xs.iter().copy_each().filter(fn(x) => x % 2 == 0)
+    return xs.iter().copy_each().filter(owns fn(x) => x % 2 == 0)
 
 fn inspect(sc: Script):                         # a value of a base class
     if sc is Door as d:                         # kind test: names it `d` when it is a `Door`
@@ -144,14 +144,14 @@ fn demo(xs: Array[int], m: Map[String, int], opt: Option[Point]):
     tick = fn(): FRAME += 1                     # no word: changes the real `FRAME`
     tick()
     with scope = thread.scope():                # scoped threads; joins at block end
-        scope.spawn(fn() => println(xs.len()))
-    h = thread.spawn(fn() copy of q: println(q))    # an unscoped thread names what it keeps
+        scope.spawn(owns fn() => println(xs.len()))
+    h = thread.spawn(owns fn() copy of q: println(q))    # an unscoped thread names what it keeps
     h.join()
     log = thread_shared Log()                   # one of several owners, on any thread
-    t = thread.spawn(fn() thread_shared log: log.push("hi"))
+    t = thread.spawn(owns fn() thread_shared log: log.push("hi"))
     t.join()
     root = Node(name=String("root"))
-    root.add(Node(name=String("leaf"), mesh=Some(owns Mesh(points=[0.0, 1.0]))))
+    root.add(owns Node(name=String("leaf"), mesh=Some(owns Mesh(points=[0.0, 1.0]))))
     for ref mut child in root.children:         # may change each child
         child.name = String("child")
     w = weakref root                            # does not keep `root` alive

@@ -120,13 +120,13 @@ The compiler infers, for every function, an **effect set** drawn from:
   static mut LOG: Array[String] = []
 
   fn note(owns msg: String):
-      LOG.push(msg)
+      LOG.push(owns msg)
 
   fn tick():
-      note(String("tick"))
+      note(owns String("tick"))
 
   fn main():
-      LOG.push(String("start"))
+      LOG.push(owns String("start"))
       for line in LOG:
           println(line)
           tick()
@@ -142,7 +142,7 @@ The compiler infers, for every function, an **effect set** drawn from:
   variable they capture (`[BRW-11]`). A call that runs a function by itself counts as making everything
   that function changes, now or later: `thread.spawn`, `scope.spawn`, `jobs.submit` and a job scope's
   `submit` (Part XI); a library function that calls the function it is given
-  (`scores.for_each(fn(s): LOG.push(copy of s.name))` changes `LOG`); whatever drives an iterator
+  (`scores.for_each(owns fn(s): LOG.push(owns copy of s.name))` changes `LOG`); whatever drives an iterator
   adapter that keeps one (`for x in it:`, `it.sum()`); and a foreign function's parameter whose contract
   says `callback(retained)` or `callback(once)`, through which C keeps the function and runs it during
   later foreign calls (a `callback(borrowed)` parameter runs it during the call, as `for_each` does).
@@ -312,6 +312,7 @@ compute the same bits, on one machine and across machines running the same binar
 | `assert_disjoint` | guaranteed present | two compares where the program writes it (two spans of one list given to one call, one of them changeable); the call is then compiled with noalias; none when the compiler knows the spans apart |
 | `Cell` access | not observable | a load or a store |
 | Interface call through `dyn` | guaranteed present | one indirect call |
+| A `runtime dyn` parameter's check | guaranteed present | one type-id compare at each line the check guards, only where a kind that may reach the parameter makes the line unsafe (`[LT-48]`); none where the kinds are known when compiling |
 | Virtual method call | conditionally elided | a load of the slot and one indirect call (`[DSP-2]`); direct when one implementation is reachable (`[DSP-5]`) |
 | Generic call, monomorphised | not observable | a direct, inlinable call |
 | Generic call, shared (`[MONO-6]`) | guaranteed present | one indirect call per bound method; only above a declared instantiation budget |

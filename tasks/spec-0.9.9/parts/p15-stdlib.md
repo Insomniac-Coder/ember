@@ -225,7 +225,7 @@ anything this Part leaves open.
   Option[V]` and `entry(k)` take the key itself; `entry(k)` is a `MapEntry` with `or_insert(v)`,
   `or_insert_with(f)` (`[F: needs fn() -> V]` above `fn or_insert_with(owns f: F) owns this -> ref mut V:`)
   and `or_default()` (for `V: needs Default`), each returning `ref mut V`, a place
-  (`counts.entry(k).or_default() += 1`).
+  (`counts.entry(owns k).or_default() += 1`).
   `keys()`, `values()`, `values_mut()` and `items()` are the view iterators
   `MapKeys`, `MapValues`, `MapValuesMut` and `MapItems`, yielding `ref K`, `ref V`, `ref mut V` and
   `(ref K, ref V)` in insertion order (`for k, v in m.items():`); `for k in m:` is by key, as
@@ -274,7 +274,7 @@ anything this Part leaves open.
   and `RingBuffer[T, N]`; `push` returns `Result[void, CapacityError]` and `push_or_drop` discards when
   full. Also `Deque[T]`, `SmallArray[T, N]` (inline up to `N`, then heap), `BitSet`.
 * `[STD-8]` *(changed in 0.9.15)* **`Contains`.** `x in c` requires `c: Contains[typeof(x)]` (`E2226` otherwise, whose help
-  is `c.iter().any(fn(e) => e == x)`). `std` implements it for `Set` and `Map` (by key); for `Array`,
+  is `c.iter().any(owns fn(e) => e == x)`). `std` implements it for `Set` and `Map` (by key); for `Array`,
   `Span`, `MutSpan` and `[T; N]` with `T: needs Eq`, as a linear scan; for `StrView`/`String`, as a substring or
   character test; for ranges, as two comparisons. The compiler never synthesises an implementation.
 * `[STD-8a]` `ember inspect --cost` reports which `contains` a use selects and its complexity, so
@@ -301,20 +301,22 @@ anything this Part leaves open.
   consumers can also be called directly on an `Iterable` value, reading it as `iter()` would:
   `xs.enumerate()` is `xs.iter().enumerate()`, and a method of the collection's own of the same name
   (`Array.join`) takes precedence. An adapter takes the iterator it wraps over (`owns this`), and so
-  does a consumer; `zip` and `chain` take their other iterator over too, so a named iterator given to
-  `zip` is handed over (`copy of it` keeps the caller's). **A function is taken as a type
+  does a consumer; `zip` and `chain` take their other iterator over too, so a named iterator is given
+  to `zip` with `owns` (`a.zip(owns it)`; `a.zip(owns copy of it)` keeps the caller's). **A function is taken as a type
   parameter**, by the adapters that apply one and the consumers alike (`any`, `all`, `find`,
   `position`, `fold`, `reduce`, `for_each`, the `…_by` and `…_by_key` forms): `[F: needs fn(Item)]` above
   `fn for_each(owns f: F) owns this:`, `[F: needs fn(Item) -> bool]` above `fn any(owns f: F) owns this ->
   bool:`, `[F: needs fn(Item)]` above `fn inspect(owns f: F) owns this -> Inspect[Self, F]:`. `F` names the
   exact function given, so the adapter or consumer is compiled once for each function given to it and
   the call through `f` is direct and may be inlined; the shared type, `owns f: fn(Item)`, is legal too,
-  and is what keeps functions of different kinds in one list (`handlers: Array[fn()]`). The function
-  is handed over as every argument for an `owns` parameter is, so an adapter made from a lambda can be
-  kept or returned
-  (`return xs.iter().map(fn(x) => x * 2)`), what the lambda holds with it. A function given may change
+  and is what keeps functions of different kinds in one list (`handlers: Array[fn()]`). A function
+  written in the call is given to it, with `owns` as every argument for an `owns` parameter is
+  (`[FN-2a]`), so an adapter made from a lambda can be kept or returned
+  (`return xs.iter().map(owns fn(x) => x * 2)`), what the lambda holds with it. A function from a
+  variable is lent to the call and takes no word: after `xs.iter().for_each(h)`, `h` is the caller's
+  still and `h(5)` runs it (ODR-240). A function given may change
   things: a consumer's call counts as making what the function changes, now
-  (`scores.for_each(fn(s): LOG.push(copy of s.name))` changes `LOG`, so inside a loop over `LOG` it is
+  (`scores.for_each(owns fn(s): LOG.push(owns copy of s.name))` changes `LOG`, so inside a loop over `LOG` it is
   `E3020`), and an adapter keeps the function and runs it at each step, so whatever drives the adapter
   (`for x in it:`, `it.sum()`) makes its changes; driving an `owns dyn Iterator[Item = T]` makes the
   changes of every adapter the program can put there. What a caller

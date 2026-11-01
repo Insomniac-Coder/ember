@@ -926,6 +926,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[LT-45]` | VII | *(new in 0.9.15)* Kept views. A struct that holds a view (`ref T`, … |
 | `[LT-46]` | VII | *(new in 0.9.15)* The three kinds of kept view, by their word: * `ref … |
 | `[LT-47]` | VII | *(new in 0.9.15)* A view put in through `ref mut`. After a call, a … |
+| `[LT-48]` | VII | *(new in 0.9.15)* `runtime`: a `dyn` parameter's kind checked while … |
 
 ## MAN
 

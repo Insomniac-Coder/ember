@@ -49,7 +49,7 @@ are rejected with a fix-it (`[DIA-21]`) rather than given a different meaning (`
 | `int(s)`, `float(s)` | `s.parse[int]()`, `s.parse[float]()` (a `Result`) |
 | `int(x)` for a float | `x as int` (saturates; NaN is 0) |
 | `range(a, b)` in a loop | `a..b` is the usual spelling; `range` also works |
-| `xs.append(x)`, `xs.extend(ys)` | `xs.push(x)`, `xs.extend(ys)` |
+| `xs.append(x)`, `xs.extend(ys)` | `xs.push(owns x)`, `xs.extend(ys)` |
 | `xs.pop()` | `xs.pop()` returns an `Option` |
 | `xs.index(x)` | `xs.index_of(x)` (an `Option`) |
 | `xs.sort(key=f)` | `xs.sort_by_key(f)` |
@@ -81,7 +81,7 @@ are rejected with a fix-it (`[DIA-21]`) rather than given a different meaning (`
 * **Objects are freed when their last owner ends**, at a predictable point, not by a collector. A
   loop of `shares` owners that nothing opens again would never be freed, so it is refused when
   compiling, with the link to make `weakref`.
-* **A list does not change while a loop walks it.** `for x in xs: xs.push(x)` is refused; the loop's
+* **A list does not change while a loop walks it.** `for x in xs: xs.push(owns x)` is refused; the loop's
   own handle may change the item it is on (`for ref mut x in xs: x = 0`), and anything else is added or
   removed after the loop.
 * **What each name may do is written on it.** A plain name reads; `ref mut` may change someone else's
@@ -144,7 +144,7 @@ for turn in range(5):
     r = roll(ref mut rng)
     counts[r] = counts.get_or(r, 0) + 1
     if r == 6:
-        player.inventory.push("gem")
+        player.inventory.push(owns "gem")
     else:
         player.hp -= r // 2
 println(f"{player.name}: hp={player.hp}, items={len(player.inventory)}")

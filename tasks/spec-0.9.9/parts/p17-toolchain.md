@@ -361,7 +361,7 @@ large_copy = { level = "warn", threshold = 256 }
 fn main():
     a = [1, 2, 3]
     b = a
-    a.push(4)          #$ error[E3040]: `a` was handed over to `b` on line 4 and is used on line 5; to keep both, write `b = copy of a` (a copy of your own) or `b = shares a` (two owners of one list)
+    a.push(owns 4)     #$ error[E3040]: `a` was handed over to `b` on line 4 and is used on line 5; to keep both, write `b = copy of a` (a copy of your own) or `b = shares a` (two owners of one list)
     println(b)
 ```
 
@@ -593,10 +593,10 @@ fn main():
 
 | Shape | Situation | Codes | Primary help |
 |---|---|---|---|
-| O1 | a name used after it was handed over; a part handed over on its own, or its owner used whole, before the part has a new value | `E3040` | `copy of x` (a copy of your own) or `shares x` (two owners), or the use moved above the line that hands it over; for a part, a new value first or `names.push(copy of p.name)`; for a list, a note that `=` hands a list over where Python's aliases it (Appendix E) |
+| O1 | a name used after it was handed over; a part handed over on its own, or its owner used whole, before the part has a new value | `E3040` | `copy of x` (a copy of your own) or `shares x` (two owners), or the use moved above the line that hands it over; for a part, a new value first or `names.push(owns copy of p.name)`; for a list, a note that `=` hands a list over where Python's aliases it (Appendix E) |
 | O2 | a hand-over out of a place that does not own the value: a field of a type with `drop`, an array or span element, a class object's field, a read-only name, a function value's own capture where it may run twice | `E3010`, `E3011`, `E3013` | a view (`ref`, `ref mut`) first (`[DIA-9]`); then `mem.take(ref mut place)`, `mem.replace`, `mem.swap`; `pop`, `swap_remove`, `remove`, `drain`; then `copy of`; for a function value, a parameter that holds it, `owns f: once fn()` |
 | O6 | a view of an uninitialised place | `E3050` | name the path on which it is uninitialised |
-| O7 | explicit `x.drop()` | `E3070` | `mem.drop(x)` |
+| O7 | explicit `x.drop()` | `E3070` | `mem.drop(owns x)` |
 | O8 | scope guard handed over or leaked | `E3014`, `E3015` | bind it with `with` (`[THR-5]`) |
 | O9 | `this` escapes its `drop`, or an owner of it is made there | `E3016` | `mem.take` the data out |
 | B1 | one place changed through two names: two changeable arguments of one place, a `ref mut` name's place changed through another name while it is used, a function value stored where a variable it changes owns it | `E3022` | `if i != j:` above the call; `split_at`, `chunks_mut`, `for ref mut x in xs:`, `swap(i, j)`; `SoA` columns; for a `ref mut` name, the change made through it or after its last use |
@@ -606,8 +606,8 @@ fn main():
 | B5 | self-referential struct | `E3024` | store an index or `Handle`; split the struct; or a class whose view field says `from` a `let` field |
 | B6 | a result that points into something its `from` does not name | `E3062` | a view of what `from` names, or `from` naming what the result points into |
 | B7 | a view used after what it points into was ended, handed over, replaced or reshaped | `E3060` | the use moved above that line, or the place named again after it (`boss = ref mut enemies[0]`; `if cam.target exists as q:`); a value of your own (`String(...)`, `.copy_each()`) |
-| B9 | a function value that may outlive a place it uses and does not own | `E3026` | a capture word (`return fn() owns n: n += 1`, `scope.spawn(fn() copy of t: ...)`), a `shares mut` owner the function keeps, or a scope (`[THR-5]`) |
-| B10 | a call's word that does not match its parameter; `ref mut` before what this function may not change | `E3027`, `E3028` | the parameter's own words at the call (`bump(ref mut a)`, `blend(const ref mut d, s)`, `show(a)`), or `ref mut` on the caller's own parameter |
+| B9 | a function value that may outlive a place it uses and does not own | `E3026` | a capture word (`return fn() owns n: n += 1`, `scope.spawn(owns fn() copy of t: ...)`), a `shares mut` owner the function keeps, or a scope (`[THR-5]`) |
+| B10 | a call's word that does not match its parameter; `ref mut` before what this function may not change | `E3027`, `E3028` | the parameter's own words at the call (`bump(ref mut a)`, `blend(const ref mut d, s)`, `take(owns xs)`, `show(a)`), or `ref mut` on the caller's own parameter |
 | B11 | two single-object references given to `assert_disjoint` | `E3095` | for two elements of one list, their positions proved apart when compiling: `if i != j:` above the call (`[DSJ-4]`) |
 | B12 | a view, or a value holding views, kept or returned where it would outlive what it points into; a value made in a memory manager's instance outliving the instance | `E3063` | a value of your own (`return String(word)`, `return copy of g[0]`), an index, or a `shares` owner; the value made in an instance the caller keeps |
 | B16 | a call that hands the callee a part of what its body may end or move before its last use of that parameter (a method's object included) | `E3031` | `copy of` the argument (`note(copy of LOG[0])`), or, in the callee, the use moved above the line that ends what it views |
@@ -638,7 +638,7 @@ The ids O3, O4, O5, B8, B14, B15 and X1 are no longer used: their cases are O1 (
 | N12 | indentation (`E0002`–`E0004`) | the expected column and the line that set it |
 | N13 | a field assigned (`this.x = …`) but not declared (`E2072`) | `field 'x' is not declared in class C`, with a machine-applicable fix-it adding `x: <inferred type>` to the class body |
 | N14 | an item has the path of a module or the name of a built-in type (`E1032`) | rename the item, or the module's file |
-| N15 | a word a place requires is missing, or a word that cannot apply: a value made for an `owns` place without `owns`, `owns` before an existing name or `fn`, `owns` on a class type, `using` on a type with no heap memory of its own, `copy of` what cannot be copied as itself, a `weakref` of a part (`E2123`, `E0109`, `E2114`, `E2116`, `E2119`) | the line with the word written or removed (`mesh=owns Mesh(points=[0.0, 1.0])`, `e.mesh = m`, `a = weakref this.keep`) |
+| N15 | a word a place requires is missing, or a word that cannot apply: a value made for an `owns` place without `owns`, `owns` before a name whose place already hands it over, after `return` or before `fn`, `owns` on a class type, `using` on a type with no heap memory of its own, `copy of` what cannot be copied as itself, a `weakref` of a part (`E2123`, `E0109`, `E2114`, `E2116`, `E2119`) | the line with the word written or removed (`mesh=owns Mesh(points=[0.0, 1.0])`, `e.mesh = m`, `a = weakref this.keep`) |
 | N16 | a word or form that is not Ember: `self`, `Box`, `Shared`, `Weak`, `RefCell`, the mode `owned`, `upgrade`, `mem.forget`, `@sync`, `@borrows`, a clause after a function's brackets (`E1010`, `E0104`, `E0100`) | the line with the current word (`[CLI-20]` lists the mechanical rewrites) |
 | N17 | opening an `Option` or a link, and kind tests: `Some(...)` in an `if` or `while` header, an opening or a kind test that always or never passes, a name already in use (`E0115`, `E2036`, `E2037`, `E2106`) | `if e exists as x:`, `if s is Circle as c:`, a new name, or the test removed |
 | N18 | a first line, a declaration or a list of names out of form: `mut` alone on a name, `ref` in a parameter's type, parts out of order, a name with no word after a name with a word, `ref mut` in a capture list, `sharedref` without `mut`, `owns this` on `init`, `static fn` outside a type, `virtual` in a class that cannot be subclassed, a view field without a usable `from`, `@cached` where its result cannot be kept (`E0113`, `E0117`, `E0118`, `E0116`, `E0120`, `E0114`, `E2108`, `E2115`, `E2112`, `E2118`, `E2117`) | the line as it is written (`ref mut n: int`, `fn finish() owns this -> u64:`, `fn() copy of name, copy of score:`) |

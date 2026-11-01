@@ -2373,3 +2373,95 @@ Generated: every rule whose text differs from 0.9.15_Hardened_8.
 |---|---|
 | `[LT-1]` | changed |
 | `[LT-1a]` | changed |
+
+## H.50 Changes in 0.9.15_Hardened_10 (from 0.9.15_Hardened_9)
+
+**0.9.15_Hardened_10** writes in the owner's verdicts 145 to 160 from the review of 2026-11-01, evening
+(`tasks/96/redesign/JOB.md`, the answers with their quotes in
+`tasks/96/redesign/compiler-0.9.15/odr-answers-2026-11-01.md`), and takes out sentences the lead had
+written without a verdict:
+
+* Verdicts 147 to 149 and 158: an argument for an `owns` parameter says `owns` at the call, whatever is
+  given: `take(owns xs)`, `take(owns copy of xs)`, `take(owns [1, 2])`, `names.push(owns p.name)`, and a
+  function written in the call, `xs.iter().for_each(owns fn(x: int): println(x))`; without it the call
+  is `E3028` (`[FN-2a]`, `[OWN-9]`, `[GRM-15]`). Every example of the text says it. Out go "An argument
+  for an `owns` parameter is handed over with no word" (`[FN-2a]`, `[OWN-9]`) and "or `x` to hand it
+  over" (`[FN-2]`).
+* Verdict 145: `owns` hands over every value `=` copies, as it does a number (`f = owns flag`).
+* Verdict 146: `owns` before an argument for a parameter that only reads is `E3028` ("remove `owns`").
+* Verdict 148: `return xs` takes no word; `return owns xs` is `E0109`.
+* Verdict 150: a function from a variable given to a standard-library function is lent and takes no
+  word (`xs.iter().for_each(h)`, ODR-240); out goes `[STD-19]`'s "The function is handed over as every
+  argument for an `owns` parameter is".
+* Verdicts 159 and 160: a constructor's argument takes no word, as `=` (`Words(names=xs)`), and neither
+  does a value made in the call with `shares` or `weakref` (`setup(shares mut game)`).
+* Verdicts 151 and 152: a `dyn` or `virtual` call is decided by the code of each kind that may reach it
+  (`[LT-1]`); `runtime` on a parameter checks the kind while the program runs where it is known only
+  then (`[LT-48]`, new; a contextual word, `[LEX-15]`; its cost in §X.4).
+* Verdict 153: a hasher may be `Copy` (`[HASH-1]` loses "that is not `Copy`", the lead's words).
+* Verdicts 154 and 155: a `[T]` line sits on the line right above its function, struct or class, and
+  every other line that begins with `[` is `E0100` (`[GRM-40]`).
+* Verdict 156: every keyword used as a name is `E0005` (`[LEX-14]`).
+* Verdict 157: the messages for `this` where there is no object (`[FN-4]`), `E2118`'s renamed parameter
+  and `E3062`'s help for a view of the object itself (`[LT-1a]`).
+
+Generated: every rule whose text differs from 0.9.15_Hardened_9.
+
+| Rule | 0.9.15_Hardened_9 → 0.9.15_Hardened_10 |
+|---|---|
+| `[ALC-5]` | changed |
+| `[BCK-5]` | changed |
+| `[BCK-6]` | changed |
+| `[BRW-2]` | changed |
+| `[BRW-3]` | changed |
+| `[BRW-10]` | changed |
+| `[BRW-11]` | changed |
+| `[BRW-15]` | changed |
+| `[BRW-17]` | changed |
+| `[BRW-18]` | changed |
+| `[CELL-13]` | changed |
+| `[CLO-2]` | changed |
+| `[CLO-4]` | changed |
+| `[CLO-7]` | changed |
+| `[CLO-12]` | changed |
+| `[CLO-17]` | changed |
+| `[CLO-19]` | changed |
+| `[CORO-14]` | changed |
+| `[DRP-1]` | changed |
+| `[ECS-5]` | changed |
+| `[EFF-25]` | changed |
+| `[EFF-26]` | changed |
+| `[ERR-10]` | changed |
+| `[EXC-19]` | changed |
+| `[FFI-54]` | changed |
+| `[FN-2]` | changed |
+| `[FN-2a]` | changed |
+| `[FN-4]` | changed |
+| `[GPU-2]` | changed |
+| `[GRM-15]` | changed |
+| `[GRM-27]` | changed |
+| `[GRM-40]` | changed |
+| `[HASH-1]` | changed |
+| `[LEX-14]` | changed |
+| `[LEX-15]` | changed |
+| `[LT-1]` | changed |
+| `[LT-1a]` | changed |
+| `[LT-47]` | changed |
+| `[LT-48]` | added |
+| `[OBJ-5]` | changed |
+| `[OWN-6]` | changed |
+| `[OWN-9]` | changed |
+| `[OWN-11]` | changed |
+| `[PAR-2]` | changed |
+| `[STD-8]` | changed |
+| `[STD-16]` | changed |
+| `[STD-19]` | changed |
+| `[THR-2]` | changed |
+| `[THR-3]` | changed |
+| `[THR-11]` | changed |
+| `[THR-15]` | changed |
+| `[THR-17]` | changed |
+| `[THR-18]` | changed |
+| `[THR-20]` | changed |
+| `[THR-21]` | changed |
+| `[WK-17]` | changed |

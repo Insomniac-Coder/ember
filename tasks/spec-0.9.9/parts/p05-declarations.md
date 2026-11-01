@@ -110,21 +110,28 @@ pub fn blend(dst: Array[f32], ref mut out: Array[f32], owns scratch: Array[f32],
   (`integrate(ref mut p.as_mut_span(), v.as_span(), 0.5)`); a callee that points such a span elsewhere
   changes only that span, which ends with the line (`[SPN-3]`).
 * `[FN-2]` *(changed in 0.9.15)* A parameter with no word reads. There is no by-copy mode: a callee
-  that needs a value of its own takes it `owns`, and the caller passes `copy of x` to keep its own, or
-  `x` to hand it over.
-* `[FN-2a]` *(changed in 0.9.15)* **A call says `ref mut` before an argument the callee may change**,
-  with the same words as the parameter, `const` included: `bump(ref mut a)` for
-  `fn bump(ref mut c: Counter):`, `blend(const ref mut d, s)` for
-  `fn blend(const ref mut dst: MutSpan[float], src: Span[float]):`, `mem.take(ref mut this.items)`. A
-  missing `ref mut` or `const`, or one written where the parameter does not say it, is `E3028`
-  ("`bump` may change `a` (its first line says `ref mut c: Counter`); say so at the call:
-  `bump(ref mut a)`"; "`show` only reads its argument; remove `ref mut`: `show(a)`"), and `ref mut`
+  that needs a value of its own takes it `owns`, and the caller passes `owns copy of x` to keep its own,
+  or `owns x` to hand it over (`[FN-2a]`).
+* `[FN-2a]` *(changed in 0.9.15)* **A call says `ref mut` before an argument the callee may change,
+  and `owns` before one it takes over**, with the same words as the parameter, `const` included:
+  `bump(ref mut a)` for `fn bump(ref mut c: Counter):`, `blend(const ref mut d, s)` for
+  `fn blend(const ref mut dst: MutSpan[float], src: Span[float]):`, `mem.take(ref mut this.items)`;
+  `take(owns xs)` for `fn take(owns xs: Array[int]):`, whatever is given: `take(owns copy of xs)` gives a
+  copy and keeps `xs`, `take(owns [1, 2])` a list made in the call, `names.push(owns p.name)` a part
+  (`[OWN-11]`), and a function written in the call is given the same way,
+  `xs.iter().for_each(owns fn(x: int): println(x))` (`[STD-19]`). A missing word, or one written where
+  the parameter does not say it, is `E3028` ("`bump` may change `a` (its first line says
+  `ref mut c: Counter`); say so at the call: `bump(ref mut a)`"; "`show` only reads its argument;
+  remove `ref mut`: `show(a)`"; "`take` takes `xs` over (its first line says `owns xs: Array[int]`); say
+  so at the call: `take(owns xs)`", with the help "to keep `xs`, give it a copy:
+  `take(owns copy of xs)`"; "`show` only reads its argument; remove `owns`: `show(xs)`"), and `ref mut`
   before something this function may not change (a plain parameter, a temporary, a place reached
   through a read-only name) is `E3027` ("`p` only reads the caller's player, so it cannot be given to
   `heal` as `ref mut`; take it as `ref mut p: Player` on `revive`'s first line, or walk the list with
-  `for ref mut p in players:`"). An argument for an `owns` parameter is handed over with no word, for
-  every type (`f(n)` ends `n` when `f` takes `owns x: int`), as `=` hands a value over. An argument for
-  a `Mutex`, `RwLock` or `Atomic` parameter, or a channel end, takes no word, since its own "only me" is
+  `for ref mut p in players:`"). `return a` and a constructor's argument take no word: they hand a
+  value over as `=` does (`[OWN-9]`). A function from a variable given to a standard-library function
+  that takes one is lent and takes no word: after `xs.iter().for_each(h)`, `h` is the caller's still
+  (`[STD-19]`). An argument for a `Mutex`, `RwLock` or `Atomic` parameter, or a channel end, takes no word, since its own "only me" is
   the lock's block (`E3028`: "`top` takes the lock of `scores` itself; a `Mutex` takes no word at the
   call: `top(scores)`"). The object a method is called on is not marked (`a.reset()`): what the method
   does to it is worked out from its body (`[EXC-15]`). The arguments of one call do not overlap a
@@ -150,9 +157,12 @@ pub fn blend(dst: Array[f32], ref mut out: Array[f32], owns scratch: Array[f32],
   `this` a whole new value (`this = Point(x=0.0, y=0.0)`); a class's may not (`[CLS-7]`). A function in
   a type body is a method unless it is written `static fn`: it then has no object and is called on the
   type (`static fn starting_at(k: int) -> Counter:`, called `Counter.starting_at(5)`). `static fn`
-  outside a type body is `E2115`; `this` in a `static fn` or a free function is `E1010` ("`starting_at`
-  is a `static fn`: it is called on the type, `Counter.starting_at(5)`, and has no object, so no
-  `this`; build the counter from `k`: `return Counter(n=k)`"); `self` is `E1010`, whose help gives
+  outside a type body is `E2115`; `this` in a `static fn` or a free function is `E1010` ("`this` can
+  only be used in a method, and `starting_at` is a `static fn`, not a method", with the help "build the
+  counter from `k`: `return Counter(n=k)`"; "`this` can only be used in a method, and `double` is not a
+  method", with the help "to make `double` a method, move it into the struct or class it belongs to").
+  The help that builds the value is given where the function returns its own type and sets each field
+  it names through `this` from its parameters; `self` is `E1010`, whose help gives
   `this` (`[GRM-41]`). A function's first line says its parameters, `owns this`, its result and
   `from`, in that order (`[GRM-41]`), and nothing about what the function changes or reads, which the
   compiler works out from its code (`[EFF-24]`).

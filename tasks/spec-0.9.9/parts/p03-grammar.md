@@ -72,7 +72,7 @@ needs         := type | "(" type {"," type} [","] ")"     -- one bare, several i
 bound_list    := type {"+" type}                        -- after `dyn` and `some` only
 where_clause  := "where" type ":" "needs" needs {"," type ":" "needs" needs}
 param_list    := param {"," param} [","]
-param         := [param_word] IDENT ":" type ["..."] ["=" expression]   -- `Ts...`: the pack's values
+param         := [param_word] IDENT ":" ["runtime"] type ["..."] ["=" expression]   -- `Ts...`: the pack's values; `runtime` before a `dyn` type only ([LT-48])
 param_word    := "ref" ["mut"] | "const" "ref" "mut" | "owns"
 
 struct_decl   := "struct" IDENT [implements] [where_clause] ":" type_body
@@ -132,7 +132,12 @@ comptime_block:= "comptime" ":" block
   (`interface Add[Rhs = Self]:`, `type Pair[T] = (T, T)`, `extend[T: needs B] Array[T]`). Brackets after the
   name of a function, method, struct or class are `E0100`, whose message gives the two lines to
   write (`[T]` above `fn first(xs: Array[T]) -> T:`); a bracket line not directly above one of them is
-  `E0100`. A line that begins with `[` is a type-parameter line when the line after it begins a
+  `E0100`: a blank line or a comment line between `[T]` and its `fn` is `E0100` too, and so is every
+  line that begins with `[` anywhere else, one that begins with a list included (`[10, 20].len()` on a
+  line of its own; `n = [10, 20].len()` is the way), with one message: "a `[...]` line gives type
+  parameters, and goes on the line right above the function, struct or class they belong to" (for an
+  enum, an interface, a `type` alias or an `extend` block, the help gives the brackets after the name:
+  `enum E[T]:`). A line that begins with `[` is a type-parameter line when the line after it begins a
   function, struct or class declaration (with `pub`, `open`, `abstract`, `static`, `virtual`,
   `override`, `gen`, `unsafe` or `extern` before it, or none); this is the one place where the parser
   looks past a line's end, at the next line's first tokens.
@@ -386,11 +391,15 @@ match_expr    := "match" expression ":" NEWLINE INDENT {pattern ["if" expression
   `left=Some(owns Tree(value=2))`, `e.mesh = owns Mesh(points=[1.0, 2.0])`; `[TYP-45]`, `E2123`);
   before the iterable of a `for` or of a comprehension's `for` clause (`[GRM-27]`) and before the
   scrutinee of a `match`, where the default is a view, so that the loop or the branches take the value
-  over (`for x in owns xs:`, `match owns e:`); and in `b = owns n` for a number, which `=` would copy,
-  so that `n` ends there. Before a name whose place already hands the value over with no word
-  (`e.mesh = m`, `b = a` for a value that is not a number, an argument, `return a`), and before
-  `fn`, it is `E0109`, whose message says to remove it (for `owns fn`, to name what the function
-  takes on each captured name: `fn() owns report:`).
+  over (`for x in owns xs:`, `match owns e:`); before an argument for an `owns` parameter, whatever is
+  given (`take(owns xs)`, `take(owns copy of xs)`, `take(owns [1, 2])`,
+  `xs.iter().for_each(owns fn(x: int): println(x))`; `[FN-2a]`, `E3028` without it); and in
+  `b = owns n` for a value `=` would copy (a number, a `bool`, a `StrView`, `[OWN-9]`), so that `n` ends
+  there. Before a name whose place already hands the value over with no word (`e.mesh = m`, `b = a` for
+  a value `=` hands over, `return a`), and before `fn` anywhere but an argument for an `owns` parameter,
+  it is `E0109`, whose message says to remove it (for `owns fn`, to name what the function takes on each
+  captured name: `fn() owns report:`). Before an argument for a parameter that only reads
+  (`show(owns xs)`) it is `E3028`, "`show` only reads its argument; remove `owns`: `show(xs)`".
 * `[GRM-17]` *(changed in 0.9.10)* A lambda with a `:` body inside brackets holds exactly one simple
   statement (`[LEX-6a]`). More is `E0106`, whose help is to declare a local function on the preceding
   line (`[GRM-28]`). Outside brackets, a `:` body on the lambda's own line is one simple statement,
@@ -438,7 +447,7 @@ match_expr    := "match" expression ":" NEWLINE INDENT {pattern ["if" expression
 * `[GRM-26]` *(new in 0.9.9)* A `{…}` atom is a map literal if its first element is followed by `:`, and a set literal
   otherwise. `{}` is an empty map; an empty set is written `Set[T]()`.
 * `[GRM-27]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* A comprehension is shorthand for an iterator pipeline and has exactly its meaning and
-  cost: `[f(x) for x in xs if p(x)]` is `xs.iter().filter(fn(x) => p(x)).map(fn(x) => f(x)).collect()`
+  cost: `[f(x) for x in xs if p(x)]` is `xs.iter().filter(owns fn(x) => p(x)).map(owns fn(x) => f(x)).collect()`
   into an `Array`; `{…}` forms collect into a `Set` or a `Map`. Clauses nest left to right as in
   Python. The loop variables are scoped to the comprehension. A clause over `owns xs` takes the
   collection over, as `for` does (`[CTL-1]`): the items the comprehension keeps are handed over into

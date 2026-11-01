@@ -46,7 +46,7 @@
 | **profile** | `debug`, `development` or `release`: optimisation and diagnostic settings that never change meaning (`[PRF-1]`) |
 | **proven fact** | a fact a verifying operation establishes for two names (`assert_disjoint` after its call, `check_disjoint` inside its `Ok` branch), dropped when either name is given another value (`[DSJ-2]`) |
 | **read-only view** | every view except `ref mut T`, `sharedref mut T` and a `MutSpan` held by a `ref mut` name; it promises that what it reads does not change while it is used |
-| **real variable** | the very variable a lambda uses without a word, not a copy: `b.on_click(fn(): score += 1)` changes the caller's `score` |
+| **real variable** | the very variable a lambda uses without a word, not a copy: `b.on_click(owns fn(): score += 1)` changes the caller's `score` |
 | **reason code** | why a run-time check exists (`[EFF-11]`) |
 | **reduction** | a combining change (`total += e`, `max`, `push`) made by scoped tasks to one place: each task keeps a private accumulator, combined at the join in spawn order |
 | **reload manifest, reload transaction, safe point** | the image section listing what can be reloaded (`[HR-8]`); the plan and prepare phases that may fail without effect (`[HR-2]`); the poll at which no thread runs Ember code (`[HR-3]`) |

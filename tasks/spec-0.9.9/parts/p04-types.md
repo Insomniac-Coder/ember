@@ -299,7 +299,7 @@ endpoints; `E2213` `in` clause on a non-numeric or generic alias; `E2214` arithm
   them (`E3023`). Their API is in §VII.7.
 * `StrView` is a `Span[u8]` known to be valid UTF-8, a view of text someone else owns; `String(w)`
   makes a `String` of one's own from it. `CStrView` is a view of NUL-terminated C text.
-  A type that contains itself, or a view of its own type, with no block of its own between, is E2200 ("`Tree` contains itself through `left`, so a `Tree` would have no end; hold the child in its own block: `left: Option[owns Tree]`"; "`Node.parent` would be a view of the `Node` that holds this one, which no struct can keep; for a link back to the parent make `Node` a class with `children: Array[Node]` and `parent: weakref Node = None`, set with `child.parent = weakref this` before `this.children.push(child)`").
+  A type that contains itself, or a view of its own type, with no block of its own between, is E2200 ("`Tree` contains itself through `left`, so a `Tree` would have no end; hold the child in its own block: `left: Option[owns Tree]`"; "`Node.parent` would be a view of the `Node` that holds this one, which no struct can keep; for a link back to the parent make `Node` a class with `children: Array[Node]` and `parent: weakref Node = None`, set with `child.parent = weakref this` before `this.children.push(owns child)`").
 * `[TYP-34]` *(new in 0.9.9)* *(replaces the 0.9.8 `@view` requirement)* *(changed in 0.9.15)* A struct, enum or tuple that contains a
   view (`ref T`, `ref mut T`, `sharedref mut T`, a `Span`, a `MutSpan`, a `StrView`) or another view
   type is a **view type**, and lives no longer than what its view fields point into. A field written
@@ -753,7 +753,7 @@ implementation the program has (Part X).
   through `Index`, `IndexMut` and `IndexSet` (ODR-042).
 * `[HASH-1]` *(changed in 0.9.15)* `Hash.hash` is generic over `H: needs Hasher` and monomorphised; hashing a value MUST feed a
   deterministic representation of it into the hasher, and values equal under `Eq` MUST hash equally.
-  `Hasher` (in `std.collections`, not the prelude) is a hashing state that is not `Copy`, with `write_bytes`,
+  `Hasher` (in `std.collections`, not the prelude) is a hashing state, with `write_bytes`,
   `write_u8`, `write_u16`, `write_u32`, `write_u64`, `write_i8`, `write_i16`, `write_i32`,
   `write_i64`, `write_usize`, `write_isize` and `finish() owns this -> u64`. A user type may
   implement it and serve as a map's hasher.
@@ -822,7 +822,7 @@ implementation the program has (Part X).
 
 ```ember
 fn evens(xs: Span[int]) -> some Iterator[Item = int]:
-    return xs.iter().copy_each().filter(fn(x) => x % 2 == 0)
+    return xs.iter().copy_each().filter(owns fn(x) => x % 2 == 0)
 ```
 
 ## IV.10 Type inference

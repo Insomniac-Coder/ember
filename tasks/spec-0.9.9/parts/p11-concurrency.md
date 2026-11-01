@@ -23,14 +23,14 @@ fn scan(stats: Stats, text: StrView):
         stats.words.fetch_add(1)
         if w.starts_with("#"):
             with stats.lock:
-                stats.tags.push(String(w))
+                stats.tags.push(owns String(w))
 
 fn main():
     stats = Stats()
     texts = [String("#ember is fast"), String("no tags here"), String("#python #c")]
     with scope = thread.scope():
         for t in texts:
-            scope.spawn(fn() ref t: scan(stats, t))
+            scope.spawn(owns fn() ref t: scan(stats, t))
     println(stats.words.load(), "words")
 ```
 
@@ -115,7 +115,7 @@ change one place unordered.
   for the other thread, and the old block is marked ended (its `drop` does not run; the new block's
   runs once, on the other thread) and stays on this thread until its last link ends, so every link here
   finds it ended (`[WK-12]`): after `w = weakref names` and
-  `h = thread.spawn(fn() owns names: names.items.len())`, `if w exists as p:` is skipped and
+  `h = thread.spawn(owns fn() owns names: names.items.len())`, `if w exists as p:` is skipped and
   `h.join()` gives 0. The same is done for every object the handed object owns whose class a `weakref`
   is made to anywhere in the program (the compiler knows those classes; one compare each), so after
   `cam.target = weakref level.enemies[0]`, handing `level` over leaves `cam.target` finding enemy 0
@@ -158,11 +158,11 @@ from std.sync import Sender, channel
 
 fn produce(tx: Sender[int]):
     for i in 0..10:
-        tx.send(i * i).expect("receiver is gone")
+        tx.send(owns i * i).expect("receiver is gone")
 
 fn main():
     tx, rx = channel[int](capacity=64)
-    producer = thread.spawn(fn() owns tx: produce(tx))
+    producer = thread.spawn(owns fn() owns tx: produce(tx))
     total = 0
     for v in rx:
         total += v
@@ -193,15 +193,15 @@ fn main():
   module variable (`RESULTS`) needs no word. **The loop's own variable**, which the loop gives another
   element every round, and a local of one round, which ends with it, are given to a task or a thread
   with a word. `copy of t` gives it its own copy (for a `String`, one allocation and copy per task):
-  `thread.spawn(fn() copy of r: worker(r))`. For a scoped task, `ref t` lets it look at the element `t`
+  `thread.spawn(owns fn() copy of r: worker(r))`. For a scoped task, `ref t` lets it look at the element `t`
   is on in that round, with no copy, since the walked collection cannot change until every task has
-  ended at the end of the `with scope` block (`scope.spawn(fn() ref t: total +=
+  ended at the end of the `with scope` block (`scope.spawn(owns fn() ref t: total +=
   t.split_whitespace().count())`). `ref t` where the function may still run after the element changes
   or ends is `E3026`: a `thread.spawn` thread may outlive the loop ("the thread may still run after the
-  loop has moved on and `texts` is gone; give it its own copy: `thread.spawn(fn() copy of t: ...)`").
+  loop has moved on and `texts` is gone; give it its own copy: `thread.spawn(owns fn() copy of t: ...)`").
   The loop's name used with no word is `E3026` for a scoped task, whose message gives both words ("the
   task may still run in a later round, when `t` names another text; give it its own copy,
-  `scope.spawn(fn() copy of t: ...)`, or let it look at this round's text, `scope.spawn(fn() ref t:
+  `scope.spawn(owns fn() copy of t: ...)`, or let it look at this round's text, `scope.spawn(owns fn() ref t:
   ...)`"), and `E7004` for a `thread.spawn` thread, whose message gives `copy of t`.
 * `[THR-16]` *(new in 0.9.9)* When `main` returns, or `process.exit` is called, the process ends: other
   threads stop without running destructors, no static is freed and no drop runs. The `debug` leak
@@ -212,7 +212,7 @@ fn main():
   `m.try_lock() -> Option[MutexGuard[T]]` never blocks. A guard belongs to the thread that took the
   lock: sending it to another thread is `E7008` ("`g` is the guard of `m`'s lock, which belongs to the
   thread that took it; take the lock inside the task: write `fn add_one(m: Mutex[Array[int]]):` with the
-  body `with g = m.lock():` and, inside it, `g.push(1)`, above line 11, and `scope.spawn(fn():
+  body `with g = m.lock():` and, inside it, `g.push(owns 1)`, above line 11, and `scope.spawn(owns fn():
   add_one(m))` in place of line 16"). A view made through a guard (`g[0]`, `ref g[0]`, a slice of `g`)
   does not leave the `with` block (`E3063`: "this points into the locked list, which can change once the
   lock ends; return a copy, or do the work inside the `with` block"), and the same holds for `RwLock`'s
@@ -233,7 +233,7 @@ fn main():
   * A `guarded by` field is a `Mutex` written as ordinary fields, and follows a `Mutex`'s rules: it is
     changed under its lock through any name that reaches its object, a plain one included, with no word
     at the call (`fn add_line(log: Log):` whose body is `with log.lock:` and, inside it,
-    `log.lines.push(String("hi"))`). An object whose every field that may change is `guarded by` its
+    `log.lines.push(owns String("hi"))`). An object whose every field that may change is `guarded by` its
     lock, or is an `Atomic`, `Mutex` or `RwLock`, may reach one call through any number of names, a plain
     argument and a function value that holds it included (`dump(log, fn() thread_shared log:
     log.push("seen"))`): the lock keeps the ways in apart (`[BRW-11]`).
@@ -255,7 +255,7 @@ fn main():
 
       fn push(s: StrView):
           with this.lock:
-              this.lines.push(String(s))
+              this.lines.push(owns String(s))
 
   fn main():
       log = Log()
@@ -310,14 +310,14 @@ fn main():
   fn worker(x: int):
       r = x * x
       with RESULTS_LOCK:
-          RESULTS.push(r)
+          RESULTS.push(owns r)
 
   fn main():
       worker(1)
       handles: Array[thread.JoinHandle[void]] = []
       with RESULTS_LOCK:
           for r in RESULTS:
-              handles.push(thread.spawn(fn() copy of r: worker(r)))
+              handles.push(owns thread.spawn(owns fn() copy of r: worker(r)))
       for h in owns handles:
           h.join()
       with RESULTS_LOCK:
@@ -334,12 +334,12 @@ fn main():
 * `[THR-15]` *(new in 0.9.9)* *(changed in 0.9.15)* `channel[T](capacity=n) -> (Sender[T], Receiver[T])` is
   a bounded many-producer, one-consumer queue; `channel_unbounded[T]()` has no bound and allocates as it
   grows. `Sender` is `Send`, `ThreadShared` and `Clone` (`copy of tx` is another sender of the same
-  channel); `Receiver` is `Send`. `tx.send(v) -> Result[void, SendError[T]]` blocks while the queue is
+  channel); `Receiver` is `Send`. `tx.send(owns v) -> Result[void, SendError[T]]` blocks while the queue is
   full and returns the value when the receiver is gone; `rx.recv() -> Option[T]` blocks and returns
   `None` once every sender has ended and the queue is empty; `try_send`/`try_recv` never block. A
   `Receiver` is iterable; the loop ends at `None`. **When the `Receiver` ends, so do the values still
   queued**: it takes them out under the channel's lock and ends them after letting the lock go, so a
-  `Sender` queued in its own channel (`tx.send(copy of tx)`) does not keep the channel alive.
+  `Sender` queued in its own channel (`tx.send(owns copy of tx)`) does not keep the channel alive.
 * `[THR-4]` In the `debug` profile the runtime records the order in which each thread takes locks and
   prints `warning: lock order inversion` with both acquisition sites when two threads take two locks
   in opposite orders. It never changes a program's behaviour.
@@ -363,15 +363,15 @@ import std.thread
 fn sum_halves(xs: Span[int]) -> int:
     left, right = xs.split_at(xs.len() // 2)
     with scope = thread.scope():
-        a = scope.spawn(fn() => left.iter().sum())
-        b = scope.spawn(fn() => right.iter().sum())
+        a = scope.spawn(owns fn() => left.iter().sum())
+        b = scope.spawn(owns fn() => right.iter().sum())
         return a.join() + b.join()
 
 fn count_words(texts: Array[String]) -> int:
     total = 0
     with scope = thread.scope():
         for t in texts:
-            scope.spawn(fn() ref t: total += t.split_whitespace().count())
+            scope.spawn(owns fn() ref t: total += t.split_whitespace().count())
     return total
 ```
 
@@ -401,13 +401,13 @@ fn count_words(texts: Array[String]) -> int:
   int):` whose body is `with this.lock:`, inside it `if this.total < limit:` and inside that
   `this.total += n`, and call `stats.add_below(10, x)` in place of lines 18 and 19"). A task started
   inside a walk of what it changes is `E3020` ("`scope.spawn(...)` (line 6) starts a task that pushes to
-  `names` (`fn(): names.push(String("x"))`), which this loop walks (line 5); start it after the loop:
+  `names` (`fn(): names.push(owns String("x"))`), which this loop walks (line 5); start it after the loop:
   move line 6 below the loop"), not `E7007`, whose fix would leave the walk refused. A task makes, ends
   or opens a `weakref` link only to a `thread_shared` target, and makes no `shares` owner (`[THR-2]`).
   `R` MUST be `Send`. `h.join() -> R` waits early.
 * `[THR-21]` *(new in 0.9.15)* **Reductions.** A task's `total += e` (and `-=`, `*=`, `|=`, `&=`, `^=`,
   `max`, `min`, `push`, `extend`, `add`, `m[k] op= e`) on a local, or on a field of an object the tasks
-  reach (`scope.spawn(fn() copy of x: stats.total += x)`), a field reached through two `sharedref mut`
+  reach (`scope.spawn(owns fn() copy of x: stats.total += x)`), a field reached through two `sharedref mut`
   links to one object included, is a reduction: each task adds into a private accumulator, and the
   accumulators are combined into the place at the join, in spawn order. Nothing reads the place before
   the join (`E7007`: "tasks add their parts to `total`, which is known only once the `with` block (lines
@@ -419,7 +419,7 @@ fn count_words(texts: Array[String]) -> int:
   total overflows stops the program there (`[TYP-8]`), even where adding one by one would not
   (`[[-100], [100, 100]]` summed into an `i8` by two tasks stops in the second, at 100 + 100, where
   adding one by one gives 100); a decimal total may differ from it in the last digit (`for part in [[0.1], [0.2, 0.3]]:` with
-  `scope.spawn(fn() copy of part: for x in part: total += x)` gives `0.6`, where adding one by one gives
+  `scope.spawn(owns fn() copy of part: for x in part: total += x)` gives `0.6`, where adding one by one gives
   `0.6000000000000001`), and is the same on every run, so it is not `Nondet` (`[DET-2]`). A plain
   assignment from a task (`a.target.hp = 5`) and a task that reads the current value
   (`if stats.total < 10: stats.total += x`) need a lock (`E7007`). A `thread.spawn` thread has no
@@ -466,7 +466,7 @@ fn hurt_all(ref mut players: Array[Player]):
   element; run the loop on one thread: remove `@parallel` (line 7)"; "`players` holds `shares mut
   Player` objects, and one object may be in the list twice, so two chunks could change it at once; give
   each player one owner: write `players: Array[Player] = []` in place of line 3, and
-  `players.push(Player(hp=10))` in place of `players.push(shares mut p)` on line 5"); where an `Atomic`,
+  `players.push(owns Player(hp=10))` in place of `players.push(shares mut p)` on line 5"); where an `Atomic`,
   `chunks_mut` or `@parallel(reduce=…)` makes the loop compile, the message gives that line.
 * `[PAR-2a]` A violation of clause (b) is `E7011`, `parallel loop has a loop-carried dependency on
   <place>`, naming both offsets and offering: two `@parallel` loops, a reduction, or a serial loop.
@@ -510,8 +510,8 @@ fn age(ref mut life: MutSpan[f32], dt: f32):
 
 fn step(ref mut pos: MutSpan[Vec3], vel: Span[Vec3], ref mut life: MutSpan[f32], dt: f32):
     with s = jobs.scope():
-        s.submit(fn(): integrate(ref mut pos, vel, dt))
-        s.submit(fn(): age(ref mut life, dt))
+        s.submit(owns fn(): integrate(ref mut pos, vel, dt))
+        s.submit(owns fn(): age(ref mut life, dt))
 ```
 
 * `[JOB-1]` A job's captured state is stored inline in its queue slot when it fits in 64 bytes and in

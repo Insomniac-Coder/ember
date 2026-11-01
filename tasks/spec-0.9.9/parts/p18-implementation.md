@@ -189,7 +189,7 @@ points, and with each call standing for what its callee's summary (`[BCK-8]`) sa
 * `[BCK-5]` *(new in 0.9.9)* *(changed in 0.9.15)* **A changeable argument takes effect when the call
   starts.** A `ref mut` argument, and the object of a method that may change it, is *reserved* while
   the call's other arguments are evaluated and *activated* when the call starts; during reservation it
-  conflicts only with a change of its place (`[BRW-3]`), so `v.push(v.len())` is accepted. When the
+  conflicts only with a change of its place (`[BRW-3]`), so `v.push(owns v.len())` is accepted. When the
   call starts, its arguments are checked against each other: two of them, at least one changeable (a
   function value counting as changing every place its functions change), name one place or reach into
   each other only where the compiler proves them one whole variable (`[MONO-10]`) (`E3022` where both
@@ -197,7 +197,7 @@ points, and with each call standing for what its callee's summary (`[BCK-8]`) sa
 * `[BCK-6]` *(new in 0.9.9)* *(changed in 0.9.15)* **Required acceptances.** Because liveness is
   location-sensitive, these are accepted: a view whose last use precedes a later change (`[BRW-2]`);
   a list added to while a position of it is still used (`boss = ref mut enemies[0]`,
-  `enemies.push(Enemy(hp=5))`, then `boss.hp = 1`); a view returned on one branch while the other
+  `enemies.push(owns Enemy(hp=5))`, then `boss.hp = 1`); a view returned on one branch while the other
   branch changes the place it views, as in
 
   ```ember

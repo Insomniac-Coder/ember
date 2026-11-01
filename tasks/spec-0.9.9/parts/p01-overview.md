@@ -178,7 +178,7 @@ class Emitter:
 
     fn spawn(count: int):
         for _ in 0..count:
-            this.particles.push(Particle(
+            this.particles.push(owns Particle(
                 position=Vec3.ZERO,
                 velocity=Vec3(0, 9.8, 0),
                 lifetime=2.0))
@@ -196,7 +196,7 @@ fn main():
     fountain.spawn(10_000)
     for _ in 0..600:
         integrate(ref mut fountain.particles, 1.0 / 60.0)
-        fountain.particles.retain(fn(p) => p.lifetime > 0.0)
+        fountain.particles.retain(owns fn(p) => p.lifetime > 0.0)
     println(f"{fountain.name}: {fountain.particles.len()} alive")
 ```
 

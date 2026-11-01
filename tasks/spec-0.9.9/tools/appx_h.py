@@ -796,7 +796,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.15', 9)
+CURRENT = ('0.9.15', 10)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -841,6 +841,7 @@ V0915_H5_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h5')
 V0915_H6_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h6')
 V0915_H7_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h7')
 V0915_H8_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h8')
+V0915_H9_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h9')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -1995,7 +1996,50 @@ Generated: every rule whose text differs from 0.9.15_Hardened_8.
 
 
 def v0915_h8_to_h9():
-    return H49_HEAD + rule_diff(V0915_H8_PARTS, os.path.join(HERE, '..', 'parts'))
+    return H49_HEAD + rule_diff(V0915_H8_PARTS, V0915_H9_PARTS)
+
+
+H50_HEAD = """
+## H.50 Changes in 0.9.15_Hardened_10 (from 0.9.15_Hardened_9)
+
+**0.9.15_Hardened_10** writes in the owner's verdicts 145 to 160 from the review of 2026-11-01, evening
+(`tasks/96/redesign/JOB.md`, the answers with their quotes in
+`tasks/96/redesign/compiler-0.9.15/odr-answers-2026-11-01.md`), and takes out sentences the lead had
+written without a verdict:
+
+* Verdicts 147 to 149 and 158: an argument for an `owns` parameter says `owns` at the call, whatever is
+  given: `take(owns xs)`, `take(owns copy of xs)`, `take(owns [1, 2])`, `names.push(owns p.name)`, and a
+  function written in the call, `xs.iter().for_each(owns fn(x: int): println(x))`; without it the call
+  is `E3028` (`[FN-2a]`, `[OWN-9]`, `[GRM-15]`). Every example of the text says it. Out go "An argument
+  for an `owns` parameter is handed over with no word" (`[FN-2a]`, `[OWN-9]`) and "or `x` to hand it
+  over" (`[FN-2]`).
+* Verdict 145: `owns` hands over every value `=` copies, as it does a number (`f = owns flag`).
+* Verdict 146: `owns` before an argument for a parameter that only reads is `E3028` ("remove `owns`").
+* Verdict 148: `return xs` takes no word; `return owns xs` is `E0109`.
+* Verdict 150: a function from a variable given to a standard-library function is lent and takes no
+  word (`xs.iter().for_each(h)`, ODR-240); out goes `[STD-19]`'s "The function is handed over as every
+  argument for an `owns` parameter is".
+* Verdicts 159 and 160: a constructor's argument takes no word, as `=` (`Words(names=xs)`), and neither
+  does a value made in the call with `shares` or `weakref` (`setup(shares mut game)`).
+* Verdicts 151 and 152: a `dyn` or `virtual` call is decided by the code of each kind that may reach it
+  (`[LT-1]`); `runtime` on a parameter checks the kind while the program runs where it is known only
+  then (`[LT-48]`, new; a contextual word, `[LEX-15]`; its cost in §X.4).
+* Verdict 153: a hasher may be `Copy` (`[HASH-1]` loses "that is not `Copy`", the lead's words).
+* Verdicts 154 and 155: a `[T]` line sits on the line right above its function, struct or class, and
+  every other line that begins with `[` is `E0100` (`[GRM-40]`).
+* Verdict 156: every keyword used as a name is `E0005` (`[LEX-14]`).
+* Verdict 157: the messages for `this` where there is no object (`[FN-4]`), `E2118`'s renamed parameter
+  and `E3062`'s help for a view of the object itself (`[LT-1a]`).
+
+Generated: every rule whose text differs from 0.9.15_Hardened_9.
+
+| Rule | 0.9.15_Hardened_9 → 0.9.15_Hardened_10 |
+|---|---|
+"""
+
+
+def v0915_h9_to_h10():
+    return H50_HEAD + rule_diff(V0915_H9_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -2067,7 +2111,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n' + v0915_h3_to_h4() + '\n' + v0915_h4_to_h5() + '\n' + v0915_h5_to_h6() + '\n' + v0915_h6_to_h7() + '\n' + v0915_h7_to_h8() + '\n' + v0915_h8_to_h9() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n' + v0915_h3_to_h4() + '\n' + v0915_h4_to_h5() + '\n' + v0915_h5_to_h6() + '\n' + v0915_h6_to_h7() + '\n' + v0915_h7_to_h8() + '\n' + v0915_h8_to_h9() + '\n' + v0915_h9_to_h10() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

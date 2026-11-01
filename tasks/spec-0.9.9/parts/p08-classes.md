@@ -17,11 +17,11 @@ class Node:
 
     fn add(owns child: Node):
         child.parent = weakref this
-        this.children.push(child)
+        this.children.push(owns child)
 
 fn main():
     root = Node("root")
-    root.add(Node("leaf"))
+    root.add(owns Node("leaf"))
     for c in root.children:
         if c.parent exists as p:
             println(f"{c.name} -> {p.name}")
@@ -92,7 +92,7 @@ offset  size  field
   everything it calls (by their summaries, `[EFF-1]`), no owner is made of the object being ended: an
   owner made from `this` (`shares this`, `shares mut this`, `thread_shared this`) is `E3016`, as storing
   `this` anywhere that outlives the call is (`[CLS-7a]`): "`drop` ends this `Player`; an owner made from
-  it would point at a freed object; keep a copy of what you need: `NAMES.push(copy of this.name)`".
+  it would point at a freed object; keep a copy of what you need: `NAMES.push(owns copy of this.name)`".
   `weakref this` stays allowed: the weak count keeps the block, and opening the link finds the object
   ended (`[WK-3]`). Nothing is checked for it while the program runs.
 
@@ -254,7 +254,7 @@ no access words, and no change of a field begins or ends anything at run time.
   20 under it").
 * `[EXC-19]` *(new in 0.9.9)* *(changed in 0.9.15)* **Fields are separate places.** A view of one field
   of an object and a change of another field never conflict: `for c in this.children:
-  this.log.push(c.name)` is accepted. What a method's call touches is the fields its body touches
+  this.log.push(owns copy of c.name)` is accepted. What a method's call touches is the fields its body touches
   (`[BRW-10]`).
 * `[EXC-16]` *(new in 0.9.9)* *(changed in 0.9.15)* Giving a field that owns memory a new value
   (`h.items = []`, `h.name = other`) is a reshape: inside a `for` loop over the same field it is
@@ -371,12 +371,12 @@ no access words, and no change of a field begins or ends anything at run time.
   `std::weak_ptr`/`std::shared_ptr` (`[SEL-2]`).
 * `[WK-17]` *(new in 0.9.15)* **Parent links.** A parent link is an ordinary `weakref` field that names
   the object owning its holder (`parent: weakref Node`), which the program gives its target like any
-  field: `child.parent = weakref this`, then `this.children.push(child)`. A read of one is compiled with
+  field: `child.parent = weakref this`, then `this.children.push(owns child)`. A read of one is compiled with
   no header test (a plain load and a test for no link) where the compiler proves its target lives; it
   proves it when both of these hold:
   1. **The link follows ownership.** In the package, every line that gives the field a target,
      `x.parent = weakref o`, is followed in the same function, before `x.parent` is read, by a line that
-     puts `x` into a place `o` owns alone (`o.children.push(x)`, `o.left = x`); every line that takes
+     puts `x` into a place `o` owns alone (`o.children.push(owns x)`, `o.left = x`); every line that takes
      such an object out of its place without ending it is followed, before that object's link is read
      (there, or in a function it is given to, by that function's summary), by a line that gives the link
      a target the same way or clears it (`c.parent = None`); no list or field holding such objects is

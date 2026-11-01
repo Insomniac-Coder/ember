@@ -23,7 +23,7 @@ fn integrate(ref mut pos: MutSpan[Vec3], vel: Span[Vec3], dt: f32):
 
 fn main():
     ps = SoA[Particle].with_capacity(100_000)
-    ps.push(Particle(pos=Vec3.ZERO, vel=Vec3(1.0, 0.0, 0.0), life=2.0))
+    ps.push(owns Particle(pos=Vec3.ZERO, vel=Vec3(1.0, 0.0, 0.0), life=2.0))
     integrate(ref mut ps.pos, ps.vel, 0.016)  # two columns at once: never one place
     ps[0].life -= 0.016                     # writes one element of the `life` column
     p = ps.get(0)                           # Option[SoARef[Particle]]: names particle 0, no copy
@@ -226,7 +226,7 @@ fn main():
   registry's pools, so while a `for` loop walks a view, adding, removing, creating or destroying through
   the registry is refused when compiling, as for any collection a loop walks (`[BRW-18]`, `E3020`: "`reg.destroy(e)`
   (line 6) changes `reg`, whose pools this loop walks (line 4); collect the entities in a list of your
-  own: write `dead: Array[Entity] = []` before the loop, `dead.push(e)` in place of this line, and `for d
+  own: write `dead: Array[Entity] = []` before the loop, `dead.push(owns e)` in place of this line, and `for d
   in dead: reg.destroy(d)` after the loop"). The values themselves change through the view's `ref mut`
   items. EnTT allows some such changes through paged pools; Ember collects first and changes after.
 * `[ECS-6]` Iteration order is insertion order with swap-remove holes: deterministic for a given

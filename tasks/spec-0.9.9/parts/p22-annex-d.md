@@ -25,7 +25,7 @@ interface Device:
   (`panic: stale TextureHandle (generation 7, current 9)`); there is no setting that removes the
   check.
 * `[GPU-2]` *(changed in 0.9.15)* `device.begin_frame() -> Option[Frame]`; `None` is normal (a minimised window). A `Frame` has
-  one owner and is not `Copy`, and `end_frame(owns frame: Frame)` takes it over (`device.end_frame(frame)`
+  one owner and is not `Copy`, and `end_frame(owns frame: Frame)` takes it over (`device.end_frame(owns frame)`
   ends the name `frame`), so ending a frame that never began, or ending one twice, is refused when
   compiling.
 * `[GPU-3]` *(changed in 0.9.15)* `frame.arena()` is the frame's transient memory manager, an instance that lives as long as

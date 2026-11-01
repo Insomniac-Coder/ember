@@ -245,7 +245,7 @@ fn main():
   an `Arena`'s `alloc*` (`[ARN-1]`), none of which touches a block already given out. Reading it stays
   allowed (`current.made`); any other change, through any name, is
   `E3021` ("`frame.reset()` (line 26) changes the arena `names` was made in (line 25), and `names` still
-  lives; end it first: write `mem.drop(names)` above line 26"). So no safe method of a memory manager
+  lives; end it first: write `mem.drop(owns names)` above line 26"). So no safe method of a memory manager
   rewinds it, frees it or gives its bytes out again under a value made in it.
 
 ## IX.4 Raw pointers and `unsafe`
@@ -396,7 +396,7 @@ struct Texture:
 
 fn main():
     pool = Pool[Texture]()
-    h = pool.insert(Texture(width=64, height=64))
+    h = pool.insert(owns Texture(width=64, height=64))
     println(pool.get(h).is_some())
     pool.remove(h)
     println(pool.get(h).is_some())        # stale handle: None
@@ -426,14 +426,14 @@ fn advance(ref mut s: Sprite):          # setting a `Cell` needs a name that may
 struct Scene:
     entities: Array[int] = []
 
-    fn add(e: int):
-        this.entities.push(e)
+    fn add(owns e: int):
+        this.entities.push(owns e)
 
 fn main():
     s = Sprite(frame=Cell(0))
     advance(ref mut s)
     scene = Scene()
-    scene.add(7)
+    scene.add(owns 7)
     println(s.frame.get(), scene.entities.len())
 ```
 
@@ -455,7 +455,7 @@ fn main():
   `Mutex`, an `RwLock` or `guarded by` fields (Part XI); a field a method changes is changed through
   `this` (`[EXC-15]`). `RefCell`, `Ref`, `RefMut`, `borrow` and `borrow_mut` are not Ember (`E1010`:
   "`RefCell` is not part of Ember; write the field plainly, `entities: Array[int]`, and change it in a
-  method: `fn add(e: int):` with the body `this.entities.push(e)`; for a scene several objects own and
+  method: `fn add(owns e: int):` with the body `this.entities.push(owns e)`; for a scene several objects own and
   change, make it once, `s = Scene(entities=[])`, write the field that keeps it in each owner as
   `scene: shares mut Scene`, and give each owner its share where it is made, for example
   `Panel(scene=shares mut s)`").

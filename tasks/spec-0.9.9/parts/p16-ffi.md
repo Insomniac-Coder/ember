@@ -550,7 +550,7 @@ unsafe overlay c "vulkan/vulkan.h":
   when it is the address of the same object.
 * `[FFI-54]` *(new in 0.9.15)* **Giving an object to C.** A C function declared as keeping an object
   (`@ffi(param(widget, owns, one))` with `owns widget: owns Widget`) is given one by an ordinary
-  hand-over, `widget_take(first)`: the name ends and Ember frees nothing, with no word. For a C function
+  hand-over, `widget_take(owns first)`: the name ends and Ember frees nothing. For a C function
   whose declaration cannot say so (a plain pointer, `unsafe fn set_user_data(p: *mut Widget)`, or a function
   with `...`), `w.into_raw()` gives the address of a value Ember holds alone in its own block, an
   `owns T` (as a `*mut T`, or a `*mut u8` for an `owns dyn I`) or a class object with one owner (as an
@@ -580,9 +580,9 @@ unsafe overlay c "vulkan/vulkan.h":
 
   fn main():
       first = widget_new(1)
-      widget_take(first)
+      widget_take(owns first)
       second = widget_new(2)
-      p = address_for_c(second)
+      p = address_for_c(owns second)
       # SAFETY: C keeps the widget as its user data and frees it with `widget_free`
       unsafe:
           set_user_data(p)

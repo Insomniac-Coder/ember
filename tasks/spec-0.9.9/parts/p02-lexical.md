@@ -69,7 +69,9 @@ identifier := XID_Start XID_Continue*          (Unicode; NFC-normalised)
   byte-equal.
 * `[LEX-13]` A lone `_` is the discard pattern and never names a variable.
 * `[LEX-14]` *(changed in 0.9.15)* A raw identifier `r#name` uses a keyword as a name (for imported C fields such as
-  `type`).
+  `type`). A keyword written where a name is expected, any keyword of the table below, is `E0005`:
+  `type = 3` is "`type` is a keyword", with the help "write `r#type` to use the word as a name"
+  (`yield = 1`, a field `class: int` and a parameter `in: int` alike).
 
 **Keywords** (reserved everywhere; 52):
 
@@ -97,6 +99,7 @@ where          while          with           yield
   `where` clause (`[TYP-17]`); `copy` directly before `of`,
   and `of` directly after `copy` (`copy of x`, so `mem.copy` and a count's `of` stay names,
   `[GRM-43]`); `exists` between the value and `as` in an `if`, `elif` or `while` header (`[GRM-44]`);
+  `runtime` after a parameter's `:` and directly before `dyn` (`[LT-48]`);
   `cast` at the start of an operand directly before a name or
   `this` (`cast s as Circle`, `[GRM-30]`), so `cast(p)` stays a call; `guarded` and `by` after the type
   of a field or a `static` (`[GRM-46]`). The reserved words `not` and

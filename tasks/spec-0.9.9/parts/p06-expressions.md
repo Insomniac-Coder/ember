@@ -29,7 +29,7 @@
 A **place** denotes memory: a local, a field of a place, an element of a place, an enum variant's
 payload, the place a `ref` or `ref mut` view names, the value an `owns` field holds, a field of a class
 object, a `static`. A call whose result type is `ref T` or `ref mut T` is a place too
-(`first(ref mut xs) += 1`, `counts.entry(k).or_default() += 1`, `[LT-1]`). Everything else is a value.
+(`first(ref mut xs) += 1`, `counts.entry(owns k).or_default() += 1`, `[LT-1]`). Everything else is a value.
 
 * `[EXP-5]` *(changed in 0.9.15)* A change, a `ref mut` name and a hand-over require a place;
   `f(x).y = 1` is `E2140` unless `f` returns `ref mut`. A method that may change its object, called on a
@@ -239,8 +239,8 @@ fn main():
   type, numbers included (after `fn() owns count`, the function that made the lambda no longer uses
   `count`, `E3040`, and the lambda uses it under the same name); `shares`, `shares mut` and
   `thread_shared` one more owner; `weakref` a link; `ref` a read-only view of what the name views at
-  that moment, for a loop's name the element of that round. So `b.on_click(fn(): score += 1)` changes
-  the real `score`, and `b.on_click(fn() copy of score: println(score))` keeps a copy of its own. What a
+  that moment, for a loop's name the element of that round. So `b.on_click(owns fn(): score += 1)` changes
+  the real `score`, and `b.on_click(owns fn() copy of score: println(score))` keeps a copy of its own. What a
   function captured with a word, and what that owns alone, is its own state (`[CLO-10]`); a real
   variable stays at its own address, and the function only borrows it (`[CLO-4]`). A place that holds
   the function value counts as reaching every real variable it uses, and a call that may run it as a
@@ -298,7 +298,7 @@ fn main():
   `return fn() owns n: n += 1` in place of this line"); with `owns`, `n` is the function's own state,
   and the returned type is a plain `fn()`: `fn make_counter() -> fn():`. A name captured with `ref`
   follows the same rule (`[LT-42]`); a task's use of a loop's own name is Part XI's.
-  Its message for a handler kept after its maker returns: E3026 ("the click handler changes `total`, which belongs to `register`'s caller, and `b` keeps the handler after `register` returns; keep the total in an object the handler can own a share of: declare `class Counter:` with the field `n: int = 0`; in `main`, instead of `total = 0`, `register(ref mut b, ref mut total)` and `println(total)`, write `count = Counter()`, `register(ref mut b, shares mut count)` and `println(count.n)`; and instead of `register`'s two lines write `fn register(ref mut b: Button, owns count: shares mut Counter):` and `b.on_click(fn() owns count: count.n += 1)`").
+  Its message for a handler kept after its maker returns: E3026 ("the click handler changes `total`, which belongs to `register`'s caller, and `b` keeps the handler after `register` returns; keep the total in an object the handler can own a share of: declare `class Counter:` with the field `n: int = 0`; in `main`, instead of `total = 0`, `register(ref mut b, ref mut total)` and `println(total)`, write `count = Counter()`, `register(ref mut b, shares mut count)` and `println(count.n)`; and instead of `register`'s two lines write `fn register(ref mut b: Button, owns count: shares mut Counter):` and `b.on_click(owns fn() owns count: count.n += 1)`").
 * `[CLO-5]` *(changed in 0.9.15)* A function value that captures an object with `shares` or
   `thread_shared` holds one more owner of it. A loop of owners through function values' state is
   refused as every loop of owners is (`[WK-1]`); the link back is captured `weakref`
@@ -321,7 +321,7 @@ fn main():
   `owns` function value, and `scope.spawn` a plain `owns f: fn() -> R`, whose tasks may use the
   caller's own variables since they end with the `with scope` block (`[THR-11]`). Nothing is captured by
   a rule of the call: the function given says after its brackets what it holds
-  (`thread.spawn(fn() owns tx: produce(tx))`), a name with no word is the real variable, and a function
+  (`thread.spawn(owns fn() owns tx: produce(tx))`), a name with no word is the real variable, and a function
   that may outlive a real variable it uses is `E3026` (`E7004` for an unscoped thread or a kept C
   callback, whose message names the words, Part XI).
 * `[CLO-11]` *(new in 0.9.9)* A call `recv.name(args)` where `recv`'s type has no method `name` but has a field `name`
@@ -329,7 +329,7 @@ fn main():
 * `[CLO-12]` *(new in 0.9.9)* *(changed in 0.9.15)* A local function (`[GRM-28]`) is a named lambda: it takes the same
   capture words after its brackets (`fn push_a() thread_shared log:`), follows `[CLO-1]` to `[CLO-6]`,
   and may be passed by its name, so a long lambda may be written inside the call
-  (`a = thread.spawn(fn() thread_shared log: log.push("a"))`) or as a local function
+  (`a = thread.spawn(owns fn() thread_shared log: log.push("a"))`) or as a local function
   (`fn push_a() thread_shared log:` with the body `log.push("a")`, then `a = thread.spawn(push_a)`).
 * `[CLO-16]` *(new in 0.9.15)* **`thread_shared fn()`: a function any thread may run.** A callable
   type says whether any thread may run its functions. A list, field or parameter whose functions may
@@ -355,7 +355,7 @@ fn main():
   loop over `LOG` `E3020` (`[BRW-18]`). For the overlap of a call's arguments a function value counts as
   changing every place its functions change and every real variable they capture (`[BRW-11]`), and a
   function value is not stored in a place that a real variable it changes owns, all the way down
-  (`b.on_click(fn(): b.handlers.clear())`, `t.on_visit = fn(n: Node): t.root.children.clear()`, `E3022`:
+  (`b.on_click(owns fn(): b.handlers.clear())`, `t.on_visit = fn(n: Node): t.root.children.clear()`, `E3022`:
   "this function clears `b.handlers`, and `on_click` would keep it in `b.handlers`, so it would change
   the button that holds it while the button runs it; clear the handlers after the click instead:
   `b.click()`, then `b.handlers.clear()`"), since it would change its own holder while it runs.
@@ -376,7 +376,7 @@ fn main():
   `fn(s)` there is `E2020` ("`each_name` hands each name over (`fn(owns String)`), so this function
   receives it as its own: write `fn(owns s) => println(s.len())`"); where the type gives it read-only,
   `fn(owns s)` is `E2020` ("`each_name` gives each name read-only, so this function cannot take it
-  over; to keep your own, write `fn(s): names.push(copy of s)`"); `fn(ref mut ui)` changes the caller's
+  over; to keep your own, write `fn(s): names.push(owns copy of s)`"); `fn(ref mut ui)` changes the caller's
   value. A plain one reads. Written without types, the parameters follow the comma rule
   (`fn(ref mut ui, ref dx)`; `E0116`, `[OWN-13]`).
 
@@ -449,8 +449,8 @@ fn main():
   a call gave (`[LT-1]`): a method's points into its object, and `from` narrows it
   (`gen fn replay() -> Generator[int] from log:`). While it will still be used, the collection it walks
   does not change, however the generator walks it, by position included (`E3020`, `[BRW-18]`:
-  "`d.log.push("open")` (line 3) changes `d.log`, which `g` walks (`g = d.replay()`, line 1), and `g`
-  is used again on line 4; push after `g`'s last use: move `d.log.push("open")` below line 4"); any
+  "`d.log.push(owns "open")` (line 3) changes `d.log`, which `g` walks (`g = d.replay()`, line 1), and `g`
+  is used again on line 4; push after `g`'s last use: move `d.log.push(owns "open")` below line 4"); any
   other change of what its view points into is `E3021` (`d.angle = 90.0` while `g` will still be used),
   unless `from` narrows the view to the field it walks.
 * `[CORO-13]` *(new in 0.9.9)* *(changed in 0.9.15)* A `yield` while a `@must_drop` value (`[THR-6]`) is live is `E2231`: a

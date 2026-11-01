@@ -1,8 +1,9 @@
 # Ember Programming Language — Specification
 
-**Version:** 0.9.15_Hardened_9
-**Supersedes:** 0.9.15_Hardened_6 (development target), 0.9.15_Hardened_5, 0.9.15_Hardened_4,
-0.9.15_Hardened_3, 0.9.15_Hardened_2, 0.9.15_Hardened_1 and every earlier file: 0.9.10_Hardened_1 to
+**Version:** 0.9.15_Hardened_10
+**Supersedes:** 0.9.15_Hardened_9 (development target until this one), 0.9.15_Hardened_8,
+0.9.15_Hardened_7, 0.9.15_Hardened_6, 0.9.15_Hardened_5, 0.9.15_Hardened_4, 0.9.15_Hardened_3,
+0.9.15_Hardened_2, 0.9.15_Hardened_1 and every earlier file: 0.9.10_Hardened_1 to
 0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3 and 0.8.5_Hardened_1
 (adopted). This document is the single specification of Ember; the earlier files are history.
 **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
@@ -20,10 +21,14 @@ a package); **0.9.15_Hardened_6** the owner's verdicts 132 to 135 (an overlay en
 `@ffi(const)` makes its method one that changes its object; a hand-written C declaration unsafe to call
 is `unsafe fn`; one `L3015` naming every call; the default manifest's note), and states that the LLVM
 backend is the default (`[CG-LL-1]`); **0.9.15_Hardened_7** the owner's verdict 136 (a hand-written C
-declaration says `safe fn` or `unsafe fn`, and a plain `fn` there is refused). What a program means is written in
+declaration says `safe fn` or `unsafe fn`, and a plain `fn` there is refused); **0.9.15_Hardened_8** the
+owner's verdict 137 (what a call's result views is read from the called function's code);
+**0.9.15_Hardened_9** the owner's verdicts 138 to 144; **0.9.15_Hardened_10** the owner's verdicts 145
+to 160 (`owns` at the call for every `owns` parameter, a `dyn` call checked for each kind that may reach
+it and `runtime` where only the running program knows it). What a program means is written in
 words on the thing it describes: one owner unless a line says `shares`; `owns` for a hand-over and a
-value held alone; `copy of` for a copy; `ref mut` on a name, and at the call, for a change of someone
-else's value; `weakref` for a link that does not keep its target alive; `this` for a method's object.
+value held alone, at the call too; `copy of` for a copy; `ref mut` on a name, and at the call, for a
+change of someone else's value; `weakref` for a link that does not keep its target alive; `this` for a method's object.
 What a function changes, reads and ends is worked out from its code, never written on its first line.
 Every memory rule is checked when compiling; what still runs while a program runs is listed with its
 cost (§X.4). It replaces `Box`, `Shared`, `Weak`, `RefCell`, `SyncShared`, `ForeignBox`, `@sync`,
