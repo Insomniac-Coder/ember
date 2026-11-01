@@ -1,5 +1,25 @@
 # Ember — handoff
 
+> **2026-11-01, evening — attended (owner here), solo. START HERE.** Watcher pid 97472 ended (owner back).
+> **The ODR round is done:** owner verdicts 145-157 (`46ecdc5b`, JOB.md), each in his words, with the quotes in
+> `tasks/96/redesign/compiler-0.9.15/odr-answers-2026-11-01.md`; decisions.md N30-N37 answered. **New owner rules**
+> (JOB.md, "Messages and tests"): a message's words, help and code are the lead's (written into the spec and
+> decisions.md, never put to him); every test follows the spec, with no approvals; only a place the spec does not
+> settle goes to him, as a language ODR.
+> - **Unpushed:** `5d2769a2`..`d03faea0` (8) and `46ecdc5b`. No bench yet (owner's download), so no push gate.
+> - **Uncommitted, A1-8 (the call word, `ref mut` at the call):** `check_call_word` in `ember_typeck`, `cimport.rs`'s
+>   `ref mut ` for C slots, 329 `ref mut` sites inserted in std/tests (scratchpad `add_ref_mut.py`). **Known
+>   breakage:** `x.hash(ref mut h)` in `std/src/collections.em:162` is `E2040`: the second pass wrote the word where
+>   `h` is already a `ref mut` parameter. `target/release/ember.exe` is HEAD's; probes run with
+>   `EMBER_STD=target/verify-0915/headstd/std/src` (HEAD's std, `git archive`).
+> - **Next:** (1) **Hardened_10**: verdicts 145-157 written in; out go the lead's sentences the owner never decided:
+>   `[FN-2a]`/`[OWN-9]` "An argument for an `owns` parameter is handed over with no word", `[FN-2]` "or `x` to hand
+>   it over", `[STD-19]` "The function is handed over as every argument for an `owns` parameter is", `[GRM-15]`'s
+>   E0109 "an argument"/"return a", `[HASH-1]` "that is not `Copy`"; `[FN-4]`'s and `[LT-1a]`'s example words become
+>   157's. (2) **Build**: A1-8 together with `owns` at the call (147-149: `take(owns xs)`, `owns copy of`, literals,
+>   `push`), 145, 146, 148's errors, 154-156 and 157's messages; then 151-152 (`dyn` checked per kind, `runtime` on
+>   a parameter), a larger piece. (3) The push gate once benchmarking is allowed.
+
 > **2026-11-01, day — AUTONOMOUS from 08:22 ("now go autonomous mode and do not break the protocol"),
 > solo. START HERE.** Watcher (power only, owner 10:55: "not for wifi") pid 97472 (scratchpad `power_only_hibernate.ps1`): end it with WMI
 > `Terminate` when the owner is back. **The protocol, restated by the owner today:** the compiler follows the spec
