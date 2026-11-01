@@ -166,6 +166,34 @@ pub struct LoanReport {
     pub keeper: Option<(String, Span)>,
 }
 
+/// `[BRW-21]`, `[EFF-24]` (A4-2, M2's slice 4) — the regions the borrow check infers of each body,
+/// from the same installed contracts as [`run_checks`]: what the summary's facts about a view
+/// parameter's last use are read from. Every body's is `None` when a contract is not installed.
+pub fn regions_all(bodies: &[Body], types: &TypeTable) -> Vec<Option<Regions>> {
+    if bodies.iter().any(|body| body.callable_regions.is_none()) {
+        return bodies.iter().map(|_| None).collect();
+    }
+    let signatures: HashMap<String, Elision> = bodies.iter().map(|body| (body.symbol.clone(), elision_of(body, types))).collect();
+    let summaries = contracts_from_metadata(bodies, types);
+    let base_contract = |func: &FuncRef| contract_for(func, &summaries, &signatures);
+    let capture_contracts = closure_capture_contracts(bodies, &summaries);
+    let dynamic = stores::dynamic_bodies(bodies);
+    let store_summaries = stores::infer_store_summaries(
+        bodies,
+        types,
+        &HashMap::new(),
+        &base_contract,
+        &|body: &Body| capture_borrow_paths(body, &capture_contracts),
+        &dynamic,
+    );
+    let call_contract =
+        |func: &FuncRef| stores::with_stores(contract_for(func, &summaries, &signatures), func, &store_summaries);
+    bodies
+        .iter()
+        .map(|body| Some(Regions::infer_with_capture_borrow_paths(body, types, &call_contract, &capture_borrow_paths(body, &capture_contracts))))
+        .collect()
+}
+
 /// `[DIA-8]` — every loan of every body, from the borrow checker's own analysis (its loans and
 /// regions, not a second inference), for `ember explain --borrow`. Its diagnostics are dropped:
 /// the program was checked already.

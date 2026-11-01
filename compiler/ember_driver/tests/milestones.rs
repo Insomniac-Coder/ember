@@ -7650,6 +7650,45 @@ fn fresh_then_print(s: StrView, ref mut out: Array[String]):
     out.push(String(\"x\"))
     println(s)
 
+fn clear_then_use(s: StrView, ref mut log: Array[String]):
+    log.clear()
+    println(s)
+
+fn use_then_clear(s: StrView, ref mut log: Array[String]):
+    println(s)
+    log.clear()
+
+fn wipe(ref mut log: Array[String]):
+    log.clear()
+
+fn clear_through(s: StrView, ref mut log: Array[String]):
+    wipe(log)
+    println(s)
+
+fn pass_on(s: StrView, ref mut log: Array[String]):
+    clear_then_use(s, log)
+
+fn piece_after(s: StrView, ref mut log: Array[String]):
+    t = s[1..]
+    log.clear()
+    println(t)
+
+fn in_a_loop(s: StrView, ref mut log: Array[String]):
+    for i in 0..3:
+        println(s)
+        log.clear()
+
+fn fill(ref mut out: Array[int]):
+    for x in LIMITS:
+        out.push(x)
+
+fn fill_on(ref mut out: Array[int]):
+    fill(out)
+
+fn push_both(ref mut out: Array[int], ref mut other: Array[int]):
+    other.push(1)
+    out.push(2)
+
 fn main():
     c = Counter(count = 0, seen = [])
     twice(c)
@@ -7669,6 +7708,16 @@ fn main():
     words: Array[String] = []
     note_text(\"a\")
     fresh_then_print(\"b\", words)
+    clear_then_use(\"c\", words)
+    use_then_clear(\"d\", words)
+    clear_through(\"e\", words)
+    pass_on(\"f\", words)
+    piece_after(\"g\", words)
+    in_a_loop(\"h\", words)
+    fill(xs)
+    fill_on(xs)
+    zs: Array[int] = []
+    push_both(xs, zs)
 ").unwrap();
     let mir = ember(&["build", &source.to_string_lossy(), "--emit", "mir"], &dir);
     assert_eq!(mir.exit, 0, "MIR failed:\n{}", mir.stderr);
@@ -7704,7 +7753,24 @@ fn main():
         // A `StrView` points at its text, which printing it reads; a string just made is memory no
         // parameter reaches, so pushing it reads nothing of the caller's.
         ("note_text", "reads s\n"),
-        ("fresh_then_print", "changes out\nreads s\nreshapes out\nadds to out\nonly adds to out\n"),
+        ("fresh_then_print", "changes out\nreads s\nreshapes out\nadds to out\nonly adds to out\nuses s after it may reshape or end out\n"),
+        // `[BRW-21]` — what a function may reshape or end before its last use of a view parameter:
+        // on a line before it (not after), through a callee, by a callee given the view, before a view
+        // made from it, before the next turn of a loop; never a change made through the parameter
+        // itself (`log`'s own clear, `Counter.note`'s push and `twice`'s calls above).
+        ("clear_then_use", "changes log\nreads s\nreshapes log\nuses s after it may reshape or end log\n"),
+        ("use_then_clear", "changes log\nreads s\nreshapes log\nwhile it uses log, reads s\n"),
+        ("wipe", "changes log\nreshapes log\n"),
+        ("clear_through", "changes log (through wipe)\nreads s\nreshapes log (through wipe)\nuses s after it may reshape or end log (through wipe)\n"),
+        ("pass_on", "changes log (through clear_then_use)\nreads s (through clear_then_use)\nreshapes log (through clear_then_use)\nuses s after it may reshape or end log (through clear_then_use)\n"),
+        ("piece_after", "changes log\nreads s\nreshapes log\nuses s after it may reshape or end log\nwhile it uses log, reads s\n"),
+        ("in_a_loop", "changes log\nreads s\nreshapes log\nuses s after it may reshape or end log\nwhile it uses log, reads s\n"),
+        // `[BRW-1]`, `[BRW-21]` — what a function reads and changes by other names while it still uses a
+        // `ref mut` parameter: a static, another parameter, through a callee too; not what a callee does
+        // after the call that was its last use of it (`pass_on` above).
+        ("fill", "changes out\nreads LIMITS\nreshapes out\nadds to out\nonly adds to out\nwhile it uses out, reads LIMITS\n"),
+        ("fill_on", "changes out (through fill)\nreads LIMITS (through fill)\nreshapes out (through fill)\nadds to out (through fill)\nonly adds to out (through fill)\nwhile it uses out, reads LIMITS (through fill)\n"),
+        ("push_both", "changes out, other\nreshapes out, other\nadds to out, other\nonly adds to out, other\nuses out after it may reshape or end other\nwhile it uses out, changes other\n"),
     ] {
         assert_eq!(summary(path), expected, "`{path}`'s summary");
     }

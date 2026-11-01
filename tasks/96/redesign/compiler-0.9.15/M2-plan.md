@@ -45,7 +45,22 @@ placement, keeping and verifying land when a check needs them.
    keeps a view or function-value parameter (the `StoreSummary` of `regions.rs` folded in, A2-9's
    facts, C2); whether it lets `this` out and which fields of `this` it reads; whether a function
    value's body may end its own state and use it after. **"Only adds" built** (2026-11-01): the
-   facts *adds* (`push`, `extend`) and *removes* (every other reshape), and `Summary::only_adds`.
+   facts *adds* (`push`, `extend`) and *removes* (every other reshape), and `Summary::only_adds`. **"Used after a line that may end or move what it views" built**
+   (2026-11-01, `[BRW-21]`, `E3031`'s fact): `Summary::used_after`, per view parameter (`this` included),
+   the places a reshape or an end may reach on a line after which the parameter, or a view made from it, is
+   still used (its regions live at the line's successor: `borrows::regions_all`, the borrow check's own
+   regions from the installed contracts); a callee's own fact passed on where the view went into its
+   argument (the operand's origins at the call). A change made through the parameter itself is not one
+   (`[BRW-1]`: a `ref mut` name is alone): the parameter's own place, through no handle or link past its
+   reference. The `if a is not b:` precision of `[BRW-21]` waits for the disjointness facts (M6c).
+   **"What it reaches by other names while a `ref mut` parameter is live" built** (2026-11-01):
+   `Summary::read_while` and `changed_while`, per `ref mut` parameter (a region slot holding a changeable
+   view), the reads and changes at a line where it is still used (a static's place among them, `[BRW-1]`'s
+   check at each call); at a call, only when it is still used after the call, since one the call is its
+   last use of goes to the callee, whose own fact about that parameter is passed on. A parameter's own
+   place is what its leading reference and handle reach (every `Deref` before its first field, element
+   or variant step), so a `ref mut n: Node`'s own object is its own. While 0.9.10's run-time access
+   brackets stand (M6b), an `end_access_write` after a call keeps a parameter live a line longer.
    Slots, empty until their milestones: area 3's
    "sets the parent link before reading it", area 5's locks taken and needed (`[THR-18]`).
 5. **A4-3: summaries in interface files.** `.emif` schema 15: each callable's summary with each chain

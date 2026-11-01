@@ -21,7 +21,7 @@ use ember_mir::{Body, Builtin, FuncRef, LocalId, Operand, Place, Projection, Rva
 use ember_span::Span;
 use ember_types::{TyKind, TypeTable};
 
-use crate::regions::{place_type, project_type};
+use crate::regions::{place_type, project_type, Origin, Point, Regions};
 use crate::targets::Targets;
 
 /// A path longer than this is cut to its first `MAX_PATH` steps, which cover it.
@@ -78,6 +78,16 @@ pub struct Summary {
     /// may move or free what is already there.
     pub removes: Vec<Fact>,
     pub ends: Vec<Fact>,
+    /// `[BRW-21]` — for each view parameter, by index (`this` included), what the function may reshape
+    /// or end at a line after which it still uses that parameter or a view made from it, through its
+    /// own lines and the same fact of the functions it calls. A change made through the parameter
+    /// itself is not one: a `ref mut` name is alone (`[BRW-1]`), and its view of the place holds.
+    pub used_after: Vec<(usize, Fact)>,
+    /// `[BRW-1]`, `[BRW-21]` — for each `ref mut` parameter, by index, what the function reads and
+    /// changes by other names while it still uses that parameter (a static's place among them, which
+    /// a call is checked against), through its own lines and the same fact of the functions it calls.
+    pub read_while: Vec<(usize, Fact)>,
+    pub changed_while: Vec<(usize, Fact)>,
 }
 
 impl Summary {
@@ -123,6 +133,11 @@ enum What {
     Add,
     Remove,
     End,
+    /// A reshape or an end after which the view parameter of this index is still used.
+    UsedAfter(usize),
+    /// A read, or a change, while the `ref mut` parameter of this index is still used.
+    ReadWhile(usize),
+    ChangedWhile(usize),
 }
 
 /// Where a place is, in a body's own terms: a local and the steps from it.
@@ -148,6 +163,8 @@ pub fn summarize(bodies: &[Body], types: &TypeTable) -> Vec<Summary> {
     let targets = Targets::new(bodies, types);
     let index: HashMap<&str, usize> = bodies.iter().enumerate().map(|(at, body)| (body.symbol.as_str(), at)).collect();
     let pointers: Vec<HashMap<LocalId, HashSet<Target>>> = bodies.iter().map(|body| pointers_of(body, types)).collect();
+    // `[BRW-21]` — where each view parameter is still used: the borrow check's own regions.
+    let regions = crate::borrows::regions_all(bodies, types);
     let mut summaries: Vec<Summary> = vec![Summary::default(); bodies.len()];
     let mut known: Vec<HashSet<(What, Reach)>> = vec![HashSet::new(); bodies.len()];
     // Each round reads what the last one found; facts only grow and are finitely many (paths are cut),
@@ -155,19 +172,22 @@ pub fn summarize(bodies: &[Body], types: &TypeTable) -> Vec<Summary> {
     loop {
         let mut grew = false;
         for (at, body) in bodies.iter().enumerate() {
-            let found = body_facts(at, body, bodies, types, &index, &targets, &pointers[at], &summaries);
+            let found = body_facts(at, body, bodies, types, &index, &targets, &pointers[at], regions[at].as_ref(), &summaries);
             for (what, fact) in found {
                 if known[at].insert((what, fact.reach.clone())) {
                     grew = true;
-                    let list = match what {
-                        What::Change => &mut summaries[at].changes,
-                        What::Read => &mut summaries[at].reads,
-                        What::Reshape => &mut summaries[at].reshapes,
-                        What::Add => &mut summaries[at].adds,
-                        What::Remove => &mut summaries[at].removes,
-                        What::End => &mut summaries[at].ends,
-                    };
-                    list.push(fact);
+                    let summary = &mut summaries[at];
+                    match what {
+                        What::Change => summary.changes.push(fact),
+                        What::Read => summary.reads.push(fact),
+                        What::Reshape => summary.reshapes.push(fact),
+                        What::Add => summary.adds.push(fact),
+                        What::Remove => summary.removes.push(fact),
+                        What::End => summary.ends.push(fact),
+                        What::UsedAfter(param) => summary.used_after.push((param, fact)),
+                        What::ReadWhile(param) => summary.read_while.push((param, fact)),
+                        What::ChangedWhile(param) => summary.changed_while.push((param, fact)),
+                    }
                 }
             }
         }
@@ -178,6 +198,9 @@ pub fn summarize(bodies: &[Body], types: &TypeTable) -> Vec<Summary> {
     for summary in &mut summaries {
         for list in [&mut summary.changes, &mut summary.reads, &mut summary.reshapes, &mut summary.adds, &mut summary.removes, &mut summary.ends] {
             list.sort_by(|a, b| a.reach.cmp(&b.reach));
+        }
+        for list in [&mut summary.used_after, &mut summary.read_while, &mut summary.changed_while] {
+            list.sort_by(|a, b| (a.0, &a.1.reach).cmp(&(b.0, &b.1.reach)));
         }
     }
     summaries
@@ -402,6 +425,7 @@ fn body_facts(
     index: &HashMap<&str, usize>,
     targets: &Targets,
     pointers: &HashMap<LocalId, HashSet<Target>>,
+    regions: Option<&Regions>,
     summaries: &[Summary],
 ) -> Vec<(What, Fact)> {
     let mut found = Vec::new();
@@ -415,8 +439,43 @@ fn body_facts(
             own(What::Read, place, found);
         }
     };
-    for block in &body.blocks {
-        for stmt in &block.stmts {
+    // `[BRW-21]` — the view parameters (those whose value carries a region), and whether one is still
+    // used at a point: its regions are live there.
+    let views: Vec<usize> = match regions {
+        Some(regions) => (0..body.arg_count).filter(|&param| !regions.local_regions(LocalId(param as u32 + 1)).is_empty()).collect(),
+        None => Vec::new(),
+    };
+    let live = |param: usize, point: Point| {
+        regions.is_some_and(|regions| regions.local_regions(LocalId(param as u32 + 1)).iter().any(|slot| regions.contains(slot.region, point)))
+    };
+    // `[BRW-1]` — of them, the `ref mut` ones: a slot holding a changeable view.
+    let unique: Vec<usize> = match regions {
+        Some(regions) => views.iter().copied().filter(|&param| regions.local_regions(LocalId(param as u32 + 1)).iter().any(|slot| slot.unique)).collect(),
+        None => Vec::new(),
+    };
+    // Each fact found since `start` on a line at `at`, which `after` follows: a reshape or an end, one
+    // more fact for each view parameter still used after it; a read or a change, one for each `ref mut`
+    // parameter still used at it; neither when it was made through the parameter itself.
+    let per_parameter = |start: usize, at: Point, after: Point, found: &mut Vec<(What, Fact)>| {
+        let mut more = Vec::new();
+        for (what, fact) in &found[start..] {
+            let (params, point, kind): (&[usize], Point, fn(usize) -> What) = match what {
+                What::Reshape | What::End => (&views, after, What::UsedAfter),
+                What::Read => (&unique, at, What::ReadWhile),
+                What::Change => (&unique, at, What::ChangedWhile),
+                _ => continue,
+            };
+            for &param in params {
+                if live(param, point) && !through_itself(param, &fact.reach) {
+                    more.push((kind(param), fact.clone()));
+                }
+            }
+        }
+        found.extend(more);
+    };
+    for (at_block, block) in body.blocks.iter().enumerate() {
+        for (at_stmt, stmt) in block.stmts.iter().enumerate() {
+            let start = found.len();
             match &stmt.kind {
                 StmtKind::Assign { place, rvalue } => {
                     own(What::Change, place, &mut found);
@@ -451,8 +510,10 @@ fn body_facts(
                 StmtKind::Drop { place, .. } => own(What::End, place, &mut found),
                 _ => {}
             }
+            per_parameter(start, Point { block: at_block, index: at_stmt }, Point { block: at_block, index: at_stmt + 1 }, &mut found);
         }
-        let Terminator::Call { func, args, .. } = &block.terminator else { continue };
+        let Terminator::Call { func, args, next, .. } = &block.terminator else { continue };
+        let start = found.len();
         let span = block.terminator_span;
         let callees: Vec<usize> = match func {
             FuncRef::Direct { symbol, .. } => match index.get(symbol.as_str()) {
@@ -519,35 +580,74 @@ fn body_facts(
             read(operand, &mut own, &mut found);
         }
         // The callee's facts, mapped onto the arguments: its parameter `i` is argument `i`.
-        for callee in callees {
+        for &callee in &callees {
             let summary = &summaries[callee];
             for (what, facts) in [(What::Change, &summary.changes), (What::Read, &summary.reads), (What::Reshape, &summary.reshapes), (What::Add, &summary.adds), (What::Remove, &summary.removes), (What::End, &summary.ends)] {
                 for fact in facts {
-                    let param = match &fact.reach.root {
-                        Root::Param(param) => *param,
-                        // A static is the same place here.
-                        Root::Static(..) => {
-                            let mut chain = vec![(callee, span)];
-                            chain.extend_from_slice(&fact.chain);
-                            found.push((what, Fact { reach: fact.reach.clone(), chain }));
-                            continue;
+                    found.extend(mapped(body, types, pointers, args, callee, span, fact).into_iter().map(|fact| (what, fact)));
+                }
+            }
+        }
+        let call = Point { block: at_block, index: block.stmts.len() };
+        // What a call reads and changes is read or changed while a parameter is used when it is still
+        // used after the call; one the call is its last use of is passed to the callee, whose own
+        // facts about that parameter say what it does while using it (below).
+        let after = Point { block: next.0 as usize, index: 0 };
+        per_parameter(start, after, after, &mut found);
+        // `[BRW-21]` — a view passed to a callee that may reshape or end a place before its last use of
+        // that parameter, or read or change one while it uses it: so may this function, before its last
+        // use of the parameter the view came from, or while it uses it.
+        for &callee in &callees {
+            let summary = &summaries[callee];
+            let lists: [(&Vec<(usize, Fact)>, &[usize], fn(usize) -> What); 3] = [
+                (&summary.used_after, &views, What::UsedAfter),
+                (&summary.read_while, &unique, What::ReadWhile),
+                (&summary.changed_while, &unique, What::ChangedWhile),
+            ];
+            for (facts, params, kind) in lists {
+                for (param, fact) in facts {
+                    let Some(origins) = args.get(*param).and_then(|argument| regions.and_then(|regions| regions.operand_origins_at(argument, call))) else { continue };
+                    for origin in origins {
+                        let Origin::Param(local) = origin else { continue };
+                        let Some(view) = (local.0 as usize).checked_sub(1).filter(|view| params.contains(view)) else { continue };
+                        for fact in mapped(body, types, pointers, args, callee, span, fact) {
+                            if !through_itself(view, &fact.reach) {
+                                found.push((kind(view), fact));
+                            }
                         }
-                    };
-                    let Some(Operand::Copy(place) | Operand::Move(place)) = args.get(param) else { continue };
-                    let mut steps = steps_of(body, types, place);
-                    steps.extend_from_slice(&fact.reach.path);
-                    let mut out = Vec::new();
-                    reaches(body, pointers, &Spot { local: place.local, steps }, 0, &mut out);
-                    for reach in out {
-                        let mut chain = vec![(callee, span)];
-                        chain.extend_from_slice(&fact.chain);
-                        found.push((what, Fact { reach, chain }));
                     }
                 }
             }
         }
     }
     found
+}
+
+/// A callee's fact, mapped onto a call's arguments: its parameter `i` is argument `i`, and a static is
+/// the same place here; the call is the first step of the chain.
+fn mapped(body: &Body, types: &TypeTable, pointers: &HashMap<LocalId, HashSet<Target>>, args: &[Operand], callee: usize, span: Span, fact: &Fact) -> Vec<Fact> {
+    let chain = || {
+        let mut chain = vec![(callee, span)];
+        chain.extend_from_slice(&fact.chain);
+        chain
+    };
+    let param = match &fact.reach.root {
+        Root::Param(param) => *param,
+        Root::Static(..) => return vec![Fact { reach: fact.reach.clone(), chain: chain() }],
+    };
+    let Some(Operand::Copy(place) | Operand::Move(place)) = args.get(param) else { return Vec::new() };
+    let mut steps = steps_of(body, types, place);
+    steps.extend_from_slice(&fact.reach.path);
+    let mut out = Vec::new();
+    reaches(body, pointers, &Spot { local: place.local, steps }, 0, &mut out);
+    out.into_iter().map(|reach| Fact { reach, chain: chain() }).collect()
+}
+
+/// `[BRW-1]` — whether a fact's place is the parameter's own: reached through its own reference and
+/// handle only (every `Deref` before its first field, element or variant step), not through a handle
+/// or link stored in it.
+fn through_itself(param: usize, reach: &Reach) -> bool {
+    reach.root == Root::Param(param) && !reach.path.iter().skip_while(|step| **step == Step::Deref).any(|step| *step == Step::Deref)
 }
 
 /// Whether `class` is `owner` or below it.
@@ -626,13 +726,26 @@ pub fn render(summary: &Summary, body: &Body, bodies: &[Body], types: &TypeTable
     };
     // `[EFF-24]` — of the places it adds to, those it only adds to.
     let only: Vec<Fact> = summary.adds.iter().filter(|fact| summary.only_adds(&fact.reach)).cloned().collect();
+    // `[BRW-21]` — for each view parameter, what it may reshape or end before its last use of it.
+    // `[BRW-1]` — and, for each `ref mut` one, what it reads and changes by other names while using it.
+    let mut per_parameter = String::new();
+    for (list, label) in [(&summary.used_after, "uses {} after it may reshape or end"), (&summary.read_while, "while it uses {}, reads"), (&summary.changed_while, "while it uses {}, changes")] {
+        let mut params: Vec<usize> = list.iter().map(|(param, _)| *param).collect();
+        params.dedup();
+        for param in params {
+            let facts: Vec<Fact> = list.iter().filter(|(at, _)| *at == param).map(|(_, fact)| fact.clone()).collect();
+            let name = place(&Reach { root: Root::Param(param), path: Vec::new() });
+            per_parameter.push_str(&line(&label.replace("{}", &name), &facts));
+        }
+    }
     format!(
-        "{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{}",
         line("changes", &summary.changes),
         line("reads", &summary.reads),
         line("reshapes", &summary.reshapes),
         line("adds to", &summary.adds),
         line("only adds to", &only),
-        line("ends", &summary.ends)
+        line("ends", &summary.ends),
+        per_parameter
     )
 }
