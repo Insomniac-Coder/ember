@@ -207,12 +207,14 @@ fn an_edited_package_checks_as_a_clean_one_does_and_checks_again_what_the_edit_r
     assert_eq!(agree(&dir, "a body above a generic", true), (geom_only.clone(), symbols(&["4geom6offset"])));
 
     // A body that changes what a caller's borrows read of it: its callers in its module and in its
-    // importers are checked again, and nothing else.
+    // importers are checked again, and nothing else. A caller's own result is what its code says
+    // (`[LT-22]`, verdict 137), so `pick` and `label`, which return what `first` returns, change
+    // with it, and `main`, which calls them, is checked again too.
     let geom = geom.replace("pub fn first(a: StrView, b: StrView) -> StrView:\n    return a", "pub fn first(a: StrView, b: StrView) -> StrView:\n    return b");
     write(&dir, &source("geom"), &geom);
     assert_eq!(
         agree(&dir, "a borrow fact", true),
-        (vec![source("geom"), source("shapes")], symbols(&["4geom4pick", "4geom5first", "6shapes5label"]))
+        (vec![source("geom"), source("main"), source("shapes")], symbols(&["4geom4pick", "4geom5first", "6shapes5label"]))
     );
     assert_eq!(agree(&dir, "nothing edited after it", true), (vec![], vec![]), "what was checked again is kept");
 

@@ -1,5 +1,39 @@
 # Ember — handoff
 
+> **2026-11-01, day — AUTONOMOUS from 08:22 ("now go autonomous mode and do not break the protocol"),
+> solo. START HERE.** Watcher started 08:22, pid 39940 (scratchpad `power_wifi_hibernate.ps1`): end it with WMI
+> `Terminate` when the owner is back. **The protocol, restated by the owner today:** the compiler follows the spec
+> word for word; anything the spec does not say is an ODR (a wording change too: "this also needs to go through a
+> minor change ODR"); a verdict changes the spec first (a hardening), and is built after; every changed test is
+> reported to him.
+> - **The morning's review** (owner, one question at a time; JOB.md 137-144, decisions.md N26-N29): 137 read the
+>   code for every result type; 138 a method may return a view of a source parameter; 139 `choose_mut` over two
+>   `Shared` handles stays `E3062` (run-time locking, an exception to `[EFF-25]`, shown and **dropped for now**);
+>   140-143 rows 2, 6-9 of M1's test changes kept; 144 (N29) `E3062`'s help "remove `from a`: ..." where both
+>   parameters are reached. **Hardened_9** (`efdc29ce`) writes in 138 and 144 (139-143 confirm Hardened_8).
+> - **Built:** verdict 137 (`27c7106d`, quick check over every directory 0 failing) and 144 (`fbaea8f3`, UI case
+>   `B6/return_from_naming_one_of_two`). Tests fixed with the owner's approval: the `word()` test (it expected the
+>   retired `E3025`) is an accept test; two L3013 tests (`EXC-7`, a retired lint) deleted; `BRW-18` has the
+>   compile-time refusal EXC-5's deleted test checked while running, and an accept case.
+> - **For the owner, still to go through** (each changed test is reported): the third L3013 test
+>   (`EXC-7/accept_long_term_class_access_across_mut_dyn_call_l3013`, same retired lint: delete too?); the
+>   remaining M1 test changes the script found and the table missed (5 deletions: `CORO-12`, `EXC-15`, `EXC-5`,
+>   `STD-19` (copy_each of Strings now allowed), `THR-1`; 3 `LT-1a` `@borrows` tests now `E0104`;
+>   `compile-fail/a_returned_view_elision_cannot_tie` lost one error by verdict 138). A correction to report:
+>   `BRW-12`/`BRW-18` "with no accept test" was the runner given two folders that did not exist.
+> - **D-942, found by the push gate (three ways), fixed:** an incremental check after an edit to `first` stopped
+>   with "callable-region metadata disagrees" for `pick` and `label` (verdict 137 makes their summaries follow
+>   `first`'s code; `[VERIFY-3]` ran before the incremental check could retry the stale kept part). The
+>   summaries are now verified after it. **A test change for the owner:** the incremental test's "a borrow
+>   fact" step now expects `main.em` checked again too (`main` calls `pick` and `label`, `[BLD-2]`).
+> - **Not built, spec says otherwise:** `[LT-1a]` `from` naming a field that is not a view (the row-11 test still
+>   expects `E2031`; the spec gives `E3062` for its body). It needs the caller's loan narrowed to that field
+>   (`d.log`, not `d`), which A2-6 brings in M5 (a generator's `from` narrows the same way): built there (owner: "do it whenever it fits
+>   best").
+>   `E3025`, `E3080` and `L3013` are still emitted (retired in 0.9.15; `gap/02`, M6b).
+> - **Next:** the push gate (gate3) on `fbaea8f3`, the bench on both backends, push, one CI look; then M2's
+>   slice 4 (M2-plan.md's design notes: the flow-sensitive per-parameter facts).
+
 > **2026-10-31, late night — AUTONOMOUS (owner asleep), solo. START HERE.** Owner: "run autonomously I'll check
 > progress in the morning and ask for ODR updates, no agents or workflow for now ... monitor the wifi and power
 > source like always" (a workflow to verify, or a helper, may be asked for once the limit resets). Watcher started

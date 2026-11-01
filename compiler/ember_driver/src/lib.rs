@@ -5719,9 +5719,6 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
             &mut sink,
         );
     }
-    if !sink.has_errors() {
-        verify_callable_regions_or_panic(mir.bodies(), &types);
-    }
     checked_ranges.extend(ember_analysis::check_unused_all(mir.bodies(), &types, &mut sink));
     // `[DIA-7]` — a borrow error the classifier could not place is recorded
     // rather than left to be noticed. CI fails when the conformance suite
@@ -5738,17 +5735,23 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     let interface_cache = interface_cache.expect("a program without errors prepares its interface artifacts");
     // `[BLD-1]` — the checked forms: those the clean modules were kept against must still hold; each
     // module checked here is kept for the next build; and what the clean ones reported is reported.
+    // `[VERIFY-3]` — the summaries are verified once the kept forms are known to hold: a kept body's
+    // is its last build's, and one a changed callee made stale (`[LT-22]`: a result is what the
+    // callee's code says) is checked again by the next attempt, not reported as the compiler's fault.
     if let Some(plan) = plan.as_mut() {
         let checks = incremental::Checks::new(plan, &checked, &modules, mir.bodies(), &checked_ranges, &sink);
         if !plan.verify(&checks, &contracts, &borrow_facts, attempts) {
             return Ok(ExitCode::FAILURE);
         }
+        verify_callable_regions_or_panic(mir.bodies(), &types);
         if !answers.is_empty() {
             plan.forget();
         } else if !checked.closure_names_unstable {
             plan.keep(&checks, interface_cache.artifacts(), mir.bodies(), &contracts, &borrow_facts, &sink, &types, &|id| checked.made_structs.get(&id).cloned(), &map)?;
         }
         mark("kept checked forms", "all modules");
+    } else {
+        verify_callable_regions_or_panic(mir.bodies(), &types);
     }
     // `[BLD-1]` — from here on the bodies are in one order whichever were kept: by module, then
     // where each is written, then by symbol (a generic's instances share their generic's place).
