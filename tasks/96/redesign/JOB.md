@@ -748,8 +748,7 @@ acceptable it hurt readability too, if you want something to have a copy use the
 97. **A value made later for an `owns` place says `owns` too** (W1's question; verdicts 74 and 85 against
     E0109). With `class Entity:` holding `mesh: owns Mesh`, `e.mesh = owns Mesh(points=[1.0, 2.0])` gives
     `e` a new mesh (the old one is freed); `e.mesh = Mesh(...)` without it is refused, as verdict 74's
-    line. E0109 keeps only its own case: `owns` before a name that already exists (`e.mesh = m` hands `m`
-    over and writes no `owns`). Owner: "yes a".
+    line. Owner: "yes a".
 98. **Two changeable elements of one list whose positions are not known when compiling are refused when
     compiling** (verdict 88's record made precise; step 4's verdict check). With `fn collide(ref mut a:
     Body, ref mut b: Body):`, `collide(ref mut bodies[i], ref mut bodies[j])` in `fn step(ref mut bodies:
@@ -1138,6 +1137,83 @@ verdicts, 2026-10-29", items 1 to 18, with the review's other answers):
     with a UI case. Owner (2026-11-01), of the lead's wording, which the lead had built without an ODR
     and reverted: "your wording is good but ... this also needs to go through a minor change ODR", then
     "yes" to N29 ([LT-1a], [LT-23], [DIA-6]).
+
+145. **`owns` hands over every value `=` copies, as it does a number** (N31): `flag = true` then `f = owns
+    flag` gives `f` the value and `flag` ends, so `println(flag)` is `E3040`; the same for `char`, `StrView`,
+    `ref T`, `Span[T]` and a struct made only of these. Owner (2026-11-01), shown it for a `bool` beside
+    E0109 "remove `owns`": "yes noext question".
+146. **`owns` before an argument for a parameter that only reads is an error** (N32): with `fn show(xs:
+    Array[int])`, `show(owns xs)` is refused, "remove `owns`". Owner (2026-11-01): "yes pick a, next
+    question". (The reason the lead gave with it, that `owns` is never written before an argument, is
+    overturned by verdict 147.)
+147. **An argument for an `owns` parameter says `owns` at the call, whatever is passed**: with `fn take(owns
+    xs: Array[int])`, `take(owns xs)` hands `xs` over and `take(xs)` is an error; a copy is `take(owns copy
+    of xs)`, which keeps `xs`; a list made in the call is `take(owns [1, 2])`. Owner (2026-11-01), shown his
+    rule of 2026-10-24 ("For every name, point at the word in the line that says what it is") and verdict 3
+    (`bump(ref mut a)`): "YES"; of `owns copy of xs`: "I think owns copy of will make things more clear"; of
+    `take(owns [1, 2])`: "yes". The spec's "An argument for an `owns` parameter is handed over with no word"
+    (`[FN-2a]`, `[OWN-9]`) and "the caller passes `copy of x` to keep its own, or `x` to hand it over"
+    (`[FN-2]`) were never the owner's and go.
+148. **`return xs` takes no word; `return owns xs` is an error, "remove `owns`"; a function that returns a
+    copy keeps its plain result type**: `fn dup(xs: Array[int]) -> Array[int]: return copy of xs`. Owner
+    (2026-11-01): "just return"; of the result type, beside `-> ref mut int` and `-> shares Array[int]`:
+    "keep it Array[int]"; of `return owns xs`: "remove owns".
+149. **`push` too**: `names.push(owns p.name)` (verdict 78's line), `Array`'s built-in `push` included;
+    `names.push(p.name)` is an error. Owner (2026-11-01), shown `SmallArray.push(owns value: T)`: "yes owns
+    at the call for push too".
+150. **A function passed from a variable to a standard-library function is borrowed; the caller keeps it**
+    (ODR-240 of 2026-10-22 stands): `h = fn(x: int): println(x)`, `[1, 2].iter().for_each(h)` prints 1, 2,
+    and `h(5)` prints 5. `[STD-19]`'s "The function is handed over as every argument for an `owns`
+    parameter is" was the lead's (0.9.15_Hardened_1, drawn from verdicts 38 and 84) and goes. Owner
+    (2026-11-01): "SO IT BORROWS RIGHT?", then "YES GOOD".
+151. **A call through an interface is checked for each kind the function is given** (the Picker example:
+    `Mine.pick` returns `this.items`, `Yours.pick` returns `other`; `fn show(p: dyn Picker)` does `r =
+    p.pick(xs)`, `xs.push(owns 3)`, `println(r)`): `show(Mine(items=[9]))` compiles and prints `[9]`;
+    `show(Yours(items=[9]))` is refused at `xs.push(owns 3)`. Owner (2026-11-01): "MAKE MINE WORK AND YOURS
+    MINE FAIL BUT AT XS.PUSH".
+152. **`runtime` on a parameter checks it while the program runs**: `fn show(p: runtime dyn Picker):`. With
+    `p: dyn Picker = Mine(items=[9]) if input() == "m" else Yours(items=[9])` and `show(p)`, a `Mine` prints
+    `[9]` and a `Yours` stops the program at `xs.push(owns 3)` with a message that `r` looks at `xs`.
+    Without the word, a kind not known when compiling is a compile error that says to write it; where the
+    kind is visible no word is needed, and `fn show(p: runtime dyn Picker)` given `show(Yours(items=[9]))`
+    is still refused when compiling, at `xs.push(owns 3)`. Owner (2026-11-01): "add a way to check it at
+    runtime but with a word"; of `assert_disjoint`: "THAT IS NOT WHAT I MEANT I WANT A NEW WORD"; of the
+    lead's reading: "yes"; of the three placements (the making line, the call, the parameter): "go with 3,
+    keep runtime"; of a visible `Yours`, refused when compiling or stopped while running: "a".
+153. **A hasher may be `Copy`** (N37): `[HASH-1]`'s "a hashing state that is not `Copy`" loses "that is not
+    `Copy`" (the lead's words: ODR-033's "move-only", respelled in 0.9.15_Hardened_1). A struct with
+    `@derive(Copy)` that implements `Hasher` compiles, as today. Owner (2026-11-01), shown `Sum` copied
+    (`e = h`, `e.write_u64(5)`, `7 12`): "COPYING SHOULD NOT BE AN ISSUE MAKE IT AN ODR".
+154. **A `[T]` line sits on the line right above its function, struct or class**: a blank line or a comment
+    line between them is `E0100` (`[GRM-40]`'s "directly above"). Owner (2026-11-01): "A".
+155. **Every line that starts with `[` and is not directly above a function, struct or class is `E0100`**:
+    `[T: needs Add]` above an `enum` gets one `E0100` in place of four errors, and `[10, 20].len()` as a line
+    of its own is refused too (`n = [10, 20].len()` is the way). Owner (2026-11-01): "a".
+156. **A keyword used as a name is `E0005`, every keyword**: `type = 3` is "`type` is a keyword", help "write
+    `r#type` to use the word as a name" (today `E0100` "expected an expression"); `yield = 1` too. Owner
+    (2026-11-01): "a".
+157. **Messages approved in the round** (from now on the lead's to word, below): `this` outside a method,
+    "`this` can only be used in a method, and `double` is not a method", help "to make `double` a method,
+    move it into the struct or class it belongs to" ("ok use that message"); in a `static fn`, "`this` can
+    only be used in a method, and `starting_at` is a `static fn`, not a method", help "build the counter
+    from `k`: `return Counter(n=k)`" ("b"); `E2118`'s help names the renamed parameter `src_param` ("a");
+    `E3062`'s help for a view of the whole object, "return a view of `owner`, or remove `from owner`"
+    ("vb"); `take(xs)`, "`take` takes `xs` over (its first line says `owns xs: Array[int]`); say so at the
+    call: `take(owns xs)`", help "to keep `xs`, give it a copy: `take(owns copy of xs)`"; `show(owns xs)`,
+    "`show` only reads its argument; remove `owns`: `show(xs)`"; `return owns xs` (`E0109`), "`return`
+    always hands the value over; remove `owns`: `return xs`" ("ok approve"); the two `runtime` messages
+    (`E3021` "`xs` changes while `r` may still look at it: `p` may be a `Yours`, and which kind it is is
+    only known while running", help "to check it while running, write `runtime` on the parameter: `fn
+    show(p: runtime dyn Picker):`"; the stop "`xs` changes while `r` looks at it: `p` is a `Yours`, whose
+    `pick` gives back the list it was handed") ("approve").
+
+## Messages and tests: the lead's to settle (owner, 2026-11-01 evening)
+
+"your error messages are okay it's the language implementation part that concerns me most of the time so
+error related messages don't really need any a strict check from me", and "for test changes make everything
+in accordance to the spec". A message's words, its help and which code a mistake gets are the lead's,
+written into the spec and `decisions.md`; every test follows the spec. What a program does, and whether it
+compiles, stays the owner's.
 
 ## Error messages are part of readability (owner, 2026-10-24)
 
