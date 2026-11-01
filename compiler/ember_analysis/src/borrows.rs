@@ -2689,20 +2689,8 @@ fn contract_for(
         && let Some(summary) = summaries.get(symbol.as_str())
     {
         let latebound = matches!(func, FuncRef::Direct { latebound: true, .. });
-        let tied = legacy_elision(func, signatures);
-        // `[LT-1]` — a result that is itself a view (a `ref`, a `Span`, a `StrView`: a region slot at
-        // the value itself) keeps its first line's rule: every source parameter may be the returned
-        // view, more than the body may need. Its summary is consumed precisely only at an explicit
-        // `@latebound` boundary, where it distinguishes a static-independent callback result from
-        // one derived from an invocation view.
-        let plain_view = matches!(&summary.result, CallResultContract::Fields(result)
-            if result.fields.iter().any(|field| field.result_projection.is_empty() && !field.sources.is_empty()));
-        if !latebound && plain_view {
-            return conservative_contract(tied, false);
-        }
-        // `[LT-22]` — a view type's result (`[TYP-34]`: `Option[ref T]`, a struct of views): callers
-        // use the summary the body gives of which result field points into which argument, so an
-        // adapter's items point into what the iterator it wraps reads (`callers_result`).
+        // `[LT-1]`, `[LT-22]` (verdict 137) — the code of the function called says what its result
+        // points into, for every result type: callers use its summary.
         let mut summary = summary.clone();
         summary.latebound = latebound;
         return summary;
@@ -2874,20 +2862,13 @@ fn inferred_callable_summary(
     }
 }
 
-/// `[LT-1]`, `[LT-22]` — what a call's result points into, from this body: its summary, within
-/// the first line's rule; where the body needs more (a method's view of a source parameter other
-/// than `this`), or no summary can be made, every source parameter (rule 3).
+/// `[LT-1]`, `[LT-22]` (verdict 137) — what a call's result points into, from this body: its
+/// summary, for every result type; where no summary can be made, every source parameter (rule 3).
 fn callers_result(body: &Body, types: &TypeTable, regions: &Regions) -> CallResultContract {
-    let first_line = elision_of(body, types);
     match inferred_result_summary(body, types, regions) {
-        Some(summary)
-            if summary.fields.iter().flat_map(|field| field.sources.iter()).all(|source| match source {
-                ResultRegionSource::View { argument, .. } | ResultRegionSource::Arena { argument } => first_line.ties(*argument),
-            }) =>
-        {
-            CallResultContract::Fields(summary)
-        }
-        _ => CallResultContract::Legacy(elision_over(body, types, widened_parameters(body, types))),
+        Some(summary) => CallResultContract::Fields(summary),
+        // No summary can be made (a view read through a raw pointer): every source parameter.
+        None => CallResultContract::Legacy(elision_over(body, types, widened_parameters(body, types))),
     }
 }
 
