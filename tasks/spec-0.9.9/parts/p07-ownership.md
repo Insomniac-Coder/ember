@@ -540,8 +540,11 @@ it must be valid, and the compiler infers every region.
   (`[LT-7]`), a `dyn` or `virtual` method, a function with no Ember body. Pointing into an argument means
   pointing into it and into everything it owns (**into**, §VII.1), so a reshape of anything it owns ends
   the view and any other change of it while the view is used is refused (`[BRW-1]`). A returned view
-  that points into any other parameter is refused: `E3063` when that parameter is `owns` or is passed as
-  a copy (`[BRW-8]`), whose storage ends with the call, and `E3062` otherwise. A call whose result type
+  may point into `this` and into any source parameter, a method's as well as a function's, with nothing
+  written: `fn pick(other: ref i32) -> ref i32: return other` in a type body is no error, and its callers
+  keep `other` viewed. A returned view that points into any other parameter is refused: `E3063` when
+  that parameter is `owns` or is passed as a copy (`[BRW-8]`), whose storage ends with the call, and
+  `E3062` otherwise. A call whose result type
   is `ref mut T` or `ref T` is a place (`first(ref mut xs) += 1`; `counts.entry(k).or_default() += 1`),
   and a name bound to it follows `[BRW-12]` (`r = ref mut first_even(ref mut xs)`). A generator method's
   result is such a view, and it walks what it views: after `g = d.replay()`, the list it walks
@@ -554,7 +557,11 @@ it must be valid, and the compiler infers every region.
   would apply: the result points into exactly the named parameter, or into the named field of `this`
   written bare (`-> StrView from src`). The body may then give only a view of what `from` names, and
   any other is `E3062` ("`next_word` returns a view of `this.buf`, but its first line says `from src`;
-  return a view of `src`, or write `-> StrView from buf`"). A named parameter is a source parameter
+  return a view of `src`, or write `-> StrView from buf`"). Where the body may give a view of what `from`
+  names and of another parameter too (`-> Pair from a` over `return make(a, b)`, `make` a function
+  value), naming the other would be as wrong, and the help says to remove `from`: `E3062` ("the returned
+  view points into `b`, but its first line says `from a`"; help: "remove `from a`: the result may point
+  into `a` and `b`, and with no `from` it points into each of them"). A named parameter is a source parameter
   (`[LT-1]`) or a `ref mut` parameter; naming a plain `Copy` parameter, or an `owns` parameter that is
   not a view, is `E2031`. A bare field name names any field of `this`, whatever the method does with its
   object (`owns this`, or passed as a copy, `[BRW-8]`): for a field whose type is a view, the result

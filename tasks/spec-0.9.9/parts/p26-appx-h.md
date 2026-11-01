@@ -2347,3 +2347,29 @@ Generated: every rule whose text differs from 0.9.15_Hardened_7.
 |---|---|
 | `[LT-1]` | changed |
 | `[LT-22]` | changed |
+
+## H.49 Changes in 0.9.15_Hardened_9 (from 0.9.15_Hardened_8)
+
+**0.9.15_Hardened_9** writes in the owner's verdicts 138 to 144 from the review of 2026-11-01
+(`tasks/96/redesign/JOB.md`). Two change the text; five confirm what Hardened_8 already says:
+
+* Verdict 138: a returned view may point into `this` and into any source parameter, a method's as well
+  as a function's, with nothing written: `fn pick(other: ref i32) -> ref i32: return other` in a type
+  body is no error, and its callers keep `other` viewed (`[LT-1]`).
+* Verdict 144 (a minor change for readability): where the body may give a view of what `from` names
+  and of another parameter too, `E3062`'s help says "remove `from a`: the result may point into `a` and
+  `b`, and with no `from` it points into each of them", since naming the other would be as wrong
+  (`[LT-1a]`).
+* Confirmed, no text change: verdict 139 (`choose_mut` over two `Shared` handles stays `E3062`, the
+  caller chooses; nothing is checked while the program runs, `[EFF-25]` as written), verdict 140 (a
+  method that takes over its object gives a result that points into its object), verdict 141 (a result
+  holding several views, returned through a function value, points into every source argument),
+  verdict 142 (a `from` naming one parameter when the result may point into another is `E3062`),
+  verdict 143 (`L3014` retired).
+
+Generated: every rule whose text differs from 0.9.15_Hardened_8.
+
+| Rule | 0.9.15_Hardened_8 → 0.9.15_Hardened_9 |
+|---|---|
+| `[LT-1]` | changed |
+| `[LT-1a]` | changed |

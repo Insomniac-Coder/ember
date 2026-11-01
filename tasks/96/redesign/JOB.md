@@ -1079,6 +1079,65 @@ verdicts, 2026-10-29", items 1 to 18, with the review's other answers):
     code of a method returning `Option[StrView]` and not of one returning `StrView`: "why the fuck is
     reading the code an issue if it breaks, if it is breaking it is clearly because some rule was broken
     right?", then, asked "read the code everywhere?": "yes" ([LT-1], [LT-22], [LT-34]).
+138. **A method may return a view of one of its source parameters, not only of its object, with nothing
+    written**: `fn pick(other: ref i32) -> ref i32: return other` in a type body is no error (0.9.10 asked
+    for `@borrows(other)`, M1's first form `from other`); the compiler reads the code (verdict 137).
+    Owner, of N27 (2026-11-01, morning), shown the method before (an error) and now (none), and told the
+    lead had chosen "no error" while building `[LT-22]`: "I am cool with that so yes" ([LT-1], [LT-22]).
+139. **A function that returns a view of one of two `Shared` handles it was given stays refused**:
+    `fn choose_mut(ref mut first: Shared[Counter], ref mut second: Shared[Counter], choose_first: bool)
+    -> ref mut Counter` returning `first.get_mut()` or `second.get_mut()` is `E3062` ("the returned view
+    points into `first`, which the result does not point into"; 0.9.10 allowed it with
+    `@borrows(first, second)`); the caller chooses instead, `chosen = open(first) if choose_first else
+    open(second)` with `fn open(ref mut owner: Shared[Counter]) -> ref mut Counter from owner`. Both ways
+    keep both handles locked while `chosen` is used (a use of `second` is `E3022`), as 0.9.10's compiler
+    did (run on the pre-M1 build); nothing is locked while the program runs. Owner, of N28 (2026-11-01),
+    shown both ways and the run-time locking alternative (only the chosen counter locked, a program that
+    compiles may then stop while running): "keep it" ([LT-1], [LT-22], [EFF-25]). Run-time locking, an
+    exception to `[EFF-25]` the owner had asked a syntax for (a `RefCell`, a one-thread `Mutex`, or a word
+    on the value), is dropped: "drop it for now"; `[EFF-25]` stays as written.
+140. **A method that takes over its object (`owns this`) gives a result that points into its object, as
+    every method does**: in `@view struct V` (`r: Span[int]`), `fn m(a: Array[int]) owns this ->
+    Span[int]: return this.r` leaves `ys` free after `s = v.m(ys)`, so `ys.push(4)` while `s` is still
+    used compiles (0.9.10's rule 3 for `owned self` kept every argument borrowed: `E3021` in
+    `LT-1/reject_mutating_an_argument_of_an_owned_receiver_call`, replaced in M1 by
+    `LT-1/accept_an_argument_of_a_call_taking_its_object_over_stays_free`). Owner, of row 2 of M1's
+    test changes (2026-11-01), shown the program line by line and `println(s, ys)` printing
+    `[1, 2] [3, 4]`: "yes" ([LT-1]).
+141. **A result holding several views, returned through a function value, points into every source
+    argument; it is no longer refused**: with `@view struct Pair` (`first`, `second: Span[int]`),
+    `make = keep if input() == "yes" else swap` then `pair = make(xs, ys)` compiles and runs, and keeps
+    both `xs` and `ys` viewed while `pair` is used (`ys.push(4)` there is `E3021`); 0.9.10 refused the
+    call (`E3065`, now retired). The tests `LT-22/accept_a_result_through_an_opaque_function_value_points_into_every_source`
+    and `LT-22/accept_an_opaque_multi_region_result_points_into_every_source` (rows 6 and 7 of M1's
+    test changes). Owner (2026-11-01), shown the program without its type clutter, run with "yes" and
+    "no": "yes" ([LT-22], [LT-1]).
+142. **A `from` that names one parameter when the result may point into another is refused**: `fn
+    call(make: fn(Span[int], Span[int]) -> Pair, a: Span[int], b: Span[int]) -> Pair from a: return
+    make(a, b)` is `E3062` ("the returned view points into `b`, but its first line says `from a`"),
+    since `make` may be `swap`; written with nothing after `-> Pair`, it compiles and the caller keeps
+    both lists viewed (verdict 141). 0.9.10's form of the test, `@borrows(a, b)` refused with `E3065`
+    (`LT-23/reject_borrows_cannot_stand_in_for_unknown_field_provenance`), has no 0.9.15 spelling and
+    was deleted; `LT-23/reject_from_naming_one_source_of_an_opaque_result` replaces it (row 8 of M1's
+    test changes). Owner (2026-11-01), shown the two first lines side by side: "okay yes" ([LT-23],
+    [LT-1a]).
+143. **The warning `L3014` is retired, and its tests with it**: `fn pick(a: Span[i32], b: Span[i32]) ->
+    Span[i32]: return a` compiles with no warning (0.9.10, with the lint on, warned "return region is the
+    intersection of 2 parameters" and kept both arguments viewed); its result points into `a` only, read
+    from the code (verdict 137), so `ys.push(4)` after `s = pick(xs, ys)` compiles and prints
+    `[1, 2] [3, 4]`. Deleted: `LT-1b/` (4 tests), `LT-2a/` (2 tests, a `@view` struct of two view fields
+    warned "view region is the intersection of 2 fields") and UI case `B14` (row 9 of M1's test
+    changes). Owner (2026-11-01): "yes keep it" ([LT-1], [LT-22]).
+144. **E3062's help names the fix that works when the result may point into what `from` names and into
+    another parameter** (N29, a minor change for readability): under `-> Pair from a` with `return
+    make(a, b)` through a function value, the help is "remove `from a`: the result may point into `a`
+    and `b`, and with no `from` it points into each of them", in place of the spec's form "return a view
+    of `a`, or write `from b` after the result type", whose two ways out both fail there. A result that
+    points into one wrong parameter only (`return b` under `from a`) keeps the spec's form. It goes into
+    the spec beside E3062's messages (`[LT-1a]`, `[LT-23]`) in the next hardening, and is built after,
+    with a UI case. Owner (2026-11-01), of the lead's wording, which the lead had built without an ODR
+    and reverted: "your wording is good but ... this also needs to go through a minor change ODR", then
+    "yes" to N29 ([LT-1a], [LT-23], [DIA-6]).
 
 ## Error messages are part of readability (owner, 2026-10-24)
 

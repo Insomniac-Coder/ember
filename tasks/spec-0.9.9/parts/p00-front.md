@@ -1,6 +1,6 @@
 # Ember Programming Language — Specification
 
-**Version:** 0.9.15_Hardened_8
+**Version:** 0.9.15_Hardened_9
 **Supersedes:** 0.9.15_Hardened_6 (development target), 0.9.15_Hardened_5, 0.9.15_Hardened_4,
 0.9.15_Hardened_3, 0.9.15_Hardened_2, 0.9.15_Hardened_1 and every earlier file: 0.9.10_Hardened_1 to
 0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3 and 0.8.5_Hardened_1
