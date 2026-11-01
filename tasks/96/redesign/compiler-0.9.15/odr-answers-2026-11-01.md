@@ -74,3 +74,6 @@ Nothing here is widened. They go into JOB.md (145+), decisions.md and a new hard
 
 The ODR round is complete (2026-11-01 evening). Next: the test changes for the owner, then JOB.md 145+,
 decisions.md, the next hardening, the build.
+
+19. A function written in a call to a std function says `owns` (verdict 147 applied): `for_each(owns fn(x: int):
+    println(x))`, `filter(owns fn ...)`, `map(owns fn ...)`; a named one stays `for_each(h)` (owner: "a"). JOB.md 158.

@@ -1207,6 +1207,13 @@ verdicts, 2026-10-29", items 1 to 18, with the review's other answers):
     show(p: runtime dyn Picker):`"; the stop "`xs` changes while `r` looks at it: `p` is a `Yours`, whose
     `pick` gives back the list it was handed") ("approve").
 
+158. **A function written in a call to a standard-library function says `owns` too** (verdict 147 for a new
+    value, beside verdict 150 for a named one): `fn for_each(owns f: F) owns this` is called
+    `[1, 2].iter().for_each(owns fn(x: int): println(x))`, `evens = xs.iter().filter(owns fn(x: int) -> bool:
+    x % 2 == 0)`, `return xs.iter().map(owns fn(x: int) -> int: x * 2)`; a function from a variable stays
+    `for_each(h)`, borrowed. Owner (2026-11-01), shown the three lines and (b) no word for a function written
+    in the call: "a".
+
 ## Messages and tests: the lead's to settle (owner, 2026-11-01 evening)
 
 "your error messages are okay it's the language implementation part that concerns me most of the time so
