@@ -19,7 +19,7 @@ pub extern "C" fn inspect_optional_span(data: *i32, n: usize) -> i32:
 fn main():
     empty: Array[i32] = Array[i32]()
     values: Array[i32] = Array[i32]()
-    values.push(7)
+    values.push(owns 7)
     println(inspect(None))
     println(inspect(Some(empty.as_span())))
     println(inspect(Some(values.as_span())))

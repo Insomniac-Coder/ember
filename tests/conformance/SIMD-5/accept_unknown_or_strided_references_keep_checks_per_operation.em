@@ -22,6 +22,6 @@ fn strided(xs: Span[int]) -> int:
 fn main():
     xs: Array[int] = []
     for i in 0..20:
-        xs.push(i)
+        xs.push(owns i)
     value = 12
     println(repeated(xs.as_span(), ref value), strided(xs.as_span()))

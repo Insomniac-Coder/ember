@@ -300,7 +300,7 @@ extend[T: needs Serialize] Array[T] implements Serialize:
     fn serialize(ref mut w: W) -> Result[void, SerError]:
         w.begin_list(len(this))?
         for x in this:
-            x.serialize(w)?
+            x.serialize(ref mut w)?
         return w.end_list()
 
 extend[T: needs Deserialize] Array[T] implements Deserialize:
@@ -309,7 +309,7 @@ extend[T: needs Deserialize] Array[T] implements Deserialize:
         out: Array[T] = []
         r.begin_list()?
         while r.next_element()?:
-            out.push(T.deserialize(r)?)
+            out.push(owns T.deserialize(ref mut r)?)
         return Ok(out)
 
 extend[T: needs Serialize] Option[T] implements Serialize:
@@ -317,7 +317,7 @@ extend[T: needs Serialize] Option[T] implements Serialize:
     fn serialize(ref mut w: W) -> Result[void, SerError]:
         match this:
             Some(x):
-                return x.serialize(w)
+                return x.serialize(ref mut w)
             None:
                 return w.write_none()
 
@@ -326,12 +326,12 @@ extend[T: needs Deserialize] Option[T] implements Deserialize:
     static fn deserialize(ref mut r: R) -> Result[Option[T], SerError]:
         if r.read_none()?:
             return Ok(None)
-        return Ok(Some(T.deserialize(r)?))
+        return Ok(Some(T.deserialize(ref mut r)?))
 
 ## `[SER-1]` — what a derived `Deserialize` reads a field with: a value of `T`.
 [T: needs Deserialize, R: needs Reader]
 pub fn read(ref mut r: R) -> Result[T, SerError]:
-    return T.deserialize(r)
+    return T.deserialize(ref mut r)
 
 ## `[SER-2]` — a field the input lacks: its default with `@ser(default)` or `@ser(since=…)`, and
 ## otherwise `MissingField`.
@@ -358,10 +358,10 @@ pub fn in_range(owns value: Result[T, E], name: StrView) -> Result[T, SerError]:
 [W: needs Writer, T: needs Serialize]
 pub fn put(ref mut w: W, name: StrView, value: T) -> Result[void, SerError]:
     w.field(name)?
-    return value.serialize(w)
+    return value.serialize(ref mut w)
 
 ## `[SER-1]` — what a derived `Deserialize` reads a field into: the slot its value fills.
 [T: needs Deserialize, R: needs Reader]
 pub fn take(ref mut r: R, ref mut slot: Option[T]) -> Result[void, SerError]:
-    slot = Some(T.deserialize(r)?)
+    slot = Some(T.deserialize(ref mut r)?)
     return Ok(())

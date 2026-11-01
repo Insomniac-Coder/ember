@@ -30,7 +30,7 @@ fn show(ref mut q: Query[(Position, Velocity)], unused: ()):
 fn main():
     world = World()
     e = world.create()
-    world.add(e, Position(Vec3.ZERO))
-    world.add(e, Velocity(Vec3(1.0, 0.0, 0.0)))
-    world.run(integrate, 0.016)
-    world.run(show, ())
+    world.add(e, owns Position(Vec3.ZERO))
+    world.add(e, owns Velocity(Vec3(1.0, 0.0, 0.0)))
+    world.run(owns integrate, owns 0.016)
+    world.run(owns show, owns ())

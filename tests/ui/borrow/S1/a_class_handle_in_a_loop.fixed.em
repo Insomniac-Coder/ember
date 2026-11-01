@@ -4,10 +4,10 @@ struct Bag:
 @no_alias_checks
 fn fill(ref mut b: Bag):
     for i in 0..3:
-        b.items.push(i)
+        b.items.push(owns i)
 
 fn main():
     b = Bag([])
-    fill(b)
+    fill(ref mut b)
     for x in b.items:
         println(x)

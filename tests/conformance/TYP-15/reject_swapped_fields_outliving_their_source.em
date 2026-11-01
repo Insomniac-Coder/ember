@@ -18,6 +18,6 @@ fn main():
     s = String.from("first")
     t = String.from("second")
     p = P(s.as_str(), t.as_str())
-    swap_fields(p)
+    swap_fields(ref mut p)
     mem.drop(t) #$ error[E3021]: `t` cannot be moved while it is borrowed
     println(p.a)

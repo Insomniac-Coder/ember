@@ -19,11 +19,11 @@ fn main():
     b: Array[int] = []
     out: Array[int] = []
     for i in 0..40:
-        a.push(i)
-        b.push(2 * i)
-        out.push(0)
-    unknown(a)
-    unknown(b)
+        a.push(owns i)
+        b.push(owns (2 * i))
+        out.push(owns 0)
+    unknown(ref mut a)
+    unknown(ref mut b)
     for i in 0..40:
         out[i] = a[i] + b[i]
     println(out[0], out[17], out[39])

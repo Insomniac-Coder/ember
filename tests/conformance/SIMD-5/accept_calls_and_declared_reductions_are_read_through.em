@@ -54,14 +54,14 @@ fn total(xs: Span[float]) -> float:
 fn main():
     a = [1, 2, 3, 4]
     b = [0, 0, 0, 0]
-    calls(a, b)
+    calls(a, ref mut b)
     println(b)
     ps = [Vec3(1.0, 2.0, 3.0)]
     vs = [Vec3(1.0, 1.0, 1.0)]
-    moved(ps, vs, 0.5)
+    moved(ref mut ps, vs, 0.5)
     println(ps[0].x)
     qs = [Pair(x=1, y=2), Pair(x=3, y=4)]
     o = [0, 0]
-    sums(qs, o)
+    sums(qs, ref mut o)
     println(o)
     println(total([1.0, 2.0, 3.5]))

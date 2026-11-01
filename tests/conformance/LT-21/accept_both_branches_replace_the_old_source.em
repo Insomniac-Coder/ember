@@ -9,18 +9,18 @@ struct Pair:
 
 fn main():
     old: Array[i32] = Array[i32]()
-    old.push(10)
+    old.push(owns 10)
     stable: Array[i32] = Array[i32]()
-    stable.push(20)
+    stable.push(owns 20)
     first: Array[i32] = Array[i32]()
-    first.push(30)
+    first.push(owns 30)
     second: Array[i32] = Array[i32]()
-    second.push(40)
+    second.push(owns 40)
     pair = Pair(old.as_span(), stable.as_span())
     use_first = true
     if use_first:
         pair.selected = first.as_span()
     else:
         pair.selected = second.as_span()
-    old.push(11)
+    old.push(owns 11)
     println(pair.selected[0])

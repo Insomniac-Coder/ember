@@ -26,4 +26,4 @@ fn render_after_replace(ref mut holder: Holder) -> i32:
 fn main():
     pixel = Pixel(20)
     holder = Holder(pixel)
-    println(render_after_replace(holder))
+    println(render_after_replace(ref mut holder))

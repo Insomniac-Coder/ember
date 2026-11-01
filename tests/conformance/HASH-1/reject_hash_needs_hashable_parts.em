@@ -17,7 +17,7 @@ struct Plain:
 [K: needs Hash]
 fn hash_of(k: K) -> u64:
     h = DefaultHasher.new()
-    k.hash(h)
+    k.hash(ref mut h)
     return h.finish()
 
 fn main():

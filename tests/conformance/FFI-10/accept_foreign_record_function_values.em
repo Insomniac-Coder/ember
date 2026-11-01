@@ -22,7 +22,7 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     safe fn transform_wide(value: ForeignWide) -> ForeignWide
 
 fn main():
-    result = add_pairs(ForeignPair(left = 3, right = 4), ForeignPair(left = 5, right = 6))
+    result = add_pairs(owns ForeignPair(left = 3, right = 4), owns ForeignPair(left = 5, right = 6))
     println(result.left)
     println(result.right)
     original = ForeignPair(left = 3, right = 4)
@@ -34,8 +34,8 @@ fn main():
     unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         println(weighted_pair(original, 3))
     values: Array[i32] = Array[i32]()
-    values.push(1)
-    values.push(2)
+    values.push(owns 1)
+    values.push(owns 2)
     println(pair_and_values(original, values.as_span()))
     unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         callback = get_pair_callback()

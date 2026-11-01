@@ -27,13 +27,13 @@ fn total(s: Span[int]) -> int:
 
 fn main():
     ns = SoA[Named].with_capacity(2)
-    ns.push(Named("ann".to_string(), 3))
-    ns.push(Named("bob".to_string(), 5))
-    ns.push(Named("cy".to_string(), 8))
+    ns.push(owns Named("ann".to_string(), 3))
+    ns.push(owns Named("bob".to_string(), 5))
+    ns.push(owns Named("cy".to_string(), 8))
     println(ns[1].name, ns[2].score, total(ns.score))
     ns[1].name = "bea".to_string()
     println(ns.get(1))
-    ns.push(Named("dee".to_string(), 1))
+    ns.push(owns Named("dee".to_string(), 1))
     println(ns.len(), ns.swap_remove(0).name, ns.len())
     ns.reserve(100)
     match mem.assert_disjoint(ns.name, ns.score):

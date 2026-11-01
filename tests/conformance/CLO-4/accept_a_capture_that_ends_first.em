@@ -9,9 +9,9 @@ fn apply(f: fn(i32) -> i32, v: i32) -> i32:
 
 fn main():
     m: Array[i32] = Array[i32]()
-    m.push(1)
+    m.push(owns 1)
     println(apply(fn(x) => x + m[0], 10))
-    m.push(2)
+    m.push(owns 2)
     println(m[1])
 #$ stdout: 11
 #$ 2

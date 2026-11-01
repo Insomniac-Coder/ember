@@ -30,7 +30,7 @@ fn total_of(xs: Array[int]) -> int:
 fn main():
     tallies: Array[Tally] = []
     for k in 0..4:
-        tallies.push(Tally())
+        tallies.push(owns Tally())
     # 21 turns: whole passes, then the rest.
     for i in 0..21:
         t = tallies[i % 4]
@@ -39,14 +39,14 @@ fn main():
 
     squares: Array[int] = []
     for k in 0..12:
-        squares.push(0)
+        squares.push(owns 0)
     for i in 0..=10:
         squares[i] = i * i
     println(squares[10], squares[7], len(squares))
 
     seen: Array[int] = []
     for k in 0..4:
-        seen.push(0)
+        seen.push(owns 0)
     for i in 3..3:
         seen[0] = seen[0] + 1
     for i in -3..-2:
@@ -59,5 +59,5 @@ fn main():
 
     ones: Array[int] = []
     for k in 1..=10:
-        ones.push(k)
+        ones.push(owns k)
     println(total_of(ones), total_of(seen))

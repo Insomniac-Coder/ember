@@ -28,7 +28,7 @@ fn main():
         s = 0
         for (i, v) in (round .. n).iter().enumerate():
             s += i + v
-        sums.push(s)
+        sums.push(owns s)
     third = 0
     for round in range(0, 3, 2):
         for (i, v) in (round .. n).iter().enumerate():
@@ -38,7 +38,7 @@ fn main():
     line: Array[String] = []
     for k, y in ys.enumerate(start=int.MAX - 2):
         top: int = k
-        line.push(f"{top} {y}")
+        line.push(owns f"{top} {y}")
     println(line.join(" "))
     zs: Array[int] = [5, 5, 5]
     size = len(zs)

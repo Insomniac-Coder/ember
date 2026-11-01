@@ -16,8 +16,8 @@ pub extern "C" fn maybe_counted(input: *i32, n: usize, present: bool) -> *i32:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(10)
-    values.push(11)
+    values.push(owns 10)
+    values.push(owns 11)
     match maybe(values.as_span(), false):
         None:
             println("none")

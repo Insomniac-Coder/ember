@@ -15,8 +15,8 @@ fn add_one(x: int) -> int:
 
 fn main():
     xs = [1, 2, 3]
-    total = xs.iter().map(fn(x: ref int) -> int => x * 2).sum()
-    kept = xs.iter().map(add_one).filter(fn(x: int) -> bool => x > 2)
+    total = xs.iter().map(owns fn(x: ref int) -> int => x * 2).sum()
+    kept = xs.iter().map(owns add_one).filter(owns fn(x: int) -> bool => x > 2)
     rest = 0
     for v in kept:
         rest += v

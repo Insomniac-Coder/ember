@@ -11,7 +11,7 @@ fn main():
         for x in owns xs:
             total += x
             yield total
-    g = running([1, 2])
+    g = running(owns [1, 2])
     total = 5    #$ error[E3021]: `total` cannot be written while it is borrowed
     println(g.next())
     base = 2

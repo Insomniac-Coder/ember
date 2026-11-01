@@ -20,7 +20,7 @@ fn program():
     owner = Shared(Token(7))
     weak: Weak[Shared[Token]] = Weak(owner)
     copies: Array[Weak[Shared[Token]]] = Array[Weak[Shared[Token]]]()
-    copies.push(weak)
+    copies.push(owns weak)
     for observed in copies:
         task = fn() -> i32:
             match observed.upgrade():

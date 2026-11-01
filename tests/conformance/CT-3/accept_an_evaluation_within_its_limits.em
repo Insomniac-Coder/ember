@@ -13,7 +13,7 @@ fn sum_to(n: int) -> int:
 fn filled(n: int) -> int:
     xs: Array[int] = []
     for i in range(n):
-        xs.push(i)
+        xs.push(owns i)
     return xs.len()
 
 fn main():

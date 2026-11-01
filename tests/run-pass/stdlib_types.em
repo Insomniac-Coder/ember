@@ -47,7 +47,7 @@ fn main():
     # `Array[T]` — a growable sequence, bounds-checked like a fixed array.
     xs: Array[int] = Array()
     for i in 0..5:
-        xs.push(i * i)
+        xs.push(owns (i * i))
     println(xs.len())
     println(xs[4])
     xs[2] = 99

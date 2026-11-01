@@ -20,6 +20,6 @@ extend Count implements Tick:
 fn main():
     r: Box[dyn Tick] = Box(Count(0))
     with scope = thread.scope():
-        a = scope.spawn(fn() => r.tick())
-        b = scope.spawn(fn() => r.tick())
+        a = scope.spawn(owns fn() => r.tick())
+        b = scope.spawn(owns fn() => r.tick())
         println(a.join() + b.join())

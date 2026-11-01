@@ -8,6 +8,6 @@ fn take(owns s: String) -> int:
 fn main():
     a: Option[String] = Some("abc")
     match owns a:
-        Some(s): println(take(s))
+        Some(s): println(take(owns s))
         None: pass
     println(a)  #$ error[E3040]

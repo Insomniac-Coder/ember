@@ -204,6 +204,9 @@ pub struct Body {
     /// been through) leave it alone; every pass over the program sees it as any other.
     #[serde(skip)]
     pub kept: bool,
+    /// `[LT-48]` — the parameters written `runtime` before their `dyn` type, by position.
+    #[serde(default)]
+    pub runtime_params: Vec<usize>,
 }
 
 /// `[SIMD-2]`, `[SIMD-5]` — what a body's loop attributes ask of the loop
@@ -1260,9 +1263,26 @@ pub enum CastKind {
     /// (`AnyError.downcast_ref`): the box's data pointer, borrowed as the
     /// box is.
     InterfaceDowncast,
+    /// `[LT-48]` — whether a `dyn` value (a `ref dyn I`) is of the kind `concrete`: a `bool`, the
+    /// one compare of its table's kind (`kind_identity`) a `runtime` parameter's check costs (§X.4).
+    /// Each unit writes its own copy of a table; the kind is the same in each.
+    DynKindIs {
+        concrete: Ty,
+        interfaces: Vec<Symbol>,
+        layout: Vec<Option<ember_hir::InterfaceSlot>>,
+        implementations: Vec<Option<InterfaceAdapterMethod>>,
+    },
 }
 
 pub use ember_hir::{AtomicOp, BinOp, Builtin, FormatSpec, IntBits, IntOp, MemoryOrder, ParseKind, SimdOp, SoAOp, UnOp};
+
+/// `[LT-48]` — the kind a `dyn` table holds a value of, the last word of every table: the 64-bit
+/// FNV-1a hash of the concrete type's canonical name, the same in every unit and every build (as
+/// `type_identity`, two types share one only by a collision of the hash).
+pub fn kind_identity(types: &ember_types::TypeTable, concrete: Ty) -> u64 {
+    let name = types.canonical_name(concrete).unwrap_or_else(|_| types.display(concrete));
+    name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3))
+}
 
 /// One statement, with the source location it came from.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]

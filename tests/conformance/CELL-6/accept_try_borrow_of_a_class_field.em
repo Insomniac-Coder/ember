@@ -18,7 +18,7 @@ fn main():
     b = Holder()
     c = b
     with g = b.cell.borrow_mut():
-        g.push(4)
+        g.push(owns 4)
         r = c.cell.try_borrow()
         println(r.is_none())
     match c.cell.try_borrow():

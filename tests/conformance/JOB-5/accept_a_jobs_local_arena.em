@@ -29,7 +29,7 @@ fn main():
     handles: Array[jobs.JobHandle] = []
     for n in [3, 4, 5, 6]:
         k = n
-        handles.push(jobs.submit(owned fn() => work(k)))
+        handles.push(owns jobs.submit(owns owned fn() => work(k)))
     for h in handles:
         jobs.wait(h)
     println(TOTAL.load())

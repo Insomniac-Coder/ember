@@ -8,12 +8,12 @@ fn take(owns x: int):
     println(x)
 
 fn pass_on(n: int):
-    take(n)    #$ error[E3013]
+    take(owns n)    #$ error[E3013]
 
 fn main():
     xs = [1, 2]
     for x in xs:
-        take(x)    #$ error[E3013]
+        take(owns x)    #$ error[E3013]
     r = ref xs[1]
-    take(r)    #$ error[E3013]
-    take(xs[0])    #$ error[E3011]
+    take(owns r)    #$ error[E3013]
+    take(owns xs[0])    #$ error[E3011]

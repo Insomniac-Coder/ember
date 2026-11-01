@@ -19,28 +19,28 @@ struct P:
 fn order(ref mut q: Query[(Entity, P)], unused: ()):
     seen: Array[u32] = []
     for e, _ in q.iter():
-        seen.push(e.index())
+        seen.push(owns e.index())
     println(seen)
 
 fn build(show: bool) -> (World, Array[Entity]):
     w = World()
     es: Array[Entity] = []
     for i in 0..7:
-        es.push(w.create())
+        es.push(owns w.create())
     for i in 0..6:
-        w.add(es[i], P())
+        w.add(es[i], owns P())
     if show:
-        w.run(order, ())
+        w.run(owns order, owns ())
     w.remove[P](es[1])
     w.remove[P](es[3])
-    w.add(es[6], P())
+    w.add(es[6], owns P())
     return (w, es)
 
 fn main():
     (w, es) = build(true)
     (again, _) = build(false)
-    w.run(order, ())
-    again.run(order, ())
+    w.run(owns order, owns ())
+    again.run(owns order, owns ())
     w.destroy(es[5])
     w.destroy(es[4])
-    w.run(order, ())
+    w.run(owns order, owns ())

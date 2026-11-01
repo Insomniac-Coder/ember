@@ -10,13 +10,13 @@ struct Person:
 
 fn main():
     xs = ["bb", "a", "ccc", "dd"]
-    a = sorted(xs, key=fn(w) => w.len())
-    b = sorted(xs, key=fn(w) => w.len(), reverse=true)
+    a = sorted(xs, key=owns fn(w) => w.len())
+    b = sorted(xs, key=owns fn(w) => w.len(), reverse=true)
     c = sorted([3, 1, 2], reverse=true)
     d = sorted(x * x for x in [3, -4, 1])
     e = sorted(range(10, 0, -3))
     people = [Person("ann", 30), Person("bob", 25), Person("cy", 30)]
-    by_age = sorted(people, key=fn(p) => p.age, reverse=true)
+    by_age = sorted(people, key=owns fn(p) => p.age, reverse=true)
     names = [p.name.clone() for p in by_age]
     fixed: [int; 3] = [9, 7, 8]
     g = sorted(fixed, reverse=true)

@@ -22,25 +22,25 @@ struct B:
 fn ab(ref mut q: Query[(Entity, A, B)], unused: ()):
     seen: Array[u32] = []
     for e, _, _ in q.iter():
-        seen.push(e.index())
+        seen.push(owns e.index())
     println(seen)
 
 fn ba(ref mut q: Query[(B, Entity, A)], unused: ()):
     seen: Array[u32] = []
     for _, e, _ in q.iter():
-        seen.push(e.index())
+        seen.push(owns e.index())
     println(seen)
 
 fn a_maybe_b(ref mut q: Query[(Entity, A, Option[B])], unused: ()):
     seen: Array[u32] = []
     for e, _, _ in q.iter():
-        seen.push(e.index())
+        seen.push(owns e.index())
     println(seen)
 
 fn a_not_b(ref mut q: Query[(Entity, A, Not[B])], unused: ()):
     seen: Array[u32] = []
     for e, _, _ in q.iter():
-        seen.push(e.index())
+        seen.push(owns e.index())
     println(seen)
 
 fn main():
@@ -48,11 +48,11 @@ fn main():
     es: Array[Entity] = []
     for i in 0..5:
         e = w.create()
-        w.add(e, A())
-        es.push(e)
-    w.add(es[3], B())
-    w.add(es[1], B())
-    w.run(ab, ())
-    w.run(ba, ())
-    w.run(a_maybe_b, ())
-    w.run(a_not_b, ())
+        w.add(e, owns A())
+        es.push(owns e)
+    w.add(es[3], owns B())
+    w.add(es[1], owns B())
+    w.run(owns ab, owns ())
+    w.run(owns ba, owns ())
+    w.run(owns a_maybe_b, owns ())
+    w.run(owns a_not_b, owns ())

@@ -26,7 +26,7 @@ fn main():
     mem.forget(resource)
     mem.forget(Resource(98))
     values: Array[i32] = Array[i32]()
-    values.push(7)
+    values.push(owns 7)
     println(values.len())
     mem.forget(values)
     println(mem.size_of[Padded]())

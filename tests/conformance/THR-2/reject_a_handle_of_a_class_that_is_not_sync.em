@@ -18,5 +18,5 @@ class Holder:
 fn main():
     a = Plain()
     b = Holder()
-    t1 = thread.spawn(owned fn() => a.n)
-    t2 = thread.spawn(owned fn() => b.cell.get())
+    t1 = thread.spawn(owns owned fn() => a.n)
+    t2 = thread.spawn(owns owned fn() => b.cell.get())

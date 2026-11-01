@@ -10,6 +10,6 @@ fn pick(ref mut xs: MutSpan[int]) -> ref mut int:
 fn main():
     values = [1, 2]
     r = pick(values.as_mut_span())
-    values.push(3)
+    values.push(owns 3)
     r = 5
     println(values)

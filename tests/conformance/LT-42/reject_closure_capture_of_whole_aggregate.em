@@ -15,10 +15,10 @@ fn bundle(left: Span[i32], right: Span[i32]) -> Pair:
 
 fn main():
     left: Array[i32] = Array[i32]()
-    left.push(7)
+    left.push(owns 7)
     right: Array[i32] = Array[i32]()
-    right.push(8)
+    right.push(owns 8)
     pair = bundle(left.as_span(), right.as_span())
     copy_pair = fn() => pair
-    right.push(9) #$ error[E3021]: `right` is borrowed here and mutably borrowed elsewhere
+    right.push(owns 9) #$ error[E3021]: `right` is borrowed here and mutably borrowed elsewhere
     println(copy_pair().left[0])

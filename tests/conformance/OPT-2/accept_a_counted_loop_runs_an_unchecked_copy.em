@@ -36,8 +36,8 @@ fn unknown(ref mut xs: Array[T]):
 fn main():
     xs: Array[int] = []
     for i in 0..100:
-        xs.push(i)
-    unknown(xs)
+        xs.push(owns i)
+    unknown(ref mut xs)
 
     total = 0
     for i in 0..len(xs):
@@ -56,11 +56,11 @@ fn main():
 
     bag = Bag()
     for i in 0..100:
-        bag.items.push(i)
-    unknown(bag.items)
+        bag.items.push(owns i)
+    unknown(ref mut bag.items)
     ys: Array[int] = []
     for i in 0..100:
-        ys.push(bag.items[i])
+        ys.push(owns bag.items[i])
     held = 0
     for i in 0..100:
         held = held + bag.items[i]

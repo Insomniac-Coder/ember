@@ -40,6 +40,6 @@ fn main():
     words = "a b c d e f g"
     a: Array[int] = [0, 0, 0]
     b: Array[int] = [1, 2, 3]
-    double_all(a, b)
+    double_all(ref mut a, b)
     held: fn(StrView) -> int = first_len
     println(count_spaces(words, 0), count_spaces("x y z w", 0), a, digits("abcdef"), apply(held, "hello"), apply(word_len, "hi"))

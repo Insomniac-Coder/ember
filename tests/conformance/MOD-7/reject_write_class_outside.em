@@ -8,5 +8,5 @@ from support.class_health import ClassHealth, make, heal
 fn main():
     h = make(10)
     println(h.value)
-    heal(h, 5)
+    heal(ref mut h, 5)
     h.value = 99          #$ error[E1050]: `support.class_health.ClassHealth.value` is read-only outside its module

@@ -30,9 +30,9 @@ fn main():
     m: Map[String, int] = {"a": 1, "c": 3}
     println(lookup(m, "a"), lookup(m, "c"))
     n: Map[String, int] = {"a": 1}
-    put(n, "z")
+    put(ref mut n, "z")
     println(n)
     xs: Array[f32] = [1.5, 2.5]
     println(first(xs), first(xs.as_span()), xs[1])
-    bump(xs)
+    bump(ref mut xs)
     println(xs)

@@ -51,4 +51,4 @@ fn main():
     holder = expired_holder()
     derived = Derived[bool](true)
     base: Base[bool] = derived
-    println(base.observe(holder.weak))
+    println(base.observe(owns holder.weak))

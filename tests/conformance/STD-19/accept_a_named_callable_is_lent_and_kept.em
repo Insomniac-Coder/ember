@@ -15,7 +15,7 @@
 ## written at the call is given to the call, so an adapter made of one may be returned.
 
 fn doubled(xs: Span[int]) -> some Iterator[Item = int]:
-    return xs.iter().map(fn(x) => x * 2)
+    return xs.iter().map(owns fn(x) => x * 2)
 
 fn main():
     xs = [3, 1, 4, 1, 5]
@@ -80,7 +80,7 @@ fn main():
         return x > 2
     zs = [3, 1, 4]
     zs.retain(keep)
-    zs.sort_by_key(fn(x) => -x)
+    zs.sort_by_key(owns fn(x) => -x)
     sorted_calls = 0
     by = fn(x: int) -> int:
         sorted_calls += 1

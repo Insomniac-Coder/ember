@@ -11,6 +11,6 @@ fn grow(c: ref mut int):    #$ error[E0117]: the mode goes on the name, not in i
 
 fn main():
     k = 1
-    bump(k)
-    grow(k)
+    bump(ref mut k)
+    grow(ref mut k)
     println(k)

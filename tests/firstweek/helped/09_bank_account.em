@@ -23,7 +23,7 @@ class Account:
         if this.frozen:
             return Err(BankError.AccountFrozen(this.owner.clone()))
         this.balance += amount
-        this.history.push(f"deposit {amount}")
+        this.history.push(owns f"deposit {amount}")
         return Ok(this.balance)
 
     fn withdraw(amount: int) -> Result[int, BankError]:
@@ -34,7 +34,7 @@ class Account:
         if amount > this.balance:
             return Err(BankError.InsufficientFunds(this.balance, amount))
         this.balance -= amount
-        this.history.push(f"withdraw {amount}")
+        this.history.push(owns f"withdraw {amount}")
         return Ok(this.balance)
 
 class Bank:

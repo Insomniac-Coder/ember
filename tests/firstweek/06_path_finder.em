@@ -35,8 +35,8 @@ class Grid:
                     this.start = Pos(this.cells.len(), row.len())
                 elif c == "E":
                     this.goal = Pos(this.cells.len(), row.len())
-                row.push(c)
-            this.cells.push(row)
+                row.push(owns c)
+            this.cells.push(owns row)
 
     fn rows() -> int:
         return this.cells.len()
@@ -61,14 +61,14 @@ fn shortest_path(grid: Grid) -> Option[Array[Pos]]:
             path = [current]
             while current != grid.start:
                 current = came_from[current]
-                path.push(current)
+                path.push(owns current)
             path.reverse()
             return Some(path)
         for next in current.neighbours():
             if grid.is_open(next) and next not in seen:
                 seen.add(next)
                 came_from[next] = current
-                queue.push(next)
+                queue.push(owns next)
     return None
 
 fn main():

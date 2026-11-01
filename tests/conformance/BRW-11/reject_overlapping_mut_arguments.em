@@ -9,4 +9,4 @@ fn update_both(ref mut left: i32, ref mut right: i32):
 
 fn main():
     value: i32 = 0
-    update_both(value, value) #$ error[E3022]: `value` is already mutably borrowed
+    update_both(ref mut value, ref mut value) #$ error[E3022]: `value` is already mutably borrowed

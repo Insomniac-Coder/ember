@@ -12,7 +12,7 @@ class Button(cpp.Widget):
     codes: Array[i32] = []
 
     override fn on_event(code: i32):
-        this.codes.push(code)
+        this.codes.push(owns code)
 
     fn press():
         cpp.fire(this, 4)

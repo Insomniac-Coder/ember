@@ -23,6 +23,6 @@ fn main():
     worker = Worker()
     consumer: ref dyn Consume = ref worker
     tokens: Array[Token] = Array[Token]()
-    tokens.push(Token(7))
+    tokens.push(owns Token(7))
     for token in tokens:
-        println(consumer.consume(token))
+        println(consumer.consume(owns token))

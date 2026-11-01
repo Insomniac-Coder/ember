@@ -13,8 +13,8 @@ fn pick(a: Span[i32], b: Span[i32]) -> Span[i32]:
 
 fn main():
     p: Array[i32] = Array[i32]()
-    p.push(1)
+    p.push(owns 1)
     q: Array[i32] = Array[i32]()
-    q.push(2)
+    q.push(owns 2)
     v = pick(p, q)
     println(v[0])

@@ -20,7 +20,7 @@ fn take(owns zs: Array[i32]) -> int:
 
 fn use_after_owned_call() -> int:
     ys: Array[i32] = Array[i32]()
-    n: int = take(ys)
+    n: int = take(owns ys)
     return n + ys.len()
 
 fn main():

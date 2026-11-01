@@ -29,7 +29,7 @@ fn plain(n: int) -> Result[int, int]:
     return Err(-n)
 
 fn main():
-    match same(load(3)):
+    match same(owns load(3)):
         Ok(v):
             println(v)
         Err(e):

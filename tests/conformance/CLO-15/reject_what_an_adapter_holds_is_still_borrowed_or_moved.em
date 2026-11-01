@@ -17,7 +17,7 @@ fn keep(owns f: F) -> F:
 
 fn main():
     seen: Array[int] = []
-    g = keep(fn(v: int) => seen.push(v))
+    g = keep(owns fn(v: int) => seen.push(owns v))
     seen.clear()  #$ error[E3022]: `seen` is already mutably borrowed
     g(1)
     n = 0
@@ -29,6 +29,6 @@ fn main():
     xs = [1, 2, 3]
     ys = [4, 5, 6]
     writer = ys.iter_mut()
-    for a, b in xs.iter().zip(writer):
+    for a, b in xs.iter().zip(owns writer):
         b += a
     writer.next()  #$ error[E3040]: `writer` has been moved out of

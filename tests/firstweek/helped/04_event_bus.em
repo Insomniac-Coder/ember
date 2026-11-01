@@ -20,7 +20,7 @@ class EventBus:
     fn subscribe(topic: StrView, owns handler: fn(Event)):
         if topic not in this.subscribers:
             this.subscribers[topic] = []
-        this.subscribers[topic].push(handler)
+        this.subscribers[topic].push(owns handler)
 
     fn publish(event: Event):
         topic = topic_of(event)
@@ -50,16 +50,16 @@ class ChatLog:
 
     fn on_event(e: Event):
         if Chat(name, text) = e:
-            this.lines.push(f"<{name}> {text}")
+            this.lines.push(owns f"<{name}> {text}")
 
 fn main():
     bus = EventBus()
     board = Scoreboard()
     log = ChatLog()
-    bus.subscribe("players", owned fn(e) => board.on_event(e))
-    bus.subscribe("score", owned fn(e) => board.on_event(e))
-    bus.subscribe("chat", owned fn(e) => log.on_event(e))
-    bus.subscribe("players", owned fn(e) => println(f"[audit] {e!r}"))
+    bus.subscribe("players", owns owned fn(e) => board.on_event(e))
+    bus.subscribe("score", owns owned fn(e) => board.on_event(e))
+    bus.subscribe("chat", owns owned fn(e) => log.on_event(e))
+    bus.subscribe("players", owns owned fn(e) => println(f"[audit] {e!r}"))
 
     bus.publish(Event.PlayerJoined("ann"))
     bus.publish(Event.PlayerJoined("bob"))

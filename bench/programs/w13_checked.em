@@ -4,9 +4,9 @@ fn main():
     b: Array[int] = []
     out: Array[int] = []
     for i in 0..n:
-        a.push(i)
-        b.push(3 * i)
-        out.push(0)
+        a.push(owns i)
+        b.push(owns (3 * i))
+        out.push(owns 0)
     for round in 0..2000:
         for i in 0..n:
             out[i] = a[i] + b[i] + round

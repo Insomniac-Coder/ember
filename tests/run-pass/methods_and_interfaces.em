@@ -80,7 +80,7 @@ fn main():
     println(k.get())
 
     n: i32 = 21
-    double(n)
+    double(ref mut n)
     println(n)
 #$ stdout: 9.0
 #$ 4

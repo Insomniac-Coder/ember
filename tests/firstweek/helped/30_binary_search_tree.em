@@ -25,9 +25,9 @@ fn insert_into(node: TreeNode, key: StrView) -> bool:
 
 fn in_order(node: Option[TreeNode], ref mut out: Array[String]):
     if node exists as n:
-        in_order(n.left, out)
-        out.push(n.key.clone())
-        in_order(n.right, out)
+        in_order(n.left, ref mut out)
+        out.push(owns n.key.clone())
+        in_order(n.right, ref mut out)
 
 fn height(node: Option[TreeNode]) -> int:
     return match node:
@@ -57,7 +57,7 @@ class Tree:
 
     fn words() -> Array[String]:
         out: Array[String] = []
-        in_order(this.root, out)
+        in_order(this.root, ref mut out)
         return out
 
 fn main():

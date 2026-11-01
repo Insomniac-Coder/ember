@@ -10,7 +10,7 @@ class Bag:
 
     fn replace():
         this.items = [2]
-        this.items.push(3)
+        this.items.push(owns 3)
 
 fn main():
     b = Bag()

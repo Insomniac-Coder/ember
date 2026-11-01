@@ -7,7 +7,7 @@ fn identity(view: Span[T]) -> Span[T] from view:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(61)
+    values.push(owns 61)
     seen = identity(values.as_span())
     println(seen[0])
 #$ stdout: 61

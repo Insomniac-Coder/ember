@@ -8,6 +8,6 @@
 # finds nothing left over.
 
 fn main(owns args: Array[String]):
-    args.push("extra".to_string())
+    args.push(owns "extra".to_string())
     println(args.len())
     println(args[args.len() - 1])

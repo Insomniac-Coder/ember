@@ -27,7 +27,7 @@ fn advance(ref mut s: StrView):
 
 [T]
 fn store(ref mut xs: Array[T], owns x: T):
-    xs.push(x)
+    xs.push(owns x)
 
 fn swap_fields(ref mut p: P):
     t = p.a
@@ -36,28 +36,28 @@ fn swap_fields(ref mut p: P):
 
 fn main():
     names = ["ann", "bob"]
-    store(names, "cy")
-    old = mem.replace(names[0], "amy")
+    store(ref mut names, owns "cy")
+    old = mem.replace(ref mut names[0], "amy")
     label = Label("lit")
     label.text = names[1]
     label.text = "lit"
     copy = [n for n in names]
-    copy.push("dee")
+    copy.push(owns "dee")
     names.extend(["dee"])
     println(names)
     s = String.from("hello")
     name = "x"
-    put(name, s.as_str())
+    put(ref mut name, s.as_str())
     println(label.text, name)
-    advance(name)
+    advance(ref mut name)
     other = old
     r = ref mut other
     r = names[0]
     println(name, old)
     a = "first"
     b = "second"
-    mem.swap(a, b)
+    mem.swap(ref mut a, ref mut b)
     p = P(a, b)
-    swap_fields(p)
+    swap_fields(ref mut p)
     println(p.b, p.a)
     println(copy)

@@ -20,14 +20,14 @@ fn primes(n: int) -> Array[int]:
             if k % p == 0:
                 prime = false
         if prime:
-            out.push(k)
+            out.push(owns k)
         k += 1
     return out
 
 fn names() -> Array[String]:
     out: Array[String] = []
     for i in range(3):
-        out.push(f"n{i}")
+        out.push(owns f"n{i}")
     return out
 
 struct Config:
@@ -55,9 +55,9 @@ fn total() -> int:
 fn main():
     for _ in range(2):
         p = comptime(primes(4))
-        p.push(0)
+        p.push(owns 0)
         println(p)
     println(NAMES, CONFIG.title, CONFIG.weights, total())
     with g = COUNTS.lock():
-        g.push(2)
+        g.push(owns 2)
         println(g.len())

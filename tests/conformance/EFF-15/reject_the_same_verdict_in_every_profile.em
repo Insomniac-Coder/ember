@@ -8,9 +8,9 @@
 @noalloc
 fn grow(ref mut xs: Array[int], n: int):
     if n > 0:
-        xs.push(n)
+        xs.push(owns n)
 
 fn main():
     xs: Array[int] = []
-    grow(xs, 1)
+    grow(ref mut xs, 1)
     println(xs.len())

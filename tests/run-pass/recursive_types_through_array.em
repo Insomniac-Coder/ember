@@ -20,7 +20,7 @@ class Node:
     children: Array[Node]    #$ warning[L3001]: potential reference cycle
 
     fn add(child: Node):
-        this.children.push(child)
+        this.children.push(owns child)
 
 # `program` holds the test, so its values die before `main`'s last
 # statement: at the end of `main` a release build leaves what only frees
@@ -28,8 +28,8 @@ class Node:
 # would go with it.
 fn program():
     tree = Tree(1, Array())
-    tree.kids.push(Tree(2, Array()))
-    tree.kids[0].kids.push(Tree(3, Array()))
+    tree.kids.push(owns Tree(2, Array()))
+    tree.kids[0].kids.push(owns Tree(3, Array()))
     println(tree.kids.len())
     println(tree.kids[0].kids[0].id)
     root = Node(1, Array())

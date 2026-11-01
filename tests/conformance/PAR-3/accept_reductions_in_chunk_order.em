@@ -11,7 +11,7 @@ fn main():
     n = 10000
     values: Array[int] = []
     for i in range(n):
-        values.push(i)
+        values.push(owns i)
     total = 0
     best = 0
     least = 5

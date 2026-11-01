@@ -21,8 +21,8 @@ fn dot(n: int) -> f64:
     a: Array[f64] = []
     b: Array[f64] = []
     for i in 0..n:
-        a.push(i as f64)
-        b.push(2.0)
+        a.push(owns (i as f64))
+        b.push(owns 2.0)
     total = 0.0
     for i in 0..n:
         total += a[i] * b[i]
@@ -32,7 +32,7 @@ fn dot(n: int) -> f64:
 fn weighted(n: int) -> f64:
     ps = SoA[Sample].with_capacity(n)
     for i in 0..n:
-        ps.push(Sample(x=i as f64, w=i as f64))
+        ps.push(owns Sample(x=i as f64, w=i as f64))
     xs = ps.x
     ws = ps.w
     total = 0.0

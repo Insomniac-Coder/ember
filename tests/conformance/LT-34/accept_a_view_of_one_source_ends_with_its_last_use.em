@@ -17,8 +17,8 @@ fn halves(all: Span[i32]) -> Halves:
 fn main():
     values: Array[i32] = Array[i32]()
     for i in 0..6:
-        values.push(i)
+        values.push(owns i)
     parts = halves(values.as_span())
     println(parts.front.len() + parts.back.len())
-    values.push(6)
+    values.push(owns 6)
     println(values.len())

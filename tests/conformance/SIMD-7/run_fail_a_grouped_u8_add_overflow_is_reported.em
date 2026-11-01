@@ -10,9 +10,9 @@ fn main():
     ys: Array[u8] = []
     out: Array[u8] = []
     for i in 0..100:
-        xs.push(200 as u8)
-        ys.push(0 as u8)
-        out.push(0 as u8)
+        xs.push(owns (200 as u8))
+        ys.push(owns (0 as u8))
+        out.push(owns (0 as u8))
     big: u8 = 200
     xs[40] = big
     ys[40] = 100 as u8

@@ -21,12 +21,12 @@ fn main():
     xs: Array[int] = []
     ys: Array[int] = []
     for i in 0..1000:
-        xs.push(i % 100)
-        ys.push(i % 7)
+        xs.push(owns (i % 100))
+        ys.push(owns (i % 7))
 
     total = 0
     for round in 0..20:
-        for x in xs.iter().chain(ys.iter()):
+        for x in xs.iter().chain(owns ys.iter()):
             total ^= x + round
     println(total)
 
@@ -52,7 +52,7 @@ fn main():
 
     zs: Array[int] = []
     for i in 0..1000:
-        zs.push(0)
+        zs.push(owns 0)
     count = 0
     for round in 0..2:
         for i in 0..1000:

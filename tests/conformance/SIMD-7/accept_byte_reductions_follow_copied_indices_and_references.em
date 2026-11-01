@@ -21,7 +21,7 @@ fn sum(xs: Span[u8], first: usize, last: usize) -> u64:
 fn main():
     xs: Array[u8] = []
     for i in 0..128:
-        xs.push(i as u8)
+        xs.push(owns (i as u8))
     assert(sum(xs[..], 1, 127) == 8004 as u64)
     assert(sum(xs[..], 17, 17) == 3 as u64)
     assert(sum(xs[..], 17, 4) == 3 as u64)

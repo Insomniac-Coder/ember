@@ -19,5 +19,5 @@ fn main():
     fesetround(0x100)
     if fegetround() != 0:
         println("changed")
-    worker = thread.spawn(owned fn() => fegetround())
+    worker = thread.spawn(owns owned fn() => fegetround())
     println(worker.join())

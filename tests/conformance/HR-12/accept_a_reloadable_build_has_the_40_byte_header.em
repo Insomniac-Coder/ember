@@ -17,7 +17,7 @@ fn fill(n: int) -> Array[Cell]:
     for i in 0..n:
         c = Cell()
         c.value = i + 1
-        cells.push(c)
+        cells.push(owns c)
     return cells
 
 fn main():

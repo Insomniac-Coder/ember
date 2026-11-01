@@ -9,5 +9,5 @@ fn main():
     left, sep, right = "k=v".partition("=")
     println(left, sep, right, "a-b-a".count("a"), " Hi ".trim().to_upper(), "Hi".starts_with("H"))
     names = ["ann"]
-    names.push("bob")
+    names.push(owns "bob")
     println(names, "a b".lines().count())

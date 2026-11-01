@@ -17,7 +17,7 @@ fn main():
     comma = ", "
     println("a", "b", "c", sep=comma)
     calls = 0
-    print(1, 2, 3, 4, sep=arrow(calls), end="!\n")
+    print(1, 2, 3, 4, sep=arrow(ref mut calls), end="!\n")
     labels = ["[first]", "[second]"]
     println(labels[0], 1, labels[1], 2, sep=" ")
     println("only", sep=comma)

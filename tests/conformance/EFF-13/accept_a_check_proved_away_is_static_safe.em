@@ -20,5 +20,5 @@ fn three(ref mut c: Counter):
 
 fn main():
     c = Counter(0)
-    three(c)
+    three(ref mut c)
     println(c.value)

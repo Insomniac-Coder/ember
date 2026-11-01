@@ -3,11 +3,11 @@
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
-    values.push(2)
-    values.push(3)
-    values.push(4)
-    values.push(5)
+    values.push(owns 1)
+    values.push(owns 2)
+    values.push(owns 3)
+    values.push(owns 4)
+    values.push(owns 5)
     view = values.as_mut_span()
     chunks = view.chunks_mut(2)
     first = chunks.next()

@@ -40,7 +40,7 @@ fn ascending(xs: Array[int]) -> bool:
 fn main():
     cards: Array[Card] = []
     for i in 0..200:
-        cards.push(Card((i * 7) % 5, i))
+        cards.push(owns Card((i * 7) % 5, i))
     cards.sort()
     kept = true
     for i in 1..cards.len():
@@ -52,7 +52,7 @@ fn main():
 
     words: Array[String] = []
     for i in 0..200:
-        words.push(f"w{(i * 37) % 200}")
+        words.push(owns f"w{(i * 37) % 200}")
     words.sort()
     ordered = true
     for i in 1..words.len():
@@ -65,7 +65,7 @@ fn main():
     total = 0
     for i in 0..1000:
         seed = (seed * 1103515245 + 12345) % 2147483648
-        xs.push(seed % 100)
+        xs.push(owns (seed % 100))
     xs.sort()
     for x in xs:
         total += x
@@ -75,9 +75,9 @@ fn main():
     down: Array[int] = []
     same: Array[int] = []
     for i in 0..500:
-        up.push(i)
-        down.push(500 - i)
-        same.push(7)
+        up.push(owns i)
+        down.push(owns (500 - i))
+        same.push(owns 7)
     up.sort()
     down.sort()
     same.sort()

@@ -15,7 +15,7 @@ class Bag:
         this.items = [x]
 
     fn grow(x: T):
-        this.items.push(x)
+        this.items.push(owns x)
 
 fn main():
     b = Bag[int](1)

@@ -14,7 +14,7 @@ fn borrow_counter(ref mut owner: Shared[Counter]) -> ref mut Counter from owner:
 fn main():
     shared = Shared(Counter(40))
     alias = shared
-    first = borrow_counter(shared)
+    first = borrow_counter(ref mut shared)
     first.value = first.value + 1
     # The returned reference's dynamic access transfers to this caller and
     # ends at `first`'s last use, so the aliased handle can be borrowed next.

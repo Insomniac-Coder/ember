@@ -22,7 +22,7 @@ fn last_use_then_write() -> int:
     total = 0
     for y in ys:
         total += y
-    ys.push(total)
+    ys.push(owns total)
     return ys.len()
 
 fn store_or_write() -> int:

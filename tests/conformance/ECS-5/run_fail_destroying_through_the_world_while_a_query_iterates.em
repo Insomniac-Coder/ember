@@ -20,5 +20,5 @@ fn cull(ref mut q: Query[(Entity, Hp)], w: World):
 fn main():
     w = World()
     e = w.create()
-    w.add(e, Hp(0))
-    w.run(cull, w)
+    w.add(e, owns Hp(0))
+    w.run(owns cull, owns w)

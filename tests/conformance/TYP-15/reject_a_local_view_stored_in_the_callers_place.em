@@ -9,5 +9,5 @@ fn fill(ref mut out: StrView):
 
 fn main():
     name = "ann"
-    fill(name)
+    fill(ref mut name)
     println(name)

@@ -14,7 +14,7 @@ struct Outer:
     pub inner: Inner
 
     fn drop():
-        y = take(this.inner)         #$ error[E3010]: cannot move a field out of `this` in `drop`
+        y = take(owns this.inner)         #$ error[E3010]: cannot move a field out of `this` in `drop`
         println(y)
 
 fn take(owns x: Inner) -> i32:

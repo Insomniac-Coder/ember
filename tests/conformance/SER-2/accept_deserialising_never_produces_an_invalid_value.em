@@ -37,14 +37,14 @@ struct Wide:
 
 fn main():
     missing: Result[Unit, SerError] = json.from_str[Unit]("{\"armour\":1}")
-    println(missing.map(fn(u) => u.armour))
+    println(missing.map(owns fn(u) => u.armour))
     unknown: Result[Kind, SerError] = json.from_str[Kind]("{\"$variant\":\"Square\"}")
-    println(unknown.map(fn(k) => 0))
+    println(unknown.map(owns fn(k) => 0))
     high: Result[Unit, SerError] = json.from_str[Unit]("{\"hp\":101}")
-    println(high.map(fn(u) => u.armour))
+    println(high.map(owns fn(u) => u.armour))
     newer = json.to_string(Wide(50, [1, 2])).unwrap()
     read: Unit = json.from_str[Unit](newer.as_str()).unwrap()
     w: Wide = json.from_str[Wide]("{\"hp\":7,\"extra\":[]}").unwrap()
     println(read.hp, w.hp, read.level)
     bytes = binary.to_bytes(Wide(-3, [])).unwrap()
-    println(binary.from_bytes[Unit](bytes.as_span()).map(fn(u) => u.armour))
+    println(binary.from_bytes[Unit](bytes.as_span()).map(owns fn(u) => u.armour))

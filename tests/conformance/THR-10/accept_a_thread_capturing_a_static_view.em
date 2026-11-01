@@ -9,6 +9,6 @@ import std.thread
 
 fn main():
     greeting = "hello"
-    h = thread.spawn(owned fn() => greeting.len())
-    g = thread.spawn(owned fn() => f"{greeting} world")
+    h = thread.spawn(owns owned fn() => greeting.len())
+    g = thread.spawn(owns owned fn() => f"{greeting} world")
     println(h.join(), g.join())

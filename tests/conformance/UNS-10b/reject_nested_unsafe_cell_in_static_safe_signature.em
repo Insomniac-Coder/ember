@@ -11,4 +11,4 @@ fn forbidden(owns wrapper: Wrapper) -> i32: #$ error[E3105]: `UnsafeCell` is not
     return wrapper.cell.into_inner()
 
 fn main():
-    println(forbidden(Wrapper(UnsafeCell(1))))
+    println(forbidden(owns Wrapper(UnsafeCell(1))))

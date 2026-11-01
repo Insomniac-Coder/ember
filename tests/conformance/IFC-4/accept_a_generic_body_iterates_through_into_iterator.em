@@ -15,4 +15,4 @@ fn first(owns u: U) -> Option[U.Item]:
 fn main():
     xs: Array[int] = [1, 2]
     empty: Array[int] = []
-    println(first(xs), first(empty))
+    println(first(owns xs), first(owns empty))

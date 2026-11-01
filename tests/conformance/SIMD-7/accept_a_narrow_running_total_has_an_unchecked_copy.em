@@ -11,7 +11,7 @@
 fn main():
     xs: Array[i32] = []
     for i in 0..100:
-        xs.push(i as i32)
+        xs.push(owns (i as i32))
     total = 0
     for i in 0..xs.len():
         total = total + (xs[i] as int)

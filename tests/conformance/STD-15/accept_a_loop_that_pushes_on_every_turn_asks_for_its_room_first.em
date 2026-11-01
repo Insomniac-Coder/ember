@@ -21,7 +21,7 @@
 fn main():
     squares: Array[int] = []
     for i in 0..10:
-        squares.push(i)
+        squares.push(owns i)
     total = 0
     for x in squares:
         total += x
@@ -30,9 +30,9 @@ fn main():
     picks: Array[int] = []
     for i in 0..7:
         if i % 2 == 0:
-            picks.push(i)
+            picks.push(owns i)
         else:
-            picks.push(i * 2)
+            picks.push(owns (i * 2))
     total = 0
     for x in picks:
         total += x
@@ -41,7 +41,7 @@ fn main():
     odd: Array[int] = []
     for i in 0..7:
         if i % 2 == 1:
-            odd.push(i)
+            odd.push(owns i)
     total = 0
     for x in odd:
         total += x
@@ -51,7 +51,7 @@ fn main():
     for i in 0..100:
         if i == 3:
             break
-        early.push(i)
+        early.push(owns i)
     total = 0
     for x in early:
         total += x
@@ -60,7 +60,7 @@ fn main():
     grid: Array[int] = []
     for row in 0..100:
         for column in 0..10:
-            grid.push(column)
+            grid.push(owns column)
     total = 0
     for x in grid:
         total += x
@@ -68,7 +68,7 @@ fn main():
 
     few: Array[int] = []
     for i in 0..3:
-        few.push(i)
+        few.push(owns i)
     total = 0
     for x in few:
         total += x

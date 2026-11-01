@@ -7,7 +7,7 @@
 
 fn main():
     v: Array[i32] = Array[i32]()
-    v.push(1)
-    v.push(v.len() as i32)
+    v.push(owns 1)
+    v.push(owns (v.len() as i32))
     println(v[1])
 #$ stdout: 1

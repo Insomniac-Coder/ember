@@ -19,14 +19,14 @@ class Bag:
         this.items = [1, 2]
 
     fn grow():
-        this.items.push(3)
+        this.items.push(owns 3)
 
 fn main():
     b = Bag()
     c = b
     match b.name:
         Some(s):
-            c.items.push(3)
+            c.items.push(owns 3)
             println(s)
         None:
             pass

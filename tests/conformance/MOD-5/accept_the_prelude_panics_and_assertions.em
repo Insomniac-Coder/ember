@@ -15,5 +15,5 @@ fn main():
     eprintln("this line goes to standard error, not the expected output")
     println("ok")
     total = 5
-    old = mem.replace(total, 0)
+    old = mem.replace(ref mut total, 0)
     println(old, total)

@@ -12,14 +12,14 @@ class Bag:
         this.items = []
 
 fn top_up(ref mut b: Bag, v: i32):
-    b.items.push(v)
+    b.items.push(owns v)
 
 fn main():
     b = Bag()
     for i in 0..10:
-        b.items.push((i % 7) as i32)
-    top_up(b, 2147483642)
-    top_up(b, 0)
+        b.items.push(owns ((i % 7) as i32))
+    top_up(ref mut b, 2147483642)
+    top_up(ref mut b, 0)
     total: i32 = 0
     for i in 0..12:
         total = total + b.items[i]

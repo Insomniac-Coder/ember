@@ -52,7 +52,7 @@ extend[T: needs Param] Mut[T] implements Param:
     static fn open() -> T.State:
         return T.open()
     static fn get(ref mut s: T.State, i: int) -> T.Item:
-        return T.get(s, i)
+        return T.get(ref mut s, i)
 
 extend[A: needs Param, B: needs Param] (A, B) implements Param:
     type Item = (A.Item, B.Item)
@@ -81,7 +81,7 @@ struct QueryIter:
             return None
         i = this.at
         this.at += 1
-        return Some(Q.get(this.state, i))
+        return Some(Q.get(ref mut this.state, i))
 
 extend[Q: needs Param] QueryIter[Q] implements Iterator:
     type Item = Q.Item
@@ -101,5 +101,5 @@ fn run(f: fn(ref mut Query[Q], A), arg: A):
 
 fn main():
     q = make[(Mut[Pos], Vel)]()
-    system(q, 1)
+    system(ref mut q, 1)
     run(system, 100)

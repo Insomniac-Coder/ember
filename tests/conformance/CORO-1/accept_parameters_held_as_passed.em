@@ -26,7 +26,7 @@ gen fn counting(start: int) -> Generator[int]:
     yield start + 2
 
 gen fn appending(ref mut xs: Array[int], x: int) -> Generator[int]:
-    xs.push(x)
+    xs.push(owns x)
     yield xs.len()
 
 gen fn consuming(owns s: String) -> Generator[String]:
@@ -44,10 +44,10 @@ fn main():
     got = [x for x in counting(10)]
     println(got[0], got[1])
     xs = [1, 2]
-    for _ in appending(xs, 7):
+    for _ in appending(ref mut xs, 7):
         pass
     println(xs)
-    for s in consuming("owned"):
+    for s in consuming(owns "owned"):
         println(s)
     g = tracking(Tracker())
     first = g.next().unwrap()

@@ -20,6 +20,6 @@ fn main():
     r += 10
     println(xs)
     counts: Map[StrView, int] = {}
-    counts.entry("a").or_default() += 1
-    counts.entry("a").or_default() += 1
+    counts.entry(owns "a").or_default() += 1
+    counts.entry(owns "a").or_default() += 1
     println(counts["a"])

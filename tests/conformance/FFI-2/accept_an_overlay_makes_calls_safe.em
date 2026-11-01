@@ -30,9 +30,9 @@ fn main():
     println(id, w.widget_sum(items.as_span()), items.len(), 3, 3)
     w.widget_fill(items.as_mut_span(), 3)
     value: i32 = 6
-    w.widget_double(value)
+    w.widget_double(ref mut value)
     println(w.widget_label(1).to_str().unwrap(), w.add(2, 3), w.widget_sum(items.as_span()), value)
-    w.widget_take(w.widget_new(9))
+    w.widget_take(owns w.widget_new(9))
     size = w.Size(w=2, h=3)
     println(size.area())
     println(w.widget_freed())

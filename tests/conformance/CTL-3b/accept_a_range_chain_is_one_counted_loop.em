@@ -17,28 +17,28 @@
 fn main():
     line: Array[String] = []
     for (i, v) in (3..=9).step_by(3).enumerate():
-        line.push(f"{i}={v}")
+        line.push(owns f"{i}={v}")
     println(line.join(" "))
     line.clear()
     for v in (250u8..=255u8).iter():
-        line.push(f"{v}")
+        line.push(owns f"{v}")
     println(line.join(" "))
     line.clear()
     for v in (9223372036854775805..=9223372036854775807).skip(1):
-        line.push(f"{v}")
+        line.push(owns f"{v}")
     println(line.join(" "))
     line.clear()
     n = 9
     for v in (2..n).skip(2).step_by(3):
-        line.push(f"{v}")
-    line.push("|")
+        line.push(owns f"{v}")
+    line.push(owns "|")
     for v in (2..n).take(4).step_by(3):
-        line.push(f"{v}")
+        line.push(owns f"{v}")
     println(line.join(" "))
     line.clear()
     top = 9223372036854775807
     bottom = -top - 1
     for v in (bottom..=top).skip(1).step_by(top):
-        line.push(f"{v}")
+        line.push(owns f"{v}")
     println(line.join(" "))
     line.clear()

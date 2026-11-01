@@ -29,13 +29,13 @@ fn saturated_signed(a: i8x16, b: i8x16) -> i8x16:
 fn first4(v: u8x16) -> Array[int]:
     out: Array[int] = []
     for i in 0..4:
-        out.push(v.to_array()[i] as int)
+        out.push(owns (v.to_array()[i] as int))
     return out
 
 fn first4_i8(v: i8x16) -> Array[int]:
     out: Array[int] = []
     for i in 0..4:
-        out.push(v.to_array()[i] as int)
+        out.push(owns (v.to_array()[i] as int))
     return out
 
 fn main():

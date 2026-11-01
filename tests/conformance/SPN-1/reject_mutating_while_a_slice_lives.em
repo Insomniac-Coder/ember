@@ -7,5 +7,5 @@
 fn main():
     xs = [1, 2, 3]
     view = xs[0..2]
-    xs.push(4)
+    xs.push(owns 4)
     println(view)

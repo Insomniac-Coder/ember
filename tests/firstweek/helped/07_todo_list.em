@@ -35,7 +35,7 @@ class TodoList:
     fn add(title: StrView, priority: Priority, tags: Array[String] = []) -> int:
         id = this.next_id
         this.next_id += 1
-        this.tasks.push(Task(id=id, title=title.to_string(), priority=priority, tags=tags.clone()))
+        this.tasks.push(owns Task(id=id, title=title.to_string(), priority=priority, tags=tags.clone()))
         return id
 
     fn complete(id: int) -> bool:
@@ -53,7 +53,7 @@ class TodoList:
 
     fn print():
         sorted_tasks = this.tasks.clone()
-        sorted_tasks.sort_by_key(fn(t) => priority_rank(t.priority))
+        sorted_tasks.sort_by_key(owns fn(t) => priority_rank(t.priority))
         for t in sorted_tasks:
             mark = "x" if t.status == Status.Done else " "
             println(f"[{mark}] #{t.id} {t.title} ({priority_label(t.priority)})")

@@ -12,7 +12,7 @@ class Ledger:
         this.id = id
 
     fn record(v: int):
-        this.entries.push(v)
+        this.entries.push(owns v)
 
 fn main():
     l = Ledger(7)

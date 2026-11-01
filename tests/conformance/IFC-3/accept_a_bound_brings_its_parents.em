@@ -13,4 +13,4 @@ fn swap_first(ref mut c: C) -> f32:
 
 fn main():
     xs: Array[f32] = [1.5, 2.5]
-    println(swap_first(xs), xs)
+    println(swap_first(ref mut xs), xs)

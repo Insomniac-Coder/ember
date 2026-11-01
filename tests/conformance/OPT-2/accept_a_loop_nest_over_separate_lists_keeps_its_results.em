@@ -17,7 +17,7 @@
 fn rounds_of(a: Array[int], b: Array[int], rounds: int, n: int) -> int:
     out: Array[int] = []
     for i in 0..n:
-        out.push(0)
+        out.push(owns 0)
     for round in 0..rounds:
         for i in 0..n:
             out[i] = a[i] + b[i] + round
@@ -32,9 +32,9 @@ fn main():
     b: Array[int] = []
     out: Array[int] = []
     for i in 0..n:
-        a.push(i)
-        b.push(3 * i)
-        out.push(0)
+        a.push(owns i)
+        b.push(owns (3 * i))
+        out.push(owns 0)
     for round in 0..200:
         for i in 0..n:
             out[i] = a[i] + b[i] + round
@@ -55,8 +55,8 @@ fn main():
     xs: Array[float] = []
     vs: Array[float] = []
     for i in 0..100:
-        xs.push(0.0)
-        vs.push(1.5)
+        xs.push(owns 0.0)
+        vs.push(owns 1.5)
     for step in 0..200:
         for i in 0..100:
             xs[i] = xs[i] + vs[i]

@@ -40,6 +40,9 @@ pub struct Program {
     /// `[BLD-1]` — the functions of the modules whose checked form an earlier build kept: their
     /// bodies were not checked, and lowering leaves them out (the kept MIR stands for them).
     pub reused: std::collections::HashSet<DefId>,
+    /// `[LT-48]` — the parameters written `runtime` before their `dyn` type, by function and
+    /// position (`fn show(p: runtime dyn Picker)` is `(show, 0)`).
+    pub runtime_params: std::collections::HashSet<(DefId, u32)>,
 }
 
 /// `[TST-3]` — one `@test` function: a free function with no parameters

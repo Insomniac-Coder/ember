@@ -36,7 +36,7 @@ class GradeBook:
             return
         if name not in this.students:
             this.students[name] = Student(name=name.to_string())
-        this.students[name].scores.push(score)
+        this.students[name].scores.push(owns score)
 
     fn class_average() -> float:
         averages = [s.average() for s in this.students.values()]
@@ -44,7 +44,7 @@ class GradeBook:
 
     fn ranking() -> Array[Student]:
         result = [s.clone() for s in this.students.values()]
-        result.sort_by_key(fn(s) => -s.average())
+        result.sort_by_key(owns fn(s) => -s.average())
         return result
 
     fn histogram() -> Map[StrView, int]:

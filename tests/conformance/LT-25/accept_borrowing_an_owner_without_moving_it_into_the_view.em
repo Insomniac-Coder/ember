@@ -13,6 +13,6 @@ struct BorrowedView:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(7)
+    values.push(owns 7)
     item = BorrowedView(values.as_span(), 1)
     println(item.first[0])

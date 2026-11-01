@@ -26,7 +26,7 @@ class Calculator:
             "/" => a / b
             "^" => a ** b
             _ => return Err(CalcError.UnknownToken(op.to_string()))
-        this.stack.push(result)
+        this.stack.push(owns result)
         return Ok(())
 
     fn evaluate(line: StrView) -> Result[float, CalcError]:
@@ -36,16 +36,16 @@ class Calculator:
                 this.apply(token)?
             elif token == "dup":
                 v = this.pop("dup")?
-                this.stack.push(v)
-                this.stack.push(v)
+                this.stack.push(owns v)
+                this.stack.push(owns v)
             elif token == "swap":
                 b = this.pop("swap")?
                 a = this.pop("swap")?
-                this.stack.push(b)
-                this.stack.push(a)
+                this.stack.push(owns b)
+                this.stack.push(owns a)
             else:
                 match token.parse[float]():
-                    Ok(v) => this.stack.push(v)
+                    Ok(v) => this.stack.push(owns v)
                     Err(_) => return Err(CalcError.UnknownToken(token.to_string()))
         if this.stack.len() != 1:
             return Err(CalcError.LeftoverValues(this.stack.len()))

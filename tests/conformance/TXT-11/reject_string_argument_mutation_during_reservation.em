@@ -7,4 +7,4 @@ fn erase(ref mut text: String) -> int:
 
 fn main():
     text: String = "abc"
-    text.insert(erase(text), 'x')    #$ error[E3022]: `text` is already mutably borrowed
+    text.insert(erase(ref mut text), 'x')    #$ error[E3022]: `text` is already mutably borrowed

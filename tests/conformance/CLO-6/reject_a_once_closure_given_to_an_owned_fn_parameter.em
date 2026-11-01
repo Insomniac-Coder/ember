@@ -17,8 +17,8 @@ fn invoke_once(f: once fn() -> i32) -> i32:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(7)
-    task = owned fn() => consume(values)
+    values.push(owns 7)
+    task = owned fn() => consume(owns values)
     println(invoke(task))    #$ error[E3030]: closure would move a captured value out
     more: Array[i32] = [8]
-    println(invoke_once(owned fn() => consume(more)))
+    println(invoke_once(owns owned fn() => consume(owns more)))

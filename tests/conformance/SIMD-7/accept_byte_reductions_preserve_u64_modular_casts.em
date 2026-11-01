@@ -47,8 +47,8 @@ fn main():
     xs: Array[u8] = []
     ys: Array[i8] = []
     for i in 0..256:
-        xs.push(i as u8)
-        ys.push((i - 128) as i8)
+        xs.push(owns (i as u8))
+        ys.push(owns ((i - 128) as i8))
     assert(add_unsigned(xs[..], 18446744073709551600) == 32624 as u64)
     assert(subtract_unsigned(xs[..], 17) == 18446744073709518993u64)
     assert(add_signed(ys[..], 5) == 18446744073709551493u64)

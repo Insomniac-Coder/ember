@@ -31,7 +31,7 @@ fn main():
             seen: Array[i32] = []
             total: i32 = 0
             for item in bag.get_mut():
-                seen.push(item)
+                seen.push(owns item)
                 total += item
             println(seen[0], seen[1], seen[2])
             println(total, bag.get().size())
@@ -40,7 +40,7 @@ fn main():
     row = cpp.Row(cells = [5, 6, 7])
     after: Array[i32] = []
     for cell in row:
-        after.push(cell + 1)
+        after.push(owns (cell + 1))
     println(after[0], after[1], after[2])
     match cpp.Bag.new():
         Ok(empty):

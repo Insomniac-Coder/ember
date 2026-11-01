@@ -13,7 +13,7 @@ class Player:
         this.items = [1]
 
     fn update(all: Array[Player]):
-        this.items.push(0)
+        this.items.push(owns 0)
         println(score(all))
 
 fn score(all: Array[Player]) -> int:
@@ -25,5 +25,5 @@ fn score(all: Array[Player]) -> int:
 fn main():
     p = Player()
     all: Array[Player] = []
-    all.push(p)
+    all.push(owns p)
     p.update(all)

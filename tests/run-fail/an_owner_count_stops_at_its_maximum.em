@@ -11,5 +11,5 @@ fn main():
     n = Node()
     keep: Array[Node] = []
     for _ in 0..300:
-        keep.push(n)
+        keep.push(owns n)
     println(keep.len())

@@ -11,5 +11,5 @@
 fn main():
     xs: Array[int] = []
     for i in 0..5:
-        xs.push(i)
+        xs.push(owns i)
     println(f"{len(xs)} {xs.capacity()}")

@@ -12,7 +12,7 @@ class Log:
 
     fn add(line: StrView):
         with lines = this.lines.borrow_mut():
-            lines.push(line)
+            lines.push(owns line)
 
 fn main():
     log = Log()

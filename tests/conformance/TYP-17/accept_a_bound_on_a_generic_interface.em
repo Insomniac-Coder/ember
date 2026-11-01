@@ -41,5 +41,5 @@ fn main():
     s: String = conv[String, StrView]("c")
     println(s)
     t = T2[String]()
-    t.keys.push("b")
+    t.keys.push(owns "b")
     println(t.has("a"), t.has(String.from("b")))

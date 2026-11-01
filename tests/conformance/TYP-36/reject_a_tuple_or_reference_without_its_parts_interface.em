@@ -12,7 +12,7 @@ struct Point:
 [T: needs Hash]
 fn digest(a: T) -> u64:
     h = collections.DefaultHasher.new()
-    a.hash(h)
+    a.hash(ref mut h)
     return h.finish()
 
 fn main():

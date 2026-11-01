@@ -11,8 +11,8 @@ fn main():
     xs: Array[int] = []
     d: Array[int] = []
     for i in 0..40:
-        xs.push(0)
-        d.push(0)
+        xs.push(owns 0)
+        d.push(owns 0)
     xs[20] = -9223372036854775807
     d[20] = -1
     for i in 0..40:

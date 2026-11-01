@@ -54,14 +54,14 @@ fn main():
 
     for minute in 0..120:
         if rng.chance(45):
-            queue.push(Customer(id=next_id, arrived=minute, items=rng.between(1, 6)))
+            queue.push(owns Customer(id=next_id, arrived=minute, items=rng.between(1, 6)))
             next_id += 1
         for till in tills.iter_mut():
             till.tick()
             if till.is_free() and queue.len() > 0:
                 customer = queue.remove(0)
-                waits.push(minute - customer.arrived)
-                till.start(customer)
+                waits.push(owns (minute - customer.arrived))
+                till.start(owns customer)
         longest_queue = max(longest_queue, queue.len())
         if minute % 30 == 0:
             println(f"minute {minute:>3}: {queue.len()} waiting")

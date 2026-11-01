@@ -15,7 +15,7 @@ fn main():
     text.insert(offset, 'é')
     println(text.remove(offset), "ok")
     count = 8
-    reserve_from_ref(text, ref count)
+    reserve_from_ref(ref mut text, ref count)
     text.push_str("abc")
     prefix: Size = 1
     text.truncate(prefix)

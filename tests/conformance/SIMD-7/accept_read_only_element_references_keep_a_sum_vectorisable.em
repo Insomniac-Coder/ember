@@ -23,6 +23,6 @@ fn array_total(xs: Array[int]) -> int:
 fn main():
     xs: Array[int] = []
     for i in 0..1000:
-        xs.push(i % 7)
+        xs.push(owns (i % 7))
     empty: Array[int] = []
     println(array_total(xs), span_total(xs.as_span()), span_total(empty.as_span()))

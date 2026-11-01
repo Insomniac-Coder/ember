@@ -17,5 +17,5 @@ fn first(owns tokens: Array[Token]) -> Token:
 
 fn main():
     tokens: Array[Token] = Array[Token]()
-    tokens.push(Token(7))
-    println(first(tokens).value)
+    tokens.push(owns Token(7))
+    println(first(owns tokens).value)

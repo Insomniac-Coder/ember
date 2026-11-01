@@ -17,7 +17,7 @@ class Record implements Log:
         this.items = []
 
     fn add(x: int):
-        this.items.push(x)
+        this.items.push(owns x)
 
 class Holder:
     log: Log

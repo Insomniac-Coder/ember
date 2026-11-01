@@ -29,7 +29,7 @@ struct RegionTotals:
 fn parse_line(line: StrView) -> Result[Sale]:
     fields = line.split(",").collect[Array[StrView]]()
     if fields.len() != 4:
-        return Err(AnyError.msg(f"expected 4 fields, got {fields.len()}"))
+        return Err(AnyError.msg(owns f"expected 4 fields, got {fields.len()}"))
     units = fields[2].trim().parse[int]()?
     price = fields[3].trim().parse[float]()?
     return Ok(Sale(region=(fields[0].trim()).to_string(), product=(fields[1].trim()).to_string(), units=units, price=price))
@@ -42,7 +42,7 @@ fn main():
             continue
         match parse_line(line):
             Ok(sale):
-                sales.push(sale)
+                sales.push(owns sale)
             Err(e):
                 println(f"line {i + 1}: skipped ({e})")
                 bad_lines += 1

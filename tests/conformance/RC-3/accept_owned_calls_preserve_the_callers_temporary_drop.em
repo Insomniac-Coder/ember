@@ -23,5 +23,5 @@ fn consume(owns value: Token):
     println("after callee drop")
 
 fn main():
-    consume(Token(9))
+    consume(owns Token(9))
     println("caller")

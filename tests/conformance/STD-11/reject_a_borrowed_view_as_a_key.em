@@ -8,7 +8,7 @@ fn main():
     labels: Map[StrView, int] = {"start": 1}
     colours: Set[StrView] = Set[StrView]()
     s = String.from("zed")
-    labels.insert(s.as_str(), 2) #$ error[E3063]: `StrView` is a view, so it may not be passed to `insert`
+    labels.insert(owns s.as_str(), owns 2) #$ error[E3063]: `StrView` is a view, so it may not be passed to `insert`
     labels[s.as_str()] = 3 #$ error[E3063]: `StrView` is a view, so it may not be passed to `index_set`
-    colours.add(s.as_str()) #$ error[E3063]: `StrView` is a view, so it may not be passed to `add`
+    colours.add(owns s.as_str()) #$ error[E3063]: `StrView` is a view, so it may not be passed to `add`
     println(labels, colours)

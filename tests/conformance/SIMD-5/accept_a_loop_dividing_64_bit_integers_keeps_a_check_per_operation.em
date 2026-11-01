@@ -21,5 +21,5 @@ fn total_of_thirds(xs: Array[int]) -> int:
 fn main():
     xs: Array[int] = []
     for i in 0..10000:
-        xs.push(i)
+        xs.push(owns i)
     println(total_of_thirds(xs))

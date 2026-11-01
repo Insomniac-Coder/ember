@@ -52,7 +52,7 @@ use serde::{Deserialize, Serialize};
 /// A record of another schema is one this compiler cannot read: it is not used. Schema 4
 /// (ODR-281): a record names its imports at their reach hashes, where schema 3 named every module
 /// it reached at its declarations.
-const SCHEMA: u32 = 4;
+const SCHEMA: u32 = 5;
 const EXTENSION: &str = "emck";
 
 type Hash = [u8; 32];
@@ -153,6 +153,10 @@ struct Form {
     /// (`ember_analysis::BorrowFacts`).
     contracts: Vec<(String, CallRegionContract)>,
     stores: Vec<(String, StoreSummary)>,
+    /// `[LT-1]` (verdict 151) — for a body with a `dyn` or virtual call, what each such call was
+    /// resolved to when it was checked (`BorrowFacts::kinds`): the next build checks it again when
+    /// the program gives it other kinds.
+    kinds: Vec<(String, Vec<String>)>,
     /// What its bodies asked of the program.
     kept: Kept,
     /// The warnings the type check of its bodies reported, and those the checks of their MIR
@@ -545,6 +549,7 @@ impl Plan {
             }
             let mut contracts: HashMap<String, CallRegionContract> = form.contracts.into_iter().collect();
             let mut stores: HashMap<String, StoreSummary> = form.stores.into_iter().collect();
+            let mut kinds: HashMap<String, Vec<String>> = form.kinds.into_iter().collect();
             for mut body in form.bodies {
                 if instance.is_none() {
                     self.kept_functions.insert(body.symbol.clone());
@@ -558,6 +563,9 @@ impl Plan {
                 }
                 if let Some(summary) = stores.remove(&body.symbol) {
                     facts.borrow.stores.insert(body.symbol.clone(), summary);
+                }
+                if let Some(resolved) = kinds.remove(&body.symbol) {
+                    facts.borrow.kinds.insert(body.symbol.clone(), resolved);
                 }
                 bodies.push(body);
             }
@@ -664,6 +672,7 @@ impl Plan {
                     .collect(),
                 contracts: symbols.iter().filter_map(|symbol| contracts.get(symbol).map(|contract| (symbol.clone(), contract.clone()))).collect(),
                 stores: symbols.iter().filter_map(|symbol| borrow.stores.get(symbol).map(|summary| (symbol.clone(), summary.clone()))).collect(),
+                kinds: symbols.iter().filter_map(|symbol| borrow.kinds.get(symbol).map(|resolved| (symbol.clone(), resolved.clone()))).collect(),
                 kept,
                 diagnostics,
                 body_diagnostics,

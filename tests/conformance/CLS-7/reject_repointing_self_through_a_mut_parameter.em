@@ -12,7 +12,7 @@ class Bag:
         this.items = [1, 2, 3]
 
     fn clobber(other: Bag):
-        repoint(this, other)
+        repoint(ref mut this, other)
         this.items = [9]
 
 fn repoint(ref mut c: Bag, to: Bag):

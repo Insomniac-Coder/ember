@@ -9,13 +9,13 @@ fn consume(owns xs: Array[i32]) -> i32:
 
 fn main():
     a: Array[i32] = Array[i32]()
-    a.push(1)
+    a.push(owns 1)
     i: i32 = 0
     while i < 2:
         if i == 0:
-            println(consume(a))
+            println(consume(owns a))
             a = Array[i32]()
-            a.push(9)
+            a.push(owns 9)
         else:
-            println(consume(a))   #$ error[E3041]: `a` is moved in a loop
+            println(consume(owns a))   #$ error[E3041]: `a` is moved in a loop
         i = i + 1

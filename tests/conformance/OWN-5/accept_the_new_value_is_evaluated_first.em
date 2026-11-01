@@ -7,12 +7,12 @@
 
 fn grow(xs: Array[i32]) -> Array[i32]:
     ys: Array[i32] = Array[i32]()
-    ys.push(xs[0] + 10)
+    ys.push(owns (xs[0] + 10))
     return ys
 
 fn main():
     x: Array[i32] = Array[i32]()
-    x.push(1)
+    x.push(owns 1)
     x = grow(x)
     println(x[0])
 #$ stdout: 11

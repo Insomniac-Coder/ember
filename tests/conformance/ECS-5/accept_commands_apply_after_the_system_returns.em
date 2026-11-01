@@ -32,7 +32,7 @@ fn judge(ref mut q: Query[(Entity, Hp)], unused: ()):
         if hp.n <= 0:
             q.commands().destroy(e)
         elif hp.n < 5:
-            q.commands().add(e, Dead())
+            q.commands().add(e, owns Dead())
         elif hp.n > 50:
             q.commands().remove[Shield](e)
     println("saw", saw, "queued", q.commands().len())
@@ -50,16 +50,16 @@ fn heal(ref mut q: Query[(Entity, Mut[Hp], Option[Dead])], amount: int):
 fn indices(es: Array[Entity]) -> Array[u32]:
     out: Array[u32] = []
     for e in es:
-        out.push(e.index())
+        out.push(owns e.index())
     return out
 
 fn main():
     w = World()
     for n in [10, 0, 3, 99]:
         e = w.create()
-        w.add(e, Hp(n))
-        w.add(e, Shield())
-    w.run(judge, ())
+        w.add(e, owns Hp(n))
+        w.add(e, owns Shield())
+    w.run(owns judge, owns ())
     println("alive", w.len(), indices(w.entities_with[Shield]()), indices(w.entities_with[Dead]()), indices(w.entities_with[Hp]()))
-    w.run(heal, 1)
+    w.run(owns heal, owns 1)
     println(indices(w.entities_with[Hp]()), indices(w.entities_with[Dead]()))

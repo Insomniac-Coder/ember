@@ -15,8 +15,8 @@ pub extern "C" fn shared_optional_count(left: *i32, right: *i32, n: usize) -> us
 fn main():
     empty: Array[i32] = Array[i32]()
     values: Array[i32] = Array[i32]()
-    values.push(1)
-    values.push(2)
+    values.push(owns 1)
+    values.push(owns 2)
     println(compare(None, None))
     println(compare(None, Some(empty.as_span())))
     println(compare(Some(values.as_span()), Some(values.as_span())))

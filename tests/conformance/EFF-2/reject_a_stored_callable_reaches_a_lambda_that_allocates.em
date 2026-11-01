@@ -15,4 +15,4 @@ fn main():
     k = 3
     times = Scaler(by = owned fn(x: int) -> int => x * k)
     widths = Scaler(by = owned fn(x: int) -> int => [x, k].len())
-    println(scaled(times, 2), scaled(widths, 2))
+    println(scaled(ref mut times, 2), scaled(ref mut widths, 2))

@@ -3,8 +3,8 @@ error[E3023]: cannot mutate borrowed parameter `values`
   |
 1 | fn append_one(values: Array[i32]):
   |               ------------------ `values` is borrowed here
-2 |     values.push(1)
-  |     ^^^^^^^^^^^^^^ this write needs mutable access
+2 |     values.push(owns 1)
+  |     ^^^^^^^^^^^^^^^^^^^ this write needs mutable access
   |
   = help: restructure to a single owner and declare this parameter `ref mut values: Array[i32]`
 

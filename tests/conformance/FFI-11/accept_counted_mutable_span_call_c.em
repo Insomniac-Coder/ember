@@ -15,6 +15,6 @@ pub extern "C" fn fill_bytes(data: *mut u8, n: usize) -> i32:
 
 fn main():
     values: Array[u8] = Array[u8]()
-    values.push(0)
+    values.push(owns 0)
     println(fill(values.as_mut_span()))
     println(values[0])

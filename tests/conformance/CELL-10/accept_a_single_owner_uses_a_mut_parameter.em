@@ -12,6 +12,6 @@ fn increment(ref mut counter: Counter):
 
 fn main():
     counter = Counter(1)
-    increment(counter)
+    increment(ref mut counter)
     println(counter.value)
 #$ stdout: 2

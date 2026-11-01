@@ -13,6 +13,6 @@ fn main():
     xs: Array[int] = [1, 2]
     ys: Array[int] = [int.MAX]
     total = 0
-    for x in xs.iter().chain(ys.iter()):
+    for x in xs.iter().chain(owns ys.iter()):
         total += x + 4
         println(total)

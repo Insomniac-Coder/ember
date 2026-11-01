@@ -12,6 +12,6 @@ fn borrow_counter(ref mut owner: Shared[Counter]) -> ref Counter from owner:
 fn main():
     shared = Shared(Counter(1))
     alias = shared
-    reader = borrow_counter(shared)
+    reader = borrow_counter(ref mut shared)
     writer = alias.get_mut()
     println(reader.value + writer.value)

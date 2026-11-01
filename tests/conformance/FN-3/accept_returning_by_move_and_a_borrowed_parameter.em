@@ -6,9 +6,9 @@
 
 fn make() -> Array[int]:
     values = Array[int]()
-    values.push(1)
-    values.push(2)
-    values.push(3)
+    values.push(owns 1)
+    values.push(owns 2)
+    values.push(owns 3)
     return values
 
 fn first(values: ref Array[int]) -> ref int:

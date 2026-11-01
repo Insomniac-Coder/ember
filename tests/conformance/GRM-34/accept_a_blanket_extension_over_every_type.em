@@ -17,7 +17,7 @@ struct Labelled:
 
 extend[T: needs Display, U: needs From[String]] T implements Wrap[U]:
     fn wrap() -> U:
-        return U.from(f"<{this}>")
+        return U.from(owns f"<{this}>")
 
 extend Labelled implements From[String]:
     static fn from(owns value: String) -> Labelled:

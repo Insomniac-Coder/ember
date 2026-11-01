@@ -9,4 +9,4 @@ import std.thread
 
 fn main():
     total = 5
-    worker = thread.spawn(fn() => total + 1)
+    worker = thread.spawn(owns fn() => total + 1)

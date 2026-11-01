@@ -19,9 +19,9 @@ fn first(p: Pair) -> i32:
 
 fn main():
     long: Array[i32] = Array[i32]()
-    long.push(1)
+    long.push(owns 1)
     short: Array[i32] = Array[i32]()
-    short.push(2)
+    short.push(owns 2)
     p = bundle(long, short)
-    short.push(3)
+    short.push(owns 3)
     println(first(p))

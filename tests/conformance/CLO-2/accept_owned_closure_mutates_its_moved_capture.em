@@ -10,7 +10,7 @@
 fn main():
     values: Array[i32] = Array[i32]()
     task = owned fn() -> int:
-        values.push(7)
+        values.push(owns 7)
         return values.len()
     println(task())
     println(task())

@@ -7,7 +7,7 @@
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
-    values.push(2)
+    values.push(owns 1)
+    values.push(owns 2)
     span = values.as_span()
     _parts = span.split_at(3)

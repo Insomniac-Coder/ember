@@ -26,8 +26,8 @@ fn value_of(n: Node) -> int:
 
 fn main():
     nodes: Array[Node] = []
-    nodes.push(Node(1))
-    nodes.push(Node(2))
+    nodes.push(owns Node(1))
+    nodes.push(owns Node(2))
     total = 0
     for i in 0..10:
         t = nodes[i % 2]

@@ -3,10 +3,10 @@
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
-    values.push(2)
-    values.push(3)
-    values.push(4)
+    values.push(owns 1)
+    values.push(owns 2)
+    values.push(owns 3)
+    values.push(owns 4)
     halves = values.as_mut_span().split_at(2)
     left = halves.0
     right = halves.1

@@ -6,14 +6,14 @@
 
 fn main():
     m: Map[String, int] = Map()
-    m.insert("a", 1)
-    m.insert("bb", 2)
+    m.insert(owns "a", owns 1)
+    m.insert(owns "bb", owns 2)
     best = ""
-    for k in m.keys().filter(fn(k: ref String) => k.len() > 1).take(1):
+    for k in m.keys().filter(owns fn(k: ref String) => k.len() > 1).take(1):
         best = k
-    m.insert("c", 3)    #$ error[E3021]: `best` is what keeps it alive
+    m.insert(owns "c", owns 3)    #$ error[E3021]: `best` is what keeps it alive
     println(best)
     words = ["x".to_string(), "yy".to_string()]
-    found = words.iter().find(fn(w: ref String) => w.len() == 2)
-    words.push("z".to_string())    #$ error[E3021]: `found` is what keeps it alive
+    found = words.iter().find(owns fn(w: ref String) => w.len() == 2)
+    words.push(owns "z".to_string())    #$ error[E3021]: `found` is what keeps it alive
     println(found)

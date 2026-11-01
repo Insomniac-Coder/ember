@@ -80,7 +80,7 @@ fn main():
     # And over a collection, which is a counted loop over its indices.
     xs: Array[int] = Array()
     for i in 0..5:
-        xs.push(i * i)
+        xs.push(owns (i * i))
     sum = 0
     for x in xs:
         sum = sum + x

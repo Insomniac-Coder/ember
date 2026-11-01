@@ -20,7 +20,7 @@ class Derived(Base):
 
     fn init(owns tag: String):
         this.tag = tag
-        super.init("d")
+        super.init(owns "d")
         println(this.name)
 
     override fn describe():

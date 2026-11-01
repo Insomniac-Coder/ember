@@ -7,7 +7,7 @@ fn take(owns xs: Array[i32]) -> i32:
 
 fn main():
     a: Array[i32] = Array[i32]()
-    a.push(1)
+    a.push(owns 1)
     b = a
-    println(take(b))
-    println(take(a))       #$ error[E3040]: `a` has been moved out of
+    println(take(owns b))
+    println(take(owns a))       #$ error[E3040]: `a` has been moved out of

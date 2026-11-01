@@ -62,7 +62,7 @@ extend JsonWriter implements Writer:
     fn begin_struct(name: StrView, version: int) -> Result[void, SerError]:
         this.before_value()
         this.out.push_str("{")
-        this.open.push((false, true))
+        this.open.push(owns (false, true))
         if version > 0:
             this.key("$version")
             this.out.push_str(f"{version}")
@@ -83,7 +83,7 @@ extend JsonWriter implements Writer:
     fn begin_variant(name: StrView) -> Result[void, SerError]:
         this.before_value()
         this.out.push_str("{")
-        this.open.push((false, true))
+        this.open.push(owns (false, true))
         this.key("$variant")
         this.quoted(name)
         return Ok(())
@@ -96,7 +96,7 @@ extend JsonWriter implements Writer:
     fn begin_list(count: int) -> Result[void, SerError]:
         this.before_value()
         this.out.push_str("[")
-        this.open.push((true, true))
+        this.open.push(owns (true, true))
         return Ok(())
 
     ## It allocates as the `String` it writes to grows.
@@ -282,7 +282,7 @@ extend JsonReader implements Reader:
     ## It allocates as the `Array` it adds to grows.
     fn begin_list() -> Result[void, SerError]:
         this.expect(91, "`[`")?
-        this.lists.push(true)
+        this.lists.push(owns true)
         return Ok(())
 
     ## It allocates the error's message when the input is malformed.
@@ -363,11 +363,11 @@ extend JsonReader implements Reader:
 [T: needs Serialize]
 pub fn to_string(value: T) -> Result[String, SerError]:
     w = JsonWriter.new()
-    value.serialize(w)?
+    value.serialize(ref mut w)?
     return Ok(String.from(w.text()))
 
 ## A `T` read from JSON text.
 [T: needs Deserialize]
 pub fn from_str(text: StrView) -> Result[T, SerError]:
     r = JsonReader.new(text)
-    return T.deserialize(r)
+    return T.deserialize(ref mut r)

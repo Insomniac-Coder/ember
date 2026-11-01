@@ -11,7 +11,7 @@ struct Pair:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(7)
+    values.push(owns 7)
     pair = Pair("label", values.as_span())
     _boxed: Box[Pair] = Box(pair) #$ error[E3063]: `Pair` is a view, so it may not be stored in a Box's contents
     println(1)

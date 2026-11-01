@@ -31,7 +31,7 @@ fn main():
         match cpp.squares(5):
             Ok(values):
                 println(values.len(), cpp.total(values))
-                cpp.double_all(values)
+                cpp.double_all(ref mut values)
                 values.push_back(100)
                 println(values.span()[4], values.to_array().len(), cpp.total(values))
             Err(error):

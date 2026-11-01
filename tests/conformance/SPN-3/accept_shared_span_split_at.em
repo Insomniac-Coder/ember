@@ -17,9 +17,9 @@ fn left_len(span: Span[T], boundary: int) -> int:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
-    values.push(2)
-    values.push(3)
+    values.push(owns 1)
+    values.push(owns 2)
+    values.push(owns 3)
     whole = values.as_span()
     parts = whole.split_at(1)
     left = parts.0

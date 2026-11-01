@@ -23,9 +23,9 @@ fn main():
     for i in 0..300:
         d = Dog()
         d.tag = i
-        animals.push(d)
+        animals.push(owns d)
         if i % 3 == 0:
-            boxes.push(Box(i))
+            boxes.push(owns Box(i))
     count = 0
     total = 0
     for a in animals:

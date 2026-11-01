@@ -6,21 +6,21 @@
 
 fn main():
     m: Map[String, int] = Map()
-    m.insert("a", 1)
+    m.insert(owns "a", owns 1)
     best = ""
     for k in m:
         best = k
-    m.insert("b", 2)    #$ error[E3021]: `best` is what keeps it alive
+    m.insert(owns "b", owns 2)    #$ error[E3021]: `best` is what keeps it alive
     println(best)
     n: Map[String, int] = Map()
-    n.insert("a", 1)
+    n.insert(owns "a", owns 1)
     kept = ""
     for k in n.keys():
         kept = k
-        n.insert("c", 3)    #$ error[E3020]: cannot mutate `n` while it is borrowed by this loop
+        n.insert(owns "c", owns 3)    #$ error[E3020]: cannot mutate `n` while it is borrowed by this loop
     println(kept)
     s: Set[String] = Set()
-    s.add("x")
+    s.add(owns "x")
     top = ""
     for v in s:
         top = v

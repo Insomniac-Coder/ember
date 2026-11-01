@@ -22,11 +22,11 @@ fn step(ref mut ps: SoA[Particle], dt: f32):
 fn main():
     ps = SoA[Particle].with_capacity(4)
     for i in range(4):
-        ps.push(Particle(i as f32, 1.0))
-    step(ps, 2.5)
+        ps.push(owns Particle(i as f32, 1.0))
+    step(ref mut ps, 2.5)
     out: Array[f32] = []
     for p in ps:
-        out.push(p.x)
+        out.push(owns p.x)
     println(out)
 
     values = [0, 1, 2, 3, 4]

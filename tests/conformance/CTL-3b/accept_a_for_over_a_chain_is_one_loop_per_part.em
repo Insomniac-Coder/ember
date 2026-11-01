@@ -26,39 +26,39 @@ fn main():
     zs: Array[int] = [100]
 
     seen: Array[int] = []
-    for x in xs.iter().chain(ys.iter()).chain(zs.iter()):
-        seen.push(x)
+    for x in xs.iter().chain(owns ys.iter()).chain(owns zs.iter()):
+        seen.push(owns x)
     println(seen)
 
     seen = []
-    for x in xs.iter().chain(ys.iter()):
+    for x in xs.iter().chain(owns ys.iter()):
         if x == 2:
             break
-        seen.push(x)
+        seen.push(owns x)
     else:
-        seen.push(-1)
+        seen.push(owns -1)
     println(seen)
 
     seen = []
-    for x in xs.iter().chain(ys.iter()):
+    for x in xs.iter().chain(owns ys.iter()):
         if x == 20:
             break
-        seen.push(x)
+        seen.push(owns x)
     else:
-        seen.push(-1)
+        seen.push(owns -1)
     println(seen)
 
     seen = []
-    for x in xs.iter().chain(ys.iter()):
+    for x in xs.iter().chain(owns ys.iter()):
         if x % 2 == 0:
             continue
-        seen.push(x)
+        seen.push(owns x)
     else:
-        seen.push(-1)
+        seen.push(owns -1)
     println(seen)
 
     turns = 0
-    outer: for x in xs.iter().chain(ys.iter()):
+    outer: for x in xs.iter().chain(owns ys.iter()):
         for _ in zs.iter():
             turns += 1
             if x == 10:
@@ -67,27 +67,27 @@ fn main():
     println(turns)
 
     pairs: Array[(int, int)] = []
-    for (i, x) in xs.iter().copy_each().enumerate().chain(ys.iter().copy_each().enumerate(start=10)):
-        pairs.push((i, x))
+    for (i, x) in xs.iter().copy_each().enumerate().chain(owns ys.iter().copy_each().enumerate(start=10)):
+        pairs.push(owns (i, x))
     println(pairs)
 
     total = 0
-    for k in (0..3).iter().chain((5..=6).iter()).chain((0..10).iter().take(1)):
+    for k in (0..3).iter().chain(owns (5..=6).iter()).chain(owns (0..10).iter().take(1)):
         total += k
     println(total + 3)
 
-    println(xs.iter().copy_each().chain(ys.iter().copy_each()).to_array())
+    println(xs.iter().copy_each().chain(owns ys.iter().copy_each()).to_array())
 
-    for x in xs.iter_mut().chain(ys.iter_mut()):
+    for x in xs.iter_mut().chain(owns ys.iter_mut()):
         x += 1
     println(f"{xs} {ys}")
 
     n = 0
-    for _ in xs.iter().chain(ys.iter()):
+    for _ in xs.iter().chain(owns ys.iter()):
         n += 1
     println(n)
 
     zipped: Array[(int, int)] = []
-    for (a, b) in xs.iter().copy_each().take(1).zip(ys.iter().copy_each()).chain(xs.iter().copy_each().skip(1).zip(ys.iter().copy_each().skip(1).chain(zs.iter().copy_each()))):
-        zipped.push((a - 1, b - 1))
+    for (a, b) in xs.iter().copy_each().take(1).zip(owns ys.iter().copy_each()).chain(owns xs.iter().copy_each().skip(1).zip(owns ys.iter().copy_each().skip(1).chain(owns zs.iter().copy_each()))):
+        zipped.push(owns (a - 1, b - 1))
     println(zipped)

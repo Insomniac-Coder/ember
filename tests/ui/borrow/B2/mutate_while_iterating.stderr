@@ -3,8 +3,8 @@ error[E3020]: cannot mutate `values` while it is borrowed by this loop
   |
 5 |     for value in values:
   |                  ------ `values` borrowed here for the whole loop
-6 |         values.push(3)
-  |         ^^^^^^^^^^^^^^ mutable borrow here
+6 |         values.push(owns 3)
+  |         ^^^^^^^^^^^^^^^^^^^ mutable borrow here
   |
   = help: collect the indices or values first, then mutate; use `retain` or `drain` when the operation fits
   = help: or iterate over a fixed index range and mutate only after taking the current value

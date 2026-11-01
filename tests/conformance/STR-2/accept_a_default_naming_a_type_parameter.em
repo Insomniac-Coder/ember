@@ -19,5 +19,5 @@ struct B:
 
 fn main():
     b = B[i32, DefaultHasher]()
-    b.inner.keys.push(4)
+    b.inner.keys.push(owns 4)
     println(b.keys.len(), b.inner.keys.len())

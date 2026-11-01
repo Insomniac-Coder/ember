@@ -13,13 +13,13 @@
 
 fn main():
     xs: Array[i32] = Array[i32]()
-    xs.push(1)
-    xs.push(2)
-    xs.push(xs.len() as i32)
+    xs.push(owns 1)
+    xs.push(owns 2)
+    xs.push(owns (xs.len() as i32))
     println(xs.len())
 
     ys: Array[i32] = Array[i32]()
-    ys.push(5)
+    ys.push(owns 5)
     ## Nested the other way: the argument reads the receiver twice.
-    ys.push((ys.len() as i32) + (ys.len() as i32))
+    ys.push(owns ((ys.len() as i32) + (ys.len() as i32)))
     println(ys.len() + 4)

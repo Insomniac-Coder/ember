@@ -9,7 +9,7 @@ fn consume(owns values: Array[i32]) -> i32:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(7)
-    task = owned fn() => consume(values)
+    values.push(owns 7)
+    task = owned fn() => consume(owns values)
     _first = task()
     println(task()) #$ error[E3040]: `task` has been moved out of

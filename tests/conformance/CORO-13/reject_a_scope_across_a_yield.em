@@ -8,7 +8,7 @@ import std.thread
 
 gen fn spawning(xs: Span[int]) -> Generator[int]:
     with s = thread.scope():
-        s.spawn(fn() => println(xs.len()))
+        s.spawn(owns fn() => println(xs.len()))
         yield 1    #$ error[E2231]: is live across this `yield`
 
 fn main():

@@ -9,5 +9,5 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
 
 fn main():
     exponent: i32 = 0
-    frexp(42.0, exponent)
+    frexp(42.0, ref mut exponent)
     println(exponent)

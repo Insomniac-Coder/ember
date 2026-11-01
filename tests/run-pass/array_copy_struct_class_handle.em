@@ -14,9 +14,9 @@ struct Wrapped:
 
 fn populate(ref mut items: Array[Wrapped]):
     item = Wrapped(Thing(7))
-    items.push(item)
+    items.push(owns item)
 
 fn main():
     items: Array[Wrapped] = Array[Wrapped]()
-    populate(items)
+    populate(ref mut items)
     println(items[0].thing.value)

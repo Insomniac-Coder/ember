@@ -36,7 +36,7 @@ class Library:
         return [b for b in this.books.values() if needle in b.title.lower() or needle in b.author.lower()]
 
     fn available(isbn: StrView) -> int:
-        lent = this.loans.iter().filter(fn(l) => l.isbn == isbn).count()
+        lent = this.loans.iter().filter(owns fn(l) => l.isbn == isbn).count()
         return this.books[isbn].copies - lent
 
     fn lend(isbn: StrView, member: StrView) -> Result[Loan, LendError]:
@@ -48,7 +48,7 @@ class Library:
         if held.len() >= MAX_LOANS:
             return Err(LendError.TooManyLoans(member, MAX_LOANS))
         loan = Loan(isbn=isbn, member=member, due_day=this.today + LOAN_DAYS)
-        this.loans.push(loan)
+        this.loans.push(owns loan)
         return Ok(loan)
 
     fn give_back(isbn: StrView, member: StrView) -> Option[int]:
@@ -61,10 +61,10 @@ class Library:
 
 fn main():
     lib = Library()
-    lib.add(Book(isbn="111", title="The Silent Forest", author="M. Reyes", year=1998))
-    lib.add(Book(isbn="222", title="Cooking with Fire", author="J. Okafor", year=2011, copies=2))
-    lib.add(Book(isbn="333", title="Forest Birds", author="A. Lindqvist", year=2005))
-    lib.add(Book(isbn="111", title="The Silent Forest", author="M. Reyes", year=1998))
+    lib.add(owns Book(isbn="111", title="The Silent Forest", author="M. Reyes", year=1998))
+    lib.add(owns Book(isbn="222", title="Cooking with Fire", author="J. Okafor", year=2011, copies=2))
+    lib.add(owns Book(isbn="333", title="Forest Birds", author="A. Lindqvist", year=2005))
+    lib.add(owns Book(isbn="111", title="The Silent Forest", author="M. Reyes", year=1998))
 
     println("search 'forest':")
     for b in lib.search("forest"):

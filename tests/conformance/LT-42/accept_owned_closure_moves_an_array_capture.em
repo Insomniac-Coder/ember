@@ -10,7 +10,7 @@
 
 fn main():
     data: Array[i32] = Array[i32]()
-    data.push(7)
+    data.push(owns 7)
     task = owned fn() => data[0]
     println(task())
     println(task())

@@ -19,13 +19,13 @@ fn fill(ref mut xs: MutSpan[i32], v: i32):
 
 fn main():
     a: Array[i32] = Array[i32]()
-    a.push(3)
-    a.push(4)
-    a.push(5)
+    a.push(owns 3)
+    a.push(owns 4)
+    a.push(owns 5)
     println(total(a))
     fixed: [i32; 3] = [1, 2, 3]
     println(total(fixed))
-    fill(a, 9)
+    fill(ref mut a, 9)
     println(total(a))
 #$ stdout: 12
 #$ 6

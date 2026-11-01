@@ -3,8 +3,8 @@
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(3)
-    values.push(4)
+    values.push(owns 3)
+    values.push(owns 4)
     view = values.as_mut_span()
 
     for item in view.iter():

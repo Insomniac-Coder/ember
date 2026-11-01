@@ -16,8 +16,8 @@ fn main():
         total += xs[i]
     once: Array[int] = []
     for i in (5..6).step_by(4):
-        once.push(i)
+        once.push(owns i)
     top: Array[int] = []
     for i in (9223372036854775800..9223372036854775807).step_by(3):
-        top.push(i)
+        top.push(owns i)
     println(total, "|", once, "|", top)

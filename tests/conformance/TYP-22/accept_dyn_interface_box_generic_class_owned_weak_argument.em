@@ -33,4 +33,4 @@ fn main():
     strong = Shared(Token(7))
     weak = Weak(strong)
     boxed: Box[dyn Observe] = Box(Reader[bool](true))
-    println(boxed.observe(weak))
+    println(boxed.observe(owns weak))

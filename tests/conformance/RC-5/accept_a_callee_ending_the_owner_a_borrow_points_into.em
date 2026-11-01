@@ -29,4 +29,4 @@ fn take(r: ref int, owns c: Child) -> int:
 
 fn main():
     c = Child(5, "five".to_string())
-    println(take(ref c.v, c))
+    println(take(ref c.v, owns c))

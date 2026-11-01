@@ -24,9 +24,9 @@ fn swap_text(ref mut s: StrView) -> int:
 fn main():
     xs = [1, 2, 3, 4, 5, 6, 7, 8]
     v: Span[int] = xs
-    w = v[0..shrink(v)]
+    w = v[0..shrink(ref mut v)]
     println(w.len(), w)
     u: Span[int] = xs
-    println(u[cut(u)..])
+    println(u[cut(ref mut u)..])
     s: StrView = "hello"
-    println(s[0..swap_text(s)])
+    println(s[0..swap_text(ref mut s)])

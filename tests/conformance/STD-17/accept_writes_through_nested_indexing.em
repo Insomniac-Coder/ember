@@ -17,5 +17,5 @@ fn main():
     lists: Map[String, Array[int]] = {"a": [0]}
     lists["a"][0] = 5
     r = ref mut lists["a"]
-    r.push(6)
+    r.push(owns 6)
     println(m, lists, place({"a": 0, "b": 1}))

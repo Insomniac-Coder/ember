@@ -30,6 +30,6 @@ extend Probe implements Hash, AsKey[Id]:
 
 fn main():
     m: Map[Id, int] = {}
-    m.insert(Id(1), 7)
+    m.insert(owns Id(1), owns 7)
     println(m.get(Probe(1)))
     m[Probe(2)] = 8 #$ error[E2040]: `Probe` does not implement `std.collections.ToKey[Id]`, which `Q` requires

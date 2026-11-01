@@ -23,49 +23,49 @@ pub struct BinaryWriter:
     fn varint(value: u64):
         v = value
         while v >= 128:
-            this.out.push(((v % 128) + 128) as u8)
+            this.out.push(owns (((v % 128) + 128) as u8))
             v = v // 128
-        this.out.push(v as u8)
+        this.out.push(owns (v as u8))
 
     ## It allocates as the `Array` it adds to grows.
     fn text(value: StrView):
         bytes = value.as_bytes()
         this.varint(len(bytes) as u64)
         for b in bytes:
-            this.out.push(b)
+            this.out.push(owns b)
 
 extend BinaryWriter implements Writer:
     ## It allocates as the `Array` it adds to grows.
     fn begin_struct(name: StrView, version: int) -> Result[void, SerError]:
-        this.out.push(6)
+        this.out.push(owns 6)
         this.varint(version as u64)
         return Ok(())
 
     ## It allocates as the `Array` it adds to grows.
     fn field(name: StrView) -> Result[void, SerError]:
-        this.out.push(9)
+        this.out.push(owns 9)
         this.text(name)
         return Ok(())
 
     ## It allocates as the `Array` it adds to grows.
     fn end_struct() -> Result[void, SerError]:
-        this.out.push(7)
+        this.out.push(owns 7)
         return Ok(())
 
     ## It allocates as the `Array` it adds to grows.
     fn begin_variant(name: StrView) -> Result[void, SerError]:
-        this.out.push(8)
+        this.out.push(owns 8)
         this.text(name)
         return Ok(())
 
     ## It allocates as the `Array` it adds to grows.
     fn end_variant() -> Result[void, SerError]:
-        this.out.push(7)
+        this.out.push(owns 7)
         return Ok(())
 
     ## It allocates as the `Array` it adds to grows.
     fn begin_list(count: int) -> Result[void, SerError]:
-        this.out.push(5)
+        this.out.push(owns 5)
         this.varint(count as u64)
         return Ok(())
 
@@ -74,31 +74,31 @@ extend BinaryWriter implements Writer:
 
     ## It allocates as the `Array` it adds to grows.
     fn write_none() -> Result[void, SerError]:
-        this.out.push(10)
+        this.out.push(owns 10)
         return Ok(())
 
     ## It allocates as the `Array` it adds to grows.
     fn write_int(value: i64) -> Result[void, SerError]:
-        this.out.push(1)
+        this.out.push(owns 1)
         zigzag = (value as u64) * 2 if value >= 0 else ((-(value + 1)) as u64) * 2 + 1
         this.varint(zigzag)
         return Ok(())
 
     ## It allocates as the `Array` it adds to grows.
     fn write_float(value: f64) -> Result[void, SerError]:
-        this.out.push(2)
+        this.out.push(owns 2)
         this.text(f"{value}")
         return Ok(())
 
     ## It allocates as the `Array` it adds to grows.
     fn write_bool(value: bool) -> Result[void, SerError]:
-        this.out.push(3)
-        this.out.push(1 if value else 0)
+        this.out.push(owns 3)
+        this.out.push(owns (1 if value else 0))
         return Ok(())
 
     ## It allocates as the `Array` it adds to grows.
     fn write_str(value: StrView) -> Result[void, SerError]:
-        this.out.push(4)
+        this.out.push(owns 4)
         this.text(value)
         return Ok(())
 
@@ -113,7 +113,7 @@ pub struct BinaryReader:
     pub static fn new(bytes: Span[u8]) -> BinaryReader:
         data: Array[u8] = []
         for b in bytes:
-            data.push(b)
+            data.push(owns b)
         return BinaryReader(data, 0, [])
 
     ## It allocates the error's message when the input is malformed.
@@ -199,7 +199,7 @@ extend BinaryReader implements Reader:
     fn begin_list() -> Result[void, SerError]:
         this.expect(5, "a list")?
         n = this.varint()? as int
-        this.lists.push(n)
+        this.lists.push(owns n)
         return Ok(())
 
     ## It allocates the error's message when the input is malformed.
@@ -283,14 +283,14 @@ extend BinaryReader implements Reader:
 [T: needs Serialize]
 pub fn to_bytes(value: T) -> Result[Array[u8], SerError]:
     w = BinaryWriter.new()
-    value.serialize(w)?
+    value.serialize(ref mut w)?
     out: Array[u8] = []
     for b in w.bytes():
-        out.push(b)
+        out.push(owns b)
     return Ok(out)
 
 ## A `T` read from the binary format.
 [T: needs Deserialize]
 pub fn from_bytes(bytes: Span[u8]) -> Result[T, SerError]:
     r = BinaryReader.new(bytes)
-    return T.deserialize(r)
+    return T.deserialize(ref mut r)

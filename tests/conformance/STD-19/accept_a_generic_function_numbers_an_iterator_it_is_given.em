@@ -32,5 +32,5 @@ fn first_two_in_order(owns it: I, start: int) -> bool:
 
 fn main():
     ys = [1, 2, 3]
-    println(numbered(ys.iter(), 5), numbered((0 .. 4).iter(), 1))
-    println(first_two_in_order(ys.iter(), 5), first_two_in_order((0u64 .. 10u64).iter(), 3))
+    println(numbered(owns ys.iter(), 5), numbered(owns (0 .. 4).iter(), 1))
+    println(first_two_in_order(owns ys.iter(), 5), first_two_in_order(owns (0u64 .. 10u64).iter(), 3))

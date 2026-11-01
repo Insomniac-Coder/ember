@@ -17,5 +17,5 @@ fn total(ref mut xs: MutSpan[int]) -> int:
 fn main():
     values: Array[int] = []
     for i in range(10000):
-        values.push(1)
+        values.push(owns 1)
     println(total(values.as_mut_span()))

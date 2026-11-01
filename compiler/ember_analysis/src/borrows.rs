@@ -144,7 +144,8 @@ pub fn check_all_with_installed_callable_regions(
     sink: &mut Sink,
     kept: &BorrowFacts,
 ) -> (Vec<(usize, std::ops::Range<usize>)>, BorrowFacts) {
-    run_checks(bodies, types, sink, None, kept)
+    let (ranges, facts, _) = run_checks(bodies, types, sink, None, kept, false);
+    (ranges, facts)
 }
 
 /// `[BLD-1]`, `[BLD-2]` — what borrow checking infers of each body for its callers' checks: what it
@@ -152,6 +153,10 @@ pub fn check_all_with_installed_callable_regions(
 #[derive(Clone, Debug, Default)]
 pub struct BorrowFacts {
     pub stores: HashMap<String, crate::regions::StoreSummary>,
+    /// `[LT-1]` (verdict 151) — for each body with a `dyn` or virtual call, the methods each such
+    /// call may run in each form it was checked in (`dyn_kinds::Expansion::checked_under`). A kept
+    /// body is checked again when the program now gives it others, or when its record keeps none.
+    pub kinds: HashMap<String, Vec<String>>,
 }
 
 /// `[DIA-8]` — one loan as the checker holds it (`[BCK-1]`): the place it borrows, whether mutably,
@@ -199,17 +204,22 @@ pub fn regions_all(bodies: &[Body], types: &TypeTable) -> Vec<Option<Regions>> {
 /// the program was checked already.
 pub fn explain_loans(bodies: &[Body], types: &TypeTable) -> Vec<LoanReport> {
     let mut reports = Vec::new();
-    let _ = run_checks(bodies, types, &mut Sink::new(), Some(&mut reports), &BorrowFacts::default());
+    let _ = run_checks(bodies, types, &mut Sink::new(), Some(&mut reports), &BorrowFacts::default(), false);
     reports
 }
 
+/// The checks of every body (`only_runtime`: of each body with a `runtime` parameter, kept or not);
+/// each body's diagnostics' range in the sink, what the checks infer of every body, and the checks of
+/// `runtime` parameters' kinds the bodies ask for (`[LT-48]`), by body.
+#[allow(clippy::type_complexity)]
 fn run_checks(
     bodies: &[Body],
     types: &TypeTable,
     sink: &mut Sink,
     reports: Option<&mut Vec<LoanReport>>,
     kept: &BorrowFacts,
-) -> (Vec<(usize, std::ops::Range<usize>)>, BorrowFacts) {
+    only_runtime: bool,
+) -> (Vec<(usize, std::ops::Range<usize>)>, BorrowFacts, Vec<(usize, crate::dyn_kinds::Guard)>) {
     let signatures: HashMap<String, Elision> = bodies
         .iter()
         .map(|body| (body.symbol.clone(), elision_of(body, types)))
@@ -217,7 +227,7 @@ fn run_checks(
     // `[BRW-4]` — a method's first parameter is its `self` receiver, so a
     // direct call to one of these bodies is a method call. Read once here
     // because the conflict is reported while checking the *caller's* body.
-    let methods: HashSet<String> = bodies
+    let mut methods: HashSet<String> = bodies
         .iter()
         .filter(|body| is_method_body(body))
         .map(|body| body.symbol.clone())
@@ -225,13 +235,47 @@ fn run_checks(
     // Borrow checking consumes the installed MIR/interface metadata, not the
     // temporary inference table. That makes the artifact a real producer /
     // consumer boundary rather than a duplicate cache beside the analysis.
-    let summaries = contracts_from_metadata(bodies, types);
+    let mut summaries = contracts_from_metadata(bodies, types);
+    // `[LT-1]` (verdict 151) — each body with a `dyn` or virtual call is checked in a form for each
+    // set of kinds that may reach it; a call made direct there runs the methods of those kinds, whose
+    // summaries joined are its contract, and is a method call as the call it replaces. A caller's
+    // call is made direct to the form of the instance it gives, whose summary its own form reads.
+    let expansion = crate::dyn_kinds::expand(
+        bodies,
+        types,
+        &|symbol| contract_for(&FuncRef::Direct { symbol: symbol.to_string(), latebound: false }, &summaries, &signatures),
+        &|forms, known| {
+            let mut given = summaries.clone();
+            given.extend(known.iter().map(|(symbol, contract)| (symbol.clone(), contract.clone())));
+            let mut signatures = signatures.clone();
+            signatures.extend(forms.iter().map(|form| (form.symbol.clone(), elision_of(form, types))));
+            let inferred = infer_callable_summaries(forms, types, &signatures, &given);
+            forms.iter().filter_map(|form| Some((form.symbol.clone(), inferred.get(&form.symbol)?.clone()))).collect()
+        },
+    );
+    for (symbol, contract) in &expansion.contracts {
+        summaries.insert(symbol.clone(), contract.clone());
+        if crate::dyn_kinds::is_joined(symbol) {
+            methods.insert(symbol.clone());
+        }
+    }
+    // A form is a method as its body is.
+    let form_of: Vec<(usize, String)> = expansion
+        .forms
+        .iter()
+        .flat_map(|(&index, forms)| forms.iter().filter_map(move |form| Some((index, form.body.as_ref()?.symbol.clone()))))
+        .collect();
+    for (index, symbol) in &form_of {
+        if methods.contains(&bodies[*index].symbol) {
+            methods.insert(symbol.clone());
+        }
+    }
     let base_contract = |func: &FuncRef| contract_for(func, &summaries, &signatures);
     let capture_contracts = closure_capture_contracts(bodies, &summaries);
     // `[TYP-15]` (D-352) — what each callee stores where its caller's regions
     // do not otherwise reach, so each caller can check its own arguments.
     let dynamic = stores::dynamic_bodies(bodies);
-    let store_summaries = stores::infer_store_summaries(
+    let mut store_summaries = stores::infer_store_summaries(
         bodies,
         types,
         &kept.stores,
@@ -239,6 +283,14 @@ fn run_checks(
         &|body: &Body| capture_borrow_paths(body, &capture_contracts),
         &dynamic,
     );
+    // A form stores what its body does: the methods its `dyn` calls run store nothing a caller
+    // answers for (`stores.rs`), and the worst case's call stores nothing either.
+    // ponytail: each form takes its body's store summary; infer each form's if one is ever less.
+    let stored: Vec<(String, crate::regions::StoreSummary)> = form_of
+        .iter()
+        .filter_map(|(index, symbol)| Some((symbol.clone(), store_summaries.get(&bodies[*index].symbol)?.clone())))
+        .collect();
+    store_summaries.extend(stored);
     let call_contract =
         |func: &FuncRef| stores::with_stores(contract_for(func, &summaries, &signatures), func, &store_summaries);
     let names: HashMap<String, String> =
@@ -288,51 +340,169 @@ fn run_checks(
         FuncRef::Interface { .. } | FuncRef::Virtual { .. } => true,
         _ => false,
     };
+    // `[LT-1]` (verdict 151) — a body in each of its forms (`dyn_kinds`), each diagnostic once.
+    // `[BLD-1]` — a kept body is checked again when what its forms read is not what its record says
+    // they read (or its record says nothing): only its errors are new, its warnings are its record's.
+    let kinds: HashMap<String, Vec<String>> =
+        expansion.checked_under.iter().map(|(&index, under)| (bodies[index].symbol.clone(), under.clone())).collect();
+    let again = |index: usize| bodies[index].kept && kinds.get(&bodies[index].symbol) != kept.kinds.get(&bodies[index].symbol);
+    let check_forms = |index: usize, sink: &mut Sink, mut reports: Option<&mut Vec<LoanReport>>| {
+        let body = &bodies[index];
+        let plain = [crate::dyn_kinds::Form::default()];
+        let forms = expansion.forms.get(&index).filter(|forms| !forms.is_empty()).map_or(&plain[..], Vec::as_slice);
+        let start = sink.mark();
+        for (at, form) in forms.iter().enumerate() {
+            let checked = form.body.as_ref().unwrap_or(body);
+            let capture_paths = capture_borrow_paths(checked, &capture_contracts);
+            let mut own = Sink::new();
+            // A kept body's diagnostics all go through `own`, its errors only on.
+            let at = if body.kept { usize::MAX } else { at };
+            check_body(
+                checked,
+                types,
+                &call_contract,
+                &capture_paths,
+                &owned_closure_environments,
+                &is_method,
+                dynamic.contains(&body.symbol),
+                &names,
+                form,
+                if at == 0 { &mut *sink } else { &mut own },
+                if at == 0 { reports.as_deref_mut() } else { None },
+            );
+            for diagnostic in own.take().into_iter().filter(|diagnostic| !body.kept || diagnostic.severity == ember_diag::Severity::Error) {
+                let seen = sink.diagnostics()[start..].iter().any(|seen| {
+                    seen.code == diagnostic.code && seen.primary.span == diagnostic.primary.span && seen.message == diagnostic.message
+                });
+                if !seen {
+                    sink.emit(diagnostic);
+                }
+            }
+        }
+    };
     let mut ranges = Vec::new();
     if let Some(reports) = reports {
         for (index, body) in bodies.iter().enumerate() {
-            if body.kept {
+            if body.kept && !again(index) {
                 continue;
             }
             let start = sink.mark();
-            let capture_paths = capture_borrow_paths(body, &capture_contracts);
-            check_body(
-                body,
-                types,
-                &call_contract,
-                &capture_paths,
-                &owned_closure_environments,
-                &is_method,
-                dynamic.contains(&body.symbol),
-                &names,
-                sink,
-                Some(&mut *reports),
-            );
-            ranges.push((index, start..sink.mark()));
+            check_forms(index, sink, Some(&mut *reports));
+            if !body.kept {
+                ranges.push((index, start..sink.mark()));
+            }
         }
     } else {
         // `[BLD-7]` — each body on the driver's threads, reported in the bodies' order.
-        let checked: Vec<usize> = (0..bodies.len()).filter(|&index| !bodies[index].kept).collect();
+        let checked: Vec<usize> = (0..bodies.len())
+            .filter(|&index| match only_runtime {
+                true => !bodies[index].runtime_params.is_empty(),
+                false => !bodies[index].kept || again(index),
+            })
+            .collect();
         let done = crate::parallel::each(&checked, sink, |&index, sink| {
-            let body = &bodies[index];
-            let capture_paths = capture_borrow_paths(body, &capture_contracts);
-            check_body(
-                body,
-                types,
-                &call_contract,
-                &capture_paths,
-                &owned_closure_environments,
-                &is_method,
-                dynamic.contains(&body.symbol),
-                &names,
-                sink,
-                None,
-            );
+            check_forms(index, sink, None);
             index
         });
-        ranges.extend(done);
+        ranges.extend(done.into_iter().filter(|(index, _)| !bodies[*index].kept));
     }
-    (ranges, BorrowFacts { stores: store_summaries })
+    let guards = expansion
+        .forms
+        .iter()
+        .flat_map(|(&index, forms)| {
+            forms.iter().flat_map(move |form| {
+                std::mem::take(&mut *form.guards.lock().unwrap_or_else(|poisoned| poisoned.into_inner())).into_iter().map(move |guard| (index, guard))
+            })
+        })
+        .collect();
+    (ranges, BorrowFacts { stores: store_summaries, kinds }, guards)
+}
+
+/// `[LT-48]` — each check of a `runtime` parameter's kind the borrow checks asked for, before the
+/// line it guards: the value's table compared with the kind's (one compare), and the program stopped
+/// there, with the guard's message, when it is that kind. A check asked for by several of a body's
+/// forms is made once.
+pub(crate) fn insert_kind_checks_all(bodies: &mut [Body], types: &TypeTable) -> usize {
+    if bodies.iter().all(|body| body.runtime_params.is_empty()) {
+        return 0;
+    }
+    let mut sink = Sink::new();
+    let (_, _, guards) = run_checks(bodies, types, &mut sink, None, &BorrowFacts::default(), true);
+    // The program's borrow checks passed: these, of the same bodies, find no error, or the checks
+    // they ask for are not the ones the program was checked with.
+    let errors: Vec<&str> = sink
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.severity == ember_diag::Severity::Error)
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "internal compiler error: [LT-48] the borrow checks of the bodies with a `runtime` parameter disagree with the program's: {errors:?}"
+    );
+    let count = guards.len();
+    let mut by_body: BTreeMap<usize, Vec<crate::dyn_kinds::Guard>> = BTreeMap::new();
+    for (index, guard) in guards {
+        let held = by_body.entry(index).or_default();
+        let same = |other: &crate::dyn_kinds::Guard| {
+            (other.block, other.index, other.param, other.table.concrete) == (guard.block, guard.index, guard.param, guard.table.concrete)
+        };
+        if !held.iter().any(same) {
+            held.push(guard);
+        }
+    }
+    let Some(bool_ty) = types.find(&TyKind::Bool) else { return 0 };
+    for (index, mut guards) in by_body {
+        // From the last point back: each split leaves the points before it where they were.
+        guards.sort_by_key(|guard| std::cmp::Reverse((guard.block, guard.index)));
+        let body = &mut bodies[index];
+        for guard in guards {
+            let flag = LocalId(body.locals.len() as u32);
+            body.locals.push(LocalDecl { ty: bool_ty, kind: LocalKind::Temp, name: None, span: guard.span });
+            let tail = BasicBlockId(body.blocks.len() as u32);
+            let head = &mut body.blocks[guard.block];
+            let rest = BasicBlock {
+                stmts: head.stmts.split_off(guard.index),
+                terminator: std::mem::replace(
+                    &mut head.terminator,
+                    Terminator::Assert {
+                        cond: Operand::Copy(Place::local(flag)),
+                        expected: false,
+                        msg: ember_mir::AssertKind::Panic { message: Operand::Const(Const::Str(guard.message.clone())) },
+                        next: tail,
+                        span: guard.span,
+                    },
+                ),
+                terminator_span: std::mem::replace(&mut head.terminator_span, guard.span),
+                call_span: head.call_span.take(),
+            };
+            let table = guard.table;
+            head.stmts.push(Stmt::new(
+                StmtKind::Assign {
+                    place: Place::local(flag),
+                    rvalue: Rvalue::Cast {
+                        kind: ember_mir::CastKind::DynKindIs {
+                            concrete: table.concrete,
+                            interfaces: table.interfaces,
+                            layout: table.layout,
+                            implementations: table.implementations,
+                        },
+                        operand: Operand::Copy(Place::local(guard.param)),
+                        to: bool_ty,
+                    },
+                },
+                guard.span,
+            ));
+            body.blocks.push(rest);
+            // A call moved into the new block takes its forwarded arguments with it (`[FN-5]`).
+            for binding in &mut body.call_argument_bindings {
+                if binding.call_block.0 as usize == guard.block {
+                    binding.call_block = tail;
+                }
+            }
+        }
+    }
+    count
 }
 
 /// `[HEAP-4]`, `[HEAP-5]`, `[RC-5]`, `[EXC-1]` — materialize the dynamic
@@ -3523,11 +3693,13 @@ pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
         &is_method,
         false,
         &HashMap::new(),
+        &crate::dyn_kinds::Form::default(),
         sink,
         None,
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn check_body(
     body: &Body,
     types: &TypeTable,
@@ -3537,6 +3709,7 @@ fn check_body(
     is_method: &dyn Fn(&FuncRef) -> bool,
     dynamic: bool,
     names: &HashMap<String, String>,
+    form: &crate::dyn_kinds::Form,
     sink: &mut Sink,
     reports: Option<&mut Vec<LoanReport>>,
 ) {
@@ -3654,6 +3827,7 @@ fn check_body(
                             &[(place.clone(), Access::Write)],
                             stmt.span,
                             is_method,
+                            form,
                             sink,
                             &mut reported,
                         );
@@ -3698,6 +3872,7 @@ fn check_body(
                         &[(Place::local(*local), Access::Write)],
                         stmt.span,
                         is_method,
+                        form,
                         sink,
                         &mut reported,
                     );
@@ -3719,6 +3894,7 @@ fn check_body(
                 &accesses,
                 stmt.span,
                 is_method,
+                form,
                 sink,
                 &mut reported,
             );
@@ -3742,6 +3918,7 @@ fn check_body(
                     args,
                     block.terminator_span,
                     is_method,
+                    form,
                     sink,
                     &mut reported,
                 );
@@ -3769,6 +3946,7 @@ fn check_body(
             &accesses,
             block.terminator_span,
             is_method,
+            form,
             sink,
             &mut reported,
         );
@@ -4552,6 +4730,7 @@ fn check_call_activation(
     args: &[Operand],
     span: Span,
     is_method: &dyn Fn(&FuncRef) -> bool,
+    form: &crate::dyn_kinds::Form,
     sink: &mut Sink,
     reported: &mut HashSet<(usize, usize)>,
 ) {
@@ -4594,6 +4773,7 @@ fn check_call_activation(
         &argument_reads,
         span,
         is_method,
+        form,
         sink,
         reported,
     );
@@ -4618,6 +4798,7 @@ fn check_call_activation(
             &[(place, Access::Borrow { mutable: true })],
             span,
             is_method,
+            form,
             sink,
             reported,
         );
@@ -4635,6 +4816,7 @@ fn check_point(
     accesses: &[(Place, Access)],
     span: Span,
     is_method: &dyn Fn(&FuncRef) -> bool,
+    form: &crate::dyn_kinds::Form,
     sink: &mut Sink,
     reported: &mut HashSet<(usize, usize)>,
 ) {
@@ -4727,7 +4909,10 @@ fn check_point(
                 loan.created_at.block * 4096 + loan.created_at.index,
                 ((span.start as usize) << 32) | span.end as usize,
             );
-            if !reported.insert(key) {
+            // `[LT-48]` — a line a `runtime` parameter's check may guard is guarded at every point it
+            // is lowered at (a `defer`'s body, at each exit); an error is reported once.
+            let repeated = !reported.insert(key);
+            if repeated && !form.sites.values().any(|site| site.runtime.is_some()) {
                 continue;
             }
 
@@ -4800,6 +4985,9 @@ fn check_point(
                     Operand::Const(_) => false,
                 })
             {
+                if repeated {
+                    continue;
+                }
                 sink.emit_classified(
                     Diagnostic::error(
                         codes::E3024,
@@ -4842,7 +5030,9 @@ fn check_point(
                         .help("bind the value to a variable first, so it lives as long as the borrow")
                         .note("a temporary lives to the end of the statement that makes it [EXP-4]")
                 };
-                sink.emit_classified(diagnostic);
+                if !repeated {
+                    sink.emit_classified(diagnostic);
+                }
                 continue;
             }
             // [DRP-7] — a scope exit ends the borrowed storage. This is a
@@ -4861,6 +5051,9 @@ fn check_point(
                 .secondary(span, format!("{name} ends its scope here"));
                 if let Some(later) = later {
                     diagnostic = diagnostic.secondary(later, "borrow later used here");
+                }
+                if repeated {
+                    continue;
                 }
                 sink.emit_classified(diagnostic
                     .help("declare the borrowed value in an enclosing scope, or drop its borrower before leaving this scope")
@@ -4924,6 +5117,35 @@ fn check_point(
                 .name
                 .as_deref()
                 .unwrap_or("array");
+            // `[LT-1]`, `[LT-48]` (verdict 151) — a change of what a `dyn` or virtual call's result
+            // may look at, where which kind the receiver is is known only while running: the kinds
+            // that make the line unsafe, and how to check it while running.
+            let explained = (code == codes::E3021
+                && !loan.capability.is_mut()
+                && matches!(access, Access::Write | Access::Borrow { mutable: true }))
+            .then(|| crate::dyn_kinds::explain(body, &form.sites, loan.borrower))
+            .flatten();
+            // `[LT-48]` — a `runtime` parameter's kind is checked here while running, in place of
+            // the error: the program stops at this line when it is a kind that makes it unsafe.
+            if let Some(explained) = &explained
+                && let Some(guards) =
+                    crate::dyn_kinds::guards(body, explained, &name, borrower.as_deref(), (point.block, point.index), span)
+            {
+                form.guards.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).extend(guards);
+                continue;
+            }
+            if repeated {
+                continue;
+            }
+            let message = match (&explained, &borrower) {
+                (Some(explained @ crate::dyn_kinds::Explained { culprits: Some(culprits), .. }), Some(keeper)) => format!(
+                    "{name} changes while `{keeper}` may still look at it: {} may be {}, and which kind it is is only known while running",
+                    crate::dyn_kinds::receiver_name(body, explained.block).map_or("the receiver".to_string(), |name| format!("`{name}`")),
+                    crate::dyn_kinds::kinds_named(culprits)
+                ),
+                _ => message,
+            };
+            let runtime_help = explained.as_ref().and_then(|explained| explained.site.help.as_deref());
             let mut diagnostic = Diagnostic::error(code, span, message)
                 .primary_label(if iteration_borrow {
                     "mutable borrow here"
@@ -4942,6 +5164,9 @@ fn check_point(
                 diagnostic = diagnostic.secondary(later, "borrow later used here");
             }
             if iteration_borrow {
+                if repeated {
+                    continue;
+                }
                 sink.emit_classified(
                     diagnostic
                         .help(
@@ -4961,37 +5186,40 @@ fn check_point(
                     .help(match (
                         &borrower,
                         loan.arena_scope,
+                        runtime_help,
                         method_root.as_deref(),
                         indexed_conflict,
                         exact_mutable_conflict,
                     ) {
-                        (_, true, _, _, _) => String::from(
+                        // `[LT-48]` — the line is unsafe for a kind known only while running.
+                        (_, _, Some(help), _, _, _) => help.to_string(),
+                        (_, true, _, _, _, _) => String::from(
                             "allocate from `scope` instead, or take this allocation before opening the scope",
                         ),
                         // `[DIA-7a]` shape B8's help: the call takes all of
                         // `self`, so the fix is structural, not a shorter borrow.
-                        (_, _, Some(_), _, _) => String::from(
+                        (_, _, _, Some(_), _, _) => String::from(
                             "inline the field access, take the two fields as separate \
                              parameters, or split the method",
                         ),
                         // ODR-068 — two elements chosen at run time are
                         // `get_pair_mut`'s; a split is the structural fix.
-                        (_, _, _, true, _) => format!(
+                        (_, _, _, _, true, _) => format!(
                             "use `{owner}.get_pair_mut(i, j)` for two elements at once (`None` when \
                              they are the same), or `{owner}.as_mut_span().split_at(k)` for two \
                              non-overlapping mutable spans; `swap`, `chunks_mut` and `iter_mut` cover \
                              other patterns"
                         ),
-                        (_, _, _, _, true) => String::from(
+                        (_, _, _, _, _, true) => String::from(
                             "use one mutable access rather than borrowing the same place twice; \
                              split the owner's mutable view with `split_at` when the intended operands are \
                              disjoint parts of it"
                         ),
-                        (Some(name), _, _, _, _) => format!(
+                        (Some(name), _, _, _, _, _) => format!(
                             "end the borrow before this: `{name}` is what keeps it alive, so \
                              shorten its last use or put it in a block of its own"
                         ),
-                        (None, _, _, _, _) => format!(
+                        (None, _, _, _, _, _) => format!(
                             "bind the borrow of {name} to a local and finish with it before \
                              this line, or copy the value out first",
                             name = name
@@ -5550,7 +5778,7 @@ mod callable_region_metadata_tests {
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
             restrict_views: false,
-            stack_buffers: Vec::new(), frame_objects: Vec::new(), loop_notes: Default::default(), kept: false,
+            stack_buffers: Vec::new(), frame_objects: Vec::new(), loop_notes: Default::default(), kept: false, runtime_params: Vec::new(),
         }
     }
 

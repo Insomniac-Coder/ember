@@ -45,14 +45,14 @@ pub fn format_to(buf: MutSpan[u8]) -> Result[StrView, FmtError]:
 [T: needs Display]
 fn write_display(value: T, ref mut out: String):
     f = Formatter(ref mut out)
-    _ = value.fmt(f)
+    _ = value.fmt(ref mut f)
 
 ## `[STR-5]` — the same for a written `Debug`, which the compiler calls
 ## wherever the value is formatted, alone or inside another value.
 [T: needs Debug]
 fn write_debug(value: T, ref mut out: String):
     f = Formatter(ref mut out)
-    _ = value.fmt_debug(f)
+    _ = value.fmt_debug(ref mut f)
 
 ## `[STR-5]` — `value`'s `Debug` text appended to `out`, as `f"{value!r}"`
 ## writes it. Compiler-known.

@@ -22,6 +22,6 @@ fn main():
     holder = Holder(Array[Item]())
     first = Item(Some(holder))
     second = Item(Some(holder))
-    holder.items.push(first)
-    holder.items.push(second)
+    holder.items.push(owns first)
+    holder.items.push(owns second)
     println("built")

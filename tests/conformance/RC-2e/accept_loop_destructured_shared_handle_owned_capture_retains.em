@@ -18,7 +18,7 @@ type Pair = (Shared[Token], i32)
 
 fn main():
     pairs: Array[Pair] = Array[Pair]()
-    pairs.push((Shared(Token(7)), 0))
+    pairs.push(owns (Shared(Token(7)), 0))
     for token, _ in pairs:
         task = owned fn() -> i32:
             value = token.get()

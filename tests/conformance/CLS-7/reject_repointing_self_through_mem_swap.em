@@ -10,8 +10,8 @@ class Counter:
 
     fn swap_with(other: Counter):
         o = other
-        mem.swap(this, o)
-        n = mem.replace(this, Counter(3))
+        mem.swap(ref mut this, ref mut o)
+        n = mem.replace(ref mut this, Counter(3))
 
 fn main():
     c = Counter(1)

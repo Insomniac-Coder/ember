@@ -92,7 +92,7 @@ plums 7
 ```ember
 fn main():
     xs = [3, 1, 4]
-    xs.push(1)
+    xs.push(owns 1)
     println(xs.pop(), xs.index_of(4), xs.index_of(9), xs.last())
     s = "  Hello, World  "
     println(s.trim().to_lower(), s.trim().starts_with("Hello"))
@@ -171,10 +171,10 @@ rng = random.Rng.seeded(42)
 player = Player("Ada")
 counts: Map[int, int] = {}
 for turn in range(5):
-    r = roll(rng)
+    r = roll(ref mut rng)
     counts[r] = counts.get_or(r, 0) + 1
     if r == 6:
-        player.inventory.push("gem")
+        player.inventory.push(owns "gem")
     else:
         player.hp -= r // 2
 println(f"{player.name}: hp={player.hp}, items={len(player.inventory)}")

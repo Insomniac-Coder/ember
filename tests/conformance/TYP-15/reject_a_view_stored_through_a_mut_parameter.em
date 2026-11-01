@@ -12,6 +12,6 @@ fn put(ref mut x: StrView, v: StrView):
 fn main():
     name = "ann"
     s = String.from("zed")
-    put(name, s.as_str())
+    put(ref mut name, s.as_str())
     mem.drop(s) #$ error[E3021]: `s` cannot be moved while it is borrowed
     println(name)

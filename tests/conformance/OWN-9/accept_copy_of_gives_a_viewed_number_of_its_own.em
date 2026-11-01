@@ -13,7 +13,7 @@ fn take(owns x: int):
     println(x)
 
 fn pass_on(n: int):
-    take(copy of n)
+    take(owns copy of n)
 
 fn record(ref mut m: Map[StrView, int], name: StrView, n: int):
     m[name] = n
@@ -21,8 +21,8 @@ fn record(ref mut m: Map[StrView, int], name: StrView, n: int):
 fn main():
     xs = [1, 2]
     for x in xs:
-        take(copy of x)
-    take(copy of xs[0])
+        take(owns copy of x)
+    take(owns copy of xs[0])
     pass_on(5)
     m: Map[StrView, int] = {}
     record(ref mut m, "a", 7)

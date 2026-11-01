@@ -15,10 +15,10 @@ struct Hp:
 fn reset(ref mut q: Query[(Entity, Mut[Hp])], w: World):
     for e, hp in q.iter_mut():
         hp.n += 1
-        w.add(e, Hp(5))
+        w.add(e, owns Hp(5))
 
 fn main():
     w = World()
     e = w.create()
-    w.add(e, Hp(1))
-    w.run(reset, w)
+    w.add(e, owns Hp(1))
+    w.run(owns reset, owns w)

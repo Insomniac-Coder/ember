@@ -15,7 +15,7 @@ class Counter:
         this.value = this.value + 1
 
     fn run(ref mut other: Counter):
-        this.log.push(0)
+        this.log.push(owns 0)
         for r in 0..2:
             for i in 0..2:
                 other.bump()
@@ -23,4 +23,4 @@ class Counter:
 fn main():
     counter = Counter(0, [])
     alias = counter
-    counter.run(alias)
+    counter.run(ref mut alias)

@@ -42,7 +42,7 @@ class Machine:
             while left >= value and this.coins[value] > 0:
                 this.coins[value] -= 1
                 left -= value
-                change.push(value)
+                change.push(owns value)
         if left != 0:
             for c in change:
                 this.coins[c] += 1

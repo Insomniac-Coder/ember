@@ -5,11 +5,11 @@
 
 fn main():
     left: Array[i32] = Array[i32]()
-    left.push(4)
+    left.push(owns 4)
     right: Array[i32] = Array[i32]()
-    right.push(5)
+    right.push(owns 5)
     pair = (left.as_span(), right.as_span())
     println(pair.0[0])
-    left.push(6)
+    left.push(owns 6)
     println(pair.1[0])
-    right.push(7)
+    right.push(owns 7)

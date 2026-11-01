@@ -47,7 +47,7 @@ const CONSOLE_AND_FILES: &str = r#"import std.fs
 fn table(n: int) -> Array[int]:
     out: Array[int] = []
     for i in range(n):
-        out.push(i * i)
+        out.push(owns (i * i))
     return out
 
 static SQUARES: Array[int] = table(5)
@@ -109,7 +109,7 @@ fn a_foreign_call_and_a_thread_are_e6010_on_the_evaluator() {
         ),
         (
             "thread",
-            "import std.thread\n\nfn main():\n    println(\"before\")\n    h = thread.spawn(owned fn() => 1)\n    println(h.join())\n",
+            "import std.thread\n\nfn main():\n    println(\"before\")\n    h = thread.spawn(owns owned fn() => 1)\n    println(h.join())\n",
             "a thread",
         ),
     ];

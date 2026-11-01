@@ -15,5 +15,5 @@ fn increment(ref mut value: i32):
 
 fn main():
     slot = Slot(1)
-    increment(slot.value)
+    increment(ref mut slot.value)
     println(slot.value)

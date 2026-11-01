@@ -32,6 +32,6 @@ fn order(a: T, b: T) -> Ordering:
 one = 1
 f = 3.0
 s = String.from("b")
-println(bigger(3, 9), bigger(String.from("a"), String.from("b")), bigger(2.5, -1.0))
+println(bigger(owns 3, owns 9), bigger(owns String.from("a"), owns String.from("b")), bigger(owns 2.5, owns -1.0))
 println(twice(String.from("s")), twice(4), one.cmp(2), "a".cmp("a"), f.cmp(-1.0))
 println(same(P(1), P(1)), same("x", "y"), order(1, 2), order(s, String.from("a")), s)

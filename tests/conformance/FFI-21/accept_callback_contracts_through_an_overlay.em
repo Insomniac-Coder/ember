@@ -24,13 +24,13 @@ fn main():
     missing = reg.maybe_call(None, 5)
     was = reg.given()
     println(missing, was, reg.maybe_call(Some(fn(value: c_int) -> c_int => value + 7), 1), reg.given())
-    (first, one) = reg.subscribe(owned fn(value: c_int) -> c_int => value * scale)
-    (second, two) = reg.subscribe(owned fn(value: c_int) -> c_int => value + 4)
+    (first, one) = reg.subscribe(owns owned fn(value: c_int) -> c_int => value * scale)
+    (second, two) = reg.subscribe(owns owned fn(value: c_int) -> c_int => value + 4)
     println(second - first, reg.subscribers())
     println(reg.fire(0) + reg.fire(0) + 18, reg.subscribers())
-    end(one)
+    end(owns one)
     println(reg.fire(2), reg.subscribers())
-    end(two)
+    end(owns two)
     println(reg.subscribers())
 
 fn end(owns token: Retained[ForeignCallback]):

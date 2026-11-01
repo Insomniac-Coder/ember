@@ -7900,7 +7900,13 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     };
     // What the call gives (`[FFI-11b]`, `[FFI-16]`, ODR-137): a status's `Result` of the outputs,
     // else the C++ function's own result first, then each output in its order.
-    let call = format!("{raw_name}({})", slots.iter().filter_map(|(_, _, _, argument)| argument.clone()).collect::<Vec<_>>().join(", "));
+    // `[FN-2a]` — the call says `ref mut` before an argument for a parameter whose first line does.
+    let call_argument = |(_, text, _, argument): &(String, String, Vec<String>, Option<String>)| {
+        argument.as_ref().map(|argument| {
+            if text.starts_with("ref mut ") && !argument.starts_with("ref mut ") { format!("ref mut {argument}") } else { argument.clone() }
+        })
+    };
+    let call = format!("{raw_name}({})", slots.iter().filter_map(call_argument).collect::<Vec<_>>().join(", "));
     let tuple = |parts: &[String]| if parts.len() == 1 { parts[0].clone() } else { format!("({})", parts.join(", ")) };
     // The value of the C++ function's own result, from what the declaration returns (`given`) and
     // what the thunk wrote (`slot`).

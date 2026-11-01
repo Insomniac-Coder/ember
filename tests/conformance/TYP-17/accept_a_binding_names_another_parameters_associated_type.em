@@ -52,7 +52,7 @@ fn main():
     xs: Array[int] = [1, 2]
     ys: Array[int] = [10, 20]
     parts: Array[String] = []
-    for x in both(xs.iter(), ys.iter()):
-        parts.push(f"{x}")
+    for x in both(owns xs.iter(), owns ys.iter()):
+        parts.push(owns f"{x}")
     println(parts.join(" "))
     println(Short(1).joined(Short(2)))

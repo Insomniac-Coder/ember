@@ -22,5 +22,5 @@ fn bump(owns it: I, x: I.Item) -> int:
 
 fn main():
     println(sum2(2, 3))
-    println(first([1, 2].into_iter()))
-    println(bump([1].into_iter(), 7))
+    println(first(owns [1, 2].into_iter()))
+    println(bump(owns [1].into_iter(), 7))

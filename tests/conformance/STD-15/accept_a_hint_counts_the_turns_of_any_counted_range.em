@@ -22,13 +22,13 @@
 fn fill(start: int, stop: int) -> Array[int]:
     xs: Array[int] = []
     for i in start..stop:
-        xs.push(i)
+        xs.push(owns i)
     return xs
 
 fn doubled(data: Array[int], n: int) -> Array[int]:
     out: Array[int] = []
     for i in 0..n:
-        out.push(data[i] * 2)
+        out.push(owns (data[i] * 2))
     return out
 
 fn sum(xs: Array[int]) -> int:
@@ -40,25 +40,25 @@ fn sum(xs: Array[int]) -> int:
 fn main():
     inclusive: Array[int] = []
     for i in 0..=20:
-        inclusive.push(i)
+        inclusive.push(owns i)
     println(f"{len(inclusive)} {sum(inclusive)}")
 
     negative: Array[int] = []
     for i in -5..5:
-        negative.push(i)
+        negative.push(owns i)
     println(f"{len(negative)} {sum(negative)}")
 
     pairs: Array[int] = []
     for i in 0..10:
-        pairs.push(i)
-        pairs.push(-i)
+        pairs.push(owns i)
+        pairs.push(owns -i)
     println(f"{len(pairs)} {sum(pairs)}")
 
     a: Array[int] = []
     b: Array[int] = []
     for i in 0..10:
-        a.push(i)
-        b.push(i * i)
+        a.push(owns i)
+        b.push(owns (i * i))
     println(f"{len(a)} {sum(a)} {sum(b)}")
 
     some = fill(3, 9)

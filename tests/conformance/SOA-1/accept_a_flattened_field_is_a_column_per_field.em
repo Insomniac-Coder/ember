@@ -37,11 +37,11 @@ fn swap_xy(ref mut xs: MutSpan[f32], ref mut ys: MutSpan[f32]):
 
 fn main():
     ps = SoA[Particle].with_capacity(4)
-    ps.push(Particle(pos=Vec3(1.0, 0.5, 3.0), vel=Vec3(1.0, 0.0, -1.0), life=2.0))
-    ps.push(Particle(pos=Vec3(2.0, 0.0, 0.0), vel=Vec3(0.0, 0.0, 0.0), life=1.0))
+    ps.push(owns Particle(pos=Vec3(1.0, 0.5, 3.0), vel=Vec3(1.0, 0.0, -1.0), life=2.0))
+    ps.push(owns Particle(pos=Vec3(2.0, 0.0, 0.0), vel=Vec3(0.0, 0.0, 0.0), life=1.0))
     println(ps.len())
     println(ps.pos.x[0], ps.pos.y[0], ps.pos.z[0])
-    drift(ps.pos.x, ps.vel, 0.016)
+    drift(ref mut ps.pos.x, ps.vel, 0.016)
     for i in 0..ps.len():
         ps[i].pos.z -= ps[i].vel.x * 0.016
     p = ps[0].pos
@@ -54,8 +54,8 @@ fn main():
     println(ps.pos.x[1], ps.pos.y[1])
     ps[1] = Particle(pos=Vec3(4.0, 6.0, 1.0), vel=Vec3.ZERO, life=0.5)
     println(ps.pos.x[1], ps.pos.y[1])
-    swap_xy(ps.pos.x, ps.pos.y)
-    swap_xy(ps.pos.x, ps.pos.y)
+    swap_xy(ref mut ps.pos.x, ref mut ps.pos.y)
+    swap_xy(ref mut ps.pos.x, ref mut ps.pos.y)
     gone = ps.swap_remove(0)
     println(ps.len())
     println(ps.pos.x[0] * gone.life / 2.0)

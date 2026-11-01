@@ -9,5 +9,5 @@ import std.thread
 fn main():
     xs = [1, 2, 3]
     view: Span[int] = xs
-    h = thread.spawn(owned fn() => view.len())
+    h = thread.spawn(owns owned fn() => view.len())
     println(h.join())

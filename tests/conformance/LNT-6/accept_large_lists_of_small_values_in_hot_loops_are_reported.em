@@ -14,9 +14,9 @@ fn main():
     weights: Array[float] = []
     wide: Array[int] = []
     for i in 0..n:
-        codes.push(i % 1000)
-        weights.push(1.5)
-        wide.push(i * 1000000000)
+        codes.push(owns (i % 1000))
+        weights.push(owns 1.5)
+        wide.push(owns (i * 1000000000))
     short: Array[int] = [1, 2, 3]
     total = 0
     sum = 0.0

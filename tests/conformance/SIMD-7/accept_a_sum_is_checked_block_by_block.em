@@ -18,8 +18,8 @@ fn unknown(ref mut xs: Array[int]):
 fn main():
     xs: Array[int] = []
     for i in 0..1000:
-        xs.push(i % 7)
-    unknown(xs)
+        xs.push(owns (i % 7))
+    unknown(ref mut xs)
     total = 0
     for round in 0..2000:
         for i in 0..1000:

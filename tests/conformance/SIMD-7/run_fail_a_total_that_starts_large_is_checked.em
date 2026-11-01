@@ -8,7 +8,7 @@
 fn main():
     xs: Array[int] = []
     for i in 0..1000:
-        xs.push(1)
+        xs.push(owns 1)
     total = 9223372036854775000
     for i in 0..1000:
         total = total + xs[i]

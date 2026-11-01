@@ -7,7 +7,7 @@
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
+    values.push(owns 1)
     parent = values.as_mut_span()
     child = parent.reborrow()
     _other = parent.reborrow()

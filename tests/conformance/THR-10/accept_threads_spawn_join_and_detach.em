@@ -24,7 +24,7 @@ fn worker(hits: SyncShared[Atomic[int]], names: SyncShared[Mutex[Array[String]]]
     for i in range(10000):
         hits.get().fetch_add(1)
     with g = names.get().lock():
-        g.push("worker".to_string())
+        g.push(owns "worker".to_string())
     return work(1000 + k)
 
 fn main():
@@ -34,7 +34,7 @@ fn main():
     for k in range(4):
         mine = hits
         theirs = names
-        handles.push(thread.spawn(owned fn() => worker(mine, theirs, k)))
+        handles.push(owns thread.spawn(owns owned fn() => worker(mine, theirs, k)))
     total = 0
     while handles.len() > 0:
         match handles.pop():
@@ -45,11 +45,11 @@ fn main():
     println(hits.get().load(), total)
     with g = names.get().lock():
         println(g.len())
-    quiet = thread.spawn(owned fn() => work(5))
+    quiet = thread.spawn(owns owned fn() => work(5))
     println(quiet.join())
-    done = thread.spawn(owned fn() => println("from a thread"))
+    done = thread.spawn(owns owned fn() => println("from a thread"))
     done.join()
-    text = thread.spawn(owned fn() => "made".to_string() + " here")
+    text = thread.spawn(owns owned fn() => "made".to_string() + " here")
     println(text.join())
-    _detached = thread.spawn(owned fn() => work(10))
-    _also = thread.spawn(owned fn() => "dropped by its own thread".to_string())
+    _detached = thread.spawn(owns owned fn() => work(10))
+    _also = thread.spawn(owns owned fn() => "dropped by its own thread".to_string())

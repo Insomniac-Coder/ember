@@ -10,4 +10,4 @@ fn place(ref mut arena: Arena, x: int) -> int:
 
 fn main():
     arena = Arena.with_capacity(64)
-    println(place(arena, 3))
+    println(place(ref mut arena, 3))

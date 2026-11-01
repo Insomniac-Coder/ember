@@ -22,12 +22,12 @@ extend B implements From[A]:
 
 [E, F: needs From[E]]
 fn convert(owns e: E) -> F:
-    return F.from(e)
+    return F.from(owns e)
 
 fn main():
-    println(B.from(B(9)).v)
-    same: B = convert(B(5))
+    println(B.from(owns B(9)).v)
+    same: B = convert(owns B(5))
     println(same.v)
-    println(i32.from(7), String.from("abc"))
-    other: B = convert(A(5))
+    println(i32.from(owns 7), String.from("abc"))
+    other: B = convert(owns A(5))
     println(other.v)

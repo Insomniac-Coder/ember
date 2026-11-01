@@ -15,7 +15,7 @@ class Token:
 
 fn main():
     values: Array[Token] = Array[Token]()
-    values.push(Token(42))
+    values.push(owns Token(42))
     println(values[0].value)
     values.clear()
     println("cleared")

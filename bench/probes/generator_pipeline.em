@@ -8,7 +8,7 @@ fn main():
     seed = 12345
     for _ in range(n):
         seed = (seed * 1103515245 + 12345) % 2147483648
-        xs.push(seed % 1000)
+        xs.push(owns (seed % 1000))
     total = 0
     picked = (x * 3 for x in xs if x % 7 != 0)
     for v in picked:

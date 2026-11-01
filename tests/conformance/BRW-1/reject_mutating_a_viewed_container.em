@@ -8,7 +8,7 @@
 
 fn main():
     a: Array[i32] = Array[i32]()
-    a.push(1)
+    a.push(owns 1)
     v: Span[i32] = a
-    a.push(2)              #$ error[E3021]: `a` is borrowed here and mutably borrowed elsewhere
+    a.push(owns 2)              #$ error[E3021]: `a` is borrowed here and mutably borrowed elsewhere
     println(v[0])

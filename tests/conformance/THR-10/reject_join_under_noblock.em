@@ -10,4 +10,4 @@ fn finish(owns h: thread.JoinHandle[int]) -> int:
     return h.join()
 
 fn main():
-    println(finish(thread.spawn(owned fn() => 1)))
+    println(finish(owns thread.spawn(owns owned fn() => 1)))

@@ -44,7 +44,7 @@ fn left(ref mut q: Query[(Entity, Pos)]):
     LEFT.store(1)
     LEFT_SAW_RIGHT.store(other_started(ref RIGHT))
     for e, p in q.iter():
-        q.commands().add(e, Mark(p.x))
+        q.commands().add(e, owns Mark(p.x))
 
 fn right(ref mut q: Query[(Entity, Mut[Vel])]):
     RIGHT.store(1)
@@ -52,7 +52,7 @@ fn right(ref mut q: Query[(Entity, Mut[Vel])]):
     cmds = q.commands()
     for e, v in q.iter_mut():
         v.x += 1
-        cmds.add(e, Mark(v.x))
+        cmds.add(e, owns Mark(v.x))
 
 @sync
 class Tally:
@@ -61,19 +61,19 @@ class Tally:
 fn main():
     w = World()
     a = w.create()
-    w.add(a, Pos(3))
+    w.add(a, owns Pos(3))
     b = w.create()
-    w.add(b, Vel(4))
-    w.run_parallel([left, right])
+    w.add(b, owns Vel(4))
+    w.run_parallel(owns [left, right])
     println(LEFT_SAW_RIGHT.load(), RIGHT_SAW_LEFT.load())
     marked = w.entities_with[Mark]()
     marks: Array[int] = []
     for e in marked:
-        marks.push(e.index() as int)
+        marks.push(owns (e.index() as int))
     seen: Array[int] = []
-    w.run(fn(ref mut q: Query[Mark], unused: ()): seen.extend([m.by for m in q.iter()]), ())
+    w.run(owns fn(ref mut q: Query[Mark], unused: ()): seen.extend([m.by for m in q.iter()]), owns ())
     println(marks, seen)
     tally = Tally()
-    counted = system(owned fn(ref mut q: Query[Vel]): tally.total.fetch_add(q.iter().map(fn(v: ref Vel) => v.x).sum()), "counted")
-    w.run_parallel([counted, system(owned fn(ref mut q: Query[Pos]): TWO.store(q.iter().count()), "two")])
+    counted = system(owns owned fn(ref mut q: Query[Vel]): tally.total.fetch_add(q.iter().map(owns fn(v: ref Vel) => v.x).sum()), "counted")
+    w.run_parallel(owns [counted, system(owns owned fn(ref mut q: Query[Pos]): TWO.store(q.iter().count()), "two")])
     println(tally.total.load(), TWO.load(), w.has[Mark](a))

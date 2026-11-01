@@ -39,7 +39,7 @@ fn need_copy(x: T) -> T:
 
 fn main():
     r = Raw(null[*mut int](), 7)
-    worker = thread.spawn(owned fn() => need_send(r).n)
+    worker = thread.spawn(owns owned fn() => need_send(r).n)
     println(worker.join())
     q = Pair(1, null[*mut int]())
     println(need_send(q).a, need_sync(3), need_copy(4))

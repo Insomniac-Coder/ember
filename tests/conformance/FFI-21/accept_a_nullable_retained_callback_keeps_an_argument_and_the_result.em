@@ -32,16 +32,16 @@ fn release(owns token: Option[Retained[ForeignCallback]]):
     pass
 
 fn main():
-    (none_id, none_token) = subscribe_on(1, None)
+    (none_id, none_token) = subscribe_on(1, owns None)
     println(none_id, none_token.is_none(), removed())
-    release(none_token)
+    release(owns none_token)
     println(removed())
     base: c_int = 100
-    (id, token) = subscribe_on(2, Some(fn(value: c_int) -> c_int => value + base))
+    (id, token) = subscribe_on(2, owns Some(fn(value: c_int) -> c_int => value + base))
     println(id, tick(2, 5))
-    release(token)
+    release(owns token)
     println(removed(), tick(2, 5))
-    (again, other) = subscribe_on(3, Some(fn(value: c_int) -> c_int => value * 2))
+    (again, other) = subscribe_on(3, owns Some(fn(value: c_int) -> c_int => value * 2))
     println(again, tick(3, 4))
-    release(other)
+    release(owns other)
     println(removed())

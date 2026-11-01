@@ -22,19 +22,19 @@ fn main():
     xs: Array[int] = [10, 20, 30, 40, 50, 60, 70]
     ys: Array[int] = [1, 2, 3]
     for (i, x) in xs.iter().enumerate():
-        line.push(f"{i}:{x}")
+        line.push(owns f"{i}:{x}")
     println(line.join(" "))
     line.clear()
     for x in xs.iter().skip(1).step_by(2).take(2):
-        line.push(f"{x}")
+        line.push(owns f"{x}")
     println(line.join(" "))
     line.clear()
-    for (a, (b, c)) in xs.iter().zip(ys.iter().enumerate()):
-        line.push(f"{a},{b},{c}")
+    for (a, (b, c)) in xs.iter().zip(owns ys.iter().enumerate()):
+        line.push(owns f"{a},{b},{c}")
     println(line.join(" "))
     line.clear()
     for p in xs.iter().copy_each().enumerate().skip(5):
-        line.push(f"{p}")
+        line.push(owns f"{p}")
     println(line.join(" "))
     line.clear()
     zs: Array[int] = [1, 2, 3, 4]
@@ -44,14 +44,14 @@ fn main():
     it = xs.iter()
     it.next()
     for (i, x) in it.enumerate(start=1):
-        line.push(f"{i}/{x}")
+        line.push(owns f"{i}/{x}")
     println(line.join(" "))
     line.clear()
     for i, x in enumerate(xs[0..3], start=5):
-        line.push(f"{i}:{x}")
+        line.push(owns f"{i}:{x}")
     for p in enumerate(ys[0..2], start=0):
-        line.push(f"({p.0}, {p.1})")
+        line.push(owns f"({p.0}, {p.1})")
     for a, b in zip(xs, ys[0..2]):
-        line.push(f"{a}+{b}")
+        line.push(owns f"{a}+{b}")
     println(line.join(" "))
     line.clear()

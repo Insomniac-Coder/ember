@@ -14,6 +14,6 @@ struct SelfView:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(7)
+    values.push(owns 7)
     item = SelfView(values.as_span(), values) #$ error[E3024]: `values` would be moved into this value while another of its fields borrows it
     println(item.first[0])

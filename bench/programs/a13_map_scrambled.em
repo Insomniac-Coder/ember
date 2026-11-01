@@ -5,7 +5,7 @@ fn key(i: int) -> int:
 fn main():
     m: Map[int, int] = {}
     for i in 0..1000000:
-        m.insert(key(i), i)
+        m.insert(owns key(i), owns i)
     total = 0
     for round in 0..5:
         for i in 0..1000000:

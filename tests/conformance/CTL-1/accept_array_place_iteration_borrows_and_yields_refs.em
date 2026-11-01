@@ -12,7 +12,7 @@ struct Resource:
 
 fn main():
     values: Array[Resource] = Array[Resource]()
-    values.push(Resource(7))
+    values.push(owns Resource(7))
     for value in values:
         println(value.value)
     println(values.len())

@@ -22,7 +22,7 @@ fn main():
     nodes: Array[Node] = Array[Node]()
     total = 0
     for i in 0..3:
-        nodes.push(node)
+        nodes.push(owns node)
         holder.item = other
         total += holder.item.value
     for item in nodes:

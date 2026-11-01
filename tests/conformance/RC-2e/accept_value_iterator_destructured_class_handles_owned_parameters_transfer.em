@@ -27,5 +27,5 @@ fn consume(owns token: Token) -> i32:
 
 fn main():
     for left, right in PairIter(false):
-        println(consume(left))
-        println(consume(right))
+        println(consume(owns left))
+        println(consume(owns right))

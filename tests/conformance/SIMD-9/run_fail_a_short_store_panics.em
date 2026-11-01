@@ -11,5 +11,5 @@ fn fill(ref mut out: MutSpan[f64]):
 
 fn main():
     out: Array[f64] = [0.0, 0.0, 0.0, 0.0]
-    fill(out)
+    fill(ref mut out)
     println(out)

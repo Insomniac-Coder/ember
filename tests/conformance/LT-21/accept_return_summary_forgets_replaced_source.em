@@ -14,11 +14,11 @@ fn replace_selected(old: Span[i32], stable: Span[i32], replacement: Span[i32]) -
 
 fn main():
     old: Array[i32] = Array[i32]()
-    old.push(10)
+    old.push(owns 10)
     stable: Array[i32] = Array[i32]()
-    stable.push(20)
+    stable.push(owns 20)
     replacement: Array[i32] = Array[i32]()
-    replacement.push(30)
+    replacement.push(owns 30)
     pair = replace_selected(old.as_span(), stable.as_span(), replacement.as_span())
-    old.push(11)
+    old.push(owns 11)
     println(pair.selected[0])

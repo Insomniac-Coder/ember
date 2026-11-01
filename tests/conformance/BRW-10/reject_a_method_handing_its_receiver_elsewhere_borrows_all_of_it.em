@@ -8,7 +8,7 @@ struct Words:
     count: int = 0
 
     fn bump():
-        touch(this)
+        touch(ref mut this)
 
 fn touch(ref mut w: Words):
     w.count += 1

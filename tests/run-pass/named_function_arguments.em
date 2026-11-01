@@ -20,4 +20,4 @@ fn main():
     println(encode(right=2, left=1))
     println(choose[i32](right=2, left=1))
     state: i32 = 1
-    println(encode(right=bump(state), left=bump(state)))
+    println(encode(right=bump(ref mut state), left=bump(ref mut state)))

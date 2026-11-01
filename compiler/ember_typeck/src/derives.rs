@@ -535,7 +535,8 @@ fn unit_display(decl: &ast::EnumDecl, span: Span) -> ast::Item {
 /// `[DRV-1]` — `Display` on a struct or a payload enum: its `Debug` text, written into the
 /// `Formatter` directly.
 fn debug_display(name: ast::Ident, generics: &[ast::GenericParam], span: Span) -> ast::Item {
-    let f = path(&[Symbol::intern("f")], span);
+    // `[FN-2a]` — `implicit_fmt_debug` may change the formatter, and the call says so.
+    let f = expr(ast::ExprKind::RefOf { mutable: true, place: Box::new(path(&[Symbol::intern("f")], span)) }, span);
     let body = ret(Some(call(path(&[Symbol::intern("std.fmt.implicit_fmt_debug")], span), vec![self_expr(span), f], span)), span);
     extend_item(&bounded(generics, "std.core.Debug", span), owner_type(name, generics), vec![named_type("std.core.Display", span)], vec![fmt_member(body, span)], span)
 }

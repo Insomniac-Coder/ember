@@ -15,7 +15,7 @@ class Bag:
         this.items = [1, 2, 3]
 
     fn grown_view() -> Span[int]:
-        this.items.push(0)
+        this.items.push(owns 0)
         return this.items
 
     fn slot(i: int) -> ref mut int:

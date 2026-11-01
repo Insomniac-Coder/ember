@@ -11,7 +11,7 @@ fn main():
     c = any(x > 2 for x in xs)
     g = (x > 0 for x in xs)
     d = all(g)
-    e = sum(enumerate(xs).map(fn(p) => p.0))
+    e = sum(enumerate(xs).map(owns fn(p) => p.0))
     fs = [0.5, 0.25]
     f = sum(fs.iter(), 1.0)
     println(a, b, c, d, e, f)

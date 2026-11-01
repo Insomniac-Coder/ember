@@ -13,10 +13,10 @@ extend[T: needs Copy] Array[T] implements Fill[T]:
     [I: needs Iterator[Item = T]]
     fn fill(owns it: I, extra: T):
         for x in it:
-            this.push(x)
-        this.push(extra)
+            this.push(owns x)
+        this.push(owns extra)
 
 fn main():
     a: Array[int] = []
-    a.fill((1..3).iter(), 9)
+    a.fill(owns (1..3).iter(), 9)
     println(a)

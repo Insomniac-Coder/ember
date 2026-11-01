@@ -14,8 +14,8 @@ fn main():
     xs: Array[int] = []
     d: Array[int] = []
     for i in 0..40:
-        xs.push(i)
-        d.push(1)
+        xs.push(owns i)
+        d.push(owns 1)
     xs[20] = 9223372036854775807
     for i in 0..40:
         xs[i] = xs[i] + d[i]

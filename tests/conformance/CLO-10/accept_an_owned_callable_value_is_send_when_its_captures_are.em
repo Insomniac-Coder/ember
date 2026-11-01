@@ -11,7 +11,7 @@ import std.thread
 
 [F: needs (fn() -> int, Send)]
 fn run_later(owns task: F) -> int:
-    h = thread.spawn(owned fn() -> int => task())
+    h = thread.spawn(owns owned fn() -> int => task())
     return h.join()
 
 fn twenty_one() -> int:
@@ -22,4 +22,4 @@ fn main():
     label = "seven".to_string()
     both = owned fn() -> int => n + label.len() + 2
     h = thread.spawn(both)
-    println(h.join(), run_later(owned fn() -> int => n + 6), run_later(twenty_one))
+    println(h.join(), run_later(owns owned fn() -> int => n + 6), run_later(owns twenty_one))

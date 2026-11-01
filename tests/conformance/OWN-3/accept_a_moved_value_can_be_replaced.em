@@ -6,10 +6,10 @@
 
 fn main():
     a: Array[i32] = Array[i32]()
-    a.push(1)
+    a.push(owns 1)
     b = a
     a = Array[i32]()
-    a.push(2)
+    a.push(owns 2)
     println(b[0])
     println(a[0])
 #$ stdout: 1

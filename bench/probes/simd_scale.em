@@ -14,8 +14,8 @@ fn main():
     xs: Array[f32] = []
     out: Array[f32] = []
     for i in 0..n:
-        xs.push((i % 100) as f32)
-        out.push(0.0)
+        xs.push(owns ((i % 100) as f32))
+        out.push(owns 0.0)
     k: f32 = 1.0
     for r in 0..200_000:
         scale(xs, out, k)

@@ -27,4 +27,4 @@ fn small(owns p: Pair) -> int:
 
 fn main():
     s = Samples([0.0; 64], 2)
-    println(by_value(copy of s), by_address(s), small(Pair(1, 2)))
+    println(by_value(owns copy of s), by_address(s), small(owns Pair(1, 2)))

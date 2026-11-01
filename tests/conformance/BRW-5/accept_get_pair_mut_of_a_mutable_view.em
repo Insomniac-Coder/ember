@@ -16,7 +16,7 @@ fn bump_pair(ref mut view: MutSpan[int]):
 
 fn main():
     xs = [1, 3, 3, 2]
-    bump_pair(xs)
+    bump_pair(ref mut xs)
     println(xs)
     match xs.as_mut_span().get_pair_mut(2, 1):
         Some((a, b)):

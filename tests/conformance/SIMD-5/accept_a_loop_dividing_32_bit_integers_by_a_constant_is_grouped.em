@@ -16,11 +16,11 @@ fn unknown(ref mut xs: Array[T]):
 fn main():
     xs: Array[i32] = []
     for i in 0..10000:
-        xs.push(i as i32)
-    unknown(xs)
+        xs.push(owns (i as i32))
+    unknown(ref mut xs)
     ys: Array[i32] = []
     for i in 0..10000:
-        ys.push(0)
+        ys.push(owns 0)
     for i in 0..10000:
         ys[i] = xs[i] * 3 // 7
     total: i64 = 0

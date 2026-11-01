@@ -18,7 +18,7 @@ fn main():
     ps = SoA[Particle].with_capacity(n)
     for i in range(n):
         f = (i % 100) as f32
-        ps.push(Particle(pos=Vec3.ZERO, vel=Vec3(f, 1.0, 0.5), life=1.0))
+        ps.push(owns Particle(pos=Vec3.ZERO, vel=Vec3(f, 1.0, 0.5), life=1.0))
     for step in range(200):
         integrate(ps.pos, ps.vel, 0.01)
     total = 0.0

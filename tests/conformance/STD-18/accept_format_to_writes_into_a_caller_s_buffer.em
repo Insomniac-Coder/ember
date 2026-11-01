@@ -42,7 +42,7 @@ fn label(buf: MutSpan[u8], n: int, ratio: float) -> Result[StrView, FmtError]:
 fn zeros(n: int) -> Array[u8]:
     bytes: Array[u8] = Array[u8]()
     for _ in range(n):
-        bytes.push(0)
+        bytes.push(owns 0)
     return bytes
 
 fn main():

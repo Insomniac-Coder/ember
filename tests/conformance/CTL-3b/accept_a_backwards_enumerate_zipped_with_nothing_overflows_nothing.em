@@ -11,6 +11,6 @@ fn main():
     xs: Array[int] = [1, 2, 3]
     ys: Array[int] = []
     top = int.MAX - 1
-    for p, q in xs.iter().copy_each().enumerate(start=top).rev().zip(ys.iter().copy_each()):
+    for p, q in xs.iter().copy_each().enumerate(start=top).rev().zip(owns ys.iter().copy_each()):
         println(p, q)
     println("no turn")

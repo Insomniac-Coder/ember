@@ -14,4 +14,4 @@ fn sum_and_empty(ref mut xs: Array[int]) -> int:
 
 fn main():
     xs: Array[int] = [1, 2, 3, 4]
-    println(sum_and_empty(xs))
+    println(sum_and_empty(ref mut xs))

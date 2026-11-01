@@ -29,9 +29,9 @@ extend Count implements Iterator:
 
 fn main():
     println(Count(0, 5).max(), Count(0, 5).min(), Count(0, 0).max())
-    println(Count(0, 5).max_by_key(fn(x) => (x * 7) % 5), Count(0, 5).min_by_key(fn(x) => (x * 7) % 5))
-    println(Count(0, 5).reduce(fn(a, b) => a * b), Count(0, 5).max_by(fn(a, b) => b.cmp(a)), Count(0, 0).reduce(fn(a, b) => a + b))
+    println(Count(0, 5).max_by_key(owns fn(x) => (x * 7) % 5), Count(0, 5).min_by_key(owns fn(x) => (x * 7) % 5))
+    println(Count(0, 5).reduce(owns fn(a, b) => a * b), Count(0, 5).max_by(owns fn(a, b) => b.cmp(a)), Count(0, 0).reduce(owns fn(a, b) => a + b))
     xs: Array[int] = [4, 9, 2, 9, 1]
-    println(xs.iter().max(), xs.iter().min(), xs.iter().min_by_key(fn(x) => -x))
+    println(xs.iter().max(), xs.iter().min(), xs.iter().min_by_key(owns fn(x) => -x))
     words: Array[String] = [String.from("pear"), String.from("fig"), String.from("apple")]
-    println(words.iter().max_by_key(fn(w) => w.len()), words.iter().min(), words.iter().min_by(fn(a, b) => a.len().cmp(b.len())))
+    println(words.iter().max_by_key(owns fn(w) => w.len()), words.iter().min(), words.iter().min_by(owns fn(a, b) => a.len().cmp(b.len())))

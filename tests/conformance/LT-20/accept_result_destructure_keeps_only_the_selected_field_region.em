@@ -12,11 +12,11 @@ struct Pair:
 
 fn main():
     left: Array[i32] = Array[i32]()
-    left.push(17)
+    left.push(owns 17)
     right: Array[i32] = Array[i32]()
-    right.push(18)
+    right.push(owns 18)
     result: Result[Pair, i32] = Ok(Pair(left.as_span(), right.as_span()))
-    right.push(19)
+    right.push(owns 19)
     match result:
         Ok(Pair(selected, _)):
             println(selected[0])

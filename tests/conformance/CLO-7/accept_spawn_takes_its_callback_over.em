@@ -9,5 +9,5 @@ import std.thread
 
 fn main():
     message = "hello from a thread".to_string()
-    worker = thread.spawn(owned fn() => message.len())
+    worker = thread.spawn(owns owned fn() => message.len())
     println(worker.join())

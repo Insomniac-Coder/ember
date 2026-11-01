@@ -16,7 +16,7 @@ class Counter:
 
     fn bump():
         this.n += 1
-        this.log.push(this.n)
+        this.log.push(owns this.n)
 
     fn twice():
         this.bump()
@@ -28,5 +28,5 @@ fn touch(ref mut c: Counter):
 fn main():
     c = Counter()
     c.twice()
-    touch(c)
+    touch(ref mut c)
     println(c.n, c.log)

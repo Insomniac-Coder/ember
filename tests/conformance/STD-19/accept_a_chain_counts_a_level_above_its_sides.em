@@ -21,7 +21,7 @@ from std.core import ExactSizeIterator
 
 [I: needs ExactSizeIterator, J: needs ExactSizeIterator[Item = I.Item]]
 fn total(owns a: I, owns b: J) -> int:
-    return a.chain(b).len().to_int()
+    return a.chain(owns b).len().to_int()
 
 [I: needs Iterator]
 fn first(owns from: I, n: int) -> Array[I.Item]:
@@ -30,7 +30,7 @@ fn first(owns from: I, n: int) -> Array[I.Item]:
     while out.len() < n:
         match it.next():
             Some(x):
-                out.push(x)
+                out.push(owns x)
             None:
                 return out
     return out
@@ -39,15 +39,15 @@ fn main():
     xs: Array[int] = [1, 2, 3]
     ys: Array[int] = [4, 5]
     small = 0 .. 3
-    a: int = xs.iter().chain(ys.iter()).len()
-    b: int = xs.iter().copy_each().chain(small.iter()).len()
+    a: int = xs.iter().chain(owns ys.iter()).len()
+    b: int = xs.iter().copy_each().chain(owns small.iter()).len()
     println(a, b)
     big = 0 as u64 .. u64.MAX
     every = 0 as u128 ..= u128.MAX
-    c: u128 = big.iter().chain(big.iter()).len()
-    d: u256 = every.iter().chain(every.iter()).len()
+    c: u128 = big.iter().chain(owns big.iter()).len()
+    d: u256 = every.iter().chain(owns every.iter()).len()
     println(c, d)
-    println(total(xs.iter(), ys.iter()), total(small.iter(), small.iter()))
-    println(first(big.iter().chain(big.iter()).take(2).rev(), 2))
-    println(first(big.iter().chain(big.iter()).enumerate().rev(), 1))
-    println(first(ys.iter().copy_each().chain(small.iter()), 5))
+    println(total(owns xs.iter(), owns ys.iter()), total(owns small.iter(), owns small.iter()))
+    println(first(owns big.iter().chain(owns big.iter()).take(2).rev(), 2))
+    println(first(owns big.iter().chain(owns big.iter()).enumerate().rev(), 1))
+    println(first(owns ys.iter().copy_each().chain(owns small.iter()), 5))

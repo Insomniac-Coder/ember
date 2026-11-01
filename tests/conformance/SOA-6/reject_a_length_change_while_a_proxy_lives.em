@@ -10,7 +10,7 @@ struct P:
 
 fn main():
     ps = SoA[P].with_capacity(2)
-    ps.push(P(1, 2))
+    ps.push(owns P(1, 2))
     p = ps[0]
-    ps.push(P(3, 4))
+    ps.push(owns P(3, 4))
     println(p.a)

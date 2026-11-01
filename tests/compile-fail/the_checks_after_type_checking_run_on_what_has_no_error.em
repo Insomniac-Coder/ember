@@ -24,8 +24,8 @@ fn wrong_type() -> int:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(7)
-    task = owned fn() => consume(values)
+    values.push(owns 7)
+    task = owned fn() => consume(owns values)
     println(twice(task))  #$ error[E3030]: closure would move a captured value out
     moves_twice()
     reads_nothing()

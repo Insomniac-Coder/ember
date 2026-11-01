@@ -1142,6 +1142,11 @@ impl<'a, 'io> Interp<'a, 'io> {
                 let boxed = u64_of(&value);
                 Ok(self.mem.read(boxed, 8)?.to_vec())
             }
+            // `[LT-48]` — whether the `dyn` value's table is the kind's.
+            CastKind::DynKindIs { concrete, interfaces, implementations, .. } => {
+                let table = self.calls.table(*concrete, interfaces, implementations);
+                Ok(vec![u8::from(value.len() >= 16 && u64_of(&value[8..16]) == table)])
+            }
         }
     }
 

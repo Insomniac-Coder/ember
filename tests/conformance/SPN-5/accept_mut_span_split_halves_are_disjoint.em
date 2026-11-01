@@ -10,9 +10,9 @@
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
-    values.push(2)
-    values.push(3)
+    values.push(owns 1)
+    values.push(owns 2)
+    values.push(owns 3)
     view = values.as_mut_span()
     (left, right) = view.split_at(1)
 

@@ -6,7 +6,7 @@
 
 fn main():
     buf: Array[i32] = Array[i32]()
-    buf.push(1)
+    buf.push(owns 1)
     m = buf.as_mut_span()
     m2 = m
     println(m2.len())

@@ -12,10 +12,10 @@ class Counter:
         this.log = []
 
     fn bump():
-        this.log.push(1)
+        this.log.push(owns 1)
 
     fn bump_other(other: Counter):
-        this.log.push(0)
+        this.log.push(owns 0)
         alias = other
         alias.bump()
 

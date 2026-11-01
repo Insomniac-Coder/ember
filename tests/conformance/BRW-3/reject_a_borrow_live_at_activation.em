@@ -6,7 +6,7 @@
 # such a borrow; `refill` would clear the element `r` points to.
 
 fn f(ref mut v: Array[int], x: ref int):
-    v.push(x)
+    v.push(owns x)
 
 fn refill(ref mut dst: Array[String], r: String):
     dst.clear()
@@ -14,6 +14,6 @@ fn refill(ref mut dst: Array[String], r: String):
 
 fn main():
     v: Array[int] = [5]
-    f(v, v[0])    #$ error[E3021]: `v[0]` is borrowed here and mutably borrowed elsewhere
+    f(ref mut v, v[0])    #$ error[E3021]: `v[0]` is borrowed here and mutably borrowed elsewhere
     xs: Array[String] = ["a"]
-    refill(xs, xs[0])    #$ error[E3021]: `xs[0]` is borrowed here and mutably borrowed elsewhere
+    refill(ref mut xs, xs[0])    #$ error[E3021]: `xs[0]` is borrowed here and mutably borrowed elsewhere

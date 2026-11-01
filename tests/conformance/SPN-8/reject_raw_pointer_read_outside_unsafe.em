@@ -3,7 +3,7 @@
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(7)
+    values.push(owns 7)
     pointer: *i32 = values.as_span().as_ptr()
     println(read(pointer, 0)) #$ error[E3100]: `read` needs an `unsafe` block
 

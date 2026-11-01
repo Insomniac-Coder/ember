@@ -25,7 +25,7 @@ fn main():
     n = 200000
     m: Map[int, int] = {}
     for i in 0..n:
-        m.insert(key(i), i)
+        m.insert(owns key(i), owns i)
     total = 0
     for round in 0..3:
         for i in 0..n:

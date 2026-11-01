@@ -15,7 +15,7 @@ class Token:
 fn main():
     tokens: Array[Token] = Array[Token]()
     copies: Array[Token] = Array[Token]()
-    tokens.push(Token(7))
+    tokens.push(owns Token(7))
     for token in tokens:
-        copies.push(token)
+        copies.push(owns token)
     println(copies[0].value)

@@ -10,8 +10,8 @@ fn main():
     for k in 0..2:
         b = Bag()
         for i in 0..1000:
-            b.items.push(i % 7)
-        bags.push(b)
+            b.items.push(owns (i % 7))
+        bags.push(owns b)
     total = 0
     for round in 0..300000:
         b = bags[round % 2]

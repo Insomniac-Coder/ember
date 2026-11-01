@@ -26,11 +26,11 @@ fn take(owns n: Node):
 
 fn main():
     a = Node(1)
-    take(a)
+    take(owns a)
     println("after", a.v)
-    take(Node(2))
+    take(owns Node(2))
     println("after the temporary")
     c = Node(3)
-    take(c)
+    take(owns c)
     mem.drop(c)
     println("after mem.drop")

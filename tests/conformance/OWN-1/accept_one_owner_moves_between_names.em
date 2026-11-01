@@ -6,7 +6,7 @@
 
 fn main():
     a: Array[i32] = Array[i32]()
-    a.push(1)
+    a.push(owns 1)
     b = a
     println(b[0])
 #$ stdout: 1

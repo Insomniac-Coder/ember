@@ -41,5 +41,5 @@ fn main():
     counter(6)
     doubled: fn(int) -> int = fn(x) => x * 2
     other: fn(int) -> int = fn(x) => x + 1000
-    swap(doubled, other)
+    swap(ref mut doubled, ref mut other)
     println(total, apply_other(g, 2), apply_state(adder, 1), counter(7), apply_swapped(doubled, 1))

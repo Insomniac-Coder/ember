@@ -15,7 +15,7 @@ class Counter:
         this.n = 0
 
 fn later(owns f: fn() -> int + Send) -> int:
-    h = thread.spawn(owned fn() -> int => f())
+    h = thread.spawn(owns owned fn() -> int => f())
     return h.join()
 
 fn widen(owns f: fn() -> int) -> fn() -> int + Send:

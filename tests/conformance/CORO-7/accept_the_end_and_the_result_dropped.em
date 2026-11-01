@@ -44,11 +44,11 @@ fn print_all(ref mut g: G):
 
 fn main():
     g = finishing()
-    print_all(g)
+    print_all(ref mut g)
     taken = g.result()
     mem.drop(taken)
     h = returning()
-    print_all(h)
+    print_all(ref mut h)
     mem.drop(h)
     d = deferring()
     d.next()

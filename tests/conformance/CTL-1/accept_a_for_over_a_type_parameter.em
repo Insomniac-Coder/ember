@@ -37,4 +37,4 @@ fn sum_of(owns it: I) -> int:
 
 fn main():
     xs: Array[int] = [5, 6]
-    println(tally(Count(0, 3)), sum_of(Count(0, 5)), "|", tally(xs.iter()), sum_of(Count(5, 6)))
+    println(tally(owns Count(0, 3)), sum_of(owns Count(0, 5)), "|", tally(owns xs.iter()), sum_of(owns Count(5, 6)))

@@ -12,5 +12,5 @@ fn bump(ps: SoA[P]):
 
 fn main():
     ps = SoA[P].with_capacity(4)
-    ps.push(P(1, 2))
+    ps.push(owns P(1, 2))
     bump(ps)

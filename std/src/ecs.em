@@ -122,8 +122,8 @@ pub open class AnyStorage:
     fn push_entity(e: Entity):
         i = e.index() as int
         while this.sparse.len() <= i:
-            this.sparse.push(0u32)
-        this.entities.push(e)
+            this.sparse.push(owns 0u32)
+        this.entities.push(owns e)
         this.sparse[i] = this.entities.len() as u32
 
     ## Removes the entity at `slot` by moving the last one into it (`[ECS-6]`'s swap-remove hole).
@@ -152,7 +152,7 @@ pub class AosStorage(AnyStorage):
             Some(at):
                 this.dense[at] = value
             None:
-                this.dense.push(value)
+                this.dense.push(owns value)
                 this.push_entity(e)
 
     pub override fn remove_entity(e: Entity) -> bool:
@@ -176,11 +176,11 @@ pub class SoaStorage(AnyStorage):
     fn insert(e: Entity, owns value: T):
         match slot_in(this.entities, this.sparse, e):
             Some(at):
-                this.dense.push(value)
+                this.dense.push(owns value)
                 this.dense.swap(at, this.dense.len() - 1)
                 _old = this.dense.pop()
             None:
-                this.dense.push(value)
+                this.dense.push(owns value)
                 this.push_entity(e)
 
     pub override fn remove_entity(e: Entity) -> bool:
@@ -222,13 +222,13 @@ pub class World:
             index = this.free.pop().unwrap()
             reused = Entity.new(index, this.generations[index as int])
             this.live_slot[index as int] = (this.live.len() + 1) as u32
-            this.live.push(reused)
+            this.live.push(owns reused)
             return reused
         index = this.generations.len() as u32
-        this.generations.push(0u32)
+        this.generations.push(owns 0u32)
         made = Entity.new(index, 0u32)
-        this.live_slot.push((this.live.len() + 1) as u32)
-        this.live.push(made)
+        this.live_slot.push(owns ((this.live.len() + 1) as u32))
+        this.live.push(owns made)
         return made
 
     pub fn is_alive(e: Entity) -> bool:
@@ -243,7 +243,7 @@ pub class World:
             _had = storage.remove_entity(e)
         i = e.index() as int
         this.generations[i] = (this.generations[i] + 1u32) & 4095u32
-        this.free.push(e.index())
+        this.free.push(owns e.index())
         this.alive -= 1
         match slot_in(this.live, this.live_slot, e):
             Some(at):
@@ -270,20 +270,20 @@ pub class World:
             match this.storages.get(key):
                 Some(found):
                     storage = cast found as SoaStorage[T]
-                    storage.insert(e, value)
+                    storage.insert(e, owns value)
                 None:
                     made = SoaStorage[T]()
-                    made.insert(e, value)
-                    _none = this.storages.insert(key, made)
+                    made.insert(e, owns value)
+                    _none = this.storages.insert(owns key, owns made)
         else:
             match this.storages.get(key):
                 Some(found):
                     storage = cast found as AosStorage[T]
-                    storage.insert(e, value)
+                    storage.insert(e, owns value)
                 None:
                     made = AosStorage[T]()
-                    made.insert(e, value)
-                    _none = this.storages.insert(key, made)
+                    made.insert(e, owns value)
+                    _none = this.storages.insert(owns key, owns made)
 
     ## Removes `e`'s component of type `T`, if it has one.
     [T: needs Component]
@@ -356,7 +356,7 @@ pub class World:
     pub fn run_parallel(owns systems: Array[System]):
         sets: Array[Array[Access]] = []
         for system in systems.iter_mut():
-            sets.push(system.accesses())
+            sets.push(owns system.accesses())
         for i in 0..systems.len():
             for j in i + 1..systems.len():
                 first = systems[i].name
@@ -376,7 +376,7 @@ pub class World:
             return
         commands: Array[Commands] = []
         for _ in 0..systems.len():
-            commands.push(Commands(true))
+            commands.push(owns Commands(true))
         parts = systems.as_mut_span().split_at(1)
         (parts.0[0].run_nested)(this, parts.1, commands.as_span())
         for queued in commands:
@@ -501,7 +501,7 @@ pub struct SetView:
 fn aos_storage(world: World) -> AosStorage[T]:
     key = T.component_hash()
     if not world.storages.contains_key(key):
-        _none = world.storages.insert(copy of key, AosStorage[T]())
+        _none = world.storages.insert(owns copy of key, owns AosStorage[T]())
     return cast world.storages[key] as AosStorage[T]
 
 ## `[ECS-3]` — a component `T` (`aos`) read by a query: `ref T`.
@@ -542,7 +542,7 @@ extend[T: needs Component] Read[T] implements ParamOps:
                 return None
 
     static fn accesses(ref mut out: Array[Access]):
-        out.push(access_of[T](false))
+        out.push(owns access_of[T](false))
 
 ## `[ECS-3]` — `Mut[T]` (`aos`) in a query: `ref mut T` from `iter_mut`, `ref T` from `iter`.
 [T]
@@ -582,7 +582,7 @@ extend[T: needs Component] Write[T] implements ParamOps:
                 return None
 
     static fn accesses(ref mut out: Array[Access]):
-        out.push(access_of[T](true))
+        out.push(owns access_of[T](true))
 
 extend[T: needs Component] Mut[T] implements QueryParam:
     type Ops = T.Write
@@ -592,7 +592,7 @@ extend[T: needs Component] Mut[T] implements QueryParam:
 fn soa_storage(world: World) -> SoaStorage[T]:
     key = T.component_hash()
     if not world.storages.contains_key(key):
-        _none = world.storages.insert(copy of key, SoaStorage[T]())
+        _none = world.storages.insert(owns copy of key, owns SoaStorage[T]())
     return cast world.storages[key] as SoaStorage[T]
 
 ## `[ECS-3]`, `[SOA-6]` — a component `T` stored as an `SoA` (`@component(layout=soa)`) read by a
@@ -634,7 +634,7 @@ extend[T: needs Component] ReadSoa[T] implements ParamOps:
                 return None
 
     static fn accesses(ref mut out: Array[Access]):
-        out.push(access_of[T](false))
+        out.push(owns access_of[T](false))
 
 ## `[ECS-3]`, `[SOA-6]` — `Mut[T]` for a component stored as an `SoA`: `SoAMut[T]` from `iter_mut`,
 ## `SoARef[T]` from `iter`.
@@ -675,7 +675,7 @@ extend[T: needs Component] WriteSoa[T] implements ParamOps:
                 return None
 
     static fn accesses(ref mut out: Array[Access]):
-        out.push(access_of[T](true))
+        out.push(owns access_of[T](true))
 
 ## `[ECS-3]` — `Option[P]` in a query: every entity matches it, with `Some` of `P`'s item where
 ## the entity has one.
@@ -704,10 +704,10 @@ extend[O: needs ParamOps] Maybe[O] implements ParamOps:
         return Some(O.get(ref view.inner, e))
 
     static fn get_mut(ref mut view: Maybe[O], e: Entity) -> Option[Option[O.Item]]:
-        return Some(O.get_mut(view.inner, e))
+        return Some(O.get_mut(ref mut view.inner, e))
 
     static fn accesses(ref mut out: Array[Access]):
-        O.accesses(out)
+        O.accesses(ref mut out)
 
 extend[P: needs QueryParam] Option[P] implements QueryParam:
     type Ops = Maybe[P.Ops]
@@ -830,8 +830,8 @@ extend[A: needs ParamOps, B: needs ParamOps] (A, B) implements ParamOps:
         return Some((got0, got1))
 
     static fn accesses(ref mut out: Array[Access]):
-        A.accesses(out)
-        B.accesses(out)
+        A.accesses(ref mut out)
+        B.accesses(ref mut out)
 
 extend[A: needs QueryParam, B: needs QueryParam] (A, B) implements QueryParam:
     type Ops = (A.Ops, B.Ops)
@@ -866,9 +866,9 @@ extend[A: needs ParamOps, B: needs ParamOps, C: needs ParamOps] (A, B, C) implem
         return Some((got0, got1, got2))
 
     static fn accesses(ref mut out: Array[Access]):
-        A.accesses(out)
-        B.accesses(out)
-        C.accesses(out)
+        A.accesses(ref mut out)
+        B.accesses(ref mut out)
+        C.accesses(ref mut out)
 
 extend[A: needs QueryParam, B: needs QueryParam, C: needs QueryParam] (A, B, C) implements QueryParam:
     type Ops = (A.Ops, B.Ops, C.Ops)
@@ -905,10 +905,10 @@ extend[A: needs ParamOps, B: needs ParamOps, C: needs ParamOps, D: needs ParamOp
         return Some((got0, got1, got2, got3))
 
     static fn accesses(ref mut out: Array[Access]):
-        A.accesses(out)
-        B.accesses(out)
-        C.accesses(out)
-        D.accesses(out)
+        A.accesses(ref mut out)
+        B.accesses(ref mut out)
+        C.accesses(ref mut out)
+        D.accesses(ref mut out)
 
 extend[A: needs QueryParam, B: needs QueryParam, C: needs QueryParam, D: needs QueryParam] (A, B, C, D) implements QueryParam:
     type Ops = (A.Ops, B.Ops, C.Ops, D.Ops)
@@ -947,11 +947,11 @@ extend[A: needs ParamOps, B: needs ParamOps, C: needs ParamOps, D: needs ParamOp
         return Some((got0, got1, got2, got3, got4))
 
     static fn accesses(ref mut out: Array[Access]):
-        A.accesses(out)
-        B.accesses(out)
-        C.accesses(out)
-        D.accesses(out)
-        E.accesses(out)
+        A.accesses(ref mut out)
+        B.accesses(ref mut out)
+        C.accesses(ref mut out)
+        D.accesses(ref mut out)
+        E.accesses(ref mut out)
 
 extend[A: needs QueryParam, B: needs QueryParam, C: needs QueryParam, D: needs QueryParam, E: needs QueryParam] (A, B, C, D, E) implements QueryParam:
     type Ops = (A.Ops, B.Ops, C.Ops, D.Ops, E.Ops)
@@ -992,12 +992,12 @@ extend[A: needs ParamOps, B: needs ParamOps, C: needs ParamOps, D: needs ParamOp
         return Some((got0, got1, got2, got3, got4, got5))
 
     static fn accesses(ref mut out: Array[Access]):
-        A.accesses(out)
-        B.accesses(out)
-        C.accesses(out)
-        D.accesses(out)
-        E.accesses(out)
-        F.accesses(out)
+        A.accesses(ref mut out)
+        B.accesses(ref mut out)
+        C.accesses(ref mut out)
+        D.accesses(ref mut out)
+        E.accesses(ref mut out)
+        F.accesses(ref mut out)
 
 extend[A: needs QueryParam, B: needs QueryParam, C: needs QueryParam, D: needs QueryParam, E: needs QueryParam, F: needs QueryParam] (A, B, C, D, E, F) implements QueryParam:
     type Ops = (A.Ops, B.Ops, C.Ops, D.Ops, E.Ops, F.Ops)
@@ -1040,13 +1040,13 @@ extend[A: needs ParamOps, B: needs ParamOps, C: needs ParamOps, D: needs ParamOp
         return Some((got0, got1, got2, got3, got4, got5, got6))
 
     static fn accesses(ref mut out: Array[Access]):
-        A.accesses(out)
-        B.accesses(out)
-        C.accesses(out)
-        D.accesses(out)
-        E.accesses(out)
-        F.accesses(out)
-        G.accesses(out)
+        A.accesses(ref mut out)
+        B.accesses(ref mut out)
+        C.accesses(ref mut out)
+        D.accesses(ref mut out)
+        E.accesses(ref mut out)
+        F.accesses(ref mut out)
+        G.accesses(ref mut out)
 
 extend[A: needs QueryParam, B: needs QueryParam, C: needs QueryParam, D: needs QueryParam, E: needs QueryParam, F: needs QueryParam, G: needs QueryParam] (A, B, C, D, E, F, G) implements QueryParam:
     type Ops = (A.Ops, B.Ops, C.Ops, D.Ops, E.Ops, F.Ops, G.Ops)
@@ -1091,14 +1091,14 @@ extend[A: needs ParamOps, B: needs ParamOps, C: needs ParamOps, D: needs ParamOp
         return Some((got0, got1, got2, got3, got4, got5, got6, got7))
 
     static fn accesses(ref mut out: Array[Access]):
-        A.accesses(out)
-        B.accesses(out)
-        C.accesses(out)
-        D.accesses(out)
-        E.accesses(out)
-        F.accesses(out)
-        G.accesses(out)
-        H.accesses(out)
+        A.accesses(ref mut out)
+        B.accesses(ref mut out)
+        C.accesses(ref mut out)
+        D.accesses(ref mut out)
+        E.accesses(ref mut out)
+        F.accesses(ref mut out)
+        G.accesses(ref mut out)
+        H.accesses(ref mut out)
 
 extend[A: needs QueryParam, B: needs QueryParam, C: needs QueryParam, D: needs QueryParam, E: needs QueryParam, F: needs QueryParam, G: needs QueryParam, H: needs QueryParam] (A, B, C, D, E, F, G, H) implements QueryParam:
     type Ops = (A.Ops, B.Ops, C.Ops, D.Ops, E.Ops, F.Ops, G.Ops, H.Ops)
@@ -1169,7 +1169,7 @@ pub struct QueryIterMut:
             unsafe:  # SAFETY: the query's list, which the run holds while the query lives (`Query`)
                 e = read(this.entities, this.at as usize)
             this.at += 1
-            match Q.Ops.get_mut(this.view, e):
+            match Q.Ops.get_mut(ref mut this.view, e):
                 Some(item):
                     return Some(item)
                 None:
@@ -1221,7 +1221,7 @@ extend[T: needs Component] AddChange[T] implements Change:
     fn apply(world: World):
         match this.value.take():
             Some(value):
-                world.add(this.e, value)
+                world.add(this.e, owns value)
             None:
                 pass
 
@@ -1243,7 +1243,7 @@ pub class Commands:
     ## It allocates the change it queues.
     pub fn destroy(e: Entity):
         with queued = this.queued.lock():
-            queued.push(Box(DestroyChange(e)))
+            queued.push(owns Box(DestroyChange(e)))
 
     ## Gives `e` the component `value`. In a system `run_parallel` runs, the component is `Send`
     ## (ODR-218): it moves to the calling thread.
@@ -1253,14 +1253,14 @@ pub class Commands:
         if this.parallel and not type_is_send[T]():
             panic(f"a system `run_parallel` runs adds a `{T.component_name()}`, which is not Send")
         with queued = this.queued.lock():
-            queued.push(Box(AddChange[T](e, Some(value))))
+            queued.push(owns Box(AddChange[T](e, Some(value))))
 
     ## Removes `e`'s component of type `T`.
     ## It allocates the change it queues.
     [T: needs Component]
     pub fn remove(e: Entity):
         with queued = this.queued.lock():
-            queued.push(Box(RemoveChange(e, T.component_hash())))
+            queued.push(owns Box(RemoveChange(e, T.component_hash())))
 
     ## How many changes are waiting.
     pub fn len() -> int:
@@ -1289,7 +1289,7 @@ pub struct System:
 ## must be `Send` (`E7004`, naming it, where `system` is called).
 [Q: needs QueryParam, B: needs fn(ref mut Query[Q])]
 pub fn system(owns body: B, name: StrView) -> System:
-    return System(name=name, accesses_of=owned fn(ref mut out: Array[Access]) => Q.Ops.accesses(out), run_nested=owned fn(world: World, ref mut rest: MutSpan[System], commands: Span[Commands]) => run_staged[Q, B](world, body, rest, commands))
+    return System(name=name, accesses_of=owned fn(ref mut out: Array[Access]) => Q.Ops.accesses(ref mut out), run_nested=owned fn(world: World, ref mut rest: MutSpan[System], commands: Span[Commands]) => run_staged[Q, B](world, ref mut body, ref mut rest, commands))
 
 ## What a system's job is handed: its function and its query, both the staging frame's.
 [B, T]
@@ -1327,7 +1327,7 @@ fn run_staged(world: World, ref mut body: B, ref mut rest: MutSpan[System], comm
             q.count = live.len()
     work = SystemWork[B, Query[Q]](body=ref mut body, query=ref mut q)
     with scope = jobs.scope():
-        scope.submit(fn() => run_work[Q, B](work))
+        scope.submit(owns fn() => run_work[Q, B](ref mut work))
         if rest.len() > 0:
             parts = rest.split_at(1)
             (parts.0[0].run_nested)(world, parts.1, commands[1..])

@@ -42,4 +42,4 @@ fn main():
     for x in Take(Count(0), 3):
         print(x, "")
     empty = Take(Count(0), 0)
-    println("|", first_of(Count(0)), empty.next())
+    println("|", first_of(owns Count(0)), empty.next())

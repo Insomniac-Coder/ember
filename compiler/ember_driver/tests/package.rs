@@ -311,7 +311,7 @@ fn a_package_uses_only_its_layers() {
     let checked = ember(&["check"], &dir.join("firmware"));
     assert!(checked.ok, "core-only code was refused: {}", checked.stderr);
 
-    package(&dir.join("firmware"), core_only, &[("lib", &format!("{fits}\npub fn readings() -> i32:\n    values = [1, 2, 3]\n    values.push(4)\n    return values.len() as i32\n"))]);
+    package(&dir.join("firmware"), core_only, &[("lib", &format!("{fits}\npub fn readings() -> i32:\n    values = [1, 2, 3]\n    values.push(owns 4)\n    return values.len() as i32\n"))]);
     let alloc = ember(&["check"], &dir.join("firmware"));
     assert!(!alloc.ok && alloc.stderr.contains("error[E1021]: `readings` needs the `alloc` layer, which is not linked in this build"), "{}", alloc.stderr);
     assert!(alloc.stderr.contains("this package declares `[package] layers = [\"core\"]`"), "{}", alloc.stderr);
@@ -373,7 +373,7 @@ fn a_binary_package_replaces_the_global_allocator() {
                 fn allocate(layout: Layout) -> *mut u8:\n        this.blocks.fetch_add(1)\n        return System().allocate(layout)\n\n    \
                 fn deallocate(p: *mut u8, layout: Layout):\n        System().deallocate(p, layout)\n\n    \
                 fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:\n        this.blocks.fetch_add(1)\n        return System().reallocate(p, old, new_size)\n";
-    let main = "import heap\n\nfn main():\n    words: Array[String] = []\n    for i in 0..50:\n        words.push(f\"word {i}\")\n    \
+    let main = "import heap\n\nfn main():\n    words: Array[String] = []\n    for i in 0..50:\n        words.push(owns f\"word {i}\")\n    \
                 println(words.len(), heap.COUNTING.blocks.load() >= 50)\n";
     let manifest = |kind: &str, named: &str| format!("[package]\nname = \"app\"\nkind = \"{kind}\"\n\n[build]\nglobal_allocator = \"{named}\"\n");
     let dir = scratch();

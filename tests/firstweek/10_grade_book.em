@@ -36,7 +36,7 @@ class GradeBook:
             return
         if name not in this.students:
             this.students[name] = Student(name=name)
-        this.students[name].scores.push(score)
+        this.students[name].scores.push(owns score)
 
     fn class_average() -> float:
         averages = [s.average() for s in this.students.values()]

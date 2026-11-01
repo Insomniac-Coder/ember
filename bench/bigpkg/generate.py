@@ -86,7 +86,7 @@ pub fn fold_{n}(s: S{n}, rounds: int) -> int:
     total = 0
     values: Array[int] = []
     for i in 0..rounds:
-        values.push(s.a * i + s.b - s.c)
+        values.push(owns (s.a * i + s.b - s.c))
     for v in values:
         if v % 3 == 0:
             total += v
@@ -251,7 +251,7 @@ def live_main_module(count):
     lines += ["", "class Particle:", "    x: int = 0", "    step: int = 1", "", "fn main():", "    total = 0"]
     for i in range(1, count):
         lines.append(f"    total += {module_name(i)}.run_{i}(total % 1000 + {i})")
-    lines += ["    world: Array[Particle] = []", f"    for k in 0..{LIVE_INSTANCES}:", "        world.push(Particle())",
+    lines += ["    world: Array[Particle] = []", f"    for k in 0..{LIVE_INSTANCES}:", "        world.push(owns Particle())",
               "    started = Instant.now()", "    last = -1",
               "    while started.elapsed().as_secs_f64() < 600.0:",
               "        for p in world:", "            p.x += p.step",

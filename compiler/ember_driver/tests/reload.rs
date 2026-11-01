@@ -386,7 +386,7 @@ fn a_running_thread_holds_the_reload_back() {
               static STARTED: Atomic[int] = Atomic(0)\nstatic STOP: Atomic[int] = Atomic(0)\n\n\
               fn version() -> int:\n    return 1\n\n\
               fn spin() -> int:\n    STARTED.store(1)\n    turns = 0\n    while STOP.load() == 0:\n        turns += 1\n    return turns\n\n\
-              fn main():\n    worker = thread.spawn(fn() => spin())\n    while STARTED.load() == 0:\n        pass\n    \
+              fn main():\n    worker = thread.spawn(owns fn() => spin())\n    while STARTED.load() == 0:\n        pass\n    \
               hot.checkpoint()\n    println(version())\n    STOP.store(1)\n    turns = worker.join()\n    hot.checkpoint()\n    println(version())\n    println(turns >= 0)\n";
     let v2 = v1.replace("return 1\n", "return 2\n");
     let (run, reloads) = reload_run("reload-threads", RELOAD_ALL, v1, &[&v2]);
@@ -519,7 +519,7 @@ fn host_run(label: &str, source: &str, edits: &[&str], frames: u32) -> Run {
     let out_arg = out.to_string_lossy().into_owned();
     let file_arg = file.to_string_lossy().into_owned();
     let built = ember(&["build", &file_arg, "--out-dir", &out_arg], &root);
-    assert_eq!(built.exit, 0, "the first build failed:\n{}", built.stderr);
+    assert_eq!(built.exit, 0, "{label}: the first build failed:\n{}", built.stderr);
     for edit in edits {
         std::fs::write(&file, edit).expect("the edit is writable");
         let reloaded = ember(&["build", "--reload", &file_arg, "--out-dir", &out_arg], &root);
@@ -574,7 +574,7 @@ fn link_host(package: &Path, out: &Path, host: &str) -> PathBuf {
 const PARTICLES: &str = "from std.sync import Atomic, Mutex\n\n@sync\nclass Particle:\n    x: Atomic[int] = Atomic(0)\n    step: int = 1\n\n\
     static WORLD: Mutex[Array[Particle]] = Mutex([])\n\n\
     @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with world = WORLD.lock():\n        \
-    if world.len() == 0:\n            for k in 0..3:\n                world.push(Particle())\n        \
+    if world.len() == 0:\n            for k in 0..3:\n                world.push(owns Particle())\n        \
     for p in world:\n            p.x.fetch_add(p.step)\n            total += p.x.load()\n    return total\n\nfn main():\n    pass\n";
 
 /// `[HR-14]`, `[HR-15]`, `[HR-2a]`, `[HR-13a]`, `[HR-21]`, `[HR-30]` — a host polls between frames.
@@ -799,7 +799,7 @@ fn an_enum_payload_migrates_by_the_field_rows() {
 const POINTS: &str = "from std.sync import Mutex\n\nstruct Point:\n    x: int = 0\n    step: int = 1\n\n\
     static PTS: Mutex[Array[Point]] = Mutex([])\n\n\
     @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with pts = PTS.lock():\n        \
-    if pts.len() == 0:\n            for k in 0..3:\n                pts.push(Point())\n        \
+    if pts.len() == 0:\n            for k in 0..3:\n                pts.push(owns Point())\n        \
     for i in 0..pts.len():\n            pts[i].x += pts[i].step\n            total += pts[i].x\n    return total\n\nfn main():\n    pass\n";
 
 /// `[HR-13]` — value-typed data is migrated through its container: `Point`s by value in an `Array`
@@ -826,7 +826,7 @@ fn value_data_migrates_through_its_container() {
     let fixed = POINTS
         .replace("static PTS: Mutex[Array[Point]] = Mutex([])", "struct Pair:\n    two: [Point; 2]\n\nstatic PTS: Mutex[Pair] = Mutex(Pair(two = [Point(), Point()]))")
         .replace(
-            "        if pts.len() == 0:\n            for k in 0..3:\n                pts.push(Point())\n        for i in 0..pts.len():\n            pts[i].x += pts[i].step\n            total += pts[i].x\n",
+            "        if pts.len() == 0:\n            for k in 0..3:\n                pts.push(owns Point())\n        for i in 0..pts.len():\n            pts[i].x += pts[i].step\n            total += pts[i].x\n",
             "        for i in 0..2:\n            pts.two[i].x += pts.two[i].step\n            total += pts.two[i].x\n",
         );
     let refixed = fixed.replace("    step: int = 1\n", "    step: int = 1\n    bonus: int = 100\n").replace("total += pts.two[i].x", "total += pts.two[i].x + pts.two[i].bonus");
@@ -836,7 +836,7 @@ fn value_data_migrates_through_its_container() {
     // An `Array` of `Array`s.
     let rows = POINTS
         .replace("Mutex[Array[Point]]", "Mutex[Array[Array[Point]]]")
-        .replace("                pts.push(Point())\n", "                pts.push([Point()])\n")
+        .replace("                pts.push(owns Point())\n", "                pts.push(owns [Point()])\n")
         .replace("            pts[i].x += pts[i].step\n            total += pts[i].x\n", "            pts[i][0].x += pts[i][0].step\n            total += pts[i][0].x\n");
     let rerows = rows.replace("    step: int = 1\n", "    step: int = 1\n    bonus: int = 100\n").replace("total += pts[i][0].x", "total += pts[i][0].x + pts[i][0].bonus");
     let run = host_run("reload-array-rows", &rows, &[&rerows], 3);
@@ -846,14 +846,14 @@ fn value_data_migrates_through_its_container() {
     let modes = "from std.sync import Mutex\n\nenum Mode:\n    Slow\n    Fast\n\nstatic MODES: Mutex[Array[Mode]] = Mutex([])\n\n\
                  fn speed(mode: Mode) -> int:\n    match mode:\n        Mode.Slow:\n            return 1\n        Mode.Fast:\n            return 10\n\n\
                  @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with modes = MODES.lock():\n        \
-                 if modes.len() == 0:\n            modes.push(Mode.Slow)\n            modes.push(Mode.Fast)\n        \
+                 if modes.len() == 0:\n            modes.push(owns Mode.Slow)\n            modes.push(owns Mode.Fast)\n        \
                  for m in modes:\n            total += speed(m)\n    return total + turn * 100\n\nfn main():\n    pass\n";
     let reordered = modes
         .replace("enum Mode:\n    Slow\n    Fast\n", "enum Mode:\n    Fast\n    Turbo\n    Slow\n")
         .replace("        Mode.Fast:\n            return 10\n", "        Mode.Fast:\n            return 10\n        Mode.Turbo:\n            return 50\n");
     let run = host_run("reload-array-modes", modes, &[&reordered], 2);
     assert_eq!(run.stdout, "11\napplied, 0 migrated\n111\n", "{}", run.stderr);
-    let removed = modes.replace("enum Mode:\n    Slow\n    Fast\n", "enum Mode:\n    Slow\n").replace("            modes.push(Mode.Fast)\n", "").replace("        Mode.Fast:\n            return 10\n", "");
+    let removed = modes.replace("enum Mode:\n    Slow\n    Fast\n", "enum Mode:\n    Slow\n").replace("            modes.push(owns Mode.Fast)\n", "").replace("        Mode.Fast:\n            return 10\n", "");
     let run = host_run("reload-array-modes-removed", modes, &[&removed], 2);
     assert!(run.stdout.contains("variant `Mode.Fast` was removed while static `MODES` holds it (an element of a container)"), "{}", run.stdout);
     assert!(run.stdout.ends_with("111\n"), "the old code did not run on: {}", run.stdout);
@@ -862,7 +862,7 @@ fn value_data_migrates_through_its_container() {
     let shapes = "from std.sync import Mutex\n\nenum Shape:\n    Dot\n    Circle(r: int)\n\nstatic SHAPES: Mutex[Array[Shape]] = Mutex([])\n\n\
                   fn size(s: Shape) -> int:\n    match s:\n        Shape.Dot:\n            return 0\n        Shape.Circle(r):\n            return r\n\n\
                   @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with shapes = SHAPES.lock():\n        \
-                  if shapes.len() == 0:\n            shapes.push(Shape.Circle(4))\n            shapes.push(Shape.Dot)\n        \
+                  if shapes.len() == 0:\n            shapes.push(owns Shape.Circle(4))\n            shapes.push(owns Shape.Dot)\n        \
                   for s in shapes:\n            total += size(s)\n    return total + turn * 100\n\nfn main():\n    pass\n";
     let reshaped = shapes
         .replace("    Circle(r: int)\n", "    Circle(r: int, scale: i64)\n    Square(side: int)\n")
@@ -891,7 +891,7 @@ fn value_data_migrates_through_its_container() {
     let ecs = "import std.hot\nfrom std.ecs import World, Component, AosStorage, SoaStorage\n\n\
                @derive(Copy, Component)\nstruct Position:\n    x: int\n\n\
                @derive(Copy, Component)\n@component(layout=soa)\nstruct Velocity:\n    dx: int\n\n\
-               fn setup(w: World):\n    for k in 0..3:\n        e = w.create()\n        w.add(e, Position(k))\n        w.add(e, Velocity(10))\n\n\
+               fn setup(w: World):\n    for k in 0..3:\n        e = w.create()\n        w.add(e, owns Position(k))\n        w.add(e, owns Velocity(10))\n\n\
                fn report(w: World) -> int:\n    total = 0\n    match w.storage[Position]():\n        Some(any):\n            \
                ps = cast any as AosStorage[Position]\n            for p in ps.dense:\n                total += p.x\n        None:\n            pass\n    \
                match w.storage[Velocity]():\n        Some(any):\n            vs = cast any as SoaStorage[Velocity]\n            \
@@ -1264,9 +1264,9 @@ fn a_pinned_object_is_never_moved() {
     let v1 = "from std.sync import Mutex\nfrom std.ffi import Retained\n\n@sync\nclass Mote:\n    x: int = 1\n    spare: int = 0\n\n\
               static PINS: Mutex[Array[Retained[Mote]]] = Mutex([])\nstatic FREE: Mutex[Array[Mote]] = Mutex([])\n\n\
               @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with pins = PINS.lock():\n        \
-              if pins.len() == 0:\n            pins.push(Retained.pin(Mote()))\n            pins.push(Retained.pin(Mote()))\n        \
+              if pins.len() == 0:\n            pins.push(owns Retained.pin(owns Mote()))\n            pins.push(owns Retained.pin(owns Mote()))\n        \
               for tok in pins:\n            total += 1\n    \
-              with free = FREE.lock():\n        if free.len() == 0:\n            free.push(Mote())\n        for m in free:\n            total += m.x * 10\n    \
+              with free = FREE.lock():\n        if free.len() == 0:\n            free.push(owns Mote())\n        for m in free:\n            total += m.x * 10\n    \
               return total\n\nfn main():\n    pass\n";
     let grown = v1.replace("    spare: int = 0\n", "    spare: int = 0\n    more: int = 5\n");
     let run = host_run("reload-pinned-moves", v1, &[&grown], 2);
@@ -1274,7 +1274,7 @@ fn a_pinned_object_is_never_moved() {
     assert!(run.stdout.contains("refused: 2 instances of `Mote` must move (the new size does not fit), but a `Retained` token foreign code holds pins them"), "{}", run.stdout);
     assert!(run.stdout.ends_with("12\n"), "the old code did not run on: {}", run.stdout);
     // Without the pins, the same edit moves the instances.
-    let unpinned = |source: &str| source.replace("            pins.push(Retained.pin(Mote()))\n            pins.push(Retained.pin(Mote()))\n", "            pass\n");
+    let unpinned = |source: &str| source.replace("            pins.push(owns Retained.pin(owns Mote()))\n            pins.push(owns Retained.pin(owns Mote()))\n", "            pass\n");
     let run = host_run("reload-unpinned-moves", &unpinned(v1), &[&unpinned(&grown)], 2);
     assert_eq!(run.stdout, "10\napplied, 1 migrated\n10\n", "{}", run.stderr);
     // A change that fits: migrated in place, pinned or not.
@@ -1294,7 +1294,7 @@ fn a_pinned_object_with_on_relocate_moves_and_is_told() {
               static PINS: Mutex[Array[Retained[Mote]]] = Mutex([])\nstatic MOVED: Atomic[i64] = Atomic(0)\nstatic SAME: Atomic[i64] = Atomic(0)\n\n\
               extern \"C\" fn moved(old: ObjectPtr[Mote], new: ObjectPtr[Mote]):\n    MOVED.fetch_add(1)\n    if old == new:\n        SAME.fetch_add(1)\n\n\
               @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with pins = PINS.lock():\n        \
-              if pins.len() == 0:\n            pins.push(Retained.pin(Mote(), on_relocate=Some(moved)))\n            pins.push(Retained.pin(Mote(), on_relocate=Some(moved)))\n        \
+              if pins.len() == 0:\n            pins.push(owns Retained.pin(owns Mote(), on_relocate=Some(moved)))\n            pins.push(owns Retained.pin(owns Mote(), on_relocate=Some(moved)))\n        \
               for _tok in pins:\n            total += 1\n    \
               return total + MOVED.load() * 100 + SAME.load() * 1000\n\nfn main():\n    pass\n";
     let grown = v1.replace("    spare: int = 0\n", "    spare: int = 0\n    more: int = 5\n");
@@ -1463,7 +1463,7 @@ fn an_enum_static_keeps_its_variant() {
 fn an_instance_moves_only_where_its_references_are_found() {
     let paired = PARTICLES
         .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Array[(int, Particle)]] = Mutex([])")
-        .replace("                world.push(Particle())", "                world.push((k, Particle()))")
+        .replace("                world.push(owns Particle())", "                world.push(owns (k, Particle()))")
         .replace("        for p in world:\n", "        for pair in world:\n            p = pair.1\n")
         .replace("    step: int = 1\n", "    step: int = 1\n    spare: int = 7\n");
     let smaller = paired.replace("    spare: int = 7\n", "");
@@ -1476,7 +1476,7 @@ fn an_instance_moves_only_where_its_references_are_found() {
 
     let boxed = PARTICLES
         .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Array[(int, Box[Particle])]] = Mutex([])")
-        .replace("                world.push(Particle())", "                world.push((k, Box(Particle())))")
+        .replace("                world.push(owns Particle())", "                world.push(owns (k, Box(Particle())))")
         .replace("        for p in world:\n            p.x.fetch_add(p.step)\n            total += p.x.load()",
                  "        for pair in world:\n            pair.1.x.fetch_add(pair.1.step)\n            total += pair.1.x.load()");
     let run = host_run("reload-box-moves", &boxed, &[&grow(&boxed)], 3);
@@ -1484,7 +1484,7 @@ fn an_instance_moves_only_where_its_references_are_found() {
 
     let rows = PARTICLES
         .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Array[Array[Particle]]] = Mutex([])")
-        .replace("                world.push(Particle())", "                world.push([Particle()])")
+        .replace("                world.push(owns Particle())", "                world.push(owns [Particle()])")
         .replace("        for p in world:\n            p.x.fetch_add(p.step)\n            total += p.x.load()",
                  "        for row in world:\n            for p in row:\n                p.x.fetch_add(p.step)\n                total += p.x.load()");
     let run = host_run("reload-rows-move", &rows, &[&grow(&rows)], 3);
@@ -1492,7 +1492,7 @@ fn an_instance_moves_only_where_its_references_are_found() {
 
     let mapped = PARTICLES
         .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Map[int, Particle]] = Mutex({})")
-        .replace("                world.push(Particle())", "                world[k] = Particle()")
+        .replace("                world.push(owns Particle())", "                world[k] = Particle()")
         .replace("        for p in world:\n            p.x.fetch_add(p.step)\n            total += p.x.load()",
                  "        for k in 0..3:\n            p = world[k]\n            p.x.fetch_add(p.step)\n            total += p.x.load()");
     let grown = mapped.replace("    step: int = 1\n", "    step: int = 1\n    more: int = 8\n");
@@ -1505,7 +1505,7 @@ const MIGRATED: &str = "from std.sync import Atomic, Mutex\nfrom std.hot import 
     static fn migrate_from(old: ref OldSelf) -> Result[Self, ReloadError]:\n        return Ok(Particle(old.x.load() * 100, old.step * 10))\n\n\
     static WORLD: Mutex[Array[Particle]] = Mutex([])\n\n\
     @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with world = WORLD.lock():\n        \
-    if world.len() == 0:\n            for k in 0..3:\n                world.push(Particle(0, 1))\n        \
+    if world.len() == 0:\n            for k in 0..3:\n                world.push(owns Particle(0, 1))\n        \
     for p in world:\n            p.x.fetch_add(p.speed)\n            total += p.x.load()\n    return total\n\nfn main():\n    pass\n";
 
 /// `[HR-16]`, `[HR-2a]`, `[HR-38]` — a type declaring `migrate_from(old: ref OldSelf)` is built by it:
@@ -1886,7 +1886,7 @@ fn a_changed_base_is_refused_and_a_renamed_variant_kept() {
 fn weak_handles_follow_a_moved_instance() {
     let v1 = PARTICLES
         .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Array[Particle]] = Mutex([])\nstatic WATCH: Mutex[Array[Weak[Particle]]] = Mutex([])")
-        .replace("                world.push(Particle())", "                p = Particle()\n                with watch = WATCH.lock():\n                    watch.push(Weak(p))\n                world.push(p)")
+        .replace("                world.push(owns Particle())", "                p = Particle()\n                with watch = WATCH.lock():\n                    watch.push(owns Weak(p))\n                world.push(owns p)")
         .replace("    return total\n", "    with watch = WATCH.lock():\n        for w in watch:\n            match w.upgrade():\n                Some(p):\n                    total += 1000 * p.step\n                None:\n                    pass\n    return total\n");
     let v2 = v1.replace("    step: int = 1\n", "    step: int = 1\n    bonus: int = 100\n");
     let run = host_run("reload-weak", &v1, &[&v2], 3);
@@ -1956,7 +1956,7 @@ int main(int argc, char** argv) {
 const BENCH_WORLD: &str = "from std.sync import Atomic, Mutex\n\n@sync\nclass Particle:\n    x: Atomic[int] = Atomic(0)\n    step: int = 1\n\n\
     static WORLD: Mutex[Array[Particle]] = Mutex([])\n\nfn tag(p: Particle) -> int:\n    return 1\n\n\
     @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    with world = WORLD.lock():\n        \
-    if world.len() == 0:\n            for k in 0..10000:\n                world.push(Particle())\n        \
+    if world.len() == 0:\n            for k in 0..10000:\n                world.push(owns Particle())\n        \
     for p in world:\n            p.x.fetch_add(p.step)\n        return tag(world[0]) * 100000 + world.len()\n\nfn main():\n    pass\n";
 
 /// `[BEN-8]` — the end-to-end reload benchmark. A host runs a program holding 10,000 live
@@ -1981,7 +1981,7 @@ fn the_reload_benchmark_times_three_edits() {
              this.step = step\n        this.bonus = bonus\n\n    static fn migrate_from(old: ref OldSelf) -> Result[Self, ReloadError]:\n        \
              return Ok(Particle(old.x.load(), old.step as f64, old.bonus + 1))\n",
         )
-        .replace("world.push(Particle())", "world.push(Particle(0, 1.0, 3))")
+        .replace("world.push(owns Particle())", "world.push(owns Particle(0, 1.0, 3))")
         .replace("p.x.fetch_add(p.step)", "p.x.fetch_add(1)");
     let edits = [("a function body", body, 210000), ("a field added with a default", field, 310000), ("a field retyped through `migrate_from`", retyped, 410000)];
 

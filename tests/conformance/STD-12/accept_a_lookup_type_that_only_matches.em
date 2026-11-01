@@ -52,7 +52,7 @@ extend Maker implements Hash, AsKey[Id], ToKey[Id]:
 
 fn main():
     m: Map[Id, int] = {}
-    m.insert(Id(1), 7)
+    m.insert(owns Id(1), owns 7)
     println(m.get(Probe(1)), Probe(1) in m, m[Probe(1)])
     maker = Maker(2, Cell(0))
     m[maker] = 9

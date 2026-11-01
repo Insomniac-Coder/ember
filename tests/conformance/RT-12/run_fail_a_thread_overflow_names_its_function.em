@@ -13,5 +13,5 @@ fn climb(n: int) -> int:
     return r + near[r % 4]
 
 fn main():
-    worker = thread.spawn(owned fn() => climb(0))
+    worker = thread.spawn(owns owned fn() => climb(0))
     println(worker.join())

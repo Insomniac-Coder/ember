@@ -11,7 +11,7 @@ fn get(ref mut c: RefCell[i32]) -> Ref[i32]:
 
 fn main():
     c: RefCell[i32] = RefCell(41)
-    with g = get(c):
+    with g = get(ref mut c):
         println(1)
         println(g)
 #$ stdout: 1

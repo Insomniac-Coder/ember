@@ -24,21 +24,21 @@ class Editor:
     fn insert(pos: int, text: StrView):
         e = Edit.Insert(pos, text)
         this.apply(e)
-        this.undo_stack.push(e)
+        this.undo_stack.push(owns e)
         this.redo_stack.clear()
 
     fn delete(pos: int, count: int):
         removed = this.text[pos:pos + count]
         e = Edit.Delete(pos, removed)
         this.apply(e)
-        this.undo_stack.push(e)
+        this.undo_stack.push(owns e)
         this.redo_stack.clear()
 
     fn undo() -> bool:
         match this.undo_stack.pop():
             Some(e):
                 this.apply(inverse(e))
-                this.redo_stack.push(e)
+                this.redo_stack.push(owns e)
                 return True
             None:
                 return False
@@ -46,7 +46,7 @@ class Editor:
     fn redo() -> bool:
         if this.redo_stack.pop() exists as e:
             this.apply(e)
-            this.undo_stack.push(e)
+            this.undo_stack.push(owns e)
             return True
         return False
 

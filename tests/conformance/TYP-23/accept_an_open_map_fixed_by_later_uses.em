@@ -7,7 +7,7 @@
 
 fn names() -> Map[String, int]:
     m = Map()
-    m.insert(String.from("a"), 1)
+    m.insert(owns String.from("a"), owns 1)
     return m
 
 fn tally(words: Array[String]) -> Map[String, int]:
@@ -23,7 +23,7 @@ fn main():
     d = {}
     d["b"] = 2
     s = Set()
-    s.add(3)
+    s.add(owns 3)
     t = Set()
-    t.add("x")
+    t.add(owns "x")
     println(names(), d, s, t, tally(["a", "b", "a"]))

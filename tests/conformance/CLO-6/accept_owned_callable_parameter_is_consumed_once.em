@@ -11,5 +11,5 @@ fn invoke(owns f: fn() -> i32) -> i32:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(7)
-    println(invoke(owned fn() => values[0]))
+    values.push(owns 7)
+    println(invoke(owns owned fn() => values[0]))

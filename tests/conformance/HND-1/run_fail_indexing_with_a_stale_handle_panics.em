@@ -7,6 +7,6 @@ from std.collections import Pool
 
 fn main():
     pool = Pool[int]()
-    h = pool.insert(3)
+    h = pool.insert(owns 3)
     pool.remove(h)
     println(pool[h])

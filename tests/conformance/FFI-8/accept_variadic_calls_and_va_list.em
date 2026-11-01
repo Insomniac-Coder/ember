@@ -23,7 +23,7 @@ extern "C" fn sink(context: *mut void, format: *c_char, owns arguments: VaList):
     bytes: [u8; 32] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     length: c_int = 0
     unsafe:  # SAFETY(ffi): `bytes` holds 32, and `arguments` are what the format reads
-        length = v.format_list(ref_to_ptr(ref mut bytes) as *mut c_char, 32, format, arguments)
+        length = v.format_list(ref_to_ptr(ref mut bytes) as *mut c_char, 32, format, owns arguments)
     println(shown(ref bytes, length))
 
 fn main():

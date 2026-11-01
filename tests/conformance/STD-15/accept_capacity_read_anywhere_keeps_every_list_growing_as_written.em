@@ -14,8 +14,8 @@ fn room(xs: Array[int]) -> int:
 fn main():
     small: Array[int] = []
     for i in 0..5:
-        small.push(i)
+        small.push(owns i)
     large: Array[int] = []
     for i in 0..9:
-        large.push(i)
+        large.push(owns i)
     println(f"{room(small)} {room(large)}")

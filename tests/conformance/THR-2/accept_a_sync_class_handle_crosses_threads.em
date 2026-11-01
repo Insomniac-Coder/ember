@@ -13,6 +13,6 @@ class Counter:
 fn main():
     counter = Counter()
     mine = counter
-    worker = thread.spawn(owned fn() => mine.hits.fetch_add(2))
+    worker = thread.spawn(owns owned fn() => mine.hits.fetch_add(2))
     worker.join()
     println(counter.hits.load())

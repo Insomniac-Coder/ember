@@ -12,5 +12,5 @@ fn main():
     xs: Array[int] = [1, 2, 3]
     k = 1
     if k < xs.len():
-        shrink(xs)
+        shrink(ref mut xs)
         println(xs[k])

@@ -11,7 +11,7 @@ from std.collections import RandomState
 
 fn seeded(s: StrView) -> u64:
     h = RandomState.new()
-    s.hash(h)
+    s.hash(ref mut h)
     return h.finish()
 
 fn main():
@@ -21,7 +21,7 @@ fn main():
     keys: Array[String] = []
     total = 0
     for (k, v) in m.items():
-        keys.push(k.clone())
+        keys.push(owns k.clone())
         total += v
     println(keys.join(" "))
     println(total, m["k3"] == 3, seeded("key") == seeded("key"), seeded("key") != seeded("kez"))

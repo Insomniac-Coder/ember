@@ -11,7 +11,7 @@ from std.collections import Hash, Hasher, DefaultHasher
 [T: needs Hash]
 fn hash_value(value: T) -> u64:
     h = DefaultHasher.new()
-    value.hash(h)
+    value.hash(ref mut h)
     return h.finish()
 
 fn main():

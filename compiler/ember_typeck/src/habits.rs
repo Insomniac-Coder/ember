@@ -334,7 +334,23 @@ impl Checker<'_> {
             diagnostic
                 .habit(Habit::P6)
                 .note("a Python method Ember spells otherwise has one name, Ember's (Appendix E) [STD-13]")
-                .suggest(format!("Ember's name for it is `{ember}`"), name.span, ember),
+                .suggest_edits(format!("Ember's name for it is `{ember}`"), {
+                    let mut edits = vec![(name.span, Replacement::Text(ember.to_string()))];
+                    // `[FN-2a]` (verdict 149) — `push` takes its value over, and the call says so.
+                    if ember == "push"
+                        && let [value] = args
+                        && !matches!(value.value.kind, ast::ExprKind::Owned(_))
+                    {
+                        // `owns` binds as `-` does: an argument of more than one operand takes brackets.
+                        if binds_as_operand(&value.value) {
+                            edits.push((value.value.span.shrink_to_start(), Replacement::Text("owns ".to_string())));
+                        } else {
+                            edits.push((value.value.span.shrink_to_start(), Replacement::Text("owns (".to_string())));
+                            edits.push((value.value.span.shrink_to_end(), Replacement::Text(")".to_string())));
+                        }
+                    }
+                    edits
+                }),
         )
     }
 
@@ -635,7 +651,8 @@ impl Checker<'_> {
         if Some(&expected) == self.named_types.get(&Symbol::intern("std.core.AnyError")) && self.is_text(found) {
             let made = matches!(expr.kind, ExprKind::Str(_)) || found != self.common.str_;
             let close = if made { ")" } else { ".to_string())" };
-            let edits = vec![(expr.span.shrink_to_start(), Replacement::Text("AnyError.msg(".to_string())), (expr.span.shrink_to_end(), Replacement::Text(close.to_string()))];
+            // `[FN-2a]` — `AnyError.msg` takes its message over (`owns text: String`).
+            let edits = vec![(expr.span.shrink_to_start(), Replacement::Text("AnyError.msg(owns ".to_string())), (expr.span.shrink_to_end(), Replacement::Text(close.to_string()))];
             return diagnostic
                 .habit(Habit::P21)
                 .note("a function returning `Result[T]` fails with an `AnyError`, which `AnyError.msg` makes of a message (ODR-180) [ERR-9]")

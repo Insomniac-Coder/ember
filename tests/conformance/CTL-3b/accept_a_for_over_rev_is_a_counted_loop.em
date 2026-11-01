@@ -19,39 +19,39 @@ fn main():
     ys: Array[int] = [1, 2, 3]
     a: Array[int] = []
     for x in xs.iter().rev():
-        a.push(x)
+        a.push(owns x)
     println(a)
     b: Array[int] = []
     for i in (0..5).iter().rev():
-        b.push(i)
+        b.push(owns i)
     c: Array[int] = []
     n = 3
     for i in (0..=n).rev():
-        c.push(i)
+        c.push(owns i)
     d: Array[int] = []
     for i in (1..=4).iter().rev().rev():
-        d.push(i)
+        d.push(owns i)
     println(b, c, d)
     e: Array[(int, int)] = []
     for i, x in xs.iter().enumerate().rev():
-        e.push((i, x))
+        e.push(owns (i, x))
     println(e)
     f: Array[(int, int)] = []
     for i, x in xs.iter().rev().enumerate():
-        f.push((i, x))
+        f.push(owns (i, x))
     println(f)
     g: Array[int] = []
     for x in xs.iter().copy_each().skip(2).step_by(2).rev():
-        g.push(x)
+        g.push(owns x)
     h: Array[(int, int)] = []
-    for p, q in xs.iter().zip(ys.iter()).rev():
-        h.push((p, q))
+    for p, q in xs.iter().zip(owns ys.iter()).rev():
+        h.push(owns (p, q))
     j: Array[int] = []
     for x in xs.iter().rev().take(3):
-        j.push(x)
+        j.push(owns x)
     k: Array[int] = []
     for x in xs.iter().take(3).rev():
-        k.push(x)
+        k.push(owns x)
     println(g, h, j, k)
     ms: Array[int] = [1, 2, 3]
     turn = 0

@@ -14,5 +14,5 @@ fn run(ref mut counter: Counter, n: int):
 
 fn main():
     counter = Counter(0)
-    run(counter, 3)
+    run(ref mut counter, 3)
     println(counter.value)

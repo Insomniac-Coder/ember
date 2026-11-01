@@ -20,7 +20,7 @@ fn program():
     token = Token(7)
     weak: Weak[Token] = Weak(token)
     copies: Array[Weak[Token]] = Array[Weak[Token]]()
-    copies.push(weak)
+    copies.push(owns weak)
     for observed in copies:
         match observed.upgrade():
             Some(owner):

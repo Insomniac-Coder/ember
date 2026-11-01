@@ -34,6 +34,6 @@ fn main():
             pass
     println(p.peek(), n)
     o: Option[int] = Some(4)
-    add_one(o)
+    add_one(ref mut o)
     none: Option[int] = None
     println(o, o.as_ref().is_some(), none.as_ref())

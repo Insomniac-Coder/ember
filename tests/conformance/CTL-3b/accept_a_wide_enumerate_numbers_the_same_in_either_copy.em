@@ -21,31 +21,31 @@
 fn show_for(m: int, n: int, s: int) -> String:
     out: Array[String] = []
     for (i, x) in (m..n).iter().enumerate(start=s):
-        out.push(f"{i}:{x}")
+        out.push(owns f"{i}:{x}")
     return out.join(" ")
 
 fn show_rev(m: int, n: int, s: int) -> String:
     out: Array[String] = []
     for (i, x) in (m..n).iter().enumerate(start=s).rev():
-        out.push(f"{i}:{x}")
+        out.push(owns f"{i}:{x}")
     return out.join(" ")
 
 fn show_skip(m: int, n: int, s: int) -> String:
     out: Array[String] = []
     for (i, x) in (m..n).iter().skip(1).enumerate(start=s).step_by(2):
-        out.push(f"{i}:{x}")
+        out.push(owns f"{i}:{x}")
     return out.join(" ")
 
 fn show_chain(m: int, n: int, s: int) -> String:
     out: Array[String] = []
-    for (i, x) in (m..n).iter().enumerate(start=s).chain((n..n + 2).iter().enumerate(start=s)):
-        out.push(f"{i}:{x}")
+    for (i, x) in (m..n).iter().enumerate(start=s).chain(owns (n..n + 2).iter().enumerate(start=s)):
+        out.push(owns f"{i}:{x}")
     return out.join(" ")
 
 fn show_wide(m: u128, n: u128, s: int) -> String:
     out: Array[String] = []
     for (i, x) in (m..n).iter().enumerate(start=s):
-        out.push(f"{i}:{x}")
+        out.push(owns f"{i}:{x}")
     return out.join(" ")
 
 fn main():

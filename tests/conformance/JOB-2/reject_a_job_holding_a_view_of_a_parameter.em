@@ -7,7 +7,7 @@
 import std.jobs
 
 fn show(text: StrView):
-    jobs.submit(owned fn() => println(text))
+    jobs.submit(owns owned fn() => println(text))
 
 fn main():
     show("x")

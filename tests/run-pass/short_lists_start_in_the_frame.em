@@ -25,7 +25,7 @@ struct Rgb:
 fn lookups() -> int:
     m: Map[String, int] = {}
     for i in 0..200:
-        m.insert(f"key{i}", i)
+        m.insert(owns f"key{i}", owns i)
     total = 0
     for i in 0..200:
         total = total + m[f"key{i}"]
@@ -41,7 +41,7 @@ fn grows_past_the_buffer():
 fn numbers():
     xs: Array[int] = []
     for i in 0..20:
-        xs.push(i)
+        xs.push(owns i)
     xs[0] = 5
     total = 0
     for i in 0..len(xs):
@@ -51,7 +51,7 @@ fn numbers():
 fn colours():
     cs: Array[Rgb] = []
     for i in 0..30:
-        cs.push(Rgb(i as u8, 1, 2))
+        cs.push(owns Rgb(i as u8, 1, 2))
     println(len(cs), cs[29].r as int + cs[0].g as int + cs[0].b as int)
 
 fn long_format(a: int, b: int, c: int, d: int) -> int:

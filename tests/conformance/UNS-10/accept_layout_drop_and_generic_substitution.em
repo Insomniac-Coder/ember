@@ -11,8 +11,8 @@ struct Bag:
 
 fn make() -> Bag:
     values: Array[i32] = Array[i32]()
-    values.push(1)
-    values.push(2)
+    values.push(owns 1)
+    values.push(owns 2)
     return Bag(values)
 
 [T]
@@ -26,7 +26,7 @@ fn main():
     println(size_of[UnsafeCell[i64]]())
     discard()
     direct = UnsafeCell(make())
-    moved: Bag = extract(direct)
+    moved: Bag = extract(owns direct)
     println(moved.values.len())
 #$ stdout: 8
 #$ 2

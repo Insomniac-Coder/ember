@@ -18,12 +18,12 @@ fn main():
     e: Array[int] = []
     f: Array[int] = []
     for i in 0..40:
-        xs.push(0)
-        zs.push(0)
-        c.push(0)
-        d.push(0)
-        e.push(0)
-        f.push(0)
+        xs.push(owns 0)
+        zs.push(owns 0)
+        c.push(owns 0)
+        d.push(owns 0)
+        e.push(owns 0)
+        f.push(owns 0)
     c[3] = 1
     xs[9] = 9223372036854775807
     d[9] = 1

@@ -6,7 +6,7 @@
 
 fn main():
     data: Array[i32] = Array[i32]()
-    data.push(7)
+    data.push(owns 7)
     task = owned fn() => data[0]
     println(data[0]) #$ error[E3040]: `data` has been moved out of
     println(task())

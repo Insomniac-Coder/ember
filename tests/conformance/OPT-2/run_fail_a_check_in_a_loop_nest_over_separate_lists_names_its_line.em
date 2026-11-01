@@ -14,9 +14,9 @@ fn main():
     d: Array[int] = []
     out: Array[int] = []
     for i in 0..n:
-        a.push(i)
-        d.push(10)
-        out.push(0)
+        a.push(owns i)
+        d.push(owns 10)
+        out.push(owns 0)
     d[7] = 2
     println(3)
     for round in 0..5:

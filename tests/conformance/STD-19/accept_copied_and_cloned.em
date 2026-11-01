@@ -13,7 +13,7 @@
 fn main():
     xs: Array[int] = [4, 9, 2]
     ys = xs.iter().copy_each().to_array()
-    ys.push(1)
+    ys.push(owns 1)
     println(ys, xs.copy_each().skip(1).to_array())
     words: Array[String] = [String.from("a"), String.from("b")]
     ws = words.iter().copy_each().to_array()

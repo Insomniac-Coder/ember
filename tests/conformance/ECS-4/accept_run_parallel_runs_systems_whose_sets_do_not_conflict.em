@@ -46,11 +46,11 @@ fn audit(ref mut q: Query[(Hp, Pos)]):
 fn main():
     w = World()
     e = w.create()
-    w.add(e, Pos(1))
-    w.add(e, Vel(2))
-    w.add(e, Hp(10))
-    w.run_parallel([movement, regen])
-    w.run_parallel([report, audit])
+    w.add(e, owns Pos(1))
+    w.add(e, owns Vel(2))
+    w.add(e, owns Hp(10))
+    w.run_parallel(owns [movement, regen])
+    w.run_parallel(owns [report, audit])
     println(REPORTED.load(), AUDITED.load())
     systems: Array[System] = [movement, regen]
     println(systems.len())

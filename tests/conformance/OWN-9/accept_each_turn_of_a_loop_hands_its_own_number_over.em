@@ -12,8 +12,8 @@ fn take(owns x: int):
 
 fn main():
     for i in 0..3:
-        take(i)
+        take(owns i)
     xs: Array[int] = []
     for j in range(3):
-        xs.push(j)
+        xs.push(owns j)
     println(xs)

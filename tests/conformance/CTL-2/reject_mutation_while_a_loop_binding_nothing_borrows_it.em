@@ -7,10 +7,10 @@
 fn main():
     xs: Array[int] = [1, 2, 3]
     for i, _ in enumerate(xs):
-        xs.push(i) #$ error[E3020]: cannot mutate `xs` while it is borrowed by this loop
+        xs.push(owns i) #$ error[E3020]: cannot mutate `xs` while it is borrowed by this loop
     for _ in xs.iter().take(2):
-        xs.push(0) #$ error[E3020]: cannot mutate `xs` while it is borrowed by this loop
+        xs.push(owns 0) #$ error[E3020]: cannot mutate `xs` while it is borrowed by this loop
     ys: Array[int] = [7, 8]
-    for _, y in xs.iter().zip(ys.iter()):
+    for _, y in xs.iter().zip(owns ys.iter()):
         xs.clear() #$ error[E3020]: cannot mutate `xs` while it is borrowed by this loop
         println(y)

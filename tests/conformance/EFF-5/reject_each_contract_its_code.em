@@ -17,7 +17,7 @@ class Token:
 
 @noalloc
 fn grows(ref mut xs: Array[int]):
-    xs.push(1)
+    xs.push(owns 1)
 
 @noio
 fn prints(n: int):
@@ -44,6 +44,6 @@ fn retains(t: Token) -> int:
 
 fn main():
     xs: Array[int] = []
-    grows(xs)
+    grows(ref mut xs)
     prints(1)
     println(waits(), stops(1), wobbles(1.0), retains(Token(1)))

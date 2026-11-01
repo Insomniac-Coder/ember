@@ -13,7 +13,7 @@ class Names:
 fn main():
     names = Names()
     with w = names.names.write():
-        w.push("a".to_string())
-        w.push("b".to_string())
+        w.push(owns "a".to_string())
+        w.push(owns "b".to_string())
     with r = names.names.read():
         println(r.len(), r[0])

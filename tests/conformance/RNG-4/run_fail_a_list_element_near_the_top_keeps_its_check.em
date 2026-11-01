@@ -8,8 +8,8 @@
 fn main():
     xs: Array[int] = []
     for i in 0..4:
-        xs.push(i)
-    xs.push(9223372036854775000)
+        xs.push(owns i)
+    xs.push(owns 9223372036854775000)
     total = 0
     for x in xs:
         total = total + x + 1000

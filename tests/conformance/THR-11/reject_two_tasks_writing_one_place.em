@@ -13,5 +13,5 @@ fn main():
     counts = [0, 0]
     whole = counts.as_mut_span()
     with scope = thread.scope():
-        scope.spawn(fn() => add_to(whole, 1))
-        scope.spawn(fn() => add_to(whole, 2))
+        scope.spawn(owns fn() => add_to(ref mut whole, 1))
+        scope.spawn(owns fn() => add_to(ref mut whole, 2))

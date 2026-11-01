@@ -13,8 +13,8 @@ fn main():
     n = 1_000_000
     ps = SoA[Particle].with_capacity(n)
     for i in range(n):
-        ps.push(Particle(pos=Vec3(i as f32, 0.0, 0.0), vel=Vec3.ZERO, life=((i * 7) % 10) as f32))
-    ps.retain(fn(p) => p.life >= 5.0)
+        ps.push(owns Particle(pos=Vec3(i as f32, 0.0, 0.0), vel=Vec3.ZERO, life=((i * 7) % 10) as f32))
+    ps.retain(owns fn(p) => p.life >= 5.0)
     total = 0.0
     for p in ps:
         total += p.life as f64

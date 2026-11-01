@@ -15,6 +15,6 @@ fn main():
     data: Array[u8] = Array[u8]()
     i: usize = 0
     while i < 256:
-        data.push(1)
+        data.push(owns 1)
         i = i + 1
     counted(data.as_span())

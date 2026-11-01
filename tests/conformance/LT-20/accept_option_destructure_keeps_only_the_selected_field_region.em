@@ -13,11 +13,11 @@ struct Pair:
 
 fn main():
     left: Array[i32] = Array[i32]()
-    left.push(7)
+    left.push(owns 7)
     right: Array[i32] = Array[i32]()
-    right.push(8)
+    right.push(owns 8)
     maybe: Option[Pair] = Some(Pair(left.as_span(), right.as_span()))
-    right.push(9)
+    right.push(owns 9)
     match maybe:
         Some(Pair(selected, _)):
             println(selected[0])

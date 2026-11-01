@@ -7,11 +7,11 @@ from support.views import bundle, right_value
 
 fn main():
     left: Array[i32] = Array[i32]()
-    left.push(11)
+    left.push(owns 11)
     right: Array[i32] = Array[i32]()
-    right.push(22)
+    right.push(owns 22)
 
     pair = bundle(left.as_span(), right.as_span())
     # The imported summary must retain only `right` through pair.right.
-    left.push(33)
+    left.push(owns 33)
     println(right_value(pair))

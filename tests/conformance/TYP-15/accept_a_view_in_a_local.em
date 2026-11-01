@@ -8,7 +8,7 @@ fn head(xs: Span[i32]) -> i32:
 
 fn main():
     a: Array[i32] = Array[i32]()
-    a.push(5)
+    a.push(owns 5)
     v: Span[i32] = a
     println(head(v))
 #$ stdout: 5

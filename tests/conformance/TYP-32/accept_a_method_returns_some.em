@@ -12,11 +12,11 @@ struct Bag:
     items: Array[int]
 
     fn evens() -> some Iterator[Item = int]:
-        return this.items.iter().copy_each().filter(fn(x) => x % 2 == 0)
+        return this.items.iter().copy_each().filter(owns fn(x) => x % 2 == 0)
 
 extend Bag:
     fn odds() -> some Iterator[Item = int]:
-        return this.items.iter().copy_each().filter(fn(x) => x % 2 == 1)
+        return this.items.iter().copy_each().filter(owns fn(x) => x % 2 == 1)
 
 [T]
 struct Shelf:

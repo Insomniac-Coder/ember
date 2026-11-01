@@ -25,18 +25,18 @@ fn pick(pair: Pair, which: int) -> Span[i32]:
 
 fn main():
     left: Array[i32] = Array[i32]()
-    left.push(7)
-    left.push(5)
+    left.push(owns 7)
+    left.push(owns 5)
     right: Array[i32] = Array[i32]()
-    right.push(8)
+    right.push(owns 8)
     pair = bundle(left.as_span(), right.as_span())
     which = 0
     head = pair.left if which == 0 else pair.left[1..]
     tail = pair.left[1..] if which == 0 else pair.left
-    right.push(9)
+    right.push(owns 9)
     println(head[0])
     println(tail[0])
     again = bundle(left.as_span(), right.as_span())
     chosen = pick(again, 0)
     println(chosen[0])
-    right.push(10)
+    right.push(owns 10)

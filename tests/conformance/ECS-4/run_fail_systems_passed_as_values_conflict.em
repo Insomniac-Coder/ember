@@ -33,8 +33,8 @@ fn report(ref mut q: Query[Pos]):
 fn main():
     w = World()
     e = w.create()
-    w.add(e, Pos(1))
-    w.add(e, Hp(10))
+    w.add(e, owns Pos(1))
+    w.add(e, owns Hp(10))
     systems: Array[System] = [regen, movement, report]
     println("before")
-    w.run_parallel(systems)
+    w.run_parallel(owns systems)

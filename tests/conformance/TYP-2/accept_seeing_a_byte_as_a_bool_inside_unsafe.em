@@ -7,8 +7,8 @@
 
 fn main():
     values: Array[u8] = Array[u8]()
-    values.push(1)
-    values.push(0)
+    values.push(owns 1)
+    values.push(owns 0)
     m = values.as_mut_span()
     p: *mut u8 = m.as_mut_ptr()
     unsafe:  # SAFETY: both bytes are 0 or 1, the only bit patterns a `bool` may hold.

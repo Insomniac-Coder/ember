@@ -21,10 +21,10 @@ fn swapped(left: Span[i32], right: Span[i32]) -> Pair:
 fn main():
     a: Array[i32] = Array[i32]()
     b: Array[i32] = Array[i32]()
-    a.push(1)
+    a.push(owns 1)
     pair = bundle(a.as_span(), b.as_span())
-    b.push(2)
+    b.push(owns 2)
     println(pair.left.len())
     other = swapped(a.as_span(), b.as_span())
-    a.push(3)
+    a.push(owns 3)
     println(other.left.len() - 1)

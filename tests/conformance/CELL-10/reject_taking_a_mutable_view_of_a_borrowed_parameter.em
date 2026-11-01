@@ -12,5 +12,5 @@ fn expose(values: Array[i32]):
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
+    values.push(owns 1)
     expose(values)

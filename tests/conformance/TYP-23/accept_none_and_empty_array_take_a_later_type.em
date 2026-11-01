@@ -19,7 +19,7 @@ fn evens(n: int) -> Array[int]:
     out = []
     for i in range(n):
         if i % 2 == 0:
-            out.push(i)
+            out.push(owns i)
     return out
 
 fn total(xs: Span[float]) -> float:

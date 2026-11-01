@@ -7,7 +7,7 @@ struct Particle:
 fn main():
     ps: Array[Particle] = []
     for i in 0..100000:
-        ps.push(Particle(i as float, 0.0, 1.0, 0.5))
+        ps.push(owns Particle(i as float, 0.0, 1.0, 0.5))
     for step in 0..2000:
         for p in ps.iter_mut():
             p.x = p.x + p.vx

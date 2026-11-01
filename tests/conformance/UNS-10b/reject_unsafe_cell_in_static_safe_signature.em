@@ -8,4 +8,4 @@ fn forbidden(owns cell: UnsafeCell[i32]) -> i32: #$ error[E3105]: `UnsafeCell` i
     return cell.into_inner()
 
 fn main():
-    println(forbidden(UnsafeCell(1)))
+    println(forbidden(owns UnsafeCell(1)))

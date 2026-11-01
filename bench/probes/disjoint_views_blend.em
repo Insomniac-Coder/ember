@@ -22,8 +22,8 @@ fn main():
     a: Array[f32] = []
     b: Array[f32] = []
     for i in 0..n:
-        a.push((i % 7) as f32)
-        b.push((i % 5) as f32)
+        a.push(owns ((i % 7) as f32))
+        b.push(owns ((i % 5) as f32))
     apart = 0
     for _ in 0..rounds:
         apart += blend(a, b)

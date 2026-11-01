@@ -12,7 +12,7 @@
 fn keys(m: Map[String, int]) -> Array[String]:
     out: Array[String] = []
     for k in m:
-        out.push(k.clone())
+        out.push(owns k.clone())
     return out
 
 fn main():
@@ -34,5 +34,5 @@ fn main():
     s = {3, 1, 2, 3}
     elements: Array[int] = []
     for x in s:
-        elements.push(x)
+        elements.push(owns x)
     println(elements)

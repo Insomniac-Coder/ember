@@ -10,8 +10,8 @@ struct Grid:
 
 fn main():
     grid = Grid(Array[int]())
-    grid.rows.push(10)
-    grid.rows.push(30)
+    grid.rows.push(owns 10)
+    grid.rows.push(owns 30)
     i = 1
     cell: ref int = ref grid.rows[i]
     println(cell)

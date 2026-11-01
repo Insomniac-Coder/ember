@@ -15,8 +15,8 @@ struct Token:
 fn main():
     tokens: Array[Shared[Token]] = Array[Shared[Token]]()
     copies: Array[Shared[Token]] = Array[Shared[Token]]()
-    tokens.push(Shared(Token(7)))
+    tokens.push(owns Shared(Token(7)))
     for token in tokens:
-        copies.push(token)
+        copies.push(owns token)
     value = copies[0].get()
     println(value.value)

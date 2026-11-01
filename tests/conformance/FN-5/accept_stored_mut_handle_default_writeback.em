@@ -15,5 +15,5 @@ fn replace(ref mut node: Node, next: int = node.value + 1):
 
 fn main():
     parent = Parent(Node(4))
-    replace(parent.child)
+    replace(ref mut parent.child)
     println(parent.child.value)

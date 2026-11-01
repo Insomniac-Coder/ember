@@ -43,10 +43,10 @@ names.extend([String.from("b"), String.from("c")])
 names.swap(0, 2)
 first = names.swap_remove(0)
 names.truncate(9)
-names.push(first)
+names.push(owns first)
 println(names)
 odd = [3, 1, 4, 1, 5, 9, 2, 6]
-odd.retain(fn(x) => x % 2 == 1)
+odd.retain(owns fn(x) => x % 2 == 1)
 runs = [1, 1, 2, 2, 2, 3, 1]
 runs.dedup()
 println(odd, runs)

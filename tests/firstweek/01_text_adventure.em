@@ -29,8 +29,8 @@ class Game:
         this.connect("kitchen", Direction.West, "hall")
         this.connect("library", Direction.East, "vault")
         this.connect("vault", Direction.West, "library")
-        this.rooms["kitchen"].items.push("key")
-        this.rooms["library"].items.push("candle")
+        this.rooms["kitchen"].items.push(owns "key")
+        this.rooms["library"].items.push(owns "candle")
 
     fn add_room(name: StrView, description: StrView):
         this.rooms[name] = Room(name=name, description=description)
@@ -63,8 +63,8 @@ class Game:
     fn take(item: StrView):
         room = this.rooms[this.current]
         if item in room.items:
-            room.items.retain(fn(i) => i != item)
-            this.inventory.push(item)
+            room.items.retain(owns fn(i) => i != item)
+            this.inventory.push(owns item)
             println(f"Taken: {item}")
         else:
             println(f"There is no {item} here.")

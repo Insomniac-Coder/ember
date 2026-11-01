@@ -11,12 +11,12 @@
 
 fn main():
     xs = [1, 2, 3]
-    pairs: Array[int] = xs.iter().copy_each().flat_map(fn(x: int) => [x, x * 10]).collect()
+    pairs: Array[int] = xs.iter().copy_each().flat_map(owns fn(x: int) => [x, x * 10]).collect()
     println(pairs)
     nested = [[1], [2, 3], [], [4]]
     flat: Array[int] = nested.iter().copy_each().flatten().collect()
     println(flat)
-    println(xs.iter().copy_each().flat_map(fn(x: int) => 0..x).count())
+    println(xs.iter().copy_each().flat_map(owns fn(x: int) => 0..x).count())
     println(xs.iter().copy_each().join(", "))
     words = ["x".to_string(), "y".to_string()]
     println(words.iter().copy_each().join("-"))

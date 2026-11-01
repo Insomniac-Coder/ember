@@ -18,15 +18,15 @@ fn main():
     w = World()
     for n in [4, 5]:
         e = w.create()
-        w.add(e, Hp(n))
+        w.add(e, owns Hp(n))
     seen = 0
     runs = 0
     count = fn(ref mut q: Query[Hp], step: int):
         runs += step
         for _ in q.iter():
             seen += 1
-    w.run(count, 1)
-    w.run(count, 1)
+    w.run(count, owns 1)
+    w.run(count, owns 1)
     println(runs, w.len(), seen)
-    w.run(fn(ref mut q: Query[Hp], step: int): runs += step, 5)
+    w.run(owns fn(ref mut q: Query[Hp], step: int): runs += step, owns 5)
     println(runs)

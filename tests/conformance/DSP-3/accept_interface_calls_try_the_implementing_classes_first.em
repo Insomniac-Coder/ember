@@ -60,10 +60,10 @@ class N5 implements Named:
 
 fn main():
     shapes: Array[Shape] = []
-    shapes.push(Rect(3, 4))
+    shapes.push(owns Rect(3, 4))
     square: Rect = Square(3, 3)
-    shapes.push(square)
-    shapes.push(Tri(3, 4))
+    shapes.push(owns square)
+    shapes.push(owns Tri(3, 4))
     total = 0
     for s in shapes:
         total = total + s.area()

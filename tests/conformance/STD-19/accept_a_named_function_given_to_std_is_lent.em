@@ -9,5 +9,5 @@
 fn main():
     xs = [1, 2]
     h = fn(x: int): println(x)
-    xs.iter().for_each(h)
+    xs.iter().for_each(owns h)
     h(5)

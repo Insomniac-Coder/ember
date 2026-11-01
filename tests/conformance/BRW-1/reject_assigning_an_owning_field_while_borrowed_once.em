@@ -12,8 +12,8 @@ fn first(ref mut h: Q) -> ref mut int:
 
 fn main():
     a: Array[int] = Array[int]()
-    a.push(1)
+    a.push(owns 1)
     h = Q(arr=a)
-    r = first(h)
+    r = first(ref mut h)
     h.arr = Array[int]()    #$ error[E3021]: `h` cannot be written while it is borrowed
     println(r)

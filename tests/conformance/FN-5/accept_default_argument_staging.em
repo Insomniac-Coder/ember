@@ -34,6 +34,6 @@ fn main():
     counter = Counter(total=0)
     println(compose(c=counter.next(), a=counter.next()), counter.total)
     item = Payload(a=2, b=6, c=4)
-    double(item)
+    double(ref mut item)
     println(item.b)
     println(same_field(item), item.a + item.c - 3)

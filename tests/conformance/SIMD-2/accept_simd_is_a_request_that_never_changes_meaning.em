@@ -48,7 +48,7 @@ fn first_at_least(xs: Span[int], limit: int) -> int:
 fn main():
     a = [1, 2, 3, 4]
     b = [0, 0, 0, 0]
-    scale(a, b, 3)
+    scale(a, ref mut b, 3)
     println(b)
     println(gathered(a, [3, 3, 1, 0]))
     println(total([1.0, 2.0, 3.5]))

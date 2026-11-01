@@ -32,15 +32,15 @@ gen fn blink(c: Counter) -> Generator[Wait]:
         yield wait_frames(2)
 
 gen fn waiting_for(c: Counter) -> Generator[Wait]:
-    yield wait_until(owned fn() => c.blinks == 0)
+    yield wait_until(owns owned fn() => c.blinks == 0)
     c.blinks = 2
 
 fn main():
     door = Door()
     c = Counter()
     s = Scheduler.new()
-    s.start(door.swing_open())
-    s.start(blink(c))
+    s.start(owns door.swing_open())
+    s.start(owns blink(c))
     s.update(0.25)
     println(door.open_angle)
     s.update(0.25)
@@ -55,7 +55,7 @@ fn main():
     s.update(0.25)
     println(f"blinks {c.blinks}, running {s.len()}")
     t = Scheduler.new()
-    t.start(waiting_for(c))
+    t.start(owns waiting_for(c))
     t.update(0.1)
     c.blinks = 0
     t.update(0.1)

@@ -17,7 +17,7 @@ class Derived(Base):
     tag: String
 
     fn init(owns tag: String):
-        super.init("d") #$ error[E2102]: field `tag` is not assigned on every path before `super.init(...)`
+        super.init(owns "d") #$ error[E2102]: field `tag` is not assigned on every path before `super.init(...)`
         this.tag = tag
 
     override fn describe():

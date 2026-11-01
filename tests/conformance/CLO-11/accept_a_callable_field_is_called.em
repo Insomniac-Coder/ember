@@ -41,7 +41,7 @@ class Button:
         this.on_click = neg
 
 h = H(f=double, g=neg)
-println(h.f(6), h.g(5), (h.g)(5), through(h, 3))
+println(h.f(6), h.g(5), (h.g)(5), through(ref mut h, 3))
 b = Button()
 k = H(f=fn(x) => x + 100, g=neg)
 println(b.on_click(9), k.f(1), (fn(x: int) => x - 1)(10))

@@ -11,5 +11,5 @@ fn main():
     values = [1, 2]
     r = pick(values.as_mut_span())
     r = 5
-    values.push(3)
+    values.push(owns 3)
     println(values)

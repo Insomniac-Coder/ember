@@ -16,7 +16,7 @@ fn main():
     xs: Array[int] = [4, 9, 2, 9]
     pairs: Array[(int, int)] = []
     for (i, x) in xs.enumerate():
-        pairs.push((i, x))
+        pairs.push(owns (i, x))
     println(pairs)
     println(xs.sum(), xs.max(), xs.count(), xs.skip(1).count(), xs.any(fn(x) => x > 8))
     m: Map[StrView, int] = {"a": 1, "b": 2}

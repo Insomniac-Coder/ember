@@ -45,7 +45,7 @@ fn main():
                     s.push_str(pick(seed, latin_words))
                 else:
                     s.push_str(pick(seed, cjk_words))
-            strings.push(s)
+            strings.push(owns s)
         for round in 0..n:
             for s in strings:
                 acc = acc ^ reduce(s, round & 1023)

@@ -7,4 +7,4 @@ fn twice(f: once fn() -> int) -> int:
     return f() + f()
 
 fn main():
-    println(twice(fn() => 1))
+    println(twice(owns fn() => 1))

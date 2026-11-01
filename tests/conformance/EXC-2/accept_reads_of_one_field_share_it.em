@@ -14,7 +14,7 @@ class Bag:
         this.log = []
 
     fn bump():
-        this.items.push(len(this.items) + 1)
+        this.items.push(owns (len(this.items) + 1))
 
 fn main():
     b = Bag()

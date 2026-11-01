@@ -12,8 +12,8 @@ fn main():
     xs: Array[int] = []
     d: Array[int] = []
     for i in 0..40:
-        xs.push(i)
-        d.push(3 * i)
+        xs.push(owns i)
+        d.push(owns (3 * i))
     for i in 0..40:
         before: ref int = ref xs[i]
         next = before + d[i]

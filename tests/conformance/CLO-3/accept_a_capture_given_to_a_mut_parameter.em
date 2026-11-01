@@ -10,6 +10,6 @@ fn add_to(ref mut s: MutSpan[int], n: int):
 fn main():
     counts = [0, 0]
     first, _second = counts.as_mut_span().split_at(1)
-    f = fn() => add_to(first, 5)
+    f = fn() => add_to(ref mut first, 5)
     f()
     println(counts)

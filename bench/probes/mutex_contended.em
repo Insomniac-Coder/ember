@@ -14,7 +14,7 @@ fn main():
     n = 2_000_000
     m = SyncShared(Mutex(0))
     theirs = m
-    other = thread.spawn(owned fn() => bump(theirs, n))
+    other = thread.spawn(owns owned fn() => bump(theirs, n))
     bump(m, n)
     other.join()
     with g = m.get().lock():

@@ -36,7 +36,7 @@ once.
 
 ```ember
 fn parse_age(text: StrView) -> Result[int, String]:
-    age = text.trim().parse[int]().map_err(fn(e) => f"`{text}`: {e}")?
+    age = text.trim().parse[int]().map_err(owns fn(e) => f"`{text}`: {e}")?
     if age < 0:
         return Err(f"{age} is negative")
     return Ok(age)

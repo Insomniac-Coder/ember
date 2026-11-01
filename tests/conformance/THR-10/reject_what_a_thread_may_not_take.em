@@ -16,10 +16,10 @@ class Plain:
 
 fn main():
     count = Shared(0)
-    a = thread.spawn(owned fn() => count.get() + 1)
+    a = thread.spawn(owns owned fn() => count.get() + 1)
     total = 5
-    c = thread.spawn(fn() => total + 1)
-    d = thread.spawn(owned fn() => Plain(3))
+    c = thread.spawn(owns fn() => total + 1)
+    d = thread.spawn(owns owned fn() => Plain(3))
     g: fn() -> int = owned fn() => 4
     e = thread.spawn(g)
-    f = thread.spawn(owned fn(x: int) => x)
+    f = thread.spawn(owns owned fn(x: int) => x)

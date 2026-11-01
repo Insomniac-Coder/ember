@@ -13,9 +13,9 @@ fn right_len(pair: Pair[T]) -> int:
 
 fn main():
     left: Array[i32] = Array[i32]()
-    left.push(41)
+    left.push(owns 41)
     right: Array[i32] = Array[i32]()
-    right.push(42)
+    right.push(owns 42)
     pair = Pair[i32](left.as_span(), right.as_span())
-    right.push(43) #$ error[E3021]: `right` is borrowed here and mutably borrowed elsewhere
+    right.push(owns 43) #$ error[E3021]: `right` is borrowed here and mutably borrowed elsewhere
     println(right_len[i32](pair))

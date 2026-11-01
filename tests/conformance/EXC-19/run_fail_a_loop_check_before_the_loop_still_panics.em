@@ -17,11 +17,11 @@ fn main():
     bags: Array[Bag] = []
     for k in 0..2:
         b = Bag()
-        b.items.push(7)
-        bags.push(b)
+        b.items.push(owns 7)
+        bags.push(owns b)
     view = bags[0].items.as_span()
     println("before")
     sink = bags[0]
     for i in 0..10:
-        sink.items.push(i)
+        sink.items.push(owns i)
     println("after", view[0])

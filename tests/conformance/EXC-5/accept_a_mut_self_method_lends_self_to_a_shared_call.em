@@ -23,7 +23,7 @@ class Bag:
 
     fn add(x: int):
         if not this.has(x):
-            this.items.push(x)
+            this.items.push(owns x)
             this.count += size(this) - this.items.len() + 1
 
 fn size(b: Bag) -> int:

@@ -31,7 +31,7 @@ fn main():
     println(pet.name.as_str())
     s: String = "hello"
     println(s.as_str())
-    g = greet("Bob")
+    g = greet(owns "Bob")
     println(g.as_str())
     t = title()
     println(t.as_str())

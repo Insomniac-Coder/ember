@@ -7,8 +7,8 @@
 
 ```ember
 xs = [3, 1, 4]
-xs.push(1)
-xs.push(5)
+xs.push(owns 1)
+xs.push(owns 5)
 println(xs, len(xs), xs[0])
 xs[1] = 9
 println(xs)
@@ -29,7 +29,7 @@ An empty list needs its type said, since nothing in it says it:
 
 ```ember
 names: Array[String] = []
-names.push("Ada".to_string())
+names.push(owns "Ada".to_string())
 println(names.len())
 ```
 
@@ -119,8 +119,8 @@ value instead, and `get` gives an `Option`.
 
 ```ember
 seen = {3, 1, 4}
-seen.add(1)
-seen.add(5)
+seen.add(owns 1)
+seen.add(owns 5)
 println(len(seen), 4 in seen, 2 in seen)
 ```
 

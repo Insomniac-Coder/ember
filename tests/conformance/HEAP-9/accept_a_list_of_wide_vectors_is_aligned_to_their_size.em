@@ -20,10 +20,10 @@ fn off64(xs: Span[f64x8]) -> int:
 
 fn main():
     xs: Array[f32x8] = Array[f32x8]()
-    xs.push(f32x8.splat(1.0))
+    xs.push(owns f32x8.splat(1.0))
     first = off8(xs.as_span())
     for i in 0..300:
-        xs.push(f32x8.splat(i as f32))
+        xs.push(owns f32x8.splat(i as f32))
     copy = xs.clone()
     ys = [f64x8.splat(1.0), f64x8.splat(2.0)]
     println(align_of[f32x8](), align_of[f64x8](), first, off8(xs.as_span()), off8(copy.as_span()), off64(ys.as_span()))

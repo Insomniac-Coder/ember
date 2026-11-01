@@ -55,7 +55,7 @@ fn main():
     while winner is None and round <= 50:
         println(f"round {round}")
         for p in players:
-            p.score += play_turn(p, dice)
+            p.score += play_turn(p, ref mut dice)
             p.turns += 1
             if p.score >= TARGET:
                 winner = Some(p)

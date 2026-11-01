@@ -32,7 +32,7 @@ class Fountain:
             vx = this.rng.range(-1.0, 1.0)
             vy = this.rng.range(8.0, 12.0)
             vz = this.rng.range(-1.0, 1.0)
-            this.particles.push(Particle(
+            this.particles.push(owns Particle(
                 position=Vec3.ZERO,
                 velocity=Vec3(vx as f32, vy as f32, vz as f32),
                 lifetime=this.rng.range(1.0, 3.0)))
@@ -46,7 +46,7 @@ class Fountain:
                 p.velocity.y = -p.velocity.y * 0.5
                 this.bounces += 1
             p.age += dt
-        this.particles.retain(fn(p) => p.age < p.lifetime)
+        this.particles.retain(owns fn(p) => p.age < p.lifetime)
 
     fn highest() -> float:
         best: f32 = 0.0

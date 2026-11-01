@@ -26,20 +26,20 @@
 
 fn main():
     xs: Array[int] = [10, 20, 30]
-    for a, b in (0 .. 2).iter().zip((5 .. 7).iter()):
+    for a, b in (0 .. 2).iter().zip(owns (5 .. 7).iter()):
         println(a, b)
-    for a, b in (0 .. 2).iter().zip((5 .. 7).iter()).rev():
+    for a, b in (0 .. 2).iter().zip(owns (5 .. 7).iter()).rev():
         println(a, b)
-    for x, i in xs.iter().zip((0 .. 3).iter()).rev():
+    for x, i in xs.iter().zip(owns (0 .. 3).iter()).rev():
         println(x, i)
     n = 0
-    for a, b in (0 as u64 .. u64.MAX).iter().zip((0 as u64 .. u64.MAX).iter()).rev():
+    for a, b in (0 as u64 .. u64.MAX).iter().zip(owns (0 as u64 .. u64.MAX).iter()).rev():
         println(a, b)
         n += 1
         if n == 2:
             break
     it = (0 .. 5).iter()
     it.next()
-    for x, i in xs.iter().zip(it.clone()):
+    for x, i in xs.iter().zip(owns it.clone()):
         println(x, i)
     println(it.next())

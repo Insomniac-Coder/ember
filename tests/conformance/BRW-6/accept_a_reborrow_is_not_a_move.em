@@ -10,7 +10,7 @@ fn bump(ref mut n: i32):
 fn main():
     x: i32 = 1
     r: ref mut i32 = ref mut x
-    bump(r)
-    bump(r)
+    bump(ref mut r)
+    bump(ref mut r)
     println(x)
 #$ stdout: 3

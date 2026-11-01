@@ -15,5 +15,5 @@ fn main():
     a: Array[i32] = Array[i32]()
     b: Array[i32] = Array[i32]()
     pair = bundle(a.as_span(), b.as_span())
-    b.push(2) #$ error[E3021]: `b` is borrowed here and mutably borrowed elsewhere
+    b.push(owns 2) #$ error[E3021]: `b` is borrowed here and mutably borrowed elsewhere
     println(pair.right.len())

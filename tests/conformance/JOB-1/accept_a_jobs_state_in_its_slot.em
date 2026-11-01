@@ -12,11 +12,11 @@ static TOTAL: Atomic[int] = Atomic(0)
 
 @noalloc
 fn small(a: int, b: int, c: int):
-    jobs.wait(jobs.submit(owned fn() => TOTAL.fetch_add(a + b + c)))
+    jobs.wait(jobs.submit(owns owned fn() => TOTAL.fetch_add(a + b + c)))
 
 fn large():
     values: [int; 10] = [7; 10]
-    jobs.wait(jobs.submit(owned fn() => TOTAL.fetch_add(values[0] * 10 - 6)))
+    jobs.wait(jobs.submit(owns owned fn() => TOTAL.fetch_add(values[0] * 10 - 6)))
 
 fn main():
     small(1, 2, 3)

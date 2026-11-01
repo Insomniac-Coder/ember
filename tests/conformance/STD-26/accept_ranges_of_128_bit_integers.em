@@ -20,7 +20,7 @@ fn main():
         count = count + 1
     down: Array[i128] = []
     for i in range(hi - 1, hi - 3, -1):
-        down.push(i)
+        down.push(owns i)
     println(total, count, down)
     top: u128 = 340282366920938463463374607431768211455
     last: u128 = 0

@@ -24,15 +24,15 @@ fn items(owns h: H) -> MutSpanIter[int]:
 
 fn main():
     xs: Array[int] = Array[int]()
-    xs.push(1)
-    xs.push(2)
+    xs.push(owns 1)
+    xs.push(owns 2)
     t = tail(xs.as_mut_span())
     t[0] = 20
     println(t[0])
     println(xs[1])
     ys: Array[int] = Array[int]()
-    ys.push(3)
-    i = items(H(s=ys.as_mut_span(), arr=Array[int]()))
+    ys.push(owns 3)
+    i = items(owns H(s=ys.as_mut_span(), arr=Array[int]()))
     match i.next():
         Some(r):
             println(r)

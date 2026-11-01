@@ -15,8 +15,8 @@ fn unknown(ref mut xs: Array[i32]):
 fn main():
     xs: Array[i32] = []
     for i in 0..1000:
-        xs.push((i % 7) as i32)
-    unknown(xs)
+        xs.push(owns ((i % 7) as i32))
+    unknown(ref mut xs)
     total: i32 = 0
     for round in 0..100:
         for i in 0..1000:

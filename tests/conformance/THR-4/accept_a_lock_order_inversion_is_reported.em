@@ -22,7 +22,7 @@ fn main():
     b = Mutex(2)
     first = 0
     with scope = thread.scope():
-        h = scope.spawn(fn() => both(a, b))
+        h = scope.spawn(owns fn() => both(a, b))
         first = h.join()
     second = both(b, a)
     println(first, second)

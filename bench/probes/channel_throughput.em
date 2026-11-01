@@ -7,12 +7,12 @@ from std.sync import Sender, channel
 
 fn produce(tx: Sender[int], n: int):
     for i in range(n):
-        tx.send(i % 1000).expect("receiver is gone")
+        tx.send(owns (i % 1000)).expect("receiver is gone")
 
 fn main():
     n = 1_000_000
     tx, rx = channel[int](capacity=64)
-    producer = thread.spawn(owned fn() => produce(tx, n))
+    producer = thread.spawn(owns owned fn() => produce(tx, n))
     total = 0
     for v in rx:
         total += v

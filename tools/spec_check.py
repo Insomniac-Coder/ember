@@ -101,11 +101,13 @@ def blocks():
 
 
 def ember_binary():
+    # Release first, as `error_pages.py` and `check_det.py` do: the suites and the quick check
+    # build release, and a debug build left from an older tree checked the blocks against it.
     for candidate in (
-        ROOT / "target" / "debug" / "ember.exe",
-        ROOT / "target" / "debug" / "ember",
         ROOT / "target" / "release" / "ember.exe",
         ROOT / "target" / "release" / "ember",
+        ROOT / "target" / "debug" / "ember.exe",
+        ROOT / "target" / "debug" / "ember",
     ):
         if candidate.exists():
             return candidate

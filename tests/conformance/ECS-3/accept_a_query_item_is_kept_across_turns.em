@@ -33,6 +33,6 @@ fn main():
     world = World()
     for hp in [5, 9, 2]:
         e = world.create()
-        world.add(e, Health(hp))
-    world.run(strongest, ())
-    world.run(first_two, ())
+        world.add(e, owns Health(hp))
+    world.run(owns strongest, owns ())
+    world.run(owns first_two, owns ())

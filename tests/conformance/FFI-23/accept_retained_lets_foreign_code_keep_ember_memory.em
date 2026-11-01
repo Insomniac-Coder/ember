@@ -36,7 +36,7 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
 
 fn pinned() -> Retained[Noisy]:
     noisy = Noisy(name = "kept")
-    token = Retained.pin(noisy)
+    token = Retained.pin(owns noisy)
     keep(token)
     return token
 
@@ -49,7 +49,7 @@ fn main():
     println(same)
     drop(token)
     println("released")
-    point = Retained.pin(Box(Point(x = 3, y = 4)))
+    point = Retained.pin(owns Box(Point(x = 3, y = 4)))
     keep_point(point)
     at: *mut Point = point.ptr()
     x: i64 = 0

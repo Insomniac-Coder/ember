@@ -28,7 +28,7 @@ fn main():
         println(pointer(5))
     println(apply(increase, 3) + apply(double, 4) + apply(fn(x) => x - 1, 5))
     total: i32 = 10
-    println(run_once(double) + run_once(fn(x) => x + total))
+    println(run_once(owns double) + run_once(owns fn(x) => x + total))
 #$ stdout: 6
 #$ 10
 #$ 16

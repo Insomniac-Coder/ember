@@ -7,4 +7,4 @@ fn apply(f: fn(ref mut i32) -> i32, ref mut value: i32) -> i32:
 
 fn main():
     value: i32 = 4
-    println(apply(fn(ref mut item) => item + 1, value))
+    println(apply(fn(ref mut item) => item + 1, ref mut value))

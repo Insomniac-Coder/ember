@@ -11,9 +11,9 @@ fn main():
     b: Array[int] = []
     out: Array[int] = []
     for i in 0..40:
-        a.push(0)
-        b.push(0)
-        out.push(0)
+        a.push(owns 0)
+        b.push(owns 0)
+        out.push(owns 0)
     a[9] = big
     b[5] = -9223372036854775807 - 1
     for i in 0..40:

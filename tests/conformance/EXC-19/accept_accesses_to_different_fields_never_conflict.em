@@ -15,12 +15,12 @@ class Bag:
 
     fn copy_items():
         for x in this.items:
-            this.log.push(x)
+            this.log.push(owns x)
 
 fn main():
     b = Bag()
     c = b
     for x in b.items:
-        c.log.push(x)
+        c.log.push(owns x)
     b.copy_items()
     println(b.items, b.log)

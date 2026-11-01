@@ -15,7 +15,7 @@ class Counter:
 
     fn reset():
         this.value = 0
-        this.log.push(1)
+        this.log.push(owns 1)
 
 fn replace(ref mut c: Counter):
     c = Counter(7)
@@ -24,5 +24,5 @@ fn main():
     c = Counter(5)
     c.reset()
     kept = c
-    replace(c)
+    replace(ref mut c)
     println(kept.value, kept.log, c.value)

@@ -11,10 +11,10 @@
 
 fn main():
     xs: Array[StrView] = Array[StrView]()
-    xs.push("a")
+    xs.push(owns "a")
     view: Span[StrView] = xs.as_span()
     m = Map[StrView, int]()
     m["k"] = 2
     s = Set[StrView]()
-    s.add("s")
+    s.add(owns "s")
     println(view.len(), xs, m, s)

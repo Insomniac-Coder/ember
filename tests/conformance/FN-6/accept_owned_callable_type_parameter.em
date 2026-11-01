@@ -13,4 +13,4 @@ fn apply(f: fn(owns Packet) -> i32, owns packet: Packet) -> i32:
 
 fn main():
     operation: fn(owns Packet) -> i32 = consume
-    println(apply(operation, Packet(9)))
+    println(apply(operation, owns Packet(9)))

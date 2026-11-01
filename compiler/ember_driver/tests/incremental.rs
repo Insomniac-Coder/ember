@@ -148,7 +148,7 @@ pub open class Shape:
 pub fn apply(xs: Array[int], f: fn(int) -> int) -> Array[int]:
     out: Array[int] = []
     for x in xs:
-        out.push(f(x))
+        out.push(owns f(x))
     return out
 
 pub fn total(p: geom.Pt) -> int:
@@ -421,7 +421,7 @@ pub fn twice(f: F, x: int) -> int:
     return f(f(x))
 
 pub fn doubled(xs: Span[int]) -> int:
-    return xs.iter().map(fn(x: ref int) -> int => x * 2).sum()
+    return xs.iter().map(owns fn(x: ref int) -> int => x * 2).sum()
 
 pub fn shifted(x: int) -> int:
     f = offset
@@ -435,7 +435,7 @@ fn main():
     xs = [1, 2, 3]
     f = lib.offset
     k = fn(x: int) -> int => x * 3
-    total = xs.iter().map(fn(x: ref int) -> int => lib.offset(x)).sum()
+    total = xs.iter().map(owns fn(x: ref int) -> int => lib.offset(x)).sum()
     println(f(1), lib.twice(f, 2), lib.shifted(1), lib.twice(k, 1), total, lib.doubled(xs.as_span()))
 "#;
 
@@ -454,7 +454,7 @@ fn function_items_are_kept_across_builds_as_a_clean_build_makes_them() {
     let edits = [
         ("a body the items name", ITEMS_LIB.replace("return x + 1", "return x + 10"), source("lib")),
         ("the importer's body", ITEMS_MAIN.replace("x * 3", "x * 4"), source("main")),
-        ("a lambda added before the others", ITEMS_LIB.replace("pub fn doubled", "pub fn tripled(xs: Span[int]) -> int:\n    return xs.iter().map(fn(x: ref int) -> int => x * 3).sum()\n\npub fn doubled"), source("lib")),
+        ("a lambda added before the others", ITEMS_LIB.replace("pub fn doubled", "pub fn tripled(xs: Span[int]) -> int:\n    return xs.iter().map(owns fn(x: ref int) -> int => x * 3).sum()\n\npub fn doubled"), source("lib")),
     ];
     for (step, text, file) in edits {
         write(&dir, &file, &text);
@@ -567,7 +567,7 @@ fn a_kept_modules_methods_change_their_objects_as_their_bodies_said() {
     write(&dir, &source("cursor"), CURSOR);
     let main = |n: usize| {
         format!(
-            "from cursor import Cursor\n\nfn split(line: StrView) -> Array[String]:\n    return line.trim().to_lower().split(\" \").map(fn(w) => w.to_string()).collect[Array[String]]()\n\nfn main():\n    words = Cursor(rest = \"a b c\").map(fn(w) => w.to_string()).collect[Array[String]]()\n    println(words.len() + split(\"Go North\").len() + {n})\n"
+            "from cursor import Cursor\n\nfn split(line: StrView) -> Array[String]:\n    return line.trim().to_lower().split(\" \").map(owns fn(w) => w.to_string()).collect[Array[String]]()\n\nfn main():\n    words = Cursor(rest = \"a b c\").map(owns fn(w) => w.to_string()).collect[Array[String]]()\n    println(words.len() + split(\"Go North\").len() + {n})\n"
         )
     };
     write(&dir, &source("main"), &main(0));
@@ -581,6 +581,115 @@ fn a_kept_modules_methods_change_their_objects_as_their_bodies_said() {
         assert_eq!(incremental.report, clean.report, "edit {n}: what the checks report");
         let kept = incremental.modules.expect("an incremental check says what it checked");
         assert!(!kept.contains(&source("cursor")), "edit {n}: `cursor` is kept: {kept:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+const KINDS: &str = r#"
+pub interface Picker:
+    fn pick(other: Array[int]) -> Span[int]
+
+pub struct Mine implements Picker:
+    pub items: Array[int]
+    fn pick(other: Array[int]) -> Span[int]:
+        return this.items
+
+pub struct Yours implements Picker:
+    pub items: Array[int]
+    fn pick(other: Array[int]) -> Span[int]:
+        return other
+
+pub fn show(p: dyn Picker):
+    xs = [1, 2]
+    r = p.pick(xs)
+    xs.push(owns 3)
+    println(r)
+"#;
+
+/// `[LT-1]` (verdict 151), `[BLD-1]` — a function with a `dyn` parameter is checked for the kinds
+/// the program gives it, and those can change in a module it does not import: `show` is checked for
+/// a `Mine`, and when `main` gives it a `Yours` too (whose `pick` gives back the list it was handed),
+/// the check that keeps `kinds` (unchanged) checks `show` again and refuses it at `xs.push(owns 3)`, as
+/// the clean check does. Back to a `Mine` only, both checks pass again.
+#[test]
+fn a_kept_function_is_checked_again_for_a_kind_a_changed_module_gives_it() {
+    let dir = scratch();
+    std::fs::write(dir.join(ember_branding::MANIFEST), "[package]\nname = \"kinds\"\nversion = \"0.1.0\"\n").expect("manifest");
+    write(&dir, &source("kinds"), KINDS);
+    let mine = "import kinds\n\nfn main():\n    m = kinds.Mine(items=[9])\n    kinds.show(ref m)\n";
+    let yours = format!("{mine}    y = kinds.Yours(items=[9])\n    kinds.show(ref y)\n");
+    write(&dir, &source("main"), mine);
+    let first = check(&dir, "target-incremental", false);
+    assert!(first.ok, "the first check: {}", first.report);
+    for (step, text, ok) in [("a `Yours` given to `show`", yours.as_str(), false), ("the `Yours` taken away", mine, true)] {
+        write(&dir, &source("main"), text);
+        let incremental = check(&dir, "target-incremental", false);
+        let clean = check(&dir, "target-clean", true);
+        assert_eq!(clean.ok, ok, "{step}: whether the package checks\n{}", clean.report);
+        assert_eq!(incremental.ok, clean.ok, "{step}: exit status\nincremental:\n{}\nclean:\n{}", incremental.report, clean.report);
+        assert_eq!(incremental.report, clean.report, "{step}: what the checks report");
+        let checked = incremental.modules.expect("an incremental check says what it checked");
+        assert!(!checked.contains(&source("kinds")), "{step}: `kinds` is kept: {checked:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+const CHECKED_KINDS: &str = r#"
+pub interface Picker:
+    fn pick(other: Array[int]) -> Span[int]
+
+pub struct Yours implements Picker:
+    pub items: Array[int]
+    fn pick(other: Array[int]) -> Span[int]:
+        return other
+
+pub struct Shower:
+    pub n: int
+    pub fn show(p: runtime dyn Picker):
+        xs = [1, 2]
+        r = p.pick(xs)
+        xs.push(owns 3)
+        println(r)
+"#;
+
+const CHECKED_MAIN: &str = r#"
+from checked import Picker, Yours, Shower
+
+struct Mine implements Picker:
+    items: Array[int]
+    fn pick(other: Array[int]) -> Span[int]:
+        return this.items
+
+fn main():
+    s = Shower(n=1)
+    p: Box[dyn Picker] = Box(Mine(items=[9])) if input() == "m" else Box(Yours(items=[9]))
+    s.show(p)
+"#;
+
+/// `[LT-48]` (verdict 152), `[BLD-1]` — whether a line is checked while running or refused when
+/// compiling is each kind's method's own doing: `show`'s `runtime` parameter may be a `Mine`, whose
+/// `pick` gives back its own list, or a `Yours`, which a check while running stops at
+/// `xs.push(owns 3)`. When `Mine.pick` too may give back the list it was handed (an edit of `main`
+/// only), every kind makes the line unsafe: the check that keeps `checked` (unchanged) checks `show`
+/// again and refuses it when compiling, as the clean check does.
+#[test]
+fn a_kept_function_is_checked_again_when_a_kinds_method_changes() {
+    let dir = scratch();
+    std::fs::write(dir.join(ember_branding::MANIFEST), "[package]\nname = \"checked\"\nversion = \"0.1.0\"\n").expect("manifest");
+    write(&dir, &source("checked"), CHECKED_KINDS);
+    write(&dir, &source("main"), CHECKED_MAIN);
+    let first = check(&dir, "target-incremental", false);
+    assert!(first.ok, "the first check: {}", first.report);
+    let both = CHECKED_MAIN.replace("        return this.items", "        if other.len() > 5:\n            return other\n        return this.items");
+    for (step, text, ok) in [("`Mine.pick` may give back its argument", both.as_str(), false), ("as it was", CHECKED_MAIN, true)] {
+        write(&dir, &source("main"), text);
+        let incremental = check(&dir, "target-incremental", false);
+        let clean = check(&dir, "target-clean", true);
+        assert_eq!(clean.ok, ok, "{step}: whether the package checks\n{}", clean.report);
+        assert_eq!(incremental.ok, clean.ok, "{step}: exit status\nincremental:\n{}\nclean:\n{}", incremental.report, clean.report);
+        assert_eq!(incremental.report, clean.report, "{step}: what the checks report");
+        let checked = incremental.modules.expect("an incremental check says what it checked");
+        assert!(!checked.contains(&source("checked")), "{step}: `checked` is kept: {checked:?}");
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

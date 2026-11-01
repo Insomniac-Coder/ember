@@ -17,8 +17,8 @@ pub extern "C" fn fresh_mut_span(input: *i32, n: usize) -> *mut i32:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
-    values.push(2)
+    values.push(owns 1)
+    values.push(owns 2)
     result: MutSpan[i32] = fresh(values.as_span())
     println(result.len())
     println(result[0])

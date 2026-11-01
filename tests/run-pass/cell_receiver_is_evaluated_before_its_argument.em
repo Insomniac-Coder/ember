@@ -14,7 +14,7 @@ fn make_value() -> i32:
 
 fn main():
     cells: Array[Cell[i32]] = Array[Cell[i32]]()
-    cells.push(Cell(0))
+    cells.push(owns Cell(0))
     cells[choose()].set(make_value())
     println(cells[0].get())
 #$ stdout: 1

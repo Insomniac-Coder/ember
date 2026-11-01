@@ -35,7 +35,7 @@ struct Holder:
 fn main():
     p = Point(x=1, tags=["a"])
     q = p.clone()
-    q.tags.push("b")
+    q.tags.push(owns "b")
     println(p.tags, q.tags)
     s = Shape.Named("n")
     match s.clone():

@@ -10,7 +10,7 @@ fn work() -> int:
 
 fn leak() -> thread.ScopedJoinHandle[int]:
     with scope = thread.scope():
-        return scope.spawn(fn() => work())
+        return scope.spawn(owns fn() => work())
 
 fn main():
     println(leak().join())

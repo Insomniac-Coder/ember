@@ -15,11 +15,11 @@ fn first_two(xs: Array[int]) -> ref mut int:
 fn main():
     xs = [1, 2, 3]
     pair = xs.get_pair_mut(0, 1)
-    xs.push(4) #$ error[E3022]
+    xs.push(owns 4) #$ error[E3022]
     match owns pair:
         Some((a, _)):
             a = 5
         None:
             pass
-    xs.push(5)
+    xs.push(owns 5)
     println(xs, first_two(xs))

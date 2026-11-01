@@ -39,9 +39,9 @@ fn main():
     failed: Result[void, CppError] = Ok(())
     unsafe:  # SAFETY(ffi): scalar calls
         direct = (cpp.quiet(4), cpp.stated(0))
-        caught.push(cpp.loud(1))
-        caught.push(cpp.halve(3))
-        caught.push(cpp.halve(4))
+        caught.push(owns cpp.loud(1))
+        caught.push(owns cpp.halve(3))
+        caught.push(owns cpp.halve(4))
         failed = cpp.fail()
     println(direct.0, show(caught[0]), direct.1)
     println(show(caught[1]))

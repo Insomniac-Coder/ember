@@ -27,7 +27,7 @@ fn started(owns g: G) -> G:
     return g
 
 fn main():
-    g = started(counting(4))
+    g = started(owns counting(4))
     a = g.next().unwrap()
     b = g.next().unwrap()
     println(a, b)

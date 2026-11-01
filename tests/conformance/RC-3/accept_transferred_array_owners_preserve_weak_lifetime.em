@@ -16,7 +16,7 @@ class Token:
 
 fn main():
     tokens: Array[Token] = Array[Token]()
-    tokens.push(Token(7))
+    tokens.push(owns Token(7))
     weak = Weak(tokens[0])
     match weak.upgrade():
         Some(value) => println("live", value.id)

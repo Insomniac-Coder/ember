@@ -25,4 +25,4 @@ fn observe(owns weak: Weak[Token]) -> i32:
 fn main():
     strong = Token(7)
     holder = Holder(Weak(strong))
-    println(observe(holder.weak))
+    println(observe(owns holder.weak))

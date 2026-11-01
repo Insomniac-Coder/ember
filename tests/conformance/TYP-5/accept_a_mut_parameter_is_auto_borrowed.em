@@ -32,4 +32,4 @@ fn main():
     println(p.bump())
     println(p.look())
     y = 4
-    println(via_mut(y))
+    println(via_mut(ref mut y))

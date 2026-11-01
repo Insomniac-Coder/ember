@@ -12,8 +12,8 @@ extend Bag implements Default:
 
 fn make_bag() -> Bag:
     values: Array[i32] = Array[i32]()
-    values.push(10)
-    values.push(20)
+    values.push(owns 10)
+    values.push(owns 20)
     return Bag(values)
 
 fn main():

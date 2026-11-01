@@ -7,9 +7,9 @@
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
-    values.push(2)
+    values.push(owns 1)
+    values.push(owns 2)
     parts = values.as_mut_span().split_at(1)
     left = parts.0
-    values.push(3)
+    values.push(owns 3)
     println(left[0])

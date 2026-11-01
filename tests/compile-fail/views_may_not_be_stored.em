@@ -10,5 +10,5 @@
 fn main():
     n = 5
     xs: Array[ref i64] = Array[ref i64]()
-    xs.push(ref n)
+    xs.push(owns ref n)
     println(xs.len())

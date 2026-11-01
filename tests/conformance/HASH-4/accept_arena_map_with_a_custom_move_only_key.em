@@ -25,7 +25,7 @@ fn has_key(values: ArenaMap[K, V], key: K) -> bool:
 
 fn hash_value(key: Key) -> u64:
     hasher = DefaultHasher.new()
-    key.hash(hasher)
+    key.hash(ref mut hasher)
     return hasher.finish()
 
 fn inserted(value: Result[Option[i32], CapacityError]) -> i32:

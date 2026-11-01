@@ -11,8 +11,8 @@ struct Pair:
 
 fn main():
     left: Array[i32] = Array[i32]()
-    left.push(8)
+    left.push(owns 8)
     right: Array[i32] = Array[i32]()
-    right.push(9)
+    right.push(owns 9)
     pair = Pair(left.as_span(), right.as_span())
     println(pair.left[0])

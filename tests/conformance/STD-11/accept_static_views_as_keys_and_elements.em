@@ -13,18 +13,18 @@
 fn main():
     labels: Map[StrView, int] = {"start": 1, "stop": 2}
     labels["go"] = 3
-    labels.entry("stop").or_insert(9)
+    labels.entry(owns "stop").or_insert(owns 9)
     println(labels, labels.get("stop"), "go" in labels)
     colours: Set[StrView] = Set[StrView]()
-    colours.add("red")
-    colours.add("green")
+    colours.add(owns "red")
+    colours.add(owns "green")
     println(colours, "red" in colours)
     keys: Array[StrView] = Array[StrView]()
     total = 0
     for k, v in labels.items():
-        keys.push(k)
+        keys.push(owns k)
         total += v
     println(keys, total)
     texts = {"a": 1}
-    texts.insert(String.from("b"), 2)
+    texts.insert(owns String.from("b"), owns 2)
     println(texts)

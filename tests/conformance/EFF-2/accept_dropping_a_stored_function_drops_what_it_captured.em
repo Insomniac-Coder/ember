@@ -26,5 +26,5 @@ fn scaled(owns s: Scaler, x: int) -> int:
 fn main():
     times = Scaler(by = double)
     log = Logger(format = widen)
-    println(scaled(times, 2))
+    println(scaled(owns times, 2))
     println(log.format(1))

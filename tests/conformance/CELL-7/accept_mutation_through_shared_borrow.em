@@ -9,7 +9,7 @@
 fn main():
     c: RefCell[Array[i32]] = RefCell(Array())
     with list = c.borrow_mut():
-        list.push(42)
+        list.push(owns 42)
     with g = c.borrow():
         println(g.len())
 #$ stdout: 1

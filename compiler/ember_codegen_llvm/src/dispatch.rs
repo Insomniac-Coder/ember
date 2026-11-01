@@ -467,6 +467,8 @@ pub(crate) fn adapter_table(m: &mut Module<'_>, concrete: Ty, identity: &str) ->
     fields.extend(clone.map(|clone| format!("ptr {clone}")));
     fields.extend(eq.map(|eq| format!("ptr {eq}")));
     fields.extend(slots);
+    // `[LT-48]` — the kind of the value, which a `runtime` parameter's check compares.
+    fields.push(format!("i64 {}", ember_mir::kind_identity(m.ty.table, concrete)));
     let types: Vec<&str> = fields.iter().map(|field| field.split(' ').next().unwrap_or("ptr")).collect();
     m.global(format!(
         "{} = internal constant {{ {} }} {{ {} }}, align 8",
@@ -797,6 +799,20 @@ impl<'a> FnCx<'_, 'a> {
         let vtable_at = self.gep(&carrier, 8);
         self.emit(format!("store ptr {table}, ptr {vtable_at}, align 8"));
         Ok(Val::Mem(carrier, 8))
+    }
+
+    /// `[LT-48]` — whether the `dyn` value `operand` is of the kind `concrete`: one compare of the
+    /// kind its table holds, its last word (each unit has its own copy of a table).
+    pub(crate) fn dyn_kind_is(&mut self, concrete: Ty, interfaces: &[Symbol], slots: usize, operand: &Operand) -> Result<Val> {
+        let identity = identity(self.m, interfaces);
+        let carrier = self.operand(operand)?;
+        let (carrier, align) = self.spill(&carrier, 16, 8);
+        let vtable_at = self.gep(&carrier, 8);
+        let vtable = self.load(Sc::Ptr, &vtable_at, align.min(8));
+        let kind_at = self.gep(&vtable, slot_offset(self.m, &identity, slots));
+        let kind = self.load(Sc::I(64), &kind_at, 8);
+        let expected = ember_mir::kind_identity(self.m.ty.table, concrete);
+        Ok(Val::Imm(Sc::Bool, self.value(format!("icmp eq i64 {kind}, {expected}"))))
     }
 
     /// `[OBJ-2]` — a class handle as an interface handle: the same pointer, its table found

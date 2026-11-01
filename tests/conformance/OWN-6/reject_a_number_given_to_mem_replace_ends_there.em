@@ -7,6 +7,6 @@ import std.mem
 fn main():
     a = 1
     b = 2
-    old = mem.replace(a, b)
+    old = mem.replace(ref mut a, b)
     println(old, a)
     println(b)  #$ error[E3040]

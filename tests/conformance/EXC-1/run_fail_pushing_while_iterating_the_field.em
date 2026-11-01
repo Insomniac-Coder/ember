@@ -14,11 +14,11 @@ class Bag:
         this.log = []
 
     fn bump():
-        this.items.push(len(this.items) + 1)
+        this.items.push(owns (len(this.items) + 1))
 
 fn main():
     b = Bag()
     c = b
     for x in b.items:
-        c.items.push(x)
+        c.items.push(owns x)
     println(b.items)

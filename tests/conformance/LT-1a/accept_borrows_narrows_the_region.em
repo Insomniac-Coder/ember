@@ -10,10 +10,10 @@ fn first(a: Span[i32], b: Span[i32]) -> Span[i32] from a:
 
 fn main():
     p: Array[i32] = Array[i32]()
-    p.push(1)
+    p.push(owns 1)
     q: Array[i32] = Array[i32]()
-    q.push(2)
+    q.push(owns 2)
     v = first(p, q)
-    q.push(3)
+    q.push(owns 3)
     println(v[0])
 #$ stdout: 1

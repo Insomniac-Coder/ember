@@ -36,10 +36,10 @@ fn swap_in(ref mut n: Node, owns p: Parent):
 
 fn main():
     p = Parent(Node(1))
-    repoint(p.child)
+    repoint(ref mut p.child)
     println("child", p.child.v)
     local = Node(3)
-    repoint(local)
+    repoint(ref mut local)
     println("local", local.v)
-    swap_in(p.child, p)
+    swap_in(ref mut p.child, owns p)
     println("after", p.child.v)

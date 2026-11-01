@@ -28,9 +28,9 @@ class Storage(AnyStorage):
 
     fn add(owns value: T):
         if this.soa:
-            this.columns.push(value)
+            this.columns.push(owns value)
         else:
-            this.dense.push(value)
+            this.dense.push(owns value)
         this.len += 1
 
     override fn remove_at(i: int):
@@ -47,11 +47,11 @@ struct Pos:
 
 fn main():
     s = Storage[Pos](true)
-    s.add(Pos(x=1.0, y=2.0))
-    s.add(Pos(x=3.0, y=4.0))
+    s.add(owns Pos(x=1.0, y=2.0))
+    s.add(owns Pos(x=3.0, y=4.0))
     a: AnyStorage = s
     a.remove_at(0)
     println(s.len, s.columns.x[0])
     t = Storage[Pos](false)
-    t.add(Pos(x=5.0, y=6.0))
+    t.add(owns Pos(x=5.0, y=6.0))
     println(t.dense[0].y)

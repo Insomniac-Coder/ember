@@ -149,7 +149,7 @@ struct ChannelQueue:
     fn pop() -> Option[T]:
         if this.count == 0:
             return None
-        value = mem.replace(this.slots[this.head], None)
+        value = mem.replace(ref mut this.slots[this.head], None)
         this.head += 1
         if this.head == this.slots.len():
             this.head = 0
@@ -163,10 +163,10 @@ struct ChannelQueue:
             at = this.head + i
             if at >= size:
                 at -= size
-            bigger.push(mem.replace(this.slots[at], None))
+            bigger.push(owns mem.replace(ref mut this.slots[at], None))
         wanted = 16 if size == 0 else size * 2
         while bigger.len() < wanted:
-            bigger.push(None)
+            bigger.push(owns None)
         this.slots = bigger
         this.head = 0
 
@@ -196,7 +196,7 @@ pub struct Sender:
                 if q.receiver_gone:
                     return Err(SendError(value, true))
                 if state.capacity == 0 or q.count < state.capacity:
-                    q.push(value)
+                    q.push(owns value)
                     if q.receiver_waiting:
                         q.receiver_waiting = false
                         state.arrivals.wrapping_fetch_add(1)
@@ -214,7 +214,7 @@ pub struct Sender:
             if q.receiver_gone:
                 return Err(SendError(value, true))
             if state.capacity == 0 or q.count < state.capacity:
-                q.push(value)
+                q.push(owns value)
                 if q.receiver_waiting:
                     q.receiver_waiting = false
                     state.arrivals.wrapping_fetch_add(1)
@@ -295,7 +295,7 @@ pub fn channel_unbounded() -> (Sender[T], Receiver[T]):
 fn open_channel(capacity: int) -> (Sender[T], Receiver[T]):
     slots: Array[Option[T]] = []
     while slots.len() < capacity:
-        slots.push(None)
+        slots.push(owns None)
     queue = ChannelQueue(slots, 0, 0, false, false, 0)
     state = SyncShared(ChannelState(Mutex(queue), capacity, Atomic(1), Atomic(0), Atomic(0)))
     return (Sender(state), Receiver(state))

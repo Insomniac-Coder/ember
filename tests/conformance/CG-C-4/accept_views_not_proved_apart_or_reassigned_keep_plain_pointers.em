@@ -27,8 +27,8 @@ fn main():
     a: Array[f64] = []
     b: Array[f64] = []
     for i in 0..3:
-        a.push(i as f64)
-        b.push(1.0 + i as f64)
-    add(a, b)
+        a.push(owns (i as f64))
+        b.push(owns (1.0 + i as f64))
+    add(a, ref mut b)
     println(b[0], b[1], b[2])
     println(first_of_each(a, b))

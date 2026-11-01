@@ -29,7 +29,7 @@ fn second(values: CppVector[c_int]) -> ref c_int:
 
 fn bigger(ref mut a: i32, ref mut b: i32) -> ref mut i32:
     unsafe:  # SAFETY(ffi): two numbers the caller lends
-        return cpp.larger(a, b)
+        return cpp.larger(ref mut a, ref mut b)
 
 fn shelf() -> Result[ForeignBox[cpp.Shelf], CppError]:
     unsafe:  # SAFETY(ffi): the constructor makes a shelf the box owns
@@ -47,7 +47,7 @@ fn main():
             println(error.what)
     a: i32 = 3
     b: i32 = 8
-    larger = bigger(a, b)
+    larger = bigger(ref mut a, ref mut b)
     larger = 10
     println(a, b)
     match shelf():

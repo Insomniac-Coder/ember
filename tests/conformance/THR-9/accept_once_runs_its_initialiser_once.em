@@ -14,7 +14,7 @@ from std.sync import Once
 static INIT: Once = Once()
 
 fn setup(tag: StrView):
-    INIT.call_once(fn() => println("setting up for", tag))
+    INIT.call_once(owns fn() => println("setting up for", tag))
 
 fn main():
     println(INIT.is_completed())
@@ -23,6 +23,6 @@ fn main():
     println(INIT.is_completed())
     local = Once()
     names: Array[String] = []
-    local.call_once(fn() => names.push("first".to_string()))
-    local.call_once(fn() => names.push("second".to_string()))
+    local.call_once(owns fn() => names.push(owns "first".to_string()))
+    local.call_once(owns fn() => names.push(owns "second".to_string()))
     println(names)

@@ -14,7 +14,7 @@ struct R:
 
 fn main():
     a: Array[R] = Array[R]()
-    a.push(R(1))
-    a.push(R(2))
+    a.push(owns R(1))
+    a.push(owns R(2))
 #$ stdout: 1
 #$ 2

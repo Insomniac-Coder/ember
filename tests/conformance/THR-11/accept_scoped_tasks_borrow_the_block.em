@@ -24,13 +24,13 @@ fn scan(stats: Stats, text: StrView):
         stats.words.fetch_add(1)
         if w.starts_with("#"):
             with tags = stats.tags.lock():
-                tags.push(w.to_string())
+                tags.push(owns w.to_string())
 
 fn sum_halves(xs: Span[int]) -> int:
     left, right = xs.split_at(xs.len() // 2)
     with scope = thread.scope():
-        a = scope.spawn(fn() => left.iter().sum())
-        b = scope.spawn(fn() => right.iter().sum())
+        a = scope.spawn(owns fn() => left.iter().sum())
+        b = scope.spawn(owns fn() => right.iter().sum())
         return a.join() + b.join()
 
 fn add_to(ref mut s: MutSpan[int], n: int):
@@ -44,7 +44,7 @@ fn main():
     texts = ["#ember is fast", "no tags here", "#python #c"]
     with scope = thread.scope():
         for t in texts:
-            scope.spawn(fn() => scan(stats, t))
+            scope.spawn(owns fn() => scan(stats, t))
     println(stats.words.load(), "words")
     with tags = stats.tags.lock():
         println(tags.len(), "tags")
@@ -53,9 +53,9 @@ fn main():
     counts = [0, 0]
     first, second = counts.as_mut_span().split_at(1)
     with scope = thread.scope():
-        scope.spawn(fn() => add_to(first, 5))
-        scope.spawn(fn() => add_to(second, 7))
+        scope.spawn(owns fn() => add_to(ref mut first, 5))
+        scope.spawn(owns fn() => add_to(ref mut second, 7))
     println(counts)
     with scope = thread.scope():
-        h = scope.spawn(fn() => total(counts) + 3)
+        h = scope.spawn(owns fn() => total(counts) + 3)
         println(h.join())

@@ -16,7 +16,7 @@ fn finish(owns resource: Resource, move_again: bool):
         _moved = resource
 
 fn main():
-    finish(Resource(1), true)
-    finish(Resource(2), false)
+    finish(owns Resource(1), true)
+    finish(owns Resource(2), false)
 #$ stdout: 1
 #$ 2

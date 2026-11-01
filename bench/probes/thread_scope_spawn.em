@@ -12,6 +12,6 @@ fn main():
     total = 0
     for i in range(20_000):
         with scope = thread.scope():
-            h = scope.spawn(fn() => step(values, i))
+            h = scope.spawn(owns fn() => step(values, i))
             total += h.join()
     println(total)

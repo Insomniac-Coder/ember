@@ -21,8 +21,8 @@ struct Holder:
 
 fn main():
     errs: Array[Box[dyn Error]] = []
-    errs.push(Box(Fail.Disk))
-    errs.push(Box(Fail.Net("example.org")))
+    errs.push(owns Box(Fail.Disk))
+    errs.push(owns Box(Fail.Net("example.org")))
     println(errs)
     h = Holder(Box(Fail.Disk), 3)
     println(f"{h!r}")

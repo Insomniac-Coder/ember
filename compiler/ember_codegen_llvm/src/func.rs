@@ -2333,6 +2333,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
             // aliasing rules, which the IR does not have.
             CastKind::ClassUpcast | CastKind::ClassUpcastBorrowed => return self.operand(operand),
             CastKind::InterfaceUpcast { concrete, interfaces, .. } => return self.interface_upcast(*concrete, interfaces, operand),
+            CastKind::DynKindIs { concrete, interfaces, layout, .. } => return self.dyn_kind_is(*concrete, interfaces, layout.len(), operand),
             CastKind::ClassInterfaceUpcast { .. } => return self.class_interface_upcast(operand),
             // ADR-186 — a borrowed `Box[dyn I]`'s value: its data pointer.
             CastKind::InterfaceDowncast => {

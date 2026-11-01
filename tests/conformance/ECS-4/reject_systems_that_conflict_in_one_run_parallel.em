@@ -31,6 +31,6 @@ fn report(ref mut q: Query[(Pos, Hp)]):
 
 fn main():
     w = World()
-    w.run_parallel([movement, report, regen])
+    w.run_parallel(owns [movement, report, regen])
 #$ error[E7020]: systems `movement` and `report` cannot run at once: `movement` writes `Pos`, which the other uses
 #$ error[E7020]: systems `report` and `regen` cannot run at once: `regen` writes `Hp`, which the other uses

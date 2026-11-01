@@ -28,7 +28,7 @@ fn consume(owns g: Guard) -> Guard:
 fn main():
     g = Guard(1)
     println(look(g))
-    h = consume(Guard(2))
+    h = consume(owns Guard(2))
     pair = (Guard(3), 4)
     o: Option[Guard] = Some(Guard(5))
     println(h.id, pair.1, o.is_some())

@@ -76,7 +76,7 @@ pub struct Rng:
                 parts = items.split_at(i)
                 head = parts.0
                 tail = parts.1
-                mem.swap(head[j], tail[0])
+                mem.swap(ref mut head[j], ref mut tail[0])
             i = i - 1
 
 @overflow(wrap)

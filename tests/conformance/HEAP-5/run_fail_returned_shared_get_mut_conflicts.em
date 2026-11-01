@@ -12,7 +12,7 @@ fn borrow_counter(ref mut owner: Shared[Counter]) -> ref mut Counter from owner:
 fn main():
     shared = Shared(Counter(1))
     alias = shared
-    first = borrow_counter(shared)
+    first = borrow_counter(ref mut shared)
     # `first` remains live below, so this starts a conflicting dynamic write
     # access through a distinct strong handle to the same allocation.
     second = alias.get_mut()

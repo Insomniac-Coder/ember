@@ -13,7 +13,7 @@ class Bag:
         this.items = [1, 2, 3]
 
     fn count_other(other: Bag) -> int:
-        this.items.push(0)
+        this.items.push(owns 0)
         return len(other.items)
 
 fn main():

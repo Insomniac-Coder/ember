@@ -18,7 +18,7 @@ fn total(xs: Span[int]) -> int:
 
 fn main():
     xs = [1, 2, 3]
-    xs.push(4)
+    xs.push(owns 4)
     println(xs.len(), total(xs))
     names: Array[String] = ["ann", "bob"]
     println(names.len(), names[1].as_str())

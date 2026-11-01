@@ -17,9 +17,9 @@ fn empty(ref mut bag: Bag):
 fn main():
     bag = Bag()
     for i in 0..4:
-        bag.items.push(i)
+        bag.items.push(owns i)
     total = 0
     for i in 0..4:
         total = total + bag.items[i]
-        empty(bag)
+        empty(ref mut bag)
     println(total)

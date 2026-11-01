@@ -29,4 +29,4 @@ fn main():
     c: Option[char] = None
     d: Option[Option[int]] = None
     e: Option[int] = None
-    println(a.unwrap_or_default(), b.unwrap_or_default().x, c.unwrap_or_default() == '\0', d.unwrap_or_default().is_none(), or_default(e))
+    println(a.unwrap_or_default(), b.unwrap_or_default().x, c.unwrap_or_default() == '\0', d.unwrap_or_default().is_none(), or_default(owns e))

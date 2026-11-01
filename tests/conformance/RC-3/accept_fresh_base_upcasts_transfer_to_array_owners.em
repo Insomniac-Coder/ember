@@ -18,7 +18,7 @@ class Child(Base):
 
 fn main():
     values: Array[Base] = Array[Base]()
-    values.push(Child())
+    values.push(owns Child())
     println(values[0].value())
     values.clear()
     println("cleared")

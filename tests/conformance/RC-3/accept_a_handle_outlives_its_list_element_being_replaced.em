@@ -15,7 +15,7 @@ class Node:
 
 fn main():
     nodes: Array[Node] = []
-    nodes.push(Node(1))
+    nodes.push(owns Node(1))
     t = nodes[0]
     nodes[0] = Node(5)
     println(t.v)

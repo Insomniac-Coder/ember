@@ -12,5 +12,5 @@ fn main():
     total = 0
     for x in xs:
         total += x as int
-        out.push(total)
+        out.push(owns total)
     println(out[0], out[1], out[2])

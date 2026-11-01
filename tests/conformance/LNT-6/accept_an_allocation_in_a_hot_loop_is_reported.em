@@ -11,9 +11,9 @@ fn main():
     lengths: Array[int] = []
     for i in 0..3:
         label = String.from("item")  #$ warning[L4001]: allocation in a hot loop
-        lengths.push(label.len() + i)
+        lengths.push(owns (label.len() + i))
     for round in 0..3:
-        names.push(String.from("x"))
+        names.push(owns String.from("x"))
         for j in 0..2:
-            lengths.push(j)
+            lengths.push(owns j)
     println(lengths.len(), names.len())

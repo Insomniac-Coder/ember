@@ -10,7 +10,7 @@
 fn main():
     xs: Array[i32] = []
     for i in 0..100:
-        xs.push(i as i32)
+        xs.push(owns (i as i32))
     total = 0
     for x in xs:
         total += x as int

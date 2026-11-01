@@ -41,7 +41,7 @@ fn grow(ref mut b: Buffer[T]):
 [T]
 fn push(ref mut b: Buffer[T], v: T):
     if b.len == b.cap:
-        grow(b)
+        grow(ref mut b)
     unsafe:  # SAFETY: this test sets up what the operation requires
         write(b.ptr, b.len, v)
     b.len = b.len + 1
@@ -68,13 +68,13 @@ fn main():
     b: Buffer[i32] = make[i32](2)
     i: i32 = 0
     while i < 9:
-        push(b, i * i)
+        push(ref mut b, i * i)
         i = i + 1
     println(b.len)
     println(b.cap)
     println(at(b, 0))
     println(at(b, 8))
-    release(b)
+    release(ref mut b)
 #$ stdout: 7
 #$ 2.5
 #$ 9

@@ -18,7 +18,7 @@ struct R:
 
 fn main():
     a: Array[i32] = Array[i32]()
-    a.push(1)
+    a.push(owns 1)
     r = R(a)
     r.drop()               #$ error[E3070]: `R`'s `drop` may not be called explicitly
     println(2)

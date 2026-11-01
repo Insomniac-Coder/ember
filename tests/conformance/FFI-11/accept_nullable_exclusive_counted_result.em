@@ -16,8 +16,8 @@ pub extern "C" fn maybe_mut_span(input: *mut i32, n: usize, present: bool) -> *m
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(3)
-    values.push(4)
+    values.push(owns 3)
+    values.push(owns 4)
     match maybe(values.as_mut_span(), false):
         None:
             println("none")

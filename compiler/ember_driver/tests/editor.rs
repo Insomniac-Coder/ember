@@ -114,7 +114,7 @@ const NEEDS_A_BUILD: &str = "\
 fn table(n: int) -> Array[int]:
     out: Array[int] = []
     for i in range(n):
-        out.push(i * i)
+        out.push(owns (i * i))
     return out
 
 static TABLE: Array[int] = table(4)
@@ -127,7 +127,7 @@ fn first(ref mut h: Q) -> ref mut int:
 
 fn main():
     h = Q(arr=[1, 2])
-    r = first(h)
+    r = first(ref mut h)
     h.arr = [3]
     println(r, TABLE)
 ";

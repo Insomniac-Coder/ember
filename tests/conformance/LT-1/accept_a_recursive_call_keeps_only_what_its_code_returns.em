@@ -14,5 +14,5 @@ fn main():
     xs = [1]
     ys = [2]
     r = pick(xs, ys, 3)
-    ys.push(3)
+    ys.push(owns 3)
     println(r, ys)

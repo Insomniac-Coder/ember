@@ -15,7 +15,7 @@ fn main():
     s = "a".to_string()
     t = (s, s)              #$ error[E3040]: `s` is moved twice in one expression
     u = "b".to_string()
-    n = both(u, u)          #$ error[E3040]: `u` is moved twice in one expression
+    n = both(owns u, owns u)          #$ error[E3040]: `u` is moved twice in one expression
     v = "c".to_string()
     p = Pair(v, v)          #$ error[E3040]: `v` is moved twice in one expression
     w = "d".to_string()

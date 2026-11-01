@@ -11,10 +11,10 @@ struct Pair:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
+    values.push(owns 1)
     shared = values.as_span()
     pair = Pair(shared, shared)
     println(pair.left[0])
     println(pair.right[0])
-    values.push(2)
+    values.push(owns 2)
     println(values[1])

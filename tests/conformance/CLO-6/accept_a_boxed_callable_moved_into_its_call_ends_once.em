@@ -41,9 +41,9 @@ fn call_once(owns f: once fn() -> int) -> int:
     return f()
 
 fn main():
-    f: Box[fn() -> int] = Box(make("a".to_string()))
-    println(call_box(f))
-    g: Box[once fn() -> int] = Box(make_once("bb".to_string()))
-    println(call_once_box(g))
-    println(call_once(make_once("ccc".to_string())))
+    f: Box[fn() -> int] = Box(make(owns "a".to_string()))
+    println(call_box(owns f))
+    g: Box[once fn() -> int] = Box(make_once(owns "bb".to_string()))
+    println(call_once_box(owns g))
+    println(call_once(owns make_once(owns "ccc".to_string())))
     println("end")

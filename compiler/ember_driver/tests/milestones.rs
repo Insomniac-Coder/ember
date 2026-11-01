@@ -518,7 +518,7 @@ fn main():
     y = x / 2
     y /= 2
     m: Map[str, int] = Map()
-    m.insert(\"a\", 1)
+    m.insert(owns \"a\", owns 1)
     for k, v in m:
         println(k, v)
     xs: Array[int] = [1, 2]
@@ -921,9 +921,9 @@ fn tcb_lists_each_category_and_audit_summarises() {
     std::fs::write(
         &source,
         "unsafe extern \"C\":\n    @ffi(effects=[], deterministic)\n    safe fn abs(x: i32) -> i32\n    unsafe fn rand() -> i32\n\n\
-         fn grow(ref mut xs: Array[int]):\n    xs.push(1)\n\n\
+         fn grow(ref mut xs: Array[int]):\n    xs.push(owns 1)\n\n\
          fn noisy() -> i32:\n    unsafe:  # SAFETY(ffi): rand has no precondition\n        return rand()\n\n\
-         fn main():\n    xs: Array[int] = []\n    grow(xs)\n    println(abs(-2), noisy())\n",
+         fn main():\n    xs: Array[int] = []\n    grow(ref mut xs)\n    println(abs(-2), noisy())\n",
     )
     .expect("write the program");
     let source_arg = source.to_string_lossy().into_owned();
@@ -971,7 +971,7 @@ fn inspect_cost_reports_each_row_by_site() {
          fn bump_all(counters: Array[Counter]):\n    for c in counters:\n        keep = c\n        keep.bump()\n\n\
          fn measure(shape: ref dyn Shape) -> int:\n    return shape.area()\n\n\
          fn get(xs: Array[int], i: int) -> int:\n    return xs[i]\n\n\
-         fn main():\n    xs = [1, 2, 3]\n    s = Set[int]()\n    s.add(2)\n    text = f\"value {xs[0]}\"\n\
+         fn main():\n    xs = [1, 2, 3]\n    s = Set[int]()\n    s.add(owns 2)\n    text = f\"value {xs[0]}\"\n\
          \x20   square = Square(side = 2)\n    counters = [Counter(), Counter()]\n    bump_all(counters)\n\
          \x20   println(get(xs, 1), 2 in xs, 2 in s, \"lu\" in text, measure(ref square), counters[0].n)\n",
     )
@@ -1103,7 +1103,7 @@ fn explain_view_names_each_view_in_use_and_the_use_that_keeps_it() {
     std::fs::write(&shared, "fn total(xs: Span[int]) -> int:\n    sum = 0\n    for x in xs:\n        sum += x\n    return sum\n\nfn main():\n    v: Array[int] = [1, 2, 3]\n    s = v.as_span()\n    n = v.len()\n    w = total(s)\n    println(w, n)\n")
         .expect("the program is writable");
     let exclusive = directory.join(ember_branding::source_file("exclusive"));
-    std::fs::write(&exclusive, "fn bump(ref mut xs: Array[int]):\n    xs.push(4)\n\nfn main():\n    v: Array[int] = [1, 2, 3]\n    r = ref mut v\n    r.push(9)\n    bump(r)\n    println(v.len())\n")
+    std::fs::write(&exclusive, "fn bump(ref mut xs: Array[int]):\n    xs.push(owns 4)\n\nfn main():\n    v: Array[int] = [1, 2, 3]\n    r = ref mut v\n    r.push(owns 9)\n    bump(ref mut r)\n    println(v.len())\n")
         .expect("the program is writable");
     let explain = |file: &Path, line: u32| {
         let run = ember(&["explain", "--view", &format!("{}:{line}", file.display())], &root);
@@ -2107,7 +2107,7 @@ fn random_state_is_keyed_per_process() {
 
 fn seeded(s: StrView) -> u64:
     h = RandomState.new()
-    s.hash(h)
+    s.hash(ref mut h)
     return h.finish()
 
 fn main():
@@ -2664,7 +2664,7 @@ fn ember_lint_reports_its_lints_at_the_levels_the_manifest_gives() {
         "    for i in 0..3:",
         "        u = String.from(\"y\")",
         "        println(u.len() + i)",
-        "    println(t.len(), first(Pair(1, 2)))",
+        "    println(t.len(), first(owns Pair(1, 2)))",
         "",
     ]
     .join("\n");
@@ -3569,15 +3569,15 @@ fn why_prints_the_shortest_chain_to_an_effect() {
     let source = dir.join(format!("why.{SOURCE_EXT}"));
     std::fs::write(
         &source,
-        "fn grow(ref mut xs: Array[int]):\n    xs.push(1)\n\n\
-         fn deep(ref mut xs: Array[int]):\n    grow(xs)\n\n\
-         fn shallow(ref mut xs: Array[int]):\n    xs.push(2)\n\n\
+        "fn grow(ref mut xs: Array[int]):\n    xs.push(owns 1)\n\n\
+         fn deep(ref mut xs: Array[int]):\n    grow(ref mut xs)\n\n\
+         fn shallow(ref mut xs: Array[int]):\n    xs.push(owns 2)\n\n\
          fn pure(x: int) -> int:\n    return x * 2\n\n\
          @safety(\"`n` is at least 1\")\n\
          unsafe fn first(p: *mut int, n: int) -> int:  # SAFETY: slot 0 exists, as `n` says\n    unsafe:  # SAFETY: slot 0 exists, as `n` says\n        return read(p, 0)\n\n\
          fn through(p: *mut int) -> int:\n    unsafe:  # SAFETY: the caller's one slot\n        return first(p, 1)\n\n\
          fn peek() -> int:\n    value = 0\n    unsafe:  # SAFETY: one slot, written before it is read and freed once\n        p = alloc[int](1)\n        write(p, 0, 7)\n        value = first(p, 1)\n        free(p, 1)\n    return value\n\n\
-         fn main():\n    xs: Array[int] = []\n    deep(xs)\n    shallow(xs)\n    println(pure(3), peek())\n",
+         fn main():\n    xs: Array[int] = []\n    deep(ref mut xs)\n    shallow(ref mut xs)\n    println(pure(3), peek())\n",
     )
     .expect("write the program");
     let source_arg = source.to_string_lossy().into_owned();
@@ -6340,7 +6340,7 @@ fn callable_region_summary_changes_invalidate_importers_interface_key() {
     .expect("write initial helper");
     std::fs::write(
         test_root.join(&main),
-        "from helper import select, package_select\n\nfn main():\n    first: Array[i32] = Array[i32]()\n    first.push(10)\n    second: Array[i32] = Array[i32]()\n    second.push(20)\n    selected = select(first.as_span(), second.as_span())\n    package_selected = package_select(first.as_span(), second.as_span())\n    println(selected[0])\n    println(package_selected[0])\n",
+        "from helper import select, package_select\n\nfn main():\n    first: Array[i32] = Array[i32]()\n    first.push(owns 10)\n    second: Array[i32] = Array[i32]()\n    second.push(owns 20)\n    selected = select(first.as_span(), second.as_span())\n    package_selected = package_select(first.as_span(), second.as_span())\n    println(selected[0])\n    println(package_selected[0])\n",
     )
     .expect("write importer");
 
@@ -6748,7 +6748,7 @@ fn generic_callable_parameter_modes_cross_the_interface_boundary() {
     .expect("write initial callable-mode helper");
     std::fs::write(
         test_root.join(&main),
-        "from helper import apply\n\nfn increment(ref mut value: i32) -> i32:\n    value = value + 1\n    return value\n\nfn main():\n    value: i32 = 4\n    println(apply(increment, value))\n",
+        "from helper import apply\n\nfn increment(ref mut value: i32) -> i32:\n    value = value + 1\n    return value\n\nfn main():\n    value: i32 = 4\n    println(apply(increment, ref mut value))\n",
     )
     .expect("write callable-mode importer");
 
@@ -6785,7 +6785,7 @@ fn generic_callable_parameter_modes_cross_the_interface_boundary() {
     .expect("change callable-mode helper");
     std::fs::write(
         test_root.join(&main),
-        "from helper import apply\n\nfn identity(value: i32) -> i32:\n    return value\n\nfn main():\n    value: i32 = 4\n    println(apply(identity, value))\n",
+        "from helper import apply\n\nfn identity(value: i32) -> i32:\n    return value\n\nfn main():\n    value: i32 = 4\n    println(apply(identity, ref mut value))\n",
     )
     .expect("adapt importer to the changed callable contract");
     check("after callable mode change");
@@ -7075,7 +7075,7 @@ struct A:
 fn main():
     w = World()
     e = w.create()
-    w.add(e, A(1))
+    w.add(e, owns A(1))
 ");
     std::fs::write(test_root.join(&one), program("")).expect("write the first program");
     std::fs::write(test_root.join(&two), program("
@@ -7575,7 +7575,7 @@ extend Counter:
         return this.count
 
     fn note(x: int):
-        this.seen.push(x)
+        this.seen.push(owns x)
         this.bump()
 
 fn twice(ref mut c: Counter):
@@ -7589,7 +7589,7 @@ fn depth(n: int, ref mut c: Counter) -> int:
     if n == 0:
         c.bump()
         return 0
-    return depth(n - 1, c)
+    return depth(n - 1, ref mut c)
 
 open class Node:
     value: int = 0
@@ -7631,25 +7631,25 @@ fn twice_first() -> int:
     return first_limit() * 2
 
 fn log(ref mut out: Array[int], x: int):
-    out.push(x)
+    out.push(owns x)
 
 fn log_twice(ref mut out: Array[int]):
-    log(out, 1)
-    log(out, 2)
+    log(ref mut out, 1)
+    log(ref mut out, 2)
 
 fn log_and_peek(ref mut out: Array[int]) -> int:
-    out.push(3)
+    out.push(owns 3)
     return out[0]
 
 fn log_and_clear(ref mut out: Array[int]):
-    out.push(4)
+    out.push(owns 4)
     out.clear()
 
 fn note_text(s: StrView):
     println(s)
 
 fn fresh_then_print(s: StrView, ref mut out: Array[String]):
-    out.push(String(\"x\"))
+    out.push(owns String(\"x\"))
     println(s)
 
 fn clear_then_use(s: StrView, ref mut log: Array[String]):
@@ -7664,11 +7664,11 @@ fn wipe(ref mut log: Array[String]):
     log.clear()
 
 fn clear_through(s: StrView, ref mut log: Array[String]):
-    wipe(log)
+    wipe(ref mut log)
     println(s)
 
 fn pass_on(s: StrView, ref mut log: Array[String]):
-    clear_then_use(s, log)
+    clear_then_use(s, ref mut log)
 
 fn piece_after(s: StrView, ref mut log: Array[String]):
     t = s[1..]
@@ -7682,18 +7682,18 @@ fn in_a_loop(s: StrView, ref mut log: Array[String]):
 
 fn fill(ref mut out: Array[int]):
     for x in LIMITS:
-        out.push(x)
+        out.push(owns x)
 
 fn fill_on(ref mut out: Array[int]):
-    fill(out)
+    fill(ref mut out)
 
 fn push_both(ref mut out: Array[int], ref mut other: Array[int]):
-    other.push(1)
-    out.push(2)
+    other.push(owns 1)
+    out.push(owns 2)
 
 fn grow_in_a_task(ref mut xs: Array[int]):
     with scope = thread.scope():
-        scope.spawn(fn(): xs.push(1))
+        scope.spawn(owns fn(): xs.push(owns 1))
 
 class Member:
     id: int = 0
@@ -7723,34 +7723,34 @@ fn keep(m: Member):
 
 fn main():
     c = Counter(count = 0, seen = [])
-    twice(c)
-    reset(c)
-    println(reads_only(c), depth(3, c))
+    twice(ref mut c)
+    reset(ref mut c)
+    println(reads_only(c), depth(3, ref mut c))
     a = Node()
     a.next = Some(Node())
     second(a)
     unlink(a)
     println(twice_first())
     xs: Array[int] = []
-    log_twice(xs)
-    println(log_and_peek(xs))
-    log_and_clear(xs)
+    log_twice(ref mut xs)
+    println(log_and_peek(ref mut xs))
+    log_and_clear(ref mut xs)
     l: Node = Loud()
-    poke_it(l)
+    poke_it(ref mut l)
     words: Array[String] = []
     note_text(\"a\")
-    fresh_then_print(\"b\", words)
-    clear_then_use(\"c\", words)
-    use_then_clear(\"d\", words)
-    clear_through(\"e\", words)
-    pass_on(\"f\", words)
-    piece_after(\"g\", words)
-    in_a_loop(\"h\", words)
-    fill(xs)
-    fill_on(xs)
+    fresh_then_print(\"b\", ref mut words)
+    clear_then_use(\"c\", ref mut words)
+    use_then_clear(\"d\", ref mut words)
+    clear_through(\"e\", ref mut words)
+    pass_on(\"f\", ref mut words)
+    piece_after(\"g\", ref mut words)
+    in_a_loop(\"h\", ref mut words)
+    fill(ref mut xs)
+    fill_on(ref mut xs)
     zs: Array[int] = []
-    push_both(xs, zs)
-    grow_in_a_task(xs)
+    push_both(ref mut xs, ref mut zs)
+    grow_in_a_task(ref mut xs)
     m = Member()
     println(m.label())
     m.give()
@@ -8542,7 +8542,7 @@ fn ember_test_doc_runs_the_documentation_examples() {
 fn main():
     a = [1, 2, 3]
     b = a
-    a.push(4)
+    a.push(owns 4)
 ```
 
 ## Why
@@ -8553,7 +8553,7 @@ Prose.
 fn main():
     a = [1, 2, 3]
     b = a.clone()
-    a.push(4)
+    a.push(owns 4)
     println(b.len())
 ```
 ").expect("a page is writable");
@@ -8918,7 +8918,7 @@ match @assume_noalloc(cpp.checked(x as c_int)):\n            Ok(value):\n       
 fn shown(x: c_int) -> c_int:\n    unsafe:  # SAFETY(ffi): a scalar call\n        match cpp.checked(x):\n            Ok(value):\n                return value\n            Err(_):\n                return 0\n\n\
 fn elsewhere() -> c_int:\n    unsafe:  # SAFETY(ffi): a scalar call\n        match cpp.checked(7):\n            Ok(value):\n                return value\n            Err(_):\n                return 0\n\n\
 fn main():\n    println(steady(2), shown(3))\n    unsafe:  # SAFETY(ffi): a scalar call\n        println(cpp.quiet(1))\n    \
-worker = thread.spawn(owned fn() => elsewhere())\n    println(worker.join())\n").unwrap();
+worker = thread.spawn(owns owned fn() => elsewhere())\n    println(worker.join())\n").unwrap();
     let source_text = std::fs::read_to_string(&source).unwrap().replace("import std.thread\n", "import std.thread\nfrom std.ffi import c_int\n");
     std::fs::write(&source, source_text).unwrap();
     let out_dir = dir.join("out");
@@ -9363,7 +9363,6 @@ fn every_example_of_the_specification_checks() {
     // `tasks/96/redesign/compiler-0.9.15/MILESTONES.md` that lands lowers these counts.
     const WRITTEN_IN_0915: &str = "written in 0.9.15, which this compiler does not implement yet";
     const BASELINE: &[(&str, usize, &str)] = &[
-        ("I.5 A complete small program", 1, WRITTEN_IN_0915),
         ("IV.6a The words in a type: who owns a value, and where its memory comes from", 1, WRITTEN_IN_0915),
         ("V.7 Constants and statics", 1, WRITTEN_IN_0915),
         ("VI.5 Lambdas and function values", 1, WRITTEN_IN_0915),

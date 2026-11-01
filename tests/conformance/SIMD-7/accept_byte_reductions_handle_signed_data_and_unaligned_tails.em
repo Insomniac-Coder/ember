@@ -22,8 +22,8 @@ fn main():
     xs: Array[u8] = []
     ys: Array[i8] = []
     for i in 0..256:
-        xs.push(i as u8)
-        ys.push((i - 128) as i8)
+        xs.push(owns (i as u8))
+        ys.push(owns ((i - 128) as i8))
     for start in 0..16:
         for end in start..257:
             (a, b) = totals(xs[start..end], ys[start..end])

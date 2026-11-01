@@ -27,7 +27,7 @@ class Token implements Value:
 fn main():
     tokens: Array[Value] = Array[Value]()
     for i in 0_i32..4_i32:
-        tokens.push(Token(i))
+        tokens.push(owns Token(i))
     total = 0_i32
     for token in tokens:
         total += token.value()

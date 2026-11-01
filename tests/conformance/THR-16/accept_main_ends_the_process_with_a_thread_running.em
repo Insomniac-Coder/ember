@@ -18,6 +18,6 @@ fn main():
     gate = SyncShared(Mutex(0))
     held = gate.get().lock()
     theirs = gate
-    _waiter = thread.spawn(owned fn() => wait_forever(theirs))
+    _waiter = thread.spawn(owns owned fn() => wait_forever(theirs))
     mem.forget(held)
     println("main ends")

@@ -40,4 +40,4 @@ fn main():
     plain = cpp.scaled(None, 3.0).unwrap_or(0.0)
     println(cpp.digit(55).unwrap_or(-1), cpp.digit(120).is_none(), cpp.or_zero(Some(5)), cpp.or_zero(None), scale, plain)
     box = cpp.make_box(41).unwrap()
-    println(cpp.consume(box), cpp.boxes_destroyed())
+    println(cpp.consume(owns box), cpp.boxes_destroyed())

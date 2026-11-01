@@ -27,7 +27,7 @@ fn main():
     println(s, t)
     xs = [1, 2]
     ys = copy of xs
-    ys.push(3)
+    ys.push(owns 3)
     println(ys.len(), xs.len())
     p = Point(x=1)
     q = copy of p

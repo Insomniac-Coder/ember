@@ -57,8 +57,8 @@ fn main():
             println(v)
         Err(e):
             println(f"same {e.code}")
-    report(generic(low(-7)), "generic")
-    kept: Result[int, LowError] = generic(low(-3))
+    report(generic(owns low(-7)), "generic")
+    kept: Result[int, LowError] = generic(owns low(-3))
     match kept:
         Ok(v):
             println(v)

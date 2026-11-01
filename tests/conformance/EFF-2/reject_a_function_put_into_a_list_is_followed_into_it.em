@@ -19,5 +19,5 @@ fn fire(ref mut b: Bus) -> int:
 
 fn main():
     bus = Bus(handlers = [double])
-    bus.handlers.push(widen)
-    println(fire(bus))
+    bus.handlers.push(owns widen)
+    println(fire(ref mut bus))

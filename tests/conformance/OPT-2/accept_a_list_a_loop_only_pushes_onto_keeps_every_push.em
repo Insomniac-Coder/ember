@@ -31,7 +31,7 @@ fn fill(ref mut log: Log, start: int, stop: int, limit: int):
     for i in start..stop:
         if i == start + limit:
             break
-        log.items.push(i)
+        log.items.push(owns i)
     else:
         print(len(log.items), log.items, "done")
         println()
@@ -41,29 +41,29 @@ fn fill(ref mut log: Log, start: int, stop: int, limit: int):
 
 fn main():
     a = Log()
-    fill(a, 0, 10, 5)
+    fill(ref mut a, 0, 10, 5)
     b = Log()
-    fill(b, 10, 17, 100)
+    fill(ref mut b, 10, 17, 100)
 
     evens: Array[int] = []
     odds: Array[int] = []
     for i in 0..10:
         if i % 2 == 0:
-            evens.push(i)
+            evens.push(owns i)
         else:
-            odds.push(i)
+            odds.push(owns i)
     println(evens, odds)
 
     c = Log()
     same = c
     for i in 0..4:
-        c.items.push(i)
+        c.items.push(owns i)
         print(len(same.items))
         if i < 3:
             print(" ")
     println()
     for i in 0..4:
-        c.items.push(i)
+        c.items.push(owns i)
         print(count(c))
         if i < 3:
             print(" ")
@@ -73,11 +73,11 @@ fn main():
     d = Log()
     total = 0
     for i in 0..len(source):
-        d.items.push(source[i])
+        d.items.push(owns source[i])
         total += source[i]
     println(len(d.items), total)
 
     pairs: Array[(int, int)] = []
     for i in 1..4:
-        pairs.push((i, i * 2))
+        pairs.push(owns (i, i * 2))
     println(pairs)

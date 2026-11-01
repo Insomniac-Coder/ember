@@ -9,7 +9,7 @@ class Bag:
     items: Array[int]
 
     fn add(x: int):
-        this.items.push(x)
+        this.items.push(owns x)
 
 @no_alias_checks
 fn fill(ref mut b: Bag, ref mut other: Bag):
@@ -20,6 +20,6 @@ fn fill(ref mut b: Bag, ref mut other: Bag):
 fn main():
     b = Bag([])
     c = b
-    fill(b, c)
+    fill(ref mut b, ref mut c)
     for x in c.items:
         println(x)

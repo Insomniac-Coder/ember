@@ -14,7 +14,7 @@ fn make(n: i32) -> Bag:
     values: Array[i32] = Array[i32]()
     i: i32 = 0
     while i < n:
-        values.push(i)
+        values.push(owns i)
         i = i + 1
     return Bag(values)
 

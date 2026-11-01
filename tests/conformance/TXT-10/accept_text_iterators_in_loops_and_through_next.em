@@ -27,15 +27,15 @@ fn main():
     # iterator is driven by `next`. Both give the same items.
     looped: Array[char] = []
     for c in s.chars():
-        looped.push(c)
+        looped.push(owns c)
     driven: Array[char] = []
     it = s.chars()
     for c in it:
-        driven.push(c)
+        driven.push(owns c)
     println(looped, driven, s.chars().count(), s.chars().last())
     offsets: Array[int] = []
     for (i, _) in s.char_indices():
-        offsets.push(i)
+        offsets.push(owns i)
     println(offsets, s.char_indices().to_array())
     total = 0
     for b in s.bytes():
@@ -44,15 +44,15 @@ fn main():
     text = "one\ntwo\r\n\nthree"
     lines: Array[StrView] = []
     for line in text.lines():
-        lines.push(line)
+        lines.push(owns line)
     println(joined(lines), "x\n".lines().count(), "".lines().count(), text.lines().nth(1))
     parts: Array[StrView] = []
     for part in "a,,b,,c,".split(","):
-        parts.push(part)
+        parts.push(owns part)
     println(joined(parts), "1é2é3".split("é").to_array(), "".split(",").count())
     words: Array[StrView] = []
     for word in "  a \t b\u{3000}c  ".split_whitespace():
-        words.push(word)
+        words.push(owns word)
     println(joined(words), "   ".split_whitespace().count())
     # A loop of each kind ends early, skips and runs its `else`.
     for c in s.chars():

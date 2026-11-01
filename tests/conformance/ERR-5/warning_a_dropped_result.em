@@ -13,4 +13,4 @@ fn parse(s: StrView) -> Result[int, StrView]:
 
 fn main():
     parse("x")
-    parse("1").map(fn(n) => n + 1)
+    parse("1").map(owns fn(n) => n + 1)

@@ -10,5 +10,5 @@ fn first(view: Span[i32]) -> i32:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(33)
+    values.push(owns 33)
     println(callback_value(first, values.as_span()))

@@ -30,8 +30,8 @@ fn sum_of_squares(n: usize) -> i32:
 fn still_checked() -> int:
     xs: Array[i32] = Array()
     unsafe:  # SAFETY: this test sets up what the operation requires    #$ warning[L3010]: contains no operation that needs
-        xs.push(4)
-        xs.push(5)
+        xs.push(owns 4)
+        xs.push(owns 5)
     return xs.len()
 
 struct Pixel:

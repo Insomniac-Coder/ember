@@ -24,4 +24,4 @@ fn bump_it(ref mut value: Accumulator) -> i32:
 
 fn main():
     counter = Counter(41)
-    println(bump_it(counter))
+    println(bump_it(ref mut counter))

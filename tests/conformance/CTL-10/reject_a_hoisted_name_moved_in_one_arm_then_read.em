@@ -14,7 +14,7 @@ fn main():
     flag = true
     if flag:
         kept = Marker(1)
-        println(consume(kept))
+        println(consume(owns kept))
     else:
         kept = Marker(2)
     println(kept.n)  #$ error[E3040]: `kept` may have been moved out of

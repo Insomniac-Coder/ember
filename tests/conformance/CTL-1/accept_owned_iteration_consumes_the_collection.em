@@ -31,12 +31,12 @@ fn main():
     kept: Array[String] = []
     for k in owns m:
         println("key", k)
-        kept.push(k)
+        kept.push(owns k)
     println(kept)
     s: Set[String] = {"y", "z"}
     seen: Array[String] = []
     for e in owns s:
-        seen.push(e)
+        seen.push(owns e)
     println(seen[0], seen[1])
     xs = [Noisy("x1"), Noisy("x2"), Noisy("x3")]
     for x in owns xs:

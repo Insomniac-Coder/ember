@@ -15,13 +15,13 @@ fn bump(count: Atomic[int]):
 
 fn early(count: Atomic[int]) -> int:
     with scope = thread.scope():
-        scope.spawn(fn() => bump(count))
+        scope.spawn(owns fn() => bump(count))
         return 7
 
 fn in_loop(count: Atomic[int]):
     for i in range(3):
         with scope = thread.scope():
-            scope.spawn(fn() => bump(count))
+            scope.spawn(owns fn() => bump(count))
             if i == 1:
                 break
             continue
@@ -32,5 +32,5 @@ fn main():
     in_loop(count)
     println(count.load())
     with scope = thread.scope():
-        scope.spawn(fn() => bump(count))
+        scope.spawn(owns fn() => bump(count))
     println(count.load())

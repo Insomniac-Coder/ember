@@ -12,7 +12,7 @@ struct Holder:
 fn main():
     holder = Holder[i32](0)
     values: Array[i32] = Array[i32]()
-    values.push(59)
+    values.push(owns 59)
     seen = holder.passthrough(values.as_span())
-    values.push(60) #$ error[E3021]: `values` is borrowed here and mutably borrowed elsewhere
+    values.push(owns 60) #$ error[E3021]: `values` is borrowed here and mutably borrowed elsewhere
     println(seen[0])

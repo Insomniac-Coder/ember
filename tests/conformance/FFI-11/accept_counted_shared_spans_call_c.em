@@ -13,9 +13,9 @@ pub extern "C" fn probe_bytes(left: *u8, right: *u8, n: usize) -> i32:
 
 fn main():
     left: Array[u8] = Array[u8]()
-    left.push(1)
-    left.push(2)
+    left.push(owns 1)
+    left.push(owns 2)
     right: Array[u8] = Array[u8]()
-    right.push(1)
-    right.push(2)
+    right.push(owns 1)
+    right.push(owns 2)
     println(counted_pair(left.as_span(), right.as_span()) == 4)

@@ -18,7 +18,7 @@ class Holder:
 
     fn add(x: int):
         with g = this.cell.borrow_mut():
-            g.push(x)
+            g.push(owns x)
 
 fn main():
     b = Holder()

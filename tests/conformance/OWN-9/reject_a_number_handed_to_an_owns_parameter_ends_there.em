@@ -8,5 +8,5 @@ fn take(owns x: int):
 
 fn main():
     n = 5
-    take(n)
+    take(owns n)
     println(n)  #$ error[E3040]

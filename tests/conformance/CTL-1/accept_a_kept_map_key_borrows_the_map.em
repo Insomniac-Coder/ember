@@ -43,9 +43,9 @@ fn first_key(m: ref Map[String, int]) -> Option[ref String]:
 
 fn main():
     m: Map[String, int] = Map()
-    m.insert("a", 1)
-    m.insert("bbb", 2)
-    m.insert("cc", 3)
+    m.insert(owns "a", owns 1)
+    m.insert(owns "bbb", owns 2)
+    m.insert(owns "cc", owns 3)
     best = ""
     for k in m:
         if k.len() > best.len():
@@ -53,8 +53,8 @@ fn main():
     println(best)
     println(longest_key(m))
     s: Set[String] = Set()
-    s.add("x")
-    s.add("yyyy")
+    s.add(owns "x")
+    s.add(owns "yyyy")
     top = ""
     for v in s:
         if v.len() > top.len():

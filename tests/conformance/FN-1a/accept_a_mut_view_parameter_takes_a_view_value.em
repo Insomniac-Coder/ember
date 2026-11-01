@@ -24,9 +24,9 @@ fn normalize(ref mut s: MutSpan[i32]):
 
 fn main():
     buf: Array[i32] = Array[i32]()
-    buf.push(1)
-    buf.push(2)
-    buf.push(3)
+    buf.push(owns 1)
+    buf.push(owns 2)
+    buf.push(owns 3)
     normalize(buf.as_mut_span())
     println(buf[0])
     println(buf[1])

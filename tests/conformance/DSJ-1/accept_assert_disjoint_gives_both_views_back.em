@@ -25,7 +25,7 @@ fn blend(ref mut dst: MutSpan[f32], src: Span[f32]) -> StrView:
 fn main():
     a: Array[f32] = [2.0, 4.0, 6.0]
     b: Array[f32] = [0.0, 0.0, 0.0]
-    println(blend(a, b), a)
+    println(blend(ref mut a, b), a)
     x: Array[int] = [1, 2, 3, 4]
     match assert_disjoint(x[0..2], x[1..3]):
         Ok((p, q)):

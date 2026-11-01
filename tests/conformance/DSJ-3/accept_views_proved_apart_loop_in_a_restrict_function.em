@@ -38,9 +38,9 @@ fn unproved(ref mut dst: MutSpan[f32], src: Span[f32]):
 fn main():
     a: Array[f32] = [0.0, 0.0, 0.0, 0.0]
     b: Array[f32] = [1.0, 2.0, 3.0, 4.0]
-    println(scale(a, b, 2.0), a)
+    println(scale(ref mut a, b, 2.0), a)
     n: Array[int] = [1, 2, 3, 4]
-    halves(n)
+    halves(ref mut n)
     println("split", n)
-    unproved(a, b)
+    unproved(ref mut a, b)
     println("unproved", a)

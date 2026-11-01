@@ -61,5 +61,5 @@ fn main():
     for i in 1..=3:
         if i == 2:
             continue
-        kept.push(i)
+        kept.push(owns i)
     println(total, kept[0], kept[1])

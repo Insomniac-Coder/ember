@@ -20,9 +20,9 @@ fn right_value(pair: Pair) -> i32:
 
 fn main():
     left: Array[i32] = Array[i32]()
-    left.push(11)
+    left.push(owns 11)
     right: Array[i32] = Array[i32]()
-    right.push(22)
+    right.push(owns 22)
     pair = outer(left.as_span(), right.as_span())
-    left.push(33)
+    left.push(owns 33)
     println(right_value(pair))

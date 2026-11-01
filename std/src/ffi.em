@@ -54,8 +54,8 @@ pub struct WideString:
         for unit in units:
             if unit == 0:
                 break
-            kept.push(unit)
-        kept.push(0)
+            kept.push(owns unit)
+        kept.push(owns 0)
         return WideString(kept)
 
     ## It allocates a new `String`.
@@ -88,12 +88,12 @@ extend StrView:
             if code == 0:
                 return Err(NulError(at as usize))
             if code < 0x10000:
-                units.push(code as u16)
+                units.push(owns (code as u16))
             else:
                 rest = code - 0x10000
-                units.push((0xD800 + (rest >> 10)) as u16)
-                units.push((0xDC00 + (rest & 0x3FF)) as u16)
-        units.push(0)
+                units.push(owns ((0xD800 + (rest >> 10)) as u16))
+                units.push(owns ((0xDC00 + (rest & 0x3FF)) as u16))
+        units.push(owns 0)
         return Ok(WideString(units))
 
 ## `[FFI-8]` — C's types by their C names, as `import c` writes them (`int` is `c_int`). Those
@@ -331,7 +331,7 @@ extend[T: needs Copy] CppVector[T]:
     pub fn to_array() -> Array[T]:
         out: Array[T] = []
         for item in this.span():
-            out.push(item)
+            out.push(owns item)
         return out
 
 ## `[FFI-17a]` — a C++ `std::function` Ember owns, which it does not call: what a result of one is
@@ -403,7 +403,7 @@ pub struct CppString:
 extend String implements From[CppString]:
     ## It allocates a new `String`.
     static fn from(owns value: CppString) -> String:
-        return cpp_string_copy(value)
+        return cpp_string_copy(owns value)
 
 ## `[FFI-17a]` — `String.from(c)`: the bytes of a `std::string`, copied, each invalid sequence
 ## becoming U+FFFD. Compiler-known: `String.from` of a `CppString` is this.

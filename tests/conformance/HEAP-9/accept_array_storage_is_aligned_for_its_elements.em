@@ -13,10 +13,10 @@ fn misaligned(xs: Span[u128]) -> int:
 
 fn main():
     xs: Array[u128] = Array[u128]()
-    xs.push(1)
+    xs.push(owns 1)
     first = misaligned(xs.as_span())
     for i in 0..1000:
-        xs.push(i as u128)
+        xs.push(owns (i as u128))
     grown = misaligned(xs.as_span())
     copy = xs.clone()
     println(align_of[u128](), first, grown, misaligned(copy.as_span()))

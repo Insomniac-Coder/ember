@@ -7,8 +7,8 @@
 
 fn main():
     v: Array[i32] = Array[i32]()
-    v.push(1)
-    v.push(2)
+    v.push(owns 1)
+    v.push(owns 2)
     i: usize = 0
     j: usize = 1
     a: ref mut i32 = ref mut v[i]

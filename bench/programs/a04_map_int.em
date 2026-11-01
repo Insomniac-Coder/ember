@@ -1,7 +1,7 @@
 fn main():
     m: Map[int, int] = {}
     for i in 0..1000000:
-        m.insert(i * 7, i)
+        m.insert(owns (i * 7), owns i)
     total = 0
     for round in 0..5:
         for i in 0..1000000:

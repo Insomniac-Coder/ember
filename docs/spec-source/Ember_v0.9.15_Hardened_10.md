@@ -5473,7 +5473,7 @@ from std.sync import Sender, channel
 
 fn produce(tx: Sender[int]):
     for i in 0..10:
-        tx.send(owns i * i).expect("receiver is gone")
+        tx.send(owns (i * i)).expect("receiver is gone")
 
 fn main():
     tx, rx = channel[int](capacity=64)

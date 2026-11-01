@@ -45,50 +45,50 @@ fn noted(v: int) -> int:
 
 fn main():
     xs = [5, 3, 9, 1, 3, 7, 2]
-    xs.sort_by(fn(a, b) => b.cmp(a))
+    xs.sort_by(owns fn(a, b) => b.cmp(a))
     println(xs)
 
     words = [String.from("pear"), String.from("fig"), String.from("apple"), String.from("kiwi")]
-    words.sort_by_key(fn(w) => w.len())
+    words.sort_by_key(owns fn(w) => w.len())
     println(words)
 
     items = [Tagged(1, String.from("c")), Tagged(3, String.from("a")), Tagged(1, String.from("d")), Tagged(3, String.from("b"))]
-    items.sort_by(fn(a, b) => b.rank.cmp(a.rank))
+    items.sort_by(owns fn(a, b) => b.rank.cmp(a.rank))
     shown: Array[String] = []
     for t in items:
-        shown.push(f"{t.rank}{t.tag}")
+        shown.push(owns f"{t.rank}{t.tag}")
     println(shown.join(" "))
 
     limit = 4
     ys = [6, 3, 8, 1]
-    ys.sort_by(fn(a, b) => (a % limit).cmp(b % limit))
+    ys.sort_by(owns fn(a, b) => (a % limit).cmp(b % limit))
     println(ys)
 
     zs = [4, 2, 8, 6]
     print("keys")
-    zs.sort_by_key(noted)
+    zs.sort_by_key(owns noted)
     println("")
     println(zs)
 
     odd = [3, 1, 2, 1]
-    odd.sort_by(fn(a, b) => Ordering.Less)
+    odd.sort_by(owns fn(a, b) => Ordering.Less)
     total = 0
     for v in odd:
         total += v
     println(total)
 
     empty: Array[int] = []
-    empty.sort_by(fn(a, b) => a.cmp(b))
+    empty.sort_by(owns fn(a, b) => a.cmp(b))
     println(empty)
 
     passed = [3, 1, 2]
-    descending(passed, fn(a, b) => b.cmp(a))
+    descending(ref mut passed, fn(a, b) => b.cmp(a))
     println(passed)
 
     texts = [String.from("ccc"), String.from("a"), String.from("bb")]
-    texts.sort_by_key(fn(s) => s.clone())
+    texts.sort_by_key(owns fn(s) => s.clone())
     println(texts.join(" "))
 
     ranks = [1, 2]
-    ranks.sort_by_key(fn(v) => Rank(v))
+    ranks.sort_by_key(owns fn(v) => Rank(v))
     println(ranks[0], ranks[1])

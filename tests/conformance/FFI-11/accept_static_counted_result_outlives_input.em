@@ -16,7 +16,7 @@ pub extern "C" fn copy_counted(input: *i32, n: usize) -> *i32:
 
 fn detached() -> Span[i32]:
     values: Array[i32] = Array[i32]()
-    values.push(40)
+    values.push(owns 40)
     return copy(values.as_span())
 
 fn main():

@@ -13,6 +13,6 @@ pub extern "C" fn probe_count_u8(data: *u8, n: u8) -> i32:
 
 fn main():
     data: Array[u8] = Array[u8]()
-    data.push(1)
-    data.push(2)
+    data.push(owns 1)
+    data.push(owns 2)
     println(counted(data.as_span()))

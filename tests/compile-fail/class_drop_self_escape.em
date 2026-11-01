@@ -8,7 +8,7 @@
 class Token:
     fn drop():
         retained: Array[Token] = Array[Token]()
-        retained.push(this) #$ error[E3016]: `this` escapes its own `drop`
+        retained.push(owns this) #$ error[E3016]: `this` escapes its own `drop`
 
 fn main():
     _token = Token()

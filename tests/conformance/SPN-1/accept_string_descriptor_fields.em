@@ -53,7 +53,7 @@ fn main():
     println(b, b.len())
     owners: Array[String] = ["élan"]
     reads = 0
-    selected = owners[next_index(reads)].as_str()
+    selected = owners[next_index(ref mut reads)].as_str()
     println(reads, selected, selected.len())
     match descriptor_chain(empty, true):
         Some(view):

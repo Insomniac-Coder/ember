@@ -1,8 +1,8 @@
 error[E3016]: `this` escapes its own `drop`
-  --> tests/ui/borrow/O9/class_drop_publishes_self.em:13:23
+  --> tests/ui/borrow/O9/class_drop_publishes_self.em:13:28
    |
-13 |         retained.push(this)
-   |                       ^^^^ published here
+13 |         retained.push(owns this)
+   |                            ^^^^ published here
    |
    = help: move the data out with `mem.take` instead
    = note: a destructor may not publish a handle to the object being destroyed [CLS-7a]

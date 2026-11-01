@@ -31,4 +31,4 @@ fn main():
     for i in 0..3:
         left.bump()
         right.bump()
-    report(left_alias, right_alias.value)
+    report(ref mut left_alias, right_alias.value)

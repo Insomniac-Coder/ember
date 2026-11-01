@@ -47,11 +47,11 @@ extend Gauge implements Reading:
 
 fn main():
     shapes: Array[Box[dyn Shape]] = [Box(Square(3)), Box(Bar(2, 2))]
-    h = thread.spawn(owned fn() -> Array[int] => [s.area() for s in shapes])
+    h = thread.spawn(owns owned fn() -> Array[int] => [s.area() for s in shapes])
     areas = h.join()
     println(areas[0], areas[1])
     r: Box[dyn Reading] = Box(Gauge(6))
     with scope = thread.scope():
-        a = scope.spawn(fn() => r.value())
-        b = scope.spawn(fn() => r.value())
+        a = scope.spawn(owns fn() => r.value())
+        b = scope.spawn(owns fn() => r.value())
         println(a.join() + b.join())

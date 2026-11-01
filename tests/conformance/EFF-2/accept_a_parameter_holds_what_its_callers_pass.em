@@ -17,11 +17,11 @@ fn apply(ref mut f: fn(int) -> int, x: int) -> int:
 
 @noalloc
 fn scaled(ref mut s: Scaler, x: int) -> int:
-    return apply(s.by, x)
+    return apply(ref mut s.by, x)
 
 fn main():
     k = 3
     times = Scaler(by = owned fn(x: int) -> int => x * k)
     log = Logger(format = owned fn(x: int) -> int => [x, k].len())
-    println(scaled(times, 2))
+    println(scaled(ref mut times, 2))
     println(log.format(1))

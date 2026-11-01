@@ -13,6 +13,6 @@ class Stats:
 fn main():
     stats = Stats()
     with tags = stats.tags.lock():
-        tags.push("#x".to_string())
+        tags.push(owns "#x".to_string())
     with tags = stats.tags.lock():
         println(tags)

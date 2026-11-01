@@ -29,8 +29,8 @@ class Game:
         this.connect("kitchen", Direction.West, "hall")
         this.connect("library", Direction.East, "vault")
         this.connect("vault", Direction.West, "library")
-        this.rooms["kitchen"].items.push("key")
-        this.rooms["library"].items.push("candle")
+        this.rooms["kitchen"].items.push(owns "key")
+        this.rooms["library"].items.push(owns "candle")
 
     fn add_room(name: StrView, description: StrView):
         this.rooms[name] = Room(name=name.to_string(), description=description.to_string())
@@ -63,8 +63,8 @@ class Game:
     fn take(item: StrView):
         room = ref mut this.rooms[this.current]
         if item.to_string() in room.items:
-            room.items.retain(fn(i) => i != item)
-            this.inventory.push(item.to_string())
+            room.items.retain(owns fn(i) => i != item)
+            this.inventory.push(owns item.to_string())
             println(f"Taken: {item}")
         else:
             println(f"There is no {item} here.")
@@ -78,7 +78,7 @@ fn parse_direction(word: StrView) -> Option[Direction]:
         _ => None
 
 fn run_command(game: Game, line: StrView):
-    words = line.trim().to_lower().split(" ").map(fn(w) => w.to_string()).collect[Array[String]]()
+    words = line.trim().to_lower().split(" ").map(owns fn(w) => w.to_string()).collect[Array[String]]()
     if words.len() == 0:
         return
     verb = ref words[0]

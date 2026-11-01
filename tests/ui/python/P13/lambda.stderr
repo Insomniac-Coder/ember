@@ -1,8 +1,8 @@
 error[E0100]: `lambda` is Python's; an Ember lambda is `fn(x) => e`
- --> tests/ui/python/P13/lambda.em:3:29
+ --> tests/ui/python/P13/lambda.em:3:34
   |
-3 |     doubled = xs.iter().map(lambda x: x * 2).collect[Array[int]]()
-  |                             ^^^^^^
+3 |     doubled = xs.iter().map(owns lambda x: x * 2).collect[Array[int]]()
+  |                                  ^^^^^^
   |
   = help: write `fn(…) =>`
 

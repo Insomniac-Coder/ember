@@ -4,8 +4,8 @@
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(7)
-    values.push(8)
+    values.push(owns 7)
+    values.push(owns 8)
     shared = values.as_span()
     shared_pointer: *i32 = shared.as_ptr()
     println(shared.len())

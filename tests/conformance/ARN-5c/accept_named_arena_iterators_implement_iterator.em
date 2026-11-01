@@ -16,15 +16,15 @@ fn main():
     values: ArenaArray[i32] = ArenaArray[i32].with_capacity(arena, 1)
     _pushed = values.push(7)
     array_iter = values.iter()
-    println(has_next(array_iter))
+    println(has_next(ref mut array_iter))
 
     mut_iter = values.iter_mut()
-    println(has_next(mut_iter))
+    println(has_next(ref mut mut_iter))
 
     pairs: ArenaMap[i32, i32] = ArenaMap[i32, i32].with_capacity(arena, 1)
     _inserted = pairs.insert(4, 9)
     map_iter = pairs.iter()
-    println(has_next(map_iter))
+    println(has_next(ref mut map_iter))
 #$ stdout: true
 #$ true
 #$ true

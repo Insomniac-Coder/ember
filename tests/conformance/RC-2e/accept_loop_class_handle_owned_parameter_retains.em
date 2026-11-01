@@ -17,6 +17,6 @@ fn consume(owns token: Token) -> i32:
 
 fn main():
     tokens: Array[Token] = Array[Token]()
-    tokens.push(Token(7))
+    tokens.push(owns Token(7))
     for token in tokens:
-        println(consume(token))
+        println(consume(owns token))

@@ -12,9 +12,9 @@ fn advance(ref mut xs: MutSpan[float], vs: Span[float]):
 fn main():
     ps = SoA[Particle].with_capacity(100000)
     for i in 0..100000:
-        ps.push(Particle(x=i as float, v=0.5))
+        ps.push(owns Particle(x=i as float, v=0.5))
     for step in 0..1000:
-        advance(ps.x, ps.v)
+        advance(ref mut ps.x, ps.v)
     total = 0.0
     for x in ps.x:
         total += x

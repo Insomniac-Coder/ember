@@ -17,4 +17,4 @@ fn main():
     value: i32 = 4
     operation: fn(ref mut i32) -> i32 = increment
     println(operation(value))
-    println(apply(increment, value))
+    println(apply(increment, ref mut value))

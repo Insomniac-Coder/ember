@@ -11,7 +11,7 @@ static NAMES: Array[StrView] = ["ann", "bob"]
 
 fn main():
     owned_keys: Map[String, int] = {}
-    owned_keys.insert(String.from("x"), 1)
+    owned_keys.insert(owns String.from("x"), owns 1)
     println(owned_keys.contains_key("x"), owned_keys.len())
     index: Map[StrView, int] = {name: i for i, name in NAMES.iter().enumerate()}
     println(index.len(), index.contains_key("ann"), index.contains_key("cat"))

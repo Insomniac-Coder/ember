@@ -17,5 +17,5 @@ struct Mixed:
 
 fn main():
     ms = SoA[Mixed].with_capacity(0)
-    ms.push(Mixed(3, Inner(2.5, 1.0), "hello".to_string(), true))
+    ms.push(owns Mixed(3, Inner(2.5, 1.0), "hello".to_string(), true))
     println(ms[0].count, ms[0].at.x, ms[0].label, ms.on[0])

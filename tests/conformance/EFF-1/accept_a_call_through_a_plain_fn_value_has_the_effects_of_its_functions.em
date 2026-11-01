@@ -18,7 +18,7 @@ fn positives(xs: Span[int]) -> int:
 
 @noalloc
 fn doubled_negatives(xs: Span[int]) -> int:
-    it = xs.iter().map(fn(x: ref int) -> int => x * 2).filter(fn(x: int) -> bool => x < 0)
+    it = xs.iter().map(owns fn(x: ref int) -> int => x * 2).filter(owns fn(x: int) -> bool => x < 0)
     total = 0
     for v in it:
         total += v

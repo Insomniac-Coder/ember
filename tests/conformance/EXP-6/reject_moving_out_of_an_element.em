@@ -13,6 +13,6 @@ fn main():
     xs = ["a".to_string(), "b".to_string()]
     taken = xs[0]
     ns = SoA[Named].with_capacity(1)
-    ns.push(Named("ann".to_string(), 3))
+    ns.push(owns Named("ann".to_string(), 3))
     name = ns[0].name
     println(taken, name)

@@ -1,6 +1,6 @@
 fn check(n: int) -> Result[int]:
     if n < 0:
-        return Err(AnyError.msg("negative"))
+        return Err(AnyError.msg(owns "negative"))
     return Ok(n)
 
 fn main():

@@ -13,5 +13,5 @@ fn separator(ref mut text: StrView) -> StrView:
 
 fn main():
     text: StrView = "old:text"
-    result = text.split_once(separator(text))
+    result = text.split_once(separator(ref mut text))
     println(result, text)

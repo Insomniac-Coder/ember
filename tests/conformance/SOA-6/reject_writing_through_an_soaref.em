@@ -12,5 +12,5 @@ fn reset(p: SoARef[P]):
 
 fn main():
     ps = SoA[P].with_capacity(2)
-    ps.push(P(1, 2))
+    ps.push(owns P(1, 2))
     reset(ps[0])

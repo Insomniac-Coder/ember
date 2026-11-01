@@ -13,9 +13,9 @@ class Player:
         this.items = [1]
 
 fn grow(ref mut items: Array[int], other: Player):
-    items.push(len(other.items))
+    items.push(owns len(other.items))
 
 fn main():
     p = Player()
     alias = p
-    grow(p.items, alias)
+    grow(ref mut p.items, alias)

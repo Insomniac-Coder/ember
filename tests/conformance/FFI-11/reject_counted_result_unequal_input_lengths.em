@@ -12,8 +12,8 @@ pub extern "C" fn echo_shared_count(left: *u8, right: *u8, n: usize) -> *u8:
 
 fn main():
     left: Array[u8] = Array[u8]()
-    left.push(1)
-    left.push(2)
+    left.push(owns 1)
+    left.push(owns 2)
     right: Array[u8] = Array[u8]()
-    right.push(3)
+    right.push(owns 3)
     echo(left.as_span(), right.as_span())

@@ -13,6 +13,6 @@ fn publish(f: fn(Span[i32]) -> Span[i32], view: Span[i32]) -> Span[i32]:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
+    values.push(owns 1)
     escaped: Span[i32] = publish(identity, values.as_span())
     println(escaped[0])

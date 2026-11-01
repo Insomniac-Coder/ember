@@ -20,5 +20,5 @@ fn main():
     point = Point(y=23, x=19)
     println(point.x + point.y)
     state: i32 = 1
-    point = Point(y=bump(state), x=bump(state))
+    point = Point(y=bump(ref mut state), x=bump(ref mut state))
     println(point.x * 10 + point.y)

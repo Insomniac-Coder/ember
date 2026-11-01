@@ -22,7 +22,7 @@ fn main():
     println(len(s.as_bytes()), count)
     xs: Array[int] = []
     for i in 0..1000:
-        xs.push(i % 7)
+        xs.push(owns (i % 7))
     total = 0
     for i in 0..1000:
         if xs[i] > 3:

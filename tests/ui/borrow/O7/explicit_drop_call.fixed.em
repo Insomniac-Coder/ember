@@ -8,7 +8,7 @@ struct R:
 
 fn main():
     a: Array[i32] = Array[i32]()
-    a.push(1)
+    a.push(owns 1)
     r = R(a)
     mem.drop(r)
     println(2)

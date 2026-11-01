@@ -18,5 +18,5 @@ fn main():
     bag = Bag()
     k = 2
     if k < bag.items.len():
-        empty(bag)
+        empty(ref mut bag)
         println(bag.items[k])

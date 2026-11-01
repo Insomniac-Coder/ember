@@ -3,4 +3,4 @@ fn double(ref mut n: i32):
 
 fn main():
     value: i32 = 1 + 1
-    double(value)
+    double(ref mut value)

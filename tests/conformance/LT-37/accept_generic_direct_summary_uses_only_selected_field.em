@@ -14,9 +14,9 @@ fn left_len(pair: Pair[T]) -> int:
 
 fn main():
     left: Array[i32] = Array[i32]()
-    left.push(11)
+    left.push(owns 11)
     right: Array[i32] = Array[i32]()
-    right.push(12)
+    right.push(owns 12)
     pair = Pair[i32](left.as_span(), right.as_span())
-    right.push(13)
+    right.push(owns 13)
     println(left_len[i32](pair))

@@ -3,7 +3,7 @@
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
+    values.push(owns 1)
     view = values.as_mut_span()
     iterator = view.iter()
     view[0] = 2 #$ error[E3021]: `view` cannot be written while it is borrowed

@@ -10,6 +10,6 @@ fn set(ref mut s: MutSpan[int], v: int):
 fn main():
     xs = [0, 0]
     left, right = xs.as_mut_span().split_at(1)
-    set(left, 10)
-    set(right, 20)
+    set(ref mut left, 10)
+    set(ref mut right, 20)
     println(xs)

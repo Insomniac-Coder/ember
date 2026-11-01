@@ -13,7 +13,7 @@ fn adder(n: int) -> fn(int) -> int:
 fn main():
     fs: Array[fn() -> int] = []
     for i in 0..3:
-        fs.push(fn() => i * 10)
+        fs.push(owns fn() => i * 10)
     total = 0
     for i in 0..fs.len():
         total = total + fs[i]()

@@ -9,6 +9,6 @@ struct Item:
 fn main():
     value = Item(1)
     borrowed: ref Item = ref value
-    old = mem.replace(value, Item(2)) #$ error[E3021]: `value` is borrowed here and mutably borrowed elsewhere
+    old = mem.replace(ref mut value, Item(2)) #$ error[E3021]: `value` is borrowed here and mutably borrowed elsewhere
     println(borrowed.value)
     println(old.value)

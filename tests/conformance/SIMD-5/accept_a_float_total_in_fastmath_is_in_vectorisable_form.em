@@ -23,12 +23,12 @@ fn fast():
     out: Array[int] = []
     fs: Array[f64] = []
     for i in 0..40:
-        a.push(i)
-        b.push(2 * i)
-        out.push(0)
-        fs.push(0.75)
-    unknown(a)
-    unknown(b)
+        a.push(owns i)
+        b.push(owns (2 * i))
+        out.push(owns 0)
+        fs.push(owns 0.75)
+    unknown(ref mut a)
+    unknown(ref mut b)
     total = 0.0
     for i in 0..40:
         out[i] = a[i] + b[i]
@@ -41,12 +41,12 @@ fn strict():
     out: Array[int] = []
     fs: Array[f64] = []
     for i in 0..40:
-        a.push(i)
-        b.push(2 * i)
-        out.push(0)
-        fs.push(0.75)
-    unknown(a)
-    unknown(b)
+        a.push(owns i)
+        b.push(owns (2 * i))
+        out.push(owns 0)
+        fs.push(owns 0.75)
+    unknown(ref mut a)
+    unknown(ref mut b)
     total = 0.0
     for i in 0..40:
         out[i] = a[i] + b[i]

@@ -25,9 +25,9 @@ fn main():
     left = [1, 2, 3]
     right = [4, 5, 6]
     with s = jobs.scope():
-        s.submit(fn() => scale(left, 10))
-        s.submit(fn() => scale(right, 2))
+        s.submit(owns fn() => scale(ref mut left, 10))
+        s.submit(owns fn() => scale(ref mut right, 2))
     with t = jobs.scope():
-        first = t.submit(fn() => SUM.store(0))
-        t.submit_after([first], fn() => add(left, right))
+        first = t.submit(owns fn() => SUM.store(0))
+        t.submit_after([first], owns fn() => add(left, right))
     println(left, right, SUM.load() - 24)

@@ -8,7 +8,7 @@
 fn main():
     xs: Array[i32] = []
     for i in 0..200:
-        xs.push(1 as i32)
+        xs.push(owns (1 as i32))
     xs[50] = 2147483647 as i32
     total: i32 = 0
     for i in 0..200:

@@ -26,16 +26,16 @@ extend Item implements Default:
 
 fn main():
     current = Item(1)
-    replaced = mem.replace(current, Item(2))
+    replaced = mem.replace(ref mut current, Item(2))
     println(replaced.value)
     mem.drop(replaced)
 
-    taken = mem.take(current)
+    taken = mem.take(ref mut current)
     println(taken.value)
     println(current.value)
     mem.drop(taken)
 
     other = Item(3)
-    mem.swap(current, other)
+    mem.swap(ref mut current, ref mut other)
     println(current.value)
     println(other.value)

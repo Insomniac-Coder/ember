@@ -10,9 +10,9 @@
 
 fn check(x: int) -> Result[int]:
     if x < 0:
-        return Err(AnyError.msg(f"{x} is negative"))
+        return Err(AnyError.msg(owns f"{x} is negative"))
     if x > 9:
-        return Err(AnyError.msg("too big"))
+        return Err(AnyError.msg(owns "too big"))
     return Ok(x)
 
 fn main():

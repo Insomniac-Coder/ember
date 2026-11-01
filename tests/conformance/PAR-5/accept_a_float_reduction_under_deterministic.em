@@ -19,7 +19,7 @@ fn total(xs: Span[f64]) -> f64:
 fn main():
     values: Array[f64] = []
     for i in range(10000):
-        values.push(1.0 / (i + 1) as f64)
+        values.push(owns (1.0 / (i + 1) as f64))
     first = total(values.as_span())
     println(first == total(values.as_span()))
     println(first > 0.9)

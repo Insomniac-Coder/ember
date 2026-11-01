@@ -54,7 +54,7 @@ fn add_tax(ref mut prices: Array[float], rate: float):
 
 fn main():
     prices = [10.0, 20.0]
-    add_tax(prices, 0.5)
+    add_tax(ref mut prices, 0.5)
     println(prices)
 ```
 
@@ -70,12 +70,12 @@ struct Inbox:
     messages: Array[String] = []
 
     fn deliver(owns message: String):
-        this.messages.push(message)
+        this.messages.push(owns message)
 
 fn main():
     inbox = Inbox()
     text = "hello".to_string()
-    inbox.deliver(text)
+    inbox.deliver(owns text)
     println(inbox.messages)
 ```
 
@@ -95,7 +95,7 @@ fn main():
     xs = [1, 2, 3, 4]
     window = xs[1..3]
     println(window)
-    xs.push(5)
+    xs.push(owns 5)
     println(xs)
 ```
 

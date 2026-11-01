@@ -30,9 +30,9 @@ fn main():
     h = Holder([1, 2])
     h.values = [7]
     alias = h
-    alias.values.push(8)
+    alias.values.push(owns 8)
     r = ref mut h.values
-    r.push(9)
+    r.push(owns 9)
     println(h.values)
     for x in h.values.iter_mut():
         x += 1

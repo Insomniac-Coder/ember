@@ -29,7 +29,7 @@ fn load(n: int) -> Result[int]:
 
 fn outer(n: int, calls: ref Cell[int]) -> Result[int]:
     name = "app.cfg"
-    v = load(n).with_context(fn() => message(name, calls))?
+    v = load(n).with_context(owns fn() => message(name, calls))?
     return Ok(v * 10)
 
 fn message(name: StrView, calls: ref Cell[int]) -> String:
@@ -60,7 +60,7 @@ fn main():
         Err(e):
             println(e)
     o: Option[int] = None
-    match o.with_context(fn() => "lazy"):
+    match o.with_context(owns fn() => "lazy"):
         Ok(v):
             println(v)
         Err(e):

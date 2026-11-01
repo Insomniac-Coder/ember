@@ -10,12 +10,12 @@ from std.collections import DefaultHasher, RandomState
 
 fn fixed(s: StrView) -> u64:
     h = DefaultHasher.new()
-    s.hash(h)
+    s.hash(ref mut h)
     return h.finish()
 
 fn seeded(s: StrView) -> u64:
     h = RandomState.new()
-    s.hash(h)
+    s.hash(ref mut h)
     return h.finish()
 
 fn main():

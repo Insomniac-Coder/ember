@@ -12,7 +12,7 @@ struct MutPair:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
+    values.push(owns 1)
     left = values.as_mut_span()
     right = values.as_mut_span() #$ error[E3022]: `values` is already mutably borrowed
     pair = MutPair(left, right)

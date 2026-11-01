@@ -18,7 +18,7 @@ fn step(ref mut p: SoA[Particle], dt: f32):
 
 fn main():
     ps = SoA[Particle].with_capacity(4)
-    ps.push(Particle(1.5))
-    ps.push(Particle(1.5))
-    step(ps, 0.5)
+    ps.push(owns Particle(1.5))
+    ps.push(owns Particle(1.5))
+    step(ref mut ps, 0.5)
     println(ps.velocity[0], ps.velocity[1])

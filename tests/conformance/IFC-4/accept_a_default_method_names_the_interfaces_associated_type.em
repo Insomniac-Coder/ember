@@ -18,7 +18,7 @@ interface Source:
         for i in 0..this.size():
             x = this.get(i)
             if keep(x):
-                out.push(x)
+                out.push(owns x)
         return out
 
 struct Evens:

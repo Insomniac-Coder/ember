@@ -9,7 +9,7 @@
 # structural repair until the complete call proves otherwise.
 
 fn append_one(values: Array[i32]):
-    values.push(1)  #$ error[E3023]: cannot mutate borrowed parameter `values`
+    values.push(owns 1)  #$ error[E3023]: cannot mutate borrowed parameter `values`
 
 fn main():
     values: Array[i32] = Array[i32]()

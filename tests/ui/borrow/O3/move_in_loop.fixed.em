@@ -5,7 +5,7 @@ fn main():
     i: i32 = 0
     while i < 2:
         values: Array[i32] = Array[i32]()
-        values.push(1)
-        println(consume(values))
+        values.push(owns 1)
+        println(consume(owns values))
         i = i + 1
 

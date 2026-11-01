@@ -5,5 +5,5 @@
 fn main():
     bytes: Array[u8] = [104, 105]
     text = bytes.as_span().to_str()
-    bytes.push(33)
+    bytes.push(owns 33)
     println(text)

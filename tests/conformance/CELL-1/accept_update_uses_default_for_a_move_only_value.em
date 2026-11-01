@@ -17,7 +17,7 @@ fn make_bag(count: int) -> Bag:
     values: Array[i32] = Array[i32]()
     i: int = 0
     while i < count:
-        values.push(0)
+        values.push(owns 0)
         i = i + 1
     return Bag(values)
 

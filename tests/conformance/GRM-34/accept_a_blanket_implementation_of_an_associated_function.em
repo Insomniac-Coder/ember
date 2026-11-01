@@ -35,10 +35,10 @@ extend[T: needs Named] B implements Conv[T]:
 
 [E, F: needs Conv[E]]
 fn up(owns e: E) -> F:
-    return F.conv(e)
+    return F.conv(owns e)
 
 fn main():
-    println(B.conv(A(4)).v)
-    println(B.conv(C(9)).v)
-    d: B = up(A(1))
+    println(B.conv(owns A(4)).v)
+    println(B.conv(owns C(9)).v)
+    d: B = up(owns A(1))
     println(d.v)

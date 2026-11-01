@@ -8,7 +8,7 @@ import std.jobs
 @noalloc
 fn large():
     values: [int; 10] = [7; 10]
-    jobs.submit(owned fn() => println(values[0]))
+    jobs.submit(owns owned fn() => println(values[0]))
 
 fn main():
     large()

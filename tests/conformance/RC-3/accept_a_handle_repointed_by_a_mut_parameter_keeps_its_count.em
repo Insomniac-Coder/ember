@@ -19,9 +19,9 @@ fn replace(ref mut h: Node):
 
 fn main():
     nodes: Array[Node] = []
-    nodes.push(Node(1))
+    nodes.push(owns Node(1))
     t = nodes[0]
-    replace(t)
+    replace(ref mut t)
     println(t.v)
     mem.drop(t)
     println("end")

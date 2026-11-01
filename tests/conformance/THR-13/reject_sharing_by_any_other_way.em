@@ -19,4 +19,4 @@ fn main():
     s = SyncShared(5)
     s.get_mut()
     count = Shared(0)
-    t = thread.spawn(owned fn() => count.get() + 1)
+    t = thread.spawn(owns owned fn() => count.get() + 1)

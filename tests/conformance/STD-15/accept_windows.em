@@ -13,7 +13,7 @@ fn main():
     xs = [1, 2, 3, 4, 5]
     shown: Array[String] = []
     for w in xs.windows(3):
-        shown.push(f"{w[0]}-{w[w.len() - 1]}")
+        shown.push(owns f"{w[0]}-{w[w.len() - 1]}")
     println(shown.join(" "))
 
     counts: Array[int] = []
@@ -21,7 +21,7 @@ fn main():
         count = 0
         for _w in xs.windows(n):
             count += 1
-        counts.push(count)
+        counts.push(owns count)
     println(counts[0], counts[1], counts[2])
 
     it = xs.windows(4)
@@ -32,5 +32,5 @@ fn main():
     names = [String.from("a"), String.from("b"), String.from("c")]
     pairs: Array[String] = []
     for w in names.as_span().windows(2):
-        pairs.push(f"{w[0]}{w[1]}")
+        pairs.push(owns f"{w[0]}{w[1]}")
     println(pairs.join(" "))

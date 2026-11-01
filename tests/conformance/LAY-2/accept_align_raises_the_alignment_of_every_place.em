@@ -53,14 +53,14 @@ fn listed(xs: Span[Line]) -> int:
 fn main():
     println(size_of[Line](), align_of[Line](), size_of[Holder](), offset_of[Holder](line), "|", size_of[(u8, Line)](), size_of[Slot](), size_of[Wide](), align_of[Wide](), size_of[Twice]() * 4)
     xs: Array[Line] = Array[Line]()
-    xs.push(Line(a = 1, b = 2))
+    xs.push(owns Line(a = 1, b = 2))
     first = listed(xs.as_span())
     for i in 0..100:
-        xs.push(Line(a = 1, b = i as u64))
+        xs.push(owns Line(a = 1, b = i as u64))
     grown = listed(xs.as_span())
     reserved: Array[Line] = Array[Line]()
     reserved.reserve(10)
-    reserved.push(Line(a = 9, b = 9))
+    reserved.push(owns Line(a = 9, b = 9))
     literal = [Line(a = 1, b = 1), Line(a = 2, b = 2)]
     literal.insert(1, Line(a = 3, b = 3))
     literal.extend(xs.as_span())

@@ -5,7 +5,7 @@
 
 fn main():
     v: Array[i32] = Array[i32]()
-    v.push(1)
+    v.push(owns 1)
     a: ref mut i32 = ref mut v[0]
     b: ref mut i32 = ref mut v[0]     #$ error[E3022]: `v[0]` is already mutably borrowed
     a = 10

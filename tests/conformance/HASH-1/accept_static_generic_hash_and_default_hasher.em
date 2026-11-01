@@ -59,19 +59,19 @@ extend Key implements Hash:
 [T: needs Hash]
 fn hash_value(value: T) -> u64:
     hasher = DefaultHasher.new()
-    value.hash(hasher)
+    value.hash(ref mut hasher)
     return hasher.finish()
 
 [T: needs Hash, H: needs Hasher]
 fn hash_with(value: T, owns hasher: H) -> u64:
-    value.hash(hasher)
+    value.hash(ref mut hasher)
     return hasher.finish()
 
 fn main():
     println(hash_value(7) == hash_value(7))
     println(hash_value(Key(7)) == hash_value(Key(7)))
     println(hash_value(Key(7)) == hash_value(Key(8)))
-    println(hash_with(Key(7), CountingHasher.new()))
+    println(hash_with(Key(7), owns CountingHasher.new()))
 #$ stdout: true
 #$ true
 #$ false

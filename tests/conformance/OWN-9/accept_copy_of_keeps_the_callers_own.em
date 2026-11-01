@@ -9,5 +9,5 @@ fn take(owns x: int):
 
 fn main():
     n = 5
-    take(copy of n)
+    take(owns copy of n)
     println(n)

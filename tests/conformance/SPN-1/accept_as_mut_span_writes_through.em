@@ -7,8 +7,8 @@
 
 fn main():
     a: Array[i32] = Array[i32]()
-    a.push(1)
-    a.push(2)
+    a.push(owns 1)
+    a.push(owns 2)
     s = a.as_mut_span()
     println(s.len())
     s[0] = 40

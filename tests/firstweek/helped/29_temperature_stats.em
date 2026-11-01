@@ -19,7 +19,7 @@ fn parse_readings(text: StrView) -> Array[Reading]:
         if hour.is_err() or temp.is_err():
             println(f"bad numbers in '{chunk.trim()}'")
             continue
-        readings.push(Reading(day=(parts[0]).to_string(), hour=hour.unwrap(), celsius=temp.unwrap()))
+        readings.push(owns Reading(day=(parts[0]).to_string(), hour=hour.unwrap(), celsius=temp.unwrap()))
     return readings
 
 fn mean(xs: Array[float]) -> float:
@@ -51,8 +51,8 @@ fn main():
     for r in readings:
         if r.day not in by_day:
             by_day[r.day] = []
-            days.push(r.day.clone())
-        by_day[r.day].push(r.celsius)
+            days.push(owns r.day.clone())
+        by_day[r.day].push(owns r.celsius)
     for day in days:
         values = by_day[day].clone()
         high = values.iter().max().unwrap()

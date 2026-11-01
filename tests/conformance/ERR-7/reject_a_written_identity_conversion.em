@@ -33,4 +33,4 @@ extend[X: needs Named] C implements From[X]:    #$ error[E2041]: `C` already imp
         return C(value.name())
 
 fn main():
-    println(B.from(B(1)).v)
+    println(B.from(owns B(1)).v)

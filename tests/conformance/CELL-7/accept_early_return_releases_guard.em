@@ -12,7 +12,7 @@ fn foo(ref mut c: RefCell[i32]) -> i32:
 
 fn main():
     c: RefCell[i32] = RefCell(1)
-    println(foo(c))
+    println(foo(ref mut c))
     with _h = c.borrow_mut():
         println(2)
 #$ stdout: 7

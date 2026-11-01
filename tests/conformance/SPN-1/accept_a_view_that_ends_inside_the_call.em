@@ -10,9 +10,9 @@ fn first(xs: Span[i32]) -> i32:
 
 fn main():
     a: Array[i32] = Array[i32]()
-    a.push(1)
+    a.push(owns 1)
     println(first(a))
-    a.push(2)
+    a.push(owns 2)
     println(a[1])
 #$ stdout: 1
 #$ 2

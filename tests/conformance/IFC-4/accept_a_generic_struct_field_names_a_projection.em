@@ -22,7 +22,7 @@ extend[U: needs IntoIterator] Each[U]:
 
 fn main():
     xs: Array[int] = [1, 2]
-    e = each(xs)
+    e = each(owns xs)
     ys: Array[int] = [3]
     f = Each[Array[int]](it = ys.into_iter())
     println(e.next_one(), e.next_one(), f.next_one(), f.next_one())

@@ -32,16 +32,16 @@ fn mixed(n: int) -> int:
 fn main():
     xs: Array[int] = []
     for i in 0..40:
-        xs.push(i * i)
+        xs.push(owns (i * i))
     line: Array[String] = []
     for x in xs.iter().skip(3).step_by(4):
         if x % 2 == 0:
             continue
-        line.push(f"{x}")
+        line.push(owns f"{x}")
     println(line.join(" "))
     line.clear()
     for (i, x) in xs.iter().enumerate(start=10).skip(5).step_by(7):
-        line.push(f"{i}:{x}")
+        line.push(owns f"{i}:{x}")
         if i > 30:
             break
     println(line.join(" "))
@@ -53,7 +53,7 @@ fn main():
         for (i, v) in (round..30).step_by(round + 1).enumerate(start=round):
             total += (i as int) * 100 + v
     println(total)
-    for (a, (b, c)) in xs.iter().skip(1).zip(xs.iter().step_by(3).enumerate()):
-        line.push(f"{a},{b},{c}")
+    for (a, (b, c)) in xs.iter().skip(1).zip(owns xs.iter().step_by(3).enumerate()):
+        line.push(owns f"{a},{b},{c}")
     println(line.join(" "))
     println(mixed(1000), mixed(7))

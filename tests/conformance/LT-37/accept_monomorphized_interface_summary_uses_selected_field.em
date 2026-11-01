@@ -22,9 +22,9 @@ fn apply(reader: R, pair: Pair) -> i32:
 
 fn main():
     left: Array[i32] = Array[i32]()
-    left.push(20)
+    left.push(owns 20)
     right: Array[i32] = Array[i32]()
-    right.push(22)
+    right.push(owns 22)
     pair = Pair(left.as_span(), right.as_span())
-    right.push(23)
+    right.push(owns 23)
     println(apply(LeftReader(1), pair))

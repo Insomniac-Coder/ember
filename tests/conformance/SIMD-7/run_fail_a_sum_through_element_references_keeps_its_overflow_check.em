@@ -10,7 +10,7 @@
 fn main():
     xs: Array[int] = []
     for i in 0..200:
-        xs.push(1)
+        xs.push(owns 1)
     xs[100] = 9223372036854775807
     total = 0
     for x in xs:

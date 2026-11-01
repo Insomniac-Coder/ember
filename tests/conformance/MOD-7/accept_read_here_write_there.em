@@ -8,7 +8,7 @@ from support.health import Health, make, heal
 fn main():
     h = make(10)
     println(h.value)
-    heal(h, 5)
+    heal(ref mut h, 5)
     println(h.value)
     h.max = 200
     println(h.max)

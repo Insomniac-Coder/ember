@@ -8,14 +8,14 @@
 fn build(n: i32) -> int:
     xs: Array[i32] = Array()
     for i in 0..n:
-        xs.push(i)
+        xs.push(owns i)
     return xs.len()
 
 # `[OWN-3]` — a move gives the value away, and the new owner drops it. The old
 # owner's drop is removed; dropping both would free the same buffer twice.
 fn moved() -> int:
     xs: Array[i32] = Array()
-    xs.push(1)
+    xs.push(owns 1)
     ys = xs
     return ys.len()
 
@@ -23,7 +23,7 @@ fn moved() -> int:
 # time, which is why this is legal rather than an error.
 fn conditional(c: bool) -> int:
     xs: Array[i32] = Array()
-    xs.push(1)
+    xs.push(owns 1)
     n: int = 0
     if c:
         ys = xs
@@ -37,7 +37,7 @@ struct Holder:
 
 fn nested() -> i32:
     inner: Array[i32] = Array()
-    inner.push(7)
+    inner.push(owns 7)
     h = Holder(inner, 3)
     return h.tag
 

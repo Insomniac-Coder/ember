@@ -19,11 +19,11 @@ fn feed(ref mut hasher: DefaultHasher, bytes: Span[u8]):
 fn main():
     bytes: [u8; 3] = [6, 7, 8]
     first = DefaultHasher.new()
-    feed(first, bytes)
+    feed(ref mut first, bytes)
     first_hash = first.finish()
 
     second = DefaultHasher.new()
-    feed(second, bytes)
+    feed(ref mut second, bytes)
     second_hash = second.finish()
 
     bytes[0] = 9

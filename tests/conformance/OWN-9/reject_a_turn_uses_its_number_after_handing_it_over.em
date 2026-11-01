@@ -7,5 +7,5 @@ fn take(owns x: int):
 
 fn main():
     for i in 0..3:
-        take(i)
+        take(owns i)
         println(i)  #$ error[E3040]

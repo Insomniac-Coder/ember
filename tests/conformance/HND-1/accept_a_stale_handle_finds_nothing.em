@@ -17,11 +17,11 @@ struct Texture:
 
 fn main():
     pool = Pool[Texture]()
-    h = pool.insert(Texture(width=64, height=64))
+    h = pool.insert(owns Texture(width=64, height=64))
     copy = h
     println(pool.get(h).is_some(), pool[copy].width)
     pool.remove(h)
-    fresh = pool.insert(Texture(width=8, height=8))
+    fresh = pool.insert(owns Texture(width=8, height=8))
     println(pool.get(h).is_some(), pool.get(copy).is_some())
     println(pool.get(fresh).is_some(), pool[fresh].width)
     unsafe:  # SAFETY: `fresh` was just given out and nothing removed it

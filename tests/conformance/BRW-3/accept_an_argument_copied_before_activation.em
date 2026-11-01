@@ -5,9 +5,9 @@
 # `mut` borrow of `v`, so reading it is allowed.
 
 fn f(ref mut v: Array[int], x: int):
-    v.push(x)
+    v.push(owns x)
 
 fn main():
     v: Array[int] = [5]
-    f(v, v[0])
+    f(ref mut v, v[0])
     println(v.len())

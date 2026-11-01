@@ -19,7 +19,7 @@ class Hangman:
             return "one letter at a time"
         if letter in this.guessed:
             return f"you already tried '{letter}'"
-        this.guessed.add(letter)
+        this.guessed.add(owns letter)
         if letter in this.secret:
             return f"yes, {this.secret.count(letter)} of them"
         this.misses += 1

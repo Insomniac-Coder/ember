@@ -6,5 +6,5 @@
 fn main():
     a = [1, 2, 3]
     b = a
-    a.push(4)          #$ error[E3040]: `a` is borrowed after it has been moved out of
+    a.push(owns 4)          #$ error[E3040]: `a` is borrowed after it has been moved out of
     println(b)

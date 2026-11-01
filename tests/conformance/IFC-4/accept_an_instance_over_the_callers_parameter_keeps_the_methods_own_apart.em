@@ -37,8 +37,8 @@ extend Count implements Iterator:
 
 [T, C: needs Gather[T], I: needs Iterator[Item = T]]
 fn build(owns it: I) -> C:
-    return C.gather(it)
+    return C.gather(owns it)
 
 fn main():
-    b: Bag = build[int, Bag, Count](Count(n = 0, stop = 3))
+    b: Bag = build[int, Bag, Count](owns Count(n = 0, stop = 3))
     println(b.total)

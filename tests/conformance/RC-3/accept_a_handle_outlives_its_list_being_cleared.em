@@ -15,7 +15,7 @@ class Node:
 
 fn main():
     nodes: Array[Node] = []
-    nodes.push(Node(7))
+    nodes.push(owns Node(7))
     t = nodes[0]
     nodes.clear()
     println("cleared")

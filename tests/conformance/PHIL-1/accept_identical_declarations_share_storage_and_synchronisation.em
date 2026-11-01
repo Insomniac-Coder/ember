@@ -30,7 +30,7 @@ fn keep(t: Tally) -> Tally:
 fn main():
     a = Point(1, 2)
     b = Point(1, 2)
-    nudge(a)
+    nudge(ref mut a)
     println(a.x + a.y + b.x)
     kept = keep(Tally(1))
     alone = Tally(2)

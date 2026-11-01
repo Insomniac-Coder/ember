@@ -25,7 +25,7 @@ fn main():
     d = Derived()
     as_base: Base = d
     for x in as_base.a:
-        d.b.push(x * 10)
+        d.b.push(owns (x * 10))
         d.c.push('d')
     as_base.set_n(len(d.b))
     println(d.a[0], d.a[1], d.b[0], d.b[1], d.c, d.n)

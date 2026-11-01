@@ -28,15 +28,15 @@ fn feed(owns f: F, n: int):
 fn main():
     xs = [1, 2, 3]
     total = 0
-    xs.iter().for_each(fn(x): total += x)
+    xs.iter().for_each(owns fn(x): total += x)
     println(total)
     seen: Map[int, bool] = {}
-    xs.iter().for_each(fn(x): seen[x] = true)
+    xs.iter().for_each(owns fn(x): seen[x] = owns true)
     last = 0
-    xs.iter().for_each(fn(x): last = x)
+    xs.iter().for_each(owns fn(x): last = x)
     println(seen.len(), last)
-    xs.iter().for_each(fn(x): pass)
-    feed(fn(i): total += i, 4)
+    xs.iter().for_each(owns fn(x): pass)
+    feed(owns fn(i): total += i, 4)
     println(total)
-    xs.iter().for_each(show)
+    xs.iter().for_each(owns show)
     println(apply(fn(x): x * 2, 4))

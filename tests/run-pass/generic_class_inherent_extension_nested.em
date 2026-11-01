@@ -13,7 +13,7 @@ extend[Element] Envelope[Array[Element]]:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(7)
-    values.push(9)
+    values.push(owns 7)
+    values.push(owns 9)
     envelope = Envelope[Array[i32]](values)
     println(envelope.count())

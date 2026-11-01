@@ -9,4 +9,4 @@ from std.collections import Pool, Split20
 fn main():
     pool = Pool[int, Split20]()
     for i in 0..1048577:
-        pool.insert(i)
+        pool.insert(owns i)

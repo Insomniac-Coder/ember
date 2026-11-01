@@ -15,7 +15,7 @@ class Token:
 
 fn main():
     tokens: Array[Token] = Array[Token]()
-    tokens.push(Token(7))
+    tokens.push(owns Token(7))
     for token in tokens:
         copy: Token = token
         task = owned fn() => copy.value

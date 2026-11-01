@@ -12,7 +12,7 @@ fn main():
     x: int = 2
     b = x as bool
     values: Array[u8] = Array[u8]()
-    values.push(2)
+    values.push(owns 2)
     m = values.as_mut_span()
     p: *mut u8 = m.as_mut_ptr()
     q = p as *mut bool

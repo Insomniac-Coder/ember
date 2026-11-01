@@ -66,4 +66,4 @@ fn main():
     a = [1, 2]
     b = [0, 0]
     fs = [twice]
-    through(a, b, fs[0])
+    through(a, ref mut b, fs[0])

@@ -27,23 +27,23 @@ fn tokenize(source: StrView) -> Result[Array[Token], LexError]:
             while i < source.len() and (source[i].isdigit() or source[i] == "."):
                 i += 1
             text = source[start:i]
-            tokens.push(Token.Number(text.parse[float]()?))
+            tokens.push(owns Token.Number(text.parse[float]()?))
         elif c.isalpha() or c == "_":
             start = i
             while i < source.len() and (source[i].isalnum() or source[i] == "_"):
                 i += 1
-            tokens.push(Token.Name(source[start:i]))
+            tokens.push(owns Token.Name(source[start:i]))
         elif is_operator(c):
-            tokens.push(Token.Op(c))
+            tokens.push(owns Token.Op(c))
             i += 1
         elif c == "(":
-            tokens.push(Token.LParen)
+            tokens.push(owns Token.LParen)
             i += 1
         elif c == ")":
-            tokens.push(Token.RParen)
+            tokens.push(owns Token.RParen)
             i += 1
         elif c == ",":
-            tokens.push(Token.Comma)
+            tokens.push(owns Token.Comma)
             i += 1
         else:
             return Err(LexError(position=i, found=c))

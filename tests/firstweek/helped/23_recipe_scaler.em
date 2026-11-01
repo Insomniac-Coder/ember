@@ -23,7 +23,7 @@ struct Recipe:
         factor = servings as float / this.servings as float
         result = Recipe(title=this.title.clone(), servings=servings)
         for ing in this.ingredients:
-            result.ingredients.push(Ingredient(name=ing.name.clone(), amount=ing.amount * factor, unit=ing.unit))
+            result.ingredients.push(owns Ingredient(name=ing.name.clone(), amount=ing.amount * factor, unit=ing.unit))
         return result
 
 fn tidy(amount: float, unit: Unit) -> (float, Unit):
@@ -55,7 +55,7 @@ fn format_amount(amount: float, unit: Unit) -> String:
 fn parse_ingredient(line: StrView) -> Result[Ingredient]:
     parts = line.split(";").collect[Array[StrView]]()
     if parts.len() != 3:
-        return Err(AnyError.msg(f"expected 'name; amount; unit'"))
+        return Err(AnyError.msg(owns f"expected 'name; amount; unit'"))
     name = parts[0].trim()
     amount = parts[1].trim().parse[float]()?
     unit = match parts[2].trim():
@@ -64,7 +64,7 @@ fn parse_ingredient(line: StrView) -> Result[Ingredient]:
         "tsp" => Unit.Teaspoon
         "tbsp" => Unit.Tablespoon
         "pc" => Unit.Piece
-        other => return Err(AnyError.msg(f"unknown unit '{other}'"))
+        other => return Err(AnyError.msg(owns f"unknown unit '{other}'"))
     return Ok(Ingredient(name=name.to_string(), amount=amount, unit=unit))
 
 const PANCAKES: StrView = """flour; 250; g
@@ -80,7 +80,7 @@ fn main():
     recipe = Recipe(title="Pancakes", servings=4)
     for line in PANCAKES.lines():
         match parse_ingredient(line):
-            Ok(ing) => recipe.ingredients.push(ing)
+            Ok(ing) => recipe.ingredients.push(owns ing)
             Err(e) => println(f"skipping '{line}': {e}")
 
     for servings in [4, 2, 10, 25]:

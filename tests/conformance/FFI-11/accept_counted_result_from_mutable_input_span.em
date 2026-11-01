@@ -14,7 +14,7 @@ pub extern "C" fn echo_mut_counted(input: *mut i32, n: usize) -> *i32:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(27)
+    values.push(owns 27)
     result: Span[i32] = echo(values.as_mut_span())
     println(result.len())
     println(result[0])

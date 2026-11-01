@@ -12,14 +12,14 @@ class Bag:
         this.items = []
 
 fn put(ref mut xs: Array[i32], v: i32):
-    xs.push(v)
+    xs.push(owns v)
 
 fn main():
     b = Bag()
     for i in 0..10:
-        b.items.push((i % 7) as i32)
-    put(b.items, 1073741823)
-    put(b.items, 1073741823)
+        b.items.push(owns ((i % 7) as i32))
+    put(ref mut b.items, 1073741823)
+    put(ref mut b.items, 1073741823)
     total: i32 = 0
     for i in 0..12:
         total = total + b.items[i]

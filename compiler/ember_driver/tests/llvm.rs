@@ -215,7 +215,7 @@ fn pair_total(p: Pair) -> i64:
 
 fn main():
     p = Pair(a=1, b=2)
-    bump(p)
+    bump(ref mut p)
     c = Cell(1i64)
     poke(ref c)
     r = RefCell(1i64)
@@ -291,8 +291,8 @@ fn main():
     xs: Array[u8] = []
     ys: Array[i8] = []
     for i in 0..256:
-        xs.push(i as u8)
-        ys.push((i - 128) as i8)
+        xs.push(owns (i as u8))
+        ys.push(owns ((i - 128) as i8))
     (a, b) = totals(xs[0..256], ys[0..256])
     println(a, b)
 ",
@@ -405,7 +405,7 @@ fn clo_1_a_lambda_in_an_adapter_is_called_directly() {
         "\
 fn main():
     xs = [1, 2, 3]
-    it = xs.iter().map(fn(x: ref int) -> int => x * 2)
+    it = xs.iter().map(owns fn(x: ref int) -> int => x * 2)
     total = 0
     for v in it:
         total += v

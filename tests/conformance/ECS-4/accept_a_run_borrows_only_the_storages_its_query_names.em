@@ -26,20 +26,20 @@ fn guard(ref mut q: Query[(Entity, Mut[Hp], Name)], w: World):
     for e, hp, name in q.iter_mut():
         hp.n += 1
         println(name.s, w.has[Name](e), w.has[Shield](e))
-        w.add(e, Shield())
+        w.add(e, owns Shield())
 
 fn report(ref mut q: Query[Hp], w: World):
     totals: Array[int] = []
     for hp in q.iter():
-        totals.push(hp.n)
+        totals.push(owns hp.n)
     println(w.entities_with[Shield](), totals)
 
 fn main():
     w = World()
     for s in ["a", "b"]:
         e = w.create()
-        w.add(e, Hp(1))
-        w.add(e, Name(s))
-    w.add(w.entities_with[Hp]()[1], Shield())
-    w.run(guard, w)
-    w.run(report, w)
+        w.add(e, owns Hp(1))
+        w.add(e, owns Name(s))
+    w.add(w.entities_with[Hp]()[1], owns Shield())
+    w.run(owns guard, owns w)
+    w.run(owns report, owns w)

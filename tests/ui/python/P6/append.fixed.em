@@ -1,4 +1,4 @@
 fn main():
     names: Array[String] = []
-    names.push("ada")
+    names.push(owns "ada")
     println(names)

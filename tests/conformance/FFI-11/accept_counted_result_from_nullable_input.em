@@ -20,8 +20,8 @@ pub extern "C" fn fresh_at_optional_count(input: *i32, n: usize) -> *i32:
 fn main():
     empty: Array[i32] = Array[i32]()
     values: Array[i32] = Array[i32]()
-    values.push(1)
-    values.push(2)
+    values.push(owns 1)
+    values.push(owns 2)
     println(fresh(None).len())
     println(fresh(Some(empty.as_span())).len())
     result: Span[i32] = fresh(Some(values.as_span()))

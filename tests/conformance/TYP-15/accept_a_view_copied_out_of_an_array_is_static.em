@@ -10,5 +10,5 @@ fn main():
     names = ["ann", "bob"]
     r = ref names
     x = r[0]
-    names.push("cy")
+    names.push(owns "cy")
     println(x, names)

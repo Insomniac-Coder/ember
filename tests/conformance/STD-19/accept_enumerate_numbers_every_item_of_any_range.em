@@ -21,14 +21,14 @@ fn first(owns from: I, n: int) -> Array[I.Item]:
     while out.len() < n:
         match it.next():
             Some(x):
-                out.push(x)
+                out.push(owns x)
             None:
                 return out
     return out
 
 fn main():
     whole = int.MIN .. int.MAX
-    println(first(whole.iter().enumerate(-3).rev(), 2))
+    println(first(owns whole.iter().enumerate(-3).rev(), 2))
     n = 0
     for i, x in whole.iter().enumerate(-3).rev():
         println("for", i, x)
@@ -36,8 +36,8 @@ fn main():
         if n == 2:
             break
     every = 0 as u128 ..= u128.MAX
-    println(first(every.iter().enumerate().rev(), 1))
+    println(first(owns every.iter().enumerate().rev(), 1))
     xs: Array[int] = [10, 20, 30]
-    println(first(xs.iter().copy_each().enumerate(5).rev(), 3))
+    println(first(owns xs.iter().copy_each().enumerate(5).rev(), 3))
     three = 0 .. 3
-    println(first(three.iter().enumerate(int.MAX - 1), 3))
+    println(first(owns three.iter().enumerate(int.MAX - 1), 3))

@@ -25,7 +25,7 @@ fn describe(pair: Option[(ref mut int, ref mut int)]) -> StrView:
 
 fn main():
     xs = [10, 20, 3]
-    swap_through(xs, 0, 1)
+    swap_through(ref mut xs, 0, 1)
     println(xs)
     match xs.get_pair_mut(2, 0):
         Some((last, first)):

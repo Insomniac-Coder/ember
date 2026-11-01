@@ -13,6 +13,6 @@ fn consume(owns values: Array[i32]) -> int:
 fn main():
     values: Array[i32] = Array[i32]()
     task = owned fn() -> int:
-        values.push(7)
-        return consume(values)
+        values.push(owns 7)
+        return consume(owns values)
     println(task())

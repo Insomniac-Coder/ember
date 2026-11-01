@@ -8,9 +8,9 @@ struct Marker:
 
 fn main():
     ms = SoA[Marker].with_capacity(1)
-    ms.push(Marker())
-    ms.push(Marker())
-    ms.push(Marker())
+    ms.push(owns Marker())
+    ms.push(owns Marker())
+    ms.push(owns Marker())
     a = ms.len()
     _gone = ms.swap_remove(0)
     b = ms.len()

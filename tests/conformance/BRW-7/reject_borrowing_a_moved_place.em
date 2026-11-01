@@ -5,7 +5,7 @@
 
 fn main():
     a: Array[i32] = Array[i32]()
-    a.push(1)
+    a.push(owns 1)
     _b = a
     r: ref Array[i32] = ref a      #$ error[E3040]: `a` is borrowed after it has been moved out of
     println(r.len())

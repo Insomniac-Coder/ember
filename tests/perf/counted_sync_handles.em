@@ -13,10 +13,10 @@ class Cell:
 fn main():
     cells: Array[Cell] = []
     for i in 0..1000:
-        cells.push(Cell(i))
+        cells.push(owns Cell(i))
     ring: Array[Cell] = []
     for i in 0..1000:
-        ring.push(cells[i])
+        ring.push(owns cells[i])
     total = 0
     for round in 0..20000:
         for i in 0..ring.len():

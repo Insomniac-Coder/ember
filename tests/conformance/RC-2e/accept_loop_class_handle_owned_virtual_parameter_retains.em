@@ -30,9 +30,9 @@ class Worker(Consumer):
 
 fn dispatch(consumer: Consumer, owns tokens: Array[Token]):
     for token in tokens:
-        println(consumer.consume(token))
+        println(consumer.consume(owns token))
 
 fn main():
     tokens: Array[Token] = Array[Token]()
-    tokens.push(Token(7))
-    dispatch(Worker(), tokens)
+    tokens.push(owns Token(7))
+    dispatch(Worker(), owns tokens)

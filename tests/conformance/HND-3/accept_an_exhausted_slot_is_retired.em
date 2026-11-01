@@ -11,18 +11,18 @@ from std.collections import Pool, Split20, CapacityError
 
 fn main():
     pool = Pool[int, Split20]()
-    first = pool.insert(0)
+    first = pool.insert(owns 0)
     last = first
     for value in 1..4096:
         pool.remove(last)
-        last = pool.insert(value)
+        last = pool.insert(owns value)
     pool.remove(last)
-    next = pool.insert(-1)
+    next = pool.insert(owns -1)
     println(last.generation(), next.index(), pool.get(first).is_some())
     full = Pool[int, Split20]()
     count = 0
     while true:
-        match full.try_insert(copy of count):
+        match full.try_insert(owns copy of count):
             Ok(_):
                 count += 1
             Err(CapacityError.Full):

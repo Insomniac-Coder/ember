@@ -25,4 +25,4 @@ fn count_calls(owns f: fn()) -> int:
 
 fn main():
     n: i32 = 7
-    println(twice(fn() => n), thrice(fn(x) => x + n, 0), count_calls(fn(): pass))
+    println(twice(owns fn() => n), thrice(owns fn(x) => x + n, 0), count_calls(owns fn(): pass))

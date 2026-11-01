@@ -62,8 +62,8 @@ extend Scheduler:
     ## Run `sequence` from the next `update`.
     [G: needs Sequence]
     pub fn start(owns sequence: G):
-        this.running.push(Box[dyn Sequence](sequence))
-        this.waiting.push(Wait.NextFrame)
+        this.running.push(owns Box[dyn Sequence](sequence))
+        this.waiting.push(owns Wait.NextFrame)
 
     ## How many sequences have not finished.
     pub fn len() -> int:

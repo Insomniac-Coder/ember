@@ -38,9 +38,9 @@ class Parent:
 
 fn main():
     p = Parent(Node(1))
-    p.child.poke(p)
+    p.child.poke(owns p)
     q = Parent(Node(2))
-    q.child.bump(q)
+    q.child.bump(owns q)
     s = Parent(Node(3))
     c = s.child
     r = ref c.v

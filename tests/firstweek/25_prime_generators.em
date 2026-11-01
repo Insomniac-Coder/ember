@@ -17,7 +17,7 @@ gen fn primes() -> Generator[int]:
                 is_prime = False
                 break
         if is_prime:
-            found.push(n)
+            found.push(owns n)
             yield n
 
 gen fn fibonacci(limit: int) -> Generator[int]:

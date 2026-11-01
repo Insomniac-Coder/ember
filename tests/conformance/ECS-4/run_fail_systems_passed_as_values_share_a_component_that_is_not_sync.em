@@ -21,7 +21,7 @@ fn second(ref mut q: Query[Gauge]):
 fn main():
     w = World()
     e = w.create()
-    w.add(e, Gauge(Cell(1)))
+    w.add(e, owns Gauge(Cell(1)))
     systems: Array[System] = [first, second]
     println("before")
-    w.run_parallel(systems)
+    w.run_parallel(owns systems)

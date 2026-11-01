@@ -18,7 +18,7 @@ fn main():
     v = f32x4.load(xs)
     println(v.to_array())
     out: Array[f32] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    shifted(xs, out)
+    shifted(xs, ref mut out)
     println(out)
     ints: Array[i64] = [10, 20, 30, 40]
     g: i64x4 = i64x4.splat(0)

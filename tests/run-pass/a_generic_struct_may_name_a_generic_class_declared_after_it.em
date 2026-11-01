@@ -24,7 +24,7 @@ fn bump(h: Holder[Pos]):
 
 fn main():
     s = Store[Pos]()
-    s.items.push(Pos(x=3))
+    s.items.push(owns Pos(x=3))
     h = Holder[Pos](store=s, at=0)
     println(s.items[0].x)
     bump(h)

@@ -18,7 +18,7 @@ fn consume(owns token: Token) -> i32:
 
 fn main():
     pairs: Array[Pair] = Array[Pair]()
-    pairs.push((Token(7), Token(8)))
+    pairs.push(owns (Token(7), Token(8)))
     for left, right in pairs.as_span().iter():
-        println(consume(left))
-        println(consume(right))
+        println(consume(owns left))
+        println(consume(owns right))

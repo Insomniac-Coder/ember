@@ -8,7 +8,7 @@ struct Words:
     count: int = 0
 
     fn rename():
-        this.names.push("x")
+        this.names.push(owns "x")
 
     fn bump():
         this.count += 1

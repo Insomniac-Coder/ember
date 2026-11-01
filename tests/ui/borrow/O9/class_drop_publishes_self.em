@@ -10,7 +10,7 @@ class Token:
 
     fn drop():
         retained: Array[Token] = Array[Token]()
-        retained.push(this)
+        retained.push(owns this)
 
 fn main():
     _token = Token(Data(7))

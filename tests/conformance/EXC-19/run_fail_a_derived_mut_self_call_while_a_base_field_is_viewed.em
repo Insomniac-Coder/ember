@@ -16,7 +16,7 @@ class Derived(Base):
     b: Array[int] = []
 
     fn grow():
-        this.b.push(len(this.b))
+        this.b.push(owns len(this.b))
 
 fn main():
     d = Derived()

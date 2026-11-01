@@ -42,5 +42,5 @@ fn expired() -> Weak[Shared[Token]]:
 
 fn main():
     boxed: Box[dyn Observe + Bump] = Box(Reader[bool](true))
-    println(boxed.observe(expired()))
+    println(boxed.observe(owns expired()))
     println(boxed.bump())

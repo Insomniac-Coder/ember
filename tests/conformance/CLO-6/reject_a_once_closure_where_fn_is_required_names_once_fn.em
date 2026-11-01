@@ -13,4 +13,4 @@ fn many(f: fn() -> int) -> int:
 
 fn main():
     s = "x".to_string()
-    println(many(owned fn() => consume(s)))
+    println(many(owned fn() => consume(owns s)))

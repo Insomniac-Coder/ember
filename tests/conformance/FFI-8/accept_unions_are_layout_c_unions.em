@@ -21,7 +21,7 @@ fn main():
     n = u.Number(i = 5)
     n.i = 10
     before = n
-    u.number_twice(n)
+    u.number_twice(ref mut n)
     unsafe:  # SAFETY: both hold `i`
         println(before.i, n.i)
     v = u.value_real(6.5)

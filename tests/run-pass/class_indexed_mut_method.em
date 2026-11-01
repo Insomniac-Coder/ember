@@ -20,6 +20,6 @@ class Child:
 fn main():
     child = Child(2)
     items: Array[Child] = Array[Child]()
-    items.push(child)
+    items.push(owns child)
     items[0].bump(5)
     println(items[0].value)

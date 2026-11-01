@@ -13,7 +13,7 @@ fn set(ref mut b: bool, ref mut n: int):
 fn main():
     x = false
     k = 0
-    set(x, k)
+    set(ref mut x, ref mut k)
     if x:
         println("written")
     else:

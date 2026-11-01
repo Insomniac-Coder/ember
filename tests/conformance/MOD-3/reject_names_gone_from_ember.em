@@ -12,4 +12,4 @@ fn size(s: str) -> int:    #$ error[E1010]: `str` is gone from Ember: the view o
 fn main():
     xs = [1, 2]
     total = xs.iter().copied().sum()    #$ error[E1010]: `.copied()` is not Ember: what `copy of` makes of each item is `.copy_each()`
-    println(take(String("a")), size("b"), total)
+    println(take(owns String("a")), size("b"), total)

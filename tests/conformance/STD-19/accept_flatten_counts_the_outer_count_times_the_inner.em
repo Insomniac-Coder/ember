@@ -11,10 +11,10 @@
 fn main():
     xs: Array[int] = [1, 2, 3]
     nested: Array[Array[int]] = [[1, 2], [3]]
-    a: int = xs.iter().copy_each().flat_map(fn(x: int) => [x, x * 10]).count()
+    a: int = xs.iter().copy_each().flat_map(owns fn(x: int) => [x, x * 10]).count()
     c: int = nested.iter().copy_each().flatten().count()
     outer = 0 as u64 .. 4 as u64
-    b: u128 = outer.iter().flat_map(fn(i: u64) => 0 as u64 .. i).count()
-    d: u128 = xs.iter().copy_each().flat_map(fn(x: int) => 0..x).count()
+    b: u128 = outer.iter().flat_map(owns fn(i: u64) => 0 as u64 .. i).count()
+    d: u128 = xs.iter().copy_each().flat_map(owns fn(x: int) => 0..x).count()
     println(a, c, b, d)
-    println(outer.iter().flat_map(fn(i: u64) => 0 as u64 .. i).enumerate(-1).to_array())
+    println(outer.iter().flat_map(owns fn(i: u64) => 0 as u64 .. i).enumerate(-1).to_array())

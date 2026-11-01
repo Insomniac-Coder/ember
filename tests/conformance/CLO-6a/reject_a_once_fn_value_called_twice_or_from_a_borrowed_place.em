@@ -22,12 +22,12 @@ fn through_borrow(t: Task) -> int:
 
 fn main():
     s = "x".to_string()
-    f: once fn() -> int = owned fn() => consume(s)
+    f: once fn() -> int = owned fn() => consume(owns s)
     println(f())
     println(f())    #$ error[E3040]: `f` has been moved out of
     g: once fn() -> int = fn() => 3
     for i in 0..2:
         println(g())    #$ error[E3041]: `g` is moved in a loop
     jobs: Array[once fn() -> int] = []
-    jobs.push(fn() => 1)
+    jobs.push(owns fn() => 1)
     println(jobs[0]())    #$ error[E3011]: cannot move out of an element

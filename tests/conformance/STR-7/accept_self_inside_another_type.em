@@ -18,8 +18,8 @@ struct Cell2:
 
     fn pair(other: Self) -> Array[Self]:
         out: Array[Self] = Array()
-        out.push(this)
-        out.push(other)
+        out.push(owns this)
+        out.push(owns other)
         return out
 
 fn main():

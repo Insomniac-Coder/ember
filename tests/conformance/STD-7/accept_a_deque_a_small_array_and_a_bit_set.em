@@ -14,15 +14,15 @@ from std.collections import BitSet, Deque, SmallArray
 fn main():
     d = Deque[int].new()
     for i in 0..6:
-        d.push_back(copy of i)
-        d.push_front(-i)
+        d.push_back(owns copy of i)
+        d.push_front(owns -i)
     println(d.len(), d.pop_front(), d.pop_back(), d.get(0))
 
     s = SmallArray[String, 2].new()
-    s.push(String.from("a"))
-    s.push(String.from("b"))
+    s.push(owns String.from("a"))
+    s.push(owns String.from("b"))
     println(s.is_inline(), s.len())
-    s.push(String.from("c"))
+    s.push(owns String.from("c"))
     if s.get(0) exists as first:
         println(s.is_inline(), s.len(), first)
     println(s.pop(), s.len())

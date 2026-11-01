@@ -159,14 +159,14 @@ extend[T: needs Hash] Span[T] implements Hash:
     fn hash(ref mut h: H):
         h.write_usize(this.len() as usize)
         for x in this:
-            x.hash(h)
+            x.hash(ref mut h)
 
 extend[T: needs Hash] Array[T] implements Hash:
     [H: needs Hasher]
     fn hash(ref mut h: H):
         h.write_usize(this.len() as usize)
         for x in this:
-            x.hash(h)
+            x.hash(ref mut h)
 
 extend[T: needs Hash] Option[T] implements Hash:
     [H: needs Hasher]
@@ -174,7 +174,7 @@ extend[T: needs Hash] Option[T] implements Hash:
         match this:
             Some(x):
                 h.write_u8(1)
-                x.hash(h)
+                x.hash(ref mut h)
             None:
                 h.write_u8(0)
 
@@ -184,10 +184,10 @@ extend[T: needs Hash, E: needs Hash] Result[T, E] implements Hash:
         match this:
             Ok(x):
                 h.write_u8(0)
-                x.hash(h)
+                x.hash(ref mut h)
             Err(e):
                 h.write_u8(1)
-                e.hash(h)
+                e.hash(ref mut h)
 
 ## `[STD-12]` (ODR-032, ODR-067) — what a lookup may take for a key `K`:
 ## something that hashes as `K` would and compares with one without
@@ -492,7 +492,7 @@ pub struct Map:
     [Q: needs (AsKey[K], Hash)]
     fn hash_of(q: Q) -> u64:
         h = H.default()
-        q.hash(h)
+        q.hash(ref mut h)
         return h.finish()
 
     ## The entry number at position `at`, from whichever list the table is in.
@@ -587,7 +587,7 @@ pub struct Map:
     ## Closes up removed entries, then lists every entry in a table of `size`.
     fn rebuild(size: int):
         if this.entries.len() != this.live:
-            this.entries.retain(fn(e) => e.is_some())
+            this.entries.retain(owns fn(e) => e.is_some())
         this.slots.clear()
         bits = 0
         while (1 << bits) < size:
@@ -599,10 +599,10 @@ pub struct Map:
         this.wide = length > 2147483647
         if this.wide:
             for _ in range(length):
-                this.wide_slots.push(-1)
+                this.wide_slots.push(owns -1)
         else:
             for _ in range(length):
-                this.slots.push(-1)
+                this.slots.push(owns -1)
         this.shift = (64 - bits) as u64
         this.used = 0
         for i in range(this.entries.len()):
@@ -620,7 +620,7 @@ pub struct Map:
     fn push_new(hash: u64, owns k: K, owns v: V):
         this.reserve(1)
         at = this.entries.len()
-        this.entries.push(Some(MapSlot(hash, k, v)))
+        this.entries.push(owns Some(MapSlot(hash, k, v)))
         passed = this.place(hash, at)
         this.live += 1
         if passed > 100 and not this.use_multiply:
@@ -633,10 +633,10 @@ pub struct Map:
         if at >= 0:
             match this.entries[this.slot_at(at)]:
                 Some(ref mut e):
-                    return Some(mem.replace(e.value, v))
+                    return Some(mem.replace(ref mut e.value, v))
                 None:
                     unreachable()  # `find` gives a listed entry's slot only
-        this.push_new(hash, k, v)
+        this.push_new(hash, owns k, owns v)
         return None
 
     [Q: needs (AsKey[K], Hash)]
@@ -678,7 +678,7 @@ pub struct Map:
         if at >= 0:
             i = this.slot_at(at)
             this.set_slot(at, -2)
-            old = mem.replace(this.entries[i], None)
+            old = mem.replace(ref mut this.entries[i], None)
             this.live -= 1
             if this.entries.len() > 16 and this.live * 2 < this.entries.len():
                 this.rebuild(this.slot_count())
@@ -738,10 +738,10 @@ pub struct Map:
     ## Inserts `other`'s entries in its order.
     pub fn update(owns other: Map[K, V, H]):
         for i in range(other.entries.len()):
-            slot = mem.replace(other.entries[i], None)
+            slot = mem.replace(ref mut other.entries[i], None)
             match owns slot:
                 Some(e):
-                    this.insert(e.key, e.value)
+                    this.insert(owns e.key, owns e.value)
                 None:
                     pass
 
@@ -749,10 +749,10 @@ pub struct Map:
     pub fn into_items() owns this -> Array[(K, V)]:
         out = []
         for i in range(this.entries.len()):
-            slot = mem.replace(this.entries[i], None)
+            slot = mem.replace(ref mut this.entries[i], None)
             match owns slot:
                 Some(e):
-                    out.push((e.key, e.value))
+                    out.push(owns (e.key, e.value))
                 None:
                     pass
         return out
@@ -769,7 +769,7 @@ pub struct MapIntoKeys:
         while this.at < this.entries.len():
             i = this.at
             this.at += 1
-            slot = mem.replace(this.entries[i], None)
+            slot = mem.replace(ref mut this.entries[i], None)
             match owns slot:
                 Some(e):
                     return Some(e.key)
@@ -787,7 +787,7 @@ extend[K: needs (Eq, Hash), V, H: needs (Hasher, Default)] Map[K, V, H] implemen
     static fn from_iter(owns it: I) -> Map[K, V, H]:
         out = Map[K, V, H]()
         for (k, v) in it:
-            out.insert(k, v)
+            out.insert(owns k, owns v)
         return out
 
 extend[K: needs (Eq, Hash), V, H: needs (Hasher, Default)] Map[K, V, H] implements IntoIterator:
@@ -840,7 +840,7 @@ extend[K: needs (Eq, Hash), V, H: needs (Hasher, Default), Q: needs (ToKey[K], H
                     return
                 None:
                     unreachable()  # `find` gives a listed entry's slot only
-        this.push_new(hash, q.to_key(), v)
+        this.push_new(hash, owns q.to_key(), owns v)
 
 extend[K: needs (Eq, Hash), V: needs Copy, H: needs (Hasher, Default)] Map[K, V, H]:
     [Q: needs (AsKey[K], Hash)]
@@ -877,7 +877,7 @@ extend[K: needs (Eq, Hash, Ord, Clone), V, H: needs (Hasher, Default)] Map[K, V,
         for i in range(this.entries.len()):
             match this.entries[i]:
                 Some(e):
-                    out.push(e.key.clone())
+                    out.push(owns e.key.clone())
                 None:
                     pass
         out.sort()
@@ -904,7 +904,7 @@ pub struct MapEntry:
         else:
             # `push_new` may close up removed entries first, so the new
             # entry's place is read after it.
-            this.map.push_new(this.hash, this.key, v)
+            this.map.push_new(this.hash, owns this.key, owns v)
             i = this.map.entries.len() - 1
         match this.map.entries[i]:
             Some(ref mut e):
@@ -923,7 +923,7 @@ pub struct MapEntry:
                 None:
                     unreachable()  # `find` gives a listed entry's slot only
         else:
-            return this.or_insert(make())
+            return this.or_insert(owns make())
 
 extend[K: needs (Eq, Hash), V: needs Default, H: needs (Hasher, Default)] MapEntry[K, V, H]:
     pub fn or_default() owns this -> ref mut V:
@@ -932,7 +932,7 @@ extend[K: needs (Eq, Hash), V: needs Default, H: needs (Hasher, Default)] MapEnt
         if at >= 0:
             i = this.map.slot_at(at)
         else:
-            this.map.push_new(this.hash, this.key, V.default())
+            this.map.push_new(this.hash, owns this.key, owns V.default())
             i = this.map.entries.len() - 1
         match this.map.entries[i]:
             Some(ref mut e):
@@ -1077,7 +1077,7 @@ pub struct Set:
 
     ## Whether `x` was new. An element already there keeps its position.
     pub fn add(owns x: T) -> bool:
-        return this.map.insert(x, true).is_none()
+        return this.map.insert(owns x, owns true).is_none()
 
     [Q: needs (AsKey[T], Hash)]
     pub fn remove(q: Q) -> bool:
@@ -1155,30 +1155,30 @@ extend[T: needs (Eq, Hash, Clone), H: needs (Hasher, Default)] Set[T, H]:
     pub fn union(other: Set[T, H]) -> Set[T, H]:
         out = Set[T, H]()
         for x in this.iter():
-            out.add(x.clone())
+            out.add(owns x.clone())
         for x in other.iter():
-            out.add(x.clone())
+            out.add(owns x.clone())
         return out
 
     pub fn intersection(other: Set[T, H]) -> Set[T, H]:
         out = Set[T, H]()
         for x in this.iter():
             if other.contains(x):
-                out.add(x.clone())
+                out.add(owns x.clone())
         return out
 
     pub fn difference(other: Set[T, H]) -> Set[T, H]:
         out = Set[T, H]()
         for x in this.iter():
             if not other.contains(x):
-                out.add(x.clone())
+                out.add(owns x.clone())
         return out
 
     pub fn symmetric_difference(other: Set[T, H]) -> Set[T, H]:
         out = this.difference(other)
         for x in other.iter():
             if not this.contains(x):
-                out.add(x.clone())
+                out.add(owns x.clone())
         return out
 
 ## `s | t`, `s & t`, `s - t` and `s ^ t` are those operations (`[STD-16]`): a
@@ -1202,7 +1202,7 @@ extend[T: needs (Eq, Hash, Ord, Clone), H: needs (Hasher, Default)] Set[T, H]:
     pub fn sorted_elements() -> Array[T]:
         out: Array[T] = []
         for x in this.iter():
-            out.push(x.clone())
+            out.push(owns x.clone())
         out.sort()
         return out
 
@@ -1213,7 +1213,7 @@ extend[T: needs (Eq, Hash), H: needs (Hasher, Default)] Set[T, H] implements Fro
     static fn from_iter(owns it: I) -> Set[T, H]:
         out = Set[T, H]()
         for x in it:
-            out.add(x)
+            out.add(owns x)
         return out
 
 extend[T: needs (Eq, Hash), H: needs (Hasher, Default)] Set[T, H] implements IntoIterator:
@@ -1446,7 +1446,7 @@ pub struct Pool:
 
     ## Puts `value` in a free slot and gives its handle; panics when every slot is retired or live.
     pub fn insert(owns value: T) -> Handle[T, B]:
-        match this.try_insert(value):
+        match this.try_insert(owns value):
             Ok(handle):
                 return handle
             Err(_):
@@ -1465,8 +1465,8 @@ pub struct Pool:
             this.slots[index] = Some(value)
         elif this.slots.len() < (1 << B.index_bits()):
             index = this.slots.len()
-            this.slots.push(Some(value))
-            this.generations.push(0)
+            this.slots.push(owns Some(value))
+            this.generations.push(owns 0)
         else:
             return Err(CapacityError.Full)
         this.live += 1
@@ -1517,7 +1517,7 @@ pub struct Pool:
         next = this.generations[at] + 1
         this.generations[at] = next
         if next < (1 << B.generation_bits()):
-            this.free.push(at)
+            this.free.push(owns at)
         return taken
 
 extend[T, B: needs HandleSplit] Pool[T, B] implements Index[Handle[T, B]]:
@@ -1561,7 +1561,7 @@ pub struct FixedArray:
         return Ok(())
 
     pub fn push_or_drop(owns value: T):
-        _ = this.push(value)
+        _ = this.push(owns value)
 
     pub fn pop() -> Option[T]:
         if this.count == 0:
@@ -1676,7 +1676,7 @@ pub struct RingBuffer:
         return Ok(())
 
     pub fn push_or_drop(owns value: T):
-        _ = this.push(value)
+        _ = this.push(owns value)
 
     pub fn pop() -> Option[T]:
         if this.count == 0:
@@ -1724,9 +1724,9 @@ pub struct Deque:
         size = 4 if this.slots.len() == 0 else this.slots.len() * 2
         for i in 0..size:
             if i < this.count:
-                bigger.push(this.slots[(this.head + i) % this.slots.len()].take())
+                bigger.push(owns this.slots[(this.head + i) % this.slots.len()].take())
             else:
-                bigger.push(None)
+                bigger.push(owns None)
         this.slots = bigger
         this.head = 0
 
@@ -1793,7 +1793,7 @@ pub struct SmallArray:
 
     pub fn push(owns value: T):
         if this.spilled:
-            this.heap.push(value)
+            this.heap.push(owns value)
             return
         if this.count < N:
             this.held[this.count] = Some(value)
@@ -1801,10 +1801,10 @@ pub struct SmallArray:
             return
         for i in 0..this.count:
             if this.held[i].take() exists as v:
-                this.heap.push(v)
+                this.heap.push(owns v)
         this.count = 0
         this.spilled = true
-        this.heap.push(value)
+        this.heap.push(owns value)
 
     pub fn pop() -> Option[T]:
         if this.spilled:
@@ -1842,7 +1842,7 @@ pub struct BitSet:
             panic(f"a BitSet holds non-negative integers, not {i}")
         word = i // 64
         while this.words.len() <= word:
-            this.words.push(0)
+            this.words.push(owns 0)
         bit = 1u64 << ((i % 64) as u64)
         absent = this.words[word] & bit == 0
         this.words[word] |= bit

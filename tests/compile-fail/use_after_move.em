@@ -4,7 +4,7 @@
 
 fn main():
     xs: Array[i32] = Array()
-    xs.push(1)
+    xs.push(owns 1)
     ys = xs
     println(ys.len())
     # `xs` gave its buffer away; reading it again would read a buffer someone

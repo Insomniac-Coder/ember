@@ -628,7 +628,7 @@ fn shutdown_ends_the_job_workers_a_module_started() {
     let toolchain = toolchain();
     package(&dir.join("worker"), "[package]\nname = \"worker\"\nkind = \"cdylib\"\n",
         "import std.jobs\nfrom std.sync import Atomic\n\nstatic TOTAL: Atomic[int] = Atomic(0)\n\n\
-         @export(\"busy\")\nfn busy() -> i32:\n    jobs.wait(jobs.submit(owned fn() => TOTAL.fetch_add(1)))\n    return TOTAL.load() as i32\n");
+         @export(\"busy\")\nfn busy() -> i32:\n    jobs.wait(jobs.submit(owns owned fn() => TOTAL.fetch_add(1)))\n    return TOTAL.load() as i32\n");
     let built = ember(&["build"], &dir.join("worker"));
     assert_success(&built, "the cdylib running jobs");
     let lib = dir.join("worker/target/debug/lib");

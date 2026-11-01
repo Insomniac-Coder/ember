@@ -19,7 +19,7 @@ fn main():
     handles: Array[jobs.JobHandle] = []
     for i in range(1, 11):
         n = i
-        handles.push(jobs.submit(owned fn() => TOTAL.fetch_add(n)))
+        handles.push(owns jobs.submit(owns owned fn() => TOTAL.fetch_add(n)))
     for h in handles:
         jobs.wait(h)
     println(TOTAL.load())
@@ -27,6 +27,6 @@ fn main():
     right = [4, 5, 6]
     greeting = "hello".to_string()
     with s = jobs.scope():
-        s.submit(fn() => scale(left, 10))
-        s.submit(fn() => scale(right, 2))
-    jobs.wait(jobs.submit(owned fn() => println(left, right, greeting)))
+        s.submit(owns fn() => scale(ref mut left, 10))
+        s.submit(owns fn() => scale(ref mut right, 2))
+    jobs.wait(jobs.submit(owns owned fn() => println(left, right, greeting)))

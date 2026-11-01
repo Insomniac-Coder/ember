@@ -8,9 +8,9 @@
 
 fn main():
     words = Array[StrView]()
-    words.push("a")
-    words.push("b")
+    words.push(owns "a")
+    words.push(owns "b")
     xs = Array[i32]()
-    xs.push(7)
+    xs.push(owns 7)
     s = String()
     println(words, xs, s.len())

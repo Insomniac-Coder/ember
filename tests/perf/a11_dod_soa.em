@@ -6,8 +6,8 @@ fn main():
     xs: Array[float] = []
     vs: Array[float] = []
     for i in 0..n:
-        xs.push(i as float)
-        vs.push(0.5)
+        xs.push(owns (i as float))
+        vs.push(owns 0.5)
     for step in 0..5000:
         for i in 0..n:
             xs[i] = xs[i] + vs[i]

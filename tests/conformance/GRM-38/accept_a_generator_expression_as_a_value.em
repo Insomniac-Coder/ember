@@ -16,7 +16,7 @@ fn main():
     total = 0
     for v in evens:
         total += v
-    zipped = (a + b for (a, b) in xs.iter().zip(xs.iter()))
+    zipped = (a + b for (a, b) in xs.iter().zip(owns xs.iter()))
     z = 0
     for v in zipped:
         z += v

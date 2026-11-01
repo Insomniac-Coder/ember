@@ -13,6 +13,6 @@ fn twice(x: int) -> int:
 fn main():
     total = (0..3).map[int](twice).sum()
     xs: Array[int] = [1, 2, 3]
-    other = xs.iter().map[int](fn(v: int) => v + 1).sum()
+    other = xs.iter().map[int](owns fn(v: int) => v + 1).sum()
     ones = (0..3).map[f64](fn(x: int) => 1).sum()
     println(total, other, ones)

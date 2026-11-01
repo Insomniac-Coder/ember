@@ -723,8 +723,15 @@ enum Home {
 /// Returns whether there was any; the bodies it made have their callable
 /// summaries made again (`[MIR-REG-1]`).
 pub fn transform(bodies: &mut Vec<Body>, types: &mut TypeTable) -> bool {
+    // `[LT-48]` — the run-time checks of `runtime` parameters' kinds, which the borrow checks asked
+    // for, go into the bodies the checks read: a generator's before it becomes its frame's state
+    // machine.
+    let checked = crate::borrows::insert_kind_checks_all(bodies, types) > 0;
     if !transform_all(bodies, types) {
-        return false;
+        if checked {
+            crate::install_callable_regions_all(bodies, types);
+        }
+        return checked;
     }
     crate::install_callable_regions_all(bodies, types);
     true

@@ -42,7 +42,7 @@ fn main():
     g = two()
     println("got", g.next().unwrap())
     mem.drop(g)
-    h = holds(Noisy("param"))
+    h = holds(owns Noisy("param"))
     println("unstarted")
     mem.drop(h)
     for _ in runs():

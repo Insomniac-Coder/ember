@@ -4,7 +4,7 @@ error[E3027]: a `ref mut` argument is not a mutable place
 5 |     double(1 + 1)
   |            ^^^^^ this value has no mutable storage for the callee to borrow
   |
-  = help: bind the value to a local first, or pass the owner place directly (`f(obj.field)` rather than `f(obj.get_field())`)
-  = note: the callee's declared `ref mut` mode forms the mutable borrow; the call site does not write a mode [FN-2a]
+  = help: bind the value to a local first, or pass the owner place directly (`f(ref mut obj.field)` rather than `f(ref mut obj.get_field())`)
+  = note: the callee changes what it is given, so it needs a place it can change [FN-2a]
 
 error: could not compile due to 1 error(s)

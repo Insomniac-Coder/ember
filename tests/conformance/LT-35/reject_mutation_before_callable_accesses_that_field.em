@@ -14,9 +14,9 @@ fn sum(pair: Pair) -> i32:
 
 fn main():
     left: Array[i32] = Array[i32]()
-    left.push(1)
+    left.push(owns 1)
     right: Array[i32] = Array[i32]()
-    right.push(2)
+    right.push(owns 2)
     pair = bundle(left.as_span(), right.as_span())
-    right.push(3) #$ error[E3021]: `right` is borrowed here and mutably borrowed elsewhere
+    right.push(owns 3) #$ error[E3021]: `right` is borrowed here and mutably borrowed elsewhere
     println(sum(pair))

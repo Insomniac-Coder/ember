@@ -14,10 +14,10 @@
 fn main():
     spread: Map[int, int] = {}
     for i in 0..20000:
-        spread.insert(i * 7, i)
+        spread.insert(owns (i * 7), owns i)
     piled: Map[int, int] = {}
     for i in 0..20000:
-        piled.insert(i * 32749, i)
+        piled.insert(owns (i * 32749), owns i)
     total = 0
     for i in 0..20000:
         total += spread[i * 7] + piled[i * 32749]

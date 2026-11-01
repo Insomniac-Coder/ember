@@ -31,9 +31,9 @@ fn main():
     xs: Array[f32] = []
     out: Array[f32] = []
     for i in 0..16:
-        xs.push(i as f32)
-        out.push(0.0)
-    scale(xs, out, 2.0)
+        xs.push(owns (i as f32))
+        out.push(owns 0.0)
+    scale(xs, ref mut out, 2.0)
     println(out)
     println(f32x8.LANES, f32x4.LANES, f64x2.LANES, i8x16.LANES, i8x32.LANES, u8x64.LANES)
     println(simd.native_lanes[f32](), simd.native_lanes[f64](), simd.native_lanes[u8](), simd.native_lanes[i16]())

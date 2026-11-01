@@ -17,7 +17,7 @@ struct Scene:
 
 fn add(s: Scene, e: int):
     with list = s.entities.borrow_mut():
-        list.push(e)
+        list.push(owns e)
 
 fn main():
     sprite = Sprite(frame=Cell(0))

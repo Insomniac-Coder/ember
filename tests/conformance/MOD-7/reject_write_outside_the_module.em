@@ -13,4 +13,4 @@ fn bump(ref mut n: i32):
 fn main():
     h = make(10)
     h.value = 99          #$ error[E1050]: `support.health.Health.value` is read-only outside its module
-    bump(h.value)         #$ error[E1050]: `support.health.Health.value` is read-only outside its module
+    bump(ref mut h.value)         #$ error[E1050]: `support.health.Health.value` is read-only outside its module

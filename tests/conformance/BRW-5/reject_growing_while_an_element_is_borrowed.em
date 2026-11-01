@@ -7,8 +7,8 @@
 
 fn main():
     v: Array[i32] = Array[i32]()
-    v.push(1)
+    v.push(owns 1)
     a: ref mut i32 = ref mut v[0]
-    v.push(2)              #$ error[E3022]: `v[0]` is already mutably borrowed
+    v.push(owns 2)              #$ error[E3022]: `v[0]` is already mutably borrowed
     a = 10
     println(v[0])

@@ -12,4 +12,4 @@ class Token:
 
 fn main():
     token = Token()
-    token.items.push(2)
+    token.items.push(owns 2)

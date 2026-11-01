@@ -13,4 +13,4 @@ fn place(ref mut fixed: FixedArena, x: i32) -> i32:
 fn main():
     bytes: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     fixed: FixedArena = Arena.fixed(bytes)
-    println(place(fixed, 41))
+    println(place(ref mut fixed, 41))

@@ -21,7 +21,7 @@ fn wide(m: u64) -> String:
         sum += i
     first: Array[(i128, u64)] = []
     for i, x in (0 as u64 .. m).iter().enumerate(-3):
-        first.push((i, x))
+        first.push(owns (i, x))
         if first.len() == 2:
             break
     return f"{d} {sum} {first}"

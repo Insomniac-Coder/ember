@@ -13,11 +13,11 @@ fn first(a: Span[i32], b: Span[i32]) -> i32:
 
 fn main():
     long: Array[i32] = Array[i32]()
-    long.push(1)
+    long.push(owns 1)
     short: Array[i32] = Array[i32]()
-    short.push(2)
+    short.push(owns 2)
     println(first(long, short))
-    short.push(3)
+    short.push(owns 3)
     println(short[1])
 #$ stdout: 1
 #$ 3

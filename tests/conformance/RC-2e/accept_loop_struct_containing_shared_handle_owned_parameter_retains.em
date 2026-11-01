@@ -23,6 +23,6 @@ fn consume(owns token: Shared[Token]) -> i32:
 
 fn main():
     entries: Array[Entry] = Array[Entry]()
-    entries.push(Entry(Shared(Token(7))))
+    entries.push(owns Entry(Shared(Token(7))))
     for entry in entries:
-        println(consume(entry.token))
+        println(consume(owns entry.token))

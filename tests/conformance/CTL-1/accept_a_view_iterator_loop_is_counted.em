@@ -25,7 +25,7 @@ struct P:
 fn main():
     ps: Array[P] = []
     for i in 0..5:
-        ps.push(P(i, 10 * i))
+        ps.push(owns P(i, 10 * i))
     for p in ps.iter_mut():
         p.x += 100
     total = 0
@@ -38,7 +38,7 @@ fn main():
     it.next()
     seen: Array[int] = []
     for x in it:
-        seen.push(x)
+        seen.push(owns x)
     println(seen)
 
     for x in xs.iter():

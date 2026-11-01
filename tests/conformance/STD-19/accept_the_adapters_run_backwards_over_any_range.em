@@ -23,18 +23,18 @@ fn first(owns from: I, n: int) -> Array[I.Item]:
     while out.len() < n:
         match it.next():
             Some(x):
-                out.push(x)
+                out.push(owns x)
             None:
                 return out
     return out
 
 fn main():
     big = 0 as u64 .. u64.MAX
-    println(first(big.iter().take(3).rev(), 3))
-    println(first(big.iter().skip(5).rev(), 3))
-    println(first(big.iter().step_by(2).rev(), 3))
-    println(first(big.iter().enumerate(-3).rev(), 2))
-    println(first(big.iter().zip(big.iter()).rev(), 2))
+    println(first(owns big.iter().take(3).rev(), 3))
+    println(first(owns big.iter().skip(5).rev(), 3))
+    println(first(owns big.iter().step_by(2).rev(), 3))
+    println(first(owns big.iter().enumerate(-3).rev(), 2))
+    println(first(owns big.iter().zip(owns big.iter()).rev(), 2))
     println(big.iter().len())
     for x in big.iter().skip(5).rev():
         println("2f", x)
@@ -43,6 +43,6 @@ fn main():
         println("3f", x)
         break
     every = 0 as u128 ..= u128.MAX
-    println(first(every.iter().skip(1).rev(), 2))
+    println(first(owns every.iter().skip(1).rev(), 2))
     whole = int.MIN ..= int.MAX
-    println(first(whole.iter().take(2).rev(), 2))
+    println(first(owns whole.iter().take(2).rev(), 2))

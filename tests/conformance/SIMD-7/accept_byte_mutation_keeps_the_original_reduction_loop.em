@@ -17,5 +17,5 @@ fn increment_and_sum(ref mut xs: Array[u8]) -> u64:
 
 fn main():
     xs: Array[u8] = [1, 2, 255]
-    total = increment_and_sum(xs)
+    total = increment_and_sum(ref mut xs)
     println(total, xs[0], xs[1], xs[2])

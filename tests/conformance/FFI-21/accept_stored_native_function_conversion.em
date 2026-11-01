@@ -33,6 +33,6 @@ fn main():
     for callback in callbacks:
         converted: extern "C" fn(i32) -> i32 = callback
         println(converted(40))
-    forwarded = forward(add_two)
+    forwarded = forward(owns add_two)
     converted: extern "C" fn(i32) -> i32 = forwarded
     println(converted(40))

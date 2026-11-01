@@ -28,6 +28,6 @@ fn main():
     println(five, nothing)
     println(five == NonZero.new(5), five == nothing, nothing == NonZero.new(0))
     xs: Array[NonZero[i32]] = Array()
-    xs.push(NonZero[i32].new(7).unwrap())
-    xs.push(NonZero[i32].new(-3).unwrap())
+    xs.push(owns NonZero[i32].new(7).unwrap())
+    xs.push(owns NonZero[i32].new(-3).unwrap())
     println(xs.pop(), xs.pop(), xs.pop())

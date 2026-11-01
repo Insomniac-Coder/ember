@@ -11,16 +11,16 @@ fn has_next(ref mut iterator: I) -> bool:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
+    values.push(owns 1)
     shared_iter = values.as_span().iter()
-    println(has_next(shared_iter))
+    println(has_next(ref mut shared_iter))
     shared_chunks = values.as_span().chunks(1)
-    println(has_next(shared_chunks))
+    println(has_next(ref mut shared_chunks))
     mutable = values.as_mut_span()
     mutable_iter = mutable.iter_mut()
-    println(has_next(mutable_iter))
+    println(has_next(ref mut mutable_iter))
     mutable_chunks = mutable.chunks_mut(1)
-    println(has_next(mutable_chunks))
+    println(has_next(ref mut mutable_chunks))
 #$ stdout: true
 #$ stdout: true
 #$ stdout: true

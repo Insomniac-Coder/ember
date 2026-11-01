@@ -21,5 +21,5 @@ fn main():
     unsafe:  # SAFETY(ffi): `x` is alive for both calls, which read and write one `int`
         through_raw = raw.pointers_read((ref x) as *i32)
         bumped = raw.pointers_bump((ref mut x) as *mut i32)
-    c.pointers_bump(x)
+    c.pointers_bump(ref mut x)
     println(read, through_raw, bumped, x)

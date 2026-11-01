@@ -14,7 +14,7 @@ class Node:
 
     fn add_child(child: Node):
         child.parent = Some(Weak(this))
-        this.children.push(child)
+        this.children.push(owns child)
 
     fn world_position() -> Vec3:
         pos = this.local

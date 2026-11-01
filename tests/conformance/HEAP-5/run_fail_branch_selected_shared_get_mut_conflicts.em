@@ -14,7 +14,7 @@ fn main():
     first_alias = first
     second = Shared(Counter(2))
     choose_first = true
-    chosen = open(first) if choose_first else open(second)
+    chosen = open(ref mut first) if choose_first else open(ref mut second)
     # The selected owner is `first`; opening the unrelated `second` here would
     # be a false positive, while this alias must still conflict at runtime.
     conflicting = first_alias.get_mut()

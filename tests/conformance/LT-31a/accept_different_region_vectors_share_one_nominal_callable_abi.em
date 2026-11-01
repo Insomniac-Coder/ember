@@ -19,13 +19,13 @@ fn left_value(pair: Pair) -> i32:
 
 fn main():
     first_left: Array[i32] = Array[i32]()
-    first_left.push(1)
+    first_left.push(owns 1)
     first_right: Array[i32] = Array[i32]()
-    first_right.push(2)
+    first_right.push(owns 2)
     second_left: Array[i32] = Array[i32]()
-    second_left.push(3)
+    second_left.push(owns 3)
     second_right: Array[i32] = Array[i32]()
-    second_right.push(4)
+    second_right.push(owns 4)
     first = Pair(first_left.as_span(), first_right.as_span())
     second = Pair(second_left.as_span(), second_right.as_span())
     println(left_value(first))

@@ -22,8 +22,8 @@ fn main():
     offsets: Array[int] = []
     codes: Array[u32] = []
     for (i, c) in text.char_indices():
-        offsets.push(signed_index(i))
-        codes.push(c as u32)
+        offsets.push(owns signed_index(i))
+        codes.push(owns (c as u32))
     println(offsets)
     println(codes)
 
@@ -42,7 +42,7 @@ fn main():
             continue
         if c == '😀':
             break
-        kept.push(signed_index(i))
+        kept.push(owns signed_index(i))
     else:
         panic("break unexpectedly ran else")
     println(kept)

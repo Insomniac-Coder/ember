@@ -16,5 +16,5 @@ fn main():
     first = pair.first
     println(pair.second.n)
     pair.first = first
-    consume(pair)
+    consume(owns pair)
 

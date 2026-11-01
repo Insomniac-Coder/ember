@@ -13,7 +13,7 @@ fn replace_shared_view(index: int):
     values = [10, 20, 30]
     view: Span[int] = values
     replacement = values[1..3]
-    old = mem.replace(view, replacement)
+    old = mem.replace(ref mut view, replacement)
     println(old[index], old[index + 1], old.len())
     println(view[index], view[index + 1], view.len())
 

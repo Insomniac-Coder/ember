@@ -12,6 +12,6 @@ pub extern "C" fn first_counted(input: *i32, n: usize) -> *i32:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(18)
+    values.push(owns 18)
     chosen: ref i32 = first(values.as_span())
     println(chosen)

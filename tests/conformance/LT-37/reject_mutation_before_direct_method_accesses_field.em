@@ -11,9 +11,9 @@ struct Pair:
 
 fn main():
     left: Array[i32] = Array[i32]()
-    left.push(31)
+    left.push(owns 31)
     right: Array[i32] = Array[i32]()
-    right.push(32)
+    right.push(owns 32)
     pair = Pair(left.as_span(), right.as_span())
-    right.push(33) #$ error[E3021]: `right` is borrowed here and mutably borrowed elsewhere
+    right.push(owns 33) #$ error[E3021]: `right` is borrowed here and mutably borrowed elsewhere
     println(pair.right_value())

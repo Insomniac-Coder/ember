@@ -14,5 +14,5 @@ pub extern "C" fn sum_fixed_and_counted(prefix: *i32, n: usize, rest: *i32) -> i
 fn main():
     prefix: [i32; 2] = [1, 2]
     rest: Array[i32] = Array[i32]()
-    rest.push(5)
+    rest.push(owns 5)
     println(mixed(ref prefix, rest.as_span()))

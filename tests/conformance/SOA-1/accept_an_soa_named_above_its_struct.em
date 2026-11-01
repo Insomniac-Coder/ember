@@ -16,6 +16,6 @@ struct Particle:
 
 fn main():
     ps = SoA[Particle].with_capacity(4)
-    ps.push(Particle(1.0, 2))
-    integrate(ps, 0.5)
+    ps.push(owns Particle(1.0, 2))
+    integrate(ref mut ps, 0.5)
     println(ps.velocity[0], ps.mass[0])

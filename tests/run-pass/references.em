@@ -46,7 +46,7 @@ fn main():
     println(read_through())
 
     n: i32 = 10
-    bump(n)
+    bump(ref mut n)
     println(n)
 
     println(reborrow())

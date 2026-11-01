@@ -10,14 +10,14 @@
 
 @noalloc
 fn doubled(xs: Span[int]) -> int:
-    it = xs.iter().map(fn(x: ref int) -> int => x * 2)
+    it = xs.iter().map(owns fn(x: ref int) -> int => x * 2)
     total = 0
     for v in it:
         total += v
     return total
 
 fn widths(xs: Span[int]) -> int:
-    it = xs.iter().map(fn(x: ref int) -> int => [x, x].len())
+    it = xs.iter().map(owns fn(x: ref int) -> int => [x, x].len())
     total = 0
     for v in it:
         total += v

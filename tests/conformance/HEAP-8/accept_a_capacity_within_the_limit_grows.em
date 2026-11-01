@@ -12,7 +12,7 @@ fn main():
     xs.reserve(1000)
     println(xs.capacity() >= 1000)
     for i in 0..3:
-        xs.push(i)
+        xs.push(owns i)
     ys: Array[int] = [7, 8]
     xs.extend(ys)
     println(xs.len(), xs[4])

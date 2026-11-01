@@ -12,12 +12,12 @@ class Player:
     fn init(n: int):
         this.items = []
         for i in 0..n:
-            this.items.push(i)
+            this.items.push(owns i)
 
 fn main():
     players: Array[Player] = []
     for n in 1..4:
-        players.push(Player(n))
+        players.push(owns Player(n))
     total = 0
     for p in players:
         total = total + len(p.items)

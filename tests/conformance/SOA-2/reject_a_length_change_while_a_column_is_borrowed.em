@@ -10,7 +10,7 @@ struct Named:
 
 fn main():
     ns = SoA[Named].with_capacity(2)
-    ns.push(Named("ann".to_string(), 3))
+    ns.push(owns Named("ann".to_string(), 3))
     scores = ns.score
-    ns.push(Named("dee".to_string(), 1))
+    ns.push(owns Named("dee".to_string(), 1))
     println(scores.len())

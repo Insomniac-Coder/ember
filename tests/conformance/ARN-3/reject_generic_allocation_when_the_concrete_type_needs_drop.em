@@ -10,5 +10,5 @@ fn put(arena: Arena, owns value: T):
 fn main():
     arena = Arena.with_capacity(16)
     values: Array[i32] = Array[i32]()
-    values.push(1)
-    put(arena, values)
+    values.push(owns 1)
+    put(arena, owns values)

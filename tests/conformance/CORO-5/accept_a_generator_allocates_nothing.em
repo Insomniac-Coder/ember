@@ -41,5 +41,5 @@ fn main():
                     s += x
                 None:
                     break
-        sums.push(s)
+        sums.push(owns s)
     println(sums[0], sums[1], sums[2])

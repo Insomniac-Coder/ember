@@ -10,10 +10,10 @@ struct Pair:
 
 fn main():
     left: Array[i32] = Array[i32]()
-    left.push(1)
+    left.push(owns 1)
     right: Array[i32] = Array[i32]()
-    right.push(2)
+    right.push(owns 2)
     pair = Pair(left.as_span(), right.as_span())
     println(pair.left[0])
-    left.push(3)
+    left.push(owns 3)
     println(pair.right[0])

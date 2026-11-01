@@ -20,4 +20,4 @@ fn main():
     pair = Pair(Part(1), Part(2))
     _first = pair.first
     println(pair.second.n)
-    consume(pair)              #$ error[E3042]: `pair` is partially moved
+    consume(owns pair)              #$ error[E3042]: `pair` is partially moved

@@ -20,5 +20,5 @@ fn twice(ref mut x: int):
 
 fn main():
     y = 3
-    twice(y)
+    twice(ref mut y)
     println(y)

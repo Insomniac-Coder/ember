@@ -14,7 +14,7 @@ struct Token:
 
 fn main():
     tokens: Array[Shared[Token]] = Array[Shared[Token]]()
-    tokens.push(Shared(Token(7)))
+    tokens.push(owns Shared(Token(7)))
     for token in tokens:
         task = owned fn() -> i32:
             value = token.get()

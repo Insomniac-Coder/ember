@@ -12,7 +12,7 @@
 
 fn main():
     s: Set[int] = {1, 2}
-    println(s.add(3), s.add(3), s.len() - 1, 3 in s, 9 in s)
+    println(s.add(owns 3), s.add(owns 3), s.len() - 1, 3 in s, 9 in s)
     t: Set[int] = {2, 3, 4}
     println(s | t, s & t, s - t, s ^ t)
     println({2, 3}.is_subset(s), s.is_superset({1, 2}), s.is_disjoint(t), {9}.is_disjoint(t))

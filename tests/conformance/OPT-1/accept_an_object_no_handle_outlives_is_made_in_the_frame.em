@@ -38,7 +38,7 @@ fn read(p: Local) -> int:
     return p.twice()
 
 fn store(ref mut list: Array[Kept], k: Kept):
-    list.push(k)
+    list.push(owns k)
 
 fn turns(n: int) -> int:
     total = 0
@@ -50,7 +50,7 @@ fn turns(n: int) -> int:
 fn kept(n: int) -> int:
     list: Array[Kept] = []
     for i in 0..n:
-        store(list, Kept(i))
+        store(ref mut list, Kept(i))
     return list.len()
 
 fn carried(n: int) -> int:

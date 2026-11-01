@@ -12,8 +12,8 @@ fn put_big(ref mut xs: Array[int]):
 fn main():
     xs: Array[int] = []
     for i in 0..10:
-        xs.push(i % 7)
-    put_big(xs)
+        xs.push(owns (i % 7))
+    put_big(ref mut xs)
     total = 0
     for i in 0..xs.len():
         total = total + xs[i]

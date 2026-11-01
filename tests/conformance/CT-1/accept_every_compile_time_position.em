@@ -8,7 +8,7 @@
 fn fib(n: int) -> int:
     seen: Array[int] = [0, 1]
     while seen.len() <= n:
-        seen.push(seen[seen.len() - 1] + seen[seen.len() - 2])
+        seen.push(owns (seen[seen.len() - 1] + seen[seen.len() - 2]))
     return seen[n]
 
 fn factorial(n: int) -> int:

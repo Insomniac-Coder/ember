@@ -13,9 +13,9 @@ fn main():
     taker = owned fn(owns x: int) -> int:
         kept = t
         return x + kept.value
-    first = o.map(taker)
-    second = o.map(taker)  #$ error[E3040]: `taker` has been moved out of
+    first = o.map(owns taker)
+    second = o.map(owns taker)  #$ error[E3040]: `taker` has been moved out of
     keep = fn(owns x: int) -> int => x + 1
-    third = o.map(keep)
-    fourth = o.map(keep)
+    third = o.map(owns keep)
+    fourth = o.map(owns keep)
     println(first, second, third, fourth)

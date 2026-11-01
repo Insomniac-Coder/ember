@@ -42,7 +42,7 @@ fn main():
             continue
         match parse_line(line):
             Ok(sale):
-                sales.push(sale)
+                sales.push(owns sale)
             Err(e):
                 println(f"line {i + 1}: skipped ({e})")
                 bad_lines += 1

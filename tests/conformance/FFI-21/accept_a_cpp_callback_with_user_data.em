@@ -29,9 +29,9 @@ fn main():
     bus.get().each(tally)
     println(total, seen)
     scale: c_int = 3
-    token = cpp.listen(owned fn(event: c_int) -> c_int => event * scale)
+    token = cpp.listen(owns owned fn(event: c_int) -> c_int => event * scale)
     println(cpp.emit(2), cpp.listening())
-    end(token)
+    end(owns token)
     println(cpp.emit(2), cpp.listening())
 
 fn end(owns token: Retained[ForeignCallback]):

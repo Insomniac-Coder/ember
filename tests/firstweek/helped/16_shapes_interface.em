@@ -64,7 +64,7 @@ fn main():
         describe(s)
     println(f"total area: {total_area(shapes):.3f}")
 
-    shapes.sort_by_key(fn(s) => s.area())
+    shapes.sort_by_key(owns fn(s) => s.area())
     println("smallest to largest:")
     for s in shapes:
         println(f"  {s.name()}")

@@ -10,6 +10,6 @@ fn step(i: int) -> int:
 fn main():
     total = 0
     for i in range(20_000):
-        h = thread.spawn(owned fn() => step(i))
+        h = thread.spawn(owns owned fn() => step(i))
         total += h.join()
     println(total)

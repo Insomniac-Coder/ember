@@ -20,11 +20,11 @@ fn main():
     for i in 0..1000000:
         k = i % 3
         if k == 0:
-            shapes.push(Shape.Circle(1.0))
+            shapes.push(owns Shape.Circle(1.0))
         elif k == 1:
-            shapes.push(Shape.Rect(2.0, 3.0))
+            shapes.push(owns Shape.Rect(2.0, 3.0))
         else:
-            shapes.push(Shape.Tri(4.0, 5.0))
+            shapes.push(owns Shape.Tri(4.0, 5.0))
     total = 0.0
     for round in 0..100:
         for s in shapes:

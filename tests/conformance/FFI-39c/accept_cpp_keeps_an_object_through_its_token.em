@@ -25,7 +25,7 @@ class Button(cpp.Widget):
 
 fn main():
     button = Button()
-    token = Retained.pin(button)
+    token = Retained.pin(owns button)
     cpp.add_widget(token)
     println(cpp.draw_added(), cpp.draw_once(button))
     drop(button)

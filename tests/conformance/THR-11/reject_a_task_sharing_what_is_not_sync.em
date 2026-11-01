@@ -8,4 +8,4 @@ import std.thread
 fn main():
     c = RefCell(0)
     with scope = thread.scope():
-        scope.spawn(fn() => c.borrow().clone())
+        scope.spawn(owns fn() => c.borrow().clone())

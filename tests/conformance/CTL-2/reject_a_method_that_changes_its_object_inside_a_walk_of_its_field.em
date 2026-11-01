@@ -15,7 +15,7 @@ class Bag:
         this.items = [1]
 
     fn grow():
-        this.items.push(9)
+        this.items.push(owns 9)
 
     fn walk():
         for x in this.items:

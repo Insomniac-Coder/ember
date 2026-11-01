@@ -17,9 +17,9 @@ fn wipe(ref mut xs: Array[Node]):
 
 fn main():
     nodes: Array[Node] = []
-    nodes.push(Node(3))
+    nodes.push(owns Node(3))
     t = nodes[0]
-    wipe(nodes)
+    wipe(ref mut nodes)
     println(t.v)
     mem.drop(t)
     println("end")

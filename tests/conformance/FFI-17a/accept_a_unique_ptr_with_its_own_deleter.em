@@ -26,4 +26,4 @@ fn main():
     unsafe:  # SAFETY(ffi): a scalar call; the box is given up to the next
         println(seven, cpp.recycled_count())
         given = cpp.make_widget(8)
-        println(cpp.take_widget(given), cpp.recycled_count())
+        println(cpp.take_widget(owns given), cpp.recycled_count())

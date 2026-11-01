@@ -19,8 +19,8 @@ fn main():
     values: Array[int] = []
     values.reserve(100000)
     for i in 0..100000:
-        values.push(i)
+        values.push(owns i)
     total = 0
     for round in 0..4000:
-        total = total + mix(values, round)
+        total = total + mix(ref mut values, round)
     println(total)

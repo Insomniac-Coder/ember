@@ -10,9 +10,9 @@ fn main():
     ys: Array[i32] = []
     out: Array[i32] = []
     for i in 0..100:
-        xs.push(0 as i32)
-        ys.push(0 as i32)
-        out.push(0 as i32)
+        xs.push(owns (0 as i32))
+        ys.push(owns (0 as i32))
+        out.push(owns (0 as i32))
     big: i32 = -2147483600
     xs[50] = big
     ys[50] = 100 as i32

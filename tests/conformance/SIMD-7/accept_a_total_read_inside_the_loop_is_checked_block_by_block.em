@@ -17,9 +17,9 @@ fn main():
     xs: Array[int] = []
     out: Array[int] = []
     for i in 0..200:
-        xs.push(i % 7)
-        out.push(0)
-    unknown(xs)
+        xs.push(owns (i % 7))
+        out.push(owns 0)
+    unknown(ref mut xs)
     total = 0
     for i in 0..200:
         out[i] = total

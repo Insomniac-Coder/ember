@@ -19,7 +19,7 @@ class Bus:
     handlers: Array[fn(Event)] = []
 
     fn subscribe(owns handler: fn(Event)):
-        this.handlers.push(handler)
+        this.handlers.push(owns handler)
 
     fn publish(e: Event):
         for h in this.handlers.iter_mut():
@@ -37,13 +37,13 @@ fn keep(owns f: fn(int) -> int) -> fn(int) -> int:
 
 fn main():
     bus = Bus()
-    bus.subscribe(report)
-    bus.subscribe(fn(e) => println("lambda"))
+    bus.subscribe(owns report)
+    bus.subscribe(owns fn(e) => println("lambda"))
     word = "owned".to_string()
-    bus.subscribe(owned fn(e) => println(word, "pong"))
+    bus.subscribe(owns owned fn(e) => println(word, "pong"))
     stored: fn(Event) = fn(e) => println("stored")
-    bus.subscribe(stored)
+    bus.subscribe(owns stored)
     bus.publish(Event.Pong(3))
     k = 10
-    add = keep(owned fn(x) => x + k)
+    add = keep(owns owned fn(x) => x + k)
     println(add(1))

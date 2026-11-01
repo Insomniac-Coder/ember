@@ -13,6 +13,6 @@ fn main():
     xs: Array[int] = [1, 2, 3]
     ys: Array[int] = [10, 20]
     total = 0
-    for x in xs.iter().chain(ys.iter()):
+    for x in xs.iter().chain(owns ys.iter()):
         total += x
     println(total)

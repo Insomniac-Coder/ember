@@ -11,7 +11,7 @@ class Bag:
     items: Array[int]
 
     fn add(x: int):
-        this.items.push(x)
+        this.items.push(owns x)
 
 @no_alias_checks
 fn fill(ref mut b: Bag, ref mut other: Bag):
@@ -30,7 +30,7 @@ fn peek(h: Holder) -> int:
 fn main():
     b = Bag([])
     c = b
-    fill(b, c)
+    fill(ref mut b, ref mut c)
     # A loop over the field holds a read of it, so a write to a `Bag` can
     # conflict somewhere: the checks in `fill` cannot be removed (`[EXC-3]`).
     for x in c.items:

@@ -6,10 +6,10 @@
 
 fn main():
     a: Array[i32] = Array[i32]()
-    a.push(1)
+    a.push(owns 1)
     b = a
     a = Array[i32]()
-    a.push(7)
+    a.push(owns 7)
     r: ref Array[i32] = ref a
     println(r.len())
     println(b[0])

@@ -8,6 +8,6 @@ fn main():
     total = Cell(0)
     n = 100_000_000
     for i in range(n):
-        init.call_once(fn() => total.set(total.get() + 1))
+        init.call_once(owns fn() => total.set(total.get() + 1))
         total.set(total.get() + i % 3)
     println(total.get())

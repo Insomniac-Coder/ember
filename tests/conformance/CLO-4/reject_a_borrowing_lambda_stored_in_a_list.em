@@ -10,5 +10,5 @@ fn main():
     fs = []
     for i in 0..3:
         s = f"item {i}"
-        fs.push(fn() => s.len())    #$ error[E3026]: this lambda borrows what it captures, so it may not be stored in an `Array` unless it is `static`
+        fs.push(owns fn() => s.len())    #$ error[E3026]: this lambda borrows what it captures, so it may not be stored in an `Array` unless it is `static`
     println(fs.len())

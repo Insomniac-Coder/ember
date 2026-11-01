@@ -29,7 +29,7 @@ fn main():
     m["bbb".to_string()] = 2
     m["dd".to_string()] = 3
     best: Option[ref String] = None
-    for k in m.keys().filter(fn(k: ref String) => k.len() > 1):
+    for k in m.keys().filter(owns fn(k: ref String) => k.len() > 1):
         match best:
             Some(b):
                 if k.len() > b.len():
@@ -40,7 +40,7 @@ fn main():
     words = ["a".to_string(), "ccc".to_string(), "dd".to_string()]
     longest: Option[ref String] = None
     shortest: Option[ref String] = None
-    for w in words.iter().map(fn(w: ref String) -> ref String => w).skip(1).take(2):
+    for w in words.iter().map(owns fn(w: ref String) -> ref String => w).skip(1).take(2):
         if longest is None:
             longest = Some(w)
         shortest = Some(w)
@@ -50,11 +50,11 @@ fn main():
         if first_pair is None:
             first_pair = Some(p)
     zipped: Option[(ref String, ref String)] = None
-    for z in words.iter().zip(words.iter().rev()):
+    for z in words.iter().zip(owns words.iter().rev()):
         zipped = Some(z)
     println(first_pair.unwrap(), zipped.unwrap())
-    stepped = keep_last(words.iter().chain(m.keys()).step_by(2).inspect(fn(w: ref String): pass))
-    tail = keep_last(words.iter().take_while(fn(w: ref String) => w.len() < 4).skip_while(fn(w: ref String) => w.len() < 2))
+    stepped = keep_last(owns words.iter().chain(owns m.keys()).step_by(2).inspect(owns fn(w: ref String): pass))
+    tail = keep_last(owns words.iter().take_while(owns fn(w: ref String) => w.len() < 4).skip_while(owns fn(w: ref String) => w.len() < 2))
     println(stepped.unwrap(), tail.unwrap())
     looked = 0
     two = fn(w: ref String) -> bool:

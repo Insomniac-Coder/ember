@@ -12,7 +12,7 @@ struct Grid:
     fn init(width: int = 0):
         this.width = width
         for _ in range(width):
-            this.cells.push(0)
+            this.cells.push(owns 0)
 
 fn main():
     g = Grid(3)

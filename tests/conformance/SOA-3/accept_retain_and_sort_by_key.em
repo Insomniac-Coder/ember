@@ -22,11 +22,11 @@ struct Named:
 fn main():
     ns = SoA[Named].with_capacity(2)
     for i in range(8):
-        ns.push(Named(f"n{i}", (i * 5) % 7))
-    ns.retain(fn(p) => p.score % 2 == 0)
+        ns.push(owns Named(f"n{i}", (i * 5) % 7))
+    ns.retain(owns fn(p) => p.score % 2 == 0)
     for p in ns:
         println(p.name, p.score)
-    ns.sort_by_key(fn(p) => p.score)
+    ns.sort_by_key(owns fn(p) => p.score)
     println("sorted")
     for p in ns:
         println(p.name, p.score)

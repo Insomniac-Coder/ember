@@ -14,7 +14,7 @@ struct Bag:
     items: Array[Option[T]] = []
 
     fn compact():
-        this.items.retain(fn(e) => e.is_some())
+        this.items.retain(owns fn(e) => e.is_some())
 
     fn count_where(keep: fn(ref Option[T]) -> bool) -> int:
         n = 0
@@ -38,8 +38,8 @@ struct Bag:
 
 fn main():
     b = Bag[int]()
-    b.items.push(Some(1))
-    b.items.push(None)
+    b.items.push(owns Some(1))
+    b.items.push(owns None)
     println(b.somes())
     b.compact()
     println(b.items.len())

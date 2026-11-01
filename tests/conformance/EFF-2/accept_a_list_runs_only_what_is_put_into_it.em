@@ -28,5 +28,5 @@ fn fire(ref mut b: Bus) -> int:
 fn main():
     bus = Bus(handlers = [double, triple])
     log = Log(lines = [widen])
-    println(fire(bus))
+    println(fire(ref mut bus))
     println((log.lines[0])(1))

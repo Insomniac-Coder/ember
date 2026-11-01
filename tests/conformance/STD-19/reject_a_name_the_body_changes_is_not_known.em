@@ -30,7 +30,7 @@ fn by_a_mut_argument() -> int:
     total = 0
     for i, x in (m .. 10).iter().enumerate():
         total += i                  #$ error[E2020]: this is `u64`
-    bump(m)
+    bump(ref mut m)
     return total
 
 fn by_a_mut_self_call() -> int:
@@ -53,7 +53,7 @@ fn by_a_closure() -> int:
 
 fn by_push() -> int:
     ys = [10, 20, 30]
-    ys.push(40)
+    ys.push(owns 40)
     total = 0
     for k, y in ys.enumerate(start=int.MAX - 2):
         total += k                  #$ error[E2020]: this is `u64`

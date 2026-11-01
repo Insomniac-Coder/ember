@@ -36,8 +36,8 @@ fn read_gauge_too(ref mut q: Query[(Gauge, Pos)]):
 
 fn main():
     w = World()
-    w.run_parallel([draw])  #$ error[E7004]: the system `draw`'s query uses `Sprite`, which is not Send
-    w.run_parallel([read_gauge, read_gauge_too])  #$ error[E7005]: systems `read_gauge` and `read_gauge_too` cannot run at once: both read `Gauge`, which is not Sync
+    w.run_parallel(owns [draw])  #$ error[E7004]: the system `draw`'s query uses `Sprite`, which is not Send
+    w.run_parallel(owns [read_gauge, read_gauge_too])  #$ error[E7005]: systems `read_gauge` and `read_gauge_too` cannot run at once: both read `Gauge`, which is not Sync
     shared = Texture(1)
-    by_value = system(owned fn(ref mut q: Query[Pos]): println(shared.id), "by_value")  #$ error[E7004]: the system `by_value` captures `shared`, a `Texture`, which is not Send
-    w.run_parallel([by_value])
+    by_value = system(owns owned fn(ref mut q: Query[Pos]): println(shared.id), "by_value")  #$ error[E7004]: the system `by_value` captures `shared`, a `Texture`, which is not Send
+    w.run_parallel(owns [by_value])

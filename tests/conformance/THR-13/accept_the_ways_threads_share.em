@@ -20,21 +20,21 @@ fn bump(ref mut s: MutSpan[int], at: int, by: int):
 fn main():
     stats = Stats()
     theirs = stats
-    a = thread.spawn(owned fn() => theirs.seen.fetch_add(3))
+    a = thread.spawn(owns owned fn() => theirs.seen.fetch_add(3))
     a.join()
-    b = thread.spawn(owned fn() => TOTAL.fetch_add(5))
+    b = thread.spawn(owns owned fn() => TOTAL.fetch_add(5))
     b.join()
     shared = SyncShared(Atomic(7))
     copy = shared
-    c = thread.spawn(owned fn() => copy.get().load())
+    c = thread.spawn(owns owned fn() => copy.get().load())
     seven = c.join()
     counts = [0, 0]
     first, second = counts.as_mut_span().split_at(1)
     nine = Atomic(9)
     with scope = thread.scope():
-        scope.spawn(fn() => bump(first, 0, 1))
-        scope.spawn(fn() => bump(second, 0, 2))
-        scope.spawn(fn() => nine.load())
+        scope.spawn(owns fn() => bump(ref mut first, 0, 1))
+        scope.spawn(owns fn() => bump(ref mut second, 0, 2))
+        scope.spawn(owns fn() => nine.load())
     text = "moved".to_string()
-    d = thread.spawn(owned fn() => text.clone())
+    d = thread.spawn(owns owned fn() => text.clone())
     println(stats.seen.load(), TOTAL.load(), seven, counts, nine.load(), d.join())

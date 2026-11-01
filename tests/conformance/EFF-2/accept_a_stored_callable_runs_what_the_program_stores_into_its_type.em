@@ -17,4 +17,4 @@ fn scaled(ref mut s: Scaler, x: int) -> int:
 fn main():
     k = 3
     s = Scaler(by = owned fn(x: int) -> int => x * k)
-    println(scaled(s, 2))
+    println(scaled(ref mut s, 2))

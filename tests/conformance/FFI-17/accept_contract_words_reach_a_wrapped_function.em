@@ -32,17 +32,17 @@ fn main():
     sum = cpp.checksum(bytes.as_span()).unwrap_or(0)
     match cpp.hex(bytes.as_span()):
         Ok(hex):
-            println(sum, shown(cpp.checksum(empty.as_span())), String.from(hex))
+            println(sum, shown(owns cpp.checksum(empty.as_span())), String.from(hex))
         Err(error):
             println(error.what)
     values: Array[c_int] = [4, 5, 6]
     nothing: Array[c_int] = []
     value: c_int = 2
     factors: Array[c_int] = [3, 5]
-    _ = cpp.scale(value, factors.as_span())
+    _ = cpp.scale(ref mut value, factors.as_span())
     match cpp.ends(values.as_span()):
         Ok(ends):
-            println(ends.first, ends.last, shown(cpp.ends(nothing.as_span())), value)
+            println(ends.first, ends.last, shown(owns cpp.ends(nothing.as_span())), value)
         Err(error):
             println(error.what)
     tally = cpp.Tally.new()
@@ -51,12 +51,12 @@ fn main():
     many: Array[c_int] = [0, 0, 0, 0, 0]
     filled = tally.get().fill(slots.as_mut_span()).unwrap_or(0)
     spot: ref c_int = tally.get().spot()
-    println(tally.get().total(), filled, slots[0], slots[2], shown(tally.get().fill(many.as_mut_span())), spot)
+    println(tally.get().total(), filled, slots[0], slots[2], shown(owns tally.get().fill(many.as_mut_span())), spot)
     parsed = tally.get_mut().parse(c"7").unwrap_or(0)
-    failed = shown(tally.get_mut().parse(c"x"))
+    failed = shown(owns tally.get_mut().parse(c"x"))
     appended = cpp.hex(bytes.as_span()).unwrap()
     mark: Array[u8] = [33, 63]
-    _ = tally.get().append(appended, mark.as_span())
+    _ = tally.get().append(ref mut appended, mark.as_span())
     println(parsed, failed, String.from(appended))
     small: Array[c_int] = [1, 2, 3]
     match cpp.tally_of(small.as_span()):

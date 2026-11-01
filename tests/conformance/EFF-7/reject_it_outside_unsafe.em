@@ -6,15 +6,15 @@
 fn collect_visible(xs: Span[int], ref mut out: Array[int]):
     for x in xs:
         if x > 0:
-            out.push(x)
+            out.push(owns x)
 
 @noalloc
 fn cull(xs: Span[int], ref mut out: Array[int]) -> int:
-    @assume_noalloc(collect_visible(xs, out))
+    @assume_noalloc(collect_visible(xs, ref mut out))
     return out.len()
 
 fn main():
     values = [1, -2, 3]
     out: Array[int] = []
     out.reserve(3)
-    println(cull(values.as_span(), out))
+    println(cull(values.as_span(), ref mut out))

@@ -14,12 +14,12 @@ class Bag:
         this.items = [1, 2, 3]
 
     fn grown_view() -> Span[int]:
-        this.items.push(0)
+        this.items.push(owns 0)
         return this.items
 
 fn main():
     b = Bag()
     c = b
     v = b.grown_view()
-    c.items.push(5)
+    c.items.push(owns 5)
     println(v)

@@ -18,13 +18,13 @@ struct Nested:
 
 fn main():
     left: Array[i32] = Array[i32]()
-    left.push(10)
+    left.push(owns 10)
     right: Array[i32] = Array[i32]()
-    right.push(20)
+    right.push(owns 20)
     original = Nested(Pair(left.as_span(), right.as_span()), 30)
     copied = original
     println(copied.pair.left[0])
-    left.push(11)
+    left.push(owns 11)
     println(copied.pair.right[0])
-    right.push(21)
+    right.push(owns 21)
     println(copied.tag)

@@ -41,9 +41,9 @@ fn main():
         None: pass
     println(b)
     match owns a:
-        Some(s): println(take(s))
+        Some(s): println(take(owns s))
         None: pass
     match make():
-        Some(s): take(s)
+        Some(s): take(owns s)
         None: pass
     _ = length(b)

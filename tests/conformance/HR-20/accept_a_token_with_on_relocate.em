@@ -27,7 +27,7 @@ extern "C" fn moved(old: ObjectPtr[Noisy], new: ObjectPtr[Noisy]):
     CALLS.fetch_add(1)
 
 fn main():
-    a = Retained.pin(Noisy(name = "a"), on_relocate=Some(moved))
-    b = Retained.pin(Noisy(name = "b"))
+    a = Retained.pin(owns Noisy(name = "a"), on_relocate=Some(moved))
+    b = Retained.pin(owns Noisy(name = "b"))
     println(a.ptr() == a.ptr(), a.ptr() == b.ptr())
     println(CALLS.load())

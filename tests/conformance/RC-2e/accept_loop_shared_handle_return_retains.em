@@ -17,7 +17,7 @@ fn first(owns tokens: Array[Shared[Token]]) -> Shared[Token]:
 
 fn main():
     tokens: Array[Shared[Token]] = Array[Shared[Token]]()
-    tokens.push(Shared(Token(7)))
-    result = first(tokens)
+    tokens.push(owns Shared(Token(7)))
+    result = first(owns tokens)
     value = result.get()
     println(value.value)

@@ -14,8 +14,8 @@ struct MutPair:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
-    values.push(2)
+    values.push(owns 1)
+    values.push(owns 2)
     parts = values.as_mut_span().split_at(1)
     pair = MutPair(parts.0, parts.1)
     pair.left[0] = 10

@@ -12,10 +12,10 @@ class Button(cpp.Widget):
     codes: Array[i32] = []
 
     override fn on_event(code: i32):
-        this.codes.push(code)
+        this.codes.push(owns code)
 
     fn press():
-        this.codes.push(0)
+        this.codes.push(owns 0)
         cpp.fire(this, 4)    #$ warning[L3013]: long-term access to `this` is live across this call
 
 fn main():

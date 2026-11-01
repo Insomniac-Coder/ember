@@ -25,7 +25,7 @@ fn main():
     a: Array[void] = [(), ()]
     arrays = {a.clone()}
     m: Map[Array[void], int] = {}
-    m.insert(a.clone(), 7)
+    m.insert(owns a.clone(), owns 7)
     println(len(arrays), a in arrays, m[a])
     h = DefaultHasher.default()
     u.hash(h)

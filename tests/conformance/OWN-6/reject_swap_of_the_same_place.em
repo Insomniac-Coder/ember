@@ -5,4 +5,4 @@ import std.mem
 
 fn main():
     value = 1
-    mem.swap(value, value) #$ error[E3022]: `value` is already mutably borrowed
+    mem.swap(ref mut value, ref mut value) #$ error[E3022]: `value` is already mutably borrowed

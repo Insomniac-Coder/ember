@@ -19,5 +19,5 @@ fn scale(xs: Span[int], ref mut out: MutSpan[int], k: int):
 fn main():
     a = [1, 2, 3, 4]
     b = [0, 0, 0, 0]
-    scale(a, b, 3)
+    scale(a, ref mut b, 3)
     println(b)

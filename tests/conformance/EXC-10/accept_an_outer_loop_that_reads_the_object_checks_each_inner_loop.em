@@ -20,5 +20,5 @@ fn main():
     for r in 0..3:
         for i in 0..2:
             counter.bump()
-        alias.log.push(alias.value)
+        alias.log.push(owns alias.value)
     println(alias.log)

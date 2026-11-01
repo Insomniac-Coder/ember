@@ -17,7 +17,7 @@ fn main():
     i: i32 = 0
     while i < 3:
         a: Array[i32] = Array[i32]()
-        a.push(1)
+        a.push(owns 1)
         println(take(R(a)))
         i = i + 1
 #$ stdout: 1

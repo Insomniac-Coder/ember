@@ -14,13 +14,13 @@ from std.collections import FixedArray, FixedString, RingBuffer
 @noalloc
 fn fill(ref mut a: FixedArray[int, 4]) -> int:
     for i in 0..10:
-        a.push_or_drop(i)
+        a.push_or_drop(owns i)
     return a.len()
 
 fn main():
     a = FixedArray[String, 2].new()
-    println(a.push(String.from("x")).is_ok(), a.push(String.from("y")).is_ok(), a.push(String.from("z")).is_err())
-    a.push_or_drop(String.from("w"))
+    println(a.push(owns String.from("x")).is_ok(), a.push(owns String.from("y")).is_ok(), a.push(owns String.from("z")).is_err())
+    a.push_or_drop(owns String.from("w"))
     line = String()
     for s in a.iter():
         line.push_str(s)
@@ -33,8 +33,8 @@ fn main():
 
     r = RingBuffer[int, 3].new()
     for i in 0..5:
-        r.push_or_drop(i)
-    println(r.pop(), r.push(9).is_ok(), r.push(10).is_ok(), r.len(), r.get(0), r.get(2))
+        r.push_or_drop(owns i)
+    println(r.pop(), r.push(owns 9).is_ok(), r.push(owns 10).is_ok(), r.len(), r.get(0), r.get(2))
 
     numbers = FixedArray[int, 4].new()
-    println(fill(numbers))
+    println(fill(ref mut numbers))

@@ -23,7 +23,7 @@ fn first_mut(ref mut span: MutSpan[T]) -> ref mut T:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(7)
+    values.push(owns 7)
     println(first[i32](values.as_span()))
     item = first_mut[i32](values.as_mut_span())
     replacement: i32 = 9

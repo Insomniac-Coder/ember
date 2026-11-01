@@ -25,8 +25,8 @@ fn unknown(ref mut xs: Array[int]):
 fn main():
     bag = Bag()
     for i in 0..4:
-        bag.items.push(i)
-    unknown(bag.items)
+        bag.items.push(owns i)
+    unknown(ref mut bag.items)
     total = 0
     for i in 0..4:
         total = total + double(bag.items[i])

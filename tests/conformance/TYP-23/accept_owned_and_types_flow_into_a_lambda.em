@@ -31,11 +31,11 @@ fn unwrap2(owns o: Option[T]) -> T:
 
 fn main():
     s: Option[String] = Some("abc")
-    println(opt_map(s, fn(v) => v.len()))
+    println(opt_map(owns s, fn(v) => v.len()))
     suffix: String = "!"
     t: String = "xy"
-    println(apply(t, fn(v) => v + suffix))
+    println(apply(owns t, fn(v) => v + suffix))
     w: Option[String] = Some("abc")
-    println(unwrap2(w).len())
+    println(unwrap2(owns w).len())
     v = 5
     println(Some(v + 1) if v > 3 else None)

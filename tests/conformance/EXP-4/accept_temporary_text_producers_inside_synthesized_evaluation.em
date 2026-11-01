@@ -19,6 +19,6 @@ fn make() -> String:
 
 fn main():
     text: StrView = "old:text"
-    result = text.split_once(separator(text))
+    result = text.split_once(separator(ref mut text))
     println(result, text)
     println(make().split_once(":"), make().partition(":"), make().get(0..2))

@@ -9,7 +9,7 @@
 
 [T: needs (Copy, Mul[Output = T])]
 fn scaled(xs: Span[T], k: T) -> Array[T]:
-    return xs.iter().map(fn(x) => x * k).to_array()
+    return xs.iter().map(owns fn(x) => x * k).to_array()
 
 fn main():
     a = [1, 2, 3]

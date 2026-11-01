@@ -12,6 +12,6 @@ fn read(s: Span[int]) -> int:
 fn main():
     counts = [0, 0]
     with scope = thread.scope():
-        h = scope.spawn(fn() => read(counts))
+        h = scope.spawn(owns fn() => read(counts))
         println(h.join())
         counts[0] = 5

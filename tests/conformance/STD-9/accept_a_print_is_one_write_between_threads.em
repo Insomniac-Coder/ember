@@ -41,7 +41,7 @@ fn shout():
 fn main():
     handles: Array[thread.JoinHandle[void]] = []
     for _ in 0..4:
-        handles.push(thread.spawn(owned fn() => shout()))
+        handles.push(owns thread.spawn(owns owned fn() => shout()))
     while handles.len() > 0:
         match handles.pop():
             Some(handle):

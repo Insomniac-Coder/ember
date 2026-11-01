@@ -65,16 +65,16 @@ fn main():
     c = Controller()
     script: Array[Input] = []
     for _ in 0..12:
-        script.push(Input.Tick)
-    script.push(Input.ButtonPressed)
+        script.push(owns Input.Tick)
+    script.push(owns Input.ButtonPressed)
     for _ in 0..6:
-        script.push(Input.Tick)
-    script.push(Input.Fault)
-    script.push(Input.Tick)
-    script.push(Input.Tick)
-    script.push(Input.Repaired)
+        script.push(owns Input.Tick)
+    script.push(owns Input.Fault)
+    script.push(owns Input.Tick)
+    script.push(owns Input.Tick)
+    script.push(owns Input.Repaired)
     for _ in 0..4:
-        script.push(Input.Tick)
+        script.push(owns Input.Tick)
 
     for step, input in script.iter().enumerate():
         println(f"step {step:>2}: {input!r}")

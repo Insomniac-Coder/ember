@@ -5,7 +5,7 @@
 # it.
 
 fn grow(ref mut xs: Array[int]):
-    xs.push(0)
+    xs.push(owns 0)
 
 @noalloc
 fn measure(xs: Span[int]) -> int:
@@ -13,5 +13,5 @@ fn measure(xs: Span[int]) -> int:
 
 fn main():
     values = [1, 2, 3]
-    grow(values)
+    grow(ref mut values)
     println(measure(values.as_span()))

@@ -13,9 +13,9 @@ fn main():
     top = int.MAX - 1
     a: Array[(u64, int)] = []
     for i, x in xs.iter().copy_each().enumerate(start=top).rev().rev().take(2):
-        a.push((i, x))
+        a.push(owns (i, x))
     println(a)
     b: Array[(u64, int)] = []
     for i, x in xs.iter().copy_each().enumerate(start=top).rev().skip(1).rev().take(1):
-        b.push((i, x))
+        b.push(owns (i, x))
     println(b)

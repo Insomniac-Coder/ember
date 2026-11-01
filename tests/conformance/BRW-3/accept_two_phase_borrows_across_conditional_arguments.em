@@ -5,12 +5,12 @@
 #$ stdout: aλé
 
 fn append(ref mut values: Array[int], value: int):
-    values.push(value)
+    values.push(owns value)
 
 fn main():
     values: Array[int] = [7]
-    append(values, values.len() if values.len() > 0 else 0)
-    values.push(values.len() if values.len() == 2 else 0)
+    append(ref mut values, values.len() if values.len() > 0 else 0)
+    values.push(owns (values.len() if values.len() == 2 else 0))
     println(values[0], values[1], values[2])
     text: String = "a"
     text.insert(text.len() if text.len() > 0 else 0, 'é')

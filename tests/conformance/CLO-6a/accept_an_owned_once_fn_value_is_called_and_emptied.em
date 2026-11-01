@@ -29,17 +29,17 @@ fn call_given(f: once fn() -> int) -> int:
 
 fn main():
     s = "hello".to_string()
-    f: once fn() -> int = owned fn() => consume(s)
+    f: once fn() -> int = owned fn() => consume(owns s)
     println(f())
     a = "aaaa".to_string()
-    t = Task("t".to_string(), owned fn() => consume(a))
+    t = Task("t".to_string(), owned fn() => consume(owns a))
     println(t.run(), t.name)
     boxed: Box[once fn() -> int] = Box(owned fn() => 9)
     println(boxed())
     jobs: Deque[once fn() -> int] = Deque.new()
     for word in ["x", "yy", "zzz"]:
         w = word.to_string()
-        jobs.push_back(owned fn() => consume(w))
+        jobs.push_back(owns owned fn() => consume(owns w))
     total = 0
     while true:
         match jobs.pop_front():
@@ -48,22 +48,22 @@ fn main():
             None:
                 break
     stack: Array[once fn() -> int] = []
-    stack.push(fn() => 1)
-    stack.push(fn() => 2)
+    stack.push(owns fn() => 1)
+    stack.push(owns fn() => 2)
     last = stack.pop().unwrap()
     println(total, last())
     b1 = "1".to_string()
     b2 = "22".to_string()
     b3 = "333".to_string()
     b4 = "4444".to_string()
-    wide: once fn() -> int = owned fn() => consume(b1) + consume(b2) + consume(b3) + consume(b4)
+    wide: once fn() -> int = owned fn() => consume(owns b1) + consume(owns b2) + consume(owns b3) + consume(owns b4)
     println(wide())
     kept = "kept".to_string()
     many: fn() -> int = owned fn() => kept.len()
     once_of_many: once fn() -> int = many
     println(once_of_many())
     unused = "never".to_string()
-    _never: once fn() -> int = owned fn() => consume(unused)
+    _never: once fn() -> int = owned fn() => consume(owns unused)
     later: Option[once fn() -> int] = Some(fn() => 7)
     given: once fn() -> int = fn() => 8
-    println(later.take().unwrap()(), call_given(given))
+    println(later.take().unwrap()(), call_given(owns given))

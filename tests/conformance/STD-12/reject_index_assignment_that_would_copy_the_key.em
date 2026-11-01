@@ -23,5 +23,5 @@ extend Ticket implements Eq, Hash:
 fn main():
     m: Map[Ticket, int] = {}
     m[Ticket(1)] = 5 #$ error[E2040]: `Ticket` does not implement `std.collections.ToKey[Ticket]`, which `Q` requires
-    m.insert(Ticket(2), 6)
+    m.insert(owns Ticket(2), owns 6)
     println(m.len())

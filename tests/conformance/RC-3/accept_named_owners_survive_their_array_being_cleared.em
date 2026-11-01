@@ -18,7 +18,7 @@ fn main():
     held = Token(7)
     weak = Weak(held)
     tokens: Array[Token] = Array[Token]()
-    tokens.push(held)
+    tokens.push(owns held)
     println("before")
     tokens.clear()
     match weak.upgrade():

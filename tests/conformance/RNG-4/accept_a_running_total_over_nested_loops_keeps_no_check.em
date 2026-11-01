@@ -12,7 +12,7 @@
 fn main():
     xs: Array[int] = []
     for i in 0..1000:
-        xs.push(i % 7)
+        xs.push(owns (i % 7))
     total = 0
     for round in 0..2000:
         for i in 0..1000:

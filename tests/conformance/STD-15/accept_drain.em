@@ -28,8 +28,8 @@ fn main():
 
     words = [String.from("a"), String.from("b"), String.from("c"), String.from("d")]
     out = words.drain(1..3)
-    out.push(String.from("z"))
-    words.push(String.from("e"))
+    out.push(owns String.from("z"))
+    words.push(owns String.from("e"))
     println(out, words)
 
     small: Array[u16] = [1, 2, 3]

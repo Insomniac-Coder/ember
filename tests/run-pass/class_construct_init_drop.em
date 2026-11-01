@@ -15,5 +15,5 @@ class Holder:
 
 fn main():
     values: Array[i32] = Array()
-    values.push(1)
+    values.push(owns 1)
     holder = Holder(values)

@@ -17,5 +17,5 @@ fn main():
         keep = fn():
             arena = jobs.local_arena()
             kept = Some(arena.alloc(1))    #$ error[E3063]: is stored in a captured variable, which the closure's creator owns
-        s.submit(keep)
+        s.submit(owns keep)
     println(kept is None)

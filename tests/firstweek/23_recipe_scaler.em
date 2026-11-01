@@ -23,7 +23,7 @@ struct Recipe:
         factor = float(servings) / float(this.servings)
         result = Recipe(title=this.title, servings=servings)
         for ing in this.ingredients:
-            result.ingredients.push(Ingredient(name=ing.name, amount=ing.amount * factor, unit=ing.unit))
+            result.ingredients.push(owns Ingredient(name=ing.name, amount=ing.amount * factor, unit=ing.unit))
         return result
 
 fn tidy(amount: float, unit: Unit) -> (float, Unit):
@@ -80,7 +80,7 @@ fn main():
     recipe = Recipe(title="Pancakes", servings=4)
     for line in PANCAKES.lines():
         match parse_ingredient(line):
-            Ok(ing) => recipe.ingredients.push(ing)
+            Ok(ing) => recipe.ingredients.push(owns ing)
             Err(e) => println(f"skipping '{line}': {e}")
 
     for servings in [4, 2, 10, 25]:

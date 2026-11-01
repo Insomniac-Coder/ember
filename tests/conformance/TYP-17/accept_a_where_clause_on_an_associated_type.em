@@ -12,4 +12,4 @@ fn show_all(owns it: I) where I.Item: needs Display:
         println(f"{x}")
 
 fn main():
-    show_all([1, 2].into_iter())
+    show_all(owns [1, 2].into_iter())

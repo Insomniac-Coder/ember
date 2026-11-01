@@ -16,7 +16,7 @@ struct World:
         this.count += 1
 
     fn note(n: int) -> ref int:
-        this.log.push(n)
+        this.log.push(owns n)
         return ref this.log[0]
 
 fn main():

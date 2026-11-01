@@ -8,5 +8,5 @@ fn consume(owns value: Box[i32]):
 fn main():
     boxed: Box[i32] = Box(9)
     payload = boxed.get()
-    consume(boxed) #$ error[E3021]: `boxed` cannot be moved while it is borrowed
+    consume(owns boxed) #$ error[E3021]: `boxed` cannot be moved while it is borrowed
     println(payload)

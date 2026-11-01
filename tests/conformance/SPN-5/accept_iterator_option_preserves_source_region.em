@@ -8,7 +8,7 @@ fn first(span: Span[T]) -> Option[ref T]:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(7)
+    values.push(owns 7)
     match first[i32](values.as_span()):
         Some(item):
             println(item)

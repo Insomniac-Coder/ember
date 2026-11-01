@@ -1,5 +1,36 @@
 # Ember — handoff
 
+> **2026-11-01 ~23:50 to 2026-11-02 night — AUTONOMOUS (owner: "after this I need you work autonomously and you can 2-3
+> helper agents to help you with coding, make sure you follow all the autonomous md file rules and run the power source
+> watcher, I'll see you in the morning"). START HERE.** Watcher: power only, pid 97416 (scratchpad
+> `power_only_hibernate.ps1`; end it with WMI `Terminate` when the owner is back). **Hardened_10** `09a5e033` (verdicts
+> 145-160; 158-160 asked and answered during the cut). OPEN ODRs for the morning: N38 (`runtime` for a class value), N39
+> (a local whose kind is chosen while running), N40 (`owns` precedence: `m.insert(owns (i * 7), owns i)` as built).
+> - **Built, uncommitted, quick check 0-4 failing while the last respelling runs:** A1-8 (`ref mut` at the call) and
+>   `owns` at the call (147-149, 158; 145, 146, 148): `check_call_word`/`missing_owns_word` in typeck. Call words are
+>   checked only for a written call's own arguments (`written_call`; a call or argument the compiler makes, id `DUMMY`,
+>   inside a map literal, a comprehension, a `yield`, a `?`; a constructor's argument, verdict 159, class `init` too; and
+>   the files an `import c`/`cpp` module is written into, `generated_files`). `owns` binds as `-` does, so a compound
+>   argument takes brackets (N40). Generic inference reads the place under a word; lambdas bare or `owns` wait for their
+>   hint (`lambda_of`). `Array`'s built-in `push` takes `owns` (149). `runtime` reaches HIR
+>   (`Program::runtime_params`, all three body loops). Std, tests, bench and docs respelled by scratchpad `add_owns.py`
+>   (edits only where the line writes the argument named; it once inserted `owns` at compiler-made calls: undone with
+>   `revert_owns.py` and redone), the Rust tests' programs by `add_words_rs.py` (never `migrate.rs`, whose inputs are
+>   0.9.10 programs).
+> - **Helpers:** parser (done: `[GRM-40]` x2, `[LEX-14]` E0005, `runtime` parsed, `owns fn` as `Owned(Lambda)`, the
+>   `extend` help, keywords the grammar expects stay E0100); analysis (verdicts 151-152, design
+>   `tasks/96/redesign/compiler-0.9.15/dyn-per-kind-design.md`: per-kind checks, per-instance summaries, the incremental
+>   re-check (the record keeps `kinds`, SCHEMA 5), the `runtime` check `DynKindIs` in MIR and three backends). A
+>   read-only reviewer found 8 issues in the analysis work (soundness: kinds changed through `ref mut`, per-unit tables
+>   in multi-module builds, guards on the wrong value, `defer` copies, generators, a cycle never checked): the analysis
+>   helper is fixing them. **Do not commit the analysis work before those are fixed and verified.**
+> - **Next:** the respelling's last pass (lambdas for std callables), the quick check, `regen_ui.py` for the UI
+>   `.stderr`, the milestone/incremental/unit suites, `spec_check --emit-appendix` (Annex A's fixture
+>   `docs/spec-source/appendix-a.em` is respelled), then commits in three parts (parser; typeck and the respelling;
+>   analysis after review). The spec example `tx.send(owns i * i)` in p11 needs brackets (an in-place example fix to
+>   Hardened_10, re-pin). The upgrader's N30 rule (`owns copy of` where 0.9.10 code reuses a handed-over value) is
+>   still to build in `migrate.rs`'s rounds.
+
 > **2026-11-01, evening — attended (owner here), solo. START HERE.** Watcher pid 97472 ended (owner back).
 > **The ODR round is done:** owner verdicts 145-157 (`46ecdc5b`, JOB.md), each in his words, with the quotes in
 > `tasks/96/redesign/compiler-0.9.15/odr-answers-2026-11-01.md`; decisions.md N30-N37 answered. **New owner rules**

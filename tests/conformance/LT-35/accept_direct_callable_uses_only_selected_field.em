@@ -15,9 +15,9 @@ fn left_value(pair: Pair) -> i32:
 
 fn main():
     left: Array[i32] = Array[i32]()
-    left.push(7)
+    left.push(owns 7)
     right: Array[i32] = Array[i32]()
-    right.push(8)
+    right.push(owns 8)
     pair = bundle(left.as_span(), right.as_span())
-    right.push(9)
+    right.push(owns 9)
     println(left_value(pair))

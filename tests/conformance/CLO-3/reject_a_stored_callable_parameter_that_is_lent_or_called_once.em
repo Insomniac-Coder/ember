@@ -10,10 +10,10 @@ class Bus:
     handlers: Array[fn(int)] = []
 
     fn subscribe(owns handler: fn(int)):
-        this.handlers.push(handler)
+        this.handlers.push(owns handler)
 
     fn lend(handler: fn(int)):
-        this.handlers.push(handler)    #$ error[E2020]: expected `fn(i64) -> void`
+        this.handlers.push(owns handler)    #$ error[E2020]: expected `fn(i64) -> void`
 
 fn consume(owns s: String):
     println(s)
@@ -21,4 +21,4 @@ fn consume(owns s: String):
 fn main():
     bus = Bus()
     s = "moved".to_string()
-    bus.subscribe(owned fn(x) => consume(s))
+    bus.subscribe(owned fn(x) => consume(owns s))

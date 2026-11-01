@@ -15,6 +15,6 @@ fn main():
     nested: Map[String, Map[String, int]] = {}
     nested["m"] = {}
     println(groups, best, nested)
-    groups["even"].push(5)
+    groups["even"].push(owns 5)
     counts: Map[String, int] = {}
     println(groups["even"], counts.get_or("zz", 0))

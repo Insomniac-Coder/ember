@@ -22,46 +22,46 @@ fn main():
     xs = [1, 2, 3, 4, 5, 6, 7, 8]
     k = 10
     out: Array[int] = []
-    for y in xs.iter().map(fn(x: ref int) => x + k):
-        out.push(y)
+    for y in xs.iter().map(owns fn(x: ref int) => x + k):
+        out.push(owns y)
     println(out)
     out = []
-    for y in xs.iter().filter(fn(x: ref int) => x % 2 == 0):
-        out.push(y)
+    for y in xs.iter().filter(owns fn(x: ref int) => x % 2 == 0):
+        out.push(owns y)
     println(out)
     out = []
-    for (i, y) in xs.iter().enumerate().filter(fn(p: (int, ref int)) => p.0 % 3 == 0):
-        out.push(i)
-        out.push(y)
+    for (i, y) in xs.iter().enumerate().filter(owns fn(p: (int, ref int)) => p.0 % 3 == 0):
+        out.push(owns i)
+        out.push(owns y)
     println(out)
     out = []
-    for y in xs.iter().filter_map(fn(x: ref int) => Some(x * 100) if x > 6 else None):
-        out.push(y)
+    for y in xs.iter().filter_map(owns fn(x: ref int) => Some(x * 100) if x > 6 else None):
+        out.push(owns y)
     println(out)
     out = []
-    for y in xs.iter().take_while(fn(x: ref int) => x < 4):
-        out.push(y)
+    for y in xs.iter().take_while(owns fn(x: ref int) => x < 4):
+        out.push(owns y)
     else:
         print(out, "ended")
     println()
     out = []
-    for y in xs.iter().skip_while(fn(x: ref int) => x < 6).map(fn(x: ref int) => x * 2):
-        out.push(y)
+    for y in xs.iter().skip_while(owns fn(x: ref int) => x < 6).map(owns fn(x: ref int) => x * 2):
+        out.push(owns y)
     println(out)
     seen: Array[int] = []
     out = []
-    for y in (0..5).map(fn(x: int) => x * x).inspect(fn(v: ref int) => seen.push(v)):
-        out.push(y)
+    for y in (0..5).map(fn(x: int) => x * x).inspect(owns fn(v: ref int) => seen.push(owns v)):
+        out.push(owns y)
     println(seen, out)
     out = []
-    for y in xs.iter().rev().skip(2).map(fn(x: ref int) => -x):
+    for y in xs.iter().rev().skip(2).map(owns fn(x: ref int) => -x):
         if y == -4:
             break
-        out.push(y)
+        out.push(owns y)
     else:
         print("never")
     println(out)
     total = 0
-    for y in xs.iter().map(fn(x: ref int) => x * 3 + 1):
+    for y in xs.iter().map(owns fn(x: ref int) => x * 3 + 1):
         total += y
     println(total)

@@ -17,9 +17,9 @@ fn set_first(ref mut b: Bag, v: i32):
 fn main():
     b = Bag()
     for i in 0..10:
-        b.items.push((i % 7) as i32)
-    set_first(b, 2147483642)
-    set_first(b, 2147483642)
+        b.items.push(owns ((i % 7) as i32))
+    set_first(ref mut b, 2147483642)
+    set_first(ref mut b, 2147483642)
     total: i32 = 0
     for i in 0..10:
         total = total + b.items[i]

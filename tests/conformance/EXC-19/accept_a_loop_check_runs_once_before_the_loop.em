@@ -19,13 +19,13 @@ fn main():
     bags: Array[Bag] = []
     for k in 0..2:
         b = Bag()
-        b.items.push(7)
-        bags.push(b)
+        b.items.push(owns 7)
+        bags.push(owns b)
     view = bags[0].items.as_span()
     turns = 0
     for round in 0..2:
         sink = bags[round]
         for i in 0..turns:
-            sink.items.push(i)
+            sink.items.push(owns i)
         turns = 3000
     println(len(bags[0].items) - 1, len(bags[1].items) - 1, view[0])

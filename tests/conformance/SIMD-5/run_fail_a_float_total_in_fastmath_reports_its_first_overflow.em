@@ -16,10 +16,10 @@ fn run() -> f64:
     out: Array[int] = []
     fs: Array[f64] = []
     for i in 0..40:
-        a.push(0)
-        b.push(0)
-        out.push(0)
-        fs.push(0.5)
+        a.push(owns 0)
+        b.push(owns 0)
+        out.push(owns 0)
+        fs.push(owns 0.5)
     a[9] = big
     b[5] = -9223372036854775807 - 1
     total = 0.0

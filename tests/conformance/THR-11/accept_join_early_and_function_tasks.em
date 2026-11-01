@@ -12,8 +12,8 @@ fn work() -> int:
 
 fn main():
     with scope = thread.scope():
-        a = scope.spawn(fn() => work())
-        b = scope.spawn(work)
+        a = scope.spawn(owns fn() => work())
+        b = scope.spawn(owns work)
         println(a.join() + b.join())
-        _c = scope.spawn(fn() => work() * 10)
+        _c = scope.spawn(owns fn() => work() * 10)
     println("after")

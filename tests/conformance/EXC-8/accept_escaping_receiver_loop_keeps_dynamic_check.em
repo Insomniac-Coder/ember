@@ -31,4 +31,4 @@ fn main():
     for i in 0..3:
         published = counter
         counter.bump()
-    report(alias, published.value)
+    report(ref mut alias, published.value)

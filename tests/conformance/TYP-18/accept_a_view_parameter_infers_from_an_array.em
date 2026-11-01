@@ -20,5 +20,5 @@ fn main():
     ys = [5, 6]
     fixed: [f64; 2] = [1.5, 2.5]
     println(pick(ys), pick(fixed))
-    bump(ys, 10)
+    bump(ref mut ys, 10)
     println(ys)

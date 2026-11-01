@@ -37,13 +37,13 @@ enum Color:
 [K: needs Hash]
 fn hash_of(k: K) -> u64:
     h = DefaultHasher.new()
-    k.hash(h)
+    k.hash(ref mut h)
     return h.finish()
 
 [K: needs Hash, H: needs (Hasher, Default)]
 fn hash_with(k: K) -> u64:
     h = H.default()
-    k.hash(h)
+    k.hash(ref mut h)
     return h.finish()
 
 fn main():

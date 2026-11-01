@@ -20,7 +20,7 @@ fn consume(owns part: Part):
 fn exercise(move_first: bool):
     pair = Pair(Part(1), Part(2))
     if move_first:
-        consume(pair.first)
+        consume(owns pair.first)
 
 fn main():
     exercise(true)

@@ -22,7 +22,7 @@ class Thing:
 fn main():
     things: Array[Thing] = []
     for k in 0..2:
-        things.push(Thing())
+        things.push(owns Thing())
     for i in 0..100000000:
         t = things[i % 2]
         t.bump()

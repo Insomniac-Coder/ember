@@ -17,6 +17,6 @@ fn longer(a: StrView, b: StrView) -> StrView from a:
 
 fn main():
     k = 2
-    s = bump(ref mut k, String("hi"))
+    s = bump(ref mut k, owns String("hi"))
     println(k, s)
     println(longer("ab", "c"))

@@ -4461,6 +4461,8 @@ impl Emitter<'_> {
                 };
                 self.line(&format!("    {} (*slot{slot})({params});", self.c_type(method.ret)));
             }
+            // `[LT-48]` — the kind of the value, which a `runtime` parameter's check compares.
+            self.line("    uint64_t kind;");
             self.line("};");
         }
         self.line("");
@@ -4742,6 +4744,7 @@ impl Emitter<'_> {
                 };
                 self.line(&format!("    {value},"));
             }
+            self.line(&format!("    UINT64_C({}),", ember_mir::kind_identity(self.types, adapter.concrete)));
             self.line("};");
         }
         self.line("");
@@ -11795,6 +11798,14 @@ impl Emitter<'_> {
                     }
                     CastKind::ViewsDisjoint => value,
                     CastKind::InterfaceDowncast => format!("(({ty})(({value})->data))"),
+                    // `[LT-48]` — one compare of the kind the value's table holds.
+                    CastKind::DynKindIs { concrete, interfaces, .. } => {
+                        let table_type = Self::interface_vtable_type(&dyn_table_identity(self.types, interfaces));
+                        format!(
+                            "(((const struct {table_type}*)(({value}).vtable))->kind == UINT64_C({}))",
+                            ember_mir::kind_identity(self.types, *concrete)
+                        )
+                    }
                 }
             }
             Rvalue::Aggregate { kind: AggregateKind::Callable, operands } => {
@@ -15051,6 +15062,7 @@ mod string_descriptor_view_parts_tests {
             removed_checks: Vec::new(),
             restrict_views: false,
             stack_buffers: Vec::new(), frame_objects: Vec::new(), loop_notes: Default::default(),
+            runtime_params: Vec::new(),
         }
     }
 

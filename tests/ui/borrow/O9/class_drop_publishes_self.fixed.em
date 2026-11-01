@@ -12,7 +12,7 @@ class Token:
 
     fn drop():
         retained: Array[Data] = Array[Data]()
-        retained.push(mem.take(this.payload))
+        retained.push(owns mem.take(ref mut this.payload))
 
 fn main():
     _token = Token(Data(7))

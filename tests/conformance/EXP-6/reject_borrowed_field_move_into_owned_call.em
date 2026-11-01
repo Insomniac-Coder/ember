@@ -18,7 +18,7 @@ fn take(owns x: Inner) -> i32:
     return x.n
 
 fn via_call(o: Outer) -> i32:
-    return take(o.inner)         #$ error[E3013]: cannot move out of a borrowed parameter
+    return take(owns o.inner)         #$ error[E3013]: cannot move out of a borrowed parameter
 
 fn main():
     o = Outer(Inner(7))

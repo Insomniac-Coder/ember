@@ -13,5 +13,5 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     safe fn frame() -> i32
 
 fn main():
-    worker = thread.spawn(owned fn() => frame())
+    worker = thread.spawn(owns owned fn() => frame())
     println(worker.join())

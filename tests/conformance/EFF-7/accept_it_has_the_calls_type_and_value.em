@@ -6,7 +6,7 @@
 fn total(xs: Span[int]) -> int:
     copy: Array[int] = []
     for x in xs:
-        copy.push(x)
+        copy.push(owns x)
     return copy.len()
 
 @noalloc

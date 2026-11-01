@@ -19,9 +19,9 @@ fn main():
     xs: Array[f32] = []
     out: Array[f32] = []
     for i in 0..48:
-        xs.push(i as f32)
-        out.push(0.0)
-    scale(xs, out, 2.0)
+        xs.push(owns (i as f32))
+        out.push(owns 0.0)
+    scale(xs, ref mut out, 2.0)
     total = 0.0
     for x in out:
         total += x as f64

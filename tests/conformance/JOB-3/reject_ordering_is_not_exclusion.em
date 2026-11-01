@@ -12,5 +12,5 @@ fn bump(ref mut xs: MutSpan[int]):
 fn main():
     left = [1, 2]
     with s = jobs.scope():
-        a = s.submit(fn() => bump(left))
-        s.submit_after([a], fn() => bump(left))
+        a = s.submit(owns fn() => bump(ref mut left))
+        s.submit_after([a], owns fn() => bump(ref mut left))

@@ -28,12 +28,12 @@ fn main():
     value: c_int = 4
     unsafe:  # SAFETY(ffi): scalar and by-value calls
         println(cpp.dot(a, b), cpp.scale(4), cpp.plain_c(3))
-        cpp.bump(value)
+        cpp.bump(ref mut value)
         println(value, cpp.twice(value), cpp.sum(a))
     results: Array[Result[c_int, CppError]] = []
     unsafe:  # SAFETY(ffi): scalar calls
-        results.push(cpp.checked_div(7, 2))
-        results.push(cpp.checked_div(1, 0))
+        results.push(owns cpp.checked_div(7, 2))
+        results.push(owns cpp.checked_div(1, 0))
     for result in results:
         match result:
             Ok(quotient):

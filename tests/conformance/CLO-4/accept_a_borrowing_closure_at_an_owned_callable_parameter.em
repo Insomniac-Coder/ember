@@ -18,7 +18,7 @@ fn keep(owns f: F) -> F:
 fn main():
     value: i32 = 7
     closure = fn() => value
-    println(invoke(closure))
+    println(invoke(owns closure))
     other: i32 = 9
-    held = keep(fn() => other)
+    held = keep(owns fn() => other)
     println(held())

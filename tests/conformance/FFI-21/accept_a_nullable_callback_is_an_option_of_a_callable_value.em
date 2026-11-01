@@ -43,21 +43,21 @@ fn main():
     println(maybe_call(None, 5), given())
     k: c_int = 3
     println(maybe_call(Some(fn(value: c_int) -> c_int => value * k), 5), given())
-    (none_id, none_token) = subscribe(None)
+    (none_id, none_token) = subscribe(owns None)
     println(none_id, none_token.is_none(), given())
     offset: c_int = 10
-    (id, token) = subscribe(Some(fn(value: c_int) -> c_int => value + offset))
+    (id, token) = subscribe(owns Some(fn(value: c_int) -> c_int => value + offset))
     println(id - 99, subscribers())
     println(fire(2), subscribers())
-    release(token)
+    release(owns token)
     println(subscribers())
-    defer_hook(None)
+    defer_hook(owns None)
     println(run_deferred(4), given())
     label = "hook".to_string()
     shout = owned fn(value: c_int) -> c_int:
         println(label, value)
         return value
-    defer_hook(Some(shout))
+    defer_hook(owns Some(shout))
     println(run_deferred(9))
 
 fn release(owns token: Option[Retained[ForeignCallback]]):

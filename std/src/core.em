@@ -108,7 +108,7 @@ extend AnyError implements Display:
             at -= 1
             f.write_str(this.context[at])?
             f.write_str(": ")?
-        return this.error.fmt(f)
+        return this.error.fmt(ref mut f)
 
 ## `AnyError(<the error's Debug>)`, and the context messages when there are
 ## any, oldest first.
@@ -116,7 +116,7 @@ extend AnyError implements Debug:
     ## It allocates: it writes into the formatter's text (`[STD-1]`).
     fn fmt_debug(ref mut f: Formatter) -> Result[void, FmtError]:
         f.write_str("AnyError(")?
-        this.error.fmt_debug(f)?
+        this.error.fmt_debug(ref mut f)?
         if this.context.len() > 0:
             f.write_str(f", context={this.context}")?
         return f.write_str(")")
@@ -176,7 +176,7 @@ fn result_context(owns r: Result[T, AnyError], msg: M) -> Result[T, AnyError]:
         Ok(v):
             return Ok(v)
         Err(e):
-            e.context.push(f"{msg}")
+            e.context.push(owns f"{msg}")
             return Err(e)
 
 ## `[ERR-10]` — `r.with_context(f)`: as `context`, with the message `f`
@@ -187,7 +187,7 @@ fn result_with_context(owns r: Result[T, AnyError], owns f: Call) -> Result[T, A
         Ok(v):
             return Ok(v)
         Err(e):
-            e.context.push(f"{f()}")
+            e.context.push(owns f"{f()}")
             return Err(e)
 
 ## `[ERR-4]` — `o.context(msg)` on an `Option`: `Ok` of its value, or for
@@ -199,7 +199,7 @@ fn option_context(owns o: Option[T], msg: M) -> Result[T, AnyError]:
         Some(v):
             return Ok(v)
         None:
-            return Err(AnyError.from(Missing(f"{msg}")))
+            return Err(AnyError.from(owns Missing(f"{msg}")))
 
 ## `[ERR-4]` — `o.with_context(f)`: as `context`, with the message `f`
 ## makes, called only for `None`.
@@ -209,7 +209,7 @@ fn option_with_context(owns o: Option[T], owns f: Call) -> Result[T, AnyError]:
         Some(v):
             return Ok(v)
         None:
-            return Err(AnyError.from(Missing(f"{f()}")))
+            return Err(AnyError.from(owns Missing(f"{f()}")))
 
 ## ODR-180 — a failure that is a message: what Python's `raise ValueError("…")` means, written
 ## `return Err(AnyError.msg("…"))` in a function returning `Result[T]`. Its text is the message.
@@ -1014,7 +1014,7 @@ pub interface Iterator:
     fn to_array() owns this -> Array[Item]:
         out: Array[Item] = []
         for x in this:
-            out.push(x)
+            out.push(owns x)
         return out
 
     ## The items gathered into a collection `C` (ODR-094): any type that can
@@ -1023,7 +1023,7 @@ pub interface Iterator:
     ## it.collect()`).
     [C: needs FromIterator[Item]]
     fn collect() owns this -> C:
-        return C.from_iter(this)
+        return C.from_iter(owns this)
 
     ## The items as text, `sep` between each two (`[1, 2, 3]` with `", "` is
     ## `"1, 2, 3"`).
@@ -2323,11 +2323,11 @@ extend[T] Option[T] implements Default:
 extend[T] Option[T]:
     ## The payload, leaving `None`.
     pub fn take() -> Option[T]:
-        return mem.replace(this, None)
+        return mem.replace(ref mut this, None)
 
     ## The payload, leaving `Some(value)`.
     pub fn replace(owns value: T) -> Option[T]:
-        return mem.replace(this, Some(value))
+        return mem.replace(ref mut this, Some(value))
 
 ## `[STD-15]` — the `Array` methods written in Ember (`[GRM-34]`). A method
 ## the compiler knows by a name comes first (`[TYP-24]`); these are found
@@ -2351,7 +2351,7 @@ extend[T] Array[T] implements FromIterator[T]:
     static fn from_iter(owns it: I) -> Array[T]:
         out: Array[T] = []
         for x in it:
-            out.push(x)
+            out.push(owns x)
         return out
 
 extend[T] Array[T] implements IntoIterator:
@@ -2379,7 +2379,7 @@ extend[T] Array[T]:
     [F: needs fn(T, T) -> Ordering]
     pub fn sort_by(owns cmp: F):
         order = stable_order(this, cmp)
-        this.apply_order(order)
+        this.apply_order(ref mut order)
 
     ## Sorts by `key(x)`, calling `key` once for each element, as Python's
     ## `key=` does. Stable (ODR-031).
@@ -2387,9 +2387,9 @@ extend[T] Array[T]:
     pub fn sort_by_key(owns key: F):
         keys: Array[K] = []
         for i in range(this.len()):
-            keys.push(key(this[i]))
-        order = stable_order(keys, fn(a, b) => a.cmp(b))
-        this.apply_order(order)
+            keys.push(owns key(this[i]))
+        order = stable_order(keys, owns fn(a, b) => a.cmp(b))
+        this.apply_order(ref mut order)
 
     ## `[STD-15]` (ODR-068) — mutable references to the elements at `i` and
     ## `j` at once, or `None` when either index is out of range or they are
@@ -2433,8 +2433,8 @@ extend[T] SoA[T]:
     pub fn sort_by_key(owns key: F):
         keys: Array[K] = []
         for i in range(this.len()):
-            keys.push(key(this[i]))
-        order = stable_order(keys, fn(a, b) => a.cmp(b))
+            keys.push(owns key(this[i]))
+        order = stable_order(keys, owns fn(a, b) => a.cmp(b))
         for start in range(this.len()):
             at = start
             while order[at] != start:
@@ -2514,8 +2514,8 @@ extend[T: needs Ord] Array[T]:
     ## `sort` for an element type with an `Ord` of its own. The compiler's
     ## `sort` orders numbers and text itself and routes the rest here (D-256).
     fn sort_ord():
-        order = stable_order(this, fn(a, b) => a.cmp(b))
-        this.apply_order(order)
+        order = stable_order(this, owns fn(a, b) => a.cmp(b))
+        this.apply_order(ref mut order)
 
 extend[T: needs (Ord, Clone)] Array[T]:
     ## `sorted` for what the compiler's own `sorted` does not take: elements
@@ -2530,8 +2530,8 @@ extend[T: needs (Ord, Clone)] Array[T]:
     fn sorted_reverse_if(reverse: bool) -> Array[T]:
         out = this.clone()
         if reverse:
-            order = stable_order(out, fn(a, b) => b.cmp(a))
-            out.apply_order(order)
+            order = stable_order(out, owns fn(a, b) => b.cmp(a))
+            out.apply_order(ref mut order)
         else:
             out.sort_ord()
         return out
@@ -2544,14 +2544,14 @@ extend[T: needs Clone] Array[T]:
     fn sorted_by_key_if(owns key: F, reverse: bool) -> Array[T]:
         keys: Array[K] = []
         for i in range(this.len()):
-            keys.push(key(this[i]))
+            keys.push(owns key(this[i]))
         out = this.clone()
         if reverse:
-            order = stable_order(keys, fn(a, b) => b.cmp(a))
-            out.apply_order(order)
+            order = stable_order(keys, owns fn(a, b) => b.cmp(a))
+            out.apply_order(ref mut order)
         else:
-            order = stable_order(keys, fn(a, b) => a.cmp(b))
-            out.apply_order(order)
+            order = stable_order(keys, owns fn(a, b) => a.cmp(b))
+            out.apply_order(ref mut order)
         return out
 
 ## `[STD-15]` — the order a stable sort puts `xs` in, as indices: a bottom-up
@@ -2565,8 +2565,8 @@ fn stable_order(xs: Array[T], owns cmp: F) -> Array[int]:
     order: Array[int] = []
     merged: Array[int] = []
     for i in range(n):
-        order.push(i)
-        merged.push(i)
+        order.push(owns i)
+        merged.push(owns i)
     width = 1
     while width < n:
         lo = 0

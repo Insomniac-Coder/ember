@@ -21,16 +21,16 @@ class Bag:
 fn main():
     xs: Array[int] = [0, 1, 2]
     for i in 0..3:
-        xs.push(xs[i])
+        xs.push(owns xs[i])
     println(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5])
 
     bag = Bag()
     other = bag
     for i in 0..3:
-        bag.items.push(i + 1)
+        bag.items.push(owns (i + 1))
     total = 0
     for i in 0..3:
         value = bag.items[i]
-        other.items.push(value)
+        other.items.push(owns value)
         total = total + value
     println(total)

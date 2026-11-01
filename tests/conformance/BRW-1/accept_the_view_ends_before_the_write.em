@@ -6,10 +6,10 @@
 
 fn main():
     a: Array[i32] = Array[i32]()
-    a.push(1)
+    a.push(owns 1)
     v: Span[i32] = a
     println(v[0])
-    a.push(2)
+    a.push(owns 2)
     println(a[1])
 #$ stdout: 1
 #$ 2

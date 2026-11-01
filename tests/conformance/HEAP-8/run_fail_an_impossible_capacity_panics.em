@@ -11,5 +11,5 @@ fn main():
     xs: Array[int] = []
     println(xs.len())
     xs.reserve(4611686018427387904)
-    xs.push(1)
+    xs.push(owns 1)
     println(xs.len())

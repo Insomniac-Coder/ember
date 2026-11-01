@@ -12,9 +12,9 @@ fn identity(value: Span[i32]) -> Span[i32]:
 
 fn main():
     left: Array[i32] = Array[i32]()
-    left.push(1)
+    left.push(owns 1)
     right: Array[i32] = Array[i32]()
-    right.push(2)
+    right.push(owns 2)
     pair = Pair(left.as_span(), right.as_span())
     pair.left = identity(right.as_span())
     println(pair.left[0])

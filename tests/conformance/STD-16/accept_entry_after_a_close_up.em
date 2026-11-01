@@ -7,6 +7,6 @@
 fn main():
     m: Map[String, int] = {"a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "f": 6, "g": 7}
     m.remove("a")
-    n = m.entry(String.from("h")).or_insert(8)
+    n = m.entry(owns String.from("h")).or_insert(owns 8)
     n += 1
     println(m)

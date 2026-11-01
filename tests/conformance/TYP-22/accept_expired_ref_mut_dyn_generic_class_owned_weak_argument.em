@@ -35,7 +35,7 @@ fn expired() -> Weak[Shared[Token]]:
     return Weak(strong)
 
 fn inspect(ref mut value: dyn Observe, weak: Weak[Shared[Token]]) -> i32:
-    return value.observe(weak)
+    return value.observe(owns weak)
 
 fn main():
     reader = Reader[bool](true, 0)

@@ -13,4 +13,4 @@ fn main():
         "a" => println(1)
         _ => println(2)
     pairs: Array[(String, int)] = [("a", 1)]
-    pairs.sort_by_key(fn(p) => (p[1], 0))    #$ error[E2020]: cannot index `(String, i64)`
+    pairs.sort_by_key(owns fn(p) => (p[1], 0))    #$ error[E2020]: cannot index `(String, i64)`

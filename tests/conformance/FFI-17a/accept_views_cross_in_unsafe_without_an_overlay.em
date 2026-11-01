@@ -32,4 +32,4 @@ fn main():
         _, length = words.get().first()
         println(length, cpp.digit(55).unwrap_or(-1), cpp.or_zero(None))
         box = cpp.make_box(9).unwrap()
-        println(cpp.consume(box), cpp.boxes_destroyed())
+        println(cpp.consume(owns box), cpp.boxes_destroyed())

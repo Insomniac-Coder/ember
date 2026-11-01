@@ -18,7 +18,7 @@ fn increment(ref mut value: i32):
 
 fn main():
     items: Array[Inner] = Array()
-    items.push(Inner(0))
+    items.push(owns Inner(0))
     holder = Holder(items)
-    increment(holder.items[0].value)
+    increment(ref mut holder.items[0].value)
     println(holder.items[0].value)

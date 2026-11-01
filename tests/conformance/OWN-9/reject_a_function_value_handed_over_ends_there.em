@@ -9,7 +9,7 @@ fn run(owns f: fn()):
 
 fn main():
     g = fn(): println(1)
-    run(g)
+    run(owns g)
     g()    #$ error[E3040]
     h = fn(): println(2)
     mem.drop(h)

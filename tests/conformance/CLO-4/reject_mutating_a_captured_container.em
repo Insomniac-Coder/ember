@@ -11,7 +11,7 @@ fn apply(f: fn(i32) -> i32, v: i32) -> i32:
 
 fn main():
     m: Array[i32] = Array[i32]()
-    m.push(1)
+    m.push(owns 1)
     g = fn(x: i32) => x + m[0]
-    m.push(2)              #$ error[E3021]: `m` is borrowed here and mutably borrowed elsewhere
+    m.push(owns 2)              #$ error[E3021]: `m` is borrowed here and mutably borrowed elsewhere
     println(apply(g, 10))

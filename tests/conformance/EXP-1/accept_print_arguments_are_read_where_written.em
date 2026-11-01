@@ -11,6 +11,6 @@ fn bump(ref mut n: int) -> int:
 
 fn main():
     n = 1
-    println(n, bump(n))
+    println(n, bump(ref mut n))
     ys = [3]
     println(ys, len(ys))

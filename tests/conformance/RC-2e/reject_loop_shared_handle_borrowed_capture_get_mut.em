@@ -10,7 +10,7 @@ struct Token:
 
 fn main():
     tokens: Array[Shared[Token]] = Array[Shared[Token]]()
-    tokens.push(Shared(Token(7)))
+    tokens.push(owns Shared(Token(7)))
     for token in tokens:
         task = fn():
             value = token.get_mut() #$ error[E3021]: cannot write through a shared reference

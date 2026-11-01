@@ -18,5 +18,5 @@ fn main():
     c = b
     with g = b.cell.borrow():
         with h = c.cell.borrow_mut():
-            h.push(4)
+            h.push(owns 4)
         println(g)

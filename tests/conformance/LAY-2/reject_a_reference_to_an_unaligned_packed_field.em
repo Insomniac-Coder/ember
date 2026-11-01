@@ -33,10 +33,10 @@ fn main():
     println(l)
     m = ref mut r.length  #$ error[E2170]: reference to a field of a packed struct
     println(m)
-    bump(r.length)  #$ error[E2170]: reference to a field of a packed struct
+    bump(ref mut r.length)  #$ error[E2170]: reference to a field of a packed struct
     a = total(r.big)  #$ error[E2170]: reference to a field of a packed struct
     b = r.big.first()  #$ error[E2170]: reference to a field of a packed struct
-    r.items.push(6)  #$ error[E2170]: reference to a field of a packed struct
+    r.items.push(owns 6)  #$ error[E2170]: reference to a field of a packed struct
     for x in r.items:  #$ error[E2170]: reference to a field of a packed struct
         println(x)
     println(a, b)

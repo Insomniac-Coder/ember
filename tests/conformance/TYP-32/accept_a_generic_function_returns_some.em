@@ -8,7 +8,7 @@
 
 [T: needs (Copy, Mul[Output = T])]
 fn scaled(xs: Span[T], k: T) -> some Iterator[Item = T]:
-    return xs.iter().copy_each().map(owned fn(x) => x * k)
+    return xs.iter().copy_each().map(owns owned fn(x) => x * k)
 
 fn main():
     a = [1, 2, 3]

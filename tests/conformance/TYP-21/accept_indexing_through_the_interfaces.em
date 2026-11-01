@@ -28,7 +28,7 @@ struct Log:
 extend Log implements IndexSet[int, String]:
     fn index_set(i: int, owns v: String):
         println(f"set {i}")
-        this.lines.push(v)
+        this.lines.push(owns v)
 
 fn main():
     g = Grid(w=2, cells=[1.0, 2.0, 3.0, 4.0])

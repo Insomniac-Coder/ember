@@ -381,7 +381,8 @@ impl Typed<'_> {
                 } else {
                     let name = pushable[self.rng.below(pushable.len())].clone();
                     let value = self.expr(Ty::Int, 2);
-                    self.line(indent, format!("{name}.push({value})"));
+                    // `[FN-2a]` — `push` takes its value over; a copy keeps the names it reads.
+                    self.line(indent, format!("{name}.push(owns copy of ({value}))"));
                 }
             }
             5 => {
@@ -565,7 +566,7 @@ fn op_text(op: Op, rng: &mut Rng) -> String {
         Op::Use { holder } if holder % 2 == 0 => format!("println(v{holder}[0] + v{holder}.len())"),
         Op::Use { holder } => if rng.chance(50) { format!("m{holder} += 1") } else { format!("println(m{holder})") },
         Op::Read { array } => if rng.chance(50) { format!("println(a{array}.len())") } else { format!("println(a{array}[0])") },
-        Op::Push { array } => format!("a{array}.push({})", rng.below(100)),
+        Op::Push { array } => format!("a{array}.push(owns {})", rng.below(100)),
         Op::Assign { array } => format!("a{array} = [{}, 1, 2]", rng.below(100)),
         Op::Move { array, to } => format!("b{to} = a{array}"),
     }

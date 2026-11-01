@@ -6,12 +6,12 @@
 # caller's afterwards: `[FN-1]` takes a borrow, not a move.
 
 fn set_first(ref mut a: Array[i32], v: i32):
-    a.push(v)
+    a.push(owns v)
 
 fn main():
     a: Array[i32] = Array[i32]()
-    a.push(7)
-    set_first(a, a.len() as i32)
+    a.push(owns 7)
+    set_first(ref mut a, a.len() as i32)
     println(a[0])
     println(a[1])
 #$ stdout: 7

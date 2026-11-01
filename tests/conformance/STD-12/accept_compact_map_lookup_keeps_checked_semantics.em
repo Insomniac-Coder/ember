@@ -31,19 +31,19 @@ fn main():
     println(zero.get(0), zero.contains_key(0))
     println(zero.remove(0))
     zero[0] = 7
-    println(zero.insert(0, 9))
+    println(zero.insert(owns 0, owns 9))
     zero[0] += 1
     match zero.get_mut(0):
         Some(v):
             v += 2
         None:
             pass
-    zero.entry(0).or_insert(99)
-    zero.entry(1).or_insert_with(fn() => 11)
-    zero.entry(2).or_default()
+    zero.entry(owns 0).or_insert(owns 99)
+    zero.entry(owns 1).or_insert_with(owns fn() => 11)
+    zero.entry(owns 2).or_default()
     println(zero[0], zero[1], zero[2], zero.contains_key(0))
     println(zero.remove(0))
     println(zero.get(0), zero.contains_key(0))
-    zero.entry(0).or_default()
-    zero.entry(0).or_insert_with(fn() => 88)
+    zero.entry(owns 0).or_default()
+    zero.entry(owns 0).or_insert_with(owns fn() => 88)
     println(zero[0], len(zero))

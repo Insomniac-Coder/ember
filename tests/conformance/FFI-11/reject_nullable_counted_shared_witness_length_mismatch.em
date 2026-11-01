@@ -12,5 +12,5 @@ pub extern "C" fn count_optional_and_present(left: *u8, right: *u8, n: usize) ->
 
 fn main():
     right: Array[u8] = Array[u8]()
-    right.push(1)
+    right.push(owns 1)
     compare(None, right.as_span())

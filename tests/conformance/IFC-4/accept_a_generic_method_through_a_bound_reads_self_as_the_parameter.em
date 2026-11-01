@@ -10,7 +10,7 @@
 [I: needs Iterator, J: needs Iterator]
 fn pairs(owns it: I, owns other: J) -> int:
     # G8-4 — `count()` gives the iterator's count type, `I.Count` here.
-    return it.zip(other).count().to_int()
+    return it.zip(owns other).count().to_int()
 
 interface Make:
     [T: needs Copy]
@@ -30,6 +30,6 @@ fn build() -> M:
 
 
 fn main():
-    println(pairs((0..3).iter(), (10..12).iter()))
+    println(pairs(owns (0..3).iter(), owns (10..12).iter()))
     t: Thing = build[Thing]()
     println(t.n)

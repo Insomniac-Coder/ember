@@ -24,16 +24,16 @@ struct Pos:
 
 fn decorate(ref mut q: Query[(Entity, Pos)]):
     for e, p in q.iter():
-        q.commands().add(e, Sprite(Texture(p.x)))
+        q.commands().add(e, owns Sprite(Texture(p.x)))
 
 fn decorate_now(ref mut q: Query[(Entity, Pos)], unused: ()):
     for e, p in q.iter():
-        q.commands().add(e, Sprite(Texture(p.x)))
+        q.commands().add(e, owns Sprite(Texture(p.x)))
 
 fn main():
     w = World()
     e = w.create()
-    w.add(e, Pos(1))
-    w.run(decorate_now, ())
+    w.add(e, owns Pos(1))
+    w.run(owns decorate_now, owns ())
     println(w.has[Sprite](e))
-    w.run_parallel([decorate])
+    w.run_parallel(owns [decorate])

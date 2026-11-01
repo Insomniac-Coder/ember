@@ -29,7 +29,7 @@ fn main():
     empty = Array[int]()
     buf = String()
     xs = [1, 2, 3]
-    xs.push(4)
+    xs.push(owns 4)
     name: String = "ember"
     text = f"node {node.value}"
     ages: Map[StrView, int] = Map()

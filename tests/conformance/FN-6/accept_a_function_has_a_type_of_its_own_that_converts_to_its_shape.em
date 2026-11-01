@@ -55,7 +55,7 @@ fn main():
     (n, m) = (sub_one, 2)
     println(fs[0](1), fs[1](1), n(m), either(add_one, sub_one, true)(1))
     xs = [1, 2, 3]
-    println(xs.iter().map(fn(x: ref int) -> int => x * 2).sum(), xs.iter().map(add_one).sum() - 2)
+    println(xs.iter().map(owns fn(x: ref int) -> int => x * 2).sum(), xs.iter().map(owns add_one).sum() - 2)
     same: fn(int) -> int = add_one
     f2 = add_one
     g2 = sub_one

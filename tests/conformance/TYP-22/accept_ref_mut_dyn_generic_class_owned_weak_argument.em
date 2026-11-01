@@ -31,7 +31,7 @@ class Reader implements Observe:
                 return 0
 
 fn inspect(ref mut value: dyn Observe, weak: Weak[Shared[Token]]) -> i32:
-    return value.observe(weak)
+    return value.observe(owns weak)
 
 fn main():
     strong = Shared(Token(7))

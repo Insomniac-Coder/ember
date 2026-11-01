@@ -9,7 +9,7 @@
 
 fn main():
     names = ["ann", "bob"]
-    names.push("cy")
+    names.push(owns "cy")
     names.insert(0, "zed")
     names[1] = "al"
     println(names)
@@ -19,5 +19,5 @@ fn main():
     view = more[1..]
     again = []
     for n in view:
-        again.push(n)
+        again.push(owns n)
     println(short, pair, again)

@@ -19,12 +19,12 @@ fn main():
     fs: Array[fn() -> int] = []
     for i in 0..3:
         s = f"item {i}!"
-        fs.push(owned fn() => s.len())
+        fs.push(owns owned fn() => s.len())
     total = 0
     for i in 0..fs.len():
         total = total + fs[i]()
     later = []
     for i in 0..2:
         t = f"x{i}"
-        later.push(owned fn() => t.len())
+        later.push(owns owned fn() => t.len())
     println(pick(true), pick(false), total, later.len())

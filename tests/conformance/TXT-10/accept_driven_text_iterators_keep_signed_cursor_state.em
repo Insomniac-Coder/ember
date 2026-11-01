@@ -19,15 +19,15 @@ fn main():
     text = "a\0é世😀\u{10FFFF}"
     native: Array[int] = []
     for (i, _) in text.char_indices():
-        native.push(signed_index(i))
+        native.push(owns signed_index(i))
     driven: Array[int] = []
     codes: Array[u32] = []
     iterator = text.char_indices()
     for _ in 0..6:
         match iterator.next():
             Some((i, c)):
-                driven.push(signed_index(i))
-                codes.push(c as u32)
+                driven.push(owns signed_index(i))
+                codes.push(owns (c as u32))
             None:
                 panic("iterator ended before its sixth scalar")
     match iterator.next():

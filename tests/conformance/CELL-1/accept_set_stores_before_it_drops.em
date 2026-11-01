@@ -30,7 +30,7 @@ fn make(n: i32) -> Bag:
     xs: Array[i32] = Array[i32]()
     i: i32 = 0
     while i < n:
-        xs.push(i)
+        xs.push(owns i)
         i = i + 1
     return Bag(xs)
 

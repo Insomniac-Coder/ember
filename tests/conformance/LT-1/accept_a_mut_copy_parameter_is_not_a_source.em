@@ -12,6 +12,6 @@ fn next_token(ref mut pos: int, src: StrView) -> StrView:
 
 fn main():
     pos = 0
-    token = next_token(pos, "abc")
+    token = next_token(ref mut pos, "abc")
     println(pos)
     println(token)

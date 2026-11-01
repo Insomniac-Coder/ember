@@ -10,7 +10,7 @@ fn make_span(xs: Span[i32]) -> Span[i32]:
 
 fn main():
     a: Array[i32] = Array[i32]()
-    a.push(1)
+    a.push(owns 1)
     v = make_span(a)
-    a.push(2)              #$ error[E3021]: `a` is borrowed here and mutably borrowed elsewhere
+    a.push(owns 2)              #$ error[E3021]: `a` is borrowed here and mutably borrowed elsewhere
     println(v[0])

@@ -9,7 +9,7 @@
 fn main():
     xs: Array[int] = []
     for i in 0..4:
-        xs.push(i + 1)
+        xs.push(owns (i + 1))
     for round in 0..70:
         for i in 0..xs.len():
             xs[i] = xs[i] * 2

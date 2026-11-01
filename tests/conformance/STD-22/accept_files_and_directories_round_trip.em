@@ -37,10 +37,10 @@ fn scratch() -> String:
     return f"{base}/ember_std22_{rng.next_u64()}"
 
 fn copy_lines(path: StrView) -> Result[void, io.Error]:
-    out = BufWriter.new(File.create(path)?)
+    out = BufWriter.new(owns File.create(path)?)
     out.write("x\r\ny\n".as_bytes())?
     out.flush()?
-    reader = BufReader.new(File.open(path)?)
+    reader = BufReader.new(owns File.open(path)?)
     while true:
         match reader.read_line()?:
             Some(line):

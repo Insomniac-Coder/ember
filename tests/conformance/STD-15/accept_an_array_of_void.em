@@ -18,7 +18,7 @@ fn unit():
 
 fn main():
     units: Array[void] = [(), (), ()]
-    units.push(unit())
+    units.push(owns unit())
     units.insert(0, ())
     println(len(units), units)
     n = 0

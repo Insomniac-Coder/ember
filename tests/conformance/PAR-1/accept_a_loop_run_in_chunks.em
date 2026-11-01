@@ -11,8 +11,8 @@ fn main():
     source: Array[int] = []
     out: Array[int] = []
     for i in range(n):
-        source.push(i)
-        out.push(0)
+        source.push(owns i)
+        out.push(owns 0)
     xs = out.as_mut_span()
     @parallel(chunk=100)
     for i in 0..n:

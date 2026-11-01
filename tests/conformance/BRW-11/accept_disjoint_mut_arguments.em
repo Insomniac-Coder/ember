@@ -12,6 +12,6 @@ fn update_both(ref mut left: i32, ref mut right: i32):
 
 fn main():
     pair = Pair(0, 0)
-    update_both(pair.left, pair.right)
+    update_both(ref mut pair.left, ref mut pair.right)
     println(pair.left + pair.right)
 #$ stdout: 3

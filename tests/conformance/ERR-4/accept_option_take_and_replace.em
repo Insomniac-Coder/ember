@@ -11,7 +11,7 @@ fn main():
     o: Option[int] = Some(5)
     t = o.take()
     println(t, o)
-    r = o.replace(7)
+    r = o.replace(owns 7)
     println(r, o)
     s: Option[String] = Some(String.from("a"))
     u = s.take()

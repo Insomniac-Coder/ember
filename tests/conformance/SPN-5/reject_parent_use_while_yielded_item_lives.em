@@ -10,5 +10,5 @@ fn first_mut(ref mut span: MutSpan[T]) -> Option[ref mut T]:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
+    values.push(owns 1)
     _item = first_mut[i32](values.as_mut_span())

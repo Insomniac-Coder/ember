@@ -20,7 +20,7 @@ fn next_index(ref mut value: usize) -> usize:
 fn main():
     slot = Slot(1)
     items: Array[Slot] = Array[Slot]()
-    items.push(slot)
+    items.push(owns slot)
     state: usize = 0
-    increment(items[next_index(state)].value)
+    increment(ref mut items[next_index(ref mut state)].value)
     println(items[0].value)

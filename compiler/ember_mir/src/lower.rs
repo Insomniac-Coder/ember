@@ -587,6 +587,17 @@ impl<'a> Builder<'a> {
             frame_objects: Vec::new(),
             loop_notes,
             kept: false,
+            runtime_params: {
+                let mut positions: Vec<usize> = self
+                    .program
+                    .runtime_params
+                    .iter()
+                    .filter(|(def, _)| *def == self.function.def)
+                    .map(|(_, position)| *position as usize)
+                    .collect();
+                positions.sort_unstable();
+                positions
+            },
         }
     }
 

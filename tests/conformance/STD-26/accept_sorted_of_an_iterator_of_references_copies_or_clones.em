@@ -19,4 +19,4 @@ fn main():
     names: Array[String] = sorted(m.keys(), reverse=true)
     println(names, sorted(m.values()))
     xs = [3, 1, 2]
-    println(sorted(xs.iter()), sorted(m.keys(), key=fn(k: ref String) => m[k]))
+    println(sorted(xs.iter()), sorted(m.keys(), key=owns fn(k: ref String) => m[k]))

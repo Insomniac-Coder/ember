@@ -31,23 +31,23 @@ extend Count implements Iterator:
 
 fn main():
     println(Count(0).take(3).to_array(), Count(0).skip(2).take(3).to_array(), Count(0).step_by(3).take(4).to_array())
-    println(Count(0).take(3).enumerate().to_array(), Count(0).take(3).zip(Count(10)).to_array())
+    println(Count(0).take(3).enumerate().to_array(), Count(0).take(3).zip(owns Count(10)).to_array())
     println(Count(0).take(5).count(), Count(0).take(5).last(), Count(0).nth(4), Count(0).take(2).nth(2))
-    println(Count(0).take(4).fold(0, fn(acc, x) => acc + x), Count(0).take(4).any(fn(x) => x > 3), Count(0).take(4).all(fn(x) => x > 3), Count(0).find(fn(x) => x % 4 == 0), Count(0).position(fn(x) => x == 6))
+    println(Count(0).take(4).fold(0, owns fn(acc, x) => acc + x), Count(0).take(4).any(owns fn(x) => x > 3), Count(0).take(4).all(owns fn(x) => x > 3), Count(0).find(owns fn(x) => x % 4 == 0), Count(0).position(owns fn(x) => x == 6))
     numbered: Array[(int, int)] = []
     for (i, x) in Count(0).skip(1).take(2).enumerate(10):
-        numbered.push((i, x))
+        numbered.push(owns (i, x))
     println(numbered)
 
     xs: Array[int] = [5, 6, 7, 8, 9]
-    println(xs.iter().count(), xs.iter().skip(1).step_by(2).count(), xs.iter().fold(0, fn(acc, x) => acc + x), xs.iter().any(fn(x) => x > 8), xs.iter().position(fn(x) => x == 7))
+    println(xs.iter().count(), xs.iter().skip(1).step_by(2).count(), xs.iter().fold(0, owns fn(acc, x) => acc + x), xs.iter().any(owns fn(x) => x > 8), xs.iter().position(owns fn(x) => x == 7))
     sums: Array[int] = []
-    for (a, b) in xs.iter().zip(xs.iter().skip(1)):
-        sums.push(a + b)
+    for (a, b) in xs.iter().zip(owns xs.iter().skip(1)):
+        sums.push(owns (a + b))
     println(sums)
 
     m: Map[StrView, int] = {"a": 1, "b": 2, "c": 3}
     s: Set[int] = {4, 5}
-    println(m.keys().count(), m.values().fold(0, fn(acc, v) => acc + v), s.iter().count())
-    Count(0).take(3).for_each(fn(x) => print(x))
+    println(m.keys().count(), m.values().fold(0, owns fn(acc, v) => acc + v), s.iter().count())
+    Count(0).take(3).for_each(owns fn(x) => print(x))
     println()

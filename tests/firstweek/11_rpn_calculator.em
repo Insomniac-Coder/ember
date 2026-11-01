@@ -26,7 +26,7 @@ class Calculator:
             "/" => a / b
             "^" => a ** b
             _ => return Err(CalcError.UnknownToken(op))
-        this.stack.push(result)
+        this.stack.push(owns result)
         return Ok(())
 
     fn evaluate(line: StrView) -> Result[float, CalcError]:

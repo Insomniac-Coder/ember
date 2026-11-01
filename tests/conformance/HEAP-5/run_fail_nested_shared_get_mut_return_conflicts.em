@@ -10,11 +10,11 @@ fn inner(ref mut owner: Shared[Counter]) -> ref mut Counter from owner:
     return owner.get_mut()
 
 fn outer(ref mut owner: Shared[Counter]) -> ref mut Counter from owner:
-    return inner(owner)
+    return inner(ref mut owner)
 
 fn main():
     shared = Shared(Counter(1))
     alias = shared
-    first = outer(shared)
+    first = outer(ref mut shared)
     second = alias.get_mut()
     println(first.value + second.value)

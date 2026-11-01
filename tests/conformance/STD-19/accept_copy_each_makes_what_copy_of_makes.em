@@ -11,8 +11,8 @@ fn main():
     total = xs.iter().copy_each().sum()
     println(total)
     m: Map[String, int] = {}
-    m.insert(String("b"), 2)
-    m.insert(String("a"), 1)
+    m.insert(owns String("b"), owns 2)
+    m.insert(owns String("a"), owns 1)
     names = sorted(m.keys().copy_each())
     m.clear()
     println(names[0], names[1])

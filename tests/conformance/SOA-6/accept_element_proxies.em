@@ -23,9 +23,9 @@ fn score_of(p: SoARef[Named]) -> int:
 
 fn main():
     ns = SoA[Named].with_capacity(2)
-    ns.push(Named("ann".to_string(), 3))
-    ns.push(Named("bob".to_string(), 5))
-    ns.push(Named("cy".to_string(), 8))
+    ns.push(owns Named("ann".to_string(), 3))
+    ns.push(owns Named("bob".to_string(), 5))
+    ns.push(owns Named("cy".to_string(), 8))
     p = ns[1]
     println(p.name, p.score, p.load())
     p.score += 10

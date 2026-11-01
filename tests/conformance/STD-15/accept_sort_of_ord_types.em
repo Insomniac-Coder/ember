@@ -39,7 +39,7 @@ fn main():
     cards.sort()
     shown: Array[String] = []
     for c in cards:
-        shown.push(f"{c.rank}{c.suit}")
+        shown.push(owns f"{c.rank}{c.suit}")
     println(shown.join(" "))
 
     ps = [P(2), P(1), P(3)]

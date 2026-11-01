@@ -21,7 +21,7 @@ fn touch_counter(ref mut value: usize):
 @overflow(wrap)
 fn addressed_total(xs: Span[u8]) -> u64:
     total: u64 = 2
-    touch_total(total)
+    touch_total(ref mut total)
     for x in xs:
         total += x as u64
     return total
@@ -31,7 +31,7 @@ fn addressed_total(xs: Span[u8]) -> u64:
 fn addressed_counter(xs: Span[u8]) -> u64:
     total: u64 = 0
     index: usize = 0
-    touch_counter(index)
+    touch_counter(ref mut index)
     limit = xs.len() as usize
     while index < limit:
         total += xs[index] as u64

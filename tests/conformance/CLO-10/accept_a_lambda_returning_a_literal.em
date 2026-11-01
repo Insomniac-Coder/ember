@@ -15,4 +15,4 @@ fn main():
     println(x())
     y = owned fn() => 7
     g: fn() -> int = y
-    println(g(), apply(owned fn() => 2.5))
+    println(g(), apply(owns owned fn() => 2.5))

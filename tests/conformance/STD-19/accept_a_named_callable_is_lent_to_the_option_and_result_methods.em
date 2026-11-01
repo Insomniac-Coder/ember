@@ -34,7 +34,7 @@ fn main():
     r: Result[int, int] = Ok(5)
     c = r.map(inc)
     e: Result[int, int] = Err(2)
-    d = e.unwrap_or_else(fn(owns s: int) -> int => s * 3)
+    d = e.unwrap_or_else(owns fn(owns s: int) -> int => s * 3)
     println(a, b, c, d, calls)
     n: Option[int] = None
     made = 0
@@ -53,5 +53,5 @@ fn main():
     taker = owned fn(owns x: int) -> int:
         kept = k
         return x + kept.value
-    println(o.map(taker))
-    println(o.map(fn(owns x: int) -> int => x * 10))
+    println(o.map(owns taker))
+    println(o.map(owns fn(owns x: int) -> int => x * 10))

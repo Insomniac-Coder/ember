@@ -8,7 +8,7 @@ fn total(a: Span[i32], b: Span[i32]) -> i32:
 
 fn main():
     xs: Array[i32] = Array[i32]()
-    xs.push(21)
+    xs.push(owns 21)
     v: Span[i32] = xs
     println(total(v, v))
 #$ stdout: 42

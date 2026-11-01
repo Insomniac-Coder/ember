@@ -14,5 +14,5 @@ fn main():
     println(math.sqrt(9.0))
     a = 1
     b = 2
-    swap(a, b)
+    swap(ref mut a, ref mut b)
     println(a, b)

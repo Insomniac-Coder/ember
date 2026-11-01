@@ -16,5 +16,5 @@ fn main():
     ys = [3]
     v = V(r=xs)
     s = v.m(ys)
-    ys.push(4)
+    ys.push(owns 4)
     println(s)

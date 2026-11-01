@@ -11,9 +11,9 @@
 
 fn main():
     words = ["a".to_string(), "bb".to_string()]
-    kept = [w.len() for w in words.iter().map(fn(w: ref String) => w)]
+    kept = [w.len() for w in words.iter().map(owns fn(w: ref String) => w)]
     same = fn(w: ref String) => w
     longest = same(words[1])
     println(kept, longest.len(), longest)
     numbers = [1, 2, 3]
-    println(numbers.iter().map(fn(x: ref int) => x).sum())
+    println(numbers.iter().map(owns fn(x: ref int) => x).sum())

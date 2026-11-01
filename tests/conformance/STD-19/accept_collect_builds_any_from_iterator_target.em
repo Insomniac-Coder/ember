@@ -33,7 +33,7 @@ fn main():
     xs = [3, 1, 3, 2, 1, 3]
     a = xs.iter().copy_each().collect[Array[int]]()
     println(a)
-    b: Array[int] = xs.iter().copy_each().map(fn(x: int) => x * 10).collect()
+    b: Array[int] = xs.iter().copy_each().map(owns fn(x: int) => x * 10).collect()
     println(b)
     s: Set[int] = xs.iter().copy_each().collect()
     println(s.len(), s.contains(2))

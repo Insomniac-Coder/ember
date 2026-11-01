@@ -27,4 +27,4 @@ extend Plus implements Runner:
 fn main():
     s = "hello".to_string()
     n = 3
-    println(call_once(owned fn() => consume(s)), apply(fn(x) => x + n, 2), Plus(1).run(fn() => n + 4))
+    println(call_once(owns owned fn() => consume(owns s)), apply(owns fn(x) => x + n, 2), Plus(1).run(owns fn() => n + 4))

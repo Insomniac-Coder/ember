@@ -15,8 +15,8 @@ fn view_len(ref mut span: MutSpan[T]) -> int:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
-    values.push(2)
+    values.push(owns 1)
+    values.push(owns 2)
     parent = values.as_mut_span()
     child = parent.reborrow()
     child[0] = 10

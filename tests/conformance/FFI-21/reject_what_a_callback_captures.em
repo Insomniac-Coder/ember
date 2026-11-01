@@ -30,5 +30,5 @@ fn main():
     now_on_main(fn(): counter.count += 1)
     later(fn(): println(name))    #$ error[E3026]: borrows `name`, and C keeps it past the call
     later(owned fn(): println(counter.count))    #$ error[E7004]: captures `counter`, a `Counter`, which is not Send
-    token = always(owned fn(): println(counter.count))
+    token = always(owns owned fn(): println(counter.count))
     println(name)

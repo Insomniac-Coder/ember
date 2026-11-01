@@ -18,8 +18,8 @@ fn main():
         g += 10
     tags: Mutex[Array[String]] = Mutex([])
     with t = tags.lock():
-        t.push("a".to_string())
-        t.push("b".to_string())
+        t.push(owns "a".to_string())
+        t.push(owns "b".to_string())
     held = m.lock()
     println(m.try_lock().is_none())
     mem.drop(held)

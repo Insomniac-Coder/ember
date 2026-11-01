@@ -35,18 +35,18 @@ fn main():
     xs: Array[int] = [1, 2, 3]
     ys: Array[int] = [10, 20]
     empty: Array[int] = []
-    println(xs.iter().copy_each().chain(ys.iter().copy_each()).to_array())
+    println(xs.iter().copy_each().chain(owns ys.iter().copy_each()).to_array())
     total = 0
-    for x in (0..3).iter().chain((7..9).iter()):
+    for x in (0..3).iter().chain(owns (7..9).iter()):
         total += x
     println(total)
-    for x in xs.iter().chain(ys.iter()):
+    for x in xs.iter().chain(owns ys.iter()):
         total += x
     println(total)
-    println(Once(false, false).chain(ys.iter().copy_each()).to_array())
-    println(empty.iter().chain(ys.iter()).count())
-    println(ys.iter().chain(empty.iter()).count())
-    println(empty.iter().chain(empty.iter()).count())
-    both = xs.iter().copy_each().chain(ys.iter().copy_each()).chain(xs.iter().copy_each())
+    println(Once(false, false).chain(owns ys.iter().copy_each()).to_array())
+    println(empty.iter().chain(owns ys.iter()).count())
+    println(ys.iter().chain(owns empty.iter()).count())
+    println(empty.iter().chain(owns empty.iter()).count())
+    both = xs.iter().copy_each().chain(owns ys.iter().copy_each()).chain(owns xs.iter().copy_each())
     println(both.enumerate().skip(4).take(3).to_array())
-    println(xs.iter().copy_each().chain(ys.iter().copy_each()).fold(0, fn(a, b) => a * 2 + b))
+    println(xs.iter().copy_each().chain(owns ys.iter().copy_each()).fold(0, owns fn(a, b) => a * 2 + b))

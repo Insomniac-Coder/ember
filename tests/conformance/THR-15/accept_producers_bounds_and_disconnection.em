@@ -16,14 +16,14 @@ from std.sync import Sender, channel, channel_unbounded
 
 fn produce(tx: Sender[String], who: int, n: int):
     for i in range(n):
-        tx.send("p{who}-{i}").expect("receiver is gone")
+        tx.send(owns "p{who}-{i}").expect("receiver is gone")
 
 fn main():
     tx, rx = channel[String](capacity=2)
     workers: Array[thread.JoinHandle[void]] = []
     for who in range(4):
         mine = tx.clone()
-        workers.push(thread.spawn(owned fn() => produce(mine, who, 2500)))
+        workers.push(owns thread.spawn(owns owned fn() => produce(mine, who, 2500)))
     mem.drop(tx)
     count = 0
     chars = 0
@@ -38,22 +38,22 @@ fn main():
                 pass
     println(count, chars)
     small_tx, small_rx = channel[int](capacity=1)
-    println(small_tx.try_send(1).is_ok(), small_tx.try_send(2).is_err())
-    match small_tx.try_send(3):
+    println(small_tx.try_send(owns 1).is_ok(), small_tx.try_send(owns 2).is_err())
+    match small_tx.try_send(owns 3):
         Ok(_):
             println("sent")
         Err(e):
             println("full, kept", e.value, e.disconnected)
     println(small_rx.try_recv(), small_rx.try_recv())
     mem.drop(small_rx)
-    match small_tx.send(9):
+    match small_tx.send(owns 9):
         Ok(_):
             println("sent")
         Err(e):
             println("gone, kept", e.value, e.disconnected)
     utx, urx = channel_unbounded[int]()
     for i in range(1000):
-        utx.send(i).expect("open")
+        utx.send(owns i).expect("open")
     mem.drop(utx)
     s = 0
     for v in urx:

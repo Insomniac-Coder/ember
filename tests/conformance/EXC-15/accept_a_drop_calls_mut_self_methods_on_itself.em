@@ -15,7 +15,7 @@ open class Base:
         this.log = [1]
 
     fn note(x: int):
-        this.log.push(x)
+        this.log.push(owns x)
 
     fn drop():
         this.note(9)
@@ -29,7 +29,7 @@ class Bag(Base):
         super.init()
 
     fn grow():
-        this.items.push(4)
+        this.items.push(owns 4)
 
     fn drop():
         this.grow()

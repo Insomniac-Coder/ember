@@ -7,5 +7,5 @@
 fn main():
     word: String = "hello"
     names = ["ann"]
-    names.push(word[1..])
+    names.push(owns word[1..])
     println(names)

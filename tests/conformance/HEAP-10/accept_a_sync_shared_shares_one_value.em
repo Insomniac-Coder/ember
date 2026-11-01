@@ -27,7 +27,7 @@ class Registry:
 
 fn add(r: SyncShared[Mutex[Array[String]]], name: StrView):
     with g = r.get().lock():
-        g.push(name.to_string())
+        g.push(owns name.to_string())
 
 fn main():
     names: SyncShared[Mutex[Array[String]]] = SyncShared(Mutex([]))

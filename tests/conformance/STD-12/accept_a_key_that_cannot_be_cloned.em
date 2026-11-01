@@ -23,7 +23,7 @@ extend Ticket implements Eq, Hash:
 
 fn main():
     m: Map[Ticket, int] = {}
-    m.insert(Ticket(1), 10)
-    m.insert(Ticket(2), 20)
+    m.insert(owns Ticket(1), owns 10)
+    m.insert(owns Ticket(2), owns 20)
     println(m.get(Ticket(1)), Ticket(2) in m, m[Ticket(2)])
     println(m.remove(Ticket(1)), Ticket(1) in m, m.len())

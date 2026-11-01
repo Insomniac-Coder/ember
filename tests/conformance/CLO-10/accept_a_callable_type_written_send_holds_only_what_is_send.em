@@ -27,21 +27,21 @@ fn make(step: int) -> fn(int) -> int + Send:
     return owned fn(x: int) -> int => x + step
 
 fn later(owns f: fn() -> int + Send) -> int:
-    h = thread.spawn(owned fn() -> int => f())
+    h = thread.spawn(owns owned fn() -> int => f())
     return h.join()
 
 fn on_a_thread(owns job: Job, x: int) -> int:
-    h = thread.spawn(owned fn() -> int => job.work(x))
+    h = thread.spawn(owns owned fn() -> int => job.work(x))
     return h.join()
 
 fn main():
     label = "abc".to_string()
-    a = on_a_thread(Job(twice), 2)
-    b = on_a_thread(Job(make(10)), 5)
-    c = later(owned fn() -> int => label.len() + 10)
+    a = on_a_thread(owns Job(twice), 2)
+    b = on_a_thread(owns Job(make(10)), 5)
+    c = later(owns owned fn() -> int => label.len() + 10)
     plain: fn(int) -> int = make(20)
     d = plain(10)
-    e = later(owned fn() -> int => 7)
+    e = later(owns owned fn() -> int => 7)
     maker: fn() -> fn() -> int + Send = pick
     task = owned fn() -> int:
         inner = maker()

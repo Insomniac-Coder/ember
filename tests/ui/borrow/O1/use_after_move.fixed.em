@@ -3,7 +3,7 @@ fn inspect(xs: Array[i32]) -> i32:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
+    values.push(owns 1)
     println(inspect(values))
     println(inspect(values))
 

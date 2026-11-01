@@ -6,6 +6,6 @@ fn invoke(f: once fn() -> i32) -> i32:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(7)
-    task = owned fn() => consume(values)
-    println(invoke(task))
+    values.push(owns 7)
+    task = owned fn() => consume(owns values)
+    println(invoke(owns task))

@@ -12,9 +12,9 @@
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(10)
-    values.push(20)
-    values.push(30)
+    values.push(owns 10)
+    values.push(owns 20)
+    values.push(owns 30)
     view = values.as_span()
 
     at_start = view.split_at(0)

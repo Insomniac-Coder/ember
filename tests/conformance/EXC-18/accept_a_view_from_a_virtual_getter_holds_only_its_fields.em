@@ -32,11 +32,11 @@ fn main():
     p = Person()
     q = p
     n = p.label()
-    q.tags.push(2)
+    q.tags.push(owns 2)
     println(n, q.tags)
     k: Person = Nick()
     r = k
     m = k.label()
-    r.tags.push(2)
-    r.tags.push(3)
+    r.tags.push(owns 2)
+    r.tags.push(owns 3)
     println(m, r.tags)

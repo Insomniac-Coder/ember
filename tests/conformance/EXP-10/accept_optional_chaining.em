@@ -41,6 +41,6 @@ fn main():
     p?.shout()
     q?.shout()
     println(p?.x)
-    e: Option[AnyError] = Some(AnyError.from(Fail.Disk))
+    e: Option[AnyError] = Some(AnyError.from(owns Fail.Disk))
     none: Option[AnyError] = None
     println(e?.is[Fail](), none?.is[Fail]())

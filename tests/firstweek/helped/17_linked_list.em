@@ -56,7 +56,7 @@ class LinkedList:
         result: Array[int] = []
         current = this.head
         while current exists as node:
-            result.push(node.value)
+            result.push(owns node.value)
             current = node.next
         return result
 

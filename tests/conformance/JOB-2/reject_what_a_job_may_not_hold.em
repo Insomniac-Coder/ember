@@ -14,6 +14,6 @@ fn count() -> int:
 
 fn main():
     shared = Shared(0)
-    jobs.submit(owned fn() => shared.get())
+    jobs.submit(owns owned fn() => shared.get())
     loose = jobs.scope()
     jobs.submit(count)

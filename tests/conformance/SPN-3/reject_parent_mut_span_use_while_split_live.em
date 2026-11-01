@@ -7,8 +7,8 @@
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
-    values.push(2)
+    values.push(owns 1)
+    values.push(owns 2)
     view = values.as_mut_span()
     parts = view.split_at(1)
     left = parts.0

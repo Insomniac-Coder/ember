@@ -33,6 +33,6 @@ fn main():
     scale = 10
     print(outer(3, fn(v) => v * scale), "")
     xs = [1, 2, 3, 4]
-    xs.retain(fn(v) => v % 2 == 0)
+    xs.retain(owns fn(v) => v % 2 == 0)
     print(xs, "")
     println(best([3, 7, 5], fn(v) => v))

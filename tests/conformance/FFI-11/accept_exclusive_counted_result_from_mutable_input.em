@@ -14,8 +14,8 @@ pub extern "C" fn echo_mut_span(input: *mut i32, n: usize) -> *mut i32:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(7)
-    values.push(8)
+    values.push(owns 7)
+    values.push(owns 8)
     result: MutSpan[i32] = echo(values.as_mut_span())
     result[0] = 29
     println(result.len())

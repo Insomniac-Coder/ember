@@ -20,17 +20,17 @@ fn first(owns from: I, n: int) -> Array[I.Item]:
     while out.len() < n:
         match it.next():
             Some(x):
-                out.push(x)
+                out.push(owns x)
             None:
                 return out
     return out
 
 fn main():
     big = 0 as u64 .. u64.MAX
-    println(first(big.iter().enumerate().take(3).rev(), 3))
-    println(first(big.iter().rev().take(2).rev(), 2))
-    println(first(big.iter().skip(int.MAX).skip(9223372036854775803), 5))
+    println(first(owns big.iter().enumerate().take(3).rev(), 3))
+    println(first(owns big.iter().rev().take(2).rev(), 2))
+    println(first(owns big.iter().skip(int.MAX).skip(9223372036854775803), 5))
     println(big.iter().nth(9223372036854775807))
-    println(first(big.iter().skip(5).zip(big.iter()).rev().take(2).rev(), 2))
+    println(first(owns big.iter().skip(5).zip(owns big.iter()).rev().take(2).rev(), 2))
     whole = int.MIN .. int.MAX
-    println(first(whole.iter().rev().enumerate().take(2).rev(), 2))
+    println(first(owns whole.iter().rev().enumerate().take(2).rev(), 2))

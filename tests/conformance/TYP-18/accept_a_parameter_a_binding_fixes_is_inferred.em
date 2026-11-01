@@ -37,7 +37,7 @@ extend Count implements Iterator:
 
 [T, C: needs Gather[T], I: needs Iterator[Item = T]]
 fn build(owns it: I) -> C:
-    return C.gather(it)
+    return C.gather(owns it)
 
 [I]
 struct Holder:
@@ -48,9 +48,9 @@ extend[T: needs Copy, I: needs Iterator[Item = T]] Holder[I]:
         return this.it.next()
 
 fn main():
-    b: Bag = build(Count(n = 0, stop = 3))
+    b: Bag = build(owns Count(n = 0, stop = 3))
     println(b.total)
-    c: Bag = build((1..4).iter())
+    c: Bag = build(owns (1..4).iter())
     println(c.total)
     xs = [1, 2]
     h = Holder(xs.iter().copy_each())

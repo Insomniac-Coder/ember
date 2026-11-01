@@ -22,7 +22,7 @@ fn call(n: Node):
     n.inc()
 
 fn push(n: Node):
-    n.items.push(7)
+    n.items.push(owns 7)
 
 fn main():
     n = Node(1, [])

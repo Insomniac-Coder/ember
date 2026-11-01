@@ -17,7 +17,7 @@ gen fn primes() -> Generator[int]:
                 is_prime = false
                 break
         if is_prime:
-            found.push(n)
+            found.push(owns n)
             yield n
 
 gen fn fibonacci(limit: int) -> Generator[int]:
@@ -43,7 +43,7 @@ fn take(owns g: I, n: int) -> Array[int]:
     for x in g:
         if result.len() >= n:
             break
-        result.push(x)
+        result.push(owns x)
     return result
 
 fn collatz_steps(start: int) -> int:
@@ -55,7 +55,7 @@ fn collatz_steps(start: int) -> int:
     return steps
 
 fn main():
-    println(f"first 15 primes: {take(primes(), 15)}")
+    println(f"first 15 primes: {take(owns primes(), 15)}")
     fibs = [f for f in fibonacci(1000)]
     println(f"fibonacci up to 1000: {fibs}")
     even_sum = sum(f for f in fibonacci(4_000_000) if f % 2 == 0)

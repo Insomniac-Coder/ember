@@ -25,8 +25,8 @@ import c "./events.c" with (overlay = "overlays/events.em") as ev
 fn queue():
     first = "first".to_string()
     second = "second".to_string()
-    ev.run_later(3, owned fn(result: c_int): println("done", first, result))
-    ev.run_later(5, owned fn(result: c_int): println("done", second, result))
+    ev.run_later(3, owns owned fn(result: c_int): println("done", first, result))
+    ev.run_later(5, owns owned fn(result: c_int): println("done", second, result))
 
 fn main():
     queue()
@@ -34,15 +34,15 @@ fn main():
     println("ran", ev.run_pending())
     scale: c_int = 10
     tag = "a".to_string()
-    token = ev.listen(1, owned fn(event: c_int) -> c_int => event * scale + tag.len() as c_int - 1)
-    other = ev.listen(2, owned fn(event: c_int) -> c_int => event)
+    token = ev.listen(1, owns owned fn(event: c_int) -> c_int => event * scale + tag.len() as c_int - 1)
+    other = ev.listen(2, owns owned fn(event: c_int) -> c_int => event)
     println(ev.listening() - 1, ev.listening())
     println(ev.emit(1, 3), ev.emit(2, 1))
-    drop_both(token, other)
+    drop_both(owns token, owns other)
     println(ev.emit(1, 3), ev.listening())
-    again = ev.listen(1, owned fn(event: c_int) -> c_int => event * 5)
+    again = ev.listen(1, owns owned fn(event: c_int) -> c_int => event * 5)
     println(ev.emit(1, 3), ev.listening())
-    keep(again)
+    keep(owns again)
     println(ev.listening())
 
 fn drop_both(owns a: Retained[ForeignCallback], owns b: Retained[ForeignCallback]):

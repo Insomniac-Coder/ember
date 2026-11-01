@@ -21,8 +21,8 @@ fn integrate(ref mut pos: MutSpan[Vec3], vel: Span[Vec3], dt: f32):
 
 fn main():
     ps = SoA[Particle].with_capacity(100_000)
-    ps.push(Particle(pos=Vec3.ZERO, vel=Vec3(1.0, 0.0, 0.0), life=2.0))
-    integrate(ps.pos, ps.vel, 0.016)
+    ps.push(owns Particle(pos=Vec3.ZERO, vel=Vec3(1.0, 0.0, 0.0), life=2.0))
+    integrate(ref mut ps.pos, ps.vel, 0.016)
     ps[0].life -= 0.016
     p = ps.get(0)
     println(ps.len(), ps[0].life, ps[0].pos.x)

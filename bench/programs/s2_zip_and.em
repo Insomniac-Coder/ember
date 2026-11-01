@@ -3,10 +3,10 @@ fn main():
     xs: Array[int] = []
     ys: Array[int] = []
     for i in 0..n:
-        xs.push(i % 1000)
-        ys.push(i % 777)
+        xs.push(owns (i % 1000))
+        ys.push(owns (i % 777))
     for round in 0..300:
-        for (a, b) in xs.iter_mut().zip(ys.iter()):
+        for (a, b) in xs.iter_mut().zip(owns ys.iter()):
             a ^= b ^ round
     total = 0
     for x in xs:

@@ -48,5 +48,5 @@ fn main():
     println(length(List[int].Cons(1, Box(List[int].Cons(2, Box(List[int].Nil))))))
     root = Tree[int](1)
     kid = Tree[int](2)
-    root.kids.push(Weak(kid))
+    root.kids.push(owns Weak(kid))
     println(root.value, root.kids[0].upgrade().unwrap().value)

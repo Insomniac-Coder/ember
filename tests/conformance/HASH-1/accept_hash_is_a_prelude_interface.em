@@ -14,7 +14,7 @@ extend Key implements Hash:
 [T: needs Hash]
 fn accepts_hash(value: T) -> u64:
     hasher = DefaultHasher.new()
-    value.hash(hasher)
+    value.hash(ref mut hasher)
     return hasher.finish()
 
 fn main():

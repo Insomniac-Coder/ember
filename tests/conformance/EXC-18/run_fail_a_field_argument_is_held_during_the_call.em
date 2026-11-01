@@ -13,7 +13,7 @@ class Bag:
 
 fn use_view(v: Span[int], other: Bag) -> int:
     alias = other
-    alias.items.push(99)
+    alias.items.push(owns 99)
     return v[0]
 
 fn main():

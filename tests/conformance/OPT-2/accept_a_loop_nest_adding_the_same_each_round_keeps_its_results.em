@@ -26,9 +26,9 @@ fn main():
     out: Array[int] = []
     big: Array[int] = []
     for i in 0..n:
-        a.push(i % 100)
-        out.push(0)
-        big.push(0)
+        a.push(owns (i % 100))
+        out.push(owns 0)
+        big.push(owns 0)
     for round in 0..300:
         for i in 0..n:
             out[i] = (out[i] + a[i]) & 1023

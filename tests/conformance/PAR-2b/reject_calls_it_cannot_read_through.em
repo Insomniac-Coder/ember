@@ -19,7 +19,7 @@ fn shifts(ref mut xs: MutSpan[int]):
 fn zero_from(ref mut xs: MutSpan[int], at: int):
     if at < xs.len():
         xs[at] = 0
-        zero_from(xs, at + 1)
+        zero_from(ref mut xs, at + 1)
 
 fn recurses(ref mut xs: MutSpan[int]):
     @parallel

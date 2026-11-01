@@ -8,7 +8,7 @@
 fn main():
     xs: Array[i32] = []
     for i in 0..100:
-        xs.push(1000)
+        xs.push(owns 1000)
     total = 9223372036854775000
     for i in 0..100:
         total = total + (xs[i] as int)

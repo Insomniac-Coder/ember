@@ -11,7 +11,7 @@ fn put(ref mut xs: MutSpan[int], at: int, value: int):
     xs[at] = value
 
 fn triple(ref mut xs: MutSpan[int], at: int):
-    put(xs, at, at * 3)
+    put(ref mut xs, at, at * 3)
 
 fn bump_next(ref mut xs: MutSpan[int], at: int):
     if xs.len() > at + 1:
@@ -22,10 +22,10 @@ fn main():
     xs = values.as_mut_span()
     @parallel
     for i in 0..xs.len():
-        triple(xs, i)
+        triple(ref mut xs, i)
     println(values)
     ys = values.as_mut_span()
     @parallel
     for i in 0..ys.len() - 1:
-        bump_next(ys, i)
+        bump_next(ref mut ys, i)
     println(values)

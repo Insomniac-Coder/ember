@@ -126,7 +126,7 @@ pub struct BufReader:
         buffer: Array[u8] = []
         buffer.reserve(8192)
         for _ in 0..8192:
-            buffer.push(0)
+            buffer.push(owns 0)
         return BufReader(file = file, buffer = buffer, at = 0, filled = 0)
 
     ## One line without its line ending; `None` at the end of the file, and `Err` when the line is
@@ -146,7 +146,7 @@ pub struct BufReader:
             read_any = true
             if byte == 10:
                 break
-            line.push(byte)
+            line.push(owns byte)
         if not read_any:
             return Ok(None)
         if line.len() > 0 and line[line.len() - 1] == 13:

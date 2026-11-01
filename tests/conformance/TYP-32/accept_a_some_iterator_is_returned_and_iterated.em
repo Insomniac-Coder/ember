@@ -8,7 +8,7 @@
 # specification's own example, iterated, and handed to a generic function bounded by `I`.
 
 fn evens(xs: Span[int]) -> some Iterator[Item = int]:
-    return xs.iter().copy_each().filter(fn(x) => x % 2 == 0)
+    return xs.iter().copy_each().filter(owns fn(x) => x % 2 == 0)
 
 [I: needs Iterator[Item = int]]
 fn total(owns it: I) -> int:
@@ -21,4 +21,4 @@ fn main():
     a = [1, 2, 3, 4]
     for x in evens(a.as_span()):
         println(x)
-    println(total(evens(a.as_span())))
+    println(total(owns evens(a.as_span())))

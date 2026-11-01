@@ -106,7 +106,7 @@ fn main():
     mum = Parent("Ada")
     kid = Child("Byron")
     kid.parent = Some(Weak(mum))
-    mum.children.push(kid)
+    mum.children.push(owns kid)
     for child in mum.children:
         if child.parent exists as weak:
             if weak.upgrade() exists as parent:

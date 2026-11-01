@@ -14,6 +14,6 @@ extend Sq implements Display:
 
 fn main():
     shown: Array[Box[dyn Display]] = []
-    shown.push(Box(Sq(2)))
+    shown.push(owns Box(Sq(2)))
     println(shown[0])
     println(shown)    #$ error[E2040]: `Box[dyn std.core.Display]` does not implement `Debug`, which printing a `Array[Box[dyn std.core.Display]]` needs

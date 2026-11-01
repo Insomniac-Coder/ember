@@ -6,9 +6,9 @@
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
-    values.push(2)
+    values.push(owns 1)
+    values.push(owns 2)
     for value in values.as_span().iter():
         println(value)
-    values.push(3)
+    values.push(owns 3)
     println(values[2])

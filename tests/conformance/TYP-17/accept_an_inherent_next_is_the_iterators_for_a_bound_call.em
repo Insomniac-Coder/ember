@@ -23,7 +23,7 @@ extend Countdown implements Iterator:
 fn main():
     seen: Array[int] = []
     for n in Countdown(left = 3):
-        seen.push(n)
+        seen.push(owns n)
     println(seen)
     xs: Array[int] = [4, 9, 2]
     println(Countdown(left = 4).skip(1).to_array(), xs.copy_each().skip(1).to_array())

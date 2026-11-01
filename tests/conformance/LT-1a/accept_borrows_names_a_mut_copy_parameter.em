@@ -9,5 +9,5 @@ fn slot(ref mut n: int) -> ref int from n:
 
 fn main():
     x = 5
-    r = slot(x)
+    r = slot(ref mut x)
     println(r)

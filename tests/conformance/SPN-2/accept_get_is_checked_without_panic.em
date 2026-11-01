@@ -10,7 +10,7 @@ fn first(xs: Span[i32]) -> i32:
 
 fn main():
     a: Array[i32] = Array[i32]()
-    a.push(7)
+    a.push(owns 7)
     println(first(a))
     empty: Array[i32] = Array[i32]()
     println(first(empty))

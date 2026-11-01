@@ -13,8 +13,8 @@ pub extern "C" fn echo_counted(input: *i32, n: usize) -> *i32:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(7)
-    values.push(8)
+    values.push(owns 7)
+    values.push(owns 8)
     result: Span[i32] = echo(values.as_span())
     println(result.len())
     println(result[0])

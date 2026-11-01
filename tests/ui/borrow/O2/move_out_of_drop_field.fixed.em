@@ -15,7 +15,7 @@ struct Holder:
     pub item: Item
 
     fn drop():
-        old = mem.take(this.item)
+        old = mem.take(ref mut this.item)
         println(old.value)
 
 fn main():

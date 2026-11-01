@@ -28,7 +28,7 @@ fn main():
     println(p.next(), p.next())
     ys = [1, 2, 5, 6]
     q = ys.iter().copy_each().peekable()
-    println(q.next_if(fn(x: ref int) => x < 3), q.next_if(fn(x: ref int) => x < 3), q.next_if(fn(x: ref int) => x < 3), q.next())
+    println(q.next_if(owns fn(x: ref int) => x < 3), q.next_if(owns fn(x: ref int) => x < 3), q.next_if(owns fn(x: ref int) => x < 3), q.next())
     zs = [4, 4, 9]
     r = zs.iter().copy_each().peekable()
     println(r.next_if_eq(4), r.next_if_eq(4), r.next_if_eq(4), r.next())

@@ -12,9 +12,9 @@
 
 fn main():
     m: Map[String, int] = {}
-    first = m.insert("a", 1)
-    again = m.insert("a", 1)
-    m.insert("b", 2)
+    first = m.insert(owns "a", owns 1)
+    again = m.insert(owns "a", owns 1)
+    m.insert(owns "b", owns 2)
     println(first, again, len(m), m.get("a"), m.contains_key("b"))
     match m.get_mut("a"):
         Some(v):
@@ -24,12 +24,12 @@ fn main():
     println(m["a"], m.get_or("z", -1), len(m), m.is_empty())
     counts: Map[String, int] = {}
     for w in ["a", "b", "a", "a"]:
-        n = counts.entry(String.from(w)).or_insert(0)
+        n = counts.entry(owns String.from(w)).or_insert(owns 0)
         n += 1
     println(counts)
     lists: Map[String, Array[int]] = {}
-    lists.entry("x").or_default().push(5)
-    lists.entry("x").or_insert_with(fn() => [0]).push(6)
+    lists.entry(owns "x").or_default().push(owns 5)
+    lists.entry(owns "x").or_insert_with(owns fn() => [0]).push(owns 6)
     println(lists)
     text = String.from("")
     for k in m.keys():
@@ -43,10 +43,10 @@ fn main():
     println(text)
     for v in m.values_mut():
         v *= 10
-    m.retain(fn(k, v) => v > 100)
+    m.retain(owns fn(k, v) => v > 100)
     println(len(m), m.pop_item(), len(m), m.is_empty())
     other: Map[String, int] = {"p": 7}
-    other.update({"q": 8})
+    other.update(owns {"q": 8})
     println(other.into_items())
     x: Map[String, int] = {"a": 1, "b": 2}
     y: Map[String, int] = {"b": 2, "a": 1}

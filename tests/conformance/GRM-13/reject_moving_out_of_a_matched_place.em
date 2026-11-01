@@ -10,5 +10,5 @@ fn take(owns s: String) -> int:
 fn main():
     a: Option[String] = Some("abc")
     match a:
-        Some(s): println(take(s))  #$ error[E3013]: cannot move out of a reference
+        Some(s): println(take(owns s))  #$ error[E3013]: cannot move out of a reference
         None: pass

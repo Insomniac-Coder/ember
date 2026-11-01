@@ -8,9 +8,9 @@ struct Pair:
 
 fn main():
     values: Array[i32] = Array[i32]()
-    values.push(1)
+    values.push(owns 1)
     shared = values.as_span()
     pair = Pair(shared, shared)
     println(pair.left[0])
-    values.push(2) #$ error[E3021]: `values` is borrowed here and mutably borrowed elsewhere
+    values.push(owns 2) #$ error[E3021]: `values` is borrowed here and mutably borrowed elsewhere
     println(pair.right[0])

@@ -22,5 +22,5 @@ fn bump_once(ref mut value: ref mut T):
 fn main():
     counter = Counter(41)
     borrowed: ref mut Counter = ref mut counter
-    bump_once[Counter](borrowed)
+    bump_once[Counter](ref mut borrowed)
     println(borrowed.value)

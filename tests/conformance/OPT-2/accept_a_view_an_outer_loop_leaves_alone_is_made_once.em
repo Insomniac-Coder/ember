@@ -24,7 +24,7 @@ struct P:
 fn make(n: int) -> Array[int]:
     out: Array[int] = []
     for i in 0..n:
-        out.push(i)
+        out.push(owns i)
     return out
 
 fn scaled(xs: Span[int], k: int) -> int:
@@ -37,20 +37,20 @@ fn scaled(xs: Span[int], k: int) -> int:
 fn main():
     ps: Array[P] = []
     for i in 0..5:
-        ps.push(P(i, i + 1))
+        ps.push(owns P(i, i + 1))
     for step in 0..3:
         for p in ps.iter_mut():
             p.x += p.v
     line: Array[String] = []
     for p in ps:
-        line.push(f"{p.x}")
+        line.push(owns f"{p.x}")
     println(line.join(" "))
     xs: Array[int] = [1]
     total = 0
     for r in 0..5:
         for x in xs.iter_mut():
             x += 1
-        xs.push(r)
+        xs.push(owns r)
         for x in xs:
             total += x
     println(total, xs)

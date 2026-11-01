@@ -7,5 +7,5 @@ from modules.ffi_counted import counted
 
 fn main():
     data: Array[u8] = Array[u8]()
-    data.push(4)
+    data.push(owns 4)
     println(counted(data.as_span()))

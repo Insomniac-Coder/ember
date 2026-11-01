@@ -23,7 +23,7 @@ struct Bag:
 fn main():
     xs: Array[int] = [1, 2]
     ys = xs.clone()
-    ys.push(3)
+    ys.push(owns 3)
     println(xs, ys)
     s: String = "hi"
     t = s.clone()
@@ -31,18 +31,18 @@ fn main():
     println(s, t)
     words: Array[String] = ["a", "b"]
     copy = words.clone()
-    copy.push("c")
+    copy.push(owns "c")
     println(words, copy)
     grid: Array[Array[int]] = [[1], [2, 3]]
     g2 = grid.clone()
-    g2[0].push(9)
+    g2[0].push(owns 9)
     println(grid, g2)
     tokens: Array[Token] = [Token(1), Token(2)]
     t2 = tokens.clone()
     println(t2.len(), tokens[0].n, t2[1].n)
     bags: Array[Bag] = [Bag(items=["x"], name="b")]
     b2 = bags.clone()
-    b2[0].items.push("y")
+    b2[0].items.push(owns "y")
     println(bags[0].items, b2[0].items)
     bag = Bag(items=["p"], name="q")
     bag2 = bag.clone()
