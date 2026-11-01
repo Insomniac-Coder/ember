@@ -18733,7 +18733,14 @@ impl<'a> Checker<'a> {
             let args: Vec<ast::Arg> =
                 call.into_iter().map(|value| ast::Arg { name: None, value: value.clone(), span: value.span }).collect();
             let receiver = Expr { ty, kind: ExprKind::Local(local), span };
-            let call = self.synth_registered_method(receiver, span, name, &args, Vec::new(), span);
+            let mut call = self.synth_registered_method(receiver, span, name, &args, Vec::new(), span);
+            // `[OWN-9]`, `[TYP-38]` — a literal gives its elements as `=` does: a `Copy` one (a number
+            // as a key) is copied, though `insert` and `add` take theirs over.
+            if let ExprKind::Call { args, .. } = &mut call.kind {
+                for arg in args.iter_mut().skip(1).filter(|arg| self.types.is_copy(arg.ty)) {
+                    *arg = Self::a_value(std::mem::replace(arg, Expr { ty: self.common.error, kind: ExprKind::Error, span }));
+                }
+            }
             stmts.push(Stmt::Expr(call));
         }
         let value = Expr { ty, kind: ExprKind::Local(local), span };
@@ -46822,7 +46829,20 @@ impl<'a> Checker<'a> {
         if self.copy_refused(copied, &text, operand.span) {
             return error;
         }
-        self.synth_method_on(receiver, operand.span, ast::Ident { name: Symbol::intern("clone"), span }, &[], &[], None, span)
+        let copy = self.synth_method_on(receiver, operand.span, ast::Ident { name: Symbol::intern("clone"), span }, &[], &[], None, span);
+        // `[OWN-9]`, `[OWN-8]` — a copy of the program's own, never the place itself: a `Copy` type's
+        // `clone` is the place, which an `owns` argument would hand over (`f(copy of n)` keeps `n`).
+        Self::a_value(copy)
+    }
+
+    /// `[OWN-9]` — `expr` as a value of its own, not the place it reads: what `=` gives of a `Copy`
+    /// value, which an `owns` parameter then takes without ending the place.
+    fn a_value(expr: Expr) -> Expr {
+        if !matches!(expr.kind, ExprKind::Local(_) | ExprKind::Field { .. } | ExprKind::EnumField { .. } | ExprKind::Index { .. } | ExprKind::Deref(_)) {
+            return expr;
+        }
+        let (ty, at) = (expr.ty, expr.span);
+        Expr { ty, kind: ExprKind::Block { block: Block { stmts: Vec::new(), span: at }, value: Box::new(expr) }, span: at }
     }
 
     fn synth_method_call_on(

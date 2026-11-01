@@ -14,7 +14,7 @@ from std.collections import BitSet, Deque, SmallArray
 fn main():
     d = Deque[int].new()
     for i in 0..6:
-        d.push_back(i)
+        d.push_back(copy of i)
         d.push_front(-i)
     println(d.len(), d.pop_front(), d.pop_back(), d.get(0))
 

@@ -501,7 +501,7 @@ pub struct SetView:
 fn aos_storage(world: World) -> AosStorage[T]:
     key = T.component_hash()
     if not world.storages.contains_key(key):
-        _none = world.storages.insert(key, AosStorage[T]())
+        _none = world.storages.insert(copy of key, AosStorage[T]())
     return cast world.storages[key] as AosStorage[T]
 
 ## `[ECS-3]` — a component `T` (`aos`) read by a query: `ref T`.
@@ -592,7 +592,7 @@ extend[T: needs Component] Mut[T] implements QueryParam:
 fn soa_storage(world: World) -> SoaStorage[T]:
     key = T.component_hash()
     if not world.storages.contains_key(key):
-        _none = world.storages.insert(key, SoaStorage[T]())
+        _none = world.storages.insert(copy of key, SoaStorage[T]())
     return cast world.storages[key] as SoaStorage[T]
 
 ## `[ECS-3]`, `[SOA-6]` — a component `T` stored as an `SoA` (`@component(layout=soa)`) read by a

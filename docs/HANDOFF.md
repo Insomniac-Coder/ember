@@ -31,8 +31,21 @@
 >   (`d.log`, not `d`), which A2-6 brings in M5 (a generator's `from` narrows the same way): built there (owner: "do it whenever it fits
 >   best").
 >   `E3025`, `E3080` and `L3013` are still emitted (retired in 0.9.15; `gap/02`, M6b).
-> - **Next:** the push gate (gate3) on `fbaea8f3`, the bench on both backends, push, one CI look; then M2's
->   slice 4 (M2-plan.md's design notes: the flow-sensitive per-parameter facts).
+> - **Pushed** `35cb6efb` (gate three ways green, bench 25/25 both backends; CI run 41275804487 green). Then
+>   M2's slice 4 (`cf84b6da`, `4700ac8e`: `used_after`, `read_while`/`changed_while`, `lets_this_out`; D-943,
+>   D-944 missing summary facts fixed); slice 6 measured (102 programs make loose values; waits for a test);
+>   slices 1, 5, 7 go with M3's first summary check (slice 7 brings E7012).
+> - **M3 begun: A1-2 (`[OWN-9]`, `[OWN-6]`), not committed yet:** an argument for an `owns` parameter (direct,
+>   method, indirect, interface) and `mem.drop`'s is handed over for every type, numbers included (`handed` in
+>   `lower.rs`); counted values (class handles, `Weak`/`Shared`, a struct holding one) and function values
+>   (`[STD-19]`, ODR-240: lent) are read as before until M4. Kept as `=` gives: a `yield` (the spec's own
+>   `[CORO-1]` example), a collection literal's elements, `copy of n` (now a value of its own). A counted loop
+>   whose body hands its name over counts with a counter of its own (`hands_over`); any other keeps today's
+>   shape, which the vectoriser and lints read. `std/src/ecs.em` writes `copy of key` twice; three tests write
+>   `copy of` (STD-7, HND-3, LNT-6). Left in A1-2: `b = owns n` (E0900 today) and E0109's new cases.
+> - **OPEN ODR N30** (decisions.md): should `ember fmt --migrate` write `copy of` where a 0.9.10 caller reused a
+>   number it gave to an `owned` parameter? `[CLI-20]` does not say.
+> - **Next:** the rest of A1-2, then A1-3 (the hand-over messages), A1-4; the push gate before any push.
 
 > **2026-10-31, late night — AUTONOMOUS (owner asleep), solo. START HERE.** Owner: "run autonomously I'll check
 > progress in the morning and ask for ODR updates, no agents or workflow for now ... monitor the wifi and power

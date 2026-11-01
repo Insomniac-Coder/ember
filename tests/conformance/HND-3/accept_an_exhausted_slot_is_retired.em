@@ -22,7 +22,7 @@ fn main():
     full = Pool[int, Split20]()
     count = 0
     while true:
-        match full.try_insert(count):
+        match full.try_insert(copy of count):
             Ok(_):
                 count += 1
             Err(CapacityError.Full):

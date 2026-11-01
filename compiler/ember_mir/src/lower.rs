@@ -299,6 +299,8 @@ struct Builder<'a> {
     /// hold nothing that points elsewhere: their storage ends with the
     /// statement too, which a borrow of one must not outlive.
     plain_temps: Vec<LocalId>,
+    /// `[OWN-9]`, `[SIMD-2]` — each counted loop's name, with the counter of its own it counts with.
+    range_counters: std::collections::HashMap<LocalId, LocalId>,
     /// `[EXP-4]`, `[CTL-8]` (D-504) — when each local in `owned` or
     /// `statement_temps` was registered, by MIR local: an early exit ends
     /// both kinds in one order, the last registered first.
@@ -470,6 +472,7 @@ impl<'a> Builder<'a> {
             owned,
             statement_temps: Vec::new(),
             plain_temps: Vec::new(),
+            range_counters: std::collections::HashMap::new(),
             cleanup_order: Vec::new(),
             cleanup_count: 0,
             place_overrides: Vec::new(),
@@ -523,7 +526,9 @@ impl<'a> Builder<'a> {
         let mut loop_notes = LoopNotes::default();
         for (index, decl) in self.function.locals.iter().enumerate() {
             if let Some((span, assert)) = decl.simd {
-                loop_notes.simd.push(SimdLoop { local: self.local_map[index], span, assert, verdict: None });
+                // The loop is its counter's (a counted loop counts with one of its own).
+                let local = self.local_map[index];
+                loop_notes.simd.push(SimdLoop { local: self.range_counters.get(&local).copied().unwrap_or(local), span, assert, verdict: None });
             }
             if decl.declared_reduction {
                 loop_notes.declared_reductions.push(self.local_map[index]);
@@ -1322,12 +1327,24 @@ impl<'a> Builder<'a> {
         body: &'a hir::Block,
         else_block: Option<&'a hir::Block>,
     ) {
-        let counter = self.local_map[local.0 as usize];
+        let name = self.local_map[local.0 as usize];
         let ty = self.function.local(local).ty;
         let counter_mark = self.owned.len();
 
-        self.push(StmtKind::StorageLive(counter));
-        self.owns(counter);
+        // `[OWN-9]`, `[CTL-3]` — each turn binds the name to a value of its own. A body that hands the
+        // name over (`d.push_back(i)` to an `owns` parameter) ends only that turn's: the loop then
+        // counts with a counter of its own and gives the name each turn's value. Any other loop counts
+        // with the name itself, the same program in fewer locals.
+        self.push(StmtKind::StorageLive(name));
+        self.owns(name);
+        let counter = if self.hands_over(body, local) {
+            let counter = self.temp(ty, start.span);
+            self.range_counters.insert(name, counter);
+            self.push(StmtKind::StorageLive(counter));
+            counter
+        } else {
+            name
+        };
         self.lower_into(Place::local(counter), start);
 
         // The end is read once, so a loop cannot be changed under itself by
@@ -1368,6 +1385,9 @@ impl<'a> Builder<'a> {
             scopes: self.scopes.len(),
         });
         self.current = body_bb;
+        if counter != name {
+            self.push(StmtKind::Assign { place: Place::local(name), rvalue: Rvalue::Use(Operand::Copy(Place::local(counter))) });
+        }
         self.lower_block(body);
         self.goto_if_open(step_bb);
         self.loops.pop();
@@ -1914,10 +1934,11 @@ impl<'a> Builder<'a> {
         self.current = join;
     }
 
+    /// `[OWN-6]` — `mem.drop(x)` ends `x` now, for every type, numbers included (`[OWN-9]`).
     fn lower_mem_drop(&mut self, value: &'a hir::Expr, elem: Ty, span: ember_span::Span) {
         let operand = match &value.kind {
             hir::ExprKind::Local(_) if self.types.needs_drop(elem) => Operand::Move(self.lower_place(value)),
-            _ => self.lower_operand(value),
+            _ => self.lower_operand_handed(value),
         };
         self.at(span);
         let temp = self.temp(elem, span);
@@ -2635,7 +2656,9 @@ impl<'a> Builder<'a> {
                         operand
                     } else {
                         match modes.get(index) {
-                            Some(hir::Mode::Owned) => self.lower_operand(a),
+                            // `[CORO-1]` — `yield e` gives its value as `=` does: a number is copied.
+                            Some(hir::Mode::Owned) if coroutines::is_yield(&symbol) => self.lower_operand(a),
+                            Some(hir::Mode::Owned) => self.lower_operand_handed(a),
                             _ => {
                                 lends |= self.lends_own_object(a);
                                 self.lower_operand_borrowed(a)
@@ -2673,7 +2696,7 @@ impl<'a> Builder<'a> {
                             self.plain_temps.push(local);
                         }
                         lowered_args[index] = Some(if modes[index] == hir::Mode::Owned {
-                            self.read(Place::local(local), ty)
+                            self.handed(self.read(Place::local(local), ty), ty)
                         } else {
                             Operand::Copy(Place::local(local))
                         });
@@ -2786,7 +2809,7 @@ impl<'a> Builder<'a> {
                             }
                             operand
                         }
-                        Some(hir::Mode::Owned) => self.lower_operand(arg),
+                        Some(hir::Mode::Owned) => self.lower_operand_handed(arg),
                         _ => self.lower_operand_borrowed(arg),
                     };
                     explicit[index] = Some(operand);
@@ -2893,7 +2916,7 @@ impl<'a> Builder<'a> {
                             callable_modes.as_ref().and_then(|modes| modes.get(index)),
                             Some(ember_types::FnParamMode::Owned)
                         ) {
-                            self.lower_operand(a)
+                            self.lower_operand_handed(a)
                         } else {
                             self.lower_operand_borrowed(a)
                         }
@@ -7264,7 +7287,7 @@ impl<'a> Builder<'a> {
                 let Some(arg) = args.get(index) else { continue };
                 let Some(param) = function.params.get(index + 1) else { continue };
                 let operand = match param.mode {
-                    hir::Mode::Owned => self.lower_operand(arg),
+                    hir::Mode::Owned => self.lower_operand_handed(arg),
                     _ => self.lower_operand_borrowed(arg),
                 };
                 lowered_args[index] = Some(operand);
@@ -7339,7 +7362,7 @@ impl<'a> Builder<'a> {
         let mut call_args = vec![Operand::Copy(Place::local(base_receiver))];
         for (arg, param) in args.iter().zip(function.params.iter().skip(1)) {
             let operand = match param.mode {
-                hir::Mode::Owned => self.lower_operand(arg),
+                hir::Mode::Owned => self.lower_operand_handed(arg),
                 _ => self.lower_operand_borrowed(arg),
             };
             call_args.push(operand);
@@ -7446,6 +7469,51 @@ impl<'a> Builder<'a> {
     /// `[MIR-2]` — a non-`Copy` place is moved, not copied.
     fn read(&self, place: Place, ty: Ty) -> Operand {
         if self.types.is_copy(ty) { Operand::Copy(place) } else { Operand::Move(place) }
+    }
+
+    /// `[OWN-9]` — the value of a place handed over, whatever its type, numbers included: the place
+    /// ends, and a later use of it is `E3040`. A `Copy` value whose copy is counted (a class handle, a
+    /// `Weak` or `Shared` handle, a struct holding one: one that needs a drop) is read as before until
+    /// objects and links stop being `Copy` (M4: A1-9, A3-2, A3-3).
+    /// A `Copy` function value is lent, not given: it may be called again (`[STD-19]`, ODR-240), and
+    /// one whose call gives a capture away is not `Copy`.
+    fn handed(&self, operand: Operand, ty: Ty) -> Operand {
+        match operand {
+            Operand::Copy(place) if !self.types.needs_drop(ty) && !matches!(self.types.kind(ty), TyKind::Fn { .. } | TyKind::FnItem { .. }) => Operand::Move(place),
+            operand => operand,
+        }
+    }
+
+    /// `[OWN-9]` — whether `body` hands `local` over: gives it, by its name, as an argument for an
+    /// `owns` parameter (of a function, a method, an interface's method or a callable value) or to
+    /// `mem.drop`.
+    fn hands_over(&self, body: &'a hir::Block, local: hir::LocalId) -> bool {
+        let named = |arg: &hir::Expr| matches!(arg.kind, hir::ExprKind::Local(found) if found == local);
+        let mut found = false;
+        hir::visit_block(body, &mut |expr| match &expr.kind {
+            hir::ExprKind::Call { callee, args, .. } => {
+                let function = self.function_of(*callee);
+                found |= !coroutines::is_yield(&function.symbol)
+                    && args.iter().zip(&function.params).any(|(arg, param)| param.mode == hir::Mode::Owned && named(arg));
+            }
+            hir::ExprKind::InterfaceCall { args, modes, .. } => {
+                found |= args.iter().zip(modes).any(|(arg, mode)| *mode == hir::Mode::Owned && named(arg));
+            }
+            hir::ExprKind::CallIndirect { callee, args, .. } => {
+                if let TyKind::Fn { params, .. } = self.types.kind(callee.ty) {
+                    found |= args.iter().zip(params).any(|(arg, param)| param.mode == ember_types::FnParamMode::Owned && named(arg));
+                }
+            }
+            hir::ExprKind::Builtin { which: hir::Builtin::MemDrop { .. }, args } => found |= args.first().is_some_and(named),
+            _ => {}
+        });
+        found
+    }
+
+    /// `[OWN-9]` — an argument for an `owns` parameter: handed over.
+    fn lower_operand_handed(&mut self, expr: &'a hir::Expr) -> Operand {
+        let operand = self.lower_operand(expr);
+        self.handed(operand, expr.ty)
     }
 
     /// A class handle, whose object the borrow checker cannot see other
