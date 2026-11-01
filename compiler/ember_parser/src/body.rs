@@ -1345,17 +1345,11 @@ impl Parser<'_> {
                 );
                 ExprKind::Lambda(self.parse_lambda(allow_block_lambda))
             }
-            // `[GRM-15]` — `owns` before any other value hands it to a place that owns it alone,
-            // which ownership in types builds (milestone M3).
+            // `[GRM-15]` — `owns` before any other value hands it over; where it may stand is the
+            // checker's, which sees the line and the value's type (`b = owns n` for a number).
             TokenKind::Keyword(Kw::Owns) => {
-                let span = self.span();
                 self.bump();
-                self.report(
-                    Diagnostic::error(codes::E0900, span, "`owns` before a value here is not built by this compiler yet")
-                        .note("it is taken before a `for` loop's iterable, a comprehension's and a `match`'s scrutinee [GRM-15]"),
-                );
-                // `[IDE-3]` — the value it marks, which is checked as written.
-                self.parse_expr_bp(BP_CAST, allow_block_lambda).kind
+                ExprKind::Owned(Box::new(self.parse_expr_bp(BP_CAST, allow_block_lambda)))
             }
             TokenKind::Punct(Punct::LParen) => {
                 self.bump();

@@ -35,17 +35,32 @@
 >   M2's slice 4 (`cf84b6da`, `4700ac8e`: `used_after`, `read_while`/`changed_while`, `lets_this_out`; D-943,
 >   D-944 missing summary facts fixed); slice 6 measured (102 programs make loose values; waits for a test);
 >   slices 1, 5, 7 go with M3's first summary check (slice 7 brings E7012).
-> - **M3 begun: A1-2 (`[OWN-9]`, `[OWN-6]`), not committed yet:** an argument for an `owns` parameter (direct,
+> - **M3 begun: A1-2 (`[OWN-9]`, `[OWN-6]`), `ff8b8216`:** an argument for an `owns` parameter (direct,
 >   method, indirect, interface) and `mem.drop`'s is handed over for every type, numbers included (`handed` in
 >   `lower.rs`); counted values (class handles, `Weak`/`Shared`, a struct holding one) and function values
 >   (`[STD-19]`, ODR-240: lent) are read as before until M4. Kept as `=` gives: a `yield` (the spec's own
 >   `[CORO-1]` example), a collection literal's elements, `copy of n` (now a value of its own). A counted loop
 >   whose body hands its name over counts with a counter of its own (`hands_over`); any other keeps today's
 >   shape, which the vectoriser and lints read. `std/src/ecs.em` writes `copy of key` twice; three tests write
->   `copy of` (STD-7, HND-3, LNT-6). Left in A1-2: `b = owns n` (E0900 today) and E0109's new cases.
+>   `copy of` (STD-7, HND-3, LNT-6).
+> - **A1-2 finished:** `b = owns n` (and `b: T = owns n`) hands a number over (`Builtin::HandOver`, a move in MIR);
+>   `owns` before a name `=` already hands over is `E0109` with `[OWN-9]`'s words; every other `owns` before a
+>   value stays `E0900` (the parser leaves it to the checker now). Found by the verification run and fixed: a loop
+>   handing its number to a class `init` or through a stored function item (D-945); `mem.replace`'s `owns new`
+>   (D-946); verdict 144's help given past the verdict, for a result pointing only into parameters `from` does not
+>   name (D-947). A test change for the owner: `GRM-42/reject_capture_words_until_built` line 13 `h = owns score`
+>   (now built) is `h = owns flag` (N31), same `E0900`.
+> - **OPEN ODRs N31, N32** (decisions.md; owner: "Ask me about the ODRs later for now just continue"): `owns` before a `Copy`
+>   value that is no number; `E0109`'s words before an argument and `return a`, and an argument of a parameter that
+>   only views it.
+> - **Verification run (owner 13:33: "Go ahead all at once"):** phase 1 (5 read-only finders) found 45 possible
+>   mismatches, saved in `target/verify-0915/phase1/<job>.json`; phase 2 (5 verifiers, `wf_15b94ed1-84c`) checks
+>   each. The confirmed ones are fixed one by one, a spec gap is an ODR, and each goes to the owner. Tried and undone:
+>   refusing a number handed over out of a view (`drops.rs` skips every type with no drop) failed 16 tests, std's own
+>   `Set`/`Map` code and comprehensions among them; it waits for phase 2.
 > - **OPEN ODR N30** (decisions.md): should `ember fmt --migrate` write `copy of` where a 0.9.10 caller reused a
 >   number it gave to an `owned` parameter? `[CLI-20]` does not say.
-> - **Next:** the rest of A1-2, then A1-3 (the hand-over messages), A1-4; the push gate before any push.
+> - **Next:** phase 2's confirmed list, then A1-3 (the hand-over messages), A1-4; the push gate before any push.
 
 > **2026-10-31, late night — AUTONOMOUS (owner asleep), solo. START HERE.** Owner: "run autonomously I'll check
 > progress in the morning and ask for ODR updates, no agents or workflow for now ... monitor the wifi and power

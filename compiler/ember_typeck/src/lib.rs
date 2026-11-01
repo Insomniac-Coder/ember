@@ -3205,6 +3205,9 @@ struct Checker<'a> {
     /// another type names the declaration in its help. The span is checked on
     /// use because local ids restart in every function.
     literal_locals: HashMap<LocalId, Span>,
+    /// `[GRM-15]`, `[OWN-9]` — an `owns e` that is the whole value of an `=` line, by its span, with
+    /// what that line gives it to as written (`b`, `e.mesh`, `b: Mesh`).
+    owns_at_equals: HashMap<Span, String>,
     /// `[TYP-23]` — the type expected of the method call being synthesised,
     /// handed from `synth_with_expectation` to `synth_method_call` for one
     /// hop and taken there before anything else is synthesised, so a nested
@@ -4023,6 +4026,7 @@ impl<'a> Checker<'a> {
             current_generics: Vec::new(),
             local_ranges: HashMap::new(),
             literal_locals: HashMap::new(),
+            owns_at_equals: HashMap::new(),
             method_expectation: None,
             lambda_changed: HashMap::new(),
             routed_method: None,
@@ -26460,6 +26464,12 @@ impl<'a> Checker<'a> {
                     self.error(codes::E1010, stmt.span, "this pattern is not supported yet");
                     return;
                 };
+                if let Some(init) = init
+                    && matches!(init.kind, ast::ExprKind::Owned(_))
+                    && let Some(given) = self.written_line(ty.as_ref().map_or(pattern.span, |t| pattern.span.to(t.span)))
+                {
+                    self.owns_at_equals.insert(init.span, given);
+                }
                 let declared = ty.as_ref().map(|t| self.resolve_type(t));
                 let init = match (init, declared) {
                     (Some(expr), Some(expected)) => Some(self.check_expr(expr, expected)),
@@ -26510,6 +26520,12 @@ impl<'a> Checker<'a> {
                     return;
                 }
                 let target = &targets[0];
+                if op.is_none()
+                    && matches!(value.kind, ast::ExprKind::Owned(_))
+                    && let Some(given) = self.written_line(target.span)
+                {
+                    self.owns_at_equals.insert(value.span, given);
+                }
 
                 // `[SOA-1]` — a flattened field written whole writes its columns.
                 if matches!(&target.kind, ast::ExprKind::Field { .. })
@@ -38524,6 +38540,7 @@ impl<'a> Checker<'a> {
             }
 
             ast::ExprKind::CopyOf(operand) => self.synth_copy_of(operand, span),
+            ast::ExprKind::Owned(inner) => self.synth_owns(inner, span),
             // `[BRW-*]` — `ref place` and `ref mut place`, the explicit forms.
             // They are needed only when initialising a `ref`-typed local or a
             // view struct's field; every other borrow is implicit in a
@@ -46843,6 +46860,37 @@ impl<'a> Checker<'a> {
         }
         let (ty, at) = (expr.ty, expr.span);
         Expr { ty, kind: ExprKind::Block { block: Block { stmts: Vec::new(), span: at }, value: Box::new(expr) }, span: at }
+    }
+
+    /// `[GRM-15]`, `[OWN-9]` — `owns e` other than before a `for` loop's, a comprehension's or a
+    /// `match`'s source. As the whole value of an `=` line, before a name: a number is handed over,
+    /// since `=` copies one (`b = owns n` ends `n`), and a value `=` already hands over is `E0109`.
+    /// Every other `owns` before a value is not built yet.
+    fn synth_owns(&mut self, inner: &ast::Expr, span: Span) -> Expr {
+        let given = self.owns_at_equals.get(&span).cloned();
+        let value = self.synth(inner);
+        if value.ty == self.common.error {
+            return value;
+        }
+        if let Some(given) = given
+            && root_local(&value.kind).is_some()
+        {
+            if self.types.is_numeric(value.ty) {
+                return Expr { ty: value.ty, kind: ExprKind::Builtin { which: Builtin::HandOver, args: vec![value] }, span };
+            }
+            // VII.1 — `=` copies only a `Copy` type's value; a counted one (a class handle, a `shares`
+            // value) is none, though this compiler still keeps a count for it.
+            if !self.types.is_copy(value.ty) || self.types.needs_drop(value.ty) {
+                let name = self.written_line(inner.span).unwrap_or_else(|| "it".to_string());
+                self.error(codes::E0109, span, format!("`{given} = {name}` already hands `{name}` over; remove `owns`"));
+                return value;
+            }
+        }
+        self.sink.emit(
+            Diagnostic::error(codes::E0900, span, "`owns` before a value here is not built by this compiler yet")
+                .note("it is taken before a `for` loop's iterable, a comprehension's and a `match`'s scrutinee, and in `b = owns n` for a number [GRM-15]"),
+        );
+        value
     }
 
     fn synth_method_call_on(

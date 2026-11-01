@@ -1728,7 +1728,8 @@ impl<'a> Builder<'a> {
         // Function arguments evaluate left to right: resolve and borrow the
         // destination place before evaluating the owned replacement.
         let target = self.lower_operand(target);
-        let value = self.lower_operand(value);
+        // `[OWN-6]`, `[OWN-9]` — `owns new: T`, handed over as every `owns` argument is.
+        let value = self.lower_operand_handed(value);
         self.at(span);
         let next = self.new_block();
         self.terminate(Terminator::Call {
@@ -3107,6 +3108,10 @@ impl<'a> Builder<'a> {
             } => {
                 self.lower_mem_drop(&args[0], *elem, expr.span);
                 self.push(StmtKind::Assign { place, rvalue: Rvalue::Use(Operand::Const(Const::Void)) });
+            }
+            hir::ExprKind::Builtin { which: hir::Builtin::HandOver, args } => {
+                let handed = Operand::Move(self.lower_place(&args[0]));
+                self.push(StmtKind::Assign { place, rvalue: Rvalue::Use(handed) });
             }
             hir::ExprKind::Builtin {
                 which: hir::Builtin::AlignOf,
@@ -6774,6 +6779,8 @@ impl<'a> Builder<'a> {
                 let place = self.lower_place(expr);
                 self.read(place, expr.ty)
             }
+            // `[OWN-9]` — `b = owns n`: the place itself moves.
+            hir::ExprKind::Builtin { which: hir::Builtin::HandOver, args } => Operand::Move(self.lower_place(&args[0])),
             // Anything else needs a temporary to hold its value.
             _ => {
                 let temp = self.temp(expr.ty, expr.span);
@@ -7485,10 +7492,14 @@ impl<'a> Builder<'a> {
     }
 
     /// `[OWN-9]` — whether `body` hands `local` over: gives it, by its name, as an argument for an
-    /// `owns` parameter (of a function, a method, an interface's method or a callable value) or to
-    /// `mem.drop`.
+    /// `owns` parameter (of a function, a method, a class's `init`, an interface's method or a
+    /// callable value), to `mem.drop`, or in `b = owns i`.
     fn hands_over(&self, body: &'a hir::Block, local: hir::LocalId) -> bool {
         let named = |arg: &hir::Expr| matches!(arg.kind, hir::ExprKind::Local(found) if found == local);
+        // A class's `init` takes the object first, which no argument gives.
+        let to_init = |init: hir::DefId, args: &[hir::Expr]| {
+            args.iter().zip(self.function_of(init).params.iter().skip(1)).any(|(arg, param)| param.mode == hir::Mode::Owned && named(arg))
+        };
         let mut found = false;
         hir::visit_block(body, &mut |expr| match &expr.kind {
             hir::ExprKind::Call { callee, args, .. } => {
@@ -7496,15 +7507,24 @@ impl<'a> Builder<'a> {
                 found |= !coroutines::is_yield(&function.symbol)
                     && args.iter().zip(&function.params).any(|(arg, param)| param.mode == hir::Mode::Owned && named(arg));
             }
+            hir::ExprKind::ClassNew { init, args, .. } => found |= to_init(*init, args),
+            hir::ExprKind::Builtin { which: hir::Builtin::ClassNew { init: Some(init), .. } | hir::Builtin::ClassSuperInit { init, .. }, args } => {
+                found |= to_init(*init, args);
+            }
             hir::ExprKind::InterfaceCall { args, modes, .. } => {
                 found |= args.iter().zip(modes).any(|(arg, mode)| *mode == hir::Mode::Owned && named(arg));
             }
             hir::ExprKind::CallIndirect { callee, args, .. } => {
-                if let TyKind::Fn { params, .. } = self.types.kind(callee.ty) {
+                // ODR-278 — a function item is called with its shape's arguments.
+                let callable = match self.types.kind(callee.ty) {
+                    TyKind::FnItem { shape, .. } => *shape,
+                    _ => callee.ty,
+                };
+                if let TyKind::Fn { params, .. } = self.types.kind(callable) {
                     found |= args.iter().zip(params).any(|(arg, param)| param.mode == ember_types::FnParamMode::Owned && named(arg));
                 }
             }
-            hir::ExprKind::Builtin { which: hir::Builtin::MemDrop { .. }, args } => found |= args.first().is_some_and(named),
+            hir::ExprKind::Builtin { which: hir::Builtin::MemDrop { .. } | hir::Builtin::HandOver, args } => found |= args.first().is_some_and(named),
             _ => {}
         });
         found

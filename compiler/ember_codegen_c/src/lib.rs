@@ -10226,6 +10226,7 @@ impl Emitter<'_> {
                     | Builtin::MemSwap { .. }
                     | Builtin::MemForget { .. }
                     | Builtin::MemDrop { .. }
+                    | Builtin::HandOver
                     | Builtin::AlignOf
                     | Builtin::UnsafeCellIntoInner
                     | Builtin::RefCellBorrow

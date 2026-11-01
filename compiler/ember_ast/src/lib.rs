@@ -827,9 +827,10 @@ pub enum ExprKind {
     /// parsed at the lowest precedence and never as an atom, so a jump is
     /// always the whole of the expression it appears in.
     Jump(Jump),
-    /// `[GRM-15]` — `owned e`, permitted only as the iterable of a `for` and
-    /// the scrutinee of a `match`, where it consumes `e` (`[CTL-1]`,
-    /// `[GRM-13]`). Anywhere else in expression position is `E0109`.
+    /// `[GRM-15]` — `owns e`, which hands `e` over: before the iterable of a
+    /// `for` and the scrutinee of a `match`, where it consumes `e` (`[CTL-1]`,
+    /// `[GRM-13]`), and in `b = owns n` for a number (`[OWN-9]`). The checker
+    /// says where else it may stand.
     Owned(Box<Expr>),
     /// `[GRM-22]` — `yield_expr := "yield" [ expression ]`. It occupies
     /// `return`'s grammatical position and precedence, but unlike a `Jump` its

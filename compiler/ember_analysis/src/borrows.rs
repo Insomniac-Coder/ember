@@ -3255,10 +3255,11 @@ fn check_return_regions(
                 .chain(offenders.iter().copied())
                 .map(|l| format!("`{}`", body.local(l).name.as_deref().map_or_else(|| format!("_{}", l.0), written)))
                 .collect();
+            let into_named = pointed.len() > offenders.len();
             (
                 format!("the returned view points into `{name}`, but its first line says `from {}`", named.join(", ")),
-                match (pointed.len(), allowed_names.len()) {
-                    (2.., _) => format!(
+                match (into_named, allowed_names.len()) {
+                    (true, _) => format!(
                         "remove `from {}`: the result may point into {}, and with no `from` it points into each of them",
                         named.join(", "),
                         pointed.join(" and ")

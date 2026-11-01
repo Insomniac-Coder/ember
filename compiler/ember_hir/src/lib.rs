@@ -2187,6 +2187,10 @@ pub enum Builtin {
     /// a retained copy and end nothing (D-347, ODR-063), so the place is
     /// moved. MIR lowers it; it never reaches the backend.
     MemDrop { elem: Ty },
+    /// `[OWN-9]`, `[GRM-15]` — `b = owns n`: the number in the place `args[0]` is handed over, so
+    /// the place ends there (`=` alone copies a number). MIR lowers it to a move; it never reaches
+    /// the backend.
+    HandOver,
     /// `[SPN-2]` — `s.len()`. The length field of the view.
     SpanLen,
     /// `[SPN-2]` — `s.get(i) -> Option[ref T]`, "the checked-without-panic
@@ -2587,6 +2591,7 @@ impl Builtin {
             Builtin::ViewsOverlap { .. } => "views_overlap",
             Builtin::MemForget { .. } => "forget",
             Builtin::MemDrop { .. } => "drop",
+            Builtin::HandOver => "owns",
             // `[RNG-10]`'s construction set. Named as they are
             // written, so a diagnostic quoting one reads as source.
             Builtin::SpanLen => "len",
