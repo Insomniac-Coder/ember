@@ -14459,7 +14459,26 @@ impl<'a> Checker<'a> {
         members: &[ast::Member],
         span: Span,
     ) {
-        self.collect_implements_in(ty, implements, members, span, Some(false))
+        // `[TYP-43]` (ODR-111) — "`Copy` comes from `@derive(Copy)`, and `Sized` is never written: each
+        // of these written by hand is `E2040`", on a type's own first line as in an `extend`
+        // (`collect_markers`).
+        let mut kept = Vec::new();
+        for entry in implements {
+            let resolved = interface_name(entry).map(|name| self.resolve_name(name));
+            match resolved.as_ref().map(|name| name.as_str()) {
+                Some("std.core.Copy") => self.sink.emit(
+                    Diagnostic::error(codes::E2040, entry.span, "`Copy` comes from `@derive(Copy)`")
+                        .help("declare the type `@derive(Copy)`")
+                        .note("a copy of a value that owns something would free it twice, whatever is promised; one that owns nothing is `@derive(Copy)` [STR-5], ODR-111"),
+                ),
+                Some("std.core.Sized") => self.sink.emit(
+                    Diagnostic::error(codes::E2040, entry.span, "`Sized` is never written")
+                        .note("a marker interface is derived from what a type is (Part IV §8)"),
+                ),
+                _ => kept.push(entry.clone()),
+            }
+        }
+        self.collect_implements_in(ty, &kept, members, span, Some(false))
     }
 
     /// `written_unsafe`: whether the block is an `unsafe extend` (`Some(true)`), a type's header or
@@ -26674,7 +26693,7 @@ impl<'a> Checker<'a> {
                             ast::Arg { name: None, value: value.clone(), span: value.span },
                         ];
                         let call = self.synth_bound_method(slot, param, receiver, name, &call_args, Vec::new(), stmt.span);
-                        out.push(Stmt::Expr(call));
+                        out.push(Stmt::Expr(self.value_as_equals_gives(call)));
                         return;
                     }
                     if self.lookup_method(probe.ty, Symbol::intern("index_set")).is_some()
@@ -26688,7 +26707,7 @@ impl<'a> Checker<'a> {
                             ast::Arg { name: None, value: value.clone(), span: value.span },
                         ];
                         let call = self.synth_registered_method(receiver, base.span, name, &call_args, Vec::new(), stmt.span);
-                        out.push(Stmt::Expr(call));
+                        out.push(Stmt::Expr(self.value_as_equals_gives(call)));
                         return;
                     }
                 }
@@ -46863,6 +46882,17 @@ impl<'a> Checker<'a> {
         // `[OWN-9]`, `[OWN-8]` — a copy of the program's own, never the place itself: a `Copy` type's
         // `clone` is the place, which an `owns` argument would hand over (`f(copy of n)` keeps `n`).
         Self::a_value(copy)
+    }
+
+    /// `[OWN-9]` — `m[k] = v` is an `=` line: `v` is given to `index_set` as `=` gives it, a number
+    /// copied, whatever `index_set` takes (`owns v: V`).
+    fn value_as_equals_gives(&self, mut call: Expr) -> Expr {
+        if let ExprKind::Call { args, .. } | ExprKind::InterfaceCall { args, .. } = &mut call.kind
+            && let Some(value) = args.pop()
+        {
+            args.push(if self.types.is_copy(value.ty) { Self::a_value(value) } else { value });
+        }
+        call
     }
 
     /// `[LT-1]` — "a call whose result type is `ref mut T` or `ref T` is a place": what it returns is

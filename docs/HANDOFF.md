@@ -81,9 +81,12 @@
 >   (call-results 2: `[BRW-10]` narrows what the call changes, `[LT-1]` points the result into the whole object;
 >   one borrow serves both today, so the fix is two: the call's, narrowed, ending with it, and the result's, the
 >   whole object, read-only; dropping the narrowing for such methods would refuse `w.push_and_get(1)` in a loop
->   over `w.names`, which `[BRW-10]` allows); a `ref mut T` call result as a place (4); a number handed over out of a view (hand-over 2:
->   std and 16 tests) and function values handed over (7); `implements Copy` ignored (new, TYP-43); then A1-3, A1-4;
->   the push gate before any push.
+>   over `w.names`, which `[BRW-10]` allows); `implements Copy` ignored (new, TYP-43); then A1-3, A1-4; the push gate
+>   before any push (owner, afternoon: a game is downloading, no benchmarking for at least an hour, so no push before
+>   then).
+> - **Done after `61928b83`:** D-962 (a number handed over out of a view is `E3013`/`E3011`, as a `String`; `m[k] = v`
+>   gives `v` as `=` does; no test's verdict changed), D-963 (a function value is lent only to the standard library's
+>   functions, ODR-240; OPEN ODR N36 asks whether `[STD-19]`'s 0.9.15 text replaces that).
 
 > **2026-10-31, late night — AUTONOMOUS (owner asleep), solo. START HERE.** Owner: "run autonomously I'll check
 > progress in the morning and ask for ODR updates, no agents or workflow for now ... monitor the wifi and power

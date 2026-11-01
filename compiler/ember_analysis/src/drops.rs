@@ -1029,13 +1029,15 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
         // nothing is a bitwise copy the analyses already treat as one (D-041
         // is the double-destroy, and a `Panel` of `i32`s has nothing to
         // destroy twice — `retitle` in `tests/conformance/MOD-2/` moves a
-        // borrowed one on every run). `Copy` types never reach here at all:
-        // lowering emits `Copy` for them. A value holding a mutable borrow (a
-        // closure that writes its captures, `[CLO-1]`) is not a copy either:
-        // two copies would be two live mutable borrows of one place (D-422,
-        // the `E3050` a direct copy gets).
+        // borrowed one on every run). A `Copy` value moves only where it is
+        // handed over (`[OWN-9]`: an `owns` argument, `b = owns n`), and is
+        // checked as any other: a number is no more a view's to give than a
+        // `String` is (`[EXP-6]`). A value holding a mutable borrow (a closure
+        // that writes its captures, `[CLO-1]`) is not a copy either: two copies
+        // would be two live mutable borrows of one place (D-422, the `E3050` a
+        // direct copy gets).
         let moved = moved_place_ty(place, body, types);
-        if !types.needs_drop(moved) && !holds_mutable_borrow(types, moved, 0) {
+        if !types.needs_drop(moved) && !holds_mutable_borrow(types, moved, 0) && !types.is_copy(moved) {
             return;
         }
         // `[EXP-6]` (D-599) — an element of an array, `Array`, `Span` or `SoA` column stays in its

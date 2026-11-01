@@ -1729,7 +1729,7 @@ impl<'a> Builder<'a> {
         // destination place before evaluating the owned replacement.
         let target = self.lower_operand(target);
         // `[OWN-6]`, `[OWN-9]` — `owns new: T`, handed over as every `owns` argument is.
-        let value = self.lower_operand_handed(value);
+        let value = self.lower_operand_handed(value, false);
         self.at(span);
         let next = self.new_block();
         self.terminate(Terminator::Call {
@@ -1939,7 +1939,7 @@ impl<'a> Builder<'a> {
     fn lower_mem_drop(&mut self, value: &'a hir::Expr, elem: Ty, span: ember_span::Span) {
         let operand = match &value.kind {
             hir::ExprKind::Local(_) if self.types.needs_drop(elem) => Operand::Move(self.lower_place(value)),
-            _ => self.lower_operand_handed(value),
+            _ => self.lower_operand_handed(value, false),
         };
         self.at(span);
         let temp = self.temp(elem, span);
@@ -2625,6 +2625,8 @@ impl<'a> Builder<'a> {
                 let write_back_mark = self.write_backs.len();
                 let function = self.function_of(*callee);
                 let symbol = function.symbol.clone();
+                // ODR-240 — the standard library's functions borrow a named function given to them.
+                let lent = std_symbol(&function.symbol);
                 // `[FN-1]` — the mode decides. `owned` consumes, so the
                 // argument is a move and `[OWN-3]`'s analysis sees it;
                 // borrowed and `mut` do not, and reading the place for one
@@ -2659,7 +2661,7 @@ impl<'a> Builder<'a> {
                         match modes.get(index) {
                             // `[CORO-1]` — `yield e` gives its value as `=` does: a number is copied.
                             Some(hir::Mode::Owned) if coroutines::is_yield(&symbol) => self.lower_operand(a),
-                            Some(hir::Mode::Owned) => self.lower_operand_handed(a),
+                            Some(hir::Mode::Owned) => self.lower_operand_handed(a, lent),
                             _ => {
                                 lends |= self.lends_own_object(a);
                                 self.lower_operand_borrowed(a)
@@ -2697,7 +2699,7 @@ impl<'a> Builder<'a> {
                             self.plain_temps.push(local);
                         }
                         lowered_args[index] = Some(if modes[index] == hir::Mode::Owned {
-                            self.handed(self.read(Place::local(local), ty), ty)
+                            self.handed(self.read(Place::local(local), ty), ty, lent)
                         } else {
                             Operand::Copy(Place::local(local))
                         });
@@ -2810,7 +2812,7 @@ impl<'a> Builder<'a> {
                             }
                             operand
                         }
-                        Some(hir::Mode::Owned) => self.lower_operand_handed(arg),
+                        Some(hir::Mode::Owned) => self.lower_operand_handed(arg, interface.as_str().starts_with("std.")),
                         _ => self.lower_operand_borrowed(arg),
                     };
                     explicit[index] = Some(operand);
@@ -2917,7 +2919,7 @@ impl<'a> Builder<'a> {
                             callable_modes.as_ref().and_then(|modes| modes.get(index)),
                             Some(ember_types::FnParamMode::Owned)
                         ) {
-                            self.lower_operand_handed(a)
+                            self.lower_operand_handed(a, false)
                         } else {
                             self.lower_operand_borrowed(a)
                         }
@@ -7294,7 +7296,7 @@ impl<'a> Builder<'a> {
                 let Some(arg) = args.get(index) else { continue };
                 let Some(param) = function.params.get(index + 1) else { continue };
                 let operand = match param.mode {
-                    hir::Mode::Owned => self.lower_operand_handed(arg),
+                    hir::Mode::Owned => self.lower_operand_handed(arg, std_symbol(&function.symbol)),
                     _ => self.lower_operand_borrowed(arg),
                 };
                 lowered_args[index] = Some(operand);
@@ -7369,7 +7371,7 @@ impl<'a> Builder<'a> {
         let mut call_args = vec![Operand::Copy(Place::local(base_receiver))];
         for (arg, param) in args.iter().zip(function.params.iter().skip(1)) {
             let operand = match param.mode {
-                hir::Mode::Owned => self.lower_operand_handed(arg),
+                hir::Mode::Owned => self.lower_operand_handed(arg, std_symbol(&function.symbol)),
                 _ => self.lower_operand_borrowed(arg),
             };
             call_args.push(operand);
@@ -7482,11 +7484,13 @@ impl<'a> Builder<'a> {
     /// ends, and a later use of it is `E3040`. A `Copy` value whose copy is counted (a class handle, a
     /// `Weak` or `Shared` handle, a struct holding one: one that needs a drop) is read as before until
     /// objects and links stop being `Copy` (M4: A1-9, A3-2, A3-3).
-    /// A `Copy` function value is lent, not given: it may be called again (`[STD-19]`, ODR-240), and
-    /// one whose call gives a capture away is not `Copy`.
-    fn handed(&self, operand: Operand, ty: Ty) -> Operand {
+    /// `lent` — the function called is the standard library's, which borrows a named function given
+    /// to it (ODR-240, `[STD-19]`): a `Copy` function value is then lent, not given, and may be called
+    /// again. Any other `owns` parameter takes a function value over as any value (`[OWN-9]`).
+    fn handed(&self, operand: Operand, ty: Ty, lent: bool) -> Operand {
+        let function = matches!(self.types.kind(ty), TyKind::Fn { .. } | TyKind::FnItem { .. });
         match operand {
-            Operand::Copy(place) if !self.types.needs_drop(ty) && !matches!(self.types.kind(ty), TyKind::Fn { .. } | TyKind::FnItem { .. }) => Operand::Move(place),
+            Operand::Copy(place) if !self.types.needs_drop(ty) && !(lent && function) => Operand::Move(place),
             operand => operand,
         }
     }
@@ -7530,10 +7534,10 @@ impl<'a> Builder<'a> {
         found
     }
 
-    /// `[OWN-9]` — an argument for an `owns` parameter: handed over.
-    fn lower_operand_handed(&mut self, expr: &'a hir::Expr) -> Operand {
+    /// `[OWN-9]` — an argument for an `owns` parameter: handed over (`lent`, `handed`).
+    fn lower_operand_handed(&mut self, expr: &'a hir::Expr, lent: bool) -> Operand {
         let operand = self.lower_operand(expr);
-        self.handed(operand, expr.ty)
+        self.handed(operand, expr.ty, lent)
     }
 
     /// A class handle, whose object the borrow checker cannot see other
@@ -7686,4 +7690,9 @@ fn is_plain_data(types: &ember_types::TypeTable, ty: Ty) -> bool {
 fn state_place(place: Place, index: usize, in_cell: bool) -> Place {
     let field = place.field(index);
     if in_cell { field.field(0) } else { field }
+}
+
+/// ODR-240 — whether `symbol` names a function of the standard library: its module path is `std`'s.
+fn std_symbol(symbol: &str) -> bool {
+    symbol.strip_prefix(ember_branding::mangle_prefix().as_str()).is_some_and(|rest| rest.starts_with("3std"))
 }
