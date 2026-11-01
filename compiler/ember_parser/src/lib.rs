@@ -74,6 +74,14 @@ pub(crate) struct Parser<'a> {
     /// `[GRM-40]` — reading 0.9.10's brackets after a name, whose one refusal writes the whole line
     /// above, bounds after `needs` included.
     misplaced_generics: bool,
+    /// `[LT-48]` — see `Module::runtime_params`.
+    runtime_params: Vec<NodeId>,
+    /// `[LEX-14]` — the token at which the statement being read began, where a keyword begins a
+    /// statement unless a name's use follows it (`type = 3`).
+    stmt_start: usize,
+    /// `[LEX-14]` — a name or pattern expected at this token, and the keywords the grammar expects
+    /// right after it (`in` after `for`'s pattern): one of them here is that keyword, not a name.
+    slot_end: (usize, &'static [Kw]),
 }
 
 pub use ember_ast::NESTING_LIMIT;
@@ -103,6 +111,9 @@ impl<'a> Parser<'a> {
             no_send_suffix: false,
             type_params_line: None,
             misplaced_generics: false,
+            runtime_params: Vec::new(),
+            stmt_start: usize::MAX,
+            slot_end: (usize::MAX, &[]),
         }
     }
 
@@ -221,6 +232,27 @@ impl<'a> Parser<'a> {
     /// which `expect_ident` takes with `E1010` (`[LEX-15]`).
     fn at_name(&self) -> bool {
         self.at_ident() || matches!(self.peek(), TokenKind::Keyword(Kw::Owned | Kw::SelfValue))
+    }
+
+    /// `[LEX-14]` — a keyword or a word reserved for a future version, written as the name of a
+    /// field, a parameter or a named argument: the token after it is `next` (`class: int`,
+    /// `in: int`, `S(type=1)`). `expect_ident` takes it with `E0005`.
+    /// `[LEX-14]` — a slot whose name or pattern begins here, followed by one of `ends` (`for` …
+    /// `in`, `from` … `import`, a name … `as`).
+    pub(crate) fn slot_ending_with(&mut self, ends: &'static [Kw]) {
+        self.slot_end = (self.pos, ends);
+    }
+
+    /// `[LEX-14]` — whether the keyword here is the one the grammar expects right after the slot
+    /// that begins here (`for in xs:`): the slot is empty, and the keyword is no name.
+    pub(crate) fn at_slot_end(&self) -> bool {
+        matches!(self.peek(), TokenKind::Keyword(kw) if self.slot_end.0 == self.pos && self.slot_end.1.contains(kw))
+    }
+
+    fn at_keyword_written_as_name(&self, next: Punct) -> bool {
+        matches!(self.peek(), TokenKind::Keyword(_) | TokenKind::Reserved(_))
+            && !matches!(self.peek(), TokenKind::Keyword(Kw::Owned | Kw::SelfValue))
+            && self.at_punct_at(1, next)
     }
 
     /// The line `span` is on, as written and trimmed, with `span`'s text replaced by `with`: the
@@ -350,6 +382,30 @@ impl<'a> Parser<'a> {
                 self.bump();
                 self.report(Diagnostic::error(codes::E1010, span, reserved_word_message(word)));
                 Ident { name: Symbol::intern(if word == Kw::Owned { "owned" } else { "self" }), span }
+            }
+            // `[LEX-14]` — a keyword of the table where a name is expected is `E0005`; the parse goes
+            // on with the word as the name. The keyword the grammar expects after the name is no
+            // name: the name is missing.
+            TokenKind::Keyword(word) if !self.at_slot_end() => {
+                let word = word.as_str();
+                let span = self.span();
+                self.bump();
+                self.report(
+                    Diagnostic::error(codes::E0005, span, format!("`{word}` is a keyword"))
+                        .help(format!("write `r#{word}` to use the word as a name")),
+                );
+                Ident { name: Symbol::intern(word), span }
+            }
+            // `[LEX-15]` — a word reserved for a future version, whose message names the version.
+            TokenKind::Reserved(reserved) => {
+                let reserved = *reserved;
+                let span = self.span();
+                self.bump();
+                self.report(
+                    Diagnostic::error(codes::E0005, span, format!("`{}` is reserved for {}", reserved.as_str(), reserved.planned_version()))
+                        .help(format!("write `r#{}` to use the word as an identifier", reserved.as_str())),
+                );
+                Ident { name: Symbol::intern(reserved.as_str()), span }
             }
             other => {
                 let found = other.to_string();
@@ -610,6 +666,11 @@ impl<'a> Parser<'a> {
                 }
                 continue;
             }
+            // `[GRM-40]` — a line that begins with `[` and is not a type-parameter line, at file
+            // scope: refused, and the next line read as it stands.
+            if self.refuse_bracket_line() {
+                continue;
+            }
             // `[DIA-21]` P2 — `def f():` at file scope is a function.
             self.python_def();
             if !self.at_item_start() {
@@ -680,7 +741,7 @@ impl<'a> Parser<'a> {
         let unsafe_sites = std::mem::take(&mut self.unsafe_sites);
         // ODR-281 — at their count, as a block's statements are (`parse_block_nested`).
         items.shrink_to_fit();
-        Module { directives, imports, items, script, unsafe_sites, local_generators: self.local_generators, span: start.to(self.prev_span()), source: self.src.into() }
+        Module { directives, imports, items, script, unsafe_sites, local_generators: self.local_generators, runtime_params: std::mem::take(&mut self.runtime_params), span: start.to(self.prev_span()), source: self.src.into() }
     }
 
     fn parse_directive(&mut self) -> Option<ember_ast::Directive> {
@@ -767,6 +828,10 @@ impl<'a> Parser<'a> {
         Some(ember_ast::Attribute { id, path, args, span: Span::new(self.file, start as u32, end as u32) })
     }
 }
+
+/// `[GRM-40]` — the one message for a `[...]` line not directly above a function, struct or class.
+pub(crate) const TYPE_PARAMS_LINE: &str =
+    "a `[...]` line gives type parameters, and goes on the line right above the function, struct or class they belong to";
 
 /// `[LEX-15]` — the message for a use of a word reserved and not of Ember, which gives the word to
 /// write.

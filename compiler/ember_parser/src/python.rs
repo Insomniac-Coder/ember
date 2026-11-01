@@ -190,7 +190,8 @@ impl Parser<'_> {
         let start = Span::new(raise.file, raise.start, value.span.start);
         let edits = match message {
             Some((exception, text)) => vec![
-                (start, Replacement::Text("return Err(AnyError.msg(".to_string())),
+                // `[FN-2a]` — `AnyError.msg` takes its message over (`owns text: String`).
+                (start, Replacement::Text("return Err(AnyError.msg(owns ".to_string())),
                 (Span::new(raise.file, exception.start, text.start), Replacement::Text(String::new())),
                 (Span::new(raise.file, text.end, value.span.end), Replacement::Text("))".to_string())),
             ],

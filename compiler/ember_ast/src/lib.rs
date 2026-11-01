@@ -43,6 +43,9 @@ pub struct Module {
     /// `[GRM-28]`, `[GRM-21]` — whether a block holds a `gen fn`, which the coroutine desugaring
     /// lifts to the module (ODR-268).
     pub local_generators: bool,
+    /// `[LT-48]` — the ids of the parameters written `runtime` before their `dyn` type
+    /// (`fn show(p: runtime dyn Picker):`), whose kind is checked while the program runs.
+    pub runtime_params: Vec<NodeId>,
     pub span: Span,
     /// The file's text, for the messages that quote code as written or name its lines.
     pub source: std::sync::Arc<str>,

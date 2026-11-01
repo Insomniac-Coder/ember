@@ -140,7 +140,11 @@ impl Parser<'_> {
         // `outer: for …`.
         // `[EFF-7]` — `@assume_noalloc(…)` begins an expression, not an attribute.
         let attrs = if self.at_assume_noalloc() { Vec::new() } else { self.parse_attributes() };
-        // `[GRM-40]` — above a local function.
+        // `[GRM-40]` — a line that begins with `[` is a type-parameter line above a local function,
+        // and nothing else.
+        if self.refuse_bracket_line() {
+            return None;
+        }
         self.parse_type_params_line();
         if self.type_params_line.is_some() && !(self.at_kw(Kw::Fn) || self.at_kw(Kw::Unsafe) || self.at_kw(Kw::Extern) || self.at_gen_fn()) {
             if let Some((_, span)) = self.type_params_line.take() {
@@ -250,7 +254,7 @@ impl Parser<'_> {
             // `fn_header`'s `extern "C"` too, before or after `unsafe`.
             TokenKind::Keyword(Kw::Fn | Kw::Unsafe | Kw::Extern) | TokenKind::Ident(_)
                 if self.at_kw(Kw::Fn)
-                    && matches!(self.peek_at(1), TokenKind::Ident(_) | TokenKind::RawIdent(_) | TokenKind::Keyword(Kw::Not | Kw::Is))
+                    && matches!(self.peek_at(1), TokenKind::Ident(_) | TokenKind::RawIdent(_) | TokenKind::Keyword(_) | TokenKind::Reserved(_))
                     || self.at_kw(Kw::Unsafe) && (self.at_kw_at(1, Kw::Fn) || self.at_gen_fn_at(1))
                     || self.at_gen_fn() && matches!(self.peek_at(2), TokenKind::Ident(_) | TokenKind::RawIdent(_))
                     || self.at_kw(Kw::Extern) && self.at_fn_at(2)
@@ -356,7 +360,9 @@ impl Parser<'_> {
     /// it is, which name resolution decides; the parser produces `Assign`
     /// either way. `x: T = e` is always a declaration.
     fn parse_expr_statement(&mut self) -> Option<StmtKind> {
+        let outer = std::mem::replace(&mut self.stmt_start, self.pos);
         let first = self.parse_expr();
+        self.stmt_start = outer;
 
         // `x: T [= e]` — a typed declaration.
         if self.at_punct(Punct::Colon) {
@@ -696,6 +702,7 @@ impl Parser<'_> {
                     }
                     let start = self.span();
                     let id = self.next_id();
+                    self.slot_ending_with(&[Kw::If]);
                     let pattern = self.parse_pattern();
                     let guard = self.eat_kw(Kw::If).then(|| self.parse_expr_no_block());
 
@@ -803,6 +810,45 @@ impl Parser<'_> {
         matches!(self.peek(), TokenKind::Keyword(Kw::Yield))
     }
 
+    /// `[LEX-14]` — whether the keyword here is written where a name stands: as an operand
+    /// (`x = type + 1`, `f(type)`), or beginning a statement it does not begin, before `=` or an
+    /// augmented `=` (`type = 3`, `yield = 1`), or before `,`, `.` or a declaration's `: T`.
+    /// The words an operand begins with (`true`, `not`, `match`, `fn`, `return`, …) are read as
+    /// they are; `this`, `owned` and `self` have their own handling.
+    fn at_keyword_as_name(&self) -> bool {
+        let TokenKind::Keyword(kw) = self.peek() else { return false };
+        // A keyword that follows an operand (`and`, `in`, `as`, `if`, `else`, `for`, …) stands
+        // where the grammar expects it, the operand missing (`println(in)`): no name.
+        if matches!(kw, Kw::Owned | Kw::SelfValue | Kw::This | Kw::And | Kw::Or | Kw::Is | Kw::In | Kw::As | Kw::If | Kw::Else | Kw::For) {
+            return false;
+        }
+        let at_start = self.pos == self.stmt_start;
+        let assigned = matches!(
+            self.peek_at(1),
+            TokenKind::Punct(
+                Punct::Eq | Punct::PlusEq | Punct::MinusEq | Punct::StarEq | Punct::SlashEq | Punct::SlashSlashEq
+                    | Punct::PercentEq | Punct::StarStarEq | Punct::AmpEq | Punct::PipeEq | Punct::CaretEq
+                    | Punct::ShlEq | Punct::ShrEq
+            )
+        );
+        if at_start && assigned {
+            return true;
+        }
+        let operand_word = matches!(
+            kw,
+            Kw::True | Kw::False | Kw::Comptime | Kw::SelfType | Kw::Super | Kw::Match | Kw::Fn | Kw::Owns
+                | Kw::Shares | Kw::ThreadShared | Kw::Weakref | Kw::Sharedref
+                | Kw::Not | Kw::Ref | Kw::Return | Kw::Break | Kw::Continue | Kw::Yield
+        ) || (self.in_ffi_attribute && matches!(kw, Kw::Static | Kw::Unsafe | Kw::Const));
+        if operand_word {
+            return false;
+        }
+        !at_start
+            || self.at_punct_at(1, Punct::Comma)
+            || self.at_punct_at(1, Punct::Dot)
+            || (self.at_punct_at(1, Punct::Colon) && !self.at_newline_at(2))
+    }
+
     fn parse_yield(&mut self, allow_block_lambda: bool) -> Expr {
         let start = self.span();
         let id = self.next_id();
@@ -876,7 +922,7 @@ impl Parser<'_> {
     }
 
     fn parse_expr_bp_nested(&mut self, min_bp: u8, allow_block_lambda: bool) -> Expr {
-        if self.at_jump() {
+        if self.at_jump() && !self.at_keyword_as_name() {
             if min_bp > 0 {
                 let span = self.span();
                 let word = match self.peek() {
@@ -904,7 +950,7 @@ impl Parser<'_> {
             return jump;
         }
 
-        if self.at_yield() {
+        if self.at_yield() && !self.at_keyword_as_name() {
             if min_bp > 0 {
                 // `[GRM-16]` — `yield e` is a jump expression (III.5's level 1,
                 // with `return`): never an operand, so `a + yield b` is `E0107`
@@ -1132,7 +1178,7 @@ impl Parser<'_> {
     fn parse_prefix(&mut self, allow_block_lambda: bool) -> Expr {
         let start = self.span();
 
-        if self.at_kw(Kw::Not) {
+        if self.at_kw(Kw::Not) && !self.at_keyword_as_name() {
             self.bump();
             let operand = self.parse_expr_bp(BP_NOT + 1, allow_block_lambda);
             let id = self.next_id();
@@ -1190,7 +1236,19 @@ impl Parser<'_> {
             return Expr { id, kind: ExprKind::CopyOf(Box::new(operand)), span: start.to(self.prev_span()) };
         }
 
-        if self.at_kw(Kw::Ref) {
+        // `[OWN-13]`, `[LEX-14]` — a word before a value that makes another owner or a link (`shares
+        // game`, `weakref this`): the grammar's (`value_word`), never a name, and not built by this
+        // compiler yet (M4); the value after it is read as written.
+        if let TokenKind::Keyword(Kw::Shares | Kw::ThreadShared | Kw::Weakref | Kw::Sharedref) = self.peek().clone() {
+            let at = self.span();
+            self.bump();
+            let _ = self.eat_kw(Kw::Mut);
+            let written = self.src.get(at.start as usize..self.prev_span().end as usize).unwrap_or("shares").to_string();
+            self.report(Diagnostic::error(codes::E0900, at.to(self.prev_span()), format!("`{written}` before a value is not built by this compiler yet")));
+            return self.parse_expr_bp(BP_UNARY, allow_block_lambda);
+        }
+
+        if self.at_kw(Kw::Ref) && !self.at_keyword_as_name() {
             self.bump();
             let mutable = self.eat_kw(Kw::Mut);
             let place = self.parse_expr_bp(BP_UNARY, allow_block_lambda);
@@ -1253,6 +1311,9 @@ impl Parser<'_> {
         let id = self.next_id();
 
         let kind = match self.peek().clone() {
+            // `[LEX-14]` — `x = type + 1`, `type = 3`: a keyword written as a name is `E0005`
+            // (`expect_ident`), and read as the name, so the rest checks as written.
+            TokenKind::Keyword(_) if self.at_keyword_as_name() => ExprKind::Path { segments: vec![self.expect_ident()] },
             TokenKind::Lit(lit) => {
                 self.bump();
                 match lit {
@@ -1372,19 +1433,10 @@ impl Parser<'_> {
                 // `[IDE-3]` — the value it marks, which is checked as written.
                 self.parse_expr_bp(BP_CAST, allow_block_lambda).kind
             }
-            // `[GRM-15]` — `owns` before `fn` is `E0109`: what a function takes over is said on each
-            // name it keeps, after its brackets.
-            TokenKind::Keyword(Kw::Owns) if self.at_kw_at(1, Kw::Fn) => {
-                let span = self.span();
-                self.bump();
-                self.report(
-                    Diagnostic::error(codes::E0109, span, "`owns` is not written before `fn`")
-                        .help("say what the function takes over after its brackets, on each name it keeps: `fn() owns report:`"),
-                );
-                ExprKind::Lambda(self.parse_lambda(allow_block_lambda))
-            }
-            // `[GRM-15]` — `owns` before any other value hands it over; where it may stand is the
-            // checker's, which sees the line and the value's type (`b = owns n` for a number).
+            // `[GRM-15]` — `owns` before a value hands it over, a function made there too (`owns
+            // fn(x: int): println(x)`, verdict 158); where it may stand is the checker's, which sees
+            // the line and the value's type (`b = owns n` for a number, `owns fn` other than as an
+            // argument for an `owns` parameter, `E0109`).
             TokenKind::Keyword(Kw::Owns) => {
                 self.bump();
                 ExprKind::Owned(Box::new(self.parse_expr_bp(BP_CAST, allow_block_lambda)))
@@ -1736,6 +1788,8 @@ impl Parser<'_> {
     /// this header grammar and the comma cannot introduce an expression
     /// before the required `in`. Comprehension clauses share it.
     fn parse_for_target(&mut self) -> Pattern {
+        // `[LEX-14]` — `for in xs:` is a pattern left out, not `in` as a name.
+        self.slot_ending_with(&[Kw::In]);
         let first = self.parse_pattern();
         if !self.eat_punct(Punct::Comma) {
             return first;
@@ -1784,7 +1838,7 @@ impl Parser<'_> {
         while !self.at_punct(Punct::RParen) && !self.at_eof() {
             let start = self.span();
             // `f(x=1)` — a named argument (`[TYP-25]`).
-            let name = (self.at_name() && self.at_punct_at(1, Punct::Eq)).then(|| {
+            let name = (self.at_name() && self.at_punct_at(1, Punct::Eq) || self.at_keyword_written_as_name(Punct::Eq)).then(|| {
                 let ident = self.expect_ident();
                 self.bump(); // '='
                 ident
@@ -2173,7 +2227,9 @@ impl Parser<'_> {
                 PatternKind::Slice { prefix, rest, suffix }
             }
             // `[LEX-15]` — `owned` and `self` written as a name are `E1010` (`expect_ident`).
-            TokenKind::Ident(_) | TokenKind::RawIdent(_) | TokenKind::Keyword(Kw::Owned | Kw::SelfValue) => {
+            // `[LEX-14]` — any other keyword, or a word reserved for a future version, written as a
+            // name is `E0005` (`expect_ident`) and read as the name.
+            TokenKind::Ident(_) | TokenKind::RawIdent(_) | TokenKind::Keyword(_) | TokenKind::Reserved(_) if !self.at_slot_end() => {
                 let mut path = vec![self.expect_ident()];
                 while self.at_punct(Punct::Dot) || self.at_punct(Punct::ColonColon) {
                     if self.at_punct(Punct::ColonColon) {
@@ -2206,7 +2262,8 @@ impl Parser<'_> {
                     Diagnostic::error(codes::E0100, span, "expected a pattern")
                         .primary_label(format!("found {found}")),
                 );
-                if !matches!(other, TokenKind::Newline | TokenKind::Dedent | TokenKind::Eof) {
+                // The keyword after the slot is the construct's, which reads it next.
+                if !matches!(other, TokenKind::Newline | TokenKind::Dedent | TokenKind::Eof) && !self.at_slot_end() {
                     self.bump();
                 }
                 PatternKind::Error
@@ -2251,7 +2308,7 @@ impl Parser<'_> {
                 break;
             }
             let start = self.span();
-            let name = (self.at_name() && self.at_punct_at(1, Punct::Eq)).then(|| {
+            let name = (self.at_name() && self.at_punct_at(1, Punct::Eq) || self.at_keyword_written_as_name(Punct::Eq)).then(|| {
                 let ident = self.expect_ident();
                 self.bump(); // '='
                 ident

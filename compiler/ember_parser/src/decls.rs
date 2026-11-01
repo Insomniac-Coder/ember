@@ -4,7 +4,7 @@ use ember_ast::*;
 use ember_diag::{Diagnostic, codes};
 use ember_lexer::{Kw, Lit, Punct, TokenKind};
 
-use crate::Parser;
+use crate::{Parser, TYPE_PARAMS_LINE};
 
 impl Parser<'_> {
     // -- imports ------------------------------------------------------------
@@ -18,6 +18,7 @@ impl Parser<'_> {
         // what lets `interface From[T]` declare `fn from(…)`.
         if self.at_contextual("from") {
             self.bump();
+            self.slot_ending_with(&[Kw::Import]);
             let path = self.parse_dotted_path();
             self.expect_kw(Kw::Import);
             let (items, glob) = self.parse_import_list();
@@ -72,6 +73,7 @@ impl Parser<'_> {
             });
         }
 
+        self.slot_ending_with(&[Kw::As]);
         let path = self.parse_dotted_path();
         let alias = self.eat_kw(Kw::As).then(|| self.expect_ident());
         self.expect_newline();
@@ -98,6 +100,7 @@ impl Parser<'_> {
             if parenthesised && self.at_punct(Punct::RParen) {
                 break;
             }
+            self.slot_ending_with(&[Kw::As]);
             let name = self.expect_ident();
             let alias = self.eat_kw(Kw::As).then(|| self.expect_ident());
             items.push(ImportItem { name, alias });
@@ -301,6 +304,9 @@ impl Parser<'_> {
         }
         let _ = doc_span;
         let attrs = self.parse_attributes();
+        if self.refuse_bracket_line() {
+            return None;
+        }
         self.parse_type_params_line();
         let start = self.span();
         let (vis, read) = self.parse_visibility();
@@ -776,6 +782,7 @@ impl Parser<'_> {
             }
             TokenKind::Ident(word) if word.is("rename") => {
                 self.bump();
+                self.slot_ending_with(&[Kw::As]);
                 let from = self.expect_ident();
                 self.expect_kw(Kw::As);
                 let to = self.expect_ident();
@@ -1127,7 +1134,8 @@ impl Parser<'_> {
         let start = self.span();
         let id = self.next_id();
         let before_word = self.pos;
-        let (mode, is_const) = self.parse_param_word(false);
+        // `[LEX-14]` — `ref: int` names the parameter with a keyword: no word before the name.
+        let (mode, is_const) = if self.at_keyword_written_as_name(Punct::Colon) { (Mode::Borrow, false) } else { self.parse_param_word(false) };
         let worded = self.pos != before_word;
 
         // `[FN-4]` — the receiver follows the same modes as any parameter.
@@ -1147,6 +1155,11 @@ impl Parser<'_> {
         let name = self.expect_ident();
         self.expect_punct(Punct::Colon);
         let mode = if !worded && self.refuse_mode_in_type(name) { Mode::Mut } else { mode };
+        // `[LEX-15]`, `[LT-48]` — `runtime` is a keyword only after the `:` and directly before `dyn`.
+        if self.at_contextual("runtime") && self.at_kw_at(1, Kw::Dyn) {
+            self.bump();
+            self.runtime_params.push(id);
+        }
         let ty = self.parse_type();
         let default = self.eat_punct(Punct::Eq).then(|| self.parse_expr());
         // `[CLO-6]` — calling a `once fn` parameter consumes it, so it is taken over as an
@@ -1236,6 +1249,7 @@ impl Parser<'_> {
 
     fn parse_struct(&mut self) -> StructDecl {
         self.expect_kw(Kw::Struct);
+        self.slot_ending_with(&[Kw::Implements, Kw::Where]);
         let name = self.expect_ident();
         let generics = self.parse_declared_generics();
         let implements = self.parse_implements();
@@ -1256,6 +1270,7 @@ impl Parser<'_> {
             Openness::Final
         };
         self.expect_kw(Kw::Class);
+        self.slot_ending_with(&[Kw::Implements, Kw::Where]);
         let name = self.expect_ident();
         let generics = self.parse_declared_generics();
         // `[GRM-1]` — the base class is written in parentheses, at most one.
@@ -1282,6 +1297,7 @@ impl Parser<'_> {
 
     fn parse_enum(&mut self) -> EnumDecl {
         self.expect_kw(Kw::Enum);
+        self.slot_ending_with(&[Kw::Implements, Kw::Where]);
         let name = self.expect_ident();
         let generics = self.parse_generic_params();
         let implements = self.parse_implements();
@@ -1357,6 +1373,7 @@ impl Parser<'_> {
 
     fn parse_interface(&mut self) -> InterfaceDecl {
         self.expect_kw(Kw::Interface);
+        self.slot_ending_with(&[Kw::Where]);
         let name = self.expect_ident();
         let generics = self.parse_generic_params();
         // `interface Ord: Eq:` — supertraits sit between the name and the body
@@ -1499,15 +1516,104 @@ impl Parser<'_> {
     }
 
     /// `[GRM-40]` — reads a type-parameter line, if this is one, for the declaration under it.
+    /// A blank or comment line between it and the declaration is `E0100`; the parameters are still
+    /// the declaration's, so what follows checks as meant.
     pub(crate) fn parse_type_params_line(&mut self) {
         if !self.at_type_params_line() {
             return;
         }
-        let start = self.span();
+        let (start, first) = (self.span(), self.pos);
         let params = self.parse_generic_params();
         let span = start.to(self.prev_span());
         self.expect_newline();
+        // From the end of the line's last token to the declaration: one line end, or a blank or
+        // comment line is between them. A line holding a token the lexer reported is that
+        // error's (`[DIA-14]`).
+        let line = &self.tokens[first..self.pos];
+        let lexed_wrong = line.iter().any(|token| matches!(token.kind, TokenKind::Error));
+        let end = line.iter().rev().find(|token| !matches!(token.kind, TokenKind::Newline)).map_or(span.end, |token| token.span.end);
+        let between = self.src.get(end as usize..self.span().start as usize).unwrap_or("");
+        if !lexed_wrong && between.matches('\n').count() > 1 {
+            self.report(Diagnostic::error(codes::E0100, span, TYPE_PARAMS_LINE));
+        }
         self.type_params_line = Some((params, span));
+    }
+
+    /// `[GRM-40]` — a line that begins with `[` and is not a type-parameter line (`[T]` above an
+    /// `enum` or an attribute, two `[T]` lines in a row, `[10, 20].len()` in a body): `E0100`, and
+    /// the line is skipped up to its end. Above an enum, an interface or a `type` alias the help
+    /// gives the brackets after the name, as the program writes both.
+    pub(crate) fn refuse_bracket_line(&mut self) -> bool {
+        if !self.at_punct(Punct::LBracket) || self.at_type_params_line() {
+            return false;
+        }
+        let help = self.brackets_after_name();
+        let start = self.span();
+        // `[DIA-14]` — a line holding a token the lexer reported is that error's.
+        let mut lexed_wrong = false;
+        while !matches!(self.peek(), TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent | TokenKind::Eof) {
+            lexed_wrong |= matches!(self.peek(), TokenKind::Error);
+            self.bump();
+        }
+        if lexed_wrong {
+            return true;
+        }
+        let span = start.to(self.prev_span());
+        let mut diagnostic = Diagnostic::error(codes::E0100, span, TYPE_PARAMS_LINE);
+        if let Some(help) = help {
+            diagnostic = diagnostic.help(help);
+        }
+        self.report(diagnostic);
+        true
+    }
+
+    /// The help for brackets on the line above an `enum`, `interface` or `type` alias: the line
+    /// below with the brackets after its name (`enum E[T]:`).
+    fn brackets_after_name(&self) -> Option<String> {
+        let mut depth = 0usize;
+        let mut n = 0;
+        loop {
+            match self.peek_at(n) {
+                TokenKind::Punct(p) if p.is_open_bracket() => depth += 1,
+                TokenKind::Punct(p) if p.is_close_bracket() => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent | TokenKind::Eof => return None,
+                _ => {}
+            }
+            n += 1;
+        }
+        let close = self.tokens[self.pos + n].span;
+        if !matches!(self.peek_at(n + 1), TokenKind::Newline) {
+            return None;
+        }
+        n += 2;
+        while matches!(self.peek_at(n), TokenKind::Keyword(Kw::Pub | Kw::Unsafe)) {
+            n += 1;
+            if matches!(self.peek_at(n), TokenKind::Punct(Punct::LParen)) {
+                while !matches!(self.peek_at(n), TokenKind::Punct(Punct::RParen) | TokenKind::Newline | TokenKind::Eof) {
+                    n += 1;
+                }
+                n += 1;
+            }
+        }
+        let brackets = self.src.get(self.span().start as usize..close.end as usize)?;
+        // `extend[T] Shape:` — an `extend` block's brackets go after `extend`.
+        if matches!(self.peek_at(n), TokenKind::Ident(word) if word.is("extend")) {
+            let word = self.tokens[self.pos + n].span;
+            return Some(format!("write the brackets after `extend`: `{}`", self.line_with(word, &format!("extend{brackets}"))));
+        }
+        if !matches!(self.peek_at(n), TokenKind::Keyword(Kw::Enum | Kw::Interface | Kw::Type))
+            || !matches!(self.peek_at(n + 1), TokenKind::Ident(_) | TokenKind::RawIdent(_))
+        {
+            return None;
+        }
+        let name = self.tokens[self.pos + n + 1].span;
+        let written = self.src.get(name.start as usize..name.end as usize)?;
+        Some(format!("write the brackets after the name: `{}`", self.line_with(name, &format!("{written}{brackets}"))))
     }
 
     /// The type parameters of a function, struct or class: those of the line above it (`[GRM-40]`).
@@ -1673,6 +1779,9 @@ impl Parser<'_> {
         doc: Option<String>,
         attrs: Vec<Attribute>,
     ) -> Option<Member> {
+        if self.refuse_bracket_line() {
+            return None;
+        }
         self.parse_type_params_line();
         // `[DIA-21]` P2 — `def m(self):` in a type's body is a method.
         self.python_def();
@@ -1680,22 +1789,24 @@ impl Parser<'_> {
         let (vis, read_only_outside) = self.parse_visibility();
         let id = self.next_id();
 
+        // `[LEX-14]` — `class: int`, `type: int`: a field named with a keyword, refused as a name.
+        let keyword_field = self.at_keyword_written_as_name(Punct::Colon);
         let kind = match self.peek() {
-            TokenKind::Keyword(Kw::Fn | Kw::Unsafe | Kw::Virtual | Kw::Override) => {
+            TokenKind::Keyword(Kw::Fn | Kw::Unsafe | Kw::Virtual | Kw::Override) if !keyword_field => {
                 MemberKind::Fn(self.parse_method())
             }
             TokenKind::Keyword(Kw::Static) if self.at_static_fn() => MemberKind::Fn(self.parse_method()),
             TokenKind::Ident(_) if self.at_gen_fn() => MemberKind::Fn(self.parse_method()),
-            TokenKind::Keyword(Kw::Const) => MemberKind::Const(self.parse_const()),
-            TokenKind::Keyword(Kw::Type) => MemberKind::TypeAlias(self.parse_type_alias(false)),
+            TokenKind::Keyword(Kw::Const) if !keyword_field => MemberKind::Const(self.parse_const()),
+            TokenKind::Keyword(Kw::Type) if !keyword_field => MemberKind::TypeAlias(self.parse_type_alias(false)),
             _ => {
                 // `name: T [= default]` or `let name: T`. `let` is a keyword
                 // in every position since `OQ-26` (errata ERR-004).
-                let is_let = self.at_kw(Kw::Let);
+                let is_let = self.at_kw(Kw::Let) && !keyword_field;
                 if is_let {
                     self.bump();
                 }
-                if !self.at_name() {
+                if !self.at_name() && !self.at_keyword_written_as_name(Punct::Colon) {
                     let found = self.peek().to_string();
                     let span = self.span();
                     self.report(
@@ -1807,6 +1918,20 @@ impl Parser<'_> {
                     .help("delete `@latebound`")
                     .migrate("`@latebound` removed", span, ""),
             );
+        }
+
+        // `[TYP-45]`, `[LEX-14]` — a word before a type that says who owns the value (`owns Mesh`,
+        // `weakref Node`, `shares mut Game`): the grammar's (`type := "owns" base_type | ...`), never a
+        // name, and not built by this compiler yet (M4); the type after it is read as written.
+        if let TokenKind::Keyword(word @ (Kw::Owns | Kw::Shares | Kw::ThreadShared | Kw::Weakref | Kw::Sharedref)) = self.peek().clone() {
+            let at = self.span();
+            self.bump();
+            if matches!(word, Kw::Shares | Kw::Sharedref) {
+                self.eat_kw(Kw::Mut);
+            }
+            let written = self.src.get(at.start as usize..self.prev_span().end as usize).unwrap_or("owns").to_string();
+            self.report(Diagnostic::error(codes::E0900, at.to(self.prev_span()), format!("`{written}` before a type is not built by this compiler yet")));
+            return self.parse_type_nested(suffix);
         }
 
         let kind = match self.peek() {

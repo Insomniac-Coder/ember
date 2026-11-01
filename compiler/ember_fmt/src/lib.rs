@@ -240,6 +240,7 @@ pub fn format(module: &ast::Module, source: &str, comments: &[Comment]) -> Strin
         out: String::new(),
         depth: 0,
         object_word: "this",
+        runtime_params: &module.runtime_params,
     };
     printer.module(module);
     printer.finish()
@@ -256,6 +257,8 @@ struct Printer<'a> {
     /// How the body being printed names its object: `self` in a method whose receiver is written
     /// (0.9.10, accepted until M1 refuses it), `this` otherwise (`[CLS-7]`).
     object_word: &'static str,
+    /// `[LT-48]` — the parameters written `runtime` before their `dyn` type (`Module::runtime_params`).
+    runtime_params: &'a [ast::NodeId],
 }
 
 impl Printer<'_> {
@@ -821,7 +824,8 @@ impl Printer<'_> {
         match &param.kind {
             ast::ParamKind::Receiver { .. } => format!("{mode}self"),
             ast::ParamKind::Named { name, ty } => {
-                format!("{mode}{}: {}", self.name(*name), self.type_expr(ty))
+                let runtime = if self.runtime_params.contains(&param.id) { "runtime " } else { "" };
+                format!("{mode}{}: {runtime}{}", self.name(*name), self.type_expr(ty))
             }
         }
     }

@@ -739,10 +739,11 @@ fn yield_may_not_be_an_operand() {
 
 #[test]
 fn yield_is_a_keyword_and_needs_a_raw_identifier_as_a_name() {
-    // `[LEX-15b]`, errata ERR-025 — `yield` is fully reserved in v1, so it is
-    // no longer `E0005` ("reserved for a later version") but a keyword.
+    // `[LEX-15b]` — `yield` is a keyword of the table; `[LEX-14]` (0.9.15) — written as a name it
+    // is `E0005`, "`yield` is a keyword", as every keyword of the table is.
     let out = run("fn f():\n    yield = 1\n");
-    assert!(!out.codes.contains(&"E0005".to_string()), "{}", out.messages);
+    assert_eq!(out.codes, ["E0005"], "{}", out.messages);
+    assert!(out.messages.contains("`yield` is a keyword"), "{}", out.messages);
     let ok = dump("fn f():\n    r#yield = 1\n");
     assert!(ok.contains("Assign"), "{ok}");
 }
@@ -790,4 +791,136 @@ fn formatting_the_formatters_output_changes_nothing() {
     assert_eq!(tree, tree_again, "the formatter changed the program:\n{once}");
     assert_eq!(once, twice, "formatting the formatter's output changed it");
     assert!(once.contains("sum(x * x for x in xs)") && once.contains("{k: v for (k, v) in m.items() if v > 0}"), "{once}");
+}
+
+#[test]
+fn a_keyword_written_as_a_name_is_e0005() {
+    // `[LEX-14]` (0.9.15) — any keyword of the table where a name is expected: one `E0005` each,
+    // "`type` is a keyword", help "write `r#type` to use the word as a name".
+    for src in [
+        "fn f():\n    type = 3\n",
+        "fn f():\n    yield += 1\n",
+        "fn f():\n    x = 1 + class\n",
+        "fn f():\n    println(while)\n",
+        "fn f():\n    a, class = 1, 2\n",
+        "fn f():\n    type: int = 3\n",
+        "fn f():\n    x += where\n",
+        "fn f():\n    x.type = 1\n",
+        "fn f():\n    s = S(type=1)\n",
+        "fn f():\n    for type in xs:\n        pass\n",
+        "fn f(in: int):\n    pass\n",
+        "fn f(ref: int):\n    pass\n",
+        "fn type():\n    pass\n",
+        "fn f():\n    fn class():\n        pass\n",
+        "struct S:\n    class: int\n",
+        "struct S:\n    type: int\n",
+        "struct S:\n    fn struct():\n        pass\n",
+    ] {
+        let out = run(src);
+        assert_eq!(out.codes, ["E0005"], "{src}\n{}", out.messages);
+        assert!(out.messages.contains("is a keyword") && out.messages.contains("to use the word as a name"), "{src}\n{}", out.messages);
+    }
+    let out = run("fn f():\n    type = 3\n");
+    assert!(out.messages.contains("`type` is a keyword") && out.messages.contains("write `r#type` to use the word as a name"), "{}", out.messages);
+    // A word reserved for a future version keeps its own message.
+    let out = run("fn f(async: int):\n    pass\n");
+    assert_eq!(out.codes, ["E0005"], "{}", out.messages);
+    assert!(out.messages.contains("`async` is reserved for v2"), "{}", out.messages);
+    // A keyword where the grammar expects that keyword is no name: the name before it is missing,
+    // and the old error stays, with nothing after it.
+    for (src, message) in [
+        ("fn f():\n    for in xs:\n        pass\n", "expected a pattern"),
+        ("fn f():\n    x = [y for in xs]\n", "expected a pattern"),
+        ("fn f(x: int):\n    match x:\n        if x > 0 => println(x)\n", "expected a pattern"),
+        ("fn f():\n    println(in)\n", "expected an expression"),
+        ("from import x\n", "expected a name"),
+        ("import as y\n", "expected a name"),
+        ("from a import as y\n", "expected a name"),
+        ("struct implements Copy:\n    x: int\n", "expected a name"),
+    ] {
+        let out = run(src);
+        assert_eq!(out.codes, ["E0100"], "{src}\n{}", out.messages);
+        assert!(out.messages.contains(message), "{src}\n{}", out.messages);
+    }
+    // Contextual keywords stay names; a keyword beginning what it begins is not a name.
+    dump("fn f():\n    runtime = 3\n    needs = runtime\n    copy = needs\n");
+    dump("fn f() -> int:\n    x = not true\n    return x if x else 0\n");
+}
+
+#[test]
+fn a_bracket_line_not_directly_above_a_function_struct_or_class_is_e0100() {
+    // `[GRM-40]` (0.9.15, verdicts 154 and 155) — one `E0100` per line, one message.
+    let message = "a `[...]` line gives type parameters, and goes on the line right above the function, struct or class they belong to";
+    for src in [
+        "[T]\n\nfn first(xs: Array[T]) -> T:\n    return xs[0]\n",
+        "[T]\n# a comment\nfn first(xs: Array[T]) -> T:\n    return xs[0]\n",
+        "[T]\n@inline\nfn first(xs: Array[T]) -> T:\n    return xs[0]\n",
+        "[T]\n[U]\nfn first(xs: Array[T]) -> T:\n    return xs[0]\n",
+        "[T: needs Add]\nenum E:\n    A\n    B\n\nfn main():\n    println(1)\n",
+        "[T]\nextend Array[T]:\n    fn n() -> int:\n        return 1\n",
+        "fn main():\n    x = 1\n    [T: needs Add]\n    y = 2\n",
+        "fn main():\n    [10, 20].len()\n    n = 1\n",
+        "fn main():\n    [a, b] = [1, 2]\n    println(a + b)\n",
+        "struct S:\n    [T]\n    x: int\n",
+        "[10, 20].len()\nprintln(1)\n",
+    ] {
+        let out = run(src);
+        assert_eq!(out.codes, ["E0100"], "{src}\n{}", out.messages);
+        assert!(out.messages.contains(message), "{src}\n{}", out.messages);
+    }
+    // Above an enum, an interface or a `type` alias, the help gives the brackets after the name.
+    for (src, help) in [
+        ("[T: needs Add]\nenum E:\n    A\n", "write the brackets after the name: `enum E[T: needs Add]:`"),
+        ("[Rhs = Self]\npub interface Add:\n    fn add(r: Rhs) -> Self\n", "write the brackets after the name: `pub interface Add[Rhs = Self]:`"),
+        ("[T]\ntype Pair = (T, T)\n", "write the brackets after the name: `type Pair[T] = (T, T)`"),
+        ("[T: needs Copy]\nextend Shape:\n    fn n() -> int:\n        return 1\n", "write the brackets after `extend`: `extend[T: needs Copy] Shape:`"),
+    ] {
+        let out = run(src);
+        assert_eq!(out.codes, ["E0100"], "{src}\n{}", out.messages);
+        assert!(out.messages.contains(help), "{src}\n{}", out.messages);
+    }
+    // Directly above, at its indentation and below its attributes, it is the declaration's.
+    dump("@inline\n[T]\nfn first(xs: Array[T]) -> T:  # first\n    return xs[0]\n");
+    dump("[T]  # one\nstruct Pool:\n    x: T\n");
+    dump("struct S:\n    x: int\n\n    ## doc\n    [E]\n    pub fn is() -> bool:\n        return true\n");
+    let out = run("struct S:\n    x: int\n\n    [E]\n\n    fn is() -> bool:\n        return true\n");
+    assert_eq!(out.codes, ["E0100"], "{}", out.messages);
+    dump("fn main():\n    n = [10, 20].len()\n");
+}
+
+#[test]
+fn owns_before_a_function_made_in_a_call_hands_it_over() {
+    // Verdict 158 — `f(owns fn(x: int): println(x))` is a call whose argument is `owns` of the
+    // lambda, with nothing reported; where `owns fn` may stand is the checker's (`E0109`).
+    let mut map = SourceMap::new();
+    let text = "fn main():\n    f(owns fn(x: int): println(x))\n".to_string();
+    let file = map.add("test.em", text.clone());
+    let mut sink = Sink::new();
+    let lexed = ember_lexer::lex(file, &text, &mut sink);
+    let module = ember_parser::parse(file, &text, lexed.tokens, &mut sink);
+    assert!(sink.diagnostics().is_empty(), "{}", sink.render(&map));
+    let ember_ast::ItemKind::Fn(decl) = &module.items[0].kind else { panic!("a function") };
+    let body = decl.body.as_ref().expect("a body");
+    let ember_ast::StmtKind::Expr(call) = &body.stmts[0].kind else { panic!("{:?}", body.stmts[0].kind) };
+    let ember_ast::ExprKind::Call { args, .. } = &call.kind else { panic!("{:?}", call.kind) };
+    let ember_ast::ExprKind::Owned(inner) = &args[0].value.kind else { panic!("{:?}", args[0].value.kind) };
+    assert!(matches!(inner.kind, ember_ast::ExprKind::Lambda(_)), "{:?}", inner.kind);
+}
+
+#[test]
+fn runtime_before_dyn_marks_the_parameter() {
+    // `[LEX-15]`, `[LT-48]` — `runtime` after a parameter's `:` and directly before `dyn`; a name
+    // everywhere else.
+    let mut map = SourceMap::new();
+    let text = "fn show(p: runtime dyn Picker, q: dyn Picker, runtime: int):\n    runtime = 3\n".to_string();
+    let file = map.add("test.em", text.clone());
+    let mut sink = Sink::new();
+    let lexed = ember_lexer::lex(file, &text, &mut sink);
+    let module = ember_parser::parse(file, &text, lexed.tokens, &mut sink);
+    assert!(sink.diagnostics().is_empty(), "{}", sink.render(&map));
+    let ember_ast::ItemKind::Fn(decl) = &module.items[0].kind else { panic!("a function") };
+    let marked: Vec<bool> = decl.params.iter().map(|param| module.runtime_params.contains(&param.id)).collect();
+    assert_eq!(marked, [true, false, false]);
+    let ember_ast::ParamKind::Named { ty, .. } = &decl.params[0].kind else { panic!("a named parameter") };
+    assert!(matches!(ty.kind, ember_ast::TypeKind::Dyn(_)), "{ty:?}");
 }
