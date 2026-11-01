@@ -2126,6 +2126,11 @@ impl TypeTable {
     /// view in any mode, or a borrowed or `mut` parameter whose type is not
     /// `Copy` with each type parameter taken to be `Copy`.
     pub fn is_source_parameter(&self, ty: Ty, by_reference: bool) -> bool {
+        // "nor a function-type parameter" (`[CLO-3]`): a function value with state is not `Copy`,
+        // and still no source.
+        if matches!(self.kind(ty), TyKind::Fn { .. } | TyKind::FnItem { .. }) {
+            return false;
+        }
         self.is_view(ty) || (by_reference && !self.is_copy_for_elision(ty))
     }
 

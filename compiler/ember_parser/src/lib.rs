@@ -217,6 +217,12 @@ impl<'a> Parser<'a> {
         matches!(self.peek(), TokenKind::Ident(_) | TokenKind::RawIdent(_))
     }
 
+    /// A name, or a word reserved and not of Ember written as one (`owned: int`, `S(owned=1)`),
+    /// which `expect_ident` takes with `E1010` (`[LEX-15]`).
+    fn at_name(&self) -> bool {
+        self.at_ident() || matches!(self.peek(), TokenKind::Keyword(Kw::Owned | Kw::SelfValue))
+    }
+
     /// The line `span` is on, as written and trimmed, with `span`'s text replaced by `with`: the
     /// line a help gives, in the program's own names (`[DIA-21]`).
     fn line_with(&self, span: Span, with: &str) -> String {
@@ -335,6 +341,15 @@ impl<'a> Parser<'a> {
                 let span = self.span();
                 self.bump();
                 Ident { name, span }
+            }
+            // `[LEX-15]` — `owned` and `self` are reserved and not words of Ember: any use is
+            // `E1010`, whose message gives the word to write; the parse goes on with the name.
+            TokenKind::Keyword(word @ (Kw::Owned | Kw::SelfValue)) => {
+                let word = *word;
+                let span = self.span();
+                self.bump();
+                self.report(Diagnostic::error(codes::E1010, span, reserved_word_message(word)));
+                Ident { name: Symbol::intern(if word == Kw::Owned { "owned" } else { "self" }), span }
             }
             other => {
                 let found = other.to_string();
@@ -750,5 +765,14 @@ impl<'a> Parser<'a> {
             return None;
         }
         Some(ember_ast::Attribute { id, path, args, span: Span::new(self.file, start as u32, end as u32) })
+    }
+}
+
+/// `[LEX-15]` — the message for a use of a word reserved and not of Ember, which gives the word to
+/// write.
+fn reserved_word_message(word: Kw) -> &'static str {
+    match word {
+        Kw::Owned => "`owned` is gone from Ember: the word that hands a value over is `owns`",
+        _ => "inside a method its object is `this`",
     }
 }

@@ -4373,6 +4373,7 @@ impl<'a> Checker<'a> {
     fn check_borrows_attribute(
         &mut self,
         attrs: &[ast::Attribute],
+        function: Symbol,
         from: Option<ast::Ident>,
         params: &[(Symbol, Ty, Mode, Span)],
         ret: Ty,
@@ -4402,7 +4403,7 @@ impl<'a> Checker<'a> {
                     };
                     let name = from.name;
                     self.sink.emit(
-                        Diagnostic::error(codes::E2118, from.span, format!("`{name}` is both a parameter and a field of `{owner}`, so `from {name}` could mean either"))
+                        Diagnostic::error(codes::E2118, from.span, format!("`{name}` is both a parameter of `{function}` and a field of `{owner}`, so `from {name}` could mean either"))
                             .secondary(at, format!("the parameter `{name}`"))
                             .help(format!("rename the parameter: then `from {name}` names the field, and `from` with the new name names the parameter")),
                     );
@@ -4622,8 +4623,25 @@ impl<'a> Checker<'a> {
         if receiver == self.common.self_ty {
             return self.recipe_fields.as_ref().map(|(_, fields)| fields.clone());
         }
-        match self.types.kind(receiver) {
-            TyKind::Struct(id) => Some(self.types.struct_def(*id).fields.iter().map(|field| (field.name, field.ty)).collect()),
+        match *self.types.kind(receiver) {
+            TyKind::Struct(id) => Some(self.types.struct_def(id).fields.iter().map(|field| (field.name, field.ty)).collect()),
+            // `[LT-1a]` — "a bare field name names any field of `this`": a class's, its bases' too.
+            TyKind::Class(mut id) => {
+                let mut fields: Vec<(Symbol, Ty)> = Vec::new();
+                loop {
+                    let def = self.types.class_def(id);
+                    for field in &def.fields {
+                        if !fields.iter().any(|(name, _)| *name == field.name) {
+                            fields.push((field.name, field.ty));
+                        }
+                    }
+                    match def.base {
+                        Some(base) => id = base,
+                        None => break,
+                    }
+                }
+                Some(fields)
+            }
             _ => None,
         }
     }
@@ -10778,7 +10796,7 @@ impl<'a> Checker<'a> {
                     } else {
                         ret
                     };
-                    let explicit_borrows = self.check_borrows_attribute(&item.attrs, decl.from, &params, ret);
+                    let explicit_borrows = self.check_borrows_attribute(&item.attrs, decl.name.name, decl.from, &params, ret);
                     let borrows = if decl.is_foreign_decl && decl.is_safe {
                         let from = match ffi_result_contract(&item.attrs) {
                             Some(FfiResultContract::CStrStatic | FfiResultContract::NullableCStrStatic
@@ -13918,9 +13936,9 @@ impl<'a> Checker<'a> {
             (None, Some(mode)) => {
                 let mut with_self = params.clone();
                 with_self.insert(0, (Symbol::intern("self"), self.common.self_ty, mode, span));
-                self.check_borrows_attribute(attrs, decl.from, &with_self, ret)
+                self.check_borrows_attribute(attrs, decl.name.name, decl.from, &with_self, ret)
             }
-            _ => self.check_borrows_attribute(attrs, decl.from, &params, ret),
+            _ => self.check_borrows_attribute(attrs, decl.name.name, decl.from, &params, ret),
         };
         self.type_params = saved_type_params;
         let overflow = self.overflow_policy(attrs, span);
@@ -23892,8 +23910,10 @@ impl<'a> Checker<'a> {
     fn clone_value(&mut self, value: Expr) -> Expr {
         let ty = value.ty;
         let span = value.span;
+        // VII.1 — a copy is a new value equal to the old one, never the place itself, which an
+        // `owns` parameter would hand over (`[OWN-9]`).
         if self.types.is_copy(ty) {
-            return value;
+            return Self::a_value(value);
         }
         if let Some(clone) = self.clone_method(ty) {
             return Expr {
@@ -26717,6 +26737,7 @@ impl<'a> Checker<'a> {
                 let place = self.synth(target);
                 self.union_store = previous_store;
                 self.in_assignment_target = previous_target;
+                let place = self.through_a_returned_ref(place);
                 let place = self.index_place_for_write(place);
                 let place = if soa_target { self.bind_soa_column_views(place, out) } else { place };
                 // Only a place can be assigned; anything else would write a
@@ -32611,33 +32632,41 @@ impl<'a> Checker<'a> {
         let block = |stmts: Vec<ast::Stmt>| ast::Block { id: ast::NodeId::DUMMY, stmts, span };
         let path = |name: Symbol| expr(ast::ExprKind::Path { segments: vec![ident(name)] });
         let arg = |value: ast::Expr| ast::Arg { name: None, value, span };
-        let (constructor, method, args) = match (kind, &element.kind) {
+        let (constructor, method, values) = match (kind, &element.kind) {
             (ast::ComprehensionKind::Map, ast::ExprKind::Tuple(pair)) if pair.len() == 2 => {
-                ("Map", "insert", vec![arg(pair[0].clone()), arg(pair[1].clone())])
+                ("Map", "insert", vec![pair[0].clone(), pair[1].clone()])
             }
-            _ => ("Set", "add", vec![arg(element.clone())]),
+            _ => ("Set", "add", vec![element.clone()]),
         };
-        let mut inner = stmt(ast::StmtKind::Expr(expr(ast::ExprKind::MethodCall {
+        // `[OWN-9]` — each element is given as `=` gives it, as a collection literal's is: a number
+        // copied, anything else handed over (`$element0 = k`, then `insert($element0, $element1)`).
+        let names: Vec<Symbol> = (0..values.len()).map(|index| Symbol::intern(&format!("$element{index}"))).collect();
+        let mut inner: Vec<ast::Stmt> = names
+            .iter()
+            .zip(values)
+            .map(|(name, value)| stmt(ast::StmtKind::Assign { targets: vec![path(*name)], op: None, value }))
+            .collect();
+        inner.push(stmt(ast::StmtKind::Expr(expr(ast::ExprKind::MethodCall {
             recv: Box::new(path(built)),
             name: ident(Symbol::intern(method)),
             generic_args: Vec::new(),
-            args,
-        })));
+            args: names.iter().map(|name| arg(path(*name))).collect(),
+        }))));
         for clause in clauses.iter().rev() {
-            inner = match clause {
+            inner = vec![match clause {
                 ast::CompClause::For { pattern, iter } => stmt(ast::StmtKind::For {
                     label: None,
                     pattern: pattern.clone(),
                     iter: iter.clone(),
-                    body: block(vec![inner]),
+                    body: block(inner),
                     else_block: None,
                 }),
                 ast::CompClause::If(condition) => stmt(ast::StmtKind::If(ast::IfStmt {
                     cond: ast::Condition::Expr(condition.clone()),
-                    then_block: block(vec![inner]),
+                    then_block: block(inner),
                     else_block: None,
                 })),
-            };
+            }];
         }
         let create = stmt(ast::StmtKind::Assign {
             targets: vec![path(built)],
@@ -32657,7 +32686,9 @@ impl<'a> Checker<'a> {
             }
             None => self.check_stmt(&create, &mut stmts),
         }
-        self.check_stmt(&inner, &mut stmts);
+        for each in &inner {
+            self.check_stmt(each, &mut stmts);
+        }
         let value = self.synth(&path(built));
         self.scopes.pop();
         if value.ty == self.common.error {
@@ -37374,7 +37405,14 @@ impl<'a> Checker<'a> {
                     // as it captures any other local of the method.
                     None if let Some(captured) = self.resolve_capture(name, span) => captured,
                     None => {
-                        self.error(codes::E1010, span, "`self` outside a method");
+                        // `[FN-4]`, `[LEX-15]` — `self` anywhere is `E1010`, whose message gives the
+                        // word to write; `this` outside a method keeps this one (N33).
+                        let message = if self.written_line(span).as_deref() == Some("self") {
+                            "inside a method its object is `this`"
+                        } else {
+                            "`self` outside a method"
+                        };
+                        self.error(codes::E1010, span, message);
                         Expr { ty: self.common.error, kind: ExprKind::Error, span }
                     }
                 }
@@ -38552,6 +38590,7 @@ impl<'a> Checker<'a> {
                 if inner.ty == self.common.error {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
+                let inner = self.through_a_returned_ref(inner);
                 let inner = if *mutable { self.index_place_for_write(inner) } else { inner };
                 // `[MOD-7]` — "taking `ref mut h.value`" is a write.
                 if *mutable {
@@ -45014,8 +45053,11 @@ impl<'a> Checker<'a> {
         if def.declaring_module == self.current_module {
             return true;
         }
-        // `[THR-9]` — `Once()` starts not run; its state is its own.
-        if self.prefixes[def.declaring_module].as_str() == "std.sync" && def.name.as_str().rsplit('.').next() == Some("Once") {
+        // `[THR-9]` — `Once()` starts not run; its state is its own. A compiler-known struct
+        // (`Arena`, a cell) has no declaring module (`usize::MAX`), and its private fields refuse it.
+        if self.prefixes.get(def.declaring_module).is_some_and(|prefix| prefix.as_str() == "std.sync")
+            && def.name.as_str().rsplit('.').next() == Some("Once")
+        {
             if given != 0 {
                 self.error(codes::E2020, span, "`Once()` takes no arguments");
                 return false;
@@ -45044,6 +45086,9 @@ impl<'a> Checker<'a> {
             .find(|f| f.vis != FieldVis::Public || f.read_only_outside)
             .map(|f| (f.name.to_string(), f.vis, f.read_only_outside));
         let Some((field, vis, read_only)) = blocking else { return true };
+        // A compiler-known struct's fields are the compiler's: refused outright, its arguments are
+        // not checked against them.
+        let compiler_known = def.declaring_module == usize::MAX;
         let why = if read_only {
             format!("`{field}` is `pub(read)`, and construction is a write")
         } else if vis == FieldVis::Package {
@@ -45066,7 +45111,7 @@ impl<'a> Checker<'a> {
                 "because constructing writes them all [STR-1]"
             )),
         );
-        true
+        !compiler_known
     }
 
     /// `[FN-1]` — what a `mut` parameter is inside the callee.
@@ -45122,44 +45167,12 @@ impl<'a> Checker<'a> {
             .collect()
     }
 
-    /// `[LT-1]` (ODR-048, ODR-069) — `@borrows` as written; or, for a method
-    /// made from a generic type's recipe whose result rule 1 ties to its
-    /// borrowed receiver, the receiver joined by each parameter whose declared
-    /// type names a type parameter the declared result names too, where this
-    /// instance makes the parameter a view. The result's type says it can hold
-    /// that parameter: `Map[str, V].entry(k) -> MapEntry[K, V, H]` returns an
-    /// entry holding `k`, and its callers keep `k`'s source borrowed for it;
-    /// `get(q) -> Option[ref V]` does not name `q`'s type and borrows only
-    /// `self`.
+    /// `[LT-1a]` — what `from` names, as written. A caller reads the body's summary (verdict 137), which
+    /// finds a parameter of a generic type's method the body returns into (ODR-069's `k` of
+    /// `Map[str, V].entry(k)`); made up here, `this` and that parameter acted as a written `from` and
+    /// refused every other source the body may return (verdict 138).
     fn declared_borrows(&self, def: DefId) -> Option<Vec<hir::BorrowSource>> {
-        let signature = &self.signatures[def.0 as usize];
-        if signature.borrows.is_some() {
-            return signature.borrows.clone();
-        }
-        let declared = self.declared_params.get(&def)?;
-        let ret = *self.declared_rets.get(&def)?;
-        let (first, _, mode, _) = signature.params.first()?;
-        if !first.is("self") || *mode == Mode::Owned || !self.types.is_view(signature.ret) {
-            return None;
-        }
-        let mut named = BTreeMap::new();
-        self.params_in(ret, &mut named, &mut HashSet::new());
-        let joined: Vec<usize> = declared
-            .iter()
-            .enumerate()
-            .skip(1)
-            .filter(|&(index, &(_, ty))| {
-                let mut mine = BTreeMap::new();
-                self.params_in(ty, &mut mine, &mut HashSet::new());
-                signature.params.get(index).is_some_and(|(_, own, _, _)| self.types.is_view(*own))
-                    && mine.keys().any(|slot| named.contains_key(slot))
-            })
-            .map(|(index, _)| index)
-            .collect();
-        if joined.is_empty() {
-            return None;
-        }
-        Some(std::iter::once(0).chain(joined).map(hir::BorrowSource::whole).collect())
+        self.signatures[def.0 as usize].borrows.clone()
     }
 
     /// A borrowed parameter's local: `ref T` where `def` passes it by address
@@ -46850,6 +46863,19 @@ impl<'a> Checker<'a> {
         // `[OWN-9]`, `[OWN-8]` — a copy of the program's own, never the place itself: a `Copy` type's
         // `clone` is the place, which an `owns` argument would hand over (`f(copy of n)` keeps `n`).
         Self::a_value(copy)
+    }
+
+    /// `[LT-1]` — "a call whose result type is `ref mut T` or `ref T` is a place": what it returns is
+    /// read through, as a `ref` local's is (`first(ref mut xs) += 1`, `ref mut first_even(ref mut xs)`).
+    fn through_a_returned_ref(&self, expr: Expr) -> Expr {
+        let call = matches!(expr.kind, ExprKind::Call { .. } | ExprKind::InterfaceCall { .. } | ExprKind::CallIndirect { .. } | ExprKind::Builtin { .. });
+        match *self.types.kind(expr.ty) {
+            TyKind::Ref { inner, .. } if call => {
+                let span = expr.span;
+                Expr { ty: inner, kind: ExprKind::Deref(Box::new(expr)), span }
+            }
+            _ => expr,
+        }
     }
 
     /// `[OWN-9]` — `expr` as a value of its own, not the place it reads: what `=` gives of a `Copy`

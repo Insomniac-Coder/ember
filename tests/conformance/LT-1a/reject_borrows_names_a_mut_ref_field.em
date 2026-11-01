@@ -15,7 +15,7 @@ struct ValuesMut:
             return None
         i = this.at
         this.at += 1
-        return Some(ref mut this.owner[i])    #$ error[E3062]: the returned view points into `this`, but its first line says `from owner`
+        return Some(ref mut this.owner[i])    #$ error[E3062]: `next` returns a view of `this`, but its first line says `from owner`
 
 fn main():
     ys = [1, 2]

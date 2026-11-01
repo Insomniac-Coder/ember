@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: LT-1, LT-1a, LT-5, DIA-7
-#$ error[E3062]: the returned view points into `b`, but its first line says `from a`
+#$ error[E3062]: `pick` returns a view of `b`, but its first line says `from a`
 #$ error[E3060]: `this.n` does not live long enough
 
 ## `[LT-1a]` — `from` was checked as a *signature*: that it names a parameter,

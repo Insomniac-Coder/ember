@@ -2785,12 +2785,40 @@ thread_local! {
 /// whose callees changed in the last round would give the summary it has
 /// again and keeps it: the same rounds and the same fixpoint, without
 /// inferring a large `main` once per round (D-476).
+/// `[LT-1]` — "exactly the arguments the called function's code shows the result points into": the
+/// least summaries, from each body taken to point into and touch nothing, so a recursive call keeps
+/// only what the code returns (`return pick(a, b, n - 1)` under `return a` keeps `a`). Where that has
+/// not settled in the rounds given, the summaries from the first line's rules, which are never less.
 fn infer_callable_summaries(
     bodies: &[Body],
     types: &TypeTable,
     signatures: &HashMap<String, Elision>,
     kept: &HashMap<String, CallRegionContract>,
 ) -> HashMap<String, CallRegionContract> {
+    let nothing = CallRegionContract {
+        access: CallAccessContract::Fields(Vec::new()),
+        result: CallResultContract::Legacy(Elision::Nothing),
+        latebound: false,
+        stores: Default::default(),
+    };
+    let mut least = kept.clone();
+    for body in bodies {
+        least.entry(body.symbol.clone()).or_insert_with(|| nothing.clone());
+    }
+    match summaries_from(bodies, types, signatures, kept, least) {
+        (summaries, true) => summaries,
+        (_, false) => summaries_from(bodies, types, signatures, kept, kept.clone()).0,
+    }
+}
+
+/// The rounds of `infer_callable_summaries` from `start`, and whether they settled.
+fn summaries_from(
+    bodies: &[Body],
+    types: &TypeTable,
+    signatures: &HashMap<String, Elision>,
+    kept: &HashMap<String, CallRegionContract>,
+    start: HashMap<String, CallRegionContract>,
+) -> (HashMap<String, CallRegionContract>, bool) {
     let callees: Vec<HashSet<&str>> = bodies
         .iter()
         .map(|body| {
@@ -2803,7 +2831,7 @@ fn infer_callable_summaries(
                 .collect()
         })
         .collect();
-    let mut summaries: HashMap<String, CallRegionContract> = kept.clone();
+    let mut summaries = start;
     // The symbols whose summary the last round changed; `None` for every body.
     let mut changed: Option<HashSet<String>> = None;
     for _ in 0..=bodies.len() {
@@ -2840,7 +2868,7 @@ fn infer_callable_summaries(
             next.insert(bodies[index].symbol.clone(), summary);
         }
         if next == summaries {
-            return summaries;
+            return (summaries, true);
         }
         let now: HashSet<String> = next
             .iter()
@@ -2853,7 +2881,7 @@ fn infer_callable_summaries(
             .then_some(now);
         summaries = next;
     }
-    summaries
+    (summaries, false)
 }
 
 fn inferred_callable_summary(
@@ -2893,11 +2921,33 @@ fn inferred_callable_summary(
 /// `[LT-1]`, `[LT-22]` (verdict 137) — what a call's result points into, from this body: its
 /// summary, for every result type; where no summary can be made, every source parameter (rule 3).
 fn callers_result(body: &Body, types: &TypeTable, regions: &Regions) -> CallResultContract {
-    match inferred_result_summary(body, types, regions) {
-        Some(summary) => CallResultContract::Fields(summary),
+    let Some(mut summary) = inferred_result_summary(body, types, regions) else {
         // No summary can be made (a view read through a raw pointer): every source parameter.
-        None => CallResultContract::Legacy(elision_over(body, types, widened_parameters(body, types))),
+        return CallResultContract::Legacy(elision_over(body, types, widened_parameters(body, types)));
+    };
+    // `[LT-22]` — "with `from`, the result points into what `from` names", whatever less the body
+    // gives (a literal under `from s`): each part of the result points into the named parameter's
+    // views, or the named field's. `E3062` holds the body to no more.
+    let narrowed = narrowed_parameters(body, types);
+    for parameter in named_parameters(body) {
+        let local = LocalId(parameter as u32 + 1);
+        let paths = narrowed.iter().find(|(named, ..)| *named == local).map(|(_, _, paths)| paths);
+        let mut named: Vec<ResultRegionSource> = regions
+            .local_regions(local)
+            .iter()
+            .filter(|slot| paths.is_none_or(|paths| paths.iter().any(|path| slot.projection.starts_with(path))))
+            .map(|slot| ResultRegionSource::View { argument: parameter, projection: slot.projection.clone() })
+            .collect();
+        if named.is_empty() && is_growing_arena_ty(types, body.local(local).ty) {
+            named.push(ResultRegionSource::Arena { argument: parameter });
+        }
+        for field in &mut summary.fields {
+            field.sources.extend(named.iter().cloned());
+            field.sources.sort();
+            field.sources.dedup();
+        }
     }
+    CallResultContract::Fields(summary)
 }
 
 fn inferred_result_summary(
@@ -3086,6 +3136,33 @@ fn method_or_source_parameters(body: &Body, types: &TypeTable) -> Vec<usize> {
     allowed
 }
 
+/// `[LT-1a]` — what a returned view of the parameter `local` points into, as written (`this.buf`,
+/// `b`), and the name `from` would give it: a field of `this` bare (`buf`), any other parameter by
+/// its own name, the whole object none.
+fn returned_view_of(body: &Body, types: &TypeTable, regions: &Regions, local: LocalId) -> (String, Option<String>) {
+    let results = regions.local_regions(ember_mir::RETURN_LOCAL);
+    let slot = regions
+        .local_regions(local)
+        .iter()
+        .filter(|slot| results.iter().any(|result| regions.reaches_slot(slot.region, result.region)))
+        .min_by_key(|slot| slot.projection.len());
+    let projection = slot.map(|slot| slot.projection.clone()).unwrap_or_default();
+    let written = place_name(body, types, &Place { local, projection: projection.clone() });
+    if !is_method_body(body) || local != LocalId(1) {
+        return (written, Some(place_name(body, types, &Place::local(local))));
+    }
+    // The object's first field after its derefs: what a bare `from` name names.
+    let derefs = projection.iter().take_while(|p| matches!(p, Projection::Deref)).count();
+    let right = match projection.get(derefs) {
+        Some(Projection::Field(_)) => {
+            let field = Place { local, projection: projection[..=derefs].to_vec() };
+            place_name(body, types, &field).rsplit('.').next().map(str::to_string)
+        }
+        _ => None,
+    };
+    (written, right)
+}
+
 /// `E3062`'s offenders: the view parameters a returned view points into
 /// that the result may not borrow.
 fn return_region_offenders(
@@ -3121,11 +3198,15 @@ fn return_region_offenders(
     // `f` reaching it is a borrow of `self` itself (its own storage, or a view
     // read through a `mut ref` field, which the reborrow continues through).
     let result_slots = regions.local_regions(ember_mir::RETURN_LOCAL);
+    // A result read through a `ref mut` field it names (the field's own slot unique) points into
+    // `this` as well, so it cannot name the field alone: an iterator gives no two changeable items.
+    // A read-only field over changeable views is no such field.
     for (local, _, paths) in narrowed_parameters(body, types) {
-        let escapes = regions
-            .local_regions(local)
+        let slots = regions.local_regions(local);
+        let changeable = |path: &Vec<Projection>| slots.iter().any(|slot| slot.projection == *path && slot.unique);
+        let escapes = slots
             .iter()
-            .filter(|slot| !paths.iter().any(|path| slot.projection.starts_with(path)))
+            .filter(|slot| paths.iter().find(|path| slot.projection.starts_with(path)).is_none_or(changeable))
             .any(|slot| result_slots.iter().any(|result| regions.reaches_slot(slot.region, result.region)));
         if escapes {
             offenders.push(local);
@@ -3237,13 +3318,26 @@ fn check_return_regions(
             .collect();
         let field_names = narrowed.iter().find(|(named, ..)| *named == local).map(|(_, names, _)| names.clone());
         // `[LT-1a]` — what `from` says, and the line that says otherwise: `-> T from name`.
+        let function = body.name.rsplit('.').next().unwrap_or(&body.name);
         let (message, help) = if let Some(field_names) = field_names {
-            // `from` names one field.
+            // `from` names one field: the result points into another part of `this`, or reads
+            // through a `ref mut` field it names, which points into `this` as well.
             let field = field_names.join(", ");
-            (
-                format!("the returned view points into `{name}`, but its first line says `from {field}`"),
-                format!("return a view of what `{field}` points into; a view read through a `ref mut` field points into `{name}` as well"),
-            )
+            let (pointed_at, right) = returned_view_of(body, types, regions, local);
+            if right.as_deref().is_some_and(|right| field_names.iter().any(|named| named == right)) {
+                (
+                    format!("`{function}` returns a view of `{name}`, but its first line says `from {field}`"),
+                    format!("return a view of what `{field}` points into; a view read through a `ref mut` field points into `{name}` as well"),
+                )
+            } else {
+                (
+                    format!("`{function}` returns a view of `{pointed_at}`, but its first line says `from {field}`"),
+                    match right {
+                        Some(right) => format!("return a view of `{field}`, or write `-> {} from {right}`", types.display(body.return_ty())),
+                        None => format!("return a view of `{field}`"),
+                    },
+                )
+            }
         } else if body.borrows.is_some() {
             let named: Vec<String> = allowed.iter().map(|l| body.local(*l).name.as_deref().map_or_else(|| format!("_{}", l.0), written)).collect();
             // `[LT-1a]` (verdict 144) — where the body may give a view of what `from` names and of
@@ -3256,18 +3350,31 @@ fn check_return_regions(
                 .map(|l| format!("`{}`", body.local(l).name.as_deref().map_or_else(|| format!("_{}", l.0), written)))
                 .collect();
             let into_named = pointed.len() > offenders.len();
-            (
-                format!("the returned view points into `{name}`, but its first line says `from {}`", named.join(", ")),
-                match (into_named, allowed_names.len()) {
-                    (true, _) => format!(
+            if into_named {
+                (
+                    format!("the returned view points into `{name}`, but its first line says `from {}`", named.join(", ")),
+                    format!(
                         "remove `from {}`: the result may point into {}, and with no `from` it points into each of them",
                         named.join(", "),
                         pointed.join(" and ")
                     ),
-                    (_, 0) => format!("write `from {name}` after the result type"),
-                    _ => format!("return a view of {}, or write `from {name}` after the result type", allowed_names.join(" or ")),
-                },
-            )
+                )
+            } else {
+                // `[LT-1a]` — "`next_word` returns a view of `this.buf`, but its first line says
+                // `from src`; return a view of `src`, or write `-> StrView from buf`": what the result
+                // points into as written, and the `from` that names it (a field of `this` bare). The
+                // whole object has no such name.
+                let (pointed_at, right) = returned_view_of(body, types, regions, local);
+                let rewrite = right.map(|right| format!("write `-> {} from {right}`", types.display(body.return_ty())));
+                (
+                    format!("`{function}` returns a view of `{pointed_at}`, but its first line says `from {}`", named.join(", ")),
+                    match (allowed_names.is_empty(), rewrite) {
+                        (true, Some(rewrite)) => rewrite,
+                        (false, Some(rewrite)) => format!("return a view of {}, or {rewrite}", allowed_names.join(" or ")),
+                        (_, None) => format!("return a view of {}", allowed_names.join(" or ")),
+                    },
+                )
+            }
         } else if is_method_body(body) {
             (
                 format!("the returned view points into `{name}` rather than into `this`"),
@@ -5424,7 +5531,8 @@ mod callable_region_metadata_tests {
 
     /// D-476 — a body none of whose callees changed in a round is not
     /// inferred again: `leaf` calls nothing and keeps its first summary, and
-    /// `caller`, whose callee's summary has just appeared, is inferred again.
+    /// `caller`, whose callee's summary is what it was taken to be at the start
+    /// (nothing, `infer_callable_summaries`), is not inferred again either.
     #[test]
     fn a_body_whose_callees_did_not_change_is_not_inferred_again() {
         let (types, _) = TypeTable::new();
@@ -5451,7 +5559,7 @@ mod callable_region_metadata_tests {
         let _ = infer_callable_summaries(&bodies, &types, &signatures, &HashMap::new());
         let inferred = INFERRED.with(|inferred| inferred.borrow().clone());
         let count = |symbol: &str| inferred.iter().filter(|each| *each == symbol).count();
-        assert_eq!((count("leaf"), count("caller")), (1, 2), "inferred: {inferred:?}");
+        assert_eq!((count("leaf"), count("caller")), (1, 1), "inferred: {inferred:?}");
     }
 
     #[test]

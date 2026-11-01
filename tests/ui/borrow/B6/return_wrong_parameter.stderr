@@ -1,4 +1,4 @@
-error[E3062]: the returned view points into `values`, but its first line says `from arena`
+error[E3062]: `choose` returns a view of `values`, but its first line says `from arena`
  --> tests/ui/borrow/B6/return_wrong_parameter.em:2:12
   |
 1 | fn choose(arena: Arena, values: Span[i32]) -> Span[i32] from arena:
@@ -6,7 +6,7 @@ error[E3062]: the returned view points into `values`, but its first line says `f
 2 |     return values
   |            ^^^^^^ returned here
   |
-  = help: return a view of `arena`, or write `from values` after the result type
+  = help: return a view of `arena`, or write `-> Span[i32] from values`
   = note: `from` is what ties a result to a parameter its first line's rule would not (LT-1a)
 
 error: could not compile due to 1 error(s)

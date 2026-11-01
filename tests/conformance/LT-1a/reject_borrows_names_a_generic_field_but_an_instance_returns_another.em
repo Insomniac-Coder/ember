@@ -17,7 +17,7 @@ extend[T: needs Copy, I: needs Iterator[Item = T]] Pick[I, T]:
             Some(x):
                 return Some(x)
             None:
-                return Some(this.keep)    #$ error[E3062]: the returned view points into `this`, but its first line says `from inner`
+                return Some(this.keep)    #$ error[E3062]: `first` returns a view of `this.keep`, but its first line says `from inner`
 
 fn main():
     numbers = [1, 2]

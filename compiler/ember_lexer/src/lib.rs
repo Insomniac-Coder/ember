@@ -664,7 +664,7 @@ impl<'a> Lexer<'a> {
             let span = self.span(start);
             let d = Diagnostic::error(codes::E0008, span, "unterminated character literal");
             let d = if looks_like_lifetime {
-                d.note("Ember has no lifetime syntax [LEX-22]; where a relationship between regions cannot be inferred, return an owned value, or use an index, a view struct or `@borrows` [LT-6]")
+                d.note("Ember has no lifetime syntax [LEX-22]; where a relationship between regions cannot be inferred, return an owned value, or use an index, a view struct or `from` [LT-6]")
             } else {
                 d
             };

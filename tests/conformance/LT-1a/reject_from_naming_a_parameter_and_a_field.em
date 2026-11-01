@@ -7,7 +7,7 @@
 struct Parser:
     src: StrView
 
-    fn next_word(src: StrView) -> StrView from src:    #$ error[E2118]: `src` is both a parameter and a field of `Parser`, so `from src` could mean either
+    fn next_word(src: StrView) -> StrView from src:    #$ error[E2118]: `src` is both a parameter of `next_word` and a field of `Parser`, so `from src` could mean either
         return src
 
 fn main():

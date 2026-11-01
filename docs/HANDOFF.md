@@ -60,7 +60,30 @@
 >   `Set`/`Map` code and comprehensions among them; it waits for phase 2.
 > - **OPEN ODR N30** (decisions.md): should `ember fmt --migrate` write `copy of` where a 0.9.10 caller reused a
 >   number it gave to an `owned` parameter? `[CLI-20]` does not say.
-> - **Next:** phase 2's confirmed list, then A1-3 (the hand-over messages), A1-4; the push gate before any push.
+> - **Phase 2 done** (`target/verify-0915/phase2/<job>.json`): 29 confirmed, 3 partly, 2 fixed already, 1 refuted, 6
+>   for the owner, 4 new. Fixed since, one by one (each in DEFECTS.md): D-948 (`Arena()` stopped the checker), D-949
+>   (LT-6's note named `@borrows`), D-950/D-951 (`self`/`owned` as names; a free function dropped its `self`), D-952
+>   (`E3062` in the spec's words), D-953 (`from` and a class's fields; `E2118` names the function), D-954 (a read
+>   through a `ref mut` field `from` names), D-955 (a function-type parameter is no source), D-956 (no made-up
+>   `from` on a generic type's method), D-957 (`from` decides what callers keep), D-958 (least summaries for
+>   recursion), D-959 (a call returning `ref mut T`/`ref T` is a place), D-960 (`x.clone()` of a `Copy` value is a
+>   new value), D-961 (a comprehension gives its elements as `=` does). LT-44's two findings need ARN-1's
+>   changeable name (A1-16, M10): a plain `FixedArena`/`ScopedArena` is a copy of the caller's cursor, so
+>   returning what it allocates stays refused, in today's words; LT-44 is off `built_for_0915` until then
+>   (Phase 2 15% -> 14%, Overall 24%).
+> - **For the owner, test changes from this batch:** eight tests' expected `E3062`/`E2118` text (LT-1a x4, LT-4b,
+>   compile-fail x2, UI `B6/return_wrong_parameter.stderr`) and the D-476 unit test's round count (1, 2) -> (1, 1).
+> - **OPEN ODRs N33-N35** with N30-N32 (owner: ask later): `this` outside a method's words; `E2118`'s renamed
+>   parameter; `E3062`'s help for a view of the whole object. Phase 2's six owner questions: what a `dyn`/`virtual`
+>   call's result points into; `[T]` lines not directly above (x2); `E0005` vs `E0100` for a keyword as a name;
+>   whether `Array.push` ends a number; whether a `Hasher` may be `Copy`.
+> - **Next:** the rest of the confirmed list: a struct method's returned view narrowed to the fields it uses
+>   (call-results 2: `[BRW-10]` narrows what the call changes, `[LT-1]` points the result into the whole object;
+>   one borrow serves both today, so the fix is two: the call's, narrowed, ending with it, and the result's, the
+>   whole object, read-only; dropping the narrowing for such methods would refuse `w.push_and_get(1)` in a loop
+>   over `w.names`, which `[BRW-10]` allows); a `ref mut T` call result as a place (4); a number handed over out of a view (hand-over 2:
+>   std and 16 tests) and function values handed over (7); `implements Copy` ignored (new, TYP-43); then A1-3, A1-4;
+>   the push gate before any push.
 
 > **2026-10-31, late night — AUTONOMOUS (owner asleep), solo. START HERE.** Owner: "run autonomously I'll check
 > progress in the morning and ask for ODR updates, no agents or workflow for now ... monitor the wifi and power

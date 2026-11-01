@@ -1090,6 +1090,19 @@ impl Parser<'_> {
         }
         let body_start = self.pos;
         let body = if self.eat_punct(Punct::Colon) { Some(self.parse_block()) } else { None };
+        // `[FN-4]`, `[LEX-15]` — `self` anywhere is `E1010`: a function standing alone has no object,
+        // and a `self` it lists with a type is a parameter of that name, checked as written.
+        if !method {
+            for param in &mut params {
+                if let ParamKind::Receiver { ty, implicit: false } = &param.kind {
+                    let ty = ty.clone();
+                    self.report(Diagnostic::error(codes::E1010, param.span, "inside a method its object is `this`"));
+                    if let Some(ty) = ty {
+                        param.kind = ParamKind::Named { name: Ident { name: ember_span::Symbol::intern("self"), span: param.span }, ty };
+                    }
+                }
+            }
+        }
         // `[DIA-21]` P14 — `self` in a method, listed or used; an interface's method lists it too.
         if method {
             let body_end = self.pos;
@@ -1195,8 +1208,9 @@ impl Parser<'_> {
         if self.eat_kw(Kw::Owns) {
             return (Mode::Owned, false);
         }
-        // `[MOD-3]` — 0.9.10's `owned` is `owns`.
-        if self.at_kw(Kw::Owned) {
+        // `[MOD-3]` — 0.9.10's `owned` is `owns`; `owned: T` is the word written as a name
+        // (`[LEX-15]`), which `expect_ident` takes.
+        if self.at_kw(Kw::Owned) && !self.at_punct_at(1, Punct::Colon) {
             let span = self.span();
             self.bump();
             self.report(
@@ -1681,7 +1695,7 @@ impl Parser<'_> {
                 if is_let {
                     self.bump();
                 }
-                if !self.at_ident() {
+                if !self.at_name() {
                     let found = self.peek().to_string();
                     let span = self.span();
                     self.report(

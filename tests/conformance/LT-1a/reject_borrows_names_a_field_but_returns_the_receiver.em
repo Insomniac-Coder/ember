@@ -11,7 +11,7 @@ struct Cursor:
 
     fn advance() -> ref int from owner:
         this.at += 1
-        return ref this.at    #$ error[E3062]: the returned view points into `this`, but its first line says `from owner`
+        return ref this.at    #$ error[E3062]: `advance` returns a view of `this`, but its first line says `from owner`
 
 fn main():
     xs = [1, 2]

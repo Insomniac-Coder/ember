@@ -588,6 +588,38 @@ impl Parser<'_> {
     }
 
     /// `[GRM-15]` — `owns e` (0.9.10's `owned e`) before a `for` iterable or a `match` scrutinee.
+    /// `[LEX-15]` — whether the `owned` here stands where a name does (`owned = 3`, `f(owned)`,
+    /// `owned.x`), not before a value.
+    fn owned_is_a_name(&self) -> bool {
+        matches!(
+            self.peek_at(1),
+            TokenKind::Newline
+                | TokenKind::Dedent
+                | TokenKind::Eof
+                | TokenKind::Punct(
+                    Punct::Eq
+                        | Punct::Colon
+                        | Punct::Comma
+                        | Punct::Dot
+                        | Punct::RParen
+                        | Punct::RBracket
+                        | Punct::RBrace
+                        | Punct::PlusEq
+                        | Punct::MinusEq
+                        | Punct::StarEq
+                        | Punct::SlashEq
+                        | Punct::SlashSlashEq
+                        | Punct::PercentEq
+                        | Punct::StarStarEq
+                        | Punct::AmpEq
+                        | Punct::PipeEq
+                        | Punct::CaretEq
+                        | Punct::ShlEq
+                        | Punct::ShrEq
+                )
+        )
+    }
+
     fn at_value_owns(&self) -> bool {
         self.at_kw(Kw::Owns) || (self.at_kw(Kw::Owned) && !self.at_kw_at(1, Kw::Fn))
     }
@@ -1330,6 +1362,12 @@ impl Parser<'_> {
             }
             // `[MOD-3]` — 0.9.10's `owned` before any other value (`owned fn` is the closures').
             TokenKind::Keyword(Kw::Owned) => {
+                // `[LEX-15]` — `owned` where a name stands (`owned = 3`) is a use of the word too,
+                // checked as the name it is written as.
+                if self.owned_is_a_name() {
+                    let name = self.expect_ident();
+                    return Expr { id: self.next_id(), kind: ExprKind::Path { segments: vec![name] }, span: name.span };
+                }
                 self.bump_value_word();
                 // `[IDE-3]` — the value it marks, which is checked as written.
                 self.parse_expr_bp(BP_CAST, allow_block_lambda).kind
@@ -1746,7 +1784,7 @@ impl Parser<'_> {
         while !self.at_punct(Punct::RParen) && !self.at_eof() {
             let start = self.span();
             // `f(x=1)` — a named argument (`[TYP-25]`).
-            let name = (self.at_ident() && self.at_punct_at(1, Punct::Eq)).then(|| {
+            let name = (self.at_name() && self.at_punct_at(1, Punct::Eq)).then(|| {
                 let ident = self.expect_ident();
                 self.bump(); // '='
                 ident
@@ -2134,7 +2172,8 @@ impl Parser<'_> {
                 self.expect_punct(Punct::RBracket);
                 PatternKind::Slice { prefix, rest, suffix }
             }
-            TokenKind::Ident(_) | TokenKind::RawIdent(_) => {
+            // `[LEX-15]` — `owned` and `self` written as a name are `E1010` (`expect_ident`).
+            TokenKind::Ident(_) | TokenKind::RawIdent(_) | TokenKind::Keyword(Kw::Owned | Kw::SelfValue) => {
                 let mut path = vec![self.expect_ident()];
                 while self.at_punct(Punct::Dot) || self.at_punct(Punct::ColonColon) {
                     if self.at_punct(Punct::ColonColon) {
@@ -2212,7 +2251,7 @@ impl Parser<'_> {
                 break;
             }
             let start = self.span();
-            let name = (self.at_ident() && self.at_punct_at(1, Punct::Eq)).then(|| {
+            let name = (self.at_name() && self.at_punct_at(1, Punct::Eq)).then(|| {
                 let ident = self.expect_ident();
                 self.bump(); // '='
                 ident
