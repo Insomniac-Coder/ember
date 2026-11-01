@@ -3181,7 +3181,20 @@ fn check_return_regions(
             .map_or(span, |(_, block)| block.terminator_span)
     };
 
-    for local in offenders {
+    // Whether some `return` gives a view of `local`.
+    let returns_into = |local: LocalId| {
+        body.blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, block)| matches!(block.terminator, Terminator::Return))
+            .any(|(index, block)| {
+                regions
+                    .result_at(Point { block: index, index: block.stmts.len() })
+                    .is_some_and(|(_, origins)| origins.contains(&Origin::Param(local)))
+            })
+    };
+
+    for &local in &offenders {
         let span = returned_at(local);
         let decl = body.local(local);
         // A method's object is `this` in its text (`[CLS-7]`).
@@ -3205,10 +3218,24 @@ fn check_return_regions(
             )
         } else if body.borrows.is_some() {
             let named: Vec<String> = allowed.iter().map(|l| body.local(*l).name.as_deref().map_or_else(|| format!("_{}", l.0), written)).collect();
+            // `[LT-1a]` (verdict 144) — where the body may give a view of what `from` names and of
+            // another parameter too, naming the other would be as wrong: the help says to remove `from`.
+            let pointed: Vec<String> = allowed
+                .iter()
+                .copied()
+                .filter(|l| returns_into(*l))
+                .chain(offenders.iter().copied())
+                .map(|l| format!("`{}`", body.local(l).name.as_deref().map_or_else(|| format!("_{}", l.0), written)))
+                .collect();
             (
                 format!("the returned view points into `{name}`, but its first line says `from {}`", named.join(", ")),
-                match allowed_names.len() {
-                    0 => format!("write `from {name}` after the result type"),
+                match (pointed.len(), allowed_names.len()) {
+                    (2.., _) => format!(
+                        "remove `from {}`: the result may point into {}, and with no `from` it points into each of them",
+                        named.join(", "),
+                        pointed.join(" and ")
+                    ),
+                    (_, 0) => format!("write `from {name}` after the result type"),
                     _ => format!("return a view of {}, or write `from {name}` after the result type", allowed_names.join(" or ")),
                 },
             )

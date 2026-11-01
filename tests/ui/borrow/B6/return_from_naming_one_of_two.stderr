@@ -1,0 +1,12 @@
+error[E3062]: the returned view points into `b`, but its first line says `from a`
+  --> tests/ui/borrow/B6/return_from_naming_one_of_two.em:13:20
+   |
+12 | fn call(make: fn(Span[int], Span[int]) -> Pair, a: Span[int], b: Span[int]) -> Pair from a:
+   |                                                               ------------ `b` is the parameter it points into
+13 |     return make(a, b)
+   |                    ^ returned here
+   |
+   = help: remove `from a`: the result may point into `a` and `b`, and with no `from` it points into each of them
+   = note: `from` is what ties a result to a parameter its first line's rule would not (LT-1a)
+
+error: could not compile due to 1 error(s)
