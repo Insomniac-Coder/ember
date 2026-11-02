@@ -72,7 +72,7 @@ needs         := type | "(" type {"," type} [","] ")"     -- one bare, several i
 bound_list    := type {"+" type}                        -- after `dyn` and `some` only
 where_clause  := "where" type ":" "needs" needs {"," type ":" "needs" needs}
 param_list    := param {"," param} [","]
-param         := [param_word] IDENT ":" ["runtime"] type ["..."] ["=" expression]   -- `Ts...`: the pack's values; `runtime` before a `dyn` type only ([LT-48])
+param         := [param_word] IDENT ":" ["runtime"] type ["..."] ["=" expression]   -- `Ts...`: the pack's values; `runtime` before a `dyn` or class type only ([LT-48])
 param_word    := "ref" ["mut"] | "const" "ref" "mut" | "owns"
 
 struct_decl   := "struct" IDENT [implements] [where_clause] ":" type_body
@@ -201,7 +201,7 @@ fn_type_param := [param_word] type
 block         := NEWLINE INDENT {statement} DEDENT | simple_stmt NEWLINE
 statement     := {attribute} (simple_stmt NEWLINE | compound_stmt)
 simple_stmt   := var_decl | assignment | expr_list | "pass"
-var_decl      := IDENT ":" type ["=" expr_list]
+var_decl      := IDENT ":" ["runtime"] type ["=" expr_list]   -- `runtime` before a `dyn` or class type only ([LT-48])
 assignment    := target_list "=" expr_list
                | target augassign expression
 target_list   := target {"," target} [","]
@@ -399,7 +399,10 @@ match_expr    := "match" expression ":" NEWLINE INDENT {pattern ["if" expression
   a value `=` hands over, `return a`), and before `fn` anywhere but an argument for an `owns` parameter,
   it is `E0109`, whose message says to remove it (for `owns fn`, to name what the function takes on each
   captured name: `fn() owns report:`). Before an argument for a parameter that only reads
-  (`show(owns xs)`) it is `E3028`, "`show` only reads its argument; remove `owns`: `show(xs)`".
+  (`show(owns xs)`) it is `E3028`, "`show` only reads its argument; remove `owns`: `show(xs)`". `owns`
+  binds as `-` does (`unary := value_word unary`), so an argument of more than one name, number or call
+  is written in brackets, `tx.send(owns (i * i))`: `tx.send(owns i * i)` is `(owns i) * i`, a value made
+  after `i` is handed over, and is `E3028`, whose help writes the brackets (`tx.send(owns (i * i))`).
 * `[GRM-17]` *(changed in 0.9.10)* A lambda with a `:` body inside brackets holds exactly one simple
   statement (`[LEX-6a]`). More is `E0106`, whose help is to declare a local function on the preceding
   line (`[GRM-28]`). Outside brackets, a `:` body on the lambda's own line is one simple statement,

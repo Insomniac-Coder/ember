@@ -1225,6 +1225,25 @@ verdicts, 2026-10-29", items 1 to 18, with the review's other answers):
     `ROSTER.push(weakref this)`; the word that makes the value says what is given. Owner (2026-11-01), shown
     `setup(owns shares mut game)` and `ROSTER.push(owns weakref this)` beside them: "yes go with b".
 
+161. **`owns` at a call binds as `-` does; an argument of more than one name, number or call takes brackets**:
+    `tx.send(owns (i * i))`, `m.insert(owns (i * 7), owns i)`; `tx.send(owns i * i)` is `(owns i) * i` and is
+    refused, with the bracketed line as its help. The grammar already says so (`unary := value_word unary`).
+    Owner (2026-11-02), shown (a) brackets and (b) `owns` covering the whole argument at a call, with the
+    recommendation (a): "yes a".
+
+162. **`runtime` goes before a class type too**: `fn pick(a: runtime A):` compiles, and the kind of `a` is
+    checked while the program runs, as `runtime dyn` is: with `A.first` giving back the object's own list and
+    `B.first` the list it was handed, `r = a.first(xs)` then `xs.push(owns 2)` stops at the `push` when `a` is a
+    `B` and runs when it is an `A`. Owner (2026-11-02), shown (a) this and (b) no `runtime` for classes, with
+    the recommendation (a): "yes a".
+
+163. **`runtime` goes on a variable too, right after the colon**: `renderer: runtime Box[dyn Renderer] =
+    Box(Gpu(pixels=[0])) if input() == "gpu" else Box(Software(unused=0))` in `main`, and the lines after it
+    are checked while the program runs as they are for a `runtime` parameter: with `Software.draw` giving back
+    the buffer it was handed, `frame = renderer.draw(scratch)` then `scratch.push(owns 1)` stops at the `push`;
+    with `Gpu` it runs. No function is needed only to carry the word. Owner (2026-11-02), shown (a) the check
+    only through a function's input and (b) this, with the recommendation (b): "yes b".
+
 ## Messages and tests: the lead's to settle (owner, 2026-11-01 evening)
 
 "your error messages are okay it's the language implementation part that concerns me most of the time so

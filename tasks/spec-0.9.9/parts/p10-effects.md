@@ -312,7 +312,7 @@ compute the same bits, on one machine and across machines running the same binar
 | `assert_disjoint` | guaranteed present | two compares where the program writes it (two spans of one list given to one call, one of them changeable); the call is then compiled with noalias; none when the compiler knows the spans apart |
 | `Cell` access | not observable | a load or a store |
 | Interface call through `dyn` | guaranteed present | one indirect call |
-| A `runtime dyn` parameter's check | guaranteed present | one type-id compare at each line the check guards, only where a kind that may reach the parameter makes the line unsafe (`[LT-48]`); none where the kinds are known when compiling |
+| A `runtime` parameter's or variable's check | guaranteed present | one type-id compare at each line the check guards, only where a kind that may reach the value makes the line unsafe (`[LT-48]`); none where the kinds are known when compiling |
 | Virtual method call | conditionally elided | a load of the slot and one indirect call (`[DSP-2]`); direct when one implementation is reachable (`[DSP-5]`) |
 | Generic call, monomorphised | not observable | a direct, inlinable call |
 | Generic call, shared (`[MONO-6]`) | guaranteed present | one indirect call per bound method; only above a declared instantiation budget |

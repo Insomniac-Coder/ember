@@ -197,8 +197,8 @@ LIVE_0915 = {'E0001': ('invalid UTF-8 in source', ['LEX-1']),
            'the end of an object by what its `drop` changes); a removal inside a counting loop',
            ['BRW-18', 'CTL-2']),
  'E3021': ('a read and a change of one place overlap: a change of what a read-only name reads while it is still used, '
-           'a view a `dyn` call may give included where the kind is known only while running (help: `runtime` on the '
-           "parameter); a `ref mut` name's place read through another name while it is still used; an argument that "
+           'a view a `dyn` or `virtual` call may give included where the kind is known only while running (help: `runtime` on the '
+           "parameter or the variable); a `ref mut` name's place read through another name while it is still used; an argument that "
            'may reach into a changeable argument of the same call',
            ['BRW-1', 'BRW-11', 'LT-1', 'LT-48']),
  'E3022': ('one place changed through two names: two changeable arguments of one call naming one place, other than one '

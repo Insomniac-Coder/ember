@@ -701,17 +701,24 @@ fn main():
   `E3060`.
   Its message: E3060 ("`bag.items.push(owns k)` (line 15) may move the list that `h.view` points into (`pick` may have put a view of `bag` there on line 13), and `h.view` is used on line 16; use `h.view` before line 15").
 
-* `[LT-48]` *(new in 0.9.15)* **`runtime`: a `dyn` parameter's kind checked while the program runs.**
-  `runtime` before a parameter's `dyn` type lets the function do what one of the kinds that may reach it
-  would make unsafe (`[LT-1]`), where which kind it is is known only while the program runs: the
-  function checks the kind at the line that would be unsafe, and stops the program there if it is that
-  kind. With `[LT-1]`'s `Picker`, `fn show(p: runtime dyn Picker):` and `p: dyn Picker = Mine(items=[9])
+* `[LT-48]` *(new in 0.9.15)* **`runtime`: a value's kind checked while the program runs.**
+  `runtime` before the `dyn` or class type of a parameter or a variable lets the function do what one of
+  the kinds that may reach that value would make unsafe (`[LT-1]`), where which kind it is is known only
+  while the program runs: the function checks the kind at the line that would be unsafe, and stops the
+  program there if it is that kind. With `[LT-1]`'s `Picker`, `fn show(p: runtime dyn Picker):` and `p: dyn Picker = Mine(items=[9])
   if input() == "m" else Yours(items=[9])`, `show(p)` prints `[9]` for a `Mine`, and for a `Yours` stops
   at `xs.push(owns 3)`: "panic at main.em:17:5: `xs` changes while `r` looks at it: `p` is a `Yours`,
   whose `pick` gives back the list it was handed". Where the kind is known when compiling, the word
   changes nothing: given `show(Yours(items=[9]))`, `show` is refused at `xs.push(owns 3)` when compiling,
-  as without it (`E3021`). `runtime` is a word only after a parameter's `:` before `dyn` (`[LEX-15]`); it
-  costs one type-id compare at each line it guards (§X.4).
+  as without it (`E3021`). A class value is checked the same way: with `open class A` whose `virtual fn
+  first(other: Array[int]) -> Span[int]` gives back `this.items` and `class B(A)` whose override gives
+  back `other`, `fn pick(a: runtime A):` doing `r = a.first(xs)`, `xs.push(owns 2)` and `println(r)`
+  stops at the `push` when `a` is a `B`, and prints `[7]` when it is an `A`. On a variable the word goes
+  right after its `:` and guards the lines of its function after it: in `main`, `p: runtime dyn Picker =
+  Mine(items=[9]) if input() == "m" else Yours(items=[9])`, then `r = p.pick(xs)`, `xs.push(owns 3)` and
+  `println(r)`, does what `show(p)` does, with no function written only to carry the word. `runtime` is
+  a word only right after the `:` of a parameter or a variable, before its type (`[LEX-15]`); it costs
+  one type-id compare at each line it guards (§X.4).
 
 ### Views with several regions
 
