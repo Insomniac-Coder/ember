@@ -5,7 +5,10 @@
 > 0.9.20_Hardened_1"). START HERE.** **Hardened_1 of 0.9.20 is cut** and is the development target
 > (`docs/spec-source/Ember_v0.9.20_Hardened_1.md`): the whole of 0.9.15_Hardened_10 read rule by rule; 35 rules
 > changed, none added or removed, each change with its reason in its §H.51 and the rulings as N52 to N75 in
-> `tasks/96/redesign/compiler-0.9.15/decisions.md` §12 (the audit's working notes were the session's scratchpad).
+> `tasks/96/redesign/compiler-0.9.15/decisions.md` §12. **The audit's notes are `docs/AUDIT-0.9.20.md`**: every
+> finding fixed (F1–F27) with its milestone and test, the open items for a second pass (O1–O14: whole-program
+> facts in a library's layout and code, `weakref` to a `thread_shared` target, channels and `Send`, ...), what was
+> read and judged sound, the recipes and a workflow plan; start there after a context reset.
 > Every change refuses a program that was unsafe, states a fact a compiler had to guess, or corrects the text;
 > nothing runs while a program runs that did not before, and no feature is taken away. The compiler's
 > `LANGUAGE_VERSION` is now `0.9.20` (one constant and seven fixtures); it builds none of the 0.9.20 changes
