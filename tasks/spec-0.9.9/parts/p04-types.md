@@ -268,9 +268,9 @@ endpoints; `E2213` `in` clause on a non-numeric or generic alias; `E2214` arithm
 * `[TYP-12]` A unit-only enum is an integer (`@repr(u8)` and friends choose it; the default is the
   smallest signed type that fits). An enum crossing a foreign boundary MUST carry `@repr`. A payload
   enum is a tag plus a union of variants.
-* `[TYP-13]` *(changed in 0.9.9)* *(changed in 0.9.15)* `Option[T]` has the size of `T` when `T` has a niche: a class
-  object, an `owns T`, a `ref`, a `Span`, a `StrView`, a `CStrView` (ODR-080), a non-nullable `extern fn`, `bool`, `char`, a range type per
-  `[RNG-7]`, an enum with unused discriminants, or `NonZero[T]` (`[STD-4]`). For class objects, `owns T`, `ref` and `extern fn` this is
+* `[TYP-13]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `Option[T]` has the size of `T` when `T` has a niche: a class
+  object, an `owns T`, a `shares`, `shares mut` or `thread_shared` value, a `sharedref mut` link, a `ref`, a `ref mut`, a `Span`, a `MutSpan`, a `StrView`, a `CStrView` (ODR-080), a non-nullable `extern fn`, `bool`, `char`, a range type per
+  `[RNG-7]`, an enum with unused discriminants, or `NonZero[T]` (`[STD-4]`). For class objects, `owns T`, the shared owners and links, `ref`, `ref mut` and `extern fn` this is
   guaranteed, so `Option[C]` of a class `C`, and `Option[owns T]`, is a nullable pointer across an FFI
   boundary. `CStrView` is non-null; `Option[CStrView]` has the size and alignment of a C character
   pointer, with null representing `None`.
@@ -332,14 +332,15 @@ endpoints; `E2213` `in` clause on a non-numeric or generic alias; `E2214` arithm
     one, or text written in the program, and after the call the caller's place may point into what it
     pointed into before or into any of the call's other arguments (`[LT-21]`); a view of the callee's
     own locals or of a temporary put there is `E3063`.
-* `[TYP-15a]` The arena-backed containers (`ArenaArray`, `ArenaMap`, §IX.2) and the view containers
-  `BorrowList[T]` may hold views bounded by the container's own region.
+* `[TYP-15a]` *(changed in 0.9.20)* The arena-backed containers (`ArenaArray`, `ArenaMap`, §IX.2) may hold views
+  bounded by the container's own region (`[ARN-5]`); there is no other view container.
 
 ## IV.5 Raw types
 
 `*T` and `*mut T` are nullable, possibly unaligned, untracked pointers. Creating one from a reference
-is safe (ODR-075): `ref_to_ptr(r: T) -> *T` and `ref_to_ptr(ref mut r: T) -> *mut T`, called
-`ref_to_ptr(x)` and `ref_to_ptr(ref mut x)`, keep the predecessor's name. An explicit `r as *T`
+is safe (ODR-075): `ref_to_ptr(ref x) -> *T` and `ref_to_ptr(ref mut x) -> *mut T` are one function
+the compiler knows, not two of one name (`[TYP-26]`): its argument is a view written with its word (a
+plain parameter, `ref x`, or `ref mut x`), and the result's type follows that word. An explicit `r as *T`
 is also safe when the pointee type is unchanged and the
 cast does not strengthen mutability: `ref T` to `*T`, or `ref mut T` to `*T` or `*mut T`.
 The raw pointer keeps no compiler-tracked view. Dereferencing, offsetting, reading and
@@ -505,8 +506,7 @@ fn main():
   checked as an ordinary parameter's is, its word included (`owns values: Ts...` takes each one over).
   A pack is the last of its type parameters, and its values' parameter is the function's last
   positional one: a parameter after it has a default and is passed by name only, as after Python's
-  `*args` (`fn println(values: Ts..., sep: StrView = " ", end: StrView = "
-")`, called
+  `*args` (`fn println(values: Ts..., sep: StrView = " ", end: StrView = "\n")`, called
   `println(a, b, sep=", ")`); anywhere else either is `E0100`. C's untyped `...` stays as `[FFI-8]` says, in `unsafe` only.
 * `[TYP-35]` *(new in 0.9.9)* *(changed in 0.9.15)* A type parameter need not appear in any field (a **phantom** parameter): `[Tag]`
   above `struct Handle:` with the one field `index: u32` is legal. A phantom parameter affects type
@@ -574,8 +574,8 @@ implements Display:` block.
 | Marker | Holds when |
 |---|---|
 | `Copy` | declared with `@derive(Copy)` on a struct or enum whose fields are all `Copy` and which has no `drop`, which gives it `Clone` too; always for scalars, `ref T`, `Span`, `StrView`, raw pointers, `extern fn`, tuples and fixed arrays of `Copy` elements; never for a class object, an `owns`, `shares`, `shares mut` or `thread_shared` value, a `weakref` or `sharedref mut` link, `ref mut T` or `MutSpan[T]` |
-| `Send` | inferred: every component is `Send`, so nothing reachable from the value is a one-thread owner (`shares`, `shares mut`), a `weakref` link to one, or bound to its thread (a lock's guard, a `Scope`, a raw pointer); `ref T` and `Span[T]` are when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is `Send`; a class object is when its fields are; a `thread_shared T` value is when `T` is `ThreadShared` and `Send` (`[THR-8]`) |
-| `ThreadShared` | inferred: several threads may hold and read one value of the type at once; every component is `ThreadShared`; `ref mut`, `Cell`, `UnsafeCell`, raw pointers, a `shares` or `shares mut` value and a `weakref` link to one are not (`[THR-9]`) |
+| `Send` | inferred: every component is `Send`, so nothing reachable from the value is a one-thread owner (`shares`, `shares mut`), a `weakref` link to one, a `sharedref mut` link (a view several holders on one thread may change), or bound to its thread (a lock's guard, a `Scope`, a raw pointer); `ref T` and `Span[T]` are when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is `Send`; a class object is when its fields are; a `thread_shared T` value is when `T` is `ThreadShared` and `Send` (`[THR-8]`) |
+| `ThreadShared` | inferred: several threads may hold and read one value of the type at once; every component is `ThreadShared`; `ref mut`, `sharedref mut`, `Cell`, `UnsafeCell`, raw pointers, a `shares` or `shares mut` value and a `weakref` link to one are not (`[THR-9]`) |
 | `Sized` | everything except `dyn I` and unsized foreign types |
 
 * `[TYP-43]` *(new in 0.9.10)* *(changed in 0.9.15)* The marker interfaces are interfaces of `std.core`, exported by the

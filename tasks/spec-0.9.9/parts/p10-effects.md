@@ -155,7 +155,7 @@ The compiler infers, for every function, an **effect set** drawn from:
   calls of its type parameters' methods make the changes those methods make for the types it is given,
   worked out for each instance.
   Its message: E3020 ("`scores.for_each(...)` (line 4) pushes to `LOG` (through the function it is given) while this loop walks `LOG` (line 3); call it after the loop: move line 4 below the loop").
-* `[EFF-27]` *(new in 0.9.15)* **What a `@cached` result depends on.** A `@cached` method's result
+* `[EFF-27]` *(new in 0.9.15)* *(changed in 0.9.20)* **What a `@cached` result depends on.** A `@cached` method's result
   depends on the fields its body reads, worked out from its body (`[EFF-24]`), and the kept result is
   cleared by every change, through any name, to one of them: the compiler places the clear at each line
   that may make such a change. A change that does not pass through the method's object cannot be cleared
@@ -164,7 +164,9 @@ The compiler infers, for every function, an **effect set** drawn from:
   which is `@cached` and would not see a change made through this link; link the shelf instead,
   `sharedref mut s`, or remove `@cached`"); a link to the whole holder is allowed, since every change
   through it passes through the holder. A reload that changes a `@cached` method's body clears every
-  kept result of its type (Annex B).
+  kept result of its type (Annex B). A change made by foreign code, or through a raw pointer, passes
+  through no name the compiler sees: unsafe code that changes a field a `@cached` method reads answers
+  for it (`[UNS-4]`, `[CLS-12]`).
 
 ## X.2 Contracts
 
@@ -290,7 +292,7 @@ compute the same bits, on one machine and across machines running the same binar
   **guaranteed present**; **conditionally elided** (the compiler MAY remove it with a proof and reports
   whether it did); **implementation-defined** (not constrained, such as code size; two conforming
   implementations may differ); **not observable** (erased).
-* `[COST-3]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **The costs.** Everything
+* `[COST-3]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* **The costs.** Everything
   the memory model checks is checked when compiling; what runs is only what this table lists.
 
 | Cost | Class | Condition, and what the programmer can do |
@@ -312,13 +314,13 @@ compute the same bits, on one machine and across machines running the same binar
 | `assert_disjoint` | guaranteed present | two compares where the program writes it (two spans of one list given to one call, one of them changeable); the call is then compiled with noalias; none when the compiler knows the spans apart |
 | `Cell` access | not observable | a load or a store |
 | Interface call through `dyn` | guaranteed present | one indirect call |
-| A `runtime dyn` parameter's check | guaranteed present | one type-id compare at each line the check guards, only where a kind that may reach the parameter makes the line unsafe (`[LT-48]`); none where the kinds are known when compiling |
+| A `runtime dyn` parameter's check | guaranteed present | one load and one bit test, of the fact in the kind's method table, at each line the check guards, only where a kind that may reach the parameter makes the line unsafe (`[LT-48]`); none where the kinds are known when compiling |
 | Virtual method call | conditionally elided | a load of the slot and one indirect call (`[DSP-2]`); direct when one implementation is reachable (`[DSP-5]`) |
 | Generic call, monomorphised | not observable | a direct, inlinable call |
 | Generic call, shared (`[MONO-6]`) | guaranteed present | one indirect call per bound method; only above a declared instantiation budget |
 | A function given through a type parameter (`[F: needs fn(Item)]`) | not observable | a direct, inlinable call; one instance per function given |
 | A call through a function value (a parameter, field, list element or local of a function type) | guaranteed present | one indirect call; a call through a list element or a field first copies the value's two words, its code and its state, out of it |
-| A function value's state | guaranteed present | a variable kept with a capture word (`owns`, `copy of`, `shares`, `thread_shared`, `weakref`) lives in the function value's own state (`[CLO-10]`), and costs nothing beyond it; a captured real variable stays at its own address and costs nothing; a function that ends its own state while it runs and then uses it holds one count on that state across the call |
+| A function value's state | guaranteed present | a variable kept with a capture word (`owns`, `copy of`, `shares`, `thread_shared`, `weakref`) lives in the function value's own state (`[CLO-10]`), and costs nothing beyond it; a captured real variable stays at its own address and costs nothing; a function value is never stored where its own run could end or move its state (`[CLO-17]`), so nothing is held across a call |
 | `some I` return | not observable | the concrete type is known |
 | Generator resume | guaranteed present | one jump on the state; the frame never allocates; a `for` over a list inside the generator reads its position again after each resume |
 | Collection literal producing a heap collection | guaranteed present | one allocation (`Alloc`); a fixed-array context allocates nothing |

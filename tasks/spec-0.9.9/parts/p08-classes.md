@@ -98,14 +98,17 @@ offset  size  field
 
 ## VIII.2 Owners and counts
 
-* `[RC-1]` *(changed in 0.9.15)* **Several owners.** `shares x` makes one more owner of what `x`
+* `[RC-1]` *(changed in 0.9.15)* *(changed in 0.9.20)* **Several owners.** `shares x` makes one more owner of what `x`
   names, on this thread, that reads it; `shares mut x` one more that may also change it; and
   `thread_shared x` one more on any thread (`[OWN-13]`). A value made shared lives in a block of its own
   with the header of `[OBJ-1]` (a class object already does), and its owners are counted: making an
   owner adds one to the count, ending one subtracts one, and the subtraction that reaches zero ends the
   value. A value with one owner is not counted: its owner ends it. **Only a whole value is shared**
   (verdict 103): `shares x`, `shares mut x` and `thread_shared x` are written before a new value, a
-  local of this function (which becomes one of the owners) or a name that is already such an owner. A
+  local of this function that owns its value (which becomes one of the owners: a value that is not a
+  class object is then made in a block of its own from the line that made it, as if that line had
+  said `shares`, so nothing moves and no view of it ends at the `shares` line, and the local's type is
+  the shared type throughout the function) or a name that is already such an owner. A
   place that has one owner and is not a local of this function, a list element (`shares mut players[1]`
   of an `Array[Player]`), a field (`shares this.items`) or a plain parameter (`fn keep(p: Player):
   LIST.push(shares p)`), is `E2122`: "`players[1]` has one owner, the list `players`, and no second
@@ -152,7 +155,7 @@ offset  size  field
   value alive. The last use of a view ends the view, not the owner (`[BRW-2]`) (ODR-063). `unsafe` code
   that keeps a raw pointer into an object keeps an owner of it alive for as long as it uses the pointer;
   `with h:` and `mem.keep_alive(h)` state that where no Safe use does.
-* `[RC-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* The counts of a value that is not
+* `[RC-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* The counts of a value that is not
   `thread_shared` are changed with plain adds and subtracts, and never cross threads (`E7015`).
   **A `thread_shared` value's owners are counted in two numbers** (verdict 101; biased counting, Choi,
   Shull and Torrellas, 2018):
@@ -169,7 +172,8 @@ offset  size  field
   3. **Check points.** The compiler places them: at every loop's back edge, before every call that may
      block the thread (waiting for a lock, `join`, a channel's receive, a sleep) and when the thread
      ends. A value whose making thread has ended is ended at once by the thread that ends its last
-     owner.
+     owner: a thread's end empties and closes its queue in one atomic step, and a subtract that
+     finds the queue closed ends the value itself, so no value waits for a thread that is gone.
   4. **Handed over at once.** A thread that stores an owner of a `thread_shared` value where other
      threads can reach it (into a lock-guarded `thread_shared` container, through a channel, into the
      capture of a thread it spawns or of a callback C keeps; every such place is known when compiling)
@@ -188,14 +192,16 @@ offset  size  field
   count's range, so threads racing past it each stop before the count can roll over, whatever their
   number. The home count, and a count that is not `thread_shared`, keep the exact compare of `[RC-1]`
   and `[WK-11]`.
-* `[RC-5]` *(changed in 0.9.15)* **A view of an object reached through a link.** A view of an object
+* `[RC-5]` *(changed in 0.9.15)* *(changed in 0.9.20)* **A view of an object reached through a link.** A view of an object
   reached through a `shares`, `shares mut`, `thread_shared` or `weakref` link (a name opened from a link,
   `if cam.target exists as p:`; a view made through a `shares mut` field, `t = ref mut ws[i].target`; a
   parameter `x: shares T`, whose life is the call) must not outlive the object. It is checked when
   compiling, and nothing runs for it while the program runs, except for one kind of object (point 2):
-  1. **No line or call in the view's life may end an object of that type**: no write to a place that
-     owns one (`T`, `owns T`, `shares T`, `shares mut T`, `thread_shared T`, and a place of a function
-     type or of `owns dyn I` whose value's state owns one: `h.keep = fn(): pass` ends the function
+  1. **No line or call in the view's life may end an object of that type's class family** (`[EXC-3]`:
+     an `Array[Entity]` cleared ends a `Player` derived from `Entity`), held directly or through
+     anything that owns it, all the way down (a list of teams cleared ends their players): no write to a
+     place that owns one (`T`, `owns T`, `shares T`, `shares mut T`, `thread_shared T`, and a place of a
+     function type or of `owns dyn I` whose value's state owns one: `h.keep = fn(): pass` ends the function
      stored there before and the node its `owns n` held), no removal from a list that owns them, no end
      of a local that owns one, and no call that may do so, worked out from its code (`[EFF-1]`):
      `remove_all(ref mut players)`, given the list that owns the players; a call through a function

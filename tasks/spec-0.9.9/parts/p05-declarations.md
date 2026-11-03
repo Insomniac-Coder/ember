@@ -144,9 +144,9 @@ pub fn blend(dst: Array[f32], ref mut out: Array[f32], owns scratch: Array[f32],
   may change the object, and `p = Player()` gives the caller's place another object (the old one
   ends); `owns p: Player` hands the object over, so the caller's name ends. A method that may change its
   object is not called through a `p` that only reads it (`E3023`, `[EXC-15]`).
-* `[FN-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* A function hands its result over to its caller. A
-  result that is a view points into the arguments it may come from, a method's into `this` and a
-  function's into its view arguments; `-> T from name` after the result type narrows it to one
+* `[FN-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A function hands its result over to its caller. A
+  result that is a view points into what the function's code shows it points into: its view
+  arguments and, for a method, `this` (`[LT-1]`); `-> T from name` after the result type narrows it to one
   parameter or one field of `this` written bare (`-> StrView from src`) (`[LT-1]`, `[LT-1a]`); a view
   of text written in the program has the `static` region (`[LT-3]`). A view of the function's own locals
   or of a temporary is never returned (`E3063`).
@@ -310,14 +310,16 @@ class Door(Script):
   object to the place it is stored in, its one owner: a class object has one owner unless a line says
   `shares` (`[OWN-1]`, `[RC-1]`), and `=` from a whole name hands it over (`[OWN-3]`). `owns` on a class
   type is `E2114` ("a `Player` object always lives in its own block; remove `owns`: `p: Player`").
-* `[CLS-2]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* `fn init(…)` is the
+* `[CLS-2]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* `fn init(…)` is the
   constructor; it sets the fields of the object it builds through `this`, with no word. Before any
   `init` body runs, every field default of the class and of its bases is evaluated and stored. Every
   field without a default MUST then be set on every path before `this` is used as a whole (`E2100`):
   `this` is used as a whole when it is passed, stored, returned or captured, when a link or an owner of
   it is made (`weakref this`, `shares this`), and by a call of a method whose body lets `this` out in
-  any of those ways, which the compiler works out from that body (`[EFF-24]`). Before then `init` may
-  call a method of its object once every field that method's body reads is set: after
+  any of those ways, which the compiler works out from that body, and for a `virtual` method from
+  every override's body the program has (`[DSP-5]`, `[EFF-24]`), since a base `init` cannot know which
+  kind it builds. Before then `init` may call a method of its object once every field that method's
+  body (every override's, for a `virtual` method) reads is set: after
   `this.renderer = r`, `this.assets = this.load_assets()` is allowed when `load_assets` reads only
   `this.renderer`, and is `E2100` when it reads a field not yet set ("`init` calls `load_assets()` (line
   6), which reads `this.assets` (its line 14), and `assets` is set only on line 7; give it a value
@@ -373,13 +375,15 @@ class Door(Script):
   `let`: it is set in `init` and never changed after; to add to it, write the field without `let`:
   `items: Array[int]`"). Other owners of a `shares` object change it as `shares` allows (`[RC-7]`);
   `let` speaks only of the field it is written on.
-* `[CLS-12]` *(new in 0.9.15)* **`@cached`.** `@cached` above a method with no parameters keeps the
-  method's result after the first call, and gives it again until a change, through any name, of a
+* `[CLS-12]` *(new in 0.9.15)* *(changed in 0.9.20)* **`@cached`.** `@cached` above a class method with no parameters keeps the
+  method's result after the first call, in the object (a struct or enum has no hidden state, `[PHIL-9]`,
+  `[TYP-11]`), and gives it again until a change, through any name, of a
   field the method's body reads clears it (`[EFF-27]`). A `Copy` result is returned by value, any other
   as a `ref T` view into the kept value, which clearing it ends (a later use is `E3060`). On an object
   several threads reach, the kept result is filled once under a once-flag. It costs one flag test per
   call and one store per change of a field the body reads. `@cached` is `E2117`, each message giving
-  the `@cached` line to remove: on a method with parameters ("`@cached` keeps one result, and `radius`
+  the `@cached` line to remove: on a method of a struct or an enum ("a `Vec2` has no hidden state to keep a
+  result in; keep it in a field of a class, or remove `@cached` (line 2)"); on a method with parameters ("`@cached` keeps one result, and `radius`
   takes `scale`; remove `@cached` (line 2), or keep the results in a field: `radii: Map[f64, f64]`");
   on one whose body changes anything ("a cached method keeps one result, so it only reads, and `radius`
   changes `this.verts` (its line 4); remove `@cached` (line 2)"); and on one whose body reads a
@@ -387,6 +391,9 @@ class Door(Script):
   threads change under a lock, whose changes need not pass through its object ("`radius` reads `verts`,
   which other threads change under `lock`; a kept result could be stale; remove `@cached` (line 18)").
   For a method that reads a value its other owners may change: E2117 ("`radius` reads `mesh`, which its other owners may change without `Mesh` seeing it, so a kept result could be stale; remove `@cached` (line 13)").
+  A change made by foreign code, or through a raw pointer, passes through no name the compiler sees:
+  unsafe code that changes a field a `@cached` method reads answers for it, as for every obligation of
+  `unsafe` (`[UNS-4]`).
 
 ## V.6 Interfaces and `extend`
 
@@ -542,7 +549,7 @@ fn tick():
 | `@ffi(…)` | extern item, overlay item | Part XVI |
 | `@test`, `@bench`, `@should_panic` | fn | `[TST-3]` |
 | `@view` | struct, enum | `[TYP-34]` (optional; checked: `E2030` on a type that holds no view) |
-| `@cached` | method with no parameters | `[CLS-12]` |
+| `@cached` | class method with no parameters | `[CLS-12]` |
 | `@reflect` | type | `[RFL-2]` |
 | `@safety("…")` | unsafe fn | `[UNS-7]` |
 | `@must_drop` | struct, class | `[THR-6]` |

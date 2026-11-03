@@ -1,5 +1,22 @@
 # Ember — handoff
 
+> **2026-11-03 — a cloud session, AUTONOMOUS, solo (the owner: "find the security holes, memory safety issues,
+> consistency problems and missing spec detail problems and fix them ... the latest version will be called
+> 0.9.20_Hardened_1"). START HERE.** **Hardened_1 of 0.9.20 is cut** and is the development target
+> (`docs/spec-source/Ember_v0.9.20_Hardened_1.md`): the whole of 0.9.15_Hardened_10 read rule by rule; 35 rules
+> changed, none added or removed, each change with its reason in its §H.51 and the rulings as N52 to N75 in
+> `tasks/96/redesign/compiler-0.9.15/decisions.md` §12 (the audit's working notes were the session's scratchpad).
+> Every change refuses a program that was unsafe, states a fact a compiler had to guess, or corrects the text;
+> nothing runs while a program runs that did not before, and no feature is taken away. The compiler's
+> `LANGUAGE_VERSION` is now `0.9.20` (one constant and seven fixtures); it builds none of the 0.9.20 changes
+> yet, as it built none of 0.9.15's at its Hardened_1. **Checked:** `check_ids`, `check_citations`,
+> `code_registry --check`, `rule_index`, `spec_check`, `phase_progress --check` green; `check_examples` 41 of 56
+> as before. The full workspace suite was not run in the cloud session (no Windows, no bench): the spec-tied
+> unit tests (`ember_diag` codes, `ember_parser`, `milestones::the_three_versions_are_separate`) were.
+> **Next:** the push gate on the owner's machine; then each 0.9.20 change lands with the milestone that owns
+> its rule (`tasks/96/redesign/compiler-0.9.15/MILESTONES.md`; the `runtime` check's table fact replaces N49's
+> kind-word compare, `dyn_kinds.rs`), and the open owner questions N38 to N40 stay open.
+
 > **2026-11-01 ~23:50 to 2026-11-02 night — AUTONOMOUS (owner: "after this I need you work autonomously and you can 2-3
 > helper agents to help you with coding, make sure you follow all the autonomous md file rules and run the power source
 > watcher, I'll see you in the morning"). START HERE.** Watcher: power only, pid 97416 (scratchpad

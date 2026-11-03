@@ -82,8 +82,7 @@ anything this Part leaves open.
   end="\n")` write their arguments' text to standard output separated by `sep`;
   `eprint`/`eprintln` write to standard error. They are ordinary functions of the library, with a pack
   (`[TYP-47]`, verdict 117): `[Ts...: needs Printable]` above
-  `pub fn println(values: Ts..., sep: StrView = " ", end: StrView = "
-"):`. The compiler implements
+  `pub fn println(values: Ts..., sep: StrView = " ", end: StrView = "\n"):`. The compiler implements
   `Printable` (§IV.8, in the prelude) for every type that has `Display` or `Debug`, which no program
   can write by hand: an argument's text is its `Display` text when its type has `Display`, and its
   `Debug` text otherwise, which is Python's `str` → `repr` fallback; a type with neither is `E2040`,

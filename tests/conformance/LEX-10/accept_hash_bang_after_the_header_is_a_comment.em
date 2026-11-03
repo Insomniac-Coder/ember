@@ -1,4 +1,4 @@
-#! language "0.9.15"
+#! language "0.9.20"
 #$ test: run-pass
 #$ rules: LEX-10, GRM-37
 #$ stdout: 1

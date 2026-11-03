@@ -40,8 +40,9 @@ These words are used with these meanings throughout the specification.
 - **position**: a view of a list element that finds the element again at each use (`[BRW-16]`).
 - **reshape**: a change that can free or move memory: replacing a value that owns memory; `push`,
   `pop`, `insert`, `remove`, `clear`, `sort`, `retain`, `extend` on a list, map, set or string;
-  changing an enum's variant; ending an object's last owner. Writing a number or a `bool` is not a
-  reshape. A reshape moves or frees only what it may move or free: adding to a list (`push`, `extend`)
+  handing a value over (its old place is left empty, and a value handed to another thread may move,
+  `[THR-2]`); changing an enum's variant; ending an object's last owner. Writing a number or a `bool`
+  is not a reshape. A reshape moves or frees only what it may move or free: adding to a list (`push`, `extend`)
   may move its buffer and every value stored inline in it, but not a class object, which lives in its
   own block and is not moved when the list grows.
 - **ended**: an object is ended the moment its last owner lets it go, before its `drop` runs
@@ -64,7 +65,7 @@ These words are used with these meanings throughout the specification.
   reverse declaration order. A value always ends with its clean-up: nothing ends an owner without
   running it, and there is no `mem.forget` (`[OWN-6]`); a value given to C is handed over to it
   (`[OWN-12]`).
-* `[OWN-3]` *(changed in 0.9.15)* **`=` with a whole name hands it over.** `b = a`, where `a` is a whole
+* `[OWN-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* **`=` with a whole name hands it over.** `b = a`, where `a` is a whole
   name that owns a value whose type is not `Copy`, hands `a` over: `a` ends. Using it afterwards,
   whether it is read, handed over again or viewed (a method call, `print`), is `E3040`, labelled at the
   hand-over and at the use, and the message names both ways out: "`items` was handed over to
@@ -72,8 +73,11 @@ These words are used with these meanings throughout the specification.
   your own) or `snapshot = shares items` (two owners of one list)". Where `a` is itself a view (a plain
   parameter, a loop, pattern or opened name, a local holding a view), `b = a` makes `b` a read-only view
   of what `a` views, and `ref` may say so (`cur = ref p`); a view hands nothing over. For a `Copy` type
-  `=` copies. A value handed over on only some paths is tracked with a hidden drop flag; a hand-over
-  on some paths is legal, and a use a hand-over may have reached is `E3040` too.
+  `=` copies. A hand-over is a reshape of the giver's place (§VII.1, `[BRW-17]`): a view into `a` that
+  is still used after `b = a` is `E3060` at that use, and `a` is not handed over while a `ref mut`
+  name of it is still used (`E3022`). A value handed over on only some paths is tracked with a hidden
+  drop flag; a hand-over on some paths is legal, and a use a hand-over may have reached is `E3040`
+  too.
 * `[OWN-4]` *(changed in 0.9.15)* A loop body that hands over a value declared outside the loop is
   `E3040`, unless every path gives it a value again before the next round.
 * `[OWN-5]` Assigning to a place that holds a live value evaluates the new value, then drops the old
@@ -164,9 +168,11 @@ These words are used with these meanings throughout the specification.
   (ODR-051). A `Copy` struct copied with `=` from a name that is still used afterwards is not then
   changed through the new name (`E3023`): the line says `copy of` (a copy of your own) or `ref mut`
   (the original), so that no copy is changed by mistake.
-* `[OWN-8]` *(changed in 0.9.15)* **`copy of x`** makes a copy of the thing itself, by its type's
+* `[OWN-8]` *(changed in 0.9.15)* *(changed in 0.9.20)* **`copy of x`** makes a copy of the thing itself, by its type's
   `Clone` (`fn clone() -> Self`, the explicit deep copy): of a class object, a new object
-  (`p2 = copy of player`); for a `shares` or `sharedref mut` link, a copy of its target. Every `Copy` type
+  (`p2 = copy of player`); for a `shares`, `shares mut`, `thread_shared` or `sharedref mut` link, a
+  copy of its target, a `T` with one owner (`p2 = copy of p` for `p: shares mut Player` is a `Player`
+  that `p2` alone owns; `p3 = shares p2` starts a second group of owners). Every `Copy` type
   has `Clone` (`@derive(Copy)` gives it), so `b = copy of a` works for a `Point` marked only `Copy`. A
   value that holds links is copied field by field, as a C++ struct holding a `shared_ptr` and a
   `weak_ptr` is: what it owns alone is copied itself, and each link is copied as a link to the same
@@ -418,10 +424,11 @@ view hands nothing over and makes no copy.
 
 ## VII.5 Views and changes
 
-* `[BRW-16]` *(new in 0.9.15)* **Positions.** A name for a list element made by indexing
+* `[BRW-16]` *(new in 0.9.15)* *(changed in 0.9.20)* **Positions.** A name for a list element made by indexing
   (`boss = enemies[0]`, `boss = ref mut enemies[0]`, `p = ps.get(0).unwrap()`), of a list reached
-  through locals that own it, parameters, `this` and one-owner fields, is a position: the element is
-  found again at each use. The list may grow while the name is used (its buffer is read again after the
+  through locals that own it, parameters, `this` and one-owner fields, is a position: the index is
+  read once, where the name is made, and kept with it (a later change of `i` moves no position made
+  from `enemies[i]`), and the element is found again at each use through the list's current buffer. The list may grow while the name is used (its buffer is read again after the
   add); anything that may remove, insert, reorder, clear or replace the list ends the name, and a later
   use is `E3060` ("`enemies.remove(0)` (line 8) may put another enemy in the place `boss` names (line
   6), and `boss` is used on line 9; use `boss` before line 8, or name the enemy again after it:
@@ -675,7 +682,7 @@ fn main():
   `from static` field given a view of anything else is `E3063` ("`kind` holds only text written in the
   program, and `name` comes from the caller; write `this.kind = String(name)` with `kind: String`").
   For a view into a field stored inside the value: E2118 ("`buf` is stored inside the value, so moving the value moves it; keep the text in a `String`, which has a block of its own: write the field as `let buf: String`").
-* `[LT-46]` *(new in 0.9.15)* **The three kinds of kept view**, by their word:
+* `[LT-46]` *(new in 0.9.15)* *(changed in 0.9.20)* **The three kinds of kept view**, by their word:
   * `ref T` reads; any number of names may view one place.
   * `ref mut T` may change, and it is alone: while its holder is still used, the place is not read or
     changed through any other name (`[BRW-1]`); a second holder is `E3022` ("`p` is lent to
@@ -685,8 +692,9 @@ fn main():
   * `sharedref mut T` may change, and several holders, and the owner, may name one object. On one thread
     any of them may change it at any time; every view into it ends at a reshape made through any of
     them, and a list in it may not change while a loop walks it, whichever holder reaches it
-    (`[BRW-17]`, `[BRW-18]`); on two threads it is changed only under a lock, through `Atomic`, or by a
-    reduction from scoped tasks (§XI.3, `[THR-13]`). It is written the same way before a value
+    (`[BRW-17]`, `[BRW-18]`); it never reaches another thread (it is neither `Send` nor `ThreadShared`,
+    `[THR-8]`), and the scoped tasks of its thread change its target only under a lock, through
+    `Atomic`, or by a reduction (§XI.3, `[THR-13]`). It is written the same way before a value
     (`Watcher(target=sharedref mut players[r])`), it costs nothing while the program runs, and its
     holders get no noalias (`[BRW-22]`). `sharedref` is always followed by `mut` (`E0114`: "a link that
     only reads may be held by any number of names: write `target: ref Player`; `sharedref` is for a link
@@ -701,17 +709,21 @@ fn main():
   `E3060`.
   Its message: E3060 ("`bag.items.push(owns k)` (line 15) may move the list that `h.view` points into (`pick` may have put a view of `bag` there on line 13), and `h.view` is used on line 16; use `h.view` before line 15").
 
-* `[LT-48]` *(new in 0.9.15)* **`runtime`: a `dyn` parameter's kind checked while the program runs.**
+* `[LT-48]` *(new in 0.9.15)* *(changed in 0.9.20)* **`runtime`: a `dyn` parameter's kind checked while the program runs.**
   `runtime` before a parameter's `dyn` type lets the function do what one of the kinds that may reach it
-  would make unsafe (`[LT-1]`), where which kind it is is known only while the program runs: the
-  function checks the kind at the line that would be unsafe, and stops the program there if it is that
-  kind. With `[LT-1]`'s `Picker`, `fn show(p: runtime dyn Picker):` and `p: dyn Picker = Mine(items=[9])
+  would make unsafe (`[LT-1]`), where which kind it is is known only while the program runs: at the line
+  that would be unsafe the function reads, from the table of the value's kind, which of the called
+  method's parameters its result may point into, and stops the program there when the result may point
+  into what the line changes. That fact is the one `[LT-22]` records for each implementation (one bit
+  per source parameter and one for `this`), kept in the method's entry of the kind's table, so a kind
+  declared in another package, which the function's own package never saw, is checked as any other;
+  a compare of kind identities instead would let such a kind through. With `[LT-1]`'s `Picker`, `fn show(p: runtime dyn Picker):` and `p: dyn Picker = Mine(items=[9])
   if input() == "m" else Yours(items=[9])`, `show(p)` prints `[9]` for a `Mine`, and for a `Yours` stops
   at `xs.push(owns 3)`: "panic at main.em:17:5: `xs` changes while `r` looks at it: `p` is a `Yours`,
   whose `pick` gives back the list it was handed". Where the kind is known when compiling, the word
   changes nothing: given `show(Yours(items=[9]))`, `show` is refused at `xs.push(owns 3)` when compiling,
   as without it (`E3021`). `runtime` is a word only after a parameter's `:` before `dyn` (`[LEX-15]`); it
-  costs one type-id compare at each line it guards (§X.4).
+  costs one load and one bit test at each line it guards (§X.4).
 
 ### Views with several regions
 

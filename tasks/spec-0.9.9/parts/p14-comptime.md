@@ -40,13 +40,17 @@ comptime:
 * `[CT-7]` *(new in 0.9.9)* A `comptime:` block at item level, or as a statement, runs once during
   compilation for its checks. A failed `assert` or any other panic there is `E6004`, which shows the
   panic message and the compile-time call chain.
-* `[CT-2]` *(changed in 0.9.9)* *(changed in 0.9.10)* An operation that cannot run at compile time — an `extern` call, a
+* `[CT-2]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.20)* An operation that cannot run at compile time — an `extern` call, a
   thread, a clock, `unsafe` pointer access outside the evaluator's heap, I/O — is `E6010`, naming the
   call chain. A raw pointer made from an integer (`0 as *mut T`, `-1 as *mut T`) is a compile-time
   value: it is an address, read by nothing, and a `const` of pointer type may hold one; a pointer into
-  the evaluator's heap may not leave it (`E6010`) (ODR-145). Two inputs are provided: `comptime.read_file(path)` (relative to the package root, and only inside the
-  package directory, `E6010` otherwise, so a dependency's build cannot read the builder's files) and
-  `comptime.env(name)`. Both are recorded as build inputs.
+  the evaluator's heap may not leave it (`E6010`) (ODR-145). Two inputs are provided: `comptime.read_file(path)` (relative to the package root, the folder of the
+  package's `ember.toml`; the path is resolved with every symbolic link followed and must then lie
+  under that root, `E6010` otherwise, so a dependency's build cannot read the builder's files) and
+  `comptime.env(name)`, which the root package may call for any variable and a dependency only for a
+  variable the root package's manifest lists for it (`[comptime] env = ["CC", "TARGET_OS"]`, by
+  default none; `E6010` otherwise), so a dependency cannot read the builder's environment into the
+  program it builds. Both are recorded as build inputs.
 * `[CT-3]` Each evaluation is limited to 10⁸ steps and 256 MB of evaluator heap by default
   (`[comptime]` in the manifest); exceeding either is `E6001`.
 * `[CT-4]` *(changed in 0.9.9)* *(changed in 0.9.10)* Compile-time evaluation is deterministic by construction: the evaluator
@@ -60,7 +64,7 @@ comptime:
   at compile time and run time (`[TYP-8]`, ODR-084), including module constants and arithmetic
   inside a function; calling another function preserves that function's policy. A result is cached with its inputs (source,
   `read_file` contents, `env` values).
-* `[CT-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Where results live.** A compile-time result is placed in the image as
+* `[CT-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **Where results live.** A compile-time result is placed in the image as
   constant data. A value that owns heap memory (`Array`, `String`, `Map`, an `owns T`, …) is handled so
   that no run-time code ever grows, changes or frees constant data:
   * in a `static` (not `static mut`) whose type gives no name a way to change the value (no `Mutex`,
@@ -73,7 +77,9 @@ comptime:
   * a `comptime(e)` whose type owns heap memory is materialised once, as constant data, and the
     expression is a read-only view of it, with no copy: `t = comptime(table())` then `t[i]` reads the
     table made when compiling, and a change through `t` is `E3023`. `copy of comptime(e)` makes a value
-    of your own, which may grow (`Alloc`).
+    of your own, which may grow (`Alloc`). Its type is the read-only view of the value: `Span[T]` for
+    an `Array[T]`, `StrView` for a `String`, `ref T` for any other value that owns heap memory, with
+    the `static` region (`[LT-3]`); `copy of comptime(e)` has the value's own type.
 
   A `const` cannot own heap memory (§V.7).
 

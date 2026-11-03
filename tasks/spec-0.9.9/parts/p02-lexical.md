@@ -39,7 +39,7 @@ Ember is indentation-sensitive exactly as Python 3 is, with stricter rules:
 ## doc comment: attaches to the next declaration; Markdown body
 # SAFETY: justification for the `unsafe` block that follows ([LEX-23])
 #$ test-harness annotation; an ordinary comment to the compiler
-#! language "0.9.9"  (only before the imports: a directive, [GRM-37])
+#! language "0.9.20"  (only before the imports: a directive, [GRM-37])
 ```
 
 * `[LEX-10]` *(changed in 0.9.9)* There are no block comments. A line beginning `#!` before the first import or item is a

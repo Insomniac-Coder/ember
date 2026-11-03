@@ -1,4 +1,4 @@
-#! language "0.9.15"
+#! language "0.9.20"
 #! threads main
 #$ test: run-pass
 #$ rules: GRM-37, VER-8, FFI-33c

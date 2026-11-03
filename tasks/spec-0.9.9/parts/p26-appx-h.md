@@ -2465,3 +2465,126 @@ Generated: every rule whose text differs from 0.9.15_Hardened_9.
 | `[THR-20]` | changed |
 | `[THR-21]` | changed |
 | `[WK-17]` | changed |
+
+
+## H.51 Changes in 0.9.20_Hardened_1 (from 0.9.15_Hardened_10)
+
+**0.9.20_Hardened_1** is the hardening audit of 2026-11-03, a reading of the whole of 0.9.15_Hardened_10
+for holes in its memory-safety rules, facts it left unsaid and words that disagreed with each other, made
+under the owner's delegation (`docs/AUTOPILOT.md` §3; the reasoning in `docs/HANDOFF.md`). Every change
+below is a rule that refuses a program that was unsafe, a fact a compiler would otherwise have to guess, or
+a correction of the text; no feature is taken away and nothing is checked while the program runs that was
+not before. The accepted set changes, so the language version moves (`[VER-9]`); `ember fmt --migrate`
+writes the `#! language` directive and rewrites nothing else (`[CLI-20]`).
+
+Holes in the memory-safety rules:
+
+* A `sharedref mut` link is neither `Send` nor `ThreadShared`: a view several holders on one thread may
+  change can reach no other thread (`[THR-8]`, `[THR-9]`, the marker table of §IV.8, `[LT-46]`, the
+  glossary). The text had said it only of unscoped threads, in `[THR-13]`.
+* A function value is not stored in a place that its body may reshape or end through a name it captured
+  with a word (a `shares mut`, `thread_shared` or `sharedref mut` owner or link, a `weakref` link it opens
+  `ref mut`), read through the chain of its calls, since the run would end or move the function's own
+  state block, which no count keeps alive (`E3022`, `[CLO-17]`, `[CLO-18]`, shape B1, the `[COST-3]` row).
+  `[CLO-18]` had said such a body "holds one count on its state", which a state block has no count for.
+* A `runtime` check reads, from the kind's own method table, which parameters the method's result may
+  point into (the fact `[LT-22]` records for each implementation, one bit per source parameter and one for
+  `this`), so a kind declared in a package the function's own package never saw is checked as any other;
+  a compare of kind identities would have let it through (`[LT-48]`, the `[COST-3]` row: one load and one
+  bit test).
+* A hand-over is a reshape of the giver's place: a view into a value still used after it is handed over,
+  to another name or to another thread, is `E3060`, and a value is not handed over while a `ref mut` name
+  of it is used (§VII.1's terms, `[OWN-3]`, `[THR-2]`, the glossary). `[BCK-4]` had said it; the language
+  Parts had not.
+* A view opened from a link lives only while no line or call may end an object of its class family, held
+  directly or through anything that owns it (`[RC-5]` point 1): a subclass object in a list of its base,
+  or a player in a team that is cleared, counts.
+* Sharing a local that is not a class object moves nothing: the value is made in a block of its own from
+  the line that made it, as if that line had said `shares`, so no view of it ends at the `shares` line
+  and the local's type is the shared type throughout (`[RC-1]`). Only a local that owns its value may be
+  shared.
+* A growing `Arena` grows by taking a new chunk and never moves what it has given out (`[ARN-4]`,
+  `[ARN-7]`).
+* A `virtual` method called from `init` is judged by every override's body the program has (`[CLS-2]`).
+* A `defer` block's uses of the locals it names are uses at every exit of the block: one handed over
+  below the `defer` line is `E3040`, and a view it uses ended before the exit is `E3060` (`[CTL-7]`).
+* A thread's end empties and closes its queue in one atomic step, so a `thread_shared` value whose last
+  owner ends on another thread at that moment is ended by that thread, not left waiting (`[RC-4]`).
+* A `static mut` the tasks of a scope reach is a place `[THR-11]` checks as any other (`[THR-20]`).
+* A grouped overflow check needs a loop body with no operation on an `Atomic` (`[SIMD-7]`).
+* The registry's signal listeners run before a method's result view is made (`[ECS-8]`).
+* The sentinel sent to C for an empty span is read-only memory for a `Span[T]` and a slot of the call's
+  own frame for a `MutSpan[T]`, never a shared static (`[FFI-10]`).
+* `comptime.read_file` follows every symbolic link before it checks that the path lies under the package
+  root, and `comptime.env` in a dependency reads only the variables the root package's manifest lists for
+  it (`[comptime] env`, `[CT-2]`, `[MAN-8]`), so a dependency's compile-time code cannot read the builder's
+  files or environment into the program it builds.
+
+Facts the text left unsaid:
+
+* A position keeps the index it was made with; a later change of that index moves no position
+  (`[BRW-16]`).
+* `copy of` before a `shares`, `shares mut`, `thread_shared` or `sharedref mut` link makes a `T` with one
+  owner (`[OWN-8]`).
+* `@cached` is for a class method, since a struct or enum has no hidden state to keep a result in
+  (`E2117`, `[CLS-12]`, the attribute table); a change made by foreign code or through a raw pointer is
+  unsafe code's obligation (`[CLS-12]`, `[EFF-27]`).
+* A memory manager's instance held inline in a struct beside values made in it is `[LT-25]`'s shape:
+  the instance is held in a block of its own, or the values are made in an instance the struct does not
+  hold (`[ALC-1]`).
+* A `comptime(e)` that owns heap memory has the type of a read-only view of the value, with the `static`
+  region (`[CT-5]`).
+* The rule `[THR-19]` names an `RwLock` among the locks a thread may not wait for while it holds them.
+* Every pointer-shaped word has a niche: a `shares`, `shares mut` or `thread_shared` value, a
+  `sharedref mut` link, a `ref mut` and a `MutSpan` join `[TYP-13]`'s list.
+
+Words made consistent:
+
+* The rule `[FN-3]` says, as `[LT-1]` does since verdicts 137 and 138, that a result points into what the
+  function's code shows, a method's into `this` and its view arguments alike.
+* `ref_to_ptr` is one function the compiler knows, whose result follows the word its argument is written
+  with, not two functions of one name, which `[TYP-26]` forbids (§IV.5).
+* `BorrowList[T]`, which no Part declared, is no longer named (`[TYP-15a]`).
+* The example of `println`'s first line is written with `"\n"` in `[TYP-47]` and `[STD-9]`, where the
+  text had a line break inside the string.
+* The directive example of §II.3 and the manifest example of §XVII.2 name the current version.
+
+Generated: every rule whose text differs from 0.9.15_Hardened_10.
+
+| Rule | 0.9.15_Hardened_10 → 0.9.20_Hardened_1 |
+|---|---|
+| `[ALC-1]` | changed |
+| `[ARN-4]` | changed |
+| `[ARN-7]` | changed |
+| `[BRW-16]` | changed |
+| `[CLI-20]` | changed |
+| `[CLO-17]` | changed |
+| `[CLO-18]` | changed |
+| `[CLS-2]` | changed |
+| `[CLS-12]` | changed |
+| `[COST-3]` | changed |
+| `[CT-2]` | changed |
+| `[CT-5]` | changed |
+| `[CTL-7]` | changed |
+| `[ECS-8]` | changed |
+| `[EFF-27]` | changed |
+| `[FFI-10]` | changed |
+| `[FN-3]` | changed |
+| `[LT-46]` | changed |
+| `[LT-48]` | changed |
+| `[MAN-8]` | changed |
+| `[OWN-3]` | changed |
+| `[OWN-8]` | changed |
+| `[RC-1]` | changed |
+| `[RC-4]` | changed |
+| `[RC-5]` | changed |
+| `[SIMD-7]` | changed |
+| `[STD-9]` | changed |
+| `[THR-2]` | changed |
+| `[THR-8]` | changed |
+| `[THR-9]` | changed |
+| `[THR-19]` | changed |
+| `[THR-20]` | changed |
+| `[TYP-13]` | changed |
+| `[TYP-15a]` | changed |
+| `[TYP-47]` | changed |

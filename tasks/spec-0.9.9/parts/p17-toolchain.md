@@ -54,9 +54,10 @@ ember --help | --version [--matrix]
   contract of each.
 * `[CLI-15]` `ember --help` lists every command and flag of this section; one missing from it, or from
   §XVII.1's listing, is a defect.
-* `[CLI-20]` *(new in 0.9.9)* *(changed in 0.9.15)* `ember fmt --migrate` rewrites source written for
+* `[CLI-20]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `ember fmt --migrate` rewrites source written for
   an earlier version into the current one where the change is mechanical, and lists, with the file
-  and line, what it could not rewrite. From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
+  and line, what it could not rewrite. From 0.9.15: the `#! language` directive to the current
+  version; the changes of 0.9.20 refuse programs that were unsafe and rewrite nothing (§H.51). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
   removal, `for k, v in m:` over a `Map` to `for k, v in m.items():` (`[CTL-1]`). From 0.9.10:
   `Box[T]` and `ForeignBox[T]` to `owns T`, `Box[T, A]` to `owns T using A`, `Array[T, A]` to
   `Array[T] using A`, `Weak[T]` to `weakref T`, the mode `owned` to `owns`, `mut x: T` on a
@@ -132,7 +133,7 @@ ember --help | --version [--matrix]
 [package]
 name = "particles"
 version = "0.1.0"
-language = "0.9.15"
+language = "0.9.20"
 kind = "bin"                      # bin | lib | staticlib | cdylib
 layers = ["core", "alloc", "sync", "io"]
 edition_lints = "strict"          # warnings listed in [lints] as "error" fail the build
@@ -140,7 +141,7 @@ edition_lints = "strict"          # warnings listed in [lints] as "error" fail t
 [dependencies]
 geometry = { path = "../geometry" }
 parser = { git = "https://example.org/parser.git", rev = "4f2a9c1" }
-std = "0.9.15"                    # implicit; may be pinned
+std = "0.9.20"                    # implicit; may be pinned
 
 [build]
 entry = "src/main.em"
@@ -160,6 +161,7 @@ debug_info = "full"
 [comptime]
 max_steps = 100000000
 max_heap_mb = 256
+env = []                          # variables a dependency may read with comptime.env ([CT-2])
 
 [jobs]
 workers = "auto"
@@ -189,12 +191,12 @@ large_copy = { level = "warn", threshold = 256 }
 * `[MAN-3]` *(changed in 0.9.9)* Every key in `[lints]` names a lint the compiler defines (`E9010`
   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
   parameters.
-* `[MAN-8]` *(new in 0.9.9)* *(changed in 0.9.10)* The sections are: `[package]` (`name`, `version`, `language`, `kind`,
+* `[MAN-8]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.20)* The sections are: `[package]` (`name`, `version`, `language`, `kind`,
   `layers`, `edition_lints`); `[dependencies]` (`{ path }`, `{ git, rev }`, or `{ git, version }`, `[VER-5]`);
   `[build]` (`entry`, `target`, `backend`, `c_compiler`, `runtime`, `max_instantiations` `[MONO-3]`,
   `reload` `[MAN-7]`); `[profiles.<name>]` (`[PRF-3]`); `[c]` (`compiler`, `flags`, `[BLD-FFI-1]`);
   `[link]` (`libs`, `timeout` `[BLD-15]`); `[jobs]` (`workers`, `[JOB-1]`); `[realtime]` (`contracts`, `[EFF-19]`);
-  `[comptime]` (`max_steps`, `max_heap_mb`, `[CT-3]`); `[lints]` (`[MAN-3]`); and `[cpp.<project>]`
+  `[comptime]` (`max_steps`, `max_heap_mb`, `[CT-3]`; `env`, `[CT-2]`); `[lints]` (`[MAN-3]`); and `[cpp.<project>]`
   and `[ffi]` (`evidence`, Annex C). A key a section does not take, or a section not listed, is
   `E9001`, naming what is accepted (ODR-110). **No manifest key turns off a
   safety check or changes what a program means** (`[PRF-1]`).
@@ -599,7 +601,7 @@ fn main():
 | O7 | explicit `x.drop()` | `E3070` | `mem.drop(owns x)` |
 | O8 | scope guard handed over or leaked | `E3014`, `E3015` | bind it with `with` (`[THR-5]`) |
 | O9 | `this` escapes its `drop`, or an owner of it is made there | `E3016` | `mem.take` the data out |
-| B1 | one place changed through two names: two changeable arguments of one place, a `ref mut` name's place changed through another name while it is used, a function value stored where a variable it changes owns it | `E3022` | `if i != j:` above the call; `split_at`, `chunks_mut`, `for ref mut x in xs:`, `swap(i, j)`; `SoA` columns; for a `ref mut` name, the change made through it or after its last use |
+| B1 | one place changed through two names: two changeable arguments of one place, a `ref mut` name's place changed through another name while it is used, a function value stored where a variable it changes, or a place its run may reshape or end, owns it | `E3022` | `if i != j:` above the call; `split_at`, `chunks_mut`, `for ref mut x in xs:`, `swap(i, j)`; `SoA` columns; for a `ref mut` name, the change made through it or after its last use |
 | B2 | a collection changed while a loop or a generator walks it | `E3020` | the loop's own handle (`for ref mut x in xs:`, `for k, ref mut v in m:`); a list of your own, added after the loop; `retain` after the loop; the call that changes it moved below the loop |
 | B3 | a read and a change of one place overlap: a change of what a read-only name reads while it is still used; a `ref mut` name's place read through another name; an argument that may reach into a changeable argument of the same call | `E3021` | the change moved after the read-only name's last use, or the name made `ref mut` (`boss = ref mut enemies[0]`) and the change made through it; a copy of your own for the other argument (`old = copy of tracks[src_name]`) |
 | B4 | a change the name does not allow: through a plain parameter, a loop, pattern or opened name, or a plain name holding a `MutSpan`; `=` on a name that keeps its place; an owner that may change made from one that only reads | `E3023` | `ref mut` on the name and at the call (`fn tick(ref mut s: Clock):`, `tick(ref mut clock)`), on the pattern (`State.Walking(ref mut path):`) or on the loop (`for ref mut p in players:`); for a parameter given a new value, a local of your own first (`count = n`) |

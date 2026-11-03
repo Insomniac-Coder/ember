@@ -50,13 +50,13 @@
 | **reason code** | why a run-time check exists (`[EFF-11]`) |
 | **reduction** | a combining change (`total += e`, `max`, `push`) made by scoped tasks to one place: each task keeps a private accumulator, combined at the join in spawn order |
 | **reload manifest, reload transaction, safe point** | the image section listing what can be reloaded (`[HR-8]`); the plan and prepare phases that may fail without effect (`[HR-2]`); the poll at which no thread runs Ember code (`[HR-3]`) |
-| **reshape** | a change that can free or move memory: replacing a value that owns memory, adding to or removing from a collection, changing an enum's variant, ending an object's last owner; writing a number is not one |
+| **reshape** | a change that can free or move memory: replacing a value that owns memory, adding to or removing from a collection, handing a value over, changing an enum's variant, ending an object's last owner; writing a number is not one |
 | **Safe Ember** | code outside unsafe code (`unsafe:` blocks and `unsafe fn` bodies), and the code of their `safe:` blocks (`[UNS-12]`); the memory-safety guarantee covers it (`[PHIL-10]`) |
 | **`Send`, `ThreadShared`** | may be handed to another thread; several threads may hold and read one value at once; both inferred from the words a value is written with (§XI.1) |
 | **shape** | a category of error with a required help text (§XVII.6) |
 | **shareable generic** | one whose type parameter is used only to call its bounds' methods, so one shared body can serve every instance (`[MONO-5]`) |
 | **`shares`, `shares mut`** | one more owner of a value on this thread, counted: a `shares` owner reads it, a `shares mut` owner may also change it |
-| **`sharedref mut`** | a link that may change its target and that several holders, and the owner, may share; on two threads it is changed only under a lock, through `Atomic`, or by a reduction |
+| **`sharedref mut`** | a link that may change its target and that several holders, and the owner, may share; it never reaches another thread, and the scoped tasks of its thread change its target only under a lock, through `Atomic`, or by a reduction |
 | **SoA** | structure of arrays: one array per field (`SoA[T]`, §XII.1) |
 | **source parameter** | a parameter a returned view may point into without `from`: every view argument, or the one named by `from` (`[LT-1]`) |
 | **static** | a program-wide value with a fixed address that never changes; `static mut` is a module variable that may, reached only by the main thread and its scoped tasks unless `guarded by` a `static` lock |

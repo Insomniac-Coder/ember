@@ -18,7 +18,7 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[ALC-1]` | IX | *(changed in 0.9.15)* The place names the kind, the making line names … |
+| `[ALC-1]` | IX | *(changed in 0.9.15)* *(changed in 0.9.20)* The place names the kind, … |
 | `[ALC-2]` | IX | *(changed in 0.9.10)* *(changed in 0.9.15)* `std.mem` declares `pub … |
 | `[ALC-3]` | IX | A binary package may replace the global allocator with `[build] … |
 | `[ALC-4]` | IX | Allocation failure in a standard container panics (`out of memory`). … |
@@ -31,13 +31,13 @@ Every rule of this document, by family, with the Part that defines it.
 | `[ARN-1]` | IX | *(changed in 0.9.15)* `Arena` is a struct, and not `Copy`. Its … |
 | `[ARN-2]` | IX | *(changed in 0.9.15)* Values placed with `alloc*` are never dropped … |
 | `[ARN-3]` | IX | *(changed in 0.9.15)* `alloc(owns v: T) -> ref mut T` hands `v` over … |
-| `[ARN-4]` | IX | *(changed in 0.9.15)* A growing `Arena` carries `Alloc` on its growth … |
+| `[ARN-4]` | IX | *(changed in 0.9.15)* *(changed in 0.9.20)* A growing `Arena` carries … |
 | `[ARN-5]` | IX | `ArenaArray[T]` and `ArenaMap[K, V]` are fixed-capacity containers … |
 | `[ARN-5c]` | IX | `ArenaArray[T]` provides `len`, `capacity`, `is_empty`, `get(i) -> … |
 | `[ARN-5d]` | IX | `ArenaMap[K, V]` (with `K: needs (Eq, Hash)`) provides `len`, … |
 | `[ARN-5g]` | IX | No operation of either container touches the arena after … |
 | `[ARN-6]` | IX | *(changed in 0.9.15)* `arena.scope() -> ScopedArena` is called … |
-| `[ARN-7]` | IX | *(changed in 0.9.15)* No operation lowers an arena's allocation … |
+| `[ARN-7]` | IX | *(changed in 0.9.15)* *(changed in 0.9.20)* No operation lowers an … |
 | `[ARN-8]` | IX | *(changed in 0.9.15)* `MaybeUninit[T]` has the size and alignment of … |
 | `[ARN-10]` | IX | A panic inside `T.default()` during `alloc_array` aborts (`[PAN-1]`); … |
 | `[ARN-11]` | IX | `Zeroable` is an `unsafe` marker: all-zero bytes are a valid `T`. The … |
@@ -127,7 +127,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[BRW-13]` | VII | *(new in 0.9.15)* `=` on a name that has a value puts the new value … |
 | `[BRW-14]` | VII | *(new in 0.9.15)* Names that keep their place. A parameter, a loop … |
 | `[BRW-15]` | VII | *(new in 0.9.15)* A plain name never changes anything. A plain … |
-| `[BRW-16]` | VII | *(new in 0.9.15)* Positions. A name for a list element made by … |
+| `[BRW-16]` | VII | *(new in 0.9.15)* *(changed in 0.9.20)* Positions. A name for a list … |
 | `[BRW-17]` | VII | *(new in 0.9.15)* Addresses. Every other view (a kept view; a view … |
 | `[BRW-18]` | VII | *(new in 0.9.15)* Loops, generators included. While a `for` loop … |
 | `[BRW-19]` | VII | *(new in 0.9.15)* Temporaries. A temporary lives until the last use … |
@@ -200,7 +200,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[CLI-15]` | XVII | `ember --help` lists every command and flag of this section; one … |
 | `[CLI-18]` | VIII | *(changed in 0.9.15)* For both commands `<path>` is a package … |
 | `[CLI-19]` | XVII | The implementation matrix. `ember --version --matrix` prints, for … |
-| `[CLI-20]` | XVII | *(changed in 0.9.15)* `ember fmt --migrate` rewrites source written … |
+| `[CLI-20]` | XVII | *(changed in 0.9.15)* *(changed in 0.9.20)* `ember fmt --migrate` … |
 | `[CLI-21]` | XVII | `ember run --interp` runs a program on the compile-time evaluator … |
 
 ## CLO
@@ -220,8 +220,8 @@ Every rule of this document, by family, with the Part that defines it.
 | `[CLO-12]` | VI | *(changed in 0.9.15)* A local function (`[GRM-28]`) is a named … |
 | `[CLO-14]` | VI | *(changed in 0.9.15)* A callable type may be written as a type … |
 | `[CLO-16]` | VI | *(new in 0.9.15)* `thread_shared fn()`: a function any thread may … |
-| `[CLO-17]` | VI | *(new in 0.9.15)* What a function value does is worked out from the … |
-| `[CLO-18]` | VI | *(new in 0.9.15)* A function value that changes its own state. A call … |
+| `[CLO-17]` | VI | *(new in 0.9.15)* *(changed in 0.9.20)* What a function value does is … |
+| `[CLO-18]` | VI | *(new in 0.9.15)* *(changed in 0.9.20)* A function value that changes … |
 | `[CLO-19]` | VI | *(new in 0.9.15)* A lambda's parameters say what they receive. A … |
 
 ## CLS
@@ -229,7 +229,7 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[CLS-1]` | V | *(changed in 0.9.10)* *(changed in 0.9.15)* A class object lives in … |
-| `[CLS-2]` | V | *(changed in 0.9.10)* *(changed in 0.9.15)* `fn init(…)` is the … |
+| `[CLS-2]` | V | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* `fn … |
 | `[CLS-3]` | V | A class with no `init` and no base class gets a memberwise … |
 | `[CLS-4]` | V | *(changed in 0.9.15)* A class is final unless declared `open` or … |
 | `[CLS-5]` | V | *(changed in 0.9.15)* Interface calls on a class object are … |
@@ -240,7 +240,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[CLS-9a]` | V | *(changed in 0.9.15)* After `init`, nothing is changed through a … |
 | `[CLS-10]` | V | A derived class with no `init` gets its base's constructor: … |
 | `[CLS-11]` | V | *(changed in 0.9.15)* Construction is two-phase. In a derived `init`, … |
-| `[CLS-12]` | V | *(new in 0.9.15)* `@cached`. `@cached` above a method with no … |
+| `[CLS-12]` | V | *(new in 0.9.15)* *(changed in 0.9.20)* `@cached`. `@cached` above a … |
 
 ## CONF
 
@@ -277,7 +277,7 @@ Every rule of this document, by family, with the Part that defines it.
 |---|---|---|
 | `[COST-1]` | X | Zero cost, defined. An abstraction is zero-cost *for a use* whose … |
 | `[COST-2]` | X | Every implicit cost is one of: guaranteed elided (emitting it is a … |
-| `[COST-3]` | X | *(changed in 0.9.10)* *(changed in 0.9.15)* The costs. Everything the … |
+| `[COST-3]` | X | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* The … |
 | `[COST-4]` | X | `ember inspect --cost <item>` prints every row that applies to an … |
 | `[COST-5]` | X | A rule that introduces an implicit cost MUST add a row to this table; … |
 | `[COST-6]` | X | *(new in 0.9.15)* What stops the program, and what it says. Of the … |
@@ -287,10 +287,10 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[CT-1]` | XIV | These are evaluated during compilation: `comptime(e)`; `comptime:` … |
-| `[CT-2]` | XIV | *(changed in 0.9.10)* An operation that cannot run at compile time — … |
+| `[CT-2]` | XIV | *(changed in 0.9.10)* *(changed in 0.9.20)* An operation that cannot … |
 | `[CT-3]` | XIV | Each evaluation is limited to 10⁸ steps and 256 MB of evaluator heap … |
 | `[CT-4]` | XIV | *(changed in 0.9.10)* Compile-time evaluation is deterministic by … |
-| `[CT-5]` | XIV | *(changed in 0.9.15)* Where results live. A compile-time result is … |
+| `[CT-5]` | XIV | *(changed in 0.9.15)* *(changed in 0.9.20)* Where results live. A … |
 | `[CT-6]` | XIV | `comptime(e)` is an expression whose value is `e` evaluated at … |
 | `[CT-7]` | XIV | A `comptime:` block at item level, or as a statement, runs once … |
 
@@ -306,7 +306,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[CTL-4]` | VI | The `else` of `while` or `for` runs when the loop ends without … |
 | `[CTL-5]` | VI | A `match` tests arms top to bottom; the first that matches runs; a … |
 | `[CTL-6]` | VI | `with a = e1, b = e2:` binds `a` and `b` for the block and drops them … |
-| `[CTL-7]` | VI | *(changed in 0.9.15)* `defer:` registers a block to run when the … |
+| `[CTL-7]` | VI | *(changed in 0.9.15)* *(changed in 0.9.20)* `defer:` registers a … |
 | `[CTL-8]` | VI | On every exit from a block, its `defer` blocks run first and then its … |
 | `[CTL-9]` | VI | `pass` does nothing; an empty block is written `pass`. |
 | `[CTL-10]` | VI | Names assigned in every branch. In an `if`/`elif`/`else` that has an … |
@@ -432,7 +432,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[ECS-5]` | XII | *(changed in 0.9.15)* Changing the registry while a view walks it. A … |
 | `[ECS-6]` | XII | Iteration order is insertion order with swap-remove holes: … |
 | `[ECS-7]` | XII | *(changed in 0.9.15)* Any type is a component, with no registration … |
-| `[ECS-8]` | XII | *(new in 0.9.15)* Signals, sorting, context, groups, snapshots. … |
+| `[ECS-8]` | XII | *(new in 0.9.15)* *(changed in 0.9.20)* Signals, sorting, context, … |
 | `[ECS-9]` | XII | *(new in 0.9.15)* No scheduler. The library runs no systems: a … |
 
 ## EFF
@@ -463,7 +463,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[EFF-24]` | X | *(new in 0.9.15)* What a function does is worked out from its code. … |
 | `[EFF-25]` | X | *(new in 0.9.15)* The summary decides every rule that needs it, and … |
 | `[EFF-26]` | X | *(new in 0.9.15)* A call that runs a function makes its changes; … |
-| `[EFF-27]` | X | *(new in 0.9.15)* What a `@cached` result depends on. A `@cached` … |
+| `[EFF-27]` | X | *(new in 0.9.15)* *(changed in 0.9.20)* What a `@cached` result … |
 
 ## ENM
 
@@ -534,7 +534,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-7]` | XVI | A header is re-parsed only when its content, its overlay, or a … |
 | `[FFI-8]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* Type mapping. |
 | `[FFI-9]` | XVI | `extern "C"` is the platform C ABI (SysV AMD64, Windows x64, … |
-| `[FFI-10]` | XVI | *(changed in 0.9.15)* An `unsafe extern "C":` block declares foreign … |
+| `[FFI-10]` | XVI | *(changed in 0.9.15)* *(changed in 0.9.20)* An `unsafe extern "C":` … |
 | `[FFI-11]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* Contract vocabulary. A … |
 | `[FFI-11a]` | XVI | A pointer contract with no count word is `E5012`, which lists the … |
 | `[FFI-11b]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* The two-call enumeration … |
@@ -631,7 +631,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FN-1a]` | V | *(changed in 0.9.15)* A `MutSpan[T]` parameter that writes the … |
 | `[FN-2]` | V | *(changed in 0.9.15)* A parameter with no word reads. There is no … |
 | `[FN-2a]` | V | *(changed in 0.9.15)* A call says `ref mut` before an argument the … |
-| `[FN-3]` | V | *(changed in 0.9.15)* A function hands its result over to its caller. … |
+| `[FN-3]` | V | *(changed in 0.9.15)* *(changed in 0.9.20)* A function hands its … |
 | `[FN-4]` | V | *(changed in 0.9.15)* Methods and `this`. Inside a method its object … |
 | `[FN-5]` | V | Default argument expressions are evaluated at each call, after the … |
 | `[FN-6]` | V | *(changed in 0.9.15)* Callable types. A function is a value. A … |
@@ -924,9 +924,9 @@ Every rule of this document, by family, with the Part that defines it.
 | `[LT-43]` | VII | Region tracking never lets a view survive a `yield` that `[CORO-6]` … |
 | `[LT-44]` | VII | *(changed in 0.9.15)* A plain or `ref mut` `Arena`, `FixedArena` or … |
 | `[LT-45]` | VII | *(new in 0.9.15)* Kept views. A struct that holds a view (`ref T`, … |
-| `[LT-46]` | VII | *(new in 0.9.15)* The three kinds of kept view, by their word: * `ref … |
+| `[LT-46]` | VII | *(new in 0.9.15)* *(changed in 0.9.20)* The three kinds of kept view, … |
 | `[LT-47]` | VII | *(new in 0.9.15)* A view put in through `ref mut`. After a call, a … |
-| `[LT-48]` | VII | *(new in 0.9.15)* `runtime`: a `dyn` parameter's kind checked while … |
+| `[LT-48]` | VII | *(new in 0.9.15)* *(changed in 0.9.20)* `runtime`: a `dyn` … |
 
 ## MAN
 
@@ -936,7 +936,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[MAN-2]` | XVII | *(changed in 0.9.15)* `ember.lock` records the resolved dependencies … |
 | `[MAN-3]` | XVII | Every key in `[lints]` names a lint the compiler defines (`E9010` … |
 | `[MAN-7]` | XVII | *(changed in 0.9.10)* `[build] reload` is `"opt-in"`, `"all"`, … |
-| `[MAN-8]` | XVII | *(changed in 0.9.10)* The sections are: `[package]` (`name`, … |
+| `[MAN-8]` | XVII | *(changed in 0.9.10)* *(changed in 0.9.20)* The sections are: … |
 | `[MAN-9]` | XVII | *(new in 0.9.15)* Every program is a package (verdict 127). A command … |
 
 ## MNG
@@ -1000,12 +1000,12 @@ Every rule of this document, by family, with the Part that defines it.
 |---|---|---|
 | `[OWN-1]` | VII | *(changed in 0.9.15)* Every value has exactly one owner: a local, a … |
 | `[OWN-2]` | VII | *(changed in 0.9.15)* A value is dropped (ended) when its owner goes … |
-| `[OWN-3]` | VII | *(changed in 0.9.15)* `=` with a whole name hands it over. `b = a`, … |
+| `[OWN-3]` | VII | *(changed in 0.9.15)* *(changed in 0.9.20)* `=` with a whole name … |
 | `[OWN-4]` | VII | *(changed in 0.9.15)* A loop body that hands over a value declared … |
 | `[OWN-5]` | VII | Assigning to a place that holds a live value evaluates the new value, … |
 | `[OWN-6]` | VII | *(changed in 0.9.15)* `mem.take(ref mut place: T) -> T` (leaves … |
 | `[OWN-7]` | VII | *(changed in 0.9.15)* A value of a `Copy` type is duplicated bit for … |
-| `[OWN-8]` | VII | *(changed in 0.9.15)* `copy of x` makes a copy of the thing itself, … |
+| `[OWN-8]` | VII | *(changed in 0.9.15)* *(changed in 0.9.20)* `copy of x` makes a copy … |
 | `[OWN-9]` | VII | *(new in 0.9.15)* `owns` hands over, for every type, numbers … |
 | `[OWN-10]` | VII | *(new in 0.9.15)* `owns` on the line that makes a value for a place … |
 | `[OWN-11]` | VII | *(new in 0.9.15)* A part handed over on its own. A part of a struct … |
@@ -1067,7 +1067,7 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[RC-1]` | VIII | *(changed in 0.9.15)* Several owners. `shares x` makes one more owner … |
+| `[RC-1]` | VIII | *(changed in 0.9.15)* *(changed in 0.9.20)* Several owners. `shares … |
 | `[RC-2]` | VIII | *(changed in 0.9.15)* No count where no owner is made. No count … |
 | `[RC-2a]` | VIII | *(changed in 0.9.15)* Passing a shared value to a parameter that is … |
 | `[RC-2b]` | VIII | *(changed in 0.9.15)* A view of a shared value or an object: a name … |
@@ -1075,8 +1075,8 @@ Every rule of this document, by family, with the Part that defines it.
 | `[RC-2d]` | VIII | *(changed in 0.9.15)* An owner handed over (`b = a`, an `owns` … |
 | `[RC-2e]` | VIII | *(changed in 0.9.15)* The loop names of a `for` over a list of … |
 | `[RC-3]` | VIII | *(changed in 0.9.15)* Further removals of count operations are … |
-| `[RC-4]` | VIII | *(changed in 0.9.15)* The counts of a value that is not … |
-| `[RC-5]` | VIII | *(changed in 0.9.15)* A view of an object reached through a link. A … |
+| `[RC-4]` | VIII | *(changed in 0.9.15)* *(changed in 0.9.20)* The counts of a value … |
+| `[RC-5]` | VIII | *(changed in 0.9.15)* *(changed in 0.9.20)* A view of an object … |
 | `[RC-6]` | VIII | *(changed in 0.9.15)* `ember inspect` lists every count operation … |
 | `[RC-7]` | VIII | *(new in 0.9.15)* Changing a shared value. A value made shared is … |
 
@@ -1149,7 +1149,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[SIMD-4]` | XII | Horizontal operations (`reduce_add`, `reduce_min`, `reduce_max`), … |
 | `[SIMD-5]` | XII | Vectorisable form, which `@simd(assert)` checks, is computed by Ember … |
 | `[SIMD-6]` | XII | The C compiler's own vectorisation report is corroborating evidence … |
-| `[SIMD-7]` | XII | Grouped overflow checks. In a loop whose body has none of `Sync`, … |
+| `[SIMD-7]` | XII | *(changed in 0.9.20)* Grouped overflow checks. In a loop whose body … |
 | `[SIMD-8]` | XII | Vector operators are lane-wise and follow the scalar rules: integer … |
 | `[SIMD-9]` | XII | *(changed in 0.9.15)* SIMD memory operations are bounds-checked like … |
 
@@ -1247,14 +1247,14 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[THR-1]` | XI | *(changed in 0.9.15)* A value several threads own is made … |
-| `[THR-2]` | XI | *(changed in 0.9.15)* A one-thread value never reaches another … |
+| `[THR-2]` | XI | *(changed in 0.9.15)* *(changed in 0.9.20)* A one-thread value never … |
 | `[THR-3]` | XI | *(changed in 0.9.15)* `Mutex[T]` is a value type. `m.lock()` blocks … |
 | `[THR-4]` | XI | In the `debug` profile the runtime records the order in which each … |
 | `[THR-5]` | XI | *(changed in 0.9.15)* `thread.scope()` returns a `Scope`, which MUST … |
 | `[THR-6]` | XI | *(changed in 0.9.15)* A type whose `drop` a safety guarantee depends … |
 | `[THR-7]` | XI | *(changed in 0.9.15)* `thread_shared` means exactly: the value may … |
-| `[THR-8]` | XI | *(changed in 0.9.10)* *(changed in 0.9.15)* A type is `Send` when a … |
-| `[THR-9]` | XI | *(changed in 0.9.15)* A type is `ThreadShared` when several threads … |
+| `[THR-8]` | XI | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* A … |
+| `[THR-9]` | XI | *(changed in 0.9.15)* *(changed in 0.9.20)* A type is `ThreadShared` … |
 | `[THR-10]` | XI | *(changed in 0.9.10)* *(changed in 0.9.15)* `thread.spawn` runs a … |
 | `[THR-11]` | XI | *(changed in 0.9.15)* `scope.spawn` takes a plain function, `[R]` … |
 | `[THR-12]` | XI | *(changed in 0.9.15)* Tasks that must run in sequence and share data … |
@@ -1264,8 +1264,8 @@ Every rule of this document, by family, with the Part that defines it.
 | `[THR-16]` | XI | When `main` returns, or `process.exit` is called, the process ends: … |
 | `[THR-17]` | XI | *(new in 0.9.15)* What an unscoped thread holds, and the loop's own … |
 | `[THR-18]` | XI | *(new in 0.9.15)* `Lock` and `guarded by`. A `Lock` is a lock with no … |
-| `[THR-19]` | XI | *(new in 0.9.15)* A wait for a lock this thread holds is refused when … |
-| `[THR-20]` | XI | *(new in 0.9.15)* Module variables and threads. A `static mut` … |
+| `[THR-19]` | XI | *(new in 0.9.15)* *(changed in 0.9.20)* A wait for a lock this thread … |
+| `[THR-20]` | XI | *(new in 0.9.15)* *(changed in 0.9.20)* Module variables and threads. … |
 | `[THR-21]` | XI | *(new in 0.9.15)* Reductions. A task's `total += e` (and `-=`, `*=`, … |
 
 ## TIER
@@ -1342,10 +1342,10 @@ Every rule of this document, by family, with the Part that defines it.
 | `[TYP-10]` | IV | Shifts. `a << n` and `a >> n` accept any integer type for `n`. If `n` … |
 | `[TYP-11]` | IV | A struct's default layout is C's: declaration order, natural … |
 | `[TYP-12]` | IV | A unit-only enum is an integer (`@repr(u8)` and friends choose it; … |
-| `[TYP-13]` | IV | *(changed in 0.9.15)* `Option[T]` has the size of `T` when `T` has a … |
+| `[TYP-13]` | IV | *(changed in 0.9.15)* *(changed in 0.9.20)* `Option[T]` has the size … |
 | `[TYP-14]` | IV | *(changed in 0.9.15)* A reference, and an `owns T`, is read through … |
 | `[TYP-15]` | IV | *(changed in 0.9.15)* Where views may be stored. A view may be stored … |
-| `[TYP-15a]` | IV | The arena-backed containers (`ArenaArray`, `ArenaMap`, §IX.2) and the … |
+| `[TYP-15a]` | IV | *(changed in 0.9.20)* The arena-backed containers (`ArenaArray`, … |
 | `[TYP-16]` | IV | Generic functions and types are monomorphised: each distinct … |
 | `[TYP-17]` | IV | *(changed in 0.9.10)* *(changed in 0.9.15)* Type parameters are … |
 | `[TYP-18]` | IV | Generic arguments are inferred from the arguments of a call. Explicit … |

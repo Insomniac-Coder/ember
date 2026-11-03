@@ -131,8 +131,10 @@ fn scale(xs: Span[f32], ref mut out: MutSpan[f32], k: f32):
   `RuntimeCheck(Arithmetic)` is removed, is one `[SIMD-7]` permits grouping (grouping is then
   required), or belongs to a running total `[SIMD-7]` proves safe block by block; the loop has one exit; and every floating-point reduction is declared by `@parallel(reduce=…)` or the function is `@fastmath`.
   `E4020` names the first clause that fails, and for a remaining check its reason (`[EFF-11]`).
-* `[SIMD-7]` *(new in 0.9.9)* **Grouped overflow checks.** In a loop whose body has none of `Sync`,
-  `Io`, `FFI`, `Unsafe` and `Block`, the compiler MAY check integer overflow once per group of
+* `[SIMD-7]` *(new in 0.9.9)* *(changed in 0.9.20)* **Grouped overflow checks.** In a loop whose body has none of `Sync`,
+  `Io`, `FFI`, `Unsafe` and `Block`, and no operation on an `Atomic` (a relaxed store is not `Sync`,
+  and another thread could read what it stored before the process aborts), the compiler MAY check
+  integer overflow once per group of
   iterations (a vector's width times the unroll factor) instead of once per operation, and in a loop in
   vectorisable form (`[SIMD-5]`) it MUST: it computes the group with wrapping arithmetic, accumulates the lanes' overflow bits, and panics at the end of the
   group, reporting the source location of the first overflowing iteration. This is not observable:
@@ -233,11 +235,13 @@ fn main():
   sequence of operations.
 * `[ECS-7]` *(changed in 0.9.15)* Any type is a component, with no registration and no derive. A tool
   that needs a list of component types reads the program's own types (Part XIV).
-* `[ECS-8]` *(new in 0.9.15)* **Signals, sorting, context, groups, snapshots.** `on_construct[T]()`,
+* `[ECS-8]` *(new in 0.9.15)* *(changed in 0.9.20)* **Signals, sorting, context, groups, snapshots.** `on_construct[T]()`,
   `on_update[T]()` and `on_destroy[T]()` give a signal; `.connect(f)` and `.disconnect(f)` take a
-  `f: fn(ref mut Registry, Entity)`, which the registry calls after the change is made, when no view of
-  a pool is in use, so a listener that changes the registry is safe (the call check, `[BRW-21]`, holds
-  for the library's own code). `sort[T](less)` and `sort_as[To, From]()` reorder a pool. `ctx()` keeps
+  `f: fn(ref mut Registry, Entity)`, which the registry calls after the change is made and before the method's result view is made,
+  when no view of a pool is in use, so a listener that changes the registry is safe (the call check,
+  `[BRW-21]`, holds for the library's own code): `emplace`'s `ref mut T` is found again once its
+  listeners have run, and a listener keeps the `ref mut Registry` it is given no longer than its call,
+  as any view. `sort[T](less)` and `sort_as[To, From]()` reorder a pool. `ctx()` keeps
   one value per type (`emplace`, `get`, `get_mut`, `find`, `contains`, `erase`). `group[A, B]()` packs
   the owned pools in one order. `Snapshot`, `SnapshotLoader` and `ContinuousLoader` save and load a
   registry through an archive given as a type parameter; `RuntimeView` walks pools chosen while the

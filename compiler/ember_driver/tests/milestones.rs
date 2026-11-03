@@ -2215,10 +2215,10 @@ fn exported_thread_contracts_hold_in_every_profile() {
     let creator_imported = directory.join(ember_branding::source_file("creator_defaults"));
     let entry = directory.join(ember_branding::source_file("entry"));
     std::fs::write(&imported,
-        "#! language \"0.9.15\"\n#! threads main\n@export(\"default_score\")\npub fn default_value() -> i32:\n    return 43\n@export(\"override_score\", threads=any)\npub fn override_value() -> i32:\n    return 44\n")
+        "#! language \"0.9.20\"\n#! threads main\n@export(\"default_score\")\npub fn default_value() -> i32:\n    return 43\n@export(\"override_score\", threads=any)\npub fn override_value() -> i32:\n    return 44\n")
         .expect("default policy module is writable");
     std::fs::write(&creator_imported,
-        "#! language \"0.9.15\"\n#! threads creator\n@export(\"creator_default_score\")\npub fn default_value() -> i32:\n    return 46\n@export(\"creator_override_score\", threads=any)\npub fn override_value() -> i32:\n    return 47\n")
+        "#! language \"0.9.20\"\n#! threads creator\n@export(\"creator_default_score\")\npub fn default_value() -> i32:\n    return 46\n@export(\"creator_override_score\", threads=any)\npub fn override_value() -> i32:\n    return 47\n")
         .expect("creator default policy module is writable");
     std::fs::write(&entry,
         "import thread_defaults\nimport creator_defaults\n@export(\"main_score\", threads=main, on_panic=abort)\npub fn main_value() -> i32:\n    return 41\n@export(\"creator_score\", threads=creator)\npub fn creator_value() -> i32:\n    return 45\n@export(\"any_score\", threads=any)\npub fn any_value() -> i32:\n    return 42\n")
@@ -6327,7 +6327,7 @@ fn module_attributes_format_from_the_parsed_tree() {
     let directory = temporary_directory("module-attr-fmt");
     let scratch = directory.join(ember_branding::source_file("main"));
     std::fs::write(&scratch,
-        "#! language \"0.9.15\"\n#! module overflow(wrap)\n#! threads any\n\nfn add(a: i8, b: i8) -> i8:\n    return a + b\n")
+        "#! language \"0.9.20\"\n#! module overflow(wrap)\n#! threads any\n\nfn add(a: i8, b: i8) -> i8:\n    return a + b\n")
         .expect("module attribute fixture is writable");
     let path = scratch.to_string_lossy();
     let once = ember(&["fmt", &path], &root);

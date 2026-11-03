@@ -171,9 +171,12 @@ fn main():
   binding; the arms MUST be exhaustive (`E2090`); an unreachable arm is `W2091`.
 * `[CTL-6]` `with a = e1, b = e2:` binds `a` and `b` for the block and drops them in reverse order when
   it ends. `with e:` keeps the temporary alive for the block (a guard).
-* `[CTL-7]` *(changed in 0.9.15)* `defer:` registers a block to run when the enclosing block exits, last registered first.
+* `[CTL-7]` *(changed in 0.9.15)* *(changed in 0.9.20)* `defer:` registers a block to run when the enclosing block exits, last registered first.
   It may refer to locals declared before it, which it uses as they are when it runs; they are not
-  dropped before it. It cannot `return`, `break` or `continue` (`E2160`).
+  dropped before it. Its uses of them are uses at every exit of the block (`[BRW-2]`): a local a
+  `defer` block uses is not handed over below the `defer` line (`E3040`, labelled at the hand-over), and a
+  view it uses is not ended before the block exits (`E3060`). It cannot `return`, `break` or `continue`
+  (`E2160`).
 * `[CTL-8]` On every exit from a block, its `defer` blocks run first and then its locals are dropped in
   reverse declaration order.
 * `[CTL-9]` `pass` does nothing; an empty block is written `pass`.
@@ -346,7 +349,7 @@ fn main():
   write `handlers: Array[thread_shared fn()] = []` in `Bus`"). A function that captures nothing, or only
   `thread_shared` values and copies of values that may go to another thread, meets
   `thread_shared fn()`.
-* `[CLO-17]` *(new in 0.9.15)* **What a function value does is worked out from the program.** A
+* `[CLO-17]` *(new in 0.9.15)* *(changed in 0.9.20)* **What a function value does is worked out from the program.** A
   callable type says nothing about what its functions change. A call through a function value makes the
   changes, reads and ends of every function the program can put there (`[EFF-2]`), and so does a call
   that hands it to something that runs it on its own (`[EFF-26]`); storing a function value in a field,
@@ -354,12 +357,16 @@ fn main():
   program's handler that pushes to `LOG` makes `b.click()` a change of `LOG` in that program, inside a
   loop over `LOG` `E3020` (`[BRW-18]`). For the overlap of a call's arguments a function value counts as
   changing every place its functions change and every real variable they capture (`[BRW-11]`), and a
-  function value is not stored in a place that a real variable it changes owns, all the way down
-  (`b.on_click(owns fn(): b.handlers.clear())`, `t.on_visit = fn(n: Node): t.root.children.clear()`, `E3022`:
+  function value is not stored in a place that a real variable it changes owns, all the way down, nor
+  in a place that its body may reshape or end through a name it captured with a word (a `shares mut`,
+  `thread_shared` or `sharedref mut` owner or link, a `weakref` link it opens `ref mut`), read through
+  the chain of its calls (`[EFF-24]`), since the run would end or move the function's own state
+  (`b.on_click(owns fn(): b.handlers.clear())`, `t.on_visit = fn(n: Node): t.root.children.clear()`,
+  `bus.handlers.push(owns fn() weakref bus: if bus exists as ref mut b: b.handlers.clear())`, `E3022`:
   "this function clears `b.handlers`, and `on_click` would keep it in `b.handlers`, so it would change
   the button that holds it while the button runs it; clear the handlers after the click instead:
   `b.click()`, then `b.handlers.clear()`"), since it would change its own holder while it runs.
-* `[CLO-18]` *(new in 0.9.15)* **A function value that changes its own state.** A call through a stored
+* `[CLO-18]` *(new in 0.9.15)* *(changed in 0.9.20)* **A function value that changes its own state.** A call through a stored
   function value whose functions may change their own state is a change of the place that holds it: the
   holder is reached through a name that may change it (`for ref mut h in this.handlers: h()`), and a
   plain `h` there is `E3023` ("`h` only reads the handler in `this.handlers`, and calling it may change
@@ -367,9 +374,12 @@ fn main():
   `for ref mut h in this.handlers:` in place of line 9"). Such a value given to a parameter that only
   reads is `E3023` too ("`cb` changes its own copy of `score` each time it runs, and `run` takes it
   read-only; write `fn run(ref mut f: fn()):` and call `run(ref mut cb)`"). The holder does not become
-  an argument of the call: `[BRW-11]` sees only the call's arguments. A body that may end its own state
-  (a handler that removes itself) and uses that state afterwards holds one count on it across that
-  call.
+  an argument of the call: `[BRW-11]` sees only the call's arguments. A body that may end or move its
+  own state (a handler that removes itself from the list that holds it, or clears that list) is
+  refused where the function value is stored (`E3022`, `[CLO-17]`): a state block is not counted
+  (`[CLO-10]`), so nothing could keep it alive across the call. A handler that must go hands its
+  removal to its holder: a result the holder reads after the call, or a list of removals the holder
+  applies after the loop.
 * `[CLO-19]` *(new in 0.9.15)* **A lambda's parameters say what they receive.** A lambda parameter's
   word is what is written on it, and matches the callable type it is given to: where the type hands the
   value over (`fn(owns String)`), the lambda writes `fn(owns s) => println(s.len())`, and a plain

@@ -40,10 +40,11 @@ change one place unordered.
 
 ## XI.1 What may reach another thread
 
-* `[THR-8]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* A type is **`Send`** when a value
+* `[THR-8]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* A type is **`Send`** when a value
   of it may be handed over to another thread: nothing reachable from it (its fields, its elements, what
   its `owns` parts hold, a function value's state) is a one-thread owner (`shares T`, `shares mut T`), a
-  `weakref` link to a value that is not `thread_shared`, or bound to the thread that made it (a lock's
+  `weakref` link to a value that is not `thread_shared`, a `sharedref mut` link (a view several holders
+  on one thread may change, `[LT-46]`), or bound to the thread that made it (a lock's
   guard, a `Scope` or `JobScope`, a raw pointer, a `threads(creator)` handle). Structs, enums, tuples,
   fixed arrays, collections and class objects are `Send` when every component is; an `owns T` when `T`
   is; `ref T` and `Span[T]` when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is
@@ -56,13 +57,13 @@ change one place unordered.
   `unsafe`: "`Counter` holds a raw pointer, so the compiler cannot tell that another thread may have
   it; say that you vouch for it: write `unsafe extend Counter implements Send:` with a `# SAFETY:` note
   above it"). A thread-bound value sent to another thread is `E7008`.
-* `[THR-9]` *(new in 0.9.9)* *(changed in 0.9.15)* A type is **`ThreadShared`** when several threads may
+* `[THR-9]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A type is **`ThreadShared`** when several threads may
   hold and read one value of it at once. It is inferred like `Send` and written only in bounds
   (`[T: needs ThreadShared]` above `fn keep(xs: Array[T]) -> int:`) and in messages; `Sync` in a bound is
   `E1010` ("`Sync` is the effect `@nosync` forbids, not a property of a type; for 'threads may share
   it' write `[T: needs ThreadShared]` above `fn keep(x: T)`"). Structural types are `ThreadShared` when every
-  component is. `ref mut T`, `Cell`, `UnsafeCell`, raw pointers, `shares T`, `shares mut T`, and a
-  `weakref` link to a value that is not `thread_shared` are not. `Atomic[T]`, `Once`, `Lock`,
+  component is. `ref mut T`, `sharedref mut T`, `Cell`, `UnsafeCell`, raw pointers, `shares T`,
+  `shares mut T`, and a `weakref` link to a value that is not `thread_shared` are not. `Atomic[T]`, `Once`, `Lock`,
   `Mutex[T]` for a `Send` `T` (one thread at a time holds its `ref mut T`), `RwLock[T]` and
   `thread_shared T` for a `T` that is `Send` and `ThreadShared` (several threads hold a `ref T` at
   once: `RwLock[Cell[int]]` is not `ThreadShared`), and a channel's `Sender` are.
@@ -96,7 +97,7 @@ change one place unordered.
   `owns log: thread_shared Log` takes one owner. A class needs no mark to be shared between threads:
   `@sync` is not Ember (`E0104`: "`@sync` is gone: a class needs no mark to be shared between threads,
   and `Stats`'s fields are `Atomic`, which threads may change as they are; remove `@sync` (line 1)").
-* `[THR-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* **A one-thread value never reaches another
+* `[THR-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **A one-thread value never reaches another
   thread.** A `shares` or `shares mut` owner counts its owners with plain adds, and every object that is
   not `thread_shared` counts its `weakref` links with plain adds. So no such owner, and no `weakref`
   link to such a value, reaches another thread by any route: captured or held by a function any thread
@@ -122,8 +123,9 @@ change one place unordered.
   ended. An object whose address C keeps (`[FFI-35a]`) never moves: a link to it at the hand-over
   stops the program ("`names` goes to another thread while `w`, a `weakref` link on this thread, points
   at it, and C keeps its address (`register(names)`, line 4), so it cannot move; end the link first:
-  `w = None`"). A view opened from a link is not used after a hand-over that may move its object
-  (`[RC-5]` point 1). The other thread never touches this thread's counts: the old block stays here
+  `w = None`"). A hand-over to another thread is a reshape of what is handed over (§VII.1): no view into it, a
+  `sharedref mut` link into a list of struct values included, is used after it (`E3060`), and a view
+  opened from a link is not used after a hand-over that may move its object (`[RC-5]` point 1). The other thread never touches this thread's counts: the old block stays here
   with the links, and the new one starts with none. So an object that stays on one thread needs no
   atomic count.
 * `[THR-7]` *(changed in 0.9.15)* `thread_shared` means exactly: the value may have owners on several
@@ -264,10 +266,11 @@ fn main():
           println(log.lines.len())
   ```
 
-* `[THR-19]` *(new in 0.9.15)* **A wait for a lock this thread holds is refused when compiling.** Inside a
+* `[THR-19]` *(new in 0.9.15)* *(changed in 0.9.20)* **A wait for a lock this thread holds is refused when compiling.** Inside a
   lock's `with` block, these are `E7018`, with no loop needed and nothing checked while the program runs:
   a call through a function value, or through a `dyn` or `virtual` method, that may run a function taking
-  a lock of the kind this thread holds (a `Log`'s lock, while it holds `log`'s: the compiler cannot tell
+  a lock of the kind this thread holds, a `Mutex`, a `Lock` or an `RwLock` (its `write()` while this
+  thread holds its `read()`, or the reverse, included) (a `Log`'s lock, while it holds `log`'s: the compiler cannot tell
   which object's lock a stored function takes, so one that takes another `Log`'s lock is refused too, and
   the way out moves one line); a join of a
   thread, or the end of a `with scope` block, whose task changes what the held lock guards; and a direct
@@ -282,7 +285,7 @@ fn main():
   9) under `log`'s lock, and `note()` (line 11) may run the function stored on line 4, which takes a
   `Log`'s lock, so it would wait for the lock this thread holds; call `note()` after the `with log.lock:`
   block: move line 11 below the block").
-* `[THR-20]` *(new in 0.9.15)* **Module variables and threads.** A `static mut` (`[STA-1]`) is reached only
+* `[THR-20]` *(new in 0.9.15)* *(changed in 0.9.20)* **Module variables and threads.** A `static mut` (`[STA-1]`) is reached only
   by the main thread and the tasks of scopes it opens, unless it is `guarded by` a `static` `Lock` and
   used inside `with` that lock: a function that may run on another thread (reachable from
   `thread.spawn`, from a job submitted outside a scope, from a callback C may run on a thread other than
@@ -292,8 +295,11 @@ fn main():
   thread runs beside it; guard both with one lock: write `from std.sync import Lock` at the top,
   `static TICK_LOCK: Lock = Lock()`, then `static mut FRAME: int guarded by TICK_LOCK = 0` instead of
   line 1 and `static mut LOG: Array[String] guarded by TICK_LOCK = []` instead of line 2, and put
-  `tick`'s body inside `with TICK_LOCK:`"). A `static` of a type that changes only through itself
-  (`Lock`, `Atomic`, `Mutex`, `RwLock`, a channel end) is usable from any thread. **A `drop` runs where
+  `tick`'s body inside `with TICK_LOCK:`"). A `static mut` the tasks of a scope reach is a place
+  `[THR-11]` checks as any other: two tasks changing it, or one reading what another changes, is
+  `E7007`, other than by a reduction, under a lock or through an `Atomic`. A `static` of a type that
+  changes only through itself (`Lock`, `Atomic`, `Mutex`, `RwLock`, a channel end) is usable from any
+  thread. **A `drop` runs where
   the last owner ends.** The last owner of a `thread_shared` value may end on any thread that holds a
   count of it: an owner, or a view opened from a `weakref` link, which holds one for its life. So a
   function that may run on another thread and holds such a count counts as possibly running that

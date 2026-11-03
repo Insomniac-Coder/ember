@@ -53,7 +53,7 @@ fn main():
 
 ## XVI.2 Declaring C functions by hand
 
-* `[FFI-10]` *(changed in 0.9.9)* *(changed in 0.9.15)* An `unsafe extern "C":` block declares foreign functions, statics
+* `[FFI-10]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* An `unsafe extern "C":` block declares foreign functions, statics
   and opaque types; `unsafe` records that the programmer asserts the signatures. The declared names
   are items of the enclosing module. Each function in the block says whether it is safe to call
   (verdict 136): `safe fn` (a contextual keyword, `[LEX-15]`), safe to call only when every parameter and
@@ -94,7 +94,9 @@ fn main():
   `exclusive`, `Option[MutSpan[T]]` on a `ref mut` parameter, whose argument the call marks `ref mut`
   (`[FN-2a]`) (ODR-079). `None` sends C a null pointer and integer zero.
   `Some` sends its checked length, and a non-null pointer even when empty: if the view's data
-  pointer is null, the wrapper supplies a statically stored, properly aligned `T` sentinel.
+  pointer is null, the wrapper supplies a properly aligned sentinel, one `T` in read-only memory for a
+  `Span[T]` and one in the call's own frame for a `MutSpan[T]`, so a C function that touches an
+  element against a count of zero faults or writes a slot of this call and nothing shared.
   The C function must not access an element when the count is zero. Several input clauses sharing
   `n` compare effective lengths, with `None` contributing zero. A counted result sharing `n`
   receives that effective length. This does not define `inout_count`.

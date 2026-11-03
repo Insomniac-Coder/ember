@@ -117,7 +117,9 @@ fn main():
   `alloc_array` still calls its `default`, and an implementation fills with zeros instead only where
   that is the same (a scalar's standard `Default`) (ODR-064). `alloc_uninit[T](n) ->
   MutSpan[MaybeUninit[T]]` initialises nothing.
-* `[ARN-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* A growing `Arena` carries `Alloc` on its growth path. `FixedArena`
+* `[ARN-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A growing `Arena` carries `Alloc` on its growth path, and grows
+  by taking a new chunk: nothing it has given out moves, so every outstanding view stays where it
+  is. `FixedArena`
   (made by `Arena.fixed(ref mut buffer)` from a `MutSpan[u8]`, which it then holds as a kept `ref mut`
   view, `[LT-45]`, or by `FixedArena.with_capacity(n)` at start-up) never grows, carries no `Alloc` on
   allocation, and panics on exhaustion (`try_alloc` returns `Option`). `FixedArena` is the arena for
@@ -141,8 +143,8 @@ fn main():
   allocates from `s` and releases everything at the block's end, last in first out. Using the parent
   while a scope is live is `E3096`, whose help is to allocate from the scope. Scopes nest: `s.scope()`
   opens one inside another.
-* `[ARN-7]` *(changed in 0.9.15)* No operation lowers an arena's allocation pointer or reuses its bytes
-  while a view into it is used: every such operation ends every view into the arena (`[ARN-1]`), and
+* `[ARN-7]` *(changed in 0.9.15)* *(changed in 0.9.20)* No operation lowers an arena's allocation pointer, reuses its bytes or
+  moves what it has given out while a view into it is used: every such operation ends every view into the arena (`[ARN-1]`), and
   while a value made `using` the arena lives, the arena is changed only through its `Allocator` methods
   (`[ALC-5]`).
 * `[ARN-8]` *(changed in 0.9.15)* `MaybeUninit[T]` has the size and alignment of `T` and does not claim
@@ -181,7 +183,7 @@ fn main():
     println(boss.mesh.points.len())
 ```
 
-* `[ALC-1]` *(changed in 0.9.15)* **The place names the kind, the making line names the instance.**
+* `[ALC-1]` *(changed in 0.9.15)* *(changed in 0.9.20)* **The place names the kind, the making line names the instance.**
   `using A` after a type whose value has heap memory of its own (an `owns`, `shares`, `shares mut` or
   `thread_shared` value, a class object, an `Array`, `Map` or `Set`) names the kind of memory manager
   that memory comes from, a type implementing `Allocator`: `mesh: owns Mesh using LevelArena`,
@@ -209,7 +211,12 @@ fn main():
   or `String`) made in it keeps the word, since its growth goes back to the instance; (2) a manager that
   implements `FoundByAddress` (`[ALC-2]`), whose values' instance is found from their address, as C's
   `free(p)` finds its heap. Neither changes what is checked: that no value outlives its instance or is
-  used after a reset is checked when compiling and never reads the word (`[LT-4]`). An allocator type parameter is not Ember: `Box[T, A]` and
+  used after a reset is checked when compiling and never reads the word (`[LT-4]`). An instance held
+  inline in a struct beside values made
+  in it would be a view into another field of the same value (`[LT-25]`, `E3024`) and would move with
+  the struct: such an instance is held in a block of its own (`arena: owns LevelArena`), or the values
+  are made `using` an instance the struct does not hold; a manager with one instance needs none of
+  this. An allocator type parameter is not Ember: `Box[T, A]` and
   `Array[T, A]` are `E1010`, whose help gives `owns T using A` and `Array[T] using A`.
 * `[ALC-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* `std.mem` declares `pub unsafe interface Allocator` with
   `fn allocate(layout: Layout) -> *mut u8` (null on failure),

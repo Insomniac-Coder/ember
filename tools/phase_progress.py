@@ -7,9 +7,9 @@ A rule counts as done only when
      only for the rules about refusing what is not built, and a parse-only test only for the
      lexer and grammar families; and
   2. `docs/phase-status.json` does not list it under `unfinished`; and
-  3. for a rule the development target marks `*(new in 0.9.15)*` or `*(changed in 0.9.15)*`,
-     `docs/phase-status.json` lists it under `built_for_0915`: its 0.9.15 behaviour is built and
-     tested. The tests written for 0.9.10 still name such a rule, so they are no evidence of it
+  3. for a rule the development target marks new or changed in 0.9.15 or in 0.9.20 (`*(new in
+     0.9.15)*`, `*(changed in 0.9.20)*`, ...), `docs/phase-status.json` lists it under
+     `built_for_0915`: its behaviour under the target is built and tested. The tests written for 0.9.10 still name such a rule, so they are no evidence of it
      (the owner, 2026-10-28). A milestone's commit adds the rules it builds.
 A phase's figure is its done rules' words over all its rules' words, as `rule_sizes.py` sizes
 them; every rule of the development target is in exactly one phase. Nothing can be marked done
@@ -168,15 +168,17 @@ PROFILES = [
     ('dynamic', ['Annex B']),
 ]
 CONFORMANCE = ROOT / 'docs' / 'conformance.json'
+REWORKED = re.compile(r'\*\((?:new|changed) in 0\.9\.(?:15|20)\)\*')
 DECLARED = re.compile(r'const PROFILE: &str = "(\w+)";')
 
 
 def rules_reworked_in_0915(text):
-    """The rules the development target marks `*(new in 0.9.15)*` or `*(changed in 0.9.15)*`."""
+    """The rules the development target marks new or changed in 0.9.15 or in 0.9.20 (the versions the
+    compiler is still building, so a 0.9.10 test is no evidence of them)."""
     reworked = set()
     for line in text.split('\n'):
         found = re.match(r'^\* `\[([A-Za-z0-9-]+)\]`(.*)$', line)
-        if found and ('*(new in 0.9.15)*' in found.group(2) or '*(changed in 0.9.15)*' in found.group(2)):
+        if found and REWORKED.search(found.group(2)):
             reworked.add(found.group(1))
     return reworked
 
