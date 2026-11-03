@@ -133,10 +133,10 @@ These words are used with these meanings throughout the specification.
   caller's player, but `template` only reads it; to put a player of your own in the list write
   `v.push(owns copy of template)`".
 * `[OWN-12]` *(new in 0.9.15)* **Giving an object to C.** A C function whose declaration says it
-  keeps the object it is given (`[FFI-11]`) takes it by an ordinary hand-over, `widget_take(first)`:
-  the name ends and Ember frees nothing. For a C function whose declaration cannot say so (a plain
-  pointer parameter, a function with `...`), `second.into_raw()` gives the object's address and
-  stops Ember from freeing it; the compiler makes that step itself, so nothing else can skip a
+  keeps the object it is given (`[FFI-11]`) takes it by an ordinary hand-over, `widget_take(owns
+  first)`: the name ends and Ember frees nothing. For a C function whose declaration cannot say so
+  (a plain pointer parameter, a function with `...`), `second.into_raw()` gives the object's address
+  and stops Ember from freeing it; the compiler makes that step itself, so nothing else can skip a
   value's clean-up. `into_raw()` outside `unsafe:` is `E3100` ("`into_raw()` stops Ember from
   freeing the widget, so a mistake leaks it or frees it twice; write it inside `unsafe:`",
   `[UNS-1]`).
@@ -252,229 +252,251 @@ given to a plain or `ref mut` parameter, walked by a loop, opened or tested, or 
 `MutSpan` or `StrView`, and where a line writes `ref`, `ref mut` or `sharedref mut` before a place. A
 view hands nothing over and makes no copy.
 
-* `[BRW-12]` *(new in 0.9.15)* **A name for a part is a read-only view.** A name is declared by the line
-  that first gives it a value; a line inside a loop's body declares it once per round (`[GRM-4]`). A
-  name bound to a part (`n = p.name`, `boss = enemies[0]`), or to a call whose result is a view
-  (`ref T`, `StrView`, `Span[T]`, a `ref` or `ref mut` place, `[LT-1]`), such as
-  `word = line.to_lower().trim()` or `best = a.as_span()`, is a read-only view of it: never a hand-over,
-  and never a silent copy, except that a part with no fields of its own (a number, a `bool`, a variant
-  with no payload) is copied, as Python binds a number. A call whose result is a new value the callee
-  made (a list it built, a list of views included) hands that value to the name, which owns it
-  (`[LT-45]` bounds the life of a value that holds views). A word before the part says otherwise:
-  `ref mut` makes a name for that very place that may change it (`boss = ref mut enemies[0]`,
-  `r = ref mut first_even(ref mut xs)`), and before a `MutSpan` a call gives it says the name may write
-  the span's elements (`d = ref mut tracks[dst_name].as_mut_span()`); `copy of` makes a copy of your own
-  (`boss = copy of enemies[0]`); the link words make a link (`[OWN-13]`); and `ref` states the default,
-  needed before a part only to view a number (`r = ref counts[0]`).
-* `[BRW-13]` *(new in 0.9.15)* **`=` on a name that has a value** puts the new value in the place the
-  name stands for. A name declared with `=` stands for its own place: its old value is replaced (and
-  ends, if it owned something), and if the value is a view, the name now views something else
-  (`rest = tail.trim()`, `cur = p`), checked by `[BRW-1]` against its new target. A `ref mut` name stands
-  for the place it was made from until it is given another ref: `r = ref mut a` then `r = 20` writes
-  `a`, and `r = ref mut b` points `r` at `b`, after which `r = 30` writes `b`. The line that gives it
-  another ref says `ref mut` again, for every type, and a read-only `ref b` given to it is `E3023`
-  ("`r` may change what it refers to, and `ref b` only reads `b`; to point `r` at `b` write
+* `[BRW-12]` *(new in 0.9.15)* **A name for a part is a read-only view.** A name is declared by the
+  line that first gives it a value; a line inside a loop's body declares it once per round
+  (`[GRM-4]`). A name bound to a part (`n = p.name`, `boss = enemies[0]`), or to a call whose result
+  is a view (`ref T`, `StrView`, `Span[T]`, a `ref` or `ref mut` place, `[LT-1]`), such as `word =
+  line.to_lower().trim()` or `best = a.as_span()`, is a read-only view of it: never a hand-over, and
+  never a silent copy, except that a part with no fields of its own (a number, a `bool`, a variant
+  with no payload) is copied, as Python binds a number. A call whose result is a new value the
+  callee made (a list it built, a list of views included) hands that value to the name, which owns
+  it (`[LT-45]` bounds the life of a value that holds views). A word before the part says otherwise:
+  `ref mut` makes a name for that very place that may change it (`boss = ref mut enemies[0]`, `r =
+  ref mut first_even(ref mut xs)`), and before a `MutSpan` a call gives it says the name may write
+  the span's elements (`d = ref mut tracks[dst_name].as_mut_span()`); `copy of` makes a copy of your
+  own (`boss = copy of enemies[0]`); the link words make a link (`[OWN-13]`); and `ref` states the
+  default, needed before a part only to view a number (`r = ref counts[0]`).
+* `[BRW-13]` *(new in 0.9.15)* **`=` on a name that has a value** puts the new value in the place
+  the name stands for. A name declared with `=` stands for its own place: its old value is replaced
+  (and ends, if it owned something), and if the value is a view, the name now views something else
+  (`rest = tail.trim()`, `cur = p`), checked by `[BRW-1]` against its new target. A `ref mut` name
+  stands for the place it was made from until it is given another ref: `r = ref mut a` then `r = 20`
+  writes `a`, and `r = ref mut b` points `r` at `b`, after which `r = 30` writes `b`. The line that
+  gives it another ref says `ref mut` again, for every type, and a read-only `ref b` given to it is
+  `E3023` ("`r` may change what it refers to, and `ref b` only reads `b`; to point `r` at `b` write
   `r = ref mut b`, or for a read-only name `rb = ref b`"). A name that holds a `MutSpan` likewise:
-  `d[i] = v` writes an element through it, and `d = ref mut other.as_mut_span()` points it at another
-  span. A name written **`const ref mut`** is never given another ref, as `const` on a value means it
-  never changes: `r = const ref mut a` then `r = ref mut b` is `E3023` ("`r` is `const ref mut a`, so it
-  always refers to `a`; to refer to `b` use a new name, `rb = ref mut b`, or make `r` with plain
-  `ref mut`: `r = ref mut a`").
-* `[BRW-14]` *(new in 0.9.15)* **Names that keep their place.** A parameter, a loop name, a pattern name
-  and a name opened with `exists as` (`[GRM-44]`) or named by a kind test (`[DSP-4]`) stand for what the
-  caller, the loop, the opening or the test gave, and keep it for their whole scope: `=` on one is
-  `E3023` ("`line` is the text the caller passed and stays that text for the whole call; for a view of
-  your own write `rest = line.trim()`"; "`n` is the number the caller passed; for a number of your own
-  write `count = n` and change `count`"), and so is any other change through one that is plain
-  (`[BRW-15]`). The one exception is a name opened `exists as copy of v`, a copy of your own, which may be
-  changed (`if scores.get(name) exists as copy of v:` then `v += 1`; the map is untouched). A `ref mut`
-  one writes the caller's place, and may be given another ref, as any `ref mut` name may: a
-  `ref mut dst: MutSpan[float]` parameter given another span points the caller's `d` at it, and
-  `ref mut c: Counter` given another ref points `c`, for the rest of the call, at that place.
-  `const ref mut dst: MutSpan[float]` writes the caller's elements and is never given another ref, so
-  the caller's `d` is the same span after the call.
-* `[BRW-15]` *(new in 0.9.15)* **A plain name never changes anything.** A plain parameter, a plain loop,
-  pattern or opened name, and a plain local that holds a view never change what they name or what it
-  leads to (a `Cell` field, an object behind a `shares` link, the elements of a `MutSpan`). A change
-  through one is `E3023`, with the line to write: "`path.pop()` changes the list in `n.state`, but
-  `path` only reads it; to change that list through `path`, write `State.Walking(ref mut path):`";
-  "`tick` sets `s.frame`, but `s` only reads the caller's clock; write `fn tick(ref mut s: Clock):` and
-  call `tick(ref mut clock)`"; "`dst[i] += src[i]` writes an element of the caller's span, but `dst`
-  only reads it; write `fn blend(ref mut dst: MutSpan[float], src: Span[float]):` and call it
-  `blend(ref mut d, s)`"; "`d[i] = 0.0` writes an element of `tracks[dst_name]`, but `d` only reads it;
-  write `d = ref mut tracks[dst_name].as_mut_span()`". A method that may change its object, called
-  through a name that only reads it, is `E3023` too (`[EXC-15]`). The types made to be shared between
-  threads are used through any name, a plain one included, by their own operations: a `Mutex`,
-  `RwLock`, `Atomic` or channel end, and the `guarded by` fields of an object under their lock
-  (`with g = m.lock():`; `with log.lock: log.lines.push(...)`; `total.fetch_add(n)`; `tx.send(owns v)`;
-  `rx.recv()`). Each orders its own change (the lock's block, an atomic instruction), and handed to a
-  call it takes no word (`[FN-2a]`, Part XI).
+  `d[i] = v` writes an element through it, and `d = ref mut other.as_mut_span()` points it at
+  another span. A name written **`const ref mut`** is never given another ref, as `const` on a value
+  means it never changes: `r = const ref mut a` then `r = ref mut b` is `E3023` ("`r` is `const ref
+  mut a`, so it always refers to `a`; to refer to `b` use a new name, `rb = ref mut b`, or make `r`
+  with plain `ref mut`: `r = ref mut a`").
+* `[BRW-14]` *(new in 0.9.15)* **Names that keep their place.** A parameter, a loop name, a pattern
+  name and a name opened with `exists as` (`[GRM-44]`) or named by a kind test (`[DSP-4]`) stand for
+  what the caller, the loop, the opening or the test gave, and keep it for their whole scope: `=` on
+  one is `E3023` ("`line` is the text the caller passed and stays that text for the whole call; for
+  a view of your own write `rest = line.trim()`"; "`n` is the number the caller passed; for a number
+  of your own write `count = n` and change `count`"), and so is any other change through one that is
+  plain (`[BRW-15]`). The one exception is a name opened `exists as copy of v`, a copy of your own,
+  which may be changed (`if scores.get(name) exists as copy of v:` then `v += 1`; the map is
+  untouched). A `ref mut` one writes the caller's place, and may be given another ref, as any `ref
+  mut` name may: a `ref mut dst: MutSpan[float]` parameter given another span points the caller's
+  `d` at it, and `ref mut c: Counter` given another ref points `c`, for the rest of the call, at
+  that place. `const ref mut dst: MutSpan[float]` writes the caller's elements and is never given
+  another ref, so the caller's `d` is the same span after the call.
+* `[BRW-15]` *(new in 0.9.15)* **A plain name never changes anything.** A plain parameter, a plain
+  loop, pattern or opened name, and a plain local that holds a view never change what they name or
+  what it leads to (a `Cell` field, an object behind a `shares` link, the elements of a `MutSpan`).
+  A change through one is `E3023`, with the line to write: "`path.pop()` changes the list in
+  `n.state`, but `path` only reads it; to change that list through `path`, write `State.Walking(ref
+  mut path):`"; "`tick` sets `s.frame`, but `s` only reads the caller's clock; write `fn tick(ref
+  mut s: Clock):` and call `tick(ref mut clock)`"; "`dst[i] += src[i]` writes an element of the
+  caller's span, but `dst` only reads it; write `fn blend(ref mut dst: MutSpan[float], src:
+  Span[float]):` and call it `blend(ref mut d, s)`"; "`d[i] = 0.0` writes an element of
+  `tracks[dst_name]`, but `d` only reads it; write `d = ref mut tracks[dst_name].as_mut_span()`". A
+  method that may change its object, called through a name that only reads it, is `E3023` too
+  (`[EXC-15]`). The types made to be shared between threads are used through any name, a plain one
+  included, by their own operations: a `Mutex`, `RwLock`, `Atomic` or channel end, and the `guarded
+  by` fields of an object under their lock (`with g = m.lock():`; `with log.lock:
+  log.lines.push(...)`; `total.fetch_add(n)`; `tx.send(owns v)`; `rx.recv()`). Each orders its own
+  change (the lock's block, an atomic instruction), and handed to a call it takes no word
+  (`[FN-2a]`, Part XI).
 * `[BRW-1]` *(changed in 0.9.15)* **One name changes, or any number read.** At every point of the
   program a place is reached through any number of read-only views, or through exactly one name that
-  may change it, as `[BRW-17]` to `[BRW-20]` and the two rules below say; every one of them is checked
-  when compiling, and nothing is checked while the program runs.
+  may change it, as `[BRW-17]` to `[BRW-20]` and the two rules below say; every one of them is
+  checked when compiling, and nothing is checked while the program runs.
   * **A `ref mut` name is alone.** While a `ref mut` name (a parameter, a local, a loop, pattern or
-    opened name, a kept `ref mut` field; one that holds a `MutSpan` included) is still used, its place is
-    read or changed only through it: another name that may name the same place, a link of the same type
-    included, is refused, `E3022` to change it and `E3021` to read it ("`boss` is the only name for
-    `enemies[0]` until line 9, and line 7 reads `enemies[0].hp`; read it through `boss`: `boss.hp`"),
-    unless the compiler proves the two differ (`if t is not a:`), or proves them the same whole variable
-    given to one call (`[BRW-11]`). For a `ref mut` parameter and a place its function reaches by its
-    own name (a module variable), the check is made at each call, by what the body does (`[BRW-21]`),
-    so the function itself compiles. Two names of elements of one list, at least one `ref mut`, whose
-    indexes are not proved different are refused as two such arguments are (`[BRW-5]`). A reshape
-    through another name while a `ref mut` name that is not a position is still used is `E3022`, at the
-    reshape; a position is ruled by `[BRW-16]`. A call through a `ref mut` name of a stored function
-    value uses the name only to copy the function's two words out, before the arguments are given
-    (`[CLO-10]`), so the call's arguments may reach the place it names; a later use of the name is
-    checked against what the call may have done. `this` is not such a name (`[EXC-15]`).
+    opened name, a kept `ref mut` field; one that holds a `MutSpan` included) is still used, its
+    place is read or changed only through it: another name that may name the same place, a link of
+    the same type included, is refused, `E3022` to change it and `E3021` to read it ("`boss` is the
+    only name for `enemies[0]` until line 9, and line 7 reads `enemies[0].hp`; read it through
+    `boss`: `boss.hp`"), unless the compiler proves the two differ (`if t is not a:`), or proves
+    them the same whole variable given to one call (`[BRW-11]`). For a `ref mut` parameter and a
+    place its function reaches by its own name (a module variable), the check is made at each call,
+    by what the body does (`[BRW-21]`), so the function itself compiles. Two names of elements of
+    one list, at least one `ref mut`, whose indexes are not proved different are refused as two such
+    arguments are (`[BRW-5]`). A reshape through another name while a `ref mut` name that is not a
+    position is still used is `E3022`, at the reshape; a position is ruled by `[BRW-16]`. A call
+    through a `ref mut` name of a stored function value uses the name only to copy the function's
+    two words out, before the arguments are given (`[CLO-10]`), so the call's arguments may reach
+    the place it names; a later use of the name is checked against what the call may have done.
+    `this` is not such a name (`[EXC-15]`).
   * **A read-only name promises that what it reads does not change while it is used.** While a
     read-only view (a plain name for a part, a `ref` name, a plain parameter, a `Span` parameter, a
-    plain name holding a `MutSpan`, a plain loop, pattern or opened name, a view a call gave) is still
-    used, what it points into is not changed through any other name (`E3021`, at the change) unless the
-    compiler proves the two differ; a change that may reshape it ends it instead (`E3060`, at its later
-    use). The refusal gives the ways out that compile in that program: "`enemies[0].hp = 1` (line 7)
-    changes the enemy `boss` reads (`boss = enemies[0]`, line 5), and `boss` is used on line 9; change
-    it after `boss`'s last use, or write `boss = ref mut enemies[0]` and change it through `boss`:
-    `boss.hp = 1`". A copy of your own (`boss = copy of enemies[0]`) is restricted by nothing. A `shares`
-    owner is an owner, not a view: it sees the changes the value's other owners make (`[RC-1]`).
-* `[BRW-2]` *(changed in 0.9.15)* **Liveness.** A view is in use from where it is made to the last use
-  of anything made from it: the view itself, a view made from it, a value returned from a call it was
-  given to. Scope does not matter: `n = v.len(); v.push(owns n)` is legal.
-* `[BRW-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Reading before the call.** For a method call
-  whose object is a place, or an argument given to a `ref mut` parameter, the place may be read while
-  the call's arguments are evaluated, and values computed from it may be passed (`v.push(owns v.len())`); a
-  view of the place still in use at the call, because it is itself an argument or is held by one,
-  overlaps the changeable argument and is `E3021` (`[BRW-11]`). For
-  `fn f(ref mut v: Array[String], s: StrView)` the call `f(ref mut v, v[0])` is therefore refused; for
-  `fn f(ref mut v: Array[int], x: int)` the call `f(ref mut v, v[0])` is accepted, because `v[0]` is
-  copied in before the call.
-* `[BRW-11]` *(new in 0.9.9)* *(changed in 0.9.15)* **Arguments do not overlap a changeable one.** Two
-  arguments of one call (the object a method is called on counts as one), of which at least one may be
-  changed (a `ref mut` argument, a `MutSpan` one included; the object of a method that may change it;
-  or a function value, which counts as changing every place the functions it may run change and every
-  real variable they capture, `[CLO-2]`), may not name one place, and neither may reach into what the
-  other owns, unless the compiler proves they differ: different constants, `j` from `i + 1..`, inside
-  `if i != j:`, or after `assert_disjoint(a, b)` (with `from std.mem import assert_disjoint`,
-  `[DSJ-5]`). Any other possible overlap is refused when compiling: `E3022` where both may be changed,
-  `E3021` otherwise. This holds for spans of numbers too: two spans of one list given to one call, one
-  of them changeable, are proved apart (`assert_disjoint`, two compares) or refused ("`blend` changes
-  the elements of `d` (`tracks[dst_name]`, line 10) while `s` shows `tracks[src_name]` (line 11), and
-  the two are one list when `dst_name` equals `src_name`; prove them apart first,
-  `assert_disjoint(d, s)` before line 12, with `from std.mem import assert_disjoint` at the top, or
-  blend from a copy: instead of lines 10 to 12 write `old = copy of tracks[src_name]` and
-  `blend(ref mut tracks[dst_name].as_mut_span(), old.as_span())`"). A function value given to a call
-  that changes the call's object is refused likewise ("`LOG.retain(keep)` changes `LOG` while it walks
-  it, and `keep` adds to `LOG` too (its line 3); drop the lines first and push the notes after:
-  `before = LOG.len()`, `LOG.retain(owns fn(s) => s != "")`, `dropped = before - LOG.len()`, then
-  `for k in 0..dropped: LOG.push(owns String("dropped an empty line"))`"). Two exceptions:
+    plain name holding a `MutSpan`, a plain loop, pattern or opened name, a view a call gave) is
+    still used, what it points into is not changed through any other name (`E3021`, at the change)
+    unless the compiler proves the two differ; a change that may reshape it ends it instead
+    (`E3060`, at its later use). The refusal gives the ways out that compile in that program:
+    "`enemies[0].hp = 1` (line 7) changes the enemy `boss` reads (`boss = enemies[0]`, line 5), and
+    `boss` is used on line 9; change it after `boss`'s last use, or write `boss = ref mut
+    enemies[0]` and change it through `boss`: `boss.hp = 1`". A copy of your own (`boss = copy of
+    enemies[0]`) is restricted by nothing. A `shares` owner is an owner, not a view: it sees the
+    changes the value's other owners make (`[RC-1]`).
+* `[BRW-2]` *(changed in 0.9.15)* **Liveness.** A view is in use from where it is made to the last
+  use of anything made from it: the view itself, a view made from it, a value returned from a call
+  it was given to. Scope does not matter: `n = v.len(); v.push(owns n)` is legal.
+* `[BRW-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Reading before the call.** For a method
+  call whose object is a place, or an argument given to a `ref mut` parameter, the place may be read
+  while the call's arguments are evaluated, and values computed from it may be passed (`v.push(owns
+  v.len())`); a view of the place still in use at the call, because it is itself an argument or is
+  held by one, overlaps the changeable argument and is `E3021` (`[BRW-11]`). For `fn f(ref mut v:
+  Array[String], s: StrView)` the call `f(ref mut v, v[0])` is therefore refused; for `fn f(ref mut
+  v: Array[int], x: int)` the call `f(ref mut v, v[0])` is accepted, because `v[0]` is copied in
+  before the call.
+* `[BRW-11]` *(new in 0.9.9)* *(changed in 0.9.15)* **Arguments do not overlap a changeable one.**
+  Two arguments of one call (the object a method is called on counts as one), of which at least one
+  may be changed (a `ref mut` argument, a `MutSpan` one included; the object of a method that may
+  change it; or a function value, which counts as changing every place the functions it may run
+  change and every real variable they capture, `[CLO-2]`), may not name one place, and neither may
+  reach into what the other owns, unless the compiler proves they differ: different constants, `j`
+  from `i + 1..`, inside `if i != j:`, or after `assert_disjoint(a, b)` (with `from std.mem import
+  assert_disjoint`, `[DSJ-5]`). Any other possible overlap is refused when compiling: `E3022` where
+  both may be changed, `E3021` otherwise. This holds for spans of numbers too: two spans of one list
+  given to one call, one of them changeable, are proved apart (`assert_disjoint`, two compares) or
+  refused ("`blend` changes the elements of `d` (`tracks[dst_name]`, line 10) while `s` shows
+  `tracks[src_name]` (line 11), and the two are one list when `dst_name` equals `src_name`; prove
+  them apart first, `assert_disjoint(d, s)` before line 12, with `from std.mem import
+  assert_disjoint` at the top, or blend from a copy: instead of lines 10 to 12 write `old = copy of
+  tracks[src_name]` and `blend(ref mut tracks[dst_name].as_mut_span(), old.as_span())`"). A function
+  value given to a call that changes the call's object is refused likewise ("`LOG.retain(keep)`
+  changes `LOG` while it walks it, and `keep` adds to `LOG` too (its line 3); drop the lines first
+  and push the notes after: `before = LOG.len()`, `LOG.retain(owns fn(s) => s != "")`, `dropped =
+  before - LOG.len()`, then `for k in 0..dropped: LOG.push(owns String("dropped an empty line"))`").
+  Two exceptions:
   1. **The same whole variable under two names.** Where the compiler proves when compiling that two
      `ref mut` arguments, or a `ref mut` argument and a variable the callee uses by its own name (a
-     module variable), are one whole variable, the call is allowed and compiled against a copy of the
-     function in which the two names are one. `fn add_both(ref mut a: int, ref mut b: int):` whose
-     body is `a += 1`, `b += 1`, `println(a)`, called `add_both(ref mut x, ref mut x)`, prints 2;
-     `fn rename(ref mut s: Array[String]):` whose body is `LOG.clear()` then
-     `s = [String("renamed")]`, called `rename(ref mut LOG)`, leaves `LOG` holding one string (it frees
-     nothing: `clear()` empties the list, `s = ...` fills it again). Other calls use the normal copy,
-     where a `ref mut` parameter is the only way in. Parts whose positions are not known when compiling
-     (`ref mut log[i]` beside `ref mut log[j]`, or beside `log`) stay refused (`E3022`).
+     module variable), are one whole variable, the call is allowed and compiled against a copy of
+     the function in which the two names are one. `fn add_both(ref mut a: int, ref mut b: int):`
+     whose body is `a += 1`, `b += 1`, `println(a)`, called `add_both(ref mut x, ref mut x)`, prints
+     2; `fn rename(ref mut s: Array[String]):` whose body is `LOG.clear()` then `s =
+     [String("renamed")]`, called `rename(ref mut LOG)`, leaves `LOG` holding one string (it frees
+     nothing: `clear()` empties the list, `s = ...` fills it again). Other calls use the normal
+     copy, where a `ref mut` parameter is the only way in. Parts whose positions are not known when
+     compiling (`ref mut log[i]` beside `ref mut log[j]`, or beside `log`) stay refused (`E3022`).
   2. **A thing whose changes go only through its lock.** A `thread_shared` object whose every field
      that may change is `guarded by` its lock (or is an `Atomic`, `Mutex` or `RwLock`) may reach one
      call through any number of names, a plain argument and a function value that holds it included:
      `dump(log, fn() thread_shared log: log.push("seen"))`, whose `dump` reads the lines inside
      `with log.lock:` and calls `note()` after the block, is allowed; the lock keeps the two ways in
-     apart. A call inside the lock that may take it again is `E7018` (§XI.2).
-  For two spans whose lists may be one: E3021 ("`refill` may replace the lists of `w1.lists` through `dst` while `src` shows numbers inside one of them, and `w1` and `w2` may be the same `Wrapper`; give `src` a list of its own: `first = copy of w2.lists[0]`, then `refill(ref mut w1.lists.as_mut_span(), first.as_span())`").
-* `[BRW-21]` *(new in 0.9.15)* **The call check: a view argument and what the callee does.** A view
-  whose last use is an argument of a call (of a plain, `Span` or `ref mut` parameter) does not live
-  across the call: inside it, the parameter makes the promise of `[BRW-1]`, and the compiler holds the
-  callee to it. It works out from each function's body which of its view parameters, `this` included,
-  it uses after a line that may end or move what they view (a reshape; the end of an object,
-  `[RC-5]`), through its own lines and the same fact of the functions it calls (a call through a
-  function value, or through an interface, `dyn` or virtual method, by every function the program can
-  put there, `[EFF-1]`), with the body's precise facts (a change inside `if a is not b:` is not one for
-  `a`). It keeps that fact with the function (in the package's interface file across a package's edge,
-  `[EFF-4]`) and checks it at each call: an argument that points into what the callee may end or move
-  before its last use of that parameter is `E3031`. Writing a number or a `bool` ends and moves nothing,
-  so a method that writes `this.health` through a link that may lead to its own object (a turret aimed
-  at itself) is allowed; leaving a lock's `with` block ends nothing either. With `fn note(s: StrView):`
-  whose body is `LOG.clear()` then `println(s)`, `note(LOG[0])` is refused ("`note` clears `LOG` (its
-  line 3) and then uses `s` (its line 4), and `LOG[0]` is part of `LOG`; give it a copy:
-  `note(copy of LOG[0])`, or in `note` use `s` before `LOG.clear()`"); `note("bye")` is allowed, and so
-  is `note(LOG[0])` for a `note` that prints before it clears. The object a method is called on counts
-  the same way: with `fn hit():` whose body is `ENEMIES.clear()` then `this.hp -= 1`, `ENEMIES[0].hit()`
-  is refused ("`hit` clears `ENEMIES` (its line 3) and then changes `this.hp` (its line 4), and
-  `ENEMIES[0]` is part of `ENEMIES`; in `hit`, change `this.hp` before `ENEMIES.clear()`"), and a `hit`
-  that uses `this` only before the clear is allowed. A `ref mut` parameter counts the same way: with
-  `fn rename(ref mut s: String):` whose body is `LOG.clear()` then `s = String("renamed")`,
-  `rename(ref mut LOG[0])` is refused ("`rename` clears `LOG` (its line 2) and then writes `s` (its line
-  3), and `LOG[0]` is part of `LOG`, so `s` would point at freed memory; rename a copy of your own:
-  write `mine = copy of LOG[0]` and `rename(ref mut mine)` in place of this line, or in `rename` write
-  `s` before `LOG.clear()`"). Since a `ref mut` parameter is compiled with noalias (`[BRW-22]`), the check
-  is wider for it: while it is used, the callee reaches its place through no other name, so an argument
-  for it that points into a place the callee reads or changes by another name while the parameter is
-  used is refused too (with `fn heal(ref mut p: Player):` whose body is `println(PARTY[0].hp)` then
-  `p.hp += 10`, `heal(ref mut PARTY[0])`: "`heal` reads `PARTY[0]` by its own name (its line 2) while
-  `p` is still used (its line 3), and `p` is `PARTY[0]`; in `heal`, read it through `p`:
-  `println(p.hp)`"), unless it is that same whole variable, proved when compiling (`[BRW-11]`,
-  exception 1). Where the fault is in one function stored in a function value (it ends what its
-  parameter views and then uses the parameter), the refusal stands on the line that stores it, not on
-  the call through the value, which is right for every other function ("`on_visit` is called with a
-  node of the tree (line 21), and this function removes its node from the parent's list (line 41) and
-  then reads it (line 42); read it before removing it: move line 42 above line 41"). Only a C function's
-  code is unseen; `[FFI-52]` covers it. Nothing is checked while the program runs.
+     apart. A call inside the lock that may take it again is `E7018` (§XI.2). For two spans whose
+     lists may be one: E3021 ("`refill` may replace the lists of `w1.lists` through `dst` while
+     `src` shows numbers inside one of them, and `w1` and `w2` may be the same `Wrapper`; give `src`
+     a list of its own: `first = copy of w2.lists[0]`, then `refill(ref mut w1.lists.as_mut_span(),
+     first.as_span())`").
+* `[BRW-21]` *(new in 0.9.15)* *(changed in 0.9.20)* **The call check: a view argument and what the
+  callee does.** A view whose last use is an argument of a call (of a plain, `Span` or `ref mut`
+  parameter) does not live across the call: inside it, the parameter makes the promise of `[BRW-1]`,
+  and the compiler holds the callee to it. It works out from each function's body which of its view
+  parameters, `this` included, it uses after a line that may end or move what they view (a reshape;
+  the end of an object, `[RC-5]`), through its own lines and the same fact of the functions it calls
+  (a call through a function value, or through an interface, `dyn` or virtual method, by every
+  function the program can put there, `[EFF-1]`), with the body's precise facts (a change inside `if
+  a is not b:` is not one for `a`). It keeps that fact with the function (in the package's interface
+  file across a package's edge, `[EFF-4]`) and checks it at each call: an argument that points into
+  what the callee may end or move before its last use of that parameter is `E3031`. Writing a number
+  or a `bool` ends and moves nothing, so a method that writes `this.health` through a link that may
+  lead to its own object (a turret aimed at itself) is allowed; leaving a lock's `with` block ends
+  nothing either. With `fn note(s: StrView):` whose body is `LOG.clear()` then `println(s)`,
+  `note(LOG[0])` is refused ("`note` clears `LOG` (its line 3) and then uses `s` (its line 4), and
+  `LOG[0]` is part of `LOG`; give it a copy: `note(copy of LOG[0])`, or in `note` use `s` before
+  `LOG.clear()`"); `note("bye")` is allowed, and so is `note(LOG[0])` for a `note` that prints
+  before it clears. The object a method is called on counts the same way: with `fn hit():` whose
+  body is `ENEMIES.clear()` then `this.hp -= 1`, `ENEMIES[0].hit()` is refused ("`hit` clears
+  `ENEMIES` (its line 3) and then changes `this.hp` (its line 4), and `ENEMIES[0]` is part of
+  `ENEMIES`; in `hit`, change `this.hp` before `ENEMIES.clear()`"), and a `hit` that uses `this`
+  only before the clear is allowed. A `ref mut` parameter counts the same way: with `fn rename(ref
+  mut s: String):` whose body is `LOG.clear()` then `s = String("renamed")`, `rename(ref mut
+  LOG[0])` is refused ("`rename` clears `LOG` (its line 2) and then writes `s` (its line 3), and
+  `LOG[0]` is part of `LOG`, so `s` would point at freed memory; rename a copy of your own: write
+  `mine = copy of LOG[0]` and `rename(ref mut mine)` in place of this line, or in `rename` write `s`
+  before `LOG.clear()`"). Since a `ref mut` parameter is compiled with noalias (`[BRW-22]`), the
+  check is wider for it: while it is used, the callee reaches its place through no other name, so an
+  argument for it that points into a place the callee reads or changes by another name while the
+  parameter is used is refused too (with `fn heal(ref mut p: Player):` whose body is
+  `println(PARTY[0].hp)` then `p.hp += 10`, `heal(ref mut PARTY[0])`: "`heal` reads `PARTY[0]` by
+  its own name (its line 2) while `p` is still used (its line 3), and `p` is `PARTY[0]`; in `heal`,
+  read it through `p`: `println(p.hp)`"), unless it is that same whole variable, proved when
+  compiling (`[BRW-11]`, exception 1). Where the fault is in one function stored in a function value
+  (it ends what its parameter views and then uses the parameter), the refusal stands on the line
+  that stores it, not on the call through the value, which is right for every other function
+  ("`on_visit` is called with a node of the tree (line 21), and this function removes its node from
+  the parent's list (line 41) and then reads it (line 42); read it before removing it: move line 42
+  above line 41"). Only a C function's code is unseen; `[FFI-52]` covers it. A foreign call without
+  `@ffi(no_callbacks)` is an **open line** of the function's summary: for each view parameter,
+  `this` included, and each `static` of its own, that the function uses after such a call
+  (`[FFI-52]`), the summary records the call and what the parameter is used as (walked, read,
+  changed through `ref mut`), without resolving which callbacks run (`[EFF-4]`, `[BLD-14]` item 15).
+  At each call from another package the caller resolves the open lines against the callbacks its
+  program keeps, its exports and its overrides (`[FFI-52]`): where one of them changes what that
+  parameter's argument reaches, the call is `E3031`, naming the chain ("`sim.tick(game)` (line 9)
+  walks `game.names` after it calls `poll_events()` (sim/game.em:9), a C function that may run the
+  callback C keeps from `register_cb` (line 8), which pushes to `game.names`; register the callback
+  after the call, or, if `poll_events` never calls back into Ember, mark it `@ffi(no_callbacks)` in
+  `sim`'s declaration"). Nothing in a library is refused for callbacks it cannot see. Nothing is
+  checked while the program runs.
 * `[BRW-22]` *(new in 0.9.15)* **Noalias.** Every `ref mut` parameter, a `MutSpan` one included, is
-  compiled with noalias (C's `restrict`): while it is used, nothing else the function uses reaches its
-  place (`[BRW-1]`, `[BRW-21]`); a call compiled against a copy with one name (`[BRW-11]`, exception 1)
-  has one name for that place. `this` is never compiled with noalias (`[EXC-15]`), and neither is a
-  `sharedref mut` link (`[LT-46]`).
-* `[BRW-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Disjoint fields.** `ref mut a.x` and
-  `ref mut a.y` may be in use together when `x` and `y` are different fields, through any depth of field
-  path, for a struct value's fields and a class object's alike (`[EXC-19]`). What two different paths
-  may both reach through links is `[BRW-17]`'s.
+  compiled with noalias (C's `restrict`): while it is used, nothing else the function uses reaches
+  its place (`[BRW-1]`, `[BRW-21]`); a call compiled against a copy with one name (`[BRW-11]`,
+  exception 1) has one name for that place. `this` is never compiled with noalias (`[EXC-15]`), and
+  neither is a `sharedref mut` link (`[LT-46]`).
+* `[BRW-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Disjoint fields.** `ref mut a.x` and `ref
+  mut a.y` may be in use together when `x` and `y` are different fields, through any depth of field
+  path, for a struct value's fields and a class object's alike (`[EXC-19]`). What two different
+  paths may both reach through links is `[BRW-17]`'s.
 * `[BRW-10]` *(new in 0.9.9)* *(changed in 0.9.15)* **What a method does to its object is worked out
-  from its body,** for every method, private or `pub` (`[EXC-15]`): a call `w.bump()` changes only the
-  fields `bump`'s body changes, and those its callees' bodies change, so it may be called while a loop
-  walks `w.names` if `bump` touches only `w.count`. `fn note(owns msg: String):` whose body is
-  `this.log.push(owns msg)` changes `this.log`, so `this.note(...)` inside a loop over `this.log` is refused
-  (`E3020`) and inside a loop over `this.players` is allowed. Across a package's edge the fact is
-  recorded in the package's interface file (`[EFF-4]`), so a change to a `pub` method's body that
-  changes what it touches is reported as a change of its interface.
+  from its body,** for every method, private or `pub` (`[EXC-15]`): a call `w.bump()` changes only
+  the fields `bump`'s body changes, and those its callees' bodies change, so it may be called while
+  a loop walks `w.names` if `bump` touches only `w.count`. `fn note(owns msg: String):` whose body
+  is `this.log.push(owns msg)` changes `this.log`, so `this.note(...)` inside a loop over `this.log`
+  is refused (`E3020`) and inside a loop over `this.players` is allowed. Across a package's edge the
+  fact is recorded in the package's interface file (`[EFF-4]`), so a change to a `pub` method's body
+  that changes what it touches is reported as a change of its interface.
 * `[BRW-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Indices are not disjoint unless proved.**
-  `ref mut a[i]` and `ref mut a[j]`, as two names or as two arguments of one call, are `E3022` unless
-  the compiler proves `i` and `j` differ: both constants and different, `j` from `i + 1..`, or the line
-  inside `if i != j:`. Nothing is compared while the program runs. With
-  `fn collide(ref mut a: Body, ref mut b: Body):`, `collide(ref mut bodies[i], ref mut bodies[j])` in a
-  function given `i` and `j` is refused ("`collide` changes `a` and `b` as two different bodies, and
-  `bodies[i]` and `bodies[j]` are the same body when `i == j`; write `if i != j:` above this line and
-  indent it under it"), and compiles under `if i != j:` or in `for j in i + 1..n:`. The same position
-  twice is refused with "both are `bodies[i]`". `get_pair_mut(i, j)`, `split_at`, `chunks_mut`,
-  `for ref mut x in xs:`, `swap(i, j)` and `SoA` columns are the library's ways to hold two changeable
-  views of one container. `get_pair_mut(i, j) -> Option[(ref mut T, ref mut T)]`, on an `Array` or a
-  `MutSpan`, views the container once, checks that both indices are in range and differ, and only then
-  makes the two views; otherwise it is `None` and the container is unchanged. The pair points into the
-  list it was called on (`[LT-1]` rule 1). Distinct elements of a zero-sized type need not have
-  distinct addresses, and nothing about addresses follows from the indices (ODR-068).
-* `[BRW-6]` *(changed in 0.9.15)* **Lending a `ref mut` name.** From a `ref mut` name `r`, a read-only
-  view of `r.f` keeps `r` from changing `r.f` while it is used, and `ref mut r.f` lends that part, so `r`
-  does not reach it meanwhile. Passing a `ref mut` name to a `ref mut` parameter (`bump(ref mut r)`)
-  lends it for the call; it does not hand it over.
-* `[BRW-7]` *(changed in 0.9.15)* Using a place that is uninitialised on some path, one never given a value there, is `E3050`;
-  using one a hand-over may have reached is `[OWN-3]`'s `E3040` (ODR-114).
+  `ref mut a[i]` and `ref mut a[j]`, as two names or as two arguments of one call, are `E3022`
+  unless the compiler proves `i` and `j` differ: both constants and different, `j` from `i + 1..`,
+  or the line inside `if i != j:`. Nothing is compared while the program runs. With `fn collide(ref
+  mut a: Body, ref mut b: Body):`, `collide(ref mut bodies[i], ref mut bodies[j])` in a function
+  given `i` and `j` is refused ("`collide` changes `a` and `b` as two different bodies, and
+  `bodies[i]` and `bodies[j]` are the same body when `i == j`; write `if i != j:` above this line
+  and indent it under it"), and compiles under `if i != j:` or in `for j in i + 1..n:`. The same
+  position twice is refused with "both are `bodies[i]`". `get_pair_mut(i, j)`, `split_at`,
+  `chunks_mut`, `for ref mut x in xs:`, `swap(i, j)` and `SoA` columns are the library's ways to
+  hold two changeable views of one container. `get_pair_mut(i, j) -> Option[(ref mut T, ref mut
+  T)]`, on an `Array` or a `MutSpan`, views the container once, checks that both indices are in
+  range and differ, and only then makes the two views; otherwise it is `None` and the container is
+  unchanged. The pair points into the list it was called on (`[LT-1]` rule 1). Distinct elements of
+  a zero-sized type need not have distinct addresses, and nothing about addresses follows from the
+  indices (ODR-068).
+* `[BRW-6]` *(changed in 0.9.15)* **Lending a `ref mut` name.** From a `ref mut` name `r`, a
+  read-only view of `r.f` keeps `r` from changing `r.f` while it is used, and `ref mut r.f` lends
+  that part, so `r` does not reach it meanwhile. Passing a `ref mut` name to a `ref mut` parameter
+  (`bump(ref mut r)`) lends it for the call; it does not hand it over.
+* `[BRW-7]` *(changed in 0.9.15)* Using a place that is uninitialised on some path, one never given
+  a value there, is `E3050`; using one a hand-over may have reached is `[OWN-3]`'s `E3040`
+  (ODR-114).
 * `[BRW-8]` *(changed in 0.9.9)* *(changed in 0.9.15)* A plain or `ref mut` parameter is passed by
-  address: the callee reads, or changes, the caller's place (`[FN-1]`, ODR-024). Two kinds are passed as
-  a copy instead:
-  * a view (a `ref`, `Span`, `MutSpan`, `StrView` or `@view` struct), which is passed as itself and keeps
-    the regions it carries;
-  * a plain parameter of a `Copy` type that holds no `Cell` or `UnsafeCell`, which goes in registers when
-    it is no larger than two pointers, except the object of a method whose result is a view (`[LT-1]`
-    rule 1).
-  An `owns` parameter receives the value. A view into the own storage of a parameter passed as a copy
-  ends with the call: returning it is `E3063`. The choice depends only on the declared first line, never
-  on the body; it is an ABI decision and cannot be observed. An instance of a generic function, method
-  or type has the generic's declared first line: a parameter its result may point into (the object, or
-  a source parameter of `[LT-1]`'s second kind) is passed as the declaration passes it, whatever the
-  type arguments, so `Holder[StrView]`'s object is passed by address as `Holder[T]`'s is (ODR-048).
+  address: the callee reads, or changes, the caller's place (`[FN-1]`, ODR-024). Two kinds are
+  passed as a copy instead:
+  * a view (a `ref`, `Span`, `MutSpan`, `StrView` or `@view` struct), which is passed as itself and
+    keeps the regions it carries;
+  * a plain parameter of a `Copy` type that holds no `Cell` or `UnsafeCell`, which goes in registers
+    when it is no larger than two pointers, except the object of a method whose result is a view
+    (`[LT-1]` rule 1). An `owns` parameter receives the value. A view into the own storage of a
+    parameter passed as a copy ends with the call: returning it is `E3063`. The choice depends only
+    on the declared first line, never on the body; it is an ABI decision and cannot be observed. An
+    instance of a generic function, method or type has the generic's declared first line: a
+    parameter its result may point into (the object, or a source parameter of `[LT-1]`'s second
+    kind) is passed as the declaration passes it, whatever the type arguments, so
+    `Holder[StrView]`'s object is passed by address as `Holder[T]`'s is (ODR-048).
 * `[BRW-9]` *(changed in 0.9.15)* A view in Safe code is never null, dangling or unaligned.
 
 ## VII.5 Views and changes

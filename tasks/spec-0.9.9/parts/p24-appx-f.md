@@ -36,6 +36,7 @@
 | **native island** | a subsystem kept in C or C++ behind a typed boundary rather than imported (Annex C) |
 | **niche** | an invalid bit pattern of a type that `Option` uses for `None`, so `Option[T]` costs no space |
 | **noalias** | C's `restrict`: the promise to the C compiler that two pointers never point at the same memory; every `ref mut` parameter is compiled with it, `this` never |
+| **needs drop** | the property of a type whose values do something when they end (`[DRP-6]`, `[TYP-1]`): a type with a `fn drop()`; a heap type (`String`, `Array`, `Map`, `Set`, `owns T`, `owns dyn I`); a class object; a counted owner or link (`shares`, `shares mut`, `thread_shared`, `weakref`); a guard; a function value whose state owns one of these; a foreign type with a destructor; and every struct, enum, tuple, fixed array, `Option`, `Cell` or generic instance with a field, element or payload that does. A `Copy` type, a `ref`, a `sharedref mut` link, a span, a `StrView`, a raw pointer and a `MaybeUninit[T]` (whatever `T`, `[ARN-8]`) never do |
 | **`Nondet`** | the effect of an operation whose result may differ between runs or machines (`[DET-2]`) |
 | **overlay** | an Ember file that states contracts, renames and wrappers for an imported header (§XVI.4) |
 | **owner** | the one place (a local, a field, a list element) that ends a value when it ends; a value made shared has several |

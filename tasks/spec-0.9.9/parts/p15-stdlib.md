@@ -4,72 +4,83 @@
 
 The standard library is one package, `std`. This Part fixes what every implementation provides and
 what each operation means; `std/**/*.em` holds the exact signatures and becomes normative for
-anything this Part leaves open.
+anything this Part leaves open. For a module whose row names another Part, that Part alone is the
+authority: where it is silent the construct is `E0901`, and a file of `std` that disagrees with it
+is a defect of the file.
 
 ## XV.1 Organisation and conventions
 
-* `[STD-6]` *(changed in 0.9.15)* `std` is layered, and each layer depends only on the ones before it: **core** (scalars,
-  `Option`, `Result`, views, fixed-capacity containers, math, SIMD), **alloc** (`Array`, `String`,
-  `Map`, `Set`, and the heap blocks of `owns` and `shares` values), **sync** (atomics, locks, channels, threads, jobs), **io** (console,
-  files, time, processes) and **ffi**. A package that declares `[package] layers = ["core"]` may use
-  only core; this is how firmware and kernels use Ember.
+* `[STD-6]` *(changed in 0.9.15)* *(changed in 0.9.20)* `std` is layered, and each layer depends
+  only on the ones before it: **core** (scalars, `Option`, `Result`, views, fixed-capacity
+  containers, math, SIMD), **alloc** (`Array`, `String`, `Map`, `Set`, and the heap blocks of `owns`
+  and `shares` values), **sync** (atomics, locks, channels, threads, jobs), **io** (console, files,
+  time, processes) and **ffi**. Each module's row in §XV.1 names its layer, and a name whose layer
+  differs from its module's is marked there (`AnyError`, `std.core`'s name but the **alloc** layer's
+  type, `[ERR-8]`). A package that declares `[package] layers = ["core"]` may use only core; this is
+  how firmware and kernels use Ember. A use of a name of a layer the package does not declare is
+  `E1042`, naming the layer and the line to write ("`Result[int]` means `Result[int, AnyError]`, and
+  `AnyError` needs the `alloc` layer, which `sensor` does not declare; name the error type:
+  `Result[int, SensorError]`").
 * `[STD-1]` Every function in `std.core`, `std.mem`, `std.math`, `std.simd` and `std.arena` is
   `@noalloc` unless its documentation says it allocates.
 * `[STD-13]` *(new in 0.9.9)* **One naming convention.** Names are `snake_case` words joined by
   underscores (`starts_with`, `to_upper`, `push`, `is_empty`). Where Python's name for a **method**
-  differs (`append`, `strip`, `startswith`, `upper`, `splitlines`), there is no second name: the call
-  is `E2072`, `no method 'append' on Array[int]`, whose help names the Ember method
-  (the full table is Appendix E). A Python name that Ember keeps (`partition`, `items`, `count`, and
-  the built-in functions of `[STD-26]`) keeps Python's meaning (`[PHIL-14]`).
-* `[STD-26]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **Python's built-in functions.** The prelude has these functions, with
-  Python's meaning; each reads its argument as a `for` loop does (`[CTL-1]`):
+  differs (`append`, `strip`, `startswith`, `upper`, `splitlines`), there is no second name: the
+  call is `E2072`, `no method 'append' on Array[int]`, whose help names the Ember method (the full
+  table is Appendix E). A Python name that Ember keeps (`partition`, `items`, `count`, and the
+  built-in functions of `[STD-26]`) keeps Python's meaning (`[PHIL-14]`).
+* `[STD-26]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **Python's built-in
+  functions.** The prelude has these functions, with Python's meaning; each reads its argument as a
+  `for` loop does (`[CTL-1]`):
   * `len(x)` is `x.len()`: an `int` for a collection or view, and for a range its count
-    (`[STD-19]`), in the smallest type that holds it by the numbers the compiler knows
-    (`len(0..n)` with `n: int` is an `int`). `len` of a `StrView` or `String` is
-    `E2073`: Python counts characters and Ember's `s.len()` counts bytes, so the help offers both
-    `s.char_count()` and `s.len()`.
-  * `range(stop)`, `range(start, stop)`, `range(start, stop, step)` count as Python's do, including a
-    negative `step`; `step == 0` panics. `range(n)` is `0..n`, and every form compiles to a counted
-    loop (`[CTL-3b]`).
-  * `enumerate(it, start=0)`, `zip(a, b, …)` (any number of iterables, `[TYP-47]`; stops at the shortest) and `reversed(x)` (for what can run
-    backwards) return lazy iterators, as Python 3's do.
-  * `sum(it, start=0)`, `any(it)` and `all(it)` consume an iterable (of numbers, of `bool`s);
-    `any(x > 0 for x in xs)` uses a generator expression (`[GRM-38]`).
-  * `sorted(it, key=None, reverse=false) -> Array[T]` returns a new sorted array (stable) of the items
-    the iterator gives, and copies none. Over an iterator of views (`sorted(m.keys())`) it is a list of
-    views, a value that holds views, which lives no longer than what they point into (`[TYP-15]`): a
-    change that may reshape `m` ends it (`E3060` at a later use). A list of items of your own is
-    written `sorted(m.keys().copy_each())` (`[STD-19]`).
-  `min` and `max` stay two-argument functions; `xs.iter().min()` gives an `Option` for a collection.
-* `[STD-14]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* Failure follows `[ERR-13]`: a caller's bug
-  panics; a failure of the world returns `Result` or `Option`. The non-panicking twin `[ERR-13]` asks
-  for is an accessor's (`Mat4.col`/`col_checked`, `CppShared.get`); a constructor's or a mutation's
-  caller's bug (`stepped(0)`, `BitSet.insert` of a negative, `Entity.new` out of range, `Registry.emplace` on
-  a dead entity, `normalize` of zero, `split` on an empty separator) panics with none. Every
-  allocating function is documented as allocating and carries `Alloc`.
+    (`[STD-19]`), in the smallest type that holds it by the numbers the compiler knows (`len(0..n)`
+    with `n: int` is an `int`). `len` of a `StrView` or `String` is `E2073`: Python counts
+    characters and Ember's `s.len()` counts bytes, so the help offers both `s.char_count()` and
+    `s.len()`.
+  * `range(stop)`, `range(start, stop)`, `range(start, stop, step)` count as Python's do, including
+    a negative `step`; `step == 0` panics. `range(n)` is `0..n`, and every form compiles to a
+    counted loop (`[CTL-3b]`).
+  * `enumerate(it, start=0)`, `zip(a, b, …)` (any number of iterables, `[TYP-47]`; stops at the
+    shortest) and `reversed(x)` (for what can run backwards) return lazy iterators, as Python 3's
+    do.
+  * `sum(it, start=0)`, `any(it)` and `all(it)` consume an iterable (of numbers, of `bool`s); `any(x
+    > 0 for x in xs)` uses a generator expression (`[GRM-38]`).
+  * `sorted(it, key=None, reverse=false) -> Array[T]` returns a new sorted array (stable) of the
+    items the iterator gives, and copies none. Over an iterator of views (`sorted(m.keys())`) it is
+    a list of views, a value that holds views, which lives no longer than what they point into
+    (`[TYP-15]`): a change that may reshape `m` ends it (`E3060` at a later use). A list of items of
+    your own is written `sorted(m.keys().copy_each())` (`[STD-19]`). `min` and `max` stay
+    two-argument functions; `xs.iter().min()` gives an `Option` for a collection.
+* `[STD-14]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* Failure follows
+  `[ERR-13]`: a caller's bug panics; a failure of the world returns `Result` or `Option`. The
+  non-panicking twin `[ERR-13]` asks for is an accessor's (`Mat4.col`/`col_checked`,
+  `CppShared.get`); a constructor's or a mutation's caller's bug (`stepped(0)`, `BitSet.insert` of a
+  negative, `Entity.new` out of range, `Registry.emplace` on a dead entity, `normalize` of zero,
+  `split` on an empty separator) panics with none. Every allocating function is documented as
+  allocating and carries `Alloc`.
 
-| Module | Contents |
+| Module | Contents; layer (`[STD-6]`) |
 |---|---|
 | prelude | the names of `[MOD-5]` |
-| `std.core` | scalars, `Option`, `Result`, `AnyError`, `Ordering`, ranges, `NonZero`, the standard interfaces (§IV.8), iterator adapters, `type_name[T]()` (a type's fully qualified name, which the compiler knows) |
-| `std.mem` | `size_of`, `align_of`, `offset_of`, `swap`, `replace`, `take`, `drop`, `keep_alive`, `MaybeUninit`, `transmute`, `zeroed`, `copy`, `copy_nonoverlapping`, `Volatile` (`[STD-29]`), `Layout`, `Allocator`, `Global`, `ptr`, `check_disjoint`, `assert_disjoint`, `assume_disjoint` (Part IX) |
-| `std.cell` | `Cell`, `UnsafeCell` |
-| `std.collections` | `Array`, `Map`, `Set`, `Deque`, `SmallArray`, `BitSet`, `FixedArray`, `FixedString`, `RingBuffer`, `Pool`, `Handle`, `SoA`, `ArenaArray`, `ArenaMap`, `ArenaSoA`, `DefaultHasher`, `RandomState`, `Hasher`, `CapacityError`; the iterator types `SpanIter`, `MutSpanIter`, `SpanChunks`, `MutSpanChunks`, `ArenaArrayIter`, `ArenaArrayIterMut`, `ArenaMapIter` (public, not in the prelude) |
-| `std.string` | `String`, `StrView` methods, `StringBuilder`, `ParseError`, `Utf8Error` |
-| `std.fmt` | `Formatter`, `FmtError`, `format`, `format_to`, the format-spec mini-language (`[LEX-19]`) |
-| `std.math` | constants, scalar functions, `Vec2/3/4`, `IVec2/3/4`, `UVec2/3/4`, `Mat2/3/4`, `Quat`, `Transform`, `Aabb`, `Sphere`, `Ray`, `Plane`, `Frustum`, `KahanSum`, `det` (`[DET-4]`) |
-| `std.simd`, `std.cpu` | Part XII; `prefetch`, `pause`, `cycle_counter`, `cache_line_size`, `logical_cores` |
-| `std.arena` | `Arena`, `FixedArena`, `ScopedArena`, `ThreadArena` |
-| `std.io`, `std.fs`, `std.path` | `stdin`, `stdout`, `stderr`, `Read`/`Write`, `BufReader`, `BufWriter`, files, directories, `Path`, `PathBuf`, `io.Error` |
-| `std.time` | `Instant`, `Duration`, `SystemTime`, `sleep` |
-| `std.process`, `std.env` | `args`, `args_os`, `exit`, `abort`, `Command`; `var`, `vars`, `current_dir` |
-| `std.random` | `Rng` (seeded, deterministic), `Rng.from_entropy()` (`Nondet`) |
-| `std.thread`, `std.sync`, `std.jobs` | Part XI |
-| `std.ecs` | Part XII |
-| `std.ser` | Part XIV |
-| `std.testing`, `std.debug` | `assert_approx_eq`, `expect_panic`, the `bench` harness (Part XVII); `backtrace`, `leak_report`, `alloc_stats`, and profiler zones `with debug.zone("name"):` |
-| `std.ffi` | `CString`, `CStrView`, `c_int` and the other C aliases, `c_wchar`, `WideString`, `Retained`, `Callback`, `adopt` (which gives an `owns T`) (Part XVI) |
-| `std.gpu` | Annex D |
+| `std.core` | scalars, `Option`, `Result`, `AnyError`, `Ordering`, ranges, `NonZero`, the standard interfaces (§IV.8), iterator adapters, `type_name[T]()` (a type's fully qualified name, which the compiler knows); layer: **core** (`AnyError` is **alloc**, `[STD-6]`) |
+| `std.mem` | `size_of`, `align_of`, `offset_of`, `swap`, `replace`, `take`, `drop`, `keep_alive`, `MaybeUninit`, `transmute`, `zeroed`, `copy`, `copy_nonoverlapping`, `Volatile` (`[STD-29]`), `Layout`, `Allocator`, `Global`, `ptr`, `check_disjoint`, `assert_disjoint`, `assume_disjoint` (Part IX); layer: **core** |
+| `std.cell` | `Cell`, `UnsafeCell`; layer: **core** |
+| `std.collections` | `Array`, `Map`, `Set`, `Deque`, `SmallArray`, `BitSet`, `FixedArray`, `FixedString`, `RingBuffer`, `Pool`, `Handle`, `SoA`, `ArenaArray`, `ArenaMap`, `ArenaSoA`, `DefaultHasher`, `RandomState`, `Hasher`, `CapacityError`; the iterator types `SpanIter`, `MutSpanIter`, `SpanChunks`, `MutSpanChunks`, `ArenaArrayIter`, `ArenaArrayIterMut`, `ArenaMapIter` (public, not in the prelude); layer: **alloc**, but `FixedArray`, `FixedString`, `RingBuffer`, `BitSet`, `Pool`, `Handle` and `SmallArray`'s inline part, which are **core** |
+| `std.string` | `String`, `StrView` methods, `StringBuilder`, `ParseError`, `Utf8Error`; layer: **alloc**, but `StrView` and its methods, `ParseError` and `Utf8Error`, which are **core** |
+| `std.fmt` | `Formatter`, `FmtError`, `format`, `format_to`, the format-spec mini-language (`[LEX-19]`); layer: **core** for `Formatter`, `format_to` and `FmtError`; **alloc** for `format` |
+| `std.math` | constants, scalar functions, `Vec2/3/4`, `IVec2/3/4`, `UVec2/3/4`, `Mat2/3/4`, `Quat`, `Transform`, `Aabb`, `Sphere`, `Ray`, `Plane`, `Frustum`, `KahanSum`, `det` (`[DET-4]`); layer: **core** |
+| `std.simd`, `std.cpu` | Part XII; `prefetch`, `pause`, `cycle_counter`, `cache_line_size`, `logical_cores`; layer: **core** |
+| `std.arena` | `Arena`, `FixedArena`, `ScopedArena`, `ThreadArena`; layer: **core** for `FixedArena`; **alloc** for the rest |
+| `std.io`, `std.fs`, `std.path` | `stdin`, `stdout`, `stderr`, `Read`/`Write`, `BufReader`, `BufWriter`, files, directories, `Path`, `PathBuf`, `io.Error`; layer: **io** |
+| `std.time` | `Instant`, `Duration`, `SystemTime`, `sleep`; layer: **io** |
+| `std.process`, `std.env` | `args`, `args_os`, `exit`, `abort`, `Command`; `var`, `vars`, `current_dir`; layer: **io** |
+| `std.random` | `Rng` (seeded, deterministic), `Rng.from_entropy()` (`Nondet`); layer: **core** for `Rng`; **io** for `from_entropy` |
+| `std.thread`, `std.sync`, `std.jobs` | Part XI; layer: **sync** |
+| `std.ecs` | Part XII; layer: **alloc** |
+| `std.ser` | Part XIV; layer: **alloc** |
+| `std.testing`, `std.debug` | `assert_approx_eq`, `expect_panic`, the `bench` harness (Part XVII); `backtrace`, `leak_report`, `alloc_stats`, and profiler zones `with debug.zone("name"):`; layer: **io** |
+| `std.ffi` | `CString`, `CStrView`, `c_int` and the other C aliases, `c_wchar`, `WideString`, `Retained`, `Callback`, `adopt` (which gives an `owns T`) (Part XVI); layer: **ffi** |
+| `std.gpu` | Annex D; layer: **ffi** |
 
 * `[STD-29]` *(new in 0.9.15)* `std.mem.Volatile[*T]`'s `read_volatile` and `write_volatile` are
   `unsafe fn`s (`[UNS-5]`) whose `@safety` asks the caller for a pointer that is valid for a read (a
@@ -289,114 +300,117 @@ anything this Part leaves open.
 
 ## XV.5 Iterators
 
-* `[STD-19]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* Every `Iterator` has the adapters `map`, `filter`, `filter_map`,
-  `enumerate`, `zip`, `chain`, `take`, `skip`, `take_while`, `skip_while`, `step_by`, `flat_map`,
-  `flatten`, `peekable`, `copy_each`, `inspect`, and `rev` where the iterator can run backwards;
-  and the consumers `count`, `sum`, `product`, `min`, `max`, `min_by_key`, `max_by_key`, `fold`,
-  `reduce`, `any`, `all`, `find`, `position`, `last`, `nth`, `min_by`, `max_by`, `for_each`,
-  `collect[C]()`, `to_array()`,
+* `[STD-19]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)*
+  Every `Iterator` has the adapters `map`, `filter`, `filter_map`, `enumerate`, `zip`, `chain`,
+  `take`, `skip`, `take_while`, `skip_while`, `step_by`, `flat_map`, `flatten`, `peekable`,
+  `copy_each`, `inspect`, and `rev` where the iterator can run backwards; and the consumers `count`,
+  `sum`, `product`, `min`, `max`, `min_by_key`, `max_by_key`, `fold`, `reduce`, `any`, `all`,
+  `find`, `position`, `last`, `nth`, `min_by`, `max_by`, `for_each`, `collect[C]()`, `to_array()`,
   and `join(sep)` for `Display` items. `copy_each()` gives, for each item, what `copy of` the item
-  would make (for `Item: needs Clone`): `names = sorted(m.keys().copy_each())` is a list of strings of its
-  own, kept past changes to `m`; `.copied()` and `.cloned()` are not Ember (`E1010`, "write
+  would make (for `Item: needs Clone`): `names = sorted(m.keys().copy_each())` is a list of strings
+  of its own, kept past changes to `m`; `.copied()` and `.cloned()` are not Ember (`E1010`, "write
   `.copy_each()`"). Adapters are lazy and allocate nothing themselves; what the functions they apply
-  do counts where they run (`[EFF-1]`). A chain of adapters in a
-  `for` loop compiles to one loop with no iterator object in memory (`[CTL-3]`). The adapters and
-  consumers can also be called directly on an `Iterable` value, reading it as `iter()` would:
-  `xs.enumerate()` is `xs.iter().enumerate()`, and a method of the collection's own of the same name
-  (`Array.join`) takes precedence. An adapter takes the iterator it wraps over (`owns this`), and so
-  does a consumer; `zip` and `chain` take their other iterator over too, so a named iterator is given
-  to `zip` with `owns` (`a.zip(owns it)`; `a.zip(owns copy of it)` keeps the caller's). **A function is taken as a type
-  parameter**, by the adapters that apply one and the consumers alike (`any`, `all`, `find`,
-  `position`, `fold`, `reduce`, `for_each`, the `…_by` and `…_by_key` forms): `[F: needs fn(Item)]` above
-  `fn for_each(owns f: F) owns this:`, `[F: needs fn(Item) -> bool]` above `fn any(owns f: F) owns this ->
-  bool:`, `[F: needs fn(Item)]` above `fn inspect(owns f: F) owns this -> Inspect[Self, F]:`. `F` names the
-  exact function given, so the adapter or consumer is compiled once for each function given to it and
-  the call through `f` is direct and may be inlined; the shared type, `owns f: fn(Item)`, is legal too,
-  and is what keeps functions of different kinds in one list (`handlers: Array[fn()]`). A function
-  written in the call is given to it, with `owns` as every argument for an `owns` parameter is
-  (`[FN-2a]`), so an adapter made from a lambda can be kept or returned
-  (`return xs.iter().map(owns fn(x) => x * 2)`), what the lambda holds with it. A function from a
-  variable is lent to the call and takes no word: after `xs.iter().for_each(h)`, `h` is the caller's
-  still and `h(5)` runs it (ODR-240). A function given may change
-  things: a consumer's call counts as making what the function changes, now
-  (`scores.for_each(owns fn(s): LOG.push(owns copy of s.name))` changes `LOG`, so inside a loop over `LOG` it is
-  `E3020`), and an adapter keeps the function and runs it at each step, so whatever drives the adapter
-  (`for x in it:`, `it.sum()`) makes its changes; driving an `owns dyn Iterator[Item = T]` makes the
-  changes of every adapter the program can put there. What a caller
-  passes is an `int` (ODR-089): `take(n)` gives at most `n` items and
-  `skip(n)` leaves out the first `n`, `nth(n)` is the item at index `n` (`None` past the end),
-  `step_by(k)` gives the first item and then every `k`-th, and `enumerate(start=0)` numbers from
-  `start` as `[STD-26]`'s `enumerate` does. A negative count or index, or a `k` of zero or less,
-  is the caller's bug and panics when the adapter is made or the consumer called (`[STD-14]`),
-  never partway through. **Counts and numbers** (the owner's design G8-4, 0.9.10): what Ember
-  hands back is in the smallest type that holds every value the iterator can give. `Iterator` has
-  the associated types `Count`, what `len()`, `count()` and `position()` give, and `Position`, what
-  `enumerate` numbers its items with; each is `int` unless the iterator says otherwise, and each
-  implements `std.core.ItemCount` (`int`, `u64`, `u128`, `u256`, `i128` and `i256` do), which
-  gives the count operations (`of`, `plus`, `less`, `exceeds`, `to_int`, and `as_count[C]()` from
-  one count type to another that holds it). Stored items (arrays, views, text, maps, sets) and
-  ranges of 8-, 16- or 32-bit numbers count and number in `int`; a `..` range of 64-bit numbers
-  counts in `u64` and a `..=` one in `u128`, a `..` range of 128-bit numbers in `u128` and a `..=`
-  one in `u256` (`[TYP-42]`); ranges of 64-bit numbers number in `i128` and of 128-bit numbers in
-  `i256`, from a start that may be negative. An adapter that never gives more items than it takes
-  counts and numbers as what it wraps. `chain` counts its two sides together, stepping up only as
-  far as needed: two `int` counts stay an `int` (stored items and small ranges cannot come near its
-  top), otherwise the count is one level above the wider side's (`u64`, then `u128`, then `u256`),
-  and it numbers in the type that holds both sides' numbers; `flatten` and `flat_map` count in the
-  level that holds the outer count times the inner one (an `int` by an `int` stays an `int`).
-  `u256` is the limit: a count past it panics. In generic code these are the counts of the types
-  involved, filled in for each use. **The known-numbers rule** (the owner's rulings of 2026-10-06,
-  which widen the visible-numbers rule): where `enumerate` is called, and where `len` or `count` is
-  called on an iterator, the numbers it gives, and the count, are in the smallest of `int`, `u64`,
-  `i128`, `u128` and `i256` that holds every value it can give, read from the numbers the compiler
-  knows. It knows a number written as one; a name set once and never changed anywhere in its
-  function (no assignment, augmented assignment, `ref mut` name or argument of it, or call of a method
-  that changes it, in the function or a lambda in it) holds what its value held, and a range or an `Array`
-  literal so set has its bounds or its length; a loop's counter (`for i in a..b`, `range(a, b,
-  step)`, and a range's value through `rev`, `skip`, `take` and `step_by`) holds its range's
-  numbers; `+`, `-`, `*`, `//` and `%` give what their known operands allow; a list's, a view's or
-  a text's length is at most what its items' bytes allow (`[HEAP-8]`: at most `PTRDIFF_MAX` bytes,
-  an item of no size counting as one) and a fixed array's is its `N`; `take`, `skip`, `step_by`,
-  `zip` and `chain` give what their known arguments allow. Anything else may be any value of its
-  type, and an iterator gives at most what its `Count` holds. `enumerate` numbers from `start` to
-  `start + n - 1` over at most `n` items, so its type steps up from the iterator's own `Position`
-  where the numbers could pass that type's top (`ys.enumerate(start=int.MAX - 1)` over three items
-  numbers in `u64`): no number of an `enumerate` overflows. In generic code an `enumerate` numbers
-  in its iterator's `Position`; where what it numbers in depends on the item type (a list of `T`,
-  whose most items depend on `T`'s size), the function's own check leaves it, and every line that
-  uses those numbers, to the check of each use (`[TYP-17]`), which numbers by what it knows. A use
-  that a line does not fit is refused there, naming the use (`in labels used with T = u8`); with
-  `[TYP-5]` rule 12, `last = i` takes the numbers of a list of `int`s from 2 whether `last` is an
-  `int` or a `u64`. An iterator can run backwards when it implements
-  `DoubleEndedIterator`, whose method `fn next_back() -> Option[Item]` gives the last item not yet
-  given from either end (with `next`, the two ends meet and no item comes twice) and whose method
-  `rev` is, so `rev` is exactly where an iterator can run backwards; `ExactSizeIterator`'s
-  `fn len() -> Count` is how many items are left (ODR-091). `skip_front(n)` and `skip_back(n)`
-  leave out up to `n` items (a `Count`) from either end and give how many of the `n` they could
-  not, and `nth_back(n)` leaves out `n` from the back and gives the one before them; a range does
-  each at once, and `rev`, `copy_each`, `take`, `skip`, `zip`, `chain`, and `enumerate` from the back
-  pass them down, so none of them passes a gigantic run of items one at a time. `ItemCount`,
-  `DoubleEndedIterator` and `ExactSizeIterator` are in `std.core` and are not prelude names
-  (`[MOD-5]`). The iterators of the ranges with an end and the element iterators of the views run
-  backwards and know their length; `copy_each` and `chain` run backwards when what they wrap
+  do counts where they run (`[EFF-1]`). A chain of adapters in a `for` loop compiles to one loop
+  with no iterator object in memory (`[CTL-3]`). The adapters and consumers can also be called
+  directly on an `Iterable` value, reading it as `iter()` would: `xs.enumerate()` is
+  `xs.iter().enumerate()`, and a method of the collection's own of the same name (`Array.join`)
+  takes precedence. An adapter takes the iterator it wraps over (`owns this`), and so does a
+  consumer; `zip` and `chain` take their other iterator over too, so a named iterator is given to
+  `zip` with `owns` (`a.zip(owns it)`; `a.zip(owns copy of it)` keeps the caller's). **A function is
+  taken as a type parameter**, by the adapters that apply one and the consumers alike (`any`, `all`,
+  `find`, `position`, `fold`, `reduce`, `for_each`, the `…_by` and `…_by_key` forms): `[F: needs
+  fn(Item)]` above `fn for_each(owns f: F) owns this:`, `[F: needs fn(Item) -> bool]` above `fn
+  any(owns f: F) owns this -> bool:`, `[F: needs fn(Item)]` above `fn inspect(owns f: F) owns this
+  -> Inspect[Self, F]:`. `F` names the exact function given, so the adapter or consumer is compiled
+  once for each function given to it and the call through `f` is direct and may be inlined; the
+  shared type, `owns f: fn(Item)`, is legal too, and is what keeps functions of different kinds in
+  one list (`handlers: Array[fn()]`). A function written in the call is given to it, with `owns` as
+  every argument for an `owns` parameter is (`[FN-2a]`), so an adapter made from a lambda can be
+  kept or returned (`return xs.iter().map(owns fn(x) => x * 2)`), what the lambda holds with it. A
+  function from a variable is lent to the call and takes no word: after `xs.iter().for_each(h)`, `h`
+  is the caller's still and `h(5)` runs it (ODR-240). A function given may change things: a
+  consumer's call counts as making what the function changes, now (`scores.for_each(owns fn(s):
+  LOG.push(owns copy of s.name))` changes `LOG`, so inside a loop over `LOG` it is `E3020`), and an
+  adapter keeps the function and runs it at each step, so whatever drives the adapter (`for x in
+  it:`, `it.sum()`) makes its changes; driving an `owns dyn Iterator[Item = T]` makes the changes of
+  every adapter the program can put there. What a caller passes is an `int` (ODR-089): `take(n)`
+  gives at most `n` items and `skip(n)` leaves out the first `n`, `nth(n)` is the item at index `n`
+  (`None` past the end), `step_by(k)` gives the first item and then every `k`-th, and
+  `enumerate(start=0)` numbers from `start` as `[STD-26]`'s `enumerate` does. A negative count or
+  index, or a `k` of zero or less, is the caller's bug and panics when the adapter is made or the
+  consumer called (`[STD-14]`), never partway through. **Counts and numbers** (the owner's design
+  G8-4, 0.9.10): what Ember hands back is in the smallest type that holds every value the iterator
+  can give. `Iterator` has the associated types `Count`, what `len()`, `count()` and `position()`
+  give, and `Position`, what `enumerate` numbers its items with; each is `int` unless the iterator
+  says otherwise, and each implements `std.core.ItemCount` (`int`, `u64`, `u128`, `u256`, `i128` and
+  `i256` do), which gives the count operations (`of`, `plus`, `less`, `exceeds`, `to_int`, and
+  `as_count[C]()` from one count type to another that holds it). Stored items (arrays, views, text,
+  maps, sets) and ranges of 8-, 16- or 32-bit numbers count and number in `int`; a `..` range of
+  64-bit numbers counts in `u64` and a `..=` one in `u128`, a `..` range of 128-bit numbers in
+  `u128` and a `..=` one in `u256` (`[TYP-42]`); ranges of 64-bit numbers number in `i128` and of
+  128-bit numbers in `i256`, from a start that may be negative. An adapter that never gives more
+  items than it takes counts and numbers as what it wraps. `chain` counts its two sides together,
+  stepping up only as far as needed: two `int` counts stay an `int` (stored items and small ranges
+  cannot come near its top), otherwise the count is one level above the wider side's (`u64`, then
+  `u128`, then `u256`), and it numbers in the type that holds both sides' numbers; `flatten` and
+  `flat_map` count in the level that holds the outer count times the inner one (the smallest of
+  `int`, `u64`, `u128` and `u256` that holds the product of the greatest counts the two sides can
+  give, by the numbers the compiler knows: two `int` counts whose product may pass `int.MAX` count
+  in `u128`, and stay an `int` where the known numbers show the product fits), and number their
+  items (`Position`) in the same type. `u256` is the limit: a count past it panics. In generic code
+  these are the counts of the types involved, filled in for each use. **The known-numbers rule**
+  (the owner's rulings of 2026-10-06, which widen the visible-numbers rule): where `enumerate` is
+  called, and where `len` or `count` is called on an iterator, the numbers it gives, and the count,
+  are in the smallest of `int`, `u64`, `i128`, `u128` and `i256` that holds every value it can give,
+  read from the numbers the compiler knows. It knows a number written as one; a name set once and
+  never changed anywhere in its function (no assignment, augmented assignment, `ref mut` name or
+  argument of it, or call of a method that changes it, in the function or a lambda in it) holds what
+  its value held, and a range or an `Array` literal so set has its bounds or its length; a loop's
+  counter (`for i in a..b`, `range(a, b, step)`, and a range's value through `rev`, `skip`, `take`
+  and `step_by`) holds its range's numbers; `+`, `-`, `*`, `//` and `%` give what their known
+  operands allow; a list's, a view's or a text's length is at most what its items' bytes allow
+  (`[HEAP-8]`: at most `PTRDIFF_MAX` bytes, an item of no size counting as one) and a fixed array's
+  is its `N`; `take`, `skip`, `step_by`, `zip` and `chain` give what their known arguments allow.
+  Anything else may be any value of its type, and an iterator gives at most what its `Count` holds.
+  `enumerate` numbers from `start` to `start + n - 1` over at most `n` items, so its type steps up
+  from the iterator's own `Position` where the numbers could pass that type's top
+  (`ys.enumerate(start=int.MAX - 1)` over three items numbers in `u64`): no number of an `enumerate`
+  overflows. In generic code an `enumerate` numbers in its iterator's `Position`; where what it
+  numbers in depends on the item type (a list of `T`, whose most items depend on `T`'s size), the
+  function's own check leaves it, and every line that uses those numbers, to the check of each use
+  (`[TYP-17]`), which numbers by what it knows. A use that a line does not fit is refused there,
+  naming the use (`in labels used with T = u8`); with `[TYP-5]` rule 12, `last = i` takes the
+  numbers of a list of `int`s from 2 whether `last` is an `int` or a `u64`. An iterator can run
+  backwards when it implements `DoubleEndedIterator`, whose method `fn next_back() -> Option[Item]`
+  gives the last item not yet given from either end (with `next`, the two ends meet and no item
+  comes twice) and whose method `rev` is, so `rev` is exactly where an iterator can run backwards;
+  `ExactSizeIterator`'s `fn len() -> Count` is how many items are left (ODR-091). `skip_front(n)`
+  and `skip_back(n)` leave out up to `n` items (a `Count`) from either end and give how many of the
+  `n` they could not, and `nth_back(n)` leaves out `n` from the back and gives the one before them;
+  a range does each at once, and `rev`, `copy_each`, `take`, `skip`, `zip`, `chain`, and `enumerate`
+  from the back pass them down, so none of them passes a gigantic run of items one at a time.
+  `ItemCount`, `DoubleEndedIterator` and `ExactSizeIterator` are in `std.core` and are not prelude
+  names (`[MOD-5]`). The iterators of the ranges with an end and the element iterators of the views
+  run backwards and know their length; `copy_each` and `chain` run backwards when what they wrap
   does, and `take`, `skip`, `step_by`, `enumerate` and `zip` when it also knows its length, giving
   the items `next` would, last first; each knows its length when what it wraps does. Run backwards,
   `enumerate` numbers its last item `start + len - 1` first, and the items `skip_back` leaves out
-  need no numbers. `collect[C]()` builds any `C` that implements `FromIterator[Item]` (ODR-094), an interface of
-  `std.core` that is not a prelude name: `interface FromIterator[T]:` declares
-  `[I: needs Iterator[Item = T]]` above `static fn from_iter(owns it: I) -> Self`. `Array[T]`, `Set[T]`, `Map[K, V]` (from `(K, V)` pairs, a later pair's
-  value replacing an earlier one's for the same key) and `String` (from `char`s and from `String`s)
-  implement it, and so may a program's own types. `C` is written (`it.collect[Array[int]]()`) or is
-  the type the call is expected to give (`a: Array[int] = it.collect()`). `flatten` is for items that
-  are themselves iterable (`IntoIterator`). `peekable()` gives the same items with
-  `fn peek() -> Option[ref Item]` and `fn peek_mut() -> Option[ref mut Item]`, which take the next item early
-  and keep it where it is until `next` gives it; `next_if(pred)` gives the next item when `pred` holds
-  for it and leaves it otherwise, and `next_if_eq(v)` when it equals `v` (`Item: needs Eq`).
+  need no numbers. `collect[C]()` builds any `C` that implements `FromIterator[Item]` (ODR-094), an
+  interface of `std.core` that is not a prelude name: `interface FromIterator[T]:` declares `[I:
+  needs Iterator[Item = T]]` above `static fn from_iter(owns it: I) -> Self`. `Array[T]`, `Set[T]`,
+  `Map[K, V]` (from `(K, V)` pairs, a later pair's value replacing an earlier one's for the same
+  key) and `String` (from `char`s and from `String`s) implement it, and so may a program's own
+  types. `C` is written (`it.collect[Array[int]]()`) or is the type the call is expected to give
+  (`a: Array[int] = it.collect()`). `flatten` is for items that are themselves iterable
+  (`IntoIterator`). `peekable()` gives the same items with `fn peek() -> Option[ref Item]` and `fn
+  peek_mut() -> Option[ref mut Item]`, which take the next item early and keep it where it is until
+  `next` gives it; `next_if(pred)` gives the next item when `pred` holds for it and leaves it
+  otherwise, and `next_if_eq(v)` when it equals `v` (`Item: needs Eq`).
 * `[STD-5]` *(changed in 0.9.9)* `sum` and `product` combine elements left to right in the element
   type; an empty sum is zero. Integer sums panic on overflow (`[TYP-8]`). Float sums are never
   reassociated outside `@fastmath` (`[TYP-9]`), so they are deterministic; `sum_f64()` accumulates
-  `f32` elements in `f64`, and `math.KahanSum` gives compensated summation: an `f64` accumulator with
-  Neumaier's correction, `KahanSum.new()`, `add(x)` and `value()`, and `KahanSum.of(xs)` for a
+  `f32` elements in `f64`, and `math.KahanSum` gives compensated summation: an `f64` accumulator
+  with Neumaier's correction, `KahanSum.new()`, `add(x)` and `value()`, and `KahanSum.of(xs)` for a
   `Span[f64]` (ODR-043).
 
 ## XV.6 Numbers and math

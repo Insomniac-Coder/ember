@@ -218,8 +218,11 @@ pub fn blend(dst: Array[f32], ref mut out: Array[f32], owns scratch: Array[f32],
   `unsafe` form; an `unsafe fn` coerces only to an `unsafe` callable type (`E2020` otherwise). Where
   an `unsafe fn(…)` is wanted, any function or lambda that meets `fn(…)` may be given, and so may an
   `unsafe fn`. A function that captures nothing also coerces to `extern "C" fn(…)` when every type
-  is FFI-safe. A view that a call through a callable value gives points into that call's own view
-  arguments (`[LT-7]`). What a callable type means in each position is `[CLO-3]`.
+  is FFI-safe; it then gets a C entry that attaches the calling thread (`[FFI-22]`) and runs it, and
+  its body is checked as an export under `threads=any` is (`[FFI-21]`, `[FFI-33]`), since the
+  compiler cannot see which thread C calls it from. A view that a call through a callable value
+  gives points into that call's own view arguments (`[LT-7]`). What a callable type means in each
+  position is `[CLO-3]`.
 * `[FN-7]` Recursion is permitted; tail calls are not guaranteed to be eliminated.
 * `[FN-8]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* `main` is `fn main()`,
   `fn main() -> Result[void, E]` for any `E: needs Display`, or either form with a first parameter
@@ -555,21 +558,21 @@ extend Square implements Shape2D:
   e` is a module variable that may change, written with no `unsafe`: a function changes it by its
   name, with no word (Python's `global` is `E0100`: "`global` is Python's; in Ember a function
   changes a module variable by its name, with no word: remove line 9"), and what a function changes
-  is worked out from its code (`[EFF-24]`). It is reached only by the main thread and its scoped
-  tasks unless it is `guarded by` a `static` `Lock` (`static mut LOG: Array[String] guarded by
-  LOG_LOCK = []`); another thread that reaches it otherwise is `E7012` (Part XI). A `guarded by`
-  `static mut` is a `Mutex[T]` written as a module variable (`[THR-18]`), so its `T` MUST be `Send`
-  (`E7002`: "`CACHE` is guarded by `L`, so any thread may reach it under the lock, and a `shares mut
-  Table` stays on one thread; share it between threads: write `static mut CACHE: thread_shared Table
-  guarded by L = thread_shared Table()`"); an unguarded `static mut` asks nothing of `T`, since one
-  thread and its scoped tasks reach it. A statement at module level outside the entry file (where
-  statements form the implicit `main`, `[FN-8]`) that would give a module variable a value is
-  `E0100`, whose help gives the declaration ("`FRAME = 0` is a statement, and a module holds
-  declarations; for a module variable that may change write `static mut FRAME: int = 0`"). A foreign
-  `static mut` (declared in an `extern` block) is reached only inside `unsafe` (`[UNS-1]`). A
-  foreign static read only in `unsafe` need not be `ThreadShared`: the programmer answers for
-  sharing it between threads; one read without `unsafe` under `@ffi(immutable)` (`[FFI-10]`) must be
-  (ODR-163).
+  is worked out from its code (`[EFF-24]`). It is reached only by the main thread and the tasks and
+  jobs of the scopes it opens (`[THR-20]`) unless it is `guarded by` a `static` `Lock` (`static mut
+  LOG: Array[String] guarded by LOG_LOCK = []`); another thread that reaches it otherwise is `E7012`
+  (Part XI). A `guarded by` `static mut` is a `Mutex[T]` written as a module variable (`[THR-18]`),
+  so its `T` MUST be `Send` (`E7002`: "`CACHE` is guarded by `L`, so any thread may reach it under
+  the lock, and a `shares mut Table` stays on one thread; share it between threads: write `static
+  mut CACHE: thread_shared Table guarded by L = thread_shared Table()`"); an unguarded `static mut`
+  asks nothing of `T`, since one thread and its scoped tasks reach it. A statement at module level
+  outside the entry file (where statements form the implicit `main`, `[FN-8]`) that would give a
+  module variable a value is `E0100`, whose help gives the declaration ("`FRAME = 0` is a statement,
+  and a module holds declarations; for a module variable that may change write `static mut FRAME:
+  int = 0`"). A foreign `static mut` (declared in an `extern` block) is reached only inside `unsafe`
+  (`[UNS-1]`). A foreign static read only in `unsafe` need not be `ThreadShared`: the programmer
+  answers for sharing it between threads; one read without `unsafe` under `@ffi(immutable)`
+  (`[FFI-10]`) must be (ODR-163).
 * `[STA-3]` *(new in 0.9.9)* *(changed in 0.9.15)* A static whose initialiser can be evaluated at
   compile time is placed in the image with no initialisation code, except a `static mut` whose value
   owns heap memory, which its functions may grow or free: that value is built on first access, never

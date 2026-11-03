@@ -37,61 +37,65 @@ ember --help | --version [--matrix]
 
 * `[CLI-1]` Every command accepts `--json` and exits non-zero on error.
 * `[CLI-4]` *(changed in 0.9.9)* `ember run file.em` and `ember build file.em` accept a single file
-  with no manifest, as a package named after the file with default settings. A first program needs no
-  manifest and no `main`: `println("hello")` on its own is a complete program (`[FN-8]`).
-* `[CLI-2]` *(changed in 0.9.15)* `ember build --emit c --out-dir <dir>` writes the C sources without
-  invoking a C compiler, for build systems that compile them themselves, and beside them
+  with no manifest, as a package named after the file with default settings. A first program needs
+  no manifest and no `main`: `println("hello")` on its own is a complete program (`[FN-8]`).
+* `[CLI-2]` *(changed in 0.9.15)* `ember build --emit c --out-dir <dir>` writes the C sources
+  without invoking a C compiler, for build systems that compile them themselves, and beside them
   `<dir>/cflags.txt`, the C compiler flags those sources need for Ember's guarantees on the target,
   the stack-probe flag of `[RT-12]` among them; a build that compiles them without those flags does
   not have Ember's guarantees. `--emit tokens|ast|hir|mir|obj` write the other stages, for tools and
   for reporting compiler defects.
 * `[CLI-9]` `ember check --syntax-only` lexes and parses only, reporting `E00xx` and `E01xx`.
-* `[CLI-12]` `ember why --alloc <item>` (and `--block`, `--io`, `--lock`, `--sync`, `--unsafe`, `--ffi`)
-  prints the shortest call chain from the item to an operation with that effect, whether or not the
-  item carries a contract; with `--unsafe` it prints the obligation of every unsafe function on the
-  chain.
-* `[CLI-13]` `ember calls --foreign <item>` lists every foreign function the item can reach, with the
-  contract of each.
-* `[CLI-15]` `ember --help` lists every command and flag of this section; one missing from it, or from
-  §XVII.1's listing, is a defect.
-* `[CLI-20]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `ember fmt --migrate` rewrites source written for
-  an earlier version into the current one where the change is mechanical, and lists, with the file
-  and line, what it could not rewrite. From 0.9.15: the `#! language` directive to the current
-  version; the changes of 0.9.20 refuse programs that were unsafe and rewrite nothing (§H.51). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
-  removal, `for k, v in m:` over a `Map` to `for k, v in m.items():` (`[CTL-1]`). From 0.9.10:
-  `Box[T]` and `ForeignBox[T]` to `owns T`, `Box[T, A]` to `owns T using A`, `Array[T, A]` to
-  `Array[T] using A`, `Weak[T]` to `weakref T`, the mode `owned` to `owns`, `mut x: T` on a
-  parameter to `ref mut x: T` with `ref mut` written before each argument given to it, `self` to
-  `this` with the object removed from a method's parameters (`fn reset(mut self):` to `fn reset():`,
-  `owned self` to `owns this` after the parameters), a function in a type body with no object to
-  `static fn`, `str` to `StrView`, `cstr` to `CStrView`, `x.clone()` to `copy of x`, `.copied()` to
-  `.copy_each()`, `if Some(x) = e:` to `if e exists as x:`, `w.upgrade()` opened in an `if` to
-  `if w exists as p:`, `cast x if D` and `as?` to `if x is D as d:`, `as!` to `cast x as D`,
-  `@borrows(p)` to `from p`, `@static_safe` to `@no_alias_checks`, `@fp(contract)` to
-  `@fp(allow_fma)`, `assert_disjoint` to `check_disjoint` and `assert_disjoint_or_panic` to
-  `assert_disjoint`, a function's type parameters in brackets after its name to a line of their own
-  above it (`fn f[T: Add](x: T)` to `[T: needs Add]` above `fn f(x: T)`, `[GRM-40]`), an `x: ref T`
-  parameter to `x: T`, a `T: Sync` bound to `T: needs ThreadShared`, `for x in xs.iter_mut():` to
-  `for ref mut x in xs:`, and a declaration left unsafe to call by the word `unsafe` to `unsafe fn`:
-  an overlay entry's `unsafe` contract words (verdict 130), and `@ffi(unsafe)`, `param(p, unsafe)` and
-  `result(unsafe)` on a hand declaration (verdict 133), the word taken out and an `@ffi(…)` left
-  empty removed, and a plain `fn` in an `unsafe extern` block (verdict 136). It writes no `@safety`
-  text: `L3015` asks for any that is missing (`[UNS-7]`). It does not rewrite what needs a choice the source does not say: `Shared[T]`
+* `[CLI-12]` `ember why --alloc <item>` (and `--block`, `--io`, `--lock`, `--sync`, `--unsafe`,
+  `--ffi`) prints the shortest call chain from the item to an operation with that effect, whether or
+  not the item carries a contract; with `--unsafe` it prints the obligation of every unsafe function
+  on the chain.
+* `[CLI-13]` `ember calls --foreign <item>` lists every foreign function the item can reach, with
+  the contract of each.
+* `[CLI-15]` `ember --help` lists every command and flag of this section; one missing from it, or
+  from §XVII.1's listing, is a defect.
+* `[CLI-20]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `ember fmt --migrate`
+  rewrites source written for an earlier version into the current one where the change is
+  mechanical, and lists, with the file and line, what it could not rewrite. From 0.9.15: the `#!
+  language` directive to the current version; the changes of 0.9.20 refuse programs that were unsafe
+  and rewrite nothing (§H.51). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views` removal,
+  `for k, v in m:` over a `Map` to `for k, v in m.items():` (`[CTL-1]`). From 0.9.10: `Box[T]` and
+  `ForeignBox[T]` to `owns T`, `Box[T, A]` to `owns T using A`, `Array[T, A]` to `Array[T] using A`,
+  `Weak[T]` to `weakref T`, the mode `owned` to `owns`, `mut x: T` on a parameter to `ref mut x: T`
+  with `ref mut` written before each argument given to it, `self` to `this` with the object removed
+  from a method's parameters (`fn reset(mut self):` to `fn reset():`, `owned self` to `owns this`
+  after the parameters), a function in a type body with no object to `static fn`, `str` to
+  `StrView`, `cstr` to `CStrView`, `x.clone()` to `copy of x`, `.copied()` to `.copy_each()`, `if
+  Some(x) = e:` to `if e exists as x:`, `w.upgrade()` opened in an `if` to `if w exists as p:`,
+  `cast x if D` and `as?` to `if x is D as d:`, `as!` to `cast x as D`, `@borrows(p)` to `from p`,
+  `@static_safe` to `@no_alias_checks`, `@fp(contract)` to `@fp(allow_fma)`, `assert_disjoint` to
+  `check_disjoint` and `assert_disjoint_or_panic` to `assert_disjoint`, a function's type parameters
+  in brackets after its name to a line of their own above it (`fn f[T: Add](x: T)` to `[T: needs
+  Add]` above `fn f(x: T)`, `[GRM-40]`), an `x: ref T` parameter to `x: T`, a `T: Sync` bound to `T:
+  needs ThreadShared`, `for x in xs.iter_mut():` to `for ref mut x in xs:`, and a declaration left
+  unsafe to call by the word `unsafe` to `unsafe fn`: an overlay entry's `unsafe` contract words
+  (verdict 130), and `@ffi(unsafe)`, `param(p, unsafe)` and `result(unsafe)` on a hand declaration
+  (verdict 133), the word taken out and an `@ffi(…)` left empty removed, and a plain `fn` in an
+  `unsafe extern` block (verdict 136). It writes no `@safety` text: `L3015` asks for any that is
+  missing (`[UNS-7]`). It does not rewrite what needs a choice the source does not say: `Shared[T]`
   (`shares T` or `shares mut T`), `RefCell`, `SyncShared` and `@sync` classes (`thread_shared` with
   `guarded by` fields or `Atomic`), `owned fn` (the capture words), and `mem.forget`.
-* `[CLI-21]` *(new in 0.9.9)* `ember run --interp` runs a program on the compile-time evaluator instead
-  of compiling it: no C compiler is needed; console and file I/O work; foreign calls and threads are
-  unavailable (`E6010`); results equal a compiled run's.
-* `[TOOL-2]` *(changed in 0.9.10)* Ember's toolchain archive (`[TOOL-1]`) carries LLVM's Clang and its
-  linker LLD, pinned and selected with `[build] c_compiler = "bundled"`, which compile the generated C
-  and the C and C++ glue: a working Ember installation never requires a separately installed C
-  toolchain, and there is no separate Clang download. On Windows the system libraries, which their
-  licence keeps out of the archive, are the one part it does not carry. `ember toolchain list` and
-  `default` show and choose among installed ones; a system compiler may be chosen explicitly, and its
-  configuration is recorded with each build.
-* `[TOOL-3]` When no C compiler is found, `E9002`'s message says so and its help names the remedy for
-  the host (on Windows, the Visual Studio Build Tools C++ workload, or `ember toolchain install cc`);
-  a bare missing path is never the primary message.
+* `[CLI-21]` *(new in 0.9.9)* *(changed in 0.9.20)* `ember run --interp` runs a program on the
+  compile-time evaluator instead of compiling it: no C compiler is needed; console and file I/O
+  work; foreign calls, `thread.spawn`, `thread.scope`, `jobs.submit` and `jobs.scope` are
+  unavailable (`E6010`); a `@parallel` loop runs on the one thread, chunk by chunk in chunk order,
+  as `[PAR-4]`'s calling thread may in any run, and gives the same bits (`[PAR-5]`); results equal a
+  compiled run's.
+* `[TOOL-2]` *(changed in 0.9.10)* Ember's toolchain archive (`[TOOL-1]`) carries LLVM's Clang and
+  its linker LLD, pinned and selected with `[build] c_compiler = "bundled"`, which compile the
+  generated C and the C and C++ glue: a working Ember installation never requires a separately
+  installed C toolchain, and there is no separate Clang download. On Windows the system libraries,
+  which their licence keeps out of the archive, are the one part it does not carry. `ember toolchain
+  list` and `default` show and choose among installed ones; a system compiler may be chosen
+  explicitly, and its configuration is recorded with each build.
+* `[TOOL-3]` When no C compiler is found, `E9002`'s message says so and its help names the remedy
+  for the host (on Windows, the Visual Studio Build Tools C++ workload, or `ember toolchain install
+  cc`); a bare missing path is never the primary message.
 * `[CLI-11]` `ember audit` prints a one-page summary of a package's safety surface: `unsafe` blocks
   and their notes, the effect totals, the foreign boundary and its contracts, and the trusted-base
   report of Annex C.
@@ -100,32 +104,34 @@ ember --help | --version [--matrix]
   arm64) with `ember`, the runtime, `std` and editor support, and a one-line installer that puts
   `ember` on `PATH`. The release workflow (`.github/workflows/release.yml`) builds them, the macOS
   archive built and tested on GitHub's macOS machines.
-* `[TOOL-4]` `ember --version` prints the compiler version, the language version, the backend, and the
-  resolved C compiler and linker, so a bug report carries its environment. **The first hour:** on a
-  clean Windows or Linux machine, installing Ember, `ember new hello`, `cd hello` and `ember run` print
-  `hello, world` in under five minutes and at most six typed commands; a regression blocks a release.
+* `[TOOL-4]` `ember --version` prints the compiler version, the language version, the backend, and
+  the resolved C compiler and linker, so a bug report carries its environment. **The first hour:**
+  on a clean Windows or Linux machine, installing Ember, `ember new hello`, `cd hello` and `ember
+  run` print `hello, world` in under five minutes and at most six typed commands; a regression
+  blocks a release.
 * `[CLI-19]` *(new in 0.9.9)* **The implementation matrix.** `ember --version --matrix` prints, for
-  every Part, rule family, command and flag of this document, whether this compiler implements it.
-  A command, flag, attribute or construct the compiler does not implement is rejected with `E0900`
+  every Part, rule family, command and flag of this document, whether this compiler implements it. A
+  command, flag, attribute or construct the compiler does not implement is rejected with `E0900`
   naming it (`[PHIL-12]`), never ignored.
-* `[CLI-5]` *(changed in 0.9.10)* `ember bind --init <header>` writes a starter overlay, `<stem>.overlay.em` beside the header
-  (ODR-148): every derived contract, every unknown
-  fact as a `TODO(…)` word (`[FFI-11c]`), every skipped declaration as a comment with its reason. It
-  compiles unchanged and never overwrites a file; with `--merge` it adds only the declarations missing
-  from an existing overlay, keeping hand-written contracts and comments, and records the header as it
-  now is in that overlay's line of the package's `ember.overlays` (`[FFI-55]`). A declaration it leaves
+* `[CLI-5]` *(changed in 0.9.10)* `ember bind --init <header>` writes a starter overlay,
+  `<stem>.overlay.em` beside the header (ODR-148): every derived contract, every unknown fact as a
+  `TODO(…)` word (`[FFI-11c]`), every skipped declaration as a comment with its reason. It compiles
+  unchanged and never overwrites a file; with `--merge` it adds only the declarations missing from
+  an existing overlay, keeping hand-written contracts and comments, and records the header as it now
+  is in that overlay's line of the package's `ember.overlays` (`[FFI-55]`). A declaration it leaves
   unsafe to call is written `unsafe fn` (verdict 130).
 * `[CLI-6]` `ember bind --report` lists every skipped declaration and every declaration still
-  `unsafe` with its unknown facts, and exits non-zero on a skip (`--baseline` limits that to new ones).
-* `[CLI-7]` *(changed in 0.9.15)* `ember bind <header> --check <overlay>` checks `[FFI-12]` and prints
-  how many declarations are safe, still `unsafe`, and skipped. With `--merge`, once the overlay passes,
-  it writes the header's declarations as they are now into the overlay's line of `ember.overlays`
-  (`[FFI-55]`): with `--init --merge` (`[CLI-5]`), the only ways a line of the record changes once
-  written.
+  `unsafe` with its unknown facts, and exits non-zero on a skip (`--baseline` limits that to new
+  ones).
+* `[CLI-7]` *(changed in 0.9.15)* `ember bind <header> --check <overlay>` checks `[FFI-12]` and
+  prints how many declarations are safe, still `unsafe`, and skipped. With `--merge`, once the
+  overlay passes, it writes the header's declarations as they are now into the overlay's line of
+  `ember.overlays` (`[FFI-55]`): with `--init --merge` (`[CLI-5]`), the only ways a line of the
+  record changes once written.
 * `[CLI-10]` `ember build --report=engine` is a report, not a profile: it changes nothing about the
   program, and summarises allocations, surviving count operations and runtime checks with their
-  reasons, vectorised loops and why others were not, FFI wrapper costs, inlining decisions, and classes
-  that could be structs (advisory; never applied automatically).
+  reasons, vectorised loops and why others were not, FFI wrapper costs, inlining decisions, and
+  classes that could be structs (advisory; never applied automatically).
 
 ## XVII.2 The manifest (`ember.toml`)
 
@@ -193,19 +199,37 @@ large_copy = { level = "warn", threshold = 256 }
   the first compile; reversed in 0.9.20 under the delegation, and reported); `ember bind` in a
   header's folder no package holds treats the folder the same way. `ember.overlays` is kept only
   beside a manifest that exists (`[FFI-55]`).
+* `[MAN-10]` *(new in 0.9.20)* **A dependency's manifest decides only its own code, never what runs
+  on the builder's machine.** Of a dependency's manifest the build reads `[package]`,
+  `[dependencies]`, `[lints]`, `[realtime]` and `[ffi]`. Its `[c]` section is taken with `compiler`
+  ignored (the root's, or the backend's, `[BLD-FFI-1]`) and `flags` limited to `-D<name>[=<value>]`,
+  `-U<name>`, `-I<path>` for a path that, with every symbolic link followed, lies under the
+  dependency's own root (`[CT-2]`), `-std=<c-standard>`, `-O<n>`, and `-W<name>` other than `-Wl,…`,
+  `-Wa,…` and `-Wp,…`, which pass arguments to the linker, assembler and preprocessor; its `[link]
+  libs` entries are taken for names with no path separator (`"m"`) and for paths under its own root,
+  resolved the same way; and its `[cpp.<project>]` section (whose configuration runs the project's
+  own build code, Annex C), any other `[c] flags` entry, any other `[link]` path, and its `[build]`,
+  `[profiles]`, `[jobs]` and `[comptime]` sections are honoured only when the root package's
+  manifest names the dependency in `[build] native = ["parser"]`, and are `E9001` otherwise, naming
+  the dependency, the key and the line to add ("`parser`'s manifest sets `[c] flags =
+  [\"-fplugin=./vendor/helper.so\"]`, which would run its code inside this build's C compiler; a
+  dependency's flags are limited to defines, include paths under its root, a C standard, an
+  optimisation level and warnings; to take the rest as written, add `native = [\"parser\"]` under
+  `[build]` in `ember.toml`"). `ember tcb` lists every dependency so named as an external library
+  (`[TCB-4]`).
 * `[MAN-3]` *(changed in 0.9.9)* Every key in `[lints]` names a lint the compiler defines (`E9010`
   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
   parameters.
 * `[MAN-8]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.20)* The sections are:
   `[package]` (`name`, `version`, `language`, `kind`, `layers`, `edition_lints`); `[dependencies]`
   (`{ path }`, `{ git, rev }`, or `{ git, version }`, `[VER-5]`); `[build]` (`entry`, `target`,
-  `backend`, `c_compiler`, `runtime`, `max_instantiations` `[MONO-3]`, `reload` `[MAN-7]`);
-  `[profiles.<name>]` (`[PRF-3]`); `[c]` (`compiler`, `flags`, `[BLD-FFI-1]`); `[link]` (`libs`,
-  `timeout` `[BLD-15]`); `[jobs]` (`workers`, `[JOB-1]`); `[realtime]` (`contracts`, `[EFF-19]`);
-  `[comptime]` (`max_steps`, `max_heap_mb`, `[CT-3]`; `env`, `[CT-2]`); `[lints]` (`[MAN-3]`); and
-  `[cpp.<project>]` and `[ffi]` (`evidence`, Annex C). A key a section does not take, or a section
-  not listed, is `E9001`, naming what is accepted (ODR-110). **No manifest key turns off a safety
-  check or changes what a program means** (`[PRF-1]`).
+  `backend`, `c_compiler`, `runtime`, `max_instantiations` `[MONO-3]`, `reload` `[MAN-7]`, `native`
+  `[MAN-10]`); `[profiles.<name>]` (`[PRF-3]`); `[c]` (`compiler`, `flags`, `[BLD-FFI-1]`); `[link]`
+  (`libs`, `timeout` `[BLD-15]`); `[jobs]` (`workers`, `[JOB-1]`); `[realtime]` (`contracts`,
+  `[EFF-19]`); `[comptime]` (`max_steps`, `max_heap_mb`, `[CT-3]`; `env`, `[CT-2]`); `[lints]`
+  (`[MAN-3]`); and `[cpp.<project>]` and `[ffi]` (`evidence`, Annex C). A key a section does not
+  take, or a section not listed, is `E9001`, naming what is accepted (ODR-110). **No manifest key
+  turns off a safety check or changes what a program means** (`[PRF-1]`).
 * `[MAN-7]` *(changed in 0.9.10)* `[build] reload` is `"opt-in"`, `"all"`, `"bodies"` or `"none"`; a
   `release` build ignores it and prints the note `hot reload is off in release builds` (Annex B).
 * `[VER-5]` *(changed in 0.9.10)* Package versions are semantic. A dependency `{ git = "<url>",
@@ -248,7 +272,7 @@ large_copy = { level = "warn", threshold = 256 }
      move what they view, and what it reaches by other names while a `ref mut` parameter is used, so
      that reordering two lines inside a library function (a use of `s` moved below `LOG.clear()`) is
      a change to its interface;
-  6. the locks a function may take; and
+  6. the locks a function may take, and the locks it needs held (`[THR-18]`); and
   7. the function values the package stores into each place a function value is called through (each
      field of each type apart, `[EFF-2]`) and the callbacks it hands to C, which a program using the
      package counts wherever such a value is called and at every foreign call not marked
@@ -269,7 +293,18 @@ large_copy = { level = "warn", threshold = 256 }
   12. for each line that calls through a `virtual` method of a `pub` class, a method of a `pub`
       interface used as `dyn`, or a `pub` function-typed place, what the line walks, holds `ref mut`
       and has lent, which a package adding an override, an implementation or a stored function
-      checks that member against (`[MOD-9a]`).
+      checks that member against (`[MOD-9a]`);
+  13. for each `pub` function, the places each of its function-typed parameters flows into
+      (`[EFF-2]`: a place a value is copied into), so that a dependant checks `[CLO-17]` at the call
+      that hands the function over ("`on_click` would keep it in `b.handlers`"); and
+  14. for each `pub` type implementing `Allocator`, whether its `deallocate` has an empty body and
+      whether it implements `FoundByAddress`, which decide whether values made in its instances keep
+      the instance word (`[ALC-1]`), a layout fact of every package that writes `using` that type;
+      and
+  15. for each function, its open lines: each foreign call without `@ffi(no_callbacks)` after which
+      it uses a view parameter, `this` included, or a `static` of its own, with what the parameter
+      is used as, which a caller from another package resolves against the callbacks, exports and
+      overrides its program has (`[BRW-21]`, `[FFI-52]`).
 * `[BLD-16]` *(new in 0.9.20)* **No fact of the whole program decides a package's code or layout.**
   The layout of a package's types and the instructions it emits for a line are decided by the
   package's own source, by the interface files of the packages it imports (`[MOD-9]`, `[EFF-4]`,
@@ -355,12 +390,15 @@ large_copy = { level = "warn", threshold = 256 }
 
 ## XVII.4 Profiles
 
-* `[PRF-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* **A profile never changes what a program
-  means.** Every profile accepts the same programs, performs the same safety checks while the program
-  runs (`[PRF-4]`), stops in the same places with the same messages, and computes the same results.
-  The one check that differs is `debug_assert`, checked only where `[PRF-3]` says: it may not have
-  side effects (`W2016`), so a program whose assertions hold computes the same results in every
-  profile. Only the following differ between profiles.
+* `[PRF-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **A profile never
+  changes what a program means.** Every profile accepts the same programs, performs the same safety
+  checks while the program runs (`[PRF-4]`), stops in the same places with the same messages, and
+  computes the same results. The one check that differs is `debug_assert`, checked only where
+  `[PRF-3]` says: it may not have side effects (`W2016`), so a program whose assertions hold
+  computes the same results in every profile; a C sanitizer (`[PRF-3]`) is a tool for finding
+  defects in foreign and `unsafe` code, outside Ember's checks: it stops the program only where that
+  code is already outside the guarantee (`[PHIL-10]`), and never changes where Safe Ember stops.
+  Only the following differ between profiles.
 * `[PRF-3]` *(new in 0.9.9)* *(changed in 0.9.10)* **What a profile may set.**
 
   | Setting (key) | `debug` | `development` | `release` |
@@ -512,82 +550,85 @@ fn main():
 * `[DIA-2]` *(changed in 0.9.15)* Messages start lowercase, have no trailing period, name the thing,
   and say what is wrong; `help` says what to do; a message never says "you" and never blames the
   programmer. Every refusal names what was refused in the program's own names (`enemies[0]`, not
-  `*enemies[0]`; `line.to_lower()`, not a temporary's internal name; `int`, not `i64`; `fn()`, not an
-  internal callable type; at a call, the caller's variable, not the callee's parameter), says why in
-  one line, and gives the exact line to write (`[DIA-25]`). Compiler-internal facts (internal names)
-  may appear only as secondary evidence.
+  `*enemies[0]`; `line.to_lower()`, not a temporary's internal name; `int`, not `i64`; `fn()`, not
+  an internal callable type; at a call, the caller's variable, not the callee's parameter), says why
+  in one line, and gives the exact line to write (`[DIA-25]`). Compiler-internal facts (internal
+  names) may appear only as secondary evidence.
 * `[DIA-25]` *(new in 0.9.15)* **The line a message gives compiles** under this document, in that
   program: its fix never runs into another error. Where it replaces several lines, the message names
-  every line it replaces ("instead of `i = 0`, the `while` line and `i += 1`, write
-  `for i in 0..idx.len():`"); a line it moves is named with where it goes ("move line 17,
-  `b.click()`, below the loop"). A form that would compile but would not do what its words say is
-  refused, with the line that does (`State.Walking(mut path):`, which says "may change" but not whose
-  list, is `E0113`: "to change that list through `path`, write `State.Walking(ref mut path):`").
+  every line it replaces ("instead of `i = 0`, the `while` line and `i += 1`, write `for i in
+  0..idx.len():`"); a line it moves is named with where it goes ("move line 17, `b.click()`, below
+  the loop"). A form that would compile but would not do what its words say is refused, with the
+  line that does (`State.Walking(mut path):`, which says "may change" but not whose list, is
+  `E0113`: "to change that list through `path`, write `State.Walking(ref mut path):`").
 * `[DIA-26]` *(new in 0.9.15)* **One mistake gives one message**, at the program's line, on the name
   that caused it. A fault inside a function stored in a function value (it ends what its parameter
   views and then uses the parameter) is reported on the line that stores it, not on a call through
   the value.
-* `[DIA-27]` *(new in 0.9.15)* **A message about a change a call makes names the chain of calls** that
-  makes it ("`tick()` (line 10) adds to `LOG` (through `note`, line 4) while this loop walks `LOG`
-  (line 9); call `tick()` after the loop: move line 10 below the loop"). No message asks for a word on
-  a function's first line: what a function changes, reads and ends is worked out from its code (§X),
-  across a package's edge from its interface file (`[BLD-14]`).
+* `[DIA-27]` *(new in 0.9.15)* **A message about a change a call makes names the chain of calls**
+  that makes it ("`tick()` (line 10) adds to `LOG` (through `note`, line 4) while this loop walks
+  `LOG` (line 9); call `tick()` after the loop: move line 10 below the loop"). No message asks for a
+  word on a function's first line: what a function changes, reads and ends is worked out from its
+  code (§X), across a package's edge from its interface file (`[BLD-14]`).
 * `[DIA-28]` *(new in 0.9.15)* **Two errors on one line.** Where two errors fit one line, the one
   whose fix makes the program compile is shown: a call through a function value that may take a lock
-  this thread holds, inside a walk under that lock, is `E7018` ("call `note()` after the
-  `with log.lock:` block"), not `E3020`, whose fix (after the loop, still inside the lock) would still
+  this thread holds, inside a walk under that lock, is `E7018` ("call `note()` after the `with
+  log.lock:` block"), not `E3020`, whose fix (after the loop, still inside the lock) would still
   wait for ever; a scoped task started inside a walk of what it changes is `E3020` ("start it after
-  the loop"), not `E7007`, whose fix (a lock or an `Atomic`) leaves the walk refused. Where both fixes
-  compile, the rule that names the case decides: a position used after a removal is `E3060`, not
-  `E3022`; a view used after a call whose callee ends what it points into, where `E3021` and `E3031`
-  both fit, is `E3031`. A message says only what the compiler knows.
-* `[DIA-3]` *(changed in 0.9.15)* Ownership and view errors (§XVII.6.1) label the later use that makes
-  the refusal ("used here") and give the fix of their shape.
+  the loop"), not `E7007`, whose fix (a lock or an `Atomic`) leaves the walk refused. Where both
+  fixes compile, the rule that names the case decides: a position used after a removal is `E3060`,
+  not `E3022`; a view used after a call whose callee ends what it points into, where `E3021` and
+  `E3031` both fit, is `E3031`. A message says only what the compiler knows.
+* `[DIA-3]` *(changed in 0.9.15)* Ownership and view errors (§XVII.6.1) label the later use that
+  makes the refusal ("used here") and give the fix of their shape.
 * `[DIA-4]` Contract errors print the whole call chain (`[EFF-6]`).
 * `[DIA-5]` FFI errors name the header and the C declaration.
 * `[DIA-6]` Every code has a page, `docs/errors/EXXXX.md`, with a program that triggers it, the
   rendered diagnostic, why the rule exists and the fix; `ember explain` prints it. A code without a
   page fails CI, and each page's examples are built by `ember test --doc`: the failing one must fail
   with that code and the fixed one must compile.
-* `[DIA-6a]` The code registry is exhaustive in both directions: every code this document names is
-  registered, and every registered code is named here (§XVII.9). Each code is defined by exactly one
-  rule.
-* `[DIA-7]` *(changed in 0.9.15)* Every ownership and view error is classified into a shape of §XVII.6.1 and emits that
-  shape's help.
+* `[DIA-6a]` *(changed in 0.9.20)* The code registry is exhaustive in both directions: every code
+  this document names is registered, and every registered code is named here (§XVII.9). Each code is
+  defined by the first rule its registry row names, which owns its page (`[DIA-6]`); the other rules
+  the row names use it, and each of them has a reject case for it (`[TST-4b]`).
+* `[DIA-7]` *(changed in 0.9.15)* Every ownership and view error is classified into a shape of
+  §XVII.6.1 and emits that shape's help.
 * `[DIA-7a]` Every code in `E3000`–`E3499` belongs to exactly one shape of §XVII.6.1; a code with no
   row is never emitted, and `tools/rule_index.py` fails CI on one.
-* `[DIA-8]` *(changed in 0.9.15)* `ember explain --view <file>:<line>` prints, for each view in use at
-  that line, where it was made, what it points into and the later use that keeps it in use:
-  `s views v (made at 12:9), in use through 19, because s is used at 19:14`. It reads the facts the
+* `[DIA-8]` *(changed in 0.9.15)* `ember explain --view <file>:<line>` prints, for each view in use
+  at that line, where it was made, what it points into and the later use that keeps it in use: `s
+  views v (made at 12:9), in use through 19, because s is used at 19:14`. It reads the facts the
   compiler's own checks use (`[BCK-1]`).
 * `[DIA-10]` *(changed in 0.9.15)* The help of shapes B1, B2, B4, B5 and B9 names a concrete API or
-  construct (`split_at`, `retain`, `for ref mut x in xs:`, `weakref`, a capture word such as
-  `owns n`), written as the line to write, never a category such as "consider restructuring".
+  construct (`split_at`, `retain`, `for ref mut x in xs:`, `weakref`, a capture word such as `owns
+  n`), written as the line to write, never a category such as "consider restructuring".
 * `[DIA-11]` *(changed in 0.9.15)* For shape S1 the diagnostic names the `assert_disjoint` call and
   gives the lines that need no check while running (blending from a copy of your own), or removing
   `@no_alias_checks`; it never suggests restructuring code that cannot be improved.
-* `[DIA-13]` Every shape has a rendered snapshot under `tests/ui/` and a `.fixed.em` companion showing
-  the help applied, which must compile.
+* `[DIA-13]` Every shape has a rendered snapshot under `tests/ui/` and a `.fixed.em` companion
+  showing the help applied, which must compile.
 * `[DIA-15]` Suggestions are computed from data the compiler already holds (scope tables, type
   information, an index of exported names); none requires speculative type checking.
-* `[DIA-18]` A foreign call rejected because its contract has unknown facts (`E5002`) names each missing
-  fact and prints the overlay line that supplies it.
-* `[DIA-12]` Every name and type error is classified into a shape of §XVII.6.2. An unclassified error
-  is logged, and CI fails on the log.
-* `[DIA-9]` *(changed in 0.9.15)* A diagnostic never suggests `unsafe` while a fix without it compiles
-  in that program, and never suggests `shares` or `shares mut` alone where a fix that keeps one owner
-  compiles.
-* `[DIA-16]` *(changed in 0.9.15)* When a diagnostic suggests a `shares` or `shares mut` owner, a note
-  names its cost while the program runs: one count per owner made or ended, and one compare with the
-  count's maximum per owner made.
+* `[DIA-18]` A foreign call rejected because its contract has unknown facts (`E5002`) names each
+  missing fact and prints the overlay line that supplies it.
+* `[DIA-12]` Every name and type error is classified into a shape of §XVII.6.2. An unclassified
+  error is logged, and CI fails on the log.
+* `[DIA-9]` *(changed in 0.9.15)* A diagnostic never suggests `unsafe` while a fix without it
+  compiles in that program, and never suggests `shares` or `shares mut` alone where a fix that keeps
+  one owner compiles.
+* `[DIA-16]` *(changed in 0.9.15)* When a diagnostic suggests a `shares` or `shares mut` owner, a
+  note names its cost while the program runs: one count per owner made or ended, and one compare
+  with the count's maximum per owner made.
 * `[DIA-14]` Only the first error of a cascade is reported: nothing is reported about an expression
-  whose type is already an error, a name bound to a failed import, or a call to a failed declaration.
-* `[DIA-20]` *(new in 0.9.9)* A run of invalid bytes or characters is one diagnostic, not one per byte.
+  whose type is already an error, a name bound to a failed import, or a call to a failed
+  declaration.
+* `[DIA-20]` *(new in 0.9.9)* A run of invalid bytes or characters is one diagnostic, not one per
+  byte.
 * `[DIA-21]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **Python habits.** Each of
-  these is a catalogued shape, named by its id in marks, in `--json` and in `tests/ui/` (`[TST-9]`, `[DIA-13]`), and is
-  recognised and answered with the Ember form: as a machine-applicable fix-it where the help is a
-  rewrite of what was written, and as text where it is advice (P18, P19, P22, P29, and P12's `try` and
-  `except`):
+  these is a catalogued shape, named by its id in marks, in `--json` and in `tests/ui/` (`[TST-9]`,
+  `[DIA-13]`), and is recognised and answered with the Ember form: as a machine-applicable fix-it
+  where the help is a rewrite of what was written, and as text where it is advice (P18, P19, P22,
+  P29, and P12's `try` and `except`):
 
   | Shape | Written | Codes | Help |
   |---|---|---|---|

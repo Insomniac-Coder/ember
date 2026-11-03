@@ -98,76 +98,102 @@ fn main():
     frame.reset()                               # allowed: `cmds` is no longer used
 ```
 
-* `[ARN-1]` *(changed in 0.9.15)* `Arena` is a struct, and not `Copy`. Its `alloc*` methods move the
-  arena's cursor, so they are called through a name that may change the arena (its owner, or a
-  `ref mut` name or parameter: `fn build(ref mut frame: Arena, n: int)`). Each gives a view of memory
-  that no earlier view of the arena reaches, and the views point into the arena's memory, not into its
-  cursor: an `alloc*` call ends no earlier view and overlaps none, so many allocations are outstanding at
-  once, each a place of its own that a `ref mut` name may write. The views live no longer than the arena
-  (`[LT-1]`, `[LT-44]`). `reset()`, `scope()` (`[ARN-6]`) and the arena's end may reuse or free that
-  memory: each ends every view into the arena, and a later use of one is `E3060`.
-* `[ARN-2]` *(changed in 0.9.15)* Values placed with `alloc*` are never dropped one by one, so an
-  `alloc*` of a type that needs drop is `E3090`, whose help gives the line with `using`. `Arena` and
-  `FixedArena` implement `Allocator` (`[ALC-2]`): a value that needs drop is made in an arena as an
-  `owns T using frame`, an `Array[T] using frame` or a class object `using frame` (`[ALC-1]`), whose end
-  runs its `drop` and gives its block back to the arena, which frees nothing one by one. There is no
-  `alloc_nodrop`.
-* `[ARN-3]` *(changed in 0.9.15)* `alloc(owns v: T) -> ref mut T` hands `v` over into the arena. `alloc_array[T](n) -> MutSpan[T]` requires `T` not to
-  need drop and `T: needs Default`, and initialises each element with `T.default()` in index order (`E2040`
-  without `Default`). `alloc_zeroed[T](n) -> MutSpan[T]` requires `T` not to need drop and
-  `T: needs Zeroable`, and fills with zero bytes. Neither stands in for the other: a `Zeroable` type's
+* `[ARN-1]` *(changed in 0.9.15)* *(changed in 0.9.20)* `Arena` is a struct, and not `Copy`. Its
+  `alloc*` methods move the arena's cursor, so they are called through a name that may change the
+  arena (its owner, or a `ref mut` name or parameter: `fn build(ref mut frame: Arena, n: int)`).
+  Each gives a view of memory that no earlier view of the arena reaches, and the views point into
+  the arena's memory, not into its cursor: an `alloc*` call ends no earlier view and overlaps none,
+  so many allocations are outstanding at once, each a place of its own that a `ref mut` name may
+  write. The views live no longer than the arena (`[LT-1]`, `[LT-44]`). `reset()` and the arena's
+  end reuse or free that memory: each ends every view into the arena, and a later use of one is
+  `E3060`. A scope (`[ARN-6]`) ends no view made before it: while it is live the parent, and every
+  view into it, is not used (`E3096`, since the scope holds a `ref mut` view of the arena,
+  `[LT-46]`), and its end reuses only the scope's own bytes, ending the views into the scope, which
+  live no longer than it in any case (`[LT-1]`). These facts are the compiler's own for the types of
+  `std.arena` (`Arena`, `FixedArena`, `ScopedArena`, `ThreadArena`), which it recognises by their
+  module as it does the types it declares itself (`[TYP-43]`), not by their names or their code. No
+  other type has them: a method of the program's own type that returns a view of its object is an
+  ordinary method, whose result points into `this` (`[LT-1]`) and is exclusive with it while used
+  (`[BRW-1]`, `E3021`), and a manager of the program's own is used through `Allocator` and `using`
+  (`[ALC-1]`), whose values are places of their own (`[ALC-5]`).
+* `[ARN-2]` *(changed in 0.9.15)* *(changed in 0.9.20)* Values placed with `alloc*` are never
+  dropped one by one, so an `alloc*` of a type that needs drop (Appendix F) is `E3090`, whose help
+  gives the line with `using`. `Arena` and `FixedArena` implement `Allocator` (`[ALC-2]`): a value
+  that needs drop is made in an arena as an `owns T using frame`, an `Array[T] using frame` or a
+  class object `using frame` (`[ALC-1]`), whose end runs its `drop` and gives its block back to the
+  arena, which frees nothing one by one; such an object keeps its block for its `weakref` links as
+  any object does (`[OBJ-3]`), so the links end before the arena is reset or ends (`[ALC-5a]`).
+  There is no `alloc_nodrop`.
+* `[ARN-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* `alloc(owns v: T) -> ref mut T` hands `v`
+  over into the arena. `alloc_array[T](n) -> MutSpan[T]` requires `T` not to need drop and `T: needs
+  Default`, and initialises each element with `T.default()` in index order (`E2040` without
+  `Default`). `alloc_zeroed[T](n) -> MutSpan[T]` requires `T` not to need drop and `T: needs
+  Zeroable`, and fills with zero bytes. Neither stands in for the other: a `Zeroable` type's
   `alloc_array` still calls its `default`, and an implementation fills with zeros instead only where
   that is the same (a scalar's standard `Default`) (ODR-064). `alloc_uninit[T](n) ->
-  MutSpan[MaybeUninit[T]]` initialises nothing.
-* `[ARN-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A growing `Arena` carries `Alloc` on its growth path, and grows
-  by taking a new chunk: nothing it has given out moves, so every outstanding view stays where it
-  is. `FixedArena`
-  (made by `Arena.fixed(ref mut buffer)` from a `MutSpan[u8]`, which it then holds as a kept `ref mut`
-  view, `[LT-45]`, or by `FixedArena.with_capacity(n)` at start-up) never grows, carries no `Alloc` on
-  allocation, and panics on exhaustion (`try_alloc` returns `Option`). `FixedArena` is the arena for
-  `@noalloc` code.
-* `[ARN-5]` `ArenaArray[T]` and `ArenaMap[K, V]` are fixed-capacity containers whose storage is taken
-  from an arena once, at construction; they never grow or move, so views of their elements stay valid
-  while the element and the arena do. Adding past capacity returns `Err(CapacityError.Full)` and changes
-  nothing. Their elements, keys and values must not need drop. They live in `std.collections` and are
-  not in the prelude.
+  MutSpan[MaybeUninit[T]]` initialises nothing. Each has a `try_` form for an arena that may be full
+  (`[ARN-4]`): `try_alloc(owns v: T) -> Result[ref mut T, owns T]` gives `v` back as the `Err` when
+  the arena is full, and `try_alloc_array[T](n)`, `try_alloc_zeroed[T](n)` and
+  `try_alloc_uninit[T](n)` give `None`; `alloc(owns v)` on a full arena stops the program before it
+  touches `v` (`[COST-6]`).
+* `[ARN-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A growing `Arena`
+  carries `Alloc` on its growth path, and grows by taking a new chunk: nothing it has given out
+  moves, so every outstanding view stays where it is. `FixedArena` (made by `Arena.fixed(ref mut
+  buffer)` from a `MutSpan[u8]`, which it then holds as a kept `ref mut` view, `[LT-45]`, or by
+  `FixedArena.with_capacity(n)` at start-up) never grows, carries no `Alloc` on allocation, and
+  stops the program on exhaustion ("`fixed.alloc_zeroed(...)` on line 9: `fixed` has 16 bytes free
+  and 32 were asked; use `try_alloc_zeroed` for an `Option`"; the `try_` forms of `[ARN-3]` give a
+  value instead). `FixedArena` is the arena for `@noalloc` code.
+* `[ARN-5]` *(changed in 0.9.20)* `ArenaArray[T]` and `ArenaMap[K, V]` are fixed-capacity containers
+  whose storage is taken from an arena once, at construction, through a name that may change it,
+  `ArenaArray.in(ref mut frame, capacity)` and `ArenaMap.in(ref mut frame, capacity)`, and held as a
+  kept `MutSpan` view (`[LT-45]`): each lives no longer than the arena, `reset()` ends it
+  (`[ARN-1]`), and `ember inspect --alloc` reports it as a `view` (`[SEL-1]`); they never grow or
+  move, so views of their elements stay valid while the element and the arena do. Adding past
+  capacity returns `Err(CapacityError.Full)` and changes nothing. Their elements, keys and values
+  must not need drop. They live in `std.collections` and are not in the prelude.
 * `[ARN-5c]` `ArenaArray[T]` provides `len`, `capacity`, `is_empty`, `get(i) -> Option[ref T]`,
-  `get_mut`, `push(v) -> Result[void, CapacityError]`, `insert(i, v) -> Result[void, CapacityError]`,
-  `remove(i) -> Option[T]`, `clear`, `iter` and `iter_mut` (in index order); indices follow the `Array`
-  rules.
-* `[ARN-5d]` `ArenaMap[K, V]` (with `K: needs (Eq, Hash)`) provides `len`, `capacity`, `is_empty`, `get`,
-  `get_mut`, `insert(k, v) -> Result[Option[V], CapacityError]` (replacing returns the old value),
-  `remove`, `contains_key`, `clear` and `iter`, which follows insertion order like `Map` (`[STD-11]`).
+  `get_mut`, `push(v) -> Result[void, CapacityError]`, `insert(i, v) -> Result[void,
+  CapacityError]`, `remove(i) -> Option[T]`, `clear`, `iter` and `iter_mut` (in index order);
+  indices follow the `Array` rules.
+* `[ARN-5d]` `ArenaMap[K, V]` (with `K: needs (Eq, Hash)`) provides `len`, `capacity`, `is_empty`,
+  `get`, `get_mut`, `insert(k, v) -> Result[Option[V], CapacityError]` (replacing returns the old
+  value), `remove`, `contains_key`, `clear` and `iter`, which follows insertion order like `Map`
+  (`[STD-11]`).
 * `[ARN-5g]` No operation of either container touches the arena after construction: nothing grows,
   moves the arena's cursor or allocates elsewhere.
-* `[ARN-6]` *(changed in 0.9.15)* `arena.scope() -> ScopedArena` is called through a name that may change the arena, and the
-  `ScopedArena` holds a `ref mut` view of it for the scope's life (`[LT-46]`); `with s = frame.scope():`
-  allocates from `s` and releases everything at the block's end, last in first out. Using the parent
-  while a scope is live is `E3096`, whose help is to allocate from the scope. Scopes nest: `s.scope()`
-  opens one inside another.
-* `[ARN-7]` *(changed in 0.9.15)* *(changed in 0.9.20)* No operation lowers an arena's allocation pointer, reuses its bytes or
-  moves what it has given out while a view into it is used: every such operation ends every view into the arena (`[ARN-1]`), and
-  while a value made `using` the arena lives, the arena is changed only through its `Allocator` methods
-  (`[ALC-5]`).
-* `[ARN-8]` *(changed in 0.9.15)* `MaybeUninit[T]` has the size and alignment of `T` and does not claim
-  to hold a valid `T`; ending it never ends a `T`. `MaybeUninit[T].uninit()` makes one;
-  `write(owns v: T) -> ref mut T` stores without ending the bytes there before;
-  `unsafe fn assume_init() owns this -> T` asserts initialisation. `MutSpan[MaybeUninit[T]]` has
-  `write_at(i, owns v: T)` and `unsafe fn assume_init() owns this -> MutSpan[T]`. There is no other
-  conversion. A `MaybeUninit` never runs its value's clean-up, so for a `T` that needs drop, `uninit()`,
-  `write` and `write_at` are `unsafe` operations (`[UNS-1]`), and outside `unsafe:` each is `E3100`
+* `[ARN-6]` *(changed in 0.9.15)* `arena.scope() -> ScopedArena` is called through a name that may
+  change the arena, and the `ScopedArena` holds a `ref mut` view of it for the scope's life
+  (`[LT-46]`); `with s = frame.scope():` allocates from `s` and releases everything at the block's
+  end, last in first out. Using the parent while a scope is live is `E3096`, whose help is to
+  allocate from the scope. Scopes nest: `s.scope()` opens one inside another.
+* `[ARN-7]` *(changed in 0.9.15)* *(changed in 0.9.20)* No operation lowers an arena's allocation
+  pointer, reuses its bytes or moves what it has given out while a view into it is used: every such
+  operation ends every view into the arena (`[ARN-1]`), and while a value made `using` the arena
+  lives, the arena is changed only through its `Allocator` methods (`[ALC-5]`).
+* `[ARN-8]` *(changed in 0.9.15)* `MaybeUninit[T]` has the size and alignment of `T` and does not
+  claim to hold a valid `T`; ending it never ends a `T`. `MaybeUninit[T].uninit()` makes one;
+  `write(owns v: T) -> ref mut T` stores without ending the bytes there before; `unsafe fn
+  assume_init() owns this -> T` asserts initialisation. `MutSpan[MaybeUninit[T]]` has `write_at(i,
+  owns v: T)` and `unsafe fn assume_init() owns this -> MutSpan[T]`. There is no other conversion. A
+  `MaybeUninit` never runs its value's clean-up, so for a `T` that needs drop, `uninit()`, `write`
+  and `write_at` are `unsafe` operations (`[UNS-1]`), and outside `unsafe:` each is `E3100`
   ("`MaybeUninit` never runs a `Player`'s clean-up, so a value written into it may never be freed;
-  write it inside `unsafe:`, or keep the value in an `Option[shares Player]`"); for a `T` with nothing
-  to drop they stay safe.
+  write it inside `unsafe:`, or keep the value in an `Option[shares Player]`"); for a `T` with
+  nothing to drop they stay safe.
 * `[ARN-10]` A panic inside `T.default()` during `alloc_array` aborts (`[PAN-1]`); no partially
   initialised span becomes reachable.
-* `[ARN-11]` `Zeroable` is an `unsafe` marker: all-zero bytes are a valid `T`. The scalars, raw
-  pointers, a range including zero, and tuples and fixed arrays of `Zeroable` elements are; a struct
-  is when it declares `@derive(Zeroable)`, which the compiler proves field by field (`E2080`), since
-  only its author can vouch for its invariants (a `NonZero`'s field is an integer). A `ref`, a range
-  excluding zero, or an enum whose zero discriminant is invalid is never `Zeroable`. `T: needs Zeroable` is
-  a bound a generic function may state (`alloc_zeroed`, `mem.zeroed`). Being `Zeroable` never changes
-  what `alloc_array` does (`[ARN-3]`).
+* `[ARN-11]` *(changed in 0.9.20)* `Zeroable` is an `unsafe` marker: all-zero bytes are a valid `T`.
+  The scalars, raw pointers, a range including zero, and tuples and fixed arrays of `Zeroable`
+  elements are; a struct is when it declares `@derive(Zeroable)`, which the compiler proves field by
+  field (`E2080`), since only its author can vouch for its invariants (a `NonZero`'s field is an
+  integer). An enum is `Zeroable` when it declares `@derive(Zeroable)` and all-zero bytes are one of
+  its values: the variant whose discriminant is zero carries no payload or a `Zeroable` one, checked
+  when compiling (`E2080`, naming the variant or field that is not); an enum whose zero bytes are no
+  variant is never `Zeroable`, and the derive on it is `E2080`. A `ref`, a range excluding zero, or
+  an enum whose zero discriminant is invalid is never `Zeroable`. `T: needs Zeroable` is a bound a
+  generic function may state (`alloc_zeroed`, `mem.zeroed`). Being `Zeroable` never changes what
+  `alloc_array` does (`[ARN-3]`).
 
 ## IX.3 Memory managers: `using` and `Allocator`
 
@@ -195,30 +221,37 @@ fn main():
   such a value names the instance after the value: `boss = Enemy(hp=500, mesh=owns Mesh(points=[0.0,
   1.0]) using current)` takes the mesh's block from the arena `current` by calling
   `current.allocate(…)`; a class object is made `Enemy(hp=5) using current`, a list `[0.0, 1.0]
-  using current`, and `Array.new_in(current)` makes an empty one. A manager type with no fields has
-  one instance (`Global`, `System`, and any such type a program declares): it needs none on the
-  making line, and its values keep no instance word; every other manager type may have several
-  instances. Checked when compiling: the instance is of the kind the place names, and a value given
-  to a `using A` place was made in an instance of `A` (`E2020`: "`mesh` takes its memory from a
-  `LevelArena` (`mesh: owns Mesh using LevelArena`), and this `Mesh` comes from the built-in
-  manager; say which arena: `mesh=owns Mesh(points=[0.0, 1.0]) using current`"); a value made in an
-  instance, and every value that holds one, lives no longer than that instance (`E3063`, `[LT-4]`);
-  `using` after any other type is `E2114` ("an `int` has no memory of its own to take from
-  `LevelArena`; remove `using`"). `using` names where that value's own memory comes from; what the
-  value holds comes from where its own fields' types say (the `points` list of that `Mesh` from the
-  built-in manager). A value whose manager may have several instances keeps its instance's address,
-  one word, so that its growth and its end go back to the instance it came from (`[LT-4]`), except
-  in two kinds of manager, whose values keep no word (verdict 107): (1) a manager that frees nothing
-  one by one, whose `deallocate` does nothing (an empty body, checked when compiling): nothing it
-  hands out is given back value by value, and all of it is freed together when the instance is
-  cleared or ends; a value that grows (an `Array`, `Map`, `Set` or `String`) made in it keeps the
-  word, since its growth goes back to the instance; (2) a manager that implements `FoundByAddress`
-  (`[ALC-2]`), whose values' instance is found from their address, as C's `free(p)` finds its heap.
-  Neither changes what is checked: that no value outlives its instance or is used after a reset is
-  checked when compiling and never reads the word (`[LT-4]`). Between threads a value made in an
-  instance follows its manager: it holds a `ref A` to the instance for `Send` and `ThreadShared`,
-  and its growth and end are changes of the instance for `[THR-11]` (`[TYP-46a]`). An instance held
-  inline in a struct beside values made in it would be a view into another field of the same value
+  using current`, and `Array.new_in(current)` makes an empty one. `using x` names the instance
+  through a name that may change it (its owner, a `ref mut` name, or a `sharedref mut` link), since
+  `allocate` changes the instance (`[EXC-15]`, `[ALC-5]`); through a plain parameter it is `E3023`
+  ("`allocate` changes the arena (`LevelArena.allocate`, its line 4), and `current` only reads it;
+  write `fn fill(ref mut current: LevelArena)`"); a manager with one instance is a `static` whose
+  `allocate` reads `this` (`[STA-1]`). Whether a `pub` manager type's `deallocate` is empty, and
+  whether it implements `FoundByAddress`, is recorded in its package's interface (`[BLD-14]` item
+  14), the same for every package that writes `using` it. A manager type with no fields has one
+  instance (`Global`, `System`, and any such type a program declares): it needs none on the making
+  line, and its values keep no instance word; every other manager type may have several instances.
+  Checked when compiling: the instance is of the kind the place names, and a value given to a `using
+  A` place was made in an instance of `A` (`E2020`: "`mesh` takes its memory from a `LevelArena`
+  (`mesh: owns Mesh using LevelArena`), and this `Mesh` comes from the built-in manager; say which
+  arena: `mesh=owns Mesh(points=[0.0, 1.0]) using current`"); a value made in an instance, and every
+  value that holds one, lives no longer than that instance (`E3063`, `[LT-4]`); `using` after any
+  other type is `E2114` ("an `int` has no memory of its own to take from `LevelArena`; remove
+  `using`"). `using` names where that value's own memory comes from; what the value holds comes from
+  where its own fields' types say (the `points` list of that `Mesh` from the built-in manager). A
+  value whose manager may have several instances keeps its instance's address, one word, so that its
+  growth and its end go back to the instance it came from (`[LT-4]`), except in two kinds of
+  manager, whose values keep no word (verdict 107): (1) a manager that frees nothing one by one,
+  whose `deallocate` does nothing (an empty body, checked when compiling): nothing it hands out is
+  given back value by value, and all of it is freed together when the instance is cleared or ends; a
+  value that grows (an `Array`, `Map`, `Set` or `String`) made in it keeps the word, since its
+  growth goes back to the instance; (2) a manager that implements `FoundByAddress` (`[ALC-2]`),
+  whose values' instance is found from their address, as C's `free(p)` finds its heap. Neither
+  changes what is checked: that no value outlives its instance or is used after a reset is checked
+  when compiling and never reads the word (`[LT-4]`). Between threads a value made in an instance
+  follows its manager: it holds a `ref A` to the instance for `Send` and `ThreadShared`, and its
+  growth and end are changes of the instance for `[THR-11]` (`[TYP-46a]`). An instance held inline
+  in a struct beside values made in it would be a view into another field of the same value
   (`[LT-25]`, `E3024`) and would move with the struct: such an instance is held in a block of its
   own (`arena: owns LevelArena`), or the values are made `using` an instance the struct does not
   hold; a manager with one instance needs none of this. An allocator type parameter is not Ember:
@@ -260,7 +293,38 @@ fn main():
   out. Reading it stays allowed (`current.made`); any other change, through any name, is `E3021`
   ("`frame.reset()` (line 26) changes the arena `names` was made in (line 25), and `names` still
   lives; end it first: write `mem.drop(owns names)` above line 26"). So no safe method of a memory
-  manager rewinds it, frees it or gives its bytes out again under a value made in it.
+  manager rewinds it, frees it or gives its bytes out again under a value made in it. A
+  `thread_shared` value made in an instance is ended where its last owner ends (`[RC-4]` point 4),
+  so the rule is checked as written; one handed to an unscoped thread (`[THR-2]`) lives, for this
+  rule, as long as the instance, so no change of this rule's kind is made to that instance after the
+  hand-over (`E3021`, naming the hand-over's line).
+* `[ALC-5a]` *(new in 0.9.20)* **A link holds the block.** A `weakref` link to a value made in a
+  memory manager's instance counts, for `[LT-4]` and `[ALC-5]`, as a value that holds one, since the
+  target's block stays until the link ends (`[WK-11]`, `[OBJ-3]`): the link carries the instance's
+  region from the line that makes it (`w = weakref n`) through every place it is copied or stored,
+  as a kept view does (`[LT-45]`); keeping it where it would outlive the instance is `E3063` ("`w`
+  links to a `Node` made in `frame` (line 10), and `frame` ends when `main` returns; end the link
+  first: write `w = None` above the return"), and while it lives a change of the instance that
+  `[ALC-5]` does not allow is `E3021` ("`frame.reset()` (line 13) reuses the memory of the `Node`
+  that `w` links to (made in `frame` on line 10), and `w` is used on line 15; end the link first:
+  write `w = None` above line 13"). A field or element of a `weakref` type whose target was made in
+  an instance carries that instance's region as a kept view field does (`[LT-45]`), so the object or
+  list that holds it lives no longer than the instance (`E3063`). Nothing runs for this: the block a
+  link keeps is given back by the manager's own `deallocate` when the weak count reaches 0, as any
+  other, which for a manager that frees nothing one by one is a no-op, so this check is what keeps
+  the block from reuse.
+* `[ALC-6]` *(new in 0.9.20)* **A making line has its instance's effects, and fails as a container
+  does.** A line that makes a value `using x`, and every growth and end of that value, carries the
+  effects of the `Allocator` methods it calls on `x`'s type (`[EFF-1]`); `Alloc` is the effect of
+  `ember_alloc`, so of `Global`'s and `System`'s `allocate` and `reallocate` and of every
+  implementation that reaches them, and a `FixedArena`'s `allocate` has none (`[ARN-4]`). When the
+  instance's `allocate` or `reallocate` returns null, the compiler's own call panics, "out of
+  memory: `owns Cmd(id=1) using fixed` (line 8) asked `fixed` for 16 bytes", the allocation failure
+  `Panic(Explicit)` lists (`[EFF-16]`), so under `@nopanic(explicit)` such a line is `E4040`
+  ("`tick` is `@nopanic(explicit)`, and `owns Cmd(id=1) using fixed` (line 8) panics when `fixed` is
+  full; make it where failure is a value: write `c = fixed.try_alloc(owns Cmd(id=1))` and open its
+  `Result`"), as a container's `push` is unless it is `try_push` or after `try_reserve` (`[ALC-4]`).
+  A `reallocate` that returns null leaves the old block as it was.
 
 ## IX.4 Raw pointers and `unsafe`
 
@@ -279,106 +343,114 @@ fn parse(data: Span[u8]) -> Option[u32]:
 
 * `[UNS-1]` *(changed in 0.9.15)* An `unsafe` context is required to: dereference, read or write
   through `*T`/`*mut T`; offset a pointer; cast between pointers or pointers and integers; call an
-  `unsafe fn` (`Allocator.deallocate` and `reallocate` among them, `[ALC-2]`), or through a value of an
-  `unsafe` callable type (`[FN-6]`); call an `extern` function without a verified contract (Part XVI);
-  access a foreign `static mut` (`[STA-1]`); `transmute`; call `get_unchecked`, `assume_init` or
-  `assume_disjoint`; give an object to C with `into_raw()` (`[OWN-12]`); make or write a `MaybeUninit`
-  of a type that needs drop (`[ARN-8]`); implement an `unsafe` interface, or declare `Send` by hand
-  (`unsafe extend T implements Send:`, `[TYP-43]`). Each of these outside unsafe code (an `unsafe:`
-  block, or an `unsafe fn` body outside its `safe:` blocks, `[UNS-12]`) is `E3100`,
-  whose message says what the code must vouch for and gives the block to write ("`read_u32_le(buf.as_ptr())`
-  (line 9) calls an `unsafe fn`, whose callers must make true what its `@safety` says; put line 9 in an
-  `unsafe:` block with a `# SAFETY:` note saying why that holds here: above line 9 write `# SAFETY:` and
-  the reason, then `unsafe:`, and indent line 9 under it"). The block to write goes around the whole
-  statement the operation is in: the compound statement for one in its header (`elif p.read() > 0:`
-  is its `if`'s, "put lines 9 to 12 in an `unsafe:` block"), every line of a statement written over
-  several, and "put the statement on line 7 on a line of its own, in an `unsafe:` block" for one on
-  the line of a header; outside a function's body (a constant's value), where no block can be
-  written, the message gives none. The unsafe operations of one statement are one `E3100`, naming
-  them together ("the reads through `p` on line 9"); a pointer's offset is named with the read or
-  write it leads to.
-* `[UNS-2]` *(changed in 0.9.15)* `unsafe` permits exactly those operations. It does not turn off the checks of Parts VII
-  and VIII, bounds checks on safe types, overflow checks or type checking.
-* `[UNS-3]` *(changed in 0.9.15)* `L3010` reports an `unsafe` block containing statements that need no
-  `unsafe`, and one written directly inside unsafe code (an `unsafe fn` body, another `unsafe:`
+  `unsafe fn` (`Allocator.deallocate` and `reallocate` among them, `[ALC-2]`), or through a value of
+  an `unsafe` callable type (`[FN-6]`); call an `extern` function without a verified contract (Part
+  XVI); access a foreign `static mut` (`[STA-1]`); `transmute`, `copy` or `copy_nonoverlapping`
+  (`[UNS-5]`); call `get_unchecked`, `assume_init` or `assume_disjoint`; give an object to C with
+  `into_raw()` (`[OWN-12]`); make or write a `MaybeUninit` of a type that needs drop (`[ARN-8]`);
+  implement an `unsafe` interface, or declare `Send` by hand (`unsafe extend T implements Send:`,
+  `[TYP-43]`). Each of these outside unsafe code (an `unsafe:` block, or an `unsafe fn` body outside
+  its `safe:` blocks, `[UNS-12]`) is `E3100`, whose message says what the code must vouch for and
+  gives the block to write ("`read_u32_le(buf.as_ptr())` (line 9) calls an `unsafe fn`, whose
+  callers must make true what its `@safety` says; put line 9 in an `unsafe:` block with a `#
+  SAFETY:` note saying why that holds here: above line 9 write `# SAFETY:` and the reason, then
+  `unsafe:`, and indent line 9 under it"). The block to write goes around the whole statement the
+  operation is in: the compound statement for one in its header (`elif p.read() > 0:` is its `if`'s,
+  "put lines 9 to 12 in an `unsafe:` block"), every line of a statement written over several, and
+  "put the statement on line 7 on a line of its own, in an `unsafe:` block" for one on the line of a
+  header; outside a function's body (a constant's value), where no block can be written, the message
+  gives none. The unsafe operations of one statement are one `E3100`, naming them together ("the
+  reads through `p` on line 9"); a pointer's offset is named with the read or write it leads to.
+* `[UNS-2]` *(changed in 0.9.15)* `unsafe` permits exactly those operations. It does not turn off
+  the checks of Parts VII and VIII, bounds checks on safe types, overflow checks or type checking.
+* `[UNS-3]` *(changed in 0.9.15)* `L3010` reports an `unsafe` block containing statements that need
+  no `unsafe`, and one written directly inside unsafe code (an `unsafe fn` body, another `unsafe:`
   block), which adds nothing (`[UNS-12]`).
 * `[UNS-4]` *(changed in 0.9.15)* Unsafe code MUST uphold what safe code assumes: every view is
-  non-null, aligned, points to a live initialised value of its type, and is used as its word allows (a
-  `ref mut` name is the only name of its place while it is used, a `ref mut` parameter's place is
+  non-null, aligned, points to a live initialised value of its type, and is used as its word allows
+  (a `ref mut` name is the only name of its place while it is used, a `ref mut` parameter's place is
   reached by no other name, and what a read-only view reads does not change while it is used,
   `[BRW-1]`, `[BRW-22]`); every view's length is within its allocation; every class object has a
-  correct header, and every owner and every `weakref` link of it is counted there, so unsafe code never
-  makes or ends an owner or a link without its count (`[OBJ-1]`); every `StrView` is UTF-8; every value
-  is valid for its type (`bool`, `char`, range types, enums); `Send` and `ThreadShared` are respected. A
-  raw pointer made from a view is not used after the view's last use, nor after what it points into is
-  reshaped or ended, nor after a hand-over of its object to another thread, which may move it
-  (`[THR-2]`).
-* `[UNS-5]` `std.mem` provides `Volatile[*T]` (volatile reads and writes), `transmute[A, B]`,
-  `copy_nonoverlapping`, `zeroed[T]()` (requires
-  `T: needs Zeroable`) and `MaybeUninit`.
+  correct header, and every owner and every `weakref` link of it is counted there, so unsafe code
+  never makes or ends an owner or a link without its count (`[OBJ-1]`); every `StrView` is UTF-8;
+  every value is valid for its type (`bool`, `char`, range types, enums); `Send` and `ThreadShared`
+  are respected. A raw pointer made from a view is not used after the view's last use, nor after
+  what it points into is reshaped or ended, nor after a hand-over of its object to another thread,
+  which may move it (`[THR-2]`).
+* `[UNS-5]` *(changed in 0.9.20)* `std.mem` provides `Volatile[*T]` (volatile reads and writes,
+  `[STD-29]`), `transmute[A, B]`, `copy` and `copy_nonoverlapping` (which read and write through the
+  raw pointers they are given), `zeroed[T]()` (requires `T: needs Zeroable`) and `MaybeUninit`.
+  `transmute`, `copy` and `copy_nonoverlapping` are `unsafe fn`s (`[UNS-1]`): a call of one outside
+  unsafe code is `E3100` ("`copy_nonoverlapping(p, q, 4)` (line 8) writes through the raw pointer
+  `q`, and nothing checks that four `int`s are writable there; put line 8 in an `unsafe:` block with
+  a `# SAFETY:` note saying why that holds here"), and each carries `@safety` (`[UNS-7]`). `zeroed`,
+  `swap`, `replace`, `take`, `drop` and `keep_alive` are safe (`[ARN-11]` vouches for `zeroed`).
 * `[UNS-6]` Inline assembly is `unsafe asm("…", …)` on toolchains that support it and `E5090`
   otherwise.
-* `[UNS-7]` *(changed in 0.9.15)* Every `unsafe fn` carries `@safety("…")` stating what its callers must
-  make true: a function declared inside unsafe code, which is an `unsafe fn` (`[UNS-12]`, verdict
-  119), one declared in an `unsafe extern` block (`[FFI-10]`, verdict 120), and a function `import c` or
-  `import cpp` writes (`[FFI-6]`, `[FFI-17]`) that its overlay entry leaves unsafe to call (verdict 125),
-  which carries it in that entry, above `unsafe fn name(…)` (`[GRM-35]`), included. Without it,
-  `L3015` ("`read_u32_le` is an `unsafe fn` that reads through the raw pointer `p`, and nothing says
-  what its callers must make true for that; say it above the function: `@safety("...")`, with what
-  `p` must point to"; a declaration with no body is named without a step). For an imported function,
-  `L3015` is given once for each function, at its first call in unsafe code by place: in the file
-  built first, then in its imports, the earliest line in each (verdict 134): "`lib_step` is a C
-  function the program calls in unsafe code, and nothing says what its callers must make true; say it
-  in the overlay entry for `lib_step`: `@safety("...")` above `unsafe fn lib_step(…)`", with a note
-  for each other call of it, `also called at src/sim.em:14:9`. A lambda
-  written inside unsafe code, an `unsafe fn(…)` value, carries `@safety` too, written just before it
-  (`set = @safety("`p` points to a writable `int`") fn(v: int) => p.write(v)`, verdict 126), and
-  without it is `L3015`; the text stays with the lambda, which `ember tcb` lists, while a value's type
-  `unsafe fn(…)` carries none, as for a named function. `@safety` is the declaration's only note: a `# SAFETY:` note on an
-  `unsafe fn`, alone on the line before it or at the end of its line (`[LEX-23]`), is `W3013`
-  ("`read_u32_le` says what its callers must make true with `@safety`; a `# SAFETY:` note says why an
-  `unsafe:` block is sound: remove this line"; "… remove this note" for one at the end of the
-  function's own line; and on a function with no `@safety`, "`read_u32_le` should say what its
-  callers must make true with `@safety("...")` above it, not with a `# SAFETY:` note: say this in
-  `@safety` and remove this line"). The standard library carries `@safety` on every unsafe function it
-  exports.
+* `[UNS-7]` *(changed in 0.9.15)* Every `unsafe fn` carries `@safety("…")` stating what its callers
+  must make true: a function declared inside unsafe code, which is an `unsafe fn` (`[UNS-12]`,
+  verdict 119), one declared in an `unsafe extern` block (`[FFI-10]`, verdict 120), and a function
+  `import c` or `import cpp` writes (`[FFI-6]`, `[FFI-17]`) that its overlay entry leaves unsafe to
+  call (verdict 125), which carries it in that entry, above `unsafe fn name(…)` (`[GRM-35]`),
+  included. Without it, `L3015` ("`read_u32_le` is an `unsafe fn` that reads through the raw pointer
+  `p`, and nothing says what its callers must make true for that; say it above the function:
+  `@safety("...")`, with what `p` must point to"; a declaration with no body is named without a
+  step). For an imported function, `L3015` is given once for each function, at its first call in
+  unsafe code by place: in the file built first, then in its imports, the earliest line in each
+  (verdict 134): "`lib_step` is a C function the program calls in unsafe code, and nothing says what
+  its callers must make true; say it in the overlay entry for `lib_step`: `@safety("...")` above
+  `unsafe fn lib_step(…)`", with a note for each other call of it, `also called at src/sim.em:14:9`.
+  A lambda written inside unsafe code, an `unsafe fn(…)` value, carries `@safety` too, written just
+  before it (`set = @safety("`p` points to a writable `int`") fn(v: int) => p.write(v)`, verdict
+  126), and without it is `L3015`; the text stays with the lambda, which `ember tcb` lists, while a
+  value's type `unsafe fn(…)` carries none, as for a named function. `@safety` is the declaration's
+  only note: a `# SAFETY:` note on an `unsafe fn`, alone on the line before it or at the end of its
+  line (`[LEX-23]`), is `W3013` ("`read_u32_le` says what its callers must make true with `@safety`;
+  a `# SAFETY:` note says why an `unsafe:` block is sound: remove this line"; "… remove this note"
+  for one at the end of the function's own line; and on a function with no `@safety`, "`read_u32_le`
+  should say what its callers must make true with `@safety("...")` above it, not with a `# SAFETY:`
+  note: say this in `@safety` and remove this line"). The standard library carries `@safety` on
+  every unsafe function it exports.
 * `[UNS-8]` *(changed in 0.9.9)* *(changed in 0.9.15)* Every `unsafe:` block, and every `unsafe`
   implementation (`unsafe extend`, `unsafe extern`, `unsafe overlay`), carries a safety note
   (`[LEX-23]`) saying why the code is sound: `# SAFETY: …` or `# SAFETY(category): …` on the line
-  before it or at the end of its first line. Without one, `W3012`. `ember tcb` lists every block with
-  its note, its category and the obligations of the unsafe functions it calls.
+  before it or at the end of its first line. Without one, `W3012`. `ember tcb` lists every block
+  with its note, its category and the obligations of the unsafe functions it calls.
 * `[UNS-10]` *(changed in 0.9.15)* `UnsafeCell[T]` (in `std.mem`) is the primitive beneath `Cell`,
-  `Mutex`, `RwLock`, `Atomic` and `Once`: `UnsafeCell(v)`, `unsafe fn get() -> *mut T`,
-  `fn into_inner() owns this -> T`. It hands out no safe view, checks nothing, is never `Copy` and never
+  `Mutex`, `RwLock`, `Atomic` and `Once`: `UnsafeCell(v)`, `unsafe fn get() -> *mut T`, `fn
+  into_inner() owns this -> T`. It hands out no safe view, checks nothing, is never `Copy` and never
   `ThreadShared` (it is `Send` when `T` is), and is refused in `@no_alias_checks` code (`E3105`).
   Diagnostics never suggest it.
-* `[UNS-10a]` *(changed in 0.9.15)* `UnsafeCell` suspends no rule globally: the checks of Parts VII and VIII, region, type
-  and bounds checking all still apply around it. Unsafe code may break the aliasing rules inside an
-  abstraction built on it, and must never let a conflicting view escape into Safe Ember.
+* `[UNS-10a]` *(changed in 0.9.15)* `UnsafeCell` suspends no rule globally: the checks of Parts VII
+  and VIII, region, type and bounds checking all still apply around it. Unsafe code may break the
+  aliasing rules inside an abstraction built on it, and must never let a conflicting view escape
+  into Safe Ember.
 * `[UNS-11]` *(new in 0.9.15)* **Only inside `unsafe`.** Anything that can break a safety promise
-  (misuse memory, race, leak, skip a promised check, or reach memory the rules cannot see) is possible
-  only inside an `unsafe` block, and no switch turns a safety check off, in any build or profile:
-  `@no_runtime_checks` is not Ember (`E0104`: "there is no switch that turns safety checks off, in any
-  build; to forbid run-time alias checks here write `@no_alias_checks`; to skip one bounds check you
-  have proved, write `xs.get_unchecked(i)` inside `unsafe:` with a `# SAFETY:` note"). `unsafe` is one
-  word with one meaning by position: before a declaration (`unsafe fn`, `unsafe interface`, an
-  `unsafe fn(…)` type) it says that whoever uses it must vouch, with `@safety` saying what they must make
-  true (`[UNS-7]`); before a block or an implementation (`unsafe:`, `unsafe extend`, `unsafe extern`,
-  `unsafe overlay`) it says that this code vouches, with `# SAFETY:` saying why (`[UNS-8]`); `safe:`
-  inside unsafe code says the opposite, that its code is checked as safe code (`[UNS-12]`).
+  (misuse memory, race, leak, skip a promised check, or reach memory the rules cannot see) is
+  possible only inside an `unsafe` block, and no switch turns a safety check off, in any build or
+  profile: `@no_runtime_checks` is not Ember (`E0104`: "there is no switch that turns safety checks
+  off, in any build; to forbid run-time alias checks here write `@no_alias_checks`; to skip one
+  bounds check you have proved, write `xs.get_unchecked(i)` inside `unsafe:` with a `# SAFETY:`
+  note"). `unsafe` is one word with one meaning by position: before a declaration (`unsafe fn`,
+  `unsafe interface`, an `unsafe fn(…)` type) it says that whoever uses it must vouch, with
+  `@safety` saying what they must make true (`[UNS-7]`); before a block or an implementation
+  (`unsafe:`, `unsafe extend`, `unsafe extern`, `unsafe overlay`) it says that this code vouches,
+  with `# SAFETY:` saying why (`[UNS-8]`); `safe:` inside unsafe code says the opposite, that its
+  code is checked as safe code (`[UNS-12]`).
 * `[UNS-12]` *(new in 0.9.15)* **An `unsafe fn` is unsafe as a whole** (verdict 118: "the function
-  literally says that it is unsafe"). Its body is unsafe code, as the inside of an `unsafe:` block is.
-  Everything written in unsafe code is unsafe (verdict 119): a function declared there is an
+  literally says that it is unsafe"). Its body is unsafe code, as the inside of an `unsafe:` block
+  is. Everything written in unsafe code is unsafe (verdict 119): a function declared there is an
   `unsafe fn`, whose body is unsafe, whose calls need unsafe code, and which carries `@safety`
   (`[UNS-7]`); a lambda written there is a value of an `unsafe` callable type, `unsafe fn(…)`
-  (`[FN-6]`), which only unsafe code calls (`fn make() -> unsafe fn(*mut u8):` may return one made in
-  an `unsafe:` block; `-> fn(*mut u8)` may not). Code inside unsafe code that is to be checked as safe
-  code is written in a `safe:` block, which needs no note: in it each operation of `[UNS-1]` is `E3100`
-  again ("`p.write(1)` (line 7) is in a `safe:` block, which is checked as safe code; move it out of
-  the `safe:` block, or put it in an `unsafe:` block with a `# SAFETY:` note"), a function or lambda
-  written in it is safe, and an `unsafe:` block in it is unsafe again. A `safe:` block outside unsafe
-  code changes nothing and is `L3020` ("this `safe:` block is not inside unsafe code, so it changes
-  nothing: remove `safe:`"); an `unsafe:` block directly inside unsafe code is `L3010` (`[UNS-3]`).
+  (`[FN-6]`), which only unsafe code calls (`fn make() -> unsafe fn(*mut u8):` may return one made
+  in an `unsafe:` block; `-> fn(*mut u8)` may not). Code inside unsafe code that is to be checked as
+  safe code is written in a `safe:` block, which needs no note: in it each operation of `[UNS-1]` is
+  `E3100` again ("`p.write(1)` (line 7) is in a `safe:` block, which is checked as safe code; move
+  it out of the `safe:` block, or put it in an `unsafe:` block with a `# SAFETY:` note"), a function
+  or lambda written in it is safe, and an `unsafe:` block in it is unsafe again. A `safe:` block
+  outside unsafe code changes nothing and is `L3020` ("this `safe:` block is not inside unsafe code,
+  so it changes nothing: remove `safe:`"); an `unsafe:` block directly inside unsafe code is `L3010`
+  (`[UNS-3]`).
 
 ## IX.5 Layout
 
@@ -416,17 +488,20 @@ fn main():
     println(pool.get(h).is_some())        # stale handle: None
 ```
 
-* `[HND-1]` A `Handle[T]` is a plain `Copy` value (index and generation). Every lookup compares the
-  generation, in every profile, and a stale handle yields `None` (or panics in `pool[h]`).
-  `unsafe: pool.get_unchecked(h)` skips the comparison.
+* `[HND-1]` *(changed in 0.9.20)* A `Handle[T]` is a plain `Copy` value (index and generation).
+  Every lookup compares the generation, in every profile, and a stale handle yields `None` (or
+  panics in `pool[h]`: "`pool[h]` on line 12: the handle is stale (slot 3, generation 2 of 5); use
+  `pool.get(h)` for an `Option`"). `unsafe: pool.get_unchecked(h)` skips the comparison.
 * `[HND-2]` *(changed in 0.9.9)* `Handle[T]` is a `u64`: 32 bits of index and 32 of generation.
-  `Pool[T, Bits]` may narrow it (`Pool[T, Split20]` gives a 20-bit index and a 12-bit generation in a
-  `u32`).
-* `[HND-3]` *(new in 0.9.9)* *(changed in 0.9.15)* A slot whose generation is exhausted is retired and never reused, so an old handle can never
-  become valid again. A retired slot's memory stays with the pool until the pool ends: a pool keeps one
-  retired slot for each slot reused as many times as its generation can count (with `Split20`, one for
-  every 4,096 reuses of a slot), a bounded cost that keeps that promise. When every slot is retired or
-  live, `insert` panics and `try_insert` returns `Err(CapacityError.Full)`.
+  `Pool[T, Bits]` may narrow it (`Pool[T, Split20]` gives a 20-bit index and a 12-bit generation in
+  a `u32`).
+* `[HND-3]` *(new in 0.9.9)* *(changed in 0.9.15)* A slot whose generation is exhausted is retired
+  and never reused, so an old handle can never become valid again. A retired slot's memory stays
+  with the pool until the pool ends: a pool keeps one retired slot for each slot reused as many
+  times as its generation can count (with `Split20`, one for every 4,096 reuses of a slot), a
+  bounded cost that keeps that promise. When every slot is retired or live, `insert` panics
+  ("`pool.insert(...)` on line 11: every slot is live or retired; use `try_insert` for a `Result`")
+  and `try_insert` returns `Err(CapacityError.Full)`.
 
 ## IX.7 `Cell`, and changes checked when compiling
 
@@ -505,36 +580,46 @@ fn mix_any(ref mut tracks: Map[String, Array[float]], dst_name: StrView, src_nam
 
 * `[DSJ-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* `check_disjoint(a, b) -> Result[void, void]`
   compares the two views' address ranges, and gives `Ok(())` when they do not overlap and `Err(())`
-  when they do: two comparisons. It reads both views and takes neither (`[FN-1]`), so they stay usable
-  after it. Its result is `@must_use`: an unused one is `W2190` ("to stop when they overlap, write
-  `assert_disjoint(d, s)`, with `from std.mem import assert_disjoint` at the top; to handle both cases,
-  write `match check_disjoint(d, s):`"). In its `Ok` branch the two names are known not to overlap, as
-  inside `if i != j:`.
+  when they do: two comparisons. It reads both views and takes neither (`[FN-1]`), so they stay
+  usable after it. Its result is `@must_use`: an unused one is `W2190` ("to stop when they overlap,
+  write `assert_disjoint(d, s)`, with `from std.mem import assert_disjoint` at the top; to handle
+  both cases, write `match check_disjoint(d, s):`"). In its `Ok` branch the two names are known not
+  to overlap, as inside `if i != j:`.
 * `[DSJ-2]` *(changed in 0.9.15)* The fact belongs to the two names, not to a program point: from
-  `assert_disjoint`, after the call; from `check_disjoint`, inside its `Ok` branch. Giving either name
-  another value (`d = ref mut other.as_mut_span()`) drops it.
-* `[DSJ-3]` *(changed in 0.9.15)* Where the fact holds, the two names are treated as not overlapping,
-  so they may be given to one call where one of them is changeable (`[BRW-11]`), and the backend marks
-  them `restrict`/`noalias` (`[SIMD-3]`).
+  `assert_disjoint`, after the call; from `check_disjoint`, inside its `Ok` branch. Giving either
+  name another value (`d = ref mut other.as_mut_span()`) drops it.
+* `[DSJ-3]` *(changed in 0.9.15)* Where the fact holds, the two names are treated as not
+  overlapping, so they may be given to one call where one of them is changeable (`[BRW-11]`), and
+  the backend marks them `restrict`/`noalias` (`[SIMD-3]`).
 * `[DSJ-4]` It applies to `Span`, `MutSpan`, `SoA` columns and arena views; two single-object
   references are `E3095`.
-* `[DSJ-5]` *(changed in 0.9.15)* `assert_disjoint(a, b)` makes the same comparison and stops the
-  program if the views overlap, saying where and which names: "`assert_disjoint(d, s)` on line 11: the
-  two spans overlap (`dst_name` and `src_name` name one track)". Both forms record a
-  `RuntimeCheck(Aliasing)` site whose reason is `establishes_static_fact` (`[EFF-11]`), unless the
-  compiler already knows the ranges are disjoint, in which case no comparison is emitted.
-* `[DSJ-6]` *(changed in 0.9.15)* `check_disjoint` and `assert_disjoint` are usable in `@noalloc` and
-  `@nosync` code. They are the one run-time alias check there is, so inside `@no_alias_checks` each is
-  `E4030` ("`mix` is `@no_alias_checks`, and `assert_disjoint(d, s)` (line 18) compares the two spans
-  while running; blend from a copy, which needs no check: instead of lines 16 to 19 write
-  `old = copy of tracks[src_name]` and `blend(ref mut tracks[dst_name].as_mut_span(), old.as_span())`,
-  or remove `@no_alias_checks`", `[EFF-12]`).
-* `[DSJ-7]` *(changed in 0.9.15)* `assume_disjoint(a, b)`, an `unsafe fn`, gives the two names the fact
-  without checking; violating it is undefined behaviour.
+* `[DSJ-5]` *(changed in 0.9.15)* *(changed in 0.9.20)* `assert_disjoint(a, b)` makes the same
+  comparison and stops the program if the views overlap, saying where and which names:
+  "`assert_disjoint(d, s)` on line 11: the two spans overlap (`dst_name` and `src_name` name one
+  track)". Both forms record a `RuntimeCheck(Aliasing)` site whose reason is
+  `establishes_static_fact` (`[EFF-11]`), unless the two views are known apart by `[DSJ-11]`, in
+  which case no site is recorded and no comparison is emitted.
+* `[DSJ-11]` *(new in 0.9.20)* **Views known apart.** Two views are known apart, with no compare,
+  exactly when the compiler proves them apart as `[BRW-11]` and §IX.8 say: the two results of one
+  `split_at`, `split_at_mut`, `get_pair_mut` or `chunks_mut` call; two columns of one SoA; two
+  `alloc*` results of one arena (`[ARN-1]`); two ranges of one list whose bounds are constants, or
+  `j` from `i + 1..`, that do not overlap; views of two different whole variables neither reached
+  through the other; and two names already given the fact by an earlier `assert_disjoint` or
+  `check_disjoint` (`[DSJ-2]`). Nothing else is, whatever an implementation could see: this is the
+  one disjointness proof, and `[EFF-15]` names it.
+* `[DSJ-6]` *(changed in 0.9.15)* `check_disjoint` and `assert_disjoint` are usable in `@noalloc`
+  and `@nosync` code. They are the one run-time alias check there is, so inside `@no_alias_checks`
+  each is `E4030` ("`mix` is `@no_alias_checks`, and `assert_disjoint(d, s)` (line 18) compares the
+  two spans while running; blend from a copy, which needs no check: instead of lines 16 to 19 write
+  `old = copy of tracks[src_name]` and `blend(ref mut tracks[dst_name].as_mut_span(),
+  old.as_span())`, or remove `@no_alias_checks`", `[EFF-12]`).
+* `[DSJ-7]` *(changed in 0.9.15)* `assume_disjoint(a, b)`, an `unsafe fn`, gives the two names the
+  fact without checking; violating it is undefined behaviour.
 * `[DSJ-8]` There is no form that checks in one profile and assumes in another (`[PHIL-13]`).
-* `[DSJ-9]` *(changed in 0.9.15)* `check_disjoint_all(v1, …, vn)` and `assert_disjoint_all(v1, …, vn)`
-  handle 2 to 8 views pairwise, as `check_disjoint` and `assert_disjoint` do.
-* `[DSJ-10]` *(new in 0.9.15)* Making a view and comparing two address ranges read no element: in `mix`
-  above, `s = tracks[src_name].as_span()` and `assert_disjoint(d, s)` are allowed while `d`, a `ref mut`
-  name of a list's elements, is in use, and the first element read through `s`, in `blend`, comes after
-  the two are proved apart. A read of an element through `s` before the proof is `E3021` (`[BRW-1]`).
+* `[DSJ-9]` *(changed in 0.9.15)* `check_disjoint_all(v1, …, vn)` and `assert_disjoint_all(v1, …,
+  vn)` handle 2 to 8 views pairwise, as `check_disjoint` and `assert_disjoint` do.
+* `[DSJ-10]` *(new in 0.9.15)* Making a view and comparing two address ranges read no element: in
+  `mix` above, `s = tracks[src_name].as_span()` and `assert_disjoint(d, s)` are allowed while `d`, a
+  `ref mut` name of a list's elements, is in use, and the first element read through `s`, in
+  `blend`, comes after the two are proved apart. A read of an element through `s` before the proof
+  is `E3021` (`[BRW-1]`).

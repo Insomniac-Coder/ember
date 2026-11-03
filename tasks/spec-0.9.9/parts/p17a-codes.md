@@ -45,6 +45,7 @@ reused; retired codes are listed with the reason.
 | `E1031` | a name bound by two glob imports is used; a name bound by a glob import and by the prelude | `[MOD-8]` |
 | `E1032` | an item has the path of a module or the name of a built-in type | `[MOD-1]` |
 | `E1041` | import cycle between packages | `[MOD-4]` |
+| `E1042` | a use of a name of a layer of `std` the package does not declare | `[STD-6]` |
 | `E1050` | field is read-only outside its module | `[MOD-7]` |
 | `E1051` | `read` visibility is valid on fields only | `[MOD-7]` |
 | `E1052` | item, field or constructor not visible here | `[MOD-2]` |
@@ -58,7 +59,7 @@ reused; retired codes are listed with the reason.
 | `E2035` | condition must be `bool` | `[CTL-0]` |
 | `E2036` | this pattern always matches: an `if` or `while` opening whose left side always holds a value, or a kind test that always passes | `[GRM-19]` |
 | `E2037` | a kind test that can never pass: the type tested for does not implement the interface, or derive from the base class, of the value tested | `[TYP-44]`, `[DSP-4]` |
-| `E2040` | unsatisfied interface bound; for a `pub` generic whose bounds are not written, or a generic that writes some of its bounds and not all the body needs, one message on the first line of its body that needs a missing bound, giving the whole line of what it needs | `[IFC-6]`, `[TYP-17]`, `[BLD-14]` |
+| `E2040` | unsatisfied interface bound; for a `pub` generic whose bounds are not written, or a generic that writes some of its bounds and not all the body needs, one message on the first line of its body that needs a missing bound, giving the whole line of what it needs; `unwrap` or `expect` on a `Result` whose error type has no `Display` | `[IFC-6]`, `[TYP-17]`, `[BLD-14]`, `[ERR-4]` |
 | `E2041` | overlapping `extend` implementations | `[TYP-19]` |
 | `E2042` | `Float` is implemented only by `f32` and `f64` | `[STD-27]` |
 | `E2043` | an associated type's default leads back to itself | `[IFC-4]` |
@@ -68,9 +69,10 @@ reused; retired codes are listed with the reason.
 | `E2062` | ambiguous type | `[TYP-23]` |
 | `E2070` | ambiguous interface method | `[TYP-24]` |
 | `E2071` | `SoA[T]` of a type that is not a struct | `[SOA-1]` |
-| `E2072` | no method or field of that name (with the Ember name for a Python one; shape N13 for an undeclared field; in a generic body that is not `pub`, a method no bound's interface declares) | `[STD-13]` |
+| `E2072` | no method or field of that name (with the Ember name for a Python one; shape N13 for an undeclared field; in a generic body that is not `pub`, a method no bound's interface declares); a flattened field's name as a column (`ps.pos`) | `[STD-13]`, `[SOA-1]` |
 | `E2073` | `len` of a string (Python counts characters, `s.len()` bytes) | `[STD-26]` |
-| `E2080` | `@derive(Copy)` on a type with a field that is not Copy, or on a type that declares `drop` | `[STR-3]` |
+| `E2074` | a component type listed twice in one ECS view, or listed and excluded | `[ECS-4a]` |
+| `E2080` | `@derive(Copy)` on a type with a field that is not Copy, or on a type that declares `drop`; `@derive(Zeroable)` on an enum whose zero bytes are no variant or whose zero variant's payload is not `Zeroable`; a derive's requirement a field does not meet, `@from`'s included | `[STR-3]`, `[ARN-11]`, `[ERR-3]` |
 | `E2090` | non-exhaustive match | `[ENM-2]` |
 | `E2100` | field read before it is set, `init` calling a method whose body reads a field not yet set included; in a `pub` `open` or `abstract` class, `init` calling a `virtual` method before every field is set | `[CLS-2]` |
 | `E2101` | derived class with a field that has no default needs an `init` | `[CLS-10]` |
@@ -130,98 +132,95 @@ reused; retired codes are listed with the reason.
 | `E3014` | scope binding may not be handed over | `[THR-5]` |
 | `E3015` | value whose drop is required may not be leaked | `[THR-6]` |
 | `E3016` | `this` escapes its own `drop`, or an owner of it is made there | `[OBJ-5]`, `[CLS-7a]` |
-| `E3020` | a collection (a list, a map, a set or a string) changed while it is walked, whatever the change (an element written, a value under a key replaced, anything added or removed), by a `for` loop or by a generator that walks it and will still be used; through its own name, or through a call that may change it (a call through a function value or a library call by the functions it may run, a `spawn` by what its thread changes, a scoped task started in the walk, a foreign call by what the callbacks C keeps change, the end of an object by what its `drop` changes); a removal inside a counting loop; an override, implementation or stored function that changes what a recorded library line walks (`[MOD-9a]`) | `[BRW-18]`, `[CTL-2]`, `[MOD-9a]` |
-| `E3021` | a read and a change of one place overlap: a change of what a read-only name reads while it is still used, a view a `dyn` call may give included where the kind is known only while running (help: `runtime` on the parameter or the typed local the call goes through, or a `runtime` name for the value); a `ref mut` name's place read through another name while it is still used; an argument that may reach into a changeable argument of the same call | `[BRW-1]`, `[BRW-11]`, `[LT-1]`, `[LT-48]` |
+| `E3020` | a collection (a list, a map, a set or a string) changed while it is walked, whatever the change (an element written, a value under a key replaced, anything added or removed), by a `for` loop or by a generator that walks it and will still be used; through its own name, or through a call that may change it (a call through a function value or a library call by the functions it may run, a `spawn` by what its thread changes, a scoped task started in the walk, a foreign call by what the callbacks C keeps change, the end of an object by what its `drop` changes); a removal inside a counting loop; an override, implementation or stored function that changes what a recorded library line walks (`[MOD-9a]`); a call through a place another package can fill, counted as changing what a `pub` route reaches, while a loop walks it | `[BRW-18]`, `[CTL-2]`, `[MOD-9a]`, `[EFF-2a]` |
+| `E3021` | a read and a change of one place overlap: a change of what a read-only name reads while it is still used, a view a `dyn` call may give included where the kind is known only while running (help: `runtime` on the parameter or the typed local the call goes through, or a `runtime` name for the value); a `ref mut` name's place read through another name while it is still used; an argument that may reach into a changeable argument of the same call; a reset or end of a manager's instance while a `weakref` link to a value made in it lives | `[BRW-1]`, `[BRW-11]`, `[LT-1]`, `[LT-48]`, `[ALC-5a]` |
 | `E3022` | one place changed through two names: two changeable arguments of one call naming one place, other than one whole variable proved when compiling (a function value that changes it counts as one); a function value stored in a place that anything it changes through any name owns (a `static mut` included, `[CLO-17]`), or whose storing changes what a recorded library line holds or has lent (`[MOD-9a]`); a `ref mut` name's place changed through another name while it is still used, a reshape of a `ref mut` address included | `[BRW-1]`, `[BRW-11]`, `[CLO-17]`, `[MOD-9a]` |
-| `E3023` | a change the name does not allow: a change through a name that only reads (a plain parameter; a loop, pattern, opened or part name; a plain name holding a `MutSpan`; a value made when compiling); `=` on a name that keeps its place for its scope (a parameter; a loop, pattern or opened name, one opened `exists as copy of` excepted; a `const ref mut` name given another ref); a read-only `ref` given to a `ref mut` name; a method that may change its object, or a stored function that may change its own state, called through a read-only name; an owner that may change made from one that only reads (a plain parameter of a `shares mut` type included); `=` on a `static` (`HOOK = v`); `=` of a whole value on a `ref mut` name of a `dyn I` type | `[BRW-14]`, `[BRW-15]`, `[STA-1]`, `[TYP-14]` |
+| `E3023` | a change the name does not allow: a change through a name that only reads (a plain parameter; a loop, pattern, opened or part name; a plain name holding a `MutSpan`; a value made when compiling); `=` on a name that keeps its place for its scope (a parameter; a loop, pattern or opened name, one opened `exists as copy of` excepted; a `const ref mut` name given another ref); a read-only `ref` given to a `ref mut` name; a method that may change its object, or a stored function that may change its own state, called through a read-only name; an owner that may change made from one that only reads (a plain parameter of a `shares mut` type included); `=` on a `static` (`HOOK = v`); `=` of a whole value on a `ref mut` name of a `dyn I` type; `using x` through a plain parameter | `[BRW-14]`, `[BRW-15]`, `[STA-1]`, `[TYP-14]`, `[ALC-1]` |
 | `E3024` | a struct field would point into another field of the same struct (shape B5) | `[TYP-15]` |
 | `E3026` | a function value that may outlive a place it uses and does not own: a returned function that changes its maker's local without `owns`; a task or thread given a loop's name with no word, or with `ref` where it may outlive the element | `[CLO-4]` |
 | `E3027` | `ref mut` before something this function may not change: an argument, a loop or pattern name over something it only reads, or a place reached through a read-only name; a default on a `ref mut` parameter; a `ref mut` argument inside `debug_assert`'s argument, which a `release` build never evaluates | `[FN-2a]`, `[FN-5]` |
 | `E3028` | a call's word does not match its parameter: no `ref mut` (or no `const` for a `const ref mut` parameter) before an argument for a `ref mut` parameter, a `MutSpan` one included, or `ref mut` before one for a parameter that is not `ref mut`; no `owns` before an argument for an `owns` parameter, or `owns` before one for a parameter that is not `owns` (shape B10) | `[FN-2a]` |
-| `E3031` | a call whose argument the callee's body reaches by another name in a way its parameter cannot allow: a part of what the callee may end or move before its last use of that parameter (a plain, `Span` or `ref mut` parameter, or a method's object); for a `ref mut` parameter, a part of what the callee reads or changes by another name while the parameter is used; at the line that stores a function into a function value, when that function does so with what the value's calls give it (shape B16) | `[BRW-21]`, `[FFI-52]` |
+| `E3031` | a call whose argument the callee's body reaches by another name in a way its parameter cannot allow: a part of what the callee may end or move before its last use of that parameter (a plain, `Span` or `ref mut` parameter, or a method's object); for a `ref mut` parameter, a part of what the callee reads or changes by another name while the parameter is used; at the line that stores a function into a function value, when that function does so with what the value's calls give it (shape B16); a call from another package whose argument a callback, export or override of that package changes across the callee's open line | `[BRW-21]`, `[FFI-52]` |
 | `E3032` | a loop of owners (`shares`, `shares mut` or `thread_shared` owners, a function value's state, channel ends) that the compiler cannot prove is opened again before its objects lose their last owner from outside (shape B17) | `[WK-6]`, `[WK-5]` |
 | `E3040` | a name used after it was handed over or ended (a number handed over with `owns` included); a part handed over on its own, or its owner used whole, before the part is given a new value | `[OWN-3]` |
 | `E3050` | a view of an uninitialised place | `[BRW-7]` |
 | `E3060` | a view used after what it points into was ended, handed over, replaced or reshaped: a position after a removal or reorder; an address after a reshape; a view put in through `ref mut` after one of the call's arguments changed; a name opened from a link after a line or call that may end its object; a view of what a function value's or an `owns dyn I` value's state owns after that value is replaced or ended | `[BRW-17]`, `[LT-3]` |
 | `E3062` | a result that points into something its first line's `from` does not name (shape B6) | `[LT-1a]` |
-| `E3063` | a view, or a value holding views, kept or returned where it would outlive what it points into: a view of a temporary, a view out of a lock's `with` block, a view of the callee's own locals put into the caller's view through `ref mut`, a kept view outliving its target; and a value made in a memory manager's instance, or one holding such a value, kept or returned where it would outlive that instance; a value made in a job's arena (`jobs.local_arena()`) that would leave the job's function | `[LT-45]`, `[BRW-19]`, `[ALC-1]`, `[JOB-5]` |
+| `E3063` | a view, or a value holding views, kept or returned where it would outlive what it points into: a view of a temporary, a view out of a lock's `with` block, a view of the callee's own locals put into the caller's view through `ref mut`, a kept view outliving its target; and a value made in a memory manager's instance, or one holding such a value, kept or returned where it would outlive that instance; a value made in a job's arena (`jobs.local_arena()`) that would leave the job's function; a `weakref` link, or a value holding one, kept where it would outlive the instance its target was made in; a listener given to `connect` that views a local the registry outlives | `[LT-45]`, `[BRW-19]`, `[ALC-1]`, `[JOB-5]`, `[ALC-5a]`, `[ECS-8]` |
 | `E3070` | `drop` cannot be called explicitly | `[DRP-1]` |
-| `E3090` | arena allocation of a type that needs `drop` | `[ARN-3]` |
+| `E3090` | arena allocation of a type that needs `drop` | `[ARN-3]`, `[ARN-2]` |
 | `E3095` | two single-object references given to `assert_disjoint` | `[DSJ-4]` |
 | `E3096` | arena is scoped here | `[ARN-6]` |
-| `E3100` | an unsafe operation outside unsafe code (in a `safe:` block included), `into_raw()` included; `Send` declared by hand without `unsafe extend` | `[UNS-1]`, `[UNS-12]`, `[ALC-2]`, `[ARN-8]`, `[FFI-51]`, `[FFI-26]`, `[FFI-54]`, `[FFI-56]` |
+| `E3100` | an unsafe operation outside unsafe code (in a `safe:` block included), `into_raw()` included; `Send` declared by hand without `unsafe extend`; a call of `transmute`, `copy` or `copy_nonoverlapping` outside unsafe code; a call of a C++ method whose reference result has no lifetime word outside unsafe code; `ThreadShared` declared for an `extern type` without `unsafe` | `[UNS-1]`, `[UNS-12]`, `[ALC-2]`, `[ARN-8]`, `[FFI-51]`, `[FFI-26]`, `[FFI-54]`, `[FFI-56]`, `[UNS-5]`, `[FFI-40]`, `[FFI-8]` |
 | `E3105` | `UnsafeCell` in `@no_alias_checks` code | `[UNS-10]` |
-| `E4001` | `@noalloc` function reaches an allocation | `[EFF-5]` |
+| `E4001` | `@noalloc` function reaches an allocation; a call through a place another package can fill whose declared contracts do not exclude `Alloc` | `[EFF-5]`, `[EFF-2a]` |
 | `E4002` | `@nosync` function reaches a synchronising operation | `[EFF-5]` |
 | `E4003` | `@noblock` function reaches a blocking operation | `[EFF-5]` |
 | `E4010` | implementation does not satisfy the interface's contract | `[EFF-2]` |
 | `E4020` | `@simd(assert)` loop did not vectorise | `[SIMD-2]` |
 | `E4030` | `assert_disjoint`, the one alias check left to run time, inside `@no_alias_checks` | `[DSJ-6]`, `[EFF-12]` |
-| `E4040` | `@nopanic(explicit)` function reaches a panic | `[EFF-17]` |
+| `E4040` | `@nopanic(explicit)` function reaches a panic; a making line `using x` whose `allocate` may return null | `[EFF-17]`, `[ALC-6]` |
 | `E4041` | `@noio` function reaches I/O | `[EFF-20]` |
 | `E4042` | `@nolock` function acquires a lock | `[EFF-21]` |
-| `E4070` | `@deterministic` function reaches a nondeterministic operation | `[DET-1]` |
+| `E4070` | `@deterministic` function reaches a nondeterministic operation; a read whose value depends on which thread acted first (a receive on a channel several threads send to, `try_lock`, an `Atomic` read of a place an unjoined task may change) | `[DET-1]`, `[DET-2]` |
 | `E4072` | `@fastmath` or `@fp(allow_fma)` inside `@deterministic` | `[DET-5]` |
 | `E5001` | imported type layout does not match | `[FFI-5]` |
-| `E5002` | a foreign declaration whose contract cannot stand: a hand declaration that says neither `safe fn` nor `unsafe fn`, or both; `safe fn` on a function whose contract is incomplete, or two destructors for one foreign type (a call of a function without a verified contract outside `unsafe` is `E3100`) | `[FFI-2]`, `[FFI-10]`, `[FFI-36a]` |
+| `E5002` | a foreign declaration whose contract cannot stand: a hand declaration that says neither `safe fn` nor `unsafe fn`, or both; `safe fn` on a function whose contract is incomplete, or two destructors for one foreign type (a call of a function without a verified contract outside `unsafe` is `E3100`); a function-pointer parameter of a `safe fn` with no `callback(…)` word; a `user_data` witness too narrow for the tagged number | `[FFI-2]`, `[FFI-10]`, `[FFI-36a]`, `[FFI-21]` |
 | `E5010` | overlay does not match the C declaration; a declaration an overlay describes differs from the one `ember.overlays` records, or the package has no record of the overlay; an entry outside a class section that names only members of classes | `[FFI-12]`, `[FFI-55]` |
 | `E5011` | one C identity imported with two different layouts | `[FFI-30]` |
 | `E5012` | pointer contract has no count | `[FFI-11]` |
 | `E5013` | a further argument of a variadic C function that C would promote to another type | `[FFI-8]` |
 | `E5014` | two packages request the same implementation macro | `[FFI-29]` |
-| `E5015` | type may not cross the boundary | `[FFI-31]`, `[FFI-31b]` |
+| `E5015` | type may not cross the boundary; an exhaustive `@repr` enum in an export | `[FFI-31]`, `[FFI-31b]` |
 | `E5016` | `_Atomic` layout does not match `Atomic[T]` | `[FFI-8]` |
 | `E5017` | struct with a flexible array member is unsized | `[FFI-8]` |
 | `E5018` | `va_list` may not be constructed | `[FFI-8]` |
 | `E5020` | `StrView` is not NUL-terminated | `[FFI-15]` |
 | `E5030` | `std::function` as a parameter | `[FFI-17a]` |
-| `E5031` | C++ parameter cannot be mapped | `[FFI-17]` |
+| `E5031` | C++ parameter cannot be mapped | `[FFI-32]` |
 | `E5032` | opaque C++ type may not be constructed | `[FFI-32]` |
-| `E5034` | unsupported C++ construct | `[FFI-17]` |
+| `E5034` | unsupported C++ construct | `[FFI-48]` |
 | `E5040` | capturing closure passed where a C function pointer is expected | `[FFI-21]` |
-| `E5041` | retained callback needs a release function in the overlay | `[FFI-21]` |
+| `E5041` | a `retained` or `once` callback needs a release function (`destroys(f)`) in the overlay | `[FFI-21]` |
 | `E5042` | a function C may call returns a pointer into a parameter C passes as a copy | `[FFI-21a]` |
 | `E5050` | a foreign fact claims a grade whose evidence is absent or stale | `[TCB-1]` |
-| `E5051` | a foreign callee retains a pointer its contract does not declare `retained` | `[FFI-35a]` |
 | `E5052` | `adopt` on a handle whose overlay declares `adopt = false` | `[FFI-36b]` |
 | `E5053` | an instrumented run contradicted a declared foreign effect | `[FFI-37]` |
 | `E5054` | range type, or `char`, in a foreign signature | `[RNG-10]`, `[FFI-31]`, `[FFI-31b]` |
 | `E5055` | an Ember generic may not instantiate a C++ template | `[FFI-17b]` |
-| `E5056` | override of a C++ virtual the overlay does not name | `[FFI-39]` |
-| `E5057` | the overlay names a method that is not virtual in the header | `[FFI-39]` |
-| `E5058` | C++ base has no default constructor and no declared `init` | `[FFI-39]` |
-| `E5059` | C++ trampoline base has no virtual destructor | `[FFI-39]` |
+| `E5056` | an `override fn` matching no virtual method of the C++ base, by name and signature | `[FFI-39]` |
+| `E5058` | C++ base has no default constructor and no declared `init` | `[FFI-39b]` |
+| `E5059` | C++ trampoline base has no virtual destructor | `[FFI-17d]` |
 | `E5060` | an object owned by Ember (`owner="ember"`) given to a C++ parameter that keeps it | `[FFI-39c]` |
 | `E5061` | imported C++ function has no exception policy and none can be derived | `[FFI-24]` |
 | `E5062` | contradictory C++ exception policies | `[FFI-43]` |
 | `E5063` | foreign bytes reach `StrView` without validation | `[TXT-2]` |
 | `E5064` | interior NUL: a `c"..."` literal containing a NUL, or a value converted to a `CStrView` | `[TXT-3]`, `[FFI-15]` |
 | `E5065` | `shares`/`weakref` and `CppShared`/`CppWeak` do not interconvert | `[WK-14]` |
-| `E5066` | an overlay marks a C++ function both `noexcept` and throwing | `[FFI-43]` |
 | `E5067` | an overlay that states facts is not declared `unsafe overlay` | `[GRM-35]`, `[TIER-1]` |
-| `E5068` | one live foreign object adopted twice | `[FFI-36b]` |
-| `E5069` | `@ffi(no_callbacks)` on a foreign function whose own contract takes a callback (`callback(...)`) | `[FFI-52]`, `[FFI-11]` |
+| `E5068` | one live foreign object adopted twice; one address taken back twice with `from_raw` | `[FFI-36b]`, `[FFI-54]` |
+| `E5069` | `@ffi(no_callbacks)` on a foreign function whose own contract takes a callback (`callback(...)`); `@ffi(no_callbacks)` on a function whose contract takes a bare function pointer | `[FFI-52]`, `[FFI-11]` |
 | `E5090` | inline assembly is not supported by the C backend | `[UNS-6]` |
 | `E6001` | comptime evaluation exceeded its limits, or a constant's value depends on itself | `[CT-3]` |
 | `E6004` | panic during compile-time evaluation | `[CT-7]` |
 | `E6005` | `comptime(e)` refers to a run-time local | `[CT-6]` |
-| `E6010` | operation not available at compile time | `[CT-2]` |
-| `E7002` | `static` of a type that is not `ThreadShared`; a `guarded by` `static mut` of a type that is not `Send` | `[STA-1]` |
+| `E6010` | operation not available at compile time, among them a compile-time value a plain name could change (an `Atomic`, lock, `Once`, channel end, `guarded by` field or `@cached` class in a `comptime(e)`), and a `static mut`, or a `static` built on first access, reached by compile-time code | `[CT-2]`, `[CLI-21]`, `[CT-5]`, `[CT-1a]` |
+| `E7002` | `static` of a type that is not `ThreadShared`; a `guarded by` `static mut` of a type that is not `Send`; a `static` `Receiver` | `[STA-1]`, `[THR-20]` |
 | `E7004` | an unscoped thread or a kept callback uses a name with no capture word (a loop's name included) | `[THR-17]`, `[THR-10]`, `[FFI-21]` |
 | `E7006` | memory order an atomic operation does not support | `[THR-14]` |
-| `E7007` | two tasks of one scope change one place other than by a reduction, under a lock or through an `Atomic` (a task that reads the place before changing it, and a plain assignment, included); two tasks growing values made in one manager instance | `[THR-11]`, `[THR-21]`, `[TYP-46a]` |
-| `E7008` | a thread-bound value (a guard, a `Scope`, a raw pointer, a `threads(creator)` handle) sent to another thread | `[THR-8]`, `[THR-3]` |
+| `E7007` | two tasks of one scope change one place other than by a reduction, through the lock that guards the place, through an `Atomic` or through a `Sender` (a task that reads the place before changing it, and a plain assignment, included); two tasks growing values made in one manager instance; two tasks, or a task and the parent, consuming one `Receiver` | `[THR-11]`, `[THR-21]`, `[TYP-46a]` |
+| `E7008` | a thread-bound value (a guard, a `Scope`, a raw pointer, a `threads(creator)` handle, a `Retained[ForeignCallback]` token, an object of a trampoline class under `threads=creator`) sent to another thread | `[THR-8]`, `[THR-3]`, `[FFI-23]`, `[FFI-17d]` |
 | `E7010` | a parallel loop's chunks may write one place | `[PAR-2]` |
 | `E7011` | parallel loop has a loop-carried dependency | `[PAR-2a]` |
 | `E7012` | a `static mut` not `guarded by` a lock reached from another thread; a function given to a `thread_shared fn()` type whose chain reaches an unguarded `static mut` | `[THR-20]`, `[STA-1]`, `[CLO-16]` |
 | `E7013` | a `guarded by` field used without holding its lock | `[THR-18]` |
-| `E7014` | a `thread_shared` value changed directly, `ref mut` after `exists as` on a `weakref thread_shared T` link included | `[THR-1]`, `[TYP-45]` |
-| `E7015` | a one-thread owner (`shares`, `shares mut`, a `weakref T` link) or a lent value reaches another thread: held by a function any thread may run (`thread_shared fn()`, `thread.spawn`'s included), in a plain `fn()` field of a class whose object is made `thread_shared` (at that line); an end of a channel of a `T` that is not `Send` given to another thread; a `weakref T` link made to a value reached through a `thread_shared` value, at the line or at a call by the callee's summary; a class whose methods pin its objects both to one thread (`weakref this`) and `thread_shared` (`thread_shared this`); a `thread_shared` object of a class pinned to one thread or with a `weakref T` field; `thread_shared T using A` for an `A` that is not `ThreadShared` | `[THR-1]`, `[THR-2]`, `[THR-10]`, `[CLO-16]`, `[FFI-22]`, `[OWN-13]`, `[THR-8]`, `[THR-15]`, `[TYP-46a]` |
+| `E7014` | a `thread_shared` value changed directly, `ref mut` after `exists as` on a `weakref thread_shared T` link included; a reduction into a field of a `thread_shared` value | `[THR-1]`, `[TYP-45]`, `[THR-21]` |
+| `E7015` | a one-thread owner (`shares`, `shares mut`, a `weakref T` link) or a lent value reaches another thread: held by a function any thread may run (`thread_shared fn()`, `thread.spawn`'s included), in a plain `fn()` field of a class whose object is made `thread_shared` (at that line); an end of a channel of a `T` that is not `Send` given to another thread; a `weakref T` link made to a value reached through a `thread_shared` value, at the line or at a call by the callee's summary; a class whose methods pin its objects both to one thread (`weakref this`) and `thread_shared` (`thread_shared this`); a `thread_shared` object of a class pinned to one thread or with a `weakref T` field; `thread_shared T using A` for an `A` that is not `ThreadShared`; a scoped task or job that may end a `shares` owner or an object of a class family that carries a weak count; a `shares` owner or `weakref` link in a `threads(main)` callback registered off the main thread; a view of an `extern type` or opaque class reaching another thread; a one-thread owner in a trampoline class under `threads=any` | `[THR-1]`, `[THR-2]`, `[THR-10]`, `[CLO-16]`, `[FFI-22]`, `[OWN-13]`, `[THR-8]`, `[THR-15]`, `[TYP-46a]`, `[THR-11]`, `[FFI-21]`, `[FFI-8]`, `[FFI-17d]` |
 | `E7016` | a `@parallel` loop over something it cannot split into chunks: neither a range nor a list walked by element | `[PAR-1]` |
 | `E7017` | `thread_shared` on a name whose value was not created `thread_shared`; `weakref thread_shared x` where `x` was not; an object with one owner (`Node()`) of a class whose methods say its objects are `thread_shared` | `[THR-1]`, `[OWN-13]` |
-| `E7018` | a wait for a lock this thread holds, inside that lock's `with` block: a call through a function value, or a `dyn` or virtual method, that may run a function taking that lock (inside a walk under that lock too), or a join of a thread (a scope's end included) whose function changes what the lock guards | `[THR-19]` |
+| `E7018` | a wait for a lock this thread holds, while this thread holds that lock (its `with` block, or a guard in a local until its last use): a call through a function value, or a `dyn` or virtual method, that may run a function taking that lock (inside a walk under that lock too), or a join of a thread (a scope's end included) whose function changes what the lock guards; a first access of a `static` whose initialiser takes the lock; a second `read()` of an `RwLock` this thread holds `read()` | `[THR-19]` |
 | `E8001` | GPU layout does not match the CPU layout | `[GPU-10]` |
-| `E9001` | invalid manifest, including an unknown key | `[MAN-1]`, `[PRF-3]` |
+| `E9001` | invalid manifest, including an unknown key; a dependency's manifest section or flag honoured only when the root names it in `[build] native` | `[MAN-1]`, `[PRF-3]`, `[MAN-10]` |
 | `E9002` | no C compiler found, or it failed; the help names the host's remedy | `[BLD-FFI-1]` |
 | `E9003` | invalid command line | `[CLI-1]` |
 | `E9010` | `[lints]` names a lint the compiler does not define | `[MAN-3]` |
@@ -298,6 +297,9 @@ reused; retired codes are listed with the reason.
 | `E3080` | no check of exclusive access runs while a program runs; overlapping uses are `E3021` and `E3022` |
 | `E4071` | an undeclared `extern` is `Nondet` (`[DET-2]`), reported as `E4070` |
 | `E4073` | generator frames never allocate (`[CORO-1]`) |
+| `E5051` | retention is never observed (`[FFI-37d]`); a parameter with no `retained` word is reported by `ember bind --report` (`[FFI-35a]`) |
+| `E5057` | the overlay names no virtuals: `[FFI-39]` reads them from the class |
+| `E5066` | its case is `E5062` (`[FFI-43]`) |
 | `E6002` | compile-time evaluation is deterministic by construction (`[CT-4]`) |
 | `E7001` | `@sync` is gone: a value shared between threads is `thread_shared`, its changing fields `guarded by` a lock or `Atomic` |
 | `E7003` | `@sync` is gone (as `E7001`); a `thread_shared` value changed directly is `E7014` |

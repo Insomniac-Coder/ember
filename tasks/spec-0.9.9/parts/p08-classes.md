@@ -83,12 +83,17 @@ offset  size  field
   is `E0901`. A `thread_shared` value's header is 32 bytes (verdict 101), in every program: its
   making thread's count of its owners, the type index, the weak count, the other threads' count with
   its marks, and its place in the making thread's queue (`[RC-4]`). Which thread made a value is
-  read from the header of the memory chunk its block came from, written once when the chunk is made,
-  never from the value; a chunk belongs to its making thread for the life of the process, and a
-  block freed goes back to that thread's own pool, so the record never changes. The header is part
-  of the runtime ABI (`[VER-4]`). Foreign code never reads it; it calls `ember_rt`. An object
-  carries nothing else for the memory model: no access words, and no flags but a `thread_shared`
-  value's three marks.
+  read from the header of the memory chunk its block came from, never from the value: the runtime
+  takes the memory for `thread_shared` blocks made in `Global` in chunks from the configured
+  allocator (`[ALC-3]`, `[FFI-27]`, else `[RT-1]`'s), writes the making thread into each chunk's
+  header once, and a chunk belongs to that thread for the life of the process, never given to
+  another thread's allocator, and a block freed goes back to that thread's own pool, so the record
+  never changes. A `thread_shared` value made `using` an instance (`[ALC-1]`) lies in memory the
+  runtime did not lay out, so it is marked handed over at the line that makes it (`[RC-4]` point 4)
+  and no thread asks which thread made it. The header is part of the runtime ABI (`[VER-4]`).
+  Foreign code never reads it; it calls `ember_rt`. An object carries nothing else for the memory
+  model: no access words, and no flags but a `thread_shared` value's three marks and the kept-by-C
+  mark, the top bit of the type index (`[FFI-35a]`), so a type index is below 2^31.
 * `[OBJ-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* An owner, a link or a view of a class object
   is one pointer, to offset 0. An object's interface tables are reached through its type index, so a
   `dyn I` value of a class object, and an `Option` of one, is one pointer wide. A bare interface
@@ -213,15 +218,17 @@ offset  size  field
      compare-exchange on the away word that succeeds only if the count is the one it read; an
      opening of a `weakref thread_shared T` link that added to the count meanwhile (`[WK-12]`) makes
      it fail, and the thread reads again.
-  3. **Check points.** The compiler places them: at every loop's back edge, before every call that
-     may block the thread (waiting for a lock, `join`, a channel's receive, a sleep) and when the
-     thread ends. A value whose making thread has ended is ended at once by the thread that ends its
-     last owner: a thread's end empties and closes its queue in one atomic step, and a subtract that
-     finds the queue closed reads the home count, which nothing changes once the making thread has
-     ended (the close is a release and the subtract that finds it an acquire, `[RT-8]`), and ends
-     the value only when the home count and the away count after its subtract add up to zero, with
-     the step of point 2; so no value waits for a thread that is gone, and none ends while an owner
-     the making thread counted still holds it.
+  3. **Check points.** The compiler places them: at every loop's back edge, before and after every
+     call that may block the thread (waiting for a lock, a `join`, the end of a `with scope` block,
+     a channel's receive, a sleep) and when the thread ends; the one after a `join` or a scope's end
+     makes a value a joined task ended on its own thread end before the parent's next line. A value
+     whose making thread has ended is ended at once by the thread that ends its last owner: a
+     thread's end empties and closes its queue in one atomic step, and a subtract that finds the
+     queue closed reads the home count, which nothing changes once the making thread has ended (the
+     close is a release and the subtract that finds it an acquire, `[RT-8]`), and ends the value
+     only when the home count and the away count after its subtract add up to zero, with the step of
+     point 2; so no value waits for a thread that is gone, and none ends while an owner the making
+     thread counted still holds it.
   4. **Handed over at once.** The making thread, when it stores an owner of a `thread_shared` value
      where other threads can reach it (into any place reachable from a `thread_shared` value, a
      `guarded by` field or container under its lock; through a channel; into the state of a
@@ -229,11 +236,17 @@ offset  size  field
      starts; into the token of a callback C keeps; every such place is known when compiling), first
      adds its own count of the value into the away count and marks the value handed over; from then
      on every thread, the making thread included, counts in the away count, and a later end on
-     another thread never goes through the queue. Another thread's store of an owner it holds moves
-     nothing: its owners are counted away already. On the making thread every count operation on a
-     `thread_shared` value, and every opening of a `weakref thread_shared T` link to one, first
-     tests the handed-over mark, one load and one branch (§X.4), and a name opened on the home count
-     (`[RC-5]` point 2) is undone on the count the mark names at the name's end.
+     another thread never goes through the queue. A `thread_shared` value made `using` an instance
+     of a manager that may have several instances (`[ALC-1]`) is marked handed over at the line that
+     makes it: its instance may be reset or end as soon as the compiler sees its last owner end
+     (`[ALC-5]`, `[LT-4]`), which an end delayed to a check point would miss, so every owner of such
+     a value is counted in its away count and its end is never delayed; a value made in `Global` or
+     `System` keeps the two counts, its block waits for the check point and nothing reuses it.
+     Another thread's store of an owner it holds moves nothing: its owners are counted away already.
+     On the making thread every count operation on a `thread_shared` value, and every opening of a
+     `weakref thread_shared T` link to one, first tests the handed-over mark, one load and one
+     branch (§X.4), and a name opened on the home count (`[RC-5]` point 2) is undone on the count
+     the mark names at the name's end.
   5. **So a value's end is delayed only** when its last owner ends on a thread that did not make it
      and the value was not handed over at a place of point 4 (it travelled inside another object):
      it is ended at its making thread's next check point. Until then it is intact, and a `weakref`

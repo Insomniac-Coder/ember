@@ -34,52 +34,78 @@ comptime:
   initialisers that qualify under `[STA-3]`. Any function may be called there if its effect set
   contains nothing beyond `Alloc`, `Panic(Explicit)` and `RuntimeCheck` — no `Io`, `FFI`, `Sync`,
   `Block`, `Unsafe` or `Nondet`. Allocation is served by the evaluator's own heap.
+* `[CT-1a]` *(new in 0.9.20)* A function run at compile time reaches no module variable that lives
+  at run time: a read or a change of a `static mut`, or a read of a `static` whose initialiser runs
+  on first access (`[STA-3]`, `[CT-5]`), by the function or by anything it calls (its summary,
+  `[EFF-24]`), is `E6010` naming the static and the call chain ("`fresh` changes `NEXT_ID`, a
+  `static mut`, and a value made when compiling cannot see what the program will hold while running:
+  `comptime(fresh())` (line 8) → `fresh` (line 3) → `NEXT_ID += 1` (line 4); pass the number in: `fn
+  fresh(id: int) -> int`"). A `static` initialised at compile time (`[STA-3]`, placed in the image)
+  is read as the constant it is. So every compile-time result is a function of its inputs alone,
+  which is what `[CT-4]`'s cache assumes.
 * `[CT-6]` *(new in 0.9.9)* `comptime(e)` is an expression whose value is `e` evaluated at compile
   time. `e` may refer to constants, generic parameters, and statics initialised at compile time, not
   to run-time locals (`E6005`).
 * `[CT-7]` *(new in 0.9.9)* A `comptime:` block at item level, or as a statement, runs once during
   compilation for its checks. A failed `assert` or any other panic there is `E6004`, which shows the
   panic message and the compile-time call chain.
-* `[CT-2]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.20)* An operation that cannot run at compile time — an `extern` call, a
-  thread, a clock, `unsafe` pointer access outside the evaluator's heap, I/O — is `E6010`, naming the
-  call chain. A raw pointer made from an integer (`0 as *mut T`, `-1 as *mut T`) is a compile-time
-  value: it is an address, read by nothing, and a `const` of pointer type may hold one; a pointer into
-  the evaluator's heap may not leave it (`E6010`) (ODR-145). Two inputs are provided: `comptime.read_file(path)` (relative to the package root, the folder of the
-  package's `ember.toml`; the path is resolved with every symbolic link followed and must then lie
-  under that root, `E6010` otherwise, so a dependency's build cannot read the builder's files) and
-  `comptime.env(name)`, which the root package may call for any variable and a dependency only for a
-  variable the root package's manifest lists for it (`[comptime] env = ["CC", "TARGET_OS"]`, by
-  default none; `E6010` otherwise), so a dependency cannot read the builder's environment into the
-  program it builds. Both are recorded as build inputs.
-* `[CT-3]` Each evaluation is limited to 10⁸ steps and 256 MB of evaluator heap by default
-  (`[comptime]` in the manifest); exceeding either is `E6001`.
-* `[CT-4]` *(changed in 0.9.9)* *(changed in 0.9.10)* Compile-time evaluation is deterministic by construction: the evaluator
-  has no source of `Nondet` (`[DET-2]`). A transcendental function runs at compile time when the
-  source names `std.math.det`'s, with the same result it gives at run time; the platform library's
-  `sin` is `Nondet` and does not run at compile time, and the evaluator never puts `det.sin` in its
-  place (ODR-056). The evaluator is the compiler's own (`[CLI-21]`): a `const` value is never computed
-  by building and running a C program, and the test suite runs every program both compiled and on the
-  evaluator and fails on any difference. The evaluator computes integer and floating-point results exactly as the target does, including overflow panics
-  and the target's pointer size, endianness and layout. The lexical overflow policy is the same
-  at compile time and run time (`[TYP-8]`, ODR-084), including module constants and arithmetic
-  inside a function; calling another function preserves that function's policy. A result is cached with its inputs (source,
-  `read_file` contents, `env` values).
-* `[CT-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **Where results live.** A compile-time result is placed in the image as
-  constant data. A value that owns heap memory (`Array`, `String`, `Map`, an `owns T`, …) is handled so
-  that no run-time code ever grows, changes or frees constant data:
-  * in a `static` (not `static mut`) whose type gives no name a way to change the value (no `Mutex`,
-    `RwLock`, `Cell`, `Atomic` or `guarded by` field on the path to it), the value is materialised in
-    read-only memory; statics are never dropped;
-  * in a `static mut`, and in any other `static` whose memory a safe operation may write
-    (`static LOG: Mutex[Array[String]] = Mutex([])`), the initialiser runs at run time on first access
-    (`[STA-3]`), producing an ordinary heap value, so `static mut LOG: Array[String] = [String("start")]`
-    may later grow, or replace its strings, without touching constant data;
+* `[CT-2]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.20)* An operation that cannot
+  run at compile time — an `extern` call, a thread, a clock, `unsafe` pointer access outside the
+  evaluator's heap, I/O — is `E6010`, naming the call chain. A raw pointer made from an integer (`0
+  as *mut T`, `-1 as *mut T`) is a compile-time value: it is an address, read by nothing, and a
+  `const` of pointer type may hold one; a pointer into the evaluator's heap may not leave it
+  (`E6010`) (ODR-145). Two inputs are provided: `comptime.read_file(path)` (relative to the root of
+  the package whose source holds the `comptime.read_file` call, the folder of that package's
+  `ember.toml`, whatever package's item is being evaluated and whatever package is built; the path
+  is resolved with every symbolic link followed and must then lie under that root, `E6010`
+  otherwise, so a dependency's build cannot read the builder's files: a dependency's function that
+  reads a file for its caller reads the dependency's own files, and a file of the root package is
+  read by a `read_file` written in the root package and given to the dependency as text) and
+  `comptime.env(name)`, which a call written in the root package's source may make for any variable
+  and one written in a dependency's only for a variable the root package's manifest lists for it
+  (`[comptime] env = ["CC", "TARGET_OS"]`, by default none; `E6010` otherwise), so a dependency
+  cannot read the builder's environment into the program it builds. Both are recorded as build
+  inputs.
+* `[CT-3]` *(changed in 0.9.20)* Each evaluation is limited to 10⁸ steps, a step being one operation
+  of the source the evaluator performs (a call, an operator, an index, a field read, a loop's test
+  or a statement; a built-in copy or compare of n bytes counts ⌈n / 8⌉ steps), so the count is the
+  same on every implementation, and 256 MB of evaluator heap by default (`[comptime]` in the
+  manifest); exceeding either is `E6001`.
+* `[CT-4]` *(changed in 0.9.9)* *(changed in 0.9.10)* Compile-time evaluation is deterministic by
+  construction: the evaluator has no source of `Nondet` (`[DET-2]`). A transcendental function runs
+  at compile time when the source names `std.math.det`'s, with the same result it gives at run time;
+  the platform library's `sin` is `Nondet` and does not run at compile time, and the evaluator never
+  puts `det.sin` in its place (ODR-056). The evaluator is the compiler's own (`[CLI-21]`): a `const`
+  value is never computed by building and running a C program, and the test suite runs every program
+  both compiled and on the evaluator and fails on any difference. The evaluator computes integer and
+  floating-point results exactly as the target does, including overflow panics and the target's
+  pointer size, endianness and layout. The lexical overflow policy is the same at compile time and
+  run time (`[TYP-8]`, ODR-084), including module constants and arithmetic inside a function;
+  calling another function preserves that function's policy. A result is cached with its inputs
+  (source, `read_file` contents, `env` values).
+* `[CT-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **Where results live.**
+  A compile-time result is placed in the image as constant data. A value that owns heap memory
+  (`Array`, `String`, `Map`, an `owns T`, …) is handled so that no run-time code ever grows, changes
+  or frees constant data:
+  * in a `static` (not `static mut`) whose type is not one a plain name may change, the value is
+    materialised in read-only memory; statics are never dropped. A type a plain name may change is
+    one with, on any path to a field, a `Mutex`, `RwLock`, `Cell`, `Atomic`, `Once`, a channel end,
+    a `guarded by` field, or a class with a `@cached` method (`[FN-1]`, `[CLS-12]`);
+  * in a `static mut`, and in any other `static` whose memory a safe operation may write (`static
+    LOG: Mutex[Array[String]] = Mutex([])`), the initialiser runs at run time on first access
+    (`[STA-3]`), producing an ordinary heap value, so `static mut LOG: Array[String] =
+    [String("start")]` may later grow, or replace its strings, without touching constant data;
   * a `comptime(e)` whose type owns heap memory is materialised once, as constant data, and the
-    expression is a read-only view of it, with no copy: `t = comptime(table())` then `t[i]` reads the
-    table made when compiling, and a change through `t` is `E3023`. `copy of comptime(e)` makes a value
-    of your own, which may grow (`Alloc`). Its type is the read-only view of the value: `Span[T]` for
-    an `Array[T]`, `StrView` for a `String`, `ref T` for any other value that owns heap memory, with
-    the `static` region (`[LT-3]`); `copy of comptime(e)` has the value's own type.
+    expression is a read-only view of it, with no copy: `t = comptime(table())` then `t[i]` reads
+    the table made when compiling, and a change through `t` is `E3023`. `copy of comptime(e)` makes
+    a value of your own, which may grow (`Alloc`). Its type is the read-only view of the value:
+    `Span[T]` for an `Array[T]`, `StrView` for a `String`, `ref T` for any other value that owns
+    heap memory, with the `static` region (`[LT-3]`); `copy of comptime(e)` has the value's own
+    type. A `comptime(e)` whose type is one a plain name may change is `E6010`, since its value
+    would be constant data a line may write ("`comptime(fresh())` (line 11) makes a `Stats` when
+    compiling, which is read-only, and `Stats.hits` is an `Atomic`, which a plain name changes; make
+    the value while running: write `s = fresh()`, or keep it in a `static`"); `copy of comptime(e)`
+    of such a type is `E6010` the same way.
 
   A `const` cannot own heap memory (§V.7).
 

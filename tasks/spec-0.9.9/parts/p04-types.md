@@ -131,27 +131,28 @@
 
 ### Integer arithmetic
 
-* `[TYP-8]` *(changed in 0.9.9)* **Integer overflow panics in every profile.** An arithmetic operation
-  (`+ - * // % **`, unary `-`, and the compound assignments) whose mathematical result does not fit its
-  type panics with `integer overflow in '<op>'` naming the operator actually written. There is no
-  profile in which overflow wraps silently (`[PHIL-13]`). Three explicit ways to get other behaviour:
-  the methods `wrapping_<op>`, `checked_<op> -> Option[T]`, `saturating_<op>`, `overflowing_<op> ->
-  (T, bool)`; the attribute `@overflow(wrap)` or `@overflow(saturate)` on a function or module, which
-  changes the operators inside it for every profile; and range facts (`[RNG-4]`), which remove a check
-  the compiler proves cannot fire. Wrapping arithmetic is two's-complement and is never undefined
-  behaviour in the generated code (`[CG-C-1]`). The policy is lexical (ODR-084): a module's
-  `#! module overflow(panic|wrap|saturate)` supplies its default, otherwise `panic`; a function's
-  explicit attribute overrides the enclosing policy. A lambda or local function inherits the
-  policy where it is declared unless it has a permitted explicit override. Generic instantiation,
-  importing, inlining and calling never replace a declaration's policy with the caller's.
-  Parameter defaults use the declaring function's effective policy (`[FN-5]`); supplied argument
-  expressions use their own lexical policy. Saturation clamps the exact mathematical result to
-  the nearest representable bound. These policies do not change zero-divisor or negative-exponent
-  checks, casts, or shift-amount checks (`[TYP-10]`). They change the written operators, not the
-  contracts of called functions or integer methods (`[STD-20]`).
-* `[TYP-28]` *(new in 0.9.9)* **Division.** `/` is **true division** and applies to floats. `/` with two integer
-  operands is `E2240`, whose fix-its are `//` (floor division) and converting an operand to `float`.
-  For integers:
+* `[TYP-8]` *(changed in 0.9.9)* **Integer overflow panics in every profile.** An arithmetic
+  operation (`+ - * // % **`, unary `-`, and the compound assignments) whose mathematical result
+  does not fit its type panics with `integer overflow in '<op>'` naming the operator actually
+  written. There is no profile in which overflow wraps silently (`[PHIL-13]`). Three explicit ways
+  to get other behaviour: the methods `wrapping_<op>`, `checked_<op> -> Option[T]`,
+  `saturating_<op>`, `overflowing_<op> -> (T, bool)`; the attribute `@overflow(wrap)` or
+  `@overflow(saturate)` on a function or module, which changes the operators inside it for every
+  profile; and range facts (`[RNG-4]`), which remove a check the compiler proves cannot fire.
+  Wrapping arithmetic is two's-complement and is never undefined behaviour in the generated code
+  (`[CG-C-1]`). The policy is lexical (ODR-084): a module's `#! module
+  overflow(panic|wrap|saturate)` supplies its default, otherwise `panic`; a function's explicit
+  attribute overrides the enclosing policy. A lambda or local function inherits the policy where it
+  is declared unless it has a permitted explicit override. Generic instantiation, importing,
+  inlining and calling never replace a declaration's policy with the caller's. Parameter defaults
+  use the declaring function's effective policy (`[FN-5]`); supplied argument expressions use their
+  own lexical policy. Saturation clamps the exact mathematical result to the nearest representable
+  bound. These policies do not change zero-divisor or negative-exponent checks, casts, or
+  shift-amount checks (`[TYP-10]`). They change the written operators, not the contracts of called
+  functions or integer methods (`[STD-20]`).
+* `[TYP-28]` *(new in 0.9.9)* **Division.** `/` is **true division** and applies to floats. `/` with
+  two integer operands is `E2240`, whose fix-its are `//` (floor division) and converting an operand
+  to `float`. For integers:
   * `a // b` is floor division: the quotient rounded toward negative infinity (Python). `-7 // 2 ==
     -4`.
   * `a % b` is floor modulo: `a - (a // b) * b`, which has the sign of `b` (Python). `-7 % 2 == 1`,
@@ -159,25 +160,28 @@
   * `a.div_trunc(b)` and `a.rem_trunc(b)` give C's truncating quotient and remainder, for code that
     wants C's exact meaning.
   * a zero divisor panics (`division by zero`); `MIN // -1` overflows per `[TYP-8]` (panic by
-    default, `MIN` under wrapping, `MAX` under saturation). `MIN.div_trunc(-1)` always panics
-    under that method's fixed contract (`[STD-20]`); `MIN.rem_trunc(-1)` is zero.
-* `[TYP-29]` *(new in 0.9.9)* For floats, `a // b` is `floor(a / b)` and `a % b` is
-  `a - b * floor(a / b)`, each operation rounded to the float type as it is evaluated (ODR-164,
-  reversing ODR-021): `1.0 // 0.1 == 10.0` and `1.0 % 0.1 == 0.0`, since `1.0 / 0.1` rounds to
-  `10.0`. Zero divisors, infinities and NaN follow IEEE.
-* `[TYP-10]` *(changed in 0.9.9)* **Shifts.** `a << n` and `a >> n` accept any integer type for `n`.
-  If `n` is negative or not less than the bit width of `a`'s type the shift panics, in every profile.
-  Bits shifted out are discarded and are not an overflow. `>>` on a signed type is arithmetic
-  (sign-extending); on an unsigned type logical. The methods `wrapping_shl`/`wrapping_shr` mask the
-  amount instead.
-* `[TYP-30]` *(new in 0.9.9)* **Powers.** `a ** b` with integer `a` and non-negative integer `b` is exact, and
-  overflows per `[TYP-8]`; a negative exponent is `E2151` when it is a constant and a panic when it is
-  not. A float base with a float or integer exponent is `pow`. Other combinations are `E2020`.
-* `[TYP-31]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **Sizes and indices are `int`.** Every standard container's `len()` returns `int`.
-  Indexing accepts an index of any integer type; an index that is negative or not less than the length
-  panics with the bounds check's stop text (`[COST-6]`), whatever its width: one wider than `usize` is compared whole, never
-  cut to its low bits (D-527). There is no Python-style negative indexing: a negative literal index
-  is `E2011` (`[LEX-24]`). `usize` and `isize` remain for foreign interfaces and raw memory.
+    default, `MIN` under wrapping, `MAX` under saturation). `MIN.div_trunc(-1)` always panics under
+    that method's fixed contract (`[STD-20]`); `MIN.rem_trunc(-1)` is zero.
+* `[TYP-29]` *(new in 0.9.9)* For floats, `a // b` is `floor(a / b)` and `a % b` is `a - b * floor(a
+  / b)`, each operation rounded to the float type as it is evaluated (ODR-164, reversing ODR-021):
+  `1.0 // 0.1 == 10.0` and `1.0 % 0.1 == 0.0`, since `1.0 / 0.1` rounds to `10.0`. Zero divisors,
+  infinities and NaN follow IEEE.
+* `[TYP-10]` *(changed in 0.9.9)* *(changed in 0.9.20)* **Shifts.** `a << n` and `a >> n` accept any
+  integer type for `n`. If `n` is negative or not less than the bit width of `a`'s type the shift
+  panics, in every profile ("`shift out of range`: `1 << n` on line 9 shifts an `int` by 70; use
+  `wrapping_shl`"). Bits shifted out are discarded and are not an overflow. `>>` on a signed type is
+  arithmetic (sign-extending); on an unsigned type logical. The methods
+  `wrapping_shl`/`wrapping_shr` mask the amount instead.
+* `[TYP-30]` *(new in 0.9.9)* **Powers.** `a ** b` with integer `a` and non-negative integer `b` is
+  exact, and overflows per `[TYP-8]`; a negative exponent is `E2151` when it is a constant and a
+  panic when it is not. A float base with a float or integer exponent is `pow`. Other combinations
+  are `E2020`.
+* `[TYP-31]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **Sizes and indices are
+  `int`.** Every standard container's `len()` returns `int`. Indexing accepts an index of any
+  integer type; an index that is negative or not less than the length panics with the bounds check's
+  stop text (`[COST-6]`), whatever its width: one wider than `usize` is compared whole, never cut to
+  its low bits (D-527). There is no Python-style negative indexing: a negative literal index is
+  `E2011` (`[LEX-24]`). `usize` and `isize` remain for foreign interfaces and raw memory.
 
 ### Floating point
 
@@ -655,8 +659,8 @@ implements Display:` block.
 | Marker | Holds when |
 |---|---|
 | `Copy` | declared with `@derive(Copy)` on a struct or enum whose fields are all `Copy` and which has no `drop`, which gives it `Clone` too; always for scalars, `ref T`, `Span`, `StrView`, raw pointers, `extern fn`, tuples and fixed arrays of `Copy` elements; never for a class object, an `owns`, `shares`, `shares mut` or `thread_shared` value, a `weakref` or `sharedref mut` link, `ref mut T` or `MutSpan[T]` |
-| `Send` | inferred: every component is `Send`, so nothing reachable from the value is a one-thread owner (`shares`, `shares mut`), a `weakref T` link, a `sharedref mut` link (a view several holders on one thread may change), or bound to its thread (a lock's guard, a `Scope`, a raw pointer; the `ref A` a value made in a manager's instance holds, unless `A` is `ThreadShared`, `[TYP-46a]`); `ref T` and `Span[T]` are when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is `Send`; a class object is when its fields are; a `thread_shared T` value, and a `weakref thread_shared T` link, are when `T` is `ThreadShared` and `Send` (`[THR-8]`) |
-| `ThreadShared` | inferred: several threads may hold and read one value of the type at once; every component is `ThreadShared` (the `ref A` a value made in a manager's instance holds included, `[TYP-46a]`); `ref mut`, `MutSpan`, `sharedref mut`, `Cell`, `UnsafeCell`, raw pointers, a `shares` or `shares mut` value and a `weakref T` link are not; a `weakref thread_shared T` link is when `T` is `Send` and `ThreadShared` (`[THR-9]`) |
+| `Send` | inferred: every component is `Send`, so nothing reachable from the value is a one-thread owner (`shares`, `shares mut`), a `weakref T` link, a `sharedref mut` link (a view several holders on one thread may change), or bound to its thread (a lock's guard, a `Scope`, a raw pointer, a `Retained[ForeignCallback]` token (`[FFI-23]`), an object of a trampoline class under `threads=creator` (`[FFI-17d]`); the `ref A` a value made in a manager's instance holds, unless `A` is `ThreadShared`, `[TYP-46a]`); `ref T` and `Span[T]` are when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is `Send`; a class object is when its fields are; a `thread_shared T` value, and a `weakref thread_shared T` link, are when `T` is `ThreadShared` and `Send` (`[THR-8]`) |
+| `ThreadShared` | inferred: several threads may hold and read one value of the type at once; every component is `ThreadShared` (the `ref A` a value made in a manager's instance holds included, `[TYP-46a]`); `ref mut`, `MutSpan`, `sharedref mut`, `Cell`, `UnsafeCell`, raw pointers, a `Retained[ForeignCallback]` token, a `shares` or `shares mut` value and a `weakref T` link are not; an `extern type`, an opaque C++ class or a `@ffi(handle)` type is only where the program declares it (`[FFI-8]`); a `weakref thread_shared T` link is when `T` is `Send` and `ThreadShared` (`[THR-9]`) |
 | `Sized` | everything except `dyn I` and unsized foreign types |
 
 * `[TYP-43]` *(new in 0.9.10)* *(changed in 0.9.15)* The marker interfaces are interfaces of `std.core`, exported by the

@@ -344,15 +344,16 @@ fn main():
   is a field of a `Job` object, which other names may reach and would find empty; take the function
   out first: `t = mem.replace(ref mut j.task, fn(): pass)`, then `t()`"), as every hand-over out of
   such a place is (`[EXP-6]`).
-* `[CLO-7]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* Standard-library
-  functions that keep a function beyond the call, or run it on another thread, take it `owns`:
-  `thread.spawn` and `jobs.submit` take `owns f: thread_shared fn() -> R` (`[THR-10]`, `[JOB-2]`), a
-  callback registry an `owns` function value, and `scope.spawn` a plain `owns f: fn() -> R`, whose
-  tasks may use the caller's own variables since they end with the `with scope` block (`[THR-11]`).
-  Nothing is captured by a rule of the call: the function given says after its brackets what it
-  holds (`thread.spawn(owns fn() owns tx: produce(tx))`), a name with no word is the real variable,
-  and a function that may outlive a real variable it uses is `E3026` (`E7004` for an unscoped thread
-  or a kept C callback, whose message names the words, Part XI).
+* `[CLO-7]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)*
+  Standard-library functions that keep a function beyond the call, or run it on another thread, take
+  it `owns`: `thread.spawn` and `jobs.submit` take `owns f: thread_shared once fn() -> R`
+  (`[THR-10]`, `[JOB-2]`), a callback registry an `owns` function value, and `scope.spawn` a plain
+  `owns f: once fn() -> R`, whose tasks may use the caller's own variables since they end with the
+  `with scope` block (`[THR-11]`). Nothing is captured by a rule of the call: the function given
+  says after its brackets what it holds (`thread.spawn(owns fn() owns tx: produce(tx))`), a name
+  with no word is the real variable, and a function that may outlive a real variable it uses is
+  `E3026` (`E7004` for an unscoped thread or a kept C callback, whose message names the words, Part
+  XI).
 * `[CLO-11]` *(new in 0.9.9)* A call `recv.name(args)` where `recv`'s type has no method `name` but
   has a field `name` of callable type calls that field. A method of that name takes precedence.
 * `[CLO-12]` *(new in 0.9.9)* *(changed in 0.9.15)* A local function (`[GRM-28]`) is a named lambda:
