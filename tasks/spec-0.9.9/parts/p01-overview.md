@@ -42,79 +42,87 @@ default, and C11, which reaches every platform that has a C compiler (`[CG-LL-1]
 
 * `[PHIL-1]` Two syntactically identical declarations in the same context have identical storage,
   lifetime and synchronisation behaviour.
-* `[PHIL-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* No heap allocation happens that the source does
-  not show. The allocating forms are: constructing a type documented to allocate (class objects,
-  `Array`, `String`, `Map`, `Set`); a value for an `owns T` place (`owns Mesh(...)`, `[OWN-10]`); a value
-  made shared (`shares x`, `shares mut x`, `thread_shared x`, `[RC-1]`); `copy of x` of a value that
-  owns memory (`[OWN-8]`); a list, map or set literal or comprehension in a position that produces a
-  heap collection; a string literal in a position that produces a `String` (`[TXT-9]`); an f-string; a
-  function value whose state exceeds its inline capacity (`[CLO-10]`); and container growth. Each
-  carries the `Alloc` effect and is listed by `ember inspect --alloc`.
+* `[PHIL-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* No heap allocation
+  happens that the source does not show. The allocating forms are: constructing a type documented to
+  allocate (class objects, `Array`, `String`, `Map`, `Set`); a value for an `owns T` place (`owns
+  Mesh(...)`, `[OWN-10]`); a value made shared (`shares x`, `shares mut x`, `thread_shared x`): the
+  block is made where the value is made, so for a local shared on a later line the allocation is the
+  local's own line, which `ember inspect --alloc` lists with the sharing line beside it (`[RC-1]`);
+  `copy of x` of a value that owns memory (`[OWN-8]`); a list, map or set literal or comprehension
+  in a position that produces a heap collection; a string literal in a position that produces a
+  `String` (`[TXT-9]`); an f-string; a function value whose state exceeds its inline capacity
+  (`[CLO-10]`); and container growth. Each carries the `Alloc` effect and is listed by `ember
+  inspect --alloc`.
 * `[PHIL-3]` *(changed in 0.9.15)* No implicit copy of a non-`Copy` value occurs: a copy is written
-  `copy of x` (`[OWN-8]`). A copy of a `Copy` value is its bits, and a `Copy` type holds no owner and no
-  link (`[OWN-7]`); no copy runs any other code.
-* `[PHIL-4]` *(changed in 0.9.15)* No implicit synchronisation occurs except through types documented to
-  synchronise (`Mutex`, `RwLock`, `Atomic`, channels, `guarded by` fields) and the counts of
-  `thread_shared` values (`[RC-4]`).
+  `copy of x` (`[OWN-8]`). A copy of a `Copy` value is its bits, and a `Copy` type holds no owner
+  and no link (`[OWN-7]`); no copy runs any other code.
+* `[PHIL-4]` *(changed in 0.9.15)* No implicit synchronisation occurs except through types
+  documented to synchronise (`Mutex`, `RwLock`, `Atomic`, channels, `guarded by` fields) and the
+  counts of `thread_shared` values (`[RC-4]`).
 * `[PHIL-5]` Every safety check the compiler removes, it removes because it proved the check
   unnecessary. Declining to look is not a proof.
 * `[PHIL-6]` Every expensive or dangerous conversion at an FFI boundary is explicit in source or
   reported by the compiler.
 * `[PHIL-7]` Panics are for programmer errors. Recoverable failures use `Result`.
-* `[PHIL-8]` *(changed in 0.9.15)* **The enforcement ladder.** Ember guarantees memory safety, lifetime
-  safety and data-race freedom for Safe code, and proves them when compiling: ownership, views, changes
-  through several names, lifetimes and threads are checked by the compiler, and nothing is paid for
-  them while the program runs. A check runs while the program runs only where the property is data the
-  program computes as it runs: an index in bounds, an integer that may overflow, whether a `weakref`
-  link's target still lives, a downcast, a count at its limit, a resource handle's generation, a foreign
-  callback's token, and a disjointness test the program writes itself (`assert_disjoint`); each has a
-  row in §X.4. A program whose safety the compiler cannot prove is rejected, and the diagnostic MUST name
-  the line that expresses the same intent in a way it can prove (`[DIA-25]`); an operation that neither
-  can make safe requires `unsafe`.
+* `[PHIL-8]` *(changed in 0.9.15)* **The enforcement ladder.** Ember guarantees memory safety,
+  lifetime safety and data-race freedom for Safe code, and proves them when compiling: ownership,
+  views, changes through several names, lifetimes and threads are checked by the compiler, and
+  nothing is paid for them while the program runs. A check runs while the program runs only where
+  the property is data the program computes as it runs: an index in bounds, an integer that may
+  overflow, whether a `weakref` link's target still lives, a downcast, a count at its limit, a
+  resource handle's generation, a foreign callback's token, and a disjointness test the program
+  writes itself (`assert_disjoint`); each has a row in §X.4. A program whose safety the compiler
+  cannot prove is rejected, and the diagnostic MUST name the line that expresses the same intent in
+  a way it can prove (`[DIA-25]`); an operation that neither can make safe requires `unsafe`.
 * `[PHIL-8a]` Every rejection shape in §XVII.6 has a mandated `help` that, applied literally to the
-  rejected program, produces a program that compiles. `tests/ui/` holds a before/after pair per shape.
-* `[PHIL-9]` *(changed in 0.9.15)* Class objects and shared values carry a header holding their counts
-  and their type (`[OBJ-1]`), and nothing else; value types have no hidden state, because `[TYP-11]`
-  gives every plain struct C layout. A value that is to be changed through several names says so where
-  it is made or held: several owners (`shares mut`, `[RC-7]`), several changeable links
-  (`sharedref mut`, `[LT-46]`), or, between threads, `thread_shared` with a lock or an `Atomic`.
+  rejected program, produces a program that compiles. `tests/ui/` holds a before/after pair per
+  shape.
+* `[PHIL-9]` *(changed in 0.9.15)* Class objects and shared values carry a header holding their
+  counts and their type (`[OBJ-1]`), and nothing else; value types have no hidden state, because
+  `[TYP-11]` gives every plain struct C layout. A value that is to be changed through several names
+  says so where it is made or held: several owners (`shares mut`, `[RC-7]`), several changeable
+  links (`sharedref mut`, `[LT-46]`), or, between threads, `thread_shared` with a lock or an
+  `Atomic`.
 * `[PHIL-12]` *(new in 0.9.9)* **No silent acceptance.** Every construct a program writes — an
-  attribute, an import, a directive, a contract, a manifest key, a statement form — either has exactly
-  the effect this specification gives it, or the program is rejected. An implementation that has not
-  yet built a construct rejects it with `E0900 not supported yet by this compiler`, naming the construct
-  and the rule; a construct this specification does not define is `E0901`. Accepting a construct and
-  ignoring it is a defect of the worst class, because the programmer believes the effect holds.
-* `[PHIL-13]` *(new in 0.9.9)* **One meaning per program.** No build profile, compiler flag, manifest key or
-  optimisation level changes what a Safe program computes, which branch it takes, whether it panics,
-  or whether it is accepted, and none turns off a check Safe Ember's guarantees need. What a build
-  accepts depends on its semantic inputs alone — the language version, the target and its layout, the
-  resolved dependencies and the library layers selected; a build may also stop for its policy
-  (warnings made errors, `[MAN-3]`) or an exhausted budget (`[CT-3]`), each reported as that and never
-  as a language error. `@realtime` means the declaring package's set (`[EFF-19]`), in every caller
-  (ODR-061). Profiles change only speed, debug information, and the amount of detail
-  in diagnostics and panic messages (`[PRF-1]`). `debug_assert` is the one check a profile turns off; it
-  may not have side effects, so it cannot change what a program whose assertions hold computes.
-* `[PHIL-14]` *(new in 0.9.9)* *(changed in 0.9.10)* **Python spelling, Python meaning.** Where Ember accepts a spelling that Python also
-  has — `/`, `//`, `%`, `**`, `a < b < c`, `x in xs`, `x is None`, `[1, 2]`, `{"k": v}`, f-strings,
-  `for … else`, keyword arguments — it gives it Python's meaning, restricted to Ember's types. Where
-  Ember cannot give Python's meaning at C speed, it rejects the spelling with a fix-it rather than
-  giving it a different meaning silently. Integer `/` is the example: rejected, with `//` and a float
-  conversion as the fixes (`[TYP-28]`). Sequence repetition (`s * n`, `[x] * n`) is rejected likewise,
-  with `s.repeat(n)` and `[x for _ in 0..n]` as the fixes (`[DIA-21]`).
-* `[PHIL-15]` *(new in 0.9.9)* *(changed in 0.9.15)* **Costs are named.** Every cost the language can
-  insert without the programmer writing it — a bounds check, an overflow check, a count operation and
-  its limit compare, a `weakref` link's header test, a type-id compare, an indirect call, an
-  allocation — has a row in §X.4 and is reported per site by `ember inspect`.
+  attribute, an import, a directive, a contract, a manifest key, a statement form — either has
+  exactly the effect this specification gives it, or the program is rejected. An implementation that
+  has not yet built a construct rejects it with `E0900 not supported yet by this compiler`, naming
+  the construct and the rule; a construct this specification does not define is `E0901`. Accepting a
+  construct and ignoring it is a defect of the worst class, because the programmer believes the
+  effect holds.
+* `[PHIL-13]` *(new in 0.9.9)* **One meaning per program.** No build profile, compiler flag,
+  manifest key or optimisation level changes what a Safe program computes, which branch it takes,
+  whether it panics, or whether it is accepted, and none turns off a check Safe Ember's guarantees
+  need. What a build accepts depends on its semantic inputs alone — the language version, the target
+  and its layout, the resolved dependencies and the library layers selected; a build may also stop
+  for its policy (warnings made errors, `[MAN-3]`) or an exhausted budget (`[CT-3]`), each reported
+  as that and never as a language error. `@realtime` means the declaring package's set (`[EFF-19]`),
+  in every caller (ODR-061). Profiles change only speed, debug information, and the amount of detail
+  in diagnostics and panic messages (`[PRF-1]`). `debug_assert` is the one check a profile turns
+  off; it may not have side effects, so it cannot change what a program whose assertions hold
+  computes.
+* `[PHIL-14]` *(new in 0.9.9)* *(changed in 0.9.10)* **Python spelling, Python meaning.** Where
+  Ember accepts a spelling that Python also has — `/`, `//`, `%`, `**`, `a < b < c`, `x in xs`, `x
+  is None`, `[1, 2]`, `{"k": v}`, f-strings, `for … else`, keyword arguments — it gives it Python's
+  meaning, restricted to Ember's types. Where Ember cannot give Python's meaning at C speed, it
+  rejects the spelling with a fix-it rather than giving it a different meaning silently. Integer `/`
+  is the example: rejected, with `//` and a float conversion as the fixes (`[TYP-28]`). Sequence
+  repetition (`s * n`, `[x] * n`) is rejected likewise, with `s.repeat(n)` and `[x for _ in 0..n]`
+  as the fixes (`[DIA-21]`).
+* `[PHIL-15]` *(new in 0.9.9)* *(changed in 0.9.15)* **Costs are named.** Every cost the language
+  can insert without the programmer writing it — a bounds check, an overflow check, a count
+  operation and its limit compare, a `weakref` link's header test, a type-id compare, an indirect
+  call, an allocation — has a row in §X.4 and is reported per site by `ember inspect`.
 * `[PHIL-16]` *(new in 0.9.15)* **The words say what the code does.** Whether a name owns its value,
-  copies it, takes it over or views it, and whether it may change what it names, is written by a word on
-  the line that makes the name (`owns`, `copy of`, `shares`, `ref mut`, `weakref`); a name with no word
-  takes a stated default that never changes anything, never aliases silently and never copies silently
-  (`[BRW-12]`, `[BRW-15]`). A keyword does the same for every type. A rule that would make a program
-  compile but do something other than what its words say is not part of Ember: such a program is
-  rejected, and the message names what was refused in the program's own names, says why in one line,
-  and gives the exact line to write, which compiles (`[DIA-25]`). A fact the compiler works out from a
-  function's body never changes what a line does: it only decides whether a line compiles, or removes a
-  test that would always pass (`[EFF-1]`).
+  copies it, takes it over or views it, and whether it may change what it names, is written by a
+  word on the line that makes the name (`owns`, `copy of`, `shares`, `ref mut`, `weakref`); a name
+  with no word takes a stated default that never changes anything, never aliases silently and never
+  copies silently (`[BRW-12]`, `[BRW-15]`). A keyword does the same for every type. A rule that
+  would make a program compile but do something other than what its words say is not part of Ember:
+  such a program is rejected, and the message names what was refused in the program's own names,
+  says why in one line, and gives the exact line to write, which compiles (`[DIA-25]`). A fact the
+  compiler works out from a function's body never changes what a line does: it only decides whether
+  a line compiles, or removes a test that would always pass (`[EFF-1]`).
 
 `[PHIL-8]` is a rule about **how** a guarantee is met, never about **whether**: what can be proved when
 compiling is proved then, at no cost while the program runs, and a refusal always names the line to

@@ -56,15 +56,18 @@ The compiler infers, for every function, an **effect set** drawn from:
   summary (`[EFF-24]`), with the chains of calls that messages name; the effects of the scoped tasks
   it starts; for a class, whether its own methods say its objects are on one thread,
   `thread_shared`, or neither, and for a function the parameters, `this` included, of which it makes
-  a `weakref T` link (`[OWN-13]`, `[BLD-14]` items 8 and 9); and the function values the package
-  stores into a function type and the callbacks it hands to C, which a program that uses the package
-  counts wherever such a value is called and at every foreign call (`[EFF-26]`). A change to any of
-  them is reported as an interface change and re-checks every caller: an edit inside one function,
-  or a library update (two lines of a function swapped, so that a use of a parameter falls below a
-  line that clears what it views), can make a line elsewhere stop compiling, and the message names
-  the chain of calls. A parent link proves itself (Part VIII) only when no other package can change
-  it or the places that own its holders. What a generic function changes through its type
-  parameters' methods is worked out for each instance, by the package that compiles that instance.
+  a `weakref T` link (`[OWN-13]`, `[BLD-14]` items 8 and 9), which parameter it stores an owner of
+  into a place of which other parameter or of `this` (`[WK-7]`, item 10), and what its body needs of
+  the kinds that reach a `dyn`, interface or base-class parameter (`[LT-1]`, item 11); and the
+  function values the package stores into a function type and the callbacks it hands to C, which a
+  program that uses the package counts wherever such a value is called and at every foreign call
+  (`[EFF-26]`). A change to any of them is reported as an interface change and re-checks every
+  caller: an edit inside one function, or a library update (two lines of a function swapped, so that
+  a use of a parameter falls below a line that clears what it views), can make a line elsewhere stop
+  compiling, and the message names the chain of calls. A parent link proves itself (Part VIII) only
+  when no other package can change it or the places that own its holders. What a generic function
+  changes through its type parameters' methods is worked out for each instance, by the package that
+  compiles that instance.
 * `[EFF-9]` *(changed in 0.9.9)* *(changed in 0.9.15)* `RuntimeCheck(k)` enters a function's effect
   set when a check of kind `k` survives the compiler's profile-independent proofs in its body.
   `Arithmetic` covers integer overflow, division by zero, shift amounts and negative integer
@@ -307,7 +310,7 @@ compute the same bits, on one machine and across machines running the same binar
 | Floor `//` and `%` on signed integers | guaranteed present, small | one compare-and-adjust over C's truncation; free for a positive constant divisor; `div_trunc`/`rem_trunc` give C's |
 | Division-by-zero and shift-range checks | conditionally elided | removed for constants, `NonZero` divisors and range facts |
 | Owner count +1 / -1 | guaranteed present | only where a line makes or ends a `shares`, `shares mut` or `thread_shared` owner (`[THR-1]`), and nowhere else; a plain add for `shares`, and for `thread_shared` on the thread that made the value until it is handed over (`[RC-4]`); an atomic one on other threads; each +1 is checked against the count's limit, one compare and a branch never taken (`[COST-6]`) |
-| A `thread_shared` value's two counts | guaranteed present | a 32-byte header, 16 bytes more than one atomic count's (`[OBJ-1]`); a test of the thread's queue at each check point (`[RC-4]`), and the queue's work for a value whose last owner ends on another thread without a hand-over. Measured against one atomic count (`tasks/96/redesign/measure-0.9.15/brc/REPORT.md`, 15 runs per cell): a thread's own values 25% faster on 1 to 8 threads, the camera program 89 ms against 544 ms; reading another thread's values 3% slower on 1 thread and 17% to 28% faster on 2 to 8; one thread handing copies to all 0.93x to 1.05x; a random mix 9% to 13% slower; a pipeline (made on one thread, ended on the next) 27% slower on 1 thread and the same on 2 to 8 |
+| A `thread_shared` value's two counts | guaranteed present | on the making thread, one load and one branch on the handed-over mark before each count operation and each opening of a `weakref thread_shared T` link (`[RC-4]` point 4); a 32-byte header, 16 bytes more than one atomic count's (`[OBJ-1]`); a test of the thread's queue at each check point (`[RC-4]`), and the queue's work for a value whose last owner ends on another thread without a hand-over. Measured against one atomic count (`tasks/96/redesign/measure-0.9.15/brc/REPORT.md`, 15 runs per cell): a thread's own values 25% faster on 1 to 8 threads, the camera program 89 ms against 544 ms; reading another thread's values 3% slower on 1 thread and 17% to 28% faster on 2 to 8; one thread handing copies to all 0.93x to 1.05x; a random mix 9% to 13% slower; a pipeline (made on one thread, ended on the next) 27% slower on 1 thread and the same on 2 to 8 |
 | The weak count in a header | guaranteed present | 4 bytes, and 8 where the first field is 8-aligned, in every object of a class family that carries a weak count and in every `shares` value of a type that does (`[OBJ-1]`: a type that can be named from outside its package, or that a `weakref` type in its own package names); none in a value of a private type its package never links to; a `thread_shared` value's 32-byte header carries it always; nothing runs for it |
 | `weakref` link made, given another target, or ended | guaranteed present | one add or one subtract of the target's weak count, the add checked against its limit; plain for a `weakref T`, one atomic add or subtract for a `weakref thread_shared T` (`[RT-10]`), chosen by the link's type; a parent link pays it too, one add when `child.parent = weakref this` runs and one subtract when the link changes or the child ends |
 | Opening a `weakref` link (`if w exists as p:`) | conditionally elided | for a `weakref T`, one load of the target's header and one compare, with no flag read and no branch choosing the path (during the target's `drop` the object is already ended, and the same test finds it gone); a parent-link read the compiler proves (Part VIII) is a load and a test for no link |
@@ -316,7 +319,7 @@ compute the same bits, on one machine and across machines running the same binar
 | A walk up a tree across a call that may change nodes | guaranteed present | per step, one test of the node's header and one move of the link's weak count (a subtract and an add); where the node's class has no `drop` of its own (nor can a derived class the walk's package cannot see) and the walk's link is a `weakref T` (`[WK-18]`), the walk runs in a deferred-drop region and the count moves go, leaving the header test; a walk whose visit function changes no node keeps its views and pays nothing per step |
 | A view of an object reached through a link; a `sharedref mut` link | not observable | checked when compiling: no count and no deferred-drop region around the view |
 | Stale-handle check | guaranteed present, **every profile** | the guarantee is the check; `get_unchecked` in `unsafe` |
-| Kind test or cast | guaranteed present | one type-id compare per `if s is Circle as c:` and per `cast s as Circle` (Part VIII) |
+| Kind test or cast | guaranteed present | one compare of the header's type index against a constant per `if s is Circle as c:` and per `cast s as Circle` (Part VIII, `[TYP-44a]`); where the C toolchain cannot fill an immediate from a link-time value, one load of that constant per function |
 | `assert_disjoint` | guaranteed present | two compares where the program writes it (two spans of one list given to one call, one of them changeable); the call is then compiled with noalias; none when the compiler knows the spans apart |
 | `Cell` access | not observable | a load or a store |
 | Interface call through `dyn` | guaranteed present | one indirect call |

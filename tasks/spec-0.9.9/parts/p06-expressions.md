@@ -5,24 +5,27 @@
 ## VI.1 Evaluation order
 
 * `[EXP-1]` Operands, arguments, and the elements of tuple, list, map and set literals are evaluated
-  left to right, completely, before the operation or call. Named arguments are evaluated in the order
-  written.
-* `[EXP-2]` *(changed in 0.9.9)* An assignment evaluates its right side first, into a temporary if it
-  has several elements, then the target places, then stores left to right. `a[i], a[j] = a[j], a[i]`
-  swaps. An augmented assignment `a[i] += x` evaluates `x`, then the place once, then reads, operates
-  and writes.
-* `[EXP-3]` `and` and `or` short-circuit. `x if c else y` evaluates `c` and then exactly one branch. A
-  comparison chain stops at the first false link (`[GRM-25]`).
-* `[EXP-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* A temporary created while evaluating an
-  expression statement is dropped at the end of that statement, in reverse order of creation, unless a
-  view made from it is still to be used: it then lives until the last use of every view made from it,
-  lists of views included (`word = line.to_lower().trim()` keeps the lowered string until `word`'s last
-  use), and a view of it that would outlive it is refused (`[BRW-19]`, `E3063`). A temporary created
-  while evaluating the **condition** of an `if`, `elif` or `while` is dropped before the chosen block
-  runs, unless the condition names what it holds (`exists as`, a kind test, a pattern) and the name
-  refers to it, in which case it lives to the end of that block only — never into an `elif` or `else`.
-  A temporary bound by `with` lives to the end of the `with` block; one created by a `for` iterable
-  lives to the end of the loop.
+  left to right, completely, before the operation or call. Named arguments are evaluated in the
+  order written.
+* `[EXP-2]` *(changed in 0.9.9)* An assignment evaluates its right side first, into a temporary if
+  it has several elements, then the target places, then stores left to right. `a[i], a[j] = a[j],
+  a[i]` swaps. An augmented assignment `a[i] += x` evaluates `x`, then the place once, then reads,
+  operates and writes.
+* `[EXP-3]` `and` and `or` short-circuit. `x if c else y` evaluates `c` and then exactly one branch.
+  A comparison chain stops at the first false link (`[GRM-25]`).
+* `[EXP-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A temporary created
+  while evaluating an expression statement is dropped at the end of that statement, in reverse order
+  of creation, unless a view made from it is still to be used: it then lives until the last use of
+  every view made from it, lists of views included (`word = line.to_lower().trim()` keeps the
+  lowered string until `word`'s last use), and a view of it that would outlive it is refused
+  (`[BRW-19]`, `E3063`). A temporary created while evaluating the **condition** of an `if`, `elif`
+  or `while` is dropped before the chosen block runs, unless the condition names what it holds
+  (`exists as`, a kind test, a pattern): the temporary the name refers to, and every temporary of
+  the condition that the name's value views, directly or through what it holds (`[BRW-19]`: `if
+  names().first() exists as p:` keeps the list `names()` made while `p` views a string in it), then
+  live to the end of that block only, never into an `elif` or `else`; the rest are dropped before
+  the block runs. A temporary bound by `with` lives to the end of the `with` block; one created by a
+  `for` iterable lives to the end of the loop.
 
 ## VI.2 Places, values and hand-overs
 
@@ -128,74 +131,80 @@ fn main():
 * `[CTL-0]` The condition of `if`, `elif`, `while` and a match guard MUST be a `bool`; there is no
   truthiness. `E2035` carries a type-directed fix-it: `not xs.is_empty()` for a container or string,
   `x is not None` for an `Option`, `x != 0` for a number.
-* `[CTL-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* `for names in e:` walks:
-  * a place `e` whose type is `Iterable`: calls `e.iter()`; each loop name is a read-only view of the
-    element it is on, and what it reads does not change while it is used (`[BRW-1]`);
-    `for ref mut x in e:` names the element so that it may change it, the only name for it while it
-    is used;
-  * `for x in owns e:`, or a value `e` (a temporary) whose type is `IntoIterator`: hands `e` over, and
-    each element to the loop's name;
-  * an `Iterator` value: calls `next` until `None`.
-  `Array`, `[T; N]`, `Span`, `MutSpan`, `Set`, `Map`, ranges and generators are iterable; a `Map`
-  yields its keys, as Python's `dict` does, and with two names its keys and values (`for k, v in m:`,
-  as `m.items()` gives them; `for k, ref mut v in m:` may change each value; `m.values()` the values),
-  and `for k in owns m:` hands its keys over, ending the values (`into_items()` keeps both); a `String`
-  or `StrView` yields its `char`s. A loop's names follow the comma rule
-  (`for ref mut pos, ref vel in q:`; a name with no word after one with a word is `E0116`,
-  `[OWN-13]`). A plain loop name changes
-  nothing: `for v in xs.iter_mut(): v += 1` is `E3023`, whose help gives `for ref mut v in xs:`.
-* `[CTL-2]` *(changed in 0.9.15)* While a `for` loop walks a collection, nothing changes it but the
-  loop's own handle on the item it is on, whatever the change and through whatever name or call
-  (`[BRW-18]`): `xs[0] = 5` inside `for x in xs:` is `E3020`, whose help gives `for ref mut x in xs:`
-  and `x = 5`, and a collection that must gain or lose items does so after the loop (`retain`,
-  `extend`, a list of the program's own). A counting loop `for i in 0..xs.len():` does not walk `xs`: it
-  may write its elements and add to it, but a removal is `E3020`; a `while` loop that tests its position
-  against the current length at every step may add and remove.
-* `[CTL-3]` *(changed in 0.9.10)* `a..b` (`Range`), `a..=b` (`RangeInclusive`) and `a..` (`RangeFrom`) over integers are
-  iterable and compile to a counted loop with no iterator object. `a..=MAX` terminates after `MAX`;
-  `a..` has no end: it gives its type's maximum, and the value after it is an overflow (`[TYP-8]`),
-  found when the loop or the iterator asks for it. A range is a
+* `[CTL-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `for names in e:`
+  walks:
+  * a place `e` whose type is `Iterable`: calls `e.iter()`; each loop name is a read-only view of
+    the element it is on, and what it reads does not change while it is used (`[BRW-1]`); `for ref
+    mut x in e:` names the element so that it may change it, the only name for it while it is used;
+  * `for x in owns e:`, or a value `e` (a temporary) whose type is `IntoIterator`: hands `e` over,
+    and each element to the loop's name;
+  * an `Iterator`, a place or a temporary: calls `next` on it until `None`; a place keeps what the
+    loop did not take (`rest = it.next()` after a `break`), and is handed over only by `owns`.
+    `Array`, `[T; N]`, `Span`, `MutSpan`, `Set`, `Map`, ranges and generators are iterable; a `Map`
+    yields its keys, as Python's `dict` does, and with two names its keys and values (`for k, v in
+    m:`, as `m.items()` gives them; `for k, ref mut v in m:` may change each value; `m.values()` the
+    values), and `for k in owns m:` hands its keys over, ending the values (`into_items()` keeps
+    both); a `String` or `StrView` yields its `char`s. A loop's names follow the comma rule (`for
+    ref mut pos, ref vel in q:`; a name with no word after one with a word is `E0116`, `[OWN-13]`).
+    A plain loop name changes nothing: `for v in xs.iter_mut(): v += 1` is `E3023`, whose help gives
+    `for ref mut v in xs:`.
+* `[CTL-2]` *(changed in 0.9.15)* *(changed in 0.9.20)* While a `for` loop walks a collection,
+  nothing changes it but the loop's own handle on the item it is on, whatever the change and through
+  whatever name or call (`[BRW-18]`): `xs[0] = 5` inside `for x in xs:` is `E3020`, whose help gives
+  `for ref mut x in xs:` and `x = 5`, and a collection that must gain or lose items does so after
+  the loop (`retain`, `extend`, a list of the program's own). A `for` over a range whose header
+  reads `xs.len()` is a counting loop over `xs`: it does not walk `xs`, so it may write elements and
+  add at the end (`[EFF-24]`'s add-only summary), but a call in its body whose summary may shorten
+  `xs` or replace it is `E3020` ("`xs.pop()` shortens `xs`, whose length this loop read once on line
+  3; walk backwards, or collect the indices and remove after the loop"); every other loop walks
+  nothing by its header, and each index is bounds-checked (`[STD-17]`), so a `while` loop that tests
+  its position against the current length at every step may add and remove.
+* `[CTL-3]` *(changed in 0.9.10)* `a..b` (`Range`), `a..=b` (`RangeInclusive`) and `a..`
+  (`RangeFrom`) over integers are iterable and compile to a counted loop with no iterator object.
+  `a..=MAX` terminates after `MAX`; `a..` has no end: it gives its type's maximum, and the value
+  after it is an overflow (`[TYP-8]`), found when the loop or the iterator asks for it. A range is a
   value (ODR-027): `Range[T]`, `RangeInclusive[T]`, `RangeFrom[T]` and `RangeTo[T]` (`..b`) are
   prelude structs with public bounds, `start` and `end` (a `RangeFrom` has only `start`, a `RangeTo`
   only `end`), and are `Copy` when `T` is. A `for` over a range value counts over a copy of its
   bounds, so the range is unchanged and can be iterated again, as Python's `range` can.
-* `[CTL-3b]` *(changed in 0.9.10)* *(changed in 0.9.15)* Iteration over ranges, `Span`, `MutSpan`, `Array`, `[T; N]`, `SoA`
-  columns, and `enumerate`, `zip`, `take`, `skip`, `step_by`, `copy_each` and `rev` composed over them,
-  MUST compile to an induction-variable loop over base pointers and lengths, with no iterator object in
-  memory and no call per element, independent of the host C compiler's optimiser. `step_by(k)` becomes
-  the increment `k` (a `k` that is not a positive constant is checked once before the loop). An
-  `enumerate` numbers in the type the known-numbers rule gives it (`[STD-19]`), which holds every
-  number it can give, so the loop computes each number with no check: over a range of 64-bit
-  numbers the compiler knows nothing of, an `i128`. The loop has a copy that computes numbers wider
-  than 64 bits as `int`s, taken after one test before it when every number fits one, and computes
-  them in their own type otherwise (G8-4 decision C); the numbers are the same either way.
-  `tests/conformance/CTL-3b/` asserts it on the emitted C.
+* `[CTL-3b]` *(changed in 0.9.10)* *(changed in 0.9.15)* Iteration over ranges, `Span`, `MutSpan`,
+  `Array`, `[T; N]`, `SoA` columns, and `enumerate`, `zip`, `take`, `skip`, `step_by`, `copy_each`
+  and `rev` composed over them, MUST compile to an induction-variable loop over base pointers and
+  lengths, with no iterator object in memory and no call per element, independent of the host C
+  compiler's optimiser. `step_by(k)` becomes the increment `k` (a `k` that is not a positive
+  constant is checked once before the loop). An `enumerate` numbers in the type the known-numbers
+  rule gives it (`[STD-19]`), which holds every number it can give, so the loop computes each number
+  with no check: over a range of 64-bit numbers the compiler knows nothing of, an `i128`. The loop
+  has a copy that computes numbers wider than 64 bits as `int`s, taken after one test before it when
+  every number fits one, and computes them in their own type otherwise (G8-4 decision C); the
+  numbers are the same either way. `tests/conformance/CTL-3b/` asserts it on the emitted C.
 * `[CTL-4]` The `else` of `while` or `for` runs when the loop ends without `break`.
-* `[CTL-5]` A `match` tests arms top to bottom; the first that matches runs; a guard is evaluated after
-  binding; the arms MUST be exhaustive (`E2090`); an unreachable arm is `W2091`.
-* `[CTL-6]` `with a = e1, b = e2:` binds `a` and `b` for the block and drops them in reverse order when
-  it ends. `with e:` keeps the temporary alive for the block (a guard).
-* `[CTL-7]` *(changed in 0.9.15)* *(changed in 0.9.20)* `defer:` registers a block to run when the enclosing block exits, last registered first.
-  It may refer to locals declared before it, which it uses as they are when it runs; they are not
-  dropped before it. Its uses of them are uses at every exit of the block (`[BRW-2]`): a local a
-  `defer` block uses is not handed over below the `defer` line (`E3040`, labelled at the hand-over), and a
-  view it uses is not ended before the block exits (`E3060`). It cannot `return`, `break` or `continue`
-  (`E2160`).
-* `[CTL-8]` On every exit from a block, its `defer` blocks run first and then its locals are dropped in
-  reverse declaration order.
+* `[CTL-5]` A `match` tests arms top to bottom; the first that matches runs; a guard is evaluated
+  after binding; the arms MUST be exhaustive (`E2090`); an unreachable arm is `W2091`.
+* `[CTL-6]` `with a = e1, b = e2:` binds `a` and `b` for the block and drops them in reverse order
+  when it ends. `with e:` keeps the temporary alive for the block (a guard).
+* `[CTL-7]` *(changed in 0.9.15)* *(changed in 0.9.20)* `defer:` registers a block to run when the
+  enclosing block exits, last registered first. It may refer to locals declared before it, which it
+  uses as they are when it runs; they are not dropped before it. Its uses of them are uses at every
+  exit of the block (`[BRW-2]`): a local a `defer` block uses is not handed over below the `defer`
+  line (`E3040`, labelled at the hand-over), and a view it uses is not ended before the block exits
+  (`E3060`). It cannot `return`, `break` or `continue` (`E2160`).
+* `[CTL-8]` On every exit from a block, its `defer` blocks run first and then its locals are dropped
+  in reverse declaration order.
 * `[CTL-9]` `pass` does nothing; an empty block is written `pass`.
-* `[CTL-10]` *(new in 0.9.9)* **Names assigned in every branch.** In an `if`/`elif`/`else` that has an `else`, or an
-  exhaustive `match` statement, a name that is not in scope before the statement and is declared (by
-  `x = e`) in **every** arm that completes normally, at the **same type**, is declared in the enclosing
-  block and is initialised after the statement. An arm that ends in `return`, `break`, `continue` or a
-  panic does not need to declare it. Different types in different arms are `E2230`, naming each arm.
+* `[CTL-10]` *(new in 0.9.9)* **Names assigned in every branch.** In an `if`/`elif`/`else` that has
+  an `else`, or an exhaustive `match` statement, a name that is not in scope before the statement
+  and is declared (by `x = e`) in **every** arm that completes normally, at the **same type**, is
+  declared in the enclosing block and is initialised after the statement. An arm that ends in
+  `return`, `break`, `continue` or a panic does not need to declare it. Different types in different
+  arms are `E2230`, naming each arm.
 * `[CTL-11]` *(new in 0.9.15)* **Headers that name what they test.** An `if` or `while` header that
-  opens an `Option` or a `weakref` link (`if cam.target exists as p:`, `while cur.parent exists as p:`,
-  `[GRM-44]`), and an `if` or `elif` header that tests a value's kind (`if s is Circle as c:`,
-  `[DSP-4]`), run their block as those rules say, and the name they declare is in scope in that block
-  only, never in an `elif` or `else`: `else:` runs when the link or `Option` holds nothing, or when the
-  value is not of that kind. The name keeps its place for the whole block (`[BRW-14]`): a plain one
-  only reads, and `exists as copy of v` is a copy of the program's own.
+  opens an `Option` or a `weakref` link (`if cam.target exists as p:`, `while cur.parent exists as
+  p:`, `[GRM-44]`), and an `if` or `elif` header that tests a value's kind (`if s is Circle as c:`,
+  `[DSP-4]`), run their block as those rules say, and the name they declare is in scope in that
+  block only, never in an `elif` or `else`: `else:` runs when the link or `Option` holds nothing, or
+  when the value is not of that kind. The name keeps its place for the whole block (`[BRW-14]`): a
+  plain one only reads, and `exists as copy of v` is a copy of the program's own.
 
 ```ember
 fn describe(n: int) -> String:
@@ -326,10 +335,15 @@ fn main():
   `owns f: once fn(A) -> R`, and accepts both kinds; a plain `f: once fn(A) -> R` is `E3013`
   ("`call_once` uses `f` up, so it must hold it: write `owns f: once fn()`"). Calling `f` uses it
   up; a second call is `E3040`.
-* `[CLO-6a]` *(changed in 0.9.9)* *(changed in 0.9.15)* A `once fn` value the program owns,
-  including one in an `owns` block or a collection, is callable: the call hands the value out of its
-  place (the place becomes empty, and a collection element is removed by the calling API, e.g.
-  `jobs.pop_front()`).
+* `[CLO-6a]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A `once fn` value is
+  called out of a place that owns it and that no other name reaches: a local, a part of a struct
+  local (`[OWN-11]`: the part is `E3040` until given a new value), or a collection element the
+  calling API removes (`jobs.pop_front()()`); the call hands the value out of its place. A call of
+  one held in a class object's field, in an `owns` block (`[EXP-6]`), or reached through a `shares`,
+  `shares mut`, `thread_shared`, `weakref` or `sharedref mut` link or a view, is `E3013` ("`j.task`
+  is a field of a `Job` object, which other names may reach and would find empty; take the function
+  out first: `t = mem.replace(ref mut j.task, fn(): pass)`, then `t()`"), as every hand-over out of
+  such a place is (`[EXP-6]`).
 * `[CLO-7]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* Standard-library
   functions that keep a function beyond the call, or run it on another thread, take it `owns`:
   `thread.spawn` and `jobs.submit` take `owns f: thread_shared fn() -> R` (`[THR-10]`, `[JOB-2]`), a
@@ -362,7 +376,14 @@ fn main():
   Array[fn()] = []`, is `E7015` at that line ("`Bus.handlers` holds plain `fn()` values, and a
   `thread_shared Bus` may run them on any thread; write `handlers: Array[thread_shared fn()] = []`
   in `Bus`"). A function that captures nothing, or only `thread_shared` values and copies of values
-  that may go to another thread, meets `thread_shared fn()`.
+  that may go to another thread, meets `thread_shared fn()` only if, through its chain of calls
+  (`[EFF-24]`), it reaches no `static mut` that is not `guarded by` a `static` `Lock` and no
+  one-thread value by any route; the check is made where the function is given to, stored into or
+  coerced to such a type, whichever thread runs it (`E7012`: "`on_frame` changes `FRAME`, a module
+  variable of the main thread, and `Bus.handlers` holds functions any thread may run (`thread_shared
+  fn()`); guard it: write `static TICK_LOCK: Lock = Lock()` and `static mut FRAME: int guarded by
+  TICK_LOCK = 0` instead of line 3, and put the change inside `with TICK_LOCK:`"), so that the type
+  says it and no package needs to see which thread calls through the place (`[BLD-16]`).
 * `[CLO-17]` *(new in 0.9.15)* *(changed in 0.9.20)* **What a function value does is worked out from
   the program.** A callable type says nothing about what its functions change. A call through a
   function value makes the changes, reads and ends of every function the program can put there
@@ -372,11 +393,12 @@ fn main():
   `b.click()` a change of `LOG` in that program, inside a loop over `LOG` `E3020` (`[BRW-18]`). For
   the overlap of a call's arguments a function value counts as changing every place its functions
   change and every real variable they capture (`[BRW-11]`), and a function value is not stored in a
-  place that a real variable it changes owns, all the way down, nor in a place that its body may
-  reshape or end through a name it captured with a word (a `shares mut`, `thread_shared` or
-  `sharedref mut` owner or link, a `weakref` link it opens `ref mut`), read through the chain of its
-  calls (`[EFF-24]`), since the run would end or move the function's own state (`b.on_click(owns
-  fn(): b.handlers.clear())`, `t.on_visit = fn(n: Node): t.root.children.clear()`,
+  place that its body may reshape or end, or that is owned, all the way down, by anything its body
+  may reshape or end, through any name it reaches: a real variable, a name it captured with a word
+  (a `shares mut`, `thread_shared` or `sharedref mut` owner or link, a `weakref` link it opens `ref
+  mut`), or a `static mut` (`BUS.handlers.push(owns fn(): BUS.handlers.clear())`), read through the
+  chain of its calls (`[EFF-24]`), since the run would end or move the function's own state
+  (`b.on_click(owns fn(): b.handlers.clear())`, `t.on_visit = fn(n: Node): t.root.children.clear()`,
   `bus.handlers.push(owns fn() weakref bus: if bus exists as ref mut b: b.handlers.clear())`,
   `E3022`: "this function clears `b.handlers`, and `on_click` would keep it in `b.handlers`, so it
   would change the button that holds it while the button runs it; clear the handlers after the click
@@ -431,61 +453,70 @@ fn main():
     println(total)
 ```
 
-* `[CORO-1]` *(changed in 0.9.9)* A `gen fn` declares a generator. Calling it runs none of its body; it
-  returns the generator's **frame**, a value holding the parameters and suspended state. The declared
-  return type is `Generator[Y]` or `Generator[Y, R]`, where `Y` is the type of each yielded value and
-  `R` (default `void`) the type of the final `return` value.
-* `[CORO-2]` `yield e` suspends the generator and produces `e`. `yield` outside a `gen fn` is `E2220`.
-  A `gen fn` with no `yield` is accepted and produces `L2004`.
-* `[CORO-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* `Generator[Y, R]` in a signature names the function's own frame type
-  opaquely, as `some Iterator[Item = Y]` would: each `gen fn` has a distinct, sized frame type, which is
-  not `Copy`, that implements `Iterator[Item = Y]`. `next()` resumes the body to the next `yield`
-  (returning `Some(y)`) or to its end (returning `None`, after which `result() -> Option[R]` gives the
-  returned value). Calling `next()` after the end returns `None` again. Generators of different
-  functions are kept together as `owns dyn Iterator[Item = Y]`. `yield` as an expression has type
-  `void`.
-* `[CORO-4]` The compiler rewrites the body into a state machine over the frame: locals live across a
-  `yield` become frame fields, others stay on the stack. No run-time machinery exists beyond the frame.
-* `[CORO-5]` *(changed in 0.9.15)* **A generator allocates nothing.** The frame's size is a compile-time constant; it is an
-  ordinary value, handed over by `=`, that may live in a local, a field, an `Array` or an arena. It is
-  held `owns dyn` only to store generators of different functions together. A `gen fn` carries `Alloc`
-  only if its body does.
-* `[CORO-6]` *(changed in 0.9.9)* *(changed in 0.9.15)* A view **into the generator's own frame** (a view
-  of one of its own locals) may not be held across a `yield`: moving the suspended frame would leave it
-  pointing where the local was (`E2221`: "`r` (line 3) points into this generator's own frame, which may
-  move while it is suspended at the `yield` on line 4; use `n` itself: remove line 3 and write
-  `yield n` instead of line 5"). A `for` over a list, string, map or set whose body yields walks by
-  position: after each resume it reads the collection again from where it lives now (the frame, or the
-  object's field) and checks the position against its current length, so it holds no address across the
-  suspension and the frame may move (`for s in buf: yield copy of s` over the generator's own `buf`
-  compiles). Views that came in as parameters, or are made from them, may be held across `yield`; the
-  frame is then a view of what they view, as a returned view would be (`[LT-1]`). `evens` above is such
-  a generator.
-* `[CORO-7]` Dropping a suspended generator drops exactly the locals live at its suspension point, in
-  reverse declaration order.
-* `[CORO-8]` A generator's effect set is the union over its whole body; contracts apply to it as to any
-  function.
-* `[CORO-9]` A frame never points into itself in Safe code; `unsafe` code that builds one states it in
-  `@safety`.
+* `[CORO-1]` *(changed in 0.9.9)* A `gen fn` declares a generator. Calling it runs none of its body;
+  it returns the generator's **frame**, a value holding the parameters and suspended state. The
+  declared return type is `Generator[Y]` or `Generator[Y, R]`, where `Y` is the type of each yielded
+  value and `R` (default `void`) the type of the final `return` value.
+* `[CORO-2]` `yield e` suspends the generator and produces `e`. `yield` outside a `gen fn` is
+  `E2220`. A `gen fn` with no `yield` is accepted and produces `L2004`.
+* `[CORO-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* `Generator[Y, R]` in a signature names the
+  function's own frame type opaquely, as `some Iterator[Item = Y]` would: each `gen fn` has a
+  distinct, sized frame type, which is not `Copy`, that implements `Iterator[Item = Y]`. `next()`
+  resumes the body to the next `yield` (returning `Some(y)`) or to its end (returning `None`, after
+  which `result() -> Option[R]` gives the returned value). Calling `next()` after the end returns
+  `None` again. Generators of different functions are kept together as `owns dyn Iterator[Item =
+  Y]`. `yield` as an expression has type `void`.
+* `[CORO-4]` The compiler rewrites the body into a state machine over the frame: locals live across
+  a `yield` become frame fields, others stay on the stack. No run-time machinery exists beyond the
+  frame.
+* `[CORO-5]` *(changed in 0.9.15)* **A generator allocates nothing.** The frame's size is a
+  compile-time constant; it is an ordinary value, handed over by `=`, that may live in a local, a
+  field, an `Array` or an arena. It is held `owns dyn` only to store generators of different
+  functions together. A `gen fn` carries `Alloc` only if its body does.
+* `[CORO-6]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A view **into the
+  generator's own frame** (a view of one of its own locals, or of a parameter the frame holds: one
+  taken `owns`, or a `Copy` value, which is copied in, `[FN-1]`) may not be held across a `yield`:
+  moving the suspended frame would leave it pointing where the local was (`E2221`: "`r` (line 3)
+  points into this generator's own frame, which may move while it is suspended at the `yield` on
+  line 4; use `n` itself: remove line 3 and write `yield n` instead of line 5"; for a parameter,
+  "`r` (line 2) points into this generator's own frame, where its parameter `p` lives, and the frame
+  may move while it is suspended at the `yield` on line 3; use `p` itself: remove line 2 and write
+  `yield p.x` instead of line 4"). A `for` over a list, string, map or set whose body yields walks
+  by position: after each resume it reads the collection again from where it lives now (the frame,
+  or the object's field) and checks the position against its current length, so it holds no address
+  across the suspension and the frame may move (`for s in buf: yield copy of s` over the generator's
+  own `buf` compiles). A view that came in as a parameter (`xs: Span[int]`, `p: Player`, a view
+  type), or one made from what such a view points into, may be held across `yield`, since it points
+  outside the frame; the frame is then a view of what they view, as a returned view would be
+  (`[LT-1]`). `evens` above is such a generator.
+* `[CORO-7]` *(changed in 0.9.20)* Dropping a suspended generator drops exactly the locals live at
+  its suspension point, in reverse declaration order, then its parameters, in reverse order; a
+  generator that has run to its end has ended its parameters as a function's `return` does, holds
+  nothing, and dropping it does nothing.
+* `[CORO-8]` A generator's effect set is the union over its whole body; contracts apply to it as to
+  any function.
+* `[CORO-9]` A frame never points into itself in Safe code; `unsafe` code that builds one states it
+  in `@safety`.
 * `[CORO-10]` A `gen fn` may not be `extern`, `@export`ed or passed to C (`E2222`).
-* `[CORO-12]` *(new in 0.9.9)* *(changed in 0.9.15)* A `gen fn` **method of a class** has `this`, and its frame is a
-  view of the object (`[CORO-14]`): the object does not end while the generator will still be used, and
-  the body changes the object as any method's body does (`[EXC-15]`).
-* `[CORO-14]` *(new in 0.9.15)* **A generator is a walk of what it views.** A generator's frame is a view
-  a call gave (`[LT-1]`): a method's points into its object, and `from` narrows it
-  (`gen fn replay() -> Generator[int] from log:`). While it will still be used, the collection it walks
-  does not change, however the generator walks it, by position included (`E3020`, `[BRW-18]`:
-  "`d.log.push(owns "open")` (line 3) changes `d.log`, which `g` walks (`g = d.replay()`, line 1), and `g`
-  is used again on line 4; push after `g`'s last use: move `d.log.push(owns "open")` below line 4"); any
-  other change of what its view points into is `E3021` (`d.angle = 90.0` while `g` will still be used),
-  unless `from` narrows the view to the field it walks.
-* `[CORO-13]` *(new in 0.9.9)* *(changed in 0.9.15)* A `yield` while a `@must_drop` value (`[THR-6]`) is live is `E2231`: a
-  suspended generator may never be resumed, so the value's `drop`, on which a safety guarantee
-  depends, would wait as long as the frame is kept (a `thread.scope()` whose tasks use the generator's
-  parameters). A scope that closes before the next `yield` is unaffected.
+* `[CORO-12]` *(new in 0.9.9)* *(changed in 0.9.15)* A `gen fn` **method of a class** has `this`,
+  and its frame is a view of the object (`[CORO-14]`): the object does not end while the generator
+  will still be used, and the body changes the object as any method's body does (`[EXC-15]`).
+* `[CORO-14]` *(new in 0.9.15)* **A generator is a walk of what it views.** A generator's frame is a
+  view a call gave (`[LT-1]`): a method's points into its object, and `from` narrows it (`gen fn
+  replay() -> Generator[int] from log:`). While it will still be used, the collection it walks does
+  not change, however the generator walks it, by position included (`E3020`, `[BRW-18]`:
+  "`d.log.push(owns "open")` (line 3) changes `d.log`, which `g` walks (`g = d.replay()`, line 1),
+  and `g` is used again on line 4; push after `g`'s last use: move `d.log.push(owns "open")` below
+  line 4"); any other change of what its view points into is `E3021` (`d.angle = 90.0` while `g`
+  will still be used), unless `from` narrows the view to the field it walks.
+* `[CORO-13]` *(new in 0.9.9)* *(changed in 0.9.15)* A `yield` while a `@must_drop` value
+  (`[THR-6]`) is live is `E2231`: a suspended generator may never be resumed, so the value's `drop`,
+  on which a safety guarantee depends, would wait as long as the frame is kept (a `thread.scope()`
+  whose tasks use the generator's parameters). A scope that closes before the next `yield` is
+  unaffected.
 * `[CORO-11]` `std.coroutine` builds gameplay sequencing on generators with no further compiler
-  support: `Scheduler` resumes a set of `Generator[Wait]` once per frame and drops the finished ones;
-  `wait(seconds)`, `wait_frames(n)` and `wait_until(pred)` produce `Wait` values.
+  support: `Scheduler` resumes a set of `Generator[Wait]` once per frame and drops the finished
+  ones; `wait(seconds)`, `wait_frames(n)` and `wait_until(pred)` produce `Wait` values.
 
 ```ember
 from std.coroutine import Wait, wait
@@ -503,8 +534,11 @@ class Door:
 ## VI.6 Assertions and panics
 
 * `assert(cond)`, `assert(cond, msg)`, `assert_eq(a, b)`, `assert_ne(a, b)` are checked in every
-  profile; `debug_assert(…)` only in `debug`, and it MUST NOT have side effects that change a program's
-  result (`W2016` if its argument calls a function with effects other than `Panic`).
+  profile; `debug_assert(…)` is evaluated only in `debug`, so its argument is checked as a read in
+  every profile: a `ref mut` argument inside it is `E3027` and a hand-over inside it `E3013`
+  ("`debug_assert` only reads its argument, since a `release` build never runs it; remove `owns`:
+  `debug_assert(check(s))`"), and a call in it of a function with effects other than `Panic` is
+  `W2016`.
 * `panic(msg)`, `todo()`, `unreachable()` have type `Never`.
 * `[PAN-1]` A panic prints `panic at <file>:<line>:<col>: <message>` (and a backtrace outside
   `release`) to standard error and calls `abort()`. There is no unwinding in this version; `defer`

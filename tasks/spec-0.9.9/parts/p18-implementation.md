@@ -271,12 +271,14 @@ points, and with each call standing for what its callee's summary (`[BCK-8]`) sa
   `#$ count_bits: 8`), stored and compared as the real one is, so 255 owners or links of a
   one-thread value reach the limit and the next stops the program ("too many owners of a `Player`
   (255)"; 127 for a `thread_shared` value); every other program keeps the 32-bit count.
-* `[RT-8]` *(changed in 0.9.15)* A `thread_shared` value's away count and its weak count (`[RC-4]`)
-  are atomic: an owner or a link made is a relaxed increment, one ended an acquire-release
-  decrement; putting a value in its making thread's queue is a release, and emptying the queue an
-  acquire. Its home count is plain: only its making thread reads or writes it. A `shares` value's
-  counts are plain adds, since no `shares` value reaches another thread. Publishing a new
-  `thread_shared` value to another thread is a release, and taking it there an acquire.
+* `[RT-8]` *(changed in 0.9.15)* *(changed in 0.9.20)* A `thread_shared` value's away count and its
+  weak count (`[RC-4]`) are atomic: an owner or a link made is a relaxed increment, one ended an
+  acquire-release decrement; putting a value in its making thread's queue is a release, and emptying
+  the queue an acquire; closing the queue at the thread's end is a release, and the subtract that
+  finds it closed an acquire, so that thread reads the final home count (`[RC-4]` point 3). Its home
+  count is plain: only its making thread reads or writes it. A `shares` value's counts are plain
+  adds, since no `shares` value reaches another thread. Publishing a new `thread_shared` value to
+  another thread is a release, and taking it there an acquire.
 * `[RT-10]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **Counting is inline.** A
   count changes only where a line makes or ends a `shares`, `shares mut` or `thread_shared` owner or
   a `weakref` link, and where a name is opened from a `weakref thread_shared T` link; an object with

@@ -185,77 +185,82 @@ fn main():
     println(boss.mesh.points.len())
 ```
 
-* `[ALC-1]` *(changed in 0.9.15)* *(changed in 0.9.20)* **The place names the kind, the making line names the instance.**
-  `using A` after a type whose value has heap memory of its own (an `owns`, `shares`, `shares mut` or
-  `thread_shared` value, a class object, an `Array`, `Map` or `Set`) names the kind of memory manager
-  that memory comes from, a type implementing `Allocator`: `mesh: owns Mesh using LevelArena`,
-  `names: Array[String] using LevelArena`, `Map[K, V, H] using A`, `Set[T, H] using A`. Without `using`,
-  it comes from the built-in manager, `Global`. The line that makes such a value names the instance
-  after the value: `boss = Enemy(hp=500, mesh=owns Mesh(points=[0.0, 1.0]) using current)` takes the
-  mesh's block from the arena `current` by calling `current.allocate(…)`; a class object is made
-  `Enemy(hp=5) using current`, a list `[0.0, 1.0] using current`, and `Array.new_in(current)` makes an
-  empty one. A manager type with no fields has one instance (`Global`, `System`, and any such type a
-  program declares): it needs none on the making line, and its values keep no instance word; every
-  other manager type may have several instances. Checked
-  when compiling: the instance is of the kind the place names, and a value given to a `using A` place
-  was made in an instance of `A` (`E2020`: "`mesh` takes its memory from a `LevelArena`
-  (`mesh: owns Mesh using LevelArena`), and this `Mesh` comes from the built-in manager; say which
-  arena: `mesh=owns Mesh(points=[0.0, 1.0]) using current`"); a value made in an instance, and every
-  value that holds one, lives no longer than that instance (`E3063`, `[LT-4]`); `using` after any other
-  type is `E2114` ("an `int` has no memory of its own to take from `LevelArena`; remove `using`").
-  `using` names where that value's own memory comes from; what the value holds comes from where its own
-  fields' types say (the `points` list of that `Mesh` from the built-in manager). A value whose manager
-  may have several instances keeps its instance's address, one word, so that its growth and its end go
-  back to the instance it came from (`[LT-4]`), except in two kinds of manager, whose values keep no
-  word (verdict 107): (1) a manager that frees nothing one by one, whose `deallocate` does nothing (an
-  empty body, checked when compiling): nothing it hands out is given back value by value, and all of it
-  is freed together when the instance is cleared or ends; a value that grows (an `Array`, `Map`, `Set`
-  or `String`) made in it keeps the word, since its growth goes back to the instance; (2) a manager that
-  implements `FoundByAddress` (`[ALC-2]`), whose values' instance is found from their address, as C's
-  `free(p)` finds its heap. Neither changes what is checked: that no value outlives its instance or is
-  used after a reset is checked when compiling and never reads the word (`[LT-4]`). An instance held
-  inline in a struct beside values made
-  in it would be a view into another field of the same value (`[LT-25]`, `E3024`) and would move with
-  the struct: such an instance is held in a block of its own (`arena: owns LevelArena`), or the values
-  are made `using` an instance the struct does not hold; a manager with one instance needs none of
-  this. An allocator type parameter is not Ember: `Box[T, A]` and
-  `Array[T, A]` are `E1010`, whose help gives `owns T using A` and `Array[T] using A`.
-* `[ALC-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* `std.mem` declares `pub unsafe interface Allocator` with
-  `fn allocate(layout: Layout) -> *mut u8` (null on failure),
-  `unsafe fn deallocate(p: *mut u8, layout: Layout)` and
-  `unsafe fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8`.
-  Giving memory back, or moving it, is unsafe, since Ember may still use it and a wrong `Layout` is
-  undefined in C: a program's own call is made inside `unsafe:` (`E3100`: "`deallocate` gives memory
-  back that Ember may still use, and a wrong `Layout` is undefined in C; write it inside `unsafe:` with a
-  `# SAFETY:` note"), and the calls the compiler makes for `using` values are its own. `Layout` holds
-  `size: usize` and `align: usize`, both `pub(read)`; its constructor `Layout(size, align)` checks that
-  `align` is a power of two and that `size` rounded up to a multiple of `align` fits in an `isize`, and
-  panics (`invalid Layout`) otherwise, so no other `Layout` exists. `Global` is the package's configured
-  allocator (the one `[ALC-3]` names, else the platform's), so an `Array[T]` never bypasses it; `System`
-  is the platform's, which a global allocator may wrap (a counting or tracing allocator delegates to
+* `[ALC-1]` *(changed in 0.9.15)* *(changed in 0.9.20)* **The place names the kind, the making line
+  names the instance.** `using A` after a type whose value has heap memory of its own (an `owns`,
+  `shares` or `shares mut` value, a class object, an `Array`, `Map`, `Set` or `String`; never a
+  `thread_shared` value, whose block carries its making thread's record, `[OBJ-4]`, `E2114`) names
+  the kind of memory manager that memory comes from, a type implementing `Allocator`: `mesh: owns
+  Mesh using LevelArena`, `names: Array[String] using LevelArena`, `Map[K, V, H] using A`, `Set[T,
+  H] using A`. Without `using`, it comes from the built-in manager, `Global`. The line that makes
+  such a value names the instance after the value: `boss = Enemy(hp=500, mesh=owns Mesh(points=[0.0,
+  1.0]) using current)` takes the mesh's block from the arena `current` by calling
+  `current.allocate(…)`; a class object is made `Enemy(hp=5) using current`, a list `[0.0, 1.0]
+  using current`, and `Array.new_in(current)` makes an empty one. A manager type with no fields has
+  one instance (`Global`, `System`, and any such type a program declares): it needs none on the
+  making line, and its values keep no instance word; every other manager type may have several
+  instances. Checked when compiling: the instance is of the kind the place names, and a value given
+  to a `using A` place was made in an instance of `A` (`E2020`: "`mesh` takes its memory from a
+  `LevelArena` (`mesh: owns Mesh using LevelArena`), and this `Mesh` comes from the built-in
+  manager; say which arena: `mesh=owns Mesh(points=[0.0, 1.0]) using current`"); a value made in an
+  instance, and every value that holds one, lives no longer than that instance (`E3063`, `[LT-4]`);
+  `using` after any other type is `E2114` ("an `int` has no memory of its own to take from
+  `LevelArena`; remove `using`"). `using` names where that value's own memory comes from; what the
+  value holds comes from where its own fields' types say (the `points` list of that `Mesh` from the
+  built-in manager). A value whose manager may have several instances keeps its instance's address,
+  one word, so that its growth and its end go back to the instance it came from (`[LT-4]`), except
+  in two kinds of manager, whose values keep no word (verdict 107): (1) a manager that frees nothing
+  one by one, whose `deallocate` does nothing (an empty body, checked when compiling): nothing it
+  hands out is given back value by value, and all of it is freed together when the instance is
+  cleared or ends; a value that grows (an `Array`, `Map`, `Set` or `String`) made in it keeps the
+  word, since its growth goes back to the instance; (2) a manager that implements `FoundByAddress`
+  (`[ALC-2]`), whose values' instance is found from their address, as C's `free(p)` finds its heap.
+  Neither changes what is checked: that no value outlives its instance or is used after a reset is
+  checked when compiling and never reads the word (`[LT-4]`). Between threads a value made in an
+  instance follows its manager: it holds a `ref A` to the instance for `Send` and `ThreadShared`,
+  and its growth and end are changes of the instance for `[THR-11]` (`[TYP-46a]`). An instance held
+  inline in a struct beside values made in it would be a view into another field of the same value
+  (`[LT-25]`, `E3024`) and would move with the struct: such an instance is held in a block of its
+  own (`arena: owns LevelArena`), or the values are made `using` an instance the struct does not
+  hold; a manager with one instance needs none of this. An allocator type parameter is not Ember:
+  `Box[T, A]` and `Array[T, A]` are `E1010`, whose help gives `owns T using A` and `Array[T] using
+  A`.
+* `[ALC-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* `std.mem` declares `pub unsafe interface
+  Allocator` with `fn allocate(layout: Layout) -> *mut u8` (null on failure), `unsafe fn
+  deallocate(p: *mut u8, layout: Layout)` and `unsafe fn reallocate(p: *mut u8, old: Layout,
+  new_size: usize) -> *mut u8`. Giving memory back, or moving it, is unsafe, since Ember may still
+  use it and a wrong `Layout` is undefined in C: a program's own call is made inside `unsafe:`
+  (`E3100`: "`deallocate` gives memory back that Ember may still use, and a wrong `Layout` is
+  undefined in C; write it inside `unsafe:` with a `# SAFETY:` note"), and the calls the compiler
+  makes for `using` values are its own. `Layout` holds `size: usize` and `align: usize`, both
+  `pub(read)`; its constructor `Layout(size, align)` checks that `align` is a power of two and that
+  `size` rounded up to a multiple of `align` fits in an `isize`, and panics (`invalid Layout`)
+  otherwise, so no other `Layout` exists. `Global` is the package's configured allocator (the one
+  `[ALC-3]` names, else the platform's), so an `Array[T]` never bypasses it; `System` is the
+  platform's, which a global allocator may wrap (a counting or tracing allocator delegates to
   `System()`). An allocator that delegates to `Global` from inside the global allocator recurses.
   Implementing `Allocator` is `unsafe` (`unsafe extend A implements Allocator:`, `[TYP-43]`): the
-  implementer promises valid, aligned, unaliased memory, which stays valid until it is given back or the
-  instance ends. `std.mem` also declares `pub unsafe interface FoundByAddress`, with no methods, and
-  `const PIECE: usize = 65536` (verdict 107). Implementing it (`unsafe extend PoolArena implements
-  FoundByAddress:`) promises that every block the manager hands out lies in a piece of memory that
-  starts at a multiple of `PIECE` bytes and holds the instance's address in its first word, within 64
-  bytes the manager never hands out, a value bigger than a piece taking a piece of its own; a value's
-  instance is then read from the start of its piece, one mask and one load, and the value keeps no word
-  (`[ALC-1]`). A manager whose `deallocate` does nothing needs no such promise (`[ALC-1]`).
-* `[ALC-3]` *(changed in 0.9.9)* A binary package may replace the global allocator with
-  `[build] global_allocator = "module.NAME"` naming a `static` whose type implements `Allocator`; an
+  implementer promises valid, aligned, unaliased memory, which stays valid until it is given back or
+  the instance ends. `std.mem` also declares `pub unsafe interface FoundByAddress`, with no methods,
+  and `const PIECE: usize = 65536` (verdict 107). Implementing it (`unsafe extend PoolArena
+  implements FoundByAddress:`) promises that every block the manager hands out lies in a piece of
+  memory that starts at a multiple of `PIECE` bytes and holds the instance's address in its first
+  word, within 64 bytes the manager never hands out, a value bigger than a piece taking a piece of
+  its own; a value's instance is then read from the start of its piece, one mask and one load, and
+  the value keeps no word (`[ALC-1]`). A manager whose `deallocate` does nothing needs no such
+  promise (`[ALC-1]`).
+* `[ALC-3]` *(changed in 0.9.9)* A binary package may replace the global allocator with `[build]
+  global_allocator = "module.NAME"` naming a `static` whose type implements `Allocator`; an
   embedding host may pass allocation functions to `ember_rt_init` (`[FFI-27]`).
 * `[ALC-4]` Allocation failure in a standard container panics (`out of memory`). `try_reserve` and
   `try_push` report it as a value.
-* `[ALC-5]` *(new in 0.9.15)* **An instance stays as its values need it.** While a value made in a memory
-  manager's instance lives, the instance is changed only by what allocates from it and gives blocks back
-  to it: the `Allocator` methods that value's growth and end call, the making of other values in it, and
-  an `Arena`'s `alloc*` (`[ARN-1]`), none of which touches a block already given out. Reading it stays
-  allowed (`current.made`); any other change, through any name, is
-  `E3021` ("`frame.reset()` (line 26) changes the arena `names` was made in (line 25), and `names` still
-  lives; end it first: write `mem.drop(owns names)` above line 26"). So no safe method of a memory manager
-  rewinds it, frees it or gives its bytes out again under a value made in it.
+* `[ALC-5]` *(new in 0.9.15)* **An instance stays as its values need it.** While a value made in a
+  memory manager's instance lives, the instance is changed only by what allocates from it and gives
+  blocks back to it: the `Allocator` methods that value's growth and end call, the making of other
+  values in it, and an `Arena`'s `alloc*` (`[ARN-1]`), none of which touches a block already given
+  out. Reading it stays allowed (`current.made`); any other change, through any name, is `E3021`
+  ("`frame.reset()` (line 26) changes the arena `names` was made in (line 25), and `names` still
+  lives; end it first: write `mem.drop(owns names)` above line 26"). So no safe method of a memory
+  manager rewinds it, frees it or gives its bytes out again under a value made in it.
 
 ## IX.4 Raw pointers and `unsafe`
 

@@ -69,12 +69,13 @@ change one place unordered.
   like `Send` and written only in bounds (`[T: needs ThreadShared]` above `fn keep(xs: Array[T]) ->
   int:`) and in messages; `Sync` in a bound is `E1010` ("`Sync` is the effect `@nosync` forbids, not
   a property of a type; for 'threads may share it' write `[T: needs ThreadShared]` above `fn keep(x:
-  T)`"). Structural types are `ThreadShared` when every component is. `ref mut T`, `sharedref mut
-  T`, `Cell`, `UnsafeCell`, raw pointers, `shares T`, `shares mut T`, and a `weakref T` link are
-  not. `Atomic[T]`, `Once`, `Lock`, `Mutex[T]` for a `Send` `T` (one thread at a time holds its `ref
-  mut T`), `RwLock[T]` and `thread_shared T` for a `T` that is `Send` and `ThreadShared` (several
-  threads hold a `ref T` at once: `RwLock[Cell[int]]` is not `ThreadShared`), a `weakref
-  thread_shared T` for such a `T`, and a channel's `Sender[T]` for a `Send` `T` are (`[THR-15]`).
+  T)`"). Structural types are `ThreadShared` when every component is. `ref mut T`, `MutSpan[T]`,
+  `sharedref mut T`, `Cell`, `UnsafeCell`, raw pointers, `shares T`, `shares mut T`, and a `weakref
+  T` link are not. `Atomic[T]`, `Once`, `Lock`, `Mutex[T]` for a `Send` `T` (one thread at a time
+  holds its `ref mut T`), `RwLock[T]` and `thread_shared T` for a `T` that is `Send` and
+  `ThreadShared` (several threads hold a `ref T` at once: `RwLock[Cell[int]]` is not
+  `ThreadShared`), a `weakref thread_shared T` for such a `T`, and a channel's `Sender[T]` for a
+  `Send` `T` are (`[THR-15]`).
 * `[THR-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **A value several
   threads own is made `thread_shared`.** `thread_shared x` makes one more owner of `x`, which may be
   on any thread; it is written before a new value (`st = thread_shared Stats()`) or on a value

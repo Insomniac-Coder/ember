@@ -258,7 +258,18 @@ large_copy = { level = "warn", threshold = 256 }
      neither, which a line that makes an object of the class checks (`[OWN-13]`); and
   9. for each function, the parameters, `this` included, of which it makes a `weakref T` link,
      directly or through a call, which a caller giving one a value reached through a `thread_shared`
-     value checks (`[OWN-13]`, `E7015`).
+     value checks (`[OWN-13]`, `E7015`);
+  10. for each function, which parameter, `this` included, or value holding one, it stores an owner
+      of into a place of which other parameter or of `this`, directly or through a call, which each
+      call judges as that store (`[WK-7]`); and
+  11. for each `pub` function with a `dyn`, interface or base-class parameter, what its body needs
+      of the kinds that reach it: for each call through the parameter and each argument of that
+      call, whether the called method's result may point into it (`[LT-1]`), which a call from
+      another package checks against the kinds it gives; and
+  12. for each line that calls through a `virtual` method of a `pub` class, a method of a `pub`
+      interface used as `dyn`, or a `pub` function-typed place, what the line walks, holds `ref mut`
+      and has lent, which a package adding an override, an implementation or a stored function
+      checks that member against (`[MOD-9a]`).
 * `[BLD-16]` *(new in 0.9.20)* **No fact of the whole program decides a package's code or layout.**
   The layout of a package's types and the instructions it emits for a line are decided by the
   package's own source, by the interface files of the packages it imports (`[MOD-9]`, `[EFF-4]`,

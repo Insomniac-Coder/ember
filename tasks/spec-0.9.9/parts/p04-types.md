@@ -86,8 +86,14 @@
   8. a value to an interface its type implements, keeping the word that says who owns it: a value
      read in place to `dyn I`, an `owns T` to `owns dyn I`, a `shares T` to `shares dyn I`, a
      `shares mut T` to `shares mut dyn I` (`[TYP-45]`); and a class object to a base class (upcast),
-     a `weakref D` to `weakref B` and a `weakref thread_shared D` to `weakref thread_shared B` for a
-     base `B` of `D`, the kind of the link kept;
+     with its word kept: a `Dog` to an `Animal`, and a `shares Dog`, `shares mut Dog`,
+     `thread_shared Dog`, `weakref Dog`, `weakref thread_shared Dog` or `ref Dog` to the same word
+     on `Animal` (`=` on a `shares mut` name hands the owner over, `[HEAP-6]`, and never writes the
+     block, so a wider owner cannot put another kind into the place); never a `ref mut Dog` to a
+     `ref mut Animal`, since `=` on a `ref mut` name writes the place (`[TYP-14]`) and the place is
+     a `Dog`'s (`E2020`: "`ref mut d` names a `Dog` place, which a `ref mut Animal` could fill with
+     another kind; pass `d` to a parameter that reads, or `shares mut d` if the dog is shared"); and
+     never the reverse, which is a kind test or a cast (`[TYP-44]`);
   9. `Never` to any type;
   10. a function or lambda to a callable type it satisfies (`[CLO-3]`);
   11. a value of type `T` to `Option[T]`, as `Some(value)`, where `T` is not itself an `Option`: one
@@ -103,7 +109,8 @@
       (the owner's ruling of 2026-10-06). Each rule composes with the others only where stated
       (widening after range erasure, and rule 11 after rules 1–4). Nothing converts implicitly to or
       from `bool` or `char`.
-* `[TYP-6]` *(changed in 0.9.9)* *(changed in 0.9.15)* `x as T` converts explicitly:
+* `[TYP-6]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `x as T` converts
+  explicitly:
   * integer → integer: keeps the low bits (truncation or sign/zero extension);
   * float → integer: rounds toward zero and **saturates** at the target's bounds; NaN becomes 0;
   * integer → float: rounds to nearest, ties to even;
@@ -111,7 +118,15 @@
   * `char → u32` and `u8 → char`; other integers become a `char` only through `char.from_u32(x) ->
     Option[char]`. A downcast is not a conversion: `cast h as D` gives the `D` or stops the program,
     and `if h is D as d:` tests (`[TYP-44]`). A checked conversion that fails instead of truncating
-    is `T.try_from(x) -> Result[T, RangeError]`.
+    is `T.try_from(x) -> Result[T, RangeError]`;
+  * `bool → integer`: `true` is 1 and `false` 0 (Python's `int(True)`, `[PHIL-14]`); nothing
+    converts to `bool` (`x != 0` is the test);
+  * a unit-only enum → an integer type that holds every one of its discriminants (`Color.Green as
+    u8`, `[ENM-3]`); an integer never converts to an enum, since a value of an enum is one of its
+    variants and `Option[Color]` keeps `None` in an unused discriminant (`[TYP-13]`): `7 as Color`
+    is `E2020` ("an integer may be no `Color`; write `Color.from_repr(7)`, an `Option[Color]`, and
+    open it: `if Color.from_repr(7) exists as c:`");
+  * `as` between any other pair of types is `E2020`, naming both.
 * `[TYP-7]` `as` between pointer types, or between a pointer and an integer, requires `unsafe`.
 
 ### Integer arithmetic
@@ -265,77 +280,95 @@ endpoints; `E2213` `in` clause on a non-numeric or generic alias; `E2214` arithm
 * **Tuples** `(A, B, C)`: fields `.0`, `.1`, …; `Copy` iff every element is.
 * **Fixed arrays** `[T; N]`: inline, `N` a constant; indexing is bounds-checked; `Copy` iff `T` is.
 * **Structs** (Part V.3) and **enums** (Part V.4).
-* `[TYP-11]` A struct's default layout is C's: declaration order, natural alignment, trailing padding.
-  `@layout(c)` states it explicitly.
-* `[TYP-12]` A unit-only enum is an integer (`@repr(u8)` and friends choose it; the default is the
-  smallest signed type that fits). An enum crossing a foreign boundary MUST carry `@repr`. A payload
+* `[TYP-11]` A struct's default layout is C's: declaration order, natural alignment, trailing
+  padding. `@layout(c)` states it explicitly.
+* `[TYP-12]` *(changed in 0.9.20)* A unit-only enum is stored as an integer (`@repr(u8)` and friends
+  choose it; the default is the smallest signed type that fits); its values are its variants, and
+  the conversions are `[ENM-3]`'s. An enum crossing a foreign boundary MUST carry `@repr`. A payload
   enum is a tag plus a union of variants.
-* `[TYP-13]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `Option[T]` has the size of `T` when `T` has a niche: a class
-  object, an `owns T`, a `shares`, `shares mut` or `thread_shared` value, a `sharedref mut` link, a `ref`, a `ref mut`, a `Span`, a `MutSpan`, a `StrView`, a `CStrView` (ODR-080), a non-nullable `extern fn`, `bool`, `char`, a range type per
-  `[RNG-7]`, an enum with unused discriminants, or `NonZero[T]` (`[STD-4]`). For class objects, `owns T`, the shared owners and links, `ref`, `ref mut` and `extern fn` this is
-  guaranteed, so `Option[C]` of a class `C`, and `Option[owns T]`, is a nullable pointer across an FFI
-  boundary. `CStrView` is non-null; `Option[CStrView]` has the size and alignment of a C character
-  pointer, with null representing `None`.
+* `[TYP-13]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `Option[T]` has the
+  size of `T` when `T` has a niche: a class object, an `owns T`, a `shares`, `shares mut` or
+  `thread_shared` value, a `sharedref mut` link, a `ref`, a `ref mut`, a `Span`, a `MutSpan`, a
+  `StrView`, a `CStrView` (ODR-080), a non-nullable `extern fn`, `bool`, `char`, a range type per
+  `[RNG-7]`, an enum with unused discriminants, or `NonZero[T]` (`[STD-4]`). For class objects,
+  `owns T`, the shared owners and links, `ref`, `ref mut` and `extern fn` this is guaranteed, so
+  `Option[C]` of a class `C`, and `Option[owns T]`, is a nullable pointer across an FFI boundary.
+  `CStrView` is non-null; `Option[CStrView]` has the size and alignment of a C character pointer,
+  with null representing `None`.
 
 ## IV.4 References and views
 
 * `ref T`, `ref mut T` and `sharedref mut T` are views of a place someone else owns: non-null,
-  aligned, pointing to a live `T` for their region. `ref T` reads, is `Copy`, and any number of names
-  may view one place. `ref mut T` may change its place and is the only name that reads or changes it
-  while it is used (`[BRW-1]`); it is not `Copy`, and `b = r` makes `b` a read-only view of the same
-  place. `sharedref mut T` may change its target, and several holders, and its owner, may name one
-  object; it is not `Copy` either, and another holder is made with `sharedref mut` (`[TYP-45]`).
-* `[TYP-14]` *(changed in 0.9.9)* *(changed in 0.9.15)* A reference, and an `owns T`, is read through wherever a `T` is wanted —
-  a field access, a method call, an operand, an argument to a plain parameter. So a recursive enum
-  whose payload is `owns Tree` is traversed by passing the payload to a function taking `Tree`, and
-  `.get()` on an `owns` value is `E2072` ("an `owns Mesh` reads as a `Mesh`; remove `.get()`"). `=` on
-  a `ref mut` name writes the place it names: `r = ref mut a` then `r = 20` writes `a`. `r = ref mut b`
-  gives it another ref, after which `r = 30` writes `b`; the line that gives another ref says `ref mut`
-  again, for every type, and a read-only `ref b` given to a `ref mut` name is `E3023` ("to point `r`
-  at `b` write `r = ref mut b`, or for a read-only name `rb = ref b`"). A name written `const ref mut`
-  is never given another ref (`E3023`): `const` says the name itself stays as it is, as on a value. A
-  read-only view name given a new view with `=` views that instead (`rest = tail.trim()`).
+  aligned, pointing to a live `T` for their region. `ref T` reads, is `Copy`, and any number of
+  names may view one place. `ref mut T` may change its place and is the only name that reads or
+  changes it while it is used (`[BRW-1]`); it is not `Copy`, and `b = r` makes `b` a read-only view
+  of the same place. `sharedref mut T` may change its target, and several holders, and its owner,
+  may name one object; it is not `Copy` either, and another holder is made with `sharedref mut`
+  (`[TYP-45]`).
+* `[TYP-14]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A reference, and an
+  `owns T`, is read through wherever a `T` is wanted — a field access, a method call, an operand, an
+  argument to a plain parameter. So a recursive enum whose payload is `owns Tree` is traversed by
+  passing the payload to a function taking `Tree`, and `.get()` on an `owns` value is `E2072` ("an
+  `owns Mesh` reads as a `Mesh`; remove `.get()`"). `=` on a `ref mut` name writes the place it
+  names: `r = ref mut a` then `r = 20` writes `a`. `r = ref mut b` gives it another ref, after which
+  `r = 30` writes `b`; the line that gives another ref says `ref mut` again, for every type, and a
+  read-only `ref b` given to a `ref mut` name is `E3023` ("to point `r` at `b` write `r = ref mut
+  b`, or for a read-only name `rb = ref b`"). A name written `const ref mut` is never given another
+  ref (`E3023`): `const` says the name itself stays as it is, as on a value. A read-only view name
+  given a new view with `=` views that instead (`rest = tail.trim()`). `=` on a `ref mut` name of a
+  `dyn I` type never gives the place a whole value, since the place's own kind is known only while
+  running and its size is the kind's: it is `E3023` ("`v` views a value of a kind known only while
+  running; change it through its methods, `v.scale(2.0)`, or take the value over, `owns v: owns dyn
+  Shape`, and return the new one").
 * `Span[T]` (read) and `MutSpan[T]` (read-write) are a pointer and a length; `Span` is `Copy`,
-  `MutSpan` is not. A `MutSpan`'s elements are written only through a name that says `ref mut`
-  (`d = ref mut xs.as_mut_span()`, `ref mut dst: MutSpan[float]`); a plain name holding one only reads
+  `MutSpan` is not. A `MutSpan`'s elements are written only through a name that says `ref mut` (`d =
+  ref mut xs.as_mut_span()`, `ref mut dst: MutSpan[float]`); a plain name holding one only reads
   them (`E3023`). Their API is in §VII.7.
 * `StrView` is a `Span[u8]` known to be valid UTF-8, a view of text someone else owns; `String(w)`
-  makes a `String` of one's own from it. `CStrView` is a view of NUL-terminated C text.
-  A type that contains itself, or a view of its own type, with no block of its own between, is E2200 ("`Tree` contains itself through `left`, so a `Tree` would have no end; hold the child in its own block: `left: Option[owns Tree]`"; "`Node.parent` would be a view of the `Node` that holds this one, which no struct can keep; for a link back to the parent make `Node` a class with `children: Array[Node]` and `parent: weakref Node = None`, set with `child.parent = weakref this` before `this.children.push(owns child)`").
-* `[TYP-34]` *(new in 0.9.9)* *(replaces the 0.9.8 `@view` requirement)* *(changed in 0.9.15)* A struct, enum or tuple that contains a
-  view (`ref T`, `ref mut T`, `sharedref mut T`, a `Span`, a `MutSpan`, a `StrView`) or another view
-  type is a **view type**, and lives no longer than what its view fields point into. A field written
-  `from static` (`[TYP-15]`) does not make its struct a view, and a class is never a view type: a view
-  field of a class says what it points into. The compiler infers this; `@view` on the declaration is
-  optional documentation, checked, and `@view` on a type that is not a view is `E2030` ("`@view` on
-  `Point`, which holds no view; remove `@view`"). A view type may also need drop, as a guard does
-  (`[DRP-6]`).
-* `[TYP-15]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Where views may be stored.** A view may be stored in any place — a
-  local, a field of a view type, a list's elements, a struct a call makes — and whatever holds it, and
-  every value that holds that, then lives no longer than what the view points into, whoever owns it:
-  `names = ["ann", "bob"]` is an `Array[StrView]` of text written in the program, which may live as
-  long as the program; a list of views of a local's text lives no longer than that local. A view, or a
-  value holding views, returned or kept where it would outlive what it points into is `E3063` (shape
-  B12). The rule is about the stored value, wherever the store happens (ODR-069):
+  makes a `String` of one's own from it. `CStrView` is a view of NUL-terminated C text. A type that
+  contains itself, or a view of its own type, with no block of its own between, is E2200 ("`Tree`
+  contains itself through `left`, so a `Tree` would have no end; hold the child in its own block:
+  `left: Option[owns Tree]`"; "`Node.parent` would be a view of the `Node` that holds this one,
+  which no struct can keep; for a link back to the parent make `Node` a class with `children:
+  Array[Node]` and `parent: weakref Node = None`, set with `child.parent = weakref this` before
+  `this.children.push(owns child)`").
+* `[TYP-34]` *(new in 0.9.9)* *(replaces the 0.9.8 `@view` requirement)* *(changed in 0.9.15)* A
+  struct, enum or tuple that contains a view (`ref T`, `ref mut T`, `sharedref mut T`, a `Span`, a
+  `MutSpan`, a `StrView`) or another view type is a **view type**, and lives no longer than what its
+  view fields point into. A field written `from static` (`[TYP-15]`) does not make its struct a
+  view, and a class is never a view type: a view field of a class says what it points into. The
+  compiler infers this; `@view` on the declaration is optional documentation, checked, and `@view`
+  on a type that is not a view is `E2030` ("`@view` on `Point`, which holds no view; remove
+  `@view`"). A view type may also need drop, as a guard does (`[DRP-6]`).
+* `[TYP-15]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Where views may be stored.** A view may be
+  stored in any place — a local, a field of a view type, a list's elements, a struct a call makes —
+  and whatever holds it, and every value that holds that, then lives no longer than what the view
+  points into, whoever owns it: `names = ["ann", "bob"]` is an `Array[StrView]` of text written in
+  the program, which may live as long as the program; a list of views of a local's text lives no
+  longer than that local. A view, or a value holding views, returned or kept where it would outlive
+  what it points into is `E3063` (shape B12). The rule is about the stored value, wherever the store
+  happens (ODR-069):
   * a class object is never a view: a view field of a class says what it points into, `from` a `let`
-    field of the same object whose contents live in a block of their own, a `String`, an `Array` or an
-    `owns T` (`words: Array[StrView] from text`), or `from static`, text written in the program
-    (`kind: StrView from static`; on a struct's field too, which then does not make the struct a view)
-    (`[GRM-46]`). A view field of a class without such a `from`, or with one that names what a view
-    cannot point into for the object's whole life (a field that is not `let`, a fixed array, a struct
-    stored inline), is `E2118` ("`words` points into `text`, so `text` must never change after `init`;
-    write `let text: String`"; "`pair` is stored inside the object, so moving the object moves it;
-    keep it in a block of its own: write the field as `let pair: owns Pair`");
+    field of the same object whose contents live in a block of their own, a `String`, an `Array` or
+    an `owns T` (`words: Array[StrView] from text`), or `from static`, text written in the program
+    (`kind: StrView from static`; on a struct's field too, which then does not make the struct a
+    view) (`[GRM-46]`). A view field of a class without such a `from`, or with one that names what a
+    view cannot point into for the object's whole life (a field that is not `let`, a fixed array, a
+    struct stored inline), is `E2118` ("`words` points into `text`, so `text` must never change
+    after `init`; write `let text: String`"; "`pair` is stored inside the object, so moving the
+    object moves it; keep it in a block of its own: write the field as `let pair: owns Pair`");
   * a `static` holds only views of text and data written in the program (`[LT-3]`);
-  * a function value holds a view only as a `ref` capture or as a real variable it uses, and does not
-    outlive what it views (`E3026`, `[CLO-2]`);
+  * a function value holds a view only as a `ref` capture or as a real variable it uses, and does
+    not outlive what it views (`E3026`, `[CLO-2]`);
   * a view put into a caller's place through a `ref mut` parameter (`fn put(ref mut x: StrView, v:
-    StrView): x = v`, called `put(ref mut name, v)`) is one of the call's view arguments or a part of
-    one, or text written in the program, and after the call the caller's place may point into what it
-    pointed into before or into any of the call's other arguments (`[LT-21]`); a view of the callee's
-    own locals or of a temporary put there is `E3063`.
-* `[TYP-15a]` *(changed in 0.9.20)* The arena-backed containers (`ArenaArray`, `ArenaMap`, §IX.2) may hold views
-  bounded by the container's own region (`[ARN-5]`); there is no other view container.
+    StrView): x = v`, called `put(ref mut name, v)`) is one of the call's view arguments or a part
+    of one, or text written in the program, and after the call the caller's place may point into
+    what it pointed into before or into any of the call's other arguments (`[LT-21]`); a view of the
+    callee's own locals or of a temporary put there is `E3063`.
+* `[TYP-15a]` *(changed in 0.9.20)* The arena-backed containers (`ArenaArray`, `ArenaMap`, §IX.2)
+  may hold views bounded by the container's own region (`[ARN-5]`); no other container bounds the
+  views it holds by its own region: an `Array[StrView]` holds views bounded by what each points into
+  (`[TYP-15]`).
 
 ## IV.5 Raw types
 
@@ -438,30 +471,62 @@ fn main():
     nothing about what its functions change, which the compiler works out from every function the
     program can put in a place of that type (`[CLO-3]`); a long one is named once with `type` (`type
     Handler = fn()`, then `handlers: Array[Handler] = []`).
+* `[TYP-45a]` *(new in 0.9.20)* **One word on a type.** A word of `[TYP-45]` stands before a type
+  that has no word of its own: a `path_type`, a tuple, a fixed array, a function type or a `dyn`
+  bound (`owns Mesh`, `shares mut Player`, `weakref Node`, `ref Span[int]`, `owns dyn Shape`,
+  `thread_shared fn()`), and `weakref` also before `thread_shared T`, the link to a `thread_shared`
+  value (`[GRM-3a]`). `ref` and `ref mut` also stand before an owner word or a link (`ref mut owns
+  Mesh`, `ref weakref Node`): the view of a place that holds such a value, read through as
+  `[TYP-14]` says, and `=` on the `ref mut` one replaces what the place holds, as `e.mesh = owns
+  Mesh(...)` does; never before `ref`, `ref mut` or `sharedref mut`: `ref ref T` and `ref mut ref
+  mut T` are `E0100` ("a view of a view names the same place; write `ref mut T`"). `*T` and `*mut T`
+  are raw and stand before any type (`[TYP-7]`, §IV.5). Every other word before a word (`owns ref
+  T`, `shares mut ref mut T`, `owns owns T`, `owns shares T`, `thread_shared shares T`; `weakref`
+  before any word but `thread_shared` is `[GRM-3a]`'s) is `E0100`, whose help gives the type with
+  one word ("`shares mut ref mut Item` stacks two words; a counted block holds a value of its own:
+  write `shares mut Item`, or, for one view that several names may change, `sharedref mut Item`"). A
+  value that is to hold a view is a struct with a view field (`[TYP-34]`), and one that is to hold a
+  link is a struct with a link field.
 
-  `Box`, `Shared`, `Weak`, `SyncShared`, `ForeignBox`, `RefCell`, `Ref` and `RefMut` are not types of
-  Ember: naming one is `E1010`, whose message gives what to write (`owns T` for `Box[T]` and
+  `Box`, `Shared`, `Weak`, `SyncShared`, `ForeignBox`, `RefCell`, `Ref` and `RefMut` are not types
+  of Ember: naming one is `E1010`, whose message gives what to write (`owns T` for `Box[T]` and
   `ForeignBox[T]`, `owns dyn I` for `Box[dyn I]`, `owns T using A` for `Box[T, A]`, `shares T` or
-  `shares mut T` for `Shared[T]`, `weakref T` for `Weak[T]`, `thread_shared T` for `SyncShared[T]`, and
-  for `RefCell` the field written plainly and changed through a name that may change it).
-* `[TYP-46]` *(new in 0.9.15)* **Which memory manager.** `using A` after a type whose value has heap
-  memory of its own names the kind of memory manager that memory comes from, a type implementing
-  `Allocator` (`[ALC-2]`): `mesh: owns Mesh using LevelArena`, `mesh: shares Mesh using LevelArena`,
-  `names: Array[String] using LevelArena`. It may follow an `owns`, `shares`, `shares mut` or
-  `thread_shared` type, a class type, or an `Array`, a `Map` or a `Set`; after any other type it is
-  `E2114` ("an `int` has no memory of its own to take from `LevelArena`; remove `using`"). Without
-  `using`, the memory comes from the built-in manager (`Global`). The line that makes such a value
-  names the instance after the value it makes (`owns Mesh(points=[0.0, 1.0]) using current`,
-  `Enemy(hp=500) using current`, `[0.0, 1.0] using current`; `[GRM-43]`), and takes the value's block
-  from it by calling `current.allocate(...)`; a manager with one instance (`Global`, `System`) needs
-  none there. A value given to a `using A` place that was not made in an instance of `A` is `E2020`
-  ("`mesh` takes its memory from a `LevelArena` (`mesh: owns Mesh using LevelArena`), and this `Mesh`
-  comes from the built-in manager; say which arena: `mesh=owns Mesh(points=[0.0, 1.0]) using
-  current`"); a value made in an instance, and every value that holds one, lives no longer than that
-  instance (`E3063`, `[ALC-1]`). `using` names where that value's own memory comes from; what it holds
-  comes from where its own fields' types say (the `points` list of that `Mesh` from the built-in
-  manager). A value whose manager may have several instances keeps its instance's address, one word,
-  so that its growth and its end go back to the instance it came from.
+  `shares mut T` for `Shared[T]`, `weakref T` for `Weak[T]`, `thread_shared T` for `SyncShared[T]`,
+  and for `RefCell` the field written plainly and changed through a name that may change it).
+* `[TYP-46]` *(new in 0.9.15)* *(changed in 0.9.20)* **Which memory manager.** `using A` after a
+  type whose value has heap memory of its own names the kind of memory manager that memory comes
+  from, a type implementing `Allocator` (`[ALC-2]`): `mesh: owns Mesh using LevelArena`, `mesh:
+  shares Mesh using LevelArena`, `names: Array[String] using LevelArena`. It may follow an `owns`,
+  `shares` or `shares mut` type, a class type, or an `Array`, a `Map`, a `Set` or a `String` (`name:
+  String using LevelArena = String("") using current`); after any other type, a `thread_shared` type
+  included (`[OBJ-4]`), it is `E2114` ("an `int` has no memory of its own to take from `LevelArena`;
+  remove `using`"). Without `using`, the memory comes from the built-in manager (`Global`). The line
+  that makes such a value names the instance after the value it makes (`owns Mesh(points=[0.0, 1.0])
+  using current`, `Enemy(hp=500) using current`, `[0.0, 1.0] using current`; `[GRM-43]`), and takes
+  the value's block from it by calling `current.allocate(...)`; a manager with one instance
+  (`Global`, `System`) needs none there. A value given to a `using A` place that was not made in an
+  instance of `A` is `E2020` ("`mesh` takes its memory from a `LevelArena` (`mesh: owns Mesh using
+  LevelArena`), and this `Mesh` comes from the built-in manager; say which arena: `mesh=owns
+  Mesh(points=[0.0, 1.0]) using current`"); a value made in an instance, and every value that holds
+  one, lives no longer than that instance (`E3063`, `[ALC-1]`). `using` names where that value's own
+  memory comes from; what it holds comes from where its own fields' types say (the `points` list of
+  that `Mesh` from the built-in manager). A value whose manager may have several instances keeps its
+  instance's address, one word, so that its growth and its end go back to the instance it came from.
+* `[TYP-46a]` *(new in 0.9.20)* **A value made in an instance follows its manager between threads.**
+  For `Send` and `ThreadShared`, a value whose growth or end calls its instance's methods (one that
+  keeps the instance word, and one in a `FoundByAddress` manager, whose end finds the instance from
+  its address, `[ALC-1]`) holds a `ref A` to that instance: it is `Send`, and `ThreadShared`, only
+  when `A` is `ThreadShared` (`[THR-8]`, `[THR-9]`), since those calls run on whichever thread holds
+  or ends it. A value made in a manager that frees nothing one by one and does not grow holds
+  nothing. `thread_shared T using A` with an `A` that is not `ThreadShared` is `E7015` at the making
+  line ("`st` would end on whichever thread holds its last owner, and `current`, an `Arena`, is used
+  by one thread; make it in the built-in manager, `st = thread_shared Stats()`, or in a manager any
+  thread may call"). For `[THR-11]` a value's growth and end are changes of its instance, so two
+  scoped tasks growing values made in one instance are `E7007` naming the instance ("the tasks on
+  lines 7 and 9 grow `xs` and `ys`, both made in `current`, so both change `current`; give each task
+  an arena of its own, `a = Arena(1 << 20)` inside its function, or make the lists in the built-in
+  manager, `xs = []`"), unless `A` is `ThreadShared`. For the exclusivity rules `[ALC-5]` stands:
+  growth and end are the changes of the instance it allows.
 
 ## IV.7 Generics
 
@@ -590,8 +655,8 @@ implements Display:` block.
 | Marker | Holds when |
 |---|---|
 | `Copy` | declared with `@derive(Copy)` on a struct or enum whose fields are all `Copy` and which has no `drop`, which gives it `Clone` too; always for scalars, `ref T`, `Span`, `StrView`, raw pointers, `extern fn`, tuples and fixed arrays of `Copy` elements; never for a class object, an `owns`, `shares`, `shares mut` or `thread_shared` value, a `weakref` or `sharedref mut` link, `ref mut T` or `MutSpan[T]` |
-| `Send` | inferred: every component is `Send`, so nothing reachable from the value is a one-thread owner (`shares`, `shares mut`), a `weakref T` link, a `sharedref mut` link (a view several holders on one thread may change), or bound to its thread (a lock's guard, a `Scope`, a raw pointer); `ref T` and `Span[T]` are when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is `Send`; a class object is when its fields are; a `thread_shared T` value, and a `weakref thread_shared T` link, are when `T` is `ThreadShared` and `Send` (`[THR-8]`) |
-| `ThreadShared` | inferred: several threads may hold and read one value of the type at once; every component is `ThreadShared`; `ref mut`, `sharedref mut`, `Cell`, `UnsafeCell`, raw pointers, a `shares` or `shares mut` value and a `weakref T` link are not; a `weakref thread_shared T` link is when `T` is `Send` and `ThreadShared` (`[THR-9]`) |
+| `Send` | inferred: every component is `Send`, so nothing reachable from the value is a one-thread owner (`shares`, `shares mut`), a `weakref T` link, a `sharedref mut` link (a view several holders on one thread may change), or bound to its thread (a lock's guard, a `Scope`, a raw pointer; the `ref A` a value made in a manager's instance holds, unless `A` is `ThreadShared`, `[TYP-46a]`); `ref T` and `Span[T]` are when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is `Send`; a class object is when its fields are; a `thread_shared T` value, and a `weakref thread_shared T` link, are when `T` is `ThreadShared` and `Send` (`[THR-8]`) |
+| `ThreadShared` | inferred: several threads may hold and read one value of the type at once; every component is `ThreadShared` (the `ref A` a value made in a manager's instance holds included, `[TYP-46a]`); `ref mut`, `MutSpan`, `sharedref mut`, `Cell`, `UnsafeCell`, raw pointers, a `shares` or `shares mut` value and a `weakref T` link are not; a `weakref thread_shared T` link is when `T` is `Send` and `ThreadShared` (`[THR-9]`) |
 | `Sized` | everything except `dyn I` and unsized foreign types |
 
 * `[TYP-43]` *(new in 0.9.10)* *(changed in 0.9.15)* The marker interfaces are interfaces of `std.core`, exported by the
@@ -700,21 +765,23 @@ Inside each method its object is `this`; whether an implementation changes it (`
 `index_set`) is worked out from that implementation's body, and through an interface value from every
 implementation the program has (Part X).
 
-* `[TYP-36]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **Which types implement which interfaces.** The table is normative; a `—` means the
-  implementation does not exist and a bound requiring it is `E2040`. A read-only view `ref T`
-  implements `Eq`, `Ord`, `Hash`, `Display` and `Debug` as `T` does (so `sorted(m.keys())` works).
-  An `owns T` is `Clone` when `T` is, and `owns dyn I` when `I` requires `Clone` (§IX.1, `[TYP-22]`).
-  Two `owns` values compare with `==` when what they hold does; `owns dyn I` compares
-  when `I` requires `Eq` (`interface Shape: needs Eq:`, a method-table entry as for `Clone`): values of two
-  different kinds are never equal, and two of one kind compare their contents. `copy of x` makes a
-  value with `Clone` (`[OWN-8]`), and every `Copy` type is `Clone`; before what it cannot copy as
-  itself (a `weakref` link, a value of a view type, a type with no `Clone`) it is `E2116`. Before an `owns`, `shares` or
-  `sharedref mut` value it copies what that value holds, never the link; a struct that holds links
-  among its fields is copied field by field, as a C++ struct holding a `shared_ptr` and a `weak_ptr`
-  is: what it owns alone is copied itself, a `shares` or `thread_shared` field becomes one more owner
-  of the same value, a `weakref` field one more link to the same target and a `sharedref mut` field
-  one more holder of the same link (`struct Team:` with `captain: shares Player` and `scout: weakref
-  Player`: `t2 = copy of t` is a new `Team` whose captain and scout are the same player).
+* `[TYP-36]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)*
+  **Which types implement which interfaces.** The table is normative; a `—` means the implementation
+  does not exist and a bound requiring it is `E2040`. A read-only view `ref T` implements `Eq`,
+  `Ord`, `Hash`, `Display` and `Debug` as `T` does (so `sorted(m.keys())` works). An `owns T` is
+  `Clone` when `T` is, and `owns dyn I` when `I` requires `Clone` (§IX.1, `[TYP-22]`). Two `owns`
+  values compare with `==` when what they hold does; `owns dyn I` compares when `I` requires `Eq`
+  (`interface Shape: needs Eq:`, a method-table entry as for `Clone`): values of two different kinds
+  are never equal, and two of one kind compare their contents; that entry is the one way `Eq` is
+  reached through `dyn` (`[TYP-22]`). `copy of x` makes a value with `Clone` (`[OWN-8]`), and every
+  `Copy` type is `Clone`; before what it cannot copy as itself (a `weakref` link, a value of a view
+  type, a type with no `Clone`) it is `E2116`. Before an `owns`, `shares` or `sharedref mut` value
+  it copies what that value holds, never the link; a struct that holds links among its fields is
+  copied field by field, as a C++ struct holding a `shared_ptr` and a `weak_ptr` is: what it owns
+  alone is copied itself, a `shares` or `thread_shared` field becomes one more owner of the same
+  value, a `weakref` field one more link to the same target and a `sharedref mut` field one more
+  holder of the same link (`struct Team:` with `captain: shares Player` and `scout: weakref Player`:
+  `t2 = copy of t` is a new `Team` whose captain and scout are the same player).
 
 | Type | Clone | Copy | Eq | Ord | Hash | Default | Display | Debug |
 |---|---|---|---|---|---|---|---|---|
@@ -733,82 +800,100 @@ implementation the program has (Part X).
 | range types | as the representation | as the representation | as the representation | as the representation | as the representation | — | as the representation | as the representation |
 | structs, enums | derived per `[STR-5]` | `@derive(Copy)` | derived per `[STR-5]` | `@derive(Ord)` | `@derive(Hash)` | `@derive(Default)` | explicit | derived per `[STR-5]` |
 
-* `[TYP-39]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* Collections, tuples and `Option`/`Result` implement `Display` the way Python's `str()`
-  shows them: `[1, 2, 3]`, `{'a': 1}`, `{1, 2}`, `(1, 'x')`, `Some(3)`, `None`, with each element
-  formatted by its `Debug` implementation (strings quoted). So `println(xs)` prints a list as Python
-  would. A `Map` prints its entries in insertion order and an empty one prints `{}`; an empty `Set`
-  prints `set()`. A collection's `Debug` text is its `Display` text. A string's `Debug` text is
-  Python's `repr`: single quotes, or double quotes when the text holds a `'` and no `"`; `\`, the
-  chosen quote, `\n`, `\r` and `\t` are escaped, and any other control character is `\xNN`. An
-  `owns T` and a `Cell[T]` show as the `T` they hold, in `Display` and `Debug` alike (an `owns int`
-  holding 5 prints `5`; ODR-094). A `Cell` shows a copy of its value, as `get` reads it: a value's own `Display` or
+* `[TYP-39]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* Collections, tuples and
+  `Option`/`Result` implement `Display` the way Python's `str()` shows them: `[1, 2, 3]`, `{'a':
+  1}`, `{1, 2}`, `(1, 'x')`, `Some(3)`, `None`, with each element formatted by its `Debug`
+  implementation (strings quoted). So `println(xs)` prints a list as Python would. A `Map` prints
+  its entries in insertion order and an empty one prints `{}`; an empty `Set` prints `set()`. A
+  collection's `Debug` text is its `Display` text. A string's `Debug` text is Python's `repr`:
+  single quotes, or double quotes when the text holds a `'` and no `"`; `\`, the chosen quote, `\n`,
+  `\r` and `\t` are escaped, and any other control character is `\xNN`. An `owns T` and a `Cell[T]`
+  show as the `T` they hold, in `Display` and `Debug` alike (an `owns int` holding 5 prints `5`;
+  ODR-094). A `Cell` shows a copy of its value, as `get` reads it: a value's own `Display` or
   `Debug` is the program's code and may `set` the cell, and a `Cell` lends its value to nothing
   (`[CELL-2]`), so one that is not `Copy` and writes its own is not shown from a `Cell` (`E2040`;
   ODR-109).
-* `[TYP-37]` *(new in 0.9.9)* Floats implement `Eq` with IEEE `==` (so `NaN != NaN`) and `Ord` with the IEEE-754
-  totalOrder predicate (`-NaN < -inf < … < -0.0 < +0.0 < … < +inf < +NaN`). The comparison
-  *operators* on float values keep IEEE meaning (`[TYP-9]`) in concrete and generic code alike: `a < b`
-  with `T: needs Ord` and `T = f64` is IEEE `<`, false when either side is NaN. `cmp`, `sort()`, `sorted()`,
-  `binary_search`, `min()` and `max()` use `cmp`, so sorting floats is total and needs no extra step.
-  A float's `==` and `cmp(…) == Equal` can differ (`-0.0 == 0.0`, which `cmp` orders; a NaN is not `==`
-  itself), so an algorithm keeps to one relation: the ordered ones to `cmp` throughout, the
-  equality-based ones (`contains`, `index_of`, `dedup`) to `==` (ODR-055). Floats do not implement
-  `Hash`; a float map key is written with `f.to_bits()`.
-* `[TYP-21]` *(changed in 0.9.9)* *(changed in 0.9.15)* Operators desugar to these interfaces for non-scalar operands; `a + b` calls
-  `Add.add(a, b)` with both operands read in place. `a += b` calls `AddAssign.add_assign` if implemented,
-  else `a = a + b`. Scalar operators are built in. The interfaces' methods are `add`, `sub`, `mul`,
-  `div`, `floordiv`, `rem`, `pow`, `bitand`, `bitor`, `bitxor`, `shl`, `shr`, `neg` and `not`, and
-  each `…Assign` form's is its operator's followed by `_assign` (ODR-040). A type has an operator
-  only by implementing its interface (`[TYP-40]`); a method that merely shares the name is not one.
-  Each number type implements the interface of each operator it has, with `Rhs = Self` and `Output =
-  Self`: every integer type `Add`, `Sub`, `Mul`, `FloorDiv`, `Rem`, `Pow`, `Neg`, `Not`, `BitAnd`,
-  `BitOr`, `BitXor`, `Shl`, `Shr` and their `…Assign` forms, and every float type `Add`, `Sub`,
-  `Mul`, `Div`, `FloorDiv`, `Rem`, `Pow`, `Neg` and theirs, so `[TYP-17]`'s `sum` takes numbers.
-  Such a method is the operator: `3.add(4)` is `3 + 4`. `bool`, `char` and `String` implement none
-  of them (`String`'s `+` takes its left operand over, `[TXT-11]`). Likewise a type is indexed only
-  through `Index`, `IndexMut` and `IndexSet` (ODR-042).
-* `[HASH-1]` *(changed in 0.9.15)* `Hash.hash` is generic over `H: needs Hasher` and monomorphised; hashing a value MUST feed a
-  deterministic representation of it into the hasher, and values equal under `Eq` MUST hash equally.
-  `Hasher` (in `std.collections`, not the prelude) is a hashing state, with `write_bytes`,
-  `write_u8`, `write_u16`, `write_u32`, `write_u64`, `write_i8`, `write_i16`, `write_i32`,
-  `write_i64`, `write_usize`, `write_isize` and `finish() owns this -> u64`. A user type may
-  implement it and serve as a map's hasher.
+* `[TYP-37]` *(new in 0.9.9)* Floats implement `Eq` with IEEE `==` (so `NaN != NaN`) and `Ord` with
+  the IEEE-754 totalOrder predicate (`-NaN < -inf < … < -0.0 < +0.0 < … < +inf < +NaN`). The
+  comparison *operators* on float values keep IEEE meaning (`[TYP-9]`) in concrete and generic code
+  alike: `a < b` with `T: needs Ord` and `T = f64` is IEEE `<`, false when either side is NaN.
+  `cmp`, `sort()`, `sorted()`, `binary_search`, `min()` and `max()` use `cmp`, so sorting floats is
+  total and needs no extra step. A float's `==` and `cmp(…) == Equal` can differ (`-0.0 == 0.0`,
+  which `cmp` orders; a NaN is not `==` itself), so an algorithm keeps to one relation: the ordered
+  ones to `cmp` throughout, the equality-based ones (`contains`, `index_of`, `dedup`) to `==`
+  (ODR-055). Floats do not implement `Hash`; a float map key is written with `f.to_bits()`.
+* `[TYP-21]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* Operators desugar to
+  these interfaces for non-scalar operands, but one: `a + b` calls `Add.add(a, b)` with both
+  operands read in place, and `String`'s `+` is the language's own, taking `a` over (`[TXT-11]`), so
+  `String` implements no operator interface and does not meet `T: needs Add`. `a += b` calls
+  `AddAssign.add_assign` if implemented, else `a = a + b`. Scalar operators are built in. The
+  interfaces' methods are `add`, `sub`, `mul`, `div`, `floordiv`, `rem`, `pow`, `bitand`, `bitor`,
+  `bitxor`, `shl`, `shr`, `neg` and `not`, and each `…Assign` form's is its operator's followed by
+  `_assign` (ODR-040). A type has an operator only by implementing its interface (`[TYP-40]`); a
+  method that merely shares the name is not one. Each number type implements the interface of each
+  operator it has, with `Rhs = Self` and `Output = Self`: every integer type `Add`, `Sub`, `Mul`,
+  `FloorDiv`, `Rem`, `Pow`, `Neg`, `Not`, `BitAnd`, `BitOr`, `BitXor`, `Shl`, `Shr` and their
+  `…Assign` forms, and every float type `Add`, `Sub`, `Mul`, `Div`, `FloorDiv`, `Rem`, `Pow`, `Neg`
+  and theirs, so `[TYP-17]`'s `sum` takes numbers. Such a method is the operator: `3.add(4)` is `3 +
+  4`. `bool`, `char` and `String` implement none of them. Likewise a type is indexed only through
+  `Index`, `IndexMut` and `IndexSet` (ODR-042).
+* `[HASH-1]` *(changed in 0.9.15)* `Hash.hash` is generic over `H: needs Hasher` and monomorphised;
+  hashing a value MUST feed a deterministic representation of it into the hasher, and values equal
+  under `Eq` MUST hash equally. `Hasher` (in `std.collections`, not the prelude) is a hashing state,
+  with `write_bytes`, `write_u8`, `write_u16`, `write_u32`, `write_u64`, `write_i8`, `write_i16`,
+  `write_i32`, `write_i64`, `write_usize`, `write_isize` and `finish() owns this -> u64`. A user
+  type may implement it and serve as a map's hasher.
 * `[HASH-2]` *(changed in 0.9.9)* `std.collections.DefaultHasher` is a fixed-seed hasher: the same
   keys hash the same way in every run and on every machine. It is a fast non-cryptographic hash, no
-  slower on integer keys than one multiply and one rotate per word (FxHash's class). `std.collections.
-  RandomState` is a per-process randomly seeded hasher for maps keyed by untrusted input; a `Map[K, V,
-  RandomState]` still iterates in insertion order (`[STD-11]`), so the seed never becomes visible.
-  `DefaultHasher`'s values are the same for one Ember version on every target (its state is 64 bits
-  on a 32-bit target too), so a table built at compile time is valid at run time; they may change
-  between versions, and a program MUST NOT depend on them.
-* `[HASH-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* `Map` and `Set` MUST NOT weaken equality to compensate for an
-  incoherent `Hash`. An incoherent `Hash`, a key changed through a `Cell`, or an inconsistent `Ord`
-  given to `sort` gives wrong answers (a missing key, any permutation of the elements) but never
-  undefined behaviour, an out-of-bounds access or an operation that does not terminate. A `hash` or
-  `eq` that panics aborts the process (`[PAN-1]`), so no map is seen half-changed. What a `hash` or
-  `eq` does is worked out from its body like any function's (Part X), so one that may change or end
-  the map it is called from, reached by another name (a link, a module variable), makes the map
-  operation that calls it refused when compiling (`E3031`); nothing is checked while the program runs.
-* `[HASH-4]` `Map[K, V]` requires `K: needs (Eq, Hash)`. A map may call `hash` any number of times per
-  operation. Safe map APIs never expose `ref mut K`.
+  slower on integer keys than one multiply and one rotate per word (FxHash's class).
+  `std.collections. RandomState` is a per-process randomly seeded hasher for maps keyed by untrusted
+  input; a `Map[K, V, RandomState]` still iterates in insertion order (`[STD-11]`), so the seed
+  never becomes visible. `DefaultHasher`'s values are the same for one Ember version on every target
+  (its state is 64 bits on a 32-bit target too), so a table built at compile time is valid at run
+  time; they may change between versions, and a program MUST NOT depend on them.
+* `[HASH-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* `Map` and `Set` MUST NOT weaken equality to
+  compensate for an incoherent `Hash`. An incoherent `Hash`, a key changed through a `Cell`, or an
+  inconsistent `Ord` given to `sort` gives wrong answers (a missing key, any permutation of the
+  elements) but never undefined behaviour, an out-of-bounds access or an operation that does not
+  terminate. A `hash` or `eq` that panics aborts the process (`[PAN-1]`), so no map is seen
+  half-changed. What a `hash` or `eq` does is worked out from its body like any function's (Part X),
+  so one that may change or end the map it is called from, reached by another name (a link, a module
+  variable), makes the map operation that calls it refused when compiling (`E3031`); nothing is
+  checked while the program runs.
+* `[HASH-4]` `Map[K, V]` requires `K: needs (Eq, Hash)`. A map may call `hash` any number of times
+  per operation. Safe map APIs never expose `ref mut K`.
 
 ## IV.9 Existential and opaque types
 
-* `dyn I` is unsized. It is a parameter's type (a read-only view of the value; `ref mut v: dyn I` may
-  change it), a view's (`ref dyn I`), or held as `owns dyn I`, `shares dyn I` or `shares mut dyn I`
-  (`[TYP-45]`). It is a data pointer and a table pointer (a class object reaches its table through the
-  object header, `[OBJ-2]`).
-* `[TYP-22]` *(changed in 0.9.10)* *(changed in 0.9.15)* An interface is usable as `dyn` only if every method has an object
-  (none is a `static fn`), does not return `Self` by value (methods marked `where Self: needs Sized`
-  excepted), and is not generic, except over a type parameter used only as the type of a parameter
-  that views its value (a plain or `ref mut` parameter), which gets one `dyn` entry (`[V: needs Visitor]`
-  above `fn visit(ref mut v: V)`). Violations are `E2050`, naming the method and giving the line to
-  write ("`Inspect` cannot be used as `dyn Inspect`: `make` returns its `V`, and a `dyn` value has one
-  entry per method; take the visitor in instead of returning it, `[V: needs Visitor]` above `fn make(ref mut
-  v: V)`"). An interface that requires `Clone`
-  (`interface Shape: needs Clone:`) is usable as `dyn` all the same: every type implementing it must be
-  `Clone`, as for any required interface, and its method table holds an entry that copies the value
-  into a new block, so `owns dyn Shape` is `Clone` (§IX.1).
+* `dyn I` is unsized. It is a parameter's type (a read-only view of the value; `ref mut v: dyn I`
+  may change it), a view's (`ref dyn I`), or held as `owns dyn I`, `shares dyn I` or `shares mut dyn
+  I` (`[TYP-45]`). It is a data pointer and a table pointer (a class object reaches its table
+  through the object header, `[OBJ-2]`).
+* `[TYP-22]` *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* An interface is
+  usable as `dyn` only if every method has an object (none is a `static fn`), names `Self` nowhere
+  but as `this`: not as a result by value, and not as a parameter's type or inside one (`fn
+  eq(other: Self)`, `fn add(rhs: Self)`, `fn merge(owns other: Self)`), since through a `dyn I`
+  value the kind of any other value is unknown (methods marked `where Self: needs Sized` excepted,
+  which a `dyn` value does not have), and is not generic, except over a type parameter used only as
+  the type of a parameter that views its value (a plain or `ref mut` parameter), which gets one
+  `dyn` entry (`[V: needs Visitor]` above `fn visit(ref mut v: V)`). Violations are `E2050`, naming
+  the method and giving the line to write ("`Inspect` cannot be used as `dyn Inspect`: `make`
+  returns its `V`, and a `dyn` value has one entry per method; take the visitor in instead of
+  returning it, `[V: needs Visitor]` above `fn make(ref mut v: V)`"; "`Same` cannot be used as `dyn
+  Same`: `same` takes `other: Self`, and through a `dyn Same` the kind of `other` is unknown; take
+  `other: dyn Same` and test its kind in the body, `if other is Tag as o:`, or mark `same` with
+  `where Self: needs Sized` and call it on the concrete types"). A method of an interface that `I`
+  requires (`interface Shape: needs (Eq, Ord):`) is reached through `dyn I` only where it names
+  `Self` nowhere but as `this`, and through the two entries this document gives: `clone` (§IX.1) and
+  `eq` (`[TYP-36]`, the kinds compared first); any other such method called through a `dyn I` value
+  is `E2050` at the call ("`cmp` takes `other: Self`, and through a `dyn Shape` the kind of `other`
+  is unknown; test the kinds first, `if a is Circle as x:` and inside it `if b is Circle as y:`, and
+  call `x.cmp(y)`"). A `dyn I` names every associated type of `I` with `Name = T` (`owns dyn
+  Iterator[Item = int]`, `[GRM-8c]`); one left unnamed is `E2060` ("`dyn Iterator` leaves `Item`
+  open; write `owns dyn Iterator[Item = int]`"). An interface that requires `Clone` (`interface
+  Shape: needs Clone:`) is usable as `dyn` all the same: every type implementing it must be `Clone`,
+  as for any required interface, and its method table holds an entry that copies the value into a
+  new block, so `owns dyn Shape` is `Clone` (§IX.1).
 * `[TYP-44]` *(new in 0.9.15)* **Kind tests and casts.** A value of an interface type (`dyn I`,
   `owns dyn I`, `shares dyn I`, `shares mut dyn I`) or of a base class is tested for its kind with
   `is` (`[GRM-45]`). `if s is Circle as c:` runs its block when `s` is a `Circle` and names it `c`
@@ -816,25 +901,35 @@ implementation the program has (Part X).
   read-only view, and, since a value tested in its place stays a place, `if this.pools[k] is Pool[T]
   as ref mut pool:` names a view of that pool that may change it, where the function may change the
   place. `if s is Circle:` tests without a name. A choice among kinds is `if`, `elif` and `else` of
-  kind tests; there is no "maybe a `Circle`" value to `match` on. A test that always passes (`s` is a
-  `Circle` already) is `E2036` ("to name it write `c = s` in place of the `if` line, and use `c` in its
-  block, moved out one level"); a test that can never pass, of a type that does not implement the
-  interface or derive from the base class, is `E2037` ("`s` is a `Shape`, which can never be a `Path`;
-  remove the test: the `if` line and its block"); a name already in use is `E2106` ("`as` declares a
-  new name: write `if s is Circle as c:`, and `c.r` for `s.r` in its block"). `cast s as Circle`
-  gives the `Circle`, on `owns dyn` and `shares dyn` values too, and stops the program when `s` is not
-  one, with the text "`cast s as Circle` on line 9: `s` is a `Square`, not a `Circle`", in the
-  program's own names and line. A cast of a place is a place: the name bound from it is read-only
-  unless written `ref mut` (`pool = ref mut cast this.pools[k] as Pool[T]`), and `ref mut` taken
-  through a plain one (`return ref mut pool.dense[pool.sparse[e]]`) is `E3027`. A cast between
-  unrelated types is `E2020`. Before a type name `is` means "is of this kind"; before a value it means
-  "the same object" (`a is b`, `x is None`). Each test and each cast is one compare of type indices.
-  `as?`, `as!`, `cast s if Circle` and `cast s when Circle` are not Ember (`E1010`, `[GRM-30]`).
-* `[TYP-32]` *(new in 0.9.9)* `some I` in a return type means "one concrete type, chosen by the function body, that
-  implements `I`". The caller sees only `I`; the compiler knows the type and monomorphises through it,
-  so there is no indirection. Every `return` in the body must produce the same concrete type
-  (`E2261` otherwise). A method returns one as a function does; an interface's method does not
-  (`[GRM-31]`). It is how a function returns an iterator pipeline whose type cannot be written:
+  kind tests; there is no "maybe a `Circle`" value to `match` on. A test that always passes (`s` is
+  a `Circle` already) is `E2036` ("to name it write `c = s` in place of the `if` line, and use `c`
+  in its block, moved out one level"); a test that can never pass, of a type that does not implement
+  the interface or derive from the base class, is `E2037` ("`s` is a `Shape`, which can never be a
+  `Path`; remove the test: the `if` line and its block"); a name already in use is `E2106` ("`as`
+  declares a new name: write `if s is Circle as c:`, and `c.r` for `s.r` in its block"). `cast s as
+  Circle` gives the `Circle`, on `owns dyn` and `shares dyn` values too, and stops the program when
+  `s` is not one, with the text "`cast s as Circle` on line 9: `s` is a `Square`, not a `Circle`",
+  in the program's own names and line. A cast of a place is a place: the name bound from it is
+  read-only unless written `ref mut` (`pool = ref mut cast this.pools[k] as Pool[T]`), and `ref mut`
+  taken through a plain one (`return ref mut pool.dense[pool.sparse[e]]`) is `E3027`. A cast between
+  unrelated types is `E2020`. Before a type name `is` means "is of this kind"; before a value it
+  means "the same object" (`a is b`, `x is None`). Each test and each cast is one compare of type
+  indices. `as?`, `as!`, `cast s if Circle` and `cast s when Circle` are not Ember (`E1010`,
+  `[GRM-30]`).
+* `[TYP-44a]` *(new in 0.9.20)* **One index per type in a process.** A type index is a number no two
+  types in one process share, given when the program is linked, and for a reload image when it is
+  loaded (`[HR-12a]`), never when a package is compiled: compiled code names a kind by its
+  type-information symbol (`em_ti_…`, `[MNG-4]`), the linker gives each such symbol in the process
+  one index, so a generic instance deduplicated at link (`[MONO-1]`) has one, and fills each compare
+  with it. A kind test or cast is then one compare of the header's index against a constant (§X.4);
+  where the C toolchain cannot fill an immediate from a link-time value, one load of that constant
+  per function, which `ember inspect` reports on the same row.
+* `[TYP-32]` *(new in 0.9.9)* `some I` in a return type means "one concrete type, chosen by the
+  function body, that implements `I`". The caller sees only `I`; the compiler knows the type and
+  monomorphises through it, so there is no indirection. Every `return` in the body must produce the
+  same concrete type (`E2261` otherwise). A method returns one as a function does; an interface's
+  method does not (`[GRM-31]`). It is how a function returns an iterator pipeline whose type cannot
+  be written:
 
 ```ember
 fn evens(xs: Span[int]) -> some Iterator[Item = int]:

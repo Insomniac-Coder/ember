@@ -479,96 +479,105 @@ view hands nothing over and makes no copy.
 
 ## VII.5 Views and changes
 
-* `[BRW-16]` *(new in 0.9.15)* *(changed in 0.9.20)* **Positions.** A name for a list element made by indexing
-  (`boss = enemies[0]`, `boss = ref mut enemies[0]`, `p = ps.get(0).unwrap()`), of a list reached
-  through locals that own it, parameters, `this` and one-owner fields, is a position: the index is
-  read once, where the name is made, and kept with it (a later change of `i` moves no position made
-  from `enemies[i]`), and the element is found again at each use through the list's current buffer. The list may grow while the name is used (its buffer is read again after the
-  add); anything that may remove, insert, reorder, clear or replace the list ends the name, and a later
-  use is `E3060` ("`enemies.remove(0)` (line 8) may put another enemy in the place `boss` names (line
-  6), and `boss` is used on line 9; use `boss` before line 8, or name the enemy again after it:
-  `boss = ref mut enemies[0]`"), a call that reads elements and removes included. Growing the list is
-  not a use of the element. A list reached through a link (a local or field holding a `shares`,
-  `shares mut` or `sharedref mut` link) gives addresses, `[BRW-17]`.
-* `[BRW-17]` *(new in 0.9.15)* **Addresses.** Every other view (a kept view; a view reached through a
-  link; a view into a value's own contents: a `String`'s text, an `Array` field's elements, an enum's
-  payload; every view a call gives, `[LT-1]`) ends at any change that may reshape what it points into,
-  made through any name that may reach it, and a later use is `E3060`. Two paths may reach the same
-  object when they lead to values of one type and at least one goes through a link or a kept view,
-  unless the compiler knows they differ (different types, a fresh object, inside `if a is not b:`).
-  What may reshape is worked out from the code (`[EFF-1]`): the function itself, the functions it
-  calls, every function the program can put in a function value or behind a `dyn` method it calls, and,
-  at a foreign call, the callbacks C keeps (`[FFI-21]`). So a call through a function value whose stored
-  function replaces the text of an object it owns (`rename = fn() owns n: n.name = String("b")`) ends a
-  view of that text reached through a link (`s = p.name.trim()` under `if w exists as p:`): `s` is not
-  used after `rename()` ("`rename()` (line 9) replaces the node's name (`n.name = String("b")`, line
-  6), and `s` views that name's text (line 8) and is used on line 10; use `s` before line 9, or keep your
-  own text: `s = String(p.name.trim())`"). A view parameter (a plain, `Span` or `ref mut` one), or
-  `this`, and what its function may end or move may be one place too; that is checked at each call
-  (`[BRW-21]`). Adding to a list moves only what it stores inline: a view of a class object (a link, a
-  kept view, or an address reached through a link), which lives in its own block, is not ended by a
-  `push` or an `extend` of the list that owns it (with `players: Array[Player]` and
-  `w = Watcher(target=sharedref mut players[0])`, `w.target.hp -= 1` after `players.push(owns Player())` is
-  allowed); one to a value stored inline in the list (a struct element) is. Removing, clearing or
-  replacing still ends every view of what it may end.
-  For keys viewed across a change of their map: E3060 ("`m.insert(owns String("z"), owns 1)` (line 8) changes `m`, whose keys `ks` (line 7) still views on line 9; use `ks` before line 8, or keep your own strings: write `ks = sorted(m.keys().copy_each())` in place of line 7").
-* `[BRW-18]` *(new in 0.9.15)* **Loops, generators included.** While a `for` loop walks a collection (a
-  list, a map, a set or a string), or a generator that walks it (a `gen fn` paused in the middle of it,
-  `[LT-1]`) will still be used, nothing changes the collection, whatever the change: nothing is added or
-  removed, no element is written or replaced and no field of one changed (`xs[0] = 5`,
-  `enemies[0].hp -= 1`), no value under a key replaced (`counts[k] *= 2`, `names[k] = String("bob")`),
-  through the collection's own name or through any call that may change it (`[EFF-1]`: a call through
-  a function value, a library call given a function that changes it, a `spawn` whose thread changes it
-  other than under a lock the loop holds, a foreign call while a callback C keeps changes it, and the
-  end of an object whose `drop` changes it, `[DRP-8]`). It is `E3020`, at the change:
-  "`enemies.push(...)` adds to `enemies`, which this loop walks (line 3); collect the new enemies in a
-  list of your own: write `spawned: Array[Enemy] = []` before the loop,
-  `spawned.push(owns Enemy(hp=5, splits=false))` in place of this line, and `enemies.extend(spawned)` after
-  the loop"; "`counts.insert(...)` (line 4) adds to `counts`, whose keys this loop walks (line 3);
-  collect the new keys in a list of your own: write `upper: Array[String] = []` before the loop,
-  `upper.push(owns k.to_upper())` in place of this line, and `for u in owns upper: counts.insert(owns u, owns 0)` after
-  the loop"; "`b.click()` (line 17) adds to `LOG` (through `click`, which runs the handler stored on
-  line 9, `log_click`, which pushes to `LOG`) while this loop walks `LOG` (line 16); click after the
-  loop: move line 17, `b.click()`, below the loop"; "`d.log.push(owns "open")` (line 3) changes `d.log`,
-  which `g` walks (`g = d.replay()`, line 1), and `g` is used again on line 4; push after `g`'s last use:
-  move `d.log.push(owns "open")` below line 4". **The loop's own handle may change the item it is on**:
-  `for ref mut x in xs: x = 5` gives `[5, 5, 5]`; `for k, ref mut v in counts: v *= 2`;
-  `for k, ref mut v in names: v = String("bob")`; and the message gives that line: "`xs[0] = 5` (line
-  3) writes an element of `xs`, which this loop walks (line 2); to change the element the loop is on,
-  write `for ref mut x in xs:` in place of line 2 and `x = 5` in place of line 3"; "`counts[k] *= 2`
-  (line 4) changes `counts`, whose keys this loop walks (line 3); change each value through the loop's
-  own handle: write `for k, ref mut v in counts:` in place of line 3 and `v *= 2` in place of line 4".
-  Anything else goes after the loop or after the generator's last use (`retain`, `extend`, `Commands`).
-  A counting loop `for i in 0..xs.len():`, whose range is fixed when it starts, does not walk `xs`: it
-  may write its elements and add to it, but not remove from it (`E3020`: "`enemies.remove(i)` (line 4)
-  shortens `enemies`, which `for i in 0..enemies.len():` (line 2) counts over with an end fixed when it
-  started; remove after the loop: instead of `if enemies[i].hp <= 0:` (line 3) and line 4, write
-  `enemies.retain(owns fn(e) => e.hp > 0)` after the loop (and remove the `for` line if nothing is left in
-  it)"). A `while` loop that tests its position against the list's current length at every step may
-  add and remove: it is not a walk, and each index is checked. A call through a function value that may
-  take a lock this thread holds, inside a walk under that lock, is `E7018`, not `E3020` (§XI.2):
-  the message whose fix compiles is the one shown (`[DIA-28]`).
-  For a call through a stored function that may change the walked list: E3020 ("`h(this)` (line 8) may clear `this.handlers` (through `close_all`, stored on line 20) while this loop walks `this.handlers` (line 7); give each handler the Ui to change, `handlers: Array[fn(ref mut Ui)]`, and walk by position instead of the `for` line: `this.current = 0`, `while this.current < len(this.handlers):`, `this.handlers[this.current](ref mut this)`, `this.current += 1`").
-* `[BRW-19]` *(new in 0.9.15)* **Temporaries.** A temporary lives until the last use of every view made
-  from it, lists of views included (`word = line.to_lower().trim()` keeps the lowered string until
-  `word`'s last use, `[EXP-4]`). Returning such a view, or storing it where it would outlive the
-  temporary, is `E3063`: "`word` is a view of the lowered copy that `line.to_lower()` made on line 2,
-  which ends when `clean` returns; return `String(...)` to hand back your own copy:
-  `return String(word)`, with the result type `String`". A method that may change its object, called on
-  a temporary that ends with the line, is refused when the call's only effect is that change (its body
-  changes nothing else, through its arguments or by any other name, and nothing it gives back is used),
-  since the change would be lost: `E2140`, "`heal` changes the enemy that `enemy_at(es, 0)` returns, a
-  copy that ends on this line, so the change would be lost; to heal the enemy in `es` write
-  `es[0].heal()`, or let `enemy_at` give back the enemy itself:
-  `fn enemy_at(ref mut xs: Array[Enemy], i: int) -> ref mut Enemy:` with `return ref mut xs[i]`,
-  called `enemy_at(ref mut es, 0).heal()`". A call whose result is used stays allowed
-  (`line.split(" ").next()`).
+* `[BRW-16]` *(new in 0.9.15)* *(changed in 0.9.20)* **Positions.** A name for a list element made
+  by indexing (`boss = enemies[0]`, `boss = ref mut enemies[0]`, `p = ps.get(0).unwrap()`), of a
+  list reached through locals that own it, parameters, `this`, one-owner fields and module variables
+  (`static mut`, `[LT-3]`), is a position: the index is read once, where the name is made, and kept
+  with it (a later change of `i` moves no position made from `enemies[i]`), and the element is found
+  again at each use through the list's current buffer. The list may grow while the name is used (its
+  buffer is read again after the add); anything that may remove, insert, reorder, clear or replace
+  the list ends the name, and a later use is `E3060` ("`enemies.remove(0)` (line 8) may put another
+  enemy in the place `boss` names (line 6), and `boss` is used on line 9; use `boss` before line 8,
+  or name the enemy again after it: `boss = ref mut enemies[0]`"), a call that reads elements and
+  removes included. Growing the list is not a use of the element. A list reached through a link (a
+  local or field holding a `shares`, `shares mut` or `sharedref mut` link) gives addresses,
+  `[BRW-17]`.
+* `[BRW-17]` *(new in 0.9.15)* *(changed in 0.9.20)* **Addresses.** Every other view (a kept view; a
+  view reached through a link; a view into a value's own contents: a `String`'s text, an `Array`
+  field's elements, an enum's payload; every view a call gives, `[LT-1]`) ends at any change that
+  may reshape what it points into, made through any name that may reach it, and a later use is
+  `E3060`. Two paths may reach the same object when they lead to values of one type and at least one
+  goes through a link or a kept view, unless the compiler knows they differ (types of which neither
+  can hold a value of the other, for classes neither deriving from the other; a fresh object; inside
+  `if a is not b:`). What may reshape is worked out from the code (`[EFF-1]`): the function itself,
+  the functions it calls, every function the program can put in a function value or behind a `dyn`
+  method it calls, and, at a foreign call, the callbacks C keeps (`[FFI-21]`). So a call through a
+  function value whose stored function replaces the text of an object it owns (`rename = fn() owns
+  n: n.name = String("b")`) ends a view of that text reached through a link (`s = p.name.trim()`
+  under `if w exists as p:`): `s` is not used after `rename()` ("`rename()` (line 9) replaces the
+  node's name (`n.name = String("b")`, line 6), and `s` views that name's text (line 8) and is used
+  on line 10; use `s` before line 9, or keep your own text: `s = String(p.name.trim())`"). A view
+  parameter (a plain, `Span` or `ref mut` one), or `this`, and what its function may end or move may
+  be one place too; that is checked at each call (`[BRW-21]`). Adding to a list moves only what it
+  stores inline: a view of a class object (a link, a kept view, or an address reached through a
+  link), which lives in its own block, is not ended by a `push` or an `extend` of the list that owns
+  it (with `players: Array[Player]` and `w = Watcher(target=sharedref mut players[0])`, `w.target.hp
+  -= 1` after `players.push(owns Player())` is allowed); one to a value stored inline in the list (a
+  struct element) is. Removing, clearing or replacing still ends every view of what it may end. For
+  keys viewed across a change of their map: E3060 ("`m.insert(owns String("z"), owns 1)` (line 8)
+  changes `m`, whose keys `ks` (line 7) still views on line 9; use `ks` before line 8, or keep your
+  own strings: write `ks = sorted(m.keys().copy_each())` in place of line 7").
+* `[BRW-18]` *(new in 0.9.15)* **Loops, generators included.** While a `for` loop walks a collection
+  (a list, a map, a set or a string), or a generator that walks it (a `gen fn` paused in the middle
+  of it, `[LT-1]`) will still be used, nothing changes the collection, whatever the change: nothing
+  is added or removed, no element is written or replaced and no field of one changed (`xs[0] = 5`,
+  `enemies[0].hp -= 1`), no value under a key replaced (`counts[k] *= 2`, `names[k] =
+  String("bob")`), through the collection's own name or through any call that may change it
+  (`[EFF-1]`: a call through a function value, a library call given a function that changes it, a
+  `spawn` whose thread changes it other than under a lock the loop holds, a foreign call while a
+  callback C keeps changes it, and the end of an object whose `drop` changes it, `[DRP-8]`). It is
+  `E3020`, at the change: "`enemies.push(...)` adds to `enemies`, which this loop walks (line 3);
+  collect the new enemies in a list of your own: write `spawned: Array[Enemy] = []` before the loop,
+  `spawned.push(owns Enemy(hp=5, splits=false))` in place of this line, and
+  `enemies.extend(spawned)` after the loop"; "`counts.insert(...)` (line 4) adds to `counts`, whose
+  keys this loop walks (line 3); collect the new keys in a list of your own: write `upper:
+  Array[String] = []` before the loop, `upper.push(owns k.to_upper())` in place of this line, and
+  `for u in owns upper: counts.insert(owns u, owns 0)` after the loop"; "`b.click()` (line 17) adds
+  to `LOG` (through `click`, which runs the handler stored on line 9, `log_click`, which pushes to
+  `LOG`) while this loop walks `LOG` (line 16); click after the loop: move line 17, `b.click()`,
+  below the loop"; "`d.log.push(owns "open")` (line 3) changes `d.log`, which `g` walks (`g =
+  d.replay()`, line 1), and `g` is used again on line 4; push after `g`'s last use: move
+  `d.log.push(owns "open")` below line 4". **The loop's own handle may change the item it is on**:
+  `for ref mut x in xs: x = 5` gives `[5, 5, 5]`; `for k, ref mut v in counts: v *= 2`; `for k, ref
+  mut v in names: v = String("bob")`; and the message gives that line: "`xs[0] = 5` (line 3) writes
+  an element of `xs`, which this loop walks (line 2); to change the element the loop is on, write
+  `for ref mut x in xs:` in place of line 2 and `x = 5` in place of line 3"; "`counts[k] *= 2` (line
+  4) changes `counts`, whose keys this loop walks (line 3); change each value through the loop's own
+  handle: write `for k, ref mut v in counts:` in place of line 3 and `v *= 2` in place of line 4".
+  Anything else goes after the loop or after the generator's last use (`retain`, `extend`,
+  `Commands`). A counting loop `for i in 0..xs.len():`, whose range is fixed when it starts, does
+  not walk `xs`: it may write its elements and add to it, but not remove from it (`E3020`:
+  "`enemies.remove(i)` (line 4) shortens `enemies`, which `for i in 0..enemies.len():` (line 2)
+  counts over with an end fixed when it started; remove after the loop: instead of `if enemies[i].hp
+  <= 0:` (line 3) and line 4, write `enemies.retain(owns fn(e) => e.hp > 0)` after the loop (and
+  remove the `for` line if nothing is left in it)"). A `while` loop that tests its position against
+  the list's current length at every step may add and remove: it is not a walk, and each index is
+  checked. A call through a function value that may take a lock this thread holds, inside a walk
+  under that lock, is `E7018`, not `E3020` (§XI.2): the message whose fix compiles is the one shown
+  (`[DIA-28]`). For a call through a stored function that may change the walked list: E3020
+  ("`h(this)` (line 8) may clear `this.handlers` (through `close_all`, stored on line 20) while this
+  loop walks `this.handlers` (line 7); give each handler the Ui to change, `handlers: Array[fn(ref
+  mut Ui)]`, and walk by position instead of the `for` line: `this.current = 0`, `while this.current
+  < len(this.handlers):`, `this.handlers[this.current](ref mut this)`, `this.current += 1`").
+* `[BRW-19]` *(new in 0.9.15)* **Temporaries.** A temporary lives until the last use of every view
+  made from it, lists of views included (`word = line.to_lower().trim()` keeps the lowered string
+  until `word`'s last use, `[EXP-4]`). Returning such a view, or storing it where it would outlive
+  the temporary, is `E3063`: "`word` is a view of the lowered copy that `line.to_lower()` made on
+  line 2, which ends when `clean` returns; return `String(...)` to hand back your own copy: `return
+  String(word)`, with the result type `String`". A method that may change its object, called on a
+  temporary that ends with the line, is refused when the call's only effect is that change (its body
+  changes nothing else, through its arguments or by any other name, and nothing it gives back is
+  used), since the change would be lost: `E2140`, "`heal` changes the enemy that `enemy_at(es, 0)`
+  returns, a copy that ends on this line, so the change would be lost; to heal the enemy in `es`
+  write `es[0].heal()`, or let `enemy_at` give back the enemy itself: `fn enemy_at(ref mut xs:
+  Array[Enemy], i: int) -> ref mut Enemy:` with `return ref mut xs[i]`, called `enemy_at(ref mut es,
+  0).heal()`". A call whose result is used stays allowed (`line.split(" ").next()`).
 * `[BRW-20]` *(new in 0.9.15)* **Guards.** A view made through a lock's guard (`g[0]`, `ref g[0]`, a
-  slice of `g`) points into the guard and does not leave its `with` block (`E3063`: "this points into
-  the locked list, which can change once the lock ends; return a copy, or do the work inside the `with`
-  block"); the same for `RwLock`'s `read()` and `write()` and for a `guarded by` field inside
-  `with x.lock:` ("this points into the read-locked list, which can change once the lock ends; return a
-  copy: `return copy of g[0]`, with the result type `String`").
+  slice of `g`) points into the guard and does not leave its `with` block (`E3063`: "this points
+  into the locked list, which can change once the lock ends; return a copy, or do the work inside
+  the `with` block"); the same for `RwLock`'s `read()` and `write()` and for a `guarded by` field
+  inside `with x.lock:` ("this points into the read-locked list, which can change once the lock
+  ends; return a copy: `return copy of g[0]`, with the result type `String`").
 
 ## VII.6 Regions and their inference
 
@@ -622,20 +631,31 @@ it must be valid, and the compiler infers every region.
      Yours(items=[9])`, then `r = q.pick(xs)` in the same function), and a call on `this` in a
      method of an open class, are decided by the code of each kind the same way and refused the same
      way, the message naming the class ("`a` may be a `B`") or the local ("`q` may be a `Yours`").
-     Pointing into an argument means pointing into it and into everything it owns (**into**,
-     §VII.1), so a reshape of anything it owns ends the view and any other change of it while the
-     view is used is refused (`[BRW-1]`). A returned view may point into `this` and into any source
-     parameter, a method's as well as a function's, with nothing written: `fn pick(other: ref i32)
-     -> ref i32: return other` in a type body is no error, and its callers keep `other` viewed. A
-     returned view that points into any other parameter is refused: `E3063` when that parameter is
-     `owns` or is passed as a copy (`[BRW-8]`), whose storage ends with the call, and `E3062`
-     otherwise. A call whose result type is `ref mut T` or `ref T` is a place (`first(ref mut xs) +=
-     1`; `counts.entry(owns k).or_default() += 1`), and a name bound to it follows `[BRW-12]` (`r =
-     ref mut first_even(ref mut xs)`). A generator method's result is such a view, and it walks what
-     it views: after `g = d.replay()`, the list it walks (`d.log`) does not change while `g` will
-     still be used (`[BRW-18]`, `E3020`), however `replay` walks it, and any other change of `d`
-     while `g` will still be used (`d.angle = 90.0`) is a change of what a view a call gave points
-     into (`[BRW-1]`, `E3021`), unless `-> Generator[int] from log` narrows the view to `d.log`.
+     Across a package's edge the kinds that reach a `pub` function's `dyn`, interface or base-class
+     parameter are its callers' to give, so the package's interface file records, for that
+     parameter, what the body needs of them (`[BLD-14]` item 11): for each call through it, followed
+     through the package's own names and calls, and for each argument of that call and its object,
+     whether the called method's result may point into it, given what the body does while that
+     result lives (`[BRW-1]`, `[BRW-17]`). A call from another package reads, for each kind it
+     gives, the bits `[LT-22]` records in the kind's table (the ones `[LT-48]` reads while running)
+     and refuses the call where a bit is set that the record forbids, with the message of this rule
+     naming the library's line (`E3021`: "`xs` changes while `r` may still look at it
+     (`lib/show.em:9`): `p` is a `Yours`, whose `pick` gives back the list it was handed"). A kind
+     known only while running is `E3021` with the `runtime` help, as within one package. Pointing
+     into an argument means pointing into it and into everything it owns (**into**, §VII.1), so a
+     reshape of anything it owns ends the view and any other change of it while the view is used is
+     refused (`[BRW-1]`). A returned view may point into `this` and into any source parameter, a
+     method's as well as a function's, with nothing written: `fn pick(other: ref i32) -> ref i32:
+     return other` in a type body is no error, and its callers keep `other` viewed. A returned view
+     that points into any other parameter is refused: `E3063` when that parameter is `owns` or is
+     passed as a copy (`[BRW-8]`), whose storage ends with the call, and `E3062` otherwise. A call
+     whose result type is `ref mut T` or `ref T` is a place (`first(ref mut xs) += 1`;
+     `counts.entry(owns k).or_default() += 1`), and a name bound to it follows `[BRW-12]` (`r = ref
+     mut first_even(ref mut xs)`). A generator method's result is such a view, and it walks what it
+     views: after `g = d.replay()`, the list it walks (`d.log`) does not change while `g` will still
+     be used (`[BRW-18]`, `E3020`), however `replay` walks it, and any other change of `d` while `g`
+     will still be used (`d.angle = 90.0`) is a change of what a view a call gave points into
+     (`[BRW-1]`, `E3021`), unless `-> Generator[int] from log` narrows the view to `d.log`.
 * `[LT-1a]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **`from`.** `-> T from
   name`, written after the result type on the function's first line, replaces the rule the compiler
   would apply: the result points into exactly the named parameter, or into the named field of `this`
@@ -678,33 +698,43 @@ fn find_word(haystack: StrView, needle: StrView) -> Option[StrView] from haystac
     return Some(haystack[i..i + needle.len()])
 ```
 
-* `[LT-3]` String literals, `bytes` literals, `static` items and views of them have the `static`
-  region, which outlives everything.
+* `[LT-3]` *(changed in 0.9.20)* String literals, `bytes` literals, `static` items (which never
+  change, `[STA-1]`) and views of them have the `static` region, which outlives everything. A
+  `static mut` is a place with one owner, the program, that each function naming it reaches as it
+  reaches a local of its own (`[BRW-16]`: `LOG[0]` in a function is a position; `[BRW-17]` for a
+  view into its contents): a result that may point into one is recorded in the function's summary as
+  pointing into that variable, beside the parameters (`[LT-22]`, `[EFF-4]`), a call through a
+  function value counts every module variable a function the package can put there returns a view of
+  (`[EFF-2]`), and a caller keeps it viewed as it keeps an argument, so a reshape of it while the
+  result lives is `E3060` at the later use ("`LOG.clear()` (line 7) may free the text `s` views
+  (`head()` returns a view of `LOG`, its line 4), and `s` is used on line 8; keep your own copy: `s
+  = String(head())`") and a change `E3021`.
 * `[LT-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* A value made in a memory manager's instance
-  (`owns Mesh(points=[0.0, 1.0]) using current`, `[ALC-1]`), and every value that holds one, lives no
-  longer than that instance, wherever it is kept: keeping or returning it where it would outlive the
-  instance is `E3063` ("`boss` holds a mesh made in `current` (line 12), and `current` ends when
-  `load_level` returns, so `boss` cannot be returned; make it in an arena the caller keeps:
-  `fn load_level(ref mut arena: LevelArena) -> Enemy:`, with `mesh=owns Mesh(points=[0.0, 1.0]) using
-  arena`, and in the caller `current = LevelArena()` and `boss = load_level(ref mut current)`"). A value
-  whose manager may have several instances keeps its instance's address, one word, so that its growth
-  and its end go back to the instance it came from; that address is a kept `sharedref mut` link to the
-  instance (`[LT-46]`): the program may use the instance while values made in it live, and each value's
-  growth and end change the instance through it. A manager with one instance (`Global`, `System`) costs
-  no word. Arena allocations point into the arena (`[ARN-1]`).
+  (`owns Mesh(points=[0.0, 1.0]) using current`, `[ALC-1]`), and every value that holds one, lives
+  no longer than that instance, wherever it is kept: keeping or returning it where it would outlive
+  the instance is `E3063` ("`boss` holds a mesh made in `current` (line 12), and `current` ends when
+  `load_level` returns, so `boss` cannot be returned; make it in an arena the caller keeps: `fn
+  load_level(ref mut arena: LevelArena) -> Enemy:`, with `mesh=owns Mesh(points=[0.0, 1.0]) using
+  arena`, and in the caller `current = LevelArena()` and `boss = load_level(ref mut current)`"). A
+  value whose manager may have several instances keeps its instance's address, one word, so that its
+  growth and its end go back to the instance it came from; that address is a kept `sharedref mut`
+  link to the instance (`[LT-46]`): the program may use the instance while values made in it live,
+  and each value's growth and end change the instance through it. A manager with one instance
+  (`Global`, `System`) costs no word. Arena allocations point into the arena (`[ARN-1]`).
 * `[LT-44]` *(new in 0.9.9)* *(changed in 0.9.15)* A plain or `ref mut` `Arena`, `FixedArena` or
-  `ScopedArena` parameter is a source parameter because it is not `Copy` (`[LT-1]`): a function whose
-  only source parameter is one arena returns views that point into it, with no word. `from arena` is
-  needed only when the function has other source parameters too.
+  `ScopedArena` parameter is a source parameter because it is not `Copy` (`[LT-1]`): a function
+  whose only source parameter is one arena returns views that point into it, with no word. `from
+  arena` is needed only when the function has other source parameters too.
 * `[LT-6]` *(changed in 0.9.9)* *(changed in 0.9.15)* Named lifetimes are not part of Ember and will
   not be added. Where a relationship between regions cannot be inferred, the diagnostic names the
   restructuring that expresses it: an owned result, an index instead of a view, a view struct, or
   `from`.
-* `[LT-7]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Function types.** Each call through a value or parameter of function
-  type `fn(P1, …, Pn) -> R` gets fresh regions for its source parameters (`[LT-1]`). `R` may point into
-  them only as `[LT-1]` would allow for a function declared with that first line, and then only for the
-  time the caller keeps the arguments. So a callee may lend a function value views of its own locals,
-  and a function value may return a view of an argument to its caller:
+* `[LT-7]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Function types.** Each call through a value
+  or parameter of function type `fn(P1, …, Pn) -> R` gets fresh regions for its source parameters
+  (`[LT-1]`). `R` may point into them only as `[LT-1]` would allow for a function declared with that
+  first line, and then only for the time the caller keeps the arguments. So a callee may lend a
+  function value views of its own locals, and a function value may return a view of an argument to
+  its caller:
 
 ```ember
 fn with_local(f: fn(Span[int]) -> int) -> int:
@@ -891,14 +921,14 @@ fn main():
   may reach a field.
 * `[LT-22]` *(changed in 0.9.15)* *(changed in 0.9.20)* A function returning a view, or a view type,
   gets from its body a summary of which part of the result points into which parameter (a plain
-  view's one part is the view itself; a view type's are its fields), and which parameter fields each
-  call uses (`[LT-35]`). Callers use the summary; source never states it. For an implementation of
-  an interface method usable as `dyn`, and for a `virtual` method and each `override`, the summary
-  is also written as a fact in the method's entry of the kind's table (`[LT-48]`, `[DSP-2]`,
-  `[DSP-3]`). A body may give a result that needs more than the first line allows, pointing into any
-  source parameter (`[LT-1]` rule 3), and its summary says which; with `from`, the result points
-  into what `from` names. Where no summary can be made (a view read through a raw pointer), a caller
-  takes the result to point into every source parameter.
+  view's one part is the view itself; a view type's are its fields), into which module variable
+  (`[LT-3]`), and which parameter fields each call uses (`[LT-35]`). Callers use the summary; source
+  never states it. For an implementation of an interface method usable as `dyn`, and for a `virtual`
+  method and each `override`, the summary is also written as a fact in the method's entry of the
+  kind's table (`[LT-48]`, `[DSP-2]`, `[DSP-3]`). A body may give a result that needs more than the
+  first line allows, pointing into any source parameter (`[LT-1]` rule 3), and its summary says
+  which; with `from`, the result points into what `from` names. Where no summary can be made (a view
+  read through a raw pointer), a caller takes the result to point into every source parameter.
 * `[LT-23]` *(changed in 0.9.15)* With `from` on a function returning a multi-region view, every
   field of the result points into what `from` names; a field that points into anything else is
   `E3062`.

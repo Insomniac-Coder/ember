@@ -111,24 +111,27 @@ fail), **reclaim** (end what the old image owned).
 
 ## B.3 Types, schemas and migration
 
-* `[HR-11]` *(changed in 0.9.15)* Every type in a reloadable package has a **schema**: its kind, base, layout attributes, and
-  the ordered list of fields (name, type schema hash, offset, size) or variants (name, discriminant,
-  payload). A field's type schema includes the words its type is written with (`owns`, `shares`,
-  `shares mut`, `thread_shared`, `weakref`, `sharedref mut`, `ref`, `ref mut`, `using A`), so a change
-  of one is a change of the field's type.
+* `[HR-11]` *(changed in 0.9.15)* Every type in a reloadable package has a **schema**: its kind,
+  base, layout attributes, and the ordered list of fields (name, type schema hash, offset, size) or
+  variants (name, discriminant, payload). A field's type schema includes the words its type is
+  written with (`owns`, `shares`, `shares mut`, `thread_shared`, `weakref`, `sharedref mut`, `ref`,
+  `ref mut`, `using A`), so a change of one is a change of the field's type.
 * `[HR-11a]` Enum values are migrated by variant name, never by discriminant.
-* `[HR-12]` *(changed in 0.9.15)* In a reloadable build, class instances are registered in a live-instance list, which adds
-  16 bytes to the object header of `[OBJ-1]` (24 bytes instead of 8, and 28 instead of 12 for an object
-  `weakref` links may reach); non-reloadable builds keep `[OBJ-1]`'s layout.
-* `[HR-12a]` The header size is a whole-process property: every package in a process agrees on whether
-  reload is enabled, enforced at link time (`E9035`).
-* `[HR-13]` Value-typed data (structs in arrays, `SoA` columns, ECS storage, arena contents) is migrated
-  through its container, which registers itself with its element type's schema.
-* `[HR-13a]` Standard-library containers of a type from a reloadable package register themselves; the
-  instantiating package emits the registration, so `std` needs no reload support.
-* `[HR-13b]` Value data reachable only through raw pointers or foreign memory cannot be migrated; if its
-  schema changed, the reload is refused.
-* `[HR-14]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **Migration is by name**, and this table is exhaustive:
+* `[HR-12]` *(changed in 0.9.15)* In a reloadable build, class instances are registered in a
+  live-instance list, which adds 16 bytes to the object header of `[OBJ-1]` (24 bytes instead of 8,
+  and 28 instead of 12 for an object `weakref` links may reach); non-reloadable builds keep
+  `[OBJ-1]`'s layout.
+* `[HR-12a]` The header size is a whole-process property: every package in a process agrees on
+  whether reload is enabled, enforced at link time (`E9035`). A reload image's new kinds take type
+  indices above the process's when the image is loaded (`[TYP-44a]`).
+* `[HR-13]` Value-typed data (structs in arrays, `SoA` columns, ECS storage, arena contents) is
+  migrated through its container, which registers itself with its element type's schema.
+* `[HR-13a]` Standard-library containers of a type from a reloadable package register themselves;
+  the instantiating package emits the registration, so `std` needs no reload support.
+* `[HR-13b]` Value data reachable only through raw pointers or foreign memory cannot be migrated; if
+  its schema changed, the reload is refused.
+* `[HR-14]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **Migration is by
+  name**, and this table is exhaustive:
 
   | Change | Behaviour |
   |---|---|

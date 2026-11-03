@@ -11,7 +11,7 @@ a construct in an example that this Part does not produce is a defect in the exa
 ## III.1 Compilation unit and imports
 
 ```text
-file          := {directive} {NEWLINE} {import_decl} {item}
+file          := {directive} {NEWLINE} {import_decl} {item | statement}   -- `statement` in the entry file only ([GRM-2]); an import below an item or a statement, and a statement outside the entry file, are E0100
 directive     := "#!" ("language" STRING | "threads" IDENT | "module" module_attr) NEWLINE
 module_attr   := attr_name ["(" [attr_arg {"," attr_arg} [","]] ")"]
 import_decl   := "import" module_path ["as" IDENT] NEWLINE
@@ -25,10 +25,13 @@ ffi_opts      := "with" "(" ffi_opt {"," ffi_opt} [","] ")"
 ffi_opt       := IDENT "=" expression
 ```
 
-* `[GRM-2]` *(changed in 0.9.9)* A file contains imports and items and, in the **entry file** only
-  (the file given to `ember run`/`ember build`, or the manifest's `entry`), statements at file scope,
-  which form the implicit `main` (`[FN-8]`). A statement at file scope in any other module is `E0100`
-  with the help `move it into a function`.
+* `[GRM-2]` *(changed in 0.9.9)* *(changed in 0.9.20)* A file contains imports and items and, in the
+  **entry file** only (the file given to `ember run`/`ember build`, or the manifest's `entry`),
+  statements at file scope, which form the implicit `main` (`[FN-8]`). A statement at file scope in
+  any other module is `E0100` with the help `move it into a function`. Items and statements of the
+  entry file stand in any order; the statements, in source order, are `main`'s body (`[FN-8]`). An
+  import below an item or a statement is `E0100` ("imports come first: move `import std.math` above
+  line 2").
 * `[GRM-37]` *(new in 0.9.9)* *(changed in 0.9.15)* A **directive** is a line beginning `#!` before the imports.
   `#! language "<version>"` is accepted only for the current version (`[VER-8]`, `E0006`);
   `#! threads main|any|creator` sets the default thread contract of the file's exports (`[FFI-33]`);
@@ -96,7 +99,8 @@ interface_decl:= ["unsafe"] "interface" IDENT [generic_params] [":" "needs" need
 interface_member := {attribute} ([type_params] fn_decl | assoc_type | const_decl)
 assoc_type    := "type" IDENT [":" "needs" needs] ["=" type] NEWLINE
 
-extend_decl   := ["unsafe"] "extend" [generic_params] type [implements] [where_clause] ":" type_body
+extend_decl   := ["unsafe"] "extend" [generic_params] type [implements] [where_clause] ":" NEWLINE INDENT {extend_member} DEDENT
+extend_member := {attribute} [type_params] [visibility] (fn_decl | const_decl | type_alias | "pass" NEWLINE)   -- no field ([GRM-34])
 const_decl    := "const" IDENT [":" type] "=" expression NEWLINE
 static_decl   := "static" ["mut"] IDENT ":" type ["guarded" "by" IDENT] "=" expression NEWLINE
 type_alias    := "type" IDENT [generic_params] "=" type ["in" expression] NEWLINE
@@ -110,17 +114,20 @@ comptime_block:= "comptime" ":" block
 * `[GRM-1]` A class has at most one base class, written in parentheses: `class Door(Script):`.
 * `[GRM-33]` *(new in 0.9.9)* A bodiless `fn_decl` is legal only in an `interface`, an `extern_block`, or as a
   `virtual` method of an `abstract class`. Elsewhere it is `E0110` with the help `add ':' and a body`.
-* `[GRM-34]` *(new in 0.9.9)* *(changed in 0.9.10)* `extend [T: needs B] Array[T] implements I:` declares a generic extension; the generic
-  parameters after `extend` scope over the whole block. A parameter the target does not name and an
-  implemented interface does makes a **blanket implementation**: `extend[K: needs (Eq, Hash), V,
-  Q: needs AsKey[K]] Map[K, V] implements Index[Q]` makes every `Map[K, V]` implement `Index[Q]` for each `Q`
-  its bounds admit, each method of the block is generic over `Q`, and each use is checked as a
-  written implementation is (ODR-042). The target may be a parameter standing alone (`extend[T, U]
-  T implements Wrap[U]`, every type's); a parameter of the block that neither the target nor an
-  implemented interface names is `E2020`. A call of a blanket method whose arguments and wanted
-  result leave such a parameter open takes it from the one instance of the interface the
-  receiver's type implements through the block (an instance of a generic function has it from its
-  bound); with two it stays open (`E2060`, ODR-112).
+* `[GRM-34]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.20)* `extend [T: needs B]
+  Array[T] implements I:` declares a generic extension; the generic parameters after `extend` scope
+  over the whole block. A parameter the target does not name and an implemented interface does makes
+  a **blanket implementation**: `extend[K: needs (Eq, Hash), V, Q: needs AsKey[K]] Map[K, V]
+  implements Index[Q]` makes every `Map[K, V]` implement `Index[Q]` for each `Q` its bounds admit,
+  each method of the block is generic over `Q`, and each use is checked as a written implementation
+  is (ODR-042). The target may be a parameter standing alone (`extend[T, U] T implements Wrap[U]`,
+  every type's); a parameter of the block that neither the target nor an implemented interface names
+  is `E2020`. A call of a blanket method whose arguments and wanted result leave such a parameter
+  open takes it from the one instance of the interface the receiver's type implements through the
+  block (an instance of a generic function has it from its bound); with two it stays open (`E2060`,
+  ODR-112). An `extend` block adds methods, constants and associated types; a field in one is
+  `E0100` ("an `extend` block adds no field: a type's layout is its declaration's (`[TYP-11]`);
+  write `y: int = 0` in `struct P:`").
 * `[GRM-8d]` A `type_alias` with an `in` clause declares a range type (`[RNG-1]`). The clause is
   legal only on an item-level alias with no generic parameters (`E2213` otherwise).
 * `[GRM-40]` *(new in 0.9.15)* **Type parameters go on a line of their own**, directly above the
@@ -177,7 +184,7 @@ path_segment  := IDENT [generic_args]
 generic_args  := "[" generic_arg {"," generic_arg} [","] "]"
 generic_arg   := type | expression | IDENT "=" type          -- const argument; associated-type binding
                | IDENT "..."                               -- a pack spelled out ([TYP-47])
-tuple_type    := "(" ")" | "(" type "," [type {"," type} [","]] ")"
+tuple_type    := "(" ")" | "(" type "," type {"," type} [","] ")"        -- two or more elements ([TYP-27])
 fn_type       := ["once"] ["unsafe"] ["extern" STRING] "fn" "(" [fn_type_param {"," fn_type_param} [","]] ")"
                  ["->" type]
 fn_type_param := [param_word] type
@@ -219,7 +226,7 @@ simple_stmt   := var_decl | assignment | expr_list | "pass"
 var_decl      := IDENT ":" ["runtime"] type ["=" expr_list]        -- `runtime` before `dyn` or an open class ([LT-48])
 assignment    := target_list "=" expr_list
                | target augassign expression
-target_list   := target {"," target} [","]
+target_list   := target ["," target {"," target} [","]]
 target        := IDENT | postfix_expr | "_" | "(" target_list ")"
 expr_list     := expression {"," expression} [","]
 augassign     := "+=" | "-=" | "*=" | "/=" | "//=" | "%=" | "**=" | "&=" | "|=" | "^="
@@ -247,46 +254,53 @@ safe_stmt     := "safe" ":" block                                -- [UNS-12]
 comptime_stmt := "comptime" ":" block
 ```
 
-* `[GRM-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* `x = e` where no `x` is in scope declares `x` with the type of `e`;
-  where `x` is in scope it assigns: the new value goes into the place `x` stands for (`[TYP-14]`). `x:
-  T = e` always declares; a declaration may shadow a name from an enclosing block, and redeclaring a
-  name in the same block is `E1020`. A declaration inside a loop's body declares its name once per
-  round: each round's name is a new one. A name declared in every arm of an exhaustive branch is
-  hoisted to the enclosing block (`[CTL-10]`).
-* `[GRM-5]` `a, b = e` destructures a tuple, a struct or a fixed array. The right side is evaluated
-  once, into a temporary, before any target is written (`[EXP-2]`).
-* `[GRM-29]` *(new in 0.9.9)* An `expr_list` of two or more expressions, or of one expression followed by a comma, is a
-  tuple: `a, b = b, a` swaps, and `return x, y` returns a tuple.
+* `[GRM-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* `x = e` where no `x` is in scope declares `x`
+  with the type of `e`; where `x` is in scope it assigns: the new value goes into the place `x`
+  stands for (`[TYP-14]`). `x: T = e` always declares; a declaration may shadow a name from an
+  enclosing block, and redeclaring a name in the same block is `E1020`. A declaration inside a
+  loop's body declares its name once per round: each round's name is a new one. A name declared in
+  every arm of an exhaustive branch is hoisted to the enclosing block (`[CTL-10]`).
+* `[GRM-5]` *(changed in 0.9.20)* `a, b = e` destructures a tuple, a struct or a fixed array. The
+  right side is evaluated once, into a temporary, before any target is written (`[EXP-2]`). Each
+  target follows `[GRM-4]` on its own: a name not in scope is declared with its part's type, one in
+  scope is assigned (`a, b = b, a` swaps two names in scope; `q, r = divmod(7, 2)` declares both),
+  and `_` discards its part (`[LEX-13]`); a name that appears twice in one target list is `E1020`.
+* `[GRM-29]` *(new in 0.9.9)* *(changed in 0.9.20)* An `expr_list` of two or more expressions is a
+  tuple: `a, b = b, a` swaps, and `return x, y` returns a tuple. `(e,)`, and one expression followed
+  by a comma in an `expr_list` (`return x,`), a `target_list` (`a, = e`) or a pattern (`(p,)`), is
+  `E0100` ("a tuple has two or more elements; write `e`").
 * `[GRM-6]` The optional `else` of `while` and `for` runs when the loop ends without `break`.
-* `[GRM-7]` `defer` blocks run in reverse order at the exit of the enclosing block, on every path out
-  of it, including `return`, `break` and `continue`. A `defer` block may not itself jump out (`E2160`).
-* `[GRM-28]` *(new in 0.9.9)* *(changed in 0.9.15)* A `fn_decl` inside a block declares a **local function**. It may capture locals of the
-  enclosing function exactly as a lambda does (`[CLO-2]`), with the same capture words after its
-  brackets (`fn push_a() thread_shared log:`), may call itself recursively, and is in scope from its
-  declaration to the end of the block. It is a value of its function type and may be passed by its
-  name, so a long lambda may be written inside the call or as a local function passed by its name
-  (`a = thread.spawn(push_a)`).
-* `[GRM-18]` `;` never separates statements. `a = 1; b = 2` is `E0105`, whose help puts each statement
-  on its own line. `;` appears only inside `[T; N]` and `[v; N]`.
-* `[GRM-19]` *(changed in 0.9.9)* *(changed in 0.9.15)* The pattern of a `condition` MUST be refutable. An irrefutable one
-  is `E2036`; when it is a bare name already in scope (`if x = 5:`), the primary help is
-  `did you mean 'x == 5'?`. The pattern form tests a variant other than an `Option`'s (`if Ok(v) =
-  r:`, `if State.Walking(ref mut path) = n.state:`); `Some(...)` as the pattern of an `if`, `elif` or
-  `while` header is `E0115`, since an `Option` is opened with `exists as` (`[GRM-44]`).
+* `[GRM-7]` `defer` blocks run in reverse order at the exit of the enclosing block, on every path
+  out of it, including `return`, `break` and `continue`. A `defer` block may not itself jump out
+  (`E2160`).
+* `[GRM-28]` *(new in 0.9.9)* *(changed in 0.9.15)* A `fn_decl` inside a block declares a **local
+  function**. It may capture locals of the enclosing function exactly as a lambda does (`[CLO-2]`),
+  with the same capture words after its brackets (`fn push_a() thread_shared log:`), may call itself
+  recursively, and is in scope from its declaration to the end of the block. It is a value of its
+  function type and may be passed by its name, so a long lambda may be written inside the call or as
+  a local function passed by its name (`a = thread.spawn(push_a)`).
+* `[GRM-18]` `;` never separates statements. `a = 1; b = 2` is `E0105`, whose help puts each
+  statement on its own line. `;` appears only inside `[T; N]` and `[v; N]`.
+* `[GRM-19]` *(changed in 0.9.9)* *(changed in 0.9.15)* The pattern of a `condition` MUST be
+  refutable. An irrefutable one is `E2036`; when it is a bare name already in scope (`if x = 5:`),
+  the primary help is `did you mean 'x == 5'?`. The pattern form tests a variant other than an
+  `Option`'s (`if Ok(v) = r:`, `if State.Walking(ref mut path) = n.state:`); `Some(...)` as the
+  pattern of an `if`, `elif` or `while` header is `E0115`, since an `Option` is opened with `exists
+  as` (`[GRM-44]`).
 * `[GRM-20]` The attributes before a statement are limited to `@parallel`, `@unroll`, `@simd` and
   `@allow` (`[ATT-2]`).
 * `[ATT-3]` A statement attribute attaches to the next compound statement, never to a simple one
   (`E0108`); `@simd`, `@parallel` and `@unroll` require a `for` (`E0108`). Several may precede one
   statement, one per line, in any order.
-* `[GRM-44]` *(new in 0.9.15)* **Opening an `Option` or a `weakref` link: `exists as`.**
-  `if cam.target exists as p:` runs its block when `cam.target` holds something (an `Option` holds a
+* `[GRM-44]` *(new in 0.9.15)* **Opening an `Option` or a `weakref` link: `exists as`.** `if
+  cam.target exists as p:` runs its block when `cam.target` holds something (an `Option` holds a
   value; a `weakref` link's target still lives) and names that thing `p` inside the block; `else:`
   runs when it holds nothing; `while cur.parent exists as p:` repeats while it holds something,
-  naming it each round. `exists` says what the line checks and `as p` gives the name, as in
-  `import x as y`. The name is declared there with its words, as a pattern name is (`[GRM-13]`):
-  plain `p` is a read-only view and never changes (`E3023`); `if ui exists as ref mut me:` may change
-  what it names; `if scores.get(name) exists as copy of v:` is a copy of the program's own, which may
-  be changed (`v += 1`; the map is untouched), the same as `if scores.get(name) exists as v:` then
+  naming it each round. `exists` says what the line checks and `as p` gives the name, as in `import
+  x as y`. The name is declared there with its words, as a pattern name is (`[GRM-13]`): plain `p`
+  is a read-only view and never changes (`E3023`); `if ui exists as ref mut me:` may change what it
+  names; `if scores.get(name) exists as copy of v:` is a copy of the program's own, which may be
+  changed (`v += 1`; the map is untouched), the same as `if scores.get(name) exists as v:` then
   `mine = copy of v`; `if pair exists as (ref mut a, ref b):` opens an `Option` of a pair, each name
   with its own word (`[GRM-42]`). A name opened from a link is a view of an object reached through a
   link, which nothing that may end that object outlives (Part VIII). The value must be able to hold
@@ -295,16 +309,17 @@ comptime_stmt := "comptime" ":" block
   write `v = n` in place of the `if` line, and use `v` in its block, moved out one level"; for a
   `Result`, "write `if Ok(v) = r:`"). The name is new: one already in use is `E2106` ("`exists as`
   declares a new name: write `if cam.target exists as t:`, and `t` for `target` in its block").
-  `Some(...)` makes a value (`best = Some(5)`) and names a `match` branch (`Some(p):`), never an `if`
-  or `while` header (`E0115`, `[GRM-19]`); a value's kind is tested with `is` (`[GRM-45]`).
-  `Some(...)` in an `if` or `while` header is E0115 ("an `Option` or a `weakref` link is opened with `exists as`: write `if ui exists as ref mut me:`").
+  `Some(...)` makes a value (`best = Some(5)`) and names a `match` branch (`Some(p):`), never an
+  `if` or `while` header (`E0115`, `[GRM-19]`); a value's kind is tested with `is` (`[GRM-45]`).
+  `Some(...)` in an `if` or `while` header is E0115 ("an `Option` or a `weakref` link is opened with
+  `exists as`: write `if ui exists as ref mut me:`").
 * `[GRM-45]` *(new in 0.9.15)* **The kind test.** In an `if` or `elif` header, `s is Circle as c`
   runs the block when `s`, a value of an interface or base-class type, is a `Circle`, and names it
   `c` there with its words (`if this.pools[k] is Pool[T] as ref mut pool:`); the type after `is` and
   the name after `as` end the header, so this `as` names and never converts. Other kinds are tested
   with `elif s is Square as q:` and `else:`, which is how a choice among kinds is written. `s is
-  Circle`, without a name, is a `bool` wherever an expression may stand. The named form is legal only
-  in an `if` or `elif` header (`E0100` elsewhere). What a test means and what it refuses is
+  Circle`, without a name, is a `bool` wherever an expression may stand. The named form is legal
+  only in an `if` or `elif` header (`E0100` elsewhere). What a test means and what it refuses is
   `[TYP-44]`.
 
 ## III.5 Expressions
@@ -338,7 +353,7 @@ Precedence, lowest first. Operators on one row associate left unless noted.
 expression    := jump_expr | lambda | ternary
 jump_expr     := "return" [expr_list] | "break" [IDENT] | "continue" [IDENT] | "yield" [expression]
 lambda        := ["@safety" "(" STRING ")"] ["once"] "fn" "(" [lambda_param {"," lambda_param} [","]] ")" [capture_list]
-                 ["->" type] ("=>" expression | ":" block)
+                 ["->" type] ("=>" expression | ":" simple_stmt)   -- one simple statement ([GRM-17])
 lambda_param  := [param_word] IDENT [":" type]
 capture_list  := capture {"," capture}
 capture       := capture_word (IDENT | "this")
@@ -370,7 +385,7 @@ arg           := expression | IDENT "=" expression | IDENT "..."   -- a pack's v
 atom          := literal | IDENT | "this" | "Self" | "(" expression ")" | tuple_lit | list_lit
                | map_lit | set_lit | comprehension | match_expr | "comptime" "(" expression ")"
                | "@assume_noalloc" "(" expression ")"
-tuple_lit     := "(" ")" | "(" expression "," [expression {"," expression} [","]] ")"
+tuple_lit     := "(" ")" | "(" expression "," expression {"," expression} [","] ")"   -- two or more ([GRM-29])
 list_lit      := "[" [expression {"," expression} [","]] "]" | "[" expression ";" expression "]"
 map_lit       := "{" "}" | "{" expression ":" expression {"," expression ":" expression} [","] "}"
 set_lit       := "{" expression {"," expression} [","] "}"
@@ -420,10 +435,14 @@ match_expr    := "match" expression ":" NEWLINE INDENT {pattern ["if" expression
   function takes on each captured name: `fn() owns report:`). Before an argument for a parameter
   that only reads (`show(owns xs)`) it is `E3028`, "`show` only reads its argument; remove `owns`:
   `show(xs)`".
-* `[GRM-17]` *(changed in 0.9.10)* A lambda with a `:` body inside brackets holds exactly one simple
-  statement (`[LEX-6a]`). More is `E0106`, whose help is to declare a local function on the
-  preceding line (`[GRM-28]`). Outside brackets, a `:` body on the lambda's own line is one simple
-  statement, ended by the statement's `NEWLINE`: `h = fn(x): total += x` assigns the lambda to `h`.
+* `[GRM-17]` *(changed in 0.9.10)* *(changed in 0.9.20)* A lambda with a `:` body inside brackets
+  holds exactly one simple statement (`[LEX-6a]`). More is `E0106`, whose help is to declare a local
+  function on the preceding line (`[GRM-28]`). A lambda's `:` body is one simple statement, inside
+  brackets (`[LEX-6a]`) and outside alike: outside brackets it stands on the lambda's own line,
+  ended by the statement's `NEWLINE` (`h = fn(x): total += x` assigns the lambda to `h`), and a
+  `NEWLINE` and `INDENT` after the `:` is `E0106` ("a lambda's body is one simple statement; declare
+  a local function: `fn add(x):` on the line above with the block below it, then `h = add`",
+  `[GRM-28]`).
 * `[GRM-42]` *(new in 0.9.15)* *(changed in 0.9.20)* **Capture words, and lists of names without
   types.** A lambda or a local function names what it keeps after its brackets, with one word before
   each name and nothing between the brackets and the first word: `fn() copy of score:`, `fn() owns
@@ -499,11 +518,12 @@ match_expr    := "match" expression ":" NEWLINE INDENT {pattern ["if" expression
   collection, the rest end, and `xs` cannot be used afterwards (`[s for s in owns shapes if s.area()
   > 1.0]`). Over a collection read in place the items are read-only views, which `copy of` copies
   (`[copy of s for s in shapes if s.area() > 1.0]`), the collection staying as it was.
-* `[GRM-38]` *(new in 0.9.9)* *(changed in 0.9.15)* A parenthesised comprehension `(e for x in it if
-  c)` is a **generator expression**: the pipeline of `[GRM-27]` without the `collect`, a lazy
-  `Iterator` that reads what it iterates in place and allocates nothing. As the only argument of a
-  call it needs no extra parentheses: `sum(x * x for x in xs)`, `any(p.hp <= 0 for p in players)`.
-  `(e)` without `for` is a parenthesised expression, and `(e,)` a tuple.
+* `[GRM-38]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A parenthesised
+  comprehension `(e for x in it if c)` is a **generator expression**: the pipeline of `[GRM-27]`
+  without the `collect`, a lazy `Iterator` that reads what it iterates in place and allocates
+  nothing. As the only argument of a call it needs no extra parentheses: `sum(x * x for x in xs)`,
+  `any(p.hp <= 0 for p in players)`. `(e)` without `for` is a parenthesised expression, and `(e,)`
+  is `E0100` (`[GRM-29]`).
 * `[GRM-39]` *(new in 0.9.9)* **Nesting depth.** Every compiler accepts expressions, statements,
   patterns and types nested 256 levels deep, counting each operand, argument, element, bracket,
   block and type argument as a level; an operator or method-call chain is as deep as it is long (`1
@@ -535,7 +555,7 @@ bind_pattern  := IDENT "@" primary_pattern | primary_pattern
 primary_pattern := "_" | literal_pattern | range_pattern | IDENT
                | path "(" [field_pattern {"," field_pattern}] ["," ".."] ")"
                | path
-               | "(" [pattern {"," pattern} [","]] ")"
+               | "(" [pattern "," pattern {"," pattern} [","]] ")"
                | "[" [pattern {"," pattern}] ["," ".." [IDENT]] "]"
                | "ref" ["mut"] IDENT
 literal_pattern := ["-"] INT | STRING | CHAR | "true" | "false"
