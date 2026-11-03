@@ -9,7 +9,7 @@ The compiler infers, for every function, an **effect set** drawn from:
 | Effect | Introduced by |
 |---|---|
 | `Alloc` | a heap allocation: constructing an allocating type (a class object, a value put in its own block by `owns`, `shares` or `thread_shared`), container growth, an allocating literal or f-string, a function value's state placed on the heap (`[CLO-10]`), arena growth |
-| `Sync` | an atomic read-modify-write stronger than relaxed, a lock, a channel operation, thread spawn or join, making or ending a `thread_shared` owner or a `weakref` link to a `thread_shared` value, and opening such a link (the view it gives holds an atomic count) |
+| `Sync` | an atomic read-modify-write stronger than relaxed, a lock, a channel operation, thread spawn or join, making or ending a `thread_shared` owner or a `weakref thread_shared T` link, and opening such a link (the view it gives holds an atomic count) |
 | `Lock` | acquiring a `Mutex`/`RwLock` (including `try_lock`), or holding a `Lock` with `with x.lock:` |
 | `Block` | an operation that may wait: a blocking lock (`with x.lock:` included), `join` and the end of a `with scope` block, `sleep`, a blocking receive or read |
 | `Io` | file, socket and console operations |
@@ -19,59 +19,63 @@ The compiler infers, for every function, an **effect set** drawn from:
 | `FFI` | a call to an `extern` function |
 | `Nondet` | a result that may differ between runs or machines (`[DET-2]`) |
 
-* `[EFF-1]` *(changed in 0.9.15)* Effects, and the function's **summary** (what it may change, read and
-  end, `[EFF-24]`), are computed from each function's body and its callees', over the call graph, with
-  recursive groups taking the union of their members. An operation's effects are its own and those of
-  everything it runs where it runs: the methods and function values it calls (a `Display` a formatter
-  invokes, a function an adapter applies), the copies, count changes and drops it performs (ending an
-  object counts as a call of its `drop`, `[DRP-8]`), and the argument and default expressions it
-  evaluates. Calling a generator runs none of its body; each `next` carries the effects of the body up
-  to the next `yield`, and dropping a suspended one those of the drops it performs (ODR-057).
-* `[EFF-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* A call through a function value contributes the
-  effects of every function the program can put there. For a type parameter bounded by a function type
-  (`[F: needs fn(Item)]` above `fn for_each(owns f: F) owns this:`) that is the function given, per instance.
-  For a field, a list element, a parameter or a local of a function type, it is every lambda and named
-  function the program puts in that place, a library's included (verdict 122): each field of each
-  struct and class apart from every other, a list's elements with the place that holds the list, a
-  parameter with every argument given to it, and a place a value is copied into with the functions of
-  the place it came from. A value the compiler cannot follow, read through a raw pointer or given by C,
-  has those of every function stored into its type. A place no function ever reaches is called by no
-  code that runs, and contributes nothing. Dropping a function value has the effects of dropping each
-  function that reaches its place: none for a named function, its captured values' drops for a
-  lambda. For an interface, `dyn`
-  or `virtual` method, it is every implementation and override the program has. A foreign function
-  pointer (`extern "C" fn`) contributes the effects its type declares, and all effects if none are
-  declared. A contract is written on a function type above a `type` line that names one (verdict 106):
-  `@noalloc` above `type Handler = fn()`; every function stored into a place of that type is checked
-  against it, with the contract's code, and a call through such a place has no effect the contract
-  excludes. An interface method may declare contracts; its implementations MUST satisfy
-  them (`E4010`).
+* `[EFF-1]` *(changed in 0.9.15)* Effects, and the function's **summary** (what it may change, read
+  and end, `[EFF-24]`), are computed from each function's body and its callees', over the call
+  graph, with recursive groups taking the union of their members. An operation's effects are its own
+  and those of everything it runs where it runs: the methods and function values it calls (a
+  `Display` a formatter invokes, a function an adapter applies), the copies, count changes and drops
+  it performs (ending an object counts as a call of its `drop`, `[DRP-8]`), and the argument and
+  default expressions it evaluates. Calling a generator runs none of its body; each `next` carries
+  the effects of the body up to the next `yield`, and dropping a suspended one those of the drops it
+  performs (ODR-057).
+* `[EFF-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* A call through a function value contributes
+  the effects of every function the program can put there. For a type parameter bounded by a
+  function type (`[F: needs fn(Item)]` above `fn for_each(owns f: F) owns this:`) that is the
+  function given, per instance. For a field, a list element, a parameter or a local of a function
+  type, it is every lambda and named function the program puts in that place, a library's included
+  (verdict 122): each field of each struct and class apart from every other, a list's elements with
+  the place that holds the list, a parameter with every argument given to it, and a place a value is
+  copied into with the functions of the place it came from. A value the compiler cannot follow, read
+  through a raw pointer or given by C, has those of every function stored into its type. A place no
+  function ever reaches is called by no code that runs, and contributes nothing. Dropping a function
+  value has the effects of dropping each function that reaches its place: none for a named function,
+  its captured values' drops for a lambda. For an interface, `dyn` or `virtual` method, it is every
+  implementation and override the program has. A foreign function pointer (`extern "C" fn`)
+  contributes the effects its type declares, and all effects if none are declared. A contract is
+  written on a function type above a `type` line that names one (verdict 106): `@noalloc` above
+  `type Handler = fn()`; every function stored into a place of that type is checked against it, with
+  the contract's code, and a call through such a place has no effect the contract excludes. An
+  interface method may declare contracts; its implementations MUST satisfy them (`E4010`).
 * `[EFF-3]` *(changed in 0.9.15)* An `extern` function carries the effects its contract declares
-  (`@ffi(effects=[…])`), `FFI` at least. What a call of one may change through the callbacks C keeps is
-  `[EFF-26]`'s.
-* `[EFF-4]` *(changed in 0.9.15)* **Effects and summaries are part of a function's interface.** Inside a
-  package they are used freely. Across a package's edge, a fact for which a word exists counts only as
-  written (a `pub` function's bounds, `E2040`), and every other worked-out fact is recorded in the
-  package's interface file: each function's effect set and summary (`[EFF-24]`), with the chains of
-  calls that messages name; the effects of the scoped tasks it starts; and the function values the
-  package stores into a function type and the callbacks it hands to C, which a program that uses the
-  package counts wherever such a value is called and at every foreign call (`[EFF-26]`). A change to any
-  of them is reported as an interface change and re-checks every caller: an edit inside one function,
-  or a library update (two lines of a function swapped, so that a use of a parameter falls below a line
-  that clears what it views), can make a line elsewhere stop compiling, and the message names the chain
-  of calls. A parent link proves itself (Part VIII) only when no other package can change it or the
-  places that own its holders. What a generic function changes through its type parameters' methods is
-  worked out for each instance, by the package that compiles that instance.
-* `[EFF-9]` *(changed in 0.9.9)* *(changed in 0.9.15)* `RuntimeCheck(k)` enters a function's effect set
-  when a check of kind `k` survives the compiler's profile-independent proofs in its body. `Arithmetic`
-  covers integer overflow, division by zero, shift amounts and negative integer exponents, and the
-  compare of an owner count or a weak count with its limit before it grows; `Bounds` covers indices,
-  slices and chunk sizes; `Aliasing` covers the compare of `assert_disjoint` and `check_disjoint`
-  (`[DSJ-1]`), the one run-time alias check there is; `Stale` covers handle generations and the test of
-  a target's header that opens a `weakref` link (`exists as`).
-* `[EFF-10]` The effect set records only which kinds occur. Per-site detail — every emitted check with
-  its kind, location, mechanism and reason, and every removed check with the proof that removed it — is
-  written to the safety side table that `ember inspect --safety` reads.
+  (`@ffi(effects=[…])`), `FFI` at least. What a call of one may change through the callbacks C keeps
+  is `[EFF-26]`'s.
+* `[EFF-4]` *(changed in 0.9.15)* *(changed in 0.9.20)* **Effects and summaries are part of a
+  function's interface.** Inside a package they are used freely. Across a package's edge, a fact for
+  which a word exists counts only as written (a `pub` function's bounds, `E2040`), and every other
+  worked-out fact is recorded in the package's interface file: each function's effect set and
+  summary (`[EFF-24]`), with the chains of calls that messages name; the effects of the scoped tasks
+  it starts; for a class, whether its own methods say its objects are on one thread,
+  `thread_shared`, or neither, and for a function the parameters, `this` included, of which it makes
+  a `weakref T` link (`[OWN-13]`, `[BLD-14]` items 8 and 9); and the function values the package
+  stores into a function type and the callbacks it hands to C, which a program that uses the package
+  counts wherever such a value is called and at every foreign call (`[EFF-26]`). A change to any of
+  them is reported as an interface change and re-checks every caller: an edit inside one function,
+  or a library update (two lines of a function swapped, so that a use of a parameter falls below a
+  line that clears what it views), can make a line elsewhere stop compiling, and the message names
+  the chain of calls. A parent link proves itself (Part VIII) only when no other package can change
+  it or the places that own its holders. What a generic function changes through its type
+  parameters' methods is worked out for each instance, by the package that compiles that instance.
+* `[EFF-9]` *(changed in 0.9.9)* *(changed in 0.9.15)* `RuntimeCheck(k)` enters a function's effect
+  set when a check of kind `k` survives the compiler's profile-independent proofs in its body.
+  `Arithmetic` covers integer overflow, division by zero, shift amounts and negative integer
+  exponents, and the compare of an owner count or a weak count with its limit before it grows;
+  `Bounds` covers indices, slices and chunk sizes; `Aliasing` covers the compare of
+  `assert_disjoint` and `check_disjoint` (`[DSJ-1]`), the one run-time alias check there is; `Stale`
+  covers handle generations and the test of a target's header that opens a `weakref` link (`exists
+  as`).
+* `[EFF-10]` The effect set records only which kinds occur. Per-site detail — every emitted check
+  with its kind, location, mechanism and reason, and every removed check with the proof that removed
+  it — is written to the safety side table that `ember inspect --safety` reads.
 * `[EFF-11]` *(changed in 0.9.15)* Every emitted check carries one reason, and diagnostics use it:
 
   | Reason | Meaning | What the programmer can do |
@@ -304,17 +308,19 @@ compute the same bits, on one machine and across machines running the same binar
 | Division-by-zero and shift-range checks | conditionally elided | removed for constants, `NonZero` divisors and range facts |
 | Owner count +1 / -1 | guaranteed present | only where a line makes or ends a `shares`, `shares mut` or `thread_shared` owner (`[THR-1]`), and nowhere else; a plain add for `shares`, and for `thread_shared` on the thread that made the value until it is handed over (`[RC-4]`); an atomic one on other threads; each +1 is checked against the count's limit, one compare and a branch never taken (`[COST-6]`) |
 | A `thread_shared` value's two counts | guaranteed present | a 32-byte header, 16 bytes more than one atomic count's (`[OBJ-1]`); a test of the thread's queue at each check point (`[RC-4]`), and the queue's work for a value whose last owner ends on another thread without a hand-over. Measured against one atomic count (`tasks/96/redesign/measure-0.9.15/brc/REPORT.md`, 15 runs per cell): a thread's own values 25% faster on 1 to 8 threads, the camera program 89 ms against 544 ms; reading another thread's values 3% slower on 1 thread and 17% to 28% faster on 2 to 8; one thread handing copies to all 0.93x to 1.05x; a random mix 9% to 13% slower; a pipeline (made on one thread, ended on the next) 27% slower on 1 thread and the same on 2 to 8 |
-| `weakref` link made, given another target, or ended | guaranteed present | one add or one subtract of the target's weak count, the add checked against its limit; atomic for a `thread_shared` target; a parent link pays it too, one add when `child.parent = weakref this` runs and one subtract when the link changes or the child ends |
-| Opening a `weakref` link (`if w exists as p:`) | conditionally elided | one test of the target's header (during the target's `drop` the object is already ended, and the same test finds it gone); a parent-link read the compiler proves (Part VIII) is a load and a test for no link |
-| A view of a `thread_shared` object opened from a `weakref` link | guaranteed present | one count held for the view's life, since another thread may end the last owner at any moment: a plain add on the thread that made the object until it is handed over, an atomic one elsewhere (`[RC-5]` point 2) |
-| A walk up a tree across a call that may change nodes | guaranteed present | per step, one test of the node's header and one move of the link's weak count (a subtract and an add); where the node's class has no `drop` of its own and no other thread can end its nodes, the walk runs in a deferred-drop region and the count moves go, leaving the header test; a walk whose visit function changes no node keeps its views and pays nothing per step |
+| The weak count in a header | guaranteed present | 4 bytes, and 8 where the first field is 8-aligned, in every object of a class family that carries a weak count and in every `shares` value of a type that does (`[OBJ-1]`: a type that can be named from outside its package, or that a `weakref` type in its own package names); none in a value of a private type its package never links to; a `thread_shared` value's 32-byte header carries it always; nothing runs for it |
+| `weakref` link made, given another target, or ended | guaranteed present | one add or one subtract of the target's weak count, the add checked against its limit; plain for a `weakref T`, one atomic add or subtract for a `weakref thread_shared T` (`[RT-10]`), chosen by the link's type; a parent link pays it too, one add when `child.parent = weakref this` runs and one subtract when the link changes or the child ends |
+| Opening a `weakref` link (`if w exists as p:`) | conditionally elided | for a `weakref T`, one load of the target's header and one compare, with no flag read and no branch choosing the path (during the target's `drop` the object is already ended, and the same test finds it gone); a parent-link read the compiler proves (Part VIII) is a load and a test for no link |
+| A name opened from a `weakref thread_shared T` link | guaranteed present | one count held for the view's life, since another thread may end the last owner at any moment: a plain add on the thread that made the object until it is handed over, an atomic one elsewhere (`[RC-5]` point 2) |
+| An object handed whole to another thread | guaranteed present | one compare of the weak count for the handed object and for each object it owns, all the way down, whose family carries one (`[THR-2]`), and a move of its contents to a new block only where a link exists; one load and one test, then a call of the kind's hand-over routine, per owned value whose layout the handing package cannot see (held `dyn I`, of an `open` or `abstract` class, a function value's state); nothing for a value whose type can own no such object |
+| A walk up a tree across a call that may change nodes | guaranteed present | per step, one test of the node's header and one move of the link's weak count (a subtract and an add); where the node's class has no `drop` of its own (nor can a derived class the walk's package cannot see) and the walk's link is a `weakref T` (`[WK-18]`), the walk runs in a deferred-drop region and the count moves go, leaving the header test; a walk whose visit function changes no node keeps its views and pays nothing per step |
 | A view of an object reached through a link; a `sharedref mut` link | not observable | checked when compiling: no count and no deferred-drop region around the view |
 | Stale-handle check | guaranteed present, **every profile** | the guarantee is the check; `get_unchecked` in `unsafe` |
 | Kind test or cast | guaranteed present | one type-id compare per `if s is Circle as c:` and per `cast s as Circle` (Part VIII) |
 | `assert_disjoint` | guaranteed present | two compares where the program writes it (two spans of one list given to one call, one of them changeable); the call is then compiled with noalias; none when the compiler knows the spans apart |
 | `Cell` access | not observable | a load or a store |
 | Interface call through `dyn` | guaranteed present | one indirect call |
-| A `runtime dyn` parameter's check | guaranteed present | one load and one bit test, of the fact in the kind's method table, at each line the check guards, only where a kind that may reach the parameter makes the line unsafe (`[LT-48]`); none where the kinds are known when compiling |
+| A `runtime` name's check | guaranteed present | one load of the fact from the called method's entry in the value's kind's table at the call (an interface's table; for a `virtual` method the slot the call already loads, `[DSP-2]`), kept in the frame while the result is used, and one bit test at each line the result guards, only where a kind that may reach the name makes the line unsafe and which kind it is is not known when compiling (`[LT-48]`); none where the kinds are known when compiling, none at a call no guarded line follows, and none for a name without the word |
 | Virtual method call | conditionally elided | a load of the slot and one indirect call (`[DSP-2]`); direct when one implementation is reachable (`[DSP-5]`) |
 | Generic call, monomorphised | not observable | a direct, inlinable call |
 | Generic call, shared (`[MONO-6]`) | guaranteed present | one indirect call per bound method; only above a declared instantiation budget |

@@ -325,7 +325,7 @@ unsafe overlay c "vulkan/vulkan.h":
   match the header is `E5010`, so overlays cannot drift. So is an entry outside a class section that
   names only members of classes (verdict 131): "`new` is a member of `Handle` and of `MutHandle`:
   write it under `class Handle:` or `class MutHandle:`".
-* `[FFI-55]` *(new in 0.9.15)* **Every overlay is checked against the header it was written for, by a
+* `[FFI-55]` *(new in 0.9.15)* *(changed in 0.9.20)* **Every overlay is checked against the header it was written for, by a
   record Ember keeps** (verdict 121). A package with an overlay of a C or C++ header has a file
   `ember.overlays` beside its `ember.toml`, written by Ember and never by hand. For each overlay it
   holds the overlay's file, its header and one `blake3:` fingerprint of each declaration the overlay
@@ -347,24 +347,26 @@ unsafe overlay c "vulkan/vulkan.h":
   lacks, an entry just written, is added by the package's own build. Every build that applies an
   overlay, its own package's and any other's, compares each declaration the overlay describes with
   the header it imports. One that differs is `E5010`, naming the overlay, the declaration as the
-  header imported declares it, and the way out ("`SDL_FreeSurface` changed since `overlays/sdl.em` was
-  checked: the `SDL.h` imported here declares `void SDL_FreeSurface(SDL_Surface*, int)`; check the
-  overlay against this header, then run `ember bind SDL.h --check overlays/sdl.em --merge`"); in another package's build, an overlay
-  or a declaration its package's record lacks is `E5010` too. A change to a declaration the overlay
-  does not describe changes nothing. Every program has an `ember.toml` (`[MAN-9]`), so the record is
-  always beside one. An overlay in no package's folder is the importing program's own: its record is
-  that package's, naming the overlay by its path from the package (`../vendor/sdl.em`).
-  Nothing of this is written in the overlay or in the program.
-* `[FFI-13]` An overlay may contain `extend` blocks with ordinary Ember wrapper methods; this is how an
-  idiomatic API is layered over a raw one.
+  header imported declares it, and the way out ("`SDL_FreeSurface` changed since `overlays/sdl.em`
+  was checked: the `SDL.h` imported here declares `void SDL_FreeSurface(SDL_Surface*, int)`; check
+  the overlay against this header, then run `ember bind SDL.h --check overlays/sdl.em --merge`"); in
+  another package's build, an overlay or a declaration its package's record lacks is `E5010` too. A
+  change to a declaration the overlay does not describe changes nothing. A program with a manifest
+  keeps the record beside it; a single file with none (`[MAN-9]`) applies its overlay as at a first
+  build, and gets a record once a manifest is written. An overlay in no package's folder is the
+  importing program's own: its record is that package's, naming the overlay by its path from the
+  package (`../vendor/sdl.em`). Nothing of this is written in the overlay or in the program.
+* `[FFI-13]` An overlay may contain `extend` blocks with ordinary Ember wrapper methods; this is how
+  an idiomatic API is layered over a raw one.
 * `[FFI-14]` The importer's result is a `.embind` file (versioned CBOR: header hash, Clang
-  configuration, declarations with layouts, overlay hash, contracts), a content-addressed build input.
-  `ember bind --explain header.h fn` prints a function's derived contract and why.
-* `[FFI-35a]` *(changed in 0.9.15)* A parameter with no `retained` word is recorded as "does not retain" in the foreign-trust
-  report (`ember bind --report`), which lists every such assumption per module, and every
-  result-position pointer with no lifetime word. A class object given to a `retained` parameter is
-  marked in its header as kept by C and never moves: handed to another thread while a `weakref` link on
-  this thread points at it, it stops the program (`[THR-2]`, verdict 114).
+  configuration, declarations with layouts, overlay hash, contracts), a content-addressed build
+  input. `ember bind --explain header.h fn` prints a function's derived contract and why.
+* `[FFI-35a]` *(changed in 0.9.15)* A parameter with no `retained` word is recorded as "does not
+  retain" in the foreign-trust report (`ember bind --report`), which lists every such assumption per
+  module, and every result-position pointer with no lifetime word. A class object given to a
+  `retained` parameter is marked in its header as kept by C and never moves: handed to another
+  thread while a `weakref` link on this thread points at it, it stops the program (`[THR-2]`,
+  verdict 114).
 
 ## XVI.5 Strings, status codes and handles
 

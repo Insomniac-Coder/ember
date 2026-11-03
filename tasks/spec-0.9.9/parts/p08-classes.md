@@ -60,41 +60,60 @@ offset  size  field
 32      …     the shared value, naturally aligned
 ```
 
-* `[OBJ-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* The header is 8 bytes: a 32-bit count and a
-  32-bit type index. A value a `weakref` link may reach has a third 32-bit number there, its weak
-  count, making 12 bytes: every object of a class family (the classes that share one root base class)
-  of which some `weakref` link in the program may name an object, and every shared value of a type some
-  `weakref` link may name. A `thread_shared` value's header is 32 bytes (verdict 101): its making
-  thread's count of its owners, the type index, the weak count, the other threads' count with its
-  marks, and its place in the making thread's queue (`[RC-4]`). Which thread made a value is read from
-  the header of the memory chunk its block came from, written once when the chunk is made, never from
-  the value. The header is part of the runtime ABI (`[VER-4]`). Foreign code never reads it; it calls
-  `ember_rt`. An object carries nothing else for the memory model: no access words, and no flags but a
-  `thread_shared` value's three marks.
+* `[OBJ-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* The header is 8 bytes:
+  a 32-bit count and a 32-bit type index. A value of a type that **carries a weak count** has a
+  third 32-bit number there, the weak count, making 12 bytes: every object of a class family (the
+  classes that share one root base class) that carries one, and every `shares` or `shares mut` value
+  of a type that carries one. Whether a type carries one is decided by the package that declares it
+  (for a class family, the package that declares its root base class; every class of the family
+  carries it alike, since a link to a base may name a derived object), from that package's own text
+  and from nothing else (`[BLD-16]`): a type carries a weak count when **it can be named from
+  outside its package** (a class of the family, or the type, is `pub`; or is named in a `pub` item's
+  signature: a `pub` function's parameters or result, a `pub` field's type, a `pub` alias, or a type
+  argument in one of these, through which a dependant's name takes its type by inference) **or when
+  a `weakref` type in the package names it** (written, inferred at a `weakref x`, or in a generic
+  instance the package makes, `[MONO-1]`). A tuple, a fixed array and a function type, which every
+  package can write, carry one. A `pub(package)` type, and a private type its package never links
+  to, carry none, and no `weakref` link anywhere can name a value of one: no line outside the
+  package holds such a value by its type (an object held `dyn I` or `some I` is never linked,
+  `E2119`, `[WK-16]`), and no line inside links to one. The fact is part of the type's layout in its
+  package's interface file (`[BLD-2]`, `[MOD-9]`) and a flag of its `TypeInfo` (`[RT-3]`), so a
+  package compiled once lays out its objects the same in every program that uses it. A `weakref`
+  whose operand's type carries no weak count can arise only by a route this rule does not list, and
+  is `E0901`. A `thread_shared` value's header is 32 bytes (verdict 101), in every program: its
+  making thread's count of its owners, the type index, the weak count, the other threads' count with
+  its marks, and its place in the making thread's queue (`[RC-4]`). Which thread made a value is
+  read from the header of the memory chunk its block came from, written once when the chunk is made,
+  never from the value; a chunk belongs to its making thread for the life of the process, and a
+  block freed goes back to that thread's own pool, so the record never changes. The header is part
+  of the runtime ABI (`[VER-4]`). Foreign code never reads it; it calls `ember_rt`. An object
+  carries nothing else for the memory model: no access words, and no flags but a `thread_shared`
+  value's three marks.
 * `[OBJ-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* An owner, a link or a view of a class object
   is one pointer, to offset 0. An object's interface tables are reached through its type index, so a
-  `dyn I` value of a class object, and an `Option` of one, is one pointer wide. A bare interface name in
-  a type position (`s: Shape`, `Array[Shape]`) does not say who owns the value, and is `E2173`:
-  "`Shape` is an interface, so `Array[Shape]` does not say who owns the shapes; say who owns them: write
-  `shapes: Array[owns dyn Shape]` in place of line 19 (the list is their only owner), and
-  `scene = Scene(shapes=[owns Square(side=2)])` in place of line 22" (with `Array[shares dyn Shape]`,
-  other names own them too, and each shape is made `shares`). `dyn I` as a parameter's type is a
-  read-only view (`ref mut v: dyn I` may change it).
+  `dyn I` value of a class object, and an `Option` of one, is one pointer wide. A bare interface
+  name in a type position (`s: Shape`, `Array[Shape]`) does not say who owns the value, and is
+  `E2173`: "`Shape` is an interface, so `Array[Shape]` does not say who owns the shapes; say who
+  owns them: write `shapes: Array[owns dyn Shape]` in place of line 19 (the list is their only
+  owner), and `scene = Scene(shapes=[owns Square(side=2)])` in place of line 22" (with `Array[shares
+  dyn Shape]`, other names own them too, and each shape is made `shares`). `dyn I` as a parameter's
+  type is a read-only view (`ref mut v: dyn I` may change it).
 * `[OBJ-3]` *(changed in 0.9.15)* The weak count starts at 1 on behalf of all owners. When the count
-  of owners reaches 0 the object is ended (`[WK-3]`): its `drop` chain and its field drops run, and the
-  weak count is decremented; the block is freed when the weak count reaches 0, which for a value no
-  `weakref` link may reach is at once.
+  of owners reaches 0 the object is ended (`[WK-3]`): its `drop` chain and its field drops run, and
+  the weak count is decremented; the block is freed when the weak count reaches 0, which for a value
+  no `weakref` link may reach is at once.
 * `[OBJ-4]` *(changed in 0.9.10)* *(changed in 0.9.15)* Objects are allocated through the runtime
-  allocator (`[RT-1]`), or from the memory manager the class names with `using` (`[ALC-1]`), except as
-  `[OPT-1]` permits. An object made in a manager keeps its instance's address only as `[ALC-1]` says:
-  none in a manager that frees nothing one by one, or in one that implements `FoundByAddress`.
-* `[OBJ-5]` *(changed in 0.9.15)* **An ended object is never brought back.** Inside a `drop`, and in
-  everything it calls (by their summaries, `[EFF-1]`), no owner is made of the object being ended: an
-  owner made from `this` (`shares this`, `shares mut this`, `thread_shared this`) is `E3016`, as storing
-  `this` anywhere that outlives the call is (`[CLS-7a]`): "`drop` ends this `Player`; an owner made from
-  it would point at a freed object; keep a copy of what you need: `NAMES.push(owns copy of this.name)`".
-  `weakref this` stays allowed: the weak count keeps the block, and opening the link finds the object
-  ended (`[WK-3]`). Nothing is checked for it while the program runs.
+  allocator (`[RT-1]`), or from the memory manager the class names with `using` (`[ALC-1]`), except
+  as `[OPT-1]` permits. An object made in a manager keeps its instance's address only as `[ALC-1]`
+  says: none in a manager that frees nothing one by one, or in one that implements `FoundByAddress`.
+* `[OBJ-5]` *(changed in 0.9.15)* *(changed in 0.9.20)* **An ended object is never brought back.**
+  Inside a `drop`, and in everything it calls (by their summaries, `[EFF-1]`), no owner is made of
+  the object being ended: an owner made from `this` (`shares this`, `shares mut this`,
+  `thread_shared this`) is `E3016`, as storing `this` anywhere that outlives the call is
+  (`[CLS-7a]`): "`drop` ends this `Player`; an owner made from it would point at a freed object;
+  keep a copy of what you need: `NAMES.push(owns copy of this.name)`". `weakref this` and `weakref
+  thread_shared this` stay allowed (`[OWN-13]`): the weak count keeps the block, and opening the
+  link finds the object ended (`[WK-3]`). Nothing is checked for it while the program runs.
 
 ## VIII.2 Owners and counts
 
@@ -185,52 +204,53 @@ offset  size  field
      is ended at its making thread's next check point. Until then it is intact, and a `weakref` link
      opened on another thread may still find it (`[WK-3]`).
 
-  The weak count of a `thread_shared` value is atomic. The away count, and the weak count, are raised
-  with one atomic add and their limit is checked on the value the add returns: when the count before
-  the add was 2,147,483,647 or more, the program stops ("too many owners of a `Player`
-  (2,147,483,647)"; "too many `weakref` links to a `Player` (2,147,483,647)"). That limit is half the
-  count's range, so threads racing past it each stop before the count can roll over, whatever their
-  number. The home count, and a count that is not `thread_shared`, keep the exact compare of `[RC-1]`
-  and `[WK-11]`.
-* `[RC-5]` *(changed in 0.9.15)* *(changed in 0.9.20)* **A view of an object reached through a link.** A view of an object
-  reached through a `shares`, `shares mut`, `thread_shared` or `weakref` link (a name opened from a link,
-  `if cam.target exists as p:`; a view made through a `shares mut` field, `t = ref mut ws[i].target`; a
-  parameter `x: shares T`, whose life is the call) must not outlive the object. It is checked when
-  compiling, and nothing runs for it while the program runs, except for one kind of object (point 2):
-  1. **No line or call in the view's life may end an object of that type's class family** (`[EXC-3]`:
-     an `Array[Entity]` cleared ends a `Player` derived from `Entity`), held directly or through
-     anything that owns it, all the way down (a list of teams cleared ends their players): no write to a
-     place that owns one (`T`, `owns T`, `shares T`, `shares mut T`, `thread_shared T`, and a place of a
-     function type or of `owns dyn I` whose value's state owns one: `h.keep = fn(): pass` ends the function
-     stored there before and the node its `owns n` held), no removal from a list that owns them, no end
-     of a local that owns one, and no call that may do so, worked out from its code (`[EFF-1]`):
-     `remove_all(ref mut players)`, given the list that owns the players; a call through a function
-     value that may run `fn() owns players: players.clear()`; the end of an object whose `drop` may end
-     one (`[DRP-8]`); a hand-over of one, or of an object that owns one, to another thread, which may
-     move it (`[THR-2]`). After such a line or call the view is not used (`E3060`: "`remove_all(ref mut
-     players)` (line 12) may destroy the player `p` reads (`if cam.target exists as p:`, line 10), and
-     `p` is used on line 13; use `p` before line 12, or open the link again after it: write
-     `if cam.target exists as q:` above line 13, indent line 13 under it and use `q` there"; "`reset()`
-     (line 7) may end `Player` objects (it runs the function stored on line 3, which clears the players
-     it owns), and `p` reads one (`if cam.target exists as p:`, line 5) and is used on line 8; use `p`
-     before line 7, or open the link again after it: write `if cam.target exists as q:` above line 8,
-     indent line 8 under it and use `q` there"; "`h.keep = fn(): pass` (line 11) ends the function
-     stored there on line 9 and the node it owns (`owns n`), and `p` reads that node
-     (`if w exists as p:`, line 10) and is used on line 12; use `p` before line 11"). A one-owner object
-     lent read-only cannot be ended while it is lent.
-  2. A view of a `thread_shared` object reached through a `weakref` link holds one count for its life,
-     as Rust's `Weak::upgrade` does (`[WK-12]`): another thread may end the last owner at any moment,
-     which no line of this thread can be checked against. On the thread that made the object, until it
-     is handed over (`[RC-4]` point 4), that count is a plain add to its home count; on another thread,
-     one atomic add to its away count.
-  Across a call that may change an object of the view's type (worked out from the functions it may run,
-  `[EFF-1]`), a read-only view of such an object does not live at all (`[BRW-1]`, `E3021`): a walk
-  across such a call keeps a `weakref` link and tests it at every step (`[WK-18]`). Where a call fits
-  both this and point 1 (it may change and end the object a name opened from a link reads), the message
-  shown is the one whose fix compiles (`[DIA-28]`): point 1's `E3060` where using the name before the
-  call, or opening the link again after it, compiles (`println(p.hp)` after `reset()`, which may run
-  `fn() owns players: players.clear()`), and `[WK-18]`'s `E3021` for a walk, where every view of the walk
-  would need opening again.
+  The weak count of a `thread_shared` value is atomic. The away count, and the weak count, are
+  raised with one atomic add and their limit is checked on the value the add returns: when the count
+  before the add was 2,147,483,647 or more, the program stops ("too many owners of a `Player`
+  (2,147,483,647)"; "too many `weakref` links to a `Player` (2,147,483,647)"). That limit is half
+  the count's range, so threads racing past it each stop before the count can roll over, whatever
+  their number. The home count, and a count that is not `thread_shared`, keep the exact compare of
+  `[RC-1]` and `[WK-11]`.
+* `[RC-5]` *(changed in 0.9.15)* *(changed in 0.9.20)* **A view of an object reached through a
+  link.** A view of an object reached through a `shares`, `shares mut`, `thread_shared` or `weakref`
+  link (a name opened from a link, `if cam.target exists as p:`; a view made through a `shares mut`
+  field, `t = ref mut ws[i].target`; a parameter `x: shares T`, whose life is the call) must not
+  outlive the object. It is checked when compiling, and nothing runs for it while the program runs,
+  except for one kind of object (point 2):
+  1. **No line or call in the view's life may end an object of that type's class family**
+     (`[EXC-3]`: an `Array[Entity]` cleared ends a `Player` derived from `Entity`), held directly or
+     through anything that owns it, all the way down (a list of teams cleared ends their players):
+     no write to a place that owns one (`T`, `owns T`, `shares T`, `shares mut T`, `thread_shared
+     T`, and a place of a function type or of `owns dyn I` whose value's state owns one: `h.keep =
+     fn(): pass` ends the function stored there before and the node its `owns n` held), no removal
+     from a list that owns them, no end of a local that owns one, and no call that may do so, worked
+     out from its code (`[EFF-1]`): `remove_all(ref mut players)`, given the list that owns the
+     players; a call through a function value that may run `fn() owns players: players.clear()`; the
+     end of an object whose `drop` may end one (`[DRP-8]`); a hand-over of one, or of an object that
+     owns one, to another thread, which may move it (`[THR-2]`). After such a line or call the view
+     is not used (`E3060`: "`remove_all(ref mut players)` (line 12) may destroy the player `p` reads
+     (`if cam.target exists as p:`, line 10), and `p` is used on line 13; use `p` before line 12, or
+     open the link again after it: write `if cam.target exists as q:` above line 13, indent line 13
+     under it and use `q` there"; "`reset()` (line 7) may end `Player` objects (it runs the function
+     stored on line 3, which clears the players it owns), and `p` reads one (`if cam.target exists
+     as p:`, line 5) and is used on line 8; use `p` before line 7, or open the link again after it:
+     write `if cam.target exists as q:` above line 8, indent line 8 under it and use `q` there";
+     "`h.keep = fn(): pass` (line 11) ends the function stored there on line 9 and the node it owns
+     (`owns n`), and `p` reads that node (`if w exists as p:`, line 10) and is used on line 12; use
+     `p` before line 11"). A one-owner object lent read-only cannot be ended while it is lent.
+  2. A name opened from a `weakref thread_shared T` link (`[WK-11]`) holds one count for its life,
+     as Rust's `Weak::upgrade` does (`[WK-12]`): another thread may end the last owner at any
+     moment, which no line of this thread can be checked against. On the thread that made the
+     object, until it is handed over (`[RC-4]` point 4), that count is a plain add to its home
+     count; on another thread, one atomic add to its away count. Across a call that may change an
+     object of the view's type (worked out from the functions it may run, `[EFF-1]`), a read-only
+     view of such an object does not live at all (`[BRW-1]`, `E3021`): a walk across such a call
+     keeps a `weakref` link and tests it at every step (`[WK-18]`). Where a call fits both this and
+     point 1 (it may change and end the object a name opened from a link reads), the message shown
+     is the one whose fix compiles (`[DIA-28]`): point 1's `E3060` where using the name before the
+     call, or opening the link again after it, compiles (`println(p.hp)` after `reset()`, which may
+     run `fn() owns players: players.clear()`), and `[WK-18]`'s `E3021` for a walk, where every view
+     of the walk would need opening again.
 * `[RC-6]` *(changed in 0.9.15)* `ember inspect` lists every count operation that survives inside a
   loop, with the reason it could not be removed, because a surviving count operation blocks
   vectorisation.
@@ -287,34 +307,44 @@ no access words, and no change of a field begins or ends anything at run time.
 
 ## VIII.4 Inheritance and dispatch
 
-* `[DSP-1]` *(changed in 0.9.15)* A call is dispatched statically when the object's static type is a final class or the
-  method is not `virtual`.
-* `[DSP-2]` A virtual call loads its slot from the object's type table; slots are assigned in
-  declaration order, base first, and an `override` reuses the base's slot.
-* `[DSP-3]` *(changed in 0.9.15)* A call through a `dyn I` value of a class object finds the
-  interface's table through the type index and caches the lookup for repeated calls on one value.
-* `[DSP-4]` *(changed in 0.9.15)* **Kind tests.** A value of an interface type (`dyn I`, `owns dyn I`,
-  `shares dyn I`) or of a base class is tested for its kind with `is`: `if s is Circle as c:` runs its
-  block when `s` is a `Circle` and names it `c` there; `if s is Circle:` tests without a name; other
-  kinds are tested with `elif s is Square as q:` and `else:`, which is how a choice among kinds is
-  written (there is no "maybe a `Circle`" value to `match` on). The name is declared with its words, as
-  a name opened with `exists as` is (`[BRW-14]`): plain `c` is a read-only view, and since a value
-  tested in its place stays a place, `if this.pools[k] is Pool[T] as ref mut pool:` names a view of the
-  registry's pool that may change it, where the function may change the place. `is` before a type name
-  means "is of this kind"; before a value it means "the same object" (`a is b`, which compares
-  addresses) or tests for absence (`x is None`). A test that always passes is `E2036` ("`s` is a
-  `Circle` already, so this `if` would always run; to name it write `c = s` in place of the `if` line,
-  and use `c` in its block, moved out one level"); a test of a type that does not implement the
-  interface or derive from the base class, which can never pass, is `E2037` ("`s` is a `Shape`, which
-  can never be a `Path`; remove the test: the `if` line and its block"); a name already in use is
-  `E2106` ("`s` already names a value (line 1); `as` declares a new name: write `if s is Circle as c:`,
-  and `c.r` for `s.r` in its block"). Each test is one type-id compare.
-* `[DSP-6]` *(new in 0.9.15)* **Casts.** `cast s as Circle` gives the `Circle` and stops the program if
-  `s` is not one, in every profile: "`cast s as Circle` on line 9: `s` is a `Square`, not a `Circle`".
-  A cast of a place is a place: the name bound from it is read-only unless written `ref mut`
-  (`pool = ref mut cast this.pools[k] as Pool[T]`), and `ref mut` taken through a plain one
-  (`return ref mut pool.dense[pool.sparse[e]]`) is `E3027` ("`pool` only reads the pool in `this.pools`,
-  so `ref mut pool.dense[...]` cannot be taken through it; name it so it may change:
+* `[DSP-1]` *(changed in 0.9.15)* A call is dispatched statically when the object's static type is a
+  final class or the method is not `virtual`.
+* `[DSP-2]` *(changed in 0.9.20)* A virtual call loads its slot from the object's type table; slots
+  are assigned in declaration order, base first, and an `override` reuses the base's slot. A slot
+  holds, beside the method's code, the fact `[LT-22]` records for the method that fills it (bit 0
+  for `this`, bit k for its k-th parameter, in the width the base's declaration fixes), read by a
+  `runtime` check (`[LT-48]`); a slot a subclass does not override keeps the base's entry whole. The
+  entry is written by the package that compiles the method's body, and a reload that rebuilds the
+  body writes its new fact beside its new code (Annex B), so an object made before the reload is
+  checked by the code it runs.
+* `[DSP-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* A call through a `dyn I` value of a class
+  object finds the interface's table through the type index and caches the lookup for repeated calls
+  on one value. Each entry of an interface's table holds, beside the implementation's code, the fact
+  `[LT-22]` records for it, in the width the interface's declaration fixes, read by a `runtime`
+  check (`[LT-48]`).
+* `[DSP-4]` *(changed in 0.9.15)* **Kind tests.** A value of an interface type (`dyn I`, `owns dyn
+  I`, `shares dyn I`) or of a base class is tested for its kind with `is`: `if s is Circle as c:`
+  runs its block when `s` is a `Circle` and names it `c` there; `if s is Circle:` tests without a
+  name; other kinds are tested with `elif s is Square as q:` and `else:`, which is how a choice
+  among kinds is written (there is no "maybe a `Circle`" value to `match` on). The name is declared
+  with its words, as a name opened with `exists as` is (`[BRW-14]`): plain `c` is a read-only view,
+  and since a value tested in its place stays a place, `if this.pools[k] is Pool[T] as ref mut
+  pool:` names a view of the registry's pool that may change it, where the function may change the
+  place. `is` before a type name means "is of this kind"; before a value it means "the same object"
+  (`a is b`, which compares addresses) or tests for absence (`x is None`). A test that always passes
+  is `E2036` ("`s` is a `Circle` already, so this `if` would always run; to name it write `c = s` in
+  place of the `if` line, and use `c` in its block, moved out one level"); a test of a type that
+  does not implement the interface or derive from the base class, which can never pass, is `E2037`
+  ("`s` is a `Shape`, which can never be a `Path`; remove the test: the `if` line and its block"); a
+  name already in use is `E2106` ("`s` already names a value (line 1); `as` declares a new name:
+  write `if s is Circle as c:`, and `c.r` for `s.r` in its block"). Each test is one type-id
+  compare.
+* `[DSP-6]` *(new in 0.9.15)* **Casts.** `cast s as Circle` gives the `Circle` and stops the program
+  if `s` is not one, in every profile: "`cast s as Circle` on line 9: `s` is a `Square`, not a
+  `Circle`". A cast of a place is a place: the name bound from it is read-only unless written `ref
+  mut` (`pool = ref mut cast this.pools[k] as Pool[T]`), and `ref mut` taken through a plain one
+  (`return ref mut pool.dense[pool.sparse[e]]`) is `E3027` ("`pool` only reads the pool in
+  `this.pools`, so `ref mut pool.dense[...]` cannot be taken through it; name it so it may change:
   `pool = ref mut cast this.pools[k] as Pool[T]`"). Each cast is one type-id compare.
 * `[DSP-5]` *(changed in 0.9.15)* With the whole program visible, a virtual call with exactly one
   reachable implementation may become a direct call; `--emit-optimization-report` lists each. What a
@@ -323,88 +353,110 @@ no access words, and no change of a field begins or ends anything at run time.
 
 ## VIII.5 `weakref` links, parent links and loops of owners
 
-* `[WK-1]` *(changed in 0.9.15)* Ember has no cycle collector: a loop of owners, objects that own each
-  other through `shares`, `shares mut` or `thread_shared` fields, through the state of function values
-  they hold, or through channel ends, would keep its objects alive for ever. So a loop of owners is
-  allowed only where the compiler proves it is opened again before its objects lose their last owner
-  from outside, and is otherwise refused (`[WK-6]`); a link back that does not keep its target alive is
-  a `weakref` (`[WK-11]`).
-* `[WK-11]` *(changed in 0.9.9)* *(changed in 0.9.15)* **`weakref` links.** `weakref T` is a link that
-  does not keep its target alive. Its target lives on its own: a class object, or a value held `shares`
-  or `thread_shared`. A link may hold no target (`parent: weakref Node = None`). `weakref x` makes a link
-  to what `x` names; before a `weakref` link it makes another link to the same target
-  (`a = weakref this.keep`). A `weakref` link is not `Copy`, and `copy of` before one is `E2116`
-  (`[OWN-8]`). Every `weakref` link holds one weak count on its target: making one adds one, and its
-  end, or giving it another target, subtracts one, as Rust's `Weak` (`[WK-18]` gives the one place a
-  proved region keeps the block instead); before each +1 the count is compared with its maximum, and at
-  the maximum the program stops, in every profile: "too many `weakref` links to a `Player`
-  (4,294,967,295)" (`[RC-4]` for a `thread_shared` target). That count is a number in the target's
-  header that no name reads, so making or ending a link is not a change of the target: any name may
-  make one (`up = weakref p` from a read-only `p`; `child.parent = weakref this` in a method that
-  otherwise changes only `this.children`). Making, ending or opening a link touches the target's
-  header, so a scoped task does it only for a `thread_shared` target (§XI.3).
-* `[WK-16]` *(new in 0.9.15)* A `weakref` of a part (a field, or an element stored inline), whose target
-  does not live on its own, is `E2119`: "a `weakref` link needs an object that lives on its own; link to
-  the player: `cam.target = weakref player`". A `weakref` link used as its target without opening it,
-  and an object stored into a `weakref` place without `weakref`, are `E2020`: "`cam.target` may be gone;
-  open it: `if cam.target exists as p:`"; "`=` alone would hand `player` over; write
-  `cam.target = weakref player`".
-* `[WK-12]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Opening a link.** A `weakref` link is read by
-  opening it with `exists as` (`[GRM-44]`): `if cam.target exists as p:` tests the target's header
-  (does the object still live?) and runs its block, with `p` a view of the object, when it does;
-  `else:` runs when the link holds nothing or its target is ended (a target handed to another thread
-  is ended here, `[THR-2]`). Each opening is one test of the
-  header, except a parent-link read proved by `[WK-17]`. For a `thread_shared` target the opening adds
-  one owner only to a value that is not ended, so an object another thread is ending is never brought
-  back, and the view holds that count for its life (`[RC-5]` point 2): on the making thread, until the
-  value is handed over (`[RC-4]` point 4), it tests that the home and away counts add up to more than
-  zero and adds one to the home count; on any other thread it is one atomic add to the away count,
-  undone when the value is marked ended.
+* `[WK-1]` *(changed in 0.9.15)* Ember has no cycle collector: a loop of owners, objects that own
+  each other through `shares`, `shares mut` or `thread_shared` fields, through the state of function
+  values they hold, or through channel ends, would keep its objects alive for ever. So a loop of
+  owners is allowed only where the compiler proves it is opened again before its objects lose their
+  last owner from outside, and is otherwise refused (`[WK-6]`); a link back that does not keep its
+  target alive is a `weakref` (`[WK-11]`).
+* `[WK-11]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **`weakref` links.** A
+  `weakref` link does not keep its target alive, and its type says what kind of target it has.
+  `weakref T` links a value on one thread: a class object with one owner or with `shares` or `shares
+  mut` owners, or a value held `shares` or `shares mut` (`[WK-13]`); one type serves them all, since
+  each has the header of `[OBJ-1]` and is tested the same way, and its weak count is changed with
+  plain adds and subtracts. `weakref thread_shared T` links a `thread_shared T`, a type of its own:
+  its target's header is `[RC-4]`'s, its weak count is atomic, and its opening holds a count
+  (`[WK-12]`). The kind of the target is in the link's type and nowhere else: no flag is read while
+  the program runs (`[OBJ-1]`), and the two types never convert into each other (`E2020`,
+  `[TYP-45]`). A value held `owns` lives in a block with no header and is not a target: a `weakref`
+  of it is `E2119` ("`b` holds its mesh in a block with no header, which a link cannot test; a link
+  names a class object or a value held `shares` or `thread_shared`: write `b = shares
+  Mesh(points=[0.0])` in place of line 3, then `w = weakref b`"). A link may hold no target
+  (`parent: weakref Node = None`). `weakref x` makes a link to what `x` names, of the kind the words
+  on the path to `x` say (`[OWN-13]`); before a link it makes another link of the same type to the
+  same target (`a = weakref this.keep`). A `weakref` link is not `Copy`, and `copy of` before one is
+  `E2116` (`[OWN-8]`). Every `weakref` link holds one weak count on its target: making one adds one,
+  and its end, or giving it another target, subtracts one, as Rust's `Weak` (`[WK-18]` gives the one
+  place a proved region keeps the block instead); before each +1 the count is compared with its
+  maximum, and at the maximum the program stops, in every profile: "too many `weakref` links to a
+  `Player` (4,294,967,295)" (`[RC-4]` for a `weakref thread_shared T`). That count is a number in
+  the target's header that no name reads, so making or ending a link is not a change of the target:
+  any name may make one (`up = weakref p` from a read-only `p`; `child.parent = weakref this` in a
+  method that otherwise changes only `this.children`). Making, ending or opening a link touches the
+  target's header, so a scoped task does it only through a `weakref thread_shared T` (§XI.3).
+* `[WK-16]` *(new in 0.9.15)* *(changed in 0.9.20)* A `weakref` of a part (a field, or an element
+  stored inline), of a value held `owns`, or of a new value, whose target does not live on its own
+  (`[WK-11]`, `[OWN-13]`), is `E2119`: "a `weakref` link needs an object that lives on its own; link
+  to the player: `cam.target = weakref player`". A `weakref` link used as its target without opening
+  it, and an object stored into a `weakref` place without `weakref`, are `E2020`: "`cam.target` may
+  be gone; open it: `if cam.target exists as p:`"; "`=` alone would hand `player` over; write
+  `cam.target = weakref player`". A `weakref` of a value held `dyn I`, `owns dyn I`, `shares dyn I`
+  or `some I`, and the type `weakref dyn I`, are `E2119` too: the kind of the object is known only
+  while the program runs, and whether its header holds a weak count is its class's to fix
+  (`[OBJ-1]`): "`weakref dyn Listener` (line 5) names a kind known only while the program runs, and
+  a `weakref` link needs a class that fixes its header; link to a base class: write `open class
+  Listener:` with `virtual fn notify(msg: StrView): pass` in place of lines 1 and 2, `class
+  Button(Listener):` in place of line 8, and `listeners: Array[weakref Listener] = []` in place of
+  line 5". A link to the base class is one pointer, opened with one header test, and every object of
+  the family carries the count.
+* `[WK-12]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **Opening a link.** A
+  `weakref` link is read by opening it with `exists as` (`[GRM-44]`): `if cam.target exists as p:`
+  tests the target's header (does the object still live?) and runs its block, with `p` a view of the
+  object, when it does; `else:` runs when the link holds nothing or its target is ended (a target
+  handed to another thread is ended here, `[THR-2]`). Opening a `weakref T` is one test of the
+  header, a load and a compare, and nothing else, except a parent-link read proved by `[WK-17]`; the
+  kind of the target is in the link's type, so no flag is read and no branch chooses the path.
+  Opening a `weakref thread_shared T` adds one owner only to a value that is not ended, so an object
+  another thread is ending is never brought back, and the view holds that count for its life
+  (`[RC-5]` point 2): on the making thread, until the value is handed over (`[RC-4]` point 4), it
+  tests that the home and away counts add up to more than zero and adds one to the home count; on
+  any other thread it is one atomic add to the away count, undone when the value is marked ended.
 * `[WK-2]` *(changed in 0.9.15)* An object is ended when its count of owners reaches zero, whatever
   `weakref` links remain; those links then find nothing when opened.
-* `[WK-3]` *(changed in 0.9.15)* **An object is ended the moment its last owner lets it go, before its
-  `drop` runs**, as C++'s `weak_ptr` and Rust's `Weak` see it: a `weakref` link opened during its
-  `drop`, or during the `drop` of anything it owns (a child's `drop` opening `this.parent` while the
-  parent is being ended), finds it ended, so the `if ... exists as p:` block is skipped and the
+* `[WK-3]` *(changed in 0.9.15)* **An object is ended the moment its last owner lets it go, before
+  its `drop` runs**, as C++'s `weak_ptr` and Rust's `Weak` see it: a `weakref` link opened during
+  its `drop`, or during the `drop` of anything it owns (a child's `drop` opening `this.parent` while
+  the parent is being ended), finds it ended, so the `if ... exists as p:` block is skipped and the
   half-ended object is never read, nor counted again. Ending the link itself (`this.parent = None`)
-  stays allowed: it only subtracts the link's weak count in the target's header, which that count keeps
-  in memory. A `thread_shared` value whose last owner ends on a thread that did not make it, and that
-  was not handed over, is ended at its making thread's next check point (`[RC-4]` point 5), and its
-  `drop` runs there.
-* `[WK-13]` *(changed in 0.9.15)* A `weakref` link to a value held `shares` names the same block as its
-  owners.
+  stays allowed: it only subtracts the link's weak count in the target's header, which that count
+  keeps in memory. A `thread_shared` value whose last owner ends on a thread that did not make it,
+  and that was not handed over, is ended at its making thread's next check point (`[RC-4]` point 5),
+  and its `drop` runs there.
+* `[WK-13]` *(changed in 0.9.15)* A `weakref` link to a value held `shares` names the same block as
+  its owners.
 * `[WK-14]` *(changed in 0.9.15)* Ember's `weakref` and `shares` never convert to or from C++'s
   `std::weak_ptr`/`std::shared_ptr` (`[SEL-2]`).
-* `[WK-17]` *(new in 0.9.15)* **Parent links.** A parent link is an ordinary `weakref` field that names
-  the object owning its holder (`parent: weakref Node`), which the program gives its target like any
-  field: `child.parent = weakref this`, then `this.children.push(owns child)`. A read of one is compiled with
-  no header test (a plain load and a test for no link) where the compiler proves its target lives; it
-  proves it when both of these hold:
+* `[WK-17]` *(new in 0.9.15)* *(changed in 0.9.20)* **Parent links.** A parent link is an ordinary
+  `weakref` field that names the object owning its holder (`parent: weakref Node`), which the
+  program gives its target like any field: `child.parent = weakref this`, then
+  `this.children.push(owns child)`. A read of one is compiled with no header test (a plain load and
+  a test for no link) where the compiler proves its target lives; it proves it when both of these
+  hold:
   1. **The link follows ownership.** In the package, every line that gives the field a target,
-     `x.parent = weakref o`, is followed in the same function, before `x.parent` is read, by a line that
-     puts `x` into a place `o` owns alone (`o.children.push(owns x)`, `o.left = x`); every line that takes
-     such an object out of its place without ending it is followed, before that object's link is read
-     (there, or in a function it is given to, by that function's summary), by a line that gives the link
-     a target the same way or clears it (`c.parent = None`); no list or field holding such objects is
-     handed over, replaced or exchanged whole while it holds them; the objects have one owner (not
-     `shares`, not `thread_shared`) and their class has no `drop` method of its own; and no other
-     package can change the link or those places (`[EFF-4]`). Then an object's parent owns it, so while
-     the object lives its parent lives.
-  2. **Nothing ends such an object meanwhile.** No line between the point where the object whose link
-     is read is known to live (a view of it) and the read can end an object of the link's target type
-     (`[RC-5]` point 1).
-  A walk up a tree with views (`cur = ref n`, `while cur.parent exists as p:`, `cur = ref p`) is then
-  compiled with no test per step; where condition 1 fails, every read tests.
-* `[WK-18]` *(new in 0.9.15)* **A walk across a call that may change nodes holds a link and tests it at
-  every step.** When a walk calls a function that may change nodes (`this.on_visit(p)`, where the
-  program stores in `on_visit: fn(Node)` a function that removes nodes from their parents' lists, and so
-  ends them), no view of a node lives across the call (`[RC-5]`): the walk with views is `E3021`
-  ("`this.on_visit(p)` (line 21) may end a `Node` (it may run `prune`, stored on line 40, which removes
-  a node from its parent's list), and `p` reads a node and is used again on line 23; walk with a link,
-  which may outlive its node: instead of `if leaf exists as n:`, `cur = ref n`, the `while` line and
-  `cur = ref p`, write `up = weakref leaf`, then `while up exists as n:`, inside it
-  `if n.parent exists as p:` with `up = weakref p` and `this.on_visit(p)`, and `else: break`"), and it
-  is written with a `weakref` link, which may outlive its node:
+     `x.parent = weakref o`, is followed in the same function, before `x.parent` is read, by a line
+     that puts `x` into a place `o` owns alone (`o.children.push(owns x)`, `o.left = x`); every line
+     that takes such an object out of its place without ending it is followed, before that object's
+     link is read (there, or in a function it is given to, by that function's summary), by a line
+     that gives the link a target the same way or clears it (`c.parent = None`); no list or field
+     holding such objects is handed over, replaced or exchanged whole while it holds them; the field
+     is a `weakref T` and the objects have one owner (not `shares`) and their class has no `drop`
+     method of its own; and no other package can change the link or those places (`[EFF-4]`). Then
+     an object's parent owns it, so while the object lives its parent lives.
+  2. **Nothing ends such an object meanwhile.** No line between the point where the object whose
+     link is read is known to live (a view of it) and the read can end an object of the link's
+     target type (`[RC-5]` point 1). A walk up a tree with views (`cur = ref n`, `while cur.parent
+     exists as p:`, `cur = ref p`) is then compiled with no test per step; where condition 1 fails,
+     every read tests.
+* `[WK-18]` *(new in 0.9.15)* *(changed in 0.9.20)* **A walk across a call that may change nodes holds a link and tests it
+  at every step.** When a walk calls a function that may change nodes (`this.on_visit(p)`, where the
+  program stores in `on_visit: fn(Node)` a function that removes nodes from their parents' lists,
+  and so ends them), no view of a node lives across the call (`[RC-5]`): the walk with views is
+  `E3021` ("`this.on_visit(p)` (line 21) may end a `Node` (it may run `prune`, stored on line 40,
+  which removes a node from its parent's list), and `p` reads a node and is used again on line 23;
+  walk with a link, which may outlive its node: instead of `if leaf exists as n:`, `cur = ref n`,
+  the `while` line and `cur = ref p`, write `up = weakref leaf`, then `while up exists as n:`,
+  inside it `if n.parent exists as p:` with `up = weakref p` and `this.on_visit(p)`, and `else:
+  break`"), and it is written with a `weakref` link, which may outlive its node:
 
 ```ember,fragment
 up = weakref leaf
@@ -416,40 +468,48 @@ while up exists as n:            # the node still lives: call it `n`
         break
 ```
 
-  The call `this.on_visit(p)` itself compiles when no function the program stores in `on_visit` uses its
-  node after a line that may end it; one that does is refused where it is stored (`E3031`, `[BRW-21]`).
-  **A walk up a tree stops at the first ended parent**: if the call ends `p`, or a node above it with
-  everything under it, the link's target is ended and its block is kept by the link's weak count, so
-  the next `while up exists as n:` finds it ended and the walk stops; it never visits an ended node, and
-  nothing stops the program. **What it costs**: per step, one test of the node's header
-  (`while up exists as n:`) and one move of the link's weak count from the node to its parent
-  (`up = weakref p`: a subtract and an add); the read of `n.parent`, between the test and the call, needs
-  no header test where `[WK-17]`'s condition 1 holds (its condition 2 holds there). **Where proof removes
-  part of it**: when the node's class has no `drop` method of its own and its objects are ones no other
-  thread can end (not `thread_shared`, and not reachable from a `thread_shared` value), the walk is
-  placed in a **deferred-drop region**: an object whose last owner ends during the walk is ended at
-  once, as anywhere: the `drop`s of what it owns run then, in their usual order, so the program prints
-  what it would with no region, and it and everything it owns are marked ended; only their blocks'
-  memory waits, and is freed when the walk ends
-  (one add and one subtract of a per-thread counter per region, nothing per step). A link that lives
-  only inside the region and is given only objects that live at that moment (`up = weakref p` from the
-  view `p`) then holds no weak count, so each step pays only the header test; the first link of each
-  walk, `up = weakref leaf`, keeps its count. A walk over objects another thread may end pays the count
-  moves. A walk whose visit function changes no node (every function the program stores in `on_visit`
-  only reads its node) keeps its views and pays nothing per step.
+  The call `this.on_visit(p)` itself compiles when no function the program stores in `on_visit` uses
+  its node after a line that may end it; one that does is refused where it is stored (`E3031`,
+  `[BRW-21]`). **A walk up a tree stops at the first ended parent**: if the call ends `p`, or a node
+  above it with everything under it, the link's target is ended and its block is kept by the link's
+  weak count, so the next `while up exists as n:` finds it ended and the walk stops; it never visits
+  an ended node, and nothing stops the program. **What it costs**: per step, one test of the node's
+  header (`while up exists as n:`) and one move of the link's weak count from the node to its parent
+  (`up = weakref p`: a subtract and an add); the read of `n.parent`, between the test and the call,
+  needs no header test where `[WK-17]`'s condition 1 holds (its condition 2 holds there). **Where
+  proof removes part of it**: when the class the link's type names has no `drop` method of its own,
+  and no class derived from it can have one the walk's package does not see (no derived class in
+  this package has one, and no `pub` class of the family is `open` or `abstract`, so no other
+  package derives from it, `[CLS-4]`), and the walk's link is a `weakref T` (a `weakref T` names an
+  object no other thread can end: a `thread_shared` node is linked only as `weakref thread_shared
+  T`, a node reached through a `thread_shared` value takes no `weakref T` (`[OWN-13]`, `E7015`), and
+  one that later becomes reachable from another thread is handed over there and leaves its links
+  behind (`[THR-2]`)), the walk is placed in a **deferred-drop region**: an object whose last owner
+  ends during the walk is ended at once, as anywhere: the `drop`s of what it owns run then, in their
+  usual order, so the program prints what it would with no region, and it and everything it owns are
+  marked ended; only their blocks' memory waits, and is freed when the walk ends (one add and one
+  subtract of a per-thread counter per region, nothing per step). Both facts are read from the
+  class's declaration and from the link's type, the same in every package (`[BLD-16]`). A link that
+  lives only inside the region and is given only objects that live at that moment (`up = weakref p`
+  from the view `p`) then holds no weak count, so each step pays only the header test; the first
+  link of each walk, `up = weakref leaf`, keeps its count. A walk with a `weakref thread_shared T`
+  link, or over a class whose `drop` the walk's package cannot see, pays the count moves. A walk
+  whose visit function changes no node (every function the program stores in `on_visit` only reads
+  its node) keeps its views and pays nothing per step.
 * `[WK-5]` *(changed in 0.9.15)* **The graph of owners.** The compiler builds a graph of owner edges
   among types, after generic substitution, over the whole program: a field holding a `shares`,
-  `shares mut` or `thread_shared` value, or a collection of them; a function value's state, from every
-  function the program can put there (`[EFF-1]`); a channel end that its own queue can hold; a
-  `Retained[ForeignCallback]` token, to the callback's state, which it keeps for C (`[FFI-23]`). `weakref`
-  links, `sharedref mut` links, views and raw pointers are not owner edges. A `let` field, set when its
-  object is made, can name only objects that exist already, so it never closes a loop.
-* `[WK-6]` *(changed in 0.9.15)* **A loop of owners is refused unless it is proved opened.** A line that
-  closes a loop of owners (`a.next = Some(shares mut b)` after `b.next` names `a`) is refused, unless the
-  compiler proves that the loop is opened again before its objects lose their last owner from outside
-  (`E3032`: "this closes a loop of owners (`a` → `b` → `a`) that nothing opens again before `a` and `b`
-  end, so neither node is ever freed; open it before the function ends: `b.next = None`, or make the
-  link back `weakref`: `next: Option[weakref Node]`") (a deliberate error example, so the block is not compiled):
+  `shares mut` or `thread_shared` value, or a collection of them; a function value's state, from
+  every function the program can put there (`[EFF-1]`); a channel end that its own queue can hold; a
+  `Retained[ForeignCallback]` token, to the callback's state, which it keeps for C (`[FFI-23]`).
+  `weakref` links, `sharedref mut` links, views and raw pointers are not owner edges. A `let` field,
+  set when its object is made, can name only objects that exist already, so it never closes a loop.
+* `[WK-6]` *(changed in 0.9.15)* **A loop of owners is refused unless it is proved opened.** A line
+  that closes a loop of owners (`a.next = Some(shares mut b)` after `b.next` names `a`) is refused,
+  unless the compiler proves that the loop is opened again before its objects lose their last owner
+  from outside (`E3032`: "this closes a loop of owners (`a` → `b` → `a`) that nothing opens again
+  before `a` and `b` end, so neither node is ever freed; open it before the function ends: `b.next =
+  None`, or make the link back `weakref`: `next: Option[weakref Node]`") (a deliberate error
+  example, so the block is not compiled):
 
 ```ember,ignore
 ## deliberate error example: a loop of owners nothing opens again (`E3032`)

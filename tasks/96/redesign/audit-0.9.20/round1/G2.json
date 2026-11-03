@@ -1,0 +1,469 @@
+{
+ "group": "G2",
+ "title": "Parts V and VI (declarations; expressions, lambdas, generators)",
+ "found": {
+  "group": "G2: Parts V and VI (declarations; expressions, lambdas, generators)",
+  "findings": [
+   {
+    "id": "G2-01",
+    "rules": [
+     "CLS-2",
+     "CLS-4",
+     "IFC-5",
+     "MOD-9"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "Checks inside a library's own bodies read sets the whole program fills (overrides, dyn implementations), which the library cannot see (extends O1)",
+    "program": "# package lib, compiled once\nopen class Script:\n    name: String                      # no default\n    virtual fn on_make():\n        pass\n    fn init(n: String):\n        this.on_make()                # [CLS-2]: allowed, every override lib has reads nothing  <- breaks the promise once app exists\n        this.name = n\n\n# package app, a dependant\nstatic mut ROSTER: Array[weakref Script] = []\nclass Door(Script):\n    override fn on_make():\n        ROSTER.push(weakref this)         # lets `this` out before `name` is set\n        for r in ROSTER:\n            if r exists as s:\n                println(s.name)       # reads the unset String: an uninitialised pointer\nfn main():\n    d = Door(\"front\")\n\n# the same shape for a walk: lib's `fn run_all(): for ref mut s in this.scripts: s.on_update(0.1)`\n# and app's `override fn on_update(dt: f32): WORLD.scripts.clear()` with `WORLD.scripts` the walked list.",
+    "why": "[CLS-2]: \"by a call of a method whose body lets `this` out ... and for a `virtual` method from every override's body the program has ([DSP-5], [EFF-24]), since a base `init` cannot know which kind it builds\" and \"`init` may call a method of its object once every field that method's body (every override's, for a `virtual` method) reads is set\". [CLS-4]: \"A call through a `virtual` method counts what every override the program has changes, worked out from their bodies ([DSP-5])\". [IFC-5]: \"What a `dyn` value's methods change is worked out from every value the program makes into that type ([EFF-2])\". [MOD-9]/[EFF-4] record a package's worked-out facts in its interface and re-check the dependant's callers, but the checks quoted sit inside the library's own `init` and `run_all`, which are compiled before the dependant's override exists; nothing says where the override is checked against them.",
+    "proposed_text": "* `[MOD-9a]` **A fact a body needs from the whole program is checked where the program adds to it.** A check inside a function that reads a set the whole program fills (the overrides of a `virtual` method, the implementations of an interface used as `dyn`, the functions stored into a function-typed place, `[EFF-2]`) is made when its package is compiled, over the members that package has, and the need is recorded in the package's interface file beside the call: for a call of a `virtual` method from `init`, which fields of the object are unset at that line (`[CLS-2]`); for a call through a `virtual` or `dyn` method or a function value, what the calling function walks, holds and has lent at that line (`[BRW-11]`, `[BRW-18]`, `[RC-5]`). A package that adds a member (an override, an implementation, a function stored into such a place) checks it, where it is declared or stored, against every recorded need of the package it extends, with the same codes and a message that names the chain: an override that reads a field unset at the base's call, or lets `this` out there, is `E2100` (\"`Door.on_make` keeps a link to the object (`ROSTER.push(weakref this)`, line 12), and `Script.init` calls `on_make` (its line 7) before `name` is set; keep the link after construction: write `ROSTER.push(weakref this)` in `Door.init` below `super.init(n)`\"); an override or stored function that changes what the calling line walks or holds is `E3020` (\"`Door.on_update` clears `WORLD.scripts` (line 9), which `Script.run_all` walks while it calls `on_update` (its line 4); clear after the walk: give `run_all`'s caller the list of doors to remove\"). A member no recorded need refuses is accepted; nothing runs for it while the program runs.",
+    "codes": "E2100 and E3020 reused, reported at the override or the storing line with the library's line and chain named (shape of [EFF-4]'s interface messages)",
+    "milestone": "M11 (init, virtual) with M6a (summaries recorded in interface files)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G2-02",
+    "rules": [
+     "CLO-6a",
+     "CLO-6",
+     "EXP-6",
+     "OWN-11"
+    ],
+    "kind": "CON",
+    "severity": "critical",
+    "title": "A `once fn` in a class field is callable by [CLO-6a] but a hand-over out of a class field is E3013 by [EXP-6]; through two owners it runs twice",
+    "program": "class Job:\n    task: once fn()\n\nfn consume(owns s: String):\n    println(s)\n\nfn main():\n    s = String(\"payload\")\n    j = shares mut Job(task=fn() owns s: consume(owns s))\n    k = shares mut j\n    j.task()      # [CLO-6a]: \"the call hands the value out of its place (the place becomes empty)\"  <- breaks\n    k.task()      # the emptied field, through another owner: `s` is handed over twice (double end)",
+    "why": "[CLO-6a]: \"A `once fn` value the program owns, including one in an `owns` block or a collection, is callable: the call hands the value out of its place (the place becomes empty, ...)\". [EXP-6]: \"a field of a class object, which other names may reach and would see the hole, ... are `E3013`\". [CLO-6]: \"given where a function may run twice it is `E3013`\" names no way to know that a class field may run twice. The two rules disagree for a class field, and nothing defines what an \"empty\" function-value place is at run time.",
+    "proposed_text": "Replace in `[CLO-6a]` the sentence \"A `once fn` value the program owns, including one in an `owns` block or a collection, is callable: the call hands the value out of its place (the place becomes empty, and a collection element is removed by the calling API, e.g. `jobs.pop_front()`).\" with: \"A `once fn` value is called out of a place that owns it and that no other name reaches: a local, a part of a struct local (`[OWN-11]`: the part is `E3040` until given a new value), the value in an `owns` block, or a collection element the calling API removes (`jobs.pop_front()()`). A call of one held in a class object's field, or reached through a `shares`, `shares mut`, `thread_shared`, `weakref` or `sharedref mut` link or a view, is `E3013` (\"`j.task` is a field of a `Job` object, which other names may reach and would find empty; take the function out first: `t = mem.replace(ref mut j.task, fn(): pass)`, then `t()`\"), as every hand-over out of such a place is (`[EXP-6]`). A place is never empty while the program runs: what a call takes, the compiler sees taken.\"",
+    "codes": "E3013 reused (its registry row already names \"a field of a class object, which other names may reach\")",
+    "milestone": "M8",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G2-03",
+    "rules": [
+     "CORO-6",
+     "CORO-1",
+     "CORO-5"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "A view of a parameter the frame holds (`owns` or `Copy`) may be held across `yield` by the text, and the frame may move",
+    "program": "struct Point:\n    x: float\n    y: float\n\ngen fn walk(owns p: Point) -> Generator[float]:\n    r = ref p               # a view of a parameter, which lives in the frame   <- breaks\n    yield 0.0\n    yield r.x               # the frame moved while suspended: `r` points where `p` was\n\nfn main():\n    g = walk(Point(x=1.0, y=2.0))\n    g.next()\n    gens: Array[owns dyn Iterator[Item = float]] = [owns g]   # hands the frame into a block ([CORO-5])\n    gens[0].next()",
+    "why": "[CORO-6]: \"A view **into the generator's own frame** (a view of one of its own locals) may not be held across a `yield`\" and \"Views that came in as parameters, or are made from them, may be held across `yield`\". [CORO-1]: the frame is \"a value holding the parameters and suspended state\", so an `owns` or `Copy` parameter is inline in the frame, and `ref p` is \"made from\" a parameter but is a view into the frame; the parenthetical says \"locals\" only.",
+    "proposed_text": "Replace \"A view **into the generator's own frame** (a view of one of its own locals) may not be held across a `yield`\" with \"A view **into the generator's own frame** (a view of one of its own locals, or of a parameter the frame holds: one taken `owns`, or a `Copy` value, which is copied in, `[FN-1]`) may not be held across a `yield`\", and replace \"Views that came in as parameters, or are made from them, may be held across `yield`\" with \"A view that came in as a parameter (`xs: Span[int]`, `p: Player`, a view type), or one made from what such a view points into, may be held across `yield`: it points outside the frame\". The `E2221` message for the parameter case: \"`r` (line 2) points into this generator's own frame, where its parameter `p` lives, and the frame may move while it is suspended at the `yield` on line 3; use `p` itself: remove line 2 and write `yield p.x` instead of line 4\".",
+    "codes": "E2221 reused; registry row reads \"a view into a generator's own frame held across `yield`\", unchanged",
+    "milestone": "M5",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G2-04",
+    "rules": [
+     "CLS-12",
+     "EFF-27"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "`@cached` on a `thread_shared` object whose body reads an `Atomic` (or `Mutex`/`RwLock`) field: another thread's clearing store frees the kept value under a live `ref T`",
+    "program": "import std.thread\nfrom std.sync import Atomic\n\nclass Stats:\n    hits: Atomic[int] = Atomic(0)\n    @cached fn summary() -> String:              # <- breaks: E2117's list names no Atomic\n        return f\"hits={this.hits.load()}\"\n\nfn main():\n    s = thread_shared Stats()\n    t = thread.spawn(owns fn() thread_shared s: s.hits.fetch_add(1))   # [EFF-27] places a clear here\n    v = s.summary()      # a `ref String` into the kept value\n    println(v)           # the other thread's clear ends the String under `v`\n    t.join()",
+    "why": "[CLS-12]: \"A `Copy` result is returned by value, any other as a `ref T` view into the kept value, which clearing it ends\"; \"On an object several threads reach, the kept result is filled once under a once-flag\" (the fill is guarded, the clear is not); the `E2117` list: \"reads a `shares`, `shares mut`, `thread_shared`, `weakref`, `sharedref mut` or `Cell` field, or a field other threads change under a lock\" names neither `Atomic` nor a `Mutex`/`RwLock` field, which [FN-1] says \"are changed through a plain parameter, by their own operations\". [EFF-27]: \"the compiler places the clear at each line that may make such a change\", so the `fetch_add` line clears on the other thread. [CLS-6] also never says when the kept results end.",
+    "proposed_text": "In `[CLS-12]`'s `E2117` list, replace \"or a field other threads change under a lock\" with \"or a field changed through its own operations by any name that reaches it, which other threads may be (`Atomic`, `Mutex`, `RwLock`, a channel end, a `guarded by` field)\", with the message \"`summary` reads `hits`, an `Atomic` other threads change; the clear of a kept result cannot be made under the once-flag that fills it; remove `@cached` (line 6)\". So a `@cached` method of a class whose objects may be `thread_shared` reads only fields that never change after `init`, and its kept result is never cleared. Add to `[CLS-6]`: \"The kept results of the object's `@cached` methods are ended with its fields.\"",
+    "codes": "E2117 reused; its registry row gains the `Atomic`/`Mutex`/`RwLock` clause",
+    "milestone": "M11",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G2-05",
+    "rules": [
+     "STA-1",
+     "THR-20",
+     "THR-18"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "A `guarded by` `static mut` of a non-`Send` type: a one-thread owner made from it on another thread races its count",
+    "program": "import std.thread\nfrom std.sync import Lock\n\nclass Table:\n    rows: Array[int] = []\n\nstatic L: Lock = Lock()\nstatic mut CACHE: shares mut Table guarded by L = shares mut Table()   # <- breaks: no Send asked of T\n\nfn worker():\n    with L:\n        mine = shares mut CACHE      # one more owner \"on this thread\": a non-atomic count, from a second thread\n    mine.rows.push(1)                # used outside the lock on the worker thread\n\nfn main():\n    t = thread.spawn(owns fn(): worker())\n    with L:\n        other = shares mut CACHE     # the main thread adds to the same count at the same moment\n    t.join()",
+    "why": "[STA-1]: \"`T` MUST be `ThreadShared` (`E7002`)\" is said of `static NAME: T` only; for `static mut` it says \"It is reached only by the main thread and its scoped tasks unless it is `guarded by` a `static` `Lock`\" and asks nothing of `T`. [THR-20] lets any thread use it \"inside `with` that lock\". [OWN-13] allows `shares mut x` \"before ... an owner\", which `CACHE` is. [THR-2]'s \"by any route\" lists captures and hand-overs, not a static. Part XI gives `Mutex[T]` its marker \"for a `Send` `T`\" (line 67), and [THR-18] says a `guarded by` field \"is a `Mutex` written as ordinary fields\", but [STA-1] never carries that over to the static.",
+    "proposed_text": "Add to `[STA-1]` after \"another thread that reaches it otherwise is `E7012` (Part XI)\": \"A `guarded by` `static mut` is a `Mutex[T]` written as a module variable (`[THR-18]`), so its `T` MUST be `Send` (`E7002`: \"`CACHE` is guarded by `L`, so any thread may reach it under the lock, and a `shares mut Table` stays on one thread; share it between threads: write `static mut CACHE: thread_shared Table guarded by L = thread_shared Table()`\"); an unguarded `static mut` asks nothing of `T`, since one thread and its scoped tasks reach it.\"",
+    "codes": "E7002 reused (its row: a `static`'s type is not `ThreadShared`; widen to \"a guarded `static mut`'s type is not `Send`\")",
+    "milestone": "M9",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G2-06",
+    "rules": [
+     "CLO-17",
+     "CLO-2",
+     "CLO-18"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "A function value stored in a `static mut` it reshapes: a `static mut` is neither a \"real variable\" nor \"a name it captured with a word\", so the store-time E3022 does not fire",
+    "program": "class Bus:\n    handlers: Array[fn()] = []\n    fn click():\n        for ref mut h in this.handlers:\n            h()\n\nstatic mut BUS: Bus = Bus()\n\nfn main():\n    BUS.handlers.push(owns fn(): BUS.handlers.clear())   # <- breaks: no real variable, no capture word\n    BUS.click()        # clears the list that holds the running function: its state block is freed under it",
+    "why": "[CLO-17]: \"a function value is not stored in a place that a real variable it changes owns, all the way down, nor in a place that its body may reshape or end through a name it captured with a word\". [CLO-2]: \"A name a lambda or a local function uses from the function that made it is the **real variable**\"; `BUS` is a module variable, not a name of `main`. [CLO-18]: \"A body that may end or move its own state ... is refused where the function value is stored (`E3022`, `[CLO-17]`): a state block is not counted ([CLO-10]), so nothing could keep it alive across the call\". The call-site walk rule ([BRW-18] through `click`'s summary) may still refuse `BUS.click()`, but the rule F2 made decisive, the store, is silent, and a compiler must choose which check carries the guarantee.",
+    "proposed_text": "In `[CLO-17]`, replace \"a function value is not stored in a place that a real variable it changes owns, all the way down, nor in a place that its body may reshape or end through a name it captured with a word\" with \"a function value is not stored in a place that its body may reshape or end, or that is owned, all the way down, by anything its body may reshape or end, through any name it reaches: a real variable, a name it captured with a word (a `shares mut`, `thread_shared` or `sharedref mut` owner or link, a `weakref` link it opens `ref mut`), or a `static mut`, read through the chain of its calls (`[EFF-24]`)\". Message for the static: \"this function clears `BUS.handlers`, and `push` would keep it in `BUS.handlers`, so it would change the bus that holds it while the bus runs it; clear the handlers after the click instead: `BUS.click()`, then `BUS.handlers.clear()`\".",
+    "codes": "E3022 reused; its registry row \"a function value stored in a place that a variable it changes owns\" becomes \"... that anything it changes through any name owns\"",
+    "milestone": "M8",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G2-07",
+    "rules": [
+     "CLO-16",
+     "THR-20",
+     "STA-1"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "A function that \"captures nothing\" meets `thread_shared fn()` even when its body changes an unguarded `static mut`; the refusal rests on composing [THR-20] through every stored place across packages",
+    "program": "import std.thread\nfrom std.sync import Lock\n\nstatic mut FRAME: int = 0\n\nclass Bus:\n    lock: Lock = Lock()\n    handlers: Array[thread_shared fn()] guarded by lock = []\n    fn fire():\n        with this.lock:\n            for ref mut h in this.handlers:\n                h()\n\nfn main():\n    bus = thread_shared Bus()\n    with bus.lock:\n        bus.handlers.push(owns fn(): FRAME += 1)     # <- the line: captures nothing, so meets `thread_shared fn()`\n    t = thread.spawn(owns fn() thread_shared bus: bus.fire())\n    FRAME += 1                                       # beside the other thread's write\n    t.join()",
+    "why": "[CLO-16]: \"A function that captures nothing, or only `thread_shared` values and copies of values that may go to another thread, meets `thread_shared fn()`\". [STA-1]: \"It is reached only by the main thread and its scoped tasks unless it is `guarded by` a `static` `Lock`...; another thread that reaches it otherwise is `E7012` (Part XI)\". [THR-20] refuses \"a function that may run on another thread (reachable from `thread.spawn`, ...)\": the lambda is reachable only through [EFF-2]'s \"every function the program puts in that place\" composed with a spawn that may sit in another package (`[EFF-4]` records \"the effects of the scoped tasks it starts\" and \"the function values the package stores\", not which function-typed places its unscoped threads call). A compiler must invent whether the type `thread_shared fn()` or the reachability decides.",
+    "proposed_text": "Add to `[CLO-16]`: \"A function meets `thread_shared fn()` only if, through its chain of calls (`[EFF-24]`), it reaches no `static mut` that is not `guarded by` a `static` `Lock` and no one-thread value by any route; the check is made where the function is given to, stored into or coerced to such a type, whichever thread runs it (`E7012`: \"`on_frame` changes `FRAME`, a module variable of the main thread, and `Bus.handlers` holds functions any thread may run (`thread_shared fn()`); guard it: write `static TICK_LOCK: Lock = Lock()` and `static mut FRAME: int guarded by TICK_LOCK = 0` instead of line 3, and put the change inside `with TICK_LOCK:`\"). So the type says it, and `[THR-20]`'s reachability adds nothing a package cannot see.\"",
+    "codes": "E7012 reused, at the store or coercion line",
+    "milestone": "M9",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G2-08",
+    "rules": [
+     "FN-5",
+     "FN-2a",
+     "FN-1",
+     "EXP-6"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "Default arguments: where they run, whether they take a word, and what a default may do with an earlier `ref mut` or `owns` parameter is unsaid",
+    "program": "# Which compiles? The text decides none of them.\nfn fill(ref mut out: Array[int], n: int = out.len()):        # reads the caller's place while `ref mut out` is in flight\n    pass\nfn tag(owns s: String, t: String = s):                       # `t = s` hands the parameter over before the body runs?\n    println(s)                                               # E3040, or not?\nfn reset(ref mut xs: Array[int] = []):                       # a `ref mut` parameter with no place behind it\n    xs.clear()\nfn take(owns xs: Array[int] = []):                           # does the default write `owns`, as [STR-1] asks of a field?\n    pass\nfn main():\n    reset()                                                  # changes a temporary: lost, with no E2140\n    take()",
+    "why": "[FN-5]: \"Default argument expressions are evaluated at each call, after the other arguments are bound, and may refer to earlier parameters. Names and type expressions resolve in the function's declaration scope\" says neither in whose frame they run (caller or callee), nor whether a default takes the parameter's word (`[FN-2a]` wants `owns`/`ref mut` \"at the call\", and a default has no call line), nor what a default may do with an earlier `ref mut` or `owns` parameter ([EXP-6]: `t = s` from a whole name hands over). [FN-2a]: \"`ref mut` before ... a temporary ... is `E3027`\", which a default for a `ref mut` parameter necessarily is.",
+    "proposed_text": "Replace `[FN-5]`'s first two sentences with: \"* `[FN-5]` A default is evaluated in the callee, as the first lines of its body, in parameter order, after every supplied argument is bound; its effects are the function's (`[EFF-24]`) and it uses the function's own overflow policy. It takes no word: the value it makes is the parameter's own, so a default is written only for a plain or an `owns` parameter (`fn take(owns xs: Array[int] = []):`), and one for a `ref mut` parameter is `E2020` (\"`ref mut xs` names the caller's place, and a default has none to name; take the list `owns xs: Array[int] = []`, or make the caller pass one: `reset(ref mut items)`\"). It may read an earlier parameter and change one that is `ref mut`; a whole earlier parameter used as a value in it is handed over as anywhere (`[EXP-6]`, `E3040` at a later use, labelled at the default). Names and type expressions resolve in the function's declaration scope, with generic parameters substituted at instantiation.\"",
+    "codes": "E2020 reused (type mismatch) for the `ref mut` default; E3040 reused for the hand-over",
+    "milestone": "M3",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G2-09",
+    "rules": [
+     "STR-2",
+     "CLS-2",
+     "CLS-10"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "What a field default may name (`this`, another field) is unsaid; a class default runs before `init`, when the object is not built",
+    "program": "class Timer:\n    ticks: int = 0\n    on_tick: fn() = fn(): this.ticks += 1      # <- `this` in a default: evaluated \"before any init body runs\"\n    name: String\n    fn init(n: String):\n        this.name = n\n\nstruct Buf:\n    n: int\n    cap: int = n * 2                           # a default naming an earlier field: allowed as [FN-5]'s are?\n\nfn main():\n    t = Timer(\"a\")\n    t.on_tick()",
+    "why": "[STR-2]: \"A field default is any expression; it is evaluated at each construction that omits the field, in field order, and may allocate\" says nothing of what it may name. [CLS-2]: \"Before any `init` body runs, every field default of the class and of its bases is evaluated and stored\", and `this` \"used as a whole when it is ... captured\" is `E2100` only inside `init`; a default is outside it, and [FN-4]'s `E1010` for `this` names only \"a `static fn` or a free function\". A compiler must invent whether a default may name `this` or a field.",
+    "proposed_text": "Add to `[STR-2]`: \"A default names no field of its type and not `this`: it is evaluated before the value exists, so it depends on nothing of it (`E1010`: \"`this` can only be used in a method, and a field default runs before `init`, when there is no object yet; set `on_tick` in `init`: write `this.on_tick = fn(): ...` below `this.name = n`\"; for a field: \"`cap`'s default reads `n`, a field of the same `Buf`, which has no value when defaults run; set `cap` in an `init`: `fn init(n: int):` with `this.n = n` and `this.cap = n * 2`\"). Names in it resolve in the type's declaration scope, with the type's generic parameters substituted at instantiation, as `[FN-5]`'s do.\"",
+    "codes": "E1010 reused (its row: `this` outside a method)",
+    "milestone": "M11 (class defaults) and M3 (struct defaults)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G2-10",
+    "rules": [
+     "CTL-1",
+     "BRW-15",
+     "OWN-3"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "`for x in it:` over an `Iterator` place: handed over, or changed in place through a plain name?",
+    "program": "fn main():\n    xs = [1, 2, 3, 4]\n    it = xs.iter()\n    for x in it:          # <- `next` changes `it`; a plain name never changes ([BRW-15]), and nothing says it is handed over\n        if x > 2:\n            break\n    rest = it.next()      # Python: Some(4); after a hand-over: E3040; the text decides neither",
+    "why": "[CTL-1] gives three cases: \"a place `e` whose type is `Iterable`: calls `e.iter()`\", \"`for x in owns e:`, or a value `e` (a temporary) whose type is `IntoIterator`: hands `e` over\", \"an `Iterator` value: calls `next` until `None`\". A local of an `Iterator` type is a place, not a value, and `next` changes it; [BRW-15]: a plain name never changes; [OWN-3]: only `=` and the listed uses hand over. The grammar (`for_stmt := \"for\" for_target \"in\" expression`) parses `ref mut it` and `owns it` there.",
+    "proposed_text": "Replace \"an `Iterator` value: calls `next` until `None`.\" with: \"an `Iterator`: calls `next` until `None`. A temporary, or `for x in owns it:`, is handed over and used up; a place is walked through a name that may change it, `for x in ref mut it:`, and keeps what the loop did not take (`rest = it.next()` after a `break`); a plain `for x in it:` over an `Iterator` place is `E3023` (\"`for x in it:` would change `it`, an iterator, through a plain name; write `for x in ref mut it:` to leave the rest in `it`, or `for x in owns it:` to use it up\").\"",
+    "codes": "E3023 reused (a change through a name that only reads)",
+    "milestone": "M5",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G2-11",
+    "rules": [
+     "EXP-4",
+     "BRW-19",
+     "CTL-11"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "A condition's temporaries: the named value lives into the block, but the temporary it views is \"dropped before the chosen block runs\"",
+    "program": "fn names() -> Array[String]:\n    return [String(\"ann\"), String(\"bob\")]\n\nfn main():\n    if names().first() exists as p:     # `p: ref String` views the list `names()` made, not the Option\n        println(p)                      # <- by the condition sentence the list is gone; by [BRW-19] this is E3063\n    # the same with `if load().shapes[0] is Circle as c:`",
+    "why": "[EXP-4]: \"A temporary created while evaluating the **condition** of an `if`, `elif` or `while` is dropped before the chosen block runs, unless the condition names what it holds (`exists as`, a kind test, a pattern) and the name refers to it, in which case it lives to the end of that block only\" — `p` refers to the `Option` temporary; the list it views is another temporary, which the sentence drops. The statement sentence (\"it then lives until the last use of every view made from it\") says the opposite for an expression statement, and [BRW-19] turns the gap into a refusal, so the two sentences disagree on what compiles.",
+    "proposed_text": "Replace \"unless the condition names what it holds (`exists as`, a kind test, a pattern) and the name refers to it, in which case it lives to the end of that block only — never into an `elif` or `else`\" with \"unless the condition names what it holds (`exists as`, a kind test, a pattern): the temporary the name refers to, and every temporary of the condition that the name's value views, directly or through what it holds (`[BRW-19]`), then live to the end of that block only — never into an `elif` or `else`; the rest are dropped before the block runs.\"",
+    "codes": "none new; E3063 stops being raised for this program",
+    "milestone": "M5",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G2-12",
+    "rules": [
+     "CORO-7",
+     "CORO-1"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "Dropping a suspended generator drops \"exactly the locals live at its suspension point\": its `owns` parameters, which the frame holds, are not named",
+    "program": "gen fn lines(owns src: String) -> Generator[StrView]:\n    for s in src.split(\"\\n\"):\n        yield s\n\nfn main():\n    g = lines(String(\"a\\nb\"))\n    g.next()\n    # `g` ends here: [CORO-7] names the live locals; `src` is a parameter, so by the letter it is never ended (a leak)",
+    "why": "[CORO-7]: \"Dropping a suspended generator drops exactly the locals live at its suspension point, in reverse declaration order.\" [CORO-1]: the frame is \"a value holding the parameters and suspended state\"; a parameter taken `owns` is the frame's to end and is not a local.",
+    "proposed_text": "Replace `[CORO-7]` with: \"* `[CORO-7]` Dropping a suspended generator drops exactly the locals live at its suspension point, in reverse declaration order, then its parameters, in reverse order; a generator that has run to its end holds nothing, and dropping it does nothing.\"",
+    "codes": "none",
+    "milestone": "M5",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G2-13",
+    "rules": [
+     "FN-6",
+     "CLO-6"
+    ],
+    "kind": "CON",
+    "severity": "minor",
+    "title": "Callable types are \"compared by their parameter types and words, their result, `unsafe` and `thread_shared`\": `once` and `extern \"C\"` are left out of the comparison",
+    "program": "fn consume(owns s: String):\n    println(s)\n\nfn main():\n    s = String(\"x\")\n    f = fn() owns s: consume(owns s)      # a `once fn()` ([CLO-6])\n    h: fn() = f                          # <- same type by [FN-6]'s comparison list; [CLO-6] says E3013\n    h()\n    h()",
+    "why": "[FN-6]: \"Callable types are compared by their parameter types and words, their result, `unsafe` and `thread_shared`.\" [CLO-6]: \"Its type is `once fn(A) -> R`, not `fn(A) -> R`; given where a function may run twice it is `E3013`\". A compiler following the comparison sentence makes the two one type.",
+    "proposed_text": "Replace the sentence with: \"Callable types are compared by their parameter types and words, their result, `once`, `unsafe`, `extern \\\"C\\\"` and `thread_shared`; `fn(…)` converts to `once fn(…)` and to `unsafe fn(…)`, never the reverse (`E3013` for a `once fn` where a function may run twice, `[CLO-6]`; `E2020` for an `unsafe fn` where a safe one is wanted).\"",
+    "codes": "E3013 and E2020 reused",
+    "milestone": "M8",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G2-14",
+    "rules": [
+     "STR-3",
+     "STR-5"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "`@derive(Copy)` on a struct with `drop`: [STR-3]'s E2080 names fields only, so each copy runs `drop` (a double end)",
+    "program": "@derive(Copy)                 # <- E2080 asks only \"if a field is not Copy\"; `fd` is Copy\nstruct Handle:\n    fd: int\n    fn drop():\n        close_fd(this.fd)\n\nfn main():\n    a = Handle(fd=open_fd())\n    b = a                      # a copy\n    # both `a` and `b` end: `drop` runs twice on one descriptor",
+    "why": "[STR-3]: \"A struct with a `drop` method, or with a field that is not `Copy`, is not `Copy`\" and \"`@derive(Copy)` requests it, and is `E2080` if a field is not `Copy`\". The first sentence states a fact, the second the only refusal, and the refusal does not cover `drop`; Part IV's table says `Copy` is \"declared with `@derive(Copy)` on a struct or enum whose fields are all `Copy` and which has no `drop`\", with no code for the `drop` case.",
+    "proposed_text": "Replace \"`@derive(Copy)` requests it, and is `E2080` if a field is not `Copy`\" with \"`@derive(Copy)` requests it, and is `E2080` if a field is not `Copy` or the type declares `drop` (\"`Handle` has a `drop` (line 5), which would run once per copy; remove `@derive(Copy)` (line 1), and hand a `Handle` over or write `copy of h` with a `clone` of its own\")\".",
+    "codes": "E2080 reused; its registry row gains \"or on a type that declares `drop`\"",
+    "milestone": "M3",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G2-15",
+    "rules": [
+     "MOD-8",
+     "MOD-5"
+    ],
+    "kind": "SEC",
+    "severity": "minor",
+    "title": "A glob import binding a prelude name: neither \"an explicit import or a local declaration\", so a dependency's `pub fn len` silently takes `len(xs)`",
+    "program": "# a dependency `util`, after an update\npub fn len(xs: Array[int]) -> int:\n    return 0                            # or anything it likes\n\n# the program\nfrom util import *                      # <- the line\nfn main():\n    xs = [1, 2, 3]\n    println(len(xs))                    # the prelude's `len`, or `util.len`? The text says neither",
+    "why": "[MOD-8]: \"`from m import *` binds every `pub` item of `m`. A name bound by two glob imports and then used is `E1031`, naming both sources; an explicit import or a local declaration shadows a glob.\" [MOD-5]: \"A local declaration or explicit import shadows a prelude name.\" A glob is neither, and the prelude is not a glob import, so the two bindings have no order; an attacker's dependency update rebinds a built-in with no diagnostic.",
+    "proposed_text": "Add to `[MOD-8]`: \"The prelude counts as a glob import of `std` written first: a name bound by a glob import and by the prelude, and then used, is `E1031` naming both (\"`len` is bound by `from util import *` (line 1) and by the prelude; write `from util import len` to take `util`'s, or `std.len` for the prelude's\"), so no package's update can take a prelude name in silence.\"",
+    "codes": "E1031 reused",
+    "milestone": "M1 (name resolution)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G2-16",
+    "rules": [
+     "PAN-1",
+     "FN-2a",
+     "EXP-6"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "`debug_assert`'s argument may hand a value over or change a place, and its evaluation depends on the profile: the compiler's ownership accounting and the release program disagree",
+    "program": "fn check(owns s: String) -> bool:\n    return s.len() > 0\n\nfn main():\n    s = String(\"x\")\n    debug_assert(check(owns s))   # <- `s` is handed over when compiling; in `release` the line runs nothing\n    # `s` is never ended in release (a value without its clean-up), and W2016 speaks only of effects",
+    "why": "VI.6: \"`debug_assert(…)` only in `debug`, and it MUST NOT have side effects that change a program's result (`W2016` if its argument calls a function with effects other than `Panic`)\" — a hand-over and a `ref mut` argument are not effects, and a warning does not keep the accounting and the program in step; [PRF-4] wants no safety-relevant difference between profiles.",
+    "proposed_text": "Replace the `debug_assert` sentence with: \"`debug_assert(…)` is evaluated only in `debug`, so its argument is checked as a read in every profile: a hand-over in it or a `ref mut` argument is `E3028` (\"`debug_assert` only reads its argument, since a `release` build never runs it; remove `owns`: `debug_assert(check(s))`\"), and a call in it of a function with effects other than `Panic` is `W2016`.\"",
+    "codes": "E3028 reused; W2016 unchanged",
+    "milestone": "M3",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G2-17",
+    "rules": [
+     "CTL-2"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "\"a removal\" and \"a `while` loop that tests its position against the current length\" have no definition a compiler can apply",
+    "program": "fn main():\n    xs = [1, 2, 3]\n    for i in 0..xs.len():\n        xs.swap_remove(i)          # a \"removal\"? `retain`? `truncate`? `xs = []`? the text lists none\n    n = xs.len()\n    for i in 0..n:                 # the bound does not say `xs.len()`: a counting loop over xs, or not?\n        xs.pop()",
+    "why": "[CTL-2]: \"A counting loop `for i in 0..xs.len():` does not walk `xs`: it may write its elements and add to it, but a removal is `E3020`; a `while` loop that tests its position against the current length at every step may add and remove.\" Neither \"removal\" nor the `while` shape is defined, and nothing says which loops are \"counting loops over `xs`\"; the summary of [EFF-24] records adds at the end (`push`, `extend`) but no \"removal\" class.",
+    "proposed_text": "Replace that sentence with: \"A `for` over a range whose header reads `xs.len()` is a counting loop over `xs`: it does not walk `xs`, so it may write elements and add at the end (`[EFF-24]`'s add-only summary), but a call in its body whose summary may shorten `xs` or replace it is `E3020` (\"`xs.pop()` shortens `xs`, whose length this loop read once on line 3; walk backwards, or collect the indices and remove after the loop\"); every other loop walks nothing by its header, and each index is bounds-checked (`[STD-17]`).\"",
+    "codes": "E3020 reused",
+    "milestone": "M5",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G2-18",
+    "rules": [
+     "IFC-5",
+     "TYP-34"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "`dyn I` as the type of a local, a field or a result is unsaid: only the parameter position is defined",
+    "program": "interface Shape:\n    fn area() -> float\n\nstruct Scene:\n    main: dyn Shape                  # a view field? [TYP-34] names `ref T`, not `dyn I`\n\nfn pick(xs: Array[owns dyn Shape]) -> dyn Shape:     # a view result, or E2173?\n    return xs[0]\n\nfn main():\n    s: dyn Shape = Square(side=2.0)  # <- a local of a bare `dyn` type",
+    "why": "[IFC-5]: \"`dyn I` as a parameter's type is a read-only view (`ref mut v: dyn I` may change it). A bare interface name used as a type is `E2173`\" — `dyn I` without an owner word in any other position is neither covered nor refused, and [TYP-34]'s view list does not name it; [PHIL-12] then makes it `E0901`.",
+    "proposed_text": "Add to `[IFC-5]`: \"`dyn I` with no owner word is a read-only view wherever a view may be written (`[TYP-15]`): a parameter, a local (`s: dyn Shape = ref sq`), a field of a view type, a result (`-> dyn Shape from xs`), and it lives no longer than the value it views (`[TYP-34]`); `ref mut v: dyn I` is the changeable view. Where the value itself is wanted (a local made from a constructor, an element of a list that owns its shapes), the owner word is written: `s: owns dyn Shape = owns Square(side=2.0)` (`E2173`, whose message gives that line).\"",
+    "codes": "E2173 reused",
+    "milestone": "M11",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G2-19",
+    "rules": [
+     "CLO-17"
+    ],
+    "kind": "ED",
+    "severity": "minor",
+    "title": "The captured-word clause of [CLO-17] lacks \"all the way down\": a body ending an owner of its holder is only implied",
+    "program": "class World:\n    buses: Array[Bus] = []\nclass Bus:\n    handlers: Array[fn()] = []\nfn main():\n    w = shares mut World()\n    w.buses.push(Bus())\n    w.buses[0].handlers.push(owns fn() shares mut w: w.buses.clear())   # reshapes an owner of the holding place, not the place",
+    "why": "[CLO-17]: \"a function value is not stored in a place that a real variable it changes owns, all the way down, nor in a place that its body may reshape or end through a name it captured with a word\" — the first clause says \"all the way down\", the second names \"a place\" only; a reader may take it as the holding place itself.",
+    "proposed_text": "If G2-06's rewrite is not taken: replace \"nor in a place that its body may reshape or end through a name it captured with a word\" with \"nor in a place that its body may reshape or end, or that is owned, all the way down, by anything it may reshape or end, through a name it captured with a word\".",
+    "codes": "E3022 reused",
+    "milestone": "text only",
+    "touches_owner_verdict": ""
+   }
+  ],
+  "judged_sound": [
+   "[FN-1]/[FN-2]/[FN-2a]/[FN-9]: the three words, the lock exception, the call words and E3027/E3028; nothing accepted that hands over or changes through a plain name",
+   "[FN-3]/[FN-4]/[FN-10]: result hand-over and views by [LT-1]; `this` and `static fn`; implicit `Ok(())`",
+   "[FN-8]: scripts; a file-scope `fn` is an item, so it cannot capture a statement's local (E1010 holds)",
+   "[STR-1]/[STR-4]/[STR-6]/[STR-7]: memberwise constructor visibility with [MOD-7]; `init` on a struct",
+   "[STR-5]: implicit Clone never for `ref mut`/`MutSpan` fields (Part IV table marks them not Clone), so no aliasing of exclusive views by `copy of`",
+   "[ENM-2]/[ENM-3]/[ENM-4] and enum payload hand-over: reachable only through a pattern (a view, [GRM-13]) or `match owns e`, so no partial move",
+   "[CLS-1]/[CLS-3]/[CLS-10]/[CLS-11]: one owner, `owns` on a class type E2114, two-phase construction within one package",
+   "[CLS-6]/[CLS-7]/[CLS-7a]/[CLS-9]/[CLS-9a]: `drop` order; `this` never replaced; a method called from `drop` is covered by [OBJ-5]'s \"everything it calls (by their summaries)\"",
+   "[CLS-5], [IFC-1]–[IFC-4], [IFC-6]: static dispatch; inherent extension in-package only; bounds all-or-none",
+   "V.7 `const`: compile-time only, `Copy`/`StrView`/`bytes`/fixed arrays, cycles E6001",
+   "[STA-3]/[STA-2]: once-only first access; a `static mut` owning heap memory built on first access",
+   "[ATT-1]/[ATT-2]/[ATT-4]/[ATT-6] and the attribute table: every attribute has a rule; unbuilt is E0900",
+   "[EXP-1]/[EXP-2]/[EXP-3]: right side before target places means `x.items[x.idx()] = g(ref mut x)` is ordered; non-Copy swap is E3011 with `mem.swap` in the help",
+   "[EXP-5]/[EXP-9]/[EXP-10]: places; `is` by address; optional chaining yields views, hands over from a temporary",
+   "[TYP-38]: a `Span` literal of a temporary fixed array follows [EXP-4]/[BRW-19]; returned it is E3063",
+   "[CTL-0]/[CTL-3]/[CTL-3b]/[CTL-4]/[CTL-5]/[CTL-6]/[CTL-8]/[CTL-9]/[CTL-10]/[CTL-11]: no truthiness; ranges copied; `with`; names assigned in every branch at one type",
+   "[CTL-7]: a `defer` inside a loop body that hands a local over is the ordinary move-in-loop check with the use placed at the exit (E3040 on the second round)",
+   "[CLO-1]/[CLO-2]/[CLO-3]/[CLO-14]/[CLO-19]: real variables, capture words, one callable type; a lambda's parameter words match the type",
+   "[CLO-4]/[CLO-5]/[CLO-7]/[CLO-12]: outliving checked by the maker with the callee's summary (recorded across the edge by [EFF-4]); a real variable handed over ends the function value's reach through F4 (hand-over is a reshape, E3060)",
+   "[CLO-10]/[CLO-18]: the copy-out before a call; a self-changing value needs `ref mut` on its holder",
+   "[CLO-11]: a method wins over a callable field",
+   "[CORO-1]–[CORO-5], [CORO-8]–[CORO-10], [CORO-12]–[CORO-14], [CORO-11]: the frame as a value; a generator as a walk (verdict 16); `@must_drop` across `yield`; a guard held across `yield` keeps the frame from being `Send` structurally",
+   "[PAN-1]–[PAN-3]: abort, no unwinding; `assert` in every profile"
+  ],
+  "could_not_cover": "The run-time side of [STA-3] under two threads initialising statics that read each other (a deadlock rather than the promised cycle panic) was noted but not written up as a finding, since it is not a memory or security hole; the examples in Parts V and VI were not compiled (O13). JOB.md was searched by rule id and topic only; no verdict was found that any proposal reverses (verdict 16 agrees with [CORO-14]; verdict 86 says libraries' code is read too, which G2-01 keeps by recording the need in the interface rather than re-reading bodies)."
+ },
+ "verdicts": {
+  "group": "G2",
+  "verdicts": [
+   {
+    "id": "G2-01",
+    "verdict": "confirmed",
+    "reason": "No sentence places the check. [CLS-2]: \"for a `virtual` method from every override's body the program has ([DSP-5], [EFF-24]), since a base `init` cannot know which kind it builds\" is a check made inside the library's `init`; [CLS-11] then promises \"So when any method runs, even a `virtual` method called from a base `init`, every field of the object holds a value\". Packages are compiled apart ([BLD-1]: \"the package is the unit of monomorphisation and code generation\"; [MONO-1]: \"across separately compiled packages too\"). What crosses the edge is [BLD-14]'s seven recorded facts (summaries, add-only lists, scoped tasks, parent links, view uses, locks, \"the function values the package stores into each place a function value is called through\") and [EFF-4]'s \"re-checks every caller\", which re-checks the dependant's calls of the library, never the library's call of the dependant's override. [EFF-2] (\"every implementation and override the program has\") names the set, not where a member added later is checked. In the program, `Script.init` compiled alone sees only `Script.on_make` and accepts line 7; `Door.on_make` lets `this` out and reads `name` through the roster, and no rule at the override refuses it. Same for `run_all`/`on_update` under [CLS-4] and for `dyn` under [IFC-5]. This is O1's shape (a whole-program fact deciding what a package compiles), not a header rule, so no owner verdict is touched; JOB.md names none of these rules.",
+    "better_fix": "Decide [CLS-2]'s case by a fact the package can see, as [MOD-9] asks (\"Where a word exists to write a fact, only the written word counts across the edge\"), and keep the reader's needs-record only for calls through what a dependant may fill. Add to [CLS-2]: \"In a class that is `pub` and `open` or `abstract`, an override of a `virtual` method may be any dependant's, which this package never sees: its `init` calls a `virtual` method only after every field is set, and a call before that is `E2100` (\\\"`init` calls `on_make()` (line 7) before `name` is set (line 8), and `Script` is `pub` and `open`, so any package may override `on_make` with a body that reads `name` or keeps a link to the object; set every field first: move line 7 below line 8\\\"). In any other class every override is the package's own, and the check reads their bodies.\" Add after [MOD-9]: \"* `[MOD-9a]` **A library's call through what a dependant may fill.** For each line of a package's functions that calls through a `virtual` method of a `pub` class, a method of a `pub` interface used as `dyn`, or a `pub` function-typed place (`[EFF-2]`), the package records in its interface file, beside the function's summary, what that line walks, holds `ref mut` and has lent (`[BRW-18]`, `[BRW-11]`, `[BRW-1]`). A package that adds an override, an implementation or a stored function value checks it, at its declaration or at the storing line, against every recorded line it may be called from, with the chain named: a body whose summary changes what such a line walks is `E3020` (\\\"`Door.on_update` clears `WORLD.scripts` (line 9), which `Script.run_all` walks while it calls `on_update` (its line 4); clear after the walk: give `run_all`'s caller the list of doors to remove\\\"), and one that changes what it holds or has lent is `E3022`. A member no recorded line refuses is accepted; nothing runs for it while the program runs.\""
+   },
+   {
+    "id": "G2-02",
+    "verdict": "narrowed",
+    "reason": "The program is refused. [CLO-6a] itself says what the call is: \"the call hands the value out of its place\", and [EXP-6] says of that hand-over \"a field of a class object, which other names may reach and would see the hole, and anything reached through a name that does not own it, are `E3013`\"; E3013's registry row names \"a field of a class object, which other names may reach\". So `j.task()` is E3013 by composition, and `k.task()` never arises. The rules compose rather than disagree.",
+    "narrowed_to": "Two wording defects in [CLO-6a]: \"the place becomes empty\" is not the document's term ([OWN-3]: the name \"is uninitialised until it is given a value again\", `E3040`; [OWN-11] for a part), and \"including one in an `owns` block\" allows exactly the hand-over O4 proposes to refuse (E3013). The reader's replacement sentence is acceptable once it names [EXP-6] for the class-field case and drops the `owns` block clause, as it does; its last sentence (\"A place is never empty while the program runs\") is a note, not a rule, and can go."
+   },
+   {
+    "id": "G2-03",
+    "verdict": "confirmed",
+    "reason": "[CORO-6]'s refusing sentence is restricted by its own parenthetical: \"A view **into the generator's own frame** (a view of one of its own locals) may not be held across a `yield`\", and [CORO-4] keeps parameters apart from locals (\"locals live across a `yield` become frame fields\"). [CORO-1] puts the parameters in the frame (\"a value holding the parameters and suspended state\"), and [BRW-8]/[FN-1] copy a `Copy` parameter in. The allowing sentence \"Views that came in as parameters, or are made from them, may be held across `yield`\" can be read as covering `ref p` for `owns p: Point`, which points into the frame; `[owns g]` then moves the frame ([CORO-5]) under `r`. The E2221 message's own example (\"use `n` itself ... write `yield n`\") shows the intent, but it is a message, not the rule. The reader's text is right."
+   },
+   {
+    "id": "G2-04",
+    "verdict": "confirmed",
+    "reason": "On a `thread_shared` object the only fields that change are [THR-1]'s: \"its state changes only through an `Atomic`, a `Mutex`, an `RwLock`, a channel end, or a field `guarded by` a lock\". [CLS-12]'s E2117 list refuses \"a field other threads change under a lock\", which covers `guarded by`, `Mutex` and `RwLock` (each changes under its lock), and names neither `Atomic` nor a channel end, which [FN-1] says \"are changed through a plain parameter, by their own operations\". [EFF-27] then places \"the clear at each line that may make such a change\", here `s.hits.fetch_add(1)` on the spawned thread, while [CLS-12] guards only the fill (\"the kept result is filled once under a once-flag\") and returns \"a `ref T` view into the kept value, which clearing it ends\": the clear on the other thread ends the String under `v`, and no compile-time check can see it. No owner verdict names [CLS-12].",
+    "better_fix": "In [CLS-12]'s E2117 list replace \"or a field other threads change under a lock, whose changes need not pass through its object\" with \"or a field another thread may change by its own operations, under a lock or not (an `Atomic`, a `Mutex`, an `RwLock`, a channel end, a field `guarded by` a lock): on an object several threads reach, a kept result is filled under a once-flag and never cleared, so the method reads only fields that never change after `init` (\\\"`summary` reads `hits`, an `Atomic` other threads change, and a kept result on a shared object is never cleared; remove `@cached` (line 6)\\\")\". E2117's row gains \"or a field another thread may change by its own operations (an `Atomic` or a channel end included)\". Add to [CLS-6]: \"The kept results of the object's `@cached` methods end with its fields.\""
+   },
+   {
+    "id": "G2-05",
+    "verdict": "confirmed",
+    "reason": "[STA-1] asks a marker of `static` alone (\"`T` MUST be `ThreadShared` (`E7002`)\") and of a `static mut` only where it is reached: \"It is reached only by the main thread and its scoped tasks unless it is `guarded by` a `static` `Lock`\". [THR-20] lets any thread use the guarded static \"inside `with` that lock\", [THR-18]'s \"A `guarded by` field is a `Mutex` written as ordinary fields\" carries a `Mutex`'s rules but [THR-9]'s \"`Mutex[T]` for a `Send` `T`\" is a marker fact, not a refusal of making one. [OWN-13] permits `shares mut CACHE` (\"written only before a new value, a local or an owner\"), and [THR-2]'s routes (\"captured or held by a function any thread may run ..., handed to an unscoped thread or a job, or reachable from a `thread_shared` value\") name no static. So `mine` and `other` add to one plain count from two threads, and `mine`'s end runs outside the lock. The reader's text is general and right; E7002's row widens as proposed."
+   },
+   {
+    "id": "G2-06",
+    "verdict": "narrowed",
+    "reason": "The program is refused, at the call. `click`'s loop walks `this.handlers` and calls `h()`, which by [EFF-2] runs \"every lambda and named function the program puts in that place\", among them the one that clears `BUS.handlers`; [BRW-18] refuses a change of the walked list \"through any call that may change it ([EFF-1]: a call through a function value ...)\", and [BRW-17] makes `this` and `BUS` one place unless proved apart. So `h()` inside `click` is E3020 and the state block is never freed under a running function. What fails is only the promise of [CLO-18]: \"is refused where the function value is stored (`E3022`, `[CLO-17]`)\", since [CLO-17]'s two clauses name \"a real variable it changes\" ([CLO-2]: a name used \"from the function that made it\") and \"a name it captured with a word\", and a `static mut` is neither.",
+    "narrowed_to": "A CON between [CLO-18]'s \"refused where the function value is stored\" and [CLO-17]'s store clause, which misses a place reached by a `static mut` (or by any name that is neither a real variable nor a capture). The reader's rewrite of the clause (\"through any name it reaches: a real variable, a name it captured with a word ..., or a `static mut`, read through the chain of its calls\") is general and acceptable; severity minor, since [BRW-18] already carries the guarantee."
+   },
+   {
+    "id": "G2-07",
+    "verdict": "narrowed",
+    "reason": "The text decides, and refuses the program: [THR-20] is explicit that reachability decides (\"a function that may run on another thread (reachable from `thread.spawn`, ...) and reads or changes it is `E7012`\"), and the graph it is reachable over is [EFF-1]'s, which [EFF-24] says includes \"for a call through a function value ... every function the program can put there ([EFF-2])\". `fn(): FRAME += 1` sits in `Bus.handlers`, `fire` calls through it, `fire` is spawned: E7012 at the lambda. [CLO-16]'s \"meets `thread_shared fn()`\" says what the type admits, not that the store ends the checks. A compiler need not guess.",
+    "narrowed_to": "The cross-package residue only: a dependant stores `fn(): FRAME += 1` into a library's `thread_shared fn()` place and the library spawns the function that calls through it; [BLD-14]'s seven recorded facts carry the library's stored values to the dependant (item 7) but nothing back to the library's spawn, so this is an instance of O1. The reader's type-carried condition on [CLO-16] (a function meets `thread_shared fn()` only if its chain reaches no unguarded `static mut`, checked where it is stored or coerced) is a sound package-local closure for that residue and keeps the three goals."
+   },
+   {
+    "id": "G2-08",
+    "verdict": "confirmed",
+    "reason": "The grammar allows a default on any parameter (`param := [param_word] IDENT \":\" [\"runtime\"] type [\"...\"] [\"=\" expression]`), and [FN-5] says only \"evaluated at each call, after the other arguments are bound, and may refer to earlier parameters\". Where: half-said by [EFF-1] (\"the argument and default expressions it evaluates\", so at the call, as an argument), nowhere in [FN-5]. The word: [FN-2a] puts `owns`/`ref mut` \"at the call\" and makes \"`ref mut` before ... a temporary\" E3027, but a default writes no word anywhere, so `reset()` changes a temporary with no E2140 ([EXP-5] covers `f(x).y = 1` and a method on a temporary only). A hand-over in a default (`t: String = s` after `owns s`): [EXP-6] lists `=`, an `owns` parameter, `return`, `owns` capture; a default binding is none of them. All three are unsaid, so by [PHIL-12] a compiler refuses them with `E0901`, which is not what the text means for `fn take(owns xs: Array[int] = [])`.",
+    "better_fix": "The reader's text puts the default in the callee's body, which contradicts [EFF-1]'s \"the argument and default expressions it evaluates\" (the call's own). Replace [FN-5]'s first two sentences with: \"* `[FN-5]` A default is the argument the caller did not write: it is evaluated at the call, in the caller, after every written argument and in parameter order, as an argument expression is (`[EXP-1]`, `[EFF-1]`), and it takes no word, since it makes the value it gives: a default is written only for a plain or an `owns` parameter (`fn take(owns xs: Array[int] = []):`, each call makes its own list), and one on a `ref mut` parameter is `E3027` (\\\"`ref mut xs` names the caller's place, and a default would be a temporary that ends with the call; take the list over, `owns xs: Array[int] = []`, or let the caller pass one: `reset(ref mut items)`\\\"). It may read an earlier parameter and neither changes it nor hands it over (`E3023`, `E3013`, as a plain name): `t: String = s` reads `s`, which stays the function's own. Names and type expressions resolve in the function's declaration scope, with generic parameters substituted at instantiation.\" E3027's row gains \"a default on a `ref mut` parameter\"."
+   },
+   {
+    "id": "G2-09",
+    "verdict": "narrowed",
+    "reason": "`this` is refused: [FN-4] says \"Inside a method its object is `this`\" and its E1010 message states the rule in general, \"`this` can only be used in a method\"; a field default is in no method, so `this` there is E1010 by that sentence (its row: \"not in scope (`this` outside a method ...)\"). A field named bare is refused too: nowhere does the document make a field a bare name (every method writes `this.x`, [FN-4], [CLS-2], [STR-6]), so `n` in `cap: int = n * 2` resolves to nothing and is E1010 (\"not in scope\").",
+    "narrowed_to": "[STR-2] does not say which scope a field default's names resolve in; one sentence closes it: \"Names and type expressions in a field default resolve in the type's declaration scope, with the type's generic parameters substituted at instantiation, as `[FN-5]`'s do; a field is named only through `this`, which a default has not (`E1010`, with the help to set the field in `init`).\" The reader's two messages are good as the help text."
+   },
+   {
+    "id": "G2-10",
+    "verdict": "narrowed",
+    "reason": "The text decides Python's answer. `Iterator` is not `Iterable` (IV.7 declares them apart: `Iterable` has `fn iter()`, `IntoIterator` has `fn into_iter() owns this`, `Iterator` only `fn next()`), so `for x in it:` is [CTL-1]'s third case, \"calls `next` until `None`\", each `next` a call on `it`. Nothing hands `it` over: [EXP-6]'s hand-overs are \"given with `=`, given to an `owns` parameter, returned, captured with `owns`\" and [CTL-1]'s only loop hand-over is written `for x in owns e:` (so [STD-19]: \"a named iterator is given to `zip` with `owns`\"). The reader misreads [BRW-15], which names \"a plain local that holds a view\", not an owning local: `it` is `main`'s own, and a call that changes it needs no word, as `xs.push(1)` needs none. [EFF-26] reads the same way (\"whatever drives an iterator adapter that keeps one (`for x in it:` ...)\"). So `rest = it.next()` is `Some(4)` and no E3023 or E3040 arises.",
+    "narrowed_to": "The word \"value\" in \"an `Iterator` value: calls `next` until `None`\" invites the reader's doubt; write \"an `Iterator`, a place or a temporary: calls `next` on it until `None`; a place keeps what the loop did not take, and is handed over only by `owns`\". No E3023 for the plain form, which would break Python's `for x in it` for no safety gain."
+   },
+   {
+    "id": "G2-11",
+    "verdict": "narrowed",
+    "reason": "The condition sentence of [EXP-4] already keeps what the name refers to, and `p` refers, through the `Option`, to a `String` inside the list `names()` made; the list is the temporary `p`'s value views, and [BRW-19]'s general rule (\"A temporary lives until the last use of every view made from it, lists of views included\") is what the condition clause instantiates. A reader who takes \"refers to it\" as the `Option` alone gets a refusal (E3063), never a dangling view, so no promise breaks.",
+    "narrowed_to": "An editorial tightening: say that every temporary of the condition that the name's value views, directly or through what it holds, lives to the end of the block, as the reader's text does. No code changes."
+   },
+   {
+    "id": "G2-12",
+    "verdict": "confirmed",
+    "reason": "[CORO-7]: \"Dropping a suspended generator drops exactly the locals live at its suspension point, in reverse declaration order\"; [CORO-1] puts \"the parameters\" in the frame and [CORO-4] keeps them apart from \"locals\"; the glossary has no entry making a parameter a local. By the letter `src` (taken `owns`) is never ended when `g` ends. The reader's text is right; add that a generator run to its end ends its parameters as a function's `return` does."
+   },
+   {
+    "id": "G2-13",
+    "verdict": "narrowed",
+    "reason": "The program is refused: [CLO-6] says \"Its type is `once fn(A) -> R`, not `fn(A) -> R`; given where a function may run twice it is `E3013`\", and `h: fn() = f` gives it where `fn()` may run twice. Two types that the text says differ are not made one by [FN-6]'s comparison sentence; the sentence is incomplete, not contradictory.",
+    "narrowed_to": "Editorial: [FN-6]'s \"Callable types are compared by their parameter types and words, their result, `unsafe` and `thread_shared`\" should also list `once` and `extern \"C\"` ([CLO-3] makes the latter a conversion), and the reader's one-sentence conversion table (`fn` to `once fn` and to `unsafe fn`, never the reverse) matches [CLO-6]'s \"accepts both kinds\" and [FN-6]'s `unsafe` rule."
+   },
+   {
+    "id": "G2-14",
+    "verdict": "narrowed",
+    "reason": "The refusal exists: [DRV-1]'s table, which the attribute table names for `@derive`, says for `Copy`: \"every field MUST be `Copy`, the type MUST have no `drop`, and it MUST be a struct or an enum ... (`E2080`)\". So `@derive(Copy)` on `Handle` is E2080 and no copy runs `drop` twice.",
+    "narrowed_to": "Editorial: [STR-3]'s clause \"is `E2080` if a field is not `Copy`\" and E2080's registry row (\"`@derive(Copy)` on a type with a field that is not Copy\") omit the `drop` clause that [DRV-1] carries; add \"or on a type that declares `drop`\" to both, with the reader's message."
+   },
+   {
+    "id": "G2-15",
+    "verdict": "confirmed",
+    "reason": "[MOD-5]: \"Every module implicitly imports these names from `std`\" and \"A local declaration or explicit import shadows a prelude name\"; [MOD-8]: \"A name bound by two glob imports and then used is `E1031` ...; an explicit import or a local declaration shadows a glob\". A glob is neither explicit nor local, the prelude is not a glob import, and no sentence orders the two bindings of `len`. [PHIL-12] makes the use `E0901` rather than a silent rebinding, so no takeover is silent, but the text should say which it means, and the reader's rule (the prelude counts as a glob written first, so the clash is E1031 naming both) is general, cheap and the secure choice."
+   },
+   {
+    "id": "G2-16",
+    "verdict": "confirmed",
+    "reason": "VI.6: \"`debug_assert(…)` only in `debug`, and it MUST NOT have side effects that change a program's result (`W2016` if its argument calls a function with effects other than `Panic`)\". A hand-over and a change through `ref mut` are summary facts ([EFF-24]: \"what it may change, read and end\"), not effects of the effect table, so W2016 need not fire; the compiler's accounting ends `s` at line 6 in every profile while a `release` build never evaluates the line, so `s` is never ended there, against [PHIL-13] (\"No build profile ... changes what a Safe program computes\") and [PRF-4]. The reader's semantics (the argument is checked as a read in every profile) are right.",
+    "better_fix": "Keep the reader's sentence but not E3028, whose row is \"a call's word does not match its parameter\" and whose parameter here (`cond: bool`) matches. Use the rows that already describe each refusal: a `ref mut` argument inside `debug_assert`'s argument is `E3027` (its row: \"`ref mut` before something this function may not change\"; add \"an argument of `debug_assert`, which a `release` build never evaluates\"), and a hand-over inside it is `E3013` (add to its row \"a hand-over inside `debug_assert`'s argument, which a `release` build never evaluates\"), each with the reader's message shape (\"`debug_assert` only reads its argument, since a `release` build never runs it; remove `owns`: `debug_assert(check(s))`\")."
+   },
+   {
+    "id": "G2-17",
+    "verdict": "narrowed",
+    "reason": "Both phrases are decidable from the document's own terms. \"A counting loop `for i in 0..xs.len():`\" is a header shape, and [CTL-3] says the range \"counts over a copy of its bounds\", so the loop walks nothing and the rule is a lint-like refusal over the summary's categories: [EFF-24] records which elements a function touches and \"whether it only adds at the end of a `ref mut` list parameter (`push`, `extend`)\", so \"may write its elements and add to it\" names those two categories and \"a removal\" is every other change of `xs` (`swap_remove`, `retain`, `truncate`, `xs = []`). The `while` sentence describes a loop that walks nothing ([BRW-18] names only `for` loops and generators), so it refuses nothing. The second loop, over `0..n`, walks nothing and reads `xs.len()` in no header, so it is accepted and every `xs[i]` is bounds-checked ([STD-17]); no promise breaks either way.",
+    "narrowed_to": "Editorial: say \"removal\" in the summary's words (\"a call whose summary may shorten or replace `xs`\") and drop or recast the `while` sentence as a note, as the reader's text does; E3020 reused."
+   },
+   {
+    "id": "G2-18",
+    "verdict": "narrowed",
+    "reason": "IV.9 answers the position question: \"`dyn I` is unsized. It is a parameter's type (a read-only view of the value; `ref mut v: dyn I` may change it), a view's (`ref dyn I`), or held as `owns dyn I`, `shares dyn I` or `shares mut dyn I`\". So a local, a field or a result that views an interface value is written `ref dyn I` (or `ref mut dyn I`), an ordinary view under [TYP-15]/[TYP-34]; bare `dyn I` has no meaning outside a parameter, and [PHIL-12] makes it E0901. What is missing is only a named refusal with the line to write.",
+    "narrowed_to": "Bare `dyn I` outside a parameter has no code and no help. Better than the reader's text, which would make bare `dyn I` a second spelling of `ref dyn I` everywhere: add to [IFC-5] \"`dyn I` with no owner word is written only as a parameter's type. A view of an interface value anywhere else (a local, a field, an element, a result) is `ref dyn I`, or `ref mut dyn I` to change it, which `[TYP-15]` and `[TYP-34]` govern as every view (`s: ref dyn Shape = ref sq`; `-> ref dyn Shape from xs`); a bare `dyn I` in such a position is `E2173` (\\\"`main: dyn Shape` does not say whether `Scene` owns or views its shape; write `main: owns dyn Shape` to own it, or `main: ref dyn Shape` for a view\\\").\" E2173's row gains \"or `dyn I` with no word outside a parameter\"."
+   },
+   {
+    "id": "G2-19",
+    "verdict": "refuted",
+    "reason": "[CLO-17] already covers the program: `w.buses.clear()` ends `w.buses[0]` and with it the place `w.buses[0].handlers` that holds the function, so the function value is stored \"in a place that its body may reshape or end through a name it captured with a word\"; ending an owner ends what it owns, which is the glossary's \"reshape\" (\"ending an object's last owner\", \"removing from a collection\"). No \"all the way down\" is needed, since the clause names the place ended, not the name written. If G2-06's rewrite is taken the clause is replaced anyway."
+   }
+  ],
+  "missed": [
+   "[STR-6] (struct `init`) never says that field defaults are evaluated and stored before its body runs; [CLS-2] says it for a class only, and [STR-6] borrows from it only the E2100 rule (\"as `[CLS-2]` says for a class\"). Program: `struct Buf:` with `n: int = 0`, `items: Array[int]`, and `fn init(): this.items = [this.n]` — whether `this.n` holds `0` or is a read of an unset field (E2100) is unsaid. Proposed: add to [STR-6] \"Before its body runs, every field default is evaluated and stored, as `[CLS-2]` says for a class.\"",
+   "[CLS-12] `@cached` on a `virtual` method or on an `override` is unsaid: the kept result depends on \"the fields the method's body reads\", and a call through the base's method on a derived object dispatches to the override's body, which reads other fields and has no flag of its own. Program: `open class A:` with `@cached virtual fn label() -> String: return this.name`; `class B(A):` with `extra: String` and `override fn label() -> String: return this.extra`; then `b = B(...)`, `v = b.label()`, `b.extra = String(\"x\")`, `println(b.label())` — whether the second call gives the kept `extra` of before, and whether [EFF-27] places a clear at `b.extra = ...`, is unsaid. Proposed: add to [CLS-12]'s E2117 list \"on a `virtual` method or an `override` (\\\"`label` is `virtual`, and a kept result follows one body; keep it in a method no subclass replaces, or remove `@cached` (line 3)\\\")\"."
+  ]
+ }
+}

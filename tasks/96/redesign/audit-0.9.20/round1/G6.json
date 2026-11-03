@@ -1,0 +1,437 @@
+{
+ "group": "G6",
+ "title": "Parts XII to XV (data-oriented, errors, compile time, the standard library)",
+ "found": {
+  "group": "G6: Parts XII to XV (data-oriented, errors, compile time, the standard library)",
+  "findings": [
+   {
+    "id": "G6-01",
+    "rules": [
+     "ECS-4",
+     "ECS-3",
+     "ECS-8",
+     "SIMD-3"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "A component type listed twice in one view hands out two `ref mut` names of one place",
+    "program": "from std.ecs import Registry\n\n@derive(Copy)\nstruct Position:\n    value: f32\n\nfn main():\n    reg = Registry()\n    e = reg.create()\n    reg.emplace(e, Position(value=1.0))\n    for e, ref mut a, ref mut b in reg.view_mut[Position, Position]():   # <- `a` and `b` are one value of the Position pool, each a `ref mut` name, each compiled `noalias` ([SIMD-3](e))\n        a.value = 2.0\n        b.value = a.value + 1.0      # the backend may read `a.value` before the store above: two names change one place\n\n# the same through generic parameters: `fn step[A, B](ref mut reg: Registry)` walking `reg.view_mut[A, B]()`, called `step[Position, Position](ref mut reg)`",
+    "why": "[ECS-4]: \"`reg.view_mut[A, B]()` gives every item `ref mut` ... The items of one entity are values of different types, so they never name one place\" and \"A view takes any number of component types, with no limit ... and any type is a component\"; nothing refuses a type listed twice, so the claim \"values of different types\" is an assertion the text does not enforce. [ECS-3] lists `all_of[A, B]` and `any_of[A, B]` the same way, [ECS-8] `group[A, B]()`. [SIMD-3](e): \"every `ref mut` parameter is compiled with `noalias`\", so the library's own `view_mut` body, which takes each pool `ref mut` through `storage[A]()` and `storage[B]()`, is miscompiled once `A` and `B` are one type; [BRW-1] (\"a `ref mut` name alone\") is broken for the user's loop items.",
+    "proposed_text": "Replace \"The items of one entity are values of different types, so they never name one place.\" in `[ECS-4]` with: \"The items of one entity are values of different types (`[ECS-4a]`), so they never name one place.\" and add:\n* `[ECS-4a]` *(new)* The component types listed in one `view`, `view_mut`, `all_of`, `any_of`, `group` or `exclude` are distinct, judged after generic parameters are filled in (`[TYP-17]`, at each use): a type listed twice, or listed and excluded in one view, is `E2074`, naming the type and the line to write (\"`view_mut[Position, Position]` (line 9) names `Position` twice; a view gives each component of an entity once, so two of its items would name one place: write `view_mut[Position]`\"). A generic function whose list becomes a repeat for one use is refused at that use, naming it (`in step used with A = B = Position`). The registry's own code is checked with this rule as a fact (`[BRW-21]`): each pool a view takes `ref mut` is reached by no other name of the view.",
+    "codes": "`E2074` (new, types range E2000–E2499, shape N6/N9: the name and the line to write); registry row: \"a component type listed twice in one ECS view, or listed and excluded\" against `[ECS-4a]`",
+    "milestone": "M14",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G6-02",
+    "rules": [
+     "CT-5",
+     "FN-1",
+     "CLS-12",
+     "THR-14"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "A `comptime(e)` value with an `Atomic`, `Mutex`, `RwLock`, `Once` or `guarded by` field, or a class with a `@cached` method, is written through its read-only view",
+    "program": "from std.sync import Atomic\n\nstruct Stats:\n    hits: Atomic[int]\n    names: Array[String]          # owns heap memory, so [CT-5]'s third bullet applies: `s` is a `ref Stats` into constant data\n\nfn fresh() -> Stats:\n    return Stats(hits=Atomic(0), names=[String(\"a\")])\n\nfn main():\n    s = comptime(fresh())\n    s.hits.fetch_add(1)           # <- an atomic read-modify-write into read-only memory: a fault in safe code, or, if the image is writable, one object shared by every evaluation of this line\n\n# the same with `lock: Mutex[int]` and `with g = s.lock:`, and with a class object whose `@cached fn area()` stores its result in the object through `ref`",
+    "why": "[CT-5], third bullet: \"a `comptime(e)` whose type owns heap memory is materialised once, as constant data, and the expression is a read-only view of it ... `ref T` for any other value that owns heap memory, with the `static` region\". The guard against a safe write exists only for statics (first bullet: \"whose type gives no name a way to change the value (no `Mutex`, `RwLock`, `Cell`, `Atomic` or `guarded by` field on the path to it), the value is materialised in read-only memory\"), and that list lacks `Once` and `@cached`. [FN-1]: \"Only a `Mutex`, `RwLock`, `Atomic` or channel end, and the `guarded by` fields of an object inside their lock, are changed through a plain parameter, by their own operations\", so `E3023`'s \"a value made when compiling\" does not catch `fetch_add` through `ref`. [CLS-12]: `@cached` \"keeps the method's result after the first call, in the object\", a store through `this` of a read-only method. [CT-1] lets `Atomic(0)` and `Mutex([])` be built at compile time (no `Sync` in construction; [CT-5]'s own example `Mutex([])`).",
+    "proposed_text": "In `[CT-5]`, first bullet, replace \"(no `Mutex`, `RwLock`, `Cell`, `Atomic` or `guarded by` field on the path to it)\" with \"(no `Mutex`, `RwLock`, `Cell`, `Atomic`, `Once` or `guarded by` field on the path to it, and no class with a `@cached` method, `[CLS-12]`, whose kept result is a store into the object)\". Add to the third bullet: \"A `comptime(e)` whose type gives a plain name a way to change the value (a `Mutex`, `RwLock`, `Atomic`, `Once` or `guarded by` field on the path to it, or a class with a `@cached` method) is `E6010`, since the view would be of constant data (\"`comptime(fresh())` (line 11) makes a `Stats` when compiling, which is read-only, and `Stats.hits` is an `Atomic`, which a plain name changes; make the value while running: write `s = fresh()`, or keep it in a `static`\"); `copy of comptime(e)` of such a type is `E6010` the same way, since `Atomic` and the locks are not `Clone`.\"",
+    "codes": "`E6010` reused (registry row widened: \"a compile-time value a plain name could change: an `Atomic`, lock, `Once`, `guarded by` field or `@cached` class in a `comptime(e)`\"); shape N7 (changing a place that never changes)",
+    "milestone": "M11 (`@cached`, kind tests) and M14 (the evaluator's placement)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G6-03",
+    "rules": [
+     "SIMD-7",
+     "SIMD-5",
+     "TYP-8"
+    ],
+    "kind": "MEM",
+    "severity": "major",
+    "title": "A grouped overflow check is skipped when the loop body leaves the group early",
+    "program": "fn first_negative(xs: Span[i32]) -> Option[int]:\n    for i in 0..xs.len():\n        y = xs[i] * 4            # overflows at i = 2 when xs[2] == i32.MAX; computed wrapping inside the group, so `y` is negative\n        if y < 0:\n            return Some(i)       # <- leaves the group before its end: the accumulated overflow bit is never tested, and the function returns a wrong answer with no panic\n    return None\n\n# the same with `break`; and with `for j in 0..y:` as an inner loop, which runs 2^31 steps on the wrapped value before the group ends",
+    "why": "[SIMD-7]: \"In a loop whose body has none of `Sync`, `Io`, `FFI`, `Unsafe` and `Block`, and no operation on an `Atomic` ..., the compiler MAY check integer overflow once per group of iterations ... it computes the group with wrapping arithmetic, accumulates the lanes' overflow bits, and panics at the end of the group\" and \"This is not observable: the body's writes go only to memory this thread owns, and the process aborts before anything reads them.\" The MAY clause has no condition on exits: \"the loop has one exit\" and the absence of `Panic(Explicit)` are conditions of vectorisable form (`[SIMD-5]`) only. A `return`, `break` or a condition on the wrapped value runs before \"the end of the group\", so the panic `[TYP-8]` promises never comes, and a `Bounds` or explicit panic on a wrapped value reports the wrong cause.",
+    "proposed_text": "Add to `[SIMD-7]`, after \"reporting the source location of the first overflowing iteration\": \"The accumulated overflow bits are tested, and the panic raised, before any path leaves the group: before a `return`, `break` or `yield`, before a call whose summary reads a value the group computed, and before a panic of another kind (`Bounds`, `Explicit`), so that no line runs on a wrapped value outside the group and no panic names a wrapped value's consequence as its cause. A loop whose body reaches a wrapped value in a condition that chooses an exit, or as the bound of an inner loop, keeps a check on that operation (the test is placed at the operation, not at the group's end).\" Replace \"This is not observable: the body's writes go only to memory this thread owns, and the process aborts before anything reads them.\" with \"This is not observable: a wrapped value reaches no memory another thread or process reads (the body has none of the effects above, and a view `unsafe` code made over memory the manager did not allocate answers for it, `[UNS-4]`), and the process aborts before any path leaves the group.\"",
+    "codes": "none new; the cost row of `RuntimeCheck(Arithmetic)` in X.4 says where the grouped test runs",
+    "milestone": "M6c",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G6-04",
+    "rules": [
+     "CT-1",
+     "CT-4",
+     "CT-6",
+     "STA-1",
+     "STA-3"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "A function run at compile time that reads or changes a `static mut` (or a `static` built on first access): no rule says what the evaluator holds there",
+    "program": "static mut NEXT_ID: int = 0\n\nfn fresh() -> int:\n    NEXT_ID += 1              # `[STA-1]`: a function changes a module variable by its name; no effect of the table is introduced\n    return NEXT_ID\n\nconst A: int = comptime(fresh())   # admitted by [CT-1]: the effect set of `fresh` is empty\nconst B: int = comptime(fresh())   # 1 again ([CT-4]: cached with the same source), or 2 (the evaluator kept the write)? And is `NEXT_ID` 0, 1 or 2 when `main` starts?\n\n# the same for `static LOG: Mutex[Array[String]] = Mutex([])` read at compile time by `LOG.try_lock()`? refused by `Sync`; but `static TABLE: Array[int] = build()` (a `static` run on first access, [STA-3]) read by a function called in `comptime(...)` has no rule either",
+    "why": "[CT-1]: \"Any function may be called there if its effect set contains nothing beyond `Alloc`, `Panic(Explicit)` and `RuntimeCheck`\": a `static mut` read or write is in the summary (\"what a function changes is worked out from its code\", `[STA-1]`, `[EFF-24]`), not in the effect set, so it passes. [CT-6] restricts only what `e` itself refers to (\"constants, generic parameters, and statics initialised at compile time, not to run-time locals (`E6005`)\"), not what a called function reaches. [CT-4]: \"A result is cached with its inputs (source, `read_file` contents, `env` values)\": a static's state is no input, so two identical calls give one answer by the cache and two by the order of evaluation. [CT-5]: a `static mut` \"runs at run time on first access\", so the evaluator has no value for it.",
+    "proposed_text": "* `[CT-1a]` *(new)* A function run at compile time reaches no module variable that lives at run time: a read or a change of a `static mut`, or of a `static` whose initialiser runs on first access (`[STA-3]`), by the function or by anything it calls (its summary, `[EFF-24]`), is `E6010` naming the static and the call chain (\"`fresh` changes `NEXT_ID`, a `static mut`, and a value made when compiling cannot see what the program will hold while running: `comptime(fresh())` (line 8) → `fresh` (line 3) → `NEXT_ID += 1` (line 4); pass the number in: `fn fresh(id: int) -> int`\"). A `static` initialised at compile time (`[STA-3]`, placed in the image) is read as the constant it is. So every compile-time result is a function of its inputs alone, which is what `[CT-4]`'s cache assumes.",
+    "codes": "`E6010` reused (registry row: add \"a `static mut`, or a `static` built on first access, reached by compile-time code\")",
+    "milestone": "M2 (`static mut` as a place) and M14",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G6-05",
+    "rules": [
+     "CT-2",
+     "MAN-8"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "`comptime.read_file`'s \"package root\" names no package: a dependency called from the root's compile-time code may read the builder's files under one reading",
+    "program": "# package `pretty` (a dependency, an adversary):\npub fn load_config(path: StrView) -> Config:\n    cfg = parse(comptime.read_file(path))\n    cfg.extra = String(comptime.read_file(\"ember.toml\"))   # <- under the reading \"the package being built\", this is the BUILDER's manifest (its registry tokens, `[comptime] env` list), baked into the image\n    return cfg\n\npub fn render(c: Config):\n    http.post(\"https://example.invalid/\", c.extra)        # run time: `Io`, sends it\n\n# the root package:\nconst CFG = comptime(pretty.load_config(\"app.cfg\"))\nfn main():\n    pretty.render(copy of CFG)",
+    "why": "[CT-2]: \"`comptime.read_file(path)` (relative to the package root, the folder of the package's `ember.toml`; the path is resolved with every symbolic link followed and must then lie under that root, `E6010` otherwise, so a dependency's build cannot read the builder's files)\". \"The package\" is not said to be the package whose source line calls `read_file`, the package whose item is being evaluated, or the package being built (which `[CT-2]` calls \"the root package\" one sentence later for `env`). The stated intent (\"a dependency's build cannot read the builder's files\", H.51) holds only under the first reading; an implementer who takes either other reading, both natural, opens the file read to every dependency the root's compile-time code calls, and the lens of AUDIT O9 (a dependency's compile-time code is sandboxed) is lost.",
+    "proposed_text": "In `[CT-2]`, replace \"(relative to the package root, the folder of the package's `ember.toml`; the path is resolved ...\" with \"(relative to the root of the package whose source holds the `comptime.read_file` call, the folder of that package's `ember.toml`, whatever package's item is being evaluated and whatever package is built; the path is resolved ...\" and add after \"so a dependency's build cannot read the builder's files)\": \"(a dependency's function that reads a file for its caller reads the dependency's own files; a file of the root package is read by a `read_file` written in the root package, and given to the dependency as text)\". Likewise for `comptime.env`: \"the package whose source holds the call\" decides whether it is the root package.",
+    "codes": "`E6010` reused; the message names the two packages (\"`comptime.read_file(\"ember.toml\")` in `pretty` (line 4) reads under `pretty`'s root, and `ember.toml` of the root package lies outside it\")",
+    "milestone": "M14",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G6-06",
+    "rules": [
+     "SOA-1",
+     "SOA-6",
+     "SOA-3",
+     "DRP-1",
+     "DRP-5"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "`SoA[T]` for a `T` with a `drop`: no rule says how an element ends when no `T` is ever assembled",
+    "program": "struct Buffer:\n    handle: int\n    data: Array[u8]\n    fn drop():\n        gpu.release(this.handle)      # reads `this` whole: a `Buffer` in memory\n\nfn main():\n    bs = SoA[Buffer].with_capacity(8)   # [SOA-1]: `T` MUST be a struct; a struct with `drop` is one\n    bs.push(owns Buffer(handle=1, data=[]))\n    bs.pop()                             # <- what runs? `drop` needs a `Buffer`; [SOA-6] says \"no `T` is assembled\". An implementer who ends the columns' values field by field runs no `drop`: a value ended without its clean-up ([PHIL-10]); one who gathers must invent that `pop`, `swap_remove`, `retain`, `clear`, `ps[i] = v` and the end of `bs` each gather first\n    bs[0].handle = 2                     # a field of a value with `drop` replaced in its column: allowed, as `b.handle = 2` is on a `Buffer`",
+    "why": "[SOA-1]: \"for any struct `T` it is a growable container holding one column per field of `T` ... `T` MUST be a struct (`E2071` otherwise)\": a struct with `drop` qualifies. [SOA-6]: \"A proxy's field `ps[i].f` is a place in column `f` at index `i`; reading or writing it touches that column only, and no `T` is assembled.\" [SOA-3]: `pop`, `swap_remove`, `retain`, `clear` with no word on what they do to the elements. [DRP-1]: \"`fn drop():` runs exactly once per value, at the end of its life\"; [DRP-5]: a `drop` body reads `this`, which must exist as a `T`. Nothing says a discarded element is gathered, so a compiler ending the columns' fields alone skips `drop` and the text does not call it wrong.",
+    "proposed_text": "Add to `[SOA-6]`: \"An element of a `T` with a `drop` (`[DRP-1]`) is ended as one value: where an element leaves `ps` without being handed over (`pop`'s and `swap_remove`'s result is handed over; `retain`, `clear`, `ps[i] = v` over the old element, and the end of `ps` discard theirs), the compiler gathers its fields from the columns into a `T` and ends that `T` (its `drop` runs once, then its fields end), so `drop` runs exactly once per element, as for an `Array[T]`. A `T` with a `drop` is otherwise an `SoA` element like any other: its field `ps[i].f` is a place of its column, as `b.f` is a place of `b`. The same holds for a flattened field's struct (`@soa(flatten)`). `ember inspect --cost` shows the gather on each such line.\"",
+    "codes": "none new (or, if the owner prefers refusal, `E2071` widened: \"`SoA[T]` of a struct with a `drop`\")",
+    "milestone": "M14",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G6-07",
+    "rules": [
+     "SIMD-9",
+     "SIMD-1",
+     "SOA-7"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "`V.load(s)` and `v.store(ref mut s)` say nothing about the span's alignment",
+    "program": "from std.simd import f32x8\n\nfn main():\n    xs: Array[f32] = [0.0; 17]\n    tail = xs[1..]                     # a Span[f32] whose base is 4 bytes past a 32-byte boundary\n    v = f32x8.load(tail[0..8])         # <- [SIMD-9] checks only `s.len() >= V.LANES`; `f32x8` is \"aligned to its size\" ([SIMD-1]). A backend that lowers `load` to the aligned form (`_mm256_load_ps`, a `*(__m256*)p` read, UB in C) faults here in safe code; one that lowers to the unaligned form does not. The text decides neither.\n    v.store(ref mut xs[1..9])",
+    "why": "[SIMD-9]: \"SIMD memory operations are bounds-checked like indexing. `V.load(s)` and `v.store(s)` require `s.len() >= V.LANES`\" — the only requirement stated. [SIMD-1]: the vector types \"are `Copy` value types aligned to their size. On the C backend they lower to the target's intrinsics through `ember_simd.h`\". [SOA-7]: \"A column's base pointer is therefore suitable for aligned vector loads\", which implies some loads need alignment and leaves which ones unsaid. `std/src/simd.em` states nothing (the only mention is the types' own alignment). An implementer must invent whether `load`/`store` tolerate any alignment, and the two answers differ in whether this safe program faults.",
+    "proposed_text": "Add to `[SIMD-9]`: \"`load`, `store`, `gather` and `scatter` make no demand on the span's alignment: they are the target's unaligned accesses (`loadu`/`storeu`, or a `memcpy` into the vector where the target has none), and `[UNS-4]`'s promise that a view is aligned to its element type is all they rely on. Where the compiler proves the address a multiple of `V`'s alignment (an `SoA` column's base, `[SOA-7]`, an array of `V`, or an address `assume_aligned` asserts in `unsafe`), the backend may emit the aligned form; the choice never changes behaviour. `load_aligned(s)` and `store_aligned(ref mut s)` require `s`'s address to be a multiple of `V`'s alignment and panic otherwise (a `Bounds` panic naming the address and the alignment), in every profile; their unchecked forms are `unsafe fn`.\"",
+    "codes": "none new; a `Bounds` panic text for `load_aligned`; a row in X.4 if the aligned forms' check is a cost",
+    "milestone": "M6c",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G6-08",
+    "rules": [
+     "ECS-2",
+     "ECS-3",
+     "ECS-8"
+    ],
+    "kind": "SEC",
+    "severity": "major",
+    "title": "A component type's identity is a 64-bit FNV-1a of its name: a dependency's type chosen to collide reaches another type's pool",
+    "program": "# package `mod` (a dependency; FNV-1a-64 is not collision resistant: a name whose hash equals `game.Health`'s is found in about 2^32 trials, offline)\npub struct Ammo_x9f2k:     # chosen so that type_hash[mod.Ammo_x9f2k]() == type_hash[game.Health]()\n    count: int\n\n# the program:\nreg.emplace(e, Health(hp=100))\nmod.arm(ref mut reg, e)           # inside: `reg.remove[Ammo_x9f2k](e)` — [ECS-2] keys pools by the hash, so `pools[h]` is the Health pool, reached as `dyn AnyStorage` with no cast: the entity's Health is removed silently; `reg.all_of[Ammo_x9f2k](e)` answers for Health; `storage[Ammo_x9f2k]()` alone stops the program at its `cast` ([TYP-44]), a stop any dependency can force\n\n# also with no adversary: two versions of one package in a build ([BLD-*]) give two types of one fully qualified name and one hash",
+    "why": "[ECS-2]: \"A component type's identity is the 64-bit FNV-1a hash of its fully qualified name ... `ecs.type_hash[T]()`, stable across builds and modules. The registry keeps its pools as `pools: Map[u64, owns dyn AnyStorage]` ... `reg.storage[T]()` reaches its own pool as a place, `pool = ref mut cast this.pools[ecs.type_hash[T]()] as Storage[T]`\". Only `storage[T]` is shown to cast; `remove[T]`, `erase[T]`, `all_of`, `any_of`, `clear_of[T]`, `orphan` and `ctx()` (\"one value per type\") are keyed by the same `u64` and the text gives them no cast. Separate compilation (AUDIT O1's lens) means the compiler cannot see every type that will share one registry, so no compile-time check closes it.",
+    "proposed_text": "In `[ECS-2]`, replace \"A component type's identity is the 64-bit FNV-1a hash of its fully qualified name, which `std.core.type_name[T]()` gives ...: `ecs.type_hash[T]()`, stable across builds and modules. The registry keeps its pools as `pools: Map[u64, owns dyn AnyStorage]`\" with: \"A component type's identity within a registry is the type itself, what a kind test compares (`[TYP-44]`): the registry keeps its pools as `pools: Map[TypeId, owns dyn AnyStorage]`, keyed by `std.core.type_id[T]()`, a value the compiler gives each type that two types of one program never share, whatever their names (`[BLD-14]` records it with the interface). `ecs.type_hash[T]()`, the 64-bit FNV-1a hash of `type_name[T]()`, is stable across builds and names a type in a snapshot (`[ECS-8]`) and to other engines; a snapshot that holds two types of one hash is `SerError.Malformed`, naming both, and no pool is ever reached by the hash alone.\" Every method that reaches a pool by type (`remove`, `erase`, `all_of`, `any_of`, `clear_of`, `ctx()`) reaches it as `storage[T]()` does.",
+    "codes": "none new; `SerError.Malformed` text for the snapshot",
+    "milestone": "M14",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G6-09",
+    "rules": [
+     "STD-19",
+     "TYP-8",
+     "TYP-42"
+    ],
+    "kind": "CON",
+    "severity": "minor",
+    "title": "\"an `int` by an `int` stays an `int`\" is false for two ranges of 32-bit numbers",
+    "program": "fn main():\n    n = (0..=u32.MAX).flat_map(fn(_) => 0..=u32.MAX).count()   # 2^32 × 2^32 = 2^64 items; both sides count in `int` ([STD-19]: \"ranges of 8-, 16- or 32-bit numbers count ... in `int`\"), so by the parenthetical the count is an `int`, which 2^64 does not fit: the count panics ([TYP-8]) although \"an iterator gives at most what its `Count` holds\" and \"`u256` is the limit\"\n    for i, x in (0..=u32.MAX).flat_map(fn(_) => 0..=u32.MAX).enumerate(): ...   # `enumerate` numbers in `Position` = `int`: \"no number of an `enumerate` overflows\" is broken past 2^63",
+    "why": "[STD-19]: \"`flatten` and `flat_map` count in the level that holds the outer count times the inner one (an `int` by an `int` stays an `int`)\" against, in the same rule, \"ranges of 8-, 16- or 32-bit numbers count and number in `int`\" and \"an iterator gives at most what its `Count` holds\" and \"no number of an `enumerate` overflows\". The justification given for `chain` (\"stored items and small ranges cannot come near its top\") does not carry to a product: 2^32 × 2^32 passes `int.MAX`. The rule also says what `flat_map` counts in and not what it numbers in (`Position`).",
+    "proposed_text": "Replace \"(an `int` by an `int` stays an `int`)\" with \"(an `int` count of stored items by any `int` count stays an `int`, since stored items number fewer than 2^31 of them times a 32-bit range's; an `int` count of a range by an `int` count of a range is a `u128`, since two 32-bit ranges reach 2^64, unless the numbers the compiler knows show the product fits a smaller type), and number their items (`Position`) in the same type\".",
+    "codes": "none",
+    "milestone": "M14",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G6-10",
+    "rules": [
+     "SOA-1",
+     "SOA-2"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "What `ps.pos` names when `pos` is `@soa(flatten)` is unsaid",
+    "program": "struct Particle:\n    @soa(flatten)\n    pos: Vec3\n    life: f32\n\nfn main():\n    ps = SoA[Particle].with_capacity(8)\n    xs = ps.pos.x          # a `MutSpan[f32]` column, [SOA-1]\n    p = ps.pos             # <- no column `pos` exists; is this a group of three columns (a value of what type?), or refused, and with which code?\n    integrate(ref mut ps.pos, ps.vel, dt)   # the example of XII.1 with `pos` flattened: accepted or not?",
+    "why": "[SOA-1]: \"A field marked `@soa(flatten)` whose type is a struct is split into one column per field of its own (`ps.pos.x`); otherwise a struct field is one column.\" [SOA-2]: \"`ps.f` names the column of field `f`: a view of that column's elements, a `MutSpan[F]`\" — for a flattened `f` there is no such column, and the text neither gives `ps.pos` a type nor refuses it.",
+    "proposed_text": "Add to `[SOA-1]`: \"A flattened field has no column of its own: `ps.pos` is `E2072` (\"`pos` is `@soa(flatten)`, so `ps` has no `pos` column; name one of its columns: `ps.pos.x`, `ps.pos.y`, `ps.pos.z`\"), while `ps[i].pos` is a `Vec3` gathered from them by `copy of`, and `ps[i].pos.x` is a place in the column `pos.x`.\"",
+    "codes": "`E2072` reused (shape N3)",
+    "milestone": "M14",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G6-11",
+    "rules": [
+     "ERR-3",
+     "ERR-8"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "`@from` on a variant whose field is `AnyError`: \"an error type\" is undefined and `AnyError` is not `Error`",
+    "program": "@derive(Error)\nenum AppError:\n    @error(\"config: {0}\")\n    Config(ConfigError)\n    @from\n    @error(\"{0}\")\n    Other(AnyError)        # <- \"a variant marked `@from` whose single field is an error type\": `AnyError` \"does not implement `Error`\" ([ERR-8]); is this `E2080`, or does `Other` get `From[AnyError]`, and what does `source()` (-> `Option[ref dyn Error]`) return for it?\n\nfn load() -> Result[Cfg, AppError]:\n    text = fs.read_to_string(\"app.cfg\").context(\"reading\")?   # Result[String, AnyError] through `?` into AppError: needs From[AnyError]",
+    "why": "[ERR-3]: \"A variant marked `@from` whose single field is an error type gets `From` for that type and returns it from `source`.\" \"Error type\" is neither in the glossary nor defined here; [ERR-8]: \"**`AnyError` does not implement `Error`**\", so the one reading that has a definition (`E: needs Error`) excludes the commonest wrapper, and `source()`'s `Option[ref dyn Error]` cannot hold an `AnyError`. A compiler must choose.",
+    "proposed_text": "In `[ERR-3]`, replace \"whose single field is an error type gets `From` for that type and returns it from `source`\" with \"whose single field is of a type `E: needs Error`, or is `AnyError`, gets `From` for that type; `source()` returns the field for an `E: needs Error`, and for an `AnyError` what its own `source()` gives (`[ERR-8]`), so the chain `[ERR-12]` prints continues through it. `@from` on a variant with no field, two fields, or a field of another type is `E2080`, naming the field.\"",
+    "codes": "`E2080` reused (its registry row widened beyond `@derive(Copy)`: \"a derive's requirement a field does not meet, `@from`'s included\")",
+    "milestone": "M14",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G6-12",
+    "rules": [
+     "ERR-4",
+     "ERR-1",
+     "STD-9"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "`unwrap`/`expect` on a `Result[T, E]` \"panic with the error's `Display` text\" but `E` is unbounded",
+    "program": "struct Opaque:\n    code: int            # no Display, no Debug\n\nfn f() -> Result[int, Opaque]:\n    return Err(Opaque(code=3))\n\nfn main():\n    v = f().unwrap()     # <- what bound does `unwrap` ask of `Opaque`? `Display` (`E2040`), `Printable` as `println` uses, or none (and then what text)?",
+    "why": "[ERR-1]: \"neither parameter is bounded ... An operation that needs more of `E` says so\"; [ERR-4]: \"`unwrap` and `expect` panic with the error's `Display` text\" says the text but not the bound, and [STD-9] gives printing a `Debug` fallback (`Printable`) that `unwrap` may or may not share. A compiler must choose between refusing this program and inventing a text.",
+    "proposed_text": "In `[ERR-4]`, replace \"`unwrap` and `expect` panic with the error's `Display` text.\" with \"`unwrap` and `expect` on a `Result[T, E]` need `E: needs Printable` (`[STD-9]`; `E2040` otherwise, whose help is to implement `Display`) and panic with the text `println(err)` would print (`Display` where the type has it, `Debug` otherwise), `expect`'s message before it, `: `-separated.\"",
+    "codes": "`E2040` reused (shape N9)",
+    "milestone": "M14",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G6-13",
+    "rules": [
+     "ECS-2",
+     "ECS-3",
+     "ECS-9",
+     "STD-6"
+    ],
+    "kind": "ED",
+    "severity": "minor",
+    "title": "The normative fallback for Part XII.3, `std/src/ecs.em`, is a different library than the Part describes",
+    "program": "Scenario, not a program: Part XV's preamble makes `std/**/*.em` \"normative for anything this Part leaves open\". `std/src/ecs.em` holds `class World`, `Query`, `Commands`, `AosStorage`/`SoaStorage`, `unsafe` reads of an entity list (\"SAFETY: the query's list, which the run holds while the query lives\"), and `run_parallel`, whose comment says \"a conflict panics, naming both systems and the component\" at run time. Part XII.3 describes `Registry`, `view`/`view_mut`, `storage[T]`, `emplace`, signals, and [ECS-9]: \"nothing compares them while the program runs\". An implementer reading the fallback for a signature the Part leaves open (`retain`'s predicate, `connect`'s word, `sort[T](less)`) finds a library that contradicts the Part.",
+    "why": "[ECS-9]: \"two pieces of work run at once that may touch one pool, one changing it, are refused when compiling ... nothing compares them while the program runs\" against `ecs.em`'s run-time `conflict()` and panic. [ECS-2]: \"The registry keeps its pools as `pools: Map[u64, owns dyn AnyStorage]`\" against `world.storages`. Part XV: \"`std/**/*.em` holds the exact signatures and becomes normative for anything this Part leaves open.\"",
+    "proposed_text": "Add to Part XII.3's preamble: \"Until M14 lands, `std/src/ecs.em` is the 0.9.10 library and is not the fallback of Part XV's preamble for this section: where this section is silent, a compiler refuses the construct (`E0901`) rather than read that file.\" And in `[ECS-8]`, say the word `connect` takes: \"`.connect(owns f)` keeps `f` in the registry, so `f` is given with `owns` (`[FN-2a]`) and what it holds goes with it; a listener that views a local the registry outlives is `E3063`.\"",
+    "codes": "none new (`E0901`, `E3063` reused)",
+    "milestone": "text only (M14 replaces the file)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G6-14",
+    "rules": [
+     "STD-6",
+     "STD-1",
+     "ERR-8",
+     "ERR-11"
+    ],
+    "kind": "CON",
+    "severity": "minor",
+    "title": "The `core` layer holds `AnyError`, which owns a heap block",
+    "program": "# a firmware package: `[package] layers = [\"core\"]`\nfn read_sensor() -> Result[int]:     # `Result[T, E = AnyError]` ([ERR-9]); `AnyError` is listed under `std.core`\n    return Err(AnyError.msg(\"no sensor\"))   # <- `AnyError` \"is a `dyn Error` held alone (`owns dyn Error`)\", and converting into it \"allocates\" ([ERR-11]): a core-only package allocates with no `alloc` layer, or this line is refused by a rule nobody wrote (and with which code?)",
+    "why": "[STD-6]: \"**core** (scalars, `Option`, `Result`, views, fixed-capacity containers, math, SIMD), **alloc** (`Array`, `String`, `Map`, `Set`, and the heap blocks of `owns` and `shares` values)\" and \"A package that declares `[package] layers = [\"core\"]` may use only core\"; the module table puts `AnyError` in `std.core`; [ERR-8]: `AnyError` holds `owns dyn Error`; [ERR-11]: conversion \"allocates\". No code is named for a use outside the declared layers.",
+    "proposed_text": "In the module table, move `AnyError` from `std.core`'s row to a note under `std.collections`'s layer: \"`AnyError` (`[ERR-8]`) is `std.core`'s name but the `alloc` layer's type: in a package whose layers are `[\"core\"]`, a `Result` whose error type is left as `AnyError`, or a conversion into it, is `E1040`, naming the layer and the line to write (\"`Result[int]` means `Result[int, AnyError]`, and `AnyError` needs the `alloc` layer, which `sensor` does not declare; name the error type: `Result[int, SensorError]`\").\" Add to `[STD-6]`: \"A use of a name of a layer the package does not declare is `E1040`.\"",
+    "codes": "a code in the names range for \"a name of a layer the package does not declare\" (`E1040` if free; none exists in the registry today)",
+    "milestone": "M14",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G6-15",
+    "rules": [
+     "CT-3",
+     "CT-4"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "\"10⁸ steps\" names no unit, so two conforming compilers accept different programs",
+    "program": "fn sieve(n: int) -> Array[bool]:          # ~10^8 simple operations for n = 10^7\n    ...\nconst PRIMES = comptime(sieve(10_000_000))   # <- `E6001` on one evaluator (a step is a statement) and accepted on another (a step is an evaluator instruction, or a call)",
+    "why": "[CT-3]: \"Each evaluation is limited to 10⁸ steps and 256 MB of evaluator heap by default\"; \"step\" is defined nowhere (not in the glossary), and [CT-4] requires \"the test suite runs every program both compiled and on the evaluator and fails on any difference\", so an accepted/refused difference between evaluators is a conformance difference.",
+    "proposed_text": "In `[CT-3]`, replace \"10⁸ steps\" with \"10⁸ steps, a step being one evaluation of an expression node or statement of the source (a call, a loop iteration's test, an operator, an index; a built-in such as `memcpy` of n bytes counts n / 8 steps), so the count is the same on every implementation\".",
+    "codes": "`E6001` reused",
+    "milestone": "M14",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G6-16",
+    "rules": [
+     "STD-7",
+     "STD-14",
+     "ERR-13"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "`FixedArray.push` on a full container: what becomes of the value handed over",
+    "program": "buf: FixedArray[owns Texture, 4] = FixedArray()\nfor t in load_all():\n    match buf.push(owns t):            # `push(owns v) -> Result[void, CapacityError]` ([STD-7]); on `Err`, `t` was handed over and is not in the error: ended (its `drop` runs, a texture freed silently) or lost? And how does `push` then differ from `push_or_drop`, which \"discards when full\"?\n        Err(_): break\n        Ok(_): pass",
+    "why": "[STD-7]: \"`push` returns `Result[void, CapacityError]` and `push_or_drop` discards when full\": the failing `push` neither returns the value nor says it ends it, while `push` takes it with `owns` (verdict 149: \"owns at the call for push too\"). [ERR-13]/[STD-14] give the convention but not this value's fate.",
+    "proposed_text": "In `[STD-7]`: \"`push(owns v) -> Result[void, CapacityError]`; when full, the error carries the value back, `CapacityError.Full(v)`, so nothing is ended behind the caller's back (`buf.push(owns t)` then `Err(Full(t))` gives `t` again); `push_or_drop(owns v)` ends `v` when full and returns whether it was kept.\"",
+    "codes": "none",
+    "milestone": "M14",
+    "touches_owner_verdict": "149 (not reversed: `owns` at the call stays; the error's payload is added)"
+   }
+  ],
+  "judged_sound": [
+   "[SOA-2] columns as places, `ref mut` through a name that may change `ps`, a length change a reshape of every column (consistent with [BRW-16]/[BRW-17] positions and addresses)",
+   "[SOA-6] proxies as positions, `copy of ps[i]` by `load()`, `SoAMut` the only name of its element",
+   "[SOA-7] one block, 64-byte column bases, growth once ([HEAP-8] bounds the size computation)",
+   "[SIMD-3] alias facts derived only: (a)–(e); an FFI or unsafe view is the unsafe maker's promise under [UNS-4]",
+   "[SIMD-5] vectorisable form computed by Ember, one exit, no `Panic(Explicit)`",
+   "[SIMD-7] the running-total block test (64 values below 2^(w−9) cannot leave [−2^(w−1), 2^(w−1)) from a start within [−2^(w−2), 2^(w−2)))",
+   "[SIMD-8] lane-wise scalar rules",
+   "[ECS-1] with [HND-3]: a 12-bit generation retires its slot, so a stale entity never revalidates",
+   "[ECS-5] changes while a view walks refused by [BRW-18]",
+   "[ECS-6] deterministic order",
+   "[ECS-8] listeners run before the result view is made (0.9.20) — safe; only `connect`'s word is open (G6-13)",
+   "[ERR-1] unbounded parameters; [ERR-2] `?` and `From`; [ERR-7] identity `From` with `AnyError` not `Error` so no overlap",
+   "[ERR-5] `@must_use`",
+   "[ERR-8] `AnyError` as `owns dyn Error`; a converted error holding views is bounded by the `from` summary ([LT-1])",
+   "[ERR-10] context stacking; [ERR-11] the cost on the failure path only; [ERR-12] `main`'s error printing; [ERR-13] the panic-or-error convention",
+   "[CT-2] symbolic links followed, absolute paths refused, `env` listed by the root's manifest (given the package named by G6-05)",
+   "[CT-4] determinism, `det.sin`, the evaluator the compiler's own, cache keyed by inputs (given G6-04)",
+   "[CT-5] `static` placement and `static mut` built on first access; `copy of comptime(e)`",
+   "[CT-6]/[CT-7] what `comptime(e)` may refer to; `E6004` with the call chain",
+   "[RFL-1]–[RFL-3] and the `std.ser` descriptions; recursion avoided by naming field types",
+   "[DRV-1] `Copy`/`Clone`/`Eq`/`Debug`/`Ord`/`Hash`/`Default` (links copied as links); `E2080` naming the field",
+   "[SER-1] monomorphised per format; [SER-2] holds as the std sources check every integer width and `read_str` gives a validated `String`; `char` has no `Deserialize`, so no invalid scalar can be made",
+   "[STD-11] `Map` with `H: needs (Hasher, Default)`, a fresh `H` per hash: sound with `RandomState`, whose `Default` draws a per-process key once (std source), so insert and lookup agree",
+   "[STD-12] `AsKey`/`ToKey`: a wrong implementation gives wrong answers, never UB",
+   "[STD-15] `Array` reshapes end views; `retain`'s function counted as the call's change",
+   "[STD-16]/[STD-17] `Map` operations, `IndexSet`, loops over a map",
+   "[STD-8]/[STD-8b] `Contains` never synthesised; character-boundary matching",
+   "[STD-19] adapters own what they wrap, functions as type parameters, a lent function from a variable (verdict 150), counts and the known-numbers rule (apart from G6-09)",
+   "[STD-5] sums left to right, no reassociation",
+   "[STD-20]/[STD-4] fixed contracts of the integer methods; `NonZero` division",
+   "[STD-21]/[STD-27]/[STD-28] `Number`/`Real`, the math types",
+   "[TXT-1]–[TXT-11] validation on every entry to `StrView`, byte slicing panics on a boundary, reshapes end views, `a + b` with `b` a view of `a` refused by [BRW-1]",
+   "[STD-9]/[STD-10]/[STD-18] printing, `input`, `format_to` with `from buf`",
+   "[STD-22]–[STD-25] I/O results, `exit` without destructors, `Rng` changing its name's value",
+   "[STD-29] `Volatile`'s alignment promise"
+  ],
+  "could_not_cover": "Not re-verified against the std sources: the exact signatures Part XV leaves to `std/**/*.em` for `SoA.sort_by_key`, `SoA.retain`, `Map.update`, `Result.context`'s word, and `Duration`'s width (`[STD-23]`, an integer count of nanoseconds in an unnamed type). The O1 lens (separate compilation) found nothing new in these Parts beyond G6-08's type identity. The JOB.md verdicts were searched only by rule id and for `flat_map`/G8-4 (no hit): if G8-4's wording is the owner's, G6-09 touches it."
+ },
+ "verdicts": {
+  "group": "G6",
+  "verdicts": [
+   {
+    "id": "G6-01",
+    "verdict": "narrowed",
+    "reason": "No sentence refuses a repeated type: [ECS-4] \"A view takes any number of component types, with no limit ... and any type is a component\", and its \"The items of one entity are values of different types, so they never name one place\" is an assertion nothing enforces. But the promise does not break as the reader says. The registry \"is an ordinary library ... written in Ember\" (XII.3 preamble) and [ECS-8] says \"the call check, [BRW-21], holds for the library's own code\"; in the library's generic body two `ref mut` names of `this.pools[type_hash[A]()]` and `this.pools[type_hash[B]()]` are refused by [BRW-1] (\"Two names of elements of one list, at least one `ref mut`, whose indexes are not proved different are refused as two such arguments are ([BRW-5])\"), so the library can only make two pool views under `if ha != hb:` ([BRW-5]: \"the line inside `if i != j:`\") and must stop (or `comptime: assert`) otherwise; no instance hands out two `ref mut` items of one pool. The loop names `a`, `b` are not parameters, and [BRW-22]/[SIMD-3](e) give `noalias` to \"Every `ref mut` parameter\" only, so the stated miscompilation of the user's loop does not follow from the text.",
+    "narrowed_to": "What `view_mut[Position, Position]` (and `view`, `all_of`, `any_of`, `group`, a type listed and excluded) means is unsaid: the only outcome the text's rules allow the library is a stop while the program runs, for a fact known when compiling (`[TYP-17]`, per instance). A compile-time refusal should be written; `E2074` is free in the registry.",
+    "better_fix": "Keep the reader's `[ECS-4a]` bullet and message, but strike its last sentence (\"The registry's own code is checked with this rule as a fact (`[BRW-21]`): each pool a view takes `ref mut` is reached by no other name of the view\"): the library's code is checked by `[BRW-5]` as any code is, and distinct types give distinct pool keys only once pools are keyed by type identity (G6-08); write instead: \"With the types distinct, the pools a view takes `ref mut` are different elements of `pools` (`[ECS-2]`), which the library's code shows by their keys (`[BRW-5]`).\""
+   },
+   {
+    "id": "G6-02",
+    "verdict": "confirmed",
+    "reason": "[CT-5] promises \"A compile-time result is placed in the image as constant data. A value that owns heap memory ... is handled so that no run-time code ever grows, changes or frees constant data\", and its third bullet makes `s` \"a read-only view of it ... `ref T` for any other value that owns heap memory, with the `static` region\" whose guard is only \"a change through `t` is `E3023`\". [FN-1]: \"Only a `Mutex`, `RwLock`, `Atomic` or channel end, and the `guarded by` fields of an object inside their lock, are changed through a plain parameter, by their own operations ([BRW-15], Part XI)\", so `s.hits.fetch_add(1)` through the plain `ref Stats` is no `E3023` and is a store into constant data. [CT-1] admits `fresh()` (effects `Alloc` only; `Atomic(0)` is built, not operated on). The first bullet's list (\"no `Mutex`, `RwLock`, `Cell`, `Atomic` or `guarded by` field\") governs statics alone and lacks `Once`, which [STA-1] names as a way to change a `static` (\"shared state that changes goes through an `Atomic`, `Mutex`, `RwLock` or `Once` in it\"), and a class with a `@cached` method, which [CLS-12] says \"keeps the method's result after the first call, in the object\". No sentence covers the `comptime(e)` case.",
+    "better_fix": "State the criterion once and use it in both bullets: \"A type a plain name may change is one with, on any path to a field, a `Mutex`, `RwLock`, `Cell`, `Atomic`, `Once`, a channel end, a `guarded by` field, or a class with a `@cached` method (`[FN-1]`, `[CLS-12]`).\" First bullet: \"in a `static` (not `static mut`) whose type is not one a plain name may change, the value is materialised in read-only memory\". Third bullet, add: \"A `comptime(e)` whose type is one a plain name may change is `E6010`, since its value would be constant data a line may write (\"`comptime(fresh())` (line 11) makes a `Stats` when compiling, which is read-only, and `Stats.hits` is an `Atomic`, which a plain name changes; make the value while running: write `s = fresh()`, or keep it in a `static`\"); `copy of comptime(e)` of such a type is `E6010` the same way.\" Registry row for `E6010` widened as the reader says."
+   },
+   {
+    "id": "G6-03",
+    "verdict": "confirmed",
+    "reason": "[SIMD-7]'s permission has only effect conditions: \"In a loop whose body has none of `Sync`, `Io`, `FFI`, `Unsafe` and `Block`, and no operation on an `Atomic` ..., the compiler MAY check integer overflow once per group of iterations ... it computes the group with wrapping arithmetic, accumulates the lanes' overflow bits, and panics at the end of the group\". \"the loop has one exit\" and the absence of `Panic(Explicit)` are clauses of [SIMD-5]'s vectorisable form, which governs the MUST case, not the MAY case. The justification \"This is not observable: the body's writes go only to memory this thread owns, and the process aborts before anything reads them\" is asserted, not required, and is false for a `return` or `break` that runs before \"the end of the group\": `first_negative` returns `Some(2)` with no panic, against [TYP-8] \"Integer overflow panics in every profile\". The same holds for a `Bounds` panic, an explicit `panic`, or an allocation (`Alloc` is admitted) whose size is a wrapped value: the stop names the wrong cause.",
+    "better_fix": "Add to `[SIMD-7]` after \"reporting the source location of the first overflowing iteration\": \"The group ends, and its accumulated bits are tested, before any instruction leaves the body's straight path: before a `return`, `break` or `yield`, before a panic of any other kind (a `Bounds` check, an explicit `panic`, an allocation's capacity check), and before a call not inlined into the group; so no line outside the group runs on a wrapped value, and no panic names a wrapped value's consequence as its cause. A test placed at such an instruction is the group's end for the lanes before it.\" Replace the \"This is not observable\" sentence with: \"This is not observable: a wrapped value reaches no memory another thread or process reads (the body has none of the effects above), leaves the group by no path before the test, and the process aborts before any line outside the group reads it.\" The reader's second clause (a check kept \"at the operation\" for a value used in an exit condition or an inner bound) is one implementation of this and need not be written."
+   },
+   {
+    "id": "G6-04",
+    "verdict": "confirmed",
+    "reason": "[CT-1] admits \"Any function ... if its effect set contains nothing beyond `Alloc`, `Panic(Explicit)` and `RuntimeCheck`\"; a `static mut` access is no effect of the table but part of the summary (\"what a function changes is worked out from its code (`[EFF-24]`)\", [STA-1]). [CT-6] restricts `e` alone: \"`e` may refer to constants, generic parameters, and statics initialised at compile time, not to run-time locals (`E6005`)\". [CT-2]'s list (\"an `extern` call, a thread, a clock, `unsafe` pointer access outside the evaluator's heap, I/O\") names no static. [CT-4] caches \"with its inputs (source, `read_file` contents, `env` values)\", so `A` and `B` are both 1 on a caching evaluator and 1 and 2 on one that keeps the write, against \"Compile-time evaluation is deterministic by construction\". [STA-3]/[CT-5] say a `static mut` that owns heap memory \"is built on first access\", so the evaluator has no value for it, and for `static mut NEXT_ID: int = 0`, which [STA-3] places in the image, nothing says whether a compile-time write changes the image's value. No sentence decides.",
+    "better_fix": "The reader's `[CT-1a]` is right and general; one tightening: a `static` whose initialiser runs on first access is reached by running that initialiser, so say \"A function run at compile time reaches no module variable that lives at run time: a read or a change of a `static mut`, or a read of a `static` whose initialiser runs on first access (`[STA-3]`, `[CT-5]` second bullet), by the function or by anything it calls (its summary, `[EFF-24]`), is `E6010` naming the static and the call chain ...\"; keep the reader's message and the closing sentence on `[CT-4]`'s cache."
+   },
+   {
+    "id": "G6-05",
+    "verdict": "narrowed",
+    "reason": "[CT-2]'s \"(relative to the package root, the folder of the package's `ember.toml` ...)\" has no antecedent for \"the package\". Its own clause \"so a dependency's build cannot read the builder's files\" rules out the reading \"the package being built\": under it a `read_file` written in a dependency would read under the builder's root, the opposite of the clause. Two readings remain, the package whose source holds the call and the package whose item is being evaluated, and under the second the reader's `pretty.load_config`, called from the root's `comptime(...)`, reads the builder's `ember.toml`. `comptime.env`'s \"a dependency only for a variable the root package's manifest lists for it\" has the same two readings of \"a dependency\".",
+    "narrowed_to": "The ambiguity is between two readings, not three; the proposed text (the package whose source holds the call, for `read_file` and `env` alike) is right and closes it.",
+    "better_fix": ""
+   },
+   {
+    "id": "G6-06",
+    "verdict": "narrowed",
+    "reason": "The obligation is already written: [DRP-1] \"`fn drop():` runs exactly once per value, at the end of its life\" and [PHIL-10] \"it cannot end a value without its clean-up (`[OWN-2]`)\" hold for an `SoA` element as for any value, so an implementation that ends the columns' fields without `drop` is wrong by the text, and `ps[i] = v` over an old element is covered by [STD-17] \"otherwise assigns through `IndexMut` (ending the old value)\". [SOA-6]'s \"no `T` is assembled\" speaks only of \"reading or writing\" a proxy's field.",
+    "narrowed_to": "Unsaid: that an element of a `T` with `drop` must be gathered into a `T` for `drop`'s `this` ([DRP-5]), at `pop`/`swap_remove` (handed over), `retain`, `clear`, `ps[i] = v` and the end of `ps`; and that this gather is a cost, which needs a row in X.4 by [COST-5] (\"A rule that introduces an implicit cost MUST add a row to this table\").",
+    "better_fix": "The reader's sentence for `[SOA-6]`, without \"as for an `Array[T]`\" (an `Array` gathers nothing), plus a row in X.4: \"gather of an `SoA` element of a type with `drop` | once per element discarded | shown by `ember inspect --cost`\"."
+   },
+   {
+    "id": "G6-07",
+    "verdict": "confirmed",
+    "reason": "[SIMD-9]: \"`V.load(s)` and `v.store(s)` require `s.len() >= V.LANES`\" is the only requirement; [SIMD-1] says the vectors \"are `Copy` value types aligned to their size\"; [SOA-7] \"A column's base pointer is therefore suitable for aligned vector loads\" implies loads that need alignment exist and names none. `std/src/simd.em` (normative for what Part XV leaves open) repeats only \"`s.len()` at least `V.LANES`\". Whether `f32x8.load(xs[1..9])` faults in safe code is left to the backend (today's `ember_simd.h` happens to use `loadu`/`memcpy`, which the text does not require).",
+    "better_fix": "Add to `[SIMD-9]`, with no new API: \"`load`, `store`, `gather` and `scatter` make no demand on the span's alignment beyond its element type's (`[UNS-4]`): they are the target's unaligned accesses, or a copy into the vector where the target has none. Where the compiler proves the address a multiple of `V`'s alignment (an `SoA` column's base, `[SOA-7]`; a view of an array of `V`) the backend may emit the aligned form; the choice never changes behaviour, and there is no form that requires alignment.\""
+   },
+   {
+    "id": "G6-08",
+    "verdict": "narrowed",
+    "reason": "[ECS-2] shows one access path with a cast: \"`pool = ref mut cast this.pools[ecs.type_hash[T]()] as Storage[T]` (`[TYP-44]`, `[DSP-4]`)\", and [TYP-44] says a cast \"stops the program when `s` is not one\", so a colliding type reaching `storage[T]()` stops; no type confusion or memory break follows from the text. What the text accepts and says nothing for: (1) how `remove[T]`, `erase[T]`, `all_of`, `any_of`, `clear_of[T]`, `orphan` and `ctx()` find a pool (no cast is written for them); (2) two types of one hash with no adversary: [VER-5] \"Two majors of one package may coexist, distinguished in symbol names\" while `type_name[T]()` is \"a type's fully qualified name\", so `v1.Health` and `v2.Health` have one `type_hash` and one pool key.",
+    "narrowed_to": "The pool key is a hash two types of one program may share (two majors of one package, or chosen names), and the text neither refuses that program nor says what any method but `storage[T]()` does with it.",
+    "better_fix": "In `[ECS-2]`: \"The registry keys its pools by the type itself, the identity a kind test compares (`[TYP-44]`): `pools: Map[TypeId, owns dyn AnyStorage]` with `TypeId` the value `std.core.type_id[T]()` gives, which two types of one program never share, whatever their names. Every method that reaches a pool by type (`remove`, `erase`, `all_of`, `any_of`, `clear_of`, `orphan`, `ctx()`) reaches it as `storage[T]()` does. `ecs.type_hash[T]()`, the 64-bit FNV-1a hash of `type_name[T]()`, names a type in a snapshot (`[ECS-8]`) and to other engines; a snapshot that holds two types of one hash is `SerError.Malformed`, naming both.\" Drop the reader's claim that `[BLD-14]` records the id (it records facts worked out from bodies, not type identities)."
+   },
+   {
+    "id": "G6-09",
+    "verdict": "confirmed",
+    "reason": "[STD-19]: \"ranges of 8-, 16- or 32-bit numbers count and number in `int`\" (a `..=` range of `u32` has 2^32 items) and \"`flatten` and `flat_map` count in the level that holds the outer count times the inner one (an `int` by an `int` stays an `int`)\" contradict the same rule's \"what Ember hands back is in the smallest type that holds every value the iterator can give\", \"an iterator gives at most what its `Count` holds\" and \"no number of an `enumerate` overflows\": 2^32 × 2^32 passes `int.MAX`. The justification given for `chain` (\"stored items and small ranges cannot come near its top\") is about sums, not products, and the reader's own replacement is also false: by [STD-19]/[HEAP-8] a list holds \"at most `PTRDIFF_MAX` bytes, an item of no size counting as one\", so stored items reach 2^63 − 1, not 2^31.",
+    "better_fix": "Replace \"(an `int` by an `int` stays an `int`)\" with: \"(the smallest of `int`, `u64`, `u128` and `u256` that holds the product of the greatest counts the two sides can give, by the numbers the compiler knows: two `int` counts whose product may pass `int.MAX` count in `u128`, and stay an `int` where the known numbers show the product fits), and number their items (`Position`) in the same type\"."
+   },
+   {
+    "id": "G6-10",
+    "verdict": "narrowed",
+    "reason": "The text gives `ps.pos` no meaning for a flattened field: [SOA-1] \"split into one column per field of its own (`ps.pos.x`)\" and [SOA-2] \"`ps.f` names the column of field `f`\" (there is none). A compiler does not guess, though: [PHIL-12] \"a construct this specification does not define is `E0901`\" refuses it.",
+    "narrowed_to": "The refusal exists (`E0901`); the text should name it as `E2072` with the help listing the columns, and say what `ps[i].pos` and `copy of ps[i].pos` are, as the reader's text does.",
+    "better_fix": ""
+   },
+   {
+    "id": "G6-11",
+    "verdict": "narrowed",
+    "reason": "The text does decide, by three sentences together: the heading \"XIII.2 Error types and `AnyError`\" sets `AnyError` apart from error types; [ERR-8] \"**`AnyError` does not implement `Error`**\"; and [ERR-3]'s `source()` is `Option[ref dyn Error]`, which cannot return a `ref AnyError`. So \"an error type\" is a type that implements `Error`, `Other(AnyError)` with `@from` does not meet the derive's requirement, and [DRV-1] gives the code: \"A derive whose requirement a field does not meet is `E2080`, naming the field.\" The program is refused, not guessed at.",
+    "narrowed_to": "[ERR-3] should write \"a type `E: needs Error`\" in place of \"an error type\" (the term is in no glossary row), and say `@from` on a variant with no field, two fields, or a field of another type is `E2080`. Admitting `AnyError` under `@from`, with `source()` continuing through its own chain, is a design change for the owner, not a hole.",
+    "better_fix": "In `[ERR-3]`: \"A variant marked `@from` whose single field is of a type `E: needs Error` gets `From[E]` and returns the field from `source`; `@from` on a variant with no field, two fields, or a field of another type (`AnyError` included, `[ERR-8]`) is `E2080`, naming the field.\" Registry row of `E2080` widened: \"a derive's requirement a field does not meet, `@from`'s included\"."
+   },
+   {
+    "id": "G6-12",
+    "verdict": "narrowed",
+    "reason": "The bound is written: [ERR-1] \"An operation that needs more of `E` says so (ODR-050): ... printing one needs `Display`\", and [ERR-4] says \"`unwrap` and `expect` panic with the error's `Display` text\", so `unwrap` needs `E: needs Display` and `Opaque`, which has only [STR-5]'s implicit `Debug`, is refused with the registry's code for an unsatisfied bound, `E2040`. `Printable` is `println`'s ([STD-9]) and nothing extends it to `unwrap`; a compiler has no choice to make.",
+    "narrowed_to": "Unsaid: the text of `expect(msg)`'s panic (where `msg` goes beside the `Display` text) and of `unwrap`/`expect` on an `Option`.",
+    "better_fix": "In `[ERR-4]`: \"`unwrap` and `expect` on a `Result[T, E]` need `E: needs Display` (`E2040` otherwise, whose help is to implement `Display`) and panic with the error's `Display` text, `expect(msg)` with `<msg>: <Display text>`; on an `Option` they panic with `called unwrap on None` and with `msg`.\""
+   },
+   {
+    "id": "G6-13",
+    "verdict": "narrowed",
+    "reason": "Part XV's preamble, \"`std/**/*.em` holds the exact signatures and becomes normative for anything this Part leaves open\", is scoped to Part XV, whose row for `std.ecs` says only \"Part XII\"; so for XII.3's silences the file is not the fallback, and [PHIL-12]'s `E0901` applies already. Two things are real: the file in the tree is headed \"`std.ecs` — the entity-component system (Part XII.3, `[ECS-1]`..`[ECS-7]`)\" and contradicts [ECS-2] (\"`pools: Map[u64, owns dyn AnyStorage]`\" against `World`'s storages) and [ECS-9] (\"nothing compares them while the program runs\" against `run_parallel`'s run-time `conflict()` panic); and [ECS-8]'s \"`.connect(f)` and `.disconnect(f)` take a `f: fn(ref mut Registry, Entity)`\" names a plain parameter for a function the registry keeps, which [FN-1] (\"`a: A`: reads\") and [FN-2a] (\"a function written in the call is given the same way\", with `owns`) do not allow.",
+    "narrowed_to": "(1) The scope of the normative-fallback clause is unsaid for a module whose row names another Part; (2) `connect`'s parameter word is wrong.",
+    "better_fix": "A temporal note (\"Until M14 lands\") does not belong in the text. In Part XV's preamble add: \"For a module whose row names another Part, that Part alone is the authority: where it is silent the construct is `E0901`, and a file of `std` that disagrees with it is a defect of the file.\" In `[ECS-8]`: \"`.connect(owns f)` keeps `f` in the registry, so `f` is given with `owns` (`[FN-2a]`) and what it holds goes with it; a listener that views a local the registry outlives is `E3063`; `.disconnect(f)` compares and keeps nothing.\""
+   },
+   {
+    "id": "G6-14",
+    "verdict": "confirmed",
+    "reason": "[STD-6] puts \"the heap blocks of `owns` and `shares` values\" in **alloc** and says \"A package that declares `[package] layers = [\"core\"]` may use only core\", with no code for a use outside the declared layers; the module table lists `AnyError` under `std.core`; [ERR-8] makes it \"a `dyn Error` held alone (`owns dyn Error`)\" and [ERR-11] says converting into it \"allocates, once, on the failure path\". So a core-only package's `Result[int]` ([ERR-9]: the default is `AnyError`) with `Err(AnyError.msg(...))` either allocates with no `alloc` layer or is refused by no rule. The reader's code is wrong: `E1040` is retired (\"glob imports are allowed from any module\") and XVII.9 says \"Codes are never reused\". Wider, the same rule maps no module or name to a layer at all (the layers are named by kinds of content, the modules by their names; \"fixed-capacity containers\" are core yet live in `std.collections` beside `Array`), so an implementer guesses the whole boundary, not only `AnyError`'s.",
+    "better_fix": "Add a `Layer` column to the module table of §XV.1 (or one sentence per module: \"`std.core`, `std.mem`, `std.math`, `std.simd`, `std.cpu`, `std.cell` are **core**; `std.collections`, `std.string`, `std.fmt`, `std.arena` are **alloc** except `FixedArray`, `FixedString`, `RingBuffer`, `SmallArray`'s inline part, `Span`, `MutSpan` and `StrView`, which are core; `std.sync`, `std.thread`, `std.jobs` are **sync**; ...\"), mark `AnyError` as `std.core`'s name but the **alloc** layer's type, and add to `[STD-6]`: \"A use of a name of a layer the package does not declare is `E1042`, naming the layer and the line to write (\"`Result[int]` means `Result[int, AnyError]`, and `AnyError` needs the `alloc` layer, which `sensor` does not declare; name the error type: `Result[int, SensorError]`\").\" New registry row `E1042` against `[STD-6]`."
+   },
+   {
+    "id": "G6-15",
+    "verdict": "confirmed",
+    "reason": "[CT-3] \"Each evaluation is limited to 10⁸ steps and 256 MB of evaluator heap by default (`[comptime]` in the manifest); exceeding either is `E6001`\": \"step\" is defined in no rule and in no glossary row, so whether `comptime(sieve(10_000_000))` compiles depends on what an implementation counts, and [CT-4] makes acceptance a conformance matter (\"the test suite runs every program both compiled and on the evaluator and fails on any difference\"). Minor: the limit is a default the manifest raises, but a defined unit costs nothing.",
+    "better_fix": "In `[CT-3]`: \"10⁸ steps, a step being one operation of the source the evaluator performs (a call, an operator, an index, a field read, a loop's test or a statement; a built-in copy or compare of n bytes counts ⌈n / 8⌉ steps), so the count is the same on every implementation\". The reader's text is equivalent; this one names the rounding."
+   },
+   {
+    "id": "G6-16",
+    "verdict": "refuted",
+    "reason": "The question is answered by the ownership rules and by the normative source (Part XV's preamble: \"`std/**/*.em` holds the exact signatures and becomes normative for anything this Part leaves open\"). `std/src/collections.em` says of `[STD-7]`: \"`push` past `N` returns `Err(CapacityError.Full)` and changes nothing; `push_or_drop` drops the value instead\", and its body is `pub fn push(owns value: T) -> Result[void, CapacityError]: if this.count == N: return Err(CapacityError.Full)`: `value` is an `owns` parameter, so it ends at that return ([OWN-2], [DRP-1] \"runs exactly once per value, at the end of its life\"); nothing is lost or leaked ([PHIL-10]). `push_or_drop` is `_ = this.push(owns value)`, so the two differ only in the `Result` (\"changes nothing\" speaks of the container). Carrying the value back in `CapacityError.Full(v)` is a design change for the owner, not a hole, and it would change `CapacityError`, a unit-only enum `Pool.try_insert` ([HND-3]) and `FixedString.push_str` return too.",
+    "better_fix": "If the owner wants the value back, the general form is `push(owns v) -> Result[void, T]` on the fixed-capacity containers (the value is the error), leaving `CapacityError` to `Pool`; otherwise write in `[STD-7]`: \"a `push` that fails ends the value it was given (`[OWN-2]`); `push_or_drop` is `push` with the `Result` discarded\"."
+   }
+  ],
+  "missed": [
+   "[ECS-3] against the XII.3 example (ED): `emplace(e, owns value: T)` takes the value with `owns`, and [FN-2a] requires the word for a value made in the call (\"`take(owns [1, 2])` a list made in the call\"; a missing word is `E3028`), yet the Part's own example writes `reg.emplace(e, Position(value=Vec3.ZERO))` and `reg.emplace(e, Velocity(value=Vec3(1.0, 0.0, 0.0)))` with no `owns`, while XII.1 writes `ps.push(owns Particle(...))`. Program: the XII.3 example as printed; fix: `reg.emplace(e, owns Position(value=Vec3.ZERO))` on both lines (not an O13 unbuilt-syntax case: the text disagrees with itself).",
+   "[ERR-8] with [VER-5] (MEM, via the normative source): `AnyError`'s `[E] fn is() -> bool` and `fn downcast_ref() -> Option[ref E]` say nothing of what identity they compare, and [VER-5] lets \"Two majors of one package ... coexist, distinguished in symbol names\" while `type_name[T]()` is \"a type's fully qualified name\". `std/src/core.em` compares `type_identity[E]()`, \"a 128-bit hash of its canonical name, the same for one type in every module and every build\", and then reads the box through `unsafe fn dyn_payload`. Program: `net` v1 has `pub struct Timeout: ms: int`, v2 has `pub struct Timeout: secs: f64, retries: int`; `e: AnyError = net1.connect()?`-style error held in an `AnyError`; `if e.is[net2.Timeout](): t = e.downcast_ref[net2.Timeout]().unwrap(); println(t.retries)` reads a `v1.Timeout` as a `v2.Timeout`. Fix (general, same as G6-08's): `is`, `downcast_ref` and every library key by type compare the identity kind tests compare ([TYP-44], \"one compare of type indices\"), never a hash of a name; and [ECS-2]/`type_name` say whether the fully qualified name carries the package's major (it must, or two majors share it).",
+   "[STD-6] (GAP, the wider form of G6-14): no sentence maps a module or a name to a layer; the layers are described by kinds of content (\"**core** (scalars, `Option`, `Result`, views, fixed-capacity containers, math, SIMD)\") and the modules by name, and \"may use only core\" names no code. Program: a package with `[package] layers = [\"core\"]` writing `from std.collections import FixedArray` (a fixed-capacity container, core by the list, in the module that holds `Array`, alloc by the list) and `from std.string import StrView` (a view, core; in `std.string` beside `String`): accepted or refused, and with which code, is a guess. Fix: the layer column proposed under G6-14 and the `E1042` rule."
+  ]
+ }
+}

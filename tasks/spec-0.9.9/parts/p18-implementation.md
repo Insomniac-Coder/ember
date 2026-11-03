@@ -67,42 +67,44 @@ The reference implementation compiles Ember to C11 and hands it to the platform'
 
 ## XVIII.2 Symbol names
 
-* `[MNG-1]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **Mangling is injective.** A symbol is `em_`
-  followed by each path component (package, modules, item) written as its length in decimal and then
-  its text, then for a generic instance `G` and the first 16 hex digits of the BLAKE3 hash of the
-  canonical spelling of its arguments (`[MNG-6]`): module `lib/m_x.em`'s `f` is `em_3lib3m_x1f` and
-  module `lib/m.em`'s `x_f` is `em_3lib1m3x_f`. The root package's items have no package component
-  (its `main` is `em_4main`); a dependency's begin with its package's name. A method's path is its
-  type's path and its name, with the interface's path before the name for a method told apart by the
-  interface it implements (`[TYP-24]`). A built-in type's path is under `std.core`
-  (`std.core.StrView`), so a program's own `struct StrView`, `Never` or `CStrView` never shares one
-  with it; a structural type (a tuple, fixed array, function, pointer or `dyn` type) that owns a method
-  is `std.core.<kind>`, with its whole spelling as its arguments; `[CLO-3]`'s copy of a function for a
-  function passed to it is an instance of that function, the passed function among its arguments; and
-  `[MONO-10]`'s copy for one whole variable under two names is an instance too. Two distinct items
-  therefore never share a name (`[MOD-1]`). A hash collision between two instances is reported as
-  `E9040`, naming both, never as an internal error.
+* `[MNG-1]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)*
+  **Mangling is injective.** A symbol is `em_` followed by each path component (package, modules,
+  item) written as its length in decimal and then its text, then for a generic instance `G` and the
+  first 16 hex digits of the BLAKE3 hash of the canonical spelling of its arguments (`[MNG-6]`):
+  module `lib/m_x.em`'s `f` is `em_3lib3m_x1f` and module `lib/m.em`'s `x_f` is `em_3lib1m3x_f`. The
+  root package's items have no package component (its `main` is `em_4main`); a dependency's begin
+  with its package's name. A method's path is its type's path and its name, with the interface's
+  path before the name for a method told apart by the interface it implements (`[TYP-24]`). A
+  built-in type's path is under `std.core` (`std.core.StrView`), so a program's own `struct
+  StrView`, `Never` or `CStrView` never shares one with it; a structural type (a tuple, fixed array,
+  function, pointer or `dyn` type) that owns a method is `std.core.<kind>`, with its whole spelling
+  as its arguments; `[CLO-3]`'s copy of a function for a function passed to it is an instance of
+  that function, the passed function among its arguments; and `[MONO-10]`'s copy for one whole
+  variable under two names is an instance too. Two distinct items therefore never share a name
+  (`[MOD-1]`). A hash collision between two instances is reported as `E9040`, naming both, never as
+  an internal error.
 * `[MNG-2]` *(changed in 0.9.15)* `@unsafe(export("name"))` sets the symbol exactly (`[FFI-26]`).
 * `[MNG-3]` *(changed in 0.9.10)* Non-ASCII identifier characters are transliterated as `_uXXXX_`
   before the length is taken, and so is an ASCII `_` that begins what would otherwise read as an
-  escape (`_u`, four or more hex digits and `_`), as `_u005F_`. A component so transliterated has `u`
-  before its length: `café` is `u10caf_u00E9_`, the ASCII name `caf_u00E9_` is
+  escape (`_u`, four or more hex digits and `_`), as `_u005F_`. A component so transliterated has
+  `u` before its length: `café` is `u10caf_u00E9_`, the ASCII name `caf_u00E9_` is
   `u16caf_u005F_u00E9_`, and `é_u00E9_` and `éé` differ. C member names are spelled the same way,
   without the length, so two fields never share one.
 * `[MNG-4]` *(changed in 0.9.10)* Object structs, method tables and type information are named
   `em_obj_`, `em_vt_` and `em_ti_` followed by the type's mangled form without its own `em_`
   (`em_obj_6Animal`).
-* `[MNG-6]` *(new in 0.9.10)* *(changed in 0.9.15)* **The canonical spelling** of a generic instance's arguments, which
-  `[MNG-1]` hashes, is the same in every compiler, so separately compiled packages deduplicate
-  instances at link time (`[MONO-1]`). It is `[a, b]` for each generic level that has arguments, in
-  path order (the owner type's, then the interface's, then the method's own): a declared type by its
-  path, never by a name the compiler gave an instance, and an instance with its arguments; a scalar by
-  its keyword; `String`, `Array`, the spans and the generics the compiler makes (`Option`) under
-  `std.core`; tuples, fixed arrays, references, pointers and function types as written, the words of a
-  type with them (`owns T`, `shares mut T`, `weakref T`, `using A`, `thread_shared fn()`); a type
-  parameter as `$`, its name and its slot (`$T0`); a function given for a callable parameter as its
-  path after its type (`[fn(i64) -> i64 = add_one]`); and, for `[MONO-10]`'s copy, each pair of
-  parameters made one, after the arguments (`[a = b]`).
+* `[MNG-6]` *(new in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* **The canonical spelling** of a generic
+  instance's arguments, which `[MNG-1]` hashes, is the same in every compiler, so separately
+  compiled packages deduplicate instances at link time (`[MONO-1]`). It is `[a, b]` for each generic
+  level that has arguments, in path order (the owner type's, then the interface's, then the method's
+  own): a declared type by its path, never by a name the compiler gave an instance, and an instance
+  with its arguments; a scalar by its keyword; `String`, `Array`, the spans and the generics the
+  compiler makes (`Option`) under `std.core`; tuples, fixed arrays, references, pointers and
+  function types as written, the words of a type with them (`owns T`, `shares mut T`, `weakref T`,
+  `weakref thread_shared T`, `using A`, `thread_shared fn()`); a type parameter as `$`, its name and
+  its slot (`$T0`); a function given for a callable parameter as its path after its type (`[fn(i64)
+  -> i64 = add_one]`); and, for `[MONO-10]`'s copy, each pair of parameters made one, after the
+  arguments (`[a = b]`).
 
 ## XVIII.3 Monomorphisation
 
@@ -209,99 +211,101 @@ points, and with each call standing for what its callee's summary (`[BCK-8]`) sa
       return ref mut xs[0]
   ```
 
-  and a loop that conditionally stores a view in a local declared outside it and changes the place it
-  views on rounds where it did not.
-* `[BCK-7]` *(new in 0.9.9)* *(changed in 0.9.15)* **Links.** A place reached through a link
-  (`shares`, `shares mut`, `thread_shared`, `weakref`, `sharedref mut`) is in another object, and two
-  paths to such places follow `[BCK-3]`'s rule for links. A view of an object reached through a link
-  lives only while no line and no call in its life may end an object of its type (`E3060`), and across
-  a call that may change an object of its type a read-only view of one does not live (`E3021`), so a
-  walk across such a call keeps a `weakref` link and tests it at every step. Nothing is kept alive
-  while the program runs for such a view, except a view of a `thread_shared` object opened from a
-  `weakref` link, which holds one count for its life (`[RC-5]` point 2, `[RT-10]`).
+  and a loop that conditionally stores a view in a local declared outside it and changes the place
+  it views on rounds where it did not.
+* `[BCK-7]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **Links.** A place reached
+  through a link (`shares`, `shares mut`, `thread_shared`, `weakref`, `sharedref mut`) is in another
+  object, and two paths to such places follow `[BCK-3]`'s rule for links. A view of an object
+  reached through a link lives only while no line and no call in its life may end an object of its
+  type (`E3060`), and across a call that may change an object of its type a read-only view of one
+  does not live (`E3021`), so a walk across such a call keeps a `weakref` link and tests it at every
+  step. Nothing is kept alive while the program runs for such a view, except a name opened from a
+  `weakref thread_shared T` link, which holds one count for its life (`[RC-5]` point 2, `[RT-10]`).
 * `[BCK-8]` *(new in 0.9.15)* **Summaries.** For each function the compiler works out a summary from
   its body: what it may change, read and end, each with the chain of calls that does it, which
   messages name; which elements of a list it touches (a list parameter it only adds to, `push` or
   `extend`, keeps a position of that list usable across the call); which of its view parameters,
   `this` included, it uses after a line that may end or move what they view; what it reaches by
-  another name while a `ref mut` parameter is used; whether it sets the parent link of an object it is
-  given before reading it; and which locks it may take. A call contributes its callee's summary; a
-  call through a function value, or through an interface, `dyn` or virtual method, the union of the
-  summaries of every function the program can put there, the libraries' included; starting a thread or
-  a task, or handing a function to C to keep, the summary of that function; a foreign call those of
-  the Ember functions C may run then (`[FFI-52]`); and ending an object, its `drop`'s. Summaries are
-  the least fixed point over the whole program's call graph, so recursion is covered and the result
-  depends on nothing but the program; across a package's edge each is recorded in the package's
-  interface file (`[EFF-4]`), and a change to it is a change of the package's interface. Each call is
-  checked with its callee's summary: an argument that points into what the callee may end or move
-  before its last use of that parameter, or, for a `ref mut` parameter, into what the callee reaches
-  by another name while the parameter is used, is `E3031`, unless it is one whole variable proved when
-  compiling (`[MONO-10]`). Nothing is checked while the program runs.
+  another name while a `ref mut` parameter is used; whether it sets the parent link of an object it
+  is given before reading it; and which locks it may take. A call contributes its callee's summary;
+  a call through a function value, or through an interface, `dyn` or virtual method, the union of
+  the summaries of every function the program can put there, the libraries' included; starting a
+  thread or a task, or handing a function to C to keep, the summary of that function; a foreign call
+  those of the Ember functions C may run then (`[FFI-52]`); and ending an object, its `drop`'s.
+  Summaries are the least fixed point over the whole program's call graph, so recursion is covered
+  and the result depends on nothing but the program; across a package's edge each is recorded in the
+  package's interface file (`[EFF-4]`), and a change to it is a change of the package's interface.
+  Each call is checked with its callee's summary: an argument that points into what the callee may
+  end or move before its last use of that parameter, or, for a `ref mut` parameter, into what the
+  callee reaches by another name while the parameter is used, is `E3031`, unless it is one whole
+  variable proved when compiling (`[MONO-10]`). Nothing is checked while the program runs.
 
 ## XVIII.5 The runtime
 
 * `[RT-1]` *(changed in 0.9.9)* The runtime `ember_rt` is C11 depending on libc and the OS only.
-  Allocation uses the system `malloc`/`realloc`/`free` for alignments up to `alignof(max_align_t)` and
-  an aligned allocator above it; `realloc` grows in place where the allocator can. A host may supply
-  its own allocator (`[FFI-27]`).
+  Allocation uses the system `malloc`/`realloc`/`free` for alignments up to `alignof(max_align_t)`
+  and an aligned allocator above it; `realloc` grows in place where the allocator can. A host may
+  supply its own allocator (`[FFI-27]`).
 * `[RT-2]` The runtime has no global constructors; the generated `main` calls `ember_rt_init`.
-* `[RT-3]` `TypeInfo` holds size, alignment, flags, name, base, drop functions, method tables and, for
-  `@reflect` types, field descriptors.
-* `[RT-4]` A panic prints `panic at <file>:<line>:<col>: <message>` naming Ember entities (`[DIA-23]`),
-  a backtrace outside `release`, calls the host's panic hook if set, and aborts.
+* `[RT-3]` *(changed in 0.9.20)* `TypeInfo` holds size, alignment, flags (among them whether the
+  type's values carry the weak count and whether they may own values that do, `[OBJ-1]`), name,
+  base, drop functions, the hand-over routine (`[THR-2]`), method tables and, for `@reflect` types,
+  field descriptors.
+* `[RT-4]` A panic prints `panic at <file>:<line>:<col>: <message>` naming Ember entities
+  (`[DIA-23]`), a backtrace outside `release`, calls the host's panic hook if set, and aborts.
 * `[RT-6]` The runtime ABI version is `EMBER_RUNTIME_ABI`.
 * `[RT-5]` Every runtime symbol, macro and header name derives from one constant,
   `EMBER_SYMBOL_PREFIX` (default `ember`); `ember_rt.h` is generated with the literal names so C
   embedders can read it.
-* `[RT-7]` *(changed in 0.9.9)* *(changed in 0.9.15)* **A count is checked before it rolls over.** The
-  owner count of a `shares`, `shares mut` or `thread_shared` value, and the weak count of an object
-  `weakref` links may reach, are 32-bit numbers in its header. Before each +1 of a one-thread count it
-  is compared with its maximum, and at the maximum the program stops: "too many owners of a `Player`
-  (4,294,967,295)", and for the weak count "too many `weakref` links to a `Player` (4,294,967,295)";
-  one compare per added owner or link, no extra memory. A `thread_shared` value's home count
-  (`[RC-4]`) is checked as a one-thread count is; its away count and its weak count are raised by one
-  atomic add (`[RT-10]`), and the program stops when the value before the add is at or above
-  2,147,483,647, half the range, so that no number of threads adding at once can carry it past its
-  maximum: "too many owners of a `Log` (2,147,483,647)", and the same for its weak count. The two test
-  programs of these stops are compiled with an 8-bit count in each object (the test header
-  `#$ count_bits: 8`), stored and compared as the real one is, so 255 owners or links of a one-thread
-  value reach the limit and the next stops the program ("too many owners of a `Player` (255)"; 127
-  for a `thread_shared` value); every other program keeps the 32-bit count.
+* `[RT-7]` *(changed in 0.9.9)* *(changed in 0.9.15)* **A count is checked before it rolls over.**
+  The owner count of a `shares`, `shares mut` or `thread_shared` value, and the weak count of an
+  object `weakref` links may reach, are 32-bit numbers in its header. Before each +1 of a one-thread
+  count it is compared with its maximum, and at the maximum the program stops: "too many owners of a
+  `Player` (4,294,967,295)", and for the weak count "too many `weakref` links to a `Player`
+  (4,294,967,295)"; one compare per added owner or link, no extra memory. A `thread_shared` value's
+  home count (`[RC-4]`) is checked as a one-thread count is; its away count and its weak count are
+  raised by one atomic add (`[RT-10]`), and the program stops when the value before the add is at or
+  above 2,147,483,647, half the range, so that no number of threads adding at once can carry it past
+  its maximum: "too many owners of a `Log` (2,147,483,647)", and the same for its weak count. The
+  two test programs of these stops are compiled with an 8-bit count in each object (the test header
+  `#$ count_bits: 8`), stored and compared as the real one is, so 255 owners or links of a
+  one-thread value reach the limit and the next stops the program ("too many owners of a `Player`
+  (255)"; 127 for a `thread_shared` value); every other program keeps the 32-bit count.
 * `[RT-8]` *(changed in 0.9.15)* A `thread_shared` value's away count and its weak count (`[RC-4]`)
-  are atomic: an owner or a link made is a relaxed increment, one ended an acquire-release decrement;
-  putting a value in its making thread's queue is a release, and emptying the queue an acquire. Its home
-  count is plain: only its making thread reads or writes it. A `shares` value's counts are plain adds,
-  since no `shares` value reaches another thread.
-  Publishing a new `thread_shared` value to another thread is a release, and taking it there an
-  acquire.
-* `[RT-10]` *(new in 0.9.9)* *(changed in 0.9.15)* **Counting is inline.** A count changes only where a
-  line makes or ends a `shares`, `shares mut` or `thread_shared` owner or a `weakref` link, and where a
-  view of a `thread_shared` object is opened from a `weakref` link; an object with one owner is never
-  counted. The fast path of a +1 (the add and its limit test, `[RT-7]`) and of a -1 (the subtract and
-  a test for zero) is defined in `ember_rt.h` and inlined into the caller; only ending the object is
-  out of line. On a `thread_shared` value's making thread, until the value is handed over (`[RC-4]`
-  point 4), making or ending an owner is a plain add or subtract of its home count, inlined as a
-  one-thread count's is. On another thread, and after the hand-over, making an owner, or a `weakref`
-  link to the value, is one atomic `fetch_add` followed by the limit test on the value it returns, and
-  ending one is one atomic subtract, never a compare-exchange loop; a subtract that takes the away
-  count below zero puts the value in its making thread's queue in the same atomic step (out of line, as
-  are the hand-over and the queue's emptying at a check point). Opening a `weakref` link to a
-  `thread_shared` object is the one +1 that may find the object ended: on its making thread it tests
-  that the two counts add up to more than zero before adding to the home count; on another thread its
-  atomic add finds the ended mark and is undone; neither ever raises an ended object's count
-  (ODR-060). Opening a link to a one-thread object only tests its header. The subtract that
-  reaches zero marks the object ended before its `drop` runs, so a `weakref` link opened during the
-  `drop` finds it ended.
+  are atomic: an owner or a link made is a relaxed increment, one ended an acquire-release
+  decrement; putting a value in its making thread's queue is a release, and emptying the queue an
+  acquire. Its home count is plain: only its making thread reads or writes it. A `shares` value's
+  counts are plain adds, since no `shares` value reaches another thread. Publishing a new
+  `thread_shared` value to another thread is a release, and taking it there an acquire.
+* `[RT-10]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **Counting is inline.** A
+  count changes only where a line makes or ends a `shares`, `shares mut` or `thread_shared` owner or
+  a `weakref` link, and where a name is opened from a `weakref thread_shared T` link; an object with
+  one owner is never counted. The fast path of a +1 (the add and its limit test, `[RT-7]`) and of a
+  -1 (the subtract and a test for zero) is defined in `ember_rt.h` and inlined into the caller; only
+  ending the object is out of line. On a `thread_shared` value's making thread, until the value is
+  handed over (`[RC-4]` point 4), making or ending an owner is a plain add or subtract of its home
+  count, inlined as a one-thread count's is. On another thread, and after the hand-over, making an
+  owner, or a `weakref` link to the value, is one atomic `fetch_add` followed by the limit test on
+  the value it returns, and ending one is one atomic subtract, never a compare-exchange loop; a
+  subtract that takes the away count below zero puts the value in its making thread's queue in the
+  same atomic step (out of line, as are the hand-over and the queue's emptying at a check point).
+  Opening a `weakref thread_shared T` link is the one +1 that may find the object ended: on its
+  making thread it tests that the two counts add up to more than zero before adding to the home
+  count; on another thread its atomic add finds the ended mark and is undone; neither ever raises an
+  ended object's count (ODR-060). Opening a link to a one-thread object only tests its header. The
+  subtract that reaches zero marks the object ended before its `drop` runs, so a `weakref` link
+  opened during the `drop` finds it ended.
 * `[RT-11]` *(new in 0.9.9)* Allocation statistics are kept per thread, or only in `debug`; no
   allocation updates a shared non-atomic counter.
-* `[RT-12]` *(new in 0.9.9)* *(changed in 0.9.15)* **Stack overflow faults.** The backend compiles every
-  target with stack probes: it passes the probe flag to every C compiler that takes one
-  (`-fstack-clash-protection` for Clang and GCC, on every target; MSVC and clang-cl probe by default),
-  and refuses a toolchain that cannot probe (`E9014`, as `E9011` refuses one that cannot turn
-  contraction off); `ember build --emit c` writes, beside the C sources, the flags they must be
-  compiled with, the probe flag among them (`[CLI-2]`). So a frame larger than a page touches each page
-  in order; the runtime gives every thread it creates a guard page; and overflow aborts with
-  `stack overflow in <function>` in every profile. A stack write can never land beyond the guard page.
+* `[RT-12]` *(new in 0.9.9)* *(changed in 0.9.15)* **Stack overflow faults.** The backend compiles
+  every target with stack probes: it passes the probe flag to every C compiler that takes one
+  (`-fstack-clash-protection` for Clang and GCC, on every target; MSVC and clang-cl probe by
+  default), and refuses a toolchain that cannot probe (`E9014`, as `E9011` refuses one that cannot
+  turn contraction off); `ember build --emit c` writes, beside the C sources, the flags they must be
+  compiled with, the probe flag among them (`[CLI-2]`). So a frame larger than a page touches each
+  page in order; the runtime gives every thread it creates a guard page; and overflow aborts with
+  `stack overflow in <function>` in every profile. A stack write can never land beyond the guard
+  page.
 
 ## XVIII.6 Correctness of the implementation
 

@@ -72,7 +72,7 @@ needs         := type | "(" type {"," type} [","] ")"     -- one bare, several i
 bound_list    := type {"+" type}                        -- after `dyn` and `some` only
 where_clause  := "where" type ":" "needs" needs {"," type ":" "needs" needs}
 param_list    := param {"," param} [","]
-param         := [param_word] IDENT ":" ["runtime"] type ["..."] ["=" expression]   -- `Ts...`: the pack's values; `runtime` before a `dyn` type only ([LT-48])
+param         := [param_word] IDENT ":" ["runtime"] type ["..."] ["=" expression]   -- `Ts...`: the pack's values; `runtime` before `dyn` or an open class ([LT-48])
 param_word    := "ref" ["mut"] | "const" "ref" "mut" | "owns"
 
 struct_decl   := "struct" IDENT [implements] [where_clause] ":" type_body
@@ -167,9 +167,11 @@ comptime_block:= "comptime" ":" block
 type          := base_type ["using" path_type]
 base_type     := path_type | "ref" ["mut"] base_type | "sharedref" "mut" base_type
                | "owns" base_type | "shares" ["mut"] base_type | "thread_shared" base_type
-               | "weakref" base_type | "*" ["mut"] base_type | tuple_type | fn_type
+               | "weakref" ["thread_shared"] target_type | "*" ["mut"] base_type | tuple_type | fn_type
                | "dyn" bound_list | "some" bound_list | "[" type ";" expression "]"
                | "Self" | "void"
+target_type   := path_type | tuple_type | fn_type | "dyn" bound_list | "[" type ";" expression "]" | "Self"
+                                                     -- what a link names ([GRM-3a])
 path_type     := path_segment {"." path_segment}
 path_segment  := IDENT [generic_args]
 generic_args  := "[" generic_arg {"," generic_arg} [","] "]"
@@ -190,6 +192,19 @@ fn_type_param := [param_word] type
   `owns Mesh` whose block comes from a `LevelArena`. A function type's parameter words are the
   parameters' own (`fn(ref mut Ui)`, `fn(owns String) -> int`), and `thread_shared fn()` is a function
   any thread may run.
+* `[GRM-3a]` *(new in 0.9.20)* **What follows `weakref`.** After `weakref` stands the target's own
+  type, with `thread_shared` before it for a link to a `thread_shared` value: `parent: weakref Node
+  = None` links a node with one owner or with `shares` owners, `parent: weakref thread_shared Node =
+  None` a `thread_shared` node (`[TYP-45]`, `[WK-11]`). Any other word between `weakref` and the
+  type is `E0100`, whose message gives the line to write: `weakref shares T` and `weakref shares mut
+  T` ("a link does not say how its target's owners hold it: `weakref Player` links a player with one
+  owner or with `shares` owners alike; write `scout: weakref Player = None`"); `weakref owns T` ("a
+  value held `owns` has no header for a link to test; a link names a class object or a value held
+  `shares` or `thread_shared`: write `mesh: shares Mesh` in place of line 4 and `last: weakref Mesh
+  = None` here"); `weakref ref T`, `weakref ref mut T`, `weakref sharedref mut T`, `weakref weakref
+  T` and `weakref *T` ("a link names the value itself, not a view, a link or a pointer to it; write
+  `target: weakref Player = None`"). In a capture list and before a value, `weakref thread_shared`
+  stands only before `this` (`[OWN-13]`).
 * `[GRM-31]` *(new in 0.9.9)* *(changed in 0.9.10)* A `some` type (`[TYP-32]`) is legal only as a function's or a
   method's return type, or nested inside one; elsewhere it is `E2260`. A method an interface declares
   is not one: each implementation would choose its own type, so an associated type states it
@@ -201,7 +216,7 @@ fn_type_param := [param_word] type
 block         := NEWLINE INDENT {statement} DEDENT | simple_stmt NEWLINE
 statement     := {attribute} (simple_stmt NEWLINE | compound_stmt)
 simple_stmt   := var_decl | assignment | expr_list | "pass"
-var_decl      := IDENT ":" type ["=" expr_list]
+var_decl      := IDENT ":" ["runtime"] type ["=" expr_list]        -- `runtime` before `dyn` or an open class ([LT-48])
 assignment    := target_list "=" expr_list
                | target augassign expression
 target_list   := target {"," target} [","]
@@ -313,7 +328,7 @@ Precedence, lowest first. Operators on one row associate left unless noted.
 | 13 | `+` `-` | |
 | 14 | `*` `/` `//` `%` | |
 | 15 | `as` | postfix type conversion |
-| 16 | `-` `~` · `ref` `ref mut` `const ref mut` `copy of` `owns` `shares` `shares mut` `thread_shared` `weakref` `sharedref mut` · `cast … as` (prefix) | `-x as u8` is `(-x) as u8`; `ref a.b[i]` names `a.b[i]`; `copy of xs[0]` copies `xs[0]` |
+| 16 | `-` `~` · `ref` `ref mut` `const ref mut` `copy of` `owns` `shares` `shares mut` `thread_shared` `weakref` `sharedref mut` · `cast … as` (prefix) | `-x as u8` is `(-x) as u8`; `ref a.b[i]` names `a.b[i]`; `copy of xs[0]` copies `xs[0]`; `owns (i * 7)` hands the product over, and `owns i * 7` is refused (`[GRM-47]`) |
 | 17 | `**` | right-associative; binds tighter than a prefix `-` on its left: `-2**2 == -4` |
 | 18 | `using` | the instance a value is made in: `owns Mesh(…) using current` is `owns (Mesh(…) using current)` |
 | 19 | call, index, field, method, `?.`, postfix `?` | |
@@ -327,7 +342,7 @@ lambda        := ["@safety" "(" STRING ")"] ["once"] "fn" "(" [lambda_param {","
 lambda_param  := [param_word] IDENT [":" type]
 capture_list  := capture {"," capture}
 capture       := capture_word (IDENT | "this")
-capture_word  := "copy" "of" | "owns" | "shares" ["mut"] | "thread_shared" | "weakref" | "ref"
+capture_word  := "copy" "of" | "owns" | "shares" ["mut"] | "thread_shared" | "weakref" ["thread_shared"] | "ref"
 ternary       := or_expr ["if" or_expr "else" ternary]
 or_expr       := and_expr {"or" and_expr}
 and_expr      := not_expr {"and" not_expr}
@@ -344,7 +359,7 @@ multiplicative:= conversion {("*" | "/" | "//" | "%") conversion}
 conversion    := unary {"as" type}
 unary         := ("-" | "~") unary | value_word unary | "cast" postfix_expr "as" type | power
 value_word    := "ref" ["mut"] | "const" "ref" "mut" | "copy" "of" | "owns"
-               | "shares" ["mut"] | "thread_shared" | "weakref" | "sharedref" "mut"
+               | "shares" ["mut"] | "thread_shared" | "weakref" ["thread_shared"] | "sharedref" "mut"
 power         := made ["**" unary]
 made          := postfix_expr ["using" postfix_expr]
 postfix_expr  := atom {postfix}
@@ -371,115 +386,146 @@ match_expr    := "match" expression ":" NEWLINE INDENT {pattern ["if" expression
 * `[GRM-8]` `name[…]` in expression position is resolved during name resolution: if `name` denotes a
   generic function or type it is an instantiation, otherwise an index. `f[int](x)` instantiates then
   calls.
-* `[GRM-8a]` *(changed in 0.9.15)* Inside `[ ]` in expression position the parser commits to a type argument when the next
-  token is `ref`, `owns`, `shares`, `thread_shared`, `weakref`, `sharedref`, `*`, `dyn`, `some`, `fn`,
-  `once`, `extern` or `void`; otherwise it parses an expression and name resolution reinterprets it
-  as a type where `[GRM-8]` resolved an instantiation.
-* `[GRM-8b]` *(changed in 0.9.10)* *(changed in 0.9.15)* An index whose argument is a type is `E2172`; an instantiation
-  argument that is neither a type nor a constant, or an interface named bare as a type, which does not
-  say who owns its values (`[TYP-45]`), is `E2173`.
+* `[GRM-8a]` *(changed in 0.9.15)* Inside `[ ]` in expression position the parser commits to a type
+  argument when the next token is `ref`, `owns`, `shares`, `thread_shared`, `weakref`, `sharedref`,
+  `*`, `dyn`, `some`, `fn`, `once`, `extern` or `void`; otherwise it parses an expression and name
+  resolution reinterprets it as a type where `[GRM-8]` resolved an instantiation.
+* `[GRM-8b]` *(changed in 0.9.10)* *(changed in 0.9.15)* An index whose argument is a type is
+  `E2172`; an instantiation argument that is neither a type nor a constant, or an interface named
+  bare as a type, which does not say who owns its values (`[TYP-45]`), is `E2173`.
 * `[GRM-8c]` `IDENT = type` inside `[ ]` is an associated-type binding (`Iterator[Item = int]`).
-* `[GRM-10]` A `match` whose arms use `pattern: block` is a statement; one whose arms use
-  `pattern => expression` is an expression. Mixing the forms is `E0103`.
-* `[GRM-11]` There are no block expressions. A value computed by several statements is written with a
-  `match` expression, a conditional expression, a local function, or `comptime(…)`.
+* `[GRM-10]` A `match` whose arms use `pattern: block` is a statement; one whose arms use `pattern
+  => expression` is an expression. Mixing the forms is `E0103`.
+* `[GRM-11]` There are no block expressions. A value computed by several statements is written with
+  a `match` expression, a conditional expression, a local function, or `comptime(…)`.
 * `[GRM-16]` *(changed in 0.9.9)* `return`, `break` and `continue` are expressions of type `Never`;
-  `yield e` is an expression of type `void` (`[CORO-3]`). A jump is either a whole expression statement or the whole
-  body of a lambda, a match arm, or a conditional-expression branch; `a + return b` is `E0107`.
-* `[GRM-15]` *(changed in 0.9.10)* *(changed in 0.9.15)* `owns e` hands `e` over. It is written, and required, on the line
-  that makes a value for a place that owns it alone (`mesh=owns Mesh(points=[0.0])`,
-  `left=Some(owns Tree(value=2))`, `e.mesh = owns Mesh(points=[1.0, 2.0])`; `[TYP-45]`, `E2123`);
-  before the iterable of a `for` or of a comprehension's `for` clause (`[GRM-27]`) and before the
-  scrutinee of a `match`, where the default is a view, so that the loop or the branches take the value
-  over (`for x in owns xs:`, `match owns e:`); before an argument for an `owns` parameter, whatever is
-  given (`take(owns xs)`, `take(owns copy of xs)`, `take(owns [1, 2])`,
-  `xs.iter().for_each(owns fn(x: int): println(x))`; `[FN-2a]`, `E3028` without it); and in
-  `b = owns n` for a value `=` would copy (a number, a `bool`, a `StrView`, `[OWN-9]`), so that `n` ends
-  there. Before a name whose place already hands the value over with no word (`e.mesh = m`, `b = a` for
-  a value `=` hands over, `return a`), and before `fn` anywhere but an argument for an `owns` parameter,
-  it is `E0109`, whose message says to remove it (for `owns fn`, to name what the function takes on each
-  captured name: `fn() owns report:`). Before an argument for a parameter that only reads
-  (`show(owns xs)`) it is `E3028`, "`show` only reads its argument; remove `owns`: `show(xs)`".
+  `yield e` is an expression of type `void` (`[CORO-3]`). A jump is either a whole expression
+  statement or the whole body of a lambda, a match arm, or a conditional-expression branch; `a +
+  return b` is `E0107`.
+* `[GRM-15]` *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* `owns e` hands `e`
+  over. It is written, and required, on the line that makes a value for a place that owns it alone
+  (`mesh=owns Mesh(points=[0.0])`, `left=Some(owns Tree(value=2))`, `e.mesh = owns Mesh(points=[1.0,
+  2.0])`; `[TYP-45]`, `E2123`); before the iterable of a `for` or of a comprehension's `for` clause
+  (`[GRM-27]`) and before the scrutinee of a `match`, where the default is a view, so that the loop
+  or the branches take the value over (`for x in owns xs:`, `match owns e:`); before an argument for
+  an `owns` parameter, whatever is given (`take(owns xs)`, `take(owns copy of xs)`, `take(owns [1,
+  2])`, `xs.iter().for_each(owns fn(x: int): println(x))`; `[FN-2a]`, `E3028` without it); and in `b
+  = owns n` for a value `=` would copy (a number, a `bool`, a `StrView`, `[OWN-9]`), so that `n`
+  ends there. Before a value made on the line that is given to a place that is not an `owns T` (`b =
+  owns (n * 2)`, `b = owns f()`, `xs = owns [1, 2]`; the required case is `[TYP-45]`'s) it ends
+  nothing and is `E0109`: "`=` already hands a value made on the line over; remove `owns`: `b = n *
+  2`". Before a name whose place already hands the value over with no word (`e.mesh = m`, `b = a`
+  for a value `=` hands over, `return a`), and before `fn` anywhere but an argument for an `owns`
+  parameter, it is `E0109`, whose message says to remove it (for `owns fn`, to name what the
+  function takes on each captured name: `fn() owns report:`). Before an argument for a parameter
+  that only reads (`show(owns xs)`) it is `E3028`, "`show` only reads its argument; remove `owns`:
+  `show(xs)`".
 * `[GRM-17]` *(changed in 0.9.10)* A lambda with a `:` body inside brackets holds exactly one simple
-  statement (`[LEX-6a]`). More is `E0106`, whose help is to declare a local function on the preceding
-  line (`[GRM-28]`). Outside brackets, a `:` body on the lambda's own line is one simple statement,
-  ended by the statement's `NEWLINE`: `h = fn(x): total += x` assigns the lambda to `h`.
-* `[GRM-42]` *(new in 0.9.15)* **Capture words, and lists of names without types.** A lambda or a
-  local function names what it keeps after its brackets, with one word before each name and nothing
-  between the brackets and the first word: `fn() copy of score:`, `fn() owns players:`, `fn() shares
-  mut count:`, `fn() thread_shared log:`, `fn() weakref this:`, `fn() ref t:`. `copy of`, `owns`,
-  `shares`, `shares mut`, `thread_shared` and `weakref` mean what they mean before a value
-  (`[GRM-43]`), and `ref t` is a read-only view of what `t` names at that moment; a name not listed is
-  the real variable (`[CLO-2]`). `with` before the captures is `E0100` ("a function's captures follow
-  its brackets with no `with`: write `fn() copy of score:`"), and `ref mut` is not a capture word
-  (`E0120`: "remove `ref mut x`: without a word the function already uses the real `x`, and may change
-  it: `fn(): x += 1`"). In a list of names declared without types of their own (a capture list, a
-  loop's names, a pattern's names, the names after `exists as`, a lambda's parameters written without
+  statement (`[LEX-6a]`). More is `E0106`, whose help is to declare a local function on the
+  preceding line (`[GRM-28]`). Outside brackets, a `:` body on the lambda's own line is one simple
+  statement, ended by the statement's `NEWLINE`: `h = fn(x): total += x` assigns the lambda to `h`.
+* `[GRM-42]` *(new in 0.9.15)* *(changed in 0.9.20)* **Capture words, and lists of names without
+  types.** A lambda or a local function names what it keeps after its brackets, with one word before
+  each name and nothing between the brackets and the first word: `fn() copy of score:`, `fn() owns
+  players:`, `fn() shares mut count:`, `fn() thread_shared log:`, `fn() weakref this:`, `fn()
+  weakref thread_shared this:`, `fn() ref t:`. `copy of`, `owns`, `shares`, `shares mut`,
+  `thread_shared` and `weakref` mean what they mean before a value (`[GRM-43]`), and `ref t` is a
+  read-only view of what `t` names at that moment; a name not listed is the real variable
+  (`[CLO-2]`). `with` before the captures is `E0100` ("a function's captures follow its brackets
+  with no `with`: write `fn() copy of score:`"), and `ref mut` is not a capture word (`E0120`:
+  "remove `ref mut x`: without a word the function already uses the real `x`, and may change it:
+  `fn(): x += 1`"). In a list of names declared without types of their own (a capture list, a loop's
+  names, a pattern's names, the names after `exists as`, a lambda's parameters written without
   types) each word belongs to the one name after it, and a name with no word may not follow a name
-  with a word, so that no word can be read as covering the next name (`E0116`: "`ref mut` here belongs
-  to `pos` only; say what `vel` is: `for ref mut pos, ref vel in q:`, or `ref mut vel` to change it
-  too"). `ref` states a name's default, a read-only view, and may be written on any declared name. A
-  parameter list with types, and a call's arguments, are not such lists.
-* `[GRM-43]` *(new in 0.9.15)* **Words before a value.** `copy of`, `owns`, `shares`, `shares mut`,
-  `thread_shared`, `weakref`, `sharedref mut`, `ref`, `ref mut` and `const ref mut` stand before the
-  value they act on and bind as a prefix `-` does: `snapshot = copy of items`, `other = shares mut
-  items`, `cam.target = weakref player`, `Watcher(target=sharedref mut players[r])`,
-  `boss = ref mut enemies[0]`, `bump(ref mut a)`, `blend(const ref mut d, s)`. What each one makes is
-  Part VII's and Part VIII's; at a call they are the parameter's words (`[FN-1]`). `copy` is a
-  keyword only directly before `of`, and `of` only directly after `copy`. `sharedref` is always
-  followed by `mut`, before a value and in a type alike: alone it is `E0114` ("a link that only reads
-  may be held by any number of names: write `target: ref Player`; `sharedref` is for a link that may
-  change its target: `target: sharedref mut Player`"). `using` after a value names the instance of
-  the memory manager it is made in (`owns Mesh(points=[0.0, 1.0]) using current`, `[0.0, 1.0] using
-  current`, `Enemy(hp=500) using current`, `[TYP-46]`); it binds tighter than the words before a
-  value, so the mesh is made in `current` and then handed to its place.
+  with a word, so that no word can be read as covering the next name (`E0116`: "`ref mut` here
+  belongs to `pos` only; say what `vel` is: `for ref mut pos, ref vel in q:`, or `ref mut vel` to
+  change it too"). `ref` states a name's default, a read-only view, and may be written on any
+  declared name. A parameter list with types, and a call's arguments, are not such lists.
+* `[GRM-43]` *(new in 0.9.15)* *(changed in 0.9.20)* **Words before a value.** `copy of`, `owns`,
+  `shares`, `shares mut`, `thread_shared`, `weakref`, `sharedref mut`, `ref`, `ref mut` and `const
+  ref mut` stand directly before the value they act on and bind as a prefix `-` does, wherever they
+  stand, in a call's argument and on the right of `=` as anywhere else, so that the word is always
+  on the value it acts on: `snapshot = copy of items`, `other = shares mut items`, `cam.target =
+  weakref player`, `child.parent = weakref thread_shared this` (`[OWN-13]`),
+  `Watcher(target=sharedref mut players[r])`, `boss = ref mut enemies[0]`, `bump(ref mut a)`,
+  `blend(const ref mut d, s)`, `m.insert(owns (i * 7), owns i)` and `tx.send(owns (i * i))` (the
+  brackets say the product is what is handed over, `[GRM-47]`), `q = owns Mine(items=[9]) if input()
+  == "m" else owns Yours(items=[9])` (each branch says its word). A conditional expression or a
+  `match` expression given as one argument or as one value is given branch by branch: each branch
+  says the word the place takes, and a branch without it is what `[FN-2a]` says for the argument
+  (`E3028`). `owns i ** 2` is `owns (i ** 2)`, as `-i ** 2` is `-(i ** 2)` (row 17), and `owns
+  Mesh(points=[0.0]) using current` is `owns (Mesh(points=[0.0]) using current)` (row 18). What each
+  one makes is Part VII's and Part VIII's; at a call they are the parameter's words (`[FN-1]`).
+  `copy` is a keyword only directly before `of`, and `of` only directly after `copy`. `sharedref` is
+  always followed by `mut`, before a value and in a type alike: alone it is `E0114` ("a link that
+  only reads may be held by any number of names: write `target: ref Player`; `sharedref` is for a
+  link that may change its target: `target: sharedref mut Player`"). `using` after a value names the
+  instance of the memory manager it is made in (`owns Mesh(points=[0.0, 1.0]) using current`, `[0.0,
+  1.0] using current`, `Enemy(hp=500) using current`, `[TYP-46]`); it binds tighter than the words
+  before a value, so the mesh is made in `current` and then handed to its place.
+* `[GRM-47]` *(new in 0.9.20)* **`owns` is never an operand.** An operator reads its operands in
+  place (`a + b` calls `Add.add(a, b)` with both read in place, `[TYP-21]`), so `owns` before an
+  operand hands nothing to the operator and only ends the name: `owns i * 7` is `(owns i) * 7`,
+  which ends `i` and multiplies what it held. `owns` is the one word that ends what it stands
+  before; so an `owns` expression that is an operand of an operator of rows 4 to 17 of the table
+  (`or` to `**`: a comparison, `is`, `in`, a range's end, `as`, a prefix `-`, `~` or `not`
+  included), with or without brackets of its own, is `E0119`, whose message names the operator and
+  gives the line to write: in an argument, "`owns` here is an operand of `*`, which only reads `i`:
+  `i` would be handed over before the multiplication, and the product is a new value; write the
+  product in brackets: `m.insert(owns (i * 7), owns i)`"; on the right of `=`, "`owns` here is an
+  operand of `*`, which only reads `n`: `n` would end before the multiplication, and `=` hands the
+  product over with no word; write `b = n * 2`". The other words make a value and end nothing, so
+  before an operand each means what it means elsewhere (`copy of a + b` adds a copy of `a` to `b`;
+  `ref a + b` is `E0111`, `[GRM-36]`).
 * `[GRM-21]` `gen fn` declares a generator (`[CORO-1]`). It is legal wherever `fn` is, except in an
   `extern` block.
-* `[GRM-23]` `x in c` and `x not in c` are membership tests at comparison precedence. `not in` is one
-  operator: `x not in xs` never parses as `(not x) in xs`. Membership does not chain: `a in b in c` is
-  `E0102`.
-* `[GRM-24]` *(new in 0.9.9)* Ember has one path separator, `.`. A path resolves left to right: package, module, type,
-  associated item or variant. `::` is not a token (`[LEX-21]`).
-* `[GRM-25]` *(new in 0.9.9)* A chain of the comparison operators `==`, `!=`, `<`, `>`, `<=`, `>=` means what it means in
-  Python: `a < b <= c` is `a < b and b <= c`, each operand is evaluated at most once and left to right,
-  and evaluation stops at the first false comparison. `is` and `in` may not appear in a chain
-  (`E0102`).
-* `[GRM-26]` *(new in 0.9.9)* A `{…}` atom is a map literal if its first element is followed by `:`, and a set literal
-  otherwise. `{}` is an empty map; an empty set is written `Set[T]()`.
-* `[GRM-27]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* A comprehension is shorthand for an iterator pipeline and has exactly its meaning and
-  cost: `[f(x) for x in xs if p(x)]` is `xs.iter().filter(owns fn(x) => p(x)).map(owns fn(x) => f(x)).collect()`
-  into an `Array`; `{…}` forms collect into a `Set` or a `Map`. Clauses nest left to right as in
-  Python. The loop variables are scoped to the comprehension. A clause over `owns xs` takes the
-  collection over, as `for` does (`[CTL-1]`): the items the comprehension keeps are handed over into
-  the new collection, the rest end, and `xs` cannot be used afterwards (`[s for s in owns shapes if
-  s.area() > 1.0]`). Over a collection read in place the items are read-only views, which `copy of`
-  copies (`[copy of s for s in shapes if s.area() > 1.0]`), the collection staying as it was.
-* `[GRM-38]` *(new in 0.9.9)* *(changed in 0.9.15)* A parenthesised comprehension `(e for x in it if c)` is a **generator
-  expression**: the pipeline of `[GRM-27]` without the `collect`, a lazy `Iterator` that reads what it
-  iterates in place and allocates nothing. As the only argument of a call it needs no extra
-  parentheses: `sum(x * x for x in xs)`, `any(p.hp <= 0 for p in players)`. `(e)` without `for` is a
-  parenthesised expression, and `(e,)` a tuple.
+* `[GRM-23]` `x in c` and `x not in c` are membership tests at comparison precedence. `not in` is
+  one operator: `x not in xs` never parses as `(not x) in xs`. Membership does not chain: `a in b in
+  c` is `E0102`.
+* `[GRM-24]` *(new in 0.9.9)* Ember has one path separator, `.`. A path resolves left to right:
+  package, module, type, associated item or variant. `::` is not a token (`[LEX-21]`).
+* `[GRM-25]` *(new in 0.9.9)* A chain of the comparison operators `==`, `!=`, `<`, `>`, `<=`, `>=`
+  means what it means in Python: `a < b <= c` is `a < b and b <= c`, each operand is evaluated at
+  most once and left to right, and evaluation stops at the first false comparison. `is` and `in` may
+  not appear in a chain (`E0102`).
+* `[GRM-26]` *(new in 0.9.9)* A `{…}` atom is a map literal if its first element is followed by `:`,
+  and a set literal otherwise. `{}` is an empty map; an empty set is written `Set[T]()`.
+* `[GRM-27]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* A comprehension is
+  shorthand for an iterator pipeline and has exactly its meaning and cost: `[f(x) for x in xs if
+  p(x)]` is `xs.iter().filter(owns fn(x) => p(x)).map(owns fn(x) => f(x)).collect()` into an
+  `Array`; `{…}` forms collect into a `Set` or a `Map`. Clauses nest left to right as in Python. The
+  loop variables are scoped to the comprehension. A clause over `owns xs` takes the collection over,
+  as `for` does (`[CTL-1]`): the items the comprehension keeps are handed over into the new
+  collection, the rest end, and `xs` cannot be used afterwards (`[s for s in owns shapes if s.area()
+  > 1.0]`). Over a collection read in place the items are read-only views, which `copy of` copies
+  (`[copy of s for s in shapes if s.area() > 1.0]`), the collection staying as it was.
+* `[GRM-38]` *(new in 0.9.9)* *(changed in 0.9.15)* A parenthesised comprehension `(e for x in it if
+  c)` is a **generator expression**: the pipeline of `[GRM-27]` without the `collect`, a lazy
+  `Iterator` that reads what it iterates in place and allocates nothing. As the only argument of a
+  call it needs no extra parentheses: `sum(x * x for x in xs)`, `any(p.hp <= 0 for p in players)`.
+  `(e)` without `for` is a parenthesised expression, and `(e,)` a tuple.
 * `[GRM-39]` *(new in 0.9.9)* **Nesting depth.** Every compiler accepts expressions, statements,
-  patterns and types nested 256 levels deep, counting each operand, argument, element, bracket, block
-  and type argument as a level; an operator or method-call chain is as deep as it is long
-  (`1 + 1 + … + 1` is left-nested). A compiler may accept more and states how much (this one, 1,024).
-  A program nested more deeply than the compiler accepts is `E0112`, reported once where the limit is
+  patterns and types nested 256 levels deep, counting each operand, argument, element, bracket,
+  block and type argument as a level; an operator or method-call chain is as deep as it is long (`1
+  + 1 + … + 1` is left-nested). A compiler may accept more and states how much (this one, 1,024). A
+  program nested more deeply than the compiler accepts is `E0112`, reported once where the limit is
   passed; the compiler never ends without a diagnostic (ODR-070).
-* `[GRM-30]` *(new in 0.9.9)* *(changed in 0.9.15)* **Casts.** `cast s as Circle` gives the `Circle` that `s`, a value of an
-  interface or base-class type, holds, and stops the program if it is not one (`[TYP-44]`); `cast` is
-  a keyword only at the start of an operand directly before a name or `this` (`[LEX-15]`), and its
-  operand is a postfix expression (`pool = ref mut cast this.pools[k] as Pool[T]`). `as?` and `as!`
-  are lexed as single tokens (`[LEX-21]`) and are not Ember: either is `E1010`, whose message gives
-  the kind test (`if s is Circle as c:`, `[GRM-45]`) for a downcast that may fail and `cast s as
-  Circle` for one that stops the program; so are `cast s if Circle` and `cast s when Circle`.
+* `[GRM-30]` *(new in 0.9.9)* *(changed in 0.9.15)* **Casts.** `cast s as Circle` gives the `Circle`
+  that `s`, a value of an interface or base-class type, holds, and stops the program if it is not
+  one (`[TYP-44]`); `cast` is a keyword only at the start of an operand directly before a name or
+  `this` (`[LEX-15]`), and its operand is a postfix expression (`pool = ref mut cast this.pools[k]
+  as Pool[T]`). `as?` and `as!` are lexed as single tokens (`[LEX-21]`) and are not Ember: either is
+  `E1010`, whose message gives the kind test (`if s is Circle as c:`, `[GRM-45]`) for a downcast
+  that may fail and `cast s as Circle` for one that stops the program; so are `cast s if Circle` and
+  `cast s when Circle`.
 * `[GRM-32]` *(new in 0.9.9)* `comptime(e)` evaluates the expression `e` at compile time (`[CT-6]`).
-* `[GRM-36]` *(new in 0.9.9)* *(changed in 0.9.15)* `ref e`, `ref mut e` and `const ref mut e` name the place `e`: `ref e`
-  as a read-only view of it, `ref mut e` as a name that may change it (`[TYP-14]`). The operand MUST be
-  a place — a local, a field, an index, a dereferenced reference, a call whose result is `ref T` or
-  `ref mut T` (`r = ref mut first_even(ref mut xs)`), a cast of a place, or, before a call that gives a
-  `MutSpan`, that span's elements (`d = ref mut tracks[name].as_mut_span()`) — and `ref` of any other
-  expression is `E0111`, whose help is to bind the value to a local first. `ref` binds like unary
-  minus: `ref a.b[i]` names `a.b[i]`.
+* `[GRM-36]` *(new in 0.9.9)* *(changed in 0.9.15)* `ref e`, `ref mut e` and `const ref mut e` name
+  the place `e`: `ref e` as a read-only view of it, `ref mut e` as a name that may change it
+  (`[TYP-14]`). The operand MUST be a place — a local, a field, an index, a dereferenced reference,
+  a call whose result is `ref T` or `ref mut T` (`r = ref mut first_even(ref mut xs)`), a cast of a
+  place, or, before a call that gives a `MutSpan`, that span's elements (`d = ref mut
+  tracks[name].as_mut_span()`) — and `ref` of any other expression is `E0111`, whose help is to bind
+  the value to a local first. `ref` binds like unary minus: `ref a.b[i]` names `a.b[i]`.
 
 ## III.6 Patterns
 

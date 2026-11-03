@@ -40,117 +40,153 @@ change one place unordered.
 
 ## XI.1 What may reach another thread
 
-* `[THR-8]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* A type is **`Send`** when a value
-  of it may be handed over to another thread: nothing reachable from it (its fields, its elements, what
-  its `owns` parts hold, a function value's state) is a one-thread owner (`shares T`, `shares mut T`), a
-  `weakref` link to a value that is not `thread_shared`, a `sharedref mut` link (a view several holders
-  on one thread may change, `[LT-46]`), or bound to the thread that made it (a lock's
-  guard, a `Scope` or `JobScope`, a raw pointer, a `threads(creator)` handle). Structs, enums, tuples,
-  fixed arrays, collections and class objects are `Send` when every component is; an `owns T` when `T`
-  is; `ref T` and `Span[T]` when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is
-  `Send`; a `thread_shared T`, and a `weakref` link to one, when `T` is `Send` and `ThreadShared`;
-  `dyn I` when `I` requires it (`interface I: needs Send:`). Of the function types, `thread_shared fn()` is
-  `Send` (`[THR-1]`). A `Send` view still goes only where it cannot outlive what it views: to a scoped
-  task or a job of a scope, never to an unscoped thread (`[THR-2]`). `Send` is inferred from the
-  words and written only in bounds; the author of a type that holds a raw
-  pointer declares it with `unsafe extend T implements Send:` and a `# SAFETY:` note (`E3100` without
-  `unsafe`: "`Counter` holds a raw pointer, so the compiler cannot tell that another thread may have
-  it; say that you vouch for it: write `unsafe extend Counter implements Send:` with a `# SAFETY:` note
-  above it"). A thread-bound value sent to another thread is `E7008`.
-* `[THR-9]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A type is **`ThreadShared`** when several threads may
-  hold and read one value of it at once. It is inferred like `Send` and written only in bounds
-  (`[T: needs ThreadShared]` above `fn keep(xs: Array[T]) -> int:`) and in messages; `Sync` in a bound is
-  `E1010` ("`Sync` is the effect `@nosync` forbids, not a property of a type; for 'threads may share
-  it' write `[T: needs ThreadShared]` above `fn keep(x: T)`"). Structural types are `ThreadShared` when every
-  component is. `ref mut T`, `sharedref mut T`, `Cell`, `UnsafeCell`, raw pointers, `shares T`,
-  `shares mut T`, and a `weakref` link to a value that is not `thread_shared` are not. `Atomic[T]`, `Once`, `Lock`,
-  `Mutex[T]` for a `Send` `T` (one thread at a time holds its `ref mut T`), `RwLock[T]` and
-  `thread_shared T` for a `T` that is `Send` and `ThreadShared` (several threads hold a `ref T` at
-  once: `RwLock[Cell[int]]` is not `ThreadShared`), and a channel's `Sender` are.
-* `[THR-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* **A value several threads own is made
-  `thread_shared`.** `thread_shared x` makes one more owner of `x`, which may be on any thread; it is
-  written before a new value (`st = thread_shared Stats()`) or on a value already `thread_shared`
-  (`fn() thread_shared st:`), and on a value made otherwise it is `E7017` ("`names` is
-  `share_and_keep`'s own object, which it may change; to share it between threads, create it shared:
-  `names = thread_shared Names()`"). A `thread_shared` value lives until its last owner ends. Its
-  owners are counted in two numbers, its making thread's and the other threads' (atomic), and its weak
-  count is atomic (`[RC-4]`); each is compared with its limit before it grows (Part VIII). Three rules keep it safe:
-  * **no owner changes a `thread_shared` value directly** (`E7014`: "`names` is shared between threads
-    (line 5), so no owner changes it directly, and line 6 pushes to its list; fill the list where the
-    object is made: write `names = thread_shared Names(items=[copy of s])` instead of lines 5 and 6");
-    its state changes only through an `Atomic`, a `Mutex`, an `RwLock`, a channel end, or a field
-    `guarded by` a lock, under that lock (`[THR-18]`);
-  * everything reachable from it is `Send` (`[THR-8]`): a one-thread owner, a `weakref` link to a value
-    that is not `thread_shared`, or a plain `fn()` value reachable from it is `E7015` at the line that
-    makes it `thread_shared` ("`Bus.handlers` holds plain `fn()` values, and a `thread_shared Bus` may
-    run them on any thread; write `handlers: Array[thread_shared fn()] = []` in `Bus`");
+* `[THR-8]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* A
+  type is **`Send`** when a value of it may be handed over to another thread: nothing reachable from
+  it (its fields, its elements, what its `owns` parts hold, a function value's state) is a
+  one-thread owner (`shares T`, `shares mut T`), a `weakref T` link (one to a value on one thread,
+  `[WK-11]`), a `sharedref mut` link (a view several holders on one thread may change, `[LT-46]`),
+  or bound to the thread that made it (a lock's guard, a `Scope` or `JobScope`, a raw pointer, a
+  `threads(creator)` handle). Structs, enums, tuples, fixed arrays, collections and class objects
+  are `Send` when every component is; an `owns T` when `T` is; `ref T` and `Span[T]` when `T` is
+  `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is `Send`; a `thread_shared T`, and a
+  `weakref thread_shared T`, when `T` is `Send` and `ThreadShared`; `dyn I` when `I` requires it
+  (`interface I: needs Send:`). Of the function types, `thread_shared fn()` is `Send` (`[THR-1]`). A
+  `Send` view still goes only where it cannot outlive what it views: to a scoped task or a job of a
+  scope, never to an unscoped thread (`[THR-2]`). `Send` is inferred from the words and written only
+  in bounds; the author of a type that holds a raw pointer declares it with `unsafe extend T
+  implements Send:` and a `# SAFETY:` note (`E3100` without `unsafe`: "`Counter` holds a raw
+  pointer, so the compiler cannot tell that another thread may have it; say that you vouch for it:
+  write `unsafe extend Counter implements Send:` with a `# SAFETY:` note above it"). A thread-bound
+  value sent to another thread is `E7008`. So a class with a `weakref T` field has no
+  `thread_shared` objects: `root = thread_shared Node()` for a `class Node:` with `parent: weakref
+  Node = None` is `E7015` at that line ("`Node.parent` is a `weakref Node`, a link kept on one
+  thread, so a `Node` is not `Send`; for nodes shared between threads write `parent: weakref
+  thread_shared Node = None` (line 3), link them `child.parent = weakref thread_shared this` (line
+  9), and make every node `thread_shared Node()`"); so has a class whose own methods write `weakref
+  this` (`[OWN-13]`).
+* `[THR-9]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A type is
+  **`ThreadShared`** when several threads may hold and read one value of it at once. It is inferred
+  like `Send` and written only in bounds (`[T: needs ThreadShared]` above `fn keep(xs: Array[T]) ->
+  int:`) and in messages; `Sync` in a bound is `E1010` ("`Sync` is the effect `@nosync` forbids, not
+  a property of a type; for 'threads may share it' write `[T: needs ThreadShared]` above `fn keep(x:
+  T)`"). Structural types are `ThreadShared` when every component is. `ref mut T`, `sharedref mut
+  T`, `Cell`, `UnsafeCell`, raw pointers, `shares T`, `shares mut T`, and a `weakref T` link are
+  not. `Atomic[T]`, `Once`, `Lock`, `Mutex[T]` for a `Send` `T` (one thread at a time holds its `ref
+  mut T`), `RwLock[T]` and `thread_shared T` for a `T` that is `Send` and `ThreadShared` (several
+  threads hold a `ref T` at once: `RwLock[Cell[int]]` is not `ThreadShared`), a `weakref
+  thread_shared T` for such a `T`, and a channel's `Sender[T]` for a `Send` `T` are (`[THR-15]`).
+* `[THR-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **A value several
+  threads own is made `thread_shared`.** `thread_shared x` makes one more owner of `x`, which may be
+  on any thread; it is written before a new value (`st = thread_shared Stats()`) or on a value
+  already `thread_shared` (`fn() thread_shared st:`), and on a value made otherwise it is `E7017`
+  ("`names` is `share_and_keep`'s own object, which it may change; to share it between threads,
+  create it shared: `names = thread_shared Names()`"). A `thread_shared` value lives until its last
+  owner ends. Its owners are counted in two numbers, its making thread's and the other threads'
+  (atomic), and its weak count is atomic (`[RC-4]`); each is compared with its limit before it grows
+  (Part VIII). Three rules keep it safe:
+  * **no owner changes a `thread_shared` value directly** (`E7014`: "`names` is shared between
+    threads (line 5), so no owner changes it directly, and line 6 pushes to its list; fill the list
+    where the object is made: write `names = thread_shared Names(items=[copy of s])` instead of
+    lines 5 and 6"); its state changes only through an `Atomic`, a `Mutex`, an `RwLock`, a channel
+    end, or a field `guarded by` a lock, under that lock (`[THR-18]`);
+  * everything reachable from it is `Send` (`[THR-8]`): a one-thread owner, a `weakref T` link, or a
+    plain `fn()` value reachable from it is `E7015` at the line that makes it `thread_shared`
+    ("`Bus.handlers` holds plain `fn()` values, and a `thread_shared Bus` may run them on any
+    thread; write `handlers: Array[thread_shared fn()] = []` in `Bus`");
   * **`thread_shared fn()`** is a function any thread may run. It holds only `thread_shared` owners,
-    values handed over to it and copies, never a one-thread owner or a `weakref` link to one (`E7015`:
-    "`on_event` keeps functions any thread may run (`thread_shared fn()`), and this one holds `count`, a
-    `shares mut` owner, which stays on one thread; share the counter between threads: write
-    `count = thread_shared Counter()` in place of line 12, give `Counter` the field
-    `n: Atomic[int] = Atomic(0)` (with `from std.sync import Atomic` at the top), and pass
-    `fn() thread_shared count: count.n.fetch_add(1)`"). A list, field or parameter whose functions may
-    run on any thread says so in its type: `handlers: Array[thread_shared fn()] guarded by lock = []`.
+    values handed over to it and copies, never a one-thread owner or a `weakref T` link (`E7015`:
+    "`on_event` keeps functions any thread may run (`thread_shared fn()`), and this one holds
+    `count`, a `shares mut` owner, which stays on one thread; share the counter between threads:
+    write `count = thread_shared Counter()` in place of line 12, give `Counter` the field `n:
+    Atomic[int] = Atomic(0)` (with `from std.sync import Atomic` at the top), and pass `fn()
+    thread_shared count: count.n.fetch_add(1)`"). A list, field or parameter whose functions may run
+    on any thread says so in its type: `handlers: Array[thread_shared fn()] guarded by lock = []`.
 
-  As a parameter's type, `log: thread_shared Log` reads the caller's value with no count, and
-  `owns log: thread_shared Log` takes one owner. A class needs no mark to be shared between threads:
-  `@sync` is not Ember (`E0104`: "`@sync` is gone: a class needs no mark to be shared between threads,
-  and `Stats`'s fields are `Atomic`, which threads may change as they are; remove `@sync` (line 1)").
-* `[THR-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **A one-thread value never reaches another
-  thread.** A `shares` or `shares mut` owner counts its owners with plain adds, and every object that is
-  not `thread_shared` counts its `weakref` links with plain adds. So no such owner, and no `weakref`
-  link to such a value, reaches another thread by any route: captured or held by a function any thread
-  may run (`thread_shared fn()`, the function of `thread.spawn` or `jobs.submit`, a callback C may run on
-  another thread), handed to an unscoped thread or a job, or reachable from a `thread_shared` value
-  (`[THR-1]`); and neither does a view of a place this thread owns, which an unscoped thread may outlive
-  (`E7015`, whose message gives the words to write: the value made `thread_shared` from the start, or a
-  copy). **Making, ending or opening a `weakref` link touches its target's header** (its weak count, and
-  the test that it still lives): in a scoped task, a job, or any function that may run on another thread
-  than its target's owner, it is allowed only for a `thread_shared` target, whose counts are kept for
-  several threads and whose opened view holds a count (`[RC-4]`, `[RC-5]` point 2; `E7015`: "`players[0]` counts its links without atomics, and
-  the task on line 9 makes one too; make the links after the scope, or make the player
-  `thread_shared`"). **An object handed whole to another thread leaves its `weakref` links behind**
-  (verdict 114; Rust's `Rc::try_unwrap`). At the hand-over the program reads the object's weak count,
-  one compare. With no link, the object goes as it is. With a link, its contents move to a new block
-  for the other thread, and the old block is marked ended (its `drop` does not run; the new block's
-  runs once, on the other thread) and stays on this thread until its last link ends, so every link here
-  finds it ended (`[WK-12]`): after `w = weakref names` and
-  `h = thread.spawn(owns fn() owns names: names.items.len())`, `if w exists as p:` is skipped and
-  `h.join()` gives 0. The same is done for every object the handed object owns whose class a `weakref`
-  is made to anywhere in the program (the compiler knows those classes; one compare each), so after
-  `cam.target = weakref level.enemies[0]`, handing `level` over leaves `cam.target` finding enemy 0
-  ended. An object whose address C keeps (`[FFI-35a]`) never moves: a link to it at the hand-over
-  stops the program ("`names` goes to another thread while `w`, a `weakref` link on this thread, points
-  at it, and C keeps its address (`register(names)`, line 4), so it cannot move; end the link first:
-  `w = None`"). A hand-over to another thread is a reshape of what is handed over (§VII.1): no view into it, a
-  `sharedref mut` link into a list of struct values included, is used after it (`E3060`), and a view
-  opened from a link is not used after a hand-over that may move its object (`[RC-5]` point 1). The other thread never touches this thread's counts: the old block stays here
-  with the links, and the new one starts with none. So an object that stays on one thread needs no
-  atomic count.
-* `[THR-7]` *(changed in 0.9.15)* `thread_shared` means exactly: the value may have owners on several
-  threads, its counts are kept for several threads (`[RC-4]`), and no owner changes it directly (`[THR-1]`). It does not make a method
-  atomic: two operations on `Atomic` fields, or a read and a store of one
-  (`if n > this.longest.load(): this.longest.store(n)`), are two steps another thread may come between;
-  a read and a change that must stay together are made under one lock (`[THR-18]`). A diagnostic MUST
-  NOT describe `thread_shared` or `ThreadShared` as "thread-safe".
+  As a parameter's type, `log: thread_shared Log` reads the caller's value with no count, and `owns
+  log: thread_shared Log` takes one owner. A class needs no mark to be shared between threads:
+  `@sync` is not Ember (`E0104`: "`@sync` is gone: a class needs no mark to be shared between
+  threads, and `Stats`'s fields are `Atomic`, which threads may change as they are; remove `@sync`
+  (line 1)").
+* `[THR-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **A one-thread value
+  never reaches another thread.** A `shares` or `shares mut` owner counts its owners with plain
+  adds, and every object that is not `thread_shared` counts its `weakref` links with plain adds. So
+  no such owner, and no `weakref T` link, reaches another thread by any route: captured or held by a
+  function any thread may run (`thread_shared fn()`, the function of `thread.spawn` or
+  `jobs.submit`, a callback C may run on another thread), handed to an unscoped thread or a job, or
+  reachable from a `thread_shared` value (`[THR-1]`); and neither does a view of a place this thread
+  owns, which an unscoped thread may outlive (`E7015`, whose message gives the words to write: the
+  value made `thread_shared` from the start, or a copy). **Making, ending or opening a `weakref`
+  link touches its target's header** (its weak count, and the test that it still lives): in a scoped
+  task, a job, or any function that may run on another thread than its target's owner, it is allowed
+  only through a `weakref thread_shared T`, whose target's counts are kept for several threads and
+  whose opened name holds a count (`[RC-4]`, `[RC-5]` point 2; `E7015`: "`players[0]` counts its
+  links without atomics, and the task on line 9 makes one too; make the links after the scope, or
+  make the player `thread_shared`"). **A `weakref T` link names only an object reached through this
+  thread's own owners** (as Rust's `Rc` never sits inside an `Arc`): `weakref x` where the place `x`
+  is reached through a `thread_shared` value is `E7015`, at the line or at a call whose callee makes
+  such a link to its parameter, by the callee's summary (`[OWN-13]`, `[BLD-14]` item 9); so the
+  thread that holds a `weakref T` link owns the link's target, which is why its count needs no
+  atomic. **An object handed whole to another thread leaves its `weakref` links behind** (verdict
+  114; Rust's `Rc::try_unwrap`). At the hand-over the program reads the object's weak count, one
+  compare. With no link, the object goes as it is. With a link, its contents move to a new block for
+  the other thread, and the old block is marked ended (its `drop` does not run; the new block's runs
+  once, on the other thread) and stays on this thread until its last link ends, so every link here
+  finds it ended (`[WK-12]`): after `w = weakref names` and `h = thread.spawn(owns fn() owns names:
+  names.items.len())`, `if w exists as p:` is skipped and `h.join()` gives 0. The same is done for
+  every object the handed object owns, all the way down, whose class family carries a weak count
+  (`[OBJ-1]`, read from the class's declaration, the same in every package; one compare each), and
+  for no object of a family that carries none, so after `cam.target = weakref level.enemies[0]`,
+  handing `level` over leaves `cam.target` finding enemy 0 ended. The walk follows the handed
+  value's fields and elements by their types, through `owns` blocks, `Option`s and collections (a
+  handed value owns no `shares` value and holds no `weakref T` link, `[THR-8]`), and stops at a
+  `thread_shared` value, whose counts are kept for several threads. A value whose layout the handing
+  package cannot see, an object held `dyn I`, an object of an `open` or `abstract` class
+  (`[CLS-4]`), or a function value's state, is walked by the **hand-over routine** its own package
+  compiled beside its `drop` and kept in its `TypeInfo` (`[RT-3]`; a generic instance's by the
+  package that instantiates it, as its `drop` is, `[MONO-1]`), so a kind declared in a package the
+  handing package never saw is walked as any other (`[BLD-16]`); a kind that carries no weak count
+  and owns nothing that does has no routine there, one load and one test. A value whose type can own
+  no object of a carrying family is handed over with no walk at all. No package needs to know which
+  classes the program links to. A line that makes a value `thread_shared` (`t = thread_shared
+  Tree(items=[item])`, `[THR-1]`), and a store under a lock into a field of one (`t.items.push(owns
+  item)`, `[THR-18]`), makes every class object the stored value owns reachable from any thread, and
+  is such a hand-over for each of them: the compare is made there, so a `weakref T` link made before
+  it (`w = weakref item`) finds its object ended afterwards, and no plain weak count is ever touched
+  from two threads. An object whose address C keeps (`[FFI-35a]`) never moves: a link to it at the
+  hand-over stops the program ("`names` goes to another thread while `w`, a `weakref` link on this
+  thread, points at it, and C keeps its address (`register(names)`, line 4), so it cannot move; end
+  the link first: `w = None`"). A hand-over to another thread is a reshape of what is handed over
+  (§VII.1): no view into it, a `sharedref mut` link into a list of struct values included, is used
+  after it (`E3060`), and a view opened from a link is not used after a hand-over that may move its
+  object (`[RC-5]` point 1). The other thread never touches this thread's counts: the old block
+  stays here with the links, and the new one starts with none. So an object that stays on one thread
+  needs no atomic count.
+* `[THR-7]` *(changed in 0.9.15)* `thread_shared` means exactly: the value may have owners on
+  several threads, its counts are kept for several threads (`[RC-4]`), and no owner changes it
+  directly (`[THR-1]`). It does not make a method atomic: two operations on `Atomic` fields, or a
+  read and a store of one (`if n > this.longest.load(): this.longest.store(n)`), are two steps
+  another thread may come between; a read and a change that must stay together are made under one
+  lock (`[THR-18]`). A diagnostic MUST NOT describe `thread_shared` or `ThreadShared` as
+  "thread-safe".
 * `[THR-13]` *(new in 0.9.9)* *(changed in 0.9.15)* **The data-race guarantee.** In Safe Ember every
   place two threads can reach is one of these, and each is ordered or only read:
   * a place a scoped task reads: neither the parent nor another task changes it until the join
-    (`[THR-11]`); the loop's own variable reaches a task only as the task's own copy, or as a view of the
-    element it is on, which the walked collection keeps unchanged until the join (`[THR-17]`);
+    (`[THR-11]`); the loop's own variable reaches a task only as the task's own copy, or as a view
+    of the element it is on, which the walked collection keeps unchanged until the join
+    (`[THR-17]`);
   * a place tasks change by a reduction: each task has its own accumulator, and the join orders them
     (`[THR-21]`);
-  * an `Atomic`, `Mutex`, `RwLock`, channel end or `guarded by` field: ordered by the atomic or by the
-    lock, which the thread that touches it holds (`[THR-3]`, `[THR-18]`);
-  * a value handed over to the other thread, which the giver no longer has, and from which no one-thread
-    value is reachable (`[THR-2]`, `[THR-8]`);
-  * a `thread_shared` value: no owner changes it directly, and its counts are kept for several threads (`[THR-1]`, `[RC-4]`);
-  * a module variable: a `static` never changes (`[STA-1]`), and a `static mut` is reached only by the
-    main thread and its scoped tasks, or is `guarded by` a lock (`[THR-20]`);
-  * a `sharedref mut` target: a scoped task changes it directly only where neither another task nor the
-    parent may touch it before the join, or by a reduction (`E7007`); an unscoped thread never holds one
-    (`E7015`).
+  * an `Atomic`, `Mutex`, `RwLock`, channel end or `guarded by` field: ordered by the atomic or by
+    the lock, which the thread that touches it holds (`[THR-3]`, `[THR-18]`);
+  * a value handed over to the other thread, which the giver no longer has, and from which no
+    one-thread value is reachable (`[THR-2]`, `[THR-8]`);
+  * a `thread_shared` value: no owner changes it directly, and its counts are kept for several
+    threads (`[THR-1]`, `[RC-4]`);
+  * a module variable: a `static` never changes (`[STA-1]`), and a `static mut` is reached only by
+    the main thread and its scoped tasks, or is `guarded by` a lock (`[THR-20]`);
+  * a `sharedref mut` target: a scoped task changes it directly only where neither another task nor
+    the parent may touch it before the join, or by a reduction (`E7007`); an unscoped thread never
+    holds one (`E7015`).
 
 ## XI.2 Threads and synchronisation (`std.thread`, `std.sync`)
 
@@ -172,81 +208,85 @@ fn main():
     println(total)
 ```
 
-* `[THR-10]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* `thread.spawn` runs a function on
-  a new thread, which may outlive the function that started it. It takes a function any thread may run,
-  `[R]` above `pub fn spawn(owns f: thread_shared fn() -> R) -> JoinHandle[R]:`, so a function that holds
-  a one-thread value is `E7015` (`[THR-1]`, `[THR-2]`), and `R` MUST be `Send` (`E7015`, `E7008`). What
-  the function holds from its maker is written in its capture list (`[THR-17]`). `h.join() -> R` waits
-  and returns the result. Dropping a `JoinHandle` detaches the thread. **Starting a thread counts as
-  making everything its function changes, now or later** (`[EFF-26]`): a `thread.spawn` inside a walk of
-  what the thread changes is `E3020` ("start it after the loop"), except where the thread makes that
-  change under a lock the walk holds, when the new thread waits for the lock until the loop ends; joining
-  such a thread inside that lock is `E7018` (`[THR-19]`).
-* `[THR-17]` *(new in 0.9.15)* **What an unscoped thread holds, and the loop's own variable.** An unscoped
-  thread (`thread.spawn`), a job submitted outside a scope (`[JOB-2]`) and a callback C keeps (Part XVI)
-  say in their capture list everything of their maker's that they use: `owns x` (handed over; the
-  maker's `x` ends), `thread_shared x` (one more owner), or `copy of x` (a copy of their own); a name
-  used with no word is `E7004` ("this thread may outlive `share_plain`, so it cannot use
-  `share_plain`'s `names`; say what the thread holds: `fn() owns names:` (handed over), or create it
-  shared, `names = thread_shared Names()`, and write `fn() thread_shared names:` (one more owner)").
-  `shares` and `shares mut` captures, and a `weakref` capture of a value that is not `thread_shared`,
-  are allowed only where the function stays on this thread, which a callback whose contract says
-  `threads(creator)` or `threads(main)` does, checked by the trampoline in every profile (Part XVI). A
-  module variable (`RESULTS`) needs no word. **The loop's own variable**, which the loop gives another
-  element every round, and a local of one round, which ends with it, are given to a task or a thread
-  with a word. `copy of t` gives it its own copy (for a `String`, one allocation and copy per task):
-  `thread.spawn(owns fn() copy of r: worker(r))`. For a scoped task, `ref t` lets it look at the element `t`
-  is on in that round, with no copy, since the walked collection cannot change until every task has
-  ended at the end of the `with scope` block (`scope.spawn(owns fn() ref t: total +=
-  t.split_whitespace().count())`). `ref t` where the function may still run after the element changes
-  or ends is `E3026`: a `thread.spawn` thread may outlive the loop ("the thread may still run after the
-  loop has moved on and `texts` is gone; give it its own copy: `thread.spawn(owns fn() copy of t: ...)`").
-  The loop's name used with no word is `E3026` for a scoped task, whose message gives both words ("the
-  task may still run in a later round, when `t` names another text; give it its own copy,
-  `scope.spawn(owns fn() copy of t: ...)`, or let it look at this round's text, `scope.spawn(owns fn() ref t:
-  ...)`"), and `E7004` for a `thread.spawn` thread, whose message gives `copy of t`.
-* `[THR-16]` *(new in 0.9.9)* When `main` returns, or `process.exit` is called, the process ends: other
-  threads stop without running destructors, no static is freed and no drop runs. The `debug` leak
-  report (`[WK-15]`) runs only if no other thread is still running, and otherwise says how many were.
-* `[THR-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* `Mutex[T]` is a value type. `m.lock()` blocks and
-  returns a `MutexGuard[T]`, a view of `m` that reads through to `ref mut T` (`[TYP-14]`); the mutex is
-  released when the guard ends, which `with g = m.lock():` places at the end of the block.
+* `[THR-10]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* `thread.spawn` runs a
+  function on a new thread, which may outlive the function that started it. It takes a function any
+  thread may run, `[R]` above `pub fn spawn(owns f: thread_shared fn() -> R) -> JoinHandle[R]:`, so
+  a function that holds a one-thread value is `E7015` (`[THR-1]`, `[THR-2]`), and `R` MUST be `Send`
+  (`E7015`, `E7008`). What the function holds from its maker is written in its capture list
+  (`[THR-17]`). `h.join() -> R` waits and returns the result. Dropping a `JoinHandle` detaches the
+  thread. **Starting a thread counts as making everything its function changes, now or later**
+  (`[EFF-26]`): a `thread.spawn` inside a walk of what the thread changes is `E3020` ("start it
+  after the loop"), except where the thread makes that change under a lock the walk holds, when the
+  new thread waits for the lock until the loop ends; joining such a thread inside that lock is
+  `E7018` (`[THR-19]`).
+* `[THR-17]` *(new in 0.9.15)* *(changed in 0.9.20)* **What an unscoped thread holds, and the loop's
+  own variable.** An unscoped thread (`thread.spawn`), a job submitted outside a scope (`[JOB-2]`)
+  and a callback C keeps (Part XVI) say in their capture list everything of their maker's that they
+  use: `owns x` (handed over; the maker's `x` ends), `thread_shared x` (one more owner), or `copy of
+  x` (a copy of their own); a name used with no word is `E7004` ("this thread may outlive
+  `share_plain`, so it cannot use `share_plain`'s `names`; say what the thread holds: `fn() owns
+  names:` (handed over), or create it shared, `names = thread_shared Names()`, and write `fn()
+  thread_shared names:` (one more owner)"). `shares` and `shares mut` captures, and a `weakref`
+  capture whose link is a `weakref T`, are allowed only where the function stays on this thread,
+  which a callback whose contract says `threads(creator)` or `threads(main)` does, checked by the
+  trampoline in every profile (Part XVI). A module variable (`RESULTS`) needs no word. **The loop's
+  own variable**, which the loop gives another element every round, and a local of one round, which
+  ends with it, are given to a task or a thread with a word. `copy of t` gives it its own copy (for
+  a `String`, one allocation and copy per task): `thread.spawn(owns fn() copy of r: worker(r))`. For
+  a scoped task, `ref t` lets it look at the element `t` is on in that round, with no copy, since
+  the walked collection cannot change until every task has ended at the end of the `with scope`
+  block (`scope.spawn(owns fn() ref t: total += t.split_whitespace().count())`). `ref t` where the
+  function may still run after the element changes or ends is `E3026`: a `thread.spawn` thread may
+  outlive the loop ("the thread may still run after the loop has moved on and `texts` is gone; give
+  it its own copy: `thread.spawn(owns fn() copy of t: ...)`"). The loop's name used with no word is
+  `E3026` for a scoped task, whose message gives both words ("the task may still run in a later
+  round, when `t` names another text; give it its own copy, `scope.spawn(owns fn() copy of t: ...)`,
+  or let it look at this round's text, `scope.spawn(owns fn() ref t: ...)`"), and `E7004` for a
+  `thread.spawn` thread, whose message gives `copy of t`.
+* `[THR-16]` *(new in 0.9.9)* When `main` returns, or `process.exit` is called, the process ends:
+  other threads stop without running destructors, no static is freed and no drop runs. The `debug`
+  leak report (`[WK-15]`) runs only if no other thread is still running, and otherwise says how many
+  were.
+* `[THR-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* `Mutex[T]` is a value type. `m.lock()` blocks
+  and returns a `MutexGuard[T]`, a view of `m` that reads through to `ref mut T` (`[TYP-14]`); the
+  mutex is released when the guard ends, which `with g = m.lock():` places at the end of the block.
   `m.try_lock() -> Option[MutexGuard[T]]` never blocks. A guard belongs to the thread that took the
-  lock: sending it to another thread is `E7008` ("`g` is the guard of `m`'s lock, which belongs to the
-  thread that took it; take the lock inside the task: write `fn add_one(m: Mutex[Array[int]]):` with the
-  body `with g = m.lock():` and, inside it, `g.push(owns 1)`, above line 11, and `scope.spawn(owns fn():
-  add_one(m))` in place of line 16"). A view made through a guard (`g[0]`, `ref g[0]`, a slice of `g`)
-  does not leave the `with` block (`E3063`: "this points into the locked list, which can change once the
-  lock ends; return a copy, or do the work inside the `with` block"), and the same holds for `RwLock`'s
-  guards and for a `guarded by` field inside its lock (`[BRW-20]`). There is no poisoning: a panic aborts
-  the process (`[PAN-1]`). `RwLock[T]` has `read()` (a shared guard, `ref T`) and `write()` (an exclusive
-  guard). `Once` runs an initialiser exactly once (`[STA-3]` is built on it). A `Mutex`, `RwLock`,
-  `Atomic` or channel end is changed through any name, a plain one included, by its own operations, and
-  an argument given to one takes no word at the call (`ref mut` before it is `E3028`: "`top` takes the
-  lock of `scores` itself; a `Mutex` takes no word at the call: `top(scores)`").
+  lock: sending it to another thread is `E7008` ("`g` is the guard of `m`'s lock, which belongs to
+  the thread that took it; take the lock inside the task: write `fn add_one(m: Mutex[Array[int]]):`
+  with the body `with g = m.lock():` and, inside it, `g.push(owns 1)`, above line 11, and
+  `scope.spawn(owns fn(): add_one(m))` in place of line 16"). A view made through a guard (`g[0]`,
+  `ref g[0]`, a slice of `g`) does not leave the `with` block (`E3063`: "this points into the locked
+  list, which can change once the lock ends; return a copy, or do the work inside the `with`
+  block"), and the same holds for `RwLock`'s guards and for a `guarded by` field inside its lock
+  (`[BRW-20]`). There is no poisoning: a panic aborts the process (`[PAN-1]`). `RwLock[T]` has
+  `read()` (a shared guard, `ref T`) and `write()` (an exclusive guard). `Once` runs an initialiser
+  exactly once (`[STA-3]` is built on it). A `Mutex`, `RwLock`, `Atomic` or channel end is changed
+  through any name, a plain one included, by its own operations, and an argument given to one takes
+  no word at the call (`ref mut` before it is `E3028`: "`top` takes the lock of `scores` itself; a
+  `Mutex` takes no word at the call: `top(scores)`").
 * `[THR-18]` *(new in 0.9.15)* **`Lock` and `guarded by`.** A `Lock` is a lock with no value inside;
-  `with x.lock:` holds it for the block. `guarded by lock` after a field's type (or a `static mut`'s,
-  `[THR-20]`) names the `Lock` that must be held for every read and change of that field outside `init`:
-  the field is used only inside `with x.lock:` on the same object `x` (the same name, not given another
-  object in the block; `this.lock` in a method), on the thread that holds it (`E7013`: "`words` is
-  guarded by `lock`; change it inside `with stats.lock:`"; "`b.words` is guarded by `b.lock`, and this
-  block holds `a.lock`; write `with b.lock:`"). Several fields may name one lock, and a class may have
-  several locks; `init` sets guarded fields without the lock.
-  * A `guarded by` field is a `Mutex` written as ordinary fields, and follows a `Mutex`'s rules: it is
-    changed under its lock through any name that reaches its object, a plain one included, with no word
-    at the call (`fn add_line(log: Log):` whose body is `with log.lock:` and, inside it,
-    `log.lines.push(owns String("hi"))`). An object whose every field that may change is `guarded by` its
-    lock, or is an `Atomic`, `Mutex` or `RwLock`, may reach one call through any number of names, a plain
-    argument and a function value that holds it included (`dump(log, fn() thread_shared log:
-    log.push("seen"))`): the lock keeps the ways in apart (`[BRW-11]`).
-  * A function whose body uses a guarded field without taking its lock is worked out to need that lock
-    held (its summary, `[EFF-24]`), and is called only where the lock is held (`E7013`).
+  `with x.lock:` holds it for the block. `guarded by lock` after a field's type (or a `static
+  mut`'s, `[THR-20]`) names the `Lock` that must be held for every read and change of that field
+  outside `init`: the field is used only inside `with x.lock:` on the same object `x` (the same
+  name, not given another object in the block; `this.lock` in a method), on the thread that holds it
+  (`E7013`: "`words` is guarded by `lock`; change it inside `with stats.lock:`"; "`b.words` is
+  guarded by `b.lock`, and this block holds `a.lock`; write `with b.lock:`"). Several fields may
+  name one lock, and a class may have several locks; `init` sets guarded fields without the lock.
+  * A `guarded by` field is a `Mutex` written as ordinary fields, and follows a `Mutex`'s rules: it
+    is changed under its lock through any name that reaches its object, a plain one included, with
+    no word at the call (`fn add_line(log: Log):` whose body is `with log.lock:` and, inside it,
+    `log.lines.push(owns String("hi"))`). An object whose every field that may change is `guarded
+    by` its lock, or is an `Atomic`, `Mutex` or `RwLock`, may reach one call through any number of
+    names, a plain argument and a function value that holds it included (`dump(log, fn()
+    thread_shared log: log.push("seen"))`): the lock keeps the ways in apart (`[BRW-11]`).
+  * A function whose body uses a guarded field without taking its lock is worked out to need that
+    lock held (its summary, `[EFF-24]`), and is called only where the lock is held (`E7013`).
   * **A direct call that takes a lock this thread already holds enters the callee past it**, without
-    taking it again, only where the compiler proves it is the very lock held: the same name, or `this`
-    of the object whose lock is held (`with log.lock: log.push("a")`, where `push` takes `this.lock`).
-    Where the callee's lock may be the held one and may not be, the call is `E7018` ("`other.push` takes
-    `other`'s lock, and `other` may be `held`, whose lock this thread holds; write `if other is not
-    held:` above line 13 and indent line 13 under it").
+    taking it again, only where the compiler proves it is the very lock held: the same name, or
+    `this` of the object whose lock is held (`with log.lock: log.push("a")`, where `push` takes
+    `this.lock`). Where the callee's lock may be the held one and may not be, the call is `E7018`
+    ("`other.push` takes `other`'s lock, and `other` may be `held`, whose lock this thread holds;
+    write `if other is not held:` above line 13 and indent line 13 under it").
 
   ```ember
   from std.sync import Lock
@@ -337,26 +377,31 @@ fn main():
   value has been stored, and another thread may observe it before the process aborts.
   `checked_fetch_add` never stores an overflowed value (it is a compare-exchange loop and returns
   `Option`), and `wrapping_fetch_add` wraps without a check.
-* `[THR-15]` *(new in 0.9.9)* *(changed in 0.9.15)* `channel[T](capacity=n) -> (Sender[T], Receiver[T])` is
-  a bounded many-producer, one-consumer queue; `channel_unbounded[T]()` has no bound and allocates as it
-  grows. `Sender` is `Send`, `ThreadShared` and `Clone` (`copy of tx` is another sender of the same
-  channel); `Receiver` is `Send`. `tx.send(owns v) -> Result[void, SendError[T]]` blocks while the queue is
-  full and returns the value when the receiver is gone; `rx.recv() -> Option[T]` blocks and returns
-  `None` once every sender has ended and the queue is empty; `try_send`/`try_recv` never block. A
-  `Receiver` is iterable; the loop ends at `None`. **When the `Receiver` ends, so do the values still
-  queued**: it takes them out under the channel's lock and ends them after letting the lock go, so a
-  `Sender` queued in its own channel (`tx.send(owns copy of tx)`) does not keep the channel alive.
-* `[THR-4]` In the `debug` profile the runtime records the order in which each thread takes locks and
-  prints `warning: lock order inversion` with both acquisition sites when two threads take two locks
-  in opposite orders. It never changes a program's behaviour.
-* `[THR-6]` *(changed in 0.9.9)* *(changed in 0.9.15)* A type whose `drop` a safety guarantee depends on is
-  `@must_drop`. A `@must_drop` value MUST NOT be stored in a class field, a `shares` or `thread_shared`
-  value, an `owns` block, a collection or a function value's state (a capture word), held across a
-  `yield` (`[CORO-13]`), or returned from the function that created it (`E3015`); every value's `drop`
-  runs at its end. The standard library applies it to `Scope` and `JobScope` only. It is structural: a
-  struct, enum, tuple or generic type that owns a `@must_drop` value is `@must_drop` too, whatever its
-  own `drop` does, so wrapping one hides nothing; a view of one is not, since it lives no longer than the
-  value it views. A `Scope` or `JobScope` cannot be put in a wrapper at all (`[THR-5]`) (ODR-054).
+* `[THR-15]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `channel[T](capacity=n) ->
+  (Sender[T], Receiver[T])` is a bounded many-producer, one-consumer queue; `channel_unbounded[T]()`
+  has no bound and allocates as it grows. `Sender[T]` and `Receiver[T]` are `Send`, and `Sender[T]`
+  is `ThreadShared`, exactly when `T` is `Send` (`[THR-8]`), so a one-thread owner never crosses
+  through a channel: an end of a channel of such a `T` given to another thread is `E7015` at that
+  line, as any value that is not `Send` (`[THR-2]`). `Sender` is `Clone` (`copy of tx` is another
+  sender of the same channel). `tx.send(owns v) -> Result[void, SendError[T]]` blocks while the
+  queue is full and returns the value when the receiver is gone; `rx.recv() -> Option[T]` blocks and
+  returns `None` once every sender has ended and the queue is empty; `try_send`/`try_recv` never
+  block. A `Receiver` is iterable; the loop ends at `None`. **When the `Receiver` ends, so do the
+  values still queued**: it takes them out under the channel's lock and ends them after letting the
+  lock go, so a `Sender` queued in its own channel (`tx.send(owns copy of tx)`) does not keep the
+  channel alive.
+* `[THR-4]` In the `debug` profile the runtime records the order in which each thread takes locks
+  and prints `warning: lock order inversion` with both acquisition sites when two threads take two
+  locks in opposite orders. It never changes a program's behaviour.
+* `[THR-6]` *(changed in 0.9.9)* *(changed in 0.9.15)* A type whose `drop` a safety guarantee
+  depends on is `@must_drop`. A `@must_drop` value MUST NOT be stored in a class field, a `shares`
+  or `thread_shared` value, an `owns` block, a collection or a function value's state (a capture
+  word), held across a `yield` (`[CORO-13]`), or returned from the function that created it
+  (`E3015`); every value's `drop` runs at its end. The standard library applies it to `Scope` and
+  `JobScope` only. It is structural: a struct, enum, tuple or generic type that owns a `@must_drop`
+  value is `@must_drop` too, whatever its own `drop` does, so wrapping one hides nothing; a view of
+  one is not, since it lives no longer than the value it views. A `Scope` or `JobScope` cannot be
+  put in a wrapper at all (`[THR-5]`) (ODR-054).
 
 ## XI.3 Scoped tasks
 
@@ -381,59 +426,61 @@ fn count_words(texts: Array[String]) -> int:
     return total
 ```
 
-* `[THR-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* `thread.scope()` returns a `Scope`, which MUST be
-  bound by a `with` (`E3014` otherwise). The `with` block is ordinary code of the enclosing function:
-  `return`, `break`, `continue` and `?` inside it mean what they mean anywhere else. On **every** exit
-  from the block — falling off its end, a jump, or `?` — the scope first joins every task spawned in it
-  that has not been joined, and then the exit completes; the value of a `return` is computed before the
-  join. The `Scope` binding is a view whose life is the block and is `@must_drop` (`[THR-6]`): it cannot
-  be handed over, stored, returned or held in a function value's state. A `with scope` block that ends
-  inside a lock's `with` block, when a task's function changes what that lock guards, is `E7018`
-  (`[THR-19]`).
-* `[THR-11]` *(new in 0.9.9)* *(changed in 0.9.15)* `scope.spawn` takes a plain function, `[R]` above
-  `fn spawn(owns f: fn() -> R) -> ScopedJoinHandle[R]:`. A task needs no capture words but for the
-  loop's own variable and a local of one round (`[THR-17]`): it uses the caller's real variables, which
-  outlive it. What each task changes and reads is worked out from its body and every function it may run
-  (`[EFF-24]`), and is checked against the other tasks and the parent until the task's join: `h.join()`
-  on its handle, or the end of the `with scope:` block for a task not joined before it (verdict 104).
-  After `h.join()` the parent may change or read what that task used, in the same block
-  (`counts[0] += 1` after `h.join()`), checked only against the tasks not yet joined: two of them
-  changing one place, or one reading a place another changes, is `E7007`, other than by a reduction
-  (`[THR-21]`), under a lock, or through an `Atomic`. A task that reads a place before changing it needs
-  the lock, which keeps the read and the change together ("two tasks change `stats.total` (line 19), and
-  each reads it first (`if stats.total < 10:`, line 18), so each may see a total the other is changing;
-  guard it, which keeps the read and the add together: write `from std.sync import Lock` at the top, in
-  `Stats` `lock: Lock = Lock()`, `total: int guarded by lock = 0` and `fn add_below(limit: int, n:
-  int):` whose body is `with this.lock:`, inside it `if this.total < limit:` and inside that
-  `this.total += n`, and call `stats.add_below(10, x)` in place of lines 18 and 19"). A task started
-  inside a walk of what it changes is `E3020` ("`scope.spawn(...)` (line 6) starts a task that pushes to
-  `names` (`fn(): names.push(owns String("x"))`), which this loop walks (line 5); start it after the loop:
-  move line 6 below the loop"), not `E7007`, whose fix would leave the walk refused. A task makes, ends
-  or opens a `weakref` link only to a `thread_shared` target, and makes no `shares` owner (`[THR-2]`).
+* `[THR-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* `thread.scope()` returns a `Scope`, which
+  MUST be bound by a `with` (`E3014` otherwise). The `with` block is ordinary code of the enclosing
+  function: `return`, `break`, `continue` and `?` inside it mean what they mean anywhere else. On
+  **every** exit from the block — falling off its end, a jump, or `?` — the scope first joins every
+  task spawned in it that has not been joined, and then the exit completes; the value of a `return`
+  is computed before the join. The `Scope` binding is a view whose life is the block and is
+  `@must_drop` (`[THR-6]`): it cannot be handed over, stored, returned or held in a function value's
+  state. A `with scope` block that ends inside a lock's `with` block, when a task's function changes
+  what that lock guards, is `E7018` (`[THR-19]`).
+* `[THR-11]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `scope.spawn` takes a
+  plain function, `[R]` above `fn spawn(owns f: fn() -> R) -> ScopedJoinHandle[R]:`. A task needs no
+  capture words but for the loop's own variable and a local of one round (`[THR-17]`): it uses the
+  caller's real variables, which outlive it. What each task changes and reads is worked out from its
+  body and every function it may run (`[EFF-24]`), and is checked against the other tasks and the
+  parent until the task's join: `h.join()` on its handle, or the end of the `with scope:` block for
+  a task not joined before it (verdict 104). After `h.join()` the parent may change or read what
+  that task used, in the same block (`counts[0] += 1` after `h.join()`), checked only against the
+  tasks not yet joined: two of them changing one place, or one reading a place another changes, is
+  `E7007`, other than by a reduction (`[THR-21]`), under a lock, or through an `Atomic`. A task that
+  reads a place before changing it needs the lock, which keeps the read and the change together
+  ("two tasks change `stats.total` (line 19), and each reads it first (`if stats.total < 10:`, line
+  18), so each may see a total the other is changing; guard it, which keeps the read and the add
+  together: write `from std.sync import Lock` at the top, in `Stats` `lock: Lock = Lock()`, `total:
+  int guarded by lock = 0` and `fn add_below(limit: int, n: int):` whose body is `with this.lock:`,
+  inside it `if this.total < limit:` and inside that `this.total += n`, and call
+  `stats.add_below(10, x)` in place of lines 18 and 19"). A task started inside a walk of what it
+  changes is `E3020` ("`scope.spawn(...)` (line 6) starts a task that pushes to `names` (`fn():
+  names.push(owns String("x"))`), which this loop walks (line 5); start it after the loop: move line
+  6 below the loop"), not `E7007`, whose fix would leave the walk refused. A task makes, ends or
+  opens only a `weakref thread_shared T` link, and makes no `shares` owner (`[THR-2]`, `[WK-11]`).
   `R` MUST be `Send`. `h.join() -> R` waits early.
-* `[THR-21]` *(new in 0.9.15)* **Reductions.** A task's `total += e` (and `-=`, `*=`, `|=`, `&=`, `^=`,
-  `max`, `min`, `push`, `extend`, `add`, `m[k] op= e`) on a local, or on a field of an object the tasks
-  reach (`scope.spawn(owns fn() copy of x: stats.total += x)`), a field reached through two `sharedref mut`
-  links to one object included, is a reduction: each task adds into a private accumulator, and the
-  accumulators are combined into the place at the join, in spawn order. Nothing reads the place before
-  the join (`E7007`: "tasks add their parts to `total`, which is known only once the `with` block (lines
-  11 to 14) ends; read it after the block: remove line 14 and write `println(total)` above line 15").
-  Each task's accumulator has the place's type, and its operations are checked as the place's are, and
-  so are the combining operations at the join (verdict 105): a whole-number total is the one adding one
-  by one gives whenever no task's own total overflows (`a.target.hp -= 1` and `b.target.hp -= 2` from
-  two tasks, `a` and `b` linking one player whose `hp` is 10, leave 7 every time), and a task whose own
-  total overflows stops the program there (`[TYP-8]`), even where adding one by one would not
-  (`[[-100], [100, 100]]` summed into an `i8` by two tasks stops in the second, at 100 + 100, where
-  adding one by one gives 100); a decimal total may differ from it in the last digit (`for part in [[0.1], [0.2, 0.3]]:` with
-  `scope.spawn(owns fn() copy of part: for x in part: total += x)` gives `0.6`, where adding one by one gives
+* `[THR-21]` *(new in 0.9.15)* **Reductions.** A task's `total += e` (and `-=`, `*=`, `|=`, `&=`,
+  `^=`, `max`, `min`, `push`, `extend`, `add`, `m[k] op= e`) on a local, or on a field of an object
+  the tasks reach (`scope.spawn(owns fn() copy of x: stats.total += x)`), a field reached through
+  two `sharedref mut` links to one object included, is a reduction: each task adds into a private
+  accumulator, and the accumulators are combined into the place at the join, in spawn order. Nothing
+  reads the place before the join (`E7007`: "tasks add their parts to `total`, which is known only
+  once the `with` block (lines 11 to 14) ends; read it after the block: remove line 14 and write
+  `println(total)` above line 15"). Each task's accumulator has the place's type, and its operations
+  are checked as the place's are, and so are the combining operations at the join (verdict 105): a
+  whole-number total is the one adding one by one gives whenever no task's own total overflows
+  (`a.target.hp -= 1` and `b.target.hp -= 2` from two tasks, `a` and `b` linking one player whose
+  `hp` is 10, leave 7 every time), and a task whose own total overflows stops the program there
+  (`[TYP-8]`), even where adding one by one would not (`[[-100], [100, 100]]` summed into an `i8` by
+  two tasks stops in the second, at 100 + 100, where adding one by one gives 100); a decimal total
+  may differ from it in the last digit (`for part in [[0.1], [0.2, 0.3]]:` with `scope.spawn(owns
+  fn() copy of part: for x in part: total += x)` gives `0.6`, where adding one by one gives
   `0.6000000000000001`), and is the same on every run, so it is not `Nondet` (`[DET-2]`). A plain
-  assignment from a task (`a.target.hp = 5`) and a task that reads the current value
-  (`if stats.total < 10: stats.total += x`) need a lock (`E7007`). A `thread.spawn` thread has no
+  assignment from a task (`a.target.hp = 5`) and a task that reads the current value (`if
+  stats.total < 10: stats.total += x`) need a lock (`E7007`). A `thread.spawn` thread has no
   reductions: it changes what other threads reach under a lock, or, where it only adds, through an
   `Atomic`.
-* `[THR-12]` *(new in 0.9.9)* *(changed in 0.9.15)* Tasks that must run in sequence and share data use two
-  scopes in sequence: the join at the end of the first is the ordering, and the views of the first end
-  there.
+* `[THR-12]` *(new in 0.9.9)* *(changed in 0.9.15)* Tasks that must run in sequence and share data
+  use two scopes in sequence: the join at the end of the first is the ordering, and the views of the
+  first end there.
 
 ## XI.4 Parallel loops
 
@@ -520,20 +567,24 @@ fn step(ref mut pos: MutSpan[Vec3], vel: Span[Vec3], ref mut life: MutSpan[f32],
         s.submit(owns fn(): age(ref mut life, dt))
 ```
 
-* `[JOB-1]` A job's captured state is stored inline in its queue slot when it fits in 64 bytes and in
-  one heap allocation otherwise (`Alloc`, reported by `ember inspect --alloc`).
-* `[JOB-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* `jobs.scope()` follows `[THR-5]` and `[THR-11]`:
-  `s.submit` on a `JobScope` takes a plain function (`owns f: fn()`), whose jobs may use the caller's own
-  variables, and the block's exit joins them. `jobs.submit` outside a scope takes a function any thread
-  may run, `pub fn submit(owns f: thread_shared fn()) -> JobHandle:`, as `thread.spawn` does
-  (`[THR-10]`, `[THR-17]`): a function that holds a one-thread value is `E7015`, and a name used with no
-  capture word `E7004`. `jobs.wait(h)` waits for it.
-* `[JOB-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* `s.submit_after(deps, f)` starts `f` only after
-  the jobs in `deps` have finished. It orders execution; it does not relax `[THR-11]`, which treats
-  every job of a scope as running at once. (The 0.9.8 declared read/write access sets, verified only in
-  debug builds, are removed: a safety property checked in one profile is not a guarantee, `[PHIL-13]`.)
-* `[JOB-5]` `jobs.local_arena()` returns an arena view for the current job, reset when the job ends;
-  allocations from it cannot escape the job.
+* `[JOB-1]` A job's captured state is stored inline in its queue slot when it fits in 64 bytes and
+  in one heap allocation otherwise (`Alloc`, reported by `ember inspect --alloc`).
+* `[JOB-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* `jobs.scope()` follows `[THR-5]` and
+  `[THR-11]`: `s.submit` on a `JobScope` takes a plain function (`owns f: fn()`), whose jobs may use
+  the caller's own variables, and the block's exit joins them. `jobs.submit` outside a scope takes a
+  function any thread may run, `pub fn submit(owns f: thread_shared fn()) -> JobHandle:`, as
+  `thread.spawn` does (`[THR-10]`, `[THR-17]`): a function that holds a one-thread value is `E7015`,
+  and a name used with no capture word `E7004`. `jobs.wait(h)` waits for it.
+* `[JOB-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* `s.submit_after(deps, f)` starts `f` only
+  after the jobs in `deps` have finished. It orders execution; it does not relax `[THR-11]`, which
+  treats every job of a scope as running at once. (The 0.9.8 declared read/write access sets,
+  verified only in debug builds, are removed: a safety property checked in one profile is not a
+  guarantee, `[PHIL-13]`.)
+* `[JOB-5]` *(changed in 0.9.20)* `jobs.local_arena()` gives a `ref mut ThreadArena` whose region is
+  the function the job runs, as a local of that function has, and the arena is reset when the job
+  ends: a value made in it that would leave that function is `E3063` (`[LT-4]`), and a call of it
+  outside a job stops the program ("`jobs.local_arena()` on line 7: `tick` is not running as a
+  job").
 
 ## XI.6 Async
 

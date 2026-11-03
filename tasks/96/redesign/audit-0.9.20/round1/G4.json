@@ -1,0 +1,434 @@
+{
+ "group": "G4",
+ "title": "Parts IX and X (memory facilities, unsafe; effects, contracts, the cost model)",
+ "found": {
+  "group": "G4: Parts IX and X (memory facilities, unsafe; effects, contracts, the cost model)",
+  "findings": [
+   {
+    "id": "G4-01",
+    "rules": [
+     "EFF-2",
+     "EFF-4",
+     "EFF-25",
+     "BRW-18",
+     "EFF-6",
+     "DET-3"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "A callee another package can supply is counted by nobody at the library's own line (extends O1 to summaries and contract verdicts)",
+    "program": "# package `bus`, a library compiled once\npub type Handler = fn()\nstatic mut HANDLERS: Array[Handler] = []\n\npub fn add(owns h: Handler):\n    HANDLERS.push(owns h)\n\n@noalloc\npub fn run_all():\n    for h in HANDLERS:          # walks HANDLERS\n        h()                     # <- BREAKS: [EFF-2] counts the functions `bus` stores into Handler places (none reshape HANDLERS, none allocate): no E3020, no E4001, and the line is compiled once\n\n# package `app`\nfrom bus import add, run_all\nfn main():\n    add(owns fn(): add(owns fn(): pass))   # a handler that adds a handler (and allocates)\n    run_all()                               # h() runs `add`: HANDLERS grows and moves its buffer under the walk; the loop reads freed memory. The same with a `virtual` method of a `pub` class, or a `dyn I` of a `pub` interface, whose override `app` writes.",
+    "why": "[EFF-2]: \"For a field, a list element, a parameter or a local of a function type, it is every lambda and named function the program puts in that place, a library's included (verdict 122)\" and \"For an interface, `dyn` or `virtual` method, it is every implementation and override the program has\": a whole-program fact, unknown when `bus` is compiled. [EFF-4]: \"the function values the package stores into a function type and the callbacks it hands to C, which a program that uses the package counts wherever such a value is called\": the dependant counts the library's stores at the dependant's lines; nothing says what the library's own `h()` line counts for the stores a dependant will make, and [EFF-25] decides `E3020` at that line \"and nothing is checked while the program runs\". [BRW-18] says the walk is `E3020` \"through any call that may change it\", judged by the summary the library computed. [EFF-6] checks a contract \"over the whole reachable call graph\", which the library cannot see. O1 covers layout and code ([OBJ-1], [THR-2], [WK-18]); this is the same shape for the summaries and the contract verdicts.",
+    "proposed_text": "Add after `[EFF-2]`:\n\n* `[EFF-2a]` **A callee another package can supply.** Inside the package that declares them, a place of a function type that another package can store into (a parameter of a `pub` function, a `pub` field, a `pub` `static`, an element of a list or map such a place holds, and every place a value from one of them is copied into), a `virtual` method of a `pub` class and a method of a `pub` interface called through `dyn` have, beside the functions this package stores or declares there (`[EFF-2]`), the functions another package may put there: such a call counts as calling every `pub` function of this package, as changing every place a `pub` name of this package reaches (a `pub static mut`; the fields of an object a `pub` function is given, returns or holds), and as having every effect the place's type's contracts do not exclude. A place or method no other package can reach keeps `[EFF-2]`'s rule. The message names the route: `E3020` \"`h()` (line 11) may add to `HANDLERS` (through `add`, which a function another package stores into a `Handler` may call) while this loop walks `HANDLERS` (line 10); run from a list of your own: write `todo = mem.take(ref mut HANDLERS)` above line 10, `for h in todo:` in place of line 10, and `HANDLERS.extend(owns todo)` below the loop\"; `E4001` \"`run_all` is `@noalloc`, and `h()` (line 11) may run a function another package stores into a `Handler`, which may allocate; say what a `Handler` may do: write `@noalloc` above `type Handler = fn()`\". A dependant's own stores are counted by the dependant at its own lines (`[EFF-4]`), and `[DET-3]` counts them the same way.",
+    "touches_owner_verdict": "122 (kept inside a package; the edge rule adds the unseen stores, it does not return to the by-type rule)",
+    "milestone": "M6a (summaries at the package edge; the contract half in M11)",
+    "codes": "E3020, E4001 (and each contract's code) reused; shape: the chain names the `pub` route another package may use"
+   },
+   {
+    "id": "G4-02",
+    "rules": [
+     "ALC-5",
+     "LT-4",
+     "ALC-1",
+     "WK-11",
+     "WK-12",
+     "HEAP-7",
+     "ARN-1"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "A `weakref` link to an object made `using` an arena survives the arena's reset or end, and opens a reused block",
+    "program": "class Node:\n    value: int\nclass Other:\n    name: String\n\nfn main():\n    frame = Arena.with_capacity(4096)\n    w: weakref Node = None\n    if true:\n        n = Node(value=1) using frame   # the object's block lies in `frame`, whose `deallocate` does nothing ([ALC-1] (1))\n        w = weakref n                   # weak count 1\n    # `n` ended here: its drop ran; [WK-11] keeps the block for `w`, but giving it back is a no-op\n    frame.reset()                       # <- BREAKS: allowed, no value made in `frame` lives ([ALC-5]); the bytes are reusable\n    o = Other(name=String(\"x\")) using frame   # placed where `n`'s block was\n    if w exists as p:                   # [WK-12]: one test of the header at that address, which is `o`'s, live\n        println(p.value)                # `p: Node` reads an `Other`",
+    "why": "[ALC-5]: \"While a value made in a memory manager's instance lives, the instance is changed only by ...\": `n` has ended. [LT-4]: \"A value made in a memory manager's instance ..., and every value that holds one, lives no longer than that instance\": a `weakref` link holds no value (IX.0: ownership \"none\"; [HEAP-7]). [WK-11]: \"the block is freed when the weak count reaches 0\", but in a manager whose `deallocate` does nothing the block is \"freed together when the instance is cleared or ends\" ([ALC-1] (1)) whatever the weak count. [ARN-1]: `reset()` \"ends every view into the arena\", and a link is not a view. The same with the arena's end while `w` lives, and with a `FoundByAddress` pool that is cleared.",
+    "proposed_text": "Add after `[ALC-5]`:\n\n* `[ALC-5a]` **A link holds the block.** A `weakref` link to a value made in a memory manager's instance counts, for `[LT-4]` and `[ALC-5]`, as a value that holds one, since the target's block stays until the link ends (`[WK-11]`): the link carries the instance's region from the line that makes it (`w = weakref n`) through every place it is copied or stored, as a kept view does (`[LT-45]`); keeping it where it would outlive the instance is `E3063` (\"`w` links to a `Node` made in `frame` (line 10), and `frame` ends when `main` returns; end the link first: write `w = None` above the return\"), and while it lives a change of the instance that `[ALC-5]` does not allow is `E3021` (\"`frame.reset()` (line 13) reuses the memory of the `Node` that `w` links to (made in `frame` on line 10), and `w` is used on line 15; end the link first: write `w = None` above line 13\"). Nothing runs for this: the block a link keeps is given back by the manager's own `deallocate` when the weak count reaches 0, as any other.",
+    "touches_owner_verdict": "",
+    "milestone": "M10",
+    "codes": "E3063, E3021 reused (shape as [ALC-5]'s)"
+   },
+   {
+    "id": "G4-03",
+    "rules": [
+     "RC-4",
+     "ALC-5",
+     "LT-4",
+     "THR-11"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "A `thread_shared` value made `using` an arena is queued past the end of its compile-time life, and the arena is reset before the check point that ends it",
+    "program": "struct Big:\n    data: Array[u8]\n\nfn main():\n    frame = Arena.with_capacity(1 << 20)\n    v = thread_shared Big(data=[0, 1, 2]) using frame   # made by the main thread: its block (header and `Big`) lies in `frame`; `data`'s buffer is `Global`'s\n    with scope:\n        scope.spawn(fn() [owns v]:        # the owner the main thread counted at home goes to the task ([THR-17])\n            mem.drop(owns v))             # ends on the task's thread: the away count goes below zero, `v` is queued for the main thread ([RC-4] point 2)\n    # the scope's end joins the task; the main thread's check point was BEFORE the blocking call ([RC-4] point 3): the queue now holds `v`, \"intact\"\n    frame.reset()                         # <- BREAKS: allowed, no value made in `frame` lives at this line ([ALC-5] is checked when compiling); `v`'s bytes are reusable\n    buf = ref mut frame.alloc_zeroed[u8](4096)   # overwrites `v`'s header and its `data` pointer\n    for i in 0..10:                       # the loop's back edge is the next check point: `v` is ended here, its `data` pointer read from reused bytes and freed\n        buf[i] = 1",
+    "why": "[RC-4] point 3: check points are placed \"at every loop's back edge, before every call that may block the thread (waiting for a lock, `join`, a channel's receive, a sleep) and when the thread ends\": none after the join. Point 5: \"it is ended at its making thread's next check point. Until then it is intact\". [ALC-5]: \"While a value made in a memory manager's instance lives ... any other change ... is `E3021`\", decided when compiling, where `v`'s life ends at the join. [LT-4] bounds the value's life by the instance, and the runtime keeps it alive longer than the compiler's bound. The value cannot reach an unscoped thread (its instance word is a `sharedref mut` link, [LT-4], [THR-8]), so the scoped task's join is the one path.",
+    "proposed_text": "In `[RC-4]` point 3, replace \"The compiler places them: at every loop's back edge, before every call that may block the thread (waiting for a lock, `join`, a channel's receive, a sleep) and when the thread ends.\" with:\n\n\"The compiler places them: at every loop's back edge, before and after every call that may block the thread (waiting for a lock, a `join`, the end of a `with scope` block, a channel's receive, a sleep) and when the thread ends. The one after a `join` or a scope's end is what makes a value a task ended on its own thread end before the parent's next line: nothing a joined task queued is still waiting when the parent runs on.\"\n\nAnd add to `[ALC-5]`: \"A `thread_shared` value lives, for this rule, until the check point that ends it (`[RC-4]` point 5): with the check point after every join, that is before the parent's next line, so the rule is checked as written.\"",
+    "touches_owner_verdict": "",
+    "milestone": "M9 (the check points), with M10's arena check",
+    "codes": "none new; the runtime's check-point placement; a `[COST-3]` row note: one queue test after each join"
+   },
+   {
+    "id": "G4-04",
+    "rules": [
+     "OBJ-1",
+     "RC-4",
+     "ALC-1",
+     "ALC-3",
+     "RT-1",
+     "FFI-27"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "\"Which thread made a value\" is read from a memory-chunk header that `malloc`, a replaced global allocator, a host allocator and a `using` manager do not have (extends O8)",
+    "program": "# any program whose `thread_shared` blocks do not come from a runtime chunk: today every program ([RT-1] allocates with `malloc`), one with `[build] global_allocator = \"alloc.POOL\"` ([ALC-3]), an embedded one ([FFI-27]), and this one:\nunsafe extend Pool implements Allocator:   # the program's own manager; a `# SAFETY:` note above\n    ...\n\nfn main():\n    pool = Pool.with_capacity(1 << 20)\n    v = thread_shared Big(data=[0]) using pool    # the block comes from `pool.allocate(...)`: memory no runtime chunk holds\n    with scope:\n        scope.spawn(fn():\n            mine = thread_shared v)               # <- BREAKS: the +1 asks which thread made `v` and reads \"the header of the chunk its block came from\"; there is none, so the bytes before the block (another value, or `Pool`'s bookkeeping) answer. A wrong answer counts this task's owner in the home count with plain instructions, racing the main thread's: a lost update frees `v` while owned.",
+    "why": "[OBJ-1]: \"Which thread made a value is read from the header of the memory chunk its block came from, written once when the chunk is made, never from the value.\" [RT-1]: \"Allocation uses the system `malloc`/`realloc`/`free`\": the runtime lays out no chunk (`runtime/ember_rt/src/ember_rt.c`'s only `chunk` is a parallel loop's). [ALC-1]: a `thread_shared` value may be made `using` any `Allocator`, whose memory the runtime never sees; [ALC-3] and [FFI-27] replace `Global` itself. O8 asks what happens when a chunk is reused; this is the case where the chunk does not exist.",
+    "proposed_text": "In `[OBJ-1]`, replace \"Which thread made a value is read from the header of the memory chunk its block came from, written once when the chunk is made, never from the value.\" with:\n\n\"Which thread made a `thread_shared` value is written into the value's own header at the line that makes it, one store, and read from there by every thread that adds or subtracts an owner, one load: the 32-byte header holds its five numbers in 20 bytes, and the making thread's identity takes 8 of the 12 left (`[RC-4]`). It is never read from the memory around the block, which may be `malloc`'s (`[RT-1]`), a host's (`[FFI-27]`), a replaced global allocator's (`[ALC-3]`) or a `using` manager's (`[ALC-1]`), none of which the runtime lays out.\"\n\nIn the `[RC-4]` header table add the row `20  8  maker  tid  the thread that made it, written once at the making line`, and in `[COST-3]`'s `thread_shared` row: \"one store of the making thread at the making line, read on the away path\".",
+    "touches_owner_verdict": "101 (the header's content, not its size: 32 bytes stays)",
+    "milestone": "M9 (runtime and header layout)",
+    "codes": "none; a runtime ABI fact ([VER-4])"
+   },
+   {
+    "id": "G4-05",
+    "rules": [
+     "ARN-2",
+     "ARN-3",
+     "ARN-5",
+     "ARN-8",
+     "DRP-8"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "\"needs drop\" is used by six rules and defined nowhere",
+    "program": "class Counter:\n    hits: int\n    fn drop():\n        println(\"closed\")          # the clean-up\n\nstruct Link:\n    target: shares mut Counter      # no `fn drop()` on `Link`\n\nfn main():\n    c = shares mut Counter(hits=0)\n    frame = Arena.with_capacity(4096)\n    l = ref mut frame.alloc(owns Link(target=shares mut c))   # <- is `Link` \"a type that needs drop\"? If \"needs drop\" means \"has a `fn drop()`\", this compiles: the owner count of the `Counter` is never subtracted, and `closed` never prints. The same for a `weakref` field (a weak count never subtracted, the block never freed) and for an `Array` field (its buffer never freed).",
+    "why": "[ARN-2]: \"an `alloc*` of a type that needs drop is `E3090`\"; [ARN-3]: \"requires `T` not to need drop\"; [ARN-5]: \"Their elements, keys and values must not need drop\"; [ARN-8]: \"for a `T` that needs drop\" the operations are unsafe, \"for a `T` with nothing to drop they stay safe\". The glossary (Appendix F) has no row for it, and [DRP-8] speaks of \"a value whose type has a `drop`\", which reads as the method. [PHIL-10] promises that a program \"cannot end a value without its clean-up\": here the value is never ended at all, its clean-up never runs, and the same words let a count leak.",
+    "proposed_text": "Add to the glossary (Appendix F): \"| **needs drop** | a type whose values do something when they end: one with a `fn drop()`, a heap type (`String`, `Array`, `Map`, `Set`, `owns T`), a class object, a counted owner or link (`shares`, `shares mut`, `thread_shared`, `weakref`), a guard, a function value with state, an `owns dyn I`, a foreign type with a destructor, and every struct, enum, tuple or fixed array with a field or element that does; a type that is `Copy`, a `ref`, a span, a `StrView`, a raw pointer and a `sharedref mut` link never do. A `MaybeUninit[T]` never does, whatever `T` is (`[ARN-8]`) |\". In `[ARN-2]` write \"a type that needs drop (Appendix F)\" at the first use, and in `[ARN-3]` after `alloc_uninit[T](n)`: \"for a `T` that needs drop too, since what `write_at` puts there is dropped by nobody, `E3090` as well, whose help names `owns T using frame`\".",
+    "touches_owner_verdict": "",
+    "milestone": "M10 (the arena check reads the fact; the fact itself is M3's drop glue)",
+    "codes": "E3090 reused"
+   },
+   {
+    "id": "G4-06",
+    "rules": [
+     "HEAP-1",
+     "ARN-4",
+     "ALC-2",
+     "ALC-4",
+     "EFF-16",
+     "EFF-1"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "Whether a value made `using` an instance carries `Alloc`, and which panic its failure is, is unsaid",
+    "program": "@derive(Zeroable)\nstruct Cmd:\n    id: int\n\n@realtime                                   # @noalloc @nolock @noblock @nopanic(explicit)\nfn tick(ref mut fixed: FixedArena) -> int:\n    c = owns Cmd(id=1) using fixed          # <- the effect table: `owns` before a value is \"constructing an allocating type\": `Alloc`, so E4001? [ARN-4]: a FixedArena \"carries no `Alloc` on allocation\". And `fixed.allocate` returns null when full ([ALC-2]): the compiler's own call then panics, as [ALC-4] says of containers (\"out of memory\") or as [ARN-4] says of the arena (\"panics on exhaustion\")? Is that \"allocation failure\", which `Panic(Explicit)` lists, or [PHIL-11]'s \"exhaustion outside `Alloc`\", which [EFF-16] says the model does not cover? Two compilers answer differently and accept different programs.\n    return c.id",
+    "why": "X.1's table: `Alloc` is introduced by \"a value put in its own block by `owns`, `shares` or `thread_shared`\" and \"arena growth\", with no word on the instance; [HEAP-1]: \"carries the `Alloc` effect where it allocates\"; [ARN-4]: `FixedArena` \"carries no `Alloc` on allocation, and panics on exhaustion (`try_alloc` returns `Option`)\" and \"is the arena for `@noalloc` code\"; the table's `Panic(Explicit)` row lists \"allocation failure\"; [EFF-16]: \"forbids only the panics the programmer writes and allocation failure\" and names \"exhaustion outside `Alloc`\" as what the model does not cover; [ALC-2] says `allocate` is \"null on failure\" and nothing of what the compiler's own call does then; [ALC-4] speaks of standard containers only.",
+    "proposed_text": "Add to `[ALC-1]` (or as `[ALC-6]`):\n\n* `[ALC-6]` **A making line has its instance's effects.** A line that makes a value `using x`, and every growth and end of that value, carries the effects of the `Allocator` methods it calls on `x`'s type (`[EFF-1]`), and `Alloc` is the effect of `Global`'s and `System`'s `allocate` and `reallocate`, of `ember_alloc`, and of every implementation that reaches them: a value made in a `FixedArena` carries no `Alloc`; one made in an `Arena` carries it (growth, `[ARN-4]`). When the instance's `allocate` or `reallocate` returns null, the compiler's own call panics, \"out of memory\", the panic `Panic(Explicit)` lists as allocation failure, as a `FixedArena`'s exhaustion is (`[ARN-4]`): under `@nopanic(explicit)` the forms are `try_alloc`, `try_reserve` and `try_push` (`[ALC-4]`), and a making line `using x` there is `E4040` whose help names `x.try_alloc`. `reallocate` that returns null leaves the old block as it was.",
+    "touches_owner_verdict": "",
+    "milestone": "M10 (effects of `using`), M11 (the contract verdicts)",
+    "codes": "E4001, E4040 reused"
+   },
+   {
+    "id": "G4-07",
+    "rules": [
+     "ARN-1",
+     "ARN-7",
+     "LT-1",
+     "BRW-1",
+     "EFF-24"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "No rule says how a compiler knows that an `alloc*` result is a place of its own, or what a user-written arena's `alloc` is",
+    "program": "fn build(ref mut frame: Arena) -> int:\n    a = ref mut frame.alloc_zeroed[int](8)   # a `ref mut` view whose result \"points into\" `frame` ([LT-1]: an arena is a source parameter)\n    b = ref mut frame.alloc_zeroed[int](8)   # <- by [BRW-1] a second change of `frame` while `a`, a `ref mut` view into it, is used: `E3021`, as `xs.get_mut(1)` while `xs.get_mut(0)` lives is. [ARN-1] says the opposite, by fiat for `Arena`. And for the program's own arena:\n    a[0] = 1\n    b[0] = 2\n    return a[0] + b[0]\n\nstruct MyArena:\n    buf: MutSpan[u8]\n    top: int\n    fn alloc(ref mut this, n: int) -> MutSpan[u8]:   # the same shape in the program's own code\n        s = ref mut this.buf[this.top .. this.top + n]\n        this.top += n\n        return s                                     # points into `this.buf`: a part of `this`, so two of these are two `ref mut` names of one field: the compiler must treat it as the std's `Arena` or as an ordinary method, and the text says which for neither",
+    "why": "[ARN-1]: \"Each gives a view of memory that no earlier view of the arena reaches, and the views point into the arena's memory, not into its cursor: an `alloc*` call ends no earlier view and overlaps none, so many allocations are outstanding at once, each a place of its own\" and `reset()` \"ends every view\": facts about `Arena` with no mechanism by which a compiler derives them from the type's code or distinguishes `alloc` from `reset` (both write fields of `this`). [LT-1] makes the result point into `this`; [BRW-1] makes a `ref mut` name the only name of its place while used; [EFF-24]'s summary lists no fact that says \"a result that is a place of its own\". A compiler built from the text alone must either special-case `std.arena` or refuse `build`.",
+    "proposed_text": "Add to `[ARN-1]`: \"These facts are the compiler's own for the types of `std.arena` (`Arena`, `FixedArena`, `ScopedArena`, `ThreadArena`), as `ref_to_ptr` is one function it knows (§IV.5): an `alloc*` result lives no longer than the arena (`[LT-1]`) and is a place of its own for `[BRW-1]`, reached through no field of the arena and overlapping no other result; `reset()`, `scope()`'s end for the scope's results, and the arena's end are the operations that end them. No other type gets them: a method of the program's own type that returns a view of its object is an ordinary method, whose result points into `this` and is exclusive with it (`[LT-1]`, `[BRW-1]`), and a manager of the program's own is used through `Allocator` and `using` (`[ALC-1]`), whose values are places of their own by `[ALC-5]`.\"",
+    "touches_owner_verdict": "",
+    "milestone": "M10",
+    "codes": "none new; E3021 stays the code for the ordinary method's second view"
+   },
+   {
+    "id": "G4-08",
+    "rules": [
+     "DSJ-5",
+     "EFF-15",
+     "EFF-12",
+     "EFF-9",
+     "DSJ-6"
+    ],
+    "kind": "CON",
+    "severity": "major",
+    "title": "`[DSJ-5]`'s \"unless the compiler already knows the ranges are disjoint\" is a proof `[EFF-15]`'s closed list does not contain",
+    "program": "@no_alias_checks\nfn halves(ref mut xs: MutSpan[float]):\n    (lo, hi) = xs.split_at(xs.len() // 2)   # two halves the structural form proves apart ([DSJ-4])\n    assert_disjoint(lo, hi)                 # <- by [DSJ-5] no compare is emitted and no `RuntimeCheck(Aliasing)` site is recorded, so no E4030; by [EFF-15] the verdict is computed \"as if every one of them were applied\" over exactly four named proofs, none of which is this one, so the compare counts and the line is E4030. Two conforming compilers disagree on whether `halves` compiles.",
+    "why": "[DSJ-5]: \"Both forms record a `RuntimeCheck(Aliasing)` site whose reason is `establishes_static_fact` (`[EFF-11]`), unless the compiler already knows the ranges are disjoint, in which case no comparison is emitted.\" [EFF-15]: \"The proofs that count are exactly those this document specifies — `[OPT-2]`, `[RNG-4]`, `[SIMD-7]` and the parent-link proof of Part VIII\" and \"a verdict is computed as if every one of them were applied wherever its conditions hold\". [EFF-9] makes the site the effect. \"already knows\" names no rule.",
+    "proposed_text": "In `[DSJ-5]`, replace \"unless the compiler already knows the ranges are disjoint, in which case no comparison is emitted\" with: \"unless the two views are known apart by `[DSJ-11]`, in which case no site is recorded and no comparison is emitted\". Add:\n\n* `[DSJ-11]` **Views known apart.** Two views are known apart, with no compare, exactly when they are the two results of one `split_at`, `split_at_mut`, `get_pair_mut` or `chunks_mut` call (the same call, by its position), two columns of one SoA, two `alloc*` results of one arena (`[ARN-1]`), or views of two different whole variables neither of which is reached through the other; nothing else is, whatever the compiler could see. This is the one disjointness proof, and `[EFF-15]`'s list names it.\n\nIn `[EFF-15]` replace \"`[OPT-2]`, `[RNG-4]`, `[SIMD-7]` and the parent-link proof of Part VIII\" with \"`[OPT-2]`, `[RNG-4]`, `[SIMD-7]`, `[DSJ-11]` and the parent-link proof of Part VIII\".",
+    "touches_owner_verdict": "",
+    "milestone": "M6c (alias facts), the verdict in M11",
+    "codes": "E4030 reused"
+   },
+   {
+    "id": "G4-09",
+    "rules": [
+     "UNS-1",
+     "UNS-5",
+     "UNS-7"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "`std.mem.copy` and `copy_nonoverlapping` write through raw pointers and no rule says they are `unsafe fn`s",
+    "program": "from std.mem import copy_nonoverlapping\n\nfn main():\n    src = [1, 2, 3, 4]\n    dst = [0]\n    p = ref_to_ptr(ref src[0])          # safe (§IV.5, ODR-075)\n    q = ref_to_ptr(ref mut dst[0])      # safe\n    copy_nonoverlapping(p, q, 4)        # <- a call of a function, not a read through `*T`, and not in [UNS-1]'s list: if `std.mem` declares it a plain `fn`, safe code writes three elements past `dst`",
+    "why": "[UNS-1] lists what needs an unsafe context: dereference, offset, casts, \"call an `unsafe fn`\", `transmute`, `get_unchecked`, `assume_init`, `assume_disjoint`, `into_raw()`, `MaybeUninit` of a drop type, unsafe implementations; `copy` and `copy_nonoverlapping` are not there, and [UNS-5] only lists them beside `Volatile`, whose reads [STD-29] does declare `unsafe fn`s. [UNS-7]: \"The standard library carries `@safety` on every unsafe function it exports\" says nothing about which these are. The text is the only authority for the std's declarations ([STD-*]), so a compiler and a std built from it may declare them safe.",
+    "proposed_text": "Replace `[UNS-5]`'s text with: \"`std.mem` provides `Volatile[*T]` (volatile reads and writes, `[STD-29]`), `transmute[A, B]`, `copy` and `copy_nonoverlapping` (which read and write through the raw pointers they are given), `zeroed[T]()` (requires `T: needs Zeroable`) and `MaybeUninit`. `transmute`, `copy` and `copy_nonoverlapping` are `unsafe fn`s (`[UNS-1]`): a call of one outside unsafe code is `E3100` (\"`copy_nonoverlapping(p, q, 4)` (line 8) writes through the raw pointer `q`, and nothing checks that four `int`s are writable there; put line 8 in an `unsafe:` block with a `# SAFETY:` note saying why that holds here\"), and each carries `@safety` (`[UNS-7]`). `zeroed`, `swap`, `replace`, `take`, `drop` and `keep_alive` are safe.\" In `[UNS-1]`'s list, after `transmute` write \"`copy` or `copy_nonoverlapping`\".",
+    "touches_owner_verdict": "",
+    "milestone": "text only (std.mem's declarations; `E3100`'s path exists), listed by `ember tcb` in M12",
+    "codes": "E3100 reused"
+   },
+   {
+    "id": "G4-10",
+    "rules": [
+     "DET-2",
+     "DET-3",
+     "THR-15",
+     "THR-14"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "`[DET-2]`'s closed list of `Nondet` sources misses every read whose value depends on which thread acted first",
+    "program": "@deterministic\nfn gather() -> Array[int]:\n    (tx, rx) = channel[int]()\n    out: Array[int] = []\n    with scope:\n        a = thread_shared tx\n        scope.spawn(fn(): a.send(owns 1))\n        scope.spawn(fn(): tx.send(owns 2))\n        out.push(owns rx.recv())        # <- the first of two senders on two threads: 1 or 2 by the scheduler; not in [DET-2]'s list, so no E4070\n        out.push(owns rx.recv())\n    return out                          # [1, 2] on one run, [2, 1] on the next; the same with `m.try_lock()`'s answer, or an `Atomic` read of a counter a running task adds to",
+    "why": "[DET-2]: \"`Nondet` is introduced by exactly: ...; the wall clock, the monotonic clock, the system random source, thread and job completion order; ...\". A receive is a channel operation (`Sync + Block`), not \"completion order\"; `try_lock`'s answer and an `Atomic` read of another thread's writes are named nowhere. [DET-3] counts only what [DET-2] lists. The word \"exactly\" closes the list, so a compiler must accept `gather`.",
+    "proposed_text": "In `[DET-2]`, after \"thread and job completion order;\" insert: \"a read whose value depends on which thread acted first: a receive on a channel that more than one thread may send to, `try_lock`'s and `try_recv`'s answer, a lock's view or an `Atomic` read of a place a thread or task that has not been joined may change (after the join, the place is what the joined tasks left, in spawn order for a reduction, `[THR-21]`);\". `E4070`'s message for it: \"`gather` is `@deterministic`, and `rx.recv()` (line 9) receives from a channel two threads send to (lines 7 and 8), so which value comes first differs between runs; give each task its own result and join them in order: write `h1 = scope.spawn(...)`, `h2 = scope.spawn(...)` returning the values, and `out.push(owns h1.join())`, `out.push(owns h2.join())`\".",
+    "touches_owner_verdict": "",
+    "milestone": "M11 (contracts), with M9's channel facts",
+    "codes": "E4070 reused"
+   },
+   {
+    "id": "G4-11",
+    "rules": [
+     "EFF-1",
+     "CORO-6",
+     "EFF-5"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "A generator's `next` \"carries the effects of the body up to the next `yield`\": which segment runs is a run-time state",
+    "program": "gen fn ids() -> int:\n    yield 1\n    yield 2\n    names = [String(\"a\")]      # allocates after the second resume\n    yield names.len()\n\n@noalloc\nfn first_two() -> int:\n    g = ids()\n    a = g.next().unwrap()      # <- the body \"up to the next yield\": nothing allocates here\n    b = g.next().unwrap()      # nor here, read literally; a third call would. The compiler cannot know which call a `next()` is in a loop, so it must choose: the segment (unsound for a loop) or the whole body (refuses `first_two`). The text picks neither.\n    return a + b",
+    "why": "[EFF-1]: \"Calling a generator runs none of its body; each `next` carries the effects of the body up to the next `yield`, and dropping a suspended one those of the drops it performs (ODR-057).\" A `next` in a loop, or after a `next` another function made, reaches any segment; [EFF-5] checks a contract over the function's effect set, so the choice decides whether `first_two` is `E4001`.",
+    "proposed_text": "In `[EFF-1]`, replace \"each `next` carries the effects of the body up to the next `yield`\" with: \"each `next` carries the effects of the whole body, the union over its segments, since which segment resumes is a state the program computes while it runs (a generator a `@noalloc` function drives therefore allocates nowhere in its body)\".",
+    "touches_owner_verdict": "",
+    "milestone": "M6a (summaries), the verdict in M11",
+    "codes": "E4001 and the other contract codes reused; the chain names the `yield` segment"
+   },
+   {
+    "id": "G4-12",
+    "rules": [
+     "ARN-1",
+     "ARN-6",
+     "ARN-7"
+    ],
+    "kind": "CON",
+    "severity": "minor",
+    "title": "`[ARN-1]` says `scope()` ends every view into the arena; `[ARN-7]` ends views only where bytes are reused",
+    "program": "fn main():\n    frame = Arena.with_capacity(4096)\n    cmds = ref mut frame.alloc_zeroed[int](8)\n    with s = frame.scope():        # [ARN-1]: `scope()` \"ends every view into the arena\": `cmds` is ended here\n        tmp = ref mut s.alloc_zeroed[int](4)\n        cmds[0] = tmp[0]           # <- E3060 by [ARN-1]; allowed by [ARN-7], since the scope's end lowers the pointer only to the scope's start, above `cmds`\n    println(cmds[0])",
+    "why": "[ARN-1]: \"`reset()`, `scope()` (`[ARN-6]`) and the arena's end may reuse or free that memory: each ends every view into the arena, and a later use of one is `E3060`.\" [ARN-7]: \"No operation lowers an arena's allocation pointer, reuses its bytes or moves what it has given out while a view into it is used: every such operation ends every view into the arena\": `scope()` does none of these, and a scope's end reuses only the scope's bytes. [ARN-6] forbids using the parent while the scope is live (`E3096`), which is a different thing from ending the views made before.",
+    "proposed_text": "In `[ARN-1]`, replace \"`reset()`, `scope()` (`[ARN-6]`) and the arena's end may reuse or free that memory: each ends every view into the arena, and a later use of one is `E3060`.\" with: \"`reset()` and the arena's end reuse or free that memory: each ends every view into the arena, and a later use of one is `E3060`. A scope (`[ARN-6]`) ends no view made before it; its end reuses the scope's own bytes, ending the views into the scope, which live no longer than it in any case (`[LT-1]`).\"",
+    "touches_owner_verdict": "",
+    "milestone": "M10",
+    "codes": "E3060, E3096 reused"
+   },
+   {
+    "id": "G4-13",
+    "rules": [
+     "ALC-1",
+     "ALC-2",
+     "ALC-3",
+     "EXC-15",
+     "STA-1",
+     "EFF-4"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "The name `using x` is written through, the word of `allocate`'s `this`, and what \"an empty body\" of `deallocate` means across a package edge",
+    "program": "fn fill(current: LevelArena) -> Enemy:        # a plain parameter: reads only\n    return Enemy(hp=5, mesh=owns Mesh(points=[0.0]) using current)   # <- `current.allocate(...)` moves the arena's cursor ([ALC-5]: allocation changes the instance), and [LT-4] makes a `sharedref mut` link to it, yet `using current` writes no word and nothing says the name must be one that may change: E3023 by [EXC-15] or accepted?\n\n# and, in package `alloc`: `pub struct Bump` whose `fn deallocate(p, layout): this.freed += 1` is not empty but changes nothing a value needs; a dependant's values made in it keep the word or not by \"an empty body, checked when compiling\" ([ALC-1] (1)), a fact [EFF-4]'s interface file does not list",
+    "why": "[ALC-1]: \"The line that makes such a value names the instance after the value\" and \"(1) a manager that frees nothing one by one, whose `deallocate` does nothing (an empty body, checked when compiling)\"; [LT-4]: the instance word \"is a kept `sharedref mut` link to the instance\", which [LT-46] writes with a word; [EXC-15] decides from the body that `allocate` changes `this`, and [STA-1] makes `Global`, a `static`, a value that \"never changes\" and is `ThreadShared`, so its `allocate` must read `this` and change state only through an `Atomic` or a lock; [EFF-4] lists what the interface file records, and the shape of `deallocate`'s body is not among them.",
+    "proposed_text": "Add to `[ALC-1]`: \"`using x` names the instance through a name that may change it (its owner, a `ref mut` name, or a `sharedref mut` link), since `allocate` changes the instance (`[ALC-5]`); through a name that only reads it is `E3023` (\"`current` only reads the arena, and `using current` takes memory from it; write `fn fill(ref mut current: LevelArena)`\"). A manager with one instance is a `static` (`[STA-1]`): its `allocate` reads `this`, and its state changes through an `Atomic`, a `Mutex` or an `UnsafeCell` in it. In (1), replace \"whose `deallocate` does nothing (an empty body, checked when compiling)\" with \"whose `deallocate` changes nothing, ends nothing and has no effect, by its summary (`[EFF-24]`), a fact its package's interface file records (`[EFF-4]`), so a dependant's values change with it\".",
+    "touches_owner_verdict": "107 (not reversed: the criterion for (b) is stated by the summary rather than by the body's text)",
+    "milestone": "M10",
+    "codes": "E3023 reused"
+   },
+   {
+    "id": "G4-14",
+    "rules": [
+     "ALC-1",
+     "TYP-46",
+     "ARN-5",
+     "ARN-3",
+     "ARN-11"
+    ],
+    "kind": "ED",
+    "severity": "minor",
+    "title": "Small gaps of IX.2 and IX.3: `String using`, the arena containers' constructor and their storage, `Zeroable` for an enum",
+    "program": "names: String using LevelArena          # [ALC-1] (1) names \"a value that grows (an `Array`, `Map`, `Set` or `String`) made in it\", yet [ALC-1]'s and [TYP-46]'s lists of what `using` may follow omit `String`: E2114 or accepted?\n\nxs = ArenaArray[int]...                 # [ARN-5]: \"storage taken from an arena once, at construction\": with which constructor, through which word on the arena, and is the container a view (ended by `reset()`, reported as a `view` by `[SEL-1]`) or a value?\n\n@derive(Zeroable)\nenum Slot:                              # [ARN-11] says which enums are never Zeroable and nothing about which are\n    Empty\n    Full(int)",
+    "why": "[ALC-1]: \"a value that grows (an `Array`, `Map`, `Set` or `String`) made in it keeps the word\" against \"an `owns`, `shares`, `shares mut` or `thread_shared` value, a class object, an `Array`, `Map` or `Set`\" and [TYP-46]'s \"after any other type it is `E2114`\". [ARN-5] gives no constructor and no word. [ARN-11]: \"an enum whose zero discriminant is invalid is never `Zeroable`\" and \"a struct is when it declares `@derive(Zeroable)`\", silent on an enum that declares it.",
+    "proposed_text": "In `[ALC-1]` and `[TYP-46]`, add `String` to the list of what `using` may follow (\"an `Array`, `Map`, `Set` or `String`\"), since a `String` has heap memory of its own. In `[ARN-5]`: \"Each is made from an arena through a name that may change it, `ArenaArray.in(ref mut frame, capacity)` and `ArenaMap.in(ref mut frame, capacity)`, and holds its storage as a kept `MutSpan` view (`[LT-45]`): it lives no longer than the arena, `reset()` ends it (`[ARN-1]`), and `ember inspect --alloc` reports it as a `view` (`[SEL-1]`).\" In `[ARN-11]`: \"An enum is `Zeroable` when it declares `@derive(Zeroable)` and all-zero bytes are one of its values: the variant whose discriminant is zero with a `Zeroable` payload or none, or the variant a zero niche encodes (`[TYP-13]`), checked when compiling (`E2080`).\"",
+    "touches_owner_verdict": "",
+    "milestone": "M10 (arena containers), M4 (the `Zeroable` derive)",
+    "codes": "E2114, E2080 reused"
+   },
+   {
+    "id": "G4-15",
+    "rules": [
+     "COST-6",
+     "PRF-4",
+     "HEAP-8",
+     "ALC-2",
+     "ALC-4",
+     "ARN-4",
+     "HND-3",
+     "HND-1"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "`[COST-6]`'s table of what stops the program omits checks its own cost table and `[PRF-4]` run in every profile",
+    "program": "fn main():\n    x: int = int.MAX\n    y = x + 1                              # the overflow check, \"every profile\" in [COST-3], stops with a text no rule gives\n    z = 7 // (y - y)                       # division by zero: `division by zero` per [TYP-8], not in [COST-6]\n    xs: Array[u8] = []\n    xs.reserve(usize.MAX)                  # `capacity overflow` ([HEAP-8]) or `out of memory` ([ALC-4]): not in [COST-6]\n    l = Layout(3, 3)                       # `invalid Layout` ([ALC-2]): not in [COST-6]\n    fixed = FixedArena.with_capacity(16)\n    a = ref mut fixed.alloc_zeroed[u8](32)  # exhaustion ([ARN-4]) with no text\n    pool = Pool[int, Split20]()            # a full pool's `insert` ([HND-3]) and `pool[h]` on a stale handle ([HND-1]): no text",
+    "why": "[COST-6]: \"Of the costs above, these may stop the program, in every profile (`[PRF-4]`); each says so in the names of the program that stopped\", then a table of twelve rows without the arithmetic checks that `[PRF-4]` names (\"overflow, division by zero, shift amounts\"), the capacity and layout checks, a `FixedArena`'s exhaustion, a full `Pool` or a stale `pool[h]`. A conformance test (`[TST-31]`'s kind) cannot be written for a text the rules do not give, and two runtimes print two different things.",
+    "proposed_text": "Add to `[COST-6]`'s table the rows: `an overflow check` — \"`x + 1` on line 3 overflows an `int` (9,223,372,036,854,775,807 + 1); use `x.wrapping_add(1)` or `x.checked_add(1)`\"; `division by zero or a shift out of range` — \"`7 // (y - y)` on line 4: division by zero\", \"`1 << n` on line 9: a shift of 70 is out of range for an `int`\"; `a negative or overflowing capacity (`[HEAP-8]`)` — \"capacity overflow: `xs.reserve(...)` on line 6 asks for 18,446,744,073,709,551,615 elements\"; `allocation failure (`[ALC-4]`, `[ALC-6]`)` — \"out of memory: `xs.reserve(...)` on line 6 asked `Global` for 1,073,741,824 bytes\"; `an invalid `Layout` (`[ALC-2]`)` — \"invalid Layout: `Layout(3, 3)` on line 7, an alignment that is not a power of two\"; `a `FixedArena` exhausted (`[ARN-4]`)` — \"`fixed.alloc_zeroed(...)` on line 9: `fixed` has 16 bytes left of 16 and 32 were asked; use `try_alloc` for an `Option`\"; `a full `Pool`, and `pool[h]` on a stale handle (`[HND-1]`, `[HND-3]`)` — \"`pool.insert(...)` on line 11: every slot is live or retired; use `try_insert` for a `Result`\", \"`pool[h]` on line 12: the handle is stale (slot 3, generation 2 of 5); use `pool.get(h)` for an `Option`\". Each is the text `[TST-31]`'s kind of test compares.",
+    "touches_owner_verdict": "",
+    "milestone": "M15 (stop texts)",
+    "codes": "none new; panic texts"
+   }
+  ],
+  "judged_sound": [
+   "IX.0 table and [SEL-1]/[SEL-2]: rows match Parts VII, VIII and XI; `Cell` 'never viewed' is kept by [CELL-2]",
+   "[HEAP-2], [HEAP-3], [HEAP-6], [HEAP-7], [HEAP-9], [HEAP-10]: counts, no `Copy`, links only to values that live on their own, one-thread counts never cross (F6 covers the local case)",
+   "[ARN-3] `alloc_array`/`alloc_zeroed` bounds and `Default` in index order; [ARN-10] a panic inside `default` aborts, nothing partial reachable",
+   "[ARN-4] growth by a new chunk (F7); `FixedArena` holding its buffer as a kept `ref mut` ([LT-45]) so the buffer is locked",
+   "[ARN-6] `ScopedArena` as a kept `ref mut` of its parent, E3096, LIFO release (apart from G4-12's wording in [ARN-1])",
+   "[ARN-8] `MaybeUninit`: unsafe `assume_init`, `write`/`write_at` unsafe for drop types, no other conversion",
+   "[ALC-1] F19's block-of-its-own instance; `E2020` for a value from the wrong instance; [LT-4] making the instance word a `sharedref mut` link, so a `using` value is neither `Send` nor `ThreadShared` and cannot reach an unscoped thread (closes the 'deallocate from another thread' attack for the worded and no-word cases alike, since 'neither changes what is checked')",
+   "[ALC-2] `Layout` checked at construction; `Allocator` unsafe to implement, `deallocate`/`reallocate` unsafe to call; `FoundByAddress`'s piece promise (a value bigger than a piece in a piece of its own)",
+   "[ALC-3] with [STA-1]: a global allocator `static` must be `ThreadShared` (E7002), so the configured allocator is safe to use from every thread",
+   "[ALC-5] for live values: a hand-over of the instance is a reshape (F4), so `level2 = level` under a live `using` value is refused; reads allowed",
+   "[UNS-1] list against Parts VII–XVI (G4-09 adds two std functions); the block-to-write rules; [UNS-2] nothing turned off; [UNS-3] L3010",
+   "[UNS-4] obligations: counts, headers, views, UTF-8, validity, Send/ThreadShared, a raw pointer not used past the view's last use or a hand-over to another thread",
+   "[UNS-7], [UNS-8], [UNS-11], [UNS-12]: `@safety` on every `unsafe fn` and lambda (verdicts 118, 119, 125, 126), `# SAFETY:` on blocks, `safe:` blocks, no switch turns a check off",
+   "[UNS-10]/[UNS-10a] `UnsafeCell`: never `ThreadShared`, `Send` when `T` is, refused in `@no_alias_checks` code, no rule suspended",
+   "[LAY-2]: `@packed` refs E2170, `@align` honoured by heaps ([HEAP-9]), the two incompatible pairs E0104",
+   "[HND-1]–[HND-3]: generation compare in every profile; retired slots never reused, bounded retirement; a handle from another pool of the same type finds a live slot or `None`, never invalid memory",
+   "[CELL-1]–[CELL-4], [CELL-13]: set through a name that may change the holder; store-before-drop; `get` only for `Copy`; `Send` when `T` is, never `ThreadShared`; no run-time borrow flag",
+   "[DSJ-1]–[DSJ-4], [DSJ-6]–[DSJ-10]: the fact belongs to the two names and is dropped on reassignment; two `ref mut` names of one map cannot both exist, so the compare is only ever read-vs-change; making a view and comparing ranges read no element; `assume_disjoint` unsafe; no profile-dependent form",
+   "X.1 effect table: `Sync` for every `thread_shared` count move even on the making thread (conservative, consistent with [EFF-15]); `Lock`, `Block`, `Io`, `Panic(Explicit)` membership; `Unsafe`, `FFI`",
+   "[EFF-3], [EFF-9], [EFF-10], [EFF-11], [EFF-18]: contract effects of foreign functions, the four `RuntimeCheck` kinds, per-site reasons",
+   "[EFF-24]–[EFF-26]: summaries from code, the chain in messages, 'a call that runs a function makes its changes; storing one does not' (F2), foreign calls run the callbacks C keeps unless `@ffi(no_callbacks)`",
+   "[EFF-27] with E2117's registry text ([CLS-12]): a `@cached` body reads no `shares`, `shares mut`, `thread_shared`, `weakref`, `sharedref mut` or `Cell` field nor one other threads change under a lock, so a link opened elsewhere cannot bypass the clear, and the once-flag on a thread-shared object is consistent",
+   "X.2 contract table, [EFF-5], [EFF-6], [EFF-7] (`@assume_noalloc` only in `unsafe`), [EFF-8], [EFF-12], [EFF-14], [EFF-16], [EFF-17], [EFF-19]–[EFF-21], [EFF-23] (E0900, never accepted unchecked)",
+   "[DET-1], [DET-4]–[DET-10]: `std.math.det` bit-exact, no contraction under `@deterministic`, one binary, defined FP environment; `is` on objects is deterministic (equality of identity, not an address value)",
+   "[COST-1], [COST-2], [COST-4], [COST-5]; the [COST-3] rows against their rules (F2, F3 changed rows; the `using` row against verdict 107); [OPT-2]/[OPT-3] loop versioning with unchanged behaviour"
+  ],
+  "could_not_cover": "Annex A's generated examples for Parts IX and X (O13/O14) were not compiled or re-read; `runtime/ember_rt` was grepped only for the chunk header of G4-04 (none exists), not read for O8's reuse question; the `ThreadArena`/[JOB-5] interaction (O5) was left to Part XI's group."
+ },
+ "verdicts": {
+  "group": "G4",
+  "verdicts": [
+   {
+    "id": "G4-01",
+    "verdict": "narrowed",
+    "reason": "The program as written is refused by `[CLO-17]` at the dependant's own line: \"a function value is not stored in a place that a real variable it changes owns, all the way down ... (`b.on_click(owns fn(): b.handlers.clear())` ... `E3022`: 'this function clears `b.handlers`, and `on_click` would keep it in `b.handlers`, so it would change the button that holds it while the button runs it')\". `fn(): add(owns fn(): pass)` changes `HANDLERS` through `add` (`[BRW-11]`: a function value \"counts as changing every place the functions it may run change\") and `add` stores it into `HANDLERS`, so `app`'s `add(owns fn(): add(...))` is `E3022`, as `b.on_click(...)` is, read from `add`'s summary in the interface file (`[EFF-4]`: \"every other worked-out fact is recorded in the package's interface file\"). So the loop in `run_all` never reads freed memory for this program. The general hole stands, and it is O1's shape for summaries and contracts: `[EFF-2]` \"it is every lambda and named function the program puts in that place, a library's included\" and \"For an interface, `dyn` or `virtual` method, it is every implementation and override the program has\" are whole-program facts; `[EFF-4]` and `[BLD-14]` item 7 record only \"the function values the package stores into a function type ... which a program that uses the package counts wherever such a value is called\", the library-to-dependant direction; no sentence counts a dependant's store at the library's own call line (`h()` in `run_all`), which `[BLD-1]` compiles once, and `[EFF-25]` decides `E3020` there. Variants the text accepts and that break: a handler that changes another list `run_all` walks (`static mut OTHER` reached through `pub fn push_other`), and the contract half (`run_all` `@noalloc`, `Handler` without a contract: `[EFF-6]`'s \"whole reachable call graph\" is unseen by `bus`). One part of the reader's rule is wrong: a function-typed *parameter* is already compiled per function given by the package that gives it (`[COST-3]`: \"a library function given a function is one instance per function, as Rust's generic `F: FnMut`\"; `[EFF-4]`: \"worked out for each instance, by the package that compiles that instance\"), so parameters need no edge rule.",
+    "narrowed_to": "A function another package stores into a stored place (a `pub` field, a `pub static`, a list element one of them holds, or a place a `pub` function's parameter flows into) or supplies as an override of a `pub` class's `virtual` method or an implementation of a `pub` interface's method is counted at no line of the package that calls through it; the exact program is refused by `[CLO-17]` at `app`'s store, but a handler that changes any other place a `pub` route reaches, or that has an effect the library function's contract forbids, is accepted and the walk or contract breaks. Parameters are not part of the hole.",
+    "better_fix": "Add after `[EFF-2]`:\n\n* `[EFF-2a]` **A place another package can fill.** A function-typed parameter is compiled once per function given, by the package that gives it, as a generic is (`[EFF-4]`, `[COST-3]`), so every function reaching it is seen where its line compiles. Every other place a function value is called through, and every `virtual` or interface method, is compiled by the package that declares it, which sees only its own stores and overrides (`[EFF-2]`). Where another package can fill such a place (a `pub` field, a `pub static`, an element of a list or map one of them holds, a place a `pub` function stores a function-typed parameter into, and every place a value from one of these is copied into), override such a method (a `virtual` method of a `pub` class) or implement it (a method of a `pub` interface called through `dyn`), a call through it counts, beside the functions this package puts there, a function another package may put there: one that may call every `pub` function of this package, change and end every place a `pub` name of this package reaches (a `pub static mut`; the fields of an object a `pub` function is given, returns or holds), take every lock a `pub` function takes, and have every effect the place's or method's declared contracts do not exclude (verdict 106). A place or method no other package can reach keeps `[EFF-2]`'s rule, and so does a `virtual` method of a class that cannot be subclassed outside its package. The message names the route: `E3020` \"`h()` (line 11) may add to `HANDLERS` (through `add`, which a function another package stores into a `Handler` may call) while this loop walks `HANDLERS` (line 10); walk a list of your own: write `todo = mem.take(ref mut HANDLERS)` above line 10, `for h in todo:` in place of line 10, and `HANDLERS.extend(owns todo)` below the loop\"; `E4001` \"`run_all` is `@noalloc`, and `h()` (line 11) may run a function another package stores into a `Handler`; say what a `Handler` may do: write `@noalloc` above `type Handler = fn()`\". A dependant's stores and overrides are counted by the dependant at its own lines (`[EFF-4]`, `[CLO-17]`), and `[DET-3]` counts the same way.\n\nIn `[BLD-14]` add item 8: \"for each `pub` function, the places each of its function-typed parameters flows into (`[EFF-2]`: 'a place a value is copied into'), so that a dependant checks `[CLO-17]` at the call that hands the function over\". In `[EFF-2]` replace \"a parameter\" in \"For a field, a list element, a parameter or a local of a function type\" with \"a local\", and add \"a parameter of a function type is the function given, per instance, as a type parameter bounded by a function type is (`[COST-3]`)\". Add `[EFF-2]`/`[EFF-4]` to AUDIT O1's list."
+   },
+   {
+    "id": "G4-02",
+    "verdict": "confirmed",
+    "reason": "No sentence refuses the program. `[ALC-5]`: \"While a value made in a memory manager's instance lives, the instance is changed only by ...\": `n`'s one owner ended at the block's end, so the value does not live and `frame.reset()` is allowed. `[LT-4]`: \"A value made in a memory manager's instance ..., and every value that holds one, lives no longer than that instance\": a `weakref` link holds nothing (IX.0: ownership \"none\"; the glossary: \"a link that does not keep its target alive\"). `[OBJ-3]`: \"the block is freed when the weak count reaches 0\" and `[WK-11]`: the weak count \"keeps [the block] in memory\", but `[ALC-1]` (1) says of the arena that \"all of it is freed together when the instance is cleared or ends\", and `[ARN-2]` that the arena \"frees nothing one by one\": the block the link keeps is reused by `reset()`. `[ARN-1]`: `reset()` \"ends every view into the arena\", and the glossary's **view** list has no `weakref`. `[WK-12]`: opening is \"one test of the header\", which after `o = Other(...) using frame` is `o`'s live header, so `p: Node` reads an `Other`. The same with the arena's end while `w` lives (freed memory) and with any manager of kind (1) or a cleared `FoundByAddress` pool. The proposed text is general (a link carries its target's instance region as a kept view does, `[LT-45]`), is checked when compiling, and costs nothing while running.",
+    "better_fix": "Keep the reader's `[ALC-5a]`, and add one sentence so that the rule reaches links held in fields and lists: \"A field or element of a `weakref` type whose target was made in an instance carries that instance's region as a kept view field does (`[LT-45]`), so the object or list that holds it lives no longer than the instance (`E3063`).\" Also add to `[ARN-2]`: \"an object made `using` an arena keeps its block for its `weakref` links as any object does (`[OBJ-3]`), so the links end before the arena is reset or ends (`[ALC-5a]`)\"."
+   },
+   {
+    "id": "G4-03",
+    "verdict": "narrowed",
+    "reason": "The program's own route is closed by `[RC-4]` point 4: \"A thread that stores an owner of a `thread_shared` value where other threads can reach it (... into the capture of a thread it spawns ...; every such place is known when compiling) first adds its own count of the value into the away count and marks the value handed over; from then on every thread ... counts in the away count, and a later end on another thread never goes through the queue\": the `owns v` capture of the task is such a place, so the task's `mem.drop(owns v)` ends the value at once, before the join, and `frame.reset()` reuses nothing live. The delayed end is real on the route point 5 names, \"when its last owner ends on a thread that did not make it and the value was not handed over at a place of point 4 (it travelled inside another object)\": `box = Holder(v=thread_shared Big(...) using frame)`, `scope.spawn(fn() owns box: mem.drop(owns box))`. Then point 3 places check points \"at every loop's back edge, before every call that may block the thread (waiting for a lock, `join`, a channel's receive, a sleep) and when the thread ends\": the one before the join finds the queue empty, nothing follows the join, `[ALC-5]` is \"checked when compiling\" with `box` ended, and the value is \"intact\" in reused bytes until the loop's back edge. A second route the reader's fix does not cover: a value a task made (on a pool thread, `using` the arena it was lent) and the parent ends after the join is queued for the pool thread, whose next check point is unbounded while it idles in its wait; the parent's `frame.reset()` is allowed meanwhile. A check point after a join fixes the first route only.",
+    "narrowed_to": "A `thread_shared` value made `using` an instance whose last owner ends on another thread without a hand-over at a place of point 4 (inside another object captured by a scoped task; or made by a task and ended by the parent) stays intact past the end of its compile-time life, which `[ALC-5]` and `[LT-4]` bound by the instance, so a `reset()` or the instance's end that the compiler allows reuses or frees its block before the check point ends it.",
+    "better_fix": "In `[RC-4]` point 4 add: \"A `thread_shared` value made `using` an instance of a manager that may have several instances (`[ALC-1]`) is marked handed over at the line that makes it: its instance may be reset or end as soon as the compiler sees its last owner end (`[ALC-5]`, `[LT-4]`), which an end delayed to a check point would miss, so every owner of such a value is counted in its away count and its end is never delayed. A value made in `Global` or `System` keeps the two counts: its block waits for the check point and nothing reuses it.\" Add the corresponding clause to the `[COST-3]` `thread_shared` row (\"a value made `using` an instance counts every owner atomically, as if handed over at its making line\") and to `[ALC-5]`: \"A `thread_shared` value made in an instance is ended where its last owner ends (`[RC-4]` point 4), so the rule is checked as written.\" The reader's check point after every `join` and scope end may be added as well, but it is not what makes the rule true."
+   },
+   {
+    "id": "G4-04",
+    "verdict": "confirmed",
+    "reason": "`[OBJ-1]`: \"Which thread made a value is read from the header of the memory chunk its block came from, written once when the chunk is made, never from the value.\" `[ALC-1]` lets a `thread_shared` value be made `using` any `Allocator` (\"an `owns`, `shares`, `shares mut` or `thread_shared` value ... `using A`\"), whose `allocate` is the program's own code and whose memory the runtime never laid out; `[RT-1]`: \"Allocation uses the system `malloc`/`realloc`/`free`\", and `[ALC-3]`/`[FFI-27]` replace even that. No sentence says what a \"chunk\" is, who lays it out, or what the away path reads for a block that came from none. A runtime built from the text must read the bytes before the block or guess (E0901's case), and a wrong answer counts an owner in the home count from another thread, racing its maker's plain instructions. The reader's text is a general rule and marks verdict 101 (fix 1: \"The maker's id is read from the object's memory chunk\") correctly; since it reverses that fix, the text below keeps it.",
+    "better_fix": "Keep verdict 101's chunk by saying what a chunk is and whose memory it is, and remove the need to know the maker where the runtime lays nothing out. In `[OBJ-1]` replace the sentence with: \"Which thread made a value is read from the header of the memory chunk its block came from: the runtime takes the memory for `thread_shared` blocks made in `Global` in chunks from the configured allocator (`[ALC-3]`, `[FFI-27]`, else `[RT-1]`'s), writes the making thread into each chunk's header once, and a chunk belongs to that thread for the process's life, never given to another thread's allocator (so a block freed and reused names the same thread). A `thread_shared` value made `using` an instance (`[ALC-1]`) lies in memory the runtime did not lay out, so it is marked handed over at the line that makes it (`[RC-4]` point 4) and no thread asks which thread made it.\" Add a `[COST-3]` note to the `thread_shared` row (chunks of the configured allocator; one load of the chunk header on the away path). This also closes AUDIT O8. If the owner prefers the reader's per-value word (one store at the making line, 8 of the header's 12 spare bytes), it is the simpler runtime, and `[VER-4]` records the header change."
+   },
+   {
+    "id": "G4-05",
+    "verdict": "narrowed",
+    "reason": "The property is named by the text: `[TYP-1]` \"Every concrete type has, at compile time, a size, an alignment, and the properties `Copy`, `Send`, `ThreadShared`, needs-drop, view and niche\", and `[DRP-6]` says what ending each kind of value does (\"ending a `shares`, `shares mut` or `thread_shared` owner subtracts one from the count ... ending a `weakref` link subtracts one ... ending a plain view ... does nothing ... ending a view type ends whatever in it needs ending\"), from which `Link` with a `shares mut` field needs drop (ending it subtracts a count). But no sentence states the definition, `[DRP-8]` speaks of \"a value whose type has a `drop`\", and the glossary has no row, so a compiler reading `[ARN-2]`'s \"a type that needs drop\" as \"declares `fn drop()`\" is not contradicted by any line: it accepts `frame.alloc(owns Link(...))`, and the `Counter`'s owner count is never subtracted. The `alloc_uninit` half of the proposal is not needed: `[ARN-8]` already makes `write_at` of a `T` that needs drop an `unsafe` operation (`E3100` outside `unsafe:`), so nothing safe puts a drop value into an `alloc_uninit` span.",
+    "narrowed_to": "needs-drop is a named property (`[TYP-1]`) whose content is implied by `[DRP-6]` but defined nowhere; the glossary row is the fix, and `[ARN-2]` should point to it. The `alloc_uninit` addition is covered by `[ARN-8]`.",
+    "better_fix": "Glossary row: \"| **needs drop** | the property of a type whose values do something when they end (`[DRP-6]`, `[TYP-1]`): a type with a `fn drop()`; a heap type (`String`, `Array`, `Map`, `Set`, `owns T`, `owns dyn I`); a class object; a counted owner or link (`shares`, `shares mut`, `thread_shared`, `weakref`); a guard; a function value whose state owns one of these; a foreign type with a destructor; and every struct, enum, tuple, fixed array, `Option`, `Cell` or generic instance with a field, element or payload that does. A `Copy` type, a `ref`, a `sharedref mut` link, a span, a `StrView`, a raw pointer and a `MaybeUninit[T]` (whatever `T`, `[ARN-8]`) never do |\". In `[ARN-2]`, at the first use, write \"a type that needs drop (Appendix F)\"."
+   },
+   {
+    "id": "G4-06",
+    "verdict": "narrowed",
+    "reason": "The `Alloc` half is answered by the text: `[ALC-1]` \"takes the mesh's block from the arena `current` by calling `current.allocate(…)`\", and `[EFF-1]` \"An operation's effects are its own and those of everything it runs where it runs\", so a making line `using fixed` has `FixedArena.allocate`'s effects, a pointer bump with no `Alloc`, which `[ARN-4]` confirms (\"carries no `Alloc` on allocation ... `FixedArena` is the arena for `@noalloc` code\") and `[HEAP-1]` (\"carries the `Alloc` effect where it allocates\", through `ember_alloc` or the manager). X.1's row \"a value put in its own block by `owns`, `shares` or `thread_shared`\" does not say \"in `Global`\", which is the one sentence to mend. The panic half is a real gap: `[ALC-2]` says `allocate` is \"null on failure\" and \"the calls the compiler makes for `using` values are its own\", `[ALC-4]` covers \"a standard container\" only, and nothing says what the compiler's own call for `owns Cmd(id=1) using fixed` does on null, nor its text (`[COST-6]`), nor whether it is the \"allocation failure\" `Panic(Explicit)` lists. Two compilers differ there.",
+    "narrowed_to": "What the compiler's own `using` call does when `allocate` or `reallocate` returns null, which panic it is, and the X.1 row's wording; the effect of the making line is already `[EFF-1]`'s.",
+    "better_fix": "In X.1's `Alloc` row write \"a value put in its own block by `owns`, `shares` or `thread_shared`, or a class object, made in `Global` (one made `using x` carries the effects of `x`'s `allocate`, `[ALC-6]`)\". Add:\n\n* `[ALC-6]` **A making line has its instance's effects, and fails as a container does.** A line that makes a value `using x`, and every growth and end of that value, carries the effects of the `Allocator` methods it calls on `x`'s type (`[EFF-1]`); `Alloc` is the effect of `ember_alloc`, so of `Global`'s and `System`'s `allocate` and `reallocate` and of every implementation that reaches them, and a `FixedArena`'s `allocate` has none. When the instance's `allocate` or `reallocate` returns null, the compiler's own call panics, \"out of memory: `owns Cmd(id=1) using fixed` (line 8) asked `fixed` for 16 bytes\", the allocation failure `Panic(Explicit)` lists (`[EFF-16]`), so under `@nopanic(explicit)` such a line is `E4040` (\"`tick` is `@nopanic(explicit)`, and `owns Cmd(id=1) using fixed` (line 8) panics when `fixed` is full; make it where failure is a value: write `c = fixed.try_alloc(owns Cmd(id=1))` and open its `Option`\"), as a container's `push` is unless it is `try_push` or after `try_reserve` (`[ALC-4]`). A `reallocate` that returns null leaves the old block as it was."
+   },
+   {
+    "id": "G4-07",
+    "verdict": "narrowed",
+    "reason": "The text decides both cases, though not in one place. For the std's types, `[ARN-1]` is a rule of the language about `Arena` (\"an `alloc*` call ends no earlier view and overlaps none, so many allocations are outstanding at once, each a place of its own that a `ref mut` name may write\") and `[LT-44]` names `Arena`, `FixedArena` and `ScopedArena` by name: a compiler built from the text implements those facts for those types, as it implements `ref_to_ptr` (§IV.5: \"one function the compiler knows\") and the types \"the compiler declares itself\" (`[TYP-43]`). For `MyArena.alloc`, no rule grants the facts, so the ordinary ones apply: `[LT-1]` rule 1 (\"if it is a method, the result points into `this`\") and `[BRW-1]` (\"a `ref mut` name is alone\") refuse a second `alloc` while the first result is used, and silence is refusal, not a guess. What is missing is one sentence saying that `[ARN-1]`'s facts belong to `std.arena`'s types alone, so that no implementer extends them to a type with the same shape.",
+    "narrowed_to": "An editorial sentence in `[ARN-1]` that its facts are the compiler's own for the types of `std.arena` and for no other type; the behaviour for both cases is already decided.",
+    "better_fix": "Add to `[ARN-1]`: \"These facts are the compiler's own for the types of `std.arena` (`Arena`, `FixedArena`, `ScopedArena`, `ThreadArena`), which it recognises by their module as it does the types it declares itself (`[TYP-43]`), not by their names or their code. No other type has them: a method of the program's own type that returns a view of its object is an ordinary method, whose result points into `this` (`[LT-1]`) and is exclusive with it while used (`[BRW-1]`, `E3021`), and a manager of the program's own is used through `Allocator` and `using` (`[ALC-1]`), whose values are places of their own (`[ALC-5]`).\""
+   },
+   {
+    "id": "G4-08",
+    "verdict": "confirmed",
+    "reason": "`[DSJ-5]`: \"Both forms record a `RuntimeCheck(Aliasing)` site ..., unless the compiler already knows the ranges are disjoint, in which case no comparison is emitted\"; `[COST-3]`'s row: \"none when the compiler knows the spans apart\". `[EFF-15]`: \"The proofs that count are exactly those this document specifies — `[OPT-2]`, `[RNG-4]`, `[SIMD-7]` and the parent-link proof of Part VIII — and a verdict is computed **as if every one of them were applied wherever its conditions hold**\". Removing the compare of `assert_disjoint(lo, hi)` removes a check, and no listed proof covers it; `[BRW-11]`'s list of when two names are proved apart (\"different constants, `j` from `i + 1..`, inside `if i != j:`, or after `assert_disjoint(a, b)`\") and §IX.8's structural forms are facts of the exclusivity analysis, not named as a proof of `[EFF-15]`'s list. Under `@no_alias_checks` one compiler records no site for `halves` and another counts the compare (`E4030`). The reader's fix is right in shape; its closed list should name the facts `[BRW-11]` and §IX.8 already use rather than a new set.",
+    "better_fix": "In `[DSJ-5]` replace \"unless the compiler already knows the ranges are disjoint, in which case no comparison is emitted\" with \"unless the two views are known apart by `[DSJ-11]`, in which case no site is recorded and no comparison is emitted\". Add:\n\n* `[DSJ-11]` **Views known apart.** Two views are known apart, with no compare, exactly when the compiler proves them apart as `[BRW-11]` and §IX.8 say: the two results of one `split_at`, `split_at_mut`, `get_pair_mut` or `chunks_mut` call; two columns of one SoA; two `alloc*` results of one arena (`[ARN-1]`); two ranges of one list whose bounds are constants, or `j` from `i + 1..`, that do not overlap; views of two different whole variables neither reached through the other; and two names already given the fact by an earlier `assert_disjoint` or `check_disjoint` (`[DSJ-2]`). Nothing else is, whatever an implementation could see: this is the one disjointness proof, and `[EFF-15]` names it.\n\nIn `[EFF-15]` write \"`[OPT-2]`, `[RNG-4]`, `[SIMD-7]`, `[DSJ-11]` and the parent-link proof of Part VIII\"."
+   },
+   {
+    "id": "G4-09",
+    "verdict": "narrowed",
+    "reason": "The principle already decides it: `[UNS-11]` \"Anything that can break a safety promise (misuse memory, race, leak, skip a promised check, or reach memory the rules cannot see) is possible only inside an `unsafe` block\", and a safe `copy_nonoverlapping(p, q, 4)` writing through raw pointers would break it, so a std that declared it a plain `fn` would not conform. But the declaration itself is nowhere: `[UNS-5]` lists `copy_nonoverlapping` with no word, `[UNS-1]`'s list names `transmute`, `get_unchecked`, `assume_init`, `assume_disjoint` and `into_raw()` but not `copy`, `[STD-29]` says it of `Volatile`'s functions only, and `[UNS-7]` (\"The standard library carries `@safety` on every unsafe function it exports\") does not say which those are. Since `[STD-*]` is the only authority for the std's declarations, the sentence is missing, not the rule.",
+    "narrowed_to": "An editorial gap: `[UNS-5]` should declare `copy` and `copy_nonoverlapping` `unsafe fn`s with `@safety`, and `[UNS-1]`'s list should name them; `[UNS-11]` already forbids the safe declaration.",
+    "better_fix": "The reader's `[UNS-5]` text is right; keep it, and in `[UNS-1]` after `transmute` write \"`copy` or `copy_nonoverlapping` (`[UNS-5]`)\". `zeroed[T]()` stays safe since `T: needs Zeroable` vouches (`[ARN-11]`)."
+   },
+   {
+    "id": "G4-10",
+    "verdict": "confirmed",
+    "reason": "`[DET-2]`: \"`Nondet` is introduced by exactly: ... the wall clock, the monotonic clock, the system random source, thread and job completion order; ...\". A receive from a channel two tasks send to is a channel operation (X.1: `Sync + Block`), named nowhere as `Nondet`; `try_lock`'s answer (`[THR-3]`: \"`m.try_lock() -> Option[MutexGuard[T]]` never blocks\") and an `Atomic` read of a place a running task adds to (`[THR-14]`) are named nowhere; `[THR-21]` says a reduction is not `Nondet` and says nothing of these. `[DET-3]` counts only what `[DET-2]` lists, and the word \"exactly\" closes it, so a conforming compiler accepts `gather`, whose result differs between runs. \"thread and job completion order\" may be read to cover the two senders' race, but not `try_lock`, `try_recv` or an `Atomic` read, so the list must say it. The reader's clause is general and computable: which places an unjoined task may change is `[THR-11]`'s summary.",
+    "better_fix": "The reader's text, with one precision so that a single-sender channel stays deterministic by the text: \"a read whose value depends on which thread acted first: a receive on a channel more than one thread may send to (one sender on one thread gives the sent order), `try_lock`'s and `try_recv`'s answer, and a lock's view or an `Atomic` read of a place another thread, or a task not yet joined, may change (`[THR-11]`; after the join the place holds what the joined tasks left, in spawn order for a reduction, `[THR-21]`)\"."
+   },
+   {
+    "id": "G4-11",
+    "verdict": "confirmed",
+    "reason": "`[EFF-1]`: \"Calling a generator runs none of its body; each `next` carries the effects of the body up to the next `yield`, and dropping a suspended one those of the drops it performs (ODR-057).\" Which `yield` a `next` resumes from is a state the program computes while it runs (`[CORO-1]`: the frame holds the \"suspended state\"; `[COST-3]`: \"one jump on the state\"), so \"up to the next `yield`\" names a segment the compiler cannot pick for a `next` in a loop or after a `next` made elsewhere. A compiler that takes the segment accepts `first_two` and a loop that reaches the allocating segment under `@noalloc`; one that takes the union refuses `first_two`. `[EFF-5]` makes the choice decide `E4001`, and `[EFF-15]` promises \"every implementation reaches the same verdict\". No other sentence settles it.",
+    "better_fix": "In `[EFF-1]` replace the clause with: \"each `next` carries the effects of the whole body, the union over its segments, since which `yield` it resumes from is a state the program computes while it runs (a generator a `@noalloc` function drives therefore allocates nowhere in its body), and dropping a suspended one carries the drops at every `yield` it may be suspended at (ODR-057)\"."
+   },
+   {
+    "id": "G4-12",
+    "verdict": "narrowed",
+    "reason": "The contradiction is real but smaller than stated. Inside the scope the program is refused on other grounds: `[ARN-6]` \"the `ScopedArena` holds a `ref mut` view of it for the scope's life (`[LT-46]`)\" and `[LT-46]` \"`ref mut T` ... is alone: while its holder is still used, the place is not read or changed through any other name (`[BRW-1]`)\", while `cmds` points into `frame` (`[ARN-1]`: \"the views point into the arena's memory\"; `[LT-44]`), so `cmds[0] = tmp[0]` is `E3022`/`E3021` by `[LT-46]`, beside `[ARN-6]`'s `E3096` for using the parent. After the scope the two rules disagree: `[ARN-1]` \"`reset()`, `scope()` (`[ARN-6]`) and the arena's end may reuse or free that memory: each ends every view into the arena, and a later use of one is `E3060`\" makes `println(cmds[0])` `E3060`, while `[ARN-7]` \"No operation lowers an arena's allocation pointer, reuses its bytes or moves what it has given out while a view into it is used: every such operation ends every view\" and `[ARN-6]` \"releases everything at the block's end, last in first out\" (the scope's own bytes only) leave `cmds` live. `[ARN-7]` is the rule that says what ends a view; `[ARN-1]`'s mention of `scope()` is the error.",
+    "narrowed_to": "`[ARN-1]` wrongly lists `scope()` among the operations that end every view into the arena; a use of an earlier view after the scope's end is allowed by `[ARN-6]`/`[ARN-7]`, and a use inside the scope is refused by `[LT-46]`/`[ARN-6]`, not by `[ARN-1]`.",
+    "better_fix": "The reader's replacement, with the inside-scope case named: \"`reset()` and the arena's end reuse or free that memory: each ends every view into the arena, and a later use of one is `E3060`. A scope (`[ARN-6]`) ends no view made before it: while it is live the parent, and every view into it, is not used (`E3096`, since the scope holds a `ref mut` view of the arena, `[LT-46]`), and its end reuses only the scope's own bytes, ending the views into the scope, which live no longer than it in any case (`[LT-1]`).\""
+   },
+   {
+    "id": "G4-13",
+    "verdict": "narrowed",
+    "reason": "(a) is answered: `[ALC-1]` \"takes the mesh's block from the arena `current` by calling `current.allocate(…)`\" makes the making line a method call, and `[EXC-15]` \"A method that may change its object is not called through a name that only reads it (`E3023`)\" with `[ALC-5]` (\"the instance is changed only by what allocates from it\") refuses `using current` through the plain parameter `current: LevelArena`, naming `allocate`'s line; for `Global`, `[STA-1]` (\"it never changes; shared state that changes goes through an `Atomic`, `Mutex`, `RwLock` or `Once` in it\") already says what its `allocate` may do. (b)'s criterion is stated and is the owner's (verdict 107: \"its `deallocate` does nothing, checked when compiling\"; `[ALC-1]` (1): \"an empty body\"): a `Bump` whose `deallocate` counts frees is not kind (1), a decision, not a hole, and the reader's summary-based criterion is not better (it would equal \"empty\" in every real case). What is thin is the interface file: whether a `pub` manager type's `deallocate` is empty decides the size of every value made `using` it in a dependant (the instance word), and `[BLD-14]`'s seven items do not list it, though `[EFF-4]`'s \"every other worked-out fact is recorded\" covers it by its catch-all.",
+    "narrowed_to": "`[BLD-14]`/`[EFF-4]` should list, as a type-level fact of a `pub` manager type, whether its `deallocate` is empty and whether it implements `FoundByAddress`, since they decide the layout of a dependant's values (`[ALC-1]`); (a) and the body criterion are already decided.",
+    "better_fix": "In `[BLD-14]` add item 8: \"for each `pub` type implementing `Allocator`, whether its `deallocate` has an empty body and whether it implements `FoundByAddress`, which decide whether values made in its instances keep the instance word (`[ALC-1]`), a layout fact of every package that writes `using` that type\". In `[ALC-1]` add, after the making-line sentence: \"`using x` names the instance through a name that may change it (its owner, a `ref mut` name, or a `sharedref mut` link), since `allocate` changes the instance (`[EXC-15]`, `[ALC-5]`); through a plain parameter it is `E3023` (\"`allocate` changes the arena (`LevelArena.allocate`, its line 4), and `current` only reads it; write `fn fill(ref mut current: LevelArena)`\"); a manager with one instance is a `static` whose `allocate` reads `this` (`[STA-1]`).\""
+   },
+   {
+    "id": "G4-14",
+    "verdict": "confirmed",
+    "reason": "(a) `[ALC-1]` lists what `using` may follow as \"an `owns`, `shares`, `shares mut` or `thread_shared` value, a class object, an `Array`, `Map` or `Set`\" and `[TYP-46]` says \"after any other type it is `E2114`\", while `[ALC-1]` (1) says \"a value that grows (an `Array`, `Map`, `Set` or `String`) made in it keeps the word\": `names: String using LevelArena` is `E2114` by one sentence and contemplated by the other. (b) `[ARN-5]` says the storage \"is taken from an arena once, at construction\" and `[ARN-5c]`/`[ARN-5d]` list every method but no constructor, no word on the arena, and whether the container is a view (`[TYP-34]`, `[SEL-1]`): a compiler must guess an API. (c) `[ARN-11]`: \"a struct is when it declares `@derive(Zeroable)` ... an enum whose zero discriminant is invalid is never `Zeroable`\" says nothing of an enum that declares it with a valid zero, so `@derive(Zeroable)` on `Slot` is `E0901` by silence where the text should decide. All three are editorial; the reader's texts are right, the enum one simplified below.",
+    "better_fix": "The reader's text for (a) and (b). For (c): \"An enum is `Zeroable` when it declares `@derive(Zeroable)` and all-zero bytes are one of its values: the variant whose discriminant is zero carries no payload or a `Zeroable` one, checked when compiling (`E2080`, naming the variant or field that is not); an enum whose zero bytes are no variant is never `Zeroable`, and the derive on it is `E2080`.\""
+   },
+   {
+    "id": "G4-15",
+    "verdict": "narrowed",
+    "reason": "`[PRF-4]`: \"A check that stops the program says so in the program's own names ..., in every profile with the same text; §X.4 gives each stop's text (`[COST-6]`)\", and `[COST-6]`'s table has no row for the arithmetic checks `[PRF-4]` itself lists. But most texts exist outside the table: `[TYP-8]` \"panics with `integer overflow in '<op>'` naming the operator actually written\", `[TYP-6]`'s \"a zero divisor panics (`division by zero`)\", `[HEAP-8]` \"panics with `capacity overflow`\", `[ALC-4]` \"panics (`out of memory`)\", `[ALC-2]` \"panics (`invalid Layout`)\", and the bounds row is in the table. No text at all is given for a shift out of range (`[TYP-10]`: \"the shift panics\"), a `FixedArena`'s exhaustion (`[ARN-4]`: \"panics on exhaustion\"), a full `Pool` (`[HND-3]`: \"`insert` panics\") and `pool[h]` on a stale handle (`[HND-1]`: \"or panics in `pool[h]`\"), so `[TST-31]`'s kind of test cannot be written for those four and two runtimes may print two things. The reader's overflow text contradicts `[TYP-8]`'s.",
+    "narrowed_to": "Four stops have no text (a shift out of range, `FixedArena` exhaustion, a full `Pool`, `pool[h]` on a stale handle), and `[COST-6]`'s table is not the index `[PRF-4]` says it is for the stops whose text other rules give.",
+    "better_fix": "Add to `[COST-6]`'s table rows that repeat the texts the rules give, in the program's names: `an overflow check (`[TYP-8]`)` — \"`integer overflow in '+'`: `x + 1` on line 3 (9,223,372,036,854,775,807 + 1); use `x.checked_add(1)` for an `Option`\"; `division by zero (`[TYP-6]`)` — \"`division by zero`: `7 // (y - y)` on line 4\"; `a shift out of range (`[TYP-10]`)` — \"`shift out of range`: `1 << n` on line 9 shifts an `int` by 70; use `wrapping_shl`\"; `capacity overflow (`[HEAP-8]`)` — \"`capacity overflow`: `xs.reserve(...)` on line 6 asks for 18,446,744,073,709,551,615 elements\"; `allocation failure (`[ALC-4]`, `[ALC-6]`)` — \"`out of memory`: `xs.reserve(...)` on line 6 asked `Global` for 1,073,741,824 bytes; use `try_reserve`\"; `an invalid `Layout` (`[ALC-2]`)` — \"`invalid Layout`: `Layout(3, 3)` on line 7, an alignment that is not a power of two\"; `a `FixedArena` exhausted (`[ARN-4]`)` — \"`fixed.alloc_zeroed(...)` on line 9: `fixed` has 16 bytes free and 32 were asked; use `try_alloc` for an `Option`\"; `a full `Pool` (`[HND-3]`)` — \"`pool.insert(...)` on line 11: every slot is live or retired; use `try_insert` for a `Result`\"; `a stale handle in `pool[h]` (`[HND-1]`)` — \"`pool[h]` on line 12: the handle is stale (slot 3, generation 2 of 5); use `pool.get(h)` for an `Option`\". Write the shift's text into `[TYP-10]`, the arena's into `[ARN-4]` and the pool's into `[HND-1]`/`[HND-3]`, since each rule owns its text."
+   }
+  ],
+  "missed": [
+   "[EFF-2] against the [COST-3] row: `[EFF-2]` says a function-typed parameter contributes \"every argument given to it\" across the program, while `[COST-3]`'s last row says \"a library function given a function is one instance per function, as Rust's generic `F: FnMut`\" and `[CLO-3]` sends per-copy calling to a type parameter (`[CLO-14]`). Program: `pub fn each(xs: Array[int], f: fn(int))` in package `lib` whose body walks `LOG` (a `lib` `static mut`) and calls `f(x)`; a dependant passes `fn(x): lib.note(x)` which pushes to `LOG`. Under the per-instance reading the dependant's package compiles the instance and refuses it (`E3020`); under `[EFF-2]`'s reading `lib` must count an argument it never sees. The two sentences should say one thing (per instance, by the package that gives the function, as `[EFF-4]` says of generics).",
+   "[BLD-14]'s seven facts omit where a `pub` function stores a function-typed parameter, which `[CLO-17]`'s check at the call that hands the function over needs across a package edge (`b.on_click(owns fn(): b.handlers.clear())` is refused with \"`on_click` would keep it in `b.handlers`\"). Program: package `ui` with `pub fn on_click(owns f: fn())` whose body is `this.handlers.push(owns f)`; a dependant writes `b.on_click(owns fn(): b.handlers.clear())`. The interface file must record that `f` flows into `handlers`, or the dependant cannot make the check and the function's own state is freed under it.",
+   "[ALC-5] and a `thread_shared` value handed to an unscoped thread from a long-lived instance: `static mut FRAME: FixedArena = FixedArena.with_capacity(1 << 20)`; `v = thread_shared Big(data=[0]) using FRAME` (no word: kind (1)); `thread.spawn(owns fn() owns v: work(v))`; later `FRAME.reset()`. `[LT-4]` lets the value go (the static outlives everything), `[ALC-5]` is \"checked when compiling\" over the values that live, and no sentence says what the compile-time life of a value handed to a thread that may outlive the function is for `[ALC-5]` (it must be \"until the program ends\", so the reset is `E3021` for ever after, or the thread's block is reused under it). One sentence in `[ALC-5]`: a value made in an instance and handed to an unscoped thread lives, for this rule, as long as the instance, so no change of `[ALC-5]`'s kind is made to that instance after the hand-over.",
+   "[ARN-4] names `try_alloc` and `[ARN-3]` gives no signature for it, nor says which `alloc*` forms have a `try_` form (`try_alloc_zeroed`, `try_alloc_array`), nor what `alloc(owns v)` does with `v` when the arena is full (the value is handed over; on exhaustion it is dropped before the panic or leaked?). Program: `fn fill(ref mut fixed: FixedArena, owns c: Cmd)` with `r = fixed.try_alloc(owns c)`: the type of `r` and whether `c` comes back in the `None` case are guesses; `E0901` by silence for code `@nopanic(explicit)` functions are told to write.",
+   "[ARN-2] and [ARN-1] with `[OBJ-3]`: an object made `using` an arena whose `weakref` links outlive its owners keeps its block (`[OBJ-3]`: \"the block is freed when the weak count reaches 0\"), but in an arena nothing is freed one by one, so the arena's `made`/used counters and `ember inspect --alloc` do not see it as live; beside G4-02's fix, `[ARN-2]` should say that such a block is given back to the arena when the last link ends, which for kind (1) is a no-op, so that `[ALC-5a]`'s check is the only thing that keeps it."
+  ]
+ }
+}

@@ -55,109 +55,164 @@ These words are used with these meanings throughout the specification.
 
 ## VII.2 Ownership
 
-* `[OWN-1]` *(changed in 0.9.15)* Every value has exactly one owner: a local, a field of an owned value,
-  an element of an owned collection, a temporary, or a `static`, unless a line makes it shared
-  (`shares x`, `thread_shared x`, `[RC-1]`). This holds for every type: a class object has one owner,
-  as a struct value does.
-* `[OWN-2]` *(changed in 0.9.15)* A value is **dropped** (ended) when its owner goes out of scope (block
-  end, reverse declaration order), when its owner is overwritten, or at the end of the statement that
-  created it as a temporary. Dropping runs the value's `drop` method, if any, then drops its fields in
-  reverse declaration order. A value always ends with its clean-up: nothing ends an owner without
-  running it, and there is no `mem.forget` (`[OWN-6]`); a value given to C is handed over to it
-  (`[OWN-12]`).
-* `[OWN-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* **`=` with a whole name hands it over.** `b = a`, where `a` is a whole
-  name that owns a value whose type is not `Copy`, hands `a` over: `a` ends. Using it afterwards,
-  whether it is read, handed over again or viewed (a method call, `print`), is `E3040`, labelled at the
-  hand-over and at the use, and the message names both ways out: "`items` was handed over to
-  `snapshot` on line 3 and is used on line 4; to keep both, write `snapshot = copy of items` (a copy of
-  your own) or `snapshot = shares items` (two owners of one list)". Where `a` is itself a view (a plain
-  parameter, a loop, pattern or opened name, a local holding a view), `b = a` makes `b` a read-only view
-  of what `a` views, and `ref` may say so (`cur = ref p`); a view hands nothing over. For a `Copy` type
-  `=` copies. A hand-over is a reshape of the giver's place (§VII.1, `[BRW-17]`): a view into `a` that
-  is still used after `b = a` is `E3060` at that use, and `a` is not handed over while a `ref mut`
-  name of it is still used (`E3022`). A value handed over on only some paths is tracked with a hidden
-  drop flag; a hand-over on some paths is legal, and a use a hand-over may have reached is `E3040`
-  too.
+* `[OWN-1]` *(changed in 0.9.15)* Every value has exactly one owner: a local, a field of an owned
+  value, an element of an owned collection, a temporary, or a `static`, unless a line makes it
+  shared (`shares x`, `thread_shared x`, `[RC-1]`). This holds for every type: a class object has
+  one owner, as a struct value does.
+* `[OWN-2]` *(changed in 0.9.15)* A value is **dropped** (ended) when its owner goes out of scope
+  (block end, reverse declaration order), when its owner is overwritten, or at the end of the
+  statement that created it as a temporary. Dropping runs the value's `drop` method, if any, then
+  drops its fields in reverse declaration order. A value always ends with its clean-up: nothing ends
+  an owner without running it, and there is no `mem.forget` (`[OWN-6]`); a value given to C is
+  handed over to it (`[OWN-12]`).
+* `[OWN-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* **`=` with a whole name hands it over.** `b
+  = a`, where `a` is a whole name that owns a value whose type is not `Copy`, hands `a` over: `a`
+  ends. Using it afterwards, whether it is read, handed over again or viewed (a method call,
+  `print`), is `E3040`, labelled at the hand-over and at the use, and the message names both ways
+  out: "`items` was handed over to `snapshot` on line 3 and is used on line 4; to keep both, write
+  `snapshot = copy of items` (a copy of your own) or `snapshot = shares items` (two owners of one
+  list)". Where `a` is itself a view (a plain parameter, a loop, pattern or opened name, a local
+  holding a view), `b = a` makes `b` a read-only view of what `a` views, and `ref` may say so (`cur
+  = ref p`); a view hands nothing over. For a `Copy` type `=` copies. A hand-over is a reshape of
+  the giver's place (§VII.1, `[BRW-17]`): a view into `a` that is still used after `b = a` is
+  `E3060` at that use, and `a` is not handed over while a `ref mut` name of it is still used
+  (`E3022`). A value handed over on only some paths is tracked with a hidden drop flag; a hand-over
+  on some paths is legal, and a use a hand-over may have reached is `E3040` too.
 * `[OWN-4]` *(changed in 0.9.15)* A loop body that hands over a value declared outside the loop is
   `E3040`, unless every path gives it a value again before the next round.
 * `[OWN-5]` Assigning to a place that holds a live value evaluates the new value, then drops the old
-  one, then stores the new one. `Cell.set` stores first and drops after (`[CELL-1]`); `MaybeUninit.write`
-  stores without dropping (`[ARN-8]`). These three orders are distinct and none generalises the others.
+  one, then stores the new one. `Cell.set` stores first and drops after (`[CELL-1]`);
+  `MaybeUninit.write` stores without dropping (`[ARN-8]`). These three orders are distinct and none
+  generalises the others.
 * `[OWN-6]` *(changed in 0.9.9)* *(changed in 0.9.15)* `mem.take(ref mut place: T) -> T` (leaves
-  `Default`), `mem.replace(ref mut place: T, owns new: T) -> T`, `mem.swap(ref mut a: T, ref mut b: T)`
-  and `mem.drop(owns x: T)` (ends `x` now: the name given to it ends, for every type, numbers included,
-  as for every `owns` parameter, and a later use is `E3040`, ODR-065) are the operations that take
-  values out of places a hand-over may not otherwise leave empty. A call writes `ref mut` before an
-  argument the callee may change (`[FN-2a]`): `mem.take(ref mut this.items)`. There is no
+  `Default`), `mem.replace(ref mut place: T, owns new: T) -> T`, `mem.swap(ref mut a: T, ref mut b:
+  T)` and `mem.drop(owns x: T)` (ends `x` now: the name given to it ends, for every type, numbers
+  included, as for every `owns` parameter, and a later use is `E3040`, ODR-065) are the operations
+  that take values out of places a hand-over may not otherwise leave empty. A call writes `ref mut`
+  before an argument the callee may change (`[FN-2a]`): `mem.take(ref mut this.items)`. There is no
   `mem.forget`: it is `E1010`, "`mem.forget` is gone: a value always ends with its clean-up; to give
   the widget to a C function that keeps it, hand it to a parameter its declaration says it takes
   (`widget_take(owns first)`), or, inside `unsafe:`, give it `first.into_raw()`".
-* `[OWN-9]` *(new in 0.9.15)* **`owns` hands over, for every type, numbers included.** An argument for
-  an `owns` parameter says `owns` at the call (`[FN-2a]`): `f(owns n)` ends `n` when `f` takes
-  `owns x: int`, and `f(owns copy of n)` keeps the caller's own. `return a` hands `a` over with no word,
-  and so does a constructor's argument, as `=` does: `w = Words(names=xs)` hands `xs` over, `Point(x=a)`
-  copies `a`. A value `=` copies (a number, a `bool`, a `char`, a `StrView`, a `ref T`, a `Span[T]`, a
-  struct made only of these) is copied with `=` too, so `b = owns n` is how `=` hands one over: `n` ends
-  there, and a later use is `E3040` (`f = owns flag` ends `flag`). `owns` is not written before a name
-  whose place already hands the value over, after `return`, nor before `fn` written on its own
-  (`E0109`: "`e.mesh = m` already hands `m` over; remove `owns`"; "`b = a` already hands `a` over; remove
-  `owns`"; "`return` always hands the value over; remove `owns`: `return xs`"; "`owns fn` does not say
-  what the function takes or copies; name it on each captured name: `fn() owns report:`"); before a
-  function written as an argument for an `owns` parameter it is the call's word
-  (`xs.iter().for_each(owns fn(x: int): println(x))`).
+* `[OWN-9]` *(new in 0.9.15)* *(changed in 0.9.20)* **`owns` hands over, for every type, numbers
+  included.** An argument for an `owns` parameter says `owns` at the call (`[FN-2a]`): `f(owns n)`
+  ends `n` when `f` takes `owns x: int`, and `f(owns copy of n)` keeps the caller's own. `return a`
+  hands `a` over with no word, and so does a constructor's argument, as `=` does: `w =
+  Words(names=xs)` hands `xs` over, `Point(x=a)` copies `a`. A value `=` copies (a number, a `bool`,
+  a `char`, a `StrView`, a `ref T`, a `Span[T]`, a struct made only of these) is copied with `=`
+  too, so `b = owns n` is how `=` hands one over: `n` ends there, and a later use is `E3040` (`f =
+  owns flag` ends `flag`). `owns` is not written before a name whose place already hands the value
+  over, after `return`, nor before `fn` written on its own, nor before a value made on the line for
+  a place that is not an `owns T` (`[GRM-15]`) (`E0109`: "`e.mesh = m` already hands `m` over;
+  remove `owns`"; "`b = a` already hands `a` over; remove `owns`"; "`return` always hands the value
+  over; remove `owns`: `return xs`"; "`owns fn` does not say what the function takes or copies; name
+  it on each captured name: `fn() owns report:`"); before a function written as an argument for an
+  `owns` parameter it is the call's word (`xs.iter().for_each(owns fn(x: int): println(x))`).
 * `[OWN-10]` *(new in 0.9.15)* **`owns` on the line that makes a value for a place that owns it
-  alone.** An `owns` field, an `Option[owns T]` and a list of `owns` values each hold their value in a
-  block of its own, and the line that makes a value for such a place says `owns`, at first and later:
-  `e = Entity(mesh=owns Mesh(points=[0.0]))`; `boss = Enemy(hp=500, mesh=owns Mesh(points=[0.0, 1.0])
-  using current)` (`[ALC-1]`); `t = Tree(value=1, left=Some(owns Tree(value=2)))` for
-  `left: Option[owns Tree]`; `r.pools.push(owns IntPool(items=[1, 2]))` for
-  `pools: Array[owns dyn Pool]`; `e.mesh = owns Mesh(points=[1.0, 2.0])`, which frees the old mesh. The
-  line without it is `E2123` ("`mesh` owns its mesh; say so where it is made:
-  `mesh=owns Mesh(points=[0.0, 1.0]) using current`"; "`left` holds its tree in a block of its own; say
-  so where it is made: `left=Some(owns Tree(value=2))`"). `owns` is also written where the default is
-  a view, before a `for` loop's or a `match`'s source (`for x in owns xs:`, `match owns e:`), which then
-  hands the value over. `owns` before a class type, whose object always lives in its own block, is
-  `E2114` ("a `Player` object always lives in its own block; remove `owns`: `p: Player`").
+  alone.** An `owns` field, an `Option[owns T]` and a list of `owns` values each hold their value in
+  a block of its own, and the line that makes a value for such a place says `owns`, at first and
+  later: `e = Entity(mesh=owns Mesh(points=[0.0]))`; `boss = Enemy(hp=500, mesh=owns
+  Mesh(points=[0.0, 1.0]) using current)` (`[ALC-1]`); `t = Tree(value=1, left=Some(owns
+  Tree(value=2)))` for `left: Option[owns Tree]`; `r.pools.push(owns IntPool(items=[1, 2]))` for
+  `pools: Array[owns dyn Pool]`; `e.mesh = owns Mesh(points=[1.0, 2.0])`, which frees the old mesh.
+  The line without it is `E2123` ("`mesh` owns its mesh; say so where it is made: `mesh=owns
+  Mesh(points=[0.0, 1.0]) using current`"; "`left` holds its tree in a block of its own; say so
+  where it is made: `left=Some(owns Tree(value=2))`"). `owns` is also written where the default is a
+  view, before a `for` loop's or a `match`'s source (`for x in owns xs:`, `match owns e:`), which
+  then hands the value over. `owns` before a class type, whose object always lives in its own block,
+  is `E2114` ("a `Player` object always lives in its own block; remove `owns`: `p: Player`").
 * `[OWN-11]` *(new in 0.9.15)* **A part handed over on its own.** A part of a struct value stored
-  somewhere else (`push`, `return`, a field, an `owns` argument) is handed over on its own: for a struct
-  value `p`, `names.push(owns p.name)` moves `p`'s name into the list, and `p.hp` stays usable; `p.name`,
-  and `p` used whole, are `E3040` until `p.name` is given a new value (`p.name = String("")`): "`p.name`
-  was handed over to `names` on line 4; give it a new value first, or keep a copy:
-  `names.push(owns copy of p.name)`". A field of a class object is not handed out this way, since other names
-  may reach the object and would see the hole (`E3013`: "`q` is a `Player` object, which other names
-  may reach, so `q.name` cannot be taken out and leave a hole; take it and leave a value in its place:
-  `names.push(owns mem.take(ref mut q.name))`"). A hand-over out of a name or place that does not own the
-  value is `E3013` too: "`v.push(owns template)` would hand over the caller's player, but `template` only
-  reads it; to put a player of your own in the list write `v.push(owns copy of template)`".
-* `[OWN-12]` *(new in 0.9.15)* **Giving an object to C.** A C function whose declaration says it keeps
-  the object it is given (`[FFI-11]`) takes it by an ordinary hand-over, `widget_take(first)`: the name
-  ends and Ember frees nothing. For a C function whose declaration cannot say so (a plain pointer
-  parameter, a function with `...`), `second.into_raw()` gives the object's address and stops Ember
-  from freeing it; the compiler makes that step itself, so nothing else can skip a value's clean-up.
-  `into_raw()` outside `unsafe:` is `E3100` ("`into_raw()` stops Ember from freeing the widget, so a
-  mistake leaks it or frees it twice; write it inside `unsafe:`", `[UNS-1]`).
-* `[OWN-13]` *(new in 0.9.15)* **Words before a value.** Before a value, a word acts on the object the
-  value names (for a link or an owner, on its target): `copy of x` (`[OWN-8]`); `owns x`
-  (`[OWN-9]`); `shares x`, one more owner, on this thread, that reads it, and `shares mut x`, one more
-  owner that may also change it, each written only before a new value, a local or an owner (`[RC-1]`,
-  `E2122`); `thread_shared x`, one more owner on any thread, written only
-  before a new value (`names = thread_shared Names()`) or a value already `thread_shared` (`E7017`
-  otherwise: "`names` is `share_and_keep`'s own object, which it may change; to share it between
-  threads, create it shared: `names = thread_shared Names()`"); `weakref x`, a link that does not keep it
-  alive (`[WK-11]`); `sharedref mut x`, a changeable link other holders may share (`[LT-46]`); and
-  `ref x` and `ref mut x`, views (`[BRW-12]`). An owner made from another may do no more than it:
-  `shares mut x` needs `x` to be a name that may change the value (`E3023`: "`g2 = shares mut game`
-  would change the `Game` through `game`, which only reads it (`game = shares Game()`, line 1), and an
-  owner made from it only reads too; write `g2 = shares game`, or, for two owners that both change the
-  game, write `game = shares mut Game()` instead of line 1"). A plain parameter of a `shares mut` type
-  only reads the caller's value (`[FN-1]`), so an owner made from it only reads too; a function that
-  hands on an owner that may change takes one: `fn setup(owns game: shares mut Game)`, called
-  `setup(shares mut game)`. In a lambda's capture list each word means
-  what it means before a value (`[CLO-2]`). In a list of names declared without types of their own (a
-  capture list, a loop's names, a pattern's names, a lambda's parameters written without types) each
-  word belongs to the one name after it, and a name with no word may not follow a name with a word, so
-  that no word can be read as covering the next name (`E0116`: "`ref mut` here belongs to `pos` only;
-  say what `vel` is: `for ref mut pos, ref vel in q:`, or `ref mut vel` to change it too").
+  somewhere else (`push`, `return`, a field, an `owns` argument) is handed over on its own: for a
+  struct value `p`, `names.push(owns p.name)` moves `p`'s name into the list, and `p.hp` stays
+  usable; `p.name`, and `p` used whole, are `E3040` until `p.name` is given a new value (`p.name =
+  String("")`): "`p.name` was handed over to `names` on line 4; give it a new value first, or keep a
+  copy: `names.push(owns copy of p.name)`". A field of a class object is not handed out this way,
+  since other names may reach the object and would see the hole (`E3013`: "`q` is a `Player` object,
+  which other names may reach, so `q.name` cannot be taken out and leave a hole; take it and leave a
+  value in its place: `names.push(owns mem.take(ref mut q.name))`"). A hand-over out of a name or
+  place that does not own the value is `E3013` too: "`v.push(owns template)` would hand over the
+  caller's player, but `template` only reads it; to put a player of your own in the list write
+  `v.push(owns copy of template)`".
+* `[OWN-12]` *(new in 0.9.15)* **Giving an object to C.** A C function whose declaration says it
+  keeps the object it is given (`[FFI-11]`) takes it by an ordinary hand-over, `widget_take(first)`:
+  the name ends and Ember frees nothing. For a C function whose declaration cannot say so (a plain
+  pointer parameter, a function with `...`), `second.into_raw()` gives the object's address and
+  stops Ember from freeing it; the compiler makes that step itself, so nothing else can skip a
+  value's clean-up. `into_raw()` outside `unsafe:` is `E3100` ("`into_raw()` stops Ember from
+  freeing the widget, so a mistake leaks it or frees it twice; write it inside `unsafe:`",
+  `[UNS-1]`).
+* `[OWN-13]` *(new in 0.9.15)* *(changed in 0.9.20)* **Words before a value.** Before a value, a
+  word acts on the object the value names (for a link or an owner, on its target): `copy of x`
+  (`[OWN-8]`); `owns x` (`[OWN-9]`); `shares x`, one more owner, on this thread, that reads it, and
+  `shares mut x`, one more owner that may also change it, each written only before a new value, a
+  local or an owner (`[RC-1]`, `E2122`); `thread_shared x`, one more owner on any thread, written
+  only before a new value (`names = thread_shared Names()`) or a value already `thread_shared`
+  (`E7017` otherwise: "`names` is `share_and_keep`'s own object, which it may change; to share it
+  between threads, create it shared: `names = thread_shared Names()`"); `weakref x`, a link that
+  does not keep it alive (`[WK-11]`), whose type is read from the words on the path to `x`: `weakref
+  thread_shared T` when the value `x` names is a `thread_shared T` (an owner `log: thread_shared
+  Log`, a parameter or a capture of that type, a field of that type crossed last on the path, a name
+  opened from a `weakref thread_shared Log`), and `weakref T` otherwise (a class object with one
+  owner, a `shares` or `shares mut` owner, a `weakref T` link, a name opened from one, a view of any
+  of these), so that `w = weakref log` is a `weakref thread_shared Log` and `cam.target = weakref p`
+  a `weakref Player`, with no second word. **A `weakref T` link is made only to a value that no
+  `thread_shared` value reaches**, so that only this thread can end it and count its links: a value
+  reached through a `thread_shared` value with no `thread_shared` word on the value itself takes no
+  `weakref T` (`E7015`: "`tree.items[0]` is reached through `tree`, which threads share, so another
+  thread may end the item, and `weakref tree.items[0]` would count its links on this thread alone;
+  share the items between threads: write `items: Array[thread_shared Item]` in `Tree` (line 3),
+  after which `weakref tree.items[0]` is a `weakref thread_shared Item`"). In the package the path
+  says it (for a view, what it points into, `[LT-1]`); across a call it is the callee's summary
+  (`[BLD-14]` item 9): a function that makes a `weakref T` link to what a parameter names, `this`
+  included, directly or through a call, records it, and a call that gives that parameter a value
+  reached through a `thread_shared` value is `E7015` at the call, naming the chain ("`f` makes a
+  link to the item `n` names (`w = weakref n`, its line 2), counted on one thread, and
+  `tree.items[0]` is reached through `tree`, which threads share; share the items between threads:
+  write `items: Array[thread_shared Item]` in `Tree` (line 3) and `fn f(n: thread_shared Item):`").
+  Inside a method `this` carries no word, so its link says it: `weakref this`, and a `weakref` of
+  anything reached through `this` with no `thread_shared` word on the way (`weakref this.root`), is
+  a `weakref` link to an object on one thread and says that every object of the class is on one
+  thread; `weakref thread_shared this`, the one place `weakref thread_shared` is written before a
+  value, is a `weakref thread_shared C` and says, as `thread_shared this` does, that every object of
+  the class is `thread_shared`. **A class's kind is read from its own methods** and recorded in its
+  interface (`[EFF-4]`, `[BLD-14]` item 8): one-thread when a method of it makes a one-thread owner
+  or link of `this` (`weakref this`, `weakref this.f` with no `thread_shared` word on the way,
+  `sharedref mut this`, and `shares this` or `shares mut this` where `[RC-1]` allows them);
+  `thread_shared` when a method of it writes `thread_shared this` or `weakref thread_shared this`;
+  neither otherwise, and such a class serves both kinds (`Log`, Annex A). A method pins the class
+  that declares it and every class derived from it, whose objects run it; a class pinned both ways,
+  by its own methods or with a base's, is `E7015` at the one-thread line ("`Node.add_child` (line 9)
+  links its nodes on one thread (`weakref this`), and `Node.share` (line 12) shares them between
+  threads (`thread_shared this`); a class's objects are one or the other: for nodes shared between
+  threads write `child.parent = weakref thread_shared this` on line 9, for one-thread nodes remove
+  `share`"). A line that makes an object of the other kind is refused there: `thread_shared Node()`
+  for a one-thread class is `E7015` ("`Node` keeps links to its nodes on one thread (`add_child`,
+  line 7: `child.parent = weakref this`), and a `thread_shared Node` may be reached from any thread;
+  for nodes shared between threads write `parent: weakref thread_shared Node = None` (line 4) and
+  `child.parent = weakref thread_shared this` (line 7), and make every node `thread_shared
+  Node()`"), and `Node()` for a `thread_shared` class is `E7017` ("every `Node` is shared between
+  threads (`add_child`, line 9: `child.parent = weakref thread_shared this`), and line 14 makes one
+  with one owner; write `root = thread_shared Node()`"). `weakref thread_shared x` before any value
+  but `this` is `E0109` where `x`'s type already says `thread_shared` ("`log` is a `thread_shared
+  Log`, so a link to it is a `weakref thread_shared Log` without the word; write `w = weakref log`")
+  and `E7017` where it does not ("`names` was not created `thread_shared`, so no link to a shared
+  value can name it; write `w = weakref names`, or create it shared: `names = thread_shared
+  Names()`"). `weakref` before a new value (`weakref Player()`) is `E2119` ("the player would end at
+  the end of the line and the link would find nothing; keep it in a name first: write `p = Player()`
+  above, then `cam.target = weakref p`"); `sharedref mut x`, a changeable link other holders may
+  share (`[LT-46]`); and `ref x` and `ref mut x`, views (`[BRW-12]`). An owner made from another may
+  do no more than it: `shares mut x` needs `x` to be a name that may change the value (`E3023`: "`g2
+  = shares mut game` would change the `Game` through `game`, which only reads it (`game = shares
+  Game()`, line 1), and an owner made from it only reads too; write `g2 = shares game`, or, for two
+  owners that both change the game, write `game = shares mut Game()` instead of line 1"). A plain
+  parameter of a `shares mut` type only reads the caller's value (`[FN-1]`), so an owner made from
+  it only reads too; a function that hands on an owner that may change takes one: `fn setup(owns
+  game: shares mut Game)`, called `setup(shares mut game)`. In a lambda's capture list each word
+  means what it means before a value (`[CLO-2]`). In a list of names declared without types of their
+  own (a capture list, a loop's names, a pattern's names, a lambda's parameters written without
+  types) each word belongs to the one name after it, and a name with no word may not follow a name
+  with a word, so that no word can be read as covering the next name (`E0116`: "`ref mut` here
+  belongs to `pos` only; say what `vel` is: `for ref mut pos, ref vel in q:`, or `ref mut vel` to
+  change it too").
 
 ## VII.3 Copy and `copy of`
 
@@ -520,94 +575,102 @@ view hands nothing over and makes no copy.
 Ember has **no lifetime syntax**. Every view carries a **region**, the set of program points at which
 it must be valid, and the compiler infers every region.
 
-* `[LT-5]` *(changed in 0.9.15)* Regions of locals are inferred by non-lexical liveness (§XVIII.4). Diagnostics describe them
-  in source terms: "the view of `x` on line 12 is still used on line 19".
-* `[LT-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Where a call's view points.** A call's result
-  that is a view, and a view a call puts in through a `ref mut` parameter (`[LT-47]`), point into the
-  arguments they may come from. A **source parameter** (ODR-024) is:
+* `[LT-5]` *(changed in 0.9.15)* Regions of locals are inferred by non-lexical liveness (§XVIII.4).
+  Diagnostics describe them in source terms: "the view of `x` on line 12 is still used on line 19".
+* `[LT-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **Where a call's view
+  points.** A call's result that is a view, and a view a call puts in through a `ref mut` parameter
+  (`[LT-47]`), point into the arguments they may come from. A **source parameter** (ODR-024) is:
   * a parameter whose type is a view, in any mode; or
   * a plain or `ref mut` parameter whose type is not `Copy` even when each of its type parameters is
-    taken to be `Copy`: an `Array[T]`, `String`, `Map`, an `owns T` or an arena, a struct or enum without
-    `@derive(Copy)`, or a tuple or fixed array holding one of these.
-  A source parameter of the second kind is the caller's place (`[FN-1]`, `[BRW-8]`): a result that points
-  into it may point anywhere in it, into its own storage or into storage it owns, and the call's view is
-  on the argument (`[BCK-1]`), read-only for a plain parameter and changeable for a `ref mut` one. A
-  `Copy` parameter that is not a view is not a source parameter (so neither is a plain `x: T`, nor a
-  function-type parameter, `[CLO-3]`), and nor is an `owns` parameter that is not a view. Which
-  parameters are sources depends only on the declared first line. In an instance of a generic, a
-  parameter whose type there is a view is a source of that instance too, of the first kind:
-  `Tree[StrView].leaf(v: T)` may return a view of what `v` views, and its callers, which call that
-  instance, know it (ODR-048). Where rule 1 below ties the result to `this`, such a parameter is a
-  source alongside it when its declared type names a type parameter the declared result names too: the
-  result's type says it can hold one, so `Map[StrView, V].entry(owns k) -> MapEntry[K, V, H]` returns an
-  entry holding `k`, while `get(q) -> Option[ref V]` points only into the map (ODR-069).
-  For a function whose result is a view:
+    taken to be `Copy`: an `Array[T]`, `String`, `Map`, an `owns T` or an arena, a struct or enum
+    without `@derive(Copy)`, or a tuple or fixed array holding one of these. A source parameter of
+    the second kind is the caller's place (`[FN-1]`, `[BRW-8]`): a result that points into it may
+    point anywhere in it, into its own storage or into storage it owns, and the call's view is on
+    the argument (`[BCK-1]`), read-only for a plain parameter and changeable for a `ref mut` one. A
+    `Copy` parameter that is not a view is not a source parameter (so neither is a plain `x: T`, nor
+    a function-type parameter, `[CLO-3]`), and nor is an `owns` parameter that is not a view. Which
+    parameters are sources depends only on the declared first line. In an instance of a generic, a
+    parameter whose type there is a view is a source of that instance too, of the first kind:
+    `Tree[StrView].leaf(v: T)` may return a view of what `v` views, and its callers, which call that
+    instance, know it (ODR-048). Where rule 1 below ties the result to `this`, such a parameter is a
+    source alongside it when its declared type names a type parameter the declared result names too:
+    the result's type says it can hold one, so `Map[StrView, V].entry(owns k) -> MapEntry[K, V, H]`
+    returns an entry holding `k`, while `get(q) -> Option[ref V]` points only into the map
+    (ODR-069). For a function whose result is a view:
   1. if it is a method, the result points into `this`;
   2. else, if exactly one parameter is a source parameter, the result points into it;
-  3. else, the result points into **all** source parameters together.
-  At a call, the caller keeps viewed, while the result lives, exactly the arguments the called
-  function's code shows the result points into: its summary (`[LT-22]`), read for every result type, so
-  `fn pick(a: Span[int], b: Span[int]) -> Span[int]:` whose body is `return a` keeps only `a` viewed.
-  The three rules decide a call where there is no code to read: a call through a function value
-  (`[LT-7]`), a function with no Ember body. A `dyn` or `virtual` method's call is decided by the code of
-  each kind that may reach it, the types the program gives to the function, followed through its names
-  and calls: with `interface Picker: fn pick(other: Array[int]) -> Span[int]`, `Mine.pick` returning
-  `this.items` and `Yours.pick` returning `other`, `fn show(p: dyn Picker):` doing `r = p.pick(xs)`,
-  `xs.push(owns 3)`, `println(r)` compiles for `show(Mine(items=[9]))`, which prints `[9]`, and is
-  refused at `xs.push(owns 3)` for `show(Yours(items=[9]))` (`E3021`). Where which kind reaches it is
-  known only while the program runs (`p: dyn Picker = Mine(items=[9]) if input() == "m" else
-  Yours(items=[9])`, then `show(p)`), what one of them makes unsafe is `E3021` ("`xs` changes while `r`
-  may still look at it: `p` may be a `Yours`, and which kind it is is only known while running", with
-  the help "to check it while running, write `runtime` on the parameter:
-  `fn show(p: runtime dyn Picker):`"), unless the parameter says `runtime` (`[LT-48]`). Pointing into an argument means
-  pointing into it and into everything it owns (**into**, §VII.1), so a reshape of anything it owns ends
-  the view and any other change of it while the view is used is refused (`[BRW-1]`). A returned view
-  may point into `this` and into any source parameter, a method's as well as a function's, with nothing
-  written: `fn pick(other: ref i32) -> ref i32: return other` in a type body is no error, and its callers
-  keep `other` viewed. A returned view that points into any other parameter is refused: `E3063` when
-  that parameter is `owns` or is passed as a copy (`[BRW-8]`), whose storage ends with the call, and
-  `E3062` otherwise. A call whose result type
-  is `ref mut T` or `ref T` is a place (`first(ref mut xs) += 1`; `counts.entry(owns k).or_default() += 1`),
-  and a name bound to it follows `[BRW-12]` (`r = ref mut first_even(ref mut xs)`). A generator method's
-  result is such a view, and it walks what it views: after `g = d.replay()`, the list it walks
-  (`d.log`) does not change while `g` will still be used (`[BRW-18]`, `E3020`), however `replay` walks
-  it, and any other change of `d` while `g` will still be used (`d.angle = 90.0`) is a change of what a
-  view a call gave points into (`[BRW-1]`, `E3021`), unless `-> Generator[int] from log` narrows the
-  view to `d.log`.
+  3. else, the result points into **all** source parameters together. At a call, the caller keeps
+     viewed, while the result lives, exactly the arguments the called function's code shows the
+     result points into: its summary (`[LT-22]`), read for every result type, so `fn pick(a:
+     Span[int], b: Span[int]) -> Span[int]:` whose body is `return a` keeps only `a` viewed. The
+     three rules decide a call where there is no code to read: a call through a function value
+     (`[LT-7]`), a function with no Ember body. A `dyn` or `virtual` method's call is decided by the
+     code of each kind that may reach it, the types the program gives to the function, followed
+     through its names and calls: with `interface Picker: fn pick(other: Array[int]) -> Span[int]`,
+     `Mine.pick` returning `this.items` and `Yours.pick` returning `other`, `fn show(p: dyn
+     Picker):` doing `r = p.pick(xs)`, `xs.push(owns 3)`, `println(r)` compiles for
+     `show(Mine(items=[9]))`, which prints `[9]`, and is refused at `xs.push(owns 3)` for
+     `show(Yours(items=[9]))` (`E3021`). Where which kind reaches it is known only while the program
+     runs (`p: dyn Picker = Mine(items=[9]) if input() == "m" else Yours(items=[9])`, then
+     `show(p)`), what one of them makes unsafe is `E3021` ("`xs` changes while `r` may still look at
+     it: `p` may be a `Yours`, and which kind it is is only known while running", with the help
+     `[LT-48]` gives for the name the call goes through (for a parameter, "to check it while
+     running, write `runtime` on the parameter: `fn show(p: runtime dyn Picker):`"), unless that
+     name says `runtime` (`[LT-48]`). A `virtual` call on a class value (`fn show(a: A):` for an
+     `open class A`, `r = a.first(xs)`), a call through a local whose kind the function itself
+     chooses while running (`q: owns dyn Picker = owns Mine(items=[9]) if input() == "m" else owns
+     Yours(items=[9])`, then `r = q.pick(xs)` in the same function), and a call on `this` in a
+     method of an open class, are decided by the code of each kind the same way and refused the same
+     way, the message naming the class ("`a` may be a `B`") or the local ("`q` may be a `Yours`").
+     Pointing into an argument means pointing into it and into everything it owns (**into**,
+     §VII.1), so a reshape of anything it owns ends the view and any other change of it while the
+     view is used is refused (`[BRW-1]`). A returned view may point into `this` and into any source
+     parameter, a method's as well as a function's, with nothing written: `fn pick(other: ref i32)
+     -> ref i32: return other` in a type body is no error, and its callers keep `other` viewed. A
+     returned view that points into any other parameter is refused: `E3063` when that parameter is
+     `owns` or is passed as a copy (`[BRW-8]`), whose storage ends with the call, and `E3062`
+     otherwise. A call whose result type is `ref mut T` or `ref T` is a place (`first(ref mut xs) +=
+     1`; `counts.entry(owns k).or_default() += 1`), and a name bound to it follows `[BRW-12]` (`r =
+     ref mut first_even(ref mut xs)`). A generator method's result is such a view, and it walks what
+     it views: after `g = d.replay()`, the list it walks (`d.log`) does not change while `g` will
+     still be used (`[BRW-18]`, `E3020`), however `replay` walks it, and any other change of `d`
+     while `g` will still be used (`d.angle = 90.0`) is a change of what a view a call gave points
+     into (`[BRW-1]`, `E3021`), unless `-> Generator[int] from log` narrows the view to `d.log`.
 * `[LT-1a]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **`from`.** `-> T from
   name`, written after the result type on the function's first line, replaces the rule the compiler
   would apply: the result points into exactly the named parameter, or into the named field of `this`
   written bare (`-> StrView from src`). The body may then give only a view of what `from` names, and
-  any other is `E3062` ("`next_word` returns a view of `this.buf`, but its first line says `from src`;
-  return a view of `src`, or write `-> StrView from buf`"). Where the body may give a view of what `from`
-  names and of another parameter too (`-> Pair from a` over `return make(a, b)`, `make` a function
-  value), naming the other would be as wrong, and the help says to remove `from`: `E3062` ("the returned
-  view points into `b`, but its first line says `from a`"; help: "remove `from a`: the result may point
-  into `a` and `b`, and with no `from` it points into each of them"). Where the body gives a view of the
-  object itself, which no `from` names (`return ref this.at` under `-> ref int from owner`, `at` a
-  number), the help gives both ways out: "return a view of `owner`, or remove `from owner`", since with
-  no `from` a method's result points into `this` (rule 1). A named parameter is a source parameter
-  (`[LT-1]`) or a `ref mut` parameter; naming a plain `Copy` parameter, or an `owns` parameter that is
-  not a view, is `E2031`. A bare field name names any field of `this`, whatever the method does with its
-  object (`owns this`, or passed as a copy, `[BRW-8]`): for a field whose type is a view, the result
-  points into what the field points into, and the call's view of the object ends with the call; for any
-  other field (`from log` with `log: Array[int]`), the result points into that field and what it owns,
-  and the object is viewed for as long as the result lives. A result read
-  through a `ref mut` field points into `this` as well, so it cannot name the field alone (`E3062`):
-  an iterator gives no two changeable items. The field may instead be one whose type is a type
-  parameter, with a result whose type names one (`Option[I.Item]`); each instance is checked, as a
-  source is (`[LT-1]`, ODR-048): where the instance's field and result are views the result points into
-  what the field points into, and where they are not it points into nothing. Naming a field when there
-  is no `this`, or a field of neither kind, is `E2031`; a name that is both a parameter and a field of
-  `this` is `E2118` ("`src` is both a parameter of `next_word` and a field of `Parser`, so `from src`
-  could mean either; rename the parameter: for a view of the field write
-  `fn next_word(src_param: StrView) -> StrView from src:`, for a view of the parameter
-  `fn next_word(src_param: StrView) -> StrView from src_param:`"; the new name is the parameter's with
-  `_param` after it). The standard library's iterators that read
-  through a read-only field say so on `next`, and its iterator adapters on the iterator they wrap, so
-  `for k in m:` and `m.keys()` give views that point into the map (`[CTL-1]`), which a program may keep
-  across rounds and after the loop. `from` is needed only where rule 1 or 3 points into more than the
-  caller can afford, or to let the result point into a `ref mut` parameter of a `Copy` type:
+  any other is `E3062` ("`next_word` returns a view of `this.buf`, but its first line says `from
+  src`; return a view of `src`, or write `-> StrView from buf`"). Where the body may give a view of
+  what `from` names and of another parameter too (`-> Pair from a` over `return make(a, b)`, `make`
+  a function value), naming the other would be as wrong, and the help says to remove `from`: `E3062`
+  ("the returned view points into `b`, but its first line says `from a`"; help: "remove `from a`:
+  the result may point into `a` and `b`, and with no `from` it points into each of them"). Where the
+  body gives a view of the object itself, which no `from` names (`return ref this.at` under `-> ref
+  int from owner`, `at` a number), the help gives both ways out: "return a view of `owner`, or
+  remove `from owner`", since with no `from` a method's result points into `this` (rule 1). A named
+  parameter is a source parameter (`[LT-1]`) or a `ref mut` parameter; naming a plain `Copy`
+  parameter, or an `owns` parameter that is not a view, is `E2031`. A bare field name names any
+  field of `this`, whatever the method does with its object (`owns this`, or passed as a copy,
+  `[BRW-8]`): for a field whose type is a view, the result points into what the field points into,
+  and the call's view of the object ends with the call; for any other field (`from log` with `log:
+  Array[int]`), the result points into that field and what it owns, and the object is viewed for as
+  long as the result lives. A result read through a `ref mut` field points into `this` as well, so
+  it cannot name the field alone (`E3062`): an iterator gives no two changeable items. The field may
+  instead be one whose type is a type parameter, with a result whose type names one
+  (`Option[I.Item]`); each instance is checked, as a source is (`[LT-1]`, ODR-048): where the
+  instance's field and result are views the result points into what the field points into, and where
+  they are not it points into nothing. Naming a field when there is no `this`, or a field of neither
+  kind, is `E2031`; a name that is both a parameter and a field of `this` is `E2118` ("`src` is both
+  a parameter of `next_word` and a field of `Parser`, so `from src` could mean either; rename the
+  parameter: for a view of the field write `fn next_word(src_param: StrView) -> StrView from src:`,
+  for a view of the parameter `fn next_word(src_param: StrView) -> StrView from src_param:`"; the
+  new name is the parameter's with `_param` after it). The standard library's iterators that read
+  through a read-only field say so on `next`, and its iterator adapters on the iterator they wrap,
+  so `for k in m:` and `m.keys()` give views that point into the map (`[CTL-1]`), which a program
+  may keep across rounds and after the loop. `from` is needed only where rule 1 or 3 points into
+  more than the caller can afford, or to let the result point into a `ref mut` parameter of a `Copy`
+  type:
 
 ```ember
 fn find_word(haystack: StrView, needle: StrView) -> Option[StrView] from haystack:
@@ -709,21 +772,84 @@ fn main():
   `E3060`.
   Its message: E3060 ("`bag.items.push(owns k)` (line 15) may move the list that `h.view` points into (`pick` may have put a view of `bag` there on line 13), and `h.view` is used on line 16; use `h.view` before line 15").
 
-* `[LT-48]` *(new in 0.9.15)* *(changed in 0.9.20)* **`runtime`: a `dyn` parameter's kind checked while the program runs.**
-  `runtime` before a parameter's `dyn` type lets the function do what one of the kinds that may reach it
-  would make unsafe (`[LT-1]`), where which kind it is is known only while the program runs: at the line
-  that would be unsafe the function reads, from the table of the value's kind, which of the called
-  method's parameters its result may point into, and stops the program there when the result may point
-  into what the line changes. That fact is the one `[LT-22]` records for each implementation (one bit
-  per source parameter and one for `this`), kept in the method's entry of the kind's table, so a kind
-  declared in another package, which the function's own package never saw, is checked as any other;
-  a compare of kind identities instead would let such a kind through. With `[LT-1]`'s `Picker`, `fn show(p: runtime dyn Picker):` and `p: dyn Picker = Mine(items=[9])
-  if input() == "m" else Yours(items=[9])`, `show(p)` prints `[9]` for a `Mine`, and for a `Yours` stops
-  at `xs.push(owns 3)`: "panic at main.em:17:5: `xs` changes while `r` looks at it: `p` is a `Yours`,
-  whose `pick` gives back the list it was handed". Where the kind is known when compiling, the word
-  changes nothing: given `show(Yours(items=[9]))`, `show` is refused at `xs.push(owns 3)` when compiling,
-  as without it (`E3021`). `runtime` is a word only after a parameter's `:` before `dyn` (`[LEX-15]`); it
-  costs one load and one bit test at each line it guards (§X.4).
+* `[LT-48]` *(new in 0.9.15)* *(changed in 0.9.20)* **`runtime`: the kind of the name a call goes
+  through, checked while the program runs.** `runtime` is written on a parameter or on a local
+  declared with its type, after the `:` and before `dyn` (under any holding word: `dyn I`, `ref dyn
+  I`, `owns dyn I`, `shares dyn I`, `shares mut dyn I`) or before the name of an `open` or
+  `abstract` class (under any holding word likewise): `fn show(p: runtime dyn Picker):`; `fn show(a:
+  runtime A):` for `open class A`; `q: runtime owns dyn Picker = owns Mine(items=[9]) if input() ==
+  "m" else owns Yours(items=[9])`; `me: runtime ref A = ref this`. It has one meaning wherever it
+  stands. A `dyn` or `virtual` call through that name whose result is a view, and which `[LT-1]`
+  would refuse for some of the kinds that may reach the name and not for others, is not refused when
+  compiling where which kind it is is known only while the program runs. The function then reads, at
+  the call, from the called method's entry in the table of the value's kind (an interface's table
+  for a `dyn` value, `[DSP-3]`; the method's slot in the class's type table for a `virtual` method,
+  `[DSP-2]`), which of the method's parameters its result may point into, keeps that fact with the
+  result for as long as the result is used, and at each later line that changes a place the result
+  may point into for one of those kinds, while the result will still be used, tests the fact's bit
+  for that place and stops the program when it is set. The fact is read once, at the call, so a name
+  given another value between the call and the change (`q = owns Yours(items=[1])`) cannot name the
+  wrong kind: that line is itself a change of what the result may point into for a kind whose result
+  points into `this`, and is tested as any other. The fact is the one `[LT-22]` records for each
+  implementation and each override: bit 0 for `this`, bit k for the method's k-th parameter in the
+  order of its declaration, counted from 1, in one word of 64 bits and one more word for each
+  further 64 parameters, the count taken from the interface's or the base class's declaration of the
+  method, so that every package writes the entry in one shape; it is kept beside the code pointer in
+  the method's entry of the kind's table, so a kind declared in another package, which the
+  function's own package never saw, is checked as any other; a compare of kind identities instead
+  would let such a kind through. The kinds that may reach a parameter are what its callers give it,
+  and those that may reach a local are what the function's own lines give it, followed through names
+  and calls as `[LT-1]` says; where they are not all known when compiling (a `pub` function's
+  parameter, a value read from a field, an element, a call's result, a parameter, or given through a
+  `ref mut` view) every kind that implements the interface or descends from the class is taken to
+  reach the name. Where the kinds are known when compiling and the line is unsafe for every one of
+  them, or where the kind itself is known, the word changes nothing: the line is refused when
+  compiling, as without it (`E3021`); given `show(Yours(items=[9]))` or `show(B())`, `show` is
+  refused at the change. `runtime` guards a call's result; a view put in through a `ref mut`
+  parameter is what `[LT-47]` says, whatever the word. `runtime` is a word on the name, not part of
+  its type: the name's type is the type written after it, the value is given on with no word
+  (`show(q)` for `fn show(p: dyn Picker):`, which decides its own lines by its own first line), a
+  result that leaves the function (returned, stored in a field or a list, kept by a callee,
+  captured) carries no fact and is what `[LT-1]` rule 3 and `[LT-30]` make it, checked when
+  compiling, and a function that calls through a name of its own says `runtime` on that name. With
+  `[LT-1]`'s `Picker`, `fn show(p: runtime dyn Picker):` and `p: dyn Picker = Mine(items=[9]) if
+  input() == "m" else Yours(items=[9])`, `show(p)` prints `[9]` for a `Mine`, and for a `Yours`
+  stops at `xs.push(owns 3)`: "panic at main.em:17:5: `xs` changes while `r` looks at it: `p` is a
+  `Yours`, whose `pick` gives back the list it was handed". The local `q` above, with `xs = [1, 2]`,
+  `r = q.pick(xs)`, `xs.push(owns 3)`, `println(r)` in the same function, prints `[9]` for a `Mine`
+  and stops the same way for a `Yours`, naming `q`. With `open class A` whose `virtual fn
+  first(other: Array[int]) -> Span[int]` returns `this.items` and `class B(A)` whose `override`
+  returns `other`, `fn show(a: runtime A):` doing `xs = [1]`, `r = a.first(xs)`, `xs.push(owns 2)`,
+  `println(r)`, given `a: A = B() if input() == "b" else A()` and `show(a)`, prints for an `A` and
+  stops for a `B`: "panic at main.em:14:5: `xs` changes while `r` looks at it: `a` is a `B`, whose
+  `first` gives back the list it was handed". The stop names the kind as the compiler shows types,
+  another package's qualified (`support.pickers.Yours`), read from the kind's `TypeInfo` (`[RT-3]`),
+  and what the result points into as the result type shows it ("the list it was handed" for an
+  `Array` or a `Span`, "the text it was handed" for text, "the `T` it was handed" otherwise, "what
+  it holds" for a result that points into the receiver). Without the word, `E3021`'s help names the
+  one line to write, for the name the call goes through: for a parameter, "to check it while
+  running, write `runtime` on the parameter: `fn show(p: runtime dyn Picker):`"; for a local, "to
+  check it while running, write `runtime` where `q` is declared: `q: runtime owns dyn Picker = owns
+  Mine(items=[9]) if input() == "m" else owns Yours(items=[9])`" (the declaration line written out,
+  with its type where the program left it to be inferred); for a `virtual` call on `this` in a
+  method of an open class, which has no declaration line of its own, "to check it while running,
+  name the object with `runtime` and call through the name: `me: runtime ref A = ref this`, then `r
+  = me.first(xs)`"; for a value with no name of its own (`ps[0].pick(xs)`, `this.picker.pick(xs)`,
+  `make().pick(xs)`), "to check it while running, name the value with `runtime` and call through the
+  name: `p: runtime ref dyn Picker = ref this.picker`, then `r = p.pick(xs)`" (`ref` of a place
+  holding `owns dyn I`, `shares dyn I` or `shares mut dyn I` is a `ref dyn I`, a read-only view of
+  the value it holds, §IV.9, `[TYP-14]`). `runtime` is written nowhere else. Before a type with one
+  kind (a struct, an enum, a class neither `open` nor `abstract`, `some I`, a list, a number) it is
+  `E2114` ("`Circle` is a final class, so a `Circle` is always a `Circle`; remove `runtime`: `c:
+  Circle`"); on a field, a result type, a type argument, a capture or a local declared without its
+  type it is `E0100` ("`runtime` goes on the parameter or the local a call goes through, so that the
+  function whose line pays says so, not on a field; in the method that calls through `picker`, name
+  its value first: `p: runtime ref dyn Picker = ref this.picker`"; "`runtime` goes on the parameter
+  or the local a call goes through, not on a result type; remove it: `fn make() -> owns dyn
+  Picker:`, and write it where the result is held: `q: runtime owns dyn Picker = make()`"). It is a
+  word only after the `:` of a parameter or of a local declared with its type (`[LEX-15]`); it costs
+  one load at the call and one bit test at each line it guards, and nothing where no line needs them
+  (§X.4).
 
 ### Views with several regions
 
@@ -748,54 +874,64 @@ fn main():
     println(pos)
 ```
 
-* `[LT-14]` *(changed in 0.9.15)* A view type carries a compiler-internal region vector with one slot per view field (fields
-  proven to share a source may share a slot). It is never written in source (`[LT-6]`).
+* `[LT-14]` *(changed in 0.9.15)* A view type carries a compiler-internal region vector with one
+  slot per view field (fields proven to share a source may share a slot). It is never written in
+  source (`[LT-6]`).
 * `[LT-16]` Constructing a view value keeps each field's region; it never replaces them with their
   intersection.
 * `[LT-17]` **Validity is conjunctive.** A view value is usable only while every region a used field
-  needs is valid. A field whose source has ended cannot be used even if other fields are still valid.
-* `[LT-18]` *(changed in 0.9.15)* Every view field is an ordinary view under `[BRW-1]` to `[BRW-22]`;
-  multiple regions add no new aliasing rule and weaken none.
-* `[LT-20]` Moving, copying, destructuring, passing and returning a view preserves each field's region.
-  Projecting one field carries only that field's region.
+  needs is valid. A field whose source has ended cannot be used even if other fields are still
+  valid.
+* `[LT-18]` *(changed in 0.9.15)* Every view field is an ordinary view under `[BRW-1]` to
+  `[BRW-22]`; multiple regions add no new aliasing rule and weaken none.
+* `[LT-20]` Moving, copying, destructuring, passing and returning a view preserves each field's
+  region. Projecting one field carries only that field's region.
 * `[LT-21]` Assigning a new view into a field recomputes that field's region; the old source is
-  released on that path and the new one constrained. Merges of control flow keep every region that may
-  reach a field.
-* `[LT-22]` *(changed in 0.9.15)* A function returning a view, or a view type, gets from its body a
-  summary of which part of the result points into which parameter (a plain view's one part is the
-  view itself; a view type's are its fields), and which parameter fields each call uses (`[LT-35]`).
-  Callers use the summary; source never states it. A body may give a result that needs more than the
-  first line allows, pointing into any source parameter (`[LT-1]` rule 3), and its summary says which;
-  with `from`, the result points into what `from` names. Where no summary can be made (a view read
-  through a raw pointer), a caller takes the result to point into every source parameter.
-* `[LT-23]` *(changed in 0.9.15)* With `from` on a function returning a multi-region view, every field
-  of the result points into what `from` names; a field that points into anything else is `E3062`.
+  released on that path and the new one constrained. Merges of control flow keep every region that
+  may reach a field.
+* `[LT-22]` *(changed in 0.9.15)* *(changed in 0.9.20)* A function returning a view, or a view type,
+  gets from its body a summary of which part of the result points into which parameter (a plain
+  view's one part is the view itself; a view type's are its fields), and which parameter fields each
+  call uses (`[LT-35]`). Callers use the summary; source never states it. For an implementation of
+  an interface method usable as `dyn`, and for a `virtual` method and each `override`, the summary
+  is also written as a fact in the method's entry of the kind's table (`[LT-48]`, `[DSP-2]`,
+  `[DSP-3]`). A body may give a result that needs more than the first line allows, pointing into any
+  source parameter (`[LT-1]` rule 3), and its summary says which; with `from`, the result points
+  into what `from` names. Where no summary can be made (a view read through a raw pointer), a caller
+  takes the result to point into every source parameter.
+* `[LT-23]` *(changed in 0.9.15)* With `from` on a function returning a multi-region view, every
+  field of the result points into what `from` names; a field that points into anything else is
+  `E3062`.
 * `[LT-24]` A region slot ends at the last use of its own field, not of the whole value.
-* `[LT-25]` *(changed in 0.9.15)* A view field may not point into another field of the value that contains it (shape B5).
+* `[LT-25]` *(changed in 0.9.15)* A view field may not point into another field of the value that
+  contains it (shape B5).
 * `[LT-26]` *(changed in 0.9.15)* A view extends no lifetime: constructing, copying or storing it
-  counts nothing. A view of an object reached through a link does not keep the object alive either; it
-  is checked when compiling not to outlive it (`[RC-5]`).
+  counts nothing. A view of an object reached through a link does not keep the object alive either;
+  it is checked when compiling not to outlive it (`[RC-5]`).
 * `[LT-27]` *(changed in 0.9.15)* Different regions never prove that two views do not overlap in
   memory; noalias comes only from a `ref mut` parameter (`[BRW-22]`), `[DSJ-*]` and `[SIMD-3]`.
-* `[LT-30]` Regions exist only at compile time: two values of one view type with different regions have
-  one layout, one ABI, one symbol and one type identity, so region inference causes no code
+* `[LT-30]` Regions exist only at compile time: two values of one view type with different regions
+  have one layout, one ABI, one symbol and one type identity, so region inference causes no code
   duplication.
-* `[LT-34]` *(changed in 0.9.15)* A view type whose fields all point into one source behaves exactly as a single-region view.
-* `[LT-35]` *(changed in 0.9.15)* For each function that can receive a view value, the compiler knows
-  which fields the body may read, write, hand over, return or publish. A call requires only the regions
-  of those fields. A call through a function value, or through an interface, `dyn` or virtual method,
-  counts every function the program can put there (`[EFF-1]`); where the target is a foreign function,
-  every field is assumed used and kept.
-* `[LT-36]` *(changed in 0.9.15)* Treating the view as a whole (passing it where every field may be used, comparing, hashing
-  or formatting it, copying or moving it) requires every region to be valid.
-* `[LT-38]` Moving one field out moves only that field's constraint; the remaining fields keep theirs.
-* `[LT-39]` *(changed in 0.9.10)* *(changed in 0.9.15)* An operation that selects a field by a run-time value (reflection, a
-  field descriptor) requires every region it could select; a region it needs that has ended is a
-  conflict, `E3021`.
+* `[LT-34]` *(changed in 0.9.15)* A view type whose fields all point into one source behaves exactly
+  as a single-region view.
+* `[LT-35]` *(changed in 0.9.15)* For each function that can receive a view value, the compiler
+  knows which fields the body may read, write, hand over, return or publish. A call requires only
+  the regions of those fields. A call through a function value, or through an interface, `dyn` or
+  virtual method, counts every function the program can put there (`[EFF-1]`); where the target is a
+  foreign function, every field is assumed used and kept.
+* `[LT-36]` *(changed in 0.9.15)* Treating the view as a whole (passing it where every field may be
+  used, comparing, hashing or formatting it, copying or moving it) requires every region to be
+  valid.
+* `[LT-38]` Moving one field out moves only that field's constraint; the remaining fields keep
+  theirs.
+* `[LT-39]` *(changed in 0.9.10)* *(changed in 0.9.15)* An operation that selects a field by a
+  run-time value (reflection, a field descriptor) requires every region it could select; a region it
+  needs that has ended is a conflict, `E3021`.
 * `[LT-42]` *(changed in 0.9.15)* A function value that uses a real variable holding a view, or
   captures a view with `ref`, records the regions of the fields it uses and may not outlive them
-  (`E3026`, `[CLO-4]`); one that takes a view into its own state with `owns` requires every region to be
-  `static` (`[TYP-15]`).
+  (`E3026`, `[CLO-4]`); one that takes a view into its own state with `owns` requires every region
+  to be `static` (`[TYP-15]`).
 * `[LT-43]` Region tracking never lets a view survive a `yield` that `[CORO-6]` forbids.
 
 ## VII.7 Views over containers: `Span` and `MutSpan`

@@ -179,63 +179,69 @@ large_copy = { level = "warn", threshold = 256 }
 
 * `[MAN-1]` *(changed in 0.9.9)* An invalid manifest, including one with an unknown key, is `E9001`,
   naming the key and the keys that section accepts.
-* `[MAN-2]` *(changed in 0.9.15)* `ember.lock` records the resolved dependencies with content hashes;
-  `--locked` fails if it would change. Beside it, `ember.overlays` records the headers the package's
-  overlays were checked against (`[FFI-55]`); Ember writes both, and neither is edited by hand.
-* `[MAN-9]` *(new in 0.9.15)* **Every program is a package** (verdict 127). A command that compiles a
-  file (`ember build`, `check`, `run`, `test`, `lint`) with no `ember.toml` in its folder or any folder
-  above it first writes a default one in the file's folder, `[package]` with the folder's name as `name`
-  and `version = "0.1.0"`, and says so on standard error: "note: created `tools/ember.toml`: every
-  program needs one, and this folder had none" (verdict 135); `ember bind` does so in a header's folder
-  no package holds. The program is then that package, and `ember.overlays` sits beside it (`[FFI-55]`).
+* `[MAN-2]` *(changed in 0.9.15)* `ember.lock` records the resolved dependencies with content
+  hashes; `--locked` fails if it would change. Beside it, `ember.overlays` records the headers the
+  package's overlays were checked against (`[FFI-55]`); Ember writes both, and neither is edited by
+  hand.
+* `[MAN-9]` *(new in 0.9.15)* *(changed in 0.9.20)* **Every program is a package** (verdict 127). A
+  command that compiles a file (`ember build`, `check`, `run`, `test`, `lint`) with no `ember.toml`
+  in its folder or any folder above it compiles it as a package named after the file's folder, with
+  `version = "0.1.0"` and every other setting its default, and says so once on standard error:
+  "note: `tools/` has no `ember.toml`, so `tools` is compiled as a package with default settings;
+  write one with `ember new`, or by hand, to change them". No compile command writes a file the
+  program did not ask for, so a check leaves nothing behind (verdict 135 had the manifest written on
+  the first compile; reversed in 0.9.20 under the delegation, and reported); `ember bind` in a
+  header's folder no package holds treats the folder the same way. `ember.overlays` is kept only
+  beside a manifest that exists (`[FFI-55]`).
 * `[MAN-3]` *(changed in 0.9.9)* Every key in `[lints]` names a lint the compiler defines (`E9010`
   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
   parameters.
-* `[MAN-8]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.20)* The sections are: `[package]` (`name`, `version`, `language`, `kind`,
-  `layers`, `edition_lints`); `[dependencies]` (`{ path }`, `{ git, rev }`, or `{ git, version }`, `[VER-5]`);
-  `[build]` (`entry`, `target`, `backend`, `c_compiler`, `runtime`, `max_instantiations` `[MONO-3]`,
-  `reload` `[MAN-7]`); `[profiles.<name>]` (`[PRF-3]`); `[c]` (`compiler`, `flags`, `[BLD-FFI-1]`);
-  `[link]` (`libs`, `timeout` `[BLD-15]`); `[jobs]` (`workers`, `[JOB-1]`); `[realtime]` (`contracts`, `[EFF-19]`);
-  `[comptime]` (`max_steps`, `max_heap_mb`, `[CT-3]`; `env`, `[CT-2]`); `[lints]` (`[MAN-3]`); and `[cpp.<project>]`
-  and `[ffi]` (`evidence`, Annex C). A key a section does not take, or a section not listed, is
-  `E9001`, naming what is accepted (ODR-110). **No manifest key turns off a
-  safety check or changes what a program means** (`[PRF-1]`).
+* `[MAN-8]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.20)* The sections are:
+  `[package]` (`name`, `version`, `language`, `kind`, `layers`, `edition_lints`); `[dependencies]`
+  (`{ path }`, `{ git, rev }`, or `{ git, version }`, `[VER-5]`); `[build]` (`entry`, `target`,
+  `backend`, `c_compiler`, `runtime`, `max_instantiations` `[MONO-3]`, `reload` `[MAN-7]`);
+  `[profiles.<name>]` (`[PRF-3]`); `[c]` (`compiler`, `flags`, `[BLD-FFI-1]`); `[link]` (`libs`,
+  `timeout` `[BLD-15]`); `[jobs]` (`workers`, `[JOB-1]`); `[realtime]` (`contracts`, `[EFF-19]`);
+  `[comptime]` (`max_steps`, `max_heap_mb`, `[CT-3]`; `env`, `[CT-2]`); `[lints]` (`[MAN-3]`); and
+  `[cpp.<project>]` and `[ffi]` (`evidence`, Annex C). A key a section does not take, or a section
+  not listed, is `E9001`, naming what is accepted (ODR-110). **No manifest key turns off a safety
+  check or changes what a program means** (`[PRF-1]`).
 * `[MAN-7]` *(changed in 0.9.10)* `[build] reload` is `"opt-in"`, `"all"`, `"bodies"` or `"none"`; a
   `release` build ignores it and prints the note `hot reload is off in release builds` (Annex B).
-* `[VER-5]` *(changed in 0.9.10)* Package versions are semantic. A dependency
-  `{ git = "<url>", version = "1.2" }` names the versions its repository has tagged
-  `vMAJOR.MINOR.PATCH`; the requirement `"1.2"` means `>= 1.2.0, < 2.0.0`, and resolution picks the
-  highest tagged version satisfying every requirement, recorded with its commit in `ember.lock`;
-  `ember update [package]` recomputes it. A requirement with no source (`geometry = "1.2"`) is for a
-  package registry, which this version does not have (`E0900`). Two majors of one package may coexist,
-  distinguished in symbol names.
+* `[VER-5]` *(changed in 0.9.10)* Package versions are semantic. A dependency `{ git = "<url>",
+  version = "1.2" }` names the versions its repository has tagged `vMAJOR.MINOR.PATCH`; the
+  requirement `"1.2"` means `>= 1.2.0, < 2.0.0`, and resolution picks the highest tagged version
+  satisfying every requirement, recorded with its commit in `ember.lock`; `ember update [package]`
+  recomputes it. A requirement with no source (`geometry = "1.2"`) is for a package registry, which
+  this version does not have (`E0900`). Two majors of one package may coexist, distinguished in
+  symbol names.
 
 ## XVII.3 Builds
 
-* `[BLD-1]` *(changed in 0.9.10)* The module (one file) is the unit of front-end caching; the package
-  is the unit of monomorphisation and code generation. A `debug` build writes one C file per module and
-  recompiles only the modules that changed; a `release` build writes one C unit, so the C compiler
-  optimises across modules and the shipped program loses no speed.
+* `[BLD-1]` *(changed in 0.9.10)* The module (one file) is the unit of front-end caching; the
+  package is the unit of monomorphisation and code generation. A `debug` build writes one C file per
+  module and recompiles only the modules that changed; a `release` build writes one C unit, so the C
+  compiler optimises across modules and the shipped program loses no speed.
 * `[BLD-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* A module's front-end result is keyed by its
   source, the compiler and language versions, the package configuration and the **interface hashes**
   of what it imports (signatures, layouts, effect sets, inline bodies, and the facts of `[BLD-14]`),
   so editing a private body recompiles that module and re-checks its callers only if a fact they use
-  changed: its effect set (`[EFF-4]`), an inline body, or a fact the compiler worked out from the body
-  that a caller's check relies on (`[BLD-14]`) (ODR-058). The cache serves `ember check` as
+  changed: its effect set (`[EFF-4]`), an inline body, or a fact the compiler worked out from the
+  body that a caller's check relies on (`[BLD-14]`) (ODR-058). The cache serves `ember check` as
   `ember build` does.
 * `[BLD-8]` Within a module, editing one function body re-checks that function, and those of the
   module that use a fact of it that changed (`[BLD-2]`).
-* `[BLD-14]` *(new in 0.9.15)* **Facts worked out at a package's edge.** A fact the compiler works out
-  from a function's body never changes what a line does; it only decides whether a line compiles, or
-  removes a test that would always pass. Inside a package such facts are used freely. Across a
-  package's edge, where a word exists to write the fact, only the written word counts: a `pub`
-  function's bounds are written (`E2040`). Every other fact is recorded in the package's interface
-  file, beside its effect sets (`[EFF-4]`), and a change to it is reported as a change to the
-  package's interface:
+* `[BLD-14]` *(new in 0.9.15)* *(changed in 0.9.20)* **Facts worked out at a package's edge.** A
+  fact the compiler works out from a function's body never changes what a line does; it only decides
+  whether a line compiles, or removes a test that would always pass. Inside a package such facts are
+  used freely. Across a package's edge, where a word exists to write the fact, only the written word
+  counts: a `pub` function's bounds are written (`E2040`). Every other fact is recorded in the
+  package's interface file, beside its effect sets (`[EFF-4]`), and a change to it is reported as a
+  change to the package's interface:
   1. what each function may change, read and end, with the chain of calls a message names (§X);
-  2. for a `ref mut` list parameter, whether the function only adds at its end (`push`, `extend`) and
-     reads or writes no element already in it, so that a caller's position in that list stays usable
-     across the call;
+  2. for a `ref mut` list parameter, whether the function only adds at its end (`push`, `extend`)
+     and reads or writes no element already in it, so that a caller's position in that list stays
+     usable across the call;
   3. what the scoped tasks a function starts change;
   4. whether a function sets the parent link of an object it is given before reading it;
   5. which of a function's view parameters, `this` included, it uses after a line that may end or
@@ -244,44 +250,70 @@ large_copy = { level = "warn", threshold = 256 }
      a change to its interface;
   6. the locks a function may take; and
   7. the function values the package stores into each place a function value is called through (each
-     field of each type apart, `[EFF-2]`) and the callbacks it hands to C,
-     which a program using the package counts wherever such a value is called and at every foreign
-     call not marked `@ffi(no_callbacks)`.
+     field of each type apart, `[EFF-2]`) and the callbacks it hands to C, which a program using the
+     package counts wherever such a value is called and at every foreign call not marked
+     `@ffi(no_callbacks)`;
+  8. for a class, whether its own methods, and its bases', say that its objects are on one thread
+     (`weakref this`), `thread_shared` (`thread_shared this`, `weakref thread_shared this`), or
+     neither, which a line that makes an object of the class checks (`[OWN-13]`); and
+  9. for each function, the parameters, `this` included, of which it makes a `weakref T` link,
+     directly or through a call, which a caller giving one a value reached through a `thread_shared`
+     value checks (`[OWN-13]`, `E7015`).
+* `[BLD-16]` *(new in 0.9.20)* **No fact of the whole program decides a package's code or layout.**
+  The layout of a package's types and the instructions it emits for a line are decided by the
+  package's own source, by the interface files of the packages it imports (`[MOD-9]`, `[EFF-4]`,
+  `[BLD-14]`) and by the generic instances it makes (`[MONO-1]`); never by a package that depends on
+  it, and never by the program as a whole, which the package never sees (`[BLD-1]`): not by which
+  lines, anywhere, write a word on a value of one of its types, not by which of its values are made
+  `thread_shared`, not by which of its classes a `weakref` names. A rule whose condition would be
+  such a fact states it so that the package compiling the line reads it from a declaration it sees
+  (a type's words, its `pub`, whether it is `Send`: `[OBJ-1]`, `[WK-18]`), from the type of the
+  place at the line (`[THR-2]`, `[OWN-13]`), or, where the fact is one of a kind known only while
+  the program runs, from the kind's own table (`[LT-48]`, `[THR-2]`); where none of these holds, the
+  instruction is emitted and the test is paid. With the whole program visible, the final link may
+  remove only what every program would let it remove (a virtual call with one reachable
+  implementation, `[DSP-5]`): it changes no layout and no meaning (`[BLD-14]`). So a package
+  compiled once lays out its objects, and tests what it tests, the same in every program that uses
+  it, in `ember check` of the package alone, in its tests, in a hot-reload image and in a module
+  loaded at run time (`[ABI-1]`, `[VER-4]`).
 
-  A library update that changes such a fact can make a line of a program that uses it stop compiling;
-  the message names the chain of calls (`[DIA-27]`). A parent link proves itself only when no other
-  package can change it or the places that own its holders. What a generic function changes through
-  its type parameters' methods is worked out for each instance, whose body the instantiating package
-  compiles.
+  A library update that changes such a fact can make a line of a program that uses it stop
+  compiling; the message names the chain of calls (`[DIA-27]`). The layout of each type is recorded
+  with it: whether its values carry the weak count and whether they may own values that do
+  (`[OBJ-1]`), decided by the package that declares the type and the same in every program
+  (`[BLD-16]`). A parent link proves itself only when no other package can change it or the places
+  that own its holders. What a generic function changes through its type parameters' methods is
+  worked out for each instance, whose body the instantiating package compiles.
 * `[BLD-4]` *(changed in 0.9.10)* The C compiler and linker run through a generated Ninja file, so C
-  compilation is incremental too. Ember's download carries Ninja beside Clang and LLD (`[TOOL-2]`); a
-  build from a source checkout finds `ninja` on `PATH`, and without it is an error naming the command
-  that installs it.
-* `[BLD-15]` *(new in 0.9.15)* **A link that hangs is an error** (verdict 124). Each link the build runs
-  has a time limit, 30 minutes unless `[link] timeout` sets another number of seconds. A link still
-  running at its limit is ended, and the build fails with `E9042`, naming the linker, its command and
-  how long it ran, and keeping the link's command file for whoever looks into it. A link that was
-  ended leaves no program behind and none in the program cache, and nothing is tried again by itself.
+  compilation is incremental too. Ember's download carries Ninja beside Clang and LLD (`[TOOL-2]`);
+  a build from a source checkout finds `ninja` on `PATH`, and without it is an error naming the
+  command that installs it.
+* `[BLD-15]` *(new in 0.9.15)* **A link that hangs is an error** (verdict 124). Each link the build
+  runs has a time limit, 30 minutes unless `[link] timeout` sets another number of seconds. A link
+  still running at its limit is ended, and the build fails with `E9042`, naming the linker, its
+  command and how long it ran, and keeping the link's command file for whoever looks into it. A link
+  that was ended leaves no program behind and none in the program cache, and nothing is tried again
+  by itself.
 * `[BLD-5]` Output goes to `target/<profile>/{bin,lib,c,obj,bind,inspect}`.
 * `[BLD-7]` Front-end stages run in parallel across modules by default (`-j`, default the number of
   physical cores).
-* `[BLD-6]` *(changed in 0.9.10)* `lto = "off" | "thin" | "on"`. A value the backend's toolchain does
-  not support is replaced by the nearest one it does, `on` for `thin` where the toolchain does only
-  `off` and `on` (cl, gcc), and the build record, `target/<profile>/inspect/<name>.build.json`, says
-  so: its `lto` gives what was asked (`asked`), what was used (`used`) and, where the two differ, why
-  (`why`). Objects another link reads (a static library) take no LTO with cl or Clang, and fat LTO
-  objects with gcc. No correctness property depends on LTO.
+* `[BLD-6]` *(changed in 0.9.10)* `lto = "off" | "thin" | "on"`. A value the backend's toolchain
+  does not support is replaced by the nearest one it does, `on` for `thin` where the toolchain does
+  only `off` and `on` (cl, gcc), and the build record, `target/<profile>/inspect/<name>.build.json`,
+  says so: its `lto` gives what was asked (`asked`), what was used (`used`) and, where the two
+  differ, why (`why`). Objects another link reads (a static library) take no LTO with cl or Clang,
+  and fat LTO objects with gcc. No correctness property depends on LTO.
 * `[BLD-9]` `--timings` writes a per-stage, per-module timing report (`--timings=json` for tools).
 * `[BLD-10]` *(changed in 0.9.10)* The compiler is made as fast as it can be, and memory safe. Its
   speed is measured, not held to fixed times, since a time differs from one machine to another: the
   figures below are a release gate by comparison, never by a limit in seconds.
-* `[BUD-1]` *(changed in 0.9.10)* They are measured over `bench/bigpkg`, a generated 50k-line package
-  of 400 modules with 15 % generic code and one C header import of Vulkan's size (a generated header
-  of 20,000 lines in Vulkan's shape: enums, structs, function-pointer types, prototypes, not counted in
-  the package's lines), on one recorded machine, whose CPU, memory and storage are published with the
-  figures.
-* `[BUD-2]` *(changed in 0.9.10)* Each figure is the median of 15 runs after 3 warm-up runs. B6's cold
-  cache is a new, empty global build cache; B7 and B9 build with the program cache off:
+* `[BUD-1]` *(changed in 0.9.10)* They are measured over `bench/bigpkg`, a generated 50k-line
+  package of 400 modules with 15 % generic code and one C header import of Vulkan's size (a
+  generated header of 20,000 lines in Vulkan's shape: enums, structs, function-pointer types,
+  prototypes, not counted in the package's lines), on one recorded machine, whose CPU, memory and
+  storage are published with the figures.
+* `[BUD-2]` *(changed in 0.9.10)* Each figure is the median of 15 runs after 3 warm-up runs. B6's
+  cold cache is a new, empty global build cache; B7 and B9 build with the program cache off:
 
   | # | Operation |
   |---|---|
@@ -640,7 +672,7 @@ The ids O3, O4, O5, B8, B14, B15 and X1 are no longer used: their cases are O1 (
 | N12 | indentation (`E0002`–`E0004`) | the expected column and the line that set it |
 | N13 | a field assigned (`this.x = …`) but not declared (`E2072`) | `field 'x' is not declared in class C`, with a machine-applicable fix-it adding `x: <inferred type>` to the class body |
 | N14 | an item has the path of a module or the name of a built-in type (`E1032`) | rename the item, or the module's file |
-| N15 | a word a place requires is missing, or a word that cannot apply: a value made for an `owns` place without `owns`, `owns` before a name whose place already hands it over, after `return` or before `fn`, `owns` on a class type, `using` on a type with no heap memory of its own, `copy of` what cannot be copied as itself, a `weakref` of a part (`E2123`, `E0109`, `E2114`, `E2116`, `E2119`) | the line with the word written or removed (`mesh=owns Mesh(points=[0.0, 1.0])`, `e.mesh = m`, `a = weakref this.keep`) |
+| N15 | a word a place requires is missing, or a word that cannot apply: a value made for an `owns` place without `owns`, `owns` before a name whose place already hands it over, after `return` or before `fn`, `owns` on a class type, `using` on a type with no heap memory of its own, `copy of` what cannot be copied as itself, a `weakref` of a part, of a value held `owns`, of a new value or of a value whose kind is known only while the program runs (`E2123`, `E0109`, `E2114`, `E2116`, `E2119`) | the line with the word written or removed (`mesh=owns Mesh(points=[0.0, 1.0])`, `e.mesh = m`, `a = weakref this.keep`) |
 | N16 | a word or form that is not Ember: `self`, `Box`, `Shared`, `Weak`, `RefCell`, the mode `owned`, `upgrade`, `mem.forget`, `@sync`, `@borrows`, a clause after a function's brackets (`E1010`, `E0104`, `E0100`) | the line with the current word (`[CLI-20]` lists the mechanical rewrites) |
 | N17 | opening an `Option` or a link, and kind tests: `Some(...)` in an `if` or `while` header, an opening or a kind test that always or never passes, a name already in use (`E0115`, `E2036`, `E2037`, `E2106`) | `if e exists as x:`, `if s is Circle as c:`, a new name, or the test removed |
 | N18 | a first line, a declaration or a list of names out of form: `mut` alone on a name, `ref` in a parameter's type, parts out of order, a name with no word after a name with a word, `ref mut` in a capture list, `sharedref` without `mut`, `owns this` on `init`, `static fn` outside a type, `virtual` in a class that cannot be subclassed, a view field without a usable `from`, `@cached` where its result cannot be kept (`E0113`, `E0117`, `E0118`, `E0116`, `E0120`, `E0114`, `E2108`, `E2115`, `E2112`, `E2118`, `E2117`) | the line as it is written (`ref mut n: int`, `fn finish() owns this -> u64:`, `fn() copy of name, copy of score:`) |

@@ -12,7 +12,7 @@
 | **Object** | `class` | its own heap block, with a header (`[OBJ-1]`) | hand-over | when its last owner ends |
 | **Owned block** | `owns T`, `owns dyn I` | pointer to a heap block it owns alone | hand-over | when its owner ends; frees the block |
 | **Shared** | `shares T`, `shares mut T`, `thread_shared T`, `shares dyn I`, `shares mut dyn I` | pointer to a counted heap block | hand-over; one more owner only with `shares`, `shares mut` or `thread_shared` | when its last owner ends |
-| **Link** | `weakref T` | pointer to its target's block, holding one weak count | hand-over; another link only with `weakref` | trivially, giving its weak count back |
+| **Link** | `weakref T`, `weakref thread_shared T` | pointer to its target's block, holding one weak count (plain for `weakref T`, atomic for `weakref thread_shared T`) | hand-over; another link only with `weakref` | trivially, giving its weak count back |
 | **View** | `ref T`, `ref mut T`, `sharedref mut T`, `Span[T]`, `MutSpan[T]`, `StrView`, any struct holding one | inline pointer(s) + compile-time region | a read-only view of what `a` views (for `ref T`, `Span` and `StrView`, a copy) | a plain view trivially; a guard ends its access (`[DRP-6]`) |
 | **Raw** | `*T`, `*mut T`, `extern fn` | inline pointer | copy | never |
 | **Existential** | `dyn I` (a parameter's type), `owns dyn I`, `shares dyn I`, `shares mut dyn I` | pointer + table | per its word | per underlying |
@@ -63,53 +63,55 @@
 * `[TYP-4]` *(changed in 0.9.9)* *(changed in 0.9.10)* No value converts implicitly between scalar
   types in an operator, but one: of two whole numbers of different types, one whose every value the
   other's type holds, by the numbers the compiler knows (`[STD-19]`), converts to it, to `int` where
-  each would (`[TYP-5]` rule 12; the owner's ruling of 2026-10-06): an `i32` always fits an `i64`, so
-  `i32 + i64` is an `i64` addition. `a + b` for an `int` and a `u64` that may be any of their values is
-  `E2020` (the `int` may be negative, the `u64` may pass `int`'s top), whose note appears only when
-  both operands are numeric and names the exact `as` cast on the narrower operand. Untyped literals
-  are not values yet and take their type from context (`[LEX-16]`, `[LEX-17]`).
-* `[TYP-5]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **Coercions — the complete list.** At a coercion site (assignment or
-  initialisation, argument, return, field initialiser, collection element, default value), and only
-  there, a value converts implicitly by exactly these rules:
+  each would (`[TYP-5]` rule 12; the owner's ruling of 2026-10-06): an `i32` always fits an `i64`,
+  so `i32 + i64` is an `i64` addition. `a + b` for an `int` and a `u64` that may be any of their
+  values is `E2020` (the `int` may be negative, the `u64` may pass `int`'s top), whose note appears
+  only when both operands are numeric and names the exact `as` cast on the narrower operand. Untyped
+  literals are not values yet and take their type from context (`[LEX-16]`, `[LEX-17]`).
+* `[TYP-5]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)*
+  **Coercions — the complete list.** At a coercion site (assignment or initialisation, argument,
+  return, field initialiser, collection element, default value), and only there, a value converts
+  implicitly by exactly these rules:
   1. lossless integer widening: `iN → iM`, `uN → uM`, `uN → iM` for M > N;
   2. float widening: `f16 → f32 → f64`;
   3. range erasure: a range type to its representation (`[RNG-2]`);
-  4. string literal to `String` (`[TXT-9]`), and `String` to `StrView` (a read-only view, `[SPN-1]`);
+  4. string literal to `String` (`[TXT-9]`), and `String` to `StrView` (a read-only view,
+     `[SPN-1]`);
   5. collection literal to the collection type the site expects (`[TYP-38]`);
   6. `Array[T]`, `[T; N]` to `Span[T]` (a read-only view) or, given with `ref mut`, to `MutSpan[T]`
      (`[SPN-1]`), and `MutSpan[T]` to `Span[T]`, a read-only view of the same elements (`[SPN-3]`,
      ODR-116);
-  7. `ref T` from a place (a read-only view of it), and reading through a `ref` or an `owns T` where a
-     `T` is expected (`[TYP-14]`);
-  8. a value to an interface its type implements, keeping the word that says who owns it: a value read
-     in place to `dyn I`, an `owns T` to `owns dyn I`, a `shares T` to `shares dyn I`, a `shares mut T`
-     to `shares mut dyn I` (`[TYP-45]`); and a class object to a base class (upcast);
+  7. `ref T` from a place (a read-only view of it), and reading through a `ref` or an `owns T` where
+     a `T` is expected (`[TYP-14]`);
+  8. a value to an interface its type implements, keeping the word that says who owns it: a value
+     read in place to `dyn I`, an `owns T` to `owns dyn I`, a `shares T` to `shares dyn I`, a
+     `shares mut T` to `shares mut dyn I` (`[TYP-45]`); and a class object to a base class (upcast),
+     a `weakref D` to `weakref B` and a `weakref thread_shared D` to `weakref thread_shared B` for a
+     base `B` of `D`, the kind of the link kept;
   9. `Never` to any type;
   10. a function or lambda to a callable type it satisfies (`[CLO-3]`);
   11. a value of type `T` to `Option[T]`, as `Some(value)`, where `T` is not itself an `Option`: one
       level only, so nothing becomes `Option[Option[T]]` (`return v` in a function returning
       `Option[T]`, `f(5)` for a parameter `x: Option[int] = None`);
   12. a whole number (a signed or unsigned integer of any size: `int`, `i8` to `i256`, `u8` to
-      `u256`, `isize`, `usize`) to another whole-number type, where the compiler knows every value it
-      can have fits that type, by the known-numbers rule (`[STD-19]`: numbers written as numbers,
+      `u256`, `isize`, `usize`) to another whole-number type, where the compiler knows every value
+      it can have fits that type, by the known-numbers rule (`[STD-19]`: numbers written as numbers,
       names set once and never changed, loop counters, `enumerate`'s numbers, arithmetic on known
-      numbers, lengths). It converts as `as` does (`[TYP-6]`), which then loses nothing. After
-      `n = 5`, `y: u64 = n` is accepted; `y: u64 = x` for a parameter `x: int` is `E2020`. In a
-      function written for any type, a number whose type each use decides (`[STD-19]`) is checked
-      at each use (the owner's ruling of 2026-10-06).
-  Each rule composes with the others only where stated (widening after range erasure, and rule 11
-  after rules 1–4). Nothing
-  converts implicitly to or from `bool` or `char`.
+      numbers, lengths). It converts as `as` does (`[TYP-6]`), which then loses nothing. After `n =
+      5`, `y: u64 = n` is accepted; `y: u64 = x` for a parameter `x: int` is `E2020`. In a function
+      written for any type, a number whose type each use decides (`[STD-19]`) is checked at each use
+      (the owner's ruling of 2026-10-06). Each rule composes with the others only where stated
+      (widening after range erasure, and rule 11 after rules 1–4). Nothing converts implicitly to or
+      from `bool` or `char`.
 * `[TYP-6]` *(changed in 0.9.9)* *(changed in 0.9.15)* `x as T` converts explicitly:
   * integer → integer: keeps the low bits (truncation or sign/zero extension);
   * float → integer: rounds toward zero and **saturates** at the target's bounds; NaN becomes 0;
   * integer → float: rounds to nearest, ties to even;
   * float → float: rounds to nearest;
   * `char → u32` and `u8 → char`; other integers become a `char` only through `char.from_u32(x) ->
-    Option[char]`.
-  A downcast is not a conversion: `cast h as D` gives the `D` or stops the program, and
-  `if h is D as d:` tests (`[TYP-44]`).
-  A checked conversion that fails instead of truncating is `T.try_from(x) -> Result[T, RangeError]`.
+    Option[char]`. A downcast is not a conversion: `cast h as D` gives the `D` or stops the program,
+    and `if h is D as d:` tests (`[TYP-44]`). A checked conversion that fails instead of truncating
+    is `T.try_from(x) -> Result[T, RangeError]`.
 * `[TYP-7]` `as` between pointer types, or between a pointer and an integer, requires `unsafe`.
 
 ### Integer arithmetic
@@ -387,41 +389,55 @@ fn main():
         println(t.hp, reader.hp, lvl.mesh.points.len())
 ```
 
-* `[TYP-45]` *(new in 0.9.15)* **Who owns a value, in its type.** A type says how its value is held,
-  with the word on the type it describes:
+* `[TYP-45]` *(new in 0.9.15)* *(changed in 0.9.20)* **Who owns a value, in its type.** A type says
+  how its value is held, with the word on the type it describes:
   * `T`: held alone: a struct or enum value inside its owner, a class object in its own heap block
     with one owner (§IV.6);
-  * `owns T`: held alone, in a heap block of its own (a recursive type's child, an interface value, a
-    foreign object with a destructor), read as a `T` (`[TYP-14]`). A class object always has its own
-    block, so `owns` on a class type is `E2114` ("a `Player` object always lives in its own block;
-    remove `owns`: `p: Player`"). The line that
-    makes a value for a place that owns it alone (an `owns` field, an `Option[owns T]`, a list of
-    `owns` values), at first or later, says `owns` before it: `mesh=owns Mesh(points=[0.0])`,
-    `left=Some(owns Tree(value=2))`, `r.pools.push(owns IntPool(items=[1, 2]))`, `e.mesh = owns
-    Mesh(points=[1.0, 2.0])`, which frees the old mesh. Without it the line is `E2123` ("`mesh` owns its
-    mesh; say so where it is made: `mesh=owns Mesh(points=[0.0, 1.0]) using current`") (`[GRM-15]`);
+  * `owns T`: held alone, in a heap block of its own (a recursive type's child, an interface value,
+    a foreign object with a destructor), read as a `T` (`[TYP-14]`). A class object always has its
+    own block, so `owns` on a class type is `E2114` ("a `Player` object always lives in its own
+    block; remove `owns`: `p: Player`"). The line that makes a value for a place that owns it alone
+    (an `owns` field, an `Option[owns T]`, a list of `owns` values), at first or later, says `owns`
+    before it: `mesh=owns Mesh(points=[0.0])`, `left=Some(owns Tree(value=2))`, `r.pools.push(owns
+    IntPool(items=[1, 2]))`, `e.mesh = owns Mesh(points=[1.0, 2.0])`, which frees the old mesh.
+    Without it the line is `E2123` ("`mesh` owns its mesh; say so where it is made: `mesh=owns
+    Mesh(points=[0.0, 1.0]) using current`") (`[GRM-15]`);
   * `shares T` and `shares mut T`: one of several owners of a value on one thread, counted; a
     `shares` owner reads it and a `shares mut` owner may also change it (Part VIII);
-  * `thread_shared T`: one of several owners on any threads, counted for several threads (`[RC-4]`), and never changed
-    directly by any owner (Part XI);
-  * `weakref T`: a link that does not keep its target alive and may hold none (`parent: weakref Node
-    = None`); it is opened before its target is used (`[GRM-44]`). Used as its target without opening
-    it, or given an object without the word, it is `E2020` ("`cam.target` may be gone; open it:
-    `if cam.target exists as p:`"; "`=` alone would hand `player` over; write `cam.target = weakref
-    player`") (Part VIII);
-  * `ref T`, `ref mut T` and `sharedref mut T`: views of a place someone else owns (§IV.4), kept in a
-    field or a list as a kept view; `sharedref` without `mut` is `E0114` (`[GRM-43]`);
-  * `owns dyn I`, `shares dyn I` and `shares mut dyn I`: a value of some type implementing `I`, held as
-    the word says; `dyn I` alone is a parameter's type, a read-only view of the value (`ref mut v:
-    dyn I` may change it). An interface named bare as a type does not say who owns its values and is
-    `E2173` ("`Shape` is an interface, so `Array[Shape]` does not say who owns the shapes; say who owns
-    them: write `shapes: Array[owns dyn Shape]` in place of line 19, and `scene =
+  * `thread_shared T`: one of several owners on any threads, counted for several threads (`[RC-4]`),
+    and never changed directly by any owner (Part XI);
+  * `weakref T`: a link to a value on one thread (a class object with one owner or with `shares` or
+    `shares mut` owners, or a value held `shares` or `shares mut`) that does not keep it alive and
+    may hold none (`parent: weakref Node = None`); `weakref thread_shared T`: a link to a
+    `thread_shared T`, a type of its own, written so in a field (`parent: weakref thread_shared Node
+    = None`), a local's annotation (`up: weakref thread_shared Node`), a parameter, a result, an
+    element (`Array[weakref thread_shared Player]`) and a bound, whose opening holds a count for the
+    opened name's life (`[WK-12]`). The kind of the target is in the link's type and nowhere else
+    (`[WK-11]`); a capture (`fn() weakref p:`) and a local declared by `w = weakref p` take the type
+    `weakref p` has (`[OWN-13]`). Neither type converts to the other: a link of one given to a place
+    of the other is `E2020` ("`cam.target` is a `weakref Player`, a link to a player on one thread,
+    and `p` is a `thread_shared Player`; for a link to a shared player write `target: weakref
+    thread_shared Player = None` in `Camera` (line 7)"). Each is opened before its target is used
+    (`[GRM-44]`); the name opened from a `weakref thread_shared T` reads the value as a parameter
+    `p: thread_shared T` does (`[THR-1]`), and `ref mut` after `exists as` on one is `E7014` ("`w`
+    links a `thread_shared Player`, which no owner changes directly; open it read-only, `if w exists
+    as p:`, and change the player through its `Atomic` fields or under its lock"). Used as its
+    target without opening it, or given an object without the word, a link is `E2020` ("`cam.target`
+    may be gone; open it: `if cam.target exists as p:`"; "`=` alone would hand `player` over; write
+    `cam.target = weakref player`") (Part VIII);
+  * `ref T`, `ref mut T` and `sharedref mut T`: views of a place someone else owns (§IV.4), kept in
+    a field or a list as a kept view; `sharedref` without `mut` is `E0114` (`[GRM-43]`);
+  * `owns dyn I`, `shares dyn I` and `shares mut dyn I`: a value of some type implementing `I`, held
+    as the word says; `dyn I` alone is a parameter's type, a read-only view of the value (`ref mut
+    v: dyn I` may change it). An interface named bare as a type does not say who owns its values and
+    is `E2173` ("`Shape` is an interface, so `Array[Shape]` does not say who owns the shapes; say
+    who owns them: write `shapes: Array[owns dyn Shape]` in place of line 19, and `scene =
     Scene(shapes=[owns Square(side=2)])` in place of line 22");
   * a function type says its parameters with their words, its result, and whether any thread may run
     its functions (`fn()`, `fn(ref mut Ui)`, `fn(owns String) -> int`, `thread_shared fn()`), and
     nothing about what its functions change, which the compiler works out from every function the
-    program can put in a place of that type (`[CLO-3]`); a long one is named once with `type`
-    (`type Handler = fn()`, then `handlers: Array[Handler] = []`).
+    program can put in a place of that type (`[CLO-3]`); a long one is named once with `type` (`type
+    Handler = fn()`, then `handlers: Array[Handler] = []`).
 
   `Box`, `Shared`, `Weak`, `SyncShared`, `ForeignBox`, `RefCell`, `Ref` and `RefMut` are not types of
   Ember: naming one is `E1010`, whose message gives what to write (`owns T` for `Box[T]` and
@@ -574,8 +590,8 @@ implements Display:` block.
 | Marker | Holds when |
 |---|---|
 | `Copy` | declared with `@derive(Copy)` on a struct or enum whose fields are all `Copy` and which has no `drop`, which gives it `Clone` too; always for scalars, `ref T`, `Span`, `StrView`, raw pointers, `extern fn`, tuples and fixed arrays of `Copy` elements; never for a class object, an `owns`, `shares`, `shares mut` or `thread_shared` value, a `weakref` or `sharedref mut` link, `ref mut T` or `MutSpan[T]` |
-| `Send` | inferred: every component is `Send`, so nothing reachable from the value is a one-thread owner (`shares`, `shares mut`), a `weakref` link to one, a `sharedref mut` link (a view several holders on one thread may change), or bound to its thread (a lock's guard, a `Scope`, a raw pointer); `ref T` and `Span[T]` are when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is `Send`; a class object is when its fields are; a `thread_shared T` value is when `T` is `ThreadShared` and `Send` (`[THR-8]`) |
-| `ThreadShared` | inferred: several threads may hold and read one value of the type at once; every component is `ThreadShared`; `ref mut`, `sharedref mut`, `Cell`, `UnsafeCell`, raw pointers, a `shares` or `shares mut` value and a `weakref` link to one are not (`[THR-9]`) |
+| `Send` | inferred: every component is `Send`, so nothing reachable from the value is a one-thread owner (`shares`, `shares mut`), a `weakref T` link, a `sharedref mut` link (a view several holders on one thread may change), or bound to its thread (a lock's guard, a `Scope`, a raw pointer); `ref T` and `Span[T]` are when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is `Send`; a class object is when its fields are; a `thread_shared T` value, and a `weakref thread_shared T` link, are when `T` is `ThreadShared` and `Send` (`[THR-8]`) |
+| `ThreadShared` | inferred: several threads may hold and read one value of the type at once; every component is `ThreadShared`; `ref mut`, `sharedref mut`, `Cell`, `UnsafeCell`, raw pointers, a `shares` or `shares mut` value and a `weakref T` link are not; a `weakref thread_shared T` link is when `T` is `Send` and `ThreadShared` (`[THR-9]`) |
 | `Sized` | everything except `dyn I` and unsized foreign types |
 
 * `[TYP-43]` *(new in 0.9.10)* *(changed in 0.9.15)* The marker interfaces are interfaces of `std.core`, exported by the

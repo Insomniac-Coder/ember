@@ -14,7 +14,7 @@ reused; retired codes are listed with the reason.
 | `E0006` | a `#!` language directive names a version other than the current one | `[VER-8]` |
 | `E0008` | unterminated character literal | `[LEX-22]` |
 | `E0009` | malformed literal | `[LEX-26]` |
-| `E0100` | unexpected token, among them Python's `global`, a statement at module level outside the entry file (whose message gives the declaration to write: `static mut FRAME: int = 0`), a bound written without `needs` or joined with `+` (whose message gives the line with `needs`), and a clause after a function's brackets that Ember does not have (`changes FRAME`, `reads renderer`, `with` before the captures), whose message gives the first line to write, and a line that begins with `[` and is not directly above a function, struct or class | `[GRM-2]`, `[TYP-17]`, `[GRM-40]` |
+| `E0100` | unexpected token, among them Python's `global`, a statement at module level outside the entry file (whose message gives the declaration to write: `static mut FRAME: int = 0`), a bound written without `needs` or joined with `+` (whose message gives the line with `needs`), and a clause after a function's brackets that Ember does not have (`changes FRAME`, `reads renderer`, `with` before the captures), whose message gives the first line to write, and a line that begins with `[` and is not directly above a function, struct or class, `runtime` on a field, a result type, a type argument, a capture or a local declared without its type (it goes on the parameter or the typed local a call goes through), and a holding word between `weakref` and its target's type (`weakref shares T`, `weakref owns T`, `weakref ref T`) | `[GRM-2]`, `[TYP-17]`, `[GRM-40]`, `[LT-48]`, `[GRM-3a]` |
 | `E0101` | unclosed delimiter or literal | `[LEX-6]` |
 | `E0102` | membership test chained (`a in b in c`) | `[GRM-23]` |
 | `E0103` | match arms mix statement and expression form | `[GRM-10]` |
@@ -23,7 +23,7 @@ reused; retired codes are listed with the reason.
 | `E0106` | a multi-statement closure cannot be written inside brackets | `[GRM-17]` |
 | `E0107` | a jump expression may not be an operand | `[GRM-16]` |
 | `E0108` | attribute is not permitted on this statement | `[GRM-20]` |
-| `E0109` | `owns` before a name whose place already hands the value over with no word (`e.mesh = m`; `b = a` for a value `=` hands over), after `return`, or before `fn` anywhere but an argument for an `owns` parameter | `[OWN-9]`, `[GRM-15]` |
+| `E0109` | `owns` before a name whose place already hands the value over with no word (`e.mesh = m`; `b = a` for a value `=` hands over), after `return`, or before `fn` anywhere but an argument for an `owns` parameter, `owns` before a value made on the line for a place that is not an `owns T` (`b = owns (n * 2)`), and `weakref thread_shared x` before a value whose type already says `thread_shared` (`weakref x` is that link) | `[OWN-9]`, `[GRM-15]`, `[OWN-13]` |
 | `E0110` | function declared without a body outside an interface, extern block or abstract class | `[GRM-33]` |
 | `E0111` | `ref` of an expression that is not a place | `[GRM-36]` |
 | `E0112` | nested more deeply than the compiler accepts | `[GRM-39]` |
@@ -33,9 +33,10 @@ reused; retired codes are listed with the reason.
 | `E0116` | in a list of names declared without types, a name with no word after a name with a word | `[GRM-42]` |
 | `E0117` | `ref` or `ref mut` written in a parameter's type instead of on its name | `[FN-1]` |
 | `E0118` | a first line whose parts are out of order (parameters, `owns this`, `-> T`, `from`) | `[GRM-41]` |
+| `E0119` | `owns` as an operand of an operator (`owns i * 7`), which reads its operands in place and takes nothing over: a computed value handed over goes in brackets, `m.insert(owns (i * 7), owns i)` | `[GRM-47]` |
 | `E0120` | `ref mut` in a lambda's capture list | `[GRM-42]`, `[CLO-2]` |
 | `E0900` | construct not implemented by this compiler | `[PHIL-12]`, `[CLI-19]` |
-| `E0901` | construct this specification leaves unspecified | `[PHIL-12]` |
+| `E0901` | construct this specification leaves unspecified, among them a `weakref` whose operand's type carries no weak count by a route `[OBJ-1]` does not list | `[PHIL-12]`, `[OBJ-1]` |
 | `E1010` | a name or form the program may not use here: not in scope (`this` outside a method or in a `static fn`), gone from Ember (`self`, `Box`, `ForeignBox`, `RefCell`, `Weak`, `Shared`, the mode `owned`, `Sync` as a property, `cast x if D`, `cast x when D`, `upgrade`, `mem.forget`), or written with a word instead (`a.clone()` is `copy of a`; `.copied()` is `.copy_each()`) | `[MOD-3]` |
 | `E1020` | name is already declared in this block | `[GRM-4]` |
 | `E1021` | name is not linked in this build | `[BLD-11]` |
@@ -50,7 +51,7 @@ reused; retired codes are listed with the reason.
 | `E1061` | no item of that name in the module | `[MOD-3]` |
 | `E2010` | literal does not fit its type | `[LEX-16]` |
 | `E2011` | negative literal index | `[TYP-31]`, `[LEX-24]` |
-| `E2020` | mismatched types, among them a lambda parameter whose word differs from the function type it is given to (a plain `fn(s)` where the type hands the value over, `fn(owns String)`); a `weakref` link used as its target without opening it; an object stored into a `weakref` place without `weakref`; a value given to a `using A` place that was not made in an instance of `A` | `[TYP-4]`, `[CLO-3]` |
+| `E2020` | mismatched types, among them a lambda parameter whose word differs from the function type it is given to (a plain `fn(s)` where the type hands the value over, `fn(owns String)`); a `weakref` link used as its target without opening it; an object stored into a `weakref` place without `weakref`; a value given to a `using A` place that was not made in an instance of `A`; a `weakref T` link given to a `weakref thread_shared T` place, or the reverse (neither converts) | `[TYP-4]`, `[CLO-3]`, `[TYP-45]` |
 | `E2030` | `@view` on a type that is not a view | `[TYP-34]` |
 | `E2031` | `from` names a parameter the result cannot point into (a number, or an `owns` parameter that is not a view) | `[LT-1a]` |
 | `E2035` | condition must be `bool` | `[CTL-0]` |
@@ -80,12 +81,12 @@ reused; retired codes are listed with the reason.
 | `E2110` | override of a method that is not virtual | `[CLS-4]` |
 | `E2111` | a method that replaces an inherited virtual one without `override` | `[CLS-4]` |
 | `E2112` | `virtual` in a class that cannot be subclassed | `[CLS-4]` |
-| `E2114` | a type word that cannot apply to its type: `owns` on a class type (it always has its own block); `using` after a type with no heap memory of its own | `[TYP-45]`, `[TYP-46]`, `[ALC-1]` |
+| `E2114` | a type word that cannot apply to its type: `owns` on a class type (it always has its own block); `using` after a type with no heap memory of its own; `runtime` before a type with one kind (a struct, an enum, a class neither `open` nor `abstract`, `some I`, a list, a number) | `[TYP-45]`, `[TYP-46]`, `[ALC-1]`, `[LT-48]` |
 | `E2115` | `static fn` outside a type body | `[GRM-41]`, `[FN-4]` |
 | `E2116` | `copy of` before what it cannot copy as itself: a `weakref` link, a value of a view type (a struct holding a `ref mut` field included), a type with no `Clone`, a value whose views point into its own `let` field | `[OWN-8]` |
 | `E2117` | `@cached` on a method whose result it cannot keep safely: one with other parameters; one whose body changes anything, or reads a `shares`, `shares mut`, `thread_shared`, `weakref`, `sharedref mut` or `Cell` field, or a field other threads change under a lock; a `sharedref mut` link or `shares mut` owner made into what a `@cached` method reads, at the line that makes it | `[CLS-12]`, `[EFF-27]` |
 | `E2118` | a `from` that is missing where a view needs one (a view field of a class), names what a view cannot point into for its life (a field that is not `let`, a fixed array or an inline struct field), or names two things (a parameter and a field of one name) | `[LT-45]`, `[TYP-15]` |
-| `E2119` | a `weakref` of a part (a field, an element stored inline), whose target does not live on its own | `[WK-16]` |
+| `E2119` | a `weakref` of a part (a field, an element stored inline), of a value held `owns` or of a new value, whose target does not live on its own, and of a value whose kind is known only while the program runs (`dyn I`, `owns dyn I`, `shares dyn I`, `some I`; the type `weakref dyn I` too), whose header the link cannot know | `[WK-16]`, `[WK-11]`, `[OWN-13]` |
 | `E2120` | inherent extension of a type from another package | `[IFC-2]` |
 | `E2121` | an implementation outside the packages that may write it | `[TYP-20]` |
 | `E2122` | `shares`, `shares mut` or `thread_shared` made of a place that has one owner and is not a local of this function (a list element, a field, a plain parameter) | `[RC-1]`, `[OWN-13]` |
@@ -124,12 +125,12 @@ reused; retired codes are listed with the reason.
 | `E2261` | returns of a `some` function have different types | `[TYP-32]` |
 | `E3010` | cannot hand over a field of a type with `drop` on its own | `[EXP-6]` |
 | `E3011` | cannot hand over an array or span element on its own | `[EXP-6]` |
-| `E3013` | a hand-over out of a name or place that does not own the value: a plain parameter's value, a function value's own capture where it may run twice, a plain `once fn()` parameter, or a field of a class object, which other names may reach | `[OWN-11]`, `[EXP-6]`, `[CLO-6]` |
+| `E3013` | a hand-over out of a name or place that does not own the value: a plain parameter's value, a function value's own capture where it may run twice, a plain `once fn()` parameter, or a field of a class object, which other names may reach; the value inside an `owns T` place handed out on its own (`m: Mesh = b` for `b: owns Mesh`) | `[OWN-11]`, `[EXP-6]`, `[CLO-6]` |
 | `E3014` | scope binding may not be handed over | `[THR-5]` |
 | `E3015` | value whose drop is required may not be leaked | `[THR-6]` |
 | `E3016` | `this` escapes its own `drop`, or an owner of it is made there | `[OBJ-5]`, `[CLS-7a]` |
 | `E3020` | a collection (a list, a map, a set or a string) changed while it is walked, whatever the change (an element written, a value under a key replaced, anything added or removed), by a `for` loop or by a generator that walks it and will still be used; through its own name, or through a call that may change it (a call through a function value or a library call by the functions it may run, a `spawn` by what its thread changes, a scoped task started in the walk, a foreign call by what the callbacks C keeps change, the end of an object by what its `drop` changes); a removal inside a counting loop | `[BRW-18]`, `[CTL-2]` |
-| `E3021` | a read and a change of one place overlap: a change of what a read-only name reads while it is still used, a view a `dyn` call may give included where the kind is known only while running (help: `runtime` on the parameter); a `ref mut` name's place read through another name while it is still used; an argument that may reach into a changeable argument of the same call | `[BRW-1]`, `[BRW-11]`, `[LT-1]`, `[LT-48]` |
+| `E3021` | a read and a change of one place overlap: a change of what a read-only name reads while it is still used, a view a `dyn` call may give included where the kind is known only while running (help: `runtime` on the parameter or the typed local the call goes through, or a `runtime` name for the value); a `ref mut` name's place read through another name while it is still used; an argument that may reach into a changeable argument of the same call | `[BRW-1]`, `[BRW-11]`, `[LT-1]`, `[LT-48]` |
 | `E3022` | one place changed through two names: two changeable arguments of one call naming one place, other than one whole variable proved when compiling (a function value that changes it counts as one); a function value stored in a place that a variable it changes owns; a `ref mut` name's place changed through another name while it is still used, a reshape of a `ref mut` address included | `[BRW-1]`, `[BRW-11]` |
 | `E3023` | a change the name does not allow: a change through a name that only reads (a plain parameter; a loop, pattern, opened or part name; a plain name holding a `MutSpan`; a value made when compiling); `=` on a name that keeps its place for its scope (a parameter; a loop, pattern or opened name, one opened `exists as copy of` excepted; a `const ref mut` name given another ref); a read-only `ref` given to a `ref mut` name; a method that may change its object, or a stored function that may change its own state, called through a read-only name; an owner that may change made from one that only reads (a plain parameter of a `shares mut` type included); `=` on a `static` (`HOOK = v`) | `[BRW-14]`, `[BRW-15]`, `[STA-1]` |
 | `E3024` | a struct field would point into another field of the same struct (shape B5) | `[TYP-15]` |
@@ -142,7 +143,7 @@ reused; retired codes are listed with the reason.
 | `E3050` | a view of an uninitialised place | `[BRW-7]` |
 | `E3060` | a view used after what it points into was ended, handed over, replaced or reshaped: a position after a removal or reorder; an address after a reshape; a view put in through `ref mut` after one of the call's arguments changed; a name opened from a link after a line or call that may end its object; a view of what a function value's or an `owns dyn I` value's state owns after that value is replaced or ended | `[BRW-17]`, `[LT-3]` |
 | `E3062` | a result that points into something its first line's `from` does not name (shape B6) | `[LT-1a]` |
-| `E3063` | a view, or a value holding views, kept or returned where it would outlive what it points into: a view of a temporary, a view out of a lock's `with` block, a view of the callee's own locals put into the caller's view through `ref mut`, a kept view outliving its target; and a value made in a memory manager's instance, or one holding such a value, kept or returned where it would outlive that instance | `[LT-45]`, `[BRW-19]`, `[ALC-1]` |
+| `E3063` | a view, or a value holding views, kept or returned where it would outlive what it points into: a view of a temporary, a view out of a lock's `with` block, a view of the callee's own locals put into the caller's view through `ref mut`, a kept view outliving its target; and a value made in a memory manager's instance, or one holding such a value, kept or returned where it would outlive that instance; a value made in a job's arena (`jobs.local_arena()`) that would leave the job's function | `[LT-45]`, `[BRW-19]`, `[ALC-1]`, `[JOB-5]` |
 | `E3070` | `drop` cannot be called explicitly | `[DRP-1]` |
 | `E3090` | arena allocation of a type that needs `drop` | `[ARN-3]` |
 | `E3095` | two single-object references given to `assert_disjoint` | `[DSJ-4]` |
@@ -213,10 +214,10 @@ reused; retired codes are listed with the reason.
 | `E7011` | parallel loop has a loop-carried dependency | `[PAR-2a]` |
 | `E7012` | a `static mut` not `guarded by` a lock reached from another thread | `[THR-20]`, `[STA-1]` |
 | `E7013` | a `guarded by` field used without holding its lock | `[THR-18]` |
-| `E7014` | a `thread_shared` value changed directly | `[THR-1]` |
-| `E7015` | a one-thread owner (`shares`, `shares mut`, a `weakref` link of one) or a lent value reaches another thread: held by a function any thread may run (`thread_shared fn()`, `thread.spawn`'s included), in a plain `fn()` field of a class whose object is made `thread_shared` (at that line) | `[THR-1]`, `[THR-2]`, `[THR-10]`, `[CLO-16]`, `[FFI-22]` |
+| `E7014` | a `thread_shared` value changed directly, `ref mut` after `exists as` on a `weakref thread_shared T` link included | `[THR-1]`, `[TYP-45]` |
+| `E7015` | a one-thread owner (`shares`, `shares mut`, a `weakref T` link) or a lent value reaches another thread: held by a function any thread may run (`thread_shared fn()`, `thread.spawn`'s included), in a plain `fn()` field of a class whose object is made `thread_shared` (at that line); an end of a channel of a `T` that is not `Send` given to another thread; a `weakref T` link made to a value reached through a `thread_shared` value, at the line or at a call by the callee's summary; a class whose methods pin its objects both to one thread (`weakref this`) and `thread_shared` (`thread_shared this`); a `thread_shared` object of a class pinned to one thread or with a `weakref T` field | `[THR-1]`, `[THR-2]`, `[THR-10]`, `[CLO-16]`, `[FFI-22]`, `[OWN-13]`, `[THR-8]`, `[THR-15]` |
 | `E7016` | a `@parallel` loop over something it cannot split into chunks: neither a range nor a list walked by element | `[PAR-1]` |
-| `E7017` | `thread_shared` on a name whose value was not created `thread_shared` | `[THR-1]` |
+| `E7017` | `thread_shared` on a name whose value was not created `thread_shared`; `weakref thread_shared x` where `x` was not; an object with one owner (`Node()`) of a class whose methods say its objects are `thread_shared` | `[THR-1]`, `[OWN-13]` |
 | `E7018` | a wait for a lock this thread holds, inside that lock's `with` block: a call through a function value, or a `dyn` or virtual method, that may run a function taking that lock (inside a walk under that lock too), or a join of a thread (a scope's end included) whose function changes what the lock guards | `[THR-19]` |
 | `E8001` | GPU layout does not match the CPU layout | `[GPU-10]` |
 | `E9001` | invalid manifest, including an unknown key | `[MAN-1]`, `[PRF-3]` |

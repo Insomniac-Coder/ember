@@ -1,0 +1,588 @@
+{
+ "group": "G8",
+ "title": "Part XVIII, Annex B and Annex D (requirements on implementations; hot reload; the GPU host model)",
+ "found": {
+  "group": "G8: Part XVIII, Annex B, Annex D",
+  "findings": [
+   {
+    "id": "G8-01",
+    "rules": [
+     "MNG-1",
+     "MNG-6",
+     "MONO-1"
+    ],
+    "kind": "SEC",
+    "severity": "critical",
+    "title": "A 64-bit instance hash deduplicated across packages with no check: a crafted collision is one body for two layouts",
+    "program": "# package d (an adversary's dependency: two spellings whose first 16 hex digits of BLAKE3 agree,\n# found in about 2^32 trials, which is minutes)\npub struct A: x: i64\npub struct B: x: i64, y: i64, z: i64\npub fn grow(ref mut xs: Array[A]):\n    xs.push(owns A(x=1))            # d instantiates Array[A].push: em_3std4core5Array4pushG<h>\npub fn feed(ref mut xs: Array[B]): pass\n\n# root package\nfrom d import B, feed\nfn main():\n    xs: Array[B] = []\n    xs.push(owns B(x=1, y=2, z=3))  # the root instantiates Array[B].push: the same symbol em_...G<h>\n    feed(ref mut xs)                # <-- link-time dedup keeps one body for both: 24-byte elements written by the 8-byte body (or the reverse); out of bounds in safe code",
+    "why": "[MNG-1]: \"for a generic instance `G` and the first 16 hex digits of the BLAKE3 hash of the canonical spelling of its arguments\" and \"A hash collision between two instances is reported as `E9040`, naming both\": only a compiler that sees both instances can report it. [MONO-1]: \"instances are named deterministically ... and deduplicated at link time, across separately compiled packages too\": the link step compares names, never spellings. Nothing says the spelling travels with the symbol.",
+    "proposed_text": "* `[MNG-1]` replace \"A hash collision between two instances is reported as `E9040`, naming both, never as an internal error.\" with: \"The hash is 32 hex digits (128 bits), so that no two spellings a program can write collide by chance or by design. Beside each instance's symbol the package records the canonical spelling it hashed, in its interface file and in the object's manifest section; before the linker runs, the build compares the spellings of every instance symbol two packages both define, and two that differ are `E9040`, naming both spellings and both packages, never an internal error and never one body for two instances. Within one package the same compare runs when the instance is named.\"",
+    "codes": "E9040, raised at the build's link step as well as in the compiler; shape: name and type (XVII.6.2)",
+    "milestone": "M15 (mangling, A7-16), with the link step of M-C's library build",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-02",
+    "rules": [
+     "MNG-1",
+     "MNG-6"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "Two majors of one package spell their types alike: instances over them deduplicate into one body",
+    "program": "# geometry v1: pub struct Vec2: x: f64, y: f64\n# geometry v2: pub struct Vec2: x: f64, y: f64, w: f64        (both majors coexist, [VER-5])\n# package old_fx depends on geometry \"1\", package new_fx on geometry \"2\"; the root uses both\n# old_fx:   pts: Array[Vec2] = []; pts.push(owns Vec2(x=1.0, y=2.0))           # Array[geometry.Vec2].push\n# new_fx:   pts: Array[Vec2] = []; pts.push(owns Vec2(x=1.0, y=2.0, w=1.0))    # <-- the same path `geometry.Vec2`, the same spelling, the same symbol: the linker keeps one body for 16-byte and 24-byte elements",
+    "why": "[MNG-1]: \"a dependency's begin with its package's name\" (no version); [MNG-6]: \"a declared type by its path\"; [VER-5] (Part XVII): \"Two majors of one package may coexist, distinguished in symbol names\", which no mangling rule honours; [MONO-1] deduplicates by name, and G8-01's `E9040` cannot fire since the spellings are identical.",
+    "proposed_text": "* `[MNG-1]` replace \"a dependency's begin with its package's name\" with: \"a dependency's begin with one component made of its package's name, `_v` and its major version (`11geometry_v2`), so two majors of one package (`[VER-5]`) never share a symbol; the same component spells a declared type's path in `[MNG-6]`, in interface files, in schemas (`[HR-11]`) and in `ember demangle`'s output.\"",
+    "codes": "none; the symbol grammar",
+    "milestone": "M15 (mangling, A7-16)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-03",
+    "rules": [
+     "MONO-10",
+     "BCK-5",
+     "CG-C-3b"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "The copy for one whole variable under two names needs a callee body the caller may not have",
+    "program": "# package lib (compiled once)\npub fn add_both(ref mut a: int, ref mut b: int):\n    a += 1\n    b += 1\n    println(a)\n\n# root\nfrom lib import add_both\nfn main():\n    x = 0\n    add_both(ref mut x, ref mut x)   # <-- accepted by [BCK-5] (one whole variable proved); [MONO-10] compiles it \"against its own copy of the callee\", whose body the root never has\n    f: fn(ref mut int, ref mut int) = add_both\n    f(ref mut x, ref mut x)          # <-- which callee's copy? a function value may hold any function",
+    "why": "[MONO-10]: \"is compiled against its own copy of the callee in which the two names are one place\"; [BCK-5]: \"two of them ... name one place ... only where the compiler proves them one whole variable (`[MONO-10]`)\". Across a package's edge only summaries ([EFF-4]) and inline bodies ([CG-C-3]) travel; a `pub` function of over 40 statements, one with a foreign call, an `extern` function, and any call through a function value, interface, `dyn` or `virtual` method have no body to copy. The compiler must invent whether to refuse or to require the body.",
+    "proposed_text": "* `[MONO-10]` append: \"The copy is compiled by the caller's package from the callee's body: for a function of its own package, from the source; for a `pub` function of another package, from that package's interface file, which carries (as `[CG-C-3]`'s header carries inline bodies, `[CG-C-3b]`) the body of every `pub` function that has two or more `ref mut` parameters, or one `ref mut` parameter and a `pub static mut` it uses by name. Where no body can be had — a call through a function value, an interface, `dyn` or `virtual` method, or of an `extern` function — a call that names one whole variable twice is `E3022` (\\\"`f(ref mut x, ref mut x)` names `x` twice, and `f` may hold any function, which has no copy for one variable; call the function by name, `add_both(ref mut x, ref mut x)`, or give the second name a value of its own: `y = x` above the call and `f(ref mut x, ref mut y)`\\\").\"",
+    "codes": "E3022, shape B1",
+    "milestone": "M6a",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-04",
+    "rules": [
+     "BCK-8",
+     "EFF-2",
+     "BLD-14"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "extends O1: a dependant's implementation, override or stored function flows into a library's already-checked call",
+    "program": "# package lib (compiled once; no Visitor it has ends a Node, so `walk` keeps plain views)\npub interface Visitor:\n    fn visit(this, n: Node)\npub class Tree:\n    nodes: Array[owns Node]\n    pub fn walk(this, v: dyn Visitor):\n        for n in this.nodes:\n            v.visit(n)                 # checked against the union of implementations lib can see\n\n# package app\nfrom lib import Tree, Visitor, Node\nclass Pruner implements Visitor:\n    tree: shares mut Tree\n    fn visit(this, n: Node):\n        this.tree.nodes.clear()        # <-- ends every Node while lib's `walk` still holds the view `n`: use after free; nothing re-checks `walk`\nfn main():\n    t = shares mut Tree(nodes=[owns Node()])\n    t.walk(Pruner(tree=shares mut t))",
+    "why": "[EFF-2]: \"For an interface, `dyn` or `virtual` method, it is every implementation and override the program has\"; [BCK-8]: \"the union of the summaries of every function the program can put there ... Summaries are the least fixed point over the whole program's call graph\": a whole-program fact. [BLD-14] point 7 and [EFF-4] record the *library's* stores for its dependants; nothing records what the library's own lines relied on, and [BLD-2] re-checks a module only when what it imports changes. The same holds for a function the dependant stores into a library's `pub` field of function type and for an override of a `pub virtual` method. AUDIT O1 lists [OBJ-1], [THR-2], [WK-18]; this is the same shape for [BCK-8].",
+    "proposed_text": "* `[BLD-14]` add point 8: \"for each call through a `pub` interface or `virtual` method, or through a `pub` place of function type (a field, a parameter, an element), the facts the package's own checks relied on at that call: what the functions there may change, read and end, as `[HR-44]` records them for a reload. A package that adds to such a place — an implementation of the interface, an override, a function it stores there or passes to it — is checked against them when it compiles: an implementation, override or store whose summary breaks a fact a recorded line relied on is refused at its own line, with the code of the rule that line relied on (`E3020`, `E3021`, `E3031` or `E3060`), naming the library's line and the chain of calls (\\\"`Pruner.visit` clears `tree.nodes`, and `lib`'s `Tree.walk` (lib/tree.em line 7) walks `nodes` across its call of `visit`; keep what to remove in a list of your own and clear after the walk\\\"). So no package's accepted line is made unsafe by a package it never saw, and nothing runs for it while the program runs.\"",
+    "codes": "E3020, E3021, E3031, E3060 at the dependant's line; interface-file entries",
+    "milestone": "M6a (summaries) and M11 (interface values)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-05",
+    "rules": [
+     "RT-7",
+     "RC-4",
+     "RT-10"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "The home count is folded into the away count unchecked: a count past half the range wraps",
+    "program": "from std.thread import thread\nclass Log: pass\nfn main():\n    log = thread_shared Log()\n    holders: Array[thread_shared Log] = []\n    for i in 0..3_000_000_000:                              # every +1 passes the home count's compare (its limit is 4,294,967,295)\n        holders.push(owns thread_shared log)\n    h = thread.spawn(owns fn() thread_shared log: pass)     # <-- a hand-over ([RC-4] point 4): the making thread adds its 3,000,000,000 into the away count, a signed 32-bit number whose limit is 2,147,483,647, with no compare: it wraps negative\n    h.join()                                                # the sum is read as zero or below: the Log ends under 3,000,000,000 live owners",
+    "why": "[RT-7]: \"A `thread_shared` value's home count (`[RC-4]`) is checked as a one-thread count is\" (limit 4,294,967,295) while \"its away count ... the program stops when the value before the add is at or above 2,147,483,647\". [RC-4] point 4: \"first adds its own count of the value into the away count\"; point 2: \"it adds each value's home count into its away count\". Neither add is named among the checked ones; a home count above 2,147,483,647 cannot fit.",
+    "proposed_text": "* `[RT-7]` append: \"The add of a home count into the away count — at a hand-over (`[RC-4]` point 4) and at the queue's emptying (point 2) — is checked as a +1 is: when the sum would be 2,147,483,647 or more, the program stops with the same message (\\\"too many owners of a `Log` (2,147,483,647)\\\"); one compare per hand-over or per queued value, never on the fast path. The 8-bit test program reaches it at 127.\"",
+    "codes": "the stop text of [RT-7]; the `[COST-3]` row for the hand-over gains \"and one compare\"",
+    "milestone": "M9 (runtime counts)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-06",
+    "rules": [
+     "HR-42",
+     "HR-42a",
+     "HR-3"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "A thread at depth zero may enter Ember code during commit and run through a half-rewritten image",
+    "program": "# reload = \"all\"; a C host calls `on_audio` from its audio thread whenever it likes\n@unsafe(export(\"on_audio\", threads=any))\nfn on_audio():\n    mix(GAME)                    # entering: \"one relaxed increment and one acquire fence\"; nothing waits\n\nfn main():\n    while running:\n        tick()\n        std.hot.checkpoint()     # <-- commit reads the audio thread's counter (0: it is in C), then stores the new call table and instances one pointer at a time; the audio thread enters between that read and the generation store and runs new `mix` over unpublished instances, or old code over published ones",
+    "why": "[HR-3]: \"applied only ... when no registered thread is executing Ember code (each thread's Ember-depth counter is zero)\" states the condition at the moment of the read, not for the length of commit. [HR-42]: \"Commit reads every counter with acquire, writes the new thunk targets and type information, and publishes them with one release store\"; [HR-42a]: \"The counter is not a lock: entering Ember code is one relaxed increment and one acquire fence\". A relaxed increment and an acquire fence on one side and an acquire read on the other do not order the two (no Dekker), and nothing makes an entering thread wait.",
+    "proposed_text": "* `[HR-42]` replace with: \"**Publication.** Entering Ember code increments the thread's depth counter and then reads the runtime's commit mark, both sequentially consistent (one full fence between them where the hardware needs it); a thread that reads the mark set decrements its counter, waits until the reload generation counter changes, and enters again. Leaving Ember code is a release decrement. Commit sets the commit mark and then reads every counter, with the same ordering, so that of a thread entering and a commit starting at once at least one sees the other; a counter that is not zero clears the mark and the poll returns `EMBER_RELOAD_UNSAFE_POINT`. With every counter zero, commit writes the instances, the type information and the call table, publishes them with one release store to the generation counter, which a thread entering next acquires, and clears the mark.\"\n* `[HR-42a]` replace with: \"The counter is not a lock: entering Ember code is one increment, one fence and one load whatever the number of threads; only a thread that meets a commit waits, for the length of the commit, and the reload side pays the scan over threads.\"",
+    "codes": "none; a `[COST-3]` row: entering Ember code from C in a reloadable build, one increment, one fence, one load",
+    "milestone": "M13",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-07",
+    "rules": [
+     "HR-3b",
+     "HR-15",
+     "HR-15a"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "A frame's view into a field of an instance migrated in place is neither rewritten nor counted as a dependence",
+    "program": "class Player:\n    hp: int\n    name: String\n\nfn run(ref mut p: Player):\n    hp = ref mut p.hp            # a view into a field\n    std.hot.checkpoint()         # the edit adds `armor: int = 0` before `hp`; the new size fits, so the instance keeps its address\n    hp += 1                      # <-- the rest of `run` reads or writes no field of `Player`: it writes through an `int` view at the old offset, now `armor` or half of `name`",
+    "why": "[HR-3b]: a frame depends on \"the types whose layout the rest of the function depends on once the call returns: those its old code reads or writes fields of, builds, holds, passes or gets back by value, indexes or allocates\" — after the call the old code holds a `ref mut int`, not a `Player`; whether \"holds\" reaches through a view is the compiler's guess. [HR-3b]: \"one a frame's view points into keeps its address, which `[HR-15]` allows when its new size fits\" — the address is kept, the field moved. [HR-15a] refuses only what \"must move\"; \"a frame's views are not counted\".",
+    "proposed_text": "* `[HR-3b]` after \"the types whose layout the rest of the function depends on once the call returns:\" insert: \"those a value it still uses is of, holds, or views — a view into a field, an element or a part depends on the type that holds the part and on every type on the path to it, read from the places the view carries (`[BCK-1]`);\". And replace \"one a frame's view points into keeps its address, which `[HR-15]` allows when its new size fits\" with \"an instance a frame's view points into is not changed in place while that frame lives: a layout change of its type is a dependence of the frame, and is refused naming the function, the line of its call and the view\".",
+    "codes": "E9030, report text",
+    "milestone": "M13",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-08",
+    "rules": [
+     "HR-15",
+     "HR-14",
+     "HR-15a"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "A kept view into a field that migration removes, converts or moves within its block is rewritten to the wrong place or to nothing",
+    "program": "struct Mesh:\n    x: f64\n    y: f64\nclass Body:\n    let mesh: owns Mesh\n    tip: ref f64 from mesh               # a kept view into `mesh.x` ([TYP-15])\n    fn init(this):\n        this.tip = ref this.mesh.x\n\nfn main():\n    b = Body(mesh=owns Mesh(x=1.0, y=2.0))\n    while running:\n        println(b.tip)                    # <-- after a reload that adds `w: f64 = 0.0` before `x`: the `mesh` block grows and moves, commit rewrites `tip` to the new block at the old offset, and it reads `w`; after one that removes `x`: `tip` points at memory reclaim ends\n        std.hot.checkpoint()",
+    "why": "[HR-15]: \"commit rewrites every owner, link and view of it that the runtime can enumerate: ... the kept views into it (`ref T`, `ref mut T`, ...)\" — a view of *it*, with no word on a view into a part of it, whose offset changes by name (\"fields reordered | carried over by name\") or whose part is \"field removed | old value ended in reclaim\" or converted (\"field type widened losslessly | converted\"). No row of [HR-14] and no sentence of [HR-15a] refuses a reload whose migration leaves a kept view without its part.",
+    "proposed_text": "* `[HR-15c]` *(new)* \"**A view into a part.** A kept view (`[TYP-15]`) that points into a part of a value — a field, an element, a range of a `String` or an array — is rewritten to the part's new place when the part is carried over by name (reordered, its holder resized or moved): the runtime maps the old offset to the new through the schema. Where the part is removed, converted, rebuilt by `migrate_from`, or of a type whose own layout changes, the view has no place to be rewritten to, and plan refuses the reload, naming the field, the type that holds the view and the count, judged from the types that can hold such a view (as `[HR-47]`); a view the runtime cannot enumerate (`[HR-15a]`) that may point into such a part refuses it the same way. A row of `[HR-14]`: `a kept view points into a field that is removed, converted or rebuilt | refused ([HR-15c])`.\"",
+    "codes": "E9030, report text; the [HR-14] row",
+    "milestone": "M13 (M5 records which types hold views)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-09",
+    "rules": [
+     "HR-13",
+     "HR-14",
+     "HR-15",
+     "HR-45",
+     "CLO-10"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "A function value's state block has no schema: a captured value's type changes and the new body reads past the block",
+    "program": "struct Vec2:\n    x: f64\n    y: f64\nclass Bus:\n    handlers: Array[fn(f64)]\n\nfn main():\n    bus = Bus(handlers=[])\n    v = Vec2(x=1.0, y=2.0)\n    bus.handlers.push(owns fn(t: f64) copy of v: println(v.x * t))   # the lambda's state block holds a 16-byte Vec2 ([CLO-10])\n    while running:\n        for h in bus.handlers:\n            h(0.5)                   # <-- after a reload that adds `z: f64 = 0.0` to Vec2 and `v.z` to the body: the thunk runs the new body, which reads 8 bytes past the state block\n        std.hot.checkpoint()",
+    "why": "[HR-13]: value data \"is migrated through its container, which registers itself\" — a state block is no container and registers nothing; [HR-15] names \"function values' state held by any of these\" only as a place whose *addresses* are rewritten; [HR-14]'s exhaustive table has no row for a lambda's captures; [HR-6a]: a function value's code word is the thunk, so the stored value runs the new body; [HR-45] gives generator frames exactly this protection and function values none.",
+    "proposed_text": "* `[HR-48]` *(new)* \"**A function value keeps its state's layout.** The state of a lambda (`[CLO-10]`) has a schema: its captures as fields, with their words, and whether it fits in the state word. The runtime finds the live states of each reloadable lambda among the values it can enumerate (`[HR-15]`). A body change that leaves the captures and their types as they were applies through the thunk; a change to the captures, or a layout change of a captured value's type, is refused in plan while a state lives, naming the lambda (its function and line) and the count; a state the runtime cannot enumerate (kept by C, `[HR-20]`; behind a raw pointer, `[HR-13b]`) is treated as live. A row of `[HR-14]`: `a lambda's captures changed, or a captured value's type changed, while a state of it lives | refused ([HR-48])`.\" And in `[HR-41]`: `| a live function value's captures or a captured type changed | plan | refused ([HR-48]) |`.",
+    "codes": "E9030, report text; [HR-14] and [HR-41] rows",
+    "milestone": "M13 (M8 gives the state block)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-10",
+    "rules": [
+     "HR-44",
+     "EFF-2",
+     "BLD-14"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "A function value stored by the old image stays in a place the new image's checks no longer count it in",
+    "program": "class Tree:\n    nodes: Array[owns Node]\n    on_visit: fn(Node)\n    fn setup(this):\n        this.on_visit = prune            # old image: `prune` reaches `on_visit`, so the old `walk` had to walk with a `weakref` link ([WK-18])\n    fn walk(this):\n        for n in this.nodes:\n            this.on_visit(n)             # <-- new image: `setup` now stores `log_visit`, which ends nothing, so this `walk` with plain views is accepted when it compiles; the live `tree.on_visit` still holds `prune`, which ends `n` under the view\nfn prune(n: Node): ...                   # removes nodes through a `shares mut` link to the tree",
+    "why": "[EFF-2] (verdict 122): a call through a place has the effects of \"every lambda and named function the program puts in that place\" — a fact of the program's text, which a reload changes under values already stored. [HR-44] compares \"a fact of a function that code the reload does not rebuild was checked against\"; here the rebuilt code is what relies on a fact the running state contradicts, and \"Code the reload rebuilds is checked again when it compiles, so a change that only it relies on is no refusal\". No rule enumerates stored function values or callbacks C keeps against the new image's sets.",
+    "proposed_text": "* `[HR-44a]` *(new)* \"**A stored function is a fact too.** Plan enumerates (`[HR-15]`) every function value held in a live instance, a registered container, a static or a lambda's state, and every callback C keeps (`[HR-20]`), and compares each with the functions the new image can put in that place (`[EFF-2]`, `[BLD-14]` point 7) or hand to C (`[FFI-52]`). Where a held function is not among them, the new image's checks of that place did not count it: the reload is refused (`E9030`), naming the place, the function and the count (\\\"`tree.on_visit` holds `prune` in 1 instance, which the new `setup` no longer stores there, and the new `walk` (line 8) walks `nodes` across its call; keep `prune` among what `setup` may store, or restart\\\"). A function value the runtime cannot enumerate is treated as held. Nothing of this runs while the program runs.\" And in `[HR-41]`: `| a stored function value or kept callback the new image does not count | plan | refused ([HR-44a]) |`.",
+    "codes": "E9030, report text; [HR-41] row",
+    "milestone": "M13",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-11",
+    "rules": [
+     "HR-16",
+     "HR-2a"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "`OldSelf`'s fields that are themselves migrated types have no stated type: the old instance read with the new layout",
+    "program": "class Log:\n    name: String\n    count: int                           # the edit adds `tag: u8 = 0` before `name`\nclass Audit:\n    log: shares Log\n    title: String\n    static fn migrate_from(old: OldSelf) -> Result[Self, ReloadError]:\n        return Ok(Audit(log=shares old.log, title=copy of old.log.name))   # <-- `old.log` is a view of the OLD `Log` instance; if its type in `OldAudit` is `shares Log`, `name` is read at the new offset of a block laid out the old way",
+    "why": "[HR-16]: \"`OldSelf` is the previous schema as a generated struct `Old<Name>`, visible only in that function; `old` is a read-only view of the old instance\" — the field types inside `Old<Name>` are unsaid, and so is whether a link read from `old` and stored in the new instance is the old target (then \"applies the map\" in [HR-2a] must rewrite it) or must be the new one.",
+    "proposed_text": "* `[HR-16]` append: \"`Old<Name>`'s fields have the types of the previous schema: a field whose type is itself migrated in this reload is of that type's `Old` form (`log: shares OldLog`), through links, `owns` blocks, containers and tuples alike, so that nothing read through `old` is read with a new layout; a field whose type is unchanged keeps its type. An `Old` type has its fields and no methods. A `shares`, `shares mut`, `thread_shared` or `weakref` link read from `old` may be stored into the new instance's field of the new type (`log=shares old.log`): it names the old instance until commit, and commit's map (`[HR-2a]`) repoints it to the migrated one; so `migrate_from` never reads the new instance of another type, and never stores a view of an `Old` value (`E3063`).\"",
+    "codes": "E3063 for a stored Old view; otherwise text",
+    "milestone": "M13",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-12",
+    "rules": [
+     "HR-2",
+     "HR-2a",
+     "HR-15"
+    ],
+    "kind": "CON",
+    "severity": "major",
+    "title": "Commit does only pointer stores, prepare changes nothing, yet an instance migrates in place and reclaim ends its 'old version'",
+    "program": "class Player:\n    hp: int           # the edit: `hp: int` becomes `hp: i64` (widened, converted) and `name: String` is removed; the new size fits\n    name: String\n# [HR-15]: the instance keeps its address. [HR-2]: commit stores pointers into memory reserved in prepare: no byte of the old block is written there. [HR-2]/[HR-2a]: prepare \"changes nothing\" and builds the new instance \"in the transaction arena\". So who writes `hp`'s eight bytes into the old block, and where does reclaim find the old `name` to end after they were written?",
+    "why": "[HR-2]: \"Commit performs only pointer stores into memory reserved in prepare\"; \"A failure in plan or prepare leaves the process ... with no instance changed\"; [HR-15]: \"Migration keeps an instance's address where the new size fits\"; [HR-2a]: \"Reclaim frees each migrated instance's old version field by field without the type's own `drop` ... and ends removed fields, running their `drop`\" — an in-place instance has no old version left; and for a type rebuilt by `migrate_from` (whose `old` was only read) nothing says its carried-name fields are ended: a double end or a leak is the implementer's choice.",
+    "proposed_text": "* `[HR-2]` replace \"Commit performs only pointer stores into memory reserved in prepare: no allocation, check, callback or other fallible operation.\" with \"Commit performs only stores: pointer stores into memory reserved in prepare, and, for an instance migrated in place (`[HR-15]`), the copy of its prepared bytes over its old block; no allocation, check, callback or other fallible operation.\"\n* `[HR-2a]` replace the prepare and reclaim sentences with: \"Prepare builds every migrated instance in the transaction arena (`[HR-37]`), an in-place one too, copies into the arena the old values of the fields that will not be carried over by name — removed fields, the old value of each converted field, and every field of an instance rebuilt by `migrate_from` — runs every `migrate_from` against a read-only view of the old instance, and computes the old-to-new address map; it writes nothing into an old block. ... Reclaim ends those saved old values, running their `drop`s and never the type's own `drop`, since the instance lives on in its new form; a field carried over by name has been handed over and is not ended; then it frees each old block whose instance moved.\"",
+    "codes": "none; text",
+    "milestone": "M13",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-13",
+    "rules": [
+     "HR-14",
+     "HR-34",
+     "HR-35",
+     "HR-39",
+     "STR-2"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "Field defaults, `Default.default()` and every function `migrate_from` calls run in prepare with ordinary panics",
+    "program": "fn fresh_id() -> int:\n    return NEXT.fetch_add(1).unwrap_overflow()     # or any body with a bounds check, overflow or `unwrap`\nclass Player:\n    hp: int\n    id: int = fresh_id()        # <-- the edit adds this field; [HR-14]: \"field added with a default | initialised to that default\": prepare runs `fresh_id()` once per instance ([STR-2]: \"evaluated at each construction\"), compiled as any function: its panic aborts the process, which [HR-34] forbids\n\nclass Audit:\n    static fn migrate_from(old: OldSelf) -> Result[Self, ReloadError]:\n        return Ok(Audit(total=sum_all(old.parts)))   # <-- `sum_all` is an ordinary function: its overflow check panics; [HR-35] rewrites only checks \"inside it\"",
+    "why": "[HR-14]: \"field added with a default | initialised to that default\", \"field added, its type is `Default` | initialised to `Default.default()`\"; [STR-2]: \"A field default is any expression\"; [HR-34]: \"Prepare cannot panic\"; [HR-35]: \"every run-time check inside it ... returns `Err(...)`\" and `E2225` for an explicit panic — both scoped to `migrate_from`'s own body; [HR-39] rejects a `noexcept` C++ call \"at compile time\" with no code. A compiler must invent whether called functions are recompiled, refused, or left to abort.",
+    "proposed_text": "* `[HR-35]` append: \"The rule covers what `migrate_from` runs, not only what it writes: every function it calls, directly or through what it calls, and every `drop` it may run, is compiled for that use as an instance of itself under this rule (`[MNG-6]`: `[reload]` among its arguments), with the same `E2225` for an explicit panic and the same `Err` returns for a check; a call through a function value, an interface, `dyn` or `virtual` method is compiled so for every function the program can put there (`[EFF-2]`); a call to an `extern` function follows `[HR-39]`, whose refusal is `E2225` (\\\"`finish` is asserted `noexcept` and may end the process; call it outside the migration, or write `@allow_reload_terminate`\\\"). A field default or `Default.default()` that prepare runs for an added field (`[HR-14]`) is compiled the same way, and an explicit panic in it makes the row `field added, neither` (refused, naming the field and the panic's line).\"",
+    "codes": "E2225 (one more situation in its registry row); [MNG-6] gains the `[reload]` argument",
+    "milestone": "M13",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-14",
+    "rules": [
+     "HR-36",
+     "HR-46",
+     "ALC-1"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "A value made `using` an instance inside `migrate_from` comes from the transaction arena and is handed back to the wrong manager",
+    "program": "static LEVEL: LevelArena = LevelArena(64 * 1024)\nclass Enemy:\n    mesh: owns Mesh using LevelArena\n    static fn migrate_from(old: OldSelf) -> Result[Self, ReloadError]:\n        return Ok(Enemy(mesh=owns Mesh(points=copy of old.mesh.points) using LEVEL))   # <-- [HR-36]: \"Allocation during prepare comes from the transaction arena\": the block is the arena's, the value's instance word says LEVEL; its end hands LEVEL a block it never gave out. Taking it from LEVEL instead leaves LEVEL changed by a reload that may be discarded ([HR-2])",
+    "why": "[HR-36]: \"Allocation during prepare comes from the transaction arena; ... construction inside `migrate_from` needs no special spelling\"; [ALC-1]: a value \"keeps its instance's address, one word, so that its growth and its end go back to the instance it came from\"; [HR-46] keeps migrated values in their instance's block but says nothing of a value `migrate_from` makes anew; `old` is read-only, so the old `mesh` cannot be moved into the new instance.",
+    "proposed_text": "* `[HR-36]` append: \"A value made `using` an instance (`[ALC-1]`) cannot come from the transaction arena, and a reload may not take memory from an instance it may discard: `using` in a `migrate_from` body, or in a default prepare runs, is `E2020` (\\\"`Mesh(...) using LEVEL` would take memory from `LEVEL` during a reload, which may be discarded; make the mesh in `Global` and give `mesh` no `using`, or let `Enemy` migrate by name\\\"), and a type that declares `migrate_from` and has a field whose type says `using A`, `A` a manager that may have several instances, is `E2020` at the `migrate_from` line (\\\"`Enemy.migrate_from` must build `mesh`, which takes its memory from a `LevelArena`, and a reload has no instance to take it from; remove `migrate_from` so that `mesh` is carried over by name (`[HR-46]`), or keep the mesh in `Global`\\\").\"",
+    "codes": "E2020 (its registry row gains the sentence)",
+    "milestone": "M13 (M10 for `using`)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-15",
+    "rules": [
+     "HR-12",
+     "RT-11",
+     "OBJ-1"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "The live-instance list's synchronisation and a `thread_shared` object's reloadable header are unsaid",
+    "program": "from std.thread import thread\nclass Job: pass\nfn main():\n    with scope = thread.scope():\n        for i in 0..8:\n            scope.spawn(owns fn(): Job())        # eight threads make objects at once: each insert links into \"a live-instance list\"\n    g = thread_shared Job()\n    h = thread.spawn(owns fn() thread_shared g: pass)   # <-- the other thread ends the last owner (after the hand-over, [RC-4] point 4) and must unlink `g` from the list while `main` inserts: with one list and no lock, a race; with per-thread lists, an unlink from another thread's list",
+    "why": "[HR-12]: \"class instances are registered in a live-instance list, which adds 16 bytes to the object header of `[OBJ-1]` (24 bytes instead of 8, and 28 instead of 12 ...)\": one list or one per thread, locked or not, is unsaid, and the 32-byte `thread_shared` header ([OBJ-1], verdict 101) has no reloadable size. [RT-11]: \"no allocation updates a shared non-atomic counter\" says nothing of the list. A wrong guess is a data race inside the runtime.",
+    "proposed_text": "* `[HR-12]` append: \"The list is per thread for objects that are not `thread_shared`, touched only by their own thread when the object is made and when it ends; a `thread_shared` object is in one runtime list guarded by a lock, taken when it is made and when it ends, on whichever thread ends it. A `thread_shared` value's 32-byte header (`[OBJ-1]`) is 48 bytes in a reloadable build. Plan and prepare walk every list with every registered thread at depth zero (`[HR-3]`), or, at a checkpoint, with the lock held and the checkpoint's own thread the only one running; so no list is touched by two threads at once. The cost, in reloadable builds only: two stores per object made and ended, and for a `thread_shared` object one lock.\"",
+    "codes": "none; a `[COST-3]` row for the dynamic profile",
+    "milestone": "M13 (M6b for the header)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-16",
+    "rules": [
+     "HR-13b",
+     "HR-45",
+     "HR-15a",
+     "HR-20"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "How plan knows that a value, frame or state lives behind a raw pointer or in foreign memory is unsaid",
+    "program": "struct Vec2: x: f64, y: f64\nfn stash(ref v: Vec2) -> *Vec2:\n    unsafe:\n        return ref_to_ptr(v)              # a Vec2 now reachable only through a raw pointer, held in a C-side table\n# the edit adds `z: f64` to Vec2. [HR-13b]: \"Value data reachable only through raw pointers ... cannot be migrated; if its schema changed, the reload is refused\" — plan has no raw pointer to find, no count, and no rule saying it judges from types; a plan that enumerates what it can applies the change, and C's Vec2 is read with the new layout",
+    "why": "[HR-13b]: \"Value data reachable only through raw pointers or foreign memory cannot be migrated; if its schema changed, the reload is refused\"; [HR-45]: \"A frame the runtime cannot enumerate (in foreign memory, behind a raw pointer) is treated as live\"; [HR-15a] likewise — each presumes plan knows such a value exists, and no rule says how. [HR-47] shows the document's own device (\"judged from the types that can hold one\") and it is not applied here.",
+    "proposed_text": "* `[HR-13b]` replace with: \"Value data reachable only through raw pointers or foreign memory cannot be migrated. Which types such data may have is judged when the program compiles, from types, as `[HR-47]` judges: a type `T` is **unenumerable** when the program, its dependencies included, has a raw pointer type `*T` or `*mut T`, a `MaybeUninit[T]`, an `into_raw()` of a `T` or of a value that holds one, a foreign parameter whose contract keeps a `T` or what holds one (`[HR-20]`), or an arena allocation of `T` whose arena is not a registered container; the image's manifest (`[HR-8]`) lists the unenumerable types with the line that makes each so. Plan refuses a schema change of an unenumerable type, naming the type and that line, whether or not such a value lives, since the runtime cannot count them; the same list decides `[HR-45]`'s frames and `[HR-48]`'s states that are 'treated as live'. `ember build --reload --explain` prints the list.\"",
+    "codes": "E9030, report text; the manifest section of [HR-8]",
+    "milestone": "M13",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-17",
+    "rules": [
+     "HR-7",
+     "HR-20",
+     "HR-21"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "'Reachable' for a removed function's thunk is undefined",
+    "program": "fn tick(): pass\nfn main():\n    register_cb(tick)                 # C keeps the `extern \"C\" fn` value: its thunk's address\n    # the edit deletes `tick`. [HR-7]: \"a reload that would leave such a thunk reachable is refused\" — C's hold is not a place the runtime enumerates: is it reachable?",
+    "why": "[HR-7]: \"A function removed by an edit keeps its thunk, now pointing at a stub that panics naming it; a reload that would leave such a thunk reachable is refused\" — reachable through what is unsaid; safe either way (the stub panics), but two implementations accept different reloads.",
+    "proposed_text": "* `[HR-7]` replace \"a reload that would leave such a thunk reachable is refused\" with: \"a reload is refused, naming the function, when its thunk is still named by a function value the runtime can enumerate (`[HR-15]`), by a method table or drop glue of a live type, by a callback C keeps (`[HR-20]`) or by an `@export` (`[HR-21]`); one C holds that the runtime cannot see runs the stub, which panics naming the function.\"",
+    "codes": "E9030, report text",
+    "milestone": "M13",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-18",
+    "rules": [
+     "HR-24",
+     "HR-15b",
+     "HR-41",
+     "HR-38"
+    ],
+    "kind": "CON",
+    "severity": "minor",
+    "title": "A GPU in-flight refusal is 'detected in prepare' while every refusal is 'decided in plan'",
+    "program": "# [HR-24]: \"otherwise the reload waits at most `frames_in_flight + 1` polls and is then refused ... This is detected in prepare, so the reload is discarded\"\n# [HR-15b]: \"Every refusal is decided in plan, before prepare runs.\"  [HR-41] lists no row for it, and `ReloadError.Timeout` ([HR-38]) has no rule that raises it.",
+    "why": "The two sentences quoted disagree on the phase; [HR-41]'s matrix, which claims to be the failure matrix, has no row for the GPU wait; [HR-38] names `Timeout` and no rule produces it.",
+    "proposed_text": "* `[HR-24]` replace \"This is detected in prepare, so the reload is discarded and the old image keeps running (`[HR-41]`).\" with \"Plan reads the device's fence state (`[GPU-4]`'s access states) and decides it, as every refusal is decided (`[HR-15b]`); a reload that has waited `frames_in_flight + 1` polls is refused with `ReloadError.Timeout` (`[HR-38]`), naming the resource.\" And a row of `[HR-41]`: `| an object in use by an in-flight GPU frame must move | plan, after at most frames_in_flight + 1 polls | refused, Timeout ([HR-24]) |`.",
+    "codes": "E9030; ReloadError.Timeout",
+    "milestone": "text only",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-19",
+    "rules": [
+     "CG-C-3a",
+     "CG-C-2"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "`@inline` is binding (`always_inline`) and nothing refuses it on a recursive function, whose C warns",
+    "program": "@inline\nfn depth(n: Node) -> int:\n    if n.next exists as m:\n        return 1 + depth(m)       # <-- `__attribute__((always_inline))` on a recursive function: GCC and Clang warn (\"inlining failed\"), which [CG-C-2] forbids an accepted program to produce\n    return 1",
+    "why": "[CG-C-3a]: \"`@inline` is binding: the function is emitted with `__forceinline` or `__attribute__((always_inline))`\"; [CG-C-2]: \"A program Ember accepts never produces C that the C compiler rejects or warns about\". No rule refuses `@inline` on a function that may call itself.",
+    "proposed_text": "* `[CG-C-3a]` append: \"`@inline` on a function that may call itself, directly or through the functions it calls (`[EFF-1]`'s call graph, the libraries' included), is `E0104`, naming the cycle (\\\"`depth` calls itself on line 4, and an `@inline` body cannot be inlined into itself; remove `@inline` (line 1), or write `@hot`\\\").\"",
+    "codes": "E0104 (one more situation in its row)",
+    "milestone": "M15",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-20",
+    "rules": [
+     "RT-12",
+     "FFI-22",
+     "HR-3a"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "The guard page is promised for threads the runtime creates; a host thread attached from C has whatever C gave it",
+    "program": "# C host: pthread_attr_setstack(&attr, buf, 64 * 1024) with no guard region, then calls the exported `on_audio`\n@unsafe(export(\"on_audio\", threads=any))\nfn on_audio():\n    deep(100000)               # <-- [RT-12]: \"A stack write can never land beyond the guard page\" — this thread has none: the probes walk into whatever lies below `buf`",
+    "why": "[RT-12]: \"the runtime gives every thread it creates a guard page; and overflow aborts ... in every profile. A stack write can never land beyond the guard page\" — a thread attached by `[FFI-22]` was not created by the runtime, and the promise is stated without that condition.",
+    "proposed_text": "* `[RT-12]` append: \"A thread C created and attached (`[FFI-22]`) keeps the stack C gave it: that it ends in a guard page is the host's obligation, an asserted fact `ember tcb` lists for every `@unsafe(export)` and callback whose contract admits a thread the runtime did not create (`[TCB-1]`).\"",
+    "codes": "none; a `ember tcb` line",
+    "milestone": "M12",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-21",
+    "rules": [
+     "GPU-2",
+     "GPU-3",
+     "GPU-4"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "A `Frame` whose owner ends without `end_frame`, and whether the frame's arena is ever GPU-visible, are unsaid",
+    "program": "fn render(device: dyn Device):\n    if device.begin_frame() exists as frame:\n        if skip: return              # <-- `frame` ends here without `end_frame`: nothing says what the device sees (a frame never submitted? a fence never signalled, so the next `begin_frame` waits for ever?)\n        staging = Array.new_in(frame.arena())   # a value made `using` the frame's arena: if the device uploads from it, the GPU reads it after `end_frame` reset the arena",
+    "why": "[GPU-2]: \"ending a frame that never began, or ending one twice, is refused when compiling\" says nothing of a frame ended by its owner's end; [GPU-3]: \"nothing made in it outlives `end_frame`\" is a CPU-lifetime promise, and \"transient memory manager\" does not say the memory is never given to the GPU, which `[GPU-4]`'s in-flight rule would otherwise have to cover.",
+    "proposed_text": "* `[GPU-2]` append: \"A `Frame` whose owner ends without `end_frame` is ended by its `drop`, which ends the frame as `end_frame` does with nothing recorded (the device skips it); so no fence is left unsignalled.\"\n* `[GPU-3]` append: \"The frame's arena is CPU memory the device never maps or uploads from: a value made in it cannot be bound or copied to the GPU (`E2020`: \\\"`staging` was made in the frame's arena, which the GPU never reads; make it in a `Ring` buffer: `ring.current(frame)`\\\"), so `[GPU-4]`'s in-flight rule never concerns it.\"",
+    "codes": "E2020",
+    "milestone": "M15 (std.gpu)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-22",
+    "rules": [
+     "GPU-8",
+     "GPU-10",
+     "GPU-12"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "`History`'s 'forbidding', the resource-set 'type error' and `ember tcb`'s listing of a run-time fact have no mechanism or code",
+    "program": "prev, cur = history.frame(frame)\ncmd.write(prev)        # <-- [GPU-8] \"forbidding reads of `cur` and writes of `prev` within a frame\": by a type, a compile-time check or a panic? and at what cost?\ncmd.bind_set(other_set)   # <-- [GPU-10] \"binding a resource set built for another interface is a type error\": which code?",
+    "why": "[GPU-8]: \"forbidding reads of `cur` and writes of `prev` within a frame\" names no check; [GPU-10]: \"is a type error\" names no code, which [PHIL-12]/E0901 would make a refusal of the whole construct; [GPU-12]: \"its use is an asserted fact that `ember tcb` lists\" asks a compile-time listing to know a value `device.robust_access()` gives while running.",
+    "proposed_text": "* `[GPU-8]` append: \"`prev` is a `ReadHandle[T]` and `cur` a `WriteHandle[T]`, two types `Copy` as handles are; `cmd.write` takes a `WriteHandle` and `cmd.read` a `ReadHandle`, so the wrong one is `E2020` when compiling, at no cost while the program runs.\"\n* `[GPU-10]` replace \"is a type error\" with \"is `E2020`, naming both interfaces\".\n* `[GPU-12]` replace \"its use is an asserted fact that `ember tcb` lists (`[TCB-1]`)\" with \"a program that drives a device through the FFI rests on the backend's answer, an asserted fact `ember tcb` lists for every `Device` implemented through an overlay (`[TCB-1]`); a device implemented in Ember answers from what its backend reports.\"",
+    "codes": "E2020",
+    "milestone": "M15 (std.gpu)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G8-23",
+    "rules": [
+     "BCK-7",
+     "RC-5"
+    ],
+    "kind": "CON",
+    "severity": "minor",
+    "title": "[BCK-7] still says 'an object of its type' where F5 made [RC-5] say the class family, held directly or through anything that owns it",
+    "program": "class Entity: pass\nclass Player(Entity): pass\nfn tick(ref mut world: World):\n    if world.cam.target exists as p:        # p: a Player opened from a link\n        world.entities.clear()               # ends every Entity, a Player among them: [RC-5] (F5) says E3060 at the later use; [BCK-7] read literally asks only for a line that may end \"an object of its type\" (Player)\n        println(p.hp)",
+    "why": "[BCK-7]: \"A view of an object reached through a link lives only while no line and no call in its life may end an object of its type (`E3060`)\" and \"across a call that may change an object of its type\"; [RC-5] point 1 after F5: the view's class family, \"held directly or through anything that owns it, all the way down\". Part XVIII is where the check is specified exactly (\"so that every implementation accepts the same programs\"), so its narrower words are the ones a compiler would build.",
+    "proposed_text": "* `[BCK-7]` replace \"may end an object of its type (`E3060`), and across a call that may change an object of its type\" with \"may end an object of its class family, held directly or through anything that owns it (`[RC-5]` point 1; `E3060`), and across a call that may change such an object\".",
+    "codes": "E3060, E3021; text",
+    "milestone": "text only",
+    "touches_owner_verdict": ""
+   }
+  ],
+  "judged_sound": [
+   "[CG-C-1], [CG-C-2], [CG-C-11]: UB-free C, deterministic text, contraction off per TU; consistent with [TYP-9]/[DET-5]",
+   "[CG-C-4]: restrict on every ref mut, never on this; the call-site proof is [BCK-8]'s and [MONO-10]'s copy keeps one pointer; loop hoisting conditioned on [SIMD-3]",
+   "[CG-C-5] to [CG-C-10]: panics cold and _Noreturn, vectorisation pragmas, names, #line, visualisers, demangle",
+   "[CG-C-3], [CG-C-3b]: the inline header's contents are in the interface hash; reloadable functions excluded by [HR-9a]",
+   "[MNG-3], [MNG-4]: transliteration injective (the _u escape handled); table names",
+   "[MONO-2], [MONO-3], [MONO-5] to [MONO-9]: sharing only above a ceiling, never for exported/extern, same results; E2223",
+   "[BCK-1] to [BCK-6]: positions and addresses, location-sensitive liveness, the conflict table, storage end, two-phase arguments, required acceptances (checked against [BRW-*] in Part VII)",
+   "[BCK-8] inside one package: least fixed point, drop as a call, foreign calls by [FFI-52]",
+   "[RT-1] to [RT-6], [RT-11]: allocator, no global constructors, TypeInfo, panic text, ABI symbol, per-thread statistics",
+   "[RT-8]: the atomic orders (relaxed increment, acq-rel decrement, release on queueing, acquire on emptying, home count plain) suffice for the biased scheme",
+   "[RT-10]: open-then-undo on another thread is safe because the opener's own weak count keeps the block; the ended mark set in the same atomic step as the subtract that reaches zero",
+   "[IMP-11], [CG-LL-1] to [CG-LL-3]: noalias/readonly only from proved facts",
+   "[HR-1], [BEN-8], [HR-2a]'s plan phase: no user code in plan",
+   "[HR-3], [HR-3a]: depth counters per registered thread (the entering race is G8-06)",
+   "[HR-4], [HR-4a], [HR-5], [HR-6], [HR-6a], [HR-8], [HR-9], [HR-9a], [HR-10], [HR-10a], [HR-21], [HR-28]: thunks at fixed addresses, old images never unloaded, statics outside image memory, no inlining of reloadable code",
+   "[HR-11], [HR-11a]: schemas include the words of a field's type; enums by variant name",
+   "[HR-12a], [HR-29], [HR-27]: header agreement at link, one runtime, release bit-identical",
+   "[HR-13], [HR-13a]: containers register with the element schema; std needs no reload support",
+   "[HR-14]'s table as exhaustive with [HR-41]'s 'no defined outcome | refused' as the default (the gaps are G8-08, G8-09, G8-13)",
+   "[HR-15a], [HR-15b], [HR-17], [HR-17a], [HR-47]: what cannot be rewritten refuses; reinit judged from types",
+   "[HR-18], [HR-18a], [HR-18b], [HR-19], [HR-25]: refusal never partial; bodies tier records the facts",
+   "[HR-20], [HR-22], [HR-23]: C-held objects never move; a changed header refuses",
+   "[HR-30] to [HR-33], [HR-37], [HR-38] (bar Timeout): host contract, arena released whole",
+   "[HR-44]: the recorded facts match [BLD-14]'s; the @cached clearing by migration",
+   "[HR-45], [HR-46]: generator frames and manager-made values (their enumeration question is G8-16)",
+   "[GPU-1]: stale handles detected in every profile ([HND-1])",
+   "[GPU-4], [GPU-5], [GPU-6], [GPU-7]: in-flight writes panic, deferred destruction, debug leak report",
+   "[GPU-9], [GPU-11]: render graph and shader toolchain are libraries",
+   "[GPU-12]: draws checked against bound buffers in every profile; robust access for what the compares cannot see (C27)"
+  ],
+  "could_not_cover": "The runtime's actual source (`runtime/ember_rt`) was not read, as instructed; G8-05, G8-06 and G8-15 are judged from the text alone. The `std.gpu` library's own source and the Device implementations through overlays (Annex C's side) were not examined beyond the Annex D text."
+ },
+ "verdicts": {
+  "group": "G8",
+  "verdicts": [
+   {
+    "id": "G8-01",
+    "verdict": "confirmed",
+    "reason": "[MNG-1]: \"for a generic instance `G` and the first 16 hex digits of the BLAKE3 hash of the canonical spelling of its arguments\" and \"A hash collision between two instances is reported as `E9040`, naming both\" — only a compiler holding both spellings can report it. [MONO-1]: \"instances are named deterministically ... and deduplicated at link time, across separately compiled packages too\". [BLD-2] lists what an interface file carries — \"signatures, layouts, effect sets, inline bodies, and the facts of `[BLD-14]`\" — and no instance spelling, so when the root instantiates `Array[B].push` nothing it reads holds `d`'s `Array[A].push` spelling, and the linker, which sees names only, keeps one body. No sentence of Part XVIII or XVII compares spellings across packages; a 64-bit prefix is within a birthday search. The E9040 registry row (\"two generic instances hash to one symbol\", `[MNG-1]`) binds nothing at the link step.",
+    "better_fix": "The proposed text is right and general; two small changes keep it tight: (1) in `[MNG-1]` say \"the 32 hex digits of the BLAKE3 hash\" once, in the symbol grammar sentence, rather than only in the appended paragraph, so the example `em_3lib3m_x1f` paragraph and `[MNG-4]` read the same length; (2) end with the cost: \"The compare runs once per build, over the interface files, and nothing of it is in the program.\" The registry row of `E9040` gains \"or two packages define one instance symbol for two spellings\"."
+   },
+   {
+    "id": "G8-02",
+    "verdict": "confirmed",
+    "reason": "[VER-5] (Part XVII): \"Two majors of one package may coexist, distinguished in symbol names.\" [MNG-1]: \"a dependency's begin with its package's name\" — the name, \"written as its length in decimal and then its text\", with no version anywhere in the grammar; [MNG-6]: \"a declared type by its path\". So `geometry.Vec2` of major 1 and of major 2 spell alike, `Array[geometry.Vec2].push` hashes alike, and [MONO-1]'s link-time deduplication keeps one body. [VER-5] promises what no rule of XVIII.2 does; a compiler must invent the component.",
+    "better_fix": "* `[MNG-1]` replace \"a dependency's begin with its package's name\" with: \"a dependency's begin with one component made of its package's name, `_v` and its major version from its manifest (`[MAN-8]`; a package whose manifest has no `version` is major 0): `11geometry_v2`, so two majors of one package (`[VER-5]`) never share a symbol. The same component spells a declared type's path in `[MNG-6]`'s canonical spelling, in interface files, in schemas (`[HR-11]`) and in `ember demangle`'s output, which prints it as `geometry@2.Vec2`.\" (The reader's text, with the no-`version` case said, since `[MAN-9]` writes `version` only for a manifest it creates.)"
+   },
+   {
+    "id": "G8-03",
+    "verdict": "confirmed",
+    "reason": "[BCK-5]: two changeable arguments may name one place \"only where the compiler proves them one whole variable (`[MONO-10]`)\" — the proof is about the arguments (`x` is one whole variable), not the callee, so `f(ref mut x, ref mut x)` through a function value passes it. [MONO-10]: the call \"is compiled against its own copy of the callee in which the two names are one place\" — a function value, interface, `dyn` or `virtual` method or `extern` function has no one callee to copy, and the text says nothing of them. Across a package's edge, [BLD-2]'s interface file carries \"signatures, layouts, effect sets, inline bodies, and the facts of `[BLD-14]`\": a `pub` `add_both` of over 40 statements or with a foreign call (`[CG-C-3]`) has no body there, and [MONO-10]'s \"The copy is an instance of the callee\" names no package that compiles it. Nothing refuses either call and nothing says how it is compiled.",
+    "better_fix": "The proposed text is right. Two amendments: say who compiles the copy of an instance across the edge in the same words `[BLD-14]` uses for generics (\"whose body the instantiating package compiles\"), so the two sentences agree; and make the refusal name the kind of callee: \"`f(ref mut x, ref mut x)` names `x` twice, and `f` is a function value, which may hold any function, so no copy of it can be made for one variable; call the function by its name, `add_both(ref mut x, ref mut x)`, or give the second name a value of its own: `y = x` above the call and `f(ref mut x, ref mut y)`\" — and the same `E3022` for an `extern` function (\"`c_add(ref mut x, ref mut x)` names `x` twice, and `c_add` is C code, which has no copy for one variable\")."
+   },
+   {
+    "id": "G8-04",
+    "verdict": "confirmed",
+    "reason": "[EFF-2]: \"For an interface, `dyn` or `virtual` method, it is every implementation and override the program has\"; [BCK-8]: \"a call through a function value, or through an interface, `dyn` or virtual method, the union of the summaries of every function the program can put there, the libraries' included\" and \"Summaries are the least fixed point over the whole program's call graph\" — facts of the whole program, which `lib` does not have when it is compiled once. [EFF-4] and [BLD-14] point 7 record \"the function values the package stores into each place ... which a program using the package counts\": the library's stores, counted by the dependant, never the dependant's implementations, overrides or stores counted by the library's already-checked line. [EFF-4]'s \"a fact for which a word exists counts only as written\" does not reach it: the only words on an interface method are the contracts of `[EFF-5]`'s table (`@noalloc`, `@noio`, `@nolock`, `@nopanic`, `@realtime`), none of which says \"ends no `Node`\". [BLD-2] re-checks a module \"only if a fact they use changed\" — `lib` imports nothing from `app`. So `walk` is accepted with plain views, `Pruner.visit` compiles, and `n` is read after its node is ended. This is O1's shape for `[BCK-8]`, as the reader says; no owner verdict covers it (122 is about by-place sets, which the proposal keeps).",
+    "better_fix": "The proposed point 8 is general and compositional (each implementation, override or stored function is checked alone against the recorded reliance, so any union of dependants is covered), and it keeps the three goals. Add the alternative the text must choose against, so an implementer does not read `[EFF-4]`'s \"counts only as written\" as the answer: \"A call through a `pub` interface or `virtual` method, or a `pub` place of function type, is not a fact a word can write, since the contracts of `[EFF-5]` say nothing of what a function may end; so it is recorded, never assumed.\" And say where the record lives: \"in the package's interface file, beside point 7, and in a reloadable image's manifest (`[HR-8]`), which `[HR-44]` already compares.\""
+   },
+   {
+    "id": "G8-05",
+    "verdict": "confirmed",
+    "reason": "[RT-7]: \"A `thread_shared` value's home count (`[RC-4]`) is checked as a one-thread count is\" — limit 4,294,967,295; \"its away count and its weak count are raised by one atomic add (`[RT-10]`), and the program stops when the value before the add is at or above 2,147,483,647\" — the named adds are the +1s. [RC-4] point 4: the hand-over \"first adds its own count of the value into the away count\"; point 2: the making thread \"adds each value's home count into its away count, and ends the value when the sum is zero\". Neither add is among the checked ones, and a home count up to 4,294,967,295 added into a count whose limit is 2,147,483,647 and which \"a subtract ... takes ... below zero\" (so signed) cannot fit. The [COST-3] row \"each +1 is checked against the count's limit\" covers +1s only. Verdict 101's scheme is untouched by a compare at the hand-over.",
+    "better_fix": "The proposed text is right; make the compare's arithmetic explicit so the stored value never wraps before the stop: \"the sum is computed in 64 bits from the home count and the away count read before the add; when it would be 2,147,483,647 or more the program stops ... otherwise the home count is added with one atomic add (point 4) or a plain store (point 2, on the making thread, which alone reads both)\"."
+   },
+   {
+    "id": "G8-06",
+    "verdict": "confirmed",
+    "reason": "[HR-3]: a reload is applied \"only when no registered thread is executing Ember code (each thread's Ember-depth counter is zero)\" — a condition at the moment commit reads the counters. [HR-42]: \"Commit reads every counter with acquire, writes the new thunk targets and type information, and publishes them with one release store to a reload generation counter, which a thread entering Ember code next acquires\"; [HR-42a]: \"entering Ember code is one relaxed increment and one acquire fence\" — nothing makes a thread that enters between the read and the release store wait, and an acquire read against a relaxed increment orders nothing between the two sides. [FFI-33] admits `threads=any` exports, so a host thread may enter at any time; [HR-30]'s \"at a point where no Ember frame is live\" binds the polling thread only. [HR-6]: a thunk \"loads the current target from the runtime's call table\", written one slot at a time during commit, so the entering thread runs a mix of images over half-published instances.",
+    "better_fix": "Keep the proposed `[HR-42]` with two corrections. (1) A thread that meets the mark must wait for the mark, not for the generation: when commit finds a counter that is not zero it \"clears the mark and the poll returns `EMBER_RELOAD_UNSAFE_POINT`\" and the generation never changes, so \"waits until the reload generation counter changes\" waits for ever; write \"waits until the commit mark is cleared, and enters again\". (2) At a checkpoint (`[HR-3]`, `[HR-33]`) the polling thread's own counter is not zero; write \"reads every other registered thread's counter\". The `[COST-3]` row stands as proposed: entering Ember code from C in a reloadable build is one increment, one fence and one load; a thread waits only for the length of a commit it meets."
+   },
+   {
+    "id": "G8-07",
+    "verdict": "confirmed",
+    "reason": "[HR-3b] lists what a frame depends on after the call: \"those its old code reads or writes fields of, builds, holds, passes or gets back by value, indexes or allocates\" — after `std.hot.checkpoint()` the rest of `run` holds a `ref mut int`, reads no field of `Player`, so by the list `Player` is no dependence; and the same rule says \"one a frame's view points into keeps its address, which `[HR-15]` allows when its new size fits\" while `[HR-14]` reorders by name (\"fields reordered, `let` changed | carried over by name\"): the address is kept, the field moves, and `hp += 1` writes at the old offset. [HR-15a] refuses only what \"must move\" and [HR-3b] says \"a frame's views are not counted\". Whether \"holds\" reaches through a view to the type it points into is nowhere said.",
+    "better_fix": "The proposed insertion is right; with it the sentence \"one a frame's view points into keeps its address, which `[HR-15]` allows when its new size fits\" has no case left (a frame that views into a `T` now depends on `T`, and \"A change a frame depends on is refused\" already covers it), so replace it as proposed rather than keep both. Name the source of the dependence precisely: \"read from the places the view carries (`[BCK-1]`): the type that holds the part and every type on the path to it, through links and `owns` blocks alike\"."
+   },
+   {
+    "id": "G8-08",
+    "verdict": "confirmed",
+    "reason": "[HR-15]: commit rewrites \"the kept views into it (`ref T`, `ref mut T`, `sharedref mut T`, `Span[T]`, `MutSpan[T]`, `StrView`)\" only \"otherwise\", when the instance moves, and as views of *it*; a `ref f64` into `mesh.x` is a view into a part, and when the `owns Mesh` block keeps its address (\"keeps an instance's address where the new size fits\") nothing is rewritten while [HR-14]'s \"fields reordered | carried over by name\" moves `x`. For \"field removed | old value ended in reclaim\" or \"field type widened losslessly | converted\" the view's part is gone or changed, and no row of [HR-14] and no sentence of [HR-15a] (which refuses only what \"must move\") refuses the reload. `[TYP-15]` lets a class keep such a view (`tip: ref f64 from mesh`), so the program compiles.",
+    "better_fix": "The proposed `[HR-15c]` is right. Say how the runtime finds the part: \"The runtime knows what a kept view points into from the `from` of the field that holds it (`[TYP-15]`): the block of that `let` field, in which the view's old offset names the field, or the element and its field, of the old schema; a view `from static` points into no instance and is never rewritten.\" And keep the refusal judged from types, as proposed, so that it needs no walk over views at plan time: \"judged from the types whose fields may hold such a view, as `[HR-47]` judges\"."
+   },
+   {
+    "id": "G8-09",
+    "verdict": "confirmed",
+    "reason": "[HR-13]: value data \"is migrated through its container, which registers itself\" — a lambda's state block (`[CLO-10]`: \"in one block of its own made with the value\") is no container and registers nothing; [HR-15] names \"function values' state held by any of these\" only as a place whose owners, links and views are rewritten; [HR-14] (\"this table is exhaustive\") has no row for a capture's type or for the set of captures; [HR-6a]: \"function values (their code word) ... stay ordinary code pointers\", the thunk, so the stored value runs the new body over the old state. `[HR-45]` gives generator frames a schema and function values none.",
+    "better_fix": "Reuse the table instead of a new refusal, which is more general and keeps body edits working: \"* `[HR-48]` *(new)* **A lambda's state has a schema.** The state of a lambda (`[CLO-10]`) is a value of a generated struct whose fields are its captures, in order, with their words (`[HR-11]`), kept in the state word or in the state block; the lambda's name (its function, its line and its ordinal on that line) names the type. It is migrated as any value is: through the places that hold it (`[HR-15]`), by `[HR-14]`'s rows — a capture of a migrated type depth-first, a capture removed ended in reclaim, a capture added `refused, naming the field` (a capture has no default), a word changed refused unless the type declares `migrate_from`, which a lambda cannot — and a body change that leaves the captures as they were applies through the thunk. A state the runtime cannot enumerate (kept by C, `[HR-20]`; behind a raw pointer, `[HR-13b]`) refuses a change of its schema. A row of `[HR-14]`: `a lambda's captures changed while a state of it lives | the field rows, applied to the captures`.\" Add the `[HR-41]` row as proposed."
+   },
+   {
+    "id": "G8-10",
+    "verdict": "confirmed",
+    "reason": "[EFF-2] (verdict 122): a call through a place has the effects of \"every lambda and named function the program puts in that place\" — a fact of the new program's text, in which `setup` stores `log_visit`; the new `walk` is \"checked again when it compiles\" ([HR-44]: \"Code the reload rebuilds is checked again when it compiles, so a change that only it relies on is no refusal\") against `{log_visit}`, while the live `tree.on_visit` still holds `prune`. [HR-44] compares only \"a fact of a function that code the reload does not rebuild was checked against\"; [HR-14]: \"methods added, removed or changed | no instance change\". No rule enumerates the function values held by live instances, statics or C (`[HR-20]`) against the new image's sets, so a reload is applied and `walk` reads `n` after `prune` ends it.",
+    "better_fix": "The proposed `[HR-44a]` is right and general. Say what it compares against so that it is one set, not two: \"with the functions the new image's compile counted for that place: `[EFF-2]`'s set from the new source and `[BLD-14]` point 7's from its dependencies' interface files, and for C's keeping `[FFI-52]`'s\"; and that a function value's identity is its code word, which `[HR-6]` makes the thunk, so the compare is one pointer compare per held value at plan time, nothing while the program runs."
+   },
+   {
+    "id": "G8-11",
+    "verdict": "confirmed",
+    "reason": "[HR-16]: \"`OldSelf` is the previous schema as a generated struct `Old<Name>`, visible only in that function; `old` is a read-only view of the old instance\" — the fields' types inside `Old<Name>` are nowhere given. [HR-2]: a failure in prepare leaves \"no instance changed\", so during prepare `old.log` names the old `Log` block, laid out the old way; if its type in `OldAudit` is the new `shares Log`, `old.log.name` is read at the new offset. [HR-14]'s \"field of a migrated type | migrated depth-first\" says the order, not what `old` shows; [HR-2a]'s \"applies the map\" says links are repointed at commit without saying a link stored from `old` is one of them. A compiler must guess both.",
+    "better_fix": "The proposed text is right. Add the one case it leaves: a container field (`parts: Array[Part]` with `Part` migrated) is `Array[OldPart]` in `Old<Name>`, read-only, and its elements are `OldPart` values; and give the refusal its shape: `E3063` (a view kept where it would outlive what it points into: shape B12) for a view of an `Old` value stored into the new instance, since the old block is freed in reclaim."
+   },
+   {
+    "id": "G8-12",
+    "verdict": "confirmed",
+    "reason": "[HR-15]: \"Migration keeps an instance's address where the new size fits\"; [HR-2]: \"Commit performs only pointer stores into memory reserved in prepare\" and prepare \"changes nothing\"; [HR-2a]: prepare \"allocates every new instance in the transaction arena\" and \"Commit publishes the instances\". No phase may write the converted `hp` into the old block, and reclaim \"frees each migrated instance's old version field by field ... and ends removed fields\" though an instance migrated in place has no old version once its bytes are overwritten. For a type rebuilt by `migrate_from`, `old` is \"a read-only view\" and no row says its fields not carried over are ended: the old `name` is leaked or ended twice at the implementer's choice.",
+    "better_fix": "The proposed text is right. One more sentence keeps `[HR-2]`'s \"cannot fail\" true for the in-place copy: \"the copy over an old block is of a size prepare computed and into memory that exists, so it cannot fail; it is made before the map is applied, so that no rewritten pointer is followed into an old layout\"."
+   },
+   {
+    "id": "G8-13",
+    "verdict": "confirmed",
+    "reason": "[HR-35]: \"It may not contain an explicit panic ... and every run-time check inside it ... returns `Err(...)`\" — \"contain\" and \"inside it\" are the body of `migrate_from`; a function it calls was compiled as any function, whose checks \"branch forward to its panic call\" (`[CG-C-5]`) and abort (`[RT-4]`). [HR-34]: \"Prepare cannot panic\" states the requirement with no mechanism for callees. [HR-14]: \"field added with a default | initialised to that default\" with [STR-2]'s \"A field default is any expression ... evaluated at each construction\" — `fresh_id()` runs in prepare under no rule. [HR-39] rejects a `noexcept` call \"at compile time\" with no code. The text leaves a compiler to choose between recompiling, refusing and aborting.",
+    "better_fix": "The proposed text is right for named callees and drops, and wrong for a call through a function value, an interface, `dyn` or `virtual` method: the stored code word points at the ordinary body, and no instance can be substituted at that call. Replace that clause with: \"a call through a function value, an interface, `dyn` or `virtual` method, in `migrate_from` or in what it calls, reaches a body compiled to stop the program, and is `E2225` (\\\"`sum_all` calls `parts.reduce(f)` on line 9 through a function value, which may stop the program during a reload; call the function by its name, or write `@allow_reload_terminate` on `migrate_from`\\\"), which `[HR-43]` admits as it admits a `noexcept` call\". Keep the `[reload]` argument of `[MNG-6]` and the field-default sentence."
+   },
+   {
+    "id": "G8-14",
+    "verdict": "confirmed",
+    "reason": "[HR-36]: \"Allocation during prepare comes from the transaction arena ... so construction inside `migrate_from` needs no special spelling\"; [ALC-1]: the line `... using LEVEL` \"takes the mesh's block from the arena `current` by calling `current.allocate(…)`\" and the value \"keeps its instance's address, one word, so that its growth and its end go back to the instance it came from\". The two cannot both hold: from the arena, the value's end hands `LEVEL` a block it never gave; from `LEVEL`, a discarded reload has changed `LEVEL`, and [HR-37] releases \"the transaction arena ... whole\" without handing anything back. `old` is \"a read-only view\", so the old mesh cannot be moved over. [HR-46] covers migrated values only.",
+    "better_fix": "Refusing `migrate_from` on every type with a `using A` field trades away the flagship use of arenas for nothing; the general rule is to let the value come from its instance and to undo prepare on a discard: \"* `[HR-36]` append: A value made `using` an instance of a manager that may have several (`[ALC-1]`) takes its memory from that instance, as its type says, never from the transaction arena, and keeps that instance's address. A reload discarded after prepare ends every instance prepare built, field by field and without the type's own `drop` (as reclaim ends an old version, `[HR-2a]`), before the arena is released (`[HR-37]`): a count raised through `old` (`shares old.log`) is lowered, and a block taken from a manager's instance goes back to it; a manager's instance asked for a block and given it back is not an instance changed in `[HR-2]`'s sense. The `drop`s this may run are compiled under `[HR-35]`.\" (The ending step is needed anyway: see the missed item on counts raised through `old`.)"
+   },
+   {
+    "id": "G8-15",
+    "verdict": "narrowed",
+    "reason": "[HR-12]: \"class instances are registered in a live-instance list, which adds 16 bytes to the object header of `[OBJ-1]` (24 bytes instead of 8, and 28 instead of 12 ...)\" — the `thread_shared` header, \"32 bytes (verdict 101)\" and \"part of the runtime ABI\" ([OBJ-1]), which [HR-12a] enforces agreement on at link time (`E9035`), has no reloadable size: that is a real gap in an ABI number. The list's locking is not: plan and prepare run when \"no registered thread is executing Ember code\" ([HR-3]), inserts and unlinks happen inside Ember code only, and how the runtime orders two threads' unlinks is its own organisation, which Part XVIII says \"is not specified\"; a runtime that races is simply defective. What the text must say is the cost, since the list's insert is on every allocation and `[RT-11]` promises \"no allocation updates a shared non-atomic counter\".",
+    "narrowed_to": "(1) `[HR-12]` must give the `thread_shared` header's size in a reloadable build (48 bytes), since `[OBJ-1]` makes the header ABI and `[HR-12a]` enforces it; (2) `[HR-12]` must state the list's cost per object made and ended in a reloadable build, and that no allocation of a value that is not `thread_shared` takes a shared lock for it, in `[RT-11]`'s terms. How the list is locked for `thread_shared` objects is the runtime's.",
+    "better_fix": "* `[HR-12]` append: \"A `thread_shared` value's 32-byte header (`[OBJ-1]`) is 48 bytes in a reloadable build. Registering costs two stores when an object is made and two when it ends, and for an object that is not `thread_shared` touches nothing another thread touches (`[RT-11]`); a `thread_shared` object's registration is ordered by the runtime, one lock or one atomic exchange, on whichever thread makes or ends it. Plan and prepare walk the list only while every other registered thread is at depth zero (`[HR-3]`).\" A `[COST-3]` row for the dynamic profile: `registering an object in a reloadable build | guaranteed present | two stores made and ended; a lock for a thread_shared object`."
+   },
+   {
+    "id": "G8-16",
+    "verdict": "confirmed",
+    "reason": "[HR-13b]: \"Value data reachable only through raw pointers or foreign memory cannot be migrated; if its schema changed, the reload is refused\" — a condition on data the runtime by definition cannot find, with no stand-in a plan can evaluate. [HR-45]: \"A frame the runtime cannot enumerate (in foreign memory, behind a raw pointer) is treated as live\" and [HR-15a] likewise presume plan knows such a frame or view exists. [HR-20] tracks what is handed over (\"handed to a foreign parameter whose contract keeps it, or given with `into_raw()`\" — the compiler makes that step, `[FFI-54]`), but a `ref_to_ptr` in `unsafe` registers nothing. [HR-47] shows the device (\"judged from the types that can hold one\") and does not apply it here, so two conforming implementations accept different reloads, which `[PHIL-13]` forbids.",
+    "better_fix": "The proposed text is right. Narrow its list to what makes a value unenumerable rather than any raw pointer in the program: \"a raw pointer type `*T` or `*mut T` made from a place (`ref_to_ptr`, `[UNS-*]`) rather than from an allocation the runtime registers, a `MaybeUninit[T]` outside a registered container, an `into_raw()` of a `T` or of what holds one (`[HR-20]` names those it can), and a foreign parameter whose contract keeps a `T`\" — so that a package that merely declares `*T` in an overlay does not refuse every reload of `T`."
+   },
+   {
+    "id": "G8-17",
+    "verdict": "confirmed",
+    "reason": "[HR-7]: \"A function removed by an edit keeps its thunk, now pointing at a stub that panics naming it; a reload that would leave such a thunk reachable is refused\" — reachable through what is not said; [HR-21] answers it for `@export` only (\"Adding, removing ... an `@export` function ... is refused\") and [HR-20] for a callback C keeps only in that \"C holds their addresses\". A function value in a live instance that holds `tick`'s thunk, a method-table entry, or an `extern \"C\" fn` value C keeps each could be \"reachable\" or not. Safe either way, as the reader says, since the stub panics; but the accepted set differs between implementations.",
+    "better_fix": "The proposed text is right; make it one list with `[HR-44a]`'s enumeration (G8-10) so that plan walks function values once: \"still named by a function value plan enumerates (`[HR-44a]`), by a method table or drop glue of a type with a live instance, by a callback C keeps (`[HR-20]`) or by an `@export` (`[HR-21]`)\"."
+   },
+   {
+    "id": "G8-18",
+    "verdict": "confirmed",
+    "reason": "[HR-24]: \"otherwise the reload waits at most `frames_in_flight + 1` polls and is then refused, naming the resource. This is detected in prepare, so the reload is discarded\"; [HR-15b]: \"Every refusal is decided in plan, before prepare runs.\" The two disagree on the phase; [HR-41], the \"Failure matrix\", has no row for the wait; [HR-38] lists `Timeout` and no rule produces it. The text contradicts itself, so an implementer must pick.",
+    "better_fix": "The proposed text is right except that plan \"runs no user code\" (`[HR-2a]`) and a device may be a host renderer through the FFI, so plan cannot ask the device. Write: \"A `Device` registers with the runtime, as a container does (`[HR-13]`), the objects in flight and the frame each waits for, data the device updates when it observes a fence (`[GPU-4]`); plan reads that record and decides it as every refusal is decided (`[HR-15b]`): an object that must move while in flight makes the poll return `EMBER_RELOAD_UNSAFE_POINT`, and after `frames_in_flight + 1` such polls the reload is refused with `ReloadError.Timeout` (`[HR-38]`), naming the resource.\" Add the `[HR-41]` row as proposed."
+   },
+   {
+    "id": "G8-19",
+    "verdict": "confirmed",
+    "reason": "[CG-C-3a]: \"`@inline` is binding: the function is emitted with `__forceinline` or `__attribute__((always_inline))`\"; [FN-7]: \"Recursion is permitted\"; [CG-C-2]: \"A program Ember accepts never produces C that the C compiler rejects or warns about\". GCC refuses `always_inline` in a cycle of direct calls (\"inlining failed in call to 'always_inline' ...: recursive inlining\", an error, not a warning) and Clang warns, so the accepted program `@inline fn depth` breaks `[CG-C-2]`, and no rule refuses it.",
+    "better_fix": "Narrow the cycle to direct calls, since a C compiler never inlines through a pointer and a cycle through a function value, interface, `dyn` or `virtual` call produces no diagnostic: \"* `[CG-C-3a]` append: `@inline` on a function that may call itself through direct calls alone (its own body, or the bodies of the functions it calls by name, the libraries' inline bodies included; a call through a function value, an interface, `dyn` or `virtual` method breaks the cycle) is `E0104`, naming the cycle (\\\"`depth` calls itself on line 4, and an `@inline` body cannot be inlined into itself; remove `@inline` (line 1), or write `@hot`\\\").\""
+   },
+   {
+    "id": "G8-20",
+    "verdict": "confirmed",
+    "reason": "[RT-12]: \"the runtime gives every thread it creates a guard page; and overflow aborts with `stack overflow in <function>` in every profile. A stack write can never land beyond the guard page.\" — the last sentence is unconditional while the guard page is promised only for threads \"it creates\"; [FFI-22] attaches a thread C created (\"attaches the calling thread to the runtime\") with whatever stack C gave it, and [FFI-33] admits `threads=any`. [TCB-3]: \"Every assumption a guarantee relies on appears in the report\" — this one does not. A real gap in a guarantee's condition, minor since the host's default stacks have a guard region.",
+    "better_fix": "The proposed text is right. Give the `ember tcb` line its grade and wording: \"listed as asserted (`[TCB-1]`) for every `@unsafe(export)` whose `threads=` admits a thread the runtime did not create and every callback contract without `threads(main)`: `stack guard: the host's thread stacks end in a guard page`\"."
+   },
+   {
+    "id": "G8-21",
+    "verdict": "narrowed",
+    "reason": "[GPU-2] says what happens for `None` (\"`None` is normal ... no `end_frame`\") and for a frame ended twice or never begun (\"refused when compiling\"), and nothing for a `Frame` whose owner ends without `end_frame`: the device's access states (\"in flight in frame N until that frame's fence is observed\") have no word for a frame never submitted, so whether the next `begin_frame` waits is the implementer's — that part is real. The arena part is not: no operation of Annex D gives CPU memory to the GPU; resources are handles (`[GPU-1]`), `cmd.read(h)`/`cmd.write(h)` take handles (`[GPU-5]`), and \"mapping a resource\" (`[GPU-4]`) is a write by the CPU into GPU memory, done at once; a `staging` list in the frame's arena can only be copied from on the CPU, so `[GPU-3]`'s \"nothing made in it outlives `end_frame`\" is the whole promise and `[GPU-4]`'s in-flight rule never concerns it.",
+    "narrowed_to": "`[GPU-2]` does not say what a `Frame` ended by its owner's end, without `end_frame`, does to the device.",
+    "better_fix": "* `[GPU-2]` append: \"A `Frame` whose owner ends without `end_frame` is ended by its `drop`, which ends the frame as `end_frame` does with nothing recorded: the device submits nothing for it and marks its fence observed, so no later `begin_frame` waits for it, and what was made in its arena ends with it (`[GPU-3]`).\" Drop the proposed `[GPU-3]` sentence."
+   },
+   {
+    "id": "G8-22",
+    "verdict": "narrowed",
+    "reason": "[GPU-8]: \"gives `(prev, cur)` each frame, forbidding reads of `cur` and writes of `prev` within a frame\" names no check, so whether a program with `cmd.write(prev)` is refused when compiling or stops while running — and at what cost — is the implementer's; that part is real. [GPU-10]'s \"is a type error\" is answered by the registry: `E2020` is \"mismatched types\" (`[TYP-4]`), the one code the document gives a type error, so a compiler does not guess the code, only the reader wants it written. [GPU-12]'s \"its use is an asserted fact that `ember tcb` lists\" reads, with `[TCB-1]` (\"Every fact an overlay states about foreign code carries a grade\"), as the backend's claim listed per overlay-implemented device, not a run-time value listed at compile time; a wording nit.",
+    "narrowed_to": "`[GPU-8]`'s forbidding has no stated mechanism, so whether the program is refused when compiling or stops while running, and the cost, are unsaid.",
+    "better_fix": "* `[GPU-8]` append the proposed sentence (`prev` a `ReadHandle[T]`, `cur` a `WriteHandle[T]`, `Copy` as handles are; `cmd.write` takes a `WriteHandle` and `cmd.read` a `ReadHandle`, so the wrong one is `E2020` when compiling, at no cost while the program runs). In `[GPU-10]`, \"is `E2020`, naming both interfaces\" is a harmless one-word clarification; in `[GPU-12]`, \"listed by `ember tcb` for every `Device` an overlay implements\" likewise."
+   },
+   {
+    "id": "G8-23",
+    "verdict": "narrowed",
+    "reason": "[BCK-7]: \"lives only while no line and no call in its life may end an object of its type (`E3060`)\" — read with [EXC-3] (\"objects of one class family (the classes that share one root base class)\"; [RC-5]'s own gloss \"an `Array[Entity]` cleared ends a `Player` derived from `Entity`\"), a line that clears `Array[Entity]` *may end an object of type `Player`*, and a list of teams cleared may end a player: \"may end an object of its type\" covers the program as written, and a compiler reading \"type\" with the subtyping the language has reaches [RC-5]'s result. What is missing is the cross-reference, since XVIII.4 is where the check is \"specified exactly, so that every implementation accepts the same programs\" and its words are narrower than [RC-5] point 1's \"class family, held directly or through anything that owns it, all the way down\".",
+    "narrowed_to": "`[BCK-7]` should name `[RC-5]` point 1 so that \"an object of its type\" is read as the class family held directly or through anything that owns it; no program is accepted or refused differently under a reading with subtyping.",
+    "better_fix": "* `[BCK-7]` replace \"may end an object of its type (`E3060`), and across a call that may change an object of its type\" with \"may end an object of its class family, held directly or through anything that owns it (`[RC-5]` point 1, `[EXC-3]`; `E3060`), and across a call that may change such an object\"."
+   }
+  ],
+  "missed": [
+   "[MONO-10]/[CG-C-4]: the copy for one whole variable under two names does not cascade. `pub static mut LOG: Array[String]`; `fn helper(ref mut a: Array[String]): a.push(owns copy of LOG[0])`; `fn rename(ref mut a: Array[String]): helper(ref mut a)`; `main`: `rename(ref mut LOG)`. [MONO-10] compiles `rename` \"against its own copy of the callee in which the two names are one place\", but `helper` is called with the ordinary body, whose `a` is `restrict` ([CG-C-4]) while it reads `LOG` by name: the emitted C has undefined behaviour, which [CG-C-1] forbids. [BCK-8]'s exception (\"unless it is one whole variable proved when compiling\") is granted on the summary, which is transitive, while the copy is of one function. Proposed: \"* `[MONO-10]` append: The copy is made down the chain: every function the copy calls with the merged place under a `ref mut` parameter, and which reaches the other name while that parameter is used (its summary, `[BCK-8]`), is called through a copy of its own with the same pair made one, an instance like the first; `ember inspect` lists the chain.\"",
+   "[HR-37]/[HR-2]: a prepare that fails leaves counts raised through `old`. `class Audit: log: shares Log; static fn migrate_from(old: OldSelf) -> Result[Self, ReloadError]: ... return Ok(Audit(log=shares old.log, ...))` and a later instance's `migrate_from` returns `Err`: [HR-37] says the arena \"is released whole if the reload fails\", which frees the new `Audit`s' blocks without lowering the `Log`'s owner count that `shares old.log` raised; [HR-2] promised \"no instance changed\". The `Log` leaks (never ended; `weakref` links keep finding it). The fix is the ending step proposed under G8-14: a discarded reload ends every instance prepare built, field by field, before the arena is released.",
+   "[HR-12]/[HR-13]: a shared block of a value that is not a class object is migrated by no rule. `struct Vec2: x: f64, y: f64`; `a = shares Vec2(x=1.0, y=2.0)`; `b = shares a` (two owners of one block, [RC-1]: \"a value that is not a class object is then made in a block of its own\"); the edit adds `z: f64 = 0.0`. [HR-12] registers \"class instances\"; [HR-13] migrates value data \"through its container, which registers itself\" — a `shares Vec2` block is neither, so plan finds it nowhere, applies the change, and `b.z` reads past the block; and were it reached from two instances' fields, \"field of a migrated type | migrated depth-first\" would migrate the one block twice. Proposed: \"* `[HR-12]` append: a value made shared in a block of its own (`[RC-1]`) is registered as a class instance is, with its type's schema, and migrated once, whatever the number of owners and links that reach it.\"",
+   "[MNG-1]/[HR-7]: a lambda has no mangled name. [MNG-1] names items by path and instances by hash; a lambda is neither (`[CLO-1]`), yet [HR-5]–[HR-7] give \"each reloadable function\" a thunk whose \"Call-table slots are identified by mangled name\", and G8-09's state schema needs the same identity. Which lambda of the edited source is the running one (two lambdas on one line, a lambda moved by an inserted line above it) is unsaid, so one implementation swaps a body and another refuses. Proposed: \"* `[MNG-1]` append: a lambda's path is its enclosing function's, then `lambda`, its ordinal among the lambdas of that function in source order and the hash of its canonical text with its captures (`[MNG-6]`), so that a lambda moved by an edit above it keeps its name and one whose text or captures changed gets a new one, which `[HR-7]` treats as a removal and an addition.\"",
+   "[BLD-2]: the interface file's contents (\"signatures, layouts, effect sets, inline bodies, and the facts of `[BLD-14]`\") omit the bodies of `pub` generic functions and methods, though [BLD-1] makes the package \"the unit of monomorphisation\", [MONO-1] instantiates \"from the program's roots\" and [BLD-14] has the instance's \"body the instantiating package compiles\". `from lib import sum_all` with `pub fn sum_all[T: Add](xs: Span[T]) -> T` of 60 statements: the root must compile `sum_all[f64]` and has no body. Proposed: add \"the bodies of `pub` generics, which the instantiating package compiles, and the bodies `[MONO-10]` needs (G8-03)\" to `[BLD-2]`'s list, and say they are part of the interface hash as `[CG-C-3b]` says of inline bodies."
+  ]
+ }
+}

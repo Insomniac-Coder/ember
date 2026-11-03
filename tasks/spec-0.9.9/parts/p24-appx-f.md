@@ -7,11 +7,12 @@
 | **access state** | a GPU resource's lifecycle: owned by the CPU, recorded, in flight, retired (Annex D) |
 | **arena** | a memory manager that hands out memory by bumping a pointer and frees it all at once; named with `using` (§IX) |
 | **capture** | a name a lambda uses from the function that made it: the real variable unless the lambda's first line names it with a word after its brackets (`fn() copy of score:`, `fn() owns n:`), which makes it part of the function value's own state |
+| **carries a weak count** | said of a type whose values have the weak count in their header: a class family with a `pub` class, one named in a `pub` signature, or one its own package links to, and a type that is not a class under the same conditions (`[OBJ-1]`); read from the declaration, never from the program |
 | **class** | a type whose objects live each in a heap block of their own, with identity (`is`) and subclasses; an object has one owner unless a line says `shares`, and an 8-byte header (Part VIII) |
 | **contract** | an attribute stating an effect a function must not have (`@noalloc`), checked over the call graph (§X.2); for FFI, the facts about a foreign pointer that a header does not state (§XVI.4) |
 | **`Copy` type** | a type whose `=` copies a value bit for bit, the two copies independent: numbers, `bool`, `ref T`, `Span[T]`, `StrView`, and structs made only of these; class objects, `shares` values, links, `ref mut` views and `MutSpan`s are not `Copy` |
 | **copy of** | a new value equal to the old one, made by its type's `Clone`, on which nothing done to the other is seen; before a link it copies the target, never the link |
-| **count, weak count** | the number of owners in the header of a value with several owners, and the number of `weakref` links to an object, which keeps its memory block (not the object) until the last link ends; each is compared with its limit before every +1 (its maximum for a one-thread count; half its range for a `thread_shared` count, which threads add to at once, `[RC-4]`), and the program stops there |
+| **count, weak count** | the number of owners in the header of a value with several owners, and the number of `weakref` links to an object, which keeps its memory block (not the object) until the last link ends, present in every value of a type that can be named from outside its package or that a `weakref` type in its own package names, decided by the declaring package (`[OBJ-1]`); each is compared with its limit before every +1 (its maximum for a one-thread count; half its range for a `thread_shared` count, which threads add to at once, `[RC-4]`), and the program stops there |
 | **deferred-drop region** | a walk during which an object whose last owner ends is set aside whole, with everything it owns, marked ended at once and freed when the walk ends |
 | **effect** | a kind of thing a function may do — allocate, block, lock, perform I/O, panic, run a run-time check — inferred by the compiler (§X.1) |
 | **`.embind`** | the cached, content-addressed result of importing a header with its flags and overlay (`[FFI-14]`) |
@@ -29,7 +30,7 @@
 | **kept callback** | a function value C keeps after the call that hands it over (`callback(retained)` or `callback(once)`) and runs during later foreign calls |
 | **kept view** | a view stored in a struct or a list; the value that holds it lives no longer than what it points into |
 | **kind test** | `x is T`, which asks whether a value of an interface or base-class type is a `T`; `if s is Circle as c:` names it |
-| **link** | a field or value that names an object it does not own alone: `weakref T`, `shares T`, `shares mut T`, `thread_shared T`, `sharedref mut T` |
+| **link** | a field or value that names an object it does not own alone: `weakref T`, `weakref thread_shared T`, `shares T`, `shares mut T`, `thread_shared T`, `sharedref mut T` |
 | **memory manager** | where a value's heap memory comes from: the built-in one, or one named with `using` (its kind in a type, its instance on the line that makes the value) (§IX) |
 | **mode** | the word in front of a parameter's name, which sets what the function may do with it, for every type: none (reads the caller's value), `ref mut` (changes the caller's place), `const ref mut` (changes it and is never given another ref), `owns` (takes the value over) (`[FN-2]`) |
 | **native island** | a subsystem kept in C or C++ behind a typed boundary rather than imported (Annex C) |
@@ -51,6 +52,7 @@
 | **reduction** | a combining change (`total += e`, `max`, `push`) made by scoped tasks to one place: each task keeps a private accumulator, combined at the join in spawn order |
 | **reload manifest, reload transaction, safe point** | the image section listing what can be reloaded (`[HR-8]`); the plan and prepare phases that may fail without effect (`[HR-2]`); the poll at which no thread runs Ember code (`[HR-3]`) |
 | **reshape** | a change that can free or move memory: replacing a value that owns memory, adding to or removing from a collection, handing a value over, changing an enum's variant, ending an object's last owner; writing a number is not one |
+| **`runtime`** | the word after the `:` of a parameter or of a typed local, before `dyn` or an open class's name, that has the kind of the value a call goes through checked while the program runs, at a line `[LT-1]` cannot decide when compiling: the fact read at the call from the kind's table, tested at the line (`[LT-48]`) |
 | **Safe Ember** | code outside unsafe code (`unsafe:` blocks and `unsafe fn` bodies), and the code of their `safe:` blocks (`[UNS-12]`); the memory-safety guarantee covers it (`[PHIL-10]`) |
 | **`Send`, `ThreadShared`** | may be handed to another thread; several threads may hold and read one value at once; both inferred from the words a value is written with (§XI.1) |
 | **shape** | a category of error with a required help text (§XVII.6) |
@@ -67,5 +69,5 @@
 | **trampoline subclass** | the generated C++ subclass through which an Ember class extends a C++ base (`[FFI-39]`) |
 | **unseen code** | code whose body the compiler cannot read, which is only a foreign (C) function: a call of one counts as possibly running every callback C keeps, unless its declaration says `@ffi(no_callbacks)` |
 | **view** | a name or value that points into a place someone else owns and may not outlive it: `ref T`, `ref mut T`, `sharedref mut T`, `Span[T]`, `MutSpan[T]`, `StrView`, a plain parameter, loop or pattern name, a name opened with `exists as` or named by a kind test, a name for a part (`[TYP-34]`) |
-| **`weakref`** | a link that does not keep its target alive; it is read by opening it (`exists as`), which finds nothing once the target has ended |
+| **`weakref`** | a link that does not keep its target alive, read by opening it (`exists as`), which finds nothing once the target has ended; `weakref T` links a value on one thread (one header test to open), `weakref thread_shared T` a `thread_shared` value (its opening holds a count); the kind is in the type, read from the words on the path to the value when the link is made |
 | **zero-cost** | for a use whose checks are all discharged, emitted code with nothing equivalent C would not contain (`[COST-1]`) |

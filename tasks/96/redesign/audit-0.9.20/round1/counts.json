@@ -1,0 +1,74 @@
+[
+ {
+  "group": "G1",
+  "findings": 21,
+  "confirmed": 17,
+  "narrowed": 3,
+  "refuted": 1,
+  "missed": 5
+ },
+ {
+  "group": "G2",
+  "findings": 19,
+  "confirmed": 8,
+  "narrowed": 10,
+  "refuted": 1,
+  "missed": 2
+ },
+ {
+  "group": "G3",
+  "findings": 15,
+  "confirmed": 10,
+  "narrowed": 3,
+  "refuted": 2,
+  "missed": 4
+ },
+ {
+  "group": "G4",
+  "findings": 15,
+  "confirmed": 6,
+  "narrowed": 9,
+  "refuted": 0,
+  "missed": 5
+ },
+ {
+  "group": "G5",
+  "findings": 12,
+  "confirmed": 9,
+  "narrowed": 3,
+  "refuted": 0,
+  "missed": 3
+ },
+ {
+  "group": "G6",
+  "findings": 16,
+  "confirmed": 7,
+  "narrowed": 8,
+  "refuted": 1,
+  "missed": 3
+ },
+ {
+  "group": "G7",
+  "findings": 25,
+  "confirmed": 22,
+  "narrowed": 3,
+  "refuted": 0,
+  "missed": 6
+ },
+ {
+  "group": "G8",
+  "findings": 23,
+  "confirmed": 19,
+  "narrowed": 4,
+  "refuted": 0,
+  "missed": 5
+ },
+ {
+  "group": "G9",
+  "findings": 17,
+  "confirmed": 10,
+  "narrowed": 2,
+  "refuted": 5,
+  "missed": 4
+ }
+]

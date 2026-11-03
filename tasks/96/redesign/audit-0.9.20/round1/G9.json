@@ -1,0 +1,483 @@
+{
+ "group": "G9",
+ "title": "the whole document, as an implementer",
+ "found": {
+  "group": "G9",
+  "findings": [
+   {
+    "id": "G9-01",
+    "rules": [
+     "CLO-10",
+     "CLO-18",
+     "BRW-1",
+     "COST-3",
+     "EFF-1"
+    ],
+    "kind": "CON",
+    "severity": "major",
+    "title": "A one-word state \"may\" live in the state word: two implementations differ on Alloc, and a copy-out loses the function's own changes",
+    "program": "class Ui:\n    handlers: Array[fn()] = []\n\n    fn fire():\n        for ref mut h in this.handlers:   # [CLO-18]: the holder reached through a name that may change it\n            h()                            # [CLO-10]: \"copies the two words out before the arguments are given\"  <-- where does `calls += 1` land?\n\n@noalloc\nfn counter() -> fn():\n    n = 0\n    return fn() owns n: n += 1           # <-- state is one `int`: in the state word (no Alloc, compiles) or in a block (Alloc, E4001)?\n\nfn main():\n    ui = Ui()\n    calls = 0\n    ui.handlers.push(owns fn() copy of calls: calls += 1)\n    ui.fire()\n    ui.fire()                            # the handler's own `calls` is 2 with a block, 1 for ever with an inline word copied out and never written back",
+    "why": "`[CLO-10]`: \"what it captured with a word, in one block of its own made with the value (it carries `Alloc` ...), except that a state of one word or less may be kept in the state word itself, with no block\" — \"may\" leaves the choice to the implementation, and `[EFF-1]`'s `Alloc` (\"a function value's state placed on the heap\") and so a `@noalloc` verdict follow the choice, against `[PHIL-13]`. `[CLO-10]`: \"A call through a list element or a field copies the two words out before the arguments are given and keeps no pointer into the list or field\"; `[CLO-18]`: \"A call through a stored function value whose functions may change their own state is a change of the place that holds it\" — with the state inline in the copied word, the change is made to the copy and nothing says it is written back.",
+    "proposed_text": "* `[CLO-10]` replace \"except that a state of one word or less may be kept in the state word itself, with no block\" with: \"except that a state of one word or less that the function's body never writes itself (a `copy of` of a `Copy` value it only reads, or an owner or a link it only reads through, no captured name assigned or given another ref in the body) is kept in the state word itself, with no block and no `Alloc`; a state the body may write lives in a block of its own, so that a call through a copy of the two words (a list element, a field, `[BRW-1]`) changes the state the holder keeps. Which of the two a function value has is decided from its captures and its body alone, the same in every implementation (`[PHIL-13]`), and `ember inspect --alloc` reports it.\" Add to `[CLO-18]`: \"The two words copied out before the call (`[CLO-10]`) point at the state the holder keeps, never at a copy of it: a function value that changes its own state has a block, so the change is the holder's after the call.\"",
+    "codes": "none new; `E4001` where the state carries `Alloc`",
+    "milestone": "M8",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G9-02",
+    "rules": [
+     "RC-1",
+     "OWN-13",
+     "THR-1",
+     "THR-2",
+     "RC-4"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "`shares p` of a `thread_shared` owner: \"a name that is already such an owner\" admits a one-thread owner of a block counted for several threads",
+    "program": "import std.thread\n\nclass Player:\n    hp: int = 10\n\nfn look(owns p: thread_shared Player):\n    q = shares p                 # <-- [RC-1]: `p` is \"a name that is already such an owner\"? If accepted, `q` is a `shares Player`: a plain +1 at offset 0, the home count only the making thread may touch\n    println(q.hp)\n\nfn main():\n    p = thread_shared Player()\n    h = thread.spawn(owns fn() thread_shared p: look(thread_shared p))\n    r = shares p                 # the making thread's plain add to the same word, at the same moment\n    h.join()",
+    "why": "`[RC-1]`: \"`shares x`, `shares mut x` and `thread_shared x` are written before a new value, a local of this function that owns its value ... or a name that is already such an owner\" — a `thread_shared` name is an owner, and nothing says which words match which; `[OWN-13]`: \"`shares x`, one more owner, on this thread, that reads it ... each written only before a new value, a local or an owner\"; `[THR-1]` refuses only the reverse (`thread_shared` on a value \"made otherwise\" is `E7017`). `[RC-4]` point 1: the home count is \"read and written only by that thread, with plain instructions\"; a `shares` owner made on another thread adds to it with a plain add (`[RT-10]`), a race on the count, and a `shares` type is not `Send`, so nothing else refuses the line.",
+    "proposed_text": "* `[RC-1]` replace \"or a name that is already such an owner\" with \"or a name that is already an owner of the same kind: `shares x` and `shares mut x` before a `shares` or `shares mut` owner, `thread_shared x` before a `thread_shared` owner. A `shares` or `shares mut` written before a `thread_shared` owner is `E7017`, as `thread_shared` before a `shares` owner is (`[THR-1]`): \\\"`p` is `thread_shared` (made on line 10), so its owners are counted for several threads; for one more owner write `q = thread_shared p`, and for a name that only reads it `q = ref p`\\\".\" `[OWN-13]`: the same words after \"or an owner\". `[THR-1]`: add \"and the reverse, `shares` or `shares mut` on a `thread_shared` owner, is `E7017` too (`[RC-1]`)\". Registry row `E7017`: \"an owner word that does not match how the value was made: `thread_shared` on a value not created `thread_shared`, or `shares`/`shares mut` on a `thread_shared` owner\".",
+    "codes": "E7017 (widened: an owner word that does not match how the value was made); shape N15",
+    "milestone": "M9 (M4 for the one-thread side)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G9-03",
+    "rules": [
+     "CORO-7",
+     "CTL-7",
+     "CTL-8",
+     "GRM-7"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "A `defer` registered before a `yield`: nothing says whether it runs when the suspended frame is dropped",
+    "program": "import std.fs\n\ngen fn lines_of(path: StrView) -> Generator[String]:\n    f = fs.File.open(path).unwrap()\n    defer: println(\"closed\")          # registered before the loop\n    for line in f.lines():\n        yield line.unwrap()\n\nfn main():\n    g = lines_of(\"a.txt\")\n    first = g.next()                   # suspended inside the `for`; the `defer` is registered\n    mem.drop(owns g)                   # <-- [CORO-7]: \"drops exactly the locals live at its suspension point\"; does \"closed\" print? Python runs `finally` here",
+    "why": "`[CORO-7]`: \"Dropping a suspended generator drops exactly the locals live at its suspension point, in reverse declaration order\" — nothing about `defer`. `[CTL-7]`: \"`defer:` registers a block to run when the enclosing block exits\"; `[CTL-8]`: \"On every exit from a block, its `defer` blocks run first\" — dropping a frame is not an exit of its block in any rule, and `[CTL-7]`'s uses \"at every exit\" (`E3040`, `E3060`) do not say whether the drop is one. `[PHIL-14]` gives Python's meaning where it costs nothing, and Python runs `finally` on `close()`.",
+    "proposed_text": "* `[CORO-7]` *(changed)* Dropping a suspended generator is an exit of every block its suspension point lies in: it runs the `defer` blocks registered in those blocks, last registered first, innermost block first, as `[CTL-8]` runs them at a block's exit, and then drops exactly the locals live at the suspension point, in reverse declaration order. A `defer` block's uses are uses at that exit too (`[CTL-7]`), so a view it uses is not ended before the `yield` (`E3060`). A `defer` block in a `gen fn` cannot `yield` (`E2160`, as it cannot `return`), and the effects of dropping a suspended frame include those of the `defer` blocks it runs (`[EFF-1]`).\n* `[CTL-7]` add: \"The drop of a suspended generator frame is an exit of the blocks its `yield` lies in (`[CORO-7]`).\"",
+    "codes": "E2160 (yield inside a defer block of a gen fn), E3060",
+    "milestone": "M5",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G9-04",
+    "rules": [
+     "WK-5",
+     "WK-6",
+     "WK-7",
+     "BLD-14",
+     "EFF-4"
+    ],
+    "kind": "MEM",
+    "severity": "major",
+    "title": "Extends O1: a loop of owners closed inside a library's store of a function value or `dyn I` value is seen by neither package (a leak `[PHIL-10]` promises away)",
+    "program": "# package `ui` (a library, compiled first)\npub class Button:\n    handler: fn() = fn() => pass\n\n    pub fn on_click(owns f: fn()):\n        this.handler = f            # the store; `ui`'s graph of owners has no edge from `fn()` to any type that owns a Button\n\n# the program\nfrom ui import Button\n\nclass Panel:\n    name: String\n    btn: Button = Button()\n\nfn main():\n    p = shares mut Panel(name=String(\"p\"))\n    q = shares mut p\n    p.btn.on_click(owns fn() owns q: println(q.name))   # <-- closes p -> btn -> handler's state -> q -> p; this line is a call, not a store, and the store is in a package already compiled; nothing opens the loop",
+    "why": "`[WK-5]`: \"The compiler builds a graph of owner edges among types ... over the whole program: ... a function value's state, from every function the program can put there\"; `[WK-7]`: \"A store of an owner ... into a place of an object may close a loop when the stored value's type can reach the holder's type through owner edges; such a line is `E3032` unless ...\" — the line that stores is `this.handler = f` in `ui`, whose build sees no program; the program's line is a call, which no rule names as the closing line. `[BLD-14]` item 7 records \"the function values the package stores into each place\" for the dependant, but no rule reads it for `[WK-6]`. `[BLD-1]`: packages compile separately.",
+    "proposed_text": "* `[WK-7]` add: \"**A store made by a called function counts on the line of the call, in the caller's package.** Each package builds its graph of owners over the types its build sees (its own, its dependencies', and what it puts into a function type or a `dyn I`), and checks every line of its own that may close a loop: a store written in it, and a call whose argument (an owner, a value holding one, a function value whose state owns one) the callee's summary stores into a place reached from another argument of the call, from `this`, or from a module variable (`[BLD-14]` item 7, the stored function values and the places they go). Through a function type or `dyn I` the owner edge is to every type the caller's build puts there. The call is `E3032` unless the loop it closes is proved opened or one of proofs (1) and (2) holds for the argument, with the message naming the callee's store (\\\"`p.btn.on_click(...)` (line 12) closes a loop of owners (`p` → `btn` → the handler's `q` → `p`) through `on_click`'s store (`ui`, line 6) that nothing opens again before `p` ends; open it before `main` ends: `p.btn.on_click(owns fn() => pass)`, or capture `weakref q`\\\").\" `[WK-5]`: replace \"over the whole program\" with \"over the types each package's build sees, as `[WK-7]` says\".",
+    "codes": "E3032 (shape B17)",
+    "milestone": "M7",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G9-05",
+    "rules": [
+     "BCK-8",
+     "EFF-4",
+     "BLD-14",
+     "BRW-18",
+     "EFF-2",
+     "CLO-17"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "Extends O1: a library's own line whose verdict rests on what the program puts in a function value or behind a `dyn` method is re-checked by nobody",
+    "program": "# package `bus` (a library, compiled first)\npub class Bus:\n    log: Array[String] = []\n    handlers: Array[fn(StrView)] = []\n\n    pub fn on(owns f: fn(StrView)):\n        this.handlers.push(owns f)\n\n    pub fn flush():\n        for line in this.log:          # a walk of this.log\n            for h in this.handlers:\n                h(line)                # changes what every function the program puts in `handlers` changes ([EFF-2]): nothing, when `bus` is built\n\n# the program\nfrom bus import Bus\n\nfn main():\n    b = shares mut Bus()\n    b2 = shares mut b\n    b.on(owns fn(s) owns b2: b2.log.push(owns String(s)))   # <-- now `flush`'s `h(line)` pushes to the list `flush` walks (E3020 by [BRW-18]) in a body no build checks again; [CLO-17]'s E3022 does not apply (the function reshapes `log`, not the place `handlers` that holds it)\n    b.flush()",
+    "why": "`[BCK-8]`: \"Summaries are the least fixed point over the whole program's call graph ... across a package's edge each is recorded in the package's interface file\"; `[EFF-4]`: \"A change to any of them is reported as an interface change and re-checks every caller\" — a program that puts a function into a library's place changes the library's summary from below, and the library's `flush` is not a caller of anything the program wrote; `[BLD-14]` item 7 records the stored functions \"which a program using the package counts wherever such a value is called\" — at the program's calls, not at the library's own walk. `[CLO-17]` refuses only a store into \"a place that a real variable it changes owns ... nor in a place that its body may reshape or end through a name it captured\".",
+    "proposed_text": "* `[BCK-8]` add: \"**Which build checks a line.** A line whose verdict rests on what the whole program puts in a place (a call through a function value, an interface, a `dyn` or `virtual` method, a foreign call, a `drop` of a `dyn` value) is checked by its own package with what that build sees, and checked again, with the same rules, by every package that puts a new function, implementation or callback there (`[BLD-14]` item 7, the interface file naming each such line with the places it calls through): a refusal is reported in that package at the line that puts it, naming the other package's line and the chain of calls (`E3020`, `E3021`, `E3022`, `E3031`, `E7018` as the case decides): \\\"`b.on(...)` (line 7) stores a function that pushes to `b2.log`, and `Bus.flush` (`bus`, line 10) walks `this.log` while it runs the handlers (its line 12); push to a list of your own in the handler and move it into the log after `flush`\\\". A line checked this way in no build is a defect of the build (`[PHIL-12]`).\" `[EFF-4]`: after \"re-checks every caller\" add \"and every line checked against that place (`[BCK-8]`)\".",
+    "codes": "E3020, E3021, E3022, E3031, E7018 at the storing line (shapes B2, B3, B1, B16)",
+    "milestone": "M6a",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G9-06",
+    "rules": [
+     "EFF-6",
+     "EFF-2",
+     "EFF-5",
+     "DET-3"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "Extends O1: a contract verdict through a `dyn` or `virtual` call depends on implementations another package adds later",
+    "program": "# package `shapes` (a library)\npub interface Shape:\n    fn area() -> float\n\n@noalloc\npub fn total(xs: Array[owns dyn Shape]) -> float:\n    t = 0.0\n    for s in xs:\n        t += s.area()          # [EFF-2]: the effects of every implementation the program has; `shapes` sees none that allocates\n    return t\n\n# the program\nfrom shapes import Shape, total\n\nstatic mut LOG: Array[String] = []\n\nstruct Logged:\n    r: float\n\nextend Logged implements Shape:\n    fn area() -> float:\n        LOG.push(owns String(\"area\"))    # <-- Alloc: `total` now reaches an allocation under `@noalloc`; which package reports E4001, at which line, and `shapes` is already built\n        return 3.14 * this.r * this.r\n\nfn main():\n    println(total([owns Logged(r=1.0)]))",
+    "why": "`[EFF-2]`: \"For an interface, `dyn` or `virtual` method, it is every implementation and override the program has\"; `[EFF-6]`: \"A contract is checked over the whole reachable call graph — callees, drop glue, ... interface implementations reached statically\"; `[EFF-5]`: \"a violation is the listed error\" — the verdict is per program, the function is compiled per package (`[BLD-1]`), and no rule names the package or the line that reports it. `[EFF-2]` already has the per-implementation form: \"An interface method may declare contracts; its implementations MUST satisfy them (`E4010`)\".",
+    "proposed_text": "* `[EFF-6]` add: \"**A contract through an interface.** Inside a function that carries a contract, a call through a `dyn I` value, through a `virtual` method of a `pub` `open` or `abstract` class, or through a type parameter's bound, counts the implementations the function's own package sees. Since another package may add one, such a call is admitted under the contract only when the interface's method or the `virtual` method declares that contract itself (`[EFF-2]`), which holds every implementation to it where it is written (`E4010`); a generic bounded by the interface is checked per instance, by the package that makes the instance. Otherwise the call is the contract's error (`E4001`, `E4002`, ...) at the call, whose help gives both lines: \\\"`total` is `@noalloc`, and `s.area()` runs whichever `area` the program gives a `Shape`; hold every `Shape` to it: write `@noalloc` above `fn area() -> float` in `interface Shape`, or take the shape as a type parameter: `[S: needs Shape]` above `fn total(xs: Array[S])`\\\".\" `[DET-3]`: the same sentence for `@deterministic` and `E4070`.",
+    "codes": "E4001–E4042, E4070 at the call; E4010 at each implementation",
+    "milestone": "M11",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G9-07",
+    "rules": [
+     "FN-2a",
+     "STD-19",
+     "CLO-14",
+     "OWN-9"
+    ],
+    "kind": "CON",
+    "severity": "major",
+    "title": "\"A function from a variable given to a standard-library function is lent\": the same first line in the program's own package reads the opposite way",
+    "program": "[F: needs fn(int)]\nfn apply(owns f: F):          # the first line `for_each` has: `fn for_each(owns f: F) owns this`\n    f(5)\n\nfn main():\n    h = fn(x: int): println(x)\n    [1, 2].iter().for_each(h)   # a standard-library function: `h` is lent, `h` stays the caller's (verdict 150)\n    apply(h)                    # <-- the program's own function with the same first line: lent, or E3028 \"say so at the call: `apply(owns h)`\", after which `h(7)` is E3040?\n    h(7)",
+    "why": "`[FN-2a]`: \"A function from a variable given to a standard-library function that takes one is lent and takes no word: after `xs.iter().for_each(h)`, `h` is the caller's still\"; `[STD-19]`: \"A function from a variable is lent to the call and takes no word\" — both name the standard library, and `[OWN-9]`: \"An argument for an `owns` parameter says `owns` at the call\" for everyone else. `[PHIL-1]`: \"Two syntactically identical declarations in the same context have identical storage, lifetime and synchronisation behaviour\"; `[PHIL-16]`: the words say what the code does. A compiler must special-case `std` by name, which `[TYP-43]` forbids for types (\"recognised by the module that declares them, never by their names\") and no rule allows for functions.",
+    "proposed_text": "* `[FN-2a]` replace \"A function from a variable given to a standard-library function that takes one is lent and takes no word: after `xs.iter().for_each(h)`, `h` is the caller's still (`[STD-19]`).\" with: \"A function from a variable given to a parameter whose type is a type parameter bounded by a function type (`owns f: F` under `[F: needs fn(int)]`, `[CLO-14]`), in any package, is lent for the call and takes no word: `F` names that very function, the callee runs it and owns nothing of it, so after `xs.iter().for_each(h)` and after `apply(h)` alike `h` is the caller's still, and a value the call gives back that keeps it (an iterator adapter, `[STD-19]`) is a value holding a view of `h`, which lives no longer than `h` (`[LT-45]`). `owns h` before such an argument is `E0109` (\\\"`apply` runs `h` and keeps nothing of it; remove `owns`: `apply(h)`\\\"); a function written in the call is given with `owns` (verdict 158). A parameter of a callable type (`owns f: fn(int)`) keeps what it is given, and takes `owns` as any `owns` parameter does.\" `[STD-19]`: \"A function from a variable is lent to the call and takes no word, as to any function that takes it as a type parameter (`[FN-2a]`)\".",
+    "codes": "E0109 (owns before a lent function), E3028 unchanged for callable-typed parameters",
+    "milestone": "M8 (words at the call: M3)",
+    "touches_owner_verdict": "150 (generalised from standard-library functions to every function with that first line; the verdict's own programs keep their meaning)"
+   },
+   {
+    "id": "G9-08",
+    "rules": [
+     "STA-3",
+     "CT-5",
+     "STA-1"
+    ],
+    "kind": "CON",
+    "severity": "major",
+    "title": "A `static` whose value owns heap memory behind a `Mutex`: `[STA-3]` puts it in the image, `[CT-5]` builds it on first access",
+    "program": "from std.sync import Mutex\n\nstatic LOG: Mutex[Array[String]] = Mutex([String(\"start\")])   # <-- [STA-3]: evaluable at compile time, not `static mut`: \"placed in the image with no initialisation code\"; [CT-5]: \"the initialiser runs at run time on first access\"\n\nfn main():\n    with g = LOG.lock():\n        g.push(owns String(\"more\"))     # grows a buffer that one reading placed in read-only memory",
+    "why": "`[STA-3]`: \"A static whose initialiser can be evaluated at compile time is placed in the image with no initialisation code, except a `static mut` whose value owns heap memory, which its functions may grow or free: that value is built on first access\" — the exception names `static mut` only. `[CT-5]`: \"in a `static mut`, and in any other `static` whose memory a safe operation may write (`static LOG: Mutex[Array[String]] = Mutex([])`), the initialiser runs at run time on first access (`[STA-3]`)\" — cites `[STA-3]` for what `[STA-3]` does not say. A compiler following `[STA-3]` lets `push` realloc constant data.",
+    "proposed_text": "* `[STA-3]` replace \"except a `static mut` whose value owns heap memory, which its functions may grow or free: that value is built on first access, never in read-only memory (`[CT-5]`)\" with: \"except a value that owns heap memory (an `Array`, `String`, `Map`, `Set`, an `owns T`, a class object) in a `static mut`, or in a `static` whose type gives some name a way to change the value (a `Mutex`, `RwLock`, `Cell`, `Atomic`, `Once` or `guarded by` field on the path to it, `[CT-5]`): that value is built on first access, never in read-only memory, so that nothing grows, changes or frees constant data.\"",
+    "codes": "none",
+    "milestone": "M15 (the evaluator and image placement); M9 for the Mutex path",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G9-09",
+    "rules": [
+     "FFI-31b",
+     "TXT-6",
+     "TXT-2",
+     "FFI-26",
+     "BLD-FFI-5"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "A view (`StrView`, `Span[T]`) in an exported signature: neither admitted nor refused, with a C ABI stated for one and a validation rule against the other",
+    "program": "# SAFETY: the host defines no other symbol named `game_log`\n@unsafe(export(\"game_log\"))\npub extern \"C\" fn log_line(s: StrView, xs: Span[i32]) -> i32:   # <-- [FFI-31b] lists neither `StrView` nor `Span` in what MUST NOT nor in what may cross; [TXT-6] gives `StrView` the shape `{ptr, len}`; [TXT-2] says nothing becomes a `StrView` without validation\n    println(s, xs.len())\n    return 0",
+    "why": "`[FFI-31b]`: \"class objects, `owns T`, ... MUST NOT appear in an exported signature ... `@layout(c)` values, scalars, opaque handles, `CStrView` and `extern \\\"C\\\" fn` may\" — views are in neither list; `[TXT-6]`: \"Across the C ABI a `StrView` is `{const uint8_t *ptr; size_t len}`\"; `[TXT-2]`: \"Nothing becomes a `StrView` without validation ... An importer or binding that would hand foreign bytes to a `StrView` without validation is `E5063`\"; `[BLD-FFI-5]`: the C++ header takes `std::span` \"where the C header takes pointer-and-length pairs\", which only an exported view would produce. Under `[PHIL-12]` the export is `E0901`, and `[TXT-6]` then describes nothing.",
+    "proposed_text": "* `[FFI-31b]` add: \"A `Span[T]` or `MutSpan[T]` whose `T` is a scalar or a `@layout(c)` value type may appear in an exported signature, and crosses as a pointer and a count (`[TXT-6]`'s shape; `MutSpan` under `ref mut`, `[FN-1a]`): that the count is right and the memory lives for the call is C's side of the export's contract, an asserted fact `ember tcb` lists (`[TCB-1]`). A `StrView` may not: C would hand bytes to it unvalidated (`E5063`: \\\"`s` would be text C never validated; take `s: Span[u8]` and write `s.to_str()?` for the `StrView`, `[TXT-2]`\\\"), and neither may a `ref T`, a `ref mut T`, a `MutSpan` of any other `T`, or a view type (`E5015`), whose lifetime nothing states.\" `[TXT-6]`: add \"(a `StrView` crosses only as an import's counted contract makes one, `[FFI-10]`, or as the `Span[u8]` an export takes)\".",
+    "codes": "E5015, E5063",
+    "milestone": "M12",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G9-10",
+    "rules": [
+     "COST-3",
+     "COST-5",
+     "OWN-3",
+     "STA-3",
+     "THR-2",
+     "PHIL-2",
+     "PHIL-15"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "Costs the rules introduce with no row in §X.4: the hidden drop flag, a static's first-access test, the hand-over's weak-count compare and its move into a new block",
+    "program": "fn maybe(xs: Array[int], c: bool) -> int:\n    if c:\n        take(owns xs)          # [OWN-3]: \"tracked with a hidden drop flag\": a store here and a test at the function's end, no row\n    return 1\n\nstatic CFG: Map[String, int] = load()   # [STA-3]: \"runs once, on first access ... the first access blocks\": a test per access, no row\n\nfn send(owns names: Names):\n    h = thread.spawn(owns fn() owns names: names.items.len())   # [THR-2]: \"reads the object's weak count, one compare\", and \"its contents move to a new block\": an allocation [PHIL-2]'s list lacks, no row",
+    "why": "`[COST-5]`: \"A rule that introduces an implicit cost MUST add a row to this table\"; `[PHIL-15]`: \"Every cost the language can insert without the programmer writing it ... has a row in §X.4\". `[OWN-3]`: \"A value handed over on only some paths is tracked with a hidden drop flag\"; `[STA-3]`: \"Any other initialiser runs **once**, on first access ... the first access blocks until it completes\"; `[THR-2]`: \"At the hand-over the program reads the object's weak count, one compare. ... its contents move to a new block for the other thread\" — none has a row, and `[PHIL-2]`'s list of allocating forms (\"No heap allocation happens that the source does not show\") lacks the hand-over's new block.",
+    "proposed_text": "* `[COST-3]` add three rows: \"| A value handed over on some paths only | guaranteed present | one hidden drop flag in the frame: a store at the hand-over and one test where the owner would end (`[OWN-3]`); none where every path hands it over or none does |\"; \"| First access of a `static` built on first access (`[STA-3]`) | guaranteed present | one test of its once-flag per access, and the initialiser once; none for a static placed in the image |\"; \"| A one-owner object handed to another thread (`[THR-2]`) | guaranteed present | one compare of its weak count, and one for each object it owns whose class a `weakref` may name; with a link, one allocation and a move of its contents into a new block (`Alloc`, listed by `ember inspect --alloc`) |\". `[PHIL-2]`: add to the allocating forms \"a one-owner object handed to another thread while a `weakref` link names it (`[THR-2]`)\". `[EFF-1]`: a read of a static built on first access carries its initialiser's effects, `Block` included.",
+    "codes": "none",
+    "milestone": "text only (rows); M9 for the hand-over's Alloc",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G9-11",
+    "rules": [
+     "EFF-15",
+     "DSJ-5",
+     "EFF-12"
+    ],
+    "kind": "CON",
+    "severity": "minor",
+    "title": "\"unless the compiler already knows the ranges are disjoint\" names no proof, so an `@no_alias_checks` verdict may differ between implementations",
+    "program": "from std.mem import assert_disjoint\n\n@no_alias_checks\nfn mix(ref mut xs: Array[float]):\n    a, b = xs.as_mut_span().split_at(2)\n    assert_disjoint(a, b)          # <-- [DSJ-5]: no compare \"in which case\" the compiler knows them apart; [EFF-15]: the proofs that count are four, and this is none of them: E4030 or not?\n    println(a.len(), b.len())",
+    "why": "`[DSJ-5]`: \"Both forms record a `RuntimeCheck(Aliasing)` site ... unless the compiler already knows the ranges are disjoint, in which case no comparison is emitted\"; `[EFF-15]`: \"The proofs that count are exactly those this document specifies — `[OPT-2]`, `[RNG-4]`, `[SIMD-7]` and the parent-link proof of Part VIII ... a verdict is computed as if every one of them were applied\"; `[EFF-12]`: `E4030` where the compare survives. What \"already knows\" means decides `E4030`.",
+    "proposed_text": "* `[DSJ-5]` replace \"unless the compiler already knows the ranges are disjoint, in which case no comparison is emitted\" with \"unless the two names are proved apart when compiling by `[BRW-5]`'s and `[SIMD-3]`'s structural facts (two constant indices that differ, `j` from `i + 1..`, the line inside `if i != j:`, the two halves of one `split_at`, two chunks of one `chunks_mut`, two distinct `SoA` columns), in which case no comparison is emitted and no `RuntimeCheck(Aliasing)` is recorded; these are the only facts that remove it, and `[EFF-15]` counts them among the proofs that decide a verdict.\" `[EFF-15]`: add `[DSJ-5]`'s structural facts to the list.",
+    "codes": "E4030",
+    "milestone": "M6c",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G9-12",
+    "rules": [
+     "TYP-8",
+     "TYP-30",
+     "LEX-16",
+     "TYP-41"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "An arithmetic operation on constants whose result does not fit: refused when compiling or a panic while running",
+    "program": "fn main():\n    big = 2 ** 70            # <-- [TYP-8]: \"panics with `integer overflow in '**'`\"; [LEX-16]: E2010 is for a literal, and this is an expression; [TYP-30] decides a constant negative exponent when compiling and says nothing of a constant overflow\n    println(big)",
+    "why": "`[TYP-8]`: \"An arithmetic operation ... whose mathematical result does not fit its type panics\"; `[LEX-16]`: \"A value that does not fit the resulting type is `E2010`\" (a literal); `[TYP-30]`: \"a negative exponent is `E2151` when it is a constant and a panic when it is not\" — the constant case is decided for the sign and not for the overflow; `[TYP-41]` rule 1 decides it only for a `const` argument (`E6004`). One compiler folds and refuses, another emits the panic: the set of accepted programs differs.",
+    "proposed_text": "* `[TYP-8]` add: \"An operation whose operands are numbers the compiler knows (numbers written as numbers, `const` items, and arithmetic on them, `[STD-19]`) is computed when compiling under the policy of its place: under `panic` a result that does not fit, a zero divisor or an exponent below zero is refused, `E2010` (\\\"`2 ** 70` does not fit `int`; compute it in a wider type, `2u128 ** 70`, or let it wrap: `2.wrapping_pow(70)`\\\"), as a literal that does not fit is (`[LEX-16]`); under `wrap` or `saturate` the result is the policy's. A result that fits is the operation's, and no check runs for it (`[RNG-4]`).\" Registry `E2010`: \"a number written in the program, a literal or an operation on known numbers, does not fit its type\".",
+    "codes": "E2010 (widened to constant arithmetic), E2151 unchanged",
+    "milestone": "text only (today's type checker folds constants; no milestone owns it)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G9-13",
+    "rules": [
+     "STR-2",
+     "CLS-2",
+     "STR-1",
+     "EXP-1",
+     "FN-5"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "A field default's scope (`this`, earlier fields) and its order against the explicit arguments of a memberwise constructor are unsaid",
+    "program": "struct Span2:\n    lo: int\n    hi: int = lo + 1                  # <-- an earlier field in a default: in scope? [STR-2]: \"any expression\"\n\nclass Node:\n    name: String\n    label: String = String(this.name)  # <-- `this` in a default: [CLS-2] evaluates defaults before any `init` body, when `name` is unset\n\nfn main():\n    s = Span2(lo=next_id())           # is `next_id()` evaluated before or after `lo + 1`? [STR-2]: defaults \"in field order\"; [FN-5]: a function's defaults \"after the other arguments are bound\"",
+    "why": "`[STR-2]`: \"A field default is any expression; it is evaluated at each construction that omits the field, in field order\" — nothing says in which scope, whether `this` or another field is a name there, or when against the written arguments; `[CLS-2]`: \"Before any `init` body runs, every field default of the class and of its bases is evaluated and stored\", so a default naming `this` would read an unset field; `[FN-5]` orders a function's defaults after its arguments but a memberwise constructor is `[STR-1]`'s.",
+    "proposed_text": "* `[STR-2]` *(changed)* A field default is any expression evaluated in the type's declaring scope, as the value of a `const` of the type is: it names no field of the value being made and not `this` (`E1010`: \\\"`this` can only be used in a method, and a field default runs before `init`; set `label` in `init`: `this.label = String(this.name)`\\\"; \\\"`lo` is a field, which a default cannot read; set `hi` in `init`, or make `lo + 1` where `Span2` is made\\\"). At a construction that omits the field, the written arguments are evaluated first, left to right (`[EXP-1]`), then the omitted fields' defaults in field order, each at that construction, and it may allocate (`items: Array[int] = []`).",
+    "codes": "E1010",
+    "milestone": "M11 (`init` and class rules); M3 for structs",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G9-14",
+    "rules": [
+     "RC-1",
+     "OWN-13"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "`shares` of an `owns` parameter: a local that owns its value with no line of this function that made it",
+    "program": "fn share(owns xs: Array[int]):\n    other = shares xs          # <-- [RC-1]: \"a local of this function that owns its value ... made in a block of its own from the line that made it\": a parameter is made by no line here; E2122 names \"a plain parameter\" only\n    println(other.len(), xs.len())",
+    "why": "`[RC-1]`: \"a local of this function that owns its value (which becomes one of the owners: a value that is not a class object is then made in a block of its own from the line that made it ... and the local's type is the shared type throughout the function)\"; `E2122`'s list: \"a list element, a field or a plain parameter\" — an `owns` parameter is neither, and the block that F6 requires has no making line in this function. `[PHIL-16]`: a fact from a body never changes what a caller's line does, so the caller cannot be the one to make the block.",
+    "proposed_text": "* `[RC-1]` after \"from the line that made it\" add: \"(for an `owns` parameter, which this function owns from its first line, at the function's entry, before any view of it is made, so that the parameter's type is the shared type throughout the function and the caller's line is unchanged)\". Registry `E2122`: unchanged (a plain parameter stays refused).",
+    "codes": "E2122 unchanged",
+    "milestone": "M4",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G9-15",
+    "rules": [
+     "TYP-4",
+     "TYP-5"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "`i8 + u8`: \"to `int` where each would\" leaves the operation's type to be guessed",
+    "program": "fn main():\n    a: i8 = -1\n    b: u8 = 200\n    c = a + b          # <-- neither type holds the other's every value; \"to `int` where each would\": an `int` addition giving 199, or E2020?\n    println(c)",
+    "why": "`[TYP-4]`: \"of two whole numbers of different types, one whose every value the other's type holds ... converts to it, to `int` where each would\" — the clause can be read as the fallback when neither holds the other (both fit `int`, so `int`) or as a restriction of the first case to `int`; the `E2020` sentence names only an `int` beside a `u64`.",
+    "proposed_text": "* `[TYP-4]` replace \"converts to it, to `int` where each would (`[TYP-5]` rule 12 ...)\" with \"converts to it; where neither type holds the other's every value but `int` holds both (`i8 + u8`, `u32 + i16`), both convert to `int` and the operation is an `int` one; otherwise the operation is `E2020` (`[TYP-5]` rule 12; the owner's ruling of 2026-10-06)\".",
+    "codes": "E2020",
+    "milestone": "text only",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G9-16",
+    "rules": [
+     "BRW-16",
+     "BRW-17",
+     "BCK-1"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "A name for a part of a list element (`ref mut enemies[0].hp`): a position found again, or an address a `push` ends",
+    "program": "struct Enemy:\n    hp: int\n\nfn main():\n    enemies = [Enemy(hp=1), Enemy(hp=2)]\n    h = ref mut enemies[0].hp        # <-- made by indexing and then a field: [BRW-16] names \"a list element made by indexing\"; [BRW-17] takes \"every other view\"\n    enemies.push(owns Enemy(hp=3))   # moves the buffer: a position survives, an address is ended\n    h += 1                           # E3060 under [BRW-17]; accepted under a reading of [BRW-16]",
+    "why": "`[BRW-16]`: \"A name for a list element made by indexing (`boss = enemies[0]`, `boss = ref mut enemies[0]`...) ... is a position: the index is read once ... and the element is found again at each use\"; `[BRW-17]`: \"Every other view (... a view into a value's own contents ...) ends at any change that may reshape what it points into\"; `[BCK-1]` repeats both. A part of an element is \"made by indexing\" and a field access; the text's \"every other\" makes it an address, but nothing says it, and the index-plus-offset re-find is as cheap and as safe.",
+    "proposed_text": "* `[BRW-16]` add: \"A name for a part of such an element (`h = ref mut enemies[0].hp`, `n = enemies[i].name`), reached by fields alone from the element, is a position too: the index is kept with it and the part is found again at each use through the list's current buffer. A view that goes on from the part through a call, a link or into a value's own contents (`enemies[0].name.trim()`) is an address (`[BRW-17]`).\" `[BCK-1]`: the same words after \"found again at each use\".",
+    "codes": "E3060",
+    "milestone": "M5",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G9-17",
+    "rules": [
+     "THR-20",
+     "STA-1",
+     "THR-11"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "\"the tasks of scopes it opens\": a scope opened inside a scoped task of the main thread",
+    "program": "import std.thread\n\nstatic mut HITS: int = 0\n\nfn inner_work():\n    with inner = thread.scope():      # a scope opened by a task, not by the main thread's own frame\n        inner.spawn(owns fn(): HITS += 1)    # <-- [THR-20]: reached \"by the main thread and the tasks of scopes it opens\": is a task of a scope a task opened one?\n\nfn main():\n    with outer = thread.scope():\n        outer.spawn(owns fn(): inner_work())\n    println(HITS)",
+    "why": "`[THR-20]`: \"A `static mut` (`[STA-1]`) is reached only by the main thread and the tasks of scopes it opens\"; `[STA-1]`: \"reached only by the main thread and its scoped tasks\" — a scope opened by a task is opened by the task's thread, and the two sentences can be read as one level deep or any depth. The reduction `HITS += 1` is safe at any depth (`[THR-21]`, the join orders it), so the deeper reading costs nothing.",
+    "proposed_text": "* `[THR-20]` replace \"reached only by the main thread and the tasks of scopes it opens\" with \"reached only by the main thread and the tasks of the scopes opened on it, at any depth: a scope opened inside such a task is on the main thread's stack of scopes, and its tasks are checked by `[THR-11]` against every task of every open scope of that stack and against the main thread; a `thread.spawn` thread, a job submitted outside a scope and the scopes they open are not\". `[STA-1]`: \"and the tasks of its scopes, at any depth (`[THR-20]`)\".",
+    "codes": "E7012, E7007",
+    "milestone": "M9",
+    "touches_owner_verdict": ""
+   }
+  ],
+  "judged_sound": [
+   "[LEX-15] the 52 keywords counted and the contextual-keyword positions; [LEX-16]/[LEX-17]/[LEX-24] untyped literals and `xs[-1]`",
+   "[GRM-15]/[GRM-43]/[GRM-42] where `owns` and the words are written, read against [FN-2a], [OWN-9], [OWN-10] and verdicts 147 to 160: consistent",
+   "[GRM-44]/[GRM-45]/[CTL-11]/[TYP-44]/[DSP-4]/[DSP-6]: openings and kind tests, the name's scope, one type-id compare each",
+   "[TYP-5] the twelve coercions and their composition; [TYP-6] casts; [TYP-13] niches; [TYP-14] `=` on a `ref mut` name and `const ref mut`",
+   "[TYP-15]/[TYP-34]/[LT-45]/[GRM-46] kept views, `from <let field>` and `from static` on a class field, E2118",
+   "[TYP-41] const-argument equality by normal form; [TYP-19] overlap decided where declared; [TYP-20] coherence per package",
+   "[TYP-36]/[OWN-8]/[STR-5] `copy of` through links, field-wise `Clone`, E2116's four cases",
+   "[FN-1]/[FN-9]/[FN-4]/[EXC-15] parameter words for every type, `this` never noalias, a method's changes from its body",
+   "[FN-8]/[FN-10] `main` forms and scripts; [FN-5] defaults in the declaring scope",
+   "[CLS-2]/[CLS-10]/[CLS-11] two-phase construction and `init` calling methods (F8 covers virtual); [CLS-9a] `let` fields",
+   "[EXP-1]/[EXP-2]/[EXP-3]/[EXP-4] evaluation order of operands, assignment targets, conditions' temporaries",
+   "[EXP-5]/[EXP-6]/[OWN-11]/[OWN-6] places, hand-overs of parts, `mem.take`; O4 remains the one gap",
+   "[CTL-1]/[CTL-2]/[BRW-18]/[CORO-14] walks, the loop's own handle, counting loops add but never remove",
+   "[CTL-10] hoisting from every arm at one type",
+   "[CLO-2]/[CLO-4]/[CLO-6]/[CLO-6a]/[CLO-16]/[CLO-17]/[CLO-19] captures, outliving, `once fn`, `thread_shared fn()`, E3022 at the store (F2)",
+   "[CORO-1]–[CORO-6], [CORO-12]–[CORO-14]: frames as values, views into the frame across `yield`, a generator as a walk",
+   "[OWN-1]–[OWN-5], [OWN-7], [OWN-12]: owners, drop order, `[OWN-5]`'s three store/drop orders",
+   "[BRW-12]–[BRW-15]: a name for a part is a view (a number copied), names that keep their place, a plain name changes nothing",
+   "[BRW-1]/[BRW-2]/[BRW-3]/[BRW-11]/[BCK-5]: one changes or any read, liveness by use, the two-phase reservation of a changeable argument, the two exceptions",
+   "[BRW-21]/[BCK-8] within one package: the call check by the callee's summary, E3031 at the storing line for a function value",
+   "[BRW-4]/[BRW-5]/[SPN-5]/[DSJ-1]–[DSJ-10]: disjoint fields, indices proved apart, `get_pair_mut`, the one run-time alias check",
+   "[LT-1]/[LT-1a]/[LT-7]/[LT-22]/[LT-47]: where a call's view points, `from`, function types with fresh regions, a view put in through `ref mut`",
+   "[LT-46] the three kept-view words; a `sharedref mut` link never leaves its thread (F1)",
+   "[LT-48] `runtime` reading the kind's own table bit (F3)",
+   "[SPN-1]–[SPN-4], [DRP-1]–[DRP-8]: spans as views, a `drop` counted as a call",
+   "[OBJ-1]–[OBJ-5] except O1(a); [RC-2a]–[RC-2e], [RC-3]: no count where no owner is made",
+   "[RC-4] biased counting with F10's closed queue; [RC-5] point 1 over the class family (F5) and point 2's held count",
+   "[EXC-1]–[EXC-3], [EXC-16], [EXC-17], [EXC-19]: fields as separate places, a number's write is no reshape",
+   "[WK-11], [WK-12], [WK-2], [WK-3], [WK-16], [WK-17] (within a package), [WK-18] except O1(c): links, opening, ended before `drop`, the walk with a link",
+   "[WK-6]/[WK-7] within one package: the two proofs that a store closes no loop",
+   "[HEAP-1]–[HEAP-10]; [ARN-1]–[ARN-11] with F7; [ALC-1], [ALC-2], [ALC-5]: arenas that never move, `using` and the instance word",
+   "[UNS-1]–[UNS-12]: the list of unsafe operations against Parts VII–XVI, `safe:` blocks, `@safety`",
+   "[CELL-1]–[CELL-13]; [HND-1]–[HND-3]; [LAY-2]",
+   "[EFF-1]–[EFF-4], [EFF-9]–[EFF-11], [EFF-24]–[EFF-27] within a package: summaries, effects, `@cached` (F18)",
+   "[DET-1]–[DET-10]; [COST-1], [COST-2], [COST-6]'s stop texts (every stop of [PRF-4] has its text)",
+   "[THR-8]/[THR-9] with F1 (O2/O3 stay open); [THR-1] the three rules; [THR-2]'s hand-over leaving links behind (O1(b) stays open); [THR-7]; [THR-13]",
+   "[THR-3]/[THR-18]/[THR-19]: guards thread-bound, `guarded by`, a wait for a held lock refused with F21",
+   "[THR-5]/[THR-11]/[THR-21]/[THR-12]: scoped tasks, reductions combined in spawn order, `return` inside a scope",
+   "[THR-10]/[THR-17]/[THR-16]: unscoped threads say what they hold; the loop's own variable",
+   "[THR-14] (O11 noted); [THR-15] (O3 noted); [THR-6] `@must_drop` structural",
+   "[PAR-1]–[PAR-5]; [JOB-1]–[JOB-3] (O5 noted)",
+   "[SOA-1]–[SOA-7]; [SIMD-1]–[SIMD-9] with F12; [ECS-1]–[ECS-9] with F13 (a type-hash collision ends in the cast's stop, never UB)",
+   "[ERR-1]–[ERR-13]: `AnyError` not `Error`, `?` and `From`, the panic-or-error convention",
+   "[CT-1]–[CT-7] with F15 and F20; [RFL-1]–[RFL-3]; [DRV-1]; [SER-1], [SER-2]",
+   "[STD-6], [STD-26], [STD-9], [STD-18], [TXT-1]–[TXT-11], [STD-15]–[STD-17], [STD-11], [STD-12], [STD-8], [STD-5], [STD-20]–[STD-28], [STD-22]–[STD-25]",
+   "[FFI-1], [FFI-2], [FFI-2a], [FFI-10] with F14 (count witnesses, nullable carriers), [FFI-8], [FFI-6]–[FFI-7], [FFI-51], [FFI-30]–[FFI-30c]",
+   "[GRM-35], [FFI-11]–[FFI-13], [FFI-55] (a dependency cannot lie about the builder's header), [FFI-14], [FFI-35a]",
+   "[FFI-15], [FFI-16], [FFI-36a], [FFI-36b]; [FFI-21], [FFI-21a], [FFI-22], [FFI-52], [FFI-53] (the tagged number, retired slots, a callback ending its own token), [FFI-23], [FFI-54], [FFI-56], [FFI-33]–[FFI-33c]",
+   "[FFI-26], [FFI-25], [FFI-27], [FFI-28], [FFI-31], [FFI-31a], [BLD-FFI-1]–[BLD-FFI-3]",
+   "[CLI-4], [CLI-19], [CLI-20], [CLI-21]; [MAN-1]–[MAN-8] (O6 noted); [BLD-1], [BLD-2], [BLD-14] within its own statement, [BLD-15]; [PRF-1]–[PRF-4]",
+   "[TST-*], [BEN-*]; [DIA-1]–[DIA-28] and the shape tables (every E3000–E3499 code has a row); [FMT-*], [LNT-*]; [CONF-*], [ABI-*]",
+   "XVII.9 registry: every code named in the Parts read is registered and each row's rule exists",
+   "[CG-C-1]–[CG-C-11], [CG-LL-1]–[CG-LL-3]; [MNG-1]–[MNG-6]; [MONO-1]–[MONO-10]; [BCK-1]–[BCK-7]; [RT-1]–[RT-12] (O8 noted)",
+   "Annex B [HR-1]–[HR-47]: the transaction, [HR-44]'s compared facts, frames below a checkpoint, [HR-45]–[HR-47]",
+   "Annex C [FFI-3], [FFI-17]–[FFI-17f], [FFI-24]–[FFI-24d], [FFI-39]–[FFI-39e], [FFI-40]/[FFI-40a], [FFI-41], [FFI-42a], [TCB-1]–[TCB-6], [BLD-FFI-5a]",
+   "Annex D [GPU-1]–[GPU-12]"
+  ],
+  "could_not_cover": "Not read: Appendix F (the glossary, p24), Annex A (generated, O14), Appendices E, G, H and I (p23, p25–p27), which the brief did not list. Read but not walked line by line as an implementer: Part XV.6's vector/matrix method list ([STD-28]), the format mini-language of [LEX-19], and the C++ bridge type table of [FFI-17a]. Not re-verified against the unsafe-feature inventory (O12). The owner's verdicts were searched only for the rule ids the findings touch (verdicts 147–160); a verdict elsewhere in JOB.md that bears on G9-02 (the owner words for `shares` before an owner) or G9-12 (constant folding) may exist unseen."
+ },
+ "verdicts": {
+  "group": "G9",
+  "verdicts": [
+   {
+    "id": "G9-01",
+    "verdict": "confirmed",
+    "reason": "`[CLO-10]`: \"what it captured with a word, in one block of its own made with the value (it carries `Alloc` ...), except that a state of one word or less may be kept in the state word itself, with no block\" — \"may\" is a permission to the implementation, while `[PHIL-2]` speaks of \"a function value whose state exceeds its inline capacity (`[CLO-10]`)\" as if the capacity were fixed; nothing fixes it, so whether `fn() owns n: n += 1` carries `Alloc` (`E4001` under `@noalloc`, `[EFF-5]`) differs between implementations, against `[PHIL-13]` and `[EFF-15]`. On the copy-out: `[CLO-10]` \"A call through a list element or a field copies the two words out before the arguments are given and keeps no pointer into the list or field\" and `[BRW-1]` \"uses the name only to copy the function's two words out ... so the call's arguments may reach the place it names\" describe a call made on a copy; `[CLO-18]` says only the effect (\"is a change of the place that holds it\") and no sentence writes the two words back, which with an inline one-word state loses `calls += 1`. A write-back cannot be the answer either: `[BRW-1]` lets the call's arguments reshape the holder's place meanwhile. The three goals favour the reader's shape: a state the body may write lives in a block (so a copied-out pointer still reaches it), and `[CLO-18]`'s own words \"a state block is not counted (`[CLO-10]`)\" already assume a self-changing function has one.",
+    "better_fix": "* `[CLO-10]` replace \"except that a state of one word or less may be kept in the state word itself, with no block\" with: \"except that a state of one word or less that the function's body never writes is kept in the state word itself, with no block and no `Alloc`: a `copy of` of a `Copy` value it only reads, or an owner or a link it only reads through. A body writes its state when, in the body or in a function it calls with the captured name, the name is assigned or augmented, named `ref mut`, given to a `ref mut` or `owns` parameter, handed over, or has a method called on it that changes it, worked out as `[EFF-24]` works out what a function changes; such a state lives in a block of its own, so that a call through a copy of the two words (a list element, a field, `[BRW-1]`) changes the state the holder keeps. Which of the two a function value has is decided from its captures and its body alone, the same in every implementation (`[PHIL-13]`); its `Alloc` is at the line that makes the function value, which `ember inspect --alloc` lists, and `E4001` there names it: \\\"`counter` is `@noalloc`, and the function made on line 4 keeps `n`, which it changes (`n += 1`), in a block of its own; keep the count in the caller's variable instead: `fn counter(ref mut n: int)`\\\".\" Add to `[CLO-18]`: \"The two words copied out before the call (`[CLO-10]`) point at the state the holder keeps, never at a copy of it: a function value that changes its own state has a block, so the change is the holder's after the call.\" `[PHIL-2]`: replace \"whose state exceeds its inline capacity\" with \"whose state has a block (`[CLO-10]`: more than one word, or a word its body writes)\"."
+   },
+   {
+    "id": "G9-02",
+    "verdict": "confirmed",
+    "reason": "`[RC-1]`: \"`shares x`, `shares mut x` and `thread_shared x` are written before a new value, a local of this function that owns its value (...) or a name that is already such an owner\" — \"such an owner\" covers the three kinds together, and `[OWN-13]`'s \"each written only before a new value, a local or an owner (`[RC-1]`, `E2122`)\" names no kind either; `[THR-1]` refuses only the reverse (\"on a value made otherwise it is `E7017`\"). So `q = shares p` for `p: thread_shared Player` is admitted and `q`'s type is the shared type of its word, `shares Player`. Two promises then break: `[THR-2]` \"A `shares` or `shares mut` owner counts its owners with plain adds\" on a value whose header `[RC-4]` keeps as \"home ... read and written only by that thread, with plain instructions\" and an atomic away count — on `look`'s thread a plain add races with the making thread's; and `q = shares mut p` gives an owner that `[RC-7]` lets change the value directly (\"A value made shared is changed by its owners that may change it: an owner made with `shares mut`\"), which `[THR-1]`'s first rule forbids for a `thread_shared` value only by its word, which `q` no longer carries. No sentence says which count or instruction such an owner uses, so at best `E0901`, at worst a race. The proposed text is general and keeps the three goals; `E7017` widened to \"an owner word that does not match how the value was made\" fits its registry row."
+   },
+   {
+    "id": "G9-03",
+    "verdict": "narrowed",
+    "reason": "The text decides the drop case, though not in `[CORO-7]`: `[EFF-1]` says \"dropping a suspended one [carries the effects of] those of the drops it performs (ODR-057)\", which is consistent only with `defer` blocks not running (their effects would otherwise be in the set), and `[CORO-7]` \"drops exactly the locals live at its suspension point\" names nothing else. `[PHIL-14]` does not reach it: `defer` is not a Python spelling, and `[PAN-1]` already keeps `defer` blocks from running on a panic. What is real: `[CORO-7]` never names `defer`, so an implementer finds the answer only through `[EFF-1]`'s effect sentence; and a `yield` written inside a `defer` block of a `gen fn` is refused by no rule (`[CTL-7]` lists `return`, `break`, `continue` for `E2160`; `[CORO-2]` refuses `yield` only outside a `gen fn`), and what a suspension in the middle of a block's exit means is said nowhere (`E0901` by `[PHIL-12]`).",
+    "narrowed_to": "(1) `[CORO-7]` should state in its own words that the drop of a suspended frame is not an exit of its blocks and runs no `defer` block, which `[EFF-1]` already implies; (2) `yield` inside a `defer` block is unspecified and needs `E2160`.",
+    "better_fix": "* `[CORO-7]` *(changed)* Dropping a suspended generator drops exactly the locals live at its suspension point, in reverse declaration order, and nothing else: the drop is not an exit of the blocks the `yield` lies in, so a `defer` block registered before the `yield` does not run (`[CTL-8]` runs it only when its block exits by the body's own path, on a later resume), and the drop's effects are those of the locals' drops alone (`[EFF-1]`). A value whose clean-up must run however the generator ends is a value with a `drop`, which the frame's drop ends, not a `defer` block. A `yield` inside a `defer` block is `E2160` (\"a `defer` block runs while its block exits, and `yield` would suspend the generator in the middle of that exit; yield before the block exits, or move the `defer` line below the `yield`\"), as `return`, `break` and `continue` are. (If the owner prefers Python's `finally`-on-close instead, the reader's text is the shape to write, and `[EFF-1]`'s sentence changes with it; either choice must be written, and this one costs nothing and changes no effect set.)"
+   },
+   {
+    "id": "G9-04",
+    "verdict": "confirmed",
+    "reason": "`[WK-6]`: \"A line that closes a loop of owners (`a.next = Some(shares mut b)` ...) is refused\"; `[WK-7]`: \"A store of an owner (...) into a place of an object may close a loop when the stored value's type can reach the holder's type through owner edges (`[WK-5]`); such a line is `E3032` unless ...\" — the only line the text names as closing a loop is a store. The store here is `this.handler = f` in `ui`, whose build sees no `Panel` and no function whose state owns one (`[WK-5]`: \"a function value's state, from every function the program can put there\" is empty there), so `ui` compiles it; the program's line is a call, which no sentence of `[WK-6]`, `[WK-7]` or `[BRW-11]` counts as a store, and `[BLD-14]` item 7 records only \"the function values the package stores into each place\", the library's own, not where an argument of a `pub` function goes. `[WK-5]`'s \"over the whole program\" cannot be honoured by a build of `ui` (`[BLD-1]`), so the loop is seen by neither build, against `[PHIL-10]`'s \"leak objects through a loop of owners (`[WK-6]`)\". The reader's shape (a store made by a callee counts on the line of the call, in the caller's package) is the right general rule, but it needs a summary fact the text does not yet record: where each `owns` argument (and `this`) may be stored by the callee.",
+    "better_fix": "* `[WK-7]` add: \"**A store made by a called function counts on the line of the call, in the caller's package.** Each package builds its graph of owners over the types its build sees (its own, its dependencies', and the functions it puts into a function type or a `dyn I`) and checks every line of its own that may close a loop: a store written in it, and a call whose argument (an owner, a value holding one, a function value whose state owns one, a value given with `owns` or `shares`) the callee's summary may store, through the chain of its calls, into a place reached from another argument of the call, from the object it is called on, or from a module variable (`[BLD-14]` item 8). Through a function type or a `dyn I` the owner edge is to every type the caller's build puts there. Such a call is `E3032` unless the loop it closes is proved opened, or proof (1) or (2) holds for the argument, and the message names the callee's store: \\\"`p.btn.on_click(...)` (line 12) closes a loop of owners (`p` → `btn` → the handler's `q` → `p`) through `on_click`'s store into `this.handler` (`ui`, line 6) that nothing opens again before `p` ends; open it before `main` ends: `p.btn.on_click(owns fn() => pass)`, or capture `weakref q`\\\".\" `[WK-5]`: replace \"over the whole program\" with \"over the types each package's build sees, each package checking its own lines (`[WK-7]`)\". `[BLD-14]` add item 8: \"for each `owns` parameter, each owner parameter and the object a method is called on, the places (fields of which types, module variables, places reached through its other parameters) the function may store it or anything it owns into, through the chain of its calls\". `[EFF-24]`: the same fact in the summary's list."
+   },
+   {
+    "id": "G9-05",
+    "verdict": "confirmed",
+    "reason": "`[EFF-2]`: a call through \"a field, a list element, a parameter or a local of a function type\" counts \"every lambda and named function the program puts in that place, a library's included\"; so `flush`'s `h(line)` changes `this.log` once the program stores the handler, and `[BRW-18]` refuses that walk (`E3020`). But `flush` is compiled in `bus` (`[BLD-1]`), where `handlers` holds nothing. `[BCK-8]`: \"Summaries are the least fixed point over the whole program's call graph ... across a package's edge each is recorded in the package's interface file\" and `[EFF-4]`: \"A change to any of them is reported as an interface change and re-checks every caller\" — the program is a caller of `flush`, and a caller's re-check is `[BRW-21]`'s check of the call against the callee's summary, not a re-check of the callee's body against a place the program filled. `[BLD-14]` item 7 runs the other way (\"which a program using the package counts wherever such a value is called\"), and `[CLO-17]`'s own example is the program's loop (\"makes `b.click()` a change of `LOG` in that program, inside a loop over `LOG` `E3020`\"), never the library's. `[CLO-17]`'s `E3022` refuses only a store into a place the function's own changes reshape; `b2.log` is not `handlers`. So the walk inside `flush` is checked by no build, and `[PHIL-10]`'s no-use-after-free promise (the walk's views over `this.log` across a push) is kept by nobody. Same shape for `[BRW-1]` views, `[RC-5]` opened names, `[THR-19]` locks and `[BRW-21]` uses across such a call. The reader's rule (the storing package re-checks the other package's line, with the facts the interface file carries) is right; it must name the facts.",
+    "better_fix": "* `[BCK-8]` add: \"**Which build checks a line.** A line whose verdict rests on what the whole program puts in a place (a call through a function value, an interface, a `dyn` or `virtual` method, a foreign call, the end of a `dyn` value) is checked by its own package with what that build sees, and checked again, with the same rules, by every package that puts a new function, implementation or callback there, at the line that puts it. For this the interface file names, for each such call reachable from a `pub` item (`[BLD-14]` item 9): the place it calls through; the collections walked across it and the generators still used after it (`[BRW-18]`); the read-only views, `ref mut` names and positions live across it, with what each points into (`[BRW-1]`, `[BRW-17]`); the names opened from links live across it, with their class families (`[RC-5]`); the parameters and `this` used after it (`[BRW-21]`); and the locks held at it (`[THR-19]`). A refusal is reported in the storing package at the line that puts the function there, naming the other package's line and the chain of calls (`E3020`, `E3021`, `E3022`, `E3031`, `E3060`, `E7018` as the case decides): \\\"`b.on(...)` (line 7) stores a function that pushes to `b2.log`, and `Bus.flush` (`bus`, line 10) walks `this.log` while it runs the handlers (its line 12); push to a list of your own in the handler and move it into the log after `flush`\\\". A line checked this way by no build is a defect of the build (`[PHIL-12]`).\" `[EFF-4]`: after \"re-checks every caller\" add \"and every line checked against that place (`[BCK-8]`)\". `[BLD-14]`: item 9 with the list above."
+   },
+   {
+    "id": "G9-06",
+    "verdict": "confirmed",
+    "reason": "`[EFF-2]`: \"For an interface, `dyn` or `virtual` method, it is every implementation and override the program has\"; `[EFF-5]`: \"a violation is the listed error\"; `[EFF-6]`: \"A contract is checked over the whole reachable call graph — callees, drop glue, default arguments, operator and interface implementations reached statically\" — which, beside `[CLS-5]`'s \"dispatched statically unless the object is a `dyn` value\", can even be read as excluding `dyn` calls, so the two rules do not agree on what `s.area()` contributes. Either way the verdict for `total`, compiled once in `shapes` (`[BLD-1]`), changes when the program adds `Logged.area`, and no sentence names the package or line that reports `E4001`; `[EFF-4]`'s \"re-checks every caller\" re-checks callers of `total`, not `total`. `[EFF-2]` already holds the per-implementation mechanism (\"An interface method may declare contracts; its implementations MUST satisfy them (`E4010`)\"), so the reader's rule (a contracted function may call through a `dyn`, `virtual` or bound only where the method itself carries the contract, else the contract's error at the call) makes the verdict a fact the package can see, with no cost while running. One refinement: an interface or class that is not `pub` can be implemented or overridden only in its own package (`[TYP-20]`, `[MOD-2]`), so the package sees every implementation and the call is admitted as a direct one is.",
+    "better_fix": "* `[EFF-6]` add: \"**A contract through an interface.** Inside a function that carries a contract, a call through a `dyn I` value, through a `virtual` method, or through a type parameter's bound, counts the implementations and overrides the function's own package sees. Where another package may add one (`I` or the `open`/`abstract` class is `pub`, `[TYP-20]`), the call is admitted under the contract only when the interface's method or the `virtual` method declares that contract itself (`[EFF-2]`), which holds every implementation to it where it is written (`E4010`); a generic bounded by the interface is checked per instance, by the package that makes the instance (`[EFF-4]`). Otherwise the call is the contract's error (`E4001`, `E4002`, ...) at the call, in the package that writes it, and its help gives both lines: \\\"`total` is `@noalloc`, and `s.area()` runs whichever `area` the program gives a `Shape`; hold every `Shape` to it: write `@noalloc` above `fn area() -> float` in `interface Shape`, or take the shape as a type parameter: `[S: needs Shape]` above `fn total(xs: Array[S])`\\\". An interface or class that is not `pub` is implemented in this package only, and such a call counts exactly its implementations.\" Replace `[EFF-6]`'s \"interface implementations reached statically\" with \"the implementations and overrides the rule below admits\". `[DET-3]`: the same sentence for `@deterministic` and `E4070`."
+   },
+   {
+    "id": "G9-07",
+    "verdict": "confirmed",
+    "reason": "`[FN-2a]`: \"A function from a variable given to a standard-library function that takes one is lent and takes no word: after `xs.iter().for_each(h)`, `h` is the caller's still (`[STD-19]`)\"; `[STD-19]`: \"A function from a variable is lent to the call and takes no word\" — both inside the standard library's rules, while `[OWN-9]` (\"An argument for an `owns` parameter says `owns` at the call\") and `[FN-2a]`'s `E3028` hold for every other function with the same first line, `fn apply(owns f: F)` under `[F: needs fn(int)]`. `[PHIL-1]`: \"Two syntactically identical declarations in the same context have identical storage, lifetime and synchronisation behaviour\" is broken by a rule that turns on the declaring package, and `[FN-1]`'s \"what a function may do with a parameter is set by the word in front of its name, for every type\" makes `owns` mean two things. The text also leaves the lent function's state unsaid: `[CLO-18]` says a self-changing value \"given to a parameter that only reads is `E3023` ... write `fn run(ref mut f: fn()):` and call `run(ref mut cb)`\", yet `for_each(h)` with a counting `h` is lent with no word and changed, against `[PHIL-16]`. The generalisation to every `F`-bounded parameter is right (verdict 150's programs keep their meaning); its text should cover the self-changing case.",
+    "better_fix": "* `[FN-2a]` replace the standard-library sentence with: \"A function from a variable given to a parameter whose type is a type parameter bounded by a function type (`owns f: F` under `[F: needs fn(int)]`, `[CLO-14]`), in any package, is lent for the call: `F` names that very function, the callee runs it and keeps nothing of it, so after `xs.iter().for_each(h)` and after `apply(h)` alike `h` is the caller's still. It takes no word when its functions keep no state or only read it; one whose functions may change their own state is given `ref mut h`, since the call changes it (`[CLO-18]`, `E3023` without the word: \\\"`counter` changes its own `n` each time it runs, and `apply` runs it; say so at the call: `apply(ref mut counter)`\\\"). `owns h` before such an argument is `E0109` (\\\"`apply` runs `h` and keeps nothing of it; remove `owns`: `apply(h)`\\\"); a function written in the call is given with `owns` (verdict 158), and a value the call gives back that keeps the lent function (an iterator adapter, `[STD-19]`) is a value holding a view of `h`, which lives no longer than `h` (`[LT-45]`). A parameter of a callable type (`owns f: fn(int)`) keeps what it is given and takes `owns` as any `owns` parameter does.\" `[STD-19]`: \"A function from a variable is lent to the call and takes no word, as to any function that takes it as a type parameter (`[FN-2a]`)\". `[CLO-14]`: add \"`owns f: F` and `f: F` are one first line: both run the function given and keep nothing of it; `ref mut f: F` is not written\". Registry `E0109`: add \"`owns` before a function from a variable given to an `F`-bounded parameter\".",
+    "touches_owner_verdict": "150"
+   },
+   {
+    "id": "G9-08",
+    "verdict": "confirmed",
+    "reason": "`[STA-3]`: \"A static whose initialiser can be evaluated at compile time is placed in the image with no initialisation code, except a `static mut` whose value owns heap memory, which its functions may grow or free: that value is built on first access, never in read-only memory (`[CT-5]`)\" — the exception names `static mut` only; `Mutex([String(\"start\")])` is evaluable (`[CT-1]`: effects within `Alloc`), so `[STA-3]` places `LOG` in the image. `[CT-5]`: \"in a `static mut`, and in any other `static` whose memory a safe operation may write (`static LOG: Mutex[Array[String]] = Mutex([])`), the initialiser runs at run time on first access (`[STA-3]`)\" — the two rules give one program two placements, and `[STA-3]`'s lets `g.push` reallocate constant data (`[STA-1]` even shows `static REGISTRY: Mutex[Map[String, int]] = Mutex({})` beside `[STA-3]`). `[CT-5]` is the safe rule and `[STA-3]` must say it; the proposed text does, in `[CT-5]`'s own words."
+   },
+   {
+    "id": "G9-09",
+    "verdict": "confirmed",
+    "reason": "`[FFI-31b]` lists what \"MUST NOT appear in an exported signature\" (\"class objects, `owns T`, `shares T`, `thread_shared T`, `weakref T`, `String`, `Array`, `Map`, function values and any type with a `drop`\") and what \"may\" (\"`@layout(c)` values, scalars, opaque handles, `CStrView` and `extern \\\"C\\\" fn`\"); `StrView`, `Span[T]`, `MutSpan[T]`, `ref T` and `ref mut T` are in neither list, so by `[PHIL-12]` an export taking one is `E0901`: refused, not unsafe. But `[TXT-6]` (\"Across the C ABI a `StrView` is `{const uint8_t *ptr; size_t len}`\") and `[BLD-FFI-5]` (\"a C++ header whose declarations take `std::string_view` and `std::span` where the C header takes pointer-and-length pairs\" — an export header, which only a span-taking export produces) describe crossings no rule admits, and `[TXT-2]`'s \"Nothing becomes a `StrView` without validation ... `E5063`\" refuses the `StrView` one by its words. The reader's text closes the gap the right way: `Span`/`MutSpan` of scalar or `@layout(c)` elements cross as a pointer and a count, C's side an asserted fact; `StrView` is `E5063` with `Span[u8]` and `to_str()?`; the rest `E5015`. One addition: `ref mut x: T` of a `@layout(c)` type should cross as `T*` under the same asserted contract, as `[FFI-11]`'s `borrowed one exclusive` does for imports, so an export can fill a caller's struct; refusing it is safe but narrower than the import side.",
+    "better_fix": "* `[FFI-31b]` add: \"A `Span[T]` or `MutSpan[T]` whose `T` is a scalar or a `@layout(c)` value type may appear in an exported signature and crosses as a pointer and a `size_t` count (`[TXT-6]`'s shape; `MutSpan` under `ref mut`, `[FN-1a]`), and so may `ref mut x: T` for such a `T`, which crosses as `T*`: that the count is right, the pointer is not null and the memory lives and is not read or changed by C for the call is C's side of the export's contract, an asserted fact `ember tcb` lists (`[TCB-1]`), and the header writes each as `const T *, size_t` or `T *` with that contract as a comment. A `StrView` may not: C would hand bytes to it unvalidated (`E5063`: \\\"`s` would be text C never validated; take `s: Span[u8]` and write `s.to_str()?` for the `StrView` (`[TXT-2]`)\\\"); neither may a `ref T`, a `MutSpan` of any other `T`, a view type, or a result that is a view (`E5015`), whose lifetime nothing states.\" `[TXT-6]`: add \"(a `StrView` crosses only as an import's contract makes one, `[FFI-10]`, or as the `Span[u8]` an export takes)\"."
+   },
+   {
+    "id": "G9-10",
+    "verdict": "confirmed",
+    "reason": "`[COST-5]`: \"A rule that introduces an implicit cost MUST add a row to this table\"; `[PHIL-15]`: \"Every cost the language can insert without the programmer writing it ... has a row in §X.4\". `[OWN-3]`: \"A value handed over on only some paths is tracked with a hidden drop flag\" — no row names a drop flag. `[STA-3]`: \"Any other initialiser runs **once**, on first access, exactly once even under concurrent first access; the first access blocks until it completes\" — a once-test per access and a possible wait, no row (the `@cached` once-flag has one, this does not), and `[EFF-1]`'s effect table has no `Block` for a first access that may wait. `[THR-2]`: \"At the hand-over the program reads the object's weak count, one compare. ... With a link, its contents move to a new block for the other thread ... The same is done for every object the handed object owns whose class a `weakref` is made to anywhere in the program (... one compare each)\" — no row, and the new block is an allocation absent from `[PHIL-2]`'s list of \"The allocating forms\" and from `[EFF-1]`'s `Alloc` row. The three rows proposed are right; add `Alloc` to `[EFF-1]`'s table for the hand-over's move and `Block` for a first access that may wait."
+   },
+   {
+    "id": "G9-11",
+    "verdict": "refuted",
+    "reason": "The verdict does not depend on \"already knows\": `[DSJ-6]` decides it flatly — \"They are the one run-time alias check there is, so inside `@no_alias_checks` each is `E4030`\" — and `[EFF-15]` makes the elision irrelevant to verdicts: \"The proofs that count are exactly those this document specifies — `[OPT-2]`, `[RNG-4]`, `[SIMD-7]` and the parent-link proof of Part VIII ... an implementation may remove further checks from the code it emits, but that never changes a verdict\". `[DSJ-5]`'s \"unless the compiler already knows the ranges are disjoint, in which case no comparison is emitted\" is such a further removal of emitted code (as the `[COST-3]` row says, \"none when the compiler knows the spans apart\"), not a proof that counts; so `assert_disjoint(a, b)` on the halves of a `split_at` is `E4030` in every implementation, and the program is written without it (`[SIMD-3]` (c) already marks the halves disjoint). At most `[DSJ-5]` could say \"no comparison is emitted; the site stays recorded (`[EFF-15]`, `[DSJ-6]`)\", a wording tidy."
+   },
+   {
+    "id": "G9-12",
+    "verdict": "refuted",
+    "reason": "The accepted set is fixed by the rules, not by what a compiler folds: `[CT-1]` lists exactly what is evaluated during compilation (\"`comptime(e)`; `comptime:` blocks; `const` initialisers; array lengths and `const` generic arguments; and `static` initialisers that qualify under `[STA-3]`\"), and `big = 2 ** 70` in a function body is none of them, so its meaning is `[TYP-8]`'s: \"An arithmetic operation (... `**` ...) whose mathematical result does not fit its type panics with `integer overflow in '<op>'`\", in every profile. `[LEX-16]`'s `E2010` is for \"An integer literal\" (`2` and `70` each fit `int`), `[TYP-30]`'s `E2151` names only a constant negative exponent, and `[TYP-41]` rule 1's `E6004` only a `const` argument. `[PHIL-13]` (\"none ... changes ... whether it panics, or whether it is accepted\") and §XVIII.4's opening (\"every implementation accepts the same programs\") forbid an implementation from refusing a program these rules accept; a compiler that refuses `2 ** 70` is non-conforming. A lint for an operation on known numbers that always panics would be a harmless addition, not a fix of a hole."
+   },
+   {
+    "id": "G9-13",
+    "verdict": "narrowed",
+    "reason": "`this` is answered: `[FN-4]` \"`this` in a `static fn` or a free function is `E1010` (\\\"`this` can only be used in a method ...\\\")\" — a field default is in no method, and `[CLS-2]` evaluates defaults \"Before any `init` body runs\". Order is answered for a class with `init` by `[EXP-1]` (arguments \"evaluated left to right, completely, before the operation or call\") and `[CLS-2]`; for the memberwise constructor by `[FN-5]` (\"Default argument expressions are evaluated at each call, after the other arguments are bound\"), since `[STR-1]` makes it a call \"taking positional or named arguments in field order; a field with a default may be omitted\". What `[STR-2]`'s \"any expression\" leaves open is the scope of an earlier field: under `[FN-5]`'s reading of the memberwise constructor, \"may refer to earlier parameters\" makes `hi: int = lo + 1` legal for a struct, while for a class `[CLS-2]` evaluates defaults before any argument reaches a field, so `lo` cannot be read; the two readings give one spelling two meanings between `struct` and `class`, which `[PHIL-1]` forbids.",
+    "narrowed_to": "Whether a field default may name an earlier field (an \"earlier parameter\" of the memberwise constructor under `[FN-5]`) is undecided, and differs between a struct and a class; `this` and the order are already decided.",
+    "better_fix": "* `[STR-2]` *(changed)* A field default is any expression evaluated in the type's declaring scope, as a `const` of the type is: it names no field of the value being made and not `this`, for a struct and a class alike (`E1010`: \\\"`lo` is a field, and a default runs before the value has fields; compute `hi` where `Span2` is made, `Span2(lo=n, hi=n + 1)`, or in an `init`: `this.hi = this.lo + 1`\\\"; \\\"`this` can only be used in a method, and a field default runs before `init`; set `label` in `init`: `this.label = String(this.name)`\\\"). At a construction that omits the field, the written arguments are evaluated first, left to right (`[EXP-1]`, `[FN-5]`), then the omitted fields' defaults in field order, each at that construction, and it may allocate (`items: Array[int] = []`)."
+   },
+   {
+    "id": "G9-14",
+    "verdict": "confirmed",
+    "reason": "`[RC-1]` admits an `owns` parameter — `E2122` is for \"A place that has one owner and is not a local of this function, a list element (...), a field (...) or a plain parameter\", and `[FN-1]` makes `owns c: C` the callee's own — but says how the block is made only for a local: \"a value that is not a class object is then made in a block of its own from the line that made it, as if that line had said `shares`, so nothing moves and no view of it ends at the `shares` line\". For `owns xs: Array[int]` the line that made it is the caller's, which `[MOD-9]`'s \"A fact worked out from a body never changes what a line does\" and `[PHIL-16]` keep unchanged, so no sentence says where `xs`'s block is made or whether a view of `xs` made before `other = shares xs` ends there: a compiler must guess (`E0901`). The reader's fix (the block at the function's entry, before any view, the parameter's type the shared type throughout, the caller's line unchanged) is the smallest general rule and costs one move at entry, shown by the `shares` line in the body (`[PHIL-2]`). Registry `E2122` unchanged."
+   },
+   {
+    "id": "G9-15",
+    "verdict": "refuted",
+    "reason": "`[TYP-4]` lists two targets: \"one whose every value the other's type holds ... converts to it, to `int` where each would (`[TYP-5]` rule 12 ...)\" — \"to it\" names the wider type, \"to `int` where each would\" names `int` where each operand would convert to `int` under rule 12 (\"where the compiler knows every value it can have fits that type\"). Every `i8` and every `u8` fits `int`, so `a + b` is an `int` addition and prints 199; the reading as a restriction of the first case has no \"only\" and would leave `[TYP-5]` rule 12's citation pointless. The `E2020` sentence (\"the `int` may be negative, the `u64` may pass `int`'s top\") is the case where neither holds the other and the second target fails too. The reader's wording is an accurate restatement, which the text may adopt as a tidy, not a change of meaning."
+   },
+   {
+    "id": "G9-16",
+    "verdict": "refuted",
+    "reason": "The text decides it: `[BRW-16]` makes a position of \"A name for a list element made by indexing (`boss = enemies[0]`, `boss = ref mut enemies[0]`, `p = ps.get(0).unwrap()`)\", and `[BCK-1]` says the same (\"a **position** (a list element named by its index ...) or an **address** (every other view)\"); `ref mut enemies[0].hp` names a field of an element, not an element, so it is an address under `[BRW-17]`'s \"Every other view (... a view into a value's own contents ...) ends at any change that may reshape what it points into\", and `h += 1` after `enemies.push(...)` is `E3060` in every implementation. No promise breaks and nothing is guessed. Extending positions to parts reached by fields alone is a feature the owner may want (it is as cheap and as safe, as the reader says), but it is not a hole."
+   },
+   {
+    "id": "G9-17",
+    "verdict": "refuted",
+    "reason": "`[THR-20]` defines the other side exhaustively: \"a function that may run on another thread (reachable from `thread.spawn`, from a job submitted outside a scope, from a callback C may run on a thread other than the main one, or from an `@unsafe(export(\\\"name\\\", threads=any))` or `... threads=creator))` function) and reads or changes it is `E7012`\" — `inner_work` and the inner tasks are reachable from `scope.spawn` only, at whatever depth, so no `E7012`; and the same rule hands them to `[THR-11]`: \"A `static mut` the tasks of a scope reach is a place `[THR-11]` checks as any other\", which checks each scope's tasks \"against the other tasks and the parent until the task's join\" — the inner tasks against each other and the outer task, the outer task against the main thread — so `HITS += 1` compiles as a reduction (`[THR-21]`) and the program prints what the join orders. \"the tasks of scopes it opens\" could read \"at any depth\" as a tidy, but the `E7012` list already decides the program."
+   }
+  ],
+  "missed": [
+   "[CLO-17]/[CLO-18]/[BRW-18]: a stored function value whose run reshapes its holder through a call argument, not a captured name, frees its own state block mid-run. `[CLO-17]` refuses only a store into \"a place that a real variable it changes owns ... nor in a place that its body may reshape or end through a name it captured with a word\", and `[BRW-18]`'s own message tells the programmer to write `handlers: Array[fn(ref mut Ui)]` and `this.handlers[this.current](ref mut this)` for a `close_all` that clears `this.handlers`. Program: `class Ui:` with `handlers: Array[fn(ref mut Ui)] = []` and `fn fire():` whose body is `i = 0`, `while i < this.handlers.len():`, `this.handlers[i](ref mut this)`, `i += 1`; in `main`: `ui = Ui()`, `n = 0`, `ui.handlers.push(owns fn(ref mut u) owns n: u.handlers.clear(); n += 1)`, `ui.fire()`. The call copies the two words out (`[CLO-10]`), `clear()` ends the function value in the list and \"what its `owns` captures held\" (`[CLO-10]`), the state block is \"not counted\" (`[CLO-18]`), and `n += 1` writes freed memory. `[BRW-21]` covers only a parameter view used after its end, not the state. Fix: `[CLO-17]` \"nor in a place that its body may reshape or end by any route its calls reach it through: a name it captured with a word, a parameter the call gives it (`ref mut u`), `this`, or a module variable, read through the chain of its calls (`[EFF-24]`)\" — `E3022` at the store, and `[BRW-18]`'s message changes to a removal list applied after the walk.",
+   "[COST-3]: three more run-time checks without a row: `[FFI-33b]`'s end-of-value thread check (\"an `owns T` foreign value of such a type records its creating thread and, in every profile, stops the program when it ends on another\"), `[FFI-33]`/`[FFI-33c]`'s export-wrapper thread check under `creator` and `main`, and `[FFI-22]`'s `ember_rt_thread_attach()` thread-local test on every export and trampoline call; `[COST-6]`'s table lacks the first two stops' texts. Program: `@unsafe(export(\"tick\", threads=main)) pub extern \"C\" fn tick() -> i32: return 0` — one thread-local load and one compare per call, no row.",
+   "[EFF-6] versus [EFF-2] (beside G9-06): `[EFF-6]`'s \"interface implementations reached statically\" and `[CLS-5]`'s \"dispatched statically unless the object is a `dyn` value\" can be read as leaving `dyn` calls out of a contract's reachable graph, while `[EFF-2]` counts \"every implementation and override the program has\"; the fix for G9-06 should replace the `[EFF-6]` phrase.",
+   "[CLO-14] versus [STD-19] (beside G9-07): `[CLO-14]`'s example writes the bounded parameter plain, `fn apply(f: F, x: int)`, and `[STD-19]` writes `fn for_each(owns f: F) owns this`; the text never says whether the two first lines mean the same, nor what a plain `f: F` does with a function that changes its own state (`[CLO-18]`'s `E3023` would refuse the call `apply_twice(counter, 1)` with no line to write). Program: `h = fn() owns n: n += 1` (n an `int`), `fn run(f: F)` under `[F: needs fn()]` with body `f()`, `run(h)`."
+  ]
+ }
+}

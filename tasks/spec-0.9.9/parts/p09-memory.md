@@ -37,43 +37,45 @@ pays a count for nothing.
 
 ## IX.1 The heap types
 
-* `[HEAP-1]` *(changed in 0.9.15)* Every heap type allocates through `ember_alloc`/`ember_realloc`/`ember_free`, or
-  through the memory manager its type names with `using` (`[ALC-1]`), and carries the `Alloc` effect
-  where it allocates.
+* `[HEAP-1]` *(changed in 0.9.15)* Every heap type allocates through
+  `ember_alloc`/`ember_realloc`/`ember_free`, or through the memory manager its type names with
+  `using` (`[ALC-1]`), and carries the `Alloc` effect where it allocates.
 * `[HEAP-2]` Growable buffers double, from a minimum of four elements; `shrink_to_fit` is explicit.
 * `[HEAP-8]` *(new in 0.9.9)* Capacity arithmetic is checked: a requested capacity whose byte size
   overflows `usize`, or exceeds the allocator's limit, panics with `capacity overflow` before any
   allocation. No length or capacity computation in the runtime wraps.
-* `[HEAP-9]` *(new in 0.9.9)* *(changed in 0.9.15)* Heap storage for elements of type `T` is aligned to at least
-  `align_of[T]()`, whatever that alignment is.
-* `owns T`: one owner, in a heap block of its own; it reads, and is changed, as its `T`, with nothing
-  written in between. `owns dyn I` holds any implementer of `I` (`[IFC-5]`). The line that makes a value
-  for an `owns` place says `owns` before it (`mesh=owns Mesh(points=[0.0])`,
+* `[HEAP-9]` *(new in 0.9.9)* *(changed in 0.9.15)* Heap storage for elements of type `T` is aligned
+  to at least `align_of[T]()`, whatever that alignment is.
+* `owns T`: one owner, in a heap block of its own; it reads, and is changed, as its `T`, with
+  nothing written in between. `owns dyn I` holds any implementer of `I` (`[IFC-5]`). The line that
+  makes a value for an `owns` place says `owns` before it (`mesh=owns Mesh(points=[0.0])`,
   `left=Some(owns Tree(value=2))`; `E2123` otherwise, `[OWN-10]`), and `owns` on a class type is
-  `E2114`, since a class object always has a block of its own. It is not `Copy`, and it is `Clone` when
-  `T` is: `copy of` it makes a new block holding a copy of the value, so a struct or enum with an `owns`
-  field derives `Clone` (`[STR-5]`). `owns dyn I` is `Clone` when `I` requires it
-  (`interface I: needs Clone:`), copying through the entry `I`'s method table holds for it (`[TYP-22]`). A
-  foreign type held `owns` is ended through its contract's destructor (Part XVI).
+  `E2114`, since a class object always has a block of its own. It is not `Copy`, and it is `Clone`
+  when `T` is: `copy of` it makes a new block holding a copy of the value, so a struct or enum with
+  an `owns` field derives `Clone` (`[STR-5]`). `owns dyn I` is `Clone` when `I` requires it
+  (`interface I: needs Clone:`), copying through the entry `I`'s method table holds for it
+  (`[TYP-22]`). A foreign type held `owns` is ended through its contract's destructor (Part XVI).
 * `[HEAP-3]` *(changed in 0.9.15)* A value with several owners (`shares`, `shares mut`,
-  `thread_shared`) lives in one heap block that holds its owner count, and, where `weakref` links may
-  reach it, its weak count (`[OBJ-1]`). A class object already has its block, so another owner only
-  adds one to its count; any other value is put in a block where it is made shared
-  (`count = shares mut Counter()`, `other = shares items`), one allocation. Each added owner is first
-  compared with the count's maximum (`[RC-1]`).
-* `[HEAP-6]` *(changed in 0.9.15)* `shares T`, `shares mut T`, `thread_shared T` and `weakref T` are not
-  `Copy`: another owner is made only by a line that says so (`shares x`, `shares mut x`,
-  `thread_shared x`), and another link only by `weakref x`, each adding one to a count; `=` from a whole
-  name hands the owner or the link over, and its end subtracts one.
-* `[HEAP-7]` *(changed in 0.9.9)* *(changed in 0.9.15)* `weakref T` links to a value that lives on its
-  own: a class object, or a value held `shares` or `thread_shared`. A `weakref` of a part (a field, an
-  element stored inline) is `E2119` (`[WK-16]`).
-* `[HEAP-10]` *(new in 0.9.9)* *(changed in 0.9.15)* A `shares` owner, and a `weakref` link to a value
-  held `shares`, never reach another thread: their counts are plain memory (`E7015`). Shared ownership
-  across threads is `thread_shared T`, whose counts are kept for several threads (its making thread's
-  owners with plain instructions, the other threads' owners and the weak count with atomic ones,
-  `[RC-4]`); no owner changes a `thread_shared` value directly, only through an `Atomic`, a `Mutex`,
-  an `RwLock`, a channel or a `guarded by` field under its lock (`E7014`, Part XI).
+  `thread_shared`) lives in one heap block that holds its owner count, and, where `weakref` links
+  may reach it, its weak count (`[OBJ-1]`). A class object already has its block, so another owner
+  only adds one to its count; any other value is put in a block where it is made shared (`count =
+  shares mut Counter()`, `other = shares items`), one allocation. Each added owner is first compared
+  with the count's maximum (`[RC-1]`).
+* `[HEAP-6]` *(changed in 0.9.15)* `shares T`, `shares mut T`, `thread_shared T` and `weakref T` are
+  not `Copy`: another owner is made only by a line that says so (`shares x`, `shares mut x`,
+  `thread_shared x`), and another link only by `weakref x`, each adding one to a count; `=` from a
+  whole name hands the owner or the link over, and its end subtracts one.
+* `[HEAP-7]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A `weakref` link names
+  a value that lives on its own: `weakref T` a class object with one owner or `shares` owners, or a
+  value held `shares`, all on one thread; `weakref thread_shared T` a `thread_shared T` (`[WK-11]`).
+  A `weakref` of a part (a field, an element stored inline) is `E2119` (`[WK-16]`).
+* `[HEAP-10]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A `shares` owner, and a
+  `weakref T` link, never reach another thread: their counts are plain memory (`E7015`). Shared
+  ownership across threads is `thread_shared T`, whose counts are kept for several threads (its
+  making thread's owners with plain instructions, the other threads' owners and the weak count with
+  atomic ones, `[RC-4]`); no owner changes a `thread_shared` value directly, only through an
+  `Atomic`, a `Mutex`, an `RwLock`, a channel or a `guarded by` field under its lock (`E7014`, Part
+  XI).
 
 ## IX.2 Arenas
 

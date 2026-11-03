@@ -180,108 +180,112 @@ anything this Part leaves open.
 
 ## XV.4 Collections
 
-* `[STD-15]` *(new in 0.9.9)* *(changed in 0.9.15)* **`Array[T]`** is a growable contiguous list (Python's `list`).
-  `len`, `is_empty`, `capacity`, `reserve`, `push`, `pop -> Option[T]`, `insert(i, v)`, `remove(i) -> T`,
-  `swap_remove(i) -> T`, `extend(iterable)`, `truncate`, `clear`, `retain(keep)`,
-  `drain(r) -> Array[T]`, `dedup`, `reverse`, `sort` (stable; `T: needs Ord`; an inconsistent order
-  permutes but never corrupts, `[HASH-3]`), `sort_by_key(f)`, `sort_by(cmp)`, `sorted() -> Array[T]`,
-  `binary_search(x) -> Result[int, int]`, `index_of(x) -> Option[int]`, `first`, `last`,
-  `get(i) -> Option[ref T]`, `get_mut`, `get_pair_mut(i, j) -> Option[(ref mut T, ref mut T)]`
-  (`[BRW-5]`), `iter`, `iter_mut`, `split_at`, `chunks(n)`, `chunks_mut(n)`, `windows(n)`, `join(sep)`
-  (for elements that are `Display`), and `x in xs` (`[STD-8]`). `xs[i]` takes any integer and panics
-  when `i < 0` or `i >= len` (`[TYP-31]`); `xs.get(i)` names an element as `xs[i]` does, as a
-  position. The methods given a function call it right away and take it as a type parameter:
-  `[F: needs fn(T) -> bool]` above `fn retain(owns keep: F):`, `[K: needs Ord, F: needs fn(T) -> K]` above
-  `fn sort_by_key(owns f: F):`, and `[F: needs fn(T, T) -> Ordering]` above `fn sort_by(owns cmp: F):`; the
-  call counts as making what the function given changes (`[STD-19]`), so `LOG.retain(keep)` with a
-  `keep` that pushes to `LOG` is `E3022`. Each changes the list it is called on, and every method that
-  adds, removes, reorders or replaces elements is a reshape: it ends every view into the list, and may
-  not run while a loop walks the list (`E3020`). `sort_by` and `sort_by_key` are stable, and
-  `sort_by_key` calls `f` once for each element, in order. `windows(n)` yields every run of `n`
-  neighbours, one step apart, as read-only views (there is no `windows_mut`); none when `n > len`, and
-  `n == 0` panics as `chunks(0)` does (`[SPN-4]`). `drain(r)` hands the elements in `r`, any range of
-  integers (`a..b`, `a..=b`, `a..`, `..b`), over to a new `Array` in order, and the rest close up; a
-  range reaching outside `0..=len`, or starting after it ends, panics.
-* `[STD-11]` *(new in 0.9.9)* *(changed in 0.9.15)* **`Map[K, V, H = DefaultHasher]`** is a hash map that **iterates in
-  insertion order**, like Python's `dict`. Re-assigning an existing key keeps its position; removing
-  a key keeps the order of the others. Lookup, insertion and removal take expected constant time,
-  amortised: a map may grow, or close up removed entries, inside an insertion or a removal;
-  iteration is linear in the number of entries. `H: needs (Hasher, Default)`, and a map makes a fresh `H`
-  for each hash. Its memory comes from the built-in memory manager, or from one of kind `A` written
-  `Map[K, V] using A`, whose instance the line that makes the map names (`[ALC-1]`).
-  `Set[T, H = DefaultHasher]` (and `Set[T] using A`) is the same with no values. Keys, values and
-  elements may be views (`labels: Map[StrView, int] = {"start": 1}`): a map that holds views is a value
-  that holds views, which lives no longer than what they point into (`[TYP-15]`), and keeping or
-  returning it where it would outlive them is `E3063` (ODR-069). A map of views of text written in the
-  program has no such bound. Because order is fixed by the program's operations and the default hasher is
-  fixed-seed (`[HASH-2]`), iterating a `Map` or `Set` is not `Nondet`.
-* `[STD-16]` *(new in 0.9.9)* *(changed in 0.9.15)* **`Map` operations.** `m[k]` reads the value and panics when the key is
-  missing (`key not found: <Debug of k>; use .get(k) for an Option`); `m[k] = v` inserts or replaces
-  (`[STD-17]`); `m[k] += 1` requires the key to exist and panics with the same message. The
-  lookups take any `q: Q` with `Q: needs AsKey[K]` (`[STD-12]`): `get(q) -> Option[ref V]`,
-  `get_mut(q) -> Option[ref mut V]`, `get_or(q, default) -> V` (for `V: needs Copy`),
-  `contains_key(q) -> bool`, `remove(q) -> Option[V]`, `m[q]` and `q in m`. `insert(k, v) ->
+* `[STD-15]` *(new in 0.9.9)* *(changed in 0.9.15)* **`Array[T]`** is a growable contiguous list
+  (Python's `list`). `len`, `is_empty`, `capacity`, `reserve`, `push`, `pop -> Option[T]`,
+  `insert(i, v)`, `remove(i) -> T`, `swap_remove(i) -> T`, `extend(iterable)`, `truncate`, `clear`,
+  `retain(keep)`, `drain(r) -> Array[T]`, `dedup`, `reverse`, `sort` (stable; `T: needs Ord`; an
+  inconsistent order permutes but never corrupts, `[HASH-3]`), `sort_by_key(f)`, `sort_by(cmp)`,
+  `sorted() -> Array[T]`, `binary_search(x) -> Result[int, int]`, `index_of(x) -> Option[int]`,
+  `first`, `last`, `get(i) -> Option[ref T]`, `get_mut`, `get_pair_mut(i, j) -> Option[(ref mut T,
+  ref mut T)]` (`[BRW-5]`), `iter`, `iter_mut`, `split_at`, `chunks(n)`, `chunks_mut(n)`,
+  `windows(n)`, `join(sep)` (for elements that are `Display`), and `x in xs` (`[STD-8]`). `xs[i]`
+  takes any integer and panics when `i < 0` or `i >= len` (`[TYP-31]`); `xs.get(i)` names an element
+  as `xs[i]` does, as a position. The methods given a function call it right away and take it as a
+  type parameter: `[F: needs fn(T) -> bool]` above `fn retain(owns keep: F):`, `[K: needs Ord, F:
+  needs fn(T) -> K]` above `fn sort_by_key(owns f: F):`, and `[F: needs fn(T, T) -> Ordering]` above
+  `fn sort_by(owns cmp: F):`; the call counts as making what the function given changes
+  (`[STD-19]`), so `LOG.retain(keep)` with a `keep` that pushes to `LOG` is `E3022`. Each changes
+  the list it is called on, and every method that adds, removes, reorders or replaces elements is a
+  reshape: it ends every view into the list, and may not run while a loop walks the list (`E3020`).
+  `sort_by` and `sort_by_key` are stable, and `sort_by_key` calls `f` once for each element, in
+  order. `windows(n)` yields every run of `n` neighbours, one step apart, as read-only views (there
+  is no `windows_mut`); none when `n > len`, and `n == 0` panics as `chunks(0)` does (`[SPN-4]`).
+  `drain(r)` hands the elements in `r`, any range of integers (`a..b`, `a..=b`, `a..`, `..b`), over
+  to a new `Array` in order, and the rest close up; a range reaching outside `0..=len`, or starting
+  after it ends, panics.
+* `[STD-11]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **`Map[K, V, H =
+  DefaultHasher]`** is a hash map that **iterates in insertion order**, like Python's `dict`.
+  Re-assigning an existing key keeps its position; removing a key keeps the order of the others.
+  Lookup, insertion and removal take expected constant time, amortised: a map may grow, or close up
+  removed entries, inside an insertion or a removal; iteration is linear in the number of entries.
+  `H: needs (Hasher, Default)`, and a map makes a fresh `H` for each hash. Its memory comes from the
+  built-in memory manager, or from one of kind `A` written `Map[K, V] using A`, whose instance the
+  line that makes the map names (`[ALC-1]`). `Set[T, H = DefaultHasher]` (and `Set[T] using A`) is
+  the same with no values. Keys, values and elements may be views (`labels: Map[StrView, int] =
+  {"start": 1}`): a map that holds views is a value that holds views, which lives no longer than
+  what they point into (`[TYP-15]`), and keeping or returning it where it would outlive them is
+  `E3063` (ODR-069). A map of views of text written in the program has no such bound. Because order
+  is fixed by the program's operations and the default hasher is fixed-seed (`[HASH-2]`), iterating
+  a `Map` or `Set` is not `Nondet`. A map or set keyed by what an outside party chooses (a request's
+  fields, a file's keys, the command line) is made with `RandomState` (`Map[K, V, RandomState]`,
+  `[HASH-2]`), since a fixed seed lets that party choose keys that collide and make every operation
+  linear.
+* `[STD-16]` *(new in 0.9.9)* *(changed in 0.9.15)* **`Map` operations.** `m[k]` reads the value and
+  panics when the key is missing (`key not found: <Debug of k>; use .get(k) for an Option`); `m[k] =
+  v` inserts or replaces (`[STD-17]`); `m[k] += 1` requires the key to exist and panics with the
+  same message. The lookups take any `q: Q` with `Q: needs AsKey[K]` (`[STD-12]`): `get(q) ->
+  Option[ref V]`, `get_mut(q) -> Option[ref mut V]`, `get_or(q, default) -> V` (for `V: needs
+  Copy`), `contains_key(q) -> bool`, `remove(q) -> Option[V]`, `m[q]` and `q in m`. `insert(k, v) ->
   Option[V]` and `entry(k)` take the key itself; `entry(k)` is a `MapEntry` with `or_insert(v)`,
-  `or_insert_with(f)` (`[F: needs fn() -> V]` above `fn or_insert_with(owns f: F) owns this -> ref mut V:`)
-  and `or_default()` (for `V: needs Default`), each returning `ref mut V`, a place
-  (`counts.entry(owns k).or_default() += 1`).
-  `keys()`, `values()`, `values_mut()` and `items()` are the view iterators
-  `MapKeys`, `MapValues`, `MapValuesMut` and `MapItems`, yielding `ref K`, `ref V`, `ref mut V` and
-  `(ref K, ref V)` in insertion order (`for k, v in m.items():`); `for k in m:` is by key, as
-  Python's `dict`, and `for k, ref mut v in m:` names each value as a place the loop may change.
-  While a loop walks a map (its keys, its values or its items), nothing changes the map, through its
-  own name or through a call (`counts[k] *= 2` and `counts.insert(...)` inside it are `E3020`); the
-  loop's own name changes the value it is on (`for k, ref mut v in counts: v *= 2`).
-  Also `Map[K, V]()`, `with_capacity(n)`, `len`, `is_empty`, `capacity`,
-  `reserve(n)`, `try_reserve(n)`, `clear`, `retain(keep)` (`[F: needs fn(K, V) -> bool]` above
-  `fn retain(owns keep: F):`), `pop_item() -> Option[(K, V)]` (the newest entry, as `dict.popitem`),
-  `update(other)` (inserts `other`'s entries in its order) and `into_items() -> Array[(K, V)]` (takes
-  the map over, `owns this`, and gives its entries in order).
-  `m1 == m2` compares as sets of entries: the same length, and every key of one in the other with an
-  equal value; order does not matter. `sorted(m)` is `sorted(m.keys())`, a sorted list of views of the
-  keys (`[STD-26]`).
-  `Set`: `Set[T]()`, `with_capacity(n)`, `len`, `is_empty`, `capacity`, `reserve(n)`,
-  `try_reserve(n)`, `clear`; `add(x) -> bool` (whether `x` was new; an element already there keeps
-  its position); taking `q: AsKey[T]`, `remove(q) -> bool`, `contains(q) -> bool` and `q in s`;
-  `retain(keep)` (`[F: needs fn(T) -> bool]` above `fn retain(owns keep: F):`), `pop() -> Option[T]` (the
-  newest), `iter()` (a `SetIter` yielding `ref T`); `union`, `intersection`, `difference` and
-  `symmetric_difference` of another `Set`, which they read, return a new `Set` of copies (for
-  `T: needs Clone`), this set's elements first in its order and then the
-  other's; `is_subset`, `is_superset`, `is_disjoint`; and the operators `|`, `&`, `-` and `^`.
-  `s1 == s2` compares as sets.
-* `[STD-12]` *(new in 0.9.9)* *(changed in 0.9.15)* **Keys looked up by a view.** Lookup methods, `m[k]` and `k in m` accept
-  any key type `Q` with `Q: needs AsKey[K]`: `K` itself, and `StrView` for `K = String`.
-  `interface AsKey[K]: needs Hash` (in `std.collections`, not the prelude) has the method
-  `fn is_key(key: K) -> bool`; `interface ToKey[K]: needs AsKey[K]` adds `fn to_key() -> K`, which makes the
-  key (ODR-067). A lookup hashes `q` and compares it with `is_key`, so it never converts or copies a
-  key. `m[q] = v` takes a `Q: needs ToKey[K]` and calls `to_key()` only when the key is new, never to replace
-  the value of an existing one, so a new key written through a `StrView` is stored as the map's own
-  `String`. Every `K: needs (Eq, Hash)` is `AsKey[K]` (`is_key` is `==`), and `ToKey[K]` when it is also
-  `Clone` (`to_key` gives `copy of` the key): a key type that cannot be copied is looked up and removed
-  by value and inserted with `insert`, which takes the key over. std implements `AsKey[String]` and
-  `ToKey[String]` for `StrView`. An
-  implementation MUST hash and compare as the key it matches would, and `to_key()` MUST make that
-  key; one that does not gives `[HASH-3]`'s wrong answers, never undefined behaviour.
-* `[STD-17]` *(new in 0.9.9)* *(changed in 0.9.15)* **Index assignment.** `a[i] = v` calls `IndexSet.index_set(i, v)` when
-  the type implements `IndexSet[Idx, V]`, and otherwise assigns through `IndexMut` (ending the old
-  value). `Map` implements `IndexSet`; `Array` does not need to. A compound assignment `a[i] op= v`
-  always goes through `IndexMut`. `Array` and `MutSpan` implement `Index[int]` and `IndexMut[int]`,
-  and `Span` `Index[int]`, through their built-in indexing; `Map[K, V]` implements `Index[Q]` and
-  `IndexMut[Q]` for every `Q: needs AsKey[K]`, and `IndexSet[Q, V]` for every `Q: needs ToKey[K]` (blanket
-  implementations, `[GRM-34]`, ODR-042, ODR-067).
+  `or_insert_with(f)` (`[F: needs fn() -> V]` above `fn or_insert_with(owns f: F) owns this -> ref
+  mut V:`) and `or_default()` (for `V: needs Default`), each returning `ref mut V`, a place
+  (`counts.entry(owns k).or_default() += 1`). `keys()`, `values()`, `values_mut()` and `items()` are
+  the view iterators `MapKeys`, `MapValues`, `MapValuesMut` and `MapItems`, yielding `ref K`, `ref
+  V`, `ref mut V` and `(ref K, ref V)` in insertion order (`for k, v in m.items():`); `for k in m:`
+  is by key, as Python's `dict`, and `for k, ref mut v in m:` names each value as a place the loop
+  may change. While a loop walks a map (its keys, its values or its items), nothing changes the map,
+  through its own name or through a call (`counts[k] *= 2` and `counts.insert(...)` inside it are
+  `E3020`); the loop's own name changes the value it is on (`for k, ref mut v in counts: v *= 2`).
+  Also `Map[K, V]()`, `with_capacity(n)`, `len`, `is_empty`, `capacity`, `reserve(n)`,
+  `try_reserve(n)`, `clear`, `retain(keep)` (`[F: needs fn(K, V) -> bool]` above `fn retain(owns
+  keep: F):`), `pop_item() -> Option[(K, V)]` (the newest entry, as `dict.popitem`), `update(other)`
+  (inserts `other`'s entries in its order) and `into_items() -> Array[(K, V)]` (takes the map over,
+  `owns this`, and gives its entries in order). `m1 == m2` compares as sets of entries: the same
+  length, and every key of one in the other with an equal value; order does not matter. `sorted(m)`
+  is `sorted(m.keys())`, a sorted list of views of the keys (`[STD-26]`). `Set`: `Set[T]()`,
+  `with_capacity(n)`, `len`, `is_empty`, `capacity`, `reserve(n)`, `try_reserve(n)`, `clear`;
+  `add(x) -> bool` (whether `x` was new; an element already there keeps its position); taking `q:
+  AsKey[T]`, `remove(q) -> bool`, `contains(q) -> bool` and `q in s`; `retain(keep)` (`[F: needs
+  fn(T) -> bool]` above `fn retain(owns keep: F):`), `pop() -> Option[T]` (the newest), `iter()` (a
+  `SetIter` yielding `ref T`); `union`, `intersection`, `difference` and `symmetric_difference` of
+  another `Set`, which they read, return a new `Set` of copies (for `T: needs Clone`), this set's
+  elements first in its order and then the other's; `is_subset`, `is_superset`, `is_disjoint`; and
+  the operators `|`, `&`, `-` and `^`. `s1 == s2` compares as sets.
+* `[STD-12]` *(new in 0.9.9)* *(changed in 0.9.15)* **Keys looked up by a view.** Lookup methods,
+  `m[k]` and `k in m` accept any key type `Q` with `Q: needs AsKey[K]`: `K` itself, and `StrView`
+  for `K = String`. `interface AsKey[K]: needs Hash` (in `std.collections`, not the prelude) has the
+  method `fn is_key(key: K) -> bool`; `interface ToKey[K]: needs AsKey[K]` adds `fn to_key() -> K`,
+  which makes the key (ODR-067). A lookup hashes `q` and compares it with `is_key`, so it never
+  converts or copies a key. `m[q] = v` takes a `Q: needs ToKey[K]` and calls `to_key()` only when
+  the key is new, never to replace the value of an existing one, so a new key written through a
+  `StrView` is stored as the map's own `String`. Every `K: needs (Eq, Hash)` is `AsKey[K]` (`is_key`
+  is `==`), and `ToKey[K]` when it is also `Clone` (`to_key` gives `copy of` the key): a key type
+  that cannot be copied is looked up and removed by value and inserted with `insert`, which takes
+  the key over. std implements `AsKey[String]` and `ToKey[String]` for `StrView`. An implementation
+  MUST hash and compare as the key it matches would, and `to_key()` MUST make that key; one that
+  does not gives `[HASH-3]`'s wrong answers, never undefined behaviour.
+* `[STD-17]` *(new in 0.9.9)* *(changed in 0.9.15)* **Index assignment.** `a[i] = v` calls
+  `IndexSet.index_set(i, v)` when the type implements `IndexSet[Idx, V]`, and otherwise assigns
+  through `IndexMut` (ending the old value). `Map` implements `IndexSet`; `Array` does not need to.
+  A compound assignment `a[i] op= v` always goes through `IndexMut`. `Array` and `MutSpan` implement
+  `Index[int]` and `IndexMut[int]`, and `Span` `Index[int]`, through their built-in indexing;
+  `Map[K, V]` implements `Index[Q]` and `IndexMut[Q]` for every `Q: needs AsKey[K]`, and
+  `IndexSet[Q, V]` for every `Q: needs ToKey[K]` (blanket implementations, `[GRM-34]`, ODR-042,
+  ODR-067).
 * `[STD-7]` Fixed-capacity containers with no heap allocation: `FixedArray[T, N]`, `FixedString[N]`
-  and `RingBuffer[T, N]`; `push` returns `Result[void, CapacityError]` and `push_or_drop` discards when
-  full. Also `Deque[T]`, `SmallArray[T, N]` (inline up to `N`, then heap), `BitSet`.
-* `[STD-8]` *(changed in 0.9.15)* **`Contains`.** `x in c` requires `c: Contains[typeof(x)]` (`E2226` otherwise, whose help
-  is `c.iter().any(owns fn(e) => e == x)`). `std` implements it for `Set` and `Map` (by key); for `Array`,
-  `Span`, `MutSpan` and `[T; N]` with `T: needs Eq`, as a linear scan; for `StrView`/`String`, as a substring or
-  character test; for ranges, as two comparisons. The compiler never synthesises an implementation.
-* `[STD-8a]` `ember inspect --cost` reports which `contains` a use selects and its complexity, so
-  `x in array` is visibly linear and `x in set` visibly constant.
-* `[STD-8b]` *(changed in 0.9.15)* `StrView` implements `Contains[char]` and `Contains[StrView]` only; matching happens at character
-  boundaries, so a character never matches inside another's encoding. A byte needle (`Span[u8] in s`)
-  is `E2226`; byte search is on `s.as_bytes()`. `x not in c` is `not c.contains(x)`, with each operand
-  evaluated once.
+  and `RingBuffer[T, N]`; `push` returns `Result[void, CapacityError]` and `push_or_drop` discards
+  when full. Also `Deque[T]`, `SmallArray[T, N]` (inline up to `N`, then heap), `BitSet`.
+* `[STD-8]` *(changed in 0.9.15)* **`Contains`.** `x in c` requires `c: Contains[typeof(x)]`
+  (`E2226` otherwise, whose help is `c.iter().any(owns fn(e) => e == x)`). `std` implements it for
+  `Set` and `Map` (by key); for `Array`, `Span`, `MutSpan` and `[T; N]` with `T: needs Eq`, as a
+  linear scan; for `StrView`/`String`, as a substring or character test; for ranges, as two
+  comparisons. The compiler never synthesises an implementation.
+* `[STD-8a]` `ember inspect --cost` reports which `contains` a use selects and its complexity, so `x
+  in array` is visibly linear and `x in set` visibly constant.
+* `[STD-8b]` *(changed in 0.9.15)* `StrView` implements `Contains[char]` and `Contains[StrView]`
+  only; matching happens at character boundaries, so a character never matches inside another's
+  encoding. A byte needle (`Span[u8] in s`) is `E2226`; byte search is on `s.as_bytes()`. `x not in
+  c` is `not c.contains(x)`, with each operand evaluated once.
 
 ## XV.5 Iterators
 

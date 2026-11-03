@@ -1,0 +1,521 @@
+{
+ "group": "G1",
+ "title": "Parts I to IV (overview, lexical, grammar, types)",
+ "found": {
+  "group": "G1: Parts I to IV (overview, lexical, grammar, types)",
+  "findings": [
+   {
+    "id": "G1-01",
+    "rules": [
+     "TYP-22",
+     "IFC-5",
+     "TYP-36"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "`Self` as a parameter type is not excluded from a `dyn`-usable interface",
+    "program": "interface Same:\n    fn same(other: Self) -> bool          # has an object, returns no Self, not generic: usable as dyn by [TYP-22]\n\nstruct Tag implements Same:\n    id: i64\n    fn same(other: Tag) -> bool: return this.id == other.id\n\nstruct Name implements Same:\n    text: String\n    fn same(other: Name) -> bool: return this.text == other.text\n\nfn both(a: dyn Same, b: dyn Same) -> bool:\n    return a.same(b)                       # <-- BREAKS: `other` is `Self`, which a `dyn Same` cannot name; the table entry for `Tag` reads the `Name`'s bytes (a String header) as a `Tag`\n\nfn main():\n    println(both(Tag(id=1), Name(text=\"x\")))",
+    "why": "[TYP-22]: \"An interface is usable as `dyn` only if every method has an object (none is a `static fn`), does not return `Self` by value (methods marked `where Self: needs Sized` excepted), and is not generic, except over a type parameter used only as the type of a parameter that views its value\". Nothing speaks of `Self` as a parameter's type, and nothing says what `Self` is on a `dyn I` receiver; an implementer who takes it as `dyn I` (the only type available) lets a value of one kind be read as another. [TYP-36] shows the authors know the problem for `Eq` (\"`owns dyn I` compares when `I` requires `Eq` ... values of two different kinds are never equal\", a special table entry), but the rule for a direct call stays silent.",
+    "proposed_text": "Replace in `[TYP-22]`: \"An interface is usable as `dyn` only if every method has an object (none is a `static fn`), does not return `Self` by value (methods marked `where Self: needs Sized` excepted), and is not generic, ...\" with: \"An interface is usable as `dyn` only if every method has an object (none is a `static fn`), names `Self` nowhere but as `this`: not as a result by value, and not as a parameter's type or inside one (`fn eq(other: Self)`, `fn add(rhs: Self)`, `fn merge(owns other: Self)`), since through a `dyn I` value the kind of any other value is unknown (methods marked `where Self: needs Sized` excepted, which a `dyn` value does not have), and is not generic, ...\". Add to the `E2050` examples: \"`Same` cannot be used as `dyn Same`: `same` takes `other: Self`, and through a `dyn Same` the kind of `other` is unknown; take `other: dyn Same` and test its kind in the body, `if other is Tag as o:`, or mark `same` with `where Self: needs Sized` and call it on the concrete types\". Keep `[TYP-36]`'s entry for `owns dyn I` where `I: needs Eq` (the kinds are compared first) and say there that it is the one way `Eq` is reached through `dyn`.",
+    "codes": "E2050 (reused), shape as today: names the method and gives the line to write",
+    "milestone": "M11",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-02",
+    "rules": [
+     "TYP-6",
+     "TYP-12",
+     "TYP-13"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "`n as Color`: an integer cast to a unit-only enum, which the text calls \"an integer\"",
+    "program": "enum Color:\n    Red\n    Green\n\nfn show(c: Color):\n    match c:                   # exhaustive by [ENM-2]: two arms\n        Red: println(\"r\")\n        Green: println(\"g\")\n\nfn main():\n    c = 7 as Color             # <-- BREAKS: [TYP-12] \"a unit-only enum is an integer\", [TYP-6] \"integer → integer: keeps the low bits\"; 7 is no variant\n    show(c)                    # a jump table indexed by 7, or `Option[Color]` reading `None` ([TYP-13]): an invalid value in Safe code\n    o: Option[Color] = Some(c)",
+    "why": "[TYP-12]: \"A unit-only enum is an integer (`@repr(u8)` and friends choose it; the default is the smallest signed type that fits)\". [TYP-6]: \"`x as T` converts explicitly: integer → integer: keeps the low bits (truncation or sign/zero extension)\". Read together they admit `7 as Color`. [TYP-6] also says nothing of `bool` with `as` (`true as int`), so an implementer guesses there too. [TYP-13] gives an enum with unused discriminants a niche, so the invalid value also corrupts `Option[Color]`.",
+    "proposed_text": "In `[TYP-12]` replace \"A unit-only enum is an integer\" with \"A unit-only enum is stored as an integer\". Add to `[TYP-6]`'s list: \"* `bool → integer`: `true` is 1 and `false` 0; nothing converts to `bool` (`x != 0` is the test); * a unit-only enum → an integer type that holds every one of its discriminants (`Color.Green as u8`); an integer never converts to an enum: a value of an enum is one of its variants (`[TYP-12]`) and `Option[Color]` keeps `None` in an unused discriminant (`[TYP-13]`), so `7 as Color` is `E2020` (\"an integer may be no `Color`; write `Color.try_from(7)`, a `Result[Color, RangeError]`, and open its `Ok`\"). * `as` between any other pair of types is `E2020` naming both.\"",
+    "codes": "E2020 (reused), the mismatched-types shape with the `try_from` line as its help",
+    "milestone": "M1",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-03",
+    "rules": [
+     "TYP-46",
+     "ALC-1",
+     "THR-8",
+     "THR-11"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "A value `using A` keeps its instance's address, which no marker and no race rule sees",
+    "program": "from std.mem import Arena          # a one-thread bump arena implementing Allocator ([ALC-2]); allocate bumps a pointer in `this`\n\nfn fill(ref mut current: Arena):\n    xs: Array[int] using Arena = Array.new_in(current)\n    ys: Array[int] using Arena = Array.new_in(current)\n    thread.scope(fn(ref mut s):\n        s.spawn(fn() owns xs:                       # <-- BREAKS: `Array[int]` is `Send` (\"every component is\", int is); the kept instance word is no component the table names\n            for i in 0..1_000_000: xs.push(i))      #     each growth calls `current.allocate(...)` on the task's thread ...\n        for i in 0..1_000_000: ys.push(i))          #     ... while this thread does the same: two threads bump one pointer; [THR-11] sees no place both tasks change\n\nfn main():\n    current = Arena(1 << 24)\n    fill(ref mut current)",
+    "why": "[TYP-46]: \"A value whose manager may have several instances keeps its instance's address, one word, so that its growth and its end go back to the instance it came from\"; \"takes the value's block from it by calling `current.allocate(...)`\". [THR-8]/the marker table: \"`Send` ... inferred: every component is `Send`\"; neither names the instance word as a component, nor says whether it is a view (`ref A`), a link or a raw pointer. [THR-11] checks \"one place\" two tasks change; nothing says the growth of `xs` is a change of `current`. The same for `thread_shared T using A`: its end may run on another thread ([RC-4], F10) and calls `deallocate` on a one-thread instance.",
+    "proposed_text": "Add to `[TYP-46]` (and the same sentence to `[ALC-1]`): \"The instance word a value keeps is a view of its instance, `ref A`, for every rule of the language: the value is `Send` or `ThreadShared` only when `A` is `ThreadShared` (`[THR-8]`, `[THR-9]`), since its growth and its end call `allocate` and `deallocate` on the instance from whichever thread holds it; and each growth and each end of the value is a call of those methods on the instance through that view, which the exclusivity and race rules see as they see any call (`[BRW-21]`, `[THR-11]`): two scoped tasks growing values made in one `Arena` are `E7007`, naming the arena, unless `Arena.allocate` synchronises inside (`A: ThreadShared`). A `thread_shared T using A`, and a value `using A` handed to another thread, with an `A` that is not `ThreadShared` is `E7015` (\"`xs` takes its memory from `current`, an `Arena`, which one thread uses at a time; make it in the built-in manager, `xs = []`, or use a manager that any thread may call\"). A manager with one instance is reached through no word and is judged by its own `static` state (`[STA-1]`, `[THR-20]`).\" Add `ref A` for `using A` values to the marker table's `Send` and `ThreadShared` rows.",
+    "codes": "E7015 and E7007 (reused), each with the help line above",
+    "milestone": "M10",
+    "touches_owner_verdict": "107 (the instance word; the proposal keeps verdict 107's two exceptions and adds only what the word is for the markers)"
+   },
+   {
+    "id": "G1-04",
+    "rules": [
+     "GRM-3",
+     "TYP-45",
+     "TYP-14"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "`base_type` admits every stack of words; the text defines each word alone",
+    "program": "struct Slot:\n    item: shares mut ref mut Item       # base_type := \"shares\" [\"mut\"] base_type; base_type := \"ref\" [\"mut\"] base_type: grammatical\n    keep: owns owns Mesh\n    back: thread_shared shares Node\n    view: owns ref String\n\nfn main():\n    it = Item(hp=1)\n    a = shares mut Slot(item=ref mut it)  # which rule decides whether two `shares mut` owners may each write through the one `ref mut`? [BRW-1] speaks of names; both are one name's copies\n    b = shares mut a\n    a.item.hp = 2\n    println(b.item.hp)",
+    "why": "III.3: \"`base_type := path_type | \"ref\" [\"mut\"] base_type | \"sharedref\" \"mut\" base_type | \"owns\" base_type | \"shares\" [\"mut\"] base_type | \"thread_shared\" base_type | \"weakref\" base_type | ...\" is recursive on every word. [TYP-45]: \"A type says how its value is held, with the word on the type it describes\" and then defines `T`, `owns T`, `shares T`, ..., each with `T` a plain type. [TYP-15] (\"A view may be stored in any place\") lets a reader take `owns ref T` and `shares ref mut T` as defined; IV.11 strips \"one level\" of `owns`, which presumes a second may exist. O2 names one pair (`weakref shares T`) and nothing names the rest. An implementer must decide which stacks are types and what each one's owner, region and `Send` are.",
+    "proposed_text": "* `[TYP-45a]` **One word on a type.** A word of `[TYP-45]` stands before a type that has no word of its own: a `path_type`, a tuple, a fixed array, a function type or a `dyn` bound (`owns Mesh`, `shares mut Player`, `weakref Node`, `ref Span[int]`, `owns dyn Shape`, `thread_shared fn()`). `ref` and `ref mut` also stand before a type with a word, as the view of a place that holds such a value (`ref mut owns Mesh` is what `ref mut lvl.mesh` names; `[TYP-14]` reads through it, and `=` on it replaces the block as `=` on the field does). Every other word before a word (`owns ref T`, `shares mut ref mut T`, `owns owns T`, `owns shares T`, `thread_shared shares T`, `weakref shares T`; `weakref thread_shared T` is O2's) is `E0100`: \"`shares mut ref mut Item` stacks two words; a counted block holds a value of its own: write `shares mut Item`, or, for one view that several names may change, `sharedref mut Item`\". A value that is to hold a view is a struct with a view field (`[TYP-34]`), and one that is to hold a link is a struct with a link field.",
+    "codes": "E0100 (reused), the help giving the type with one word",
+    "milestone": "M1",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-05",
+    "rules": [
+     "TYP-44",
+     "OBJ-1",
+     "DSP-6"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "How a type index is assigned across separately compiled packages is unsaid",
+    "program": "# package `shapes`, compiled once ([BLD-1]):\nopen class Shape:\n    pass\nclass Circle(Shape):\n    r: float = 1.0\npub fn radius(s: Shape) -> float:\n    return (cast s as Circle).r          # one compare of type indices ([TYP-44]): against the index `shapes` gave `Circle`\n\n# package `app`, which depends on `shapes`:\nclass Square(Shape):\n    side: float = 2.0\nfn main():\n    println(shapes.radius(Square()))     # <-- if each package numbers its own types from 1, `Square` may carry `Circle`'s number; the cast passes and reads a Square as a Circle",
+    "why": "[TYP-44]: \"Each test and each cast is one compare of type indices.\" [OBJ-1]: \"The header is 8 bytes: a 32-bit count and a 32-bit type index\". [MNG-4] names type information `em_ti_…` as a symbol; [MONO-1] deduplicates instances at link time. No rule says who gives the 32-bit number, when, or that two types in one process never share one; a dependant's kinds, a reload image's new kinds (Annex B) and a generic instance deduplicated from two packages all need one. The natural per-package numbering is the unsafe guess.",
+    "proposed_text": "* `[TYP-44a]` **One index per type in a process.** A type index is a number no two types in one process share, given when the program is linked (and, for a reload image, when it is loaded, `[HR-12a]`), never when a package is compiled: compiled code names a type by its type-information symbol (`em_ti_…`, `[MNG-4]`), the linker gives each symbol its index and fills every compare with it, and a generic instance deduplicated at link (`[MONO-1]`) has one index. A kind test or cast is then one compare of the header's index against a constant (`[COST-3]`); a C toolchain that cannot fill an immediate from a link-time value loads the constant once per function, which `ember inspect` reports as that row. Two packages that give two types one index are refused at link (`E9035`'s shape, naming both types).",
+    "codes": "E9035 (reused: packages of one process disagree) or a new E904x if the registry wants a row of its own",
+    "milestone": "M6b",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-06",
+    "rules": [
+     "LEX-10",
+     "GRM-37"
+    ],
+    "kind": "CON",
+    "severity": "major",
+    "title": "A `#!` line after an import: a comment by [LEX-10], `E0104` by [GRM-37]",
+    "program": "import std.io\n#! language \"0.9.20\"        # [LEX-10]: \"anywhere else it is a comment\"; [GRM-37]: \"A directive after an import or item ... is E0104\"\n#! module overflow(wrap)    # the same: if a comment, the module's policy silently stays `panic`, which [PHIL-12] calls the worst class of defect\n\nfn main():\n    x: u8 = 255\n    x += 1",
+    "why": "[LEX-10]: \"A line beginning `#!` before the first import or item is a directive (`[GRM-37]`), not a comment; anywhere else it is a comment.\" [GRM-37]: \"A directive after an import or item, an unknown directive, or a module attribute with an invalid target or arguments is `E0104`.\" The two disagree on the same line, and [LEX-10]'s reading lets `#! module overflow(wrap)` be accepted and ignored.",
+    "proposed_text": "Replace in `[LEX-10]`: \"A line beginning `#!` before the first import or item is a directive (`[GRM-37]`), not a comment; anywhere else it is a comment.\" with: \"A line beginning `#!` is a directive wherever it stands (`[GRM-37]`), never a comment: one below an import or an item is `E0104` (\"`#! module overflow(wrap)` is a directive, and directives come first; move it above `import std.io`\"). The one exception is a shebang line (G1-18).\"",
+    "codes": "E0104 (reused)",
+    "milestone": "M1",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-07",
+    "rules": [
+     "GRM-2",
+     "FN-8"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "The `file` production has no statements, which the entry file may hold",
+    "program": "# the entry file ([GRM-2]):\nimport std.io\nx = 5\nfn double(n: int) -> int: return n * 2     # \"items anywhere in the file are declared as usual\" ([FN-8])\nprintln(double(x))\nimport std.math                              # may an import follow a statement? the grammar says no; no rule says what it is",
+    "why": "III.1: \"`file := {directive} {NEWLINE} {import_decl} {item}`\" and the Part's own claim, \"Every construct used anywhere in this specification appears here\". [GRM-2]: \"in the entry file only ... statements at file scope, which form the implicit `main`\"; [FN-8]: \"the statements at file scope of the entry file form, in source order, the body of an implicit `fn main()` ...; items anywhere in the file are declared as usual\". The production cannot parse the file [FN-8] describes, and nothing says whether an import may follow a statement or an item.",
+    "proposed_text": "Replace the production with: \"`file := {directive} {NEWLINE} {import_decl} {item | statement}   -- `statement` in the entry file only ([GRM-2]); elsewhere E0100`\". Add to `[GRM-2]`: \"Items and statements of the entry file stand in any order; the statements, in source order, are `main`'s body (`[FN-8]`). An import below an item or a statement is `E0100` (\"imports come first: move `import std.math` above line 2\").\"",
+    "codes": "E0100 (reused)",
+    "milestone": "M1",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-08",
+    "rules": [
+     "LEX-1",
+     "LEX-11",
+     "LEX-26"
+    ],
+    "kind": "SEC",
+    "severity": "major",
+    "title": "Bidirectional format characters in source: the reviewer reads one program, the compiler another",
+    "program": "# a dependency's source, or its overlay ([GRM-35]), read by a reviewer before the build:\nfn check(p: *i32) -> bool:\n    # SAFETY: p is checked by the caller⁦‮ }  # ⁦ if p is None: return false   <-- BREAKS: U+202E/U+2066 (Trojan Source, CVE-2021-42574) make the comment display as code and code as comment; [LEX-11] says a comment never produces a diagnostic\n    unsafe:\n        return *p == 0",
+    "why": "[LEX-1]: \"Source files are UTF-8. A byte-order mark is accepted and ignored ... An invalid UTF-8 sequence is `E0001`\" — U+202A–U+202E and U+2066–U+2069 are valid UTF-8. [LEX-11]: \"a comment never affects compilation, including by producing a diagnostic.\" [LEX-26] lists what a literal admits by escapes, not which raw characters. No rule names the bidirectional controls, so a dependency or an overlay (whose facts the compiler trusts, `[FFI-2]`) can show a reviewer a program other than the one lexed, against `[PHIL-16]` (\"The words say what the code does\").",
+    "proposed_text": "* `[LEX-1a]` A Unicode bidirectional format character (U+202A to U+202E, U+2066 to U+2069) anywhere in a source file, an overlay or a manifest, in a comment or a string literal included, is `E0010` (\"line 3 holds U+202E, which reorders how the line is shown; write the text as an escape, `\\u{202E}`, inside the literal, or remove it\"); the one way to put one in a program is the escape of `[LEX-26]`. This is the one diagnostic a comment produces (`[LEX-11]`).",
+    "codes": "new code E0010 (none registered; the first pass added none, so `codes.rs`'s test and XVII.9 gain one row)",
+    "milestone": "M1",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-09",
+    "rules": [
+     "GRM-17",
+     "LEX-6a",
+     "GRM-28"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "A lambda with an indented block body outside brackets: grammatical, and the prose does not say",
+    "program": "fn main():\n    total = 0\n    count = 0\n    h = fn(x):              # lambda := ... (\":\" block); block := NEWLINE INDENT {statement} DEDENT: parses\n        total += x\n        count += 1          # [GRM-17] speaks only of a body \"on the lambda's own line\"; [LEX-6a] says a body of more than one statement is a local function\n    h(1)",
+    "why": "III.5: \"`lambda := [...] \"fn\" \"(\" ... \")\" [capture_list] [\"->\" type] (\"=>\" expression | \":\" block)`\" with `block := NEWLINE INDENT {statement} DEDENT | simple_stmt NEWLINE`. [GRM-17]: \"Outside brackets, a `:` body on the lambda's own line is one simple statement, ended by the statement's `NEWLINE`\"; [LEX-6a]: \"A lambda body needing more than one statement is written as a local function.\" The grammar accepts what the prose implies is written another way, and `E0106`'s registry row says \"cannot be written inside brackets\" only.",
+    "proposed_text": "Replace in the grammar: `(\"=>\" expression | \":\" block)` with `(\"=>\" expression | \":\" simple_stmt)`, and in `[GRM-17]`: \"A lambda's `:` body is one simple statement, inside brackets (`[LEX-6a]`) and outside alike; a `NEWLINE` and `INDENT` after the `:` is `E0106`, whose help declares a local function on the line above (`fn add(x):` with the block, then `h = add`, `[GRM-28]`).\" In XVII.9, `E0106`: \"a lambda body of more than one statement, or an indented block after a lambda's `:`\".",
+    "codes": "E0106 (reused), row text widened",
+    "milestone": "M1",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-10",
+    "rules": [
+     "TYP-27",
+     "GRM-29",
+     "GRM-38"
+    ],
+    "kind": "CON",
+    "severity": "minor",
+    "title": "One-element tuples: values and types the grammar makes, which [TYP-27] refuses",
+    "program": "fn main():\n    one = (5,)                 # tuple_lit := \"(\" expression \",\" [...] \")\": a tuple; [GRM-29]/[GRM-38]: \"(e,) a tuple\"\n    t: (int,) = one            # tuple_type := \"(\" type \",\" [...] \")\": parses; [TYP-27]: \"a tuple type has two or more elements\"",
+    "why": "[TYP-27]: \"Written as a type, `()` is `void`: a tuple type has two or more elements (ODR-071).\" [GRM-29]: \"An `expr_list` ... of one expression followed by a comma, is a tuple\"; [GRM-38]: \"`(e,)` a tuple\". So `(5,)` is a value of a type that does not exist. Verdict 115 records the owner calling `(A,)` \"a tuple `[TYP-27]` refuses\".",
+    "proposed_text": "Grammar: `tuple_lit := \"(\" \")\" | \"(\" expression \",\" expression {\",\" expression} [\",\"] \")\"` and `tuple_type := \"(\" \")\" | \"(\" type \",\" type {\",\" type} [\",\"] \")\"`. In `[GRM-29]` and `[GRM-38]` replace \"`(e,)` a tuple\" with \"`(e,)` is `E0100` (\"a tuple has two or more elements; write `e`, or `(e, ())` for a pair\"); in a `return` or an `expr_list`, a trailing comma after one expression is the same\".",
+    "codes": "E0100 (reused)",
+    "milestone": "M1",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-11",
+    "rules": [
+     "TYP-5"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "Upcast of a `shares`, `thread_shared` or `weakref` class value to its base is unsaid",
+    "program": "open class Animal:\n    pass\nclass Dog(Animal):\n    pass\n\nfn main():\n    d = shares mut Dog()\n    a: shares mut Animal = shares mut d   # rule 8 lists \"a class object to a base class (upcast)\" and the dyn forms with their words; not `shares mut Dog` → `shares mut Animal`\n    w: weakref Animal = weakref d         # nor `weakref Dog` → `weakref Animal`",
+    "why": "[TYP-5] rule 8: \"a value to an interface its type implements, keeping the word that says who owns it: a value read in place to `dyn I`, an `owns T` to `owns dyn I`, a `shares T` to `shares dyn I`, a `shares mut T` to `shares mut dyn I`; and a class object to a base class (upcast)\". The interface half keeps the word; the base-class half names the plain object only, so an implementer must decide the other words (and `thread_shared`, and `ref`).",
+    "proposed_text": "In rule 8 replace \"and a class object to a base class (upcast)\" with \"and a class object to a base class (upcast), with its word kept: a `Dog` to an `Animal`, a `shares Dog`, `shares mut Dog`, `thread_shared Dog`, `weakref Dog` or `ref Dog` to the same word on `Animal`; never the reverse, which is a kind test or a cast (`[TYP-44]`)\".",
+    "codes": "none new",
+    "milestone": "M4",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-12",
+    "rules": [
+     "THR-9",
+     "TYP-43"
+    ],
+    "kind": "CON",
+    "severity": "minor",
+    "title": "The `ThreadShared` row names `ref mut` and not `MutSpan`",
+    "program": "struct Buf:\n    data: MutSpan[int]      # not `ref mut` by name, so \"every component is ThreadShared\" is read as: a pointer and a length\n\nfn main():\n    xs = [1, 2, 3]\n    b = thread_shared Buf(data=ref mut xs.as_mut_span())   # `[THR-8]`'s `Send` row treats MutSpan as ref mut; the ThreadShared row is silent",
+    "why": "Marker table, `ThreadShared`: \"`ref mut`, `sharedref mut`, `Cell`, `UnsafeCell`, raw pointers, a `shares` or `shares mut` value and a `weakref` link to one are not (`[THR-9]`)\"; the `Send` row names \"`ref mut T` and `MutSpan[T]`\" together. A `MutSpan` is `ref mut` to each element and belongs in the same list; [TYP-43] says the compiler's own types are \"recognised by the module that declares them\", so an implementer cannot fall back on a raw-pointer field inside `MutSpan`.",
+    "proposed_text": "In the `ThreadShared` row: \"`ref mut`, `MutSpan`, `sharedref mut`, `Cell`, `UnsafeCell`, raw pointers, a `shares` or `shares mut` value and a `weakref` link to one are not (`[THR-9]`)\"; the same word in `[THR-9]`'s list.",
+    "codes": "none new",
+    "milestone": "M9",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-13",
+    "rules": [
+     "TYP-46",
+     "ALC-1"
+    ],
+    "kind": "CON",
+    "severity": "minor",
+    "title": "`String using A` is `E2114` by the closed list, yet a `String` is named among the values made in an arena",
+    "program": "fn main():\n    current = LevelArena(1 << 20)\n    name: String using LevelArena = String.new_in(current)   # [TYP-46]'s list: owns, shares, shares mut, thread_shared, a class, Array, Map, Set: a String is \"any other type\" → E2114",
+    "why": "[TYP-46]: \"`using A` after a type whose value has heap memory of its own ... It may follow an `owns`, `shares`, `shares mut` or `thread_shared` type, a class type, or an `Array`, a `Map` or a `Set`; after any other type it is `E2114`\". [ALC-1]: \"a value that grows (an `Array`, `Map`, `Set` or `String`) made in it keeps the word\". A `String` has heap memory of its own and is made in an arena by [ALC-1], and refused by [TYP-46].",
+    "proposed_text": "In `[TYP-46]` and `[ALC-1]`: \"or an `Array`, a `Map`, a `Set` or a `String`\" (IV.1 names these as the collection category, \"from the memory manager its type names (`[TYP-46]`)\").",
+    "codes": "none new",
+    "milestone": "M10",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-14",
+    "rules": [
+     "TYP-21",
+     "TXT-11",
+     "TYP-40"
+    ],
+    "kind": "CON",
+    "severity": "minor",
+    "title": "`String` has `+` and \"implements none of\" the operator interfaces",
+    "program": "fn main():\n    a = String(\"ab\")\n    b = a + \"c\"              # [TXT-11]: takes `a` over; [TYP-21]: `+` calls `Add.add(a, b)` \"with both operands read in place\", and String implements none",
+    "why": "[TYP-21]: \"A type has an operator only by implementing its interface (`[TYP-40]`) ... `bool`, `char` and `String` implement none of them (`String`'s `+` takes its left operand over, `[TXT-11]`)\". The one sentence both denies `String` the interface and gives it the operator; `Add.add` reads `this` in place, so `String`'s `+` cannot be `Add`'s.",
+    "proposed_text": "Replace \"`bool`, `char` and `String` implement none of them (`String`'s `+` takes its left operand over, `[TXT-11]`)\" with \"`bool` and `char` implement none of them; `String` implements none either, and its `+` is a built-in of the language, as the scalar operators are: `a + b` takes `a` over and appends `b` (`[TXT-11]`), so `T: needs Add` is not met by `String`\".",
+    "codes": "none new",
+    "milestone": "text only",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-15",
+    "rules": [
+     "LEX-15",
+     "GRM-37"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "Contextual keywords the grammar uses and [LEX-15] does not list: `module`, `package`, `read`",
+    "program": "#! module overflow(saturate)     # `module` after `#!`: directive := \"#!\" (... | \"module\" module_attr); [LEX-15] lists `language` and `threads` after `#!` only\npub(package, read) fn f():       # `package` and `read` are terminals of `visibility`; [LEX-15] does not name them, so `package = 3` elsewhere is a name or not by a guess\n    pass",
+    "why": "[LEX-15]: \"The table above is the complete reserved set. **Contextual keywords** are keywords only in the stated position and identifiers everywhere else: ... `language` and `threads` after `#!` ...\". The grammar's `directive` has `\"module\"` and `visibility` has `\"package\"` and `\"read\"`, which the list leaves out.",
+    "proposed_text": "Add to `[LEX-15]`'s list: \"`language`, `threads` and `module` after `#!` (and `main`, `any`, `creator` after `#! threads` are plain identifiers); `package` and `read` inside the round brackets after `pub`\".",
+    "codes": "none new",
+    "milestone": "M1",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-16",
+    "rules": [
+     "LEX-18",
+     "LEX-24",
+     "LEX-26"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "Three literal edges the lexer must guess: `t.0.1`, `-128i8`, `\\u{…}` in a byte string",
+    "program": "fn main():\n    t = ((1, 2), 3)\n    x = t.0.1                # `.0.1`: maximal munch reads FLOAT `0.1` after `.`, and `postfix := \".\" INT` has no match\n    m = -128i8               # [LEX-24] covers an untyped literal; `128i8` alone is E2010, so with the suffix the sign has nowhere to apply\n    b = b\"\\u{1F600}\"         # [LEX-26]: a byte string holds \"ASCII characters or escapes\"; `escape` includes `\\u{…}`, which is no byte",
+    "why": "[LEX-18]: \"`1.` followed by an identifier character is a method call on `1`; `1.0` is a float\" says nothing of a digit after `.` in a field access. [LEX-24]: \"A unary minus applied directly to an untyped integer literal forms a negative constant of the literal's eventual type\" (untyped only). [LEX-26]: \"a byte or C string ASCII characters or escapes\" with `escape` holding `\\u{…}`.",
+    "proposed_text": "`[LEX-18]`: add \"After `.` the lexer reads an integer, never a float: `t.0.1` is two field accesses.\" `[LEX-24]`: add \"The same holds for a suffixed literal: `-128i8` is the constant −128 of type `i8`; `128i8` without the minus is `E2010`.\" `[LEX-26]`: replace \"a byte or C string ASCII characters or escapes\" with \"a byte or C string ASCII characters and the escapes but `\\u{…}` (`E0009`: \"a byte string holds bytes; write the UTF-8 bytes, `\\xF0\\x9F\\x98\\x80`, or a text literal\")\".",
+    "codes": "E2010, E0009 (reused)",
+    "milestone": "M1",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-17",
+    "rules": [
+     "PHIL-2",
+     "RC-1"
+    ],
+    "kind": "CON",
+    "severity": "minor",
+    "title": "After F6 the allocation of a shared local is on the making line, and [PHIL-2] still names `shares x`",
+    "program": "fn main():\n    items = [1, 2, 3]            # [RC-1] (0.9.20): made in a block of its own from this line, \"as if that line had said shares\"\n    v = ref items\n    other = shares mut items     # [PHIL-2]: the allocating form is \"a value made shared (`shares x`, ...)\"; `ember inspect --alloc` lists which line?",
+    "why": "[PHIL-2]: \"The allocating forms are: ... a value made shared (`shares x`, `shares mut x`, `thread_shared x`, `[RC-1]`)\". [RC-1]: \"a value that is not a class object is then made in a block of its own from the line that made it, as if that line had said `shares`, so nothing moves\". The allocation is at the making line; [PHIL-2] and `ember inspect --alloc` point at the sharing line.",
+    "proposed_text": "In `[PHIL-2]`: \"a value made shared (`shares x`, `shares mut x`, `thread_shared x`): the block is made where the value is made, so for a local some later line of the function shares, the allocation is the local's own line (`[RC-1]`), and `ember inspect --alloc` lists that line\".",
+    "codes": "none new",
+    "milestone": "text only",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-18",
+    "rules": [
+     "LEX-10",
+     "GRM-37",
+     "FN-8"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "A shebang line is an unknown directive",
+    "program": "#!/usr/bin/env ember        # [LEX-10]: a line beginning `#!` before the imports is a directive; [GRM-37]: \"an unknown directive ... is E0104\"\nprintln(\"hi\")               # a script ([FN-8]) that the shell cannot run",
+    "why": "[LEX-10] and [GRM-37] make every leading `#!` line a directive of three forms; `[FN-8]` calls a file of statements a script, and no rule drops the Unix shebang.",
+    "proposed_text": "Add to `[LEX-10]`: \"A first line beginning `#!` whose next character is `/` is a shebang line, dropped before tokenisation and never a directive, so a script runs from the shell; the formatter keeps it as it is.\"",
+    "codes": "none new",
+    "milestone": "M1",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-19",
+    "rules": [
+     "GRM-34",
+     "IFC-2"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "`extend_decl` takes a `type_body`, which admits fields",
+    "program": "struct P:\n    x: int\n\nextend P implements Display:\n    y: int = 0                     # type_body := NEWLINE INDENT {member} DEDENT; member := ... field_decl ...: parses; no rule says what a field in an `extend` block is\n    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]: return f.write(this.x)",
+    "why": "III.2: \"`extend_decl := [\"unsafe\"] \"extend\" [generic_params] type [implements] [where_clause] \":\" type_body`\" and \"`member := {attribute} [type_params] [visibility] (field_decl | fn_decl | const_decl | type_alias | \"pass\" NEWLINE)`\". [GRM-34] and [IFC-2] speak of methods and implementations only; a field here is `E0901` by silence, which an implementer may not notice.",
+    "proposed_text": "Grammar: `extend_decl := [\"unsafe\"] \"extend\" [generic_params] type [implements] [where_clause] \":\" NEWLINE INDENT {extend_member} DEDENT` with `extend_member := {attribute} [type_params] [visibility] (fn_decl | const_decl | type_alias | \"pass\" NEWLINE)`. Add to `[GRM-34]`: \"An `extend` block adds methods, constants and associated types; a field in one is `E0100` (\"an `extend` block adds no field; write `y: int = 0` in `struct P:`\").\"",
+    "codes": "E0100 (reused)",
+    "milestone": "M1",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-20",
+    "rules": [
+     "GRM-4",
+     "GRM-5"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "Whether `a, b = e` declares a name not in scope is unsaid",
+    "program": "fn main():\n    q = 0\n    q, r = divmod(7, 2)       # `q` is in scope and is assigned; `r` is not: declared ([GRM-4] speaks of `x = e` with one name), or E1010?\n    println(r)",
+    "why": "[GRM-4]: \"`x = e` where no `x` is in scope declares `x` with the type of `e`; where `x` is in scope it assigns\". [GRM-5]: \"`a, b = e` destructures a tuple, a struct or a fixed array. The right side is evaluated once\". Neither says that each target of a `target_list` follows [GRM-4] on its own.",
+    "proposed_text": "Add to `[GRM-5]`: \"Each target follows `[GRM-4]` on its own: a name not in scope is declared with its part's type, one in scope is assigned (`a, b = b, a` swaps two names in scope; `q, r = divmod(7, 2)` declares both); `_` discards its part.\"",
+    "codes": "none new",
+    "milestone": "M1",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G1-21",
+    "rules": [
+     "TYP-15a",
+     "TYP-15"
+    ],
+    "kind": "ED",
+    "severity": "minor",
+    "title": "\"there is no other view container\" reads against `[TYP-15]`'s `Array[StrView]`",
+    "program": "fn main():\n    names: Array[StrView] = [\"ann\", \"bob\"]     # [TYP-15]: a list of views, legal; [TYP-15a]: \"there is no other view container\"",
+    "why": "[TYP-15a]: \"The arena-backed containers (`ArenaArray`, `ArenaMap`, §IX.2) may hold views bounded by the container's own region (`[ARN-5]`); there is no other view container.\" [TYP-15]: \"A view may be stored in any place — a local, a field of a view type, a list's elements\". The sentence means no other container bounds its views by its own region; read alone it denies `Array[StrView]`.",
+    "proposed_text": "Replace \"there is no other view container\" with \"no other container bounds the views it holds by its own region: an `Array[StrView]` holds views bounded by what each points into (`[TYP-15]`)\".",
+    "codes": "none new",
+    "milestone": "text only",
+    "touches_owner_verdict": ""
+   }
+  ],
+  "judged_sound": [
+   "TIER-1: the boundary list matches [LEX-23]'s and the first pass's cross-check; no attribute or profile opens another",
+   "PHIL-3/OWN-7: a Copy type holds no owner and no link; views (ref T, Span, StrView) are Copy and are not links",
+   "PHIL-8 and the I.4 table: every run-time check named has a §X.4 row (division-by-zero and shift-range checks have their own row, X.4 line 304)",
+   "PHIL-12/PHIL-13: E0901 for silence; target-dependent acceptance of [TYP-4]'s `usize + int` is covered by 'the target and its layout'",
+   "PHIL-16 against I.5: `Emitter(\"fountain\")` needs no `owns` because a constructor's argument takes no word ([FN-2a]); the example compiles under [GRM-15]",
+   "LEX-1, LEX-2, LEX-4, LEX-5, LEX-6, LEX-6a, LEX-7, LEX-8, LEX-9 (the `:` sentence is about block-introducing colons), LEX-11, LEX-11a, LEX-23, II.7",
+   "LEX-12, LEX-13, LEX-14, LEX-22: NFC, `_`, `r#name`, no lifetimes; the 52 keywords count",
+   "LEX-16, LEX-17, LEX-17a, LEX-19, LEX-20, LEX-21, LEX-25: untyped literals, f-strings, static StrView, maximal munch and `as?`/`as!`",
+   "GRM-37 module attributes (repeat is E0104; unimplemented is E0900), GRM-1, GRM-33, GRM-34, GRM-8d, GRM-40, GRM-41, GRM-31",
+   "GRM-4 (one name per loop round; shadowing only by `x: T = e`), GRM-7, GRM-28, GRM-18, GRM-19, GRM-44, GRM-45, GRM-6, GRM-20/ATT-3",
+   "GRM-8, GRM-8a (commit tokens cover every type start), GRM-8b, GRM-8c, GRM-10, GRM-11, GRM-16, GRM-15 (`owns` at every place that owns alone), GRM-42, GRM-43, GRM-21, GRM-23, GRM-24, GRM-25, GRM-26, GRM-27, GRM-38, GRM-39, GRM-30, GRM-32, GRM-36",
+   "III.5 precedence table: `-x as u8`, `-2**2`, `using` tighter than the words, `cast` an operand; the `is ... as` header is carved out in prose by GRM-45",
+   "GRM-12, GRM-13, ENM-1, GRM-46 patterns and field clauses",
+   "TYP-1, TYP-2, TYP-3, TYP-42 (counts, no range of them), TYP-27 (apart from G1-10)",
+   "TYP-4 and TYP-5 rules 1 to 7 and 9 to 12 (rule 12 the owner's; rule 11 one level; composition stated); TYP-7",
+   "TYP-8, TYP-28, TYP-29, TYP-10, TYP-30, TYP-31: lexical policies, shifts and zero divisors unchanged by policy, indices of any width compared whole",
+   "TYP-9, TYP-9a, TYP-9b, TYP-9c: float modes lexical; no mode makes NaN undefined",
+   "RNG-1 to RNG-10b: NaN in no range, niche, never Default, `checked`/`clamped` only; RNG-4's unchecked increment is safe with [CTL-3]'s `a..=MAX terminates after MAX`",
+   "TYP-11, TYP-13 (F22's list), IV.4 views and TYP-14 (re-pointing says `ref mut` again), TYP-34, TYP-15 (kept views; a class never a view), IV.5 raw pointers (`ref_to_ptr` one built-in; `null[P]()`)",
+   "IV.6 and TYP-45 for each word standing alone; the `Box`/`Shared`/`Weak`/`RefCell` refusals",
+   "TYP-16, TYP-17 (pub writes all; inferred bounds from method calls; a body checked once), TYP-40, TYP-18, TYP-19 (overlap decided at declaration, open bounds never separate), TYP-47, TYP-35, TYP-41 (normal forms)",
+   "TYP-20 (coherence with acyclic imports gives one writer per implementation), TYP-24, TYP-43 (markers written only in bounds; `unsafe extend` for Send)",
+   "TYP-36 table and `copy of` through links (F17), TYP-39, TYP-37, HASH-1 to HASH-4 (O9 noted), TYP-32, TYP-23, IV.11 resolution (one level stripped; weakref opened first), TYP-25, TYP-26"
+  ],
+  "could_not_cover": "Not re-verified: the §XVII.6.1 shape tables against each code the proposals reuse (E2050, E2020, E7015, E7007, E0100, E0106, E0104), and whether the compiler's `codes.rs` test tolerates the one new code (E0010) G1-08 proposes. Parts V to XVIII were read only at the rules the Parts I–IV findings reach ([FN-2a], [FN-8], [CLS-1], [BRW-7], [RC-1], [ALC-1], [ALC-2], [THR-8], [WK-16], [IFC-2], [IFC-5], [CLO-6], [CTL-3], [MNG-4], [MONO-1], [BLD-14], [HR-12a], [OBJ-1], [OBJ-2]). The `shares mut ref mut T` aliasing question inside G1-04 was not pursued into [RC-7]/[BRW-1]; the finding is reported as the gap in Part IV (which stacks are types), not as a proven race. The verdict search in JOB.md was by rule id for the rules named in the findings; verdicts that bear on them under another name may exist."
+ },
+ "verdicts": {
+  "group": "G1",
+  "verdicts": [
+   {
+    "id": "G1-01",
+    "verdict": "confirmed",
+    "reason": "[TYP-22]: 'An interface is usable as `dyn` only if every method has an object (none is a `static fn`), does not return `Self` by value (methods marked `where Self: needs Sized` excepted), and is not generic, except over a type parameter used only as the type of a parameter that views its value'. [IFC-5] adds only the generic case: 'an interface whose generic method returns or stores its type parameter is not usable as `dyn`'. [STR-7] defines `Self` 'Inside the body of a `struct`, `enum`, `class` or `extend` block' and nowhere for a call through `dyn I`. So `Same` with `fn same(other: Self)` meets every condition of [TYP-22], `a.same(b)` on two `dyn Same` gives `other` a type no rule names, and the one place that knows the problem is [TYP-36]'s special entry ('`owns dyn I` compares when `I` requires `Eq` ... values of two different kinds are never equal'). Nothing refuses the program; an implementer who reads `Self` as `dyn I` lets one kind's bytes be read as another's.",
+    "better_fix": "The reader's replacement in [TYP-22] is right and general. Add two sentences so that required interfaces are covered too, since [TYP-22] already keeps an interface requiring `Clone` (whose `clone` returns `Self`) usable: 'A method of an interface that `I` requires (`interface Shape: needs (Eq, Ord):`) is reached through `dyn I` only where it names `Self` nowhere but as `this`, and through the two entries this document gives: `clone` (section IX.1) and `eq` ([TYP-36], the kinds compared first). Any other such method called through a `dyn I` value is `E2050` at the call (\"`cmp` takes `other: Self`, and through a `dyn Shape` the kind of `other` is unknown; test the kinds first, `if a is Circle as x:` and inside it `if b is Circle as y:`, and call `x.cmp(y)`\").' Keep the reader's `E2050` example for `Same` and the `where Self: needs Sized` escape ('which a `dyn` value does not have', the `Sized` row of the marker table)."
+   },
+   {
+    "id": "G1-02",
+    "verdict": "narrowed",
+    "reason": "[ENM-3] already answers the direction and the way back: 'A unit-only enum ... converts to its representation with `as`, and converts back with `Mode.from_repr(x) -> Option[Mode]`', so the text does not admit `7 as Color` as a checked program's form and names the checked construction. What remains: [TYP-6] lists its pairs ('integer -> integer: keeps the low bits ...') with no closing sentence for every other pair, and [TYP-12] ('A unit-only enum is an integer') lets an implementer put the enum under [TYP-6]'s first bullet; `bool` under `as` is in neither, so it is E0901 by the document's convention rather than a defined refusal. The proposed help is also wrong against the text: the enum's checked conversion is `Color.from_repr(7) -> Option[Color]` ([ENM-3]), not `try_from`/`RangeError`, which [TYP-6] gives for integers.",
+    "narrowed_to": "[TYP-6] lacks a closing clause for unlisted pairs (an integer to an enum, anything to or from `bool`), and [TYP-12]'s 'is an integer' should read 'is stored as an integer', with [ENM-3] cited.",
+    "better_fix": "In [TYP-12]: 'A unit-only enum is stored as an integer (`@repr(u8)` ...); its values are its variants, and the conversions are [ENM-3]'s.' Add to the end of [TYP-6]'s list: '* `bool -> integer`: `true` is 1 and `false` 0 (Python's `int(True)`, [PHIL-14]); nothing converts to `bool` (`x != 0` is the test); * a unit-only enum -> an integer type that holds every one of its discriminants (`Color.Green as u8`, [ENM-3]); an integer never converts to an enum, since a value of an enum is one of its variants and `Option[Color]` keeps `None` in an unused discriminant ([TYP-13]): `7 as Color` is `E2020` (\"an integer may be no `Color`; write `Color.from_repr(7)`, an `Option[Color]`, and open it: `if Color.from_repr(7) exists as c:`\"); * `as` between any other pair of types is `E2020`, naming both.'"
+   },
+   {
+    "id": "G1-03",
+    "verdict": "confirmed",
+    "reason": "[TYP-46]/[ALC-1]: 'A value whose manager may have several instances keeps its instance's address, one word, so that its growth and its end go back to the instance it came from'. [THR-8]'s reachable list is closed and does not name it: 'nothing reachable from it (its fields, its elements, what its `owns` parts hold, a function value's state) is a one-thread owner ...; collections and class objects are `Send` when every component is'. [ALC-5] makes growth a change of the instance ('the instance is changed only by what allocates from it ...: the `Allocator` methods that value's growth and end call'), and [ARN-1] makes `Arena`'s allocation a change of `this` ('called through a name that may change the arena'). [THR-11] checks 'two of them changing one place' from 'its body and every function it may run', and nothing says a value's growth is a change of its instance for that check, so two scoped tasks growing `xs` and `ys` made in one `Arena` bump one cursor from two threads, and `thread_shared T using A` ends on any thread ([RC-4]) through `deallocate` on a one-thread instance. The text covers neither route.",
+    "better_fix": "The reader's 'a view of its instance, `ref A`, for every rule of the language' would collide with [ALC-5] and [ARN-1]: `allocate` changes the arena, so two values each holding a `ref A` and growing through it would be two changers through read-only views (`E3023`) on one thread, which [ALC-5] deliberately allows. Narrow it to the two rules that need it. Add to [TYP-46] (and the same to [ALC-1] after verdict 107's two exceptions, which stay): '* `[TYP-46a]` **A value made in an instance follows its manager between threads.** For `Send` and `ThreadShared` a value whose growth or end calls its instance's methods (one that keeps the instance word, and one in a `FoundByAddress` manager, whose end finds the instance from its address) holds a `ref A` to that instance: it is `Send`, and `ThreadShared`, only when `A` is `ThreadShared` ([THR-8], [THR-9]), since those calls run on whichever thread holds or ends it. A value made in a manager that frees nothing one by one and does not grow holds nothing. `thread_shared T using A` with an `A` that is not `ThreadShared` is `E7015` at the making line (\"`st` would end on whichever thread holds its last owner, and `current`, an `Arena`, is used by one thread; make it in the built-in manager, `st = thread_shared Stats()`, or in a manager any thread may call\"). For [THR-11] a value's growth and end are changes of its instance, so two scoped tasks growing values made in one instance are `E7007` naming the instance (\"the tasks on lines 7 and 9 grow `xs` and `ys`, both made in `current`, so both change `current`; give each task an arena of its own, `a = Arena(1 << 20)` inside its function, or make the lists in the built-in manager, `xs = []`\"), unless `A` is `ThreadShared`. For the exclusivity rules [ALC-5] stands: growth and end are the changes of the instance it allows.' Add `ref A` for such values to the `Send` and `ThreadShared` rows of the marker table."
+   },
+   {
+    "id": "G1-04",
+    "verdict": "confirmed",
+    "reason": "III.3: '`base_type := path_type | \"ref\" [\"mut\"] base_type | \"sharedref\" \"mut\" base_type | \"owns\" base_type | \"shares\" [\"mut\"] base_type | \"thread_shared\" base_type | \"weakref\" base_type | ...`' is recursive on every word. [TYP-45] defines each word over a plain `T` ('`owns T`: held alone, in a heap block of its own ...; `shares T` and `shares mut T`: one of several owners of a value ...') and never a word over a worded type; [TYP-15] names where a view may be stored ('a local, a field of a view type, a list's elements, a struct a call makes') and not an `owns` block or a counted block; [GRM-3] says only that the words 'say who owns the value, how it may be reached and where its memory comes from'. The audit's O2 names `weakref thread_shared T` and `weakref shares T` as the one pair with a meaning or a refusal to decide, and no sentence covers `owns owns T`, `shares mut ref mut T`, `owns ref T` or `thread_shared shares T`. The program parses and no rule says what the two `shares mut` owners of one `ref mut` may do.",
+    "better_fix": "The reader's [TYP-45a] is the right shape with three edits. (1) Leave `weakref thread_shared T` to O2 explicitly ('whether `weakref` stands before `thread_shared T` is [O2]'s question, open with the owner') rather than refusing it, since [THR-8] and [WK-12] need the link's type to say its target's kind. (2) `ref` and `ref mut` stand before an owner word or a link (`ref mut owns Mesh`, `ref weakref Node`: the view of a place that holds such a value, read through by [TYP-14], and `=` on the `ref mut` one replaces what the place holds, as `e.mesh = owns Mesh(...)` does), never before `ref`, `ref mut` or `sharedref mut`: `ref ref T` and `ref mut ref mut T` are `E0100` (\"a view of a view names the same place; write `ref mut T`\"). (3) `*` and `*mut` are raw and stand before any type ([TYP-7], IV.5), outside this rule. Everything else in the proposal (every other word before a word is `E0100`, with the help giving the one-word type; a value that is to hold a view or a link is a struct with such a field) stands."
+   },
+   {
+    "id": "G1-05",
+    "verdict": "confirmed",
+    "reason": "[OBJ-1]: 'The header is 8 bytes: a 32-bit count and a 32-bit type index'; [DSP-3]: 'finds the interface's table through the type index'; [TYP-44]/[DSP-6]: 'Each test and each cast is one compare of type indices'; [MNG-4] names type information as a symbol, '`em_ti_` followed by the type's mangled form'; [MONO-1]: 'deduplicated at link time, across separately compiled packages too'; [RT-3] lists what `TypeInfo` holds ('size, alignment, flags, name, base, drop functions, method tables') with no index; [HR-12a] and `E9035` are about the header size only ('every package in a process agrees on whether reload is enabled'). No sentence says who gives the 32-bit number or that two types in one process never share one; a package compiled alone cannot know the other packages' kinds, so per-package numbering is the natural and unsafe reading.",
+    "better_fix": "Keep the reader's [TYP-44a] with three corrections. (1) Drop the reuse of `E9035`: once the index is given at link (and at load for a reload image), no two packages can disagree, so there is nothing to refuse; the reload case is written beside [HR-12a] ('a reload image's new kinds take indices above the process's at load'). (2) Say the mechanism in the document's terms: 'compiled code names a kind by its type-information symbol (`em_ti_...`, [MNG-4]); the linker gives each such symbol in the process one index, so a generic instance deduplicated at link ([MONO-1]) has one, and fills each compare with it'. (3) The C-backend note is a cost and belongs as a parenthesis on the kind-test row of X.4 ([COST-3]): 'one compare of the header's index against a constant; where the C toolchain cannot fill an immediate from a link-time value, one load of that constant per function, which `ember inspect` reports on the same row'."
+   },
+   {
+    "id": "G1-06",
+    "verdict": "confirmed",
+    "reason": "[LEX-10]: 'A line beginning `#!` before the first import or item is a directive ([GRM-37]), not a comment; anywhere else it is a comment.' [GRM-37]: 'A directive after an import or item, an unknown directive, or a module attribute with an invalid target or arguments is `E0104`.' The two name the same line and give it two fates, and under [LEX-10]'s reading [LEX-11] ('a comment never affects compilation, including by producing a diagnostic') makes `#! module overflow(wrap)` below an import vanish in silence, which [PHIL-12] calls 'a defect of the worst class'.",
+    "better_fix": "The reader's text, without its last sentence (G1-18 is refuted below): replace in [LEX-10] with 'A line beginning `#!` is a directive wherever it stands ([GRM-37]) and never a comment: one below an import or an item is `E0104` (\"`#! module overflow(wrap)` is a directive, and directives come first; move it above `import std.io`\").' Change II.3's example line to match ('a directive, [GRM-37]; below the imports it is `E0104`')."
+   },
+   {
+    "id": "G1-07",
+    "verdict": "confirmed",
+    "reason": "III.1: '`file := {directive} {NEWLINE} {import_decl} {item}`', and the Part's own promise: '**Every construct used anywhere in this specification appears here**; a construct in an example that this Part does not produce is a defect in the example.' [GRM-2]: 'in the **entry file** only ..., statements at file scope, which form the implicit `main`'; [FN-8]: 'the statements at file scope of the entry file ([GRM-2]) form, in source order, the body of an implicit `fn main()` ...; items anywhere in the file are declared as usual'. The production cannot produce the file [GRM-2] and [FN-8] describe, and no sentence in III.1 or V.1 ([MOD-3] binds names; nothing orders imports) says whether an import may follow a statement or an item.",
+    "better_fix": "The reader's production and the [GRM-2] sentence are right. State the import order as a rule of the production, not only of the help: '`file := {directive} {NEWLINE} {import_decl} {item | statement}` -- `statement` in the entry file only ([GRM-2]); an import below an item or a statement, and a statement outside the entry file, are `E0100`', with [GRM-2]'s help '\"imports come first: move `import std.math` above line 2\"'."
+   },
+   {
+    "id": "G1-08",
+    "verdict": "confirmed",
+    "reason": "[LEX-1]: 'Source files are UTF-8 ... An invalid UTF-8 sequence is `E0001`' admits every valid scalar; [LEX-12] normalises identifiers to NFC and says nothing of format characters; [LEX-11]: 'a comment never affects compilation, including by producing a diagnostic'; [LEX-26] lists what a literal admits by escapes and no raw character it refuses; II.7's `Error` token is for 'an invalid character' and nothing names U+202A to U+202E or U+2066 to U+2069 as one. [PHIL-16] ('The words say what the code does') is a promise the displayed program breaks while the lexed one compiles; no code in the E000x range covers it, and `E0010` (and `E0007`) are unregistered in XVII.9.",
+    "better_fix": "The reader's [LEX-1a], with the scope made exact: 'in a source file or an overlay ([GRM-35]), in a comment, a string, raw string, byte or C string literal included' (a manifest is TOML and [MAN-*]'s; say there, in one clause, that `ember.toml` is read with the same refusal). Keep: the one way to write one is the escape of [LEX-26], this is the one diagnostic a comment produces (amend [LEX-11]: 'Apart from [LEX-23] and [LEX-1a]'), and the formatter never writes one. Register `E0010` with the row 'a Unicode bidirectional format character in source' and reference [LEX-1a]."
+   },
+   {
+    "id": "G1-09",
+    "verdict": "confirmed",
+    "reason": "III.5: '`lambda := ... \"fn\" \"(\" ... \")\" [capture_list] [\"->\" type] (\"=>\" expression | \":\" block)`' with III.4's '`block := NEWLINE INDENT {statement} DEDENT | simple_stmt NEWLINE`', so `h = fn(x):` followed by an indented block of two statements parses. [GRM-17] speaks only of two placements: 'inside brackets holds exactly one simple statement ([LEX-6a]). More is `E0106`' and 'Outside brackets, a `:` body on the lambda's own line is one simple statement, ended by the statement's `NEWLINE`'; neither sentence names an indented block after the `:`. [LEX-6a]'s 'A lambda body needing more than one statement is written as a local function' is stated inside a rule about brackets, and XVII.9's `E0106` row reads 'a multi-statement closure cannot be written inside brackets', so the block form outside brackets is accepted by the grammar and refused by nothing.",
+    "better_fix": "The reader's text is right as written: `(\"=>\" expression | \":\" simple_stmt)` in the grammar, the [GRM-17] sentence, and the widened `E0106` row. Add the help's exact lines in [GRM-17]: '\"a lambda's body is one simple statement; declare a local function: `fn add(x):` on the line above with the block below it, then `h = add`\" ([GRM-28])'."
+   },
+   {
+    "id": "G1-10",
+    "verdict": "confirmed",
+    "reason": "III.5: '`tuple_lit := \"(\" \")\" | \"(\" expression \",\" [expression {\",\" expression} [\",\"]] \")\"`' and III.3: '`tuple_type := \"(\" \")\" | \"(\" type \",\" [type {\",\" type} [\",\"]] \")\"`' both produce one element; [GRM-29]: 'An `expr_list` of two or more expressions, or of one expression followed by a comma, is a tuple'; [GRM-38]: '`(e,)` a tuple'; [TYP-27]: 'Written as a type, `()` is `void`: a tuple type has two or more elements (ODR-071)'. So `(5,)` is a value whose type cannot be written, and verdict 115 records the owner reading `(A,)` as 'a tuple [TYP-27] refuses'. Patterns (`\"(\" [pattern {\",\" pattern} [\",\"]] \")\"`) and targets (`target_list := target {\",\" target} [\",\"]`) admit the one-element form too.",
+    "better_fix": "The reader's grammar for `tuple_lit` and `tuple_type` is right; the help `(e, ())` is not a fix anyone wants. Write: in [GRM-29] and [GRM-38], '`(e,)`, and one expression followed by a comma in an `expr_list` (`return x,`), a `target_list` (`a, = e`) or a pattern (`(p,)`), is `E0100` (\"a tuple has two or more elements; write `e`\")', and change the two pattern and target productions to `{\",\" x} [\",\"]` only after a second element, as the tuple productions are."
+   },
+   {
+    "id": "G1-11",
+    "verdict": "confirmed",
+    "reason": "[TYP-5] rule 8: 'a value to an interface its type implements, keeping the word that says who owns it: a value read in place to `dyn I`, an `owns T` to `owns dyn I`, a `shares T` to `shares dyn I`, a `shares mut T` to `shares mut dyn I` ([TYP-45]); and a class object to a base class (upcast)'; IV.6: 'Upcasting to a base class or to `dyn I` is implicit'. The interface half lists its words; the base-class half names 'a class object' only, and [TYP-5] is 'the complete list', so `shares mut Dog` to `shares mut Animal`, `weakref Dog` to `weakref Animal` and `thread_shared Dog` to `thread_shared Animal` are refused by silence and an implementer must decide them.",
+    "better_fix": "The reader's list is right to leave `ref mut` out, and the text must say why, because [TYP-14] ('`=` on a `ref mut` name writes the place it names') and [BRW-14] ('A `ref mut` one writes the caller's place') would let `a = Cat()` through a `ref mut a: Animal` put a `Cat` into a `Dog` place (see the missed item below). Write in rule 8: 'and a class object to a base class (upcast), with its word kept: a `Dog` to an `Animal`, and a `shares Dog`, `shares mut Dog`, `thread_shared Dog`, `weakref Dog` or `ref Dog` to the same word on `Animal` (`=` on a `shares mut` name hands the owner over, [HEAP-6], and never writes the block, so a wider owner cannot put another kind into the place); never a `ref mut Dog` to a `ref mut Animal`, since `=` on a `ref mut` name writes the place ([TYP-14]) and the place is a `Dog`'s (`E2020`: \"`ref mut d` names a `Dog` place, which a `ref mut Animal` could fill with another kind; pass `d` to a parameter that reads, or `shares mut d` if the dog is shared\"); and never the reverse, which is a kind test or a cast ([TYP-44])'."
+   },
+   {
+    "id": "G1-12",
+    "verdict": "narrowed",
+    "reason": "The `ThreadShared` row and [THR-9] name '`ref mut T`, `sharedref mut T`, `Cell`, `UnsafeCell`, raw pointers, `shares T`, `shares mut T`, and a `weakref` link to a value that is not `thread_shared` are not', without `MutSpan`. But the text already makes a `MutSpan` a `ref mut` to its elements: IV.4 'A `MutSpan`'s elements are written only through a name that says `ref mut`', and VII 'A **read-only view** is every view except `ref mut T`, `sharedref mut T` and a `MutSpan[T]`', so no faithful reading makes `Buf` `ThreadShared` (a pointer-and-length reading gives a raw pointer, also 'not'). The program is refused either way; only the row's symmetry with the `Send` row ('`ref mut T` and `MutSpan[T]` when `T` is `Send`') is missing.",
+    "narrowed_to": "A text-only consistency fix: add `MutSpan` to the `ThreadShared` row and to [THR-9]'s list, as the reader proposes; no program is accepted that should not be."
+   },
+   {
+    "id": "G1-13",
+    "verdict": "confirmed",
+    "reason": "[TYP-46]: 'It may follow an `owns`, `shares`, `shares mut` or `thread_shared` type, a class type, or an `Array`, a `Map` or a `Set`; after any other type it is `E2114`'; [ALC-1]'s opening list is the same ('an `owns`, `shares`, `shares mut` or `thread_shared` value, a class object, an `Array`, `Map` or `Set`'), yet the same rule later says 'a value that grows (an `Array`, `Map`, `Set` or `String`) made in it keeps the word', and IV.1's Collection row names '`Array`, `String`, `Map`, `Set`' with memory 'from the memory manager its type names ([TYP-46])'. A `String` is both admitted and `E2114`.",
+    "better_fix": "Add `String` to both closed lists, as the reader says. Note that `String.new_in` exists nowhere in the text ([TXT-11] lists `String()`, `String(s)`, `with_capacity(n)`); the making line is [ALC-1]'s general form, `name: String using LevelArena = String(\"\") using current` or `String.with_capacity(16) using current`, and `new_in` is written only for `Array` ([ALC-1]); either add `String.new_in(a)` to [TXT-11] or let the example use `String(\"\") using current`."
+   },
+   {
+    "id": "G1-14",
+    "verdict": "narrowed",
+    "reason": "[TXT-11] defines the operator in full: '`a + b` for `a: String, b: StrView` takes `a` over and returns it extended; `s += t` appends. `StrView + StrView` is `E2040`'. [TYP-21] says 'A type has an operator only by implementing its interface ([TYP-40])' and then '`bool`, `char` and `String` implement none of them (`String`'s `+` takes its left operand over, [TXT-11])', so the text does state that `String`'s `+` is not `Add`'s and `T: needs Add` is not met by `String`; the only sentence without the exception is the opening 'Operators desugar to these interfaces for non-scalar operands; `a + b` calls `Add.add(a, b)` with both operands read in place.' No implementer is left to guess the behaviour; the opening sentence contradicts the later one.",
+    "narrowed_to": "An editorial fix to [TYP-21]'s first sentence.",
+    "better_fix": "'Operators desugar to these interfaces for non-scalar operands, but one: `a + b` calls `Add.add(a, b)` with both operands read in place, and `String`'s `+` is the language's own, taking `a` over ([TXT-11]), so `String` implements no operator interface and does not meet `T: needs Add`.' Then drop the parenthesis from the later sentence."
+   },
+   {
+    "id": "G1-15",
+    "verdict": "confirmed",
+    "reason": "[LEX-15]: 'The table above is the complete reserved set. **Contextual keywords** are keywords only in the stated position and identifiers everywhere else: ... `language` and `threads` after `#!` ...'. III.1: '`directive := \"#!\" (\"language\" STRING | \"threads\" IDENT | \"module\" module_attr) NEWLINE`' and III.2: '`visibility := \"pub\" [\"(\" (\"package\" | \"read\" | \"package\" \",\" \"read\") \")\"]`' use `module`, `package` and `read` as terminals, which the list does not name, so whether `package = 3` is a name elsewhere is decided by nothing.",
+    "better_fix": "The reader's addition is right; write it in the list's own form: '`language`, `threads` and `module` after `#!` (the word after `#! threads` is an identifier, one of `main`, `any`, `creator`, [FFI-33]); `package` and `read` inside the round brackets after `pub`'."
+   },
+   {
+    "id": "G1-16",
+    "verdict": "confirmed",
+    "reason": "(a) [LEX-21] 'Tokenisation is maximal munch' and II.5 '`float_lit := dec_lit \".\" dec_lit ...`' read `0.1` after `t.` as a `FLOAT`, and III.5's '`postfix := ... \".\" INT`' has no production for it; [LEX-18] ('`1.` followed by an identifier character is a method call on `1`; `1.0` is a float') covers a leading literal only. (b) is wider than reported: II.5 defines '`int_suffix := \"i8\"|...`' and no production uses it ('`int_lit := dec_lit | hex_lit | oct_lit | bin_lit`', while `float_lit` does use `float_suffix`), so `128i8` is produced by nothing, and [LEX-16] ('An integer literal without a suffix is an **untyped integer**') and [LEX-24] ('A unary minus applied directly to an untyped integer literal') say what a suffixed one is nowhere. (c) [LEX-26]: 'a byte or C string ASCII characters or escapes' with '`escape := ... | \"\\u{\" hex{1,6} \"}\"`' admits `\\u{1F600}` in `b\"...\"` and gives it no bytes.",
+    "better_fix": "(a) as proposed in [LEX-18]. (b) in the grammar '`int_lit := (dec_lit | hex_lit | oct_lit | bin_lit) [int_suffix]`' and a new sentence in [LEX-16]: 'A literal with a suffix has the suffix's type; one that does not fit it is `E2010`. A unary minus directly before it forms the negative constant of that type: `-128i8` is -128 of type `i8`, and `128i8` alone is `E2010`' (which replaces the reader's [LEX-24] addition). (c) as proposed in [LEX-26], with the same clause for a C string, and `\\x80` to `\\xFF` in a text literal added (see the missed items)."
+   },
+   {
+    "id": "G1-17",
+    "verdict": "confirmed",
+    "reason": "[PHIL-2]: 'The allocating forms are: ... a value made shared (`shares x`, `shares mut x`, `thread_shared x`, [RC-1]) ... Each carries the `Alloc` effect and is listed by `ember inspect --alloc`.' [RC-1] (0.9.20): 'a local of this function that owns its value ... is then made in a block of its own from the line that made it, as if that line had said `shares`, so nothing moves'. The block is made at line 2 and [PHIL-2] names line 4's form as the allocating one, so `ember inspect --alloc` has two lines to choose from. Text-only.",
+    "better_fix": "Shorter than proposed, in [PHIL-2]: 'a value made shared (`shares x`, `shares mut x`, `thread_shared x`): the block is made where the value is made, so for a local shared on a later line the allocation is the local's own line, which `ember inspect --alloc` lists with the sharing line beside it ([RC-1])'."
+   },
+   {
+    "id": "G1-18",
+    "verdict": "refuted",
+    "reason": "The text refuses the program and leaves nothing to guess: III.1 '`directive := \"#!\" (\"language\" STRING | \"threads\" IDENT | \"module\" module_attr) NEWLINE`' produces no `#!/usr/bin/env ember`, and [GRM-37] says 'A directive after an import or item, an unknown directive, or a module attribute with an invalid target or arguments is `E0104`', so the first line is `E0104`. No rule promises that a script runs from the shell: [GRM-2] names how an entry file is run ('the file given to `ember run`/`ember build`, or the manifest's `entry`'), and [FN-8]'s 'Scripts' sentence defines the implicit `main`, not a launch route. A shebang is a feature request for the owner (one word: whether `#!/` is dropped before tokenisation), not a hole or a contradiction."
+   },
+   {
+    "id": "G1-19",
+    "verdict": "confirmed",
+    "reason": "III.2: '`extend_decl := [\"unsafe\"] \"extend\" [generic_params] type [implements] [where_clause] \":\" type_body`' and '`member := {attribute} [type_params] [visibility] (field_decl | fn_decl | const_decl | type_alias | \"pass\" NEWLINE)`' produce a field inside an `extend` block. [IFC-1]: '`extend T:` without `implements` adds inherent methods to `T`'; [GRM-34] speaks of methods and implementations; [TYP-11] fixes a struct's layout by 'declaration order'. No sentence says a field here is refused, so an implementer either adds a field from another block (and changes a layout another package may have compiled) or guesses `E0901`.",
+    "better_fix": "The reader's `extend_member` production and [GRM-34] sentence are right. Give the reason in the message, in the document's voice: '\"an `extend` block adds no field: a type's layout is its declaration's ([TYP-11]); write `y: int = 0` in `struct P:`\"'."
+   },
+   {
+    "id": "G1-20",
+    "verdict": "confirmed",
+    "reason": "[GRM-4]: '`x = e` where no `x` is in scope declares `x` with the type of `e`; where `x` is in scope it assigns'; [GRM-5]: '`a, b = e` destructures a tuple, a struct or a fixed array. The right side is evaluated once'; [GRM-42]'s list of 'names declared without types of their own' names captures, loop names, pattern names, `exists as` names and lambda parameters, not assignment targets. Whether `q, r = divmod(7, 2)` with `q` in scope declares `r`, or is refused as mixing a declaration with an assignment (as `E1020` refuses a redeclaration), is decided by no sentence; [PHIL-14]'s Python meaning argues for the first, and an implementer may take either.",
+    "better_fix": "The reader's sentence in [GRM-5] is right and general; add `_` from [LEX-13] ('`_` discards its part') and the refusal side: 'a name that appears twice in one target list is `E1020`'."
+   },
+   {
+    "id": "G1-21",
+    "verdict": "confirmed",
+    "reason": "[TYP-15a]: 'The arena-backed containers (`ArenaArray`, `ArenaMap`, section IX.2) may hold views bounded by the container's own region ([ARN-5]); there is no other view container.' [TYP-15]: 'A view may be stored in any place -- a local, a field of a view type, a list's elements ...: `names = [\"ann\", \"bob\"]` is an `Array[StrView]` of text written in the program'. Read alone the last clause denies the `Array[StrView]` that [TYP-15] gives as its example; the meaning (no other container bounds its views by its own region) is one clause away. Editorial.",
+    "better_fix": "The reader's replacement is right: 'no other container bounds the views it holds by its own region: an `Array[StrView]` holds views bounded by what each points into ([TYP-15])'."
+   }
+  ],
+  "missed": [
+   "[TYP-14], [BRW-14], [TYP-5] rule 8, IV.9 (beside G1-11; MEM, critical): `=` through a `ref mut` name whose type is a base class, or `dyn I`, writes another kind into the caller's place. Program: `open class Animal:\\n    hp: int = 1\\nclass Dog(Animal):\\n    bone: int = 7\\nclass Cat(Animal):\\n    pass\\nfn feed(ref mut a: Animal):\\n    a = Cat()                 # [TYP-5] rule 8 upcasts the Cat at the assignment; [TYP-14]: `=` on a `ref mut` name writes the place it names; [BRW-14]: a `ref mut` one writes the caller's place\\nfn main():\\n    d = Dog()\\n    feed(ref mut d)           # a `Dog` place now holds a `Cat`\\n    println(d.bone)           # reads past the Cat's block: own fields follow base-class fields ([OBJ-1])`. The same with `fn bump(ref mut v: dyn Shape): v = Circle(r=1.0)` (IV.9: '`ref mut v: dyn I` may change it'), where the written value is unsized. No sentence refuses either. Rule: '* `[TYP-14a]` `=` on a `ref mut` name of a base-class or `dyn I` type never gives the place a whole value, since the place's own kind may be narrower than the name's: it is `E3023` (\"`a` views a place whose kind may be narrower than `Animal`; change its fields, `a.hp = 0`, or take the object over, `owns a: Animal`, and return the new one\"). A `shares mut` or `thread_shared` name of such a type is not affected: `=` on it hands the owner over ([HEAP-6]).'",
+   "[LEX-26], [LEX-20] (LEX, minor): `\\\\x80` to `\\\\xFF` inside a text literal. A string literal 'has type `StrView`' ([LEX-20]) and a `StrView` is 'a `Span[u8]` known to be valid UTF-8' (IV.4), yet `escape` admits `\\\\x` with any two hex digits in `string_body`, so `s = \"\\\\xFF\"; println(s.len())` is produced by the grammar and either an invalid `StrView` in Safe code or a `char` U+00FF by a guess. Rule: 'in a text literal `\\\\x` takes `00` to `7F`; above it is `E0009` (\"write the character, `\\\\u{FF}`, or a byte string, `b\\\"\\\\xFF\\\"`\")'.",
+   "[LEX-26] (LEX, minor): a NUL inside a C string literal. II.5: '`cstr_lit := 'c\"' byte_body* '\"'  -- type CStrView, NUL-terminated`', and `escape` admits `\\\\0`, so `p = c\"ab\\\\0cd\"` makes a `CStrView` whose C length is 2 and whose Ember length nothing defines. Rule: '`\\\\0` and `\\\\x00` inside a C string literal are `E0009` (\"a C string ends at its first NUL; write `c\\\"ab\\\"`\")'.",
+   "[TYP-22], [IFC-4] (beside G1-01; GAP, major): `dyn I` for an interface with an associated type the use does not bind. Every example writes `owns dyn Iterator[Item = Y]` (VI, XV), and [GRM-8c] gives the binding form, but [TYP-22] lists what makes an interface usable as `dyn` and says nothing of associated types, so `it: owns dyn Iterator = owns xs.iter()` then `it.next()` has a result of type `Item` that no rule fixes, and a compiler must guess (refuse, or treat it as a second `dyn`). Rule: 'A `dyn I` names every associated type of `I` with `Name = T` (`owns dyn Iterator[Item = int]`); one left unnamed is `E2060` (\"`dyn Iterator` leaves `Item` open; write `owns dyn Iterator[Item = int]`\").'",
+   "[LEX-16], II.5 grammar (beside G1-16; LEX, major): `int_suffix` is defined and used by no production (`int_lit := dec_lit | hex_lit | oct_lit | bin_lit`, while `float_lit` uses `float_suffix`), so no suffixed integer literal is produced and no rule gives one its type; `n = 5u8` is a lexer guess. The fix is in G1-16's better text."
+  ]
+ }
+}

@@ -87,30 +87,34 @@ type           unsafe         using          virtual        void           weakr
 where          while          with           yield
 ```
 
-* `[LEX-15]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* The table above is the complete reserved set. **Contextual
-  keywords** are keywords only in the stated position and identifiers everywhere else: `abstract`
-  and `open` before `class` (so `File` can have its `open`, `[STD-22]`, ODR-134); `from` at the start
-  of an import, after a function's result type and after a field's type (`[GRM-46]`); `extend` at the start of an item when the type
-  it extends follows, directly or after generic parameters (`[GRM-34]`); `gen` and `once` immediately before `fn`; `safe` before `fn` in an extern block and at the start of a statement before `:` (`[UNS-12]`); `some`
-  at the start of a type; `c` and `cpp` between `import` or `overlay` and a string; `language` and
-  `threads` after `#!`; `overlay` at the start of an item, and `rename` and `hide` inside an overlay
-  (`[GRM-35]`); `union` at the start of an item followed by a name, where it is reserved for a future
-  version (`E0005`), so `Set` can have its `union` method (`[STD-16]`); `needs` directly after the `:` of a type parameter, an interface's header, an associated type or a
-  `where` clause (`[TYP-17]`); `copy` directly before `of`,
-  and `of` directly after `copy` (`copy of x`, so `mem.copy` and a count's `of` stay names,
-  `[GRM-43]`); `exists` between the value and `as` in an `if`, `elif` or `while` header (`[GRM-44]`);
-  `runtime` after a parameter's `:` and directly before `dyn` (`[LT-48]`);
-  `cast` at the start of an operand directly before a name or
-  `this` (`cast s as Circle`, `[GRM-30]`), so `cast(p)` stays a call; `guarded` and `by` after the type
-  of a field or a `static` (`[GRM-46]`). The reserved words `not` and
-  `is` are also method names immediately after `fn` in a type's body, an `extend` block or an
-  interface, and after `.` and `?.`, so `Not` can have its method `not` (`a.not()` is `~a`, ODR-040)
-  and `AnyError` its method `is[E]()` (`[ERR-8]`, ODR-106); a function standing alone, an item or a
-  local function, may take neither (`E0005`; `r#is` is its raw spelling). **Reserved for a future version** (lexed as keywords; using one as a
-  name is `E0005`, whose message names the reservation): `async`, `await`, `macro`. **Reserved and
-  not words of Ember** (lexed as keywords so that no program uses them as names; any use is `E1010`,
-  whose message gives the word to write): `owned` (write `owns`: `owns x: T`, `owns this`, `mesh: owns
-  Mesh`, `fn() owns x:`, and in a C contract `@ffi(param(widget, owns, one))`, verdict 102) and `self` (inside a method its object is `this`, `[GRM-41]`).
+* `[LEX-15]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* The table above is the
+  complete reserved set. **Contextual keywords** are keywords only in the stated position and
+  identifiers everywhere else: `abstract` and `open` before `class` (so `File` can have its `open`,
+  `[STD-22]`, ODR-134); `from` at the start of an import, after a function's result type and after a
+  field's type (`[GRM-46]`); `extend` at the start of an item when the type it extends follows,
+  directly or after generic parameters (`[GRM-34]`); `gen` and `once` immediately before `fn`;
+  `safe` before `fn` in an extern block and at the start of a statement before `:` (`[UNS-12]`);
+  `some` at the start of a type; `c` and `cpp` between `import` or `overlay` and a string;
+  `language` and `threads` after `#!`; `overlay` at the start of an item, and `rename` and `hide`
+  inside an overlay (`[GRM-35]`); `union` at the start of an item followed by a name, where it is
+  reserved for a future version (`E0005`), so `Set` can have its `union` method (`[STD-16]`);
+  `needs` directly after the `:` of a type parameter, an interface's header, an associated type or a
+  `where` clause (`[TYP-17]`); `copy` directly before `of`, and `of` directly after `copy` (`copy of
+  x`, so `mem.copy` and a count's `of` stay names, `[GRM-43]`); `exists` between the value and `as`
+  in an `if`, `elif` or `while` header (`[GRM-44]`); `runtime` after the `:` of a parameter or of a
+  local declared with its type, directly before the type (`[LT-48]`); `cast` at the start of an
+  operand directly before a name or `this` (`cast s as Circle`, `[GRM-30]`), so `cast(p)` stays a
+  call; `guarded` and `by` after the type of a field or a `static` (`[GRM-46]`). The reserved words
+  `not` and `is` are also method names immediately after `fn` in a type's body, an `extend` block or
+  an interface, and after `.` and `?.`, so `Not` can have its method `not` (`a.not()` is `~a`,
+  ODR-040) and `AnyError` its method `is[E]()` (`[ERR-8]`, ODR-106); a function standing alone, an
+  item or a local function, may take neither (`E0005`; `r#is` is its raw spelling). **Reserved for a
+  future version** (lexed as keywords; using one as a name is `E0005`, whose message names the
+  reservation): `async`, `await`, `macro`. **Reserved and not words of Ember** (lexed as keywords so
+  that no program uses them as names; any use is `E1010`, whose message gives the word to write):
+  `owned` (write `owns`: `owns x: T`, `owns this`, `mesh: owns Mesh`, `fn() owns x:`, and in a C
+  contract `@ffi(param(widget, owns, one))`, verdict 102) and `self` (inside a method its object is
+  `this`, `[GRM-41]`).
 * `[LEX-22]` *(changed in 0.9.9)* Ember has no lifetime syntax and never will. A `'` begins a
   character literal and nothing else; an unterminated one is `E0008`.
 

@@ -1,0 +1,663 @@
+{
+ "group": "G7",
+ "title": "Part XVI and Annex C (the C interface; C++ interoperation)",
+ "found": {
+  "group": "G7: Part XVI (Calling C) and Annex C (C++ interoperation)",
+  "findings": [
+   {
+    "id": "G7-01",
+    "rules": [
+     "FFI-23",
+     "FFI-21",
+     "FFI-22",
+     "THR-8"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "The Retained token of a threads(creator)/threads(main) callback can end on another thread, ending a one-thread owner there",
+    "program": "from std.ffi import ForeignCallback, Retained\nimport std.thread\nclass Game:\n    score: i32 = 0\n    fn add_point(): this.score += 1\nunsafe extern \"C\":\n    @safety(\"`cb` and `ud` are a pair `register_cb` was given\")\n    unsafe fn unregister(cb: extern \"C\" fn(*mut void), ud: *mut void)\n    @ffi(param(cb, callback(retained, user_data=ud), threads(creator)), destroys(unregister))\n    safe fn register_cb(cb: extern \"C\" fn(*mut void), ud: *mut void)\nfn main():\n    game = shares mut Game()\n    token = register_cb(fn() owns game: game.add_point())   # line 13: the block holds a `shares mut Game`, allowed under threads(creator)\n    h = thread.spawn(owns fn() owns token: pass)            # line 14 BREAKS: `token` is judged Send (nothing visible is reachable from `Retained[ForeignCallback]`); it ends on the new thread: `unregister` runs there, the block ends, and its `shares mut` owner subtracts a one-thread count on another thread while `main` still holds `game`\n    h.join()\n    println(game.score)",
+    "why": "[FFI-23]: \"its end unregisters the callback through `destroys(f)` and then ends the block\" (no thread named). [FFI-21]: \"`shares`, `shares mut` and `weakref` only under `threads(creator)` or `threads(main)`\". [THR-8] infers `Send` from \"nothing reachable from it\", and `Retained[ForeignCallback]` is one type for every callback, its state unseen, so the token is `Send` by inference; [THR-10] then accepts the capture. [FFI-33b]: \"A callback's thread is the trampoline's to check\" covers calls, not the token's end.",
+    "proposed_text": "* `[FFI-23]` … A `Retained[ForeignCallback]` token is bound to the thread that registered the callback, whatever the callback's contract: it is neither `Send` nor `ThreadShared` (`[THR-8]`'s list of thread-bound values names it), so handing it to another thread is `E7008` (\"`token` keeps the callback registered on line 13 for C, and its end unregisters the callback on the thread that holds the token; keep `token` in `main`, or end it there before the thread starts: `token = None` above line 14\"). Its end, the `destroys(f)` call and the block's end, runs on that thread, so a callback's state ends where it was made, and a `shares` owner or a `weakref` link it holds under `threads(creator)` or `threads(main)` is counted on one thread only.",
+    "codes": "E7008 (no shape: E7xxx); add the token to [THR-8]'s list",
+    "milestone": "M12 (M9 for the marker list)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-02",
+    "rules": [
+     "FFI-21",
+     "FFI-22",
+     "THR-20"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "A threads(main) callback holding a shares owner may be registered from a non-main thread",
+    "program": "import std.thread\nclass Log:\n    lines: Array[String] = []\nunsafe extern \"C\":\n    @safety(\"`cb` and `ud` are a pair `on_main` was given\")\n    unsafe fn off_main(cb: extern \"C\" fn(*mut void), ud: *mut void)\n    @ffi(param(cb, callback(retained, user_data=ud), threads(main)), destroys(off_main))\n    safe fn on_main(cb: extern \"C\" fn(*mut void), ud: *mut void)   # the host runs it on its main thread\n    @ffi(no_callbacks)\n    safe fn block_forever()\nfn worker():\n    log = shares mut Log()                                            # a one-thread owner of the worker thread\n    token = on_main(fn() owns log: log.lines.push(owns String(\"tick\")))   # line 13 BREAKS: accepted (`shares mut` under threads(main)); the main thread will push to the worker's list\n    log.lines.push(owns String(\"mine\"))                               # line 14: the worker writes the same list: a data race, and two threads move one plain count\n    block_forever()\nfn main():\n    h = thread.spawn(owns fn(): worker())\n    h.join()",
+    "why": "[FFI-21]: \"`shares`, `shares mut` and `weakref` only under `threads(creator)` or `threads(main)`, `[FFI-22]`\". [FFI-22]/[FFI-53] check only the thread that *calls* the callback (\"`threads(main)` or `threads(creator)`, which the trampoline checks\"); nothing ties the *registering* thread to the main thread. Under `threads(creator)` the two coincide by definition; under `threads(main)` they need not.",
+    "proposed_text": "Replace in `[FFI-21]` \"`shares`, `shares mut` and `weakref` only under `threads(creator)` or `threads(main)`, `[FFI-22]`\" with: \"`shares`, `shares mut` and `weakref` only under `threads(creator)`, or under `threads(main)` where the registering call is in code only the main thread runs, decided as a `static mut`'s readers are (`[STA-1]`, `[THR-20]`: not reachable from `thread.spawn`, from a job outside a scope, from a callback C may run on another thread, or from an export under `threads=any` or `creator`); elsewhere it is `E7015` (\"C runs this function on the main thread (`on_main`'s `cb` says `threads(main)`), and `worker` may run on another thread (`thread.spawn`, line 18), so `log`, a `shares mut` owner of that thread, would be used by two threads; share the log between threads: write `log = thread_shared Log()` in place of line 12, with `lines` `guarded by` a lock, or register the callback from `main`\")\".",
+    "codes": "E7015 (no shape: E7xxx)",
+    "milestone": "M12 (reach facts from M9)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-03",
+    "rules": [
+     "FFI-52",
+     "EFF-4",
+     "EFF-26",
+     "BRW-18"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "Extends O1: a library's foreign call is checked only against callbacks the library can see; a dependant's kept callback changes what the library walks",
+    "program": "# package sim, compiled once:\npub class Game:\n    pub score: i32 = 0\n    pub names: Array[String] = []\nunsafe extern \"C\":\n    safe fn poll_events()                 # no `no_callbacks`\npub fn tick(game: Game):\n    for name in game.names:               # line 8: a walk of `game.names`\n        poll_events()                     # line 9: accepted when `sim` was compiled: no callback `sim` hands to C changes `game.names`\n        println(name)\n\n# package app, which uses sim:\nunsafe extern \"C\":\n    @safety(\"`cb` and `ud` are a pair `register_cb` was given\")\n    unsafe fn unregister(cb: extern \"C\" fn(*mut void), ud: *mut void)\n    @ffi(param(cb, callback(retained, user_data=ud), threads(creator)), destroys(unregister))\n    safe fn register_cb(cb: extern \"C\" fn(*mut void), ud: *mut void)\nfn main():\n    game = shares mut sim.Game(names=[String(\"ann\")])\n    token = register_cb(fn() owns game: game.names.push(owns String(\"bo\")))   # line 8: C keeps a callback that pushes to `game.names`\n    sim.tick(game)                        # line 9 BREAKS: `poll_events()` inside `tick`'s walk runs the callback; the list regrows under the loop's position: use after free",
+    "why": "[FFI-52]: \"Across a package's edge, the callbacks a package hands to C … are recorded in its interface file (`[EFF-4]`), so a program that uses the package counts them at every foreign call\" — the *program's* foreign calls; the library's own call on line 9 was checked when the library was compiled, against the callbacks it could see, and [EFF-4] records what a package hands to C, not what its foreign calls are held across. The set of callbacks C keeps is a whole-program fact deciding a package's code, O1's shape.",
+    "proposed_text": "* `[FFI-52]` … A package's foreign call is checked against the callbacks the package can see, and the rest at the call of the package's function: a function's summary (`[EFF-4]`, `[EFF-24]`) records each foreign call without `@ffi(no_callbacks)` it makes, directly or through the chain of its calls, with the places it holds across that call: each parameter it walks, reads through a read-only name or changes through a `ref mut` name across it, and each `static` of its own. A call of such a function from another package is checked by the caller, who sees every callback C keeps: where a kept callback of the caller's program changes what one of those places reaches (through a link, a field or an element), the call is refused as the walk, read or `ref mut` use would be (`E3020`, `E3021`, `E3022`), naming the chain: \"`sim.tick(game)` (line 9) walks `game.names` while it calls `poll_events()` (sim/game.em:9), a C function that may run the callback C keeps from `register_cb` (line 8), which pushes to `game.names`; register the callback after the call: move line 8 below line 9, or, if `poll_events` never calls back into Ember, mark it `@ffi(no_callbacks)` in `sim`'s declaration\". Nothing in a library is refused for callbacks it cannot see.",
+    "codes": "E3020 (B2), E3021 (B3), E3022 (B1); a new summary fact in the interface file",
+    "milestone": "M12 (summary fields from M2/M6a)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-04",
+    "rules": [
+     "FFI-11",
+     "FFI-15",
+     "LT-3",
+     "BRW-1"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "from(static) admits memory C rewrites on the next call: a read-only view changed under its holder, a data race across threads",
+    "program": "from std.ffi import c_int\n@layout(c) struct Tm:\n    sec: c_int\n    min: c_int\n    hour: c_int\nunsafe extern \"C\":\n    @ffi(effects=[], no_callbacks, param(t, borrowed, one), result(borrowed, one, from(static)))\n    safe fn localtime(t: i64) -> ref Tm      # C's `localtime` returns one static `struct tm` it rewrites on every call; the overlay author read \"lives for the whole program\" and wrote `from(static)`\nfn main():\n    a = localtime(0)                          # line 10: a read-only view with the `static` region\n    b = localtime(90_000)                     # line 11 BREAKS: the same memory is rewritten under `a`; the call changes nothing the summary knows\n    println(a.hour, b.hour)                   # `a.hour` is `b`'s; with lines 10 and 11 in two scoped tasks it is a data race on `a`'s memory",
+    "why": "[FFI-11]: \"`from(static)` … a view … into what lives for the whole program (`[LT-1a]`, `[LT-3]`)\" asserts life, not immutability; [LT-3] gives such views the `static` region, which [STA-1]'s statics earn by never changing. A foreign call's changes are its `ref mut` and `MutSpan` parameters, so line 11 is not a change of what `a` views for [BRW-1]'s read-only promise. [FFI-15] has the same hole for `nul_terminated` results (`strerror`, `getenv`).",
+    "proposed_text": "* `[FFI-11]` … `from(static)` asserts two things: the memory lives for the program's life, and nothing writes it after the call returns, neither this function on a later call nor any other. A result that holds only until the library's next call (C's `localtime`, `strerror`, `getenv`) is not `from(static)`: it takes the lifetime word `copied`, under which the wrapper copies the pointed-to value before it returns and the safe type is the value itself: `T` for `one` where `T` is a `Copy` `@layout(c)` type, `CString` for `nul_terminated`, `Array[T]` for `count(n)` with a `Copy` `T`; `copied` on any other type is `E5002` (\"`localtime`'s result is a `Tm` C rewrites on its next call, and `from(static)` promises memory nothing writes again; write `result(borrowed, one, copied)`, which gives `-> Tm`, a copy of your own\"). The lifetime words are `from(this)`, `from(p)`, `from(static)` and `copied`; `ember bind --report` lists each `from(static)` result as the assertion it is. Cost table (§X.4): \"`copied` result: one copy of the value at the call, nothing else\".",
+    "codes": "E5002; a new contract word `copied` (needs the owner's word, as O2 does); one cost row",
+    "milestone": "M12",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-05",
+    "rules": [
+     "FFI-39",
+     "FFI-39c",
+     "FFI-39d",
+     "FFI-17c",
+     "FFI-17d",
+     "FFI-22",
+     "THR-20"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "An Ember class derived from a C++ base has no thread contract: C++ runs its overrides and deletes it on any thread, ending one-thread owners there",
+    "program": "import cpp \"ui.hpp\" with (project=\"ui\") as ui   # class Widget { virtual void on_click(); virtual ~Widget(); }; class Panel { void add_child(Widget*); }\n# overlay: `class Panel:` with `fn add_child(w: owns)`\nclass Log:\n    lines: Array[String] = []\n@ffi(trampoline, owner=\"foreign\")\nclass Button(ui.Widget):\n    log: shares mut Log                         # a one-thread owner, accepted: nothing asks the class to be Send\n    fn init(owns l: shares mut Log):\n        this.log = l\n        super.init()\n    override fn on_click():\n        this.log.lines.push(owns String(\"click\"))   # line 12: C++ chooses the thread that runs this\nfn main():\n    log = shares mut Log()\n    panel = ui.Panel()\n    panel.add_child(owns Button(shares mut log))   # line 16 BREAKS: C++ keeps the button; its UI thread calls `on_click` and later `delete`s it: the `drop` ends `log`'s plain count on that thread while `main` holds `log`\n    log.lines.push(owns String(\"mine\"))",
+    "why": "[FFI-39c] hands the object to C++ (\"`b` ends, upcast to the C++ base\") with no `Send` requirement. [FFI-22] attaches \"every exported function and trampoline\" but gives an override no thread word; [FFI-39d] checks only \"every change those overrides make\". [FFI-17d]: \"`owner=\"foreign\"` makes a foreign `delete` end it\", and [THR-20]: \"A `drop` runs where the last owner ends\", so the `drop` runs on C++'s thread. [FFI-33a]'s \"no one-thread owner reaches C (`[FFI-31b]`)\" is about exports.",
+    "proposed_text": "* `[FFI-17d]` … `@ffi(trampoline, owner=…, threads=creator|any)` says which threads C++ may call the class's overrides from and end its objects on; the default is `creator`: an object of the class is bound to the thread that made it (not `Send`: `E7008` if Ember hands it to another thread), its thread is recorded at the hand-over to C++ (`[FFI-39c]`, one store), and the thunk of every override and the trampoline's destructor check, in every profile, that the calling thread is that one, stopping the program otherwise (\"C++ called `on_click` of a `Button` made on another thread (line 16); its class says `threads=creator`\"). `threads=any` requires the class to be `Send` and `ThreadShared` (`E7015` at the class, naming the field: \"`Button.log` is a `shares mut` owner, which stays on one thread, and C++ may call `Button`'s overrides from any thread (`threads=any`); make the log `thread_shared`, with `lines` `guarded by` a lock\"), and each override is then checked as an export under `threads=any` is (`[FFI-33]`, `[THR-20]`). Cost table: \"a C++ override call or `delete` under `threads=creator`: one compare of the thread\".",
+    "codes": "E7008, E7015 (no shape: E7xxx); a stop text for §X.4's table; one cost row",
+    "milestone": "M12 (Annex C)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-06",
+    "rules": [
+     "FFI-21",
+     "FFI-22",
+     "FFI-10",
+     "THR-20",
+     "FFI-33"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "An Ember function given to C as a bare extern \"C\" fn value has no wrapper that attaches the thread and no thread contract",
+    "program": "static mut TICKS: int = 0                              # line 1: a module variable of the main thread\nfn on_tick():                                          # captures nothing, so it coerces to `extern \"C\" fn()`\n    TICKS += 1\nunsafe extern \"C\":\n    @ffi(effects=[], no_callbacks)\n    safe fn set_timer(ms: c_int, cb: extern \"C\" fn())    # line 6: no `callback(...)` word; is a function-pointer parameter one a `safe fn` may have? ([FFI-10] lists scalars, `@layout(c)` values and contracted pointers)\nfn main():\n    set_timer(10, on_tick)                             # line 8 BREAKS: the host runs `on_tick` on its timer thread: the thread is never attached (no trampoline, no export), and `TICKS` is written by two threads\n    while TICKS < 100: pass",
+    "why": "[FFI-21]: \"A C function-pointer parameter accepts a capture-free Ember function (as an `extern \"C\" fn`)\". [FFI-22]: \"Every exported function and trampoline first attaches the calling thread\" — this is neither. [THR-20] names \"a callback C may run on a thread other than the main one\", and the glossary's callback is one under `callback(…)`; [FFI-52] counts \"every Ember function given to C as an `extern \"C\" fn` value\" for changes, not for its thread. `E5069` refuses `no_callbacks` only beside a `callback(…)` parameter, so `set_timer` keeps the mark though the host calls back.",
+    "proposed_text": "* `[FFI-21]` … A function-pointer parameter of a `safe fn` or of an overlay entry carries a `callback(…)` word, or the declaration is `E5002` (\"`set_timer`'s `cb` is a function pointer, and nothing says whether C keeps it or which thread runs it; write `param(cb, callback(retained, threads(any)))`, or `callback(borrowed)` if C runs it only during the call\"); an `unsafe fn` may take one with no word. **An Ember function given to C as an `extern \"C\" fn` value is an export without a name** (`[FFI-26]`): its C entry is a wrapper that attaches the calling thread (`[FFI-22]`) and runs it, and its body is checked under the parameter's thread word, `threads(any)` where the declaration gives none (`[FFI-33]`, `[THR-20]`: `E7012` for a `static mut` it reaches without its lock). `@ffi(no_callbacks)` on a function whose contract takes a function pointer is `E5069`, as for a `callback(…)` parameter.",
+    "codes": "E5002, E5069, E7012 (no shapes)",
+    "milestone": "M12",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-07",
+    "rules": [
+     "FFI-21",
+     "FFI-53",
+     "FFI-23"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "callback(once): whether it returns a token, what the token's end does after the one call, and whether the used-up mark is taken atomically",
+    "program": "unsafe extern \"C\":\n    @safety(\"`cb` and `ud` are a pair `when_ready` was given\")\n    unsafe fn cancel(cb: extern \"C\" fn(*mut void), ud: *mut void)\n    @ffi(param(cb, callback(once, user_data=ud), threads(any)), destroys(cancel))\n    safe fn when_ready(cb: extern \"C\" fn(*mut void), ud: *mut void)\n    @ffi(no_callbacks)\n    safe fn wait_all()\nfn main():\n    xs = [1, 2]\n    t = when_ready(fn() owns xs: println(xs.len()))   # line 10: is `t` a token? Implementer question 1\n    wait_all()                                        # C runs the callback, possibly from two of its threads at once: question 2, is the used-up mark a plain load and store?\n    # `t` ends here: `cancel` on a registration C already consumed, or nothing? question 3",
+    "why": "[FFI-21]: \"`retained` returns a `Retained[ForeignCallback]` token … and with `once` the trampoline ends the block after the first call\" says nothing of a token for `once`; [FFI-52] speaks of a `callback(once)` \"not yet unregistered\"; [FFI-53]: \"a `callback(once)` slot carries a used-up mark\" and checks \"the generation and the function's type in one compare\", without saying that the mark is taken atomically for a `threads(any)` callback.",
+    "proposed_text": "* `[FFI-21]` … `callback(once)` returns the same token, which keeps the block until C has run the function or the token ends, whichever is first: a token ending before the call unregisters the callback through `destroys(f)` and ends the block; one ending after it calls nothing, since C gave the registration up by running it, and frees the slot's record. * `[FFI-53]` … A `callback(once)` slot's used-up mark is taken with one atomic exchange before any of the callback's state is read, so of two threads calling it at once one runs it and the other stops the program with the second-call text; the block is ended when the call that ran it returns.",
+    "codes": "none new; the stop text of §X.4's table",
+    "milestone": "M12",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-08",
+    "rules": [
+     "FFI-35a",
+     "OBJ-1",
+     "FFI-11",
+     "THR-2"
+    ],
+    "kind": "CON",
+    "severity": "major",
+    "title": "[FFI-35a]'s kept-by-C mark has no bit in [OBJ-1]'s header and no rule says which line sets it",
+    "program": "class Names:\n    items: Array[String] = []\nunsafe extern \"C\":\n    @safety(\"`p` is an object the program keeps alive while C holds it\")\n    @ffi(param(p, retained, one))\n    unsafe fn register(p: *mut Names)     # `retained` on a non-callback pointer has no safe type ([FFI-11]): the call is unsafe\nfn main():\n    names = Names()\n    w = weakref names\n    # SAFETY: the host keeps the address until `main` returns\n    unsafe:\n        register(ref_to_ptr(names))        # line 12: which store marks `names`'s header \"kept by C\"? [OBJ-1] has no bit for it\n    h = thread.spawn(owns fn() owns names: names.items.len())   # line 13: [THR-2] says the link stops the program here, by reading a mark no header holds",
+    "why": "[FFI-35a]: \"A class object given to a `retained` parameter is marked in its header as kept by C and never moves\". [OBJ-1]: \"An object carries nothing else for the memory model: no access words, and no flags but a `thread_shared` value's three marks\". [FFI-11]: on a non-callback pointer `retained` gives \"no safe type … the call stays `unsafe`, with a raw pointer\", so the address reaches C only through unsafe code, and no rule names the line that sets the mark.",
+    "proposed_text": "* `[OBJ-1]` … The top bit of the type index is the **kept-by-C mark** (`[FFI-35a]`), so a type index is below 2^31; it is the header's only mark on a value that is not `thread_shared`. * `[FFI-35a]` … The mark is set, one store, by a call that gives a `retained` parameter a pointer the same statement makes from a class object (`register(ref_to_ptr(names))`, inside `unsafe:`), and by nothing else: a pointer made earlier or elsewhere is unsafe code's own obligation (`[UNS-4]`: an object handed to another thread may move). A marked object never moves: handed to another thread while a `weakref` link on this thread points at it, it stops the program (`[THR-2]`, verdict 114).",
+    "codes": "none; the stop text [THR-2] already gives",
+    "milestone": "M6b (the header) and M12",
+    "touches_owner_verdict": "114"
+   },
+   {
+    "id": "G7-09",
+    "rules": [
+     "FFI-8",
+     "FFI-2a",
+     "THR-8",
+     "THR-9",
+     "FFI-32",
+     "FFI-33b"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "An extern type (and an opaque C++ class) is Send and ThreadShared by inference, so two threads use one C object at once through const T* views",
+    "program": "import std.thread\nunsafe extern \"C\":\n    @ffi(destroys(ctx_free))\n    type Ctx                                             # nothing is reachable from it: [THR-8]/[THR-9] infer `Send` and `ThreadShared`\n    @safety(\"`c` is a context C made, not freed yet\")\n    unsafe fn ctx_free(c: *mut Ctx)\n    @ffi(result(returns_owned(destructor=ctx_free), one))\n    safe fn ctx_new() -> owns Ctx\n    @ffi(effects=[], no_callbacks, param(c, borrowed, one))\n    safe fn ctx_lookup(c: Ctx, k: c_int) -> c_int         # C: `int ctx_lookup(const Ctx* c, int k)`, which fills a cache inside `*c` on a miss\nfn main():\n    ctx = ctx_new()\n    with thread.scope() as s:\n        s.spawn(fn(): println(ctx_lookup(ctx, 1)))        # line 14 BREAKS: two tasks hold a `ref Ctx` at once, allowed since `Ctx` is `ThreadShared`\n        s.spawn(fn(): println(ctx_lookup(ctx, 2)))        # line 15: C writes its cache from both threads",
+    "why": "[FFI-8]: \"incomplete `struct` | `extern type S`, used only behind pointers\", with no marker rule. [THR-8]/[THR-9] infer both markers from what is reachable. [FFI-2a] derives \"`const T*` is a read-only view\", which C does not promise; [FFI-40a] says it of C++'s `const` (\"not an aliasing guarantee\") and Part XVI says nothing of C's. [FFI-33b] gives `threads(creator)` for thread-bound types and no default for the rest.",
+    "proposed_text": "* `[FFI-8]` … An `extern type`, and an opaque C++ class (`[FFI-32]`), holds what the compiler cannot see, so neither marker is inferred for it (`[THR-8]`, `[THR-9]`): it is `Send` unless its contract says `threads(creator)` or `threads(main)`, so one thread at a time uses an object of it; it is `ThreadShared` only where the program declares it, `unsafe extend Ctx implements ThreadShared:` with a `# SAFETY:` note saying that the library reads one object from several threads at once (as `Send` is declared for a type holding a raw pointer, `[THR-8]`), an asserted fact `ember tcb` lists. A view of one reaching another thread otherwise is `E7015` (\"`ctx` is a C object (`Ctx`, line 4), and two tasks read it at once (lines 14 and 15); C's `const` does not promise that `ctx_lookup` writes nothing: give each task a context of its own, or, if the library allows it, declare `unsafe extend Ctx implements ThreadShared:` with a `# SAFETY:` note\").",
+    "codes": "E7015 (no shape: E7xxx); `ember tcb` row",
+    "milestone": "M12 (markers from M9)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-10",
+    "rules": [
+     "FFI-39",
+     "FFI-17c",
+     "FFI-17d",
+     "FFI-39c",
+     "OBJ-1",
+     "CLS-6"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "The object model of a trampoline class is unsaid: where the C++ subobject lies, what C++'s delete frees, and how weakref links outlive it",
+    "program": "@ffi(trampoline, owner=\"foreign\")\nclass Button(ui.Widget):\n    override fn on_click(): pass\nfn main():\n    b = Button()\n    w = weakref b                        # line 6: the block must outlive the object while a link remains ([CLS-6])\n    panel.add_child(owns b)              # line 7: C++ `delete`s it later: `operator delete` frees the address of the C++ object, which is not the block's start if the base lies after the header, and frees it while `w` lives\n    if w exists as p: pass               # line 8 BREAKS: a header `delete` never marked ended, or a freed block",
+    "why": "[FFI-39]: \"the importer generates a C++ subclass, the trampoline, which passes on … the virtual methods it overrides\" — the Ember object's relation to the C++ object is not given. [FFI-17d]: \"`owner=\"foreign\"` makes a foreign `delete` end it\"; [FFI-17c] orders destruction; [OBJ-1] fixes the header and [CLS-6] keeps the block \"once no `weakref` link to it remains\"; no rule says what `delete` frees or who marks the object ended.",
+    "proposed_text": "* `[FFI-39]` … An object of such a class is one block: the header (`[OBJ-1]`), then the C++ base subobject (the trampoline's `this`, at a fixed offset every upcast adds), then the Ember fields. The trampoline class declares a virtual destructor, which runs the Ember `drop` and ends the Ember fields (`[FFI-17c]`) before the base destructor, and an `operator delete` that calls `ember_rt`, which marks the object ended and frees the block only when no `weakref` link remains (`[CLS-6]`); so C++'s `delete` of an `owner=\"foreign\"` object does what the end of its last Ember owner would, and frees nothing itself. An `owner=\"ember\"` object is ended by Ember as any object is, its C++ base destructor running last.",
+    "codes": "none",
+    "milestone": "M12",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-11",
+    "rules": [
+     "FFI-40",
+     "FFI-2a",
+     "LT-1",
+     "FFI-11"
+    ],
+    "kind": "MEM",
+    "severity": "major",
+    "title": "A C++ reference result's lifetime is derived as \"into the object\", against [FFI-2a]; a reference to another object is a use after free",
+    "program": "import cpp \"tree.hpp\" with (project=\"t\") as t\n# class Node { Node* parent_; Node& parent() { return *parent_; } };  class Tree { Node* make_child(Node* p); void prune(); }\n# overlay: `fn make_child(p: borrowed one) -> borrowed one exclusive from(this)`\nfn main():\n    tree = t.Tree()\n    child = tree.make_child(tree.root())   # a `ref mut Node` into `tree`\n    p = child.parent()                     # line 7 BREAKS: imported as `ref mut Node` into `child` ([FFI-40]): the view keeps `child` viewed, not the parent it points at\n    tree.prune()                           # line 8: C++ deletes the parent; `p` is held valid, since `child` lives\n    println(p.depth())                     # a read of freed memory",
+    "why": "[FFI-40]: \"a `T&` result is a `ref mut T` view into the object and a `const T&` result a `ref T` one (`[LT-1]`)\". [FFI-2a]: \"In **result** position a pointer's lifetime is never derived.\" A C++ reference is a pointer, and `parent()` returns one into another object.",
+    "proposed_text": "Replace in `[FFI-40]` \"a `T&` result is a `ref mut T` view into the object and a `const T&` result a `ref T` one (`[LT-1]`)\" with: \"a `T&` or `const T&` result is a pointer result (`[FFI-2a]`): its lifetime is never derived, and the overlay's entry gives it a lifetime word, `from(this)`, `from(p)` or `from(static)` (`[FFI-11]`), under which it is a `ref mut T` or `ref T` view into what the word names (`[LT-1a]`); without one the method stays unsafe to call, its result a `*mut T` or `*T`, and `ember bind --report` lists it among the result-position pointers with no lifetime word (`[FFI-35a]`)\".",
+    "codes": "none new (E5002/E3100 as [FFI-2] has them)",
+    "milestone": "M12",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-12",
+    "rules": [
+     "FFI-17a",
+     "CLO-17",
+     "EFF-3",
+     "FFI-52",
+     "FFI-17e"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "A std::function imported as fn(A…) -> R is \"called as any other\": its target is C++ code, so its call's changes and effects are empty",
+    "program": "import cpp \"bus.hpp\" with (project=\"b\") as b   # overlay: `@ffi(std_function) type Handler` for `std::function<void()>`; `fn handler_of(bus: borrowed one) -> owns`\nfn main():\n    bus = b.Bus()\n    names = [String(\"a\")]\n    register_push(ref mut names)            # C++ keeps a kept callback that pushes to `names`\n    h = b.handler_of(bus)                   # a `fn()` whose target is C++ code\n    for n in names:\n        h()                                 # line 8 BREAKS: [CLO-17] works out the call's changes from \"every function the program can put there\": none, so a C++ target that runs the kept callback is unseen inside the walk",
+    "why": "[FFI-17a]: \"with `@ffi(std_function)` on its overlay entry, a function value of type `fn(A…) -> R` (`[CLO-3]`), called as any other, which owns its target\". [CLO-17]: \"A call through a function value makes the changes, reads and ends of every function the program can put there\" — the program puts none. [EFF-3] gives `FFI` to extern functions only; [FFI-52]'s list of what a *foreign call* may run does not name a call through such a value.",
+    "proposed_text": "* `[FFI-17a]` … A call through such a value is a foreign call: it carries every effect (`[EFF-3]`) and counts as possibly running every Ember function C++ can reach (`[FFI-52]`, `[FFI-39d]`), since its target is C++ code the compiler cannot read; `@ffi(no_callbacks)` beside `std_function` on the type's entry says it runs none. The value is neither `Send` nor `ThreadShared` (`[FFI-17e]`), and its end runs the `std::function`'s destructor through a thunk, which `ember inspect` reports (`[FFI-17f]`).",
+    "codes": "E3020 (B2) and the others [FFI-52] names; E5069 for a contradictory mark",
+    "milestone": "M12",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-13",
+    "rules": [
+     "BLD-FFI-5a",
+     "THR-1",
+     "FFI-22",
+     "FFI-33"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "The C++ handle class exposes \"the class's pub methods\", changing ones included, with no attach and no thread check",
+    "program": "class Stats:\n    hits: Atomic[int] = Atomic(0)\n    names: Array[String] = []\n    pub fn bump(): this.hits.fetch_add(1)\n    pub fn add(owns n: String): this.names.push(owns n)     # changes the object directly: `E7014` on a `thread_shared` name in Ember\n@unsafe(export(\"stats_make\"))\npub extern \"C\" fn make() -> thread_shared Stats:            # line 7: allowed by [BLD-FFI-5a]\n    return thread_shared Stats()\n# C++, on two threads at once:  auto s = stats_make();  s.add(\"x\");   // line BREAKS: `names` pushed from two threads; no thread attached before Ember code runs",
+    "why": "[BLD-FFI-5a]: \"the header presents it as a copyable handle class of the same name with the class's `pub` methods\". [THR-1]: \"no owner changes a `thread_shared` value directly (`E7014`)\". [FFI-22] attaches the thread for \"every exported function and trampoline\"; a handle's method is named as neither.",
+    "proposed_text": "* `[BLD-FFI-5a]` … The handle has the `pub` methods a `thread_shared` name may call in Ember: those whose summary changes the object only through its `Atomic`, lock, channel and `guarded by` fields (`[THR-1]`); the others are left out of the header with a comment naming the rule. Each is an export under `threads=any` (`[FFI-33]`): its wrapper attaches the calling thread (`[FFI-22]`), its body is checked as such an export's is, and its parameters and result follow `[FFI-31b]`.",
+    "codes": "E7014, E7012 (no shapes)",
+    "milestone": "M12",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-14",
+    "rules": [
+     "FFI-31b",
+     "FFI-26",
+     "BLD-FFI-5",
+     "FFI-8",
+     "UNS-4"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "An export's type mapping and the C caller's obligations are unsaid: which view types cross, with what carriers, and an Ember enum C may fill with any value",
+    "program": "@repr(i32)\nenum Mode:\n    Fast\n    Safe\n@unsafe(export(\"set_mode\"))\npub extern \"C\" fn set_mode(m: Mode, ref mut out: Stats, names: Span[CStrView]) -> i32:   # line 6: an enum, a `ref mut`, a `Span`: may they cross, and as what C types? what must the C caller make true of `out`?\n    match m:                                # line 7 BREAKS: C passes 7: no arm, no default\n        Mode.Fast: return 1\n        Mode.Safe: return 2",
+    "why": "[FFI-31b]: \"`@layout(c)` values, scalars, opaque handles, `CStrView` and `extern \"C\" fn` may\" cross; [BLD-FFI-5]: the C header \"takes pointer-and-length pairs\", so spans cross too, and neither names `ref mut`, `Option`, `MutSpan`, an Ember enum, nor a carrier. [FFI-8] makes an imported enum `@non_exhaustive` because \"any value may arrive\"; an exported one is not. [UNS-4]'s obligations (a `ref mut` reached by no other name) bind unsafe code, and no rule hands them to the C caller.",
+    "proposed_text": "* `[FFI-31b]` … An export's parameters and result are written in the safe types of `[FFI-10]`'s mapping and lowered to the same carriers: a plain `x: T` as `const T*` (a scalar by value), `ref mut x: T` as `T*`, `Span[T]` and `MutSpan[T]` as a pointer and a `size_t`, `Option[…]` as a null pointer, `CStrView` as `const char*`, an enum as its `@repr` type. An enum in an export is `@non_exhaustive`, or the export is `E5015` (\"`Mode` has two values and C may pass any `int32_t`; write `@non_exhaustive` above `enum Mode`, and give `match m:` an `else:` arm\"). `ember build --emit-header` writes above each prototype what the caller must make true, `[UNS-4]`'s words per parameter: a pointer valid for the call, a `T*` reached by no other argument, a `const char*` NUL-terminated, a count that fits its pointer; a C caller that breaks one is outside the contract, as a C library is.",
+    "codes": "E5015; the header's comments",
+    "milestone": "M12",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-15",
+    "rules": [
+     "FFI-10",
+     "FFI-21",
+     "FFI-52",
+     "FFI-53"
+    ],
+    "kind": "CON",
+    "severity": "major",
+    "title": "[FFI-52]'s example declares `safe fn register_cb(cb: extern \"C\" fn(*mut void), ud: *mut void)`, which [FFI-10] refuses; the user_data witness and the callback parameter's Ember type are unsaid",
+    "program": "unsafe extern \"C\":\n    @ffi(param(cb, callback(retained, user_data=ud), threads(creator)), destroys(unregister))\n    safe fn register_cb(cb: extern \"C\" fn(*mut void), ud: *mut void)   # line 3: `ud` is a raw pointer on a `safe fn`: `E5002` by [FFI-10]; is `ud` erased from the callable signature as `count(n)`'s `n` is?\nfn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:\n    return register_cb(fn() owns game: game.add_point())            # line 5: a `fn()` given where the declaration says `extern \"C\" fn(*mut void)`: by which rule is the callable type `fn()`?",
+    "why": "[FFI-10]: \"complete facts do not make a raw-pointer parameter or result safe to expose; `safe fn` with one is `E5002`\", and only `count(n)`'s witness \"is absent from the callable Ember signature\" (ODR-074). [FFI-21] gives the trampoline and the tagged number but not the Ember type a caller writes for a `callback(…)` parameter, nor what becomes of its other pointer parameters.",
+    "proposed_text": "* `[FFI-10]` … A `user_data=p` parameter is an ABI witness as `count(n)`'s `n` is: `p` is written as a raw pointer at its C ABI position, is absent from the callable signature, and the call supplies the callback's tagged number for it (`[FFI-53]`); a `safe fn` may name it. The callable type of a `callback(…)` parameter is `fn(P…) -> R`: the C function pointer's parameters mapped by `[FFI-8]` with the user-data one removed, a raw pointer among them staying raw (a lambda's body uses it in `unsafe:`); `thread_shared fn(P…) -> R` under `threads(any)` (`[FFI-22]`), and `once fn(P…) -> R` under `callback(once)`. A function given to it is written as any function value is (`fn() owns game: …`).",
+    "codes": "E5002 (the exception for witnesses)",
+    "milestone": "M12",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-16",
+    "rules": [
+     "FFI-54",
+     "FFI-23",
+     "OBJ-1",
+     "WK-15",
+     "FFI-36b",
+     "THR-8"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "Nothing takes an object back after into_raw(): no from_raw, no runtime entry for C, so an object given to C is never ended; and ObjectPtr[C]'s markers are unsaid",
+    "program": "class Widget:\n    name: String\nunsafe extern \"C\":\n    @safety(\"`p` is an address `into_raw()` gave\")\n    unsafe fn set_user_data(p: *mut void)\n    @safety(\"the result is what `set_user_data` was given, or null\")\n    unsafe fn get_user_data() -> *mut void\nfn main():\n    w = Widget(name=String(\"a\"))\n    # SAFETY: C keeps the address and gives it back through `get_user_data`\n    unsafe:\n        set_user_data(w.into_raw() as *mut void)      # line 12: Ember's name ends; the count stays 1\n        p = get_user_data() as ObjectPtr[Widget]     # line 13 BREAKS: no rule gives a way to own the object again: it and its `name` are never freed ([WK-15] reports it), and `ObjectPtr[Widget]` may go to another thread for all the text says",
+    "why": "[FFI-54]: \"`w.into_raw()` gives the address … and stops Ember freeing it\"; [FFI-23]: `ObjectPtr[C]` is \"the address of a class object, which `into_raw()` gives, with no count of its own\"; [OBJ-1]: \"Foreign code never reads it; it calls `ember_rt`\" names no entry; [FFI-36a]'s `adopt` reads a foreign `destroys(f)`, not an Ember object's end; [THR-8] lists \"a raw pointer\" as thread-bound without saying `ObjectPtr[C]` is one.",
+    "proposed_text": "* `[FFI-54]` … `std.ffi.from_raw[C](p: ObjectPtr[C]) -> C`, and `from_raw[T](p: *mut T) -> owns T` for an `owns T` given so, is an `unsafe fn` (`@safety(\"`p` is an address `into_raw()` gave, taken back once\")`) that makes the value owned again, by one name, so its end frees it as before; taking one address back twice is caught as adopting twice is (`[FFI-36b]`: at run time in every profile, and `E5068` on one local). A C host ends an object given with `into_raw()` with `ember_rt_object_release(void*)`, on an attached thread, which does what its last owner's end would. An `ObjectPtr[C]` is a raw pointer for `[THR-8]`, `[THR-9]` and `[UNS-1]`: thread-bound, and read through only in unsafe code.",
+    "codes": "E5068; E3100 for `from_raw` outside unsafe (shape U1); a runtime entry",
+    "milestone": "M12 (M4 for the pointer's markers)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-17",
+    "rules": [
+     "FFI-10",
+     "FFI-11"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "The safe type of a `borrowed one nullable` input is unsaid (ODR-079 and ODR-080 cover spans and strings only)",
+    "program": "unsafe extern \"C\":\n    @ffi(param(n, borrowed, one, nullable))\n    safe fn set_name(n: ???)     # C: `void set_name(const Name* n)`: `Option[Name]` as a plain parameter? and with `exclusive`, `ref mut n: Option[Name]`?",
+    "why": "[FFI-10]: \"For an input `param(p, borrowed, count(n), nullable)`, the safe type is `Option[Span[T]]`\" and [FFI-15] gives `Option[CStrView]` for `nul_terminated`; [FFI-11]'s table says only \"nullability | `nullable` | `Option[…]`\" for `one`.",
+    "proposed_text": "* `[FFI-10]` … A `borrowed one nullable` input is a plain `x: Option[T]`, or `ref mut x: Option[T]` with `exclusive`, whose argument the call marks `ref mut`: `None` sends a null pointer, and `Some` the address of its value, which C reads or, with `exclusive`, writes in place; the `Option`'s own tag never crosses.",
+    "codes": "none",
+    "milestone": "M12",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-18",
+    "rules": [
+     "FFI-11",
+     "FFI-16",
+     "FFI-35a"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "`out` is not said to assert that C writes the value, so an unwritten out slot is an uninitialised read in safe code",
+    "program": "unsafe extern \"C\":\n    @ffi(param(size, out, one))\n    safe fn get_size(size: *mut c_int)    # C writes `*size` only when a device is present; declared `void`, no `status`\nfn main():\n    n = get_size()                        # line 5: the wrapper's slot was never written: an uninitialised read, which [PHIL-10] forbids",
+    "why": "[FFI-11]: \"`out` (an out-parameter, returned instead)\"; [FFI-16] reads `out` values only after a `status` success. Nothing says what `out` asserts of C, so the assertion is not in [FFI-35a]'s report either.",
+    "proposed_text": "* `[FFI-11]` … `out` asserts that C writes the whole value before it returns (on success, for a `-> status` function, whose `out` values are read only then, `[FFI-16]`); it is an asserted fact, listed by `ember bind --report` beside the retention assumptions (`[FFI-35a]`). A function that writes its out-parameter only on some return takes it as `nullable out` with a `status`, or stays unsafe.",
+    "codes": "none",
+    "milestone": "M12 (report), text only for the assertion",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-19",
+    "rules": [
+     "FFI-39",
+     "FFI-35a",
+     "FFI-43",
+     "FFI-32",
+     "FFI-48",
+     "FFI-20a"
+    ],
+    "kind": "ED",
+    "severity": "minor",
+    "title": "Registry rows that name no rule that can emit them, or the wrong rule",
+    "program": "n/a (text): E5056 \"override of a C++ virtual the overlay does not name\" and E5057 \"the overlay names a method that is not virtual\" describe an overlay naming virtuals, which [FFI-39] no longer has (\"read from the class\"); E5051 \"a foreign callee retains a pointer its contract does not declare `retained`\" is a fact [FFI-37d] says cannot be observed; E5066 repeats E5062's case, and [FFI-43] names only E5062; E5031 and E5034 cite [FFI-17] where [FFI-32] and [FFI-48] define them; W5031 cites [FFI-20a], which does not mention it.",
+    "why": "[DIA-6a]: \"every registered code is named here … Each code is defined by exactly one rule.\" [FFI-39]: \"passes on to the Ember class exactly the virtual methods it overrides (`override fn`), read from the class\". [FFI-37d]: \"ownership, nullability, lifetime … facts stay asserted unless checked or proven\".",
+    "proposed_text": "In §XVII.9: `E5056` becomes \"`override fn` of a method the C++ base has no virtual of that name and signature\" (`[FFI-39]`, with the sentence added to the rule: \"an `override fn` matching no virtual method of the base is `E5056`\"); `E5057` is retired to the table of retired codes (\"the overlay names no virtuals: `[FFI-39]` reads them from the class\"); `E5051` retired (\"retention is never observed: `[FFI-37d]`\"); `E5066` retired (\"its case is `E5062`\"); `E5031` and `E5034` cite `[FFI-32]` and `[FFI-48]`; `W5031` is named in `[FFI-20a]`: \"for a C++ header the importer could not parse, each declaration is `W5031`\".",
+    "codes": "E5056, E5057, E5051, E5066, E5031, E5034, W5031",
+    "milestone": "text only",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-20",
+    "rules": [
+     "FFI-53"
+    ],
+    "kind": "SEC",
+    "severity": "minor",
+    "title": "Extends O10: the tagged number is not non-canonical on AArch64 (top-byte ignore) when only its top byte is non-zero",
+    "program": "n/a (runtime): a slot number with generation 0x0100 gives 0x0100_0000_0000_0010; under AArch64 Linux's top-byte-ignore, a C library that wrongly writes through it as a pointer writes to 0x10, or to a mapped page for a larger slot, and does not fault \"before writing anything\"; LA57 x86-64 has the same for a generation below 0x0100.",
+    "why": "[FFI-53]: \"the slot's generation in the top 16, which are never all zero, so the number is no user-space address and a C library that wrongly writes through it faults before writing anything.\"",
+    "proposed_text": "* `[FFI-53]` … The generation is written with its lowest bit set (the odd numbers, 32,767 of them before the slot retires), so bits 48 to 55 are never all zero and the number is non-canonical on every 64-bit target, under AArch64's top-byte-ignore too; on a target whose user addresses reach past bit 55 the text's promise is the trampoline's checks alone, as on a 32-bit target.",
+    "codes": "none",
+    "milestone": "M12",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-21",
+    "rules": [
+     "FFI-33b",
+     "THR-8",
+     "FFI-17a"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "Where an `owns T` of a threads(creator) type keeps its creating thread is unsaid, and its run-time stop can fire only through unsafe code or C",
+    "program": "unsafe extern \"C\":\n    @ffi(destroys(gl_free), threads(creator))\n    type GlContext\n    @ffi(result(returns_owned(destructor=gl_free), one))\n    safe fn gl_make() -> owns GlContext     # [FFI-17a]: \"an `owns T` holds one address\"; [FFI-33b]: it \"records its creating thread\": in which word?",
+    "why": "[FFI-33b]: \"an `owns T` foreign value of such a type records its creating thread and, in every profile, stops the program when it ends on another\"; [FFI-17a]: \"an `owns T` holds one address\"; [THR-8] makes \"a `threads(creator)` handle\" thread-bound (`E7008`), so safe code never moves one.",
+    "proposed_text": "* `[FFI-33b]` … An `owns T` of a `threads(creator)` type is two words, the address and the id of the thread that made it; its end is one compare of that id with the current thread's. Safe code never hands such a value to another thread (`[THR-8]`, `E7008`), so the stop backs unsafe code and C, which may move it. Cost table: \"an `owns T` of a `threads(creator)` type: one word more, one compare at its end\".",
+    "codes": "E7008; one cost row",
+    "milestone": "M12",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-22",
+    "rules": [
+     "FFI-39c",
+     "FN-2a",
+     "FFI-54"
+    ],
+    "kind": "ED",
+    "severity": "minor",
+    "title": "[FFI-39c]'s hand-over `panel.add_child(b)` lacks the call word [FN-2a] requires, where [FFI-54] writes `widget_take(owns first)`",
+    "program": "panel.add_child(b)       # [FFI-39c]: \"the argument is handed over (`panel.add_child(b)`: `b` ends …)\"; [FN-2a]: a missing `owns` at the call is E3028",
+    "why": "[FN-2a]: \"A call says … `owns` before one it takes over, with the same words as the parameter … A missing word … is `E3028`\". [FFI-54]: \"`widget_take(owns first)`\".",
+    "proposed_text": "In `[FFI-39c]` write \"(`panel.add_child(owns b)`: `b` ends, upcast to the C++ base)\", and in the `E5060` help \"hand the object over, `panel.add_child(owns b)`\".",
+    "codes": "E3028 (B10)",
+    "milestone": "text only",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-23",
+    "rules": [
+     "FFI-33",
+     "FFI-33c",
+     "STA-1"
+    ],
+    "kind": "CON",
+    "severity": "minor",
+    "title": "`threads=creator` and `threads=main` on an export name the same thread (the module's initialising thread) but check the body differently",
+    "program": "@unsafe(export(\"bump\", threads=creator))\npub extern \"C\" fn bump():\n    HITS += 1       # `E7012` under `creator` (\"The same holds under `creator`\"), accepted under `main`, though [FFI-33] and [FFI-33c] both define the thread as the one of the module's initialisation",
+    "why": "[FFI-33]: \"Under `any`, everything the export reaches is checked as if it ran on any thread … The same holds under `creator`. For a static free-function export, `creator` is the thread whose successful initialization established that module's export contract\"; [FFI-33c]: \"Under `threads = main`, the exported wrapper checks … that the calling thread is the one that initialised the module … in exchange the body may use thread-confined state, the module's `static mut`s among it.\"",
+    "proposed_text": "* `[FFI-33]` … Under `creator` the export runs on the thread of the module's initialisation, which is the module's main thread for `[STA-1]`, so its body may reach the module's `static mut`s as under `main` (`[FFI-33c]`); the two words differ only in what they say to the reader of the header, and the sentence \"The same holds under `creator`\" is struck. (Or, if the owner means them to differ, `[FFI-33]` says in one line what `creator` forbids that `main` allows and why.)",
+    "codes": "E7012",
+    "milestone": "M12",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-24",
+    "rules": [
+     "FFI-55",
+     "FFI-14",
+     "FFI-5"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "What `ember.overlays`'s fingerprint hashes is unsaid, so two implementations disagree on which header changes are E5010",
+    "program": "n/a: `SDL_FreeSurface = \"blake3:…\"` — of the declaration's spelling, of its canonical type, of the layouts of the aggregates it names? A header that renames a parameter, or widens `struct SDL_Surface`, is E5010 under one reading and \"changes nothing\" under another.",
+    "why": "[FFI-55]: \"one `blake3:` fingerprint of each declaration the overlay describes, as the importer binds it (`[FFI-14]`)\" and \"A change to a declaration the overlay does not describe changes nothing\".",
+    "proposed_text": "* `[FFI-55]` … The fingerprint is the blake3 of the declaration's canonical form as Clang prints it with every typedef resolved and its parameter names kept (an overlay names them, `[FFI-12]`), followed by the size, alignment and field offsets of each complete aggregate the declaration names (`[FFI-5]`); so a renamed parameter or a changed layout is a changed declaration, and a comment or a changed default argument is not.",
+    "codes": "E5010",
+    "milestone": "M12",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G7-25",
+    "rules": [
+     "FFI-17a",
+     "FFI-3"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "`std::optional<T>` maps to `Option[T]` with no word on the conversion, though the two layouts differ",
+    "program": "import cpp \"cfg.hpp\" with (project=\"c\") as c   # std::optional<int> lookup(int k);\nfn main():\n    v = c.lookup(3)     # `Option[int]`: an implementer may pass the `std::optional` bytes as Ember's `Option`, whose tag and niche are Ember's",
+    "why": "[FFI-17a]: \"`std::optional<T>` | `Option[T]` for a `T` that maps by value\"; [FFI-3] says the thunks are C++ compiled by the project's compiler, and nothing says they convert.",
+    "proposed_text": "* `[FFI-17a]` … The thunk converts between `std::optional<T>` and `Option[T]` at the call, in both directions (`has_value()` and the value, one branch and one copy of `T`), since the two layouts differ; `ember inspect` reports the conversion as it reports a thunk call (`[FFI-17f]`).",
+    "codes": "none; one cost row",
+    "milestone": "M12",
+    "touches_owner_verdict": ""
+   }
+  ],
+  "judged_sound": [
+   "[FFI-1]/[FFI-2]/[FFI-2a]: the safe-to-call fact never derived; `safe fn`/`unsafe fn` and the overlay's `unsafe overlay` as a [TIER-1] boundary; E5002 naming each missing fact (with G7-09's reservation on `const T*` for opaque types)",
+   "[FFI-10]: count witnesses, unequal lengths panicking before the call, the sentinel for an empty span (read-only memory / the call's frame), result counts needing an input span, `from(p)`/`from(static)` required on results, `safe fn` refusing raw pointers (with G7-15's witness exception)",
+   "[FFI-5]/[FFI-5a]: layouts verified by Clang and re-verified by `_Static_assert` in the shim",
+   "[FFI-6]/[FFI-6a]/[FFI-6b]/[FFI-7]/[FFI-20a]/[FFI-38]: the importer rejects rather than guesses; macros by Clang's evaluation; nothing silently absent",
+   "[FFI-8]: `char` never crosses (E5054), variadic promotion (E5013), `va_list` never constructed, unions read only in `unsafe`, `@ffi(immutable)` needing `ThreadShared` and a foreign `static mut` only in `unsafe`",
+   "[FFI-29]–[FFI-30c]: one entity per USR with one layout (E5011), overlays composing in declared order with explicit `override`, a dependency's overlay applied only to its own header",
+   "[FFI-55]: a dependency's record missing an overlay or a declaration is E5010, so a published package cannot bind an unchecked overlay in a dependant (fingerprint input: G7-24)",
+   "[FFI-11]/[FFI-11a]/[FFI-11b]/[FFI-11c]: the five axes, a count required (E5012), `inout_count`'s tuple, `TODO(...)` keeping a declaration unsafe",
+   "[FFI-15]/[FFI-16]: `to_cstring` scanning for NUL before allocating, `to_str` validating, `Option[CStrView]` carriers; `status` enums giving `Result[T, N]`",
+   "[FFI-36a]/[FFI-36b]: one destructor per foreign type, adopting twice caught in every profile and at compile time on one local",
+   "[FFI-21] for `callback(borrowed)`: run only during the call, the block freed at return, real variables under [FFI-22]'s thread rule and [BRW-11]'s argument overlap",
+   "[FFI-21a]: no raw pointer returned into a parameter C passes by value (E5042)",
+   "[FFI-22]: a `threads(any)` callback is a `thread_shared fn()`, changing real variables only by their own operations; the trampoline's thread check in every profile",
+   "[FFI-52] within one package: a foreign call counts as running every reachable Ember function; `no_callbacks` an asserted fact, E5069 beside a `callback(...)` parameter; the example's reasoning (the cross-package case is G7-03)",
+   "[FFI-53]: tagged numbers never addresses; slot, generation and type in one compare; retired slots never reused; a `threads(any)` slot marked running while unregistering waits; a callback ending its own token (the once mark: G7-07; TBI: G7-20)",
+   "[FFI-54]/[OWN-12]: `into_raw()` built into the compiler, only in `unsafe`, the name ending (the way back: G7-16)",
+   "[FFI-56]: a C function pointer unsafe to call; `@ffi(safe)` only for scalar/`@layout(c)` signatures",
+   "[FFI-26]/[FFI-25]/[FFI-27]/[FFI-28]/[FFI-31]/[FFI-31a]/[FFI-31c]: `@unsafe(export)` vouching for the symbol, known-taken names refused, no panic unwinding into C, the module protocol's versioned marker, shutdown detaching threads without TLS destructors",
+   "[FFI-31b] for owning values: class objects, `shares`, `String`, function values and `drop` types never crossing (the view-type mapping: G7-14)",
+   "[FFI-33] for `any`: statics `ThreadShared`, `static mut` guarded (E7012); the wrapper attaching before the check; `creator` per module (its difference from `main`: G7-23)",
+   "[BLD-FFI-1]–[BLD-FFI-3], [BLD-FFI-1a]/[BLD-FFI-1b]/[BLD-FFI-4]: flags per import, MSVC runtime switches inherited byte for byte (E9020/E9021), link order by declaration",
+   "[FFI-3]/[FFI-17]/[FFI-17b]/[FFI-50]: no mangled symbols, thunks compiled by the project's compiler, templates only as listed instantiations (E5055)",
+   "[FFI-17e]/[FFI-17f]: bridge types not `Copy`/`Send`/`ThreadShared`, views into them not outliving them, thunk calls reported",
+   "[FFI-32]: standard-layout trivially-copyable classes by value, opaque ones only through imported constructors, by-value results moved to an object of their own",
+   "[FFI-11f]/[FFI-48]: `lifetimebound` an asserted fact; the unsupported-construct table with a way out for each row",
+   "[FFI-24]–[FFI-24d]/[FFI-43]/[FFI-39e]: a derived exception policy with a default that catches; asserted `noexcept` still catching and panicking; no exception into Ember, no panic into C++",
+   "[FFI-39a]/[FFI-39b]/[FFI-39d]/[FFI-17c]: overrides through permanent thunks surviving reload; `super.init` exactly once selecting the base constructor; re-entrant C++ calls checked as [FFI-52]'s; derived-first destruction (the object model: G7-10; the thread word: G7-05)",
+   "[FFI-39c]/[FFI-17d]: `owner=\"ember\"`/`\"foreign\"`, an `owns` parameter taking the object over, `into_raw()` for a raw keeper, E5060 for an Ember-owned object given to a keeper, E5059 without a virtual destructor",
+   "[FFI-40]/[FFI-40a]: `const` not an aliasing guarantee, the body read for mutable members, an overlay entry deciding (verdict 132), E3023 for a changing method through a read-only name (the reference-result lifetime: G7-11)",
+   "[FFI-41]: static data members and namespace variables through address thunks, in `unsafe` unless `const` and pointer-free; anonymous namespaces skipped",
+   "[FFI-42]/[FFI-42a]: operators to `Index`/`IndexMut` and read-through; a walk over a C++ container refusing every changing method inside it (E3020), `IndexMut` writes already refused by [BRW-18]",
+   "[TCB-1]–[TCB-6], [FFI-37]–[FFI-37d]: grades never raised by declaration, only effect facts instrumentable, evidence tied to identities and stale on any change, unexercised facts not counting",
+   "[BLD-FFI-5a]'s counting: C++ handles on the away count, a making-thread copy counted away tolerated by the biased scheme, the last handle ending through the queue or at once when the queue is closed (the methods exposed: G7-13)",
+   "[CXX-1]: the conformance corpus under MSVC and Clang, disagreeing configurations failing with E9020",
+   "[WK-5]'s owner edge from a `Retained[ForeignCallback]` token to the callback's state, so a loop through a kept callback is E3032 as any loop is"
+  ],
+  "could_not_cover": "Not re-read with the attacker lens: the exact run-time behaviour of `ember_rt` in `runtime/ember_rt` (the brief forbade running the compiler and reading HANDOFF/AUTOPILOT; O8's chunk-header question stays with its owner). Hot reload's interaction with the callback table and trampoline objects ([HR-20], Annex B) was read only for what Part XVI cites and is group Annex B's. Verdict texts were searched for the rule ids my findings touch (114, 91, 131–136); verdicts outside those greps were not read."
+ },
+ "verdicts": {
+  "group": "G7",
+  "verdicts": [
+   {
+    "id": "G7-01",
+    "verdict": "confirmed",
+    "reason": "No sentence gives `Retained[ForeignCallback]` a marker. [THR-8]: \"A type is `Send` when ... nothing reachable from it (its fields, its elements, what its `owns` parts hold, a function value's state) is a one-thread owner\"; the token is not a function value, and its type names no callback, so the type's `Send` cannot depend on which block it keeps. [WK-5] makes the token an owner edge \"to the callback's state, which it keeps for C\" for the loop graph only. [FFI-23]: \"its end unregisters the callback through `destroys(f)` and then ends the block\" names no thread; [FFI-33b]: \"A callback's thread is the trampoline's to check\" covers calls, not the token's end; [FFI-21] allows \"`shares`, `shares mut` and `weakref` only under `threads(creator)` or `threads(main)`\" on the assumption that the block ends where it was made, which nothing states. So line 14 is accepted by inference and the `shares mut` count is subtracted on the new thread with a plain subtract ([RC-4]: \"never cross threads\").",
+    "better_fix": "The proposed rule is right; two corrections. (1) The help's `token = None` does not compile: the local is `Retained[ForeignCallback]`, not an `Option`; a local ends early with `mem.drop(owns x)` ([DRP-1]: \"`mem.drop(owns x)` ends a value early\"). Write: \"keep `token` in `main`, or end it there before the thread starts: `mem.drop(owns token)` above line 14\". (2) Add the token to the marker table of §IV.8 and to [THR-9]'s list beside [THR-8]'s, and say in [FFI-23]: \"A token is bound to the thread that registered the callback (`[THR-8]`: neither `Send` nor `ThreadShared`), so its end, the `destroys(f)` call and the block's end, runs on that thread, and a one-thread owner the block holds under `threads(creator)` or `threads(main)` is counted on one thread only.\""
+   },
+   {
+    "id": "G7-02",
+    "verdict": "confirmed",
+    "reason": "[FFI-21]: \"`shares`, `shares mut` and `weakref` only under `threads(creator)` or `threads(main)`, `[FFI-22]`\" accepts line 13 with no condition on the registering thread; [FFI-22]: \"`threads(main)` or `threads(creator)`, which the trampoline checks in every profile\" checks only the calling thread. [THR-2] states the principle (\"no such owner ... reaches another thread by any route: captured or held by a function any thread may run (..., a callback C may run on another thread)\") but names no way to decide that `worker` is not the main thread, so the specific rule accepts what the general one would refuse, and a compiler must choose. [THR-20] already decides the same question for a `static mut` (\"a function that may run on another thread (reachable from `thread.spawn`, ...)\"), which is the hook the fix needs.",
+    "better_fix": "Keep the proposed condition, anchored in [THR-2]'s route list rather than a new one: in [FFI-21] write \"`shares`, `shares mut` and `weakref` only under `threads(creator)`, or under `threads(main)` where the registering call is in a function only the main thread runs, decided as `[THR-20]` decides it (not reachable from `thread.spawn`, from a job submitted outside a scope, from a callback C may run on another thread, or from an export under `threads=any` or `creator`); elsewhere the owner reaches another thread (`[THR-2]`, `E7015`)\", with the reader's message. `E7015` is the right code (its registry row already names `[FFI-22]`); no new code."
+   },
+   {
+    "id": "G7-03",
+    "verdict": "confirmed",
+    "reason": "[FFI-52]: \"Across a package's edge, the callbacks a package hands to C ... are recorded in its interface file (`[EFF-4]`), so a program that uses the package counts them at every foreign call\": the program's foreign calls, not the package's. [BRW-21] keeps with each function \"which of its view parameters ... it uses after a line that may end or move what they view ... through its own lines and the same fact of the functions it calls\" and checks it at the call (`E3031`), but that fact is resolved inside the package: when `sim` is compiled, `poll_events()` \"counts as possibly running ... every callback C keeps\" ([EFF-26]) and `sim` keeps none, so `tick`'s summary says `game` is used after nothing that may reshape it. [EFF-4] records \"each function's effect set and summary\", not the foreign calls a parameter is held across. So `sim.tick(game)` passes [BRW-21] and the walk regrows under its position. O1's shape (a whole-program fact deciding a package's code), but no header rule is touched.",
+    "better_fix": "Ride on [BRW-21]'s existing call check instead of a new caller-side `E3020`: \"* `[BRW-21]` ... A foreign call without `@ffi(no_callbacks)` is an **open line** of the function's summary: for each view parameter, `this` included, and each `static` of its own, that the function uses after such a call (`[FFI-52]`), the summary records the call and what the parameter is used as (walked, read, changed through `ref mut`), without resolving which callbacks run (`[EFF-4]`). At each call from another package the caller resolves the open lines against the callbacks its program keeps, its exports and its overrides (`[FFI-52]`): where one of them changes what that parameter's argument reaches, the call is `E3031`, naming the chain: \"`sim.tick(game)` (line 9) walks `game.names` after it calls `poll_events()` (sim/game.em:9), a C function that may run the callback C keeps from `register_cb` (line 8), which pushes to `game.names`; register the callback after the call, or, if `poll_events` never calls back into Ember, mark it `@ffi(no_callbacks)` in `sim`'s declaration\". Nothing in a library is refused for callbacks it cannot see.\" One summary field, `E3031`'s shape, no new code."
+   },
+   {
+    "id": "G7-04",
+    "verdict": "narrowed",
+    "reason": "The program is not accepted by a hole in the checks but by a false assertion whose content the text never states. [FFI-2]: an overlay entry or `safe fn` \"asserts that a call within its contract cannot break memory safety\"; [FFI-11]: `from(static)` is \"a view ... into what lives for the whole program (`[LT-1a]`, `[LT-3]`)\"; [LT-3] gives the `static` region, which [STA-1]'s statics earn because a `static` \"never changes\". Nowhere does the text tell the overlay author that `from(static)` asserts that nothing writes the memory again, so an author reading \"lives for the whole program\" writes it for `localtime` in good faith; [FFI-35a] lists result pointers \"with no lifetime word\" but not what the word asserts. The same for [FFI-15]'s `from(static)` strings.",
+    "narrowed_to": "The content of the `from(static)` (and `from(p)`) assertion is unsaid: that the memory is not written after the call returns, by this function on a later call or any other, which is what gives the view [BRW-1]'s promise. One sentence in [FFI-11], and a line in `ember bind --report`, closes it; a function whose result holds only until the next call is then declared `unsafe fn` and wrapped by an `extend` method ([FFI-13]) that copies inside `unsafe:`.",
+    "better_fix": "* `[FFI-11]` ... A lifetime word asserts two things of the memory the result points into: it lives at least as long as the word says, and nothing writes it while the view may be used, neither this function on a later call nor any other; a result that holds only until the library's next call (C's `localtime`, `strerror`, `getenv`) has no lifetime word and its function stays `unsafe fn`, with an `extend` wrapper that copies the value inside `unsafe:` (`[FFI-13]`). `ember bind --report` lists each `from(static)` and `from(p)` result as the assertion it is (`[FFI-35a]`). The `copied` word is a convenience the owner may add (as O2's word); it is not needed for safety."
+   },
+   {
+    "id": "G7-05",
+    "verdict": "confirmed",
+    "reason": "[FFI-39c] hands the object over with no marker check: \"the argument is handed over (`panel.add_child(b)`: `b` ends, upcast to the C++ base), and C++'s `delete` ends the object later\"; [FFI-17d]: \"`owner=\"foreign\"` makes a foreign `delete` end it\"; [THR-20]: \"A `drop` runs where the last owner ends.\" No rule gives an override a thread word: [FFI-22] attaches the thread for \"Every exported function and trampoline\" (the C trampoline of [FFI-53]), [FFI-39d] checks only \"every change those overrides make\", [FFI-52] counts overrides as running \"on the calling thread\", and [THR-20]'s list of functions that may run on another thread names callbacks and exports, not overrides. [FFI-33a]'s \"no one-thread owner reaches C (`[FFI-31b]`)\" is about exported signatures. So `Button.log` is accepted and C++'s thread subtracts a plain count while `main` holds `log`.",
+    "better_fix": "The proposed text is right in shape. Two refinements: record the thread when the object is made, not at the hand-over, in a member of the generated trampoline subclass (the Ember header stays as [OBJ-1] has it, verdict 101): \"an object of the class is bound to the thread that made it (`[THR-8]`: not `Send`, `E7008`), whose id the trampoline subobject holds, one word; every override thunk and the trampoline's destructor compare the calling thread with it, in every profile, and stop the program otherwise\". And say that the override thunks and the destructor attach the calling thread first (`[FFI-22]`), which the text says of nothing in Annex C. Cost row: \"an override call or `delete` of a trampoline-class object under `threads=creator`: one compare of the thread\"."
+   },
+   {
+    "id": "G7-06",
+    "verdict": "confirmed",
+    "reason": "Whether line 6 is accepted is a guess: [FFI-10] allows `safe fn` \"only when every parameter and result is a scalar, a `@layout(c)` value type, or a pointer whose contract is complete\" and [FFI-11a] makes \"A pointer contract with no count word\" `E5012`, which cannot mean a function pointer; [FFI-21] speaks of \"A C function-pointer parameter\" accepting a capture-free function with no contract word at all. Once accepted, no rule attaches the thread or checks the body: [FFI-22] attaches it for \"Every exported function and trampoline\", [CLO-3] says a conversion \"reads its C entry\" without saying what that entry does, [FFI-52] counts \"every Ember function given to C as an `extern \"C\" fn` value\" for changes only, and [THR-20] names \"a callback C may run on a thread other than the main one\" where the glossary's callback is one under `callback(…)`. `E5069` refuses `no_callbacks` only beside a `callback(…)` parameter.",
+    "better_fix": "Make the rule general at the coercion, not at one parameter, since a function becomes an `extern \"C\" fn` in many places ([FFI-56]: struct fields, typedefs, arguments): \"* `[FN-6]`/`[FFI-21]` ... A function coerced to `extern \"C\" fn(…)` anywhere gets a C entry that attaches the calling thread (`[FFI-22]`) and then runs it, and its body is checked as an export under `threads=any` is (`[FFI-33]`, `[THR-20]`: `E7012` for a `static mut` it reaches without its lock), since the compiler cannot see which thread C calls it from. A function-pointer parameter of a `safe fn` or an overlay entry carries a `callback(…)` word (`E5002`, with the reader's help); an `unsafe fn` may take one bare. `@ffi(no_callbacks)` on a function whose contract takes a function pointer is `E5069`.\" Cost row: \"an Ember function called by C through a function pointer: the thread-local attach check\"."
+   },
+   {
+    "id": "G7-07",
+    "verdict": "narrowed",
+    "reason": "Question 1 is answered: [FFI-23] says the token is \"the token a registering call returns for a callback C keeps (`[FFI-21]`)\" and the glossary defines a kept callback as one under \"`callback(retained)` or `callback(once)`\", so `when_ready` returns a token. Questions 2 and 3 are real: [FFI-53] says only that \"a `callback(once)` slot carries a used-up mark\" and that the checks run \"in every profile\", nothing of how two C threads taking it at once are ordered; and [FFI-23]'s \"its end unregisters the callback through `destroys(f)` and then ends the block\" is written for `retained`, while [FFI-21] says \"with `once` the trampoline ends the block after the first call\", so a token ending after the call would call `cancel` on a consumed registration and end an ended block, and the text does not say which. Also [FFI-21]'s `E5041` (\"if none is declared\") is stated for `retained` only.",
+    "narrowed_to": "(a) The used-up mark's atomicity for a `threads(any)` `callback(once)` callback; (b) what a `once` token's end does after the call ran; (c) whether `callback(once)` needs `destroys(f)` (`E5041`), without which a token ending before the call has no way to unregister and must leak or wait.",
+    "better_fix": "The proposed two sentences, plus: \"`callback(once)` needs a `destroys(f)` as `retained` does (`E5041`), since a token that ends before C runs the function must unregister it.\" Say in [FFI-53] that the used-up mark is taken with one atomic exchange, so the §X.4 row (\"the used-up mark of a `callback(once)` one\") describes an atomic, and that the token records that the call ran so its end then frees the slot's record and calls nothing."
+   },
+   {
+    "id": "G7-08",
+    "verdict": "confirmed",
+    "reason": "[FFI-35a]: \"A class object given to a `retained` parameter is marked in its header as kept by C and never moves\" against [OBJ-1]: \"An object carries nothing else for the memory model: no access words, and no flags but a `thread_shared` value's three marks.\" And no line sets it: [FFI-11] says of `retained` on a non-callback pointer \"no safe type ... the call stays `unsafe`, with a raw pointer\", so the object reaches C only as `ref_to_ptr(names)` inside `unsafe:`, where the compiler sees a raw pointer; [THR-2] then reads the mark (\"An object whose address C keeps (`[FFI-35a]`) never moves: a link to it at the hand-over stops the program\"). Verdict 114 fix 3 asked for exactly this stop, so the mark must exist and [OBJ-1] must name it.",
+    "better_fix": "Keep the header bit, but set it by the parameter's contract, not by the shape of the statement (\"a pointer the same statement makes\" is a pattern): \"* `[FFI-35a]` ... The mark is set by the call: the wrapper of a function with a parameter contracted `retained` whose C type is a pointer to a class type (`*mut Names`) stores the mark through the pointer before the call, one store, since a class object's address is its header (`[OBJ-2]`); that the pointer is a live object's is the unsafe caller's obligation (`[UNS-4]`), as every raw pointer's is. A `retained` pointer to anything else marks nothing.\" In [OBJ-1]: \"The top bit of the type index is the kept-by-C mark (`[FFI-35a]`), so a type index is below 2^31; it is the header's only mark on a value that is not `thread_shared`.\" This touches verdict 101's header design as well as 114; both say the header is the owner's."
+   },
+   {
+    "id": "G7-09",
+    "verdict": "confirmed",
+    "reason": "[FFI-8] gives \"incomplete `struct` | `extern type S`, used only behind pointers\" and no marker rule; [THR-8] infers `Send` when \"nothing reachable from it ... is a one-thread owner ... or bound to the thread that made it\" and [THR-9] \"is inferred like `Send`\", so a type with no visible parts is both; [THR-8] makes `ref T` `Send` \"when `T` is `ThreadShared`\", so both tasks hold a `ref Ctx`. [FFI-2a] derives \"`const T*` is a read-only view\" and [FFI-40a] says only of C++ that \"`const` is not an aliasing guarantee\". [FFI-33b] gives `threads(creator)` to some types and says nothing of the rest. So the program is accepted and C writes its cache from two threads. (An `owns T` of an `extern type` is one word holding an address, which [THR-8] treats as thread-bound only when it is a raw pointer; the text leaves the compiler to guess whether an opaque handle is one.)",
+    "better_fix": "The proposed text, with the `ThreadShared` declaration spelled as [THR-8] spells `Send` (\"`unsafe extend Ctx implements ThreadShared:` with a `# SAFETY:` note\", `E3100` without `unsafe`, listed by `ember tcb`), and one line saying why: \"C's `const` says what the pointer's holder may do, not what the callee does (`[FFI-40a]` for C++), so reading one object from several threads is a fact only the library's documentation gives.\" Apply it to `@ffi(handle)` types too, since the text gives those no markers either."
+   },
+   {
+    "id": "G7-10",
+    "verdict": "confirmed",
+    "reason": "[FFI-39]: \"the importer generates a C++ subclass, the trampoline, which passes on to the Ember class exactly the virtual methods it overrides\" and nothing of how the Ember object and the C++ object relate; [FFI-17d]: \"`owner=\"foreign\"` makes a foreign `delete` end it\"; [FFI-17c] orders the destructors; [OBJ-1] fixes the header at offset 0 ([OBJ-2]: \"one pointer, to offset 0\"); [CLS-6] frees \"once no `weakref` link to it remains\" and ends the object \"before its `drop` runs (`[WK-3]`)\". No sentence says what `delete` frees, who marks the object ended, or how a link outlives a C++ `delete`; [FFI-39c]'s `b.into_raw()` \"gives C++ the object's address\" without saying whether that is the header's address or the base subobject's, which differ once a header precedes the base.",
+    "better_fix": "The proposed layout and `operator delete`, ordered as [WK-3] and [CLS-6] order Ember's end: \"The trampoline subclass declares a virtual destructor that first marks the object ended through `ember_rt` (`[WK-3]`), then runs the Ember `drop`, ends the Ember fields and runs the base destructor (`[FFI-17c]`); and an `operator delete` that returns the block to `ember_rt`, which frees it only when no `weakref` link remains (`[CLS-6]`), subtracting the base subobject's fixed offset to reach the header; so C++'s `delete` frees nothing itself and does what the end of the last Ember owner would. An upcast, a hand-over to C++ and `into_raw()` on such an object give the base subobject's address, the header's plus that offset.\""
+   },
+   {
+    "id": "G7-11",
+    "verdict": "confirmed",
+    "reason": "[FFI-40]: \"a `T&` result is a `ref mut T` view into the object and a `const T&` result a `ref T` one (`[LT-1]`)\" derives the result's target from nothing but the signature, where [LT-1]'s rule 1 (a method's result points into `this`) is proved from an Ember body and C++'s \"is not read as Ember's is\" ([FFI-40] itself). [FFI-2a]: \"In **result** position a pointer's lifetime is never derived\", and [FFI-17a] says of `std::span` results \"a result needs a lifetime word\"; a reference is the same pointer. `[FFI-11f]` makes even `[[clang::lifetimebound]]` an asserted fact. So `p` is held valid while `child` lives and reads freed memory after `prune()`. Verdict 132 (`@ffi(const)`) is not reversed.",
+    "better_fix": "The proposed replacement is right. Add the report line to [FFI-35a]'s list (\"every result-position pointer or C++ reference with no lifetime word\") and the `E3100` message for a call of such a method outside `unsafe:`, in [FFI-56]'s form: \"`child.parent()` returns a C++ reference whose target no contract names; put line 7 in an `unsafe:` block with a `# SAFETY:` note, or give `parent` a lifetime word in the overlay: `fn parent() -> borrowed one from(this)`\"."
+   },
+   {
+    "id": "G7-12",
+    "verdict": "confirmed",
+    "reason": "[FFI-17a]: \"a function value of type `fn(A…) -> R` (`[CLO-3]`), called as any other, which owns its target\"; [CLO-17]: \"A call through a function value makes the changes, reads and ends of every function the program can put there (`[EFF-2]`)\", and the program puts none, the target being C++ code; [EFF-3] gives `FFI` to \"An `extern` function\" only; [FFI-52]'s list of what a foreign call may run names no call through such a value, and [FFI-39d] counts only \"a call into C++ not marked `@ffi(no_callbacks)`\". So `h()` inside the walk is judged to change nothing. [FFI-17e] lists the bridge types' markers and leaves this value out.",
+    "better_fix": "Put the C++ target into [EFF-2]'s set rather than describing one call, so a value stored in an `Array[fn()]` is covered too: \"* `[FFI-17a]` ... A value made from a `std::function` by a `std_function` import holds a foreign function as its target: for `[EFF-2]` and `[CLO-17]` that function is one the program can put in every place the value may reach (recorded across a package's edge as the function values a package stores, `[EFF-4]`), with every effect (`[EFF-3]`) and the callbacks, exports and overrides a foreign call may run (`[FFI-52]`); `@ffi(no_callbacks)` beside `std_function` on the type's entry says it runs none. The value is neither `Send` nor `ThreadShared` (`[FFI-17e]`), and its end runs the `std::function`'s destructor through a thunk (`[FFI-17f]`).\""
+   },
+   {
+    "id": "G7-13",
+    "verdict": "confirmed",
+    "reason": "[BLD-FFI-5a]: \"the header presents it as a copyable handle class of the same name with the class's `pub` methods\" names every `pub` method, where [THR-1] lets a `thread_shared` name call only what changes the object through its own operations (\"no owner changes a `thread_shared` value directly (`E7014`) ... its state changes only through an `Atomic`, a `Mutex`, an `RwLock`, a channel end, or a field `guarded by` a lock\"); so `add` is in the header and C++ pushes from two threads. [FFI-28] calls the handle's methods \"the functions its header declares\", which makes an attach by [FFI-22] arguable, but no rule gives them a thread contract or checks their bodies under one.",
+    "better_fix": "The proposed text, naming [FFI-28]'s functions as the exports in question: \"The functions `[FFI-28]`'s header declares for a handle are the class's `pub` methods a `thread_shared` name may call in Ember (`[THR-1]`); the others are left out with a comment naming the rule. Each is an export under `threads=any` (`[FFI-33]`): its wrapper attaches the calling thread (`[FFI-22]`), its body is checked as such an export's is, and its parameters and result follow `[FFI-31b]`.\""
+   },
+   {
+    "id": "G7-14",
+    "verdict": "confirmed",
+    "reason": "[FFI-31b] lists only \"`@layout(c)` values, scalars, opaque handles, `CStrView` and `extern \"C\" fn` may\" and the owning types that \"MUST NOT appear\"; `Span`, `MutSpan`, `Option`, a `ref mut` parameter and a `@repr` enum are in neither list, while [BLD-FFI-5] presumes spans cross (\"where the C header takes pointer-and-length pairs\"). [FFI-26]'s header writes \"a prototype for each export\" with no mapping to C types. [FFI-8] makes an imported enum `@non_exhaustive` since \"any value may arrive\", and nothing says it of an exported one, so `match m:` with two arms is exhaustive and C's 7 is undefined. [UNS-4]'s obligations bind unsafe code, and no rule states what the C caller must make true of a `ref mut` parameter. One part of the example is already refused: `ref mut out: Stats` with `Stats` a class is `E5015` (\"class objects ... MUST NOT appear in an exported signature or be reachable through a pointer in one\").",
+    "better_fix": "The proposed text, minus the class-typed `ref mut` (already `E5015`), and with the carrier table written as [FFI-8]'s is: \"| Ember export type | C carrier | `x: T` (`@layout(c)`) | `const T*`, a scalar by value | `ref mut x: T` | `T*` | `Span[T]`, `MutSpan[T]` | `const T*, size_t`; `T*, size_t` | `Option[…]` of a pointer-shaped type | a null pointer | `CStrView` | `const char*` | a `@repr` enum | its `@repr` type |\", plus the `E5015` sentence for an exhaustive enum and the header comments naming the caller's obligations."
+   },
+   {
+    "id": "G7-15",
+    "verdict": "confirmed",
+    "reason": "[FFI-10]: \"complete facts do not make a raw-pointer parameter or result safe to expose; `safe fn` with one is `E5002`\", and only `count(n)`'s witness \"is absent from the callable Ember signature\" (ODR-074); [FFI-52]'s own example declares `safe fn register_cb(cb: extern \"C\" fn(*mut void), ud: *mut void)` with `ud` raw and calls it as `register_cb(fn() owns game: game.add_point())`, one argument of type `fn()`. [FFI-21] gives the trampoline and \"the block's tagged number as the user data\" but no rule erases `ud` from the callable signature or derives `fn()` from `extern \"C\" fn(*mut void)`. The text contradicts itself and the mapping is unsaid.",
+    "better_fix": "The proposed text; add that the callable type under `threads(any)` is `thread_shared fn(P…) -> R` as [FFI-22] already says (\"is a `thread_shared fn()`\"), and that `ud`'s C type must be a pointer or `uintptr_t` wide enough for the tagged number (`E5002` otherwise), since [FFI-53]'s number is 64 bits."
+   },
+   {
+    "id": "G7-16",
+    "verdict": "confirmed",
+    "reason": "[FFI-54]: \"`w.into_raw()` gives the address ... and stops Ember freeing it ... the name ends\"; [FFI-23]: \"C gives a foreign object back through `adopt`\", and [FFI-36a]'s `adopt` reads \"its destructor from the contract of `T`'s declaration, `@ffi(destroys(f))` on `type T`\", which an Ember class has not; [FFI-27] lists `ember_rt_init`, `ember_rt_thread_attach` and `ember_rt_shutdown` and no entry that ends an object; [WK-15] names such objects as leaked (\"kept by `unsafe` code (`into_raw()`)\"). No `from_raw` exists anywhere in the Parts. `ObjectPtr[C]` is \"the address of a class object ... (to C, one pointer): `Copy`\", and whether it is \"a raw pointer\" for [THR-8], [THR-9] and [UNS-1] is unsaid.",
+    "better_fix": "The proposed text, with two additions: `ember_rt_object_release` honours `[CLS-6]` (it ends the object and frees the block only when no `weakref` link remains, as the last Ember owner's end would), and `from_raw` on a class object gives it back with one owner, so a `weakref` link made before `into_raw()` still finds it alive, which keeps `[OBJ-1]`'s counts right (`[UNS-4]`: \"every owner and every `weakref` link of it is counted there\")."
+   },
+   {
+    "id": "G7-17",
+    "verdict": "confirmed",
+    "reason": "[FFI-11]'s table composes \"nullability | `nullable` | `Option[…]`\" with \"a parameter that views the caller's value for the call (`x: T` ...)\", which reads as `x: Option[T]`, but [FFI-10] spells the carrier out only for spans (\"the safe type is `Option[Span[T]]` ... `None` sends C a null pointer and integer zero\") and [FFI-15] for strings (ODR-080); for `one` nothing says what `Some` sends (the address of the `Option`'s value, with the tag never crossing) or how `exclusive` writes back into the caller's `Option`. A minor gap, as reported.",
+    "better_fix": "The proposed sentence is right; add the `exclusive` message shape of [FFI-11] (\"written with `ref mut` in front of its name ... and the call marks its argument `ref mut`\") so `set_name(ref mut maybe_name)` is the line to write."
+   },
+   {
+    "id": "G7-18",
+    "verdict": "confirmed",
+    "reason": "[FFI-11]: \"`out` (an out-parameter, returned instead)\" and [FFI-16] reads outs only for `-> status` functions; for a `void` function with `out`, the wrapper returns a slot C may not have written, and nothing says `out` asserts that C writes it, so the assertion is absent from [FFI-35a]'s report. A minor gap in the assertion's content, as G7-04's.",
+    "better_fix": "Keep the first sentence (\"`out` asserts that C writes the whole value before it returns, on success for a `-> status` function (`[FFI-16]`); an asserted fact `ember bind --report` lists beside the retention assumptions (`[FFI-35a]`)\") and drop `nullable out`, which no rule defines: \"A function that may leave its out-parameter unwritten is declared `unsafe fn`, with `@safety` saying when the value is written.\""
+   },
+   {
+    "id": "G7-19",
+    "verdict": "confirmed",
+    "reason": "[DIA-6a]: \"every registered code is named here ... Each code is defined by exactly one rule.\" `E5056`/`E5057` describe an overlay naming virtuals, which [FFI-39] no longer has (\"exactly the virtual methods it overrides (`override fn`), read from the class\"); `E5051` reports a retention no rule can observe ([FFI-37d]: \"ownership ... facts stay asserted unless checked or proven\"); [FFI-43] names only `E5062` (\"An overlay that marks a function both `noexcept` and throwing, or two composed overlays that disagree, is `E5062`\"), so `E5066` is named by no rule; `E5031` is defined in [FFI-32] (\"a parameter that maps to nothing is `E5031`\") and `E5034` in [FFI-48] (\"**Unsupported constructs** (`E5034`, naming the row)\"), both cited as [FFI-17]; [FFI-20a] names `W5002` only, not `W5031`. All as reported.",
+    "better_fix": "As proposed, and two more rows of the same defect: `E5058` (\"C++ base has no default constructor and no declared `init`\") is defined in [FFI-39b] and `E5059` (\"trampoline base has no virtual destructor\") in [FFI-17d]; both cite [FFI-39]."
+   },
+   {
+    "id": "G7-20",
+    "verdict": "confirmed",
+    "reason": "[FFI-53]: \"the slot's generation in the top 16, which are never all zero, so the number is no user-space address and a C library that wrongly writes through it faults before writing anything.\" A generation such as 0x0100 has bits 48 to 55 all zero; under AArch64 Linux's top-byte-ignore the top byte is dropped from the address, so the number is the slot's low 48 bits, a user-space address, and the promise fails; the text's own 32-bit caveat shows it meant the promise literally.",
+    "better_fix": "Set three bits of the generation, not one: \"The generation always has its bits 0, 7 and 15 set (bits 48, 55 and 63 of the number), 8,192 values before the slot retires: with bit 63 set and bits 56 to 62 clear the number is non-canonical on x86-64 under 48- and 57-bit addressing, and with bits 48 and 55 set it stays non-canonical on AArch64 under top-byte-ignore with 48- or 52-bit addresses; on a 32-bit target the promise is the trampoline's checks alone.\" The reader's odd-generation form leaves LA57 and 52-bit AArch64 uncovered."
+   },
+   {
+    "id": "G7-21",
+    "verdict": "confirmed",
+    "reason": "[FFI-33b]: \"an `owns T` foreign value of such a type records its creating thread and, in every profile, stops the program when it ends on another\"; [FFI-36a]: \"so an `owns T` foreign value stays one word\" and [FFI-17a]: \"an `owns T` holds one address\". One word cannot hold both, so an implementer must choose between a second word and a side table, which decides the type's size, a layout fact. [THR-8] makes \"a `threads(creator)` handle\" thread-bound (`E7008`), so the stop fires only through unsafe code or C, as the reader says.",
+    "better_fix": "The proposed text, and amend [FFI-36a]'s sentence to \"so an `owns T` foreign value stays one word, two for a `threads(creator)` type (`[FFI-33b]`)\"; the cost row as proposed."
+   },
+   {
+    "id": "G7-22",
+    "verdict": "confirmed",
+    "reason": "[FN-2a]: \"A call says ... `owns` before one it takes over, with the same words as the parameter ... A missing word ... is `E3028`\"; [FFI-39c] writes \"(`panel.add_child(b)`: `b` ends, upcast to the C++ base)\" and [FFI-54] writes `widget_take(owns first)`. Editorial, as reported.",
+    "better_fix": "As proposed; also [OWN-12], which writes \"takes it by an ordinary hand-over, `widget_take(first)`\" against [FFI-54]'s `widget_take(owns first)`."
+   },
+   {
+    "id": "G7-23",
+    "verdict": "narrowed",
+    "reason": "No program is accepted unsafely: under `creator` the body is checked as any thread's (\"The same holds under `creator`\") and the wrapper also checks the caller (\"In every profile, `creator` checks that the caller is this thread\"), so `bump` is refused, not broken. The two words do name one thread: [FFI-33] makes `creator` \"the thread whose successful initialization established that module's export contract\" and [FFI-33c] makes `main` \"the one that initialised the module\". What is unsaid is narrower than the reader's: [FFI-33] says `creator` \"permits what is bound to that thread (`threads(creator)` values, `[FFI-33b]`)\" while refusing the module's `static mut`s, and [FFI-33c] says `main` permits \"thread-confined state, the module's `static mut`s among it\" without saying whether a `threads(creator)` value is among it; so under `main` a body ending a `threads(creator)` handle is accepted or refused by a guess, and the reason the two differ is unstated.",
+    "narrowed_to": "Under `threads=main`, whether an export's body may hold and end `threads(creator)` values is unsaid; and the text gives no reason why `creator` refuses a `static mut` that `main` allows though both name the initialising thread.",
+    "better_fix": "Either the reader's merge, or, if the owner keeps two words, one sentence in [FFI-33]: \"`creator` and `main` name the same thread; under `main` the body may also use `threads(creator)` values, and under `creator` it may not reach a `static mut`, because `creator` is also the word of a callback's and a handle's contract and says only that the caller is the maker, not that the module's state is its own\" (or whatever the owner's reason is)."
+   },
+   {
+    "id": "G7-24",
+    "verdict": "confirmed",
+    "reason": "[FFI-55]: \"one `blake3:` fingerprint of each declaration the overlay describes, as the importer binds it (`[FFI-14]`)\" and \"One that differs is `E5010`\"; [FFI-14] says the `.embind` holds \"declarations with layouts\" but not what of a declaration the fingerprint covers, so whether a renamed parameter or a widened struct the declaration names is `E5010` is an implementer's choice, and `E5010` is a build failure the document must decide.",
+    "better_fix": "The proposed sentence, written as what is hashed rather than how Clang prints it (an implementation may not use Clang's printer): \"The fingerprint is the blake3 of the declaration as `[FFI-14]` records it: its name, its canonical type with every typedef resolved, its parameter names (`[FFI-12]`), and the size, alignment and field offsets of each complete aggregate it names (`[FFI-5]`); so a renamed parameter or a changed layout is a changed declaration, and a comment, a macro the declaration does not use, or a C++ default argument is not.\""
+   },
+   {
+    "id": "G7-25",
+    "verdict": "confirmed",
+    "reason": "[FFI-17a]: \"`std::optional<T>` | `Option[T]` for a `T` that maps by value\"; [FFI-3]: \"The importer generates `extern \"C\"` thunks\". Nothing says the thunk converts, and `std::optional`'s layout is the C++ library's where `Option[T]`'s tag and niche are Ember's ([TYP-13]); [FFI-5]'s layout verification covers imported aggregates, which `std::optional` is not. An implementer passing the bytes through would be wrong and the text does not say so.",
+    "better_fix": "As proposed; put the row beside [FFI-17f]'s list of thunk operations so `ember inspect` reports it, and add `std::variant` ([FFI-17a]'s generated enum), which has the same gap."
+   }
+  ],
+  "missed": [
+   "[FFI-11]/[FFI-1]: the contract word `handle` (`@ffi(handle) type VkBuffer`, §XVI.4's overlay) produces no stated Ember type, markers or ownership: whether a handle is `Copy`, `Send` or `ThreadShared`, whether `destroys(f)` applies to it, and what a `nullable` handle is. Program: `@ffi(handle) type VkBuffer` then `b = vk.vkCreateBuffer(...)` (an `out one` of handle type) then `h = thread.spawn(owns fn() owns b: vk.vkDestroyBuffer(dev, b, None))`: accepted or `E7008` by a guess, and a handle of a `threads(creator)` device used on the new thread. Fix: a row in [FFI-11]'s table (\"`handle` | an opaque pointer-sized `Copy` value with no destructor, `Send`, `ThreadShared` only where declared as [THR-8] declares `Send`, thread-bound under `threads(creator)`\") and the markers in §IV.8's table, alongside G7-09's rule for `extern type`.",
+   "[FFI-39c]/[FFI-17d]: an `owner=\"foreign\"` object that is never handed to C++ has no stated end. [FFI-17d]: \"`owner=\"foreign\"` makes a foreign `delete` end it, once it has been handed to C++\" says nothing of one that is not. Program: `@ffi(trampoline, owner=\"foreign\") class Button(ui.Widget): ...` then in `main` `b = Button()` and `return` with no `add_child`: ended by Ember at the scope's end, or leaked (and reported by [WK-15])? Fix in [FFI-17d]: \"until it is handed to C++ the object is Ember's and ends when its last Ember owner does, as an `owner=\"ember\"` one.\"",
+   "[FFI-52]'s example calls `token = setup(shares mut game)` for `fn setup(owns game: shares mut Game)`, with no `owns` at the call, which [FN-2a] makes `E3028` (\"`take(owns [1, 2])` a list made in the call\" still says `owns`); [FFI-22]'s message writes `setup(game)` for a plain `thread_shared` parameter, which is right. Possibly covered by open question N40/O7 (whether `owns` at a call covers the whole argument); if not, write `setup(owns shares mut game)`. Same shape as G7-22.",
+   "[FFI-39c]/[FFI-54]: `b.into_raw()` on a trampoline-class object \"gives C++ the object's address\": with a header before the C++ base (G7-10), the address a C++ raw-pointer parameter expects is the base subobject's, not the header's; the text does not say which `into_raw()` gives, nor which [FFI-39c]'s \"upcast to the C++ base\" adds. Program: `panel.set_raw(b.into_raw())` inside `unsafe:` for `void set_raw(Widget*)`: C++ reads a `Widget` at the header's address. Folded into G7-10's better fix, but it is a separate sentence for [FFI-54].",
+   "Registry rows `E5058` and `E5059` cite [FFI-39] where [FFI-39b] (\"a base with no default constructor and no declared `init` is `E5058`\") and [FFI-17d] (\"A trampoline base without a virtual destructor is `E5059`\") define them: the same defect as G7-19's `E5031`/`E5034`.",
+   "[OWN-12] writes the hand-over to C as `widget_take(first)` where [FFI-54] writes `widget_take(owns first)` and [FN-2a] requires the word: the same defect as G7-22, in Part VII."
+  ]
+ }
+}

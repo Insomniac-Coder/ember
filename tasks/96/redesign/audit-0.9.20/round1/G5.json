@@ -1,0 +1,336 @@
+{
+ "group": "G5",
+ "title": "Parts XI and XVII (concurrency; toolchain, manifest, builds, diagnostics)",
+ "found": {
+  "group": "G5: Parts XI and XVII (concurrency; toolchain, manifest, builds, diagnostics)",
+  "findings": [
+   {
+    "id": "G5-01",
+    "rules": [
+     "THR-11",
+     "THR-13",
+     "THR-9",
+     "THR-15",
+     "THR-3"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "\"under a lock\" in [THR-11] admits a shared (read) lock and an unnamed kind of place: two tasks change one `shares mut` object under `RwLock.read()`, and two tasks may both consume one `Receiver`",
+    "milestone": "M9",
+    "program": "import std.thread\nfrom std.sync import RwLock\n\nclass Player:\n    hp: int = 10\n\nfn main():\n    p = shares mut Player()\n    rw = RwLock(shares mut p)\n    with scope = thread.scope():\n        for _ in 0..2:\n            scope.spawn(owns fn():\n                with g = rw.read():\n                    g.hp = g.hp + 1)        # <-- two tasks write one `hp` at once: `g` is `ref shares mut Player`, which an owner changes through a plain name ([BRW-15]); the change is \"under a lock\", so [THR-11] accepts it\n    with g = rw.read():\n        println(g.hp)\n\n# second scenario: two tasks, or a task and the parent, call `rx.recv()` on one `Receiver` (a one-consumer queue): [THR-3] makes `recv()` a change of `rx`, [THR-11]'s list of exceptions does not name a channel end (so two senders on one `tx` would be E7007, which [THR-15]'s \"many-producer\" forbids), and [THR-13] bullet 3 lists \"channel end\" among the places that are ordered by themselves.",
+    "why": "[THR-11]: \"two of them changing one place, or one reading a place another changes, is `E7007`, other than by a reduction (`[THR-21]`), under a lock, or through an `Atomic`\" — no word says which lock, and an `RwLock`'s `read()` is a lock. [THR-9] says `RwLock[T]` is `ThreadShared` only \"for a `T` that is `Send` and `ThreadShared`\", but no rule of §XI.3 requires the places a scoped task reaches to be `ThreadShared`; a task \"uses the caller's real variables\". [THR-13] bullet 3: \"an `Atomic`, `Mutex`, `RwLock`, channel end or `guarded by` field: ordered by the atomic or by the lock\" — a `Receiver` is a channel end, yet [THR-15] says it is a one-consumer queue and `Receiver` is `Send` but not `ThreadShared`. [THR-3]: \"A `Mutex`, `RwLock`, `Atomic` or channel end is changed through any name, a plain one included, by its own operations\".",
+    "proposed_text": "In `[THR-11]`, replace \"is `E7007`, other than by a reduction (`[THR-21]`), under a lock, or through an `Atomic`.\" with: \"is `E7007`, other than by a reduction (`[THR-21]`) or through a value of a `ThreadShared` type by its own operations (`[THR-9]`): an `Atomic`; a `Lock` and the fields `guarded by` it; a `Mutex[T]` for a `Send` `T`; an `RwLock[T]` for a `T` that is `Send` and `ThreadShared` (its `read()` guard is a `ref T` several tasks hold at once, so a `T` one thread changes through any owner, `shares mut Player`, is not enough); a `Sender`. A `Receiver` is not `ThreadShared`: it is used by one task, or by the parent, until the join, as any other place (`E7007`: \\\"two tasks take values out of `rx`, which one consumer owns; give each task a channel of its own, or let one task receive and hand the values on\\\"). A read lock on a value one thread changes through any owner is refused with the lock that fits: \\\"`rw` holds a `shares mut Player`, which any owner changes, so two tasks holding `rw.read()` could change `p.hp` at once; keep the player inside the lock: write `rw = RwLock(Player())` in place of line 9 and `with g = rw.write():` in place of line 13\\\".\" In `[THR-13]` bullet 3, replace \"an `Atomic`, `Mutex`, `RwLock`, channel end or `guarded by` field\" with \"an `Atomic`, a `Mutex`, an `RwLock` whose content is `ThreadShared`, a `Sender` or a `guarded by` field\". In `[THR-20]`, replace \"(`Lock`, `Atomic`, `Mutex`, `RwLock`, a channel end)\" with \"(`Lock`, `Atomic`, `Mutex`, `RwLock`, a `Sender`; a `Receiver` is not `ThreadShared`, `E7002`)\".",
+    "codes": "E7007 reused (two tasks change one place); E7002 reused for a `static Receiver`",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G5-02",
+    "rules": [
+     "THR-11",
+     "THR-2",
+     "THR-13",
+     "RC-4",
+     "WK-11"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "A scoped task may end a `shares` owner, or end an object a `weakref` link names, with plain count writes while the parent touches the same header",
+    "milestone": "M9",
+    "program": "import std.thread\n\nclass Player:\n    name: String = String(\"ann\")\n\nfn main():\n    p = shares Player()\n    a: Array[shares Player] = [shares p]\n    b: Array[shares Player] = [shares p]\n    with scope = thread.scope():\n        scope.spawn(owns fn(): a.clear())    # <-- ends a's owner of the player: a plain subtract in the player's header, on the task's thread\n        b.clear()                             # <-- ends b's owner on the main thread at the same time: two plain read-modify-writes of one count race (a lost subtract leaks the player; `[OWN-2]`)\n\nfn main2():\n    q = Player()\n    w = weakref q\n    with scope = thread.scope():\n        scope.spawn(owns fn(): q = Player())  # <-- replaces the parent's `q`: the old player is ended on the task's thread (its ended mark written, its weak count read, plain)\n        if w exists as r:                      # <-- tests the same header on the main thread at the same time; the test may pass and `r.name` is read while the task frees the old player's fields\n            println(r.name)\n\n# [THR-11] accepts both: in the first, the task changes `a` and the parent `b`, two places; in the second, the task changes `q` and the parent reads `w`. Neither line makes a `shares` owner or makes, ends or opens a `weakref` link in the task, which is all [THR-11] forbids.",
+    "why": "[THR-11]: \"A task makes, ends or opens a `weakref` link only to a `thread_shared` target, and makes no `shares` owner (`[THR-2]`)\" — ending a `shares` owner, and ending an object that links name, are not named. [THR-2]: \"A `shares` or `shares mut` owner counts its owners with plain adds, and every object that is not `thread_shared` counts its `weakref` links with plain adds.\" [WK-11]: \"That count is a number in the target's header that no name reads, so making or ending a link is not a change of the target\" — so the header is not a place [THR-11]'s check sees. [RC-5] point 1 forbids an end only \"in the view's life\", a sequential notion, and the parent's `if w exists as r:` runs beside the task, not after it. Whether `scope.spawn(owns fn() owns q: ...)` is \"an object handed whole to another thread\" (the compare and move of [THR-2]) is also unsaid: [THR-2] names only `thread.spawn`, and without the move a hand-over to a task gives the same race.",
+    "proposed_text": "Add to `[THR-11]`, after \"and makes no `shares` owner (`[THR-2]`).\": \"**A one-thread value's header is a place the tasks of a scope share.** Ending an owner of a `shares` or `shares mut` value, and ending an object (its last owner ending, replaced, or cleared with the list that owns it, and a hand-over of it to another thread, `[THR-2]`), write its header with plain instructions, and making, ending or opening a `weakref` link to it, or making or ending another `shares` owner of it, read or write the same header. So a task that may end a `shares` or `shares mut` owner of a `T`, or end a `T` object, while the parent or another task may, before that task's join, make or end a `shares` owner of a `T`, make, end or open a `weakref T` link, or end a `T` object, is `E7007`, by class family (the compiler cannot tell which object a link or an owner names): \\\"the task started on line 11 may end a `Player` (`a.clear()`), and line 12 ends one too (`b.clear()`), each with a plain write to the player's count; end one after the join: move line 12 below the `with scope` block\\\"; \\\"the task started on line 18 may end the `Player` `w` links (`q = Player()`), while line 19 tests whether it still lives; open `w` after the `with scope` block, or join the task first: write `h = scope.spawn(...)` on line 18 and `h.join()` above line 19\\\". A `thread_shared` target is not such a place: its counts are atomic and an opened view holds one (`[RC-5]` point 2). A value handed to a task or a job with `owns` is handed to another thread: `[THR-2]`'s compare and move apply at the spawn, so every link on this thread then finds it ended, and the task's end of it touches no header this thread reads.\" In `[THR-2]`, replace \"**An object handed whole to another thread leaves its `weakref` links behind**\" with \"**An object handed whole to another thread, a scoped task or a job included, leaves its `weakref` links behind**\".",
+    "codes": "E7007 reused (the header as a place two tasks share)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G5-03",
+    "rules": [
+     "THR-1",
+     "THR-2",
+     "THR-20",
+     "WK-11",
+     "THR-8"
+    ],
+    "kind": "MEM",
+    "severity": "critical",
+    "title": "A one-thread `weakref` link to an object a `thread_shared` value owns: the object ends on whichever thread's owner is last, racing the link's test (extends O2, O1)",
+    "milestone": "M9",
+    "program": "import std.thread\nfrom std.sync import Lock\n\nclass Player:\n    name: String = String(\"ann\")\n\nclass Team:\n    lock: Lock = Lock()\n    players: Array[Player] guarded by lock = []\n\nfn main():\n    team = thread_shared Team(players=[Player()])\n    with team.lock:\n        w = weakref team.players[0]        # <-- a one-thread link (plain weak count, plain test) to a player the shared team owns\n    h = thread.spawn(owns fn() thread_shared team: pass)\n    team = thread_shared Team()            # main's owner ends; the player now ends on whichever thread ends the team's last owner ([THR-20]: \"A drop runs where the last owner ends\")\n    if w exists as p:                      # <-- the test of the player's header runs on main while the other thread may be ending the player: the test can pass, and `p.name` is read while its String is freed\n        println(p.name)\n    h.join()",
+    "why": "[THR-1] bullet 2 checks only what the value holds: \"everything reachable from it is `Send` (`[THR-8]`): a one-thread owner, a `weakref` link to a value that is not `thread_shared`, or a plain `fn()` value reachable from it is `E7015`\" — a `Player` with one owner is `Send`, and the link is held outside the team, not reachable from it. [THR-2] forbids a link only \"in a scoped task, a job, or any function that may run on another thread than its target's owner\"; `main` runs on a thread that owns the team, so the line is allowed. [THR-20]: \"The last owner of a `thread_shared` value may end on any thread that holds a count of it ... counts as possibly running that value's `drop`, and the `drop` of everything it owns\" — which is the player's end on another thread. [WK-11]: \"Its target lives on its own: a class object\" — a player owned by a team qualifies. O2 proposes `weakref thread_shared T` for a `thread_shared` target, and O1(c) names \"reachable from a `thread_shared` value\" for the walk region only; neither says that a one-thread link may not name an object a `thread_shared` value owns.",
+    "proposed_text": "Add to `[THR-1]` bullet 2, after \"is `E7015` at the line that makes it `thread_shared`\": \"; and no `weakref` link that is not to a `thread_shared` target names an object the value owns, directly or through what it owns, all the way down: such an object ends on the thread that ends the value's last owner (`[THR-20]`), while a one-thread link tests its header with plain instructions. A link made through a `thread_shared` name or parameter (`weakref team.players[0]`) is `E7015` at the link (\\\"`team` is shared between threads (line 12), so the player it owns may end on any of them, and `w` would test whether it lives with no atomic; share the player too: write `players: Array[thread_shared Player] guarded by lock = []` in `Team`, `Team(players=[thread_shared Player()])` on line 12, and `w = weakref team.players[0]` then links a `thread_shared` target\\\"); and a value is made `thread_shared` only when no class it may own, by the types of its fields all the way down, is one a `weakref` link in the program names with a one-thread link (the same class families as `[THR-2]`'s hand-over compare; across a package's edge, the class is `pub` or the package's own link names it, O1), `E7015` at the line that makes it `thread_shared`, with the same words.\" Add to `[WK-11]`: \"Its target ends on the thread that holds the link: a class object or `shares` value no `thread_shared` value owns, or a `thread_shared` value itself (`[THR-1]`).\"",
+    "codes": "E7015 reused (a one-thread link reaching another thread); needs O2's `weakref thread_shared T` for the fix line",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G5-04",
+    "rules": [
+     "MAN-8",
+     "BLD-FFI-1",
+     "BLD-FFI-1a",
+     "CT-2",
+     "MAN-1"
+    ],
+    "kind": "SEC",
+    "severity": "critical",
+    "title": "A dependency's manifest chooses the C compiler flags, link inputs and C++ project configuration the builder's toolchain runs with: build-time code execution that [CT-2]'s sandbox (F15) does not cover",
+    "milestone": "M12",
+    "program": "# the dependency `parser`'s ember.toml, fetched by `[dependencies] parser = { git = \"https://example.org/parser.git\", rev = \"4f2a9c1\" }`\n[package]\nname = \"parser\"\nversion = \"0.1.0\"\n\n[c]\ncompiler = \"clang\"\nflags = [\"-fplugin=./vendor/helper.so\"]    # <-- the builder's C compiler loads and runs the dependency's code while compiling the shim of `unsafe import c \"./shim.c\"`; `-specs=`, `-Xclang -load`, `-include /home/.../secret.h` do the same\n\n[link]\nlibs = [\"./vendor/libhelper.a\"]            # link inputs the root never named\n\n[cpp.parser]\n# a C++ project configured and read \"through the CMake File API\" (Annex C): configuring runs the project's CMake code on the builder's machine",
+    "why": "[MAN-8]: \"The sections are: ... `[c]` (`compiler`, `flags`, `[BLD-FFI-1]`); `[link]` (`libs`, `timeout` `[BLD-15]`); ... `[cpp.<project>]` and `[ffi]`\" — for every package's manifest, with no word on whether a dependency's sections are honoured. [BLD-FFI-1]: \"The manifest's `[c]` section names the C compiler and flags used for shims and C source files\"; [BLD-FFI-1a]: \"Each `import c` is parsed and its shim compiled with the package's C flags plus the import's own `defines` and `include_paths`\" — \"the package's\", so the dependency's own flags run the builder's compiler. [CT-2] (F15) sandboxes a dependency's compile-time Ember code \"so a dependency's build cannot read the builder's files\" and \"cannot read the builder's environment\"; the same dependency reaches both through a compiler flag. [MAN-8]'s last sentence, \"No manifest key turns off a safety check or changes what a program means\", does not reach what runs while building.",
+    "proposed_text": "Add `[MAN-10]` after `[MAN-8]`: \"**A dependency's manifest decides only its own code, never what runs on the builder's machine.** Of a dependency's manifest the build reads `[package]`, `[dependencies]`, `[lints]`, `[realtime]` and `[ffi]`. Its `[c]` section is taken with `compiler` ignored (the root's, or the backend's, `[BLD-FFI-1]`) and `flags` limited to `-D<name>[=<value>]`, `-U<name>`, `-I<path>` for a path under the dependency's own root, `-std=<c-standard>`, `-W…` and `-O<n>`; its `[link] libs` are taken for names (`\\\"m\\\"`) and for paths under its own root; and its `[cpp.<project>]` section, any other `[c] flags` entry, any other `[link]` path, and its `[build]`, `[profiles]`, `[jobs]`, `[comptime]` sections are honoured only when the root package's manifest names the dependency in `[build] native = [\\\"parser\\\"]`, and are `E9001` otherwise, naming the dependency, the key and the line to add: \\\"`parser`'s manifest sets `[c] flags = [\\\\\\\"-fplugin=./vendor/helper.so\\\\\\\"]`, which would run its code inside this build's C compiler; a dependency's flags are limited to defines, include paths under its root, a C standard and warnings; to take the rest as written, add `native = [\\\\\\\"parser\\\\\\\"]` under `[build]` in `ember.toml`\\\". `ember tcb` lists every dependency so named (`[TCB-4]`, external library).\" In `[BLD-FFI-1a]`, replace \"with the package's C flags\" with \"with the package's C flags as `[MAN-10]` admits them\".",
+    "codes": "E9001 reused (invalid manifest, naming the key and what is accepted); a new `[build] native` key in [MAN-8]'s list",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G5-05",
+    "rules": [
+     "THR-10",
+     "THR-11",
+     "JOB-2",
+     "CLO-6",
+     "CLO-7"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "A thread's, task's or job's function that gives a capture away is a `once fn`, and `spawn`/`submit` are typed `thread_shared fn() -> R` / `fn() -> R`",
+    "milestone": "M9",
+    "program": "import std.thread\nfrom std.sync import Receiver, channel\n\nfn drain(owns rx: Receiver[int]) -> int:\n    total = 0\n    for v in owns rx:\n        total += v\n    return total\n\nfn main():\n    tx, rx = channel[int](capacity=4)\n    h = thread.spawn(owns fn() owns rx: drain(owns rx))   # <-- this function gives `rx` away, so its type is `once fn() -> int` ([CLO-6]); `spawn` takes `owns f: thread_shared fn() -> R`, which is not a `once fn` parameter: does the call compile?\n    tx.send(owns 3).unwrap()\n    println(h.join())",
+    "why": "[THR-10]: \"`[R]` above `pub fn spawn(owns f: thread_shared fn() -> R) -> JoinHandle[R]:`\"; [THR-11]: \"`fn spawn(owns f: fn() -> R) -> ScopedJoinHandle[R]:`\"; [JOB-2]: \"`pub fn submit(owns f: thread_shared fn()) -> JobHandle:`\". [CLO-6]: \"A function that gives one of its captures away (to an `owns` parameter, a return, a field) can be called only once. Its type is `once fn(A) -> R`, not `fn(A) -> R`; given where a function may run twice it is `E3013` ... A parameter that takes a `once fn` holds it, `owns f: once fn(A) -> R`, and accepts both kinds\". [FN-6]: \"Callable types are compared by their parameter types and words, their result, `unsafe` and `thread_shared`\" — `once` is not named among what is compared, and whether a `once fn` coerces to `fn()` is unsaid. A compiler must choose between refusing the most common thread body (one that consumes what it was handed) and accepting a `once` value where the type says `fn()`.",
+    "proposed_text": "In `[THR-10]`, replace \"`[R]` above `pub fn spawn(owns f: thread_shared fn() -> R) -> JoinHandle[R]:`\" with \"`[R]` above `pub fn spawn(owns f: thread_shared once fn() -> R) -> JoinHandle[R]:`, which runs it once and so accepts a function that gives its captures away as well as one that does not (`[CLO-6]`)\". In `[THR-11]`: \"`fn spawn(owns f: once fn() -> R) -> ScopedJoinHandle[R]:`\". In `[JOB-2]`: \"`s.submit` on a `JobScope` takes a plain function (`owns f: once fn()`)\" and \"`pub fn submit(owns f: thread_shared once fn()) -> JobHandle:`\"; `[JOB-3]`'s `submit_after` the same. In `[CLO-7]`, replace \"`thread.spawn` and `jobs.submit` take `owns f: thread_shared fn() -> R`\" with \"`thread.spawn` and `jobs.submit` take `owns f: thread_shared once fn() -> R`\" and \"`scope.spawn` a plain `owns f: fn() -> R`\" with \"`scope.spawn` a plain `owns f: once fn() -> R`\". In `[FN-6]`, add `once` to \"compared by their parameter types and words, their result, `unsafe`, `once` and `thread_shared`\", and: \"a `fn(…)` coerces to the `once fn(…)` of the same shape; a `once fn(…)` never to `fn(…)` (`E3013`)\".",
+    "codes": "E3013 reused; the signatures of `spawn`, `submit`, `submit_after` change (text and `std`)",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G5-06",
+    "rules": [
+     "THR-21",
+     "THR-20",
+     "THR-1",
+     "PAR-3"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "The written form of a `max`/`min`/`add` reduction, the accumulator of `m[k] op= e`, and whether a `static mut` or a `thread_shared` field is a reduction place are unsaid",
+    "milestone": "M9",
+    "program": "import std.thread\n\nstatic mut SEEN: int = 0\n\nfn main():\n    best = 0\n    counts: Map[String, int] = {}\n    parts = [String(\"ab\"), String(\"c\")]\n    with scope = thread.scope():\n        for part in parts:\n            scope.spawn(owns fn() ref part:\n                best = max(best, part.len())     # <-- is this the `max` reduction of [THR-21], or \"a task that reads the current value\" (E7007)? No form for `max` is written\n                counts[part] += 1                 # <-- `m[k] op= e`: `k` differs per task; \"each task's accumulator has the place's type\" names an `int`, so what is combined at the join, and what if `part` is not a key yet?\n                SEEN += 1)                        # <-- [THR-20] says a `static mut` the tasks reach may change \"by a reduction\"; [THR-21] names \"a local, or a field of an object the tasks reach\"\n    println(best, counts, SEEN)",
+    "why": "[THR-21]: \"A task's `total += e` (and `-=`, `*=`, `|=`, `&=`, `^=`, `max`, `min`, `push`, `extend`, `add`, `m[k] op= e`) on a local, or on a field of an object the tasks reach ... is a reduction\" and \"Each task's accumulator has the place's type\"; also \"a task that reads the current value (`if stats.total < 10: stats.total += x`) need[s] a lock (`E7007`)\" — `best = max(best, e)` reads the current value. [THR-20]: \"two tasks changing it, or one reading what another changes, is `E7007`, other than by a reduction, under a lock or through an `Atomic`\" — a `static mut` is neither a local nor a field. [THR-1]: \"no owner changes a `thread_shared` value directly (`E7014`)\" — [THR-21] does not say that `st.total += x` on a `thread_shared st` is a direct change, so the combining write at the join is either `E7014` or admitted.",
+    "proposed_text": "Replace in `[THR-21]` \"A task's `total += e` (and `-=`, `*=`, `|=`, `&=`, `^=`, `max`, `min`, `push`, `extend`, `add`, `m[k] op= e`) on a local, or on a field of an object the tasks reach (`scope.spawn(owns fn() copy of x: stats.total += x)`), a field reached through two `sharedref mut` links to one object included, is a reduction\" with: \"A task's statement of one of these forms on a place `P` that the task otherwise neither reads nor writes — `P op= e` for `+`, `-`, `*`, `|`, `&`, `^`; `P = max(P, e)` and `P = min(P, e)`; `P.push(owns e)`, `P.extend(owns e)` and `P.add(owns e)`; and `P[k] op= e` on a `Map` — where `P` is a local, a `static mut` (`[THR-20]`), or a field of an object the tasks reach (`scope.spawn(owns fn() copy of x: stats.total += x)`), a field reached through two `sharedref mut` links to one object included, is a reduction. A field of a `thread_shared` value is not: the combining write at the join is a direct change (`E7014`, `[THR-1]`), and the message gives the `Atomic` or the `guarded by` field. For `P[k] op= e` the accumulator is a `Map` of the task's own keys, and the join applies `P[k] op= acc[k]` for each key in spawn order, inserting a key absent from `P` with the accumulator's value.\" Keep the rest of the rule as it is.",
+    "codes": "E7007, E7014 reused",
+    "touches_owner_verdict": "105 is kept (the accumulator's type and its overflow stop are unchanged)"
+   },
+   {
+    "id": "G5-07",
+    "rules": [
+     "THR-19",
+     "THR-3",
+     "STA-3",
+     "EFF-26"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "[THR-19] refuses waits only \"inside a lock's `with` block\": a guard held in a plain local, a foreign call that may run a kept callback, a static's first-access initialiser and `read()` under `read()` are unsaid",
+    "milestone": "M9",
+    "program": "from std.sync import Mutex\n\nstatic mut HANDLER: fn() = fn(): pass\n\nfn main():\n    m = Mutex(0)\n    g = m.lock()                 # <-- the lock is held by a local, not a `with` block, until `g`'s last use\n    HANDLER()                    # <-- may run a stored function that takes `m`'s lock ([THR-19] names such a call only \"inside a lock's `with` block\"): waits for ever, and nothing refuses it\n    println(g)\n\n# the same question for: a foreign call not marked `@ffi(no_callbacks)` inside `with log.lock:` (it may run a callback C keeps that takes `log`'s lock, [EFF-26]); a first access of `static REG: Mutex[Map[String, int]] = build()` whose `build` takes a lock this thread holds ([STA-3] runs it on first access, which is not a call); and `rw.read()` while this thread holds `rw.read()` with a writer waiting between them.",
+    "why": "[THR-19]: \"Inside a lock's `with` block, these are `E7018`, with no loop needed and nothing checked while the program runs: a call through a function value, or through a `dyn` or `virtual` method, that may run a function taking a lock of the kind this thread holds ... a join ... and a direct call that may take the held lock\" — the condition is the `with` block, and the list has no foreign call and no first access. [THR-3]: \"`m.lock()` blocks and returns a `MutexGuard[T]`, a view of `m` ... the mutex is released when the guard ends, which `with g = m.lock():` places at the end of the block\" — a guard in a plain local is legal and ends at its block's end. [THR-19] (F21) names \"its `write()` while this thread holds its `read()`, or the reverse\" and not a second `read()`, whose outcome depends on whether the runtime's `RwLock` lets a waiting writer block new readers. [STA-3]: \"Any other initialiser runs once, on first access ... the first access blocks until it completes.\"",
+    "proposed_text": "In `[THR-19]`, replace \"Inside a lock's `with` block, these are `E7018`\" with \"While this thread holds a lock — inside its `with` block, or from `g = m.lock()`, `g = rw.read()` or `g = rw.write()` to the last use of `g` or of a value holding it (`[BRW-2]`) — these are `E7018`\". Extend the list: \"a foreign call not declared `@ffi(no_callbacks)`, which may run a callback C keeps that takes such a lock (`[EFF-26]`); a first access of a `static` whose initialiser runs on first access (`[STA-3]`), which counts as a direct call of that initialiser; a second `read()` of an `RwLock` this thread holds `read()`, since a writer that arrived between the two would wait for the first and the second for it (\\\"`rw.read()` (line 9) takes a read lock this thread already holds (line 7), and a writer arriving between them would make each wait for the other for ever; use the guard `g` already held, or take the second read after the first ends\\\")\".",
+    "codes": "E7018 reused",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G5-08",
+    "rules": [
+     "THR-18",
+     "THR-3",
+     "BRW-1",
+     "TYP-14"
+    ],
+    "kind": "GAP",
+    "severity": "major",
+    "title": "`with x.lock:` holds no view of `x.lock`: the lock may be replaced, swapped or taken out, and `x` ended, while the block holds it",
+    "milestone": "M9",
+    "program": "from std.sync import Lock\n\nclass Log:\n    lock: Lock = Lock()\n    lines: Array[String] guarded by lock = []\n\nfn main():\n    log = Log()\n    with log.lock:\n        log.lock = Lock()                    # <-- replaces the lock this block holds: the block's end unlocks a lock never taken, and the one that was taken is gone; no rule names a view of `log.lock` that `[BRW-1]` would protect\n        log.lines.push(owns String(\"a\"))\n    with log.lock:                           # a lock in an undefined state\n        println(log.lines.len())",
+    "why": "[THR-18]: \"A `Lock` is a lock with no value inside; `with x.lock:` holds it for the block.\" — nothing says the block holds a view of `x.lock`, and a `Lock` field is not a `let` field, so `log.lock = Lock()` is an ordinary change of a field through an owner. [THR-3] gives `with g = m.lock():` a guard that is \"a view of `m` that reads through to `ref mut T` (`[TYP-14]`)\", which `[BRW-1]` protects; the `Lock` form has no name and so no view. Whether a `Lock`, `Mutex`, `RwLock`, `Atomic` or `Once` may be given another value at all is unsaid.",
+    "proposed_text": "Add to `[THR-18]`, after \"`with x.lock:` holds it for the block.\": \"The block holds a read-only view of `x.lock` whose life is the block, as `with g = m.lock():` holds `g` (`[TYP-14]`, `[BRW-1]`): while it runs, `x.lock` is not given another value, swapped or taken out, and `x` is not handed over, ended or given another value, through any name (`E3021`: \\\"`log.lock = Lock()` (line 10) replaces the lock this block holds (line 9); the block's end would release a lock never taken; give the log a new lock after the block, or never: a lock is made with its object\\\"). A `Lock`, `Mutex`, `RwLock`, `Atomic` or `Once` field is set in `init` and never replaced after it, as a `let` field is (`E3023`, shape N7); a local of one of these types is given another value only when no guard of it is in use.\"",
+    "codes": "E3021 reused (a change of what a read-only view reads); E3023 reused for the field",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G5-09",
+    "rules": [
+     "BLD-14",
+     "EFF-24",
+     "THR-18",
+     "EFF-4"
+    ],
+    "kind": "CON",
+    "severity": "minor",
+    "title": "[BLD-14]'s recorded facts name \"the locks a function may take\" but not the locks it needs held ([THR-18], [EFF-24])",
+    "milestone": "text only",
+    "program": "# library L\npub class Log:\n    lock: Lock = Lock()\n    lines: Array[String] guarded by lock = []\n\npub fn count(log: Log) -> int:\n    return log.lines.len()          # uses a guarded field without the lock: `count` needs `log.lock` held ([THR-18])\n\n# program D, another package\nn = count(log)                        # <-- without `with log.lock:`; whether D's compiler knows `count` needs the lock depends on which of [BLD-14] item 6 and [EFF-24] it reads",
+    "why": "[BLD-14] item 6: \"the locks a function may take;\" [EFF-24]: \"and which locks it may take, or needs held (`[THR-18]`)\"; [THR-18]: \"A function whose body uses a guarded field without taking its lock is worked out to need that lock held (its summary, `[EFF-24]`), and is called only where the lock is held (`E7013`)\". `[EFF-4]` records \"the summary\" whole, so the fact is recorded by one rule and left out by the other's list.",
+    "proposed_text": "In `[BLD-14]`, replace \"6. the locks a function may take; and\" with \"6. the locks a function may take, and the locks it needs held (`[THR-18]`); and\".",
+    "codes": "E7013 reused; no new code",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G5-10",
+    "rules": [
+     "PRF-1",
+     "PRF-3",
+     "PRF-4"
+    ],
+    "kind": "CON",
+    "severity": "minor",
+    "title": "[PRF-1] says only `debug_assert` differs between profiles, and [PRF-3] allows C sanitizers in `debug` and `development`, which stop the program where `release` does not",
+    "milestone": "text only",
+    "program": "# ember.toml\n[profiles.development]\nsanitizers = [\"address\"]\n# a foreign call that writes one byte past a buffer C owns stops the `development` build with the sanitizer's report and runs on in `release`: [PRF-1] promises every profile \"stops in the same places with the same messages\"",
+    "why": "[PRF-1]: \"Every profile accepts the same programs, performs the same safety checks while the program runs (`[PRF-4]`), stops in the same places with the same messages, and computes the same results. The one check that differs is `debug_assert`\". [PRF-3]'s table: \"C sanitizers (`sanitizers = […]`) | allowed | allowed | not allowed\". [PRF-4]: \"The checks that run while a program runs are the same in every profile\".",
+    "proposed_text": "In `[PRF-1]`, after \"The one check that differs is `debug_assert`, checked only where `[PRF-3]` says\", add: \"; a C sanitizer (`[PRF-3]`) is a tool for finding defects in foreign and `unsafe` code, outside Ember's checks: it stops the program only where that code is already outside the guarantee (`[PHIL-10]`), and never changes where Safe Ember stops.\"",
+    "codes": "none",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G5-11",
+    "rules": [
+     "CLI-21",
+     "PAR-1",
+     "PAR-5",
+     "CT-2"
+    ],
+    "kind": "GAP",
+    "severity": "minor",
+    "title": "`ember run --interp` says threads are unavailable and nothing about `@parallel` loops and `std.jobs`",
+    "milestone": "M15",
+    "program": "fn main():\n    xs = [1.0, 2.0, 3.0]\n    @parallel\n    for ref mut x in xs:\n        x *= 2.0\n    println(xs)\n# under `ember run --interp`: `E6010` (the job system is threads), or run on one thread with [PAR-5]'s guarantee that the bits are the same? A compiler must choose.",
+    "why": "[CLI-21]: \"foreign calls and threads are unavailable (`E6010`); results equal a compiled run's\". [PAR-5]: \"A `@parallel` loop therefore computes the same bits whatever the worker count and scheduling\". [CT-2]'s `E6010` names \"a thread\". The evaluator with one worker would satisfy both sentences; `E6010` would too.",
+    "proposed_text": "In `[CLI-21]`, replace \"foreign calls and threads are unavailable (`E6010`)\" with \"foreign calls, `thread.spawn`, `thread.scope` and `jobs.submit` are unavailable (`E6010`); a `@parallel` loop and a job scope run on the one thread, chunk by chunk in chunk order, which gives the same bits (`[PAR-5]`)\".",
+    "codes": "E6010 reused",
+    "touches_owner_verdict": ""
+   },
+   {
+    "id": "G5-12",
+    "rules": [
+     "DIA-6a",
+     "TST-4b"
+    ],
+    "kind": "ED",
+    "severity": "minor",
+    "title": "[DIA-6a] says each code is defined by exactly one rule; the registry's rows name several rules for one code",
+    "milestone": "text only",
+    "program": "# registry rows: `E7015` → `[THR-1]`, `[THR-2]`, `[THR-10]`, `[CLO-16]`, `[FFI-22]`; `E3020` → `[BRW-18]`, `[CTL-2]`; `E9001` → `[MAN-1]`, `[PRF-3]`\n# `tools/rule_index.py` under [TST-4b] (\"a rule that names a code needs one [reject case] per code\") must decide which of them owns the code's page and reject case.",
+    "why": "[DIA-6a]: \"Each code is defined by exactly one rule.\" The registry (§XVII.9) lists several rules in the `Rule` column of many rows. [TST-4b]: \"a rule that names a code needs one per code\".",
+    "proposed_text": "In `[DIA-6a]`, replace \"Each code is defined by exactly one rule.\" with \"Each code is defined by the first rule its registry row names, which owns its page (`[DIA-6]`); the other rules the row names use it, and each of them has a reject case for it (`[TST-4b]`).\"",
+    "codes": "none",
+    "touches_owner_verdict": ""
+   }
+  ],
+  "judged_sound": [
+   "[THR-7]: `thread_shared` is not atomicity; the read-then-store example is right",
+   "[THR-13] bullets 1, 2, 4, 5, 6, 7: each matches the rule it cites (bullet 3 is G5-01)",
+   "[THR-16]: process end without destructors; the leak report's thread count",
+   "[THR-3]: guards are views that do not leave the `with` block, thread-bound (E7008), no poisoning; `try_lock`, `Once`",
+   "[THR-14]: atomics and orders (O11 acknowledged)",
+   "[THR-15]: queue ending under then outside the lock; a sender queued in its own channel (O3 open)",
+   "[THR-6]: `@must_drop` structural, views exempt, `Scope`/`JobScope` only",
+   "[THR-5]: every exit joins; `return` computed before the join; `E7018` for a scope ending inside a lock",
+   "[THR-12]: two scopes in sequence",
+   "[THR-17]: capture words for unscoped threads; the loop's own name with `ref t` (E3026) and `copy of t`; a consuming loop's local ends with the round",
+   "[THR-10]: `R` must be `Send`; a spawn inside a walk of what the thread changes (E3020) with the lock exception",
+   "[THR-20]: `static mut` reached from another thread (E7012), the scope's tasks (F11), a `drop` running where the last owner ends",
+   "[THR-2]'s hand-over move: internal links make the object non-`Send`, so only outside links are left behind; the compare per owned class family (O1(b) open)",
+   "[THR-8]/[THR-9] marker rules (O1, O2, O3 open)",
+   "[PAR-1], [PAR-2], [PAR-2a], [PAR-2b], [PAR-3], [PAR-4], [PAR-5]: index forms, inlined analysis, chunk-order reductions, no machine dependence",
+   "[JOB-1], [JOB-2], [JOB-3]: inline state, scope rules, `submit_after` orders only (O5 open)",
+   "[CLI-1] to [CLI-20], [TOOL-1] to [TOOL-4]: command surface, migration list",
+   "[MAN-1], [MAN-2], [MAN-3], [MAN-7], [VER-5]: unknown keys E9001, lock and overlay records (O6 open)",
+   "[BLD-1], [BLD-2], [BLD-8], [BLD-4] to [BLD-13], [BUD-*]: caching keys (compile-time inputs are build inputs by [CT-2]), link time limit, reproducibility",
+   "[BLD-14] items 1 to 5 and 7: the recorded facts match [EFF-4]/[EFF-24] (item 6 is G5-09)",
+   "[PRF-3], [PRF-4]: the table's keys; the run-time checks listed match Parts VII to XVI",
+   "[TST-0] to [TST-31], [BEN-1] to [BEN-6]: process rules; [TST-31]'s 8-bit counts consistent with [RC-4]'s half-range limit",
+   "[DIA-1] to [DIA-5], [DIA-7], [DIA-7a] (the unshaped E3 codes are retired rows), [DIA-8] to [DIA-28]: shapes and precedence between two errors on one line",
+   "[FMT-*], [LNT-*], [DOC-*], [IDE-*], [CONF-*], [ABI-*]: text consistent with the Parts they cite"
+  ],
+  "could_not_cover": "Not re-derived: the runtime's actual queue and chunk-header behaviour (O8) and `runtime/ember_rt`'s `RwLock` policy, which G5-07's read-under-read clause depends on; Annex B's hot-reload commit beside running threads (outside Parts XI and XVII, touched only through [PRF-2]/[MAN-7]); the `[cpp.<project>]` configuration steps of Annex C, which G5-04 names from [BLD-FFI-2]'s wording without reading Annex C whole."
+ },
+ "verdicts": {
+  "group": "G5",
+  "verdicts": [
+   {
+    "id": "G5-01",
+    "verdict": "narrowed",
+    "reason": "Scenario 1 (two tasks write `hp` through `rw.read()`) is refused by the text: `[THR-3]` makes `read()` \"a shared guard, `ref T`\", so `g` is a plain local holding a view, and `[BRW-15]` says \"a plain local that holds a view never change[s] what they name or what it leads to (a `Cell` field, an object behind a `shares` link, the elements of a `MutSpan`). A change through one is `E3023`\"; `[CELL-1]` repeats it for a `Cell` (\"through a plain name, `E3023`, `[BRW-15]`\"). So `g.hp = g.hp + 1` is `E3023` whatever the lock, and no `ThreadShared` requirement on a scoped task's reach is needed. Scenario 2 is real: `[THR-3]` (\"A `Mutex`, `RwLock`, `Atomic` or channel end is changed through any name ... by its own operations\") makes `rx.recv()` and `tx.send()` changes of `rx`/`tx`; `[THR-11]`'s exceptions are only \"by a reduction (`[THR-21]`), under a lock, or through an `Atomic`\", so two tasks on one `tx` read literally as `E7007` against `[THR-15]`'s many-producer `ThreadShared` `Sender`, while `[THR-13]` bullet 3 (\"an `Atomic`, `Mutex`, `RwLock`, channel end or `guarded by` field: ordered by the atomic or by the lock\") and `[THR-20]` (\"`Lock`, `Atomic`, `Mutex`, `RwLock`, a channel end\") read a channel end as self-ordered, which would admit two tasks calling `recv()` on a one-consumer `Receiver` that `[THR-15]` says is `Send` but not `ThreadShared`, a marker no scoped-task rule consults. A compiler must guess both ways. The `[THR-20]` edit is editorial only: a `static Receiver` is already `E7002` by `[STA-1]` (\"`T` MUST be `ThreadShared` (`E7002`)\").",
+    "narrowed_to": "`[THR-11]` does not say whether a channel end's own operations are among its exceptions, so two tasks (or a task and the parent) calling `send` on one `Sender` read as `E7007` while two calling `recv` on one `Receiver` read as admitted by `[THR-13]` bullet 3; `[THR-13]`'s and `[THR-20]`'s \"channel end\" must become `Sender`.",
+    "better_fix": "In `[THR-11]`, replace \"is `E7007`, other than by a reduction (`[THR-21]`), under a lock, or through an `Atomic`.\" with \"is `E7007`, other than by a reduction (`[THR-21]`), through the lock that guards the place (a `guarded by` field inside `with` its lock, `[THR-18]`; a `Mutex`'s or `RwLock`'s content through its guard, `[THR-3]`), through an `Atomic`, or through a `Sender` by its own operations (`[THR-15]`). A `Receiver` is one consumer: it is used by one task, or by the parent, until the join, as any other place (`E7007`: \\\"two tasks take values out of `rx`, which one consumer owns; give each task a channel of its own, or let one task receive and hand the values on\\\").\" In `[THR-13]` bullet 3, replace \"an `Atomic`, `Mutex`, `RwLock`, channel end or `guarded by` field\" with \"an `Atomic`, `Mutex`, `RwLock`, `Sender` or `guarded by` field\". In `[THR-20]`, replace \"(`Lock`, `Atomic`, `Mutex`, `RwLock`, a channel end)\" with \"(`Lock`, `Atomic`, `Mutex`, `RwLock`, a `Sender`; a `Receiver` is not `ThreadShared`, `E7002`, `[STA-1]`)\". The `E7007` registry row gains \"through a `Sender`\". No change to `[THR-9]`'s `RwLock` sentence is needed."
+   },
+   {
+    "id": "G5-02",
+    "verdict": "confirmed",
+    "reason": "Nothing refuses either program. `[THR-11]` forbids in a task only that it \"makes, ends or opens a `weakref` link only to a `thread_shared` target, and makes no `shares` owner\"; ending a `shares` owner (`a.clear()`) and ending an object a link names (`q = Player()`) are not named. `[THR-2]`'s routes (\"captured or held by a function any thread may run (`thread_shared fn()`, the function of `thread.spawn` or `jobs.submit`, a callback C may run on another thread), handed to an unscoped thread or a job, or reachable from a `thread_shared` value\") do not include a scoped task's use of the caller's real variables, and its hand-over compare names `thread.spawn` only. `[RC-4]`: \"The counts of a value that is not `thread_shared` are changed with plain adds and subtracts, and never cross threads (`E7015`)\" states the promise but names no check for a task. `[WK-11]` removes the header from the places `[THR-11]` compares: \"That count is a number in the target's header that no name reads, so making or ending a link is not a change of the target\"; `[THR-13]`'s seven kinds of place do not list a header. `[RC-5]` point 1 refuses an end only by \"a line or call in the view's life\", and the spawn on line 18 is before `r`'s life. So a task and the parent subtract one plain count at once (a lost subtract leaks or double-frees), and the parent's `if w exists as r:` can pass while the task frees the player.",
+    "better_fix": "A one-sided rule on the task is enough, since the parent and the other tasks then never share a one-thread header with it. Add to `[THR-11]`, replacing \"A task makes, ends or opens a `weakref` link only to a `thread_shared` target, and makes no `shares` owner (`[THR-2]`).\": \"**A task touches no one-thread count.** Making or ending a `shares` or `shares mut` owner, making, ending or opening a `weakref` link, and ending an object a `weakref` link may name (its class family carries a weak count, `[OBJ-1]`), each write a header with plain instructions (`[RC-4]`, `[WK-11]`), which the parent may write at the same moment. So a task does each of them only for a `thread_shared` target (`[THR-2]`), worked out from its body and every function it may run (`[EFF-24]`, `[DRP-8]`): a task that may end a `shares` owner, or may end an object of a class family some `weakref` link names, is `E7015` at the spawn (\\\"the task started on line 11 clears `a`, which holds `shares Player` owners, whose count is kept with plain adds on one thread; clear it after the join: move `a.clear()` below the `with scope` block\\\"; \\\"the task started on line 18 may end the `Player` that `w` links (`q = Player()`), while this thread may test `w`; give `q` its new value after the `with scope` block\\\"). A value a task or a job takes with `owns` is handed to another thread: `[THR-2]`'s compare and move happen at the spawn, so every link on this thread then finds it ended, and the task ends it with no header this thread reads.\" In `[THR-2]`, replace \"**An object handed whole to another thread leaves its `weakref` links behind**\" with \"**An object handed whole to another thread, a scoped task or a job included, leaves its `weakref` links behind**\". The class-family set is `[THR-2]`'s hand-over set (O1(b) applies to it as it does there)."
+   },
+   {
+    "id": "G5-03",
+    "verdict": "confirmed",
+    "reason": "`[THR-1]` bullet 2 checks only what the value holds: \"everything reachable from it is `Send` (`[THR-8]`): a one-thread owner, a `weakref` link to a value that is not `thread_shared`, or a plain `fn()` value reachable from it is `E7015`\"; the link `w` is held outside the team. `[WK-11]` allows the link (\"Its target lives on its own: a class object\"; `[THR-2]` itself writes `cam.target = weakref level.enemies[0]`), and `[BRW-20]` confines only views, not links, to `with x.lock:`. `[THR-2]` restricts a link \"in a scoped task, a job, or any function that may run on another thread than its target's owner\": a sentence about where a function runs, which a compiler judging `main` (the main thread) cannot turn into a fact about an owner that is itself owned by threads it cannot see; and it says nothing for a link made before the value is made `thread_shared` (`p = Player(); w = weakref p; team = thread_shared Team(players=[p])`). `[THR-20]` then states the race: \"The last owner of a `thread_shared` value may end on any thread that holds a count of it ... counts as possibly running that value's `drop`, and the `drop` of everything it owns\", while `[WK-12]`'s test of a one-thread target is plain. `[WK-18]` already names \"not reachable from a `thread_shared` value\" as the condition for an object no other thread can end, so the text knows the case and leaves the link unrefused. Neither O1(c) nor O2 covers a one-thread link from outside to an owned object. The reader's second clause (refuse `thread_shared` whenever a one-thread link to an owned class exists anywhere) is O1's whole-program shape and would refuse `thread_shared Team` for a `weakref Player` in an unrelated module; the mechanism the owner already approved (verdict 114, which this extends and does not reverse) does it with one compare per owned object of a linked class.",
+    "better_fix": "Add to `[THR-2]`, after \"it is allowed only for a `thread_shared` target, whose counts are kept for several threads and whose opened view holds a count\": \"; and a link made through a `thread_shared` name or parameter, or through a guard or `guarded by` field of a value reached through one (`weakref team.players[0]`), names an object that may end on any thread that holds the value (`[THR-20]`), so it is `E7015` at the link (\\\"`team` is shared between threads (line 12), so the player it owns may end on any of them, and `w` would test whether it lives with no atomic; share the player too: write `players: Array[thread_shared Player] guarded by lock = []` in `Team` and `Team(players=[thread_shared Player()])` on line 12\\\").\" And after the hand-over paragraph's \"so after `cam.target = weakref level.enemies[0]`, handing `level` over leaves `cam.target` finding enemy 0 ended.\": \"**Making a value `thread_shared` is such a hand-over for the objects it owns**: at `team = thread_shared Team(players=[p])` the same compare, and move with a link, is made for every object the value owns whose class a `weakref` is made to, so `w = weakref p` made before that line finds the player ended afterwards, and the object the shared team owns has no one-thread link.\" The fix line needs O2's `weakref thread_shared T` only if the programmer wants to keep a link; the message above needs none."
+   },
+   {
+    "id": "G5-04",
+    "verdict": "confirmed",
+    "reason": "`[MAN-8]` lists `[c]` (`compiler`, `flags`), `[link]` (`libs`) and `[cpp.<project>]` for every manifest and says nothing of whose manifest; `[BLD-FFI-1]` (\"The manifest's `[c]` section names the C compiler and flags used for shims and C source files\") and `[BLD-FFI-1a]` (\"compiled with the package's C flags plus the import's own `defines` and `include_paths`, and no others\") bind the flags to the package that owns the `import c`, so a dependency's `-fplugin=`, `-specs=` or `-include` runs on the builder's machine. `[CT-2]` sandboxes only the evaluator (\"so a dependency's build cannot read the builder's files\", \"cannot read the builder's environment\"), `[FFI-55]` only the headers a dependency's overlays were checked against, and `[TCB-4]` lists external libraries without any gate. `[MAN-8]`'s \"No manifest key turns off a safety check or changes what a program means\" does not reach what runs while building. Nothing in Parts XVI, XVII or Annex C limits a dependency's `[c]`, `[link]` or `[cpp.<project>]`. The proposed allowlist is general; two of its admitted flag families must be narrowed, since `-W` admits `-Wl,` (linker arguments: `-Wl,-rpath`, `-Wl,--wrap`), `-Wa,` and `-Wp,`, and `-I<path>` must resolve symbolic links as `[CT-2]` does.",
+    "better_fix": "As proposed, with these changes to `[MAN-10]`: \"`flags` limited to `-D<name>[=<value>]`, `-U<name>`, `-I<path>` for a path that, with every symbolic link followed, lies under the dependency's own root (`[CT-2]`), `-std=<c-standard>`, `-O<n>`, and `-W<name>` other than `-Wl,…`, `-Wa,…` and `-Wp,…`, which pass arguments to the linker, assembler and preprocessor\"; and `[link] libs` entries \"for names with no path separator (`\\\"m\\\"`) and for paths under its own root, resolved the same way\". Keep the `E9001` message and the `[build] native = [\"parser\"]` key, added to `[MAN-8]`'s `[build]` list; `ember tcb` lists each so named under external library (`[TCB-4]`)."
+   },
+   {
+    "id": "G5-05",
+    "verdict": "confirmed",
+    "reason": "`[CLO-6]`: \"A function that gives one of its captures away (to an `owns` parameter, a return, a field) can be called only once. Its type is `once fn(A) -> R`, not `fn(A) -> R`; given where a function may run twice it is `E3013` ... A parameter that takes a `once fn` holds it, `owns f: once fn(A) -> R`, and accepts both kinds\". `[THR-10]` writes `pub fn spawn(owns f: thread_shared fn() -> R)`, `[THR-11]` `fn spawn(owns f: fn() -> R)`, `[JOB-2]` `pub fn submit(owns f: thread_shared fn())` and \"`owns f: fn()`\", and `[CLO-7]` repeats them: none is a `once fn` parameter, so `thread.spawn(owns fn() owns rx: drain(owns rx))` is by the letter `E3013` (or `E2020`), refusing the thread body that consumes what it was handed, while `[ERR-4]` (Part XIII) shows the intended pattern for such parameters (`[F: needs once fn(owns T) -> U]` above `fn map(owns f: F)`). `[FN-6]` makes it worse: \"Callable types are compared by their parameter types and words, their result, `unsafe` and `thread_shared`\" omits `once`, so `once fn() -> int` and `fn() -> int` compare equal there and differ in `[CLO-6]`; a compiler must choose. The grammar parses the fix (`fn_type := [\"once\"] [\"unsafe\"] ... \"fn\"`, with `thread_shared` before a `base_type`).",
+    "better_fix": "As proposed. In `[FN-6]` write the coercion in `[CLO-6]`'s own words: \"a function that gives no capture away meets both `fn(…)` and `once fn(…)` of its shape; one that does meets only `once fn(…)`, and given where `fn(…)` is wanted is `E3013` (`[CLO-6]`)\". The `std` signatures and the `E3013` registry row (\"a plain `once fn()` parameter\") are unchanged in meaning."
+   },
+   {
+    "id": "G5-06",
+    "verdict": "narrowed",
+    "reason": "Three of the four points are real. `max`/`min`: `[THR-21]` lists \"`max`, `min`\" among the forms of \"A task's `total += e` (and `-=`, ...)\" with no written statement, while the same rule says \"a task that reads the current value (`if stats.total < 10: stats.total += x`) need[s] a lock (`E7007`)\" and `best = max(best, part.len())` reads `best`; `[PAR-3]` gives a form only for `@parallel(reduce=[... best: max])`. `m[k] op= e`: \"Each task's accumulator has the place's type\" names an `int` for `counts[part]`, which cannot hold two tasks' different keys, and whether a task's key absent from `counts` is inserted at the join is unsaid. `static mut`: `[THR-20]` says \"two tasks changing it ... is `E7007`, other than by a reduction, under a lock or through an `Atomic`\" while `[THR-21]` admits a reduction only \"on a local, or on a field of an object the tasks reach\"; `SEEN += 1` is neither. The `thread_shared` field is answered: `[THR-1]` says \"**no owner changes a `thread_shared` value directly** (`E7014` ...); its state changes only through an `Atomic`, a `Mutex`, an `RwLock`, a channel end, or a field `guarded by` a lock\", and a reduction's combining write at the join is none of these, so `st.total += x` on a `thread_shared st` is `E7014` with no further word. Verdict 105 is untouched by the proposal.",
+    "narrowed_to": "The written form of the `max`/`min` reduction, the accumulator and join of `P[k] op= e` with per-task keys, and whether a `static mut` is a reduction place are unsaid; a `thread_shared` field is already `E7014` by `[THR-1]`.",
+    "better_fix": "As proposed, with the `thread_shared` sentence reduced to a cross-reference: \"A field of a `thread_shared` value is not a reduction place: its owners never change it directly (`E7014`, `[THR-1]`), and the message gives the `Atomic` or the `guarded by` field.\""
+   },
+   {
+    "id": "G5-07",
+    "verdict": "narrowed",
+    "reason": "The guard in a plain local is a real gap: `[THR-19]` conditions every refusal on \"Inside a lock's `with` block\", `[THR-3]` allows a guard elsewhere (\"the mutex is released when the guard ends, which `with g = m.lock():` places at the end of the block\"), and `[THR-6]` makes `MutexGuard` not `@must_drop` (\"The standard library applies it to `Scope` and `JobScope` only\"), so `g = m.lock()` followed by `HANDLER()` is a wait for a held lock the text never refuses. The static's first access is real too: `[STA-3]` runs the initialiser \"on first access\", which is not a call, and `[EFF-24]` computes \"which locks it may take\" \"from the functions it calls\". The second `read()` is real: `[THR-19]` names \"its `write()` while this thread holds its `read()`, or the reverse\" and `[THR-3]` states no policy for a writer waiting between two readers, so whether the program waits for ever depends on the runtime, against `[THR-19]`'s title \"refused when compiling\". The foreign call is already covered: `[THR-19]` refuses \"a direct call that may take the held lock and is not proved to enter past it\", and `[EFF-26]` makes \"a call of a foreign function count[] as possibly running every callback C keeps, on the threads their contracts allow, and makes the changes they make, for its caller and every function that calls it, unless the foreign function's declaration says `@ffi(no_callbacks)`\", over \"the same call graph\" from which `[EFF-24]` works out \"which locks it may take\"; naming it in `[THR-19]` is harmless but adds no rule.",
+    "narrowed_to": "`[THR-19]` must hold while a guard in a plain local is in use, must count a `static`'s first-access initialiser as a direct call of it, and must say what a second `read()` under a held `read()` does; the foreign call is covered by `[THR-19]`'s direct-call clause with `[EFF-26]`.",
+    "better_fix": "As proposed for the opening sentence and the `static` and `read()` items; the foreign-call item may be kept as an example of the direct-call clause (\"a foreign call not declared `@ffi(no_callbacks)` is such a direct call, by the callbacks C keeps, `[EFF-26]`\"). The `E7018` registry row (\"inside that lock's `with` block\") changes with it to \"while this thread holds that lock\"."
+   },
+   {
+    "id": "G5-08",
+    "verdict": "confirmed",
+    "reason": "`[THR-18]` gives the block no name for what it holds: \"A `Lock` is a lock with no value inside; `with x.lock:` holds it for the block\", and its only identity condition is on the object (\"on the same object `x` (the same name, not given another object in the block ...)\"), which `log.lock = Lock()` does not break: it gives the field, not `log`, another value. For a `Mutex` the text is safe without a new rule, since `[THR-3]` makes the guard \"a view of `m` that reads through to `ref mut T`\" and `[BRW-1]` keeps a `ref mut` name alone (`E3022` for `m = Mutex(1)` while `g` is used); the `Lock` form alone has no view. No rule says a `Lock` field is set once (`[CLS-9]` speaks of `let` fields only; Annex A's \"never replaced; changed by its own operations\" is a comment on a `static`, not a rule). The reader's first sentence is the right and general fix; its second sentence (every lock, atomic and `Once` field `let`-like, `E3023`) is not needed and refuses harmless programs: a replacement while no guard is in use breaks nothing, a replacement under a scoped task is already `E7007` (`[THR-11]`: the task changes the lock by its own operation while the parent changes it), and one of a `thread_shared` value's field is already `E7014`.",
+    "better_fix": "Add to `[THR-18]`, after \"`with x.lock:` holds it for the block.\": \"The block holds a read-only view of `x.lock` whose life is the block, as `with g = m.lock():` holds `g` (`[THR-3]`, `[BRW-1]`, `[BRW-2]`): while it runs, `x.lock` is not given another value, swapped or taken out, and `x` is not handed over, ended or given another value, through any name (`E3021` for the change of what the view reads, `E3060` where the change reshapes or ends what it points into: \\\"`log.lock = Lock()` (line 10) replaces the lock this block holds (line 9), whose end would release a lock never taken; give the log a new lock after the block, or keep the one made with it\\\").\" Nothing else changes; `[THR-19]`'s and `[BRW-20]`'s rules apply to the view as to a guard."
+   },
+   {
+    "id": "G5-09",
+    "verdict": "confirmed",
+    "reason": "`[BLD-14]` item 6 reads \"the locks a function may take; and\"; `[EFF-24]` records \"which locks it may take, or needs held (`[THR-18]`)\"; `[THR-18]` makes the second fact decide a call across the edge: \"A function whose body uses a guarded field without taking its lock is worked out to need that lock held (its summary, `[EFF-24]`), and is called only where the lock is held (`E7013`)\". `[EFF-4]` records \"each function's effect set and summary (`[EFF-24]`)\" whole, so the fact is recorded; `[BLD-14]`'s enumeration is the one place that leaves it out, which `[BLD-2]`'s interface hashes and `[DIA-22]` read. Text only, as the reader says."
+   },
+   {
+    "id": "G5-10",
+    "verdict": "confirmed",
+    "reason": "`[PRF-1]`: \"Every profile ... stops in the same places with the same messages, and computes the same results. The one check that differs is `debug_assert`\"; `[PRF-4]`: \"The checks that run while a program runs are the same in every profile\". `[PRF-3]`'s table allows \"C sanitizers (`sanitizers = […]`) | allowed | allowed | not allowed\", and a sanitizer stops a `development` build where `release` runs on. No sentence of Part XVII places the sanitizer outside the guarantee; the proposed sentence does, in one line, without changing any check. Minor."
+   },
+   {
+    "id": "G5-11",
+    "verdict": "confirmed",
+    "reason": "`[CLI-21]`: \"foreign calls and threads are unavailable (`E6010`); results equal a compiled run's\"; `[CT-2]`'s `E6010` names \"a thread\". A `@parallel` loop runs \"on the job system (§XI.5)\", a pool of worker threads, yet `[PAR-4]` lets \"the calling thread run[] the chunk itself\" and `[PAR-5]` promises the same bits \"whatever the worker count\", so a one-thread run is within what a compiled program may do; `[CT-4]` even requires that \"the test suite runs every program both compiled and on the evaluator\". So an evaluator may refuse or run the loop and both readings satisfy the sentences: a guess. The proposal's \"a job scope run on the one thread\" is not safe in the same way: two jobs of one `jobs.scope()` may wait on each other through a channel, which a compiled run serves with two workers and a one-thread run never does, and `[PAR-4]`'s own-thread fallback is stated for `@parallel` only.",
+    "better_fix": "In `[CLI-21]`, replace \"foreign calls and threads are unavailable (`E6010`)\" with \"foreign calls, `thread.spawn`, `thread.scope`, `jobs.submit` and `jobs.scope` are unavailable (`E6010`); a `@parallel` loop runs on the one thread, chunk by chunk in chunk order, as `[PAR-4]`'s calling thread may in any run, and gives the same bits (`[PAR-5]`)\"."
+   },
+   {
+    "id": "G5-12",
+    "verdict": "confirmed",
+    "reason": "`[DIA-6a]`: \"Each code is defined by exactly one rule.\" The registry's header says each row gives \"what it reports and the rule it enforces\", and rows name several: `E7015` → `[THR-1]`, `[THR-2]`, `[THR-10]`, `[CLO-16]`, `[FFI-22]`; `E3020` → `[BRW-18]`, `[CTL-2]`; `E9001` → `[MAN-1]`, `[PRF-3]`; `E3013` → `[OWN-11]`, `[EXP-6]`, `[CLO-6]`. `[TST-4b]` (\"a rule that names a code needs one per code\") is consistent with either reading, but `tools/rule_index.py` under `[TST-4]`/`[DIA-6]` has no rule for which row owns the page. The proposed text resolves it without changing any case. Text only."
+   }
+  ],
+  "missed": [
+   "[THR-11] \"under a lock\" does not say which lock: a place no lock guards, changed by two tasks each inside a `with` block of some lock, is literally \"under a lock\". Program: `class Stats:` with `lock: Lock = Lock()` and `total: int = 0` (not `guarded by`); two tasks `scope.spawn(owns fn(): with stats.lock: stats.total += 1)` and `scope.spawn(owns fn(): with other.lock: stats.total += 1)` — the second holds another object's lock, and even the first is a plain field changed inside a `with` of a lock that does not guard it. A compiler must guess whether \"under a lock\" means any `with` block or the lock that guards the place (`[THR-18]`'s `guarded by`, a `Mutex`/`RwLock`'s content through its guard, `[THR-3]`). The better text for `[THR-11]` given under G5-01 (\"through the lock that guards the place\") closes it; the `E7007` registry row's \"under a lock\" changes the same way.",
+   "[BLD-FFI-3] names the manifest key `link = [\"vulkan-1\"]` while §XVII.2 and `[MAN-8]` name `[link]` with `libs = [\"m\"]`, and `[MAN-1]` makes an unknown key `E9001`. Program: an `ember.toml` with `[link]` and `link = [\"vulkan-1\"]` as `[BLD-FFI-3]` writes it, which `[MAN-8]`'s list refuses, or `libs = [\"vulkan-1\"]`, which `[BLD-FFI-3]` does not describe. Text only: replace `[BLD-FFI-3]`'s \"(`link = [\"vulkan-1\"]`)\" with \"(`[link] libs = [\"vulkan-1\"]`, `[MAN-8]`)\".",
+   "[THR-20] says a `static mut` \"is reached only by the main thread and the tasks of scopes it opens\" and lists among the other-thread functions \"a job submitted outside a scope\"; a job of a `jobs.scope()` block, which `[JOB-2]` makes follow `[THR-5]` and `[THR-11]` and which runs on a worker thread, is in neither list. Program: `static mut FRAME: int = 0` and, in `main`, `with s = jobs.scope(): s.submit(owns fn(): FRAME += 1)` — `E7012` or a reduction checked by `[THR-11]`? A compiler must guess. Proposed: in `[THR-20]`, write \"by the main thread and the tasks and jobs of the scopes it opens (`[THR-11]`, `[JOB-2]`)\" in place of \"by the main thread and the tasks of scopes it opens\", and the same in `[THR-13]`'s module-variable bullet and `[STA-1]`'s \"the main thread and its scoped tasks\"."
+  ]
+ }
+}

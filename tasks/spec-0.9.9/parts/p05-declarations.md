@@ -4,48 +4,53 @@
 
 ## V.1 Modules, packages, imports, visibility
 
-* `[MOD-1]` *(changed in 0.9.10)* *(changed in 0.9.15)* A **package** is a directory tree with an `ember.toml` at its root. A **module** is one
-  `.em` file. A module's path is the package name followed by its path under `src/`, with `/` replaced
-  by `.` and the extension removed; `src/lib.em` or `src/main.em` is the package's root module, and
-  `src/a/mod.em` is module `a` when `a/` has submodules. A single `.em` file with no manifest is a
-  package of its own (`[CLI-4]`), and the directory containing it is its source root. A module and an
-  item of one name in one scope are `E1032`: an item whose path is a module's (the root module's `fn
-  grid()` beside module `grid`; a dependency's root module has its package's name), and an item named
-  like a module its module imports (`fn grid()` beside `import paths.grid`). A type named like a
-  built-in type (`struct i32`) is `E1032` too, except a name `[MOD-5]` lets a declaration shadow
-  (`int`, `float`, `Never`, `StrView`) and a declaration `import c` takes from a header, which keeps the
-  header's name. Every item thus has one path (`[MNG-1]`). The modules compared are those of the
-  build, each imported by some module, not every file under the source root.
-* `[MOD-2]` *(changed in 0.9.9)* Items are private to their module unless marked. `pub(package)` makes an
-  item visible within the package; `pub` makes it visible to dependants. Using an item, field or
-  constructor that is not visible is `E1052`, naming where it is declared and its visibility; `E1020`
-  means only a name declared twice in one block (`[GRM-4]`).
-* `[MOD-3]` *(changed in 0.9.9)* `import a.b.c` binds the name `c` to module `a.b.c`, and
-  `import a.b.c as d` binds `d`. `from a.b import x, y as z` binds items. A standard module may be
-  named without `std.`, as in Python: `import math` is `import std.math`, and `from random import Rng`
-  is `from std.random import Rng`; when the package itself or one of its dependencies has that name,
-  the package wins, with warning `W1003` naming both. A module path that names no module is
-  `E1060 no module named 'a.b.c'` at the import, whose help lists the nearest existing module paths;
-  an item missing from an existing module is `E1061`. Neither is ever deferred to the first use
+* `[MOD-1]` *(changed in 0.9.10)* *(changed in 0.9.15)* A **package** is a directory tree with an
+  `ember.toml` at its root. A **module** is one `.em` file. A module's path is the package name
+  followed by its path under `src/`, with `/` replaced by `.` and the extension removed;
+  `src/lib.em` or `src/main.em` is the package's root module, and `src/a/mod.em` is module `a` when
+  `a/` has submodules. A single `.em` file with no manifest is a package of its own (`[CLI-4]`), and
+  the directory containing it is its source root. A module and an item of one name in one scope are
+  `E1032`: an item whose path is a module's (the root module's `fn grid()` beside module `grid`; a
+  dependency's root module has its package's name), and an item named like a module its module
+  imports (`fn grid()` beside `import paths.grid`). A type named like a built-in type (`struct i32`)
+  is `E1032` too, except a name `[MOD-5]` lets a declaration shadow (`int`, `float`, `Never`,
+  `StrView`) and a declaration `import c` takes from a header, which keeps the header's name. Every
+  item thus has one path (`[MNG-1]`). The modules compared are those of the build, each imported by
+  some module, not every file under the source root.
+* `[MOD-2]` *(changed in 0.9.9)* Items are private to their module unless marked. `pub(package)`
+  makes an item visible within the package; `pub` makes it visible to dependants. Using an item,
+  field or constructor that is not visible is `E1052`, naming where it is declared and its
+  visibility; `E1020` means only a name declared twice in one block (`[GRM-4]`).
+* `[MOD-3]` *(changed in 0.9.9)* `import a.b.c` binds the name `c` to module `a.b.c`, and `import
+  a.b.c as d` binds `d`. `from a.b import x, y as z` binds items. A standard module may be named
+  without `std.`, as in Python: `import math` is `import std.math`, and `from random import Rng` is
+  `from std.random import Rng`; when the package itself or one of its dependencies has that name,
+  the package wins, with warning `W1003` naming both. A module path that names no module is `E1060
+  no module named 'a.b.c'` at the import, whose help lists the nearest existing module paths; an
+  item missing from an existing module is `E1061`. Neither is ever deferred to the first use
   (`[PHIL-12]`).
-* `[MOD-8]` *(new in 0.9.9)* `from m import *` binds every `pub` item of `m`. A name bound by two glob imports and then
-  used is `E1031`, naming both sources; an explicit import or a local declaration shadows a glob.
+* `[MOD-8]` *(new in 0.9.9)* `from m import *` binds every `pub` item of `m`. A name bound by two
+  glob imports and then used is `E1031`, naming both sources; an explicit import or a local
+  declaration shadows a glob.
 * `[MOD-4]` Import cycles within a package are allowed; cycles between packages are `E1041`.
 * `[MOD-7]` A field declared `pub(read)` (or `pub(package, read)`) may be read wherever a `pub`
   (`pub(package)`) field could be, and written only from its declaring module (`E1050` otherwise).
   Construction is a write, so a `pub(read)` field makes the memberwise constructor private to the
   module.
-* `[MOD-9]` *(new in 0.9.15)* **A package's edge.** What a dependant may rely on is what the package's
-  `pub` items write and what the compiler works out from their code. Where a word exists to write a
-  fact, only the written word counts across the edge: a `pub` generic function writes its bounds
-  (`[IFC-6]`). Every other fact the compiler works out (what each function may change, read and end,
-  with the chain of calls; which view parameters it uses after a line that may end what they view; the
-  locks it may take; the function values it stores and the callbacks it hands to C) is recorded in the
-  package's interface file, and a change to it is a change of the package's interface (`[EFF-4]`): an
-  edit inside one function, or a library update, can make a dependant's line stop compiling, and the
-  message names the chain of calls. A fact worked out from a body never changes what a line does.
-* `[MOD-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* **The prelude.** Every module implicitly imports these names from
-  `std`, and this list is the only definition of the prelude:
+* `[MOD-9]` *(new in 0.9.15)* *(changed in 0.9.20)* **A package's edge.** What a dependant may rely
+  on is what the package's `pub` items write and what the compiler works out from their code. Where
+  a word exists to write a fact, only the written word counts across the edge: a `pub` generic
+  function writes its bounds (`[IFC-6]`). Every other fact the compiler works out (what each
+  function may change, read and end, with the chain of calls; which view parameters it uses after a
+  line that may end what they view, and which it makes a one-thread `weakref` link to; for a class,
+  whether its methods say its objects are on one thread or `thread_shared`; the locks it may take;
+  the function values it stores and the callbacks it hands to C; each type's layout, with whether
+  its values carry the weak count, `[OBJ-1]`) is recorded in the package's interface file, and a
+  change to it is a change of the package's interface (`[EFF-4]`): an edit inside one function, or a
+  library update, can make a dependant's line stop compiling, and the message names the chain of
+  calls. A fact worked out from a body never changes what a line does.
+* `[MOD-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* **The prelude.** Every module implicitly
+  imports these names from `std`, and this list is the only definition of the prelude:
 
   | Group | Names |
   |---|---|
@@ -90,82 +95,85 @@ pub fn blend(dst: Array[f32], ref mut out: Array[f32], owns scratch: Array[f32],
     the callee one more owner that reads a shared value, and `owns c: shares mut C` one that may also
     change it.
 
-  So a plain `game: shares mut Game` reads the caller's shared value, with no count, and an owner that
-  may change the game is not made from it: `fn() shares mut game` is `E3023` ("`game` only reads the
-  `Game` that `main` lends to `setup` (`shares mut Game` says what `main`'s game is, not what `setup`
-  may do with it), so an owner made from it only reads too; to hand on an owner that may change the
-  game, take one: write `fn setup(owns game: shares mut Game):`, call it `setup(shares mut game)`, and
-  capture it `owns game`"). Only a `Mutex`, `RwLock`, `Atomic` or channel end, and the `guarded by`
-  fields of an object inside their lock, are changed through a plain parameter, by their own operations
-  (`[BRW-15]`, Part XI). `mut` alone on a parameter is `E0113`, and `ref` or `ref mut` written in a
-  parameter's type is `E0117` (`[GRM-41]`).
+  So a plain `game: shares mut Game` reads the caller's shared value, with no count, and an owner
+  that may change the game is not made from it: `fn() shares mut game` is `E3023` ("`game` only
+  reads the `Game` that `main` lends to `setup` (`shares mut Game` says what `main`'s game is, not
+  what `setup` may do with it), so an owner made from it only reads too; to hand on an owner that
+  may change the game, take one: write `fn setup(owns game: shares mut Game):`, call it
+  `setup(shares mut game)`, and capture it `owns game`"). Only a `Mutex`, `RwLock`, `Atomic` or
+  channel end, and the `guarded by` fields of an object inside their lock, are changed through a
+  plain parameter, by their own operations (`[BRW-15]`, Part XI). `mut` alone on a parameter is
+  `E0113`, and `ref` or `ref mut` written in a parameter's type is `E0117` (`[GRM-41]`).
 * `[FN-1a]` *(changed in 0.9.15)* A `MutSpan[T]` parameter that writes the elements it views says
-  `ref mut`, as every name that may change what it does not own does:
-  `fn blend(ref mut dst: MutSpan[float], src: Span[float]):`. Through it the callee may also point the
-  caller's span elsewhere; `const ref mut dst: MutSpan[float]` writes the elements and never does. A
-  plain `dst: MutSpan[float]` only reads them, and a write through it is `E3023` ("`dst[i] += src[i]`
-  writes an element of the caller's span, but `dst` only reads it; write
-  `fn blend(ref mut dst: MutSpan[float], src: Span[float]):` and call it `blend(ref mut d, s)`"). At the
-  call the word stands before the span's elements, so it may stand before a span made in the call
-  (`integrate(ref mut p.as_mut_span(), v.as_span(), 0.5)`); a callee that points such a span elsewhere
-  changes only that span, which ends with the line (`[SPN-3]`).
+  `ref mut`, as every name that may change what it does not own does: `fn blend(ref mut dst:
+  MutSpan[float], src: Span[float]):`. Through it the callee may also point the caller's span
+  elsewhere; `const ref mut dst: MutSpan[float]` writes the elements and never does. A plain `dst:
+  MutSpan[float]` only reads them, and a write through it is `E3023` ("`dst[i] += src[i]` writes an
+  element of the caller's span, but `dst` only reads it; write `fn blend(ref mut dst:
+  MutSpan[float], src: Span[float]):` and call it `blend(ref mut d, s)`"). At the call the word
+  stands before the span's elements, so it may stand before a span made in the call (`integrate(ref
+  mut p.as_mut_span(), v.as_span(), 0.5)`); a callee that points such a span elsewhere changes only
+  that span, which ends with the line (`[SPN-3]`).
 * `[FN-2]` *(changed in 0.9.15)* A parameter with no word reads. There is no by-copy mode: a callee
-  that needs a value of its own takes it `owns`, and the caller passes `owns copy of x` to keep its own,
-  or `owns x` to hand it over (`[FN-2a]`).
-* `[FN-2a]` *(changed in 0.9.15)* **A call says `ref mut` before an argument the callee may change,
-  and `owns` before one it takes over**, with the same words as the parameter, `const` included:
-  `bump(ref mut a)` for `fn bump(ref mut c: Counter):`, `blend(const ref mut d, s)` for
-  `fn blend(const ref mut dst: MutSpan[float], src: Span[float]):`, `mem.take(ref mut this.items)`;
-  `take(owns xs)` for `fn take(owns xs: Array[int]):`, whatever is given: `take(owns copy of xs)` gives a
-  copy and keeps `xs`, `take(owns [1, 2])` a list made in the call, `names.push(owns p.name)` a part
-  (`[OWN-11]`), and a function written in the call is given the same way,
-  `xs.iter().for_each(owns fn(x: int): println(x))` (`[STD-19]`). A missing word, or one written where
-  the parameter does not say it, is `E3028` ("`bump` may change `a` (its first line says
-  `ref mut c: Counter`); say so at the call: `bump(ref mut a)`"; "`show` only reads its argument;
-  remove `ref mut`: `show(a)`"; "`take` takes `xs` over (its first line says `owns xs: Array[int]`); say
-  so at the call: `take(owns xs)`", with the help "to keep `xs`, give it a copy:
-  `take(owns copy of xs)`"; "`show` only reads its argument; remove `owns`: `show(xs)`"), and `ref mut`
+  that needs a value of its own takes it `owns`, and the caller passes `owns copy of x` to keep its
+  own, or `owns x` to hand it over (`[FN-2a]`).
+* `[FN-2a]` *(changed in 0.9.15)* *(changed in 0.9.20)* **A call says `ref mut` before an argument
+  the callee may change, and `owns` before one it takes over**, with the same words as the
+  parameter, `const` included: `bump(ref mut a)` for `fn bump(ref mut c: Counter):`, `blend(const
+  ref mut d, s)` for `fn blend(const ref mut dst: MutSpan[float], src: Span[float]):`, `mem.take(ref
+  mut this.items)`; `take(owns xs)` for `fn take(owns xs: Array[int]):`, whatever is given:
+  `take(owns copy of xs)` gives a copy and keeps `xs`, `take(owns [1, 2])` a list made in the call,
+  `m.insert(owns (i * 7), owns i)` a value computed in the call, in brackets (`[GRM-43]`,
+  `[GRM-47]`), `names.push(owns p.name)` a part (`[OWN-11]`), and a function written in the call is
+  given the same way, `xs.iter().for_each(owns fn(x: int): println(x))` (`[STD-19]`). A missing
+  word, or one written where the parameter does not say it, is `E3028` ("`bump` may change `a` (its
+  first line says `ref mut c: Counter`); say so at the call: `bump(ref mut a)`"; "`show` only reads
+  its argument; remove `ref mut`: `show(a)`"; "`take` takes `xs` over (its first line says `owns xs:
+  Array[int]`); say so at the call: `take(owns xs)`", with the help "to keep `xs`, give it a copy:
+  `take(owns copy of xs)`"; for a computed argument, "`insert` takes this argument over (its first
+  line says `owns key: K`); say so at the call: write `owns` before it, in brackets: `m.insert(owns
+  (i * 7), owns i)`"; "`show` only reads its argument; remove `owns`: `show(xs)`"), and `ref mut`
   before something this function may not change (a plain parameter, a temporary, a place reached
-  through a read-only name) is `E3027` ("`p` only reads the caller's player, so it cannot be given to
-  `heal` as `ref mut`; take it as `ref mut p: Player` on `revive`'s first line, or walk the list with
-  `for ref mut p in players:`"). `return a` and a constructor's argument take no word: they hand a
-  value over as `=` does (`[OWN-9]`). A function from a variable given to a standard-library function
-  that takes one is lent and takes no word: after `xs.iter().for_each(h)`, `h` is the caller's still
-  (`[STD-19]`). An argument for a `Mutex`, `RwLock` or `Atomic` parameter, or a channel end, takes no word, since its own "only me" is
-  the lock's block (`E3028`: "`top` takes the lock of `scores` itself; a `Mutex` takes no word at the
-  call: `top(scores)`"). The object a method is called on is not marked (`a.reset()`): what the method
-  does to it is worked out from its body (`[EXC-15]`). The arguments of one call do not overlap a
-  changeable one (`[BRW-11]`), and a call is checked against what the callee does with each view
-  argument (`[BRW-21]`). The editor shows a parameter's word as an inlay hint where the call does not
-  write one.
-* `[FN-9]` *(new in 0.9.9)* *(changed in 0.9.15)* A parameter of a class type takes its word as one of
-  any type does, since a class object has one owner unless a line says `shares` (`[CLS-1]`):
-  `p: Player` reads the object, which neither changes nor ends while `p` is used; `ref mut p: Player`
+  through a read-only name) is `E3027` ("`p` only reads the caller's player, so it cannot be given
+  to `heal` as `ref mut`; take it as `ref mut p: Player` on `revive`'s first line, or walk the list
+  with `for ref mut p in players:`"). `return a` and a constructor's argument take no word: they
+  hand a value over as `=` does (`[OWN-9]`). A function from a variable given to a standard-library
+  function that takes one is lent and takes no word: after `xs.iter().for_each(h)`, `h` is the
+  caller's still (`[STD-19]`). An argument for a `Mutex`, `RwLock` or `Atomic` parameter, or a
+  channel end, takes no word, since its own "only me" is the lock's block (`E3028`: "`top` takes the
+  lock of `scores` itself; a `Mutex` takes no word at the call: `top(scores)`"). The object a method
+  is called on is not marked (`a.reset()`): what the method does to it is worked out from its body
+  (`[EXC-15]`). The arguments of one call do not overlap a changeable one (`[BRW-11]`), and a call
+  is checked against what the callee does with each view argument (`[BRW-21]`). The editor shows a
+  parameter's word as an inlay hint where the call does not write one.
+* `[FN-9]` *(new in 0.9.9)* *(changed in 0.9.15)* A parameter of a class type takes its word as one
+  of any type does, since a class object has one owner unless a line says `shares` (`[CLS-1]`): `p:
+  Player` reads the object, which neither changes nor ends while `p` is used; `ref mut p: Player`
   may change the object, and `p = Player()` gives the caller's place another object (the old one
-  ends); `owns p: Player` hands the object over, so the caller's name ends. A method that may change its
-  object is not called through a `p` that only reads it (`E3023`, `[EXC-15]`).
-* `[FN-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A function hands its result over to its caller. A
-  result that is a view points into what the function's code shows it points into: its view
-  arguments and, for a method, `this` (`[LT-1]`); `-> T from name` after the result type narrows it to one
-  parameter or one field of `this` written bare (`-> StrView from src`) (`[LT-1]`, `[LT-1a]`); a view
-  of text written in the program has the `static` region (`[LT-3]`). A view of the function's own locals
-  or of a temporary is never returned (`E3063`).
-* `[FN-4]` *(changed in 0.9.15)* **Methods and `this`.** Inside a method its object is `this`; a method
-  does not list it among its parameters (`fn reset():` with `this.count = 0`). `owns this` after the
-  parameters takes the object over, so the caller's name ends (`fn finish() owns this -> u64:`); what
-  else a method does to its object is worked out from its body (`[EXC-15]`). A struct's method may give
-  `this` a whole new value (`this = Point(x=0.0, y=0.0)`); a class's may not (`[CLS-7]`). A function in
-  a type body is a method unless it is written `static fn`: it then has no object and is called on the
-  type (`static fn starting_at(k: int) -> Counter:`, called `Counter.starting_at(5)`). `static fn`
-  outside a type body is `E2115`; `this` in a `static fn` or a free function is `E1010` ("`this` can
-  only be used in a method, and `starting_at` is a `static fn`, not a method", with the help "build the
-  counter from `k`: `return Counter(n=k)`"; "`this` can only be used in a method, and `double` is not a
-  method", with the help "to make `double` a method, move it into the struct or class it belongs to").
-  The help that builds the value is given where the function returns its own type and sets each field
-  it names through `this` from its parameters; `self` is `E1010`, whose help gives
-  `this` (`[GRM-41]`). A function's first line says its parameters, `owns this`, its result and
-  `from`, in that order (`[GRM-41]`), and nothing about what the function changes or reads, which the
-  compiler works out from its code (`[EFF-24]`).
+  ends); `owns p: Player` hands the object over, so the caller's name ends. A method that may change
+  its object is not called through a `p` that only reads it (`E3023`, `[EXC-15]`).
+* `[FN-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A function hands its
+  result over to its caller. A result that is a view points into what the function's code shows it
+  points into: its view arguments and, for a method, `this` (`[LT-1]`); `-> T from name` after the
+  result type narrows it to one parameter or one field of `this` written bare (`-> StrView from
+  src`) (`[LT-1]`, `[LT-1a]`); a view of text written in the program has the `static` region
+  (`[LT-3]`). A view of the function's own locals or of a temporary is never returned (`E3063`).
+* `[FN-4]` *(changed in 0.9.15)* **Methods and `this`.** Inside a method its object is `this`; a
+  method does not list it among its parameters (`fn reset():` with `this.count = 0`). `owns this`
+  after the parameters takes the object over, so the caller's name ends (`fn finish() owns this ->
+  u64:`); what else a method does to its object is worked out from its body (`[EXC-15]`). A struct's
+  method may give `this` a whole new value (`this = Point(x=0.0, y=0.0)`); a class's may not
+  (`[CLS-7]`). A function in a type body is a method unless it is written `static fn`: it then has
+  no object and is called on the type (`static fn starting_at(k: int) -> Counter:`, called
+  `Counter.starting_at(5)`). `static fn` outside a type body is `E2115`; `this` in a `static fn` or
+  a free function is `E1010` ("`this` can only be used in a method, and `starting_at` is a `static
+  fn`, not a method", with the help "build the counter from `k`: `return Counter(n=k)`"; "`this` can
+  only be used in a method, and `double` is not a method", with the help "to make `double` a method,
+  move it into the struct or class it belongs to"). The help that builds the value is given where
+  the function returns its own type and sets each field it names through `this` from its parameters;
+  `self` is `E1010`, whose help gives `this` (`[GRM-41]`). A function's first line says its
+  parameters, `owns this`, its result and `from`, in that order (`[GRM-41]`), and nothing about what
+  the function changes or reads, which the compiler works out from its code (`[EFF-24]`).
 * `[FN-5]` Default argument expressions are evaluated at each call, after the other arguments are
   bound, and may refer to earlier parameters. Names and type expressions resolve in the function's
   declaration scope, with generic parameters substituted at instantiation. Defaults use that
@@ -175,31 +183,33 @@ pub fn blend(dst: Array[f32], ref mut out: Array[f32], owns scratch: Array[f32],
 * `[FN-6]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Callable types.** A function is a value. A
   callable type is written `fn(A, ref mut B, owns C) -> R`, with the same parameter words as a
   declaration. It says the parameters, the result, and whether any thread may run its functions
-  (`thread_shared fn(…)`, `[CLO-16]`), and nothing about what they change (`[CLO-17]`). `once fn(…) -> R`
-  is a callable that may be called at most once (`[CLO-6]`), and `unsafe fn(…) -> R` one whose call is
-  an `unsafe` operation (`[UNS-1]`, ODR-115); the two combine with `extern "C"` as the grammar orders
-  them, `once unsafe extern "C" fn(…)`. Callable types are compared by their parameter types and words,
-  their result, `unsafe` and `thread_shared`. A function coerces to any callable type it satisfies, and
-  to its `unsafe` form; an `unsafe fn` coerces only to an `unsafe` callable type (`E2020` otherwise).
-  Where an `unsafe fn(…)` is wanted, any function or lambda that meets `fn(…)` may be given, and so may
-  an `unsafe fn`. A function that captures nothing also coerces to `extern "C" fn(…)` when every type is
-  FFI-safe. A view that a call through a callable value gives points into that call's own view
-  arguments (`[LT-7]`). What a callable type means in each position is `[CLO-3]`.
+  (`thread_shared fn(…)`, `[CLO-16]`), and nothing about what they change (`[CLO-17]`). `once fn(…)
+  -> R` is a callable that may be called at most once (`[CLO-6]`), and `unsafe fn(…) -> R` one whose
+  call is an `unsafe` operation (`[UNS-1]`, ODR-115); the two combine with `extern "C"` as the
+  grammar orders them, `once unsafe extern "C" fn(…)`. Callable types are compared by their
+  parameter types and words, their result, `unsafe` and `thread_shared`. A function coerces to any
+  callable type it satisfies, and to its `unsafe` form; an `unsafe fn` coerces only to an `unsafe`
+  callable type (`E2020` otherwise). Where an `unsafe fn(…)` is wanted, any function or lambda that
+  meets `fn(…)` may be given, and so may an `unsafe fn`. A function that captures nothing also
+  coerces to `extern "C" fn(…)` when every type is FFI-safe. A view that a call through a callable
+  value gives points into that call's own view arguments (`[LT-7]`). What a callable type means in
+  each position is `[CLO-3]`.
 * `[FN-7]` Recursion is permitted; tail calls are not guaranteed to be eliminated.
-* `[FN-8]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* `main` is `fn main()`, `fn main() -> Result[void, E]` for any
-  `E: needs Display`, or either form with a first parameter `args: Array[String]`. `args` holds the command
-  line, decoded as UTF-8 with invalid bytes replaced by U+FFFD; `std.process.args_os()` returns the raw
-  bytes. An `Err` returned from `main` is printed with `Display` to standard error and the process
-  exits with status 1. The entry module's `main` in any other form (another parameter or more than one,
-  another return type, or type parameters) is `E2183`, reported at its name; an `E` that is not
-  `Display` is `E2040`, an unmet bound (ODR-101). **Scripts:** the statements at file scope of the entry file (`[GRM-2]`) form, in
-  source order, the body of an implicit `fn main()`, or `fn main() -> Result[void, AnyError]` when one
-  of them uses `?`; items anywhere in the file are declared as usual. A file with such statements that
-  also declares `main` has two items named `main` (`E1030`). The names the statements bind are locals
-  of the implicit `main`: a function of the file that uses one is `E1010`, whose help names a
+* `[FN-8]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* `main` is `fn main()`,
+  `fn main() -> Result[void, E]` for any `E: needs Display`, or either form with a first parameter
+  `args: Array[String]`. `args` holds the command line, decoded as UTF-8 with invalid bytes replaced
+  by U+FFFD; `std.process.args_os()` returns the raw bytes. An `Err` returned from `main` is printed
+  with `Display` to standard error and the process exits with status 1. The entry module's `main` in
+  any other form (another parameter or more than one, another return type, or type parameters) is
+  `E2183`, reported at its name; an `E` that is not `Display` is `E2040`, an unmet bound (ODR-101).
+  **Scripts:** the statements at file scope of the entry file (`[GRM-2]`) form, in source order, the
+  body of an implicit `fn main()`, or `fn main() -> Result[void, AnyError]` when one of them uses
+  `?`; items anywhere in the file are declared as usual. A file with such statements that also
+  declares `main` has two items named `main` (`E1030`). The names the statements bind are locals of
+  the implicit `main`: a function of the file that uses one is `E1010`, whose help names a
   parameter, a `const`, a `static`, or a `static mut` for a module variable that functions change
-  (`[STA-1]`) (unlike Python, where it would read a global). `return` and
-  `yield` at file scope are `E0100`, as in Python; `process.exit(code)` ends a script early.
+  (`[STA-1]`) (unlike Python, where it would read a global). `return` and `yield` at file scope are
+  `E0100`, as in Python; `process.exit(code)` ends a script early.
 * `[FN-10]` *(new in 0.9.9)* A function whose return type is `Result[void, E]` returns `Ok(())` when
   control reaches the end of its body, as a `void` function returns; an explicit `return Ok(())` is
   still allowed. No other return type has an implicit value: a body that can reach its end is

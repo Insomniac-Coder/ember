@@ -1,0 +1,163 @@
+G1-01|MEM|crit|conf|TYP-22,IFC-5,TYP-36|`Self` as a parameter type is not excluded from a `dyn`-usable interface
+G1-02|MEM|crit|narr|TYP-6,TYP-12,TYP-13|`n as Color`: an integer cast to a unit-only enum, which the text calls "an integer"
+G1-03|MEM|crit|conf|TYP-46,ALC-1,THR-8,THR-11|A value `using A` keeps its instance's address, which no marker and no race rule sees
+G1-04|GAP|majo|conf|GRM-3,TYP-45,TYP-14|`base_type` admits every stack of words; the text defines each word alone
+G1-05|GAP|majo|conf|TYP-44,OBJ-1,DSP-6|How a type index is assigned across separately compiled packages is unsaid
+G1-06|CON|majo|conf|LEX-10,GRM-37|A `#!` line after an import: a comment by [LEX-10], `E0104` by [GRM-37]
+G1-07|GAP|majo|conf|GRM-2,FN-8|The `file` production has no statements, which the entry file may hold
+G1-08|SEC|majo|conf|LEX-1,LEX-11,LEX-26|Bidirectional format characters in source: the reviewer reads one program, the compiler another
+G1-09|GAP|majo|conf|GRM-17,LEX-6a,GRM-28|A lambda with an indented block body outside brackets: grammatical, and the prose does not say
+G1-10|CON|mino|conf|TYP-27,GRM-29,GRM-38|One-element tuples: values and types the grammar makes, which [TYP-27] refuses
+G1-11|GAP|mino|conf|TYP-5|Upcast of a `shares`, `thread_shared` or `weakref` class value to its base is unsaid
+G1-12|CON|mino|narr|THR-9,TYP-43|The `ThreadShared` row names `ref mut` and not `MutSpan`
+G1-13|CON|mino|conf|TYP-46,ALC-1|`String using A` is `E2114` by the closed list, yet a `String` is named among the values made in an 
+G1-14|CON|mino|narr|TYP-21,TXT-11,TYP-40|`String` has `+` and "implements none of" the operator interfaces
+G1-15|GAP|mino|conf|LEX-15,GRM-37|Contextual keywords the grammar uses and [LEX-15] does not list: `module`, `package`, `read`
+G1-16|GAP|mino|conf|LEX-18,LEX-24,LEX-26|Three literal edges the lexer must guess: `t.0.1`, `-128i8`, `\u{…}` in a byte string
+G1-17|CON|mino|conf|PHIL-2,RC-1|After F6 the allocation of a shared local is on the making line, and [PHIL-2] still names `shares x`
+G1-18|GAP|mino|refu|LEX-10,GRM-37,FN-8|A shebang line is an unknown directive
+G1-19|GAP|mino|conf|GRM-34,IFC-2|`extend_decl` takes a `type_body`, which admits fields
+G1-20|GAP|mino|conf|GRM-4,GRM-5|Whether `a, b = e` declares a name not in scope is unsaid
+G1-21|ED|mino|conf|TYP-15a,TYP-15|"there is no other view container" reads against `[TYP-15]`'s `Array[StrView]`
+G2-01|MEM|crit|conf|CLS-2,CLS-4,IFC-5,MOD-9|Checks inside a library's own bodies read sets the whole program fills (overrides, dyn implementatio
+G2-02|CON|crit|narr|CLO-6a,CLO-6,EXP-6,OWN-11|A `once fn` in a class field is callable by [CLO-6a] but a hand-over out of a class field is E3013 b
+G2-03|MEM|crit|conf|CORO-6,CORO-1,CORO-5|A view of a parameter the frame holds (`owns` or `Copy`) may be held across `yield` by the text, and
+G2-04|MEM|crit|conf|CLS-12,EFF-27|`@cached` on a `thread_shared` object whose body reads an `Atomic` (or `Mutex`/`RwLock`) field: anot
+G2-05|MEM|crit|conf|STA-1,THR-20,THR-18|A `guarded by` `static mut` of a non-`Send` type: a one-thread owner made from it on another thread 
+G2-06|GAP|majo|narr|CLO-17,CLO-2,CLO-18|A function value stored in a `static mut` it reshapes: a `static mut` is neither a "real variable" n
+G2-07|GAP|majo|narr|CLO-16,THR-20,STA-1|A function that "captures nothing" meets `thread_shared fn()` even when its body changes an unguarde
+G2-08|GAP|majo|conf|FN-5,FN-2a,FN-1,EXP-6|Default arguments: where they run, whether they take a word, and what a default may do with an earli
+G2-09|GAP|majo|narr|STR-2,CLS-2,CLS-10|What a field default may name (`this`, another field) is unsaid; a class default runs before `init`,
+G2-10|GAP|majo|narr|CTL-1,BRW-15,OWN-3|`for x in it:` over an `Iterator` place: handed over, or changed in place through a plain name?
+G2-11|GAP|majo|narr|EXP-4,BRW-19,CTL-11|A condition's temporaries: the named value lives into the block, but the temporary it views is "drop
+G2-12|GAP|mino|conf|CORO-7,CORO-1|Dropping a suspended generator drops "exactly the locals live at its suspension point": its `owns` p
+G2-13|CON|mino|narr|FN-6,CLO-6|Callable types are "compared by their parameter types and words, their result, `unsafe` and `thread_
+G2-14|GAP|majo|narr|STR-3,STR-5|`@derive(Copy)` on a struct with `drop`: [STR-3]'s E2080 names fields only, so each copy runs `drop`
+G2-15|SEC|mino|conf|MOD-8,MOD-5|A glob import binding a prelude name: neither "an explicit import or a local declaration", so a depe
+G2-16|GAP|mino|conf|PAN-1,FN-2a,EXP-6|`debug_assert`'s argument may hand a value over or change a place, and its evaluation depends on the
+G2-17|GAP|mino|narr|CTL-2|"a removal" and "a `while` loop that tests its position against the current length" have no definiti
+G2-18|GAP|mino|narr|IFC-5,TYP-34|`dyn I` as the type of a local, a field or a result is unsaid: only the parameter position is define
+G2-19|ED|mino|refu|CLO-17|The captured-word clause of [CLO-17] lacks "all the way down": a body ending an owner of its holder 
+G3-01|MEM|crit|conf|WK-7,WK-6|Proof (1) of [WK-7] is circular: a fresh holder passes its own test, so the loop [WK-6] refuses is a
+G3-02|MEM|crit|conf|WK-5,WK-7,EFF-4|The graph of owners misses plain-owned edges, and a store judged in a library closes a loop a depend
+G3-03|MEM|crit|narr|WK-17,OWN-8|`copy of` (a `Clone`) gives a parent link a target outside [WK-17]'s pattern, and the proved test-fr
+G3-04|MEM|crit|narr|WK-17,WK-3,DRP-2|A `drop` in a derived class (or in a value the node owns) reads a parent link test-free while the pa
+G3-05|MEM|crit|conf|RC-4,WK-3|After the making thread ends, a subtract that finds the queue closed ends the value while home-count
+G3-06|GAP|majo|conf|RC-4,WK-12,RC-5|[RC-4]'s unsaid transitions: home reaching zero with away owners, the state after a queue merge, the
+G3-07|GAP|majo|conf|RC-1,OBJ-3,WK-12,RT-10|"A value with one owner is not counted" leaves unsaid what the header's count holds, which the `weak
+G3-08|CON|majo|conf|RC-1,OWN-13,THR-1|[RC-1] allows `thread_shared` of a local that owns its value; [OWN-13] refuses it with E7017
+G3-09|MEM|crit|conf|LT-3,LT-1,LT-22,BRW-17,STA-1|A view a call returns into a `static mut` has the static region and no source parameter, so the call
+G3-10|MEM|crit|conf|LT-1,BRW-21,LT-48,EFF-4|The per-kind check of a call through `dyn` is a whole-program fact: a library's function compiled be
+G3-11|MEM|crit|conf|OPT-1,RC-4,OBJ-1,OBJ-4|A `thread_shared` value placed in a frame ([OPT-1]) or made `using` a manager has no chunk header to
+G3-12|GAP|majo|narr|WK-18|The deferred-drop region's edges are unsaid: early exits, a `yield` inside it, links made by callees
+G3-13|ED|mino|conf|EXC-3,BRW-17|"different classes" as proof that two paths differ must exclude a base and its derived class
+G3-14|GAP|mino|refu|BRW-14,BRW-13,LT-47|`= ref mut` on a `ref mut` parameter writes the caller's place for a view type but re-points the par
+G3-15|GAP|mino|refu|RC-1,OBJ-5,CLS-7a,OWN-13|`shares this` outside `drop`, and `shares p` of a parameter whose type is already shared, are decide
+G4-01|MEM|crit|narr|EFF-2,EFF-4,EFF-25,BRW-18,EFF-|A callee another package can supply is counted by nobody at the library's own line (extends O1 to su
+G4-02|MEM|crit|conf|ALC-5,LT-4,ALC-1,WK-11,WK-12,H|A `weakref` link to an object made `using` an arena survives the arena's reset or end, and opens a r
+G4-03|MEM|crit|narr|RC-4,ALC-5,LT-4,THR-11|A `thread_shared` value made `using` an arena is queued past the end of its compile-time life, and t
+G4-04|MEM|crit|conf|OBJ-1,RC-4,ALC-1,ALC-3,RT-1,FF|"Which thread made a value" is read from a memory-chunk header that `malloc`, a replaced global allo
+G4-05|GAP|majo|narr|ARN-2,ARN-3,ARN-5,ARN-8,DRP-8|"needs drop" is used by six rules and defined nowhere
+G4-06|GAP|majo|narr|HEAP-1,ARN-4,ALC-2,ALC-4,EFF-1|Whether a value made `using` an instance carries `Alloc`, and which panic its failure is, is unsaid
+G4-07|GAP|majo|narr|ARN-1,ARN-7,LT-1,BRW-1,EFF-24|No rule says how a compiler knows that an `alloc*` result is a place of its own, or what a user-writ
+G4-08|CON|majo|conf|DSJ-5,EFF-15,EFF-12,EFF-9,DSJ-|`[DSJ-5]`'s "unless the compiler already knows the ranges are disjoint" is a proof `[EFF-15]`'s clos
+G4-09|GAP|majo|narr|UNS-1,UNS-5,UNS-7|`std.mem.copy` and `copy_nonoverlapping` write through raw pointers and no rule says they are `unsaf
+G4-10|GAP|majo|conf|DET-2,DET-3,THR-15,THR-14|`[DET-2]`'s closed list of `Nondet` sources misses every read whose value depends on which thread ac
+G4-11|GAP|majo|conf|EFF-1,CORO-6,EFF-5|A generator's `next` "carries the effects of the body up to the next `yield`": which segment runs is
+G4-12|CON|mino|narr|ARN-1,ARN-6,ARN-7|`[ARN-1]` says `scope()` ends every view into the arena; `[ARN-7]` ends views only where bytes are r
+G4-13|GAP|mino|narr|ALC-1,ALC-2,ALC-3,EXC-15,STA-1|The name `using x` is written through, the word of `allocate`'s `this`, and what "an empty body" of 
+G4-14|ED|mino|conf|ALC-1,TYP-46,ARN-5,ARN-3,ARN-1|Small gaps of IX.2 and IX.3: `String using`, the arena containers' constructor and their storage, `Z
+G4-15|GAP|mino|narr|COST-6,PRF-4,HEAP-8,ALC-2,ALC-|`[COST-6]`'s table of what stops the program omits checks its own cost table and `[PRF-4]` run in ev
+G5-01|MEM|crit|narr|THR-11,THR-13,THR-9,THR-15,THR|"under a lock" in [THR-11] admits a shared (read) lock and an unnamed kind of place: two tasks chang
+G5-02|MEM|crit|conf|THR-11,THR-2,THR-13,RC-4,WK-11|A scoped task may end a `shares` owner, or end an object a `weakref` link names, with plain count wr
+G5-03|MEM|crit|conf|THR-1,THR-2,THR-20,WK-11,THR-8|A one-thread `weakref` link to an object a `thread_shared` value owns: the object ends on whichever 
+G5-04|SEC|crit|conf|MAN-8,BLD-FFI-1,BLD-FFI-1a,CT-|A dependency's manifest chooses the C compiler flags, link inputs and C++ project configuration the 
+G5-05|GAP|majo|conf|THR-10,THR-11,JOB-2,CLO-6,CLO-|A thread's, task's or job's function that gives a capture away is a `once fn`, and `spawn`/`submit` 
+G5-06|GAP|majo|narr|THR-21,THR-20,THR-1,PAR-3|The written form of a `max`/`min`/`add` reduction, the accumulator of `m[k] op= e`, and whether a `s
+G5-07|GAP|majo|narr|THR-19,THR-3,STA-3,EFF-26|[THR-19] refuses waits only "inside a lock's `with` block": a guard held in a plain local, a foreign
+G5-08|GAP|majo|conf|THR-18,THR-3,BRW-1,TYP-14|`with x.lock:` holds no view of `x.lock`: the lock may be replaced, swapped or taken out, and `x` en
+G5-09|CON|mino|conf|BLD-14,EFF-24,THR-18,EFF-4|[BLD-14]'s recorded facts name "the locks a function may take" but not the locks it needs held ([THR
+G5-10|CON|mino|conf|PRF-1,PRF-3,PRF-4|[PRF-1] says only `debug_assert` differs between profiles, and [PRF-3] allows C sanitizers in `debug
+G5-11|GAP|mino|conf|CLI-21,PAR-1,PAR-5,CT-2|`ember run --interp` says threads are unavailable and nothing about `@parallel` loops and `std.jobs`
+G5-12|ED|mino|conf|DIA-6a,TST-4b|[DIA-6a] says each code is defined by exactly one rule; the registry's rows name several rules for o
+G6-01|MEM|crit|narr|ECS-4,ECS-3,ECS-8,SIMD-3|A component type listed twice in one view hands out two `ref mut` names of one place
+G6-02|MEM|crit|conf|CT-5,FN-1,CLS-12,THR-14|A `comptime(e)` value with an `Atomic`, `Mutex`, `RwLock`, `Once` or `guarded by` field, or a class 
+G6-03|MEM|majo|conf|SIMD-7,SIMD-5,TYP-8|A grouped overflow check is skipped when the loop body leaves the group early
+G6-04|GAP|majo|conf|CT-1,CT-4,CT-6,STA-1,STA-3|A function run at compile time that reads or changes a `static mut` (or a `static` built on first ac
+G6-05|GAP|majo|narr|CT-2,MAN-8|`comptime.read_file`'s "package root" names no package: a dependency called from the root's compile-
+G6-06|GAP|majo|narr|SOA-1,SOA-6,SOA-3,DRP-1,DRP-5|`SoA[T]` for a `T` with a `drop`: no rule says how an element ends when no `T` is ever assembled
+G6-07|GAP|majo|conf|SIMD-9,SIMD-1,SOA-7|`V.load(s)` and `v.store(ref mut s)` say nothing about the span's alignment
+G6-08|SEC|majo|narr|ECS-2,ECS-3,ECS-8|A component type's identity is a 64-bit FNV-1a of its name: a dependency's type chosen to collide re
+G6-09|CON|mino|conf|STD-19,TYP-8,TYP-42|"an `int` by an `int` stays an `int`" is false for two ranges of 32-bit numbers
+G6-10|GAP|mino|narr|SOA-1,SOA-2|What `ps.pos` names when `pos` is `@soa(flatten)` is unsaid
+G6-11|GAP|mino|narr|ERR-3,ERR-8|`@from` on a variant whose field is `AnyError`: "an error type" is undefined and `AnyError` is not `
+G6-12|GAP|mino|narr|ERR-4,ERR-1,STD-9|`unwrap`/`expect` on a `Result[T, E]` "panic with the error's `Display` text" but `E` is unbounded
+G6-13|ED|mino|narr|ECS-2,ECS-3,ECS-9,STD-6|The normative fallback for Part XII.3, `std/src/ecs.em`, is a different library than the Part descri
+G6-14|CON|mino|conf|STD-6,STD-1,ERR-8,ERR-11|The `core` layer holds `AnyError`, which owns a heap block
+G6-15|GAP|mino|conf|CT-3,CT-4|"10⁸ steps" names no unit, so two conforming compilers accept different programs
+G6-16|GAP|mino|refu|STD-7,STD-14,ERR-13|`FixedArray.push` on a full container: what becomes of the value handed over
+G7-01|MEM|crit|conf|FFI-23,FFI-21,FFI-22,THR-8|The Retained token of a threads(creator)/threads(main) callback can end on another thread, ending a 
+G7-02|MEM|crit|conf|FFI-21,FFI-22,THR-20|A threads(main) callback holding a shares owner may be registered from a non-main thread
+G7-03|MEM|crit|conf|FFI-52,EFF-4,EFF-26,BRW-18|Extends O1: a library's foreign call is checked only against callbacks the library can see; a depend
+G7-04|MEM|crit|narr|FFI-11,FFI-15,LT-3,BRW-1|from(static) admits memory C rewrites on the next call: a read-only view changed under its holder, a
+G7-05|MEM|crit|conf|FFI-39,FFI-39c,FFI-39d,FFI-17c|An Ember class derived from a C++ base has no thread contract: C++ runs its overrides and deletes it
+G7-06|GAP|majo|conf|FFI-21,FFI-22,FFI-10,THR-20,FF|An Ember function given to C as a bare extern "C" fn value has no wrapper that attaches the thread a
+G7-07|GAP|majo|narr|FFI-21,FFI-53,FFI-23|callback(once): whether it returns a token, what the token's end does after the one call, and whethe
+G7-08|CON|majo|conf|FFI-35a,OBJ-1,FFI-11,THR-2|[FFI-35a]'s kept-by-C mark has no bit in [OBJ-1]'s header and no rule says which line sets it
+G7-09|GAP|majo|conf|FFI-8,FFI-2a,THR-8,THR-9,FFI-3|An extern type (and an opaque C++ class) is Send and ThreadShared by inference, so two threads use o
+G7-10|GAP|majo|conf|FFI-39,FFI-17c,FFI-17d,FFI-39c|The object model of a trampoline class is unsaid: where the C++ subobject lies, what C++'s delete fr
+G7-11|MEM|majo|conf|FFI-40,FFI-2a,LT-1,FFI-11|A C++ reference result's lifetime is derived as "into the object", against [FFI-2a]; a reference to 
+G7-12|GAP|majo|conf|FFI-17a,CLO-17,EFF-3,FFI-52,FF|A std::function imported as fn(A…) -> R is "called as any other": its target is C++ code, so its cal
+G7-13|GAP|majo|conf|BLD-FFI-5a,THR-1,FFI-22,FFI-33|The C++ handle class exposes "the class's pub methods", changing ones included, with no attach and n
+G7-14|GAP|majo|conf|FFI-31b,FFI-26,BLD-FFI-5,FFI-8|An export's type mapping and the C caller's obligations are unsaid: which view types cross, with wha
+G7-15|CON|majo|conf|FFI-10,FFI-21,FFI-52,FFI-53|[FFI-52]'s example declares `safe fn register_cb(cb: extern "C" fn(*mut void), ud: *mut void)`, whic
+G7-16|GAP|majo|conf|FFI-54,FFI-23,OBJ-1,WK-15,FFI-|Nothing takes an object back after into_raw(): no from_raw, no runtime entry for C, so an object giv
+G7-17|GAP|mino|conf|FFI-10,FFI-11|The safe type of a `borrowed one nullable` input is unsaid (ODR-079 and ODR-080 cover spans and stri
+G7-18|GAP|mino|conf|FFI-11,FFI-16,FFI-35a|`out` is not said to assert that C writes the value, so an unwritten out slot is an uninitialised re
+G7-19|ED|mino|conf|FFI-39,FFI-35a,FFI-43,FFI-32,F|Registry rows that name no rule that can emit them, or the wrong rule
+G7-20|SEC|mino|conf|FFI-53|Extends O10: the tagged number is not non-canonical on AArch64 (top-byte ignore) when only its top b
+G7-21|GAP|mino|conf|FFI-33b,THR-8,FFI-17a|Where an `owns T` of a threads(creator) type keeps its creating thread is unsaid, and its run-time s
+G7-22|ED|mino|conf|FFI-39c,FN-2a,FFI-54|[FFI-39c]'s hand-over `panel.add_child(b)` lacks the call word [FN-2a] requires, where [FFI-54] writ
+G7-23|CON|mino|narr|FFI-33,FFI-33c,STA-1|`threads=creator` and `threads=main` on an export name the same thread (the module's initialising th
+G7-24|GAP|mino|conf|FFI-55,FFI-14,FFI-5|What `ember.overlays`'s fingerprint hashes is unsaid, so two implementations disagree on which heade
+G7-25|GAP|mino|conf|FFI-17a,FFI-3|`std::optional<T>` maps to `Option[T]` with no word on the conversion, though the two layouts differ
+G8-01|SEC|crit|conf|MNG-1,MNG-6,MONO-1|A 64-bit instance hash deduplicated across packages with no check: a crafted collision is one body f
+G8-02|MEM|crit|conf|MNG-1,MNG-6|Two majors of one package spell their types alike: instances over them deduplicate into one body
+G8-03|GAP|majo|conf|MONO-10,BCK-5,CG-C-3b|The copy for one whole variable under two names needs a callee body the caller may not have
+G8-04|MEM|crit|conf|BCK-8,EFF-2,BLD-14|extends O1: a dependant's implementation, override or stored function flows into a library's already
+G8-05|MEM|crit|conf|RT-7,RC-4,RT-10|The home count is folded into the away count unchecked: a count past half the range wraps
+G8-06|MEM|crit|conf|HR-42,HR-42a,HR-3|A thread at depth zero may enter Ember code during commit and run through a half-rewritten image
+G8-07|MEM|crit|conf|HR-3b,HR-15,HR-15a|A frame's view into a field of an instance migrated in place is neither rewritten nor counted as a d
+G8-08|MEM|crit|conf|HR-15,HR-14,HR-15a|A kept view into a field that migration removes, converts or moves within its block is rewritten to 
+G8-09|MEM|crit|conf|HR-13,HR-14,HR-15,HR-45,CLO-10|A function value's state block has no schema: a captured value's type changes and the new body reads
+G8-10|MEM|crit|conf|HR-44,EFF-2,BLD-14|A function value stored by the old image stays in a place the new image's checks no longer count it 
+G8-11|MEM|crit|conf|HR-16,HR-2a|`OldSelf`'s fields that are themselves migrated types have no stated type: the old instance read wit
+G8-12|CON|majo|conf|HR-2,HR-2a,HR-15|Commit does only pointer stores, prepare changes nothing, yet an instance migrates in place and recl
+G8-13|GAP|majo|conf|HR-14,HR-34,HR-35,HR-39,STR-2|Field defaults, `Default.default()` and every function `migrate_from` calls run in prepare with ordi
+G8-14|GAP|majo|conf|HR-36,HR-46,ALC-1|A value made `using` an instance inside `migrate_from` comes from the transaction arena and is hande
+G8-15|GAP|majo|narr|HR-12,RT-11,OBJ-1|The live-instance list's synchronisation and a `thread_shared` object's reloadable header are unsaid
+G8-16|GAP|majo|conf|HR-13b,HR-45,HR-15a,HR-20|How plan knows that a value, frame or state lives behind a raw pointer or in foreign memory is unsai
+G8-17|GAP|mino|conf|HR-7,HR-20,HR-21|'Reachable' for a removed function's thunk is undefined
+G8-18|CON|mino|conf|HR-24,HR-15b,HR-41,HR-38|A GPU in-flight refusal is 'detected in prepare' while every refusal is 'decided in plan'
+G8-19|GAP|mino|conf|CG-C-3a,CG-C-2|`@inline` is binding (`always_inline`) and nothing refuses it on a recursive function, whose C warns
+G8-20|GAP|mino|conf|RT-12,FFI-22,HR-3a|The guard page is promised for threads the runtime creates; a host thread attached from C has whatev
+G8-21|GAP|mino|narr|GPU-2,GPU-3,GPU-4|A `Frame` whose owner ends without `end_frame`, and whether the frame's arena is ever GPU-visible, a
+G8-22|GAP|mino|narr|GPU-8,GPU-10,GPU-12|`History`'s 'forbidding', the resource-set 'type error' and `ember tcb`'s listing of a run-time fact
+G8-23|CON|mino|narr|BCK-7,RC-5|[BCK-7] still says 'an object of its type' where F5 made [RC-5] say the class family, held directly 
+G9-01|CON|majo|conf|CLO-10,CLO-18,BRW-1,COST-3,EFF|A one-word state "may" live in the state word: two implementations differ on Alloc, and a copy-out l
+G9-02|MEM|crit|conf|RC-1,OWN-13,THR-1,THR-2,RC-4|`shares p` of a `thread_shared` owner: "a name that is already such an owner" admits a one-thread ow
+G9-03|GAP|majo|narr|CORO-7,CTL-7,CTL-8,GRM-7|A `defer` registered before a `yield`: nothing says whether it runs when the suspended frame is drop
+G9-04|MEM|majo|conf|WK-5,WK-6,WK-7,BLD-14,EFF-4|Extends O1: a loop of owners closed inside a library's store of a function value or `dyn I` value is
+G9-05|GAP|majo|conf|BCK-8,EFF-4,BLD-14,BRW-18,EFF-|Extends O1: a library's own line whose verdict rests on what the program puts in a function value or
+G9-06|GAP|majo|conf|EFF-6,EFF-2,EFF-5,DET-3|Extends O1: a contract verdict through a `dyn` or `virtual` call depends on implementations another 
+G9-07|CON|majo|conf|FN-2a,STD-19,CLO-14,OWN-9|"A function from a variable given to a standard-library function is lent": the same first line in th
+G9-08|CON|majo|conf|STA-3,CT-5,STA-1|A `static` whose value owns heap memory behind a `Mutex`: `[STA-3]` puts it in the image, `[CT-5]` b
+G9-09|GAP|majo|conf|FFI-31b,TXT-6,TXT-2,FFI-26,BLD|A view (`StrView`, `Span[T]`) in an exported signature: neither admitted nor refused, with a C ABI s
+G9-10|GAP|mino|conf|COST-3,COST-5,OWN-3,STA-3,THR-|Costs the rules introduce with no row in §X.4: the hidden drop flag, a static's first-access test, t
+G9-11|CON|mino|refu|EFF-15,DSJ-5,EFF-12|"unless the compiler already knows the ranges are disjoint" names no proof, so an `@no_alias_checks`
+G9-12|GAP|majo|refu|TYP-8,TYP-30,LEX-16,TYP-41|An arithmetic operation on constants whose result does not fit: refused when compiling or a panic wh
+G9-13|GAP|mino|narr|STR-2,CLS-2,STR-1,EXP-1,FN-5|A field default's scope (`this`, earlier fields) and its order against the explicit arguments of a m
+G9-14|GAP|mino|conf|RC-1,OWN-13|`shares` of an `owns` parameter: a local that owns its value with no line of this function that made
+G9-15|GAP|mino|refu|TYP-4,TYP-5|`i8 + u8`: "to `int` where each would" leaves the operation's type to be guessed
+G9-16|GAP|mino|refu|BRW-16,BRW-17,BCK-1|A name for a part of a list element (`ref mut enemies[0].hp`): a position found again, or an address
+G9-17|GAP|mino|refu|THR-20,STA-1,THR-11|"the tasks of scopes it opens": a scope opened inside a scoped task of the main thread
