@@ -449,7 +449,7 @@ any disruptions. Also answer all the open questions in this pass with the best j
   UNS-8: citations after a semicolon, not definitions), `rule_index --write-baseline --allow-growth` then
   green, `spec_check` no new failures, `phase_progress --write` then `--check` green, `check_examples` 41
   of 54 (the rest unbuilt syntax), `cargo test -p ember_diag -p ember_parser` green (the registry test
-  reads the pinned target), the milestones tests (see the handoff for the run's result).
+  reads the pinned target). **The full milestones suite (186 tests) on this container, through the C backend:** 183 passed, 1 ignored by design (`the_compilers_speed_over_bigpkg`, the by-hand benchmark), 1 failed for the container alone (`the_llvm_backend_writes_debugger_visualisers_beside_the_program`: this container's clang rejects the backend's `.ll` with "expected instruction opcode" at `#dbg_declare`, as the earlier cloud session recorded; it passes with a current clang), and `the_conformance_suite_runs`, which the two-hour background allowance cut off twice a few directories from its end, run as four shards (`EMBER_TEST_SHARD=i/4`): all four passed, 0 failures, 33 + 31 + 42 + 32 minutes. So no test that reads the specification or runs the conformance programs changed its verdict with Hardened_2.
 * **To resume or to cut Hardened_3:** the recipe of §0 with the numbers moved by one (`CURRENT`,
   `V0920_H2_PARTS`, `H53_HEAD`, `v0920_h3()`); the exit checks the plan named (an implementer and an
   attacker over the changed Parts) were not run, for the owner's credits: a small pass may run them.

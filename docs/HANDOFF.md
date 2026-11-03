@@ -14,7 +14,11 @@
 > owner's "better solutions are welcomed"), `tasks/96/redesign/audit-0.9.20/round1/` (every finding, refutation
 > and ruling as JSON; `applied.md` the disposition of each). **Checked:** `check_ids`, `check_citations`,
 > `code_registry --check`, `rule_index` (baseline rewritten with growth), `spec_check`, `phase_progress --check`
-> green; `check_examples` 41 of 54; `ember_diag` and `ember_parser` green. The compiler builds none of the 0.9.20
+> green; `check_examples` 41 of 54; `ember_diag` and `ember_parser` green; the full milestones suite 183 passed, 1 ignored
+> (the by-hand benchmark), 1 failed for the container alone (the LLVM-backend visualiser test: this clang rejects
+> `#dbg_declare`), the conformance sweep green in four shards (`EMBER_TEST_SHARD=i/4`, since the two-hour background
+> allowance cut the whole off twice). **Branch:** `spec-0.9.20-hardening` (the same commits are also under the
+> session's generated name `ccr-f5aedc9d-5l4mab`; delete that one at will). The compiler builds none of the 0.9.20
 > changes yet. **Next:** the push gate on the owner's machine; each 0.9.20 change lands with the milestone that
 > owns its rule; a small pass may run the two exit checks the plan named (an implementer and an attacker over the
 > changed Parts).
