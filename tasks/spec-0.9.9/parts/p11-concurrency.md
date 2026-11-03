@@ -80,12 +80,13 @@ change one place unordered.
 * `[THR-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **A value several
   threads own is made `thread_shared`.** `thread_shared x` makes one more owner of `x`, which may be
   on any thread; it is written before a new value (`st = thread_shared Stats()`) or on a value
-  already `thread_shared` (`fn() thread_shared st:`), and on a value made otherwise it is `E7017`
-  ("`names` is `share_and_keep`'s own object, which it may change; to share it between threads,
-  create it shared: `names = thread_shared Names()`"). A `thread_shared` value lives until its last
-  owner ends. Its owners are counted in two numbers, its making thread's and the other threads'
-  (atomic), and its weak count is atomic (`[RC-4]`); each is compared with its limit before it grows
-  (Part VIII). Three rules keep it safe:
+  already `thread_shared` (`fn() thread_shared st:`), and on a value made otherwise it is `E7017`,
+  as `shares` or `shares mut` on a `thread_shared` owner is (`[RC-1]`) ("`names` is
+  `share_and_keep`'s own object, which it may change; to share it between threads, create it shared:
+  `names = thread_shared Names()`"). A `thread_shared` value lives until its last owner ends. Its
+  owners are counted in two numbers, its making thread's and the other threads' (atomic), and its
+  weak count is atomic (`[RC-4]`); each is compared with its limit before it grows (Part VIII).
+  Three rules keep it safe:
   * **no owner changes a `thread_shared` value directly** (`E7014`: "`names` is shared between
     threads (line 5), so no owner changes it directly, and line 6 pushes to its list; fill the list
     where the object is made: write `names = thread_shared Names(items=[copy of s])` instead of

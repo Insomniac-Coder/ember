@@ -772,7 +772,15 @@ pub extern "C" fn on_update(entity: u64, dt: f32) -> i32:
   Mode`, and give `match m:` an `else:` arm"). `ember build --emit-header` writes above each
   prototype what the caller must make true, `[UNS-4]`'s words per parameter: a pointer valid for the
   call, a `T*` reached by no other argument, a `const char*` NUL-terminated, a count that fits its
-  pointer; a C caller that breaks one is outside the contract, as a C library is.
+  pointer; a C caller that breaks one is outside the contract, as a C library is. So a `Span[T]` or
+  `MutSpan[T]` whose `T` is a scalar or a `@layout(c)` value type may appear in an exported
+  signature, and so may `ref mut x: T` for such a `T`: that the count is right, the pointer is not
+  null and the memory lives and is not read or changed by C for the call is C's side of the export's
+  contract, an asserted fact `ember tcb` lists (`[TCB-1]`), and the header writes each with that
+  contract as a comment. A `StrView` may not: C would hand bytes to it unvalidated (`E5063`: "`s`
+  would be text C never validated; take `s: Span[u8]` and write `s.to_str()?` for the `StrView`
+  (`[TXT-2]`)"); neither may a `ref T`, a `MutSpan` of any other `T`, a view type, or a result that
+  is a view (`E5015`), whose lifetime nothing states.
 * `[FFI-31c]` With `[build] runtime = "shared"`, several Ember modules in one process share one
   runtime (hot reload requires it, `[HR-29]`), and the rule of `[FFI-31b]` still applies across
   their exported boundaries in this version.

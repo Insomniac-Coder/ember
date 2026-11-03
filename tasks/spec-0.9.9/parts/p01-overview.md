@@ -48,11 +48,12 @@ default, and C11, which reaches every platform that has a C compiler (`[CG-LL-1]
   Mesh(...)`, `[OWN-10]`); a value made shared (`shares x`, `shares mut x`, `thread_shared x`): the
   block is made where the value is made, so for a local shared on a later line the allocation is the
   local's own line, which `ember inspect --alloc` lists with the sharing line beside it (`[RC-1]`);
-  `copy of x` of a value that owns memory (`[OWN-8]`); a list, map or set literal or comprehension
-  in a position that produces a heap collection; a string literal in a position that produces a
-  `String` (`[TXT-9]`); an f-string; a function value whose state exceeds its inline capacity
-  (`[CLO-10]`); and container growth. Each carries the `Alloc` effect and is listed by `ember
-  inspect --alloc`.
+  `copy of x` of a value that owns memory (`[OWN-8]`); a one-owner object handed to another thread
+  while a `weakref` link names it (`[THR-2]`); a list, map or set literal or comprehension in a
+  position that produces a heap collection; a string literal in a position that produces a `String`
+  (`[TXT-9]`); an f-string; a function value whose state has a block (`[CLO-10]`: more than one
+  word, or a word its body writes); and container growth. Each carries the `Alloc` effect and is
+  listed by `ember inspect --alloc`.
 * `[PHIL-3]` *(changed in 0.9.15)* No implicit copy of a non-`Copy` value occurs: a copy is written
   `copy of x` (`[OWN-8]`). A copy of a `Copy` value is its bits, and a `Copy` type holds no owner
   and no link (`[OWN-7]`); no copy runs any other code.

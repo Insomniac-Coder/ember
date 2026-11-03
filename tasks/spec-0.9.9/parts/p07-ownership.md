@@ -723,7 +723,7 @@ fn find_word(haystack: StrView, needle: StrView) -> Option[StrView] from haystac
 * `[LT-3]` *(changed in 0.9.20)* String literals, `bytes` literals, `static` items (which never
   change, `[STA-1]`) and views of them have the `static` region, which outlives everything. A
   `static mut` is a place with one owner, the program, that each function naming it reaches as it
-  reaches a local of its own (`[BRW-16]`: `LOG[0]` in a function is a position; `[BRW-17]` for a
+  reaches a local of its own (`[BRW-16]`: `LOG[0]` in a function is a position, and `[BRW-17]` for a
   view into its contents): a result that may point into one is recorded in the function's summary as
   pointing into that variable, beside the parameters (`[LT-22]`, `[EFF-4]`), a call through a
   function value counts every module variable a function the package can put there returns a view of

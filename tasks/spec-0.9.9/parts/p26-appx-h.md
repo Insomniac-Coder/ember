@@ -2588,3 +2588,386 @@ Generated: every rule whose text differs from 0.9.15_Hardened_10.
 | `[TYP-13]` | changed |
 | `[TYP-15a]` | changed |
 | `[TYP-47]` | changed |
+
+
+## H.52 Changes in 0.9.20_Hardened_2 (from 0.9.20_Hardened_1)
+
+**0.9.20_Hardened_2** is the second hardening pass of 2026-11-03, made under the owner's delegation
+(`docs/AUTOPILOT.md` §3): a reading of the whole of 0.9.20_Hardened_1 by nine readers, each over a few
+Parts, each finding refuted or confirmed by a second reader, and the open questions of
+`docs/AUDIT-0.9.20.md` ruled by three designs and three judges apiece, applied by the lead with the
+records in `tasks/96/redesign/audit-0.9.20/round1/`. Every change below is a rule that refuses a program
+that was unsafe, a fact a compiler would otherwise have to guess, a rule that let a fact of the whole
+program decide a package's code, or a correction of the text; no feature is taken away. The accepted
+set changes, so the language version stays 0.9.20 and the hardening number moves (`[VER-9]`).
+
+The rulings on the open questions:
+
+* **No fact of the whole program decides a package's code or layout** (O1, new `[BLD-16]`): a type
+  carries a weak count when it can be named from outside its package or a `weakref` type in its own
+  package names it, decided by the declaring package (`[OBJ-1]`); the hand-over to another thread
+  walks the owned objects by their declared layouts, with a hand-over routine in `TypeInfo` for a
+  layout the handing package cannot see (`[THR-2]`, `[RT-3]`); the deferred-drop region is read from
+  the class and the link's type (`[WK-18]`); and every rule that had read a fact of the program now
+  reads a declaration, the type of the place, or the kind's own table.
+* **A link to a `thread_shared` value is its own type**, `weakref thread_shared T` (O2, new
+  `[GRM-3a]`): `weakref T` links a value on one thread and is made only to a value no `thread_shared`
+  value reaches; a class's kind is read from its own methods (`[OWN-13]`, `[TYP-45]`, `[WK-11]`,
+  `[WK-12]`, `[THR-8]`, `[THR-9]`, `[THR-11]`, the marker table, the grammar).
+* **`runtime` on a parameter or a typed local**, before `dyn` or an `open` class, the fact read at the
+  call from the kind's table and kept with the result (N38, N39: `[LT-48]`, `[LT-1]`, `[DSP-2]`,
+  `[DSP-3]`); **the value words bind the same everywhere**, and `owns` is never an operand (N40: new
+  `[GRM-47]`, `E0119`, `[GRM-43]`, `[GRM-15]`, `[FN-2a]`).
+* A channel's ends are `Send` exactly when `T` is (O3, `[THR-15]`); a hand-out of the value inside an
+  `owns T` block is `E3013` (O4, `[EXP-6]`); the job arena's region is the job function's (O5,
+  `[JOB-5]`); no compile command writes a manifest, which reverses the half of verdict 135 that had one
+  written on the first compile, reported to the owner (O6, `[MAN-9]`, `[FFI-55]`); a chunk belongs to
+  its making thread for the life of the process, and a value made in a manager's instance is handed
+  over at its making line (O8, `[OBJ-1]`, `[RC-4]`); untrusted keys use `RandomState` (O9,
+  `[STD-11]`); the tagged number is non-canonical on every 64-bit target (O10, `[FFI-53]`).
+
+Holes in the memory-safety rules:
+
+* Proof (1) of a loop of owners is no longer circular, the graph's edges run through every owned
+  place, and a store is judged in the package that sees both ends, each call being the store its
+  callee's summary records (`[WK-5]`, `[WK-7]`, `[WK-1]`, `[BLD-14]` item 10); a function value given
+  as an argument is the stored value.
+* A parent link's test-free read counts every route that gives the link a target, and ending a node
+  runs no `drop` (`[WK-17]`); the deferred-drop region has its extent (`[WK-18]`).
+* A `thread_shared` value's counts: the home count reaching zero, the merge, the end as one atomic
+  step, the hand-over on the making thread only, the thread's end as a release, and the fold of the
+  home count checked before it rolls over (`[RC-4]`, `[RT-7]`, `[RT-8]`).
+* A one-owner object's count is written 1 at its making and 0 at its end, which is what opening a
+  link tests; `thread_shared` is written only before a new value; `shares` before a `thread_shared`
+  owner is refused (`[RC-1]`, `[WK-3]`, `[THR-1]`).
+* A view into a `static mut`, and a call's view into one, are recorded in the summary (`[LT-3]`,
+  `[LT-22]`, `[BRW-16]`); the per-kind check of a `dyn` call is recorded across a package's edge
+  (`[LT-1]`, `[BLD-14]` item 11).
+* A `thread_shared` value is never placed in a frame or a manager's instance (`[OPT-1]`,
+  `[OBJ-4]`, `[ALC-1]`).
+* `Self` as a parameter's type keeps an interface from `dyn`, and a `dyn I` names its associated types
+  (`[TYP-22]`); an integer never converts to an enum, and `as` is closed (`[TYP-6]`, `[TYP-12]`); a
+  value made in a manager's instance follows its manager between threads (new `[TYP-46a]`); one word
+  on a type (new `[TYP-45a]`); one type index per process (new `[TYP-44a]`); an upcast keeps its
+  word and is never `ref mut` (`[TYP-5]`, `[TYP-14]`); bidirectional format characters are refused
+  (new `[LEX-1a]`, `E0012`).
+* A library's call through what a dependant may fill is checked where the member is added (new
+  `[MOD-9a]`, new `[EFF-2a]`, `[BCK-8]`, `[BLD-14]` items 12, 13 and 16, `[CLS-2]` for a `pub` open
+  class's `init`); a library's foreign call across which it uses a view is an open line of its
+  summary, resolved by each caller (`[BRW-21]`, `[FFI-52]`, item 15); a contract through a `pub`
+  interface holds only where the interface declares it (`[EFF-6]`, `[DET-3]`).
+* A `once fn` is called out of owned places only (`[CLO-6a]`); a generator's frame holds its
+  parameters, and its drop runs no `defer` block (`[CORO-6]`, `[CORO-7]`, `[CTL-7]`); `@cached` on a
+  shared object or a `virtual` method is refused (`[CLS-12]`, `[CLS-6]`); a guarded `static mut` is a
+  `Mutex[T]` (`[STA-1]`); a function value is not stored where anything it changes, through any name,
+  owns its place (`[CLO-17]`); `thread_shared fn()` is carried by the type (`[CLO-16]`); defaults are
+  evaluated in the caller with no word (`[FN-5]`); `debug_assert` only reads (§VI.6).
+* A `weakref` link holds its target's block in a manager's instance (new `[ALC-5a]`); views known
+  apart are one proof (new `[DSJ-11]`, `[DSJ-5]`, `[EFF-15]`); `copy` and `copy_nonoverlapping` are
+  `unsafe fn`s (`[UNS-5]`, `[UNS-1]`); a read that depends on which thread acted first is `Nondet`
+  (`[DET-2]`); a generator's `next` carries its whole body (`[EFF-1]`); a grouped overflow check ends
+  before any exit (`[SIMD-7]`).
+* Which lock excepts a place, and a `Receiver` is one consumer (`[THR-11]`, `[THR-13]`, `[THR-20]`);
+  a task touches no one-thread count (`[THR-11]`, `[THR-2]`); a dependency's manifest never runs code
+  on the builder's machine (new `[MAN-10]`, `[build] native`); a thread's, task's and job's function
+  is a `once fn` (`[THR-10]`, `[JOB-2]`, `[JOB-3]`, `[CLO-7]`); the written forms of a reduction
+  (`[THR-21]`); a lock held by a guard in a local, a static's first access and a second `read()`
+  (`[THR-19]`); `with x.lock:` holds a view of the lock (`[THR-18]`).
+* Distinct component types in a view (new `[ECS-4a]`, `E2074`); pools keyed by the type's identity,
+  never a hash of its name (`[ECS-2]`, `[ERR-8]`); a compile-time value a plain name could change,
+  and compile-time code that reaches a module variable, are refused (`[CT-5]`, new `[CT-1a]`); whose
+  root `read_file` reads under (`[CT-2]`); an `SoA` element with a `drop` is gathered to end
+  (`[SOA-6]`).
+* The token, a trampoline-class object and an `owns T` of a `threads(creator)` type are thread-bound
+  (`[FFI-23]`, `[FFI-17d]`, `[FFI-33b]`); a `threads(main)` callback holding a one-thread owner is
+  registered only from code the main thread runs (`[FFI-21]`); what a lifetime word and `out` assert
+  (`[FFI-11]`, `[FFI-35a]`); a bare function pointer's C entry attaches the thread (`[FFI-21]`,
+  `[FN-6]`); `callback(once)`'s token and atomic mark (`[FFI-21]`, `[FFI-53]`); the kept-by-C mark's
+  bit (`[OBJ-1]`, `[FFI-35a]`); an `extern type`, an opaque class and a handle have no inferred
+  marker (`[FFI-8]`); a C++ reference result needs a lifetime word (`[FFI-40]`); a `std::function`
+  target is a foreign function (`[FFI-17a]`); the handle class's methods are exports (`[BLD-FFI-5a]`);
+  an export's carriers, and which views may cross (`[FFI-31b]`, `[TXT-6]`); `from_raw` and
+  `ember_rt_object_release` (`[FFI-54]`).
+* Instance symbols hash 128 bits and their spellings are compared at link; two majors of one package
+  never share a symbol; a lambda has a name (`[MNG-1]`, `[MNG-6]`); the copy for one whole variable
+  cascades and has a body across the edge (`[MONO-10]`, `[BLD-2]`); publication of a reload orders
+  an entering thread against a commit (`[HR-42]`, `[HR-42a]`); a frame's view into a migrated
+  instance, a kept view into a part, a lambda's state, a stored function, `OldSelf`'s fields, what
+  each phase writes, what `migrate_from` runs, the live-instance list, unenumerable types, a removed
+  function's thunk and the GPU wait (`[HR-3b]`, new `[HR-15c]`, new `[HR-48]`, new `[HR-44a]`,
+  `[HR-16]`, `[HR-2]`, `[HR-2a]`, `[HR-35]`, `[HR-36]`, `[HR-37]`, `[HR-12]`, `[HR-13b]`, `[HR-7]`,
+  `[HR-24]`); `@inline` in a cycle (`[CG-C-3a]`); a host thread's stack (`[RT-12]`).
+
+Facts the text left unsaid:
+
+* Where a one-word state lives, decided from the body alone (`[CLO-10]`, `[CLO-18]`, `[PHIL-2]`); a
+  function from a variable given to an `F`-bounded parameter is lent in any package (`[FN-2a]`,
+  `[STD-19]`, `[CLO-14]`); a static whose value a name may change is built on first access
+  (`[STA-3]`).
+* The `file` production and the entry file's statements (§III.1, `[GRM-2]`); a lambda's `:` body is
+  one simple statement (`[GRM-17]`); no one-element tuple (`[GRM-29]`, `[GRM-38]`); no field in an
+  `extend` block (`[GRM-34]`); each target of `a, b = e` on its own (`[GRM-5]`); `#!` always a
+  directive (`[LEX-10]`); contextual keywords and literal edges (`[LEX-15]`, `[LEX-16]`, `[LEX-18]`,
+  `[LEX-26]`); field defaults' scope and order (`[STR-2]`, `[STR-6]`); the prelude against a glob
+  (`[MOD-8]`); bare `dyn I` only on a parameter (`[IFC-5]`); `String using A` (`[TYP-46]`); a
+  `for` over an `Iterator` place (`[CTL-1]`); a counting loop (`[CTL-2]`); a condition's temporaries
+  (`[EXP-4]`).
+* "Needs drop" defined (Appendix F); a making line's effects and failure (new `[ALC-6]`); the arena
+  types the compiler knows (`[ARN-1]`); the `try_` forms (`[ARN-3]`, `[ARN-4]`); the arena containers'
+  constructor (`[ARN-5]`); `Zeroable` enums (`[ARN-11]`); `using x` through a name that may change it,
+  and a `pub` manager's layout facts (`[ALC-1]`, `[BLD-14]` item 14); the stops' texts (`[COST-6]`,
+  `[TYP-10]`, `[HND-1]`, `[HND-3]`).
+* The evaluator and `@parallel` (`[CLI-21]`); which rule defines a code (`[DIA-6a]`); the jobs of a
+  scope and a `static mut` (`[THR-20]`, `[STA-1]`); the locks a function needs held (`[BLD-14]` item
+  6); sanitizers (`[PRF-1]`); the `[link]` key (`[BLD-FFI-3]`).
+* A step of the evaluator (`[CT-3]`); SIMD loads make no alignment demand (`[SIMD-9]`); the count of
+  a product (`[STD-19]`); `@from` and `unwrap`'s bound (`[ERR-3]`, `[ERR-4]`); the layers of `std`
+  per module and `E1042` (`[STD-6]`, §XV.1); `connect` takes `owns` (`[ECS-8]`); a flattened field
+  has no column (`[SOA-1]`).
+* A `borrowed one nullable` input, the user-data witness, the callable type of a callback
+  (`[FFI-10]`, `[FFI-21]`); the trampoline's object model (`[FFI-39]`); `std::optional` converted at
+  the call (`[FFI-17a]`, `[FFI-17f]`); the fingerprint (`[FFI-55]`); `creator` and `main`
+  (`[FFI-33]`); a `Frame` ended without `end_frame`, `History`'s handles, a resource set's code
+  (`[GPU-2]`, `[GPU-8]`, `[GPU-10]`, `[GPU-12]`); the registry rows that named no rule, three
+  retired codes and five re-cited (§XVII.9).
+
+Words made consistent:
+
+* "Different classes" means classes of which neither derives from the other (`[EXC-3]`, `[BRW-17]`);
+  `MutSpan` in the `ThreadShared` list (`[THR-9]`, the marker table); `String`'s `+` is the
+  language's own (`[TYP-21]`); the allocation of a shared local is on its own line (`[PHIL-2]`);
+  "no other view container" (`[TYP-15a]`); the links of `[BCK-7]` say the class family; the pointer
+  of `[WK-7]` to §XVIII.4 goes; the call word on `emplace`, `add_child`, `setup` and `widget_take`
+  (§XII.3, `[FFI-39c]`, `[FFI-52]`, `[OWN-12]`); `[CLO-7]`'s signatures; `[GPU-10]`'s code.
+
+New rules: `[BLD-16]`, `[GRM-3a]`, `[GRM-47]`, `[TYP-44a]`, `[TYP-45a]`, `[TYP-46a]`, `[LEX-1a]`,
+`[MOD-9a]`, `[EFF-2a]`, `[ALC-5a]`, `[ALC-6]`, `[DSJ-11]`, `[MAN-10]`, `[ECS-4a]`, `[CT-1a]`,
+`[HR-15c]`, `[HR-48]`, `[HR-44a]`. New codes: `E0012`, `E0119`, `E1042`, `E2074`. Retired: `E5051`,
+`E5057`, `E5066`.
+
+Generated: every rule whose text differs from 0.9.20_Hardened_1.
+
+| Rule | 0.9.20_Hardened_1 → 0.9.20_Hardened_2 |
+|---|---|
+| `[ALC-1]` | changed |
+| `[ALC-5]` | changed |
+| `[ALC-5a]` | added |
+| `[ALC-6]` | added |
+| `[ARN-1]` | changed |
+| `[ARN-2]` | changed |
+| `[ARN-3]` | changed |
+| `[ARN-4]` | changed |
+| `[ARN-5]` | changed |
+| `[ARN-11]` | changed |
+| `[BCK-7]` | changed |
+| `[BCK-8]` | changed |
+| `[BLD-2]` | changed |
+| `[BLD-14]` | changed |
+| `[BLD-16]` | added |
+| `[BLD-FFI-1a]` | changed |
+| `[BLD-FFI-3]` | changed |
+| `[BLD-FFI-5a]` | changed |
+| `[BRW-16]` | changed |
+| `[BRW-17]` | changed |
+| `[BRW-21]` | changed |
+| `[CG-C-3a]` | changed |
+| `[CLI-21]` | changed |
+| `[CLO-6a]` | changed |
+| `[CLO-7]` | changed |
+| `[CLO-10]` | changed |
+| `[CLO-14]` | changed |
+| `[CLO-16]` | changed |
+| `[CLO-17]` | changed |
+| `[CLO-18]` | changed |
+| `[CLS-2]` | changed |
+| `[CLS-6]` | changed |
+| `[CLS-12]` | changed |
+| `[CORO-6]` | changed |
+| `[CORO-7]` | changed |
+| `[COST-6]` | changed |
+| `[CT-1a]` | added |
+| `[CT-2]` | changed |
+| `[CT-3]` | changed |
+| `[CT-5]` | changed |
+| `[CTL-1]` | changed |
+| `[CTL-2]` | changed |
+| `[CTL-7]` | changed |
+| `[DET-2]` | changed |
+| `[DET-3]` | changed |
+| `[DIA-6a]` | changed |
+| `[DSJ-5]` | changed |
+| `[DSJ-11]` | added |
+| `[DSP-2]` | changed |
+| `[DSP-3]` | changed |
+| `[ECS-2]` | changed |
+| `[ECS-4]` | changed |
+| `[ECS-4a]` | added |
+| `[ECS-8]` | changed |
+| `[EFF-1]` | changed |
+| `[EFF-2]` | changed |
+| `[EFF-2a]` | added |
+| `[EFF-4]` | changed |
+| `[EFF-6]` | changed |
+| `[EFF-15]` | changed |
+| `[ERR-3]` | changed |
+| `[ERR-4]` | changed |
+| `[ERR-8]` | changed |
+| `[EXC-3]` | changed |
+| `[EXP-4]` | changed |
+| `[EXP-6]` | changed |
+| `[FFI-8]` | changed |
+| `[FFI-10]` | changed |
+| `[FFI-11]` | changed |
+| `[FFI-17a]` | changed |
+| `[FFI-17d]` | changed |
+| `[FFI-17e]` | changed |
+| `[FFI-17f]` | changed |
+| `[FFI-20a]` | changed |
+| `[FFI-21]` | changed |
+| `[FFI-23]` | changed |
+| `[FFI-27]` | changed |
+| `[FFI-31b]` | changed |
+| `[FFI-33]` | changed |
+| `[FFI-33b]` | changed |
+| `[FFI-35a]` | changed |
+| `[FFI-36a]` | changed |
+| `[FFI-39]` | changed |
+| `[FFI-39c]` | changed |
+| `[FFI-40]` | changed |
+| `[FFI-52]` | changed |
+| `[FFI-53]` | changed |
+| `[FFI-54]` | changed |
+| `[FFI-55]` | changed |
+| `[FN-2a]` | changed |
+| `[FN-5]` | changed |
+| `[FN-6]` | changed |
+| `[GPU-2]` | changed |
+| `[GPU-8]` | changed |
+| `[GPU-10]` | changed |
+| `[GPU-12]` | changed |
+| `[GRM-2]` | changed |
+| `[GRM-3a]` | added |
+| `[GRM-5]` | changed |
+| `[GRM-15]` | changed |
+| `[GRM-17]` | changed |
+| `[GRM-29]` | changed |
+| `[GRM-34]` | changed |
+| `[GRM-38]` | changed |
+| `[GRM-42]` | changed |
+| `[GRM-43]` | changed |
+| `[GRM-47]` | added |
+| `[HEAP-7]` | changed |
+| `[HEAP-10]` | changed |
+| `[HND-1]` | changed |
+| `[HND-3]` | changed |
+| `[HR-2]` | changed |
+| `[HR-2a]` | changed |
+| `[HR-3b]` | changed |
+| `[HR-7]` | changed |
+| `[HR-12]` | changed |
+| `[HR-12a]` | changed |
+| `[HR-13b]` | changed |
+| `[HR-14]` | changed |
+| `[HR-15c]` | added |
+| `[HR-16]` | changed |
+| `[HR-24]` | changed |
+| `[HR-35]` | changed |
+| `[HR-36]` | changed |
+| `[HR-37]` | changed |
+| `[HR-41]` | changed |
+| `[HR-42]` | changed |
+| `[HR-42a]` | changed |
+| `[HR-44a]` | added |
+| `[HR-48]` | added |
+| `[IFC-5]` | changed |
+| `[JOB-2]` | changed |
+| `[JOB-3]` | changed |
+| `[JOB-5]` | changed |
+| `[LEX-1a]` | added |
+| `[LEX-10]` | changed |
+| `[LEX-11]` | changed |
+| `[LEX-15]` | changed |
+| `[LEX-16]` | changed |
+| `[LEX-18]` | changed |
+| `[LEX-26]` | changed |
+| `[LT-1]` | changed |
+| `[LT-3]` | changed |
+| `[LT-22]` | changed |
+| `[LT-48]` | changed |
+| `[MAN-8]` | changed |
+| `[MAN-9]` | changed |
+| `[MAN-10]` | added |
+| `[MNG-1]` | changed |
+| `[MNG-6]` | changed |
+| `[MOD-8]` | changed |
+| `[MOD-9]` | changed |
+| `[MOD-9a]` | added |
+| `[MONO-10]` | changed |
+| `[OBJ-1]` | changed |
+| `[OBJ-4]` | changed |
+| `[OBJ-5]` | changed |
+| `[OPT-1]` | changed |
+| `[OWN-9]` | changed |
+| `[OWN-12]` | changed |
+| `[OWN-13]` | changed |
+| `[PHIL-2]` | changed |
+| `[PRF-1]` | changed |
+| `[RC-1]` | changed |
+| `[RC-4]` | changed |
+| `[RC-5]` | changed |
+| `[RT-3]` | changed |
+| `[RT-7]` | changed |
+| `[RT-8]` | changed |
+| `[RT-10]` | changed |
+| `[RT-12]` | changed |
+| `[SIMD-7]` | changed |
+| `[SIMD-9]` | changed |
+| `[SOA-1]` | changed |
+| `[SOA-6]` | changed |
+| `[STA-1]` | changed |
+| `[STA-3]` | changed |
+| `[STD-6]` | changed |
+| `[STD-11]` | changed |
+| `[STD-19]` | changed |
+| `[STR-2]` | changed |
+| `[STR-3]` | changed |
+| `[STR-6]` | changed |
+| `[THR-1]` | changed |
+| `[THR-2]` | changed |
+| `[THR-8]` | changed |
+| `[THR-9]` | changed |
+| `[THR-10]` | changed |
+| `[THR-11]` | changed |
+| `[THR-13]` | changed |
+| `[THR-15]` | changed |
+| `[THR-17]` | changed |
+| `[THR-18]` | changed |
+| `[THR-19]` | changed |
+| `[THR-20]` | changed |
+| `[THR-21]` | changed |
+| `[TXT-6]` | changed |
+| `[TYP-5]` | changed |
+| `[TYP-6]` | changed |
+| `[TYP-10]` | changed |
+| `[TYP-12]` | changed |
+| `[TYP-14]` | changed |
+| `[TYP-15a]` | changed |
+| `[TYP-21]` | changed |
+| `[TYP-22]` | changed |
+| `[TYP-36]` | changed |
+| `[TYP-44a]` | added |
+| `[TYP-45]` | changed |
+| `[TYP-45a]` | added |
+| `[TYP-46]` | changed |
+| `[TYP-46a]` | added |
+| `[UNS-1]` | changed |
+| `[UNS-5]` | changed |
+| `[WK-1]` | changed |
+| `[WK-3]` | changed |
+| `[WK-5]` | changed |
+| `[WK-7]` | changed |
+| `[WK-11]` | changed |
+| `[WK-12]` | changed |
+| `[WK-16]` | changed |
+| `[WK-17]` | changed |
+| `[WK-18]` | changed |

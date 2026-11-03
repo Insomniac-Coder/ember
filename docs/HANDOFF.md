@@ -1,5 +1,24 @@
 # Ember — handoff
 
+> **2026-11-03 (later) — the same cloud session, AUTONOMOUS, a workflow of 29 agents applied by the lead (the
+> owner: "the final mile ... make it as foolproof as possible ... remove all the gaps, flaws and memory issues ...
+> near 100% complete ... answer all the open questions"). START HERE.** **Hardened_2 of 0.9.20 is cut** and is the
+> development target (`docs/spec-source/Ember_v0.9.20_Hardened_2.md`, 1,018 rules): nine readers and nine refuters
+> over every Part found 163 findings (108 confirmed, 45 narrowed, 10 refuted) and 37 missed items; three designs
+> and three judges apiece ruled O1 (no whole-program fact in a package's code, new `[BLD-16]`), O2 (`weakref
+> thread_shared T` a type of its own, new `[GRM-3a]`) and N38–N40 (`runtime` on a parameter or typed local; `owns`
+> never an operand, new `[GRM-47]`, `E0119`); the lead ruled O3–O10 and applied everything: 222 rules changed or
+> added (§H.52), 18 new rules, 4 new codes, 3 retired. **The record:** `docs/AUDIT-0.9.20.md` §7 (counts, what each
+> open item became, how to resume), `tasks/96/redesign/compiler-0.9.15/decisions.md` §13 (N76–N88; N83 reverses
+> the written-manifest half of verdict 135 and N87 touches verdicts 101 and 114, both reported, both under the
+> owner's "better solutions are welcomed"), `tasks/96/redesign/audit-0.9.20/round1/` (every finding, refutation
+> and ruling as JSON; `applied.md` the disposition of each). **Checked:** `check_ids`, `check_citations`,
+> `code_registry --check`, `rule_index` (baseline rewritten with growth), `spec_check`, `phase_progress --check`
+> green; `check_examples` 41 of 54; `ember_diag` and `ember_parser` green. The compiler builds none of the 0.9.20
+> changes yet. **Next:** the push gate on the owner's machine; each 0.9.20 change lands with the milestone that
+> owns its rule; a small pass may run the two exit checks the plan named (an implementer and an attacker over the
+> changed Parts).
+
 > **2026-11-03 — a cloud session, AUTONOMOUS, solo (the owner: "find the security holes, memory safety issues,
 > consistency problems and missing spec detail problems and fix them ... the latest version will be called
 > 0.9.20_Hardened_1"). START HERE.** **Hardened_1 of 0.9.20 is cut** and is the development target

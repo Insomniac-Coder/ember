@@ -26,10 +26,11 @@ The compiler infers, for every function, an **effect set** drawn from:
   function values it calls (a `Display` a formatter invokes, a function an adapter applies), the
   copies, count changes and drops it performs (ending an object counts as a call of its `drop`,
   `[DRP-8]`), and the argument and default expressions it evaluates. Calling a generator runs none
-  of its body; each `next` carries the effects of the whole body, the union over its segments, since
-  which `yield` it resumes from is a state the program computes while it runs (a generator a
-  `@noalloc` function drives therefore allocates nowhere in its body), and dropping a suspended one
-  carries the drops at every `yield` it may be suspended at (ODR-057).
+  of its body; a read of a `static` built on first access (`[STA-3]`) carries its initialiser's
+  effects, `Block` included; each `next` carries the effects of the whole body, the union over its
+  segments, since which `yield` it resumes from is a state the program computes while it runs (a
+  generator a `@noalloc` function drives therefore allocates nowhere in its body), and dropping a
+  suspended one carries the drops at every `yield` it may be suspended at (ODR-057).
 * `[EFF-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A call through a
   function value contributes the effects of every function the program can put there. For a type
   parameter bounded by a function type (`[F: needs fn(Item)]` above `fn for_each(owns f: F) owns
@@ -90,12 +91,13 @@ The compiler infers, for every function, an **effect set** drawn from:
   function values the package stores into a function type and the callbacks it hands to C, which a
   program that uses the package counts wherever such a value is called and at every foreign call
   (`[EFF-26]`). A change to any of them is reported as an interface change and re-checks every
-  caller: an edit inside one function, or a library update (two lines of a function swapped, so that
-  a use of a parameter falls below a line that clears what it views), can make a line elsewhere stop
-  compiling, and the message names the chain of calls. A parent link proves itself (Part VIII) only
-  when no other package can change it or the places that own its holders. What a generic function
-  changes through its type parameters' methods is worked out for each instance, by the package that
-  compiles that instance.
+  caller, and every line checked against a place the change fills (`[BCK-8]`, `[MOD-9a]`): an edit
+  inside one function, or a library update (two lines of a function swapped, so that a use of a
+  parameter falls below a line that clears what it views), can make a line elsewhere stop compiling,
+  and the message names the chain of calls. A parent link proves itself (Part VIII) only when no
+  other package can change it or the places that own its holders. What a generic function changes
+  through its type parameters' methods is worked out for each instance, by the package that compiles
+  that instance.
 * `[EFF-9]` *(changed in 0.9.9)* *(changed in 0.9.15)* `RuntimeCheck(k)` enters a function's effect
   set when a check of kind `k` survives the compiler's profile-independent proofs in its body.
   `Arithmetic` covers integer overflow, division by zero, shift amounts and negative integer
@@ -219,11 +221,24 @@ A contract attribute states an effect the function must not have.
 | `@deterministic` | `Nondet` (Part X.3) | `E4070` |
 | `@realtime` | the manifest's set, by default `@noalloc @nolock @noblock @nopanic(explicit)` | per contract |
 
-* `[EFF-5]` Each contract in the table forbids its effect in the function's effect set; a violation is
-  the listed error.
-* `[EFF-6]` A contract is checked over the whole reachable call graph — callees, drop glue, default
-  arguments, operator and interface implementations reached statically — and a violation names the full
-  chain to the offending operation:
+* `[EFF-5]` Each contract in the table forbids its effect in the function's effect set; a violation
+  is the listed error.
+* `[EFF-6]` *(changed in 0.9.20)* A contract is checked over the whole reachable call graph,
+  callees, drop glue, default arguments, operator implementations, and the implementations and
+  overrides the paragraph below admits, and a violation names the full chain to the offending
+  operation: **A contract through an interface.** Inside a function that carries a contract, a call
+  through a `dyn I` value, through a `virtual` method, or through a type parameter's bound, counts
+  the implementations and overrides the function's own package sees. Where another package may add
+  one (`I` or the `open`/`abstract` class is `pub`, `[TYP-20]`), the call is admitted under the
+  contract only when the interface's method or the `virtual` method declares that contract itself
+  (`[EFF-2]`), which holds every implementation to it where it is written (`E4010`); a generic
+  bounded by the interface is checked per instance, by the package that makes the instance
+  (`[EFF-4]`). Otherwise the call is the contract's error (`E4001`, `E4002`, …) at the call, in the
+  package that writes it, and its help gives both lines ("`total` is `@noalloc`, and `s.area()` runs
+  whichever `area` the program gives a `Shape`; hold every `Shape` to it: write `@noalloc` above `fn
+  area() -> float` in `interface Shape`, or take the shape as a type parameter: `[S: needs Shape]`
+  above `fn total(xs: Array[S])`"). An interface or class that is not `pub` is implemented in this
+  package only, and such a call counts exactly its implementations.
 
   ```text
   error[E4001]: @noalloc function `cull` reaches an allocation
@@ -309,9 +324,12 @@ compute the same bits, on one machine and across machines running the same binar
   `Nondet`: their order is insertion order (`[STD-11]`). A reduction of scoped tasks, combined in
   spawn order, is not `Nondet` either (`[THR-21]`). Reading uninitialised memory is not `Nondet` but
   undefined, outside Safe Ember (`[PHIL-10]`): an `unsafe` obligation (ODR-136).
-* `[DET-3]` *(changed in 0.9.15)* A `@deterministic` function may call only `Nondet`-free functions;
-  a call through a function value counts every function the program can put there, and a function
-  given through a type parameter is checked per instance (`[EFF-2]`).
+* `[DET-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* A `@deterministic` function may call only
+  `Nondet`-free functions; a call through a function value counts every function the program can put
+  there, and a function given through a type parameter is checked per instance (`[EFF-2]`). A call
+  through a `dyn I` value or a `virtual` method of a `pub` interface or class is admitted under
+  `@deterministic` only when the method declares `@deterministic` itself, as `[EFF-6]` says of every
+  contract; otherwise it is `E4070` at the call.
 * `[DET-4]` `std.math.det` provides `sin`, `cos`, `tan`, `exp`, `log`, `pow`, `atan2` and `sqrt` for
   `f32` and `f64` returning the same bits on every supported target. Each takes either type and
   answers in it (`det.sin(x)` of an `f32` is an `f32`); an `f32`'s result is its `f64` result
@@ -394,6 +412,11 @@ compute the same bits, on one machine and across machines running the same binar
 | An Ember function called by C through a function pointer (`[FFI-21]`) | guaranteed present | the thread-local attach check of its C entry (`[FFI-22]`), nothing else |
 | An override call or `delete` of a trampoline-class object under `threads=creator` (`[FFI-17d]`) | guaranteed present | one compare of the calling thread with the id the trampoline subobject holds, one word per object |
 | An `owns T` of a `threads(creator)` type (`[FFI-33b]`) | guaranteed present | one word more, the making thread's id, and one compare at its end |
+| Entering Ember code from C in a reloadable build (`[HR-42]`) | guaranteed present | one increment, one fence and one load; a thread waits only for the length of a commit it meets |
+| Registering an object in a reloadable build (`[HR-12]`) | guaranteed present | two stores when it is made and two when it ends; a lock or an atomic exchange for a `thread_shared` object; a `thread_shared` header of 48 bytes |
+| A value handed over on some paths only (`[OWN-3]`) | guaranteed present | one hidden drop flag in the frame: a store at the hand-over and one test where the owner would end; none where every path hands it over or none does |
+| First access of a `static` built on first access (`[STA-3]`) | guaranteed present | one test of its once-flag per access, and the initialiser once, during which a first access on another thread waits; none for a static placed in the image |
+| An export's or a trampoline's entry (`[FFI-22]`, `[FFI-33]`) | guaranteed present | the thread-local attach test, and under `threads=creator` or `main` one compare of the calling thread |
 | A C callback | guaranteed present | the checked trampoline (Part XVI): C holds a tagged number, never an address; each call compares the callback's generation, and, in every profile, the thread of a `threads(creator)` callback and the used-up mark of a `callback(once)` one |
 | What a function changes, reads and ends; the thread rules; the arena checks | not observable | all checked when compiling (`[EFF-24]`); a library function given a function is one instance per function, as Rust's generic `F: FnMut`; a call that names one whole variable twice is compiled against its own copy of the function (`[BRW-11]`), one more copy of its code and nothing while running |
 
@@ -419,6 +442,8 @@ compute the same bits, on one machine and across machines running the same binar
   | a `thread_shared` owner count at its limit (`[RC-4]`) | "too many owners of a `Log` (2,147,483,647)" |
   | a `thread_shared` weak count at its limit (`[RC-4]`) | "too many `weakref` links to a `Log` (2,147,483,647)" |
   | the type-id compare of `cast s as Circle` | "`cast s as Circle` on line 9: `s` is a `Square`, not a `Circle`" |
+  | an export called on another thread than its `threads=creator` or `main` says (`[FFI-33]`, `[FFI-33c]`) | "C called `tick` on another thread, but its export says `threads=main`" |
+  | an `owns T` of a `threads(creator)` type ended on another thread (`[FFI-33b]`) | "`ctx`, a `GlContext` made on thread 1 (line 9), ended on thread 2; a `threads(creator)` value ends where it was made" |
   | the checked trampoline: a call after the token ended | "C called the callback registered on line 16 after its token ended; it was unregistered" |
   | the checked trampoline: a `callback(once)` function called a second time | "C called the callback registered on line 29 a second time; it was registered `callback(once)`, so it may run only once" |
   | a C++ override call or `delete` of a trampoline-class object on another thread (`[FFI-17d]`) | "C++ called `on_click` of a `Button` made on another thread (line 16); its class says `threads=creator`" |

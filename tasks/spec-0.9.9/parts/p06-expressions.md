@@ -188,7 +188,9 @@ fn main():
   uses as they are when it runs; they are not dropped before it. Its uses of them are uses at every
   exit of the block (`[BRW-2]`): a local a `defer` block uses is not handed over below the `defer`
   line (`E3040`, labelled at the hand-over), and a view it uses is not ended before the block exits
-  (`E3060`). It cannot `return`, `break` or `continue` (`E2160`).
+  (`E3060`). It cannot `return`, `break` or `continue` (`E2160`), nor `yield` (`E2160`: "a `defer`
+  block runs while its block exits, and `yield` would suspend the generator in the middle of that
+  exit; yield before the block exits, or move the `defer` line below the `yield`"; `[CORO-7]`).
 * `[CTL-8]` On every exit from a block, its `defer` blocks run first and then its locals are dropped
   in reverse declaration order.
 * `[CTL-9]` `pass` does nothing; an empty block is written `pass`.
@@ -281,29 +283,42 @@ fn main():
   on_click(owns f: Handler):`). `extern "C" fn(A) -> R` is a C function pointer: functions that
   capture nothing only. Converting a stored function value to one reads its C entry without handing
   it over; a value holding state has none, and the conversion panics (ODR-102).
-* `[CLO-14]` *(new in 0.9.9)* *(changed in 0.9.15)* A callable type may be written as a type
-  parameter's bound, on the line above the function: `[F: needs fn(int) -> int]` above `fn apply(f:
-  F, x: int) -> int:`. `F` names the exact function given, so each function or lambda given gets its
-  own instance of `apply`, and the call through `f` is direct and may be inlined, as C++'s `template
-  <typename F>` and Rust's `F: FnMut`; a parameter so bounded is called like a function, and the
-  call counts as making what the given function changes, worked out from it (`[EFF-2]`). A library
-  function that calls a function right away takes it this way (`[F: needs fn(Item)]` above `fn
-  for_each(owns f: F) owns this:`; `retain`, `inspect`, `sort_by`, `[STD-19]`). `Callable[…]` is not
-  source syntax.
-* `[CLO-10]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* A function value is two
-  words, `{code, state}`. Its state is what it needs besides its code: what it captured with a word,
-  in one block of its own made with the value (it carries `Alloc` and is reported by `ember inspect
-  --alloc`), except that a state of one word or less may be kept in the state word itself, with no
-  block; and where the real variables it uses live, which costs nothing beyond their addresses. A
-  named function, or a lambda that captures nothing, has no state and allocates nothing, and is
-  `Copy`; a function value with state is not, and `=` hands it over. Calling one is one indirect
-  call. A call through a list element or a field copies the two words out before the arguments are
-  given and keeps no pointer into the list or field. Replacing or ending a function value ends what
-  its state owns, as ending an object runs its `drop` (`[DRP-8]`): `h.keep = fn(): pass` ends the
-  function stored there before and what its `owns` captures held, so a view of that is not used
-  after that line (`E3060`, `[RC-5]`). Whether another thread may run it is said by its type,
-  `thread_shared fn()` (`[CLO-16]`); two are equal (`==`) when they call the same function with the
-  same state (ODR-102).
+* `[CLO-14]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A callable type may be
+  written as a type parameter's bound, on the line above the function: `[F: needs fn(int) -> int]`
+  above `fn apply(f: F, x: int) -> int:`. `F` names the exact function given, so each function or
+  lambda given gets its own instance of `apply`, and the call through `f` is direct and may be
+  inlined, as C++'s `template <typename F>` and Rust's `F: FnMut`; a parameter so bounded is called
+  like a function, and the call counts as making what the given function changes, worked out from it
+  (`[EFF-2]`); `owns f: F` and `f: F` are one first line, since both run the function given and keep
+  nothing of it, and `ref mut f: F` is not written (the call says `ref mut` where the function
+  changes its own state, `[FN-2a]`). A library function that calls a function right away takes it
+  this way (`[F: needs fn(Item)]` above `fn for_each(owns f: F) owns this:`; `retain`, `inspect`,
+  `sort_by`, `[STD-19]`). `Callable[…]` is not source syntax.
+* `[CLO-10]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* A
+  function value is two words, `{code, state}`. Its state is what it needs besides its code: what it
+  captured with a word, in one block of its own made with the value (it carries `Alloc` and is
+  reported by `ember inspect --alloc`), except that a state of one word or less that the function's
+  body never writes is kept in the state word itself, with no block and no `Alloc`: a `copy of` of a
+  `Copy` value it only reads, or an owner or a link it only reads through (a body writes its state
+  when, in the body or in a function it calls with the captured name, the name is assigned or
+  augmented, named `ref mut`, given to a `ref mut` or `owns` parameter, handed over, or has a method
+  called on it that changes it, worked out as `[EFF-24]` works out what a function changes); such a
+  state lives in a block of its own, so that a call through a copy of the two words (a list element,
+  a field, `[BRW-1]`) changes the state the holder keeps; which of the two a function value has is
+  decided from its captures and its body alone, the same in every implementation (`[PHIL-13]`), its
+  `Alloc` is at the line that makes the function value, which `ember inspect --alloc` lists, and
+  `E4001` there names it ("`counter` is `@noalloc`, and the function made on line 4 keeps `n`, which
+  it changes (`n += 1`), in a block of its own; keep the count in the caller's variable instead: `fn
+  counter(ref mut n: int)`"); and where the real variables it uses live, which costs nothing beyond
+  their addresses. A named function, or a lambda that captures nothing, has no state and allocates
+  nothing, and is `Copy`; a function value with state is not, and `=` hands it over. Calling one is
+  one indirect call. A call through a list element or a field copies the two words out before the
+  arguments are given and keeps no pointer into the list or field. Replacing or ending a function
+  value ends what its state owns, as ending an object runs its `drop` (`[DRP-8]`): `h.keep = fn():
+  pass` ends the function stored there before and what its `owns` captures held, so a view of that
+  is not used after that line (`E3060`, `[RC-5]`). Whether another thread may run it is said by its
+  type, `thread_shared fn()` (`[CLO-16]`); two are equal (`==`) when they call the same function
+  with the same state (ODR-102).
 * `[CLO-4]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **A function value does
   not outlive what it uses and does not own.** The real variables a lambda uses are checked in the
   function that writes it, which sees every place the function value goes: the value must provably
@@ -397,14 +412,14 @@ fn main():
   place that its body may reshape or end, or that is owned, all the way down, by anything its body
   may reshape or end, through any name it reaches: a real variable, a name it captured with a word
   (a `shares mut`, `thread_shared` or `sharedref mut` owner or link, a `weakref` link it opens `ref
-  mut`), or a `static mut` (`BUS.handlers.push(owns fn(): BUS.handlers.clear())`), read through the
-  chain of its calls (`[EFF-24]`), since the run would end or move the function's own state
-  (`b.on_click(owns fn(): b.handlers.clear())`, `t.on_visit = fn(n: Node): t.root.children.clear()`,
-  `bus.handlers.push(owns fn() weakref bus: if bus exists as ref mut b: b.handlers.clear())`,
-  `E3022`: "this function clears `b.handlers`, and `on_click` would keep it in `b.handlers`, so it
-  would change the button that holds it while the button runs it; clear the handlers after the click
-  instead: `b.click()`, then `b.handlers.clear()`"), since it would change its own holder while it
-  runs.
+  mut`), a parameter the call gives it (`ref mut u` in `fn(ref mut u: Ui)`), `this`, or a `static
+  mut` (`BUS.handlers.push(owns fn(): BUS.handlers.clear())`), read through the chain of its calls
+  (`[EFF-24]`), since the run would end or move the function's own state (`b.on_click(owns fn():
+  b.handlers.clear())`, `t.on_visit = fn(n: Node): t.root.children.clear()`, `bus.handlers.push(owns
+  fn() weakref bus: if bus exists as ref mut b: b.handlers.clear())`, `E3022`: "this function clears
+  `b.handlers`, and `on_click` would keep it in `b.handlers`, so it would change the button that
+  holds it while the button runs it; clear the handlers after the click instead: `b.click()`, then
+  `b.handlers.clear()`"), since it would change its own holder while it runs.
 * `[CLO-18]` *(new in 0.9.15)* *(changed in 0.9.20)* **A function value that changes its own
   state.** A call through a stored function value whose functions may change their own state is a
   change of the place that holds it: the holder is reached through a name that may change it (`for
@@ -417,8 +432,10 @@ fn main():
   call's arguments. A body that may end or move its own state (a handler that removes itself from
   the list that holds it, or clears that list) is refused where the function value is stored
   (`E3022`, `[CLO-17]`): a state block is not counted (`[CLO-10]`), so nothing could keep it alive
-  across the call. A handler that must go hands its removal to its holder: a result the holder reads
-  after the call, or a list of removals the holder applies after the loop.
+  across the call. The two words copied out before the call (`[CLO-10]`) point at the state the
+  holder keeps, never at a copy of it: a function value that changes its own state has a block, so
+  the change is the holder's after the call. A handler that must go hands its removal to its holder:
+  a result the holder reads after the call, or a list of removals the holder applies after the loop.
 * `[CLO-19]` *(new in 0.9.15)* **A lambda's parameters say what they receive.** A lambda parameter's
   word is what is written on it, and matches the callable type it is given to: where the type hands
   the value over (`fn(owns String)`), the lambda writes `fn(owns s) => println(s.len())`, and a
@@ -491,9 +508,13 @@ fn main():
   outside the frame; the frame is then a view of what they view, as a returned view would be
   (`[LT-1]`). `evens` above is such a generator.
 * `[CORO-7]` *(changed in 0.9.20)* Dropping a suspended generator drops exactly the locals live at
-  its suspension point, in reverse declaration order, then its parameters, in reverse order; a
-  generator that has run to its end has ended its parameters as a function's `return` does, holds
-  nothing, and dropping it does nothing.
+  its suspension point, in reverse declaration order, then its parameters, in reverse order, and
+  nothing else: the drop is not an exit of the blocks the `yield` lies in, so a `defer` block
+  registered before the `yield` does not run (`[CTL-8]` runs it only when its block exits by the
+  body's own path, on a later resume), and the drop's effects are those of the locals' drops alone
+  (`[EFF-1]`); a value whose clean-up must run however the generator ends is a value with a `drop`,
+  which the frame's drop ends, not a `defer` block; a generator that has run to its end has ended
+  its parameters as a function's `return` does, holds nothing, and dropping it does nothing.
 * `[CORO-8]` A generator's effect set is the union over its whole body; contracts apply to it as to
   any function.
 * `[CORO-9]` A frame never points into itself in Safe code; `unsafe` code that builds one states it

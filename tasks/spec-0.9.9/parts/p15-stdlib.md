@@ -119,75 +119,84 @@ is a defect of the file.
 
 ## XV.3 Text
 
-* `[TXT-1]` *(changed in 0.9.15)* `StrView` is a read-only view of bytes, a `Span[u8]`, known to be valid UTF-8; `String`
-  owns a heap buffer with the same guarantee. Safe code may rely on the invariant (`[UNS-4]`).
-* `[TXT-2]` *(changed in 0.9.15)* Nothing becomes a `StrView` without validation: every conversion from bytes or foreign text
-  returns `Result[StrView, Utf8Error]`, or a `_lossy` form that substitutes U+FFFD. An importer or
-  binding that would hand foreign bytes to a `StrView` without validation is `E5063`.
-* `[TXT-3]` *(changed in 0.9.15)* `StrView` and `String` are a pointer and a length, not null-terminated, and may contain
-  `\0`. A C boundary uses `CStrView`/`CString` (Part XVI); a `c"…"` literal containing a NUL is `E5064`.
-* `[TXT-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* Slicing a string, `s[a..b]`, is by byte offset and panics in every
-  profile when a bound is not on a character boundary; `s.get(a..b) -> Option[StrView]` is the total
-  form. There is no indexing by character position, because it would be O(n).
-* `[TXT-5]` *(changed in 0.9.15)* `StrView` → `String` allocates and copies, and is written `String(s)`; `String` →
-  `StrView` is free; `Span[u8]` → `StrView` validates in O(n) without allocating; `StrView` →
-  `CString` is the fallible allocating `.to_cstring()` of `[FFI-15]` (ODR-081).
-* `[TXT-6]` *(changed in 0.9.15)* Across the C ABI a `StrView` is `{const uint8_t *ptr; size_t len}`.
+* `[TXT-1]` *(changed in 0.9.15)* `StrView` is a read-only view of bytes, a `Span[u8]`, known to be
+  valid UTF-8; `String` owns a heap buffer with the same guarantee. Safe code may rely on the
+  invariant (`[UNS-4]`).
+* `[TXT-2]` *(changed in 0.9.15)* Nothing becomes a `StrView` without validation: every conversion
+  from bytes or foreign text returns `Result[StrView, Utf8Error]`, or a `_lossy` form that
+  substitutes U+FFFD. An importer or binding that would hand foreign bytes to a `StrView` without
+  validation is `E5063`.
+* `[TXT-3]` *(changed in 0.9.15)* `StrView` and `String` are a pointer and a length, not
+  null-terminated, and may contain `\0`. A C boundary uses `CStrView`/`CString` (Part XVI); a `c"…"`
+  literal containing a NUL is `E5064`.
+* `[TXT-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* Slicing a string, `s[a..b]`, is by byte
+  offset and panics in every profile when a bound is not on a character boundary; `s.get(a..b) ->
+  Option[StrView]` is the total form. There is no indexing by character position, because it would
+  be O(n).
+* `[TXT-5]` *(changed in 0.9.15)* `StrView` → `String` allocates and copies, and is written
+  `String(s)`; `String` → `StrView` is free; `Span[u8]` → `StrView` validates in O(n) without
+  allocating; `StrView` → `CString` is the fallible allocating `.to_cstring()` of `[FFI-15]`
+  (ODR-081).
+* `[TXT-6]` *(changed in 0.9.15)* *(changed in 0.9.20)* Across the C ABI a `StrView` is `{const
+  uint8_t *ptr; size_t len}` (a `StrView` crosses only as an import's contract makes one,
+  `[FFI-10]`, or as the `Span[u8]` an export takes, `[FFI-31b]`).
 * `[TXT-7]` Text is UTF-8 everywhere. `std.ffi.WideString` converts, explicitly, for APIs that need
   UTF-16.
-* `[TXT-8]` *(changed in 0.9.15)* `StrView` is a view, like every `Span`: it lives no longer than the text it points into,
-  and a change that may reshape that text (replacing a `String`, `push_str`, `clear`) ends it.
-  A `String` place reads as a `StrView` wherever one is expected.
-* `[TXT-9]` *(new in 0.9.9)* *(changed in 0.9.15)* **A string literal initialises a `String`.** Wherever a `String` is
-  expected — an initialiser, an argument, a field, a collection element, a return value — a string
-  literal produces a new `String` holding its text. The allocation happens at the literal and is
-  reported there (`Alloc`); where a `StrView` is expected, a literal is a view of text written in the
-  program and allocates nothing. A `StrView` *value* never converts implicitly: a `String` of your own
-  is written `String(s)` (`s.to_string()` and `String.from(s)` mean the same).
-* `[TXT-10]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **`StrView` operations.** `len()` is the length in bytes and
-  `char_count()` in characters; `is_empty`, `chars`, `char_indices`, `bytes`, `as_bytes`, `lines`,
-  `split(sep)`, `split_whitespace()` (Python's `split()` with no argument), `split_once(sep) ->
-  Option[(StrView, StrView)]`, `partition(sep) -> (StrView, StrView, StrView)` (Python's), `trim`,
-  `trim_start`, `trim_end`,
-  `starts_with`, `ends_with`, `find(sub) -> Option[int]`, `rfind`, `count(sub)`, `replace(old, new)
-  -> String`, `to_upper`, `to_lower`, `repeat(n)`, `parse[T]() -> Result[T, ParseError]`,
-  `to_string`, `get(range)`, `is_char_boundary(i)`, and `x in s` (`[STD-8b]`). A method that gives
-  text it did not make (`trim`, `split`, `lines`) gives views pointing into `s`; one returning several
-  strings returns an iterator of such views. Case mapping and `char_count` are
-  Unicode-aware; nothing depends on the locale. `char` has `is_alphabetic` (Unicode's Lu, Ll, Lt, Lm
-  and Lo), `is_digit` (the digits of every script, and the superscripts), `is_alphanumeric`
-  (alphabetic or numeric) and `is_whitespace` (what `split_whitespace` splits at), which mean what
-  Python's `isalpha`, `isdigit`, `isalnum` and `isspace` do, and `is_ascii_alphabetic`,
-  `is_ascii_digit`, `is_ascii_alphanumeric` and `is_ascii_whitespace`, the same restricted to ASCII.
-  `parse[T]()` (ODR-029) reads the whole text as an
-  integer type (the 256-bit counts included, over their whole range), a float type, `bool` or `char`,
-  skipping no white space (`s.trim().parse[int]()`): an
-  integer is an optional sign (`-` only for a signed type) and ASCII decimal digits, and must fit `T`;
-  a float is an optional sign and `inf`, `infinity` or `nan` in any case, or decimal digits with an
-  optional `.`, fraction and exponent (`e` or `E`, an optional sign, digits), rounded to the nearest
-  `T`; a `bool` is `true` or `false`; a `char` is exactly one character. `ParseError`, in `std.string`,
-  is a unit-only enum, `Empty`, `Invalid` or `Overflow`, naming the first problem from the left.
-* `[TXT-11]` *(new in 0.9.9)* *(changed in 0.9.15)* **`String` operations.** Everything `StrView` has (by read-through),
-  plus `String()`, `String(s)` (a `String` of your own made from text), `with_capacity(n)`,
-  `push(c: char)`, `push_str(s)`, `insert`, `remove`, `truncate`, `clear`, `capacity`, `reserve`, and
-  `as_str` (a `StrView` of the whole text). `a + b` for `a: String, b: StrView` takes `a` over and
-  returns it extended; `s += t` appends. `StrView + StrView` is `E2040` whose help is an f-string.
-  ODR-098 defines the mutation and capacity methods: `String.with_capacity(n) -> String` makes an
-  empty string with room for at least `n` bytes; zero allocates nothing. `capacity() -> int` reads
-  the allocated byte capacity. `reserve(additional)` makes room for at least `len() + additional`
-  bytes, without changing the text, and does nothing when that capacity already exists.
-  `insert(i, c: char)` inserts one character at byte offset `i`, which must be in `0..=len()` and
-  on a character boundary. `remove(i) -> char` removes and returns the character starting at byte
-  offset `i`, which must be in `0..len()` and on a character boundary. Both close up or move the
-  suffix as necessary; neither scans the prefix for a character position. `truncate(n)` retains
-  the first `n` bytes when `n < len()` (then `n` must be a character boundary), and otherwise does
-  nothing. `clear()` removes all text. `remove`, `truncate` and `clear` keep the capacity.
-  These change the string, through a name that may change it, and return `void` unless a result is
-  named above; each is a reshape, which ends every view into the text. Counts and
-  offsets accept any integer type; a negative literal is `E2011`, and a negative run-time value or
-  one not representable as a native length panics before conversion. An invalid offset or character
-  boundary panics in every profile. Growth uses the checked allocation rules of `[HEAP-8]`.
-  The arguments are evaluated before the string is changed, as for `Array`'s methods that change it.
+* `[TXT-8]` *(changed in 0.9.15)* `StrView` is a view, like every `Span`: it lives no longer than
+  the text it points into, and a change that may reshape that text (replacing a `String`,
+  `push_str`, `clear`) ends it. A `String` place reads as a `StrView` wherever one is expected.
+* `[TXT-9]` *(new in 0.9.9)* *(changed in 0.9.15)* **A string literal initialises a `String`.**
+  Wherever a `String` is expected — an initialiser, an argument, a field, a collection element, a
+  return value — a string literal produces a new `String` holding its text. The allocation happens
+  at the literal and is reported there (`Alloc`); where a `StrView` is expected, a literal is a view
+  of text written in the program and allocates nothing. A `StrView` *value* never converts
+  implicitly: a `String` of your own is written `String(s)` (`s.to_string()` and `String.from(s)`
+  mean the same).
+* `[TXT-10]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **`StrView` operations.**
+  `len()` is the length in bytes and `char_count()` in characters; `is_empty`, `chars`,
+  `char_indices`, `bytes`, `as_bytes`, `lines`, `split(sep)`, `split_whitespace()` (Python's
+  `split()` with no argument), `split_once(sep) -> Option[(StrView, StrView)]`, `partition(sep) ->
+  (StrView, StrView, StrView)` (Python's), `trim`, `trim_start`, `trim_end`, `starts_with`,
+  `ends_with`, `find(sub) -> Option[int]`, `rfind`, `count(sub)`, `replace(old, new) -> String`,
+  `to_upper`, `to_lower`, `repeat(n)`, `parse[T]() -> Result[T, ParseError]`, `to_string`,
+  `get(range)`, `is_char_boundary(i)`, and `x in s` (`[STD-8b]`). A method that gives text it did
+  not make (`trim`, `split`, `lines`) gives views pointing into `s`; one returning several strings
+  returns an iterator of such views. Case mapping and `char_count` are Unicode-aware; nothing
+  depends on the locale. `char` has `is_alphabetic` (Unicode's Lu, Ll, Lt, Lm and Lo), `is_digit`
+  (the digits of every script, and the superscripts), `is_alphanumeric` (alphabetic or numeric) and
+  `is_whitespace` (what `split_whitespace` splits at), which mean what Python's `isalpha`,
+  `isdigit`, `isalnum` and `isspace` do, and `is_ascii_alphabetic`, `is_ascii_digit`,
+  `is_ascii_alphanumeric` and `is_ascii_whitespace`, the same restricted to ASCII. `parse[T]()`
+  (ODR-029) reads the whole text as an integer type (the 256-bit counts included, over their whole
+  range), a float type, `bool` or `char`, skipping no white space (`s.trim().parse[int]()`): an
+  integer is an optional sign (`-` only for a signed type) and ASCII decimal digits, and must fit
+  `T`; a float is an optional sign and `inf`, `infinity` or `nan` in any case, or decimal digits
+  with an optional `.`, fraction and exponent (`e` or `E`, an optional sign, digits), rounded to the
+  nearest `T`; a `bool` is `true` or `false`; a `char` is exactly one character. `ParseError`, in
+  `std.string`, is a unit-only enum, `Empty`, `Invalid` or `Overflow`, naming the first problem from
+  the left.
+* `[TXT-11]` *(new in 0.9.9)* *(changed in 0.9.15)* **`String` operations.** Everything `StrView`
+  has (by read-through), plus `String()`, `String(s)` (a `String` of your own made from text),
+  `with_capacity(n)`, `push(c: char)`, `push_str(s)`, `insert`, `remove`, `truncate`, `clear`,
+  `capacity`, `reserve`, and `as_str` (a `StrView` of the whole text). `a + b` for `a: String, b:
+  StrView` takes `a` over and returns it extended; `s += t` appends. `StrView + StrView` is `E2040`
+  whose help is an f-string. ODR-098 defines the mutation and capacity methods:
+  `String.with_capacity(n) -> String` makes an empty string with room for at least `n` bytes; zero
+  allocates nothing. `capacity() -> int` reads the allocated byte capacity. `reserve(additional)`
+  makes room for at least `len() + additional` bytes, without changing the text, and does nothing
+  when that capacity already exists. `insert(i, c: char)` inserts one character at byte offset `i`,
+  which must be in `0..=len()` and on a character boundary. `remove(i) -> char` removes and returns
+  the character starting at byte offset `i`, which must be in `0..len()` and on a character
+  boundary. Both close up or move the suffix as necessary; neither scans the prefix for a character
+  position. `truncate(n)` retains the first `n` bytes when `n < len()` (then `n` must be a character
+  boundary), and otherwise does nothing. `clear()` removes all text. `remove`, `truncate` and
+  `clear` keep the capacity. These change the string, through a name that may change it, and return
+  `void` unless a result is named above; each is a reshape, which ends every view into the text.
+  Counts and offsets accept any integer type; a negative literal is `E2011`, and a negative run-time
+  value or one not representable as a native length panics before conversion. An invalid offset or
+  character boundary panics in every profile. Growth uses the checked allocation rules of
+  `[HEAP-8]`. The arguments are evaluated before the string is changed, as for `Array`'s methods
+  that change it.
 
 ## XV.4 Collections
 
@@ -327,73 +336,74 @@ is a defect of the file.
   one list (`handlers: Array[fn()]`). A function written in the call is given to it, with `owns` as
   every argument for an `owns` parameter is (`[FN-2a]`), so an adapter made from a lambda can be
   kept or returned (`return xs.iter().map(owns fn(x) => x * 2)`), what the lambda holds with it. A
-  function from a variable is lent to the call and takes no word: after `xs.iter().for_each(h)`, `h`
-  is the caller's still and `h(5)` runs it (ODR-240). A function given may change things: a
-  consumer's call counts as making what the function changes, now (`scores.for_each(owns fn(s):
-  LOG.push(owns copy of s.name))` changes `LOG`, so inside a loop over `LOG` it is `E3020`), and an
-  adapter keeps the function and runs it at each step, so whatever drives the adapter (`for x in
-  it:`, `it.sum()`) makes its changes; driving an `owns dyn Iterator[Item = T]` makes the changes of
-  every adapter the program can put there. What a caller passes is an `int` (ODR-089): `take(n)`
-  gives at most `n` items and `skip(n)` leaves out the first `n`, `nth(n)` is the item at index `n`
-  (`None` past the end), `step_by(k)` gives the first item and then every `k`-th, and
-  `enumerate(start=0)` numbers from `start` as `[STD-26]`'s `enumerate` does. A negative count or
-  index, or a `k` of zero or less, is the caller's bug and panics when the adapter is made or the
-  consumer called (`[STD-14]`), never partway through. **Counts and numbers** (the owner's design
-  G8-4, 0.9.10): what Ember hands back is in the smallest type that holds every value the iterator
-  can give. `Iterator` has the associated types `Count`, what `len()`, `count()` and `position()`
-  give, and `Position`, what `enumerate` numbers its items with; each is `int` unless the iterator
-  says otherwise, and each implements `std.core.ItemCount` (`int`, `u64`, `u128`, `u256`, `i128` and
-  `i256` do), which gives the count operations (`of`, `plus`, `less`, `exceeds`, `to_int`, and
-  `as_count[C]()` from one count type to another that holds it). Stored items (arrays, views, text,
-  maps, sets) and ranges of 8-, 16- or 32-bit numbers count and number in `int`; a `..` range of
-  64-bit numbers counts in `u64` and a `..=` one in `u128`, a `..` range of 128-bit numbers in
-  `u128` and a `..=` one in `u256` (`[TYP-42]`); ranges of 64-bit numbers number in `i128` and of
-  128-bit numbers in `i256`, from a start that may be negative. An adapter that never gives more
-  items than it takes counts and numbers as what it wraps. `chain` counts its two sides together,
-  stepping up only as far as needed: two `int` counts stay an `int` (stored items and small ranges
-  cannot come near its top), otherwise the count is one level above the wider side's (`u64`, then
-  `u128`, then `u256`), and it numbers in the type that holds both sides' numbers; `flatten` and
-  `flat_map` count in the level that holds the outer count times the inner one (the smallest of
-  `int`, `u64`, `u128` and `u256` that holds the product of the greatest counts the two sides can
-  give, by the numbers the compiler knows: two `int` counts whose product may pass `int.MAX` count
-  in `u128`, and stay an `int` where the known numbers show the product fits), and number their
-  items (`Position`) in the same type. `u256` is the limit: a count past it panics. In generic code
-  these are the counts of the types involved, filled in for each use. **The known-numbers rule**
-  (the owner's rulings of 2026-10-06, which widen the visible-numbers rule): where `enumerate` is
-  called, and where `len` or `count` is called on an iterator, the numbers it gives, and the count,
-  are in the smallest of `int`, `u64`, `i128`, `u128` and `i256` that holds every value it can give,
-  read from the numbers the compiler knows. It knows a number written as one; a name set once and
-  never changed anywhere in its function (no assignment, augmented assignment, `ref mut` name or
-  argument of it, or call of a method that changes it, in the function or a lambda in it) holds what
-  its value held, and a range or an `Array` literal so set has its bounds or its length; a loop's
-  counter (`for i in a..b`, `range(a, b, step)`, and a range's value through `rev`, `skip`, `take`
-  and `step_by`) holds its range's numbers; `+`, `-`, `*`, `//` and `%` give what their known
-  operands allow; a list's, a view's or a text's length is at most what its items' bytes allow
-  (`[HEAP-8]`: at most `PTRDIFF_MAX` bytes, an item of no size counting as one) and a fixed array's
-  is its `N`; `take`, `skip`, `step_by`, `zip` and `chain` give what their known arguments allow.
-  Anything else may be any value of its type, and an iterator gives at most what its `Count` holds.
-  `enumerate` numbers from `start` to `start + n - 1` over at most `n` items, so its type steps up
-  from the iterator's own `Position` where the numbers could pass that type's top
-  (`ys.enumerate(start=int.MAX - 1)` over three items numbers in `u64`): no number of an `enumerate`
-  overflows. In generic code an `enumerate` numbers in its iterator's `Position`; where what it
-  numbers in depends on the item type (a list of `T`, whose most items depend on `T`'s size), the
-  function's own check leaves it, and every line that uses those numbers, to the check of each use
-  (`[TYP-17]`), which numbers by what it knows. A use that a line does not fit is refused there,
-  naming the use (`in labels used with T = u8`); with `[TYP-5]` rule 12, `last = i` takes the
-  numbers of a list of `int`s from 2 whether `last` is an `int` or a `u64`. An iterator can run
-  backwards when it implements `DoubleEndedIterator`, whose method `fn next_back() -> Option[Item]`
-  gives the last item not yet given from either end (with `next`, the two ends meet and no item
-  comes twice) and whose method `rev` is, so `rev` is exactly where an iterator can run backwards;
-  `ExactSizeIterator`'s `fn len() -> Count` is how many items are left (ODR-091). `skip_front(n)`
-  and `skip_back(n)` leave out up to `n` items (a `Count`) from either end and give how many of the
-  `n` they could not, and `nth_back(n)` leaves out `n` from the back and gives the one before them;
-  a range does each at once, and `rev`, `copy_each`, `take`, `skip`, `zip`, `chain`, and `enumerate`
-  from the back pass them down, so none of them passes a gigantic run of items one at a time.
-  `ItemCount`, `DoubleEndedIterator` and `ExactSizeIterator` are in `std.core` and are not prelude
-  names (`[MOD-5]`). The iterators of the ranges with an end and the element iterators of the views
-  run backwards and know their length; `copy_each` and `chain` run backwards when what they wrap
-  does, and `take`, `skip`, `step_by`, `enumerate` and `zip` when it also knows its length, giving
-  the items `next` would, last first; each knows its length when what it wraps does. Run backwards,
+  function from a variable is lent to the call and takes no word, as to any function that takes it
+  as a type parameter (`[FN-2a]`): after `xs.iter().for_each(h)`, `h` is the caller's still and
+  `h(5)` runs it (ODR-240). A function given may change things: a consumer's call counts as making
+  what the function changes, now (`scores.for_each(owns fn(s): LOG.push(owns copy of s.name))`
+  changes `LOG`, so inside a loop over `LOG` it is `E3020`), and an adapter keeps the function and
+  runs it at each step, so whatever drives the adapter (`for x in it:`, `it.sum()`) makes its
+  changes; driving an `owns dyn Iterator[Item = T]` makes the changes of every adapter the program
+  can put there. What a caller passes is an `int` (ODR-089): `take(n)` gives at most `n` items and
+  `skip(n)` leaves out the first `n`, `nth(n)` is the item at index `n` (`None` past the end),
+  `step_by(k)` gives the first item and then every `k`-th, and `enumerate(start=0)` numbers from
+  `start` as `[STD-26]`'s `enumerate` does. A negative count or index, or a `k` of zero or less, is
+  the caller's bug and panics when the adapter is made or the consumer called (`[STD-14]`), never
+  partway through. **Counts and numbers** (the owner's design G8-4, 0.9.10): what Ember hands back
+  is in the smallest type that holds every value the iterator can give. `Iterator` has the
+  associated types `Count`, what `len()`, `count()` and `position()` give, and `Position`, what
+  `enumerate` numbers its items with; each is `int` unless the iterator says otherwise, and each
+  implements `std.core.ItemCount` (`int`, `u64`, `u128`, `u256`, `i128` and `i256` do), which gives
+  the count operations (`of`, `plus`, `less`, `exceeds`, `to_int`, and `as_count[C]()` from one
+  count type to another that holds it). Stored items (arrays, views, text, maps, sets) and ranges of
+  8-, 16- or 32-bit numbers count and number in `int`; a `..` range of 64-bit numbers counts in
+  `u64` and a `..=` one in `u128`, a `..` range of 128-bit numbers in `u128` and a `..=` one in
+  `u256` (`[TYP-42]`); ranges of 64-bit numbers number in `i128` and of 128-bit numbers in `i256`,
+  from a start that may be negative. An adapter that never gives more items than it takes counts and
+  numbers as what it wraps. `chain` counts its two sides together, stepping up only as far as
+  needed: two `int` counts stay an `int` (stored items and small ranges cannot come near its top),
+  otherwise the count is one level above the wider side's (`u64`, then `u128`, then `u256`), and it
+  numbers in the type that holds both sides' numbers; `flatten` and `flat_map` count in the level
+  that holds the outer count times the inner one (the smallest of `int`, `u64`, `u128` and `u256`
+  that holds the product of the greatest counts the two sides can give, by the numbers the compiler
+  knows: two `int` counts whose product may pass `int.MAX` count in `u128`, and stay an `int` where
+  the known numbers show the product fits), and number their items (`Position`) in the same type.
+  `u256` is the limit: a count past it panics. In generic code these are the counts of the types
+  involved, filled in for each use. **The known-numbers rule** (the owner's rulings of 2026-10-06,
+  which widen the visible-numbers rule): where `enumerate` is called, and where `len` or `count` is
+  called on an iterator, the numbers it gives, and the count, are in the smallest of `int`, `u64`,
+  `i128`, `u128` and `i256` that holds every value it can give, read from the numbers the compiler
+  knows. It knows a number written as one; a name set once and never changed anywhere in its
+  function (no assignment, augmented assignment, `ref mut` name or argument of it, or call of a
+  method that changes it, in the function or a lambda in it) holds what its value held, and a range
+  or an `Array` literal so set has its bounds or its length; a loop's counter (`for i in a..b`,
+  `range(a, b, step)`, and a range's value through `rev`, `skip`, `take` and `step_by`) holds its
+  range's numbers; `+`, `-`, `*`, `//` and `%` give what their known operands allow; a list's, a
+  view's or a text's length is at most what its items' bytes allow (`[HEAP-8]`: at most
+  `PTRDIFF_MAX` bytes, an item of no size counting as one) and a fixed array's is its `N`; `take`,
+  `skip`, `step_by`, `zip` and `chain` give what their known arguments allow. Anything else may be
+  any value of its type, and an iterator gives at most what its `Count` holds. `enumerate` numbers
+  from `start` to `start + n - 1` over at most `n` items, so its type steps up from the iterator's
+  own `Position` where the numbers could pass that type's top (`ys.enumerate(start=int.MAX - 1)`
+  over three items numbers in `u64`): no number of an `enumerate` overflows. In generic code an
+  `enumerate` numbers in its iterator's `Position`; where what it numbers in depends on the item
+  type (a list of `T`, whose most items depend on `T`'s size), the function's own check leaves it,
+  and every line that uses those numbers, to the check of each use (`[TYP-17]`), which numbers by
+  what it knows. A use that a line does not fit is refused there, naming the use (`in labels used
+  with T = u8`); with `[TYP-5]` rule 12, `last = i` takes the numbers of a list of `int`s from 2
+  whether `last` is an `int` or a `u64`. An iterator can run backwards when it implements
+  `DoubleEndedIterator`, whose method `fn next_back() -> Option[Item]` gives the last item not yet
+  given from either end (with `next`, the two ends meet and no item comes twice) and whose method
+  `rev` is, so `rev` is exactly where an iterator can run backwards; `ExactSizeIterator`'s `fn len()
+  -> Count` is how many items are left (ODR-091). `skip_front(n)` and `skip_back(n)` leave out up to
+  `n` items (a `Count`) from either end and give how many of the `n` they could not, and
+  `nth_back(n)` leaves out `n` from the back and gives the one before them; a range does each at
+  once, and `rev`, `copy_each`, `take`, `skip`, `zip`, `chain`, and `enumerate` from the back pass
+  them down, so none of them passes a gigantic run of items one at a time. `ItemCount`,
+  `DoubleEndedIterator` and `ExactSizeIterator` are in `std.core` and are not prelude names
+  (`[MOD-5]`). The iterators of the ranges with an end and the element iterators of the views run
+  backwards and know their length; `copy_each` and `chain` run backwards when what they wrap does,
+  and `take`, `skip`, `step_by`, `enumerate` and `zip` when it also knows its length, giving the
+  items `next` would, last first; each knows its length when what it wraps does. Run backwards,
   `enumerate` numbers its last item `start + len - 1` first, and the items `skip_back` leaves out
   need no numbers. `collect[C]()` builds any `C` that implements `FromIterator[Item]` (ODR-094), an
   interface of `std.core` that is not a prelude name: `interface FromIterator[T]:` declares `[I:

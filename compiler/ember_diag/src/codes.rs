@@ -150,6 +150,7 @@ codes! {
     // does not write (an escape, a character's value, a raw string's prefix, a byte string's
     // character, an f-string's lone `}`).
     E0009 = (Error, 9, Lex, "[LEX-26]", "malformed literal");
+    E0012 = (Error, 12, Lex, "[LEX-1a]", "a Unicode bidirectional format character in a source file, an overlay or the manifest");
 
     // --- parser -------------------------------------------------------------
     E0100 = (Error, 100, Parse, "[GRM-2], [TYP-17]", "unexpected token, among them Python's `global`, a statement at module level outside the entry file (whose message gives the declaration to write: `static mut FRAME: int = 0`), a bound written without `needs` or joined with `+` (whose message gives the line with `needs`), and a clause after a function's brackets that Ember does not have (`changes FRAME`, `reads renderer`, `with` before the captures), whose message gives the first line to write");
@@ -181,6 +182,7 @@ codes! {
     E0116 = (Error, 116, Parse, "[GRM-42]", "in a list of names declared without types, a name with no word after a name with a word");
     E0117 = (Error, 117, Parse, "[FN-1]", "`ref` or `ref mut` written in a parameter's type instead of on its name");
     E0118 = (Error, 118, Parse, "[GRM-41]", "a first line whose parts are out of order (parameters, `owns this`, `-> T`, `from`)");
+    E0119 = (Error, 119, Parse, "[GRM-47]", "`owns` as an operand of an operator, which reads its operands in place: a computed value handed over goes in brackets");
     E0120 = (Error, 120, Parse, "[GRM-42], [CLO-2]", "`ref mut` in a lambda's capture list");
     // 0.9.9 `[CLI-19]`: a construct the specification defines and this
     // compiler does not implement yet is rejected by name, never silently.
@@ -197,6 +199,7 @@ codes! {
     // ODR-201 — every item has one path (`[MNG-1]`).
     E1032 = (Error, 1032, Resolve, "[MOD-1]", "an item has the path of a module or the name of a built-in type");
     E1041 = (Error, 1041, Resolve, "[MOD-4]", "import cycle between packages");
+    E1042 = (Error, 1042, Resolve, "[STD-6]", "a use of a name of a layer of `std` the package does not declare");
     E1050 = (Error, 1050, Resolve, "[MOD-7]", "field is read-only outside its module");
     E1051 = (Error, 1051, Resolve, "[MOD-7]", "`read` visibility is valid on fields only");
     E1052 = (Error, 1052, Resolve, "[MOD-2]", "item, field or constructor not visible here");
@@ -225,6 +228,7 @@ codes! {
     E2071 = (Error, 2071, Types, "[SOA-1]", "`SoA[T]` of a type that is not a struct");
     E2072 = (Error, 2072, Types, "[STD-13]", "no method or field of that name (with the Ember name for a Python one; shape N13 for an undeclared field; in a generic body that is not `pub`, a method no bound's interface declares)");
     E2073 = (Error, 2073, Types, "[STD-26]", "`len` of a string (Python counts characters, `s.len()` bytes)");
+    E2074 = (Error, 2074, Types, "[ECS-4a]", "a component type listed twice in one ECS view, or listed and excluded");
     E2230 = (Error, 2230, Types, "[CTL-10]", "a name assigned in every branch at different types");
     E2228 = (Error, 2228, Types, "[CLO-3]", "callable parameter-mode mismatch (shape B15)");
     E2080 = (Error, 2080, Types, "[STR-3]", "`@derive(Copy)` on a type with a field that is not Copy");
@@ -380,13 +384,13 @@ codes! {
     E5016 = (Error, 5016, Ffi, "[FFI-8]", "`_Atomic` layout does not match `Atomic[T]`");
     E5017 = (Error, 5017, Ffi, "[FFI-8]", "struct with a flexible array member is unsized");
     E5018 = (Error, 5018, Ffi, "[FFI-8]", "`va_list` may not be constructed");
-    E5031 = (Error, 5031, Ffi, "[FFI-17]", "C++ parameter cannot be mapped");
+    E5031 = (Error, 5031, Ffi, "[FFI-32]", "C++ parameter cannot be mapped");
     E5032 = (Error, 5032, Ffi, "[FFI-32]", "opaque C++ type may not be constructed");
     W5002 = (Warning, 5002, Ffi, "[FFI-20a]", "declaration not imported (unsupported convention or construct)");
     E5090 = (Error, 5090, Ffi, "[UNS-6]", "inline assembly is not supported by the C backend");
 
     // --- grades, adoption, C++ boundary, text (0.6, 0.7.x) --------------------
-    E5034 = (Error, 5034, Ffi, "[FFI-17]", "unsupported C++ construct");
+    E5034 = (Error, 5034, Ffi, "[FFI-48]", "unsupported C++ construct");
     E5050 = (Error, 5050, Ffi, "[TCB-1]", "a foreign fact claims a grade whose evidence is absent or stale");
     E5051 = (Error, 5051, Ffi, "[FFI-35a]", "a foreign callee retains a pointer its contract does not declare `retained`");
     E5052 = (Error, 5052, Ffi, "[FFI-36b]", "`adopt` on a handle whose overlay declares `adopt = false`");
@@ -395,8 +399,8 @@ codes! {
     E5055 = (Error, 5055, Ffi, "[FFI-17b]", "an Ember generic may not instantiate a C++ template");
     E5056 = (Error, 5056, Ffi, "[FFI-39]", "override of a C++ virtual the overlay does not name");
     E5057 = (Error, 5057, Ffi, "[FFI-39]", "the overlay names a method that is not virtual in the header");
-    E5058 = (Error, 5058, Ffi, "[FFI-39]", "C++ base has no default constructor and no declared `init`");
-    E5059 = (Error, 5059, Ffi, "[FFI-39]", "C++ trampoline base has no virtual destructor");
+    E5058 = (Error, 5058, Ffi, "[FFI-39b]", "C++ base has no default constructor and no declared `init`");
+    E5059 = (Error, 5059, Ffi, "[FFI-17d]", "C++ trampoline base has no virtual destructor");
     E5060 = (Error, 5060, Ffi, "[FFI-39c]", "an object owned by Ember (`owner=\"ember\"`) given to a C++ parameter that keeps it");
     E5061 = (Error, 5061, Ffi, "[FFI-24]", "imported C++ function has no exception policy and none can be derived");
     E5062 = (Error, 5062, Ffi, "[FFI-43]", "contradictory C++ exception policies");

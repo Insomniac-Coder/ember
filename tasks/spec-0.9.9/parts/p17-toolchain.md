@@ -246,13 +246,15 @@ large_copy = { level = "warn", threshold = 256 }
   package is the unit of monomorphisation and code generation. A `debug` build writes one C file per
   module and recompiles only the modules that changed; a `release` build writes one C unit, so the C
   compiler optimises across modules and the shipped program loses no speed.
-* `[BLD-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* A module's front-end result is keyed by its
-  source, the compiler and language versions, the package configuration and the **interface hashes**
-  of what it imports (signatures, layouts, effect sets, inline bodies, and the facts of `[BLD-14]`),
-  so editing a private body recompiles that module and re-checks its callers only if a fact they use
-  changed: its effect set (`[EFF-4]`), an inline body, or a fact the compiler worked out from the
-  body that a caller's check relies on (`[BLD-14]`) (ODR-058). The cache serves `ember check` as
-  `ember build` does.
+* `[BLD-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* A module's front-end
+  result is keyed by its source, the compiler and language versions, the package configuration and
+  the **interface hashes** of what it imports (signatures, layouts, effect sets, inline bodies, the
+  bodies of `pub` generics, which the instantiating package compiles, the bodies `[MONO-10]` needs,
+  which are part of the interface hash as inline bodies are (`[CG-C-3b]`), and the facts of
+  `[BLD-14]`), so editing a private body recompiles that module and re-checks its callers only if a
+  fact they use changed: its effect set (`[EFF-4]`), an inline body, or a fact the compiler worked
+  out from the body that a caller's check relies on (`[BLD-14]`) (ODR-058). The cache serves `ember
+  check` as `ember build` does.
 * `[BLD-8]` Within a module, editing one function body re-checks that function, and those of the
   module that use a fact of it that changed (`[BLD-2]`).
 * `[BLD-14]` *(new in 0.9.15)* *(changed in 0.9.20)* **Facts worked out at a package's edge.** A
@@ -304,7 +306,22 @@ large_copy = { level = "warn", threshold = 256 }
   15. for each function, its open lines: each foreign call without `@ffi(no_callbacks)` after which
       it uses a view parameter, `this` included, or a `static` of its own, with what the parameter
       is used as, which a caller from another package resolves against the callbacks, exports and
-      overrides its program has (`[BRW-21]`, `[FFI-52]`).
+      overrides its program has (`[BRW-21]`, `[FFI-52]`); and
+  16. for each call through a `pub` interface or `virtual` method, or through a `pub` place of
+      function type (a field, a parameter, an element), the facts the package's own checks relied on
+      at that call: what the functions there may change, read and end, as `[HR-44]` records them for
+      a reload (a call through such a place is not a fact a word can write, since the contracts of
+      `[EFF-5]` say nothing of what a function may end, so it is recorded, never assumed). A package
+      that adds to such a place, an implementation of the interface, an override, a function it
+      stores there or passes to it, is checked against them when it compiles: an implementation,
+      override or store whose summary breaks a fact a recorded line relied on is refused at its own
+      line, with the code of the rule that line relied on (`E3020`, `E3021`, `E3031` or `E3060`),
+      naming the library's line and the chain of calls ("`Pruner.visit` clears `tree.nodes`, and
+      `lib`'s `Tree.walk` (lib/tree.em line 7) walks `nodes` across its call of `visit`; keep what
+      to remove in a list of your own and clear after the walk"), so that no package's accepted line
+      is made unsafe by a package it never saw, and nothing runs for it while the program runs; the
+      record lives in the interface file beside item 7, and in a reloadable image's manifest
+      (`[HR-8]`), which `[HR-44]` compares.
 * `[BLD-16]` *(new in 0.9.20)* **No fact of the whole program decides a package's code or layout.**
   The layout of a package's types and the instructions it emits for a line are decided by the
   package's own source, by the interface files of the packages it imports (`[MOD-9]`, `[EFF-4]`,

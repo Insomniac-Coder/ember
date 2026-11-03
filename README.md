@@ -22,8 +22,8 @@ pages, and the records that keep them consistent.
 
 | | |
 |---|---|
-| Language version being implemented | **0.9.20**, specification `Ember_v0.9.20_Hardened_1` (what changed: its Appendix H, §H.41 to §H.51) |
-| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.20_Hardened_1.md`](docs/spec-source/Ember_v0.9.20_Hardened_1.md) |
+| Language version being implemented | **0.9.20**, specification `Ember_v0.9.20_Hardened_2` (what changed: its Appendix H, §H.41 to §H.52) |
+| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.20_Hardened_2.md`](docs/spec-source/Ember_v0.9.20_Hardened_2.md) |
 | Specification sources | [`tasks/spec-0.9.9/parts/`](tasks/spec-0.9.9/parts/), one file per Part; each `Hardened_N` is their concatenation and is never edited afterwards |
 | Last adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), 0.8.5_Hardened_1 (0.9.10 is adopted when its gates pass and the owner installs it) |
 | Tests | Rust unit and integration suites; Ember run and conformance suites in [`tests/`](tests/) |
@@ -39,21 +39,21 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 
 | Phase | Scope | Done |
 |---|---|---:|
-| 1 | Core language (Parts II–VI) | 30% |
-| 2 | Ownership, borrowing, regions | 14% |
-| 3 | Classes, reference counting, exclusivity | 2% |
-| 4 | Effects, compile time, reflection, derives | 23% |
-| 5 | C interoperability | 26% |
-| 6 | Concurrency and data-oriented design | 15% |
-| 7 | C++ interoperability and the interpreter | 42% |
-| 7a | Iteration, determinism, cost control | 36% |
+| 1 | Core language (Parts II–VI) | 23% |
+| 2 | Ownership, borrowing, regions | 11% |
+| 3 | Classes, reference counting, exclusivity | 1% |
+| 4 | Effects, compile time, reflection, derives | 16% |
+| 5 | C interoperability | 19% |
+| 6 | Concurrency and data-oriented design | 12% |
+| 7 | C++ interoperability and the interpreter | 32% |
+| 7a | Iteration, determinism, cost control | 21% |
 | 8 | Hardening and 1.0 | 49% |
 | 9 | The LLVM backend (ODR-223) | 38% |
-| | Overall (1.0) | 23% |
+| | Overall (1.0) | 17% |
 | | After 1.0: the GPU host model (v0.6) | 0% |
 
 The latest language work is the memory-model rework, which makes the language 0.9.15, hardened as
-0.9.20 by the audit of 2026-11-03 (`docs/spec-source/Ember_v0.9.20_Hardened_1.md`, its §H.51; the
+0.9.20 by the two hardening passes of 2026-11-03 (`docs/spec-source/Ember_v0.9.20_Hardened_2.md`, its §H.51 and §H.52; the
 owner's verdicts in
 [`tasks/96/redesign/JOB.md`](tasks/96/redesign/JOB.md), the build plan in
 [`tasks/96/redesign/compiler-0.9.15/MILESTONES.md`](tasks/96/redesign/compiler-0.9.15/MILESTONES.md)):

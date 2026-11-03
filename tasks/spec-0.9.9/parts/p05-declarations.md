@@ -56,16 +56,23 @@
   message names the chain of calls. A fact worked out from a body never changes what a line does.
 * `[MOD-9a]` *(new in 0.9.20)* **A library's call through what a dependant may fill.** For each line
   of a package's functions that calls through a `virtual` method of a `pub` class, a method of a
-  `pub` interface used as `dyn`, or a `pub` function-typed place (`[EFF-2]`), the package records in
-  its interface file, beside the function's summary (`[BLD-14]` item 12), what that line walks,
-  holds `ref mut` and has lent (`[BRW-18]`, `[BRW-11]`, `[BRW-1]`). A package that adds an override,
-  an implementation or a stored function value checks it, at its declaration or at the storing line,
-  against every recorded line it may be called from, with the chain named: a body whose summary
-  changes what such a line walks is `E3020` ("`Door.on_update` clears `WORLD.scripts` (line 9),
-  which `Script.run_all` walks while it calls `on_update` (its line 4); clear after the walk: give
-  `run_all`'s caller the list of doors to remove"), and one that changes what it holds or has lent
-  is `E3022`. A member no recorded line refuses is accepted; nothing runs for it while the program
-  runs.
+  `pub` interface used as `dyn`, or a function-typed place another package can fill (`[EFF-2a]`),
+  the package records in its interface file, beside the function's summary (`[BLD-14]` item 12): the
+  place it calls through; the collections walked across it and the generators still used after it
+  (`[BRW-18]`); the read-only views, `ref mut` names and positions live across it, with what each
+  points into (`[BRW-1]`, `[BRW-17]`); the names opened from links live across it, with their class
+  families (`[RC-5]`); the parameters and `this` used after it (`[BRW-21]`); and the locks held at
+  it (`[THR-19]`). A package that adds an override, an implementation or a stored function value
+  checks it, at its declaration or at the storing line, against every recorded line it may be called
+  from, with the chain named: a body whose summary changes what such a line walks is `E3020`
+  ("`Door.on_update` clears `WORLD.scripts` (line 9), which `Script.run_all` walks while it calls
+  `on_update` (its line 4); clear after the walk: give `run_all`'s caller the list of doors to
+  remove"), one that changes what it holds or has lent is `E3022`, one that may end what a name
+  opened from a link reads `E3060`, and one that takes a lock held there `E7018`, each at the line
+  that adds the member ("`b.on(...)` (line 7) stores a function that pushes to `b2.log`, and
+  `Bus.flush` (`bus`, line 10) walks `this.log` while it runs the handlers (its line 12); push to a
+  list of your own in the handler and move it into the log after `flush`"). A member no recorded
+  line refuses is accepted; nothing runs for it while the program runs.
 * `[MOD-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* **The prelude.** Every module implicitly
   imports these names from `std`, and this list is the only definition of the prelude:
 
@@ -154,15 +161,26 @@ pub fn blend(dst: Array[f32], ref mut out: Array[f32], owns scratch: Array[f32],
   through a read-only name) is `E3027` ("`p` only reads the caller's player, so it cannot be given
   to `heal` as `ref mut`; take it as `ref mut p: Player` on `revive`'s first line, or walk the list
   with `for ref mut p in players:`"). `return a` and a constructor's argument take no word: they
-  hand a value over as `=` does (`[OWN-9]`). A function from a variable given to a standard-library
-  function that takes one is lent and takes no word: after `xs.iter().for_each(h)`, `h` is the
-  caller's still (`[STD-19]`). An argument for a `Mutex`, `RwLock` or `Atomic` parameter, or a
-  channel end, takes no word, since its own "only me" is the lock's block (`E3028`: "`top` takes the
-  lock of `scores` itself; a `Mutex` takes no word at the call: `top(scores)`"). The object a method
-  is called on is not marked (`a.reset()`): what the method does to it is worked out from its body
-  (`[EXC-15]`). The arguments of one call do not overlap a changeable one (`[BRW-11]`), and a call
-  is checked against what the callee does with each view argument (`[BRW-21]`). The editor shows a
-  parameter's word as an inlay hint where the call does not write one.
+  hand a value over as `=` does (`[OWN-9]`). A function from a variable given to a parameter whose
+  type is a type parameter bounded by a function type (`owns f: F` under `[F: needs fn(int)]`,
+  `[CLO-14]`), in any package, is lent for the call: `F` names that very function, the callee runs
+  it and keeps nothing of it, so after `xs.iter().for_each(h)` and after `apply(h)` alike `h` is the
+  caller's still. It takes no word when its functions keep no state or only read it; one whose
+  functions may change their own state is given `ref mut h`, since the call changes it (`[CLO-18]`,
+  `E3023` without the word: "`counter` changes its own `n` each time it runs, and `apply` runs it;
+  say so at the call: `apply(ref mut counter)`"). `owns h` before such an argument is `E0109`
+  ("`apply` runs `h` and keeps nothing of it; remove `owns`: `apply(h)`"); a function written in the
+  call is given with `owns` (verdict 158), and a value the call gives back that keeps the lent
+  function (an iterator adapter, `[STD-19]`) is a value holding a view of `h`, which lives no longer
+  than `h` (`[LT-45]`). A parameter of a callable type (`owns f: fn(int)`) keeps what it is given
+  and takes `owns` as any `owns` parameter does. An argument for a `Mutex`, `RwLock` or `Atomic`
+  parameter, or a channel end, takes no word, since its own "only me" is the lock's block (`E3028`:
+  "`top` takes the lock of `scores` itself; a `Mutex` takes no word at the call: `top(scores)`").
+  The object a method is called on is not marked (`a.reset()`): what the method does to it is worked
+  out from its body (`[EXC-15]`). The arguments of one call do not overlap a changeable one
+  (`[BRW-11]`), and a call is checked against what the callee does with each view argument
+  (`[BRW-21]`). The editor shows a parameter's word as an inlay hint where the call does not write
+  one.
 * `[FN-9]` *(new in 0.9.9)* *(changed in 0.9.15)* A parameter of a class type takes its word as one
   of any type does, since a class object has one owner unless a line says `shares` (`[CLS-1]`): `p:
   Player` reads the object, which neither changes nor ends while `p` is used; `ref mut p: Player`
@@ -267,15 +285,17 @@ pub struct Vec2:
   omitted. It is `pub` iff every field is `pub`. A declared `fn init(…)` replaces it (`[STR-6]`). An
   argument for an `owns` field is made with `owns` on its line (`mesh=owns Mesh(points=[0.0])`,
   `[OWN-10]`).
-* `[STR-2]` *(changed in 0.9.9)* *(changed in 0.9.20)* A field default is any expression; it is
-  evaluated at each construction that omits the field, in field order, and may allocate (`items:
-  Array[int] = []`). Names and type expressions in a field default resolve in the type's declaration
-  scope, with the type's generic parameters substituted at instantiation, as `[FN-5]`'s do; a field
-  is named only through `this`, which a default has not, since it runs before the value exists
-  (`E1010`: "`this` can only be used in a method, and a field default runs before `init`, when there
-  is no object yet; set `on_tick` in `init`: write `this.on_tick = fn(): ...` below `this.name =
-  n`"; "`cap`'s default reads `n`, a field of the same `Buf`, which has no value when defaults run;
-  set `cap` in an `init`: `fn init(n: int):` with `this.n = n` and `this.cap = n * 2`").
+* `[STR-2]` *(changed in 0.9.9)* *(changed in 0.9.20)* A field default is any expression; at a
+  construction that omits the field, the written arguments are evaluated first, left to right
+  (`[EXP-1]`, `[FN-5]`), then the omitted fields' defaults in field order, each at that
+  construction, and a default may allocate (`items: Array[int] = []`). Names and type expressions in
+  a field default resolve in the type's declaration scope, with the type's generic parameters
+  substituted at instantiation, as `[FN-5]`'s do; a field is named only through `this`, which a
+  default has not, since it runs before the value exists (`E1010`: "`this` can only be used in a
+  method, and a field default runs before `init`, when there is no object yet; set `on_tick` in
+  `init`: write `this.on_tick = fn(): ...` below `this.name = n`"; "`cap`'s default reads `n`, a
+  field of the same `Buf`, which has no value when defaults run; set `cap` in an `init`: `fn init(n:
+  int):` with `this.n = n` and `this.cap = n * 2`").
 * `[STR-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* A struct with a `drop` method, or with a
   field that is not `Copy`, is not `Copy`: `=` from a whole name hands it over (`[OWN-3]`). `Copy`
   is never implicit: `@derive(Copy)` requests it, and is `E2080` if a field is not `Copy` or the
@@ -573,13 +593,16 @@ extend Square implements Shape2D:
   (`[UNS-1]`). A foreign static read only in `unsafe` need not be `ThreadShared`: the programmer
   answers for sharing it between threads; one read without `unsafe` under `@ffi(immutable)`
   (`[FFI-10]`) must be (ODR-163).
-* `[STA-3]` *(new in 0.9.9)* *(changed in 0.9.15)* A static whose initialiser can be evaluated at
-  compile time is placed in the image with no initialisation code, except a `static mut` whose value
-  owns heap memory, which its functions may grow or free: that value is built on first access, never
-  in read-only memory (`[CT-5]`). Any other initialiser runs **once**, on first access, exactly once
-  even under concurrent first access; the first access blocks until it completes. A panic during
-  initialisation aborts. An initialiser that reaches its own static is `static initialisation
-  cycle`, a panic naming the chain.
+* `[STA-3]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A static whose initialiser
+  can be evaluated at compile time is placed in the image with no initialisation code, except a
+  value that owns heap memory (an `Array`, `String`, `Map`, `Set`, an `owns T`, a class object) in a
+  `static mut`, or in a `static` whose type is one a plain name may change (`[CT-5]`: a `Mutex`,
+  `RwLock`, `Cell`, `Atomic`, `Once`, channel end or `guarded by` field on the path to it, or a
+  class with a `@cached` method): that value is built on first access, never in read-only memory, so
+  that nothing grows, changes or frees constant data. Any other initialiser runs **once**, on first
+  access, exactly once even under concurrent first access; the first access blocks until it
+  completes. A panic during initialisation aborts. An initialiser that reaches its own static is
+  `static initialisation cycle`, a panic naming the chain.
 
 ```ember
 from std.sync import Mutex

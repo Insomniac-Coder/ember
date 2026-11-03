@@ -24,10 +24,14 @@ interface Device:
   `Copy` and `Send`. A stale handle is detected by its generation **in every profile**
   (`panic: stale TextureHandle (generation 7, current 9)`); there is no setting that removes the
   check.
-* `[GPU-2]` *(changed in 0.9.15)* `device.begin_frame() -> Option[Frame]`; `None` is normal (a minimised window). A `Frame` has
-  one owner and is not `Copy`, and `end_frame(owns frame: Frame)` takes it over (`device.end_frame(owns frame)`
-  ends the name `frame`), so ending a frame that never began, or ending one twice, is refused when
-  compiling.
+* `[GPU-2]` *(changed in 0.9.15)* *(changed in 0.9.20)* `device.begin_frame() -> Option[Frame]`;
+  `None` is normal (a minimised window). A `Frame` has one owner and is not `Copy`, and
+  `end_frame(owns frame: Frame)` takes it over (`device.end_frame(owns frame)` ends the name
+  `frame`), so ending a frame that never began, or ending one twice, is refused when compiling. A
+  `Frame` whose owner ends without `end_frame` is ended by its `drop`, which ends the frame as
+  `end_frame` does with nothing recorded: the device submits nothing for it and marks its fence
+  observed, so no later `begin_frame` waits for it, and what was made in its arena ends with it
+  (`[GPU-3]`).
 * `[GPU-3]` *(changed in 0.9.15)* `frame.arena()` is the frame's transient memory manager, an instance that lives as long as
   the `Frame`: a value made `using` it (`[ALC-1]`) lives no longer than the frame (`E3063`), so nothing
   made in it outlives `end_frame`.
@@ -49,45 +53,50 @@ Each resource has an access state the device tracks: owned by the CPU; recorded 
 flight in frame N until that frame's fence is observed; retired (destroyed while in flight, freed
 later).
 
-* `[GPU-4]` *(changed in 0.9.9)* Writing or mapping a resource that the GPU may still be reading is a
-  panic in every profile (`buffer is in flight (frame 42); use a per-frame ring or wait`).
+* `[GPU-4]` *(changed in 0.9.9)* Writing or mapping a resource that the GPU may still be reading is
+  a panic in every profile (`buffer is in flight (frame 42); use a per-frame ring or wait`).
   `Ring[T, N]` holds one resource per frame in flight (`ring.current(frame)`).
 * `[GPU-5]` Binding a resource declares its access; `cmd.read(h)`/`cmd.write(h)` declare it
   explicitly; barriers are derived from the declarations; `cmd.barrier(…)` remains available.
   `unsafe: cmd.native()` exposes the backend's command buffer.
-* `[GPU-12]` *(new in 0.9.15)* **Every draw and dispatch is checked against what is bound, in every profile.** The
-  command list keeps, for each bound vertex, instance and index buffer, how many elements it holds (its
-  size over its stride or index width), and before recording a draw compares the ranges the draw reads
-  with them: `draw(vertex_count, first_vertex, instance_count, first_instance)` against every bound
-  vertex buffer and every instance-rate buffer, `draw_indexed(index_count, first_index, …)` against the
-  bound index buffer, and `dispatch(x, y, z)` against the device's group-count limits. One compare per
-  range per draw; a range outside stops the program, naming the call, the numbers and the buffer
-  (`panic: cmd.draw_indexed(1000000) reads indices 0 to 999999, but the index buffer bound (ibo)
-  holds 3`). What these compares cannot see — the vertex numbers stored in an index buffer, an
-  indirect draw's arguments in GPU memory, a shader's own reads — is covered by robust buffer access,
-  which the device turns on wherever the backend offers it, so such a read past a buffer yields zero
-  or nothing instead of other memory. A device whose backend cannot offer it says so
-  (`device.robust_access()` is `false`), and its use is an asserted fact that `ember tcb` lists
-  (`[TCB-1]`). `unsafe: cmd.native()` records without these compares.
-* `[GPU-6]` *(changed in 0.9.15)* `device.destroy(h)` invalidates the handle at once and destroys the object after the GPU
-  has finished the frames that may use it. Ending the device waits for the GPU and flushes every
-  retirement list.
-* `[GPU-7]` *(changed in 0.9.15)* In `debug`, ending a device while handles are still live reports each leaked handle
-  with the place it was created.
-* `[GPU-8]` `History[T]` owns the per-frame copies of a temporal resource
+* `[GPU-12]` *(new in 0.9.15)* **Every draw and dispatch is checked against what is bound, in every
+  profile.** The command list keeps, for each bound vertex, instance and index buffer, how many
+  elements it holds (its size over its stride or index width), and before recording a draw compares
+  the ranges the draw reads with them: `draw(vertex_count, first_vertex, instance_count,
+  first_instance)` against every bound vertex buffer and every instance-rate buffer,
+  `draw_indexed(index_count, first_index, …)` against the bound index buffer, and `dispatch(x, y,
+  z)` against the device's group-count limits. One compare per range per draw; a range outside stops
+  the program, naming the call, the numbers and the buffer (`panic: cmd.draw_indexed(1000000) reads
+  indices 0 to 999999, but the index buffer bound (ibo) holds 3`). What these compares cannot see —
+  the vertex numbers stored in an index buffer, an indirect draw's arguments in GPU memory, a
+  shader's own reads — is covered by robust buffer access, which the device turns on wherever the
+  backend offers it, so such a read past a buffer yields zero or nothing instead of other memory. A
+  device whose backend cannot offer it says so (`device.robust_access()` is `false`), and its use is
+  an asserted fact that `ember tcb` lists for every `Device` an overlay implements (`[TCB-1]`).
+  `unsafe: cmd.native()` records without these compares.
+* `[GPU-6]` *(changed in 0.9.15)* `device.destroy(h)` invalidates the handle at once and destroys
+  the object after the GPU has finished the frames that may use it. Ending the device waits for the
+  GPU and flushes every retirement list.
+* `[GPU-7]` *(changed in 0.9.15)* In `debug`, ending a device while handles are still live reports
+  each leaked handle with the place it was created.
+* `[GPU-8]` *(changed in 0.9.20)* `History[T]` owns the per-frame copies of a temporal resource
   (`gpu.History[TextureHandle].new(device, desc, count=2)`) and gives `(prev, cur)` each frame,
-  forbidding reads of `cur` and writes of `prev` within a frame.
-* `[GPU-9]` *(changed in 0.9.15)* `std.gpu.graph` is an optional render-graph layer over `CommandList`: passes declare reads
-  and writes, `graph.compile()` orders them, aliases transient resources with disjoint lifetimes and
-  inserts transitions, and `pass.native(fn(ref mut cmd) => …)` records directly inside a graph.
+  forbidding reads of `cur` and writes of `prev` within a frame. `prev` is a `ReadHandle[T]` and
+  `cur` a `WriteHandle[T]`, two types `Copy` as handles are; `cmd.write` takes a `WriteHandle` and
+  `cmd.read` a `ReadHandle`, so the wrong one is `E2020` when compiling, at no cost while the
+  program runs.
+* `[GPU-9]` *(changed in 0.9.15)* `std.gpu.graph` is an optional render-graph layer over
+  `CommandList`: passes declare reads and writes, `graph.compile()` orders them, aliases transient
+  resources with disjoint lifetimes and inserts transitions, and `pass.native(fn(ref mut cmd) => …)`
+  records directly inside a graph.
 
 ## D.2 Shader interfaces
 
-* `[GPU-10]` `ember shader-bind <reflection.json>`, reading the reflection a SPIR-V toolchain produces,
-  generates a module with a `@gpu_layout(std140 | std430)` struct per uniform or storage block, with
-  compile-time layout assertions (`E8001` on a mismatch), a typed binding interface, the push-constant
-  struct and the vertex-input layout; binding a resource set built for another interface is a type
-  error.
+* `[GPU-10]` *(changed in 0.9.20)* `ember shader-bind <reflection.json>`, reading the reflection a
+  SPIR-V toolchain produces, generates a module with a `@gpu_layout(std140 | std430)` struct per
+  uniform or storage block, with compile-time layout assertions (`E8001` on a mismatch), a typed
+  binding interface, the push-constant struct and the vertex-input layout; binding a resource set
+  built for another interface is `E2020`, naming both interfaces.
 * `[GPU-11]` Ember assumes no shader language: anything that produces SPIR-V and reflection works.
 * A kernel language (`@gpu fn`) is reserved for a later version; `@gpu` and `std.gpu.kernel` are
   reserved names.

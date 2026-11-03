@@ -1,4 +1,4 @@
-# Audit of Ember 0.9.15_Hardened_10 → 0.9.20 (first pass, solo)
+# Audit of Ember 0.9.15_Hardened_10 → 0.9.20 (first pass solo; second pass with a workflow, §7)
 
 Written 2026-11-03 by a cloud session, solo, under the owner's delegation (`docs/AUTOPILOT.md` §3). The
 owner's task: read the latest 0.9.15 spec, find the security holes, memory-safety issues, consistency
@@ -11,13 +11,16 @@ session, or a workflow the owner allows, starts here and does not redo the readi
 
 ## 0. State, and how to resume
 
-* **Cut and pinned:** `docs/spec-source/Ember_v0.9.20_Hardened_1.md` (14,328 lines, 1,000 rules) is the
-  development target (`docs/spec-source/development-target.json`); sources frozen in
-  `tasks/spec-0.9.9/parts-0.9.20-h1/`; `tasks/spec-0.9.9/parts/` is the working copy. Commit `2dd9d26`
-  on branch `ccr-f5aedc9d-5l4mab` (the session's designated branch, not `main`).
-* **The change log** is Appendix H §H.51 (`H51_HEAD` in `tasks/spec-0.9.9/tools/appx_h.py`); the rulings
-  are N52 to N75 in `tasks/96/redesign/compiler-0.9.15/decisions.md` §12; the cut's record is in
-  `tasks/spec-0.9.9/HANDOFF.md` ("0.9.20_Hardened_1 CUT") and `docs/HANDOFF.md`'s first entry.
+* **Cut and pinned (second pass):** `docs/spec-source/Ember_v0.9.20_Hardened_2.md` (16,317 lines, 1,018
+  rules) is the development target (`docs/spec-source/development-target.json`); sources frozen in
+  `tasks/spec-0.9.9/parts-0.9.20-h2/` (Hardened_1's in `parts-0.9.20-h1/`); `tasks/spec-0.9.9/parts/` is
+  the working copy. On branch `ccr-f5aedc9d-5l4mab` (the session's designated branch, not `main`);
+  Hardened_1 was commit `2dd9d26`. **§7 below is the second pass's record**; §§1–6 are the first's.
+* **The change logs** are Appendix H §H.51 (Hardened_1) and §H.52 (Hardened_2; `H51_HEAD` and
+  `H52_HEAD` in `tasks/spec-0.9.9/tools/appx_h.py`); the rulings are N52 to N75 (§12) and N76 to N88 (§13)
+  in `tasks/96/redesign/compiler-0.9.15/decisions.md`; the cuts' records are in
+  `tasks/spec-0.9.9/HANDOFF.md` ("0.9.20_Hardened_1 CUT", "0.9.20_Hardened_2 CUT") and
+  `docs/HANDOFF.md`'s first entries.
 * **35 rules changed, none added or removed** (§2 below). Every change refuses a program that was unsafe,
   states a fact a compiler had to guess, or corrects the text; nothing new runs while a program runs, and
   no feature is taken away.
@@ -406,3 +409,47 @@ above (A02, A03, A05, A18, A25, A28, A38, A41 were checked and found to need not
 - A39 | p17 manifest example | version strings | CON | (F27)
 - A40 | p16 FFI-10 | the static `T` sentinel for an empty non-null span | ED/MEM | (F14)
 ```
+
+
+## 7. The second pass: 0.9.20_Hardened_2 (2026-11-03, a workflow of 29 agents, applied by the lead)
+
+The owner's task: "the final mile ... make it as foolproof as possible ... remove all the gaps, flaws and
+memory issues. Make the spec near 100% complete so that any agent can pick it and start implementing without
+any disruptions. Also answer all the open questions in this pass with the best judgement."
+
+* **The workflow** (`tasks/96/redesign/PLAN-spec-0.9.20.md` is the original oversized plan; what ran was its
+  reduction to 29 agents, Fable 5.1 at high effort, two at a time on 4 CPUs, 5.0M tokens, 2.9 h): nine
+  readers, one per group of Parts (G1 I–IV, G2 V–VI, G3 VII–VIII, G4 IX–X, G5 XI and XVII, G6 XII–XV, G7
+  XVI and Annex C, G8 XVIII and Annexes B and D, G9 the whole document as an implementer), each finding
+  written with the breaking program, the sentence that allows it and the rule text to write; nine
+  refuters, one per group, each finding refuted, narrowed or confirmed with a better fix where they had one
+  and the items the reader missed; for O1, O2 and N38–N40 three designers (speed first, safety first, the
+  newcomer first) and three judges apiece, the judges scoring and grafting. Results in
+  `tasks/96/redesign/audit-0.9.20/round1/` (`G1.json`–`G9.json`, `ruling-*.json`, `digest.txt`,
+  `counts.json`, `applied.md`).
+* **Found:** 163 findings (108 confirmed, 45 narrowed, 10 refuted) and 37 missed items; 3 judged rulings.
+  **Fixed:** the 153 non-refuted findings, the 37 missed items, the 3 judged rulings and the 7 smaller
+  questions (O3, O4, O5, O6, O8, O9, O10) ruled by the lead: 222 rules changed or added (the rows of §H.52;
+  18 new rules, 4 new codes, 3 retired), the document 1,000 → 1,018 rules. Every open item of §3 is now
+  ruled or closed: O1 N76, O2 N77, O3 N80, O4 N81, O5 N82, O6 N83 (reverses half of verdict 135, reported),
+  O7 N79, O8 N84, O9 N85, O10 N86, O11 by design (`[THR-14]`: `checked_fetch_add` exists; the text says
+  it), O12 read by the readers of round 1 (every Part was read), O13 the examples are unbuilt syntax
+  (41 of 54 blocks compile, as before), O14 Annex A unchanged (`second = shares mut other` on a local
+  stays legal under `[RC-1]`).
+* **Applied how:** one asserting script per group (the session scratchpad; the scripts assert the text they
+  replace, re-wrap the bullet at 100 columns and add the `*(changed in 0.9.20)*` marker), the refuter's
+  better fix where it gave one and the reader's text otherwise, merged where two findings or a ruling
+  covered one rule (G5-03 is covered by N77; G9-04 by G3-02's rule; G9-05 by widening `[MOD-9a]`). The
+  registry (`tools/p17a_0915.py`) gained the rows each change needs and `compiler/ember_diag/src/codes.rs`
+  the four new codes (`E0012`, `E0119`, `E1042`, `E2074`) and the re-cited ones (`E5031` → `[FFI-32]`,
+  `E5034` → `[FFI-48]`, `E5058` → `[FFI-39b]`, `E5059` → `[FFI-17d]`); `E5051`, `E5057` and `E5066` are
+  retired (named by no rule that can emit them).
+* **Checked at the cut:** `check_ids` 0 problems (1,018 rules), `check_citations` 0 undefined,
+  `code_registry --check` 0 problems (269 live, 36 retired), `split_inline` two citation flags (FFI-52,
+  UNS-8: citations after a semicolon, not definitions), `rule_index --write-baseline --allow-growth` then
+  green, `spec_check` no new failures, `phase_progress --write` then `--check` green, `check_examples` 41
+  of 54 (the rest unbuilt syntax), `cargo test -p ember_diag -p ember_parser` green (the registry test
+  reads the pinned target), the milestones tests (see the handoff for the run's result).
+* **To resume or to cut Hardened_3:** the recipe of §0 with the numbers moved by one (`CURRENT`,
+  `V0920_H2_PARTS`, `H53_HEAD`, `v0920_h3()`); the exit checks the plan named (an implementer and an
+  attacker over the changed Parts) were not run, for the owner's credits: a small pass may run them.

@@ -23,16 +23,18 @@ Every rule of this document, by family, with the Part that defines it.
 | `[ALC-3]` | IX | A binary package may replace the global allocator with `[build] … |
 | `[ALC-4]` | IX | Allocation failure in a standard container panics (`out of memory`). … |
 | `[ALC-5]` | IX | *(new in 0.9.15)* An instance stays as its values need it. While a … |
+| `[ALC-5a]` | IX | *(new in 0.9.20)* A link holds the block. A `weakref` link to a value … |
+| `[ALC-6]` | IX | *(new in 0.9.20)* A making line has its instance's effects, and fails … |
 
 ## ARN
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[ARN-1]` | IX | *(changed in 0.9.15)* `Arena` is a struct, and not `Copy`. Its … |
-| `[ARN-2]` | IX | *(changed in 0.9.15)* Values placed with `alloc*` are never dropped … |
-| `[ARN-3]` | IX | *(changed in 0.9.15)* `alloc(owns v: T) -> ref mut T` hands `v` over … |
+| `[ARN-1]` | IX | *(changed in 0.9.15)* *(changed in 0.9.20)* `Arena` is a struct, and … |
+| `[ARN-2]` | IX | *(changed in 0.9.15)* *(changed in 0.9.20)* Values placed with … |
+| `[ARN-3]` | IX | *(changed in 0.9.15)* *(changed in 0.9.20)* `alloc(owns v: T) -> ref … |
 | `[ARN-4]` | IX | *(changed in 0.9.15)* *(changed in 0.9.20)* A growing `Arena` carries … |
-| `[ARN-5]` | IX | `ArenaArray[T]` and `ArenaMap[K, V]` are fixed-capacity containers … |
+| `[ARN-5]` | IX | *(changed in 0.9.20)* `ArenaArray[T]` and `ArenaMap[K, V]` are … |
 | `[ARN-5c]` | IX | `ArenaArray[T]` provides `len`, `capacity`, `is_empty`, `get(i) -> … |
 | `[ARN-5d]` | IX | `ArenaMap[K, V]` (with `K: needs (Eq, Hash)`) provides `len`, … |
 | `[ARN-5g]` | IX | No operation of either container touches the arena after … |
@@ -40,7 +42,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[ARN-7]` | IX | *(changed in 0.9.15)* *(changed in 0.9.20)* No operation lowers an … |
 | `[ARN-8]` | IX | *(changed in 0.9.15)* `MaybeUninit[T]` has the size and alignment of … |
 | `[ARN-10]` | IX | A panic inside `T.default()` during `alloc_array` aborts (`[PAN-1]`); … |
-| `[ARN-11]` | IX | `Zeroable` is an `unsafe` marker: all-zero bytes are a valid `T`. The … |
+| `[ARN-11]` | IX | *(changed in 0.9.20)* `Zeroable` is an `unsafe` marker: all-zero … |
 
 ## ATT
 
@@ -62,8 +64,8 @@ Every rule of this document, by family, with the Part that defines it.
 | `[BCK-4]` | XVIII | *(changed in 0.9.15)* Storage end. A place whose storage ends (scope … |
 | `[BCK-5]` | XVIII | *(changed in 0.9.15)* A changeable argument takes effect when the … |
 | `[BCK-6]` | XVIII | *(changed in 0.9.15)* Required acceptances. Because liveness is … |
-| `[BCK-7]` | XVIII | *(changed in 0.9.15)* Links. A place reached through a link … |
-| `[BCK-8]` | XVIII | *(new in 0.9.15)* Summaries. For each function the compiler works out … |
+| `[BCK-7]` | XVIII | *(changed in 0.9.15)* *(changed in 0.9.20)* Links. A place reached … |
+| `[BCK-8]` | XVIII | *(new in 0.9.15)* *(changed in 0.9.20)* Summaries. For each function … |
 
 ## BEN
 
@@ -82,7 +84,7 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[BLD-1]` | XVII | *(changed in 0.9.10)* The module (one file) is the unit of front-end … |
-| `[BLD-2]` | XVII | *(changed in 0.9.10)* *(changed in 0.9.15)* A module's front-end … |
+| `[BLD-2]` | XVII | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* A … |
 | `[BLD-4]` | XVII | *(changed in 0.9.10)* The C compiler and linker run through a … |
 | `[BLD-5]` | XVII | Output goes to `target/<profile>/{bin,lib,c,obj,bind,inspect}`. |
 | `[BLD-6]` | XVII | *(changed in 0.9.10)* `lto = "off" \| "thin" \| "on"`. A value the … |
@@ -92,21 +94,22 @@ Every rule of this document, by family, with the Part that defines it.
 | `[BLD-10]` | XVII | *(changed in 0.9.10)* The compiler is made as fast as it can be, and … |
 | `[BLD-11]` | XVII | A package that omits a `[STD-6]` layer cannot use it or depend on a … |
 | `[BLD-13]` | XVII | Builds are reproducible: the same inputs give a byte-identical … |
-| `[BLD-14]` | XVII | *(new in 0.9.15)* Facts worked out at a package's edge. A fact the … |
+| `[BLD-14]` | XVII | *(new in 0.9.15)* *(changed in 0.9.20)* Facts worked out at a … |
 | `[BLD-15]` | XVII | *(new in 0.9.15)* A link that hangs is an error (verdict 124). Each … |
+| `[BLD-16]` | XVII | *(new in 0.9.20)* No fact of the whole program decides a package's … |
 
 ## BLD-FFI
 
 | Rule | Part | Begins |
 |---|---|---|
 | `[BLD-FFI-1]` | XVI | *(changed in 0.9.15)* The manifest's `[c]` section names the C … |
-| `[BLD-FFI-1a]` | XVI | Each `import c` is parsed and its shim compiled with the package's C … |
+| `[BLD-FFI-1a]` | XVI | *(changed in 0.9.20)* Each `import c` is parsed and its shim compiled … |
 | `[BLD-FFI-1b]` | Annex C | The MSVC runtime-library switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL` … |
 | `[BLD-FFI-2]` | XVI | The toolchain ships a CMake module: `ember_add_library(name KIND … |
-| `[BLD-FFI-3]` | XVI | *(changed in 0.9.15)* Existing libraries are linked by name (`link = … |
+| `[BLD-FFI-3]` | XVI | *(changed in 0.9.15)* *(changed in 0.9.20)* Existing libraries are … |
 | `[BLD-FFI-4]` | Annex C | Ember's emitted C and the project's C++ are compiled by the same … |
 | `[BLD-FFI-5]` | Annex C | `ember build --emit header` with `--cpp` also writes a C++ header … |
-| `[BLD-FFI-5a]` | Annex C | *(changed in 0.9.15)* With the C++ header, an exported function may … |
+| `[BLD-FFI-5a]` | Annex C | *(changed in 0.9.15)* *(changed in 0.9.20)* With the C++ header, an … |
 
 ## BRW
 
@@ -128,11 +131,11 @@ Every rule of this document, by family, with the Part that defines it.
 | `[BRW-14]` | VII | *(new in 0.9.15)* Names that keep their place. A parameter, a loop … |
 | `[BRW-15]` | VII | *(new in 0.9.15)* A plain name never changes anything. A plain … |
 | `[BRW-16]` | VII | *(new in 0.9.15)* *(changed in 0.9.20)* Positions. A name for a list … |
-| `[BRW-17]` | VII | *(new in 0.9.15)* Addresses. Every other view (a kept view; a view … |
+| `[BRW-17]` | VII | *(new in 0.9.15)* *(changed in 0.9.20)* Addresses. Every other view … |
 | `[BRW-18]` | VII | *(new in 0.9.15)* Loops, generators included. While a `for` loop … |
 | `[BRW-19]` | VII | *(new in 0.9.15)* Temporaries. A temporary lives until the last use … |
 | `[BRW-20]` | VII | *(new in 0.9.15)* Guards. A view made through a lock's guard (`g[0]`, … |
-| `[BRW-21]` | VII | *(new in 0.9.15)* The call check: a view argument and what the callee … |
+| `[BRW-21]` | VII | *(new in 0.9.15)* *(changed in 0.9.20)* The call check: a view … |
 | `[BRW-22]` | VII | *(new in 0.9.15)* Noalias. Every `ref mut` parameter, a `MutSpan` one … |
 
 ## BUD
@@ -163,7 +166,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[CG-C-1]` | XVIII | The emitted C has no undefined behaviour. Checked signed arithmetic … |
 | `[CG-C-2]` | XVIII | Accepted programs compile. A program Ember accepts never produces C … |
 | `[CG-C-3]` | XVIII | Cross-module inlining. Because each module is one translation unit, … |
-| `[CG-C-3a]` | XVIII | *(changed in 0.9.10)* `@inline` is binding: the function is emitted … |
+| `[CG-C-3a]` | XVIII | *(changed in 0.9.10)* *(changed in 0.9.20)* `@inline` is binding: the … |
 | `[CG-C-3b]` | XVIII | The bodies it exports are part of the interface hash (`[BLD-2]`). |
 | `[CG-C-4]` | XVIII | *(changed in 0.9.15)* Aliasing facts. Every `ref mut` parameter, a … |
 | `[CG-C-5]` | XVIII | Every panic function is `_Noreturn` and cold, and each check branches … |
@@ -201,7 +204,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[CLI-18]` | VIII | *(changed in 0.9.15)* For both commands `<path>` is a package … |
 | `[CLI-19]` | XVII | The implementation matrix. `ember --version --matrix` prints, for … |
 | `[CLI-20]` | XVII | *(changed in 0.9.15)* *(changed in 0.9.20)* `ember fmt --migrate` … |
-| `[CLI-21]` | XVII | `ember run --interp` runs a program on the compile-time evaluator … |
+| `[CLI-21]` | XVII | *(changed in 0.9.20)* `ember run --interp` runs a program on the … |
 
 ## CLO
 
@@ -213,13 +216,13 @@ Every rule of this document, by family, with the Part that defines it.
 | `[CLO-4]` | VI | *(changed in 0.9.10)* *(changed in 0.9.15)* A function value does not … |
 | `[CLO-5]` | VI | *(changed in 0.9.15)* A function value that captures an object with … |
 | `[CLO-6]` | VI | *(changed in 0.9.15)* A function that gives one of its captures away … |
-| `[CLO-6a]` | VI | *(changed in 0.9.15)* A `once fn` value the program owns, including … |
-| `[CLO-7]` | VI | *(changed in 0.9.10)* *(changed in 0.9.15)* Standard-library … |
-| `[CLO-10]` | VI | *(changed in 0.9.10)* *(changed in 0.9.15)* A function value is two … |
+| `[CLO-6a]` | VI | *(changed in 0.9.15)* *(changed in 0.9.20)* A `once fn` value is … |
+| `[CLO-7]` | VI | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* … |
+| `[CLO-10]` | VI | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* A … |
 | `[CLO-11]` | VI | A call `recv.name(args)` where `recv`'s type has no method `name` but … |
 | `[CLO-12]` | VI | *(changed in 0.9.15)* A local function (`[GRM-28]`) is a named … |
-| `[CLO-14]` | VI | *(changed in 0.9.15)* A callable type may be written as a type … |
-| `[CLO-16]` | VI | *(new in 0.9.15)* `thread_shared fn()`: a function any thread may … |
+| `[CLO-14]` | VI | *(changed in 0.9.15)* *(changed in 0.9.20)* A callable type may be … |
+| `[CLO-16]` | VI | *(new in 0.9.15)* *(changed in 0.9.20)* `thread_shared fn()`: a … |
 | `[CLO-17]` | VI | *(new in 0.9.15)* *(changed in 0.9.20)* What a function value does is … |
 | `[CLO-18]` | VI | *(new in 0.9.15)* *(changed in 0.9.20)* A function value that changes … |
 | `[CLO-19]` | VI | *(new in 0.9.15)* A lambda's parameters say what they receive. A … |
@@ -233,7 +236,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[CLS-3]` | V | A class with no `init` and no base class gets a memberwise … |
 | `[CLS-4]` | V | *(changed in 0.9.15)* A class is final unless declared `open` or … |
 | `[CLS-5]` | V | *(changed in 0.9.15)* Interface calls on a class object are … |
-| `[CLS-6]` | V | *(changed in 0.9.15)* Destruction runs the derived `drop`, then the … |
+| `[CLS-6]` | V | *(changed in 0.9.15)* *(changed in 0.9.20)* Destruction runs the … |
 | `[CLS-7]` | V | *(changed in 0.9.15)* `this` in a class method. Inside a class method … |
 | `[CLS-7a]` | V | *(changed in 0.9.15)* Inside `drop`, `this` MUST NOT be stored … |
 | `[CLS-9]` | V | *(changed in 0.9.10)* *(changed in 0.9.15)* A `let` field is set only … |
@@ -261,8 +264,8 @@ Every rule of this document, by family, with the Part that defines it.
 | `[CORO-3]` | VI | *(changed in 0.9.15)* `Generator[Y, R]` in a signature names the … |
 | `[CORO-4]` | VI | The compiler rewrites the body into a state machine over the frame: … |
 | `[CORO-5]` | VI | *(changed in 0.9.15)* A generator allocates nothing. The frame's size … |
-| `[CORO-6]` | VI | *(changed in 0.9.15)* A view into the generator's own frame (a view … |
-| `[CORO-7]` | VI | Dropping a suspended generator drops exactly the locals live at its … |
+| `[CORO-6]` | VI | *(changed in 0.9.15)* *(changed in 0.9.20)* A view into the … |
+| `[CORO-7]` | VI | *(changed in 0.9.20)* Dropping a suspended generator drops exactly … |
 | `[CORO-8]` | VI | A generator's effect set is the union over its whole body; contracts … |
 | `[CORO-9]` | VI | A frame never points into itself in Safe code; `unsafe` code that … |
 | `[CORO-10]` | VI | A `gen fn` may not be `extern`, `@export`ed or passed to C (`E2222`). |
@@ -280,15 +283,16 @@ Every rule of this document, by family, with the Part that defines it.
 | `[COST-3]` | X | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* The … |
 | `[COST-4]` | X | `ember inspect --cost <item>` prints every row that applies to an … |
 | `[COST-5]` | X | A rule that introduces an implicit cost MUST add a row to this table; … |
-| `[COST-6]` | X | *(new in 0.9.15)* What stops the program, and what it says. Of the … |
+| `[COST-6]` | X | *(new in 0.9.15)* *(changed in 0.9.20)* What stops the program, and … |
 
 ## CT
 
 | Rule | Part | Begins |
 |---|---|---|
 | `[CT-1]` | XIV | These are evaluated during compilation: `comptime(e)`; `comptime:` … |
+| `[CT-1a]` | XIV | *(new in 0.9.20)* A function run at compile time reaches no module … |
 | `[CT-2]` | XIV | *(changed in 0.9.10)* *(changed in 0.9.20)* An operation that cannot … |
-| `[CT-3]` | XIV | Each evaluation is limited to 10⁸ steps and 256 MB of evaluator heap … |
+| `[CT-3]` | XIV | *(changed in 0.9.20)* Each evaluation is limited to 10⁸ steps, a step … |
 | `[CT-4]` | XIV | *(changed in 0.9.10)* Compile-time evaluation is deterministic by … |
 | `[CT-5]` | XIV | *(changed in 0.9.15)* *(changed in 0.9.20)* Where results live. A … |
 | `[CT-6]` | XIV | `comptime(e)` is an expression whose value is `e` evaluated at … |
@@ -299,8 +303,8 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[CTL-0]` | VI | The condition of `if`, `elif`, `while` and a match guard MUST be a … |
-| `[CTL-1]` | VI | *(changed in 0.9.15)* `for names in e:` walks: * a place `e` whose … |
-| `[CTL-2]` | VI | *(changed in 0.9.15)* While a `for` loop walks a collection, nothing … |
+| `[CTL-1]` | VI | *(changed in 0.9.15)* *(changed in 0.9.20)* `for names in e:` walks: … |
+| `[CTL-2]` | VI | *(changed in 0.9.15)* *(changed in 0.9.20)* While a `for` loop walks … |
 | `[CTL-3]` | VI | *(changed in 0.9.10)* `a..b` (`Range`), `a..=b` (`RangeInclusive`) … |
 | `[CTL-3b]` | VI | *(changed in 0.9.10)* *(changed in 0.9.15)* Iteration over ranges, … |
 | `[CTL-4]` | VI | The `else` of `while` or `for` runs when the loop ends without … |
@@ -323,8 +327,8 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[DET-1]` | X | `@deterministic` on a function or module is a contract: `Nondet` MUST … |
-| `[DET-2]` | X | *(changed in 0.9.15)* `Nondet` is introduced by exactly: … |
-| `[DET-3]` | X | *(changed in 0.9.15)* A `@deterministic` function may call only … |
+| `[DET-2]` | X | *(changed in 0.9.15)* *(changed in 0.9.20)* `Nondet` is introduced by … |
+| `[DET-3]` | X | *(changed in 0.9.15)* *(changed in 0.9.20)* A `@deterministic` … |
 | `[DET-4]` | X | `std.math.det` provides `sin`, `cos`, `tan`, `exp`, `log`, `pow`, … |
 | `[DET-5]` | X | *(changed in 0.9.15)* Inside a `@deterministic` function the backend … |
 | `[DET-6]` | X | `@deterministic` constrains results, not timing. |
@@ -343,7 +347,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[DIA-4]` | XVII | Contract errors print the whole call chain (`[EFF-6]`). |
 | `[DIA-5]` | XVII | FFI errors name the header and the C declaration. |
 | `[DIA-6]` | XVII | Every code has a page, `docs/errors/EXXXX.md`, with a program that … |
-| `[DIA-6a]` | XVII | The code registry is exhaustive in both directions: every code this … |
+| `[DIA-6a]` | XVII | *(changed in 0.9.20)* The code registry is exhaustive in both … |
 | `[DIA-7]` | XVII | *(changed in 0.9.15)* Every ownership and view error is classified … |
 | `[DIA-7a]` | XVII | Every code in `E3000`–`E3499` belongs to exactly one shape of … |
 | `[DIA-8]` | XVII | *(changed in 0.9.15)* `ember explain --view <file>:<line>` prints, … |
@@ -403,20 +407,21 @@ Every rule of this document, by family, with the Part that defines it.
 | `[DSJ-2]` | IX | *(changed in 0.9.15)* The fact belongs to the two names, not to a … |
 | `[DSJ-3]` | IX | *(changed in 0.9.15)* Where the fact holds, the two names are treated … |
 | `[DSJ-4]` | IX | It applies to `Span`, `MutSpan`, `SoA` columns and arena views; two … |
-| `[DSJ-5]` | IX | *(changed in 0.9.15)* `assert_disjoint(a, b)` makes the same … |
+| `[DSJ-5]` | IX | *(changed in 0.9.15)* *(changed in 0.9.20)* `assert_disjoint(a, b)` … |
 | `[DSJ-6]` | IX | *(changed in 0.9.15)* `check_disjoint` and `assert_disjoint` are … |
 | `[DSJ-7]` | IX | *(changed in 0.9.15)* `assume_disjoint(a, b)`, an `unsafe fn`, gives … |
 | `[DSJ-8]` | IX | There is no form that checks in one profile and assumes in another … |
 | `[DSJ-9]` | IX | *(changed in 0.9.15)* `check_disjoint_all(v1, …, vn)` and … |
 | `[DSJ-10]` | IX | *(new in 0.9.15)* Making a view and comparing two address ranges read … |
+| `[DSJ-11]` | IX | *(new in 0.9.20)* Views known apart. Two views are known apart, with … |
 
 ## DSP
 
 | Rule | Part | Begins |
 |---|---|---|
 | `[DSP-1]` | VIII | *(changed in 0.9.15)* A call is dispatched statically when the … |
-| `[DSP-2]` | VIII | A virtual call loads its slot from the object's type table; slots are … |
-| `[DSP-3]` | VIII | *(changed in 0.9.15)* A call through a `dyn I` value of a class … |
+| `[DSP-2]` | VIII | *(changed in 0.9.20)* A virtual call loads its slot from the object's … |
+| `[DSP-3]` | VIII | *(changed in 0.9.15)* *(changed in 0.9.20)* A call through a `dyn I` … |
 | `[DSP-4]` | VIII | *(changed in 0.9.15)* Kind tests. A value of an interface type (`dyn … |
 | `[DSP-5]` | VIII | *(changed in 0.9.15)* With the whole program visible, a virtual call … |
 | `[DSP-6]` | VIII | *(new in 0.9.15)* Casts. `cast s as Circle` gives the `Circle` and … |
@@ -426,9 +431,10 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[ECS-1]` | XII | *(changed in 0.9.15)* `Entity` is a 32-bit generational handle: a … |
-| `[ECS-2]` | XII | *(changed in 0.9.15)* Each component type is stored in a pool of its … |
+| `[ECS-2]` | XII | *(changed in 0.9.15)* *(changed in 0.9.20)* Each component type is … |
 | `[ECS-3]` | XII | *(changed in 0.9.15)* The registry. `Registry` (EnTT's … |
-| `[ECS-4]` | XII | *(changed in 0.9.15)* Views. `reg.view[A, B]()` walks the entities … |
+| `[ECS-4]` | XII | *(changed in 0.9.15)* *(changed in 0.9.20)* Views. `reg.view[A, B]()` … |
+| `[ECS-4a]` | XII | *(new in 0.9.20)* The component types listed in one `view`, … |
 | `[ECS-5]` | XII | *(changed in 0.9.15)* Changing the registry while a view walks it. A … |
 | `[ECS-6]` | XII | Iteration order is insertion order with swap-remove holes: … |
 | `[ECS-7]` | XII | *(changed in 0.9.15)* Any type is a component, with no registration … |
@@ -439,12 +445,13 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[EFF-1]` | X | *(changed in 0.9.15)* Effects, and the function's summary (what it … |
-| `[EFF-2]` | X | *(changed in 0.9.15)* A call through a function value contributes the … |
+| `[EFF-1]` | X | *(changed in 0.9.15)* *(changed in 0.9.20)* Effects, and the … |
+| `[EFF-2]` | X | *(changed in 0.9.15)* *(changed in 0.9.20)* A call through a function … |
+| `[EFF-2a]` | X | *(new in 0.9.20)* A place another package can fill. A function-typed … |
 | `[EFF-3]` | X | *(changed in 0.9.15)* An `extern` function carries the effects its … |
-| `[EFF-4]` | X | *(changed in 0.9.15)* Effects and summaries are part of a function's … |
+| `[EFF-4]` | X | *(changed in 0.9.15)* *(changed in 0.9.20)* Effects and summaries are … |
 | `[EFF-5]` | X | Each contract in the table forbids its effect in the function's … |
-| `[EFF-6]` | X | A contract is checked over the whole reachable call graph — callees, … |
+| `[EFF-6]` | X | *(changed in 0.9.20)* A contract is checked over the whole reachable … |
 | `[EFF-7]` | X | `@assume_noalloc(call)`, an expression admitted only inside `unsafe` … |
 | `[EFF-8]` | X | An `override` inherits its base method's contracts. |
 | `[EFF-9]` | X | *(changed in 0.9.15)* `RuntimeCheck(k)` enters a function's effect … |
@@ -452,7 +459,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[EFF-11]` | X | *(changed in 0.9.15)* Every emitted check carries one reason, and … |
 | `[EFF-12]` | X | *(changed in 0.9.15)* `@no_alias_checks` permits … |
 | `[EFF-14]` | X | *(changed in 0.9.15)* Contracts compose; the usual inner-loop set is … |
-| `[EFF-15]` | X | *(changed in 0.9.15)* Effects and contract verdicts are computed … |
+| `[EFF-15]` | X | *(changed in 0.9.15)* *(changed in 0.9.20)* Effects and contract … |
 | `[EFF-16]` | X | *(changed in 0.9.15)* `@nopanic(explicit)` forbids only the panics … |
 | `[EFF-17]` | X | `@nopanic(explicit)` is spelled with its argument; bare `@nopanic` is … |
 | `[EFF-18]` | X | *(changed in 0.9.15)* Effects are independent: a blocking … |
@@ -480,8 +487,8 @@ Every rule of this document, by family, with the Part that defines it.
 |---|---|---|
 | `[ERR-1]` | XIII | `Option[T]` is absence: `Some(v)` or `None`. `Result[T, E = … |
 | `[ERR-2]` | XIII | *(changed in 0.9.15)* `e?` on a `Result[T, E]` in a function … |
-| `[ERR-3]` | XIII | *(changed in 0.9.15)* `Error` is the interface of error types: … |
-| `[ERR-4]` | XIII | *(changed in 0.9.15)* `Option` and `Result` provide … |
+| `[ERR-3]` | XIII | *(changed in 0.9.15)* *(changed in 0.9.20)* `Error` is the interface … |
+| `[ERR-4]` | XIII | *(changed in 0.9.15)* *(changed in 0.9.20)* `Option` and `Result` … |
 | `[ERR-5]` | XIII | `Result` is `@must_use`: discarding one is `W2190` (an error under … |
 | `[ERR-6]` | XIII | *(changed in 0.9.10)* A foreign function's status code becomes a … |
 | `[ERR-7]` | XIII | Identity conversion. The prelude provides `From[T]` for every `T` … |
@@ -498,7 +505,7 @@ Every rule of this document, by family, with the Part that defines it.
 |---|---|---|
 | `[EXC-1]` | VIII | *(changed in 0.9.15)* A change of an object's field while a read-only … |
 | `[EXC-2]` | VIII | *(changed in 0.9.15)* A read of an object's field through another … |
-| `[EXC-3]` | VIII | *(changed in 0.9.15)* Which names may reach one object. Two paths may … |
+| `[EXC-3]` | VIII | *(changed in 0.9.15)* *(changed in 0.9.20)* Which names may reach one … |
 | `[EXC-15]` | VIII | *(changed in 0.9.15)* A method and its object. Inside a method its … |
 | `[EXC-16]` | VIII | *(changed in 0.9.15)* Giving a field that owns memory a new value … |
 | `[EXC-17]` | VIII | *(changed in 0.9.15)* Writing a number or a `bool` (a field of a … |
@@ -511,9 +518,9 @@ Every rule of this document, by family, with the Part that defines it.
 | `[EXP-1]` | VI | Operands, arguments, and the elements of tuple, list, map and set … |
 | `[EXP-2]` | VI | An assignment evaluates its right side first, into a temporary if it … |
 | `[EXP-3]` | VI | `and` and `or` short-circuit. `x if c else y` evaluates `c` and then … |
-| `[EXP-4]` | VI | *(changed in 0.9.15)* A temporary created while evaluating an … |
+| `[EXP-4]` | VI | *(changed in 0.9.15)* *(changed in 0.9.20)* A temporary created while … |
 | `[EXP-5]` | VI | *(changed in 0.9.15)* A change, a `ref mut` name and a hand-over … |
-| `[EXP-6]` | VI | *(changed in 0.9.15)* A whole name of a type that is not `Copy`, used … |
+| `[EXP-6]` | VI | *(changed in 0.9.15)* *(changed in 0.9.20)* A whole name of a type … |
 | `[EXP-9]` | VI | *(changed in 0.9.15)* `a is b` tests whether two class objects (or … |
 | `[EXP-10]` | VI | *(new in 0.9.10)* *(changed in 0.9.15)* Optional chaining. `a?.f` and … |
 
@@ -532,10 +539,10 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-6a]` | XVI | *(changed in 0.9.10)* An object-like macro is imported when, after … |
 | `[FFI-6b]` | XVI | *(changed in 0.9.10)* A function-like macro is exposed only when an … |
 | `[FFI-7]` | XVI | A header is re-parsed only when its content, its overlay, or a … |
-| `[FFI-8]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* Type mapping. |
+| `[FFI-8]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* … |
 | `[FFI-9]` | XVI | `extern "C"` is the platform C ABI (SysV AMD64, Windows x64, … |
 | `[FFI-10]` | XVI | *(changed in 0.9.15)* *(changed in 0.9.20)* An `unsafe extern "C":` … |
-| `[FFI-11]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* Contract vocabulary. A … |
+| `[FFI-11]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* … |
 | `[FFI-11a]` | XVI | A pointer contract with no count word is `E5012`, which lists the … |
 | `[FFI-11b]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* The two-call enumeration … |
 | `[FFI-11c]` | XVI | `TODO(count)`, `TODO(nullable)`, `TODO(ownership)` and … |
@@ -546,17 +553,17 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-15]` | XVI | *(changed in 0.9.15)* `CStrView` is a read-only view of a … |
 | `[FFI-16]` | XVI | *(changed in 0.9.10)* An enum `E` marked `@ffi(status=E, ok=X, … |
 | `[FFI-17]` | Annex C | `import cpp "Header.hpp" with (project="engine", overlay="…", … |
-| `[FFI-17a]` | Annex C | *(changed in 0.9.10)* *(changed in 0.9.10)* *(changed in 0.9.15)* |
+| `[FFI-17a]` | Annex C | *(changed in 0.9.10)* *(changed in 0.9.10)* *(changed in 0.9.15)* … |
 | `[FFI-17b]` | Annex C | Templates are available only as explicit instantiations listed in … |
 | `[FFI-17c]` | Annex C | Destruction of an Ember class derived from a C++ class is … |
-| `[FFI-17d]` | Annex C | *(changed in 0.9.15)* `@ffi(trampoline, owner="ember")`, the default, … |
-| `[FFI-17e]` | Annex C | *(changed in 0.9.15)* The bridge types `CppVector[T]`, `CppString` … |
-| `[FFI-17f]` | Annex C | `ember inspect` reports each bridge operation that is a thunk call … |
-| `[FFI-20a]` | XVI | A declaration the importer cannot represent is recorded with the … |
-| `[FFI-21]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* A C function-pointer … |
+| `[FFI-17d]` | Annex C | *(changed in 0.9.15)* *(changed in 0.9.20)* `@ffi(trampoline, … |
+| `[FFI-17e]` | Annex C | *(changed in 0.9.15)* *(changed in 0.9.20)* The bridge types … |
+| `[FFI-17f]` | Annex C | *(changed in 0.9.20)* `ember inspect` reports each bridge operation … |
+| `[FFI-20a]` | XVI | *(changed in 0.9.20)* A declaration the importer cannot represent is … |
+| `[FFI-21]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* A C … |
 | `[FFI-21a]` | XVI | *(new in 0.9.10)* *(changed in 0.9.15)* A parameter C passes as a … |
 | `[FFI-22]` | XVI | *(changed in 0.9.15)* Every exported function and trampoline first … |
-| `[FFI-23]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* … |
+| `[FFI-23]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* … |
 | `[FFI-24]` | Annex C | Every imported C++ function has an exception policy, with a default. … |
 | `[FFI-24b]` | Annex C | An overlay may assert `@ffi(noexcept)` for a function the header … |
 | `[FFI-24c]` | Annex C | *(changed in 0.9.10)* `ember inspect --cost`, which reads the built … |
@@ -575,16 +582,16 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-30c]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* A package may distribute … |
 | `[FFI-31]` | XVI | *(changed in 0.9.10)* A `cdylib` links its own copy of the runtime. … |
 | `[FFI-31a]` | XVI | Its thread detachment never relies on a TLS destructor in the … |
-| `[FFI-31b]` | XVI | *(changed in 0.9.15)* No owning Ember value crosses a module … |
+| `[FFI-31b]` | XVI | *(changed in 0.9.15)* *(changed in 0.9.20)* No owning Ember value … |
 | `[FFI-31c]` | XVI | With `[build] runtime = "shared"`, several Ember modules in one … |
 | `[FFI-32]` | Annex C | *(changed in 0.9.15)* A C++ class that is standard-layout and … |
-| `[FFI-33]` | XVI | *(changed in 0.9.15)* The export attribute's `threads=any \| main \| … |
+| `[FFI-33]` | XVI | *(changed in 0.9.15)* *(changed in 0.9.20)* The export attribute's … |
 | `[FFI-33a]` | XVI | *(changed in 0.9.15)* Attaching a thread (`[FFI-22]`) gives it no … |
-| `[FFI-33b]` | XVI | *(changed in 0.9.15)* `returns_owned` results and callbacks may carry … |
+| `[FFI-33b]` | XVI | *(changed in 0.9.15)* *(changed in 0.9.20)* `returns_owned` results … |
 | `[FFI-33c]` | XVI | *(changed in 0.9.15)* Under `threads = main`, the exported wrapper … |
-| `[FFI-35a]` | XVI | *(changed in 0.9.15)* A parameter with no `retained` word is recorded … |
+| `[FFI-35a]` | XVI | *(changed in 0.9.15)* *(changed in 0.9.20)* A parameter with no … |
 | `[FFI-36]` | Annex C | *(changed in 0.9.15)* A C++ function returning a raw pointer with no … |
-| `[FFI-36a]` | XVI | *(changed in 0.9.15)* `std.ffi.adopt[T](h) -> owns T` is an `unsafe … |
+| `[FFI-36a]` | XVI | *(changed in 0.9.15)* *(changed in 0.9.20)* `std.ffi.adopt[T](h) -> … |
 | `[FFI-36b]` | XVI | Adopting a type whose overlay says `adopt = false` is `E5052`. … |
 | `[FFI-37]` | Annex C | `ember test --instrument-ffi` runs the tests with the allocation, … |
 | `[FFI-37a]` | Annex C | The intercepted set is published and recorded in the evidence; an … |
@@ -592,13 +599,13 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-37c]` | Annex C | `instrumented` means "no counterexample was observed on the paths … |
 | `[FFI-37d]` | Annex C | *(changed in 0.9.15)* Only effect facts (`Alloc`, `Block`, `Lock`, … |
 | `[FFI-38]` | XVI | The importer rejects rather than guesses: a fact it cannot establish … |
-| `[FFI-39]` | Annex C | *(changed in 0.9.10)* *(changed in 0.9.15)* An Ember class may derive … |
+| `[FFI-39]` | Annex C | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* An … |
 | `[FFI-39a]` | Annex C | The trampoline calls the overrides through their permanent thunks, so … |
 | `[FFI-39b]` | Annex C | *(changed in 0.9.10)* `super.init(…)` selects the C++ base … |
-| `[FFI-39c]` | Annex C | *(changed in 0.9.10)* *(changed in 0.9.15)* A C++ parameter that … |
+| `[FFI-39c]` | Annex C | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* A … |
 | `[FFI-39d]` | Annex C | *(changed in 0.9.15)* Re-entrant calls from C++ into an Ember object … |
 | `[FFI-39e]` | Annex C | A C++ exception never crosses into Ember code, and an Ember panic … |
-| `[FFI-40]` | Annex C | *(changed in 0.9.15)* A method imported from C++ is a method of the … |
+| `[FFI-40]` | Annex C | *(changed in 0.9.15)* *(changed in 0.9.20)* A method imported from … |
 | `[FFI-40a]` | Annex C | *(changed in 0.9.15)* `const` is not an aliasing guarantee in C++: a … |
 | `[FFI-41]` | Annex C | *(changed in 0.9.15)* Static member functions import as functions of … |
 | `[FFI-42]` | Annex C | *(changed in 0.9.10)* Overloaded operators map to Ember operator … |
@@ -609,10 +616,10 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-49]` | XVI | `@ffi(link_name="sym")` binds a declaration to a differently named … |
 | `[FFI-50]` | Annex C | The manifest section `[cpp.<project>]` names the C++ project: … |
 | `[FFI-51]` | XVI | *(new in 0.9.15)* C compiled into the program is vouched for. An … |
-| `[FFI-52]` | XVI | *(new in 0.9.15)* What a foreign call may run. The compiler cannot … |
-| `[FFI-53]` | XVI | *(new in 0.9.15)* The checked trampoline. C never holds the address … |
-| `[FFI-54]` | XVI | *(new in 0.9.15)* Giving an object to C. A C function declared as … |
-| `[FFI-55]` | XVI | *(new in 0.9.15)* Every overlay is checked against the header it was … |
+| `[FFI-52]` | XVI | *(new in 0.9.15)* *(changed in 0.9.20)* What a foreign call may run. … |
+| `[FFI-53]` | XVI | *(new in 0.9.15)* *(changed in 0.9.20)* The checked trampoline. C … |
+| `[FFI-54]` | XVI | *(new in 0.9.15)* *(changed in 0.9.20)* Giving an object to C. A C … |
+| `[FFI-55]` | XVI | *(new in 0.9.15)* *(changed in 0.9.20)* Every overlay is checked … |
 | `[FFI-56]` | XVI | *(new in 0.9.15)* A C function pointer is unsafe to call. A function … |
 
 ## FMT
@@ -630,11 +637,11 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FN-1]` | V | *(changed in 0.9.15)* Parameter words. What a function may do with a … |
 | `[FN-1a]` | V | *(changed in 0.9.15)* A `MutSpan[T]` parameter that writes the … |
 | `[FN-2]` | V | *(changed in 0.9.15)* A parameter with no word reads. There is no … |
-| `[FN-2a]` | V | *(changed in 0.9.15)* A call says `ref mut` before an argument the … |
+| `[FN-2a]` | V | *(changed in 0.9.15)* *(changed in 0.9.20)* A call says `ref mut` … |
 | `[FN-3]` | V | *(changed in 0.9.15)* *(changed in 0.9.20)* A function hands its … |
 | `[FN-4]` | V | *(changed in 0.9.15)* Methods and `this`. Inside a method its object … |
-| `[FN-5]` | V | Default argument expressions are evaluated at each call, after the … |
-| `[FN-6]` | V | *(changed in 0.9.15)* Callable types. A function is a value. A … |
+| `[FN-5]` | V | *(changed in 0.9.20)* A default is the argument the caller did not … |
+| `[FN-6]` | V | *(changed in 0.9.15)* *(changed in 0.9.20)* Callable types. A … |
 | `[FN-7]` | V | Recursion is permitted; tail calls are not guaranteed to be … |
 | `[FN-8]` | V | *(changed in 0.9.10)* *(changed in 0.9.15)* `main` is `fn main()`, … |
 | `[FN-9]` | V | *(changed in 0.9.15)* A parameter of a class type takes its word as … |
@@ -645,15 +652,15 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[GPU-1]` | Annex D | GPU objects are named by generational handles (`[HND-1]`), which are … |
-| `[GPU-2]` | Annex D | *(changed in 0.9.15)* `device.begin_frame() -> Option[Frame]`; `None` … |
+| `[GPU-2]` | Annex D | *(changed in 0.9.15)* *(changed in 0.9.20)* `device.begin_frame() -> … |
 | `[GPU-3]` | Annex D | *(changed in 0.9.15)* `frame.arena()` is the frame's transient memory … |
 | `[GPU-4]` | Annex D | Writing or mapping a resource that the GPU may still be reading is a … |
 | `[GPU-5]` | Annex D | Binding a resource declares its access; `cmd.read(h)`/`cmd.write(h)` … |
 | `[GPU-6]` | Annex D | *(changed in 0.9.15)* `device.destroy(h)` invalidates the handle at … |
 | `[GPU-7]` | Annex D | *(changed in 0.9.15)* In `debug`, ending a device while handles are … |
-| `[GPU-8]` | Annex D | `History[T]` owns the per-frame copies of a temporal resource … |
+| `[GPU-8]` | Annex D | *(changed in 0.9.20)* `History[T]` owns the per-frame copies of a … |
 | `[GPU-9]` | Annex D | *(changed in 0.9.15)* `std.gpu.graph` is an optional render-graph … |
-| `[GPU-10]` | Annex D | `ember shader-bind <reflection.json>`, reading the reflection a … |
+| `[GPU-10]` | Annex D | *(changed in 0.9.20)* `ember shader-bind <reflection.json>`, reading … |
 | `[GPU-11]` | Annex D | Ember assumes no shader language: anything that produces SPIR-V and … |
 | `[GPU-12]` | Annex D | *(new in 0.9.15)* Every draw and dispatch is checked against what is … |
 
@@ -662,10 +669,11 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[GRM-1]` | III | A class has at most one base class, written in parentheses: `class … |
-| `[GRM-2]` | III | A file contains imports and items and, in the entry file only (the … |
+| `[GRM-2]` | III | *(changed in 0.9.20)* A file contains imports and items and, in the … |
 | `[GRM-3]` | III | *(changed in 0.9.15)* `Array[T]`, `Map[K, V]`, `Option[T]`, … |
+| `[GRM-3a]` | III | *(new in 0.9.20)* What follows `weakref`. After `weakref` stands the … |
 | `[GRM-4]` | III | *(changed in 0.9.15)* `x = e` where no `x` is in scope declares `x` … |
-| `[GRM-5]` | III | `a, b = e` destructures a tuple, a struct or a fixed array. The right … |
+| `[GRM-5]` | III | *(changed in 0.9.20)* `a, b = e` destructures a tuple, a struct or a … |
 | `[GRM-6]` | III | The optional `else` of `while` and `for` runs when the loop ends … |
 | `[GRM-7]` | III | `defer` blocks run in reverse order at the exit of the enclosing … |
 | `[GRM-8]` | III | `name[…]` in expression position is resolved during name resolution: … |
@@ -677,9 +685,9 @@ Every rule of this document, by family, with the Part that defines it.
 | `[GRM-11]` | III | There are no block expressions. A value computed by several … |
 | `[GRM-12]` | III | An identifier in pattern position names a unit variant or a `const` … |
 | `[GRM-13]` | III | *(changed in 0.9.15)* A name a pattern binds in a place it does not … |
-| `[GRM-15]` | III | *(changed in 0.9.10)* *(changed in 0.9.15)* `owns e` hands `e` over. … |
+| `[GRM-15]` | III | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* … |
 | `[GRM-16]` | III | `return`, `break` and `continue` are expressions of type `Never`; … |
-| `[GRM-17]` | III | *(changed in 0.9.10)* A lambda with a `:` body inside brackets holds … |
+| `[GRM-17]` | III | *(changed in 0.9.10)* *(changed in 0.9.20)* A lambda with a `:` body … |
 | `[GRM-18]` | III | `;` never separates statements. `a = 1; b = 2` is `E0105`, whose help … |
 | `[GRM-19]` | III | *(changed in 0.9.15)* The pattern of a `condition` MUST be refutable. … |
 | `[GRM-20]` | III | The attributes before a statement are limited to `@parallel`, … |
@@ -690,24 +698,25 @@ Every rule of this document, by family, with the Part that defines it.
 | `[GRM-26]` | III | A `{…}` atom is a map literal if its first element is followed by … |
 | `[GRM-27]` | III | *(changed in 0.9.10)* *(changed in 0.9.15)* A comprehension is … |
 | `[GRM-28]` | III | *(changed in 0.9.15)* A `fn_decl` inside a block declares a local … |
-| `[GRM-29]` | III | An `expr_list` of two or more expressions, or of one expression … |
+| `[GRM-29]` | III | *(changed in 0.9.20)* An `expr_list` of two or more expressions is a … |
 | `[GRM-30]` | III | *(changed in 0.9.15)* Casts. `cast s as Circle` gives the `Circle` … |
 | `[GRM-31]` | III | *(changed in 0.9.10)* A `some` type (`[TYP-32]`) is legal only as a … |
 | `[GRM-32]` | III | `comptime(e)` evaluates the expression `e` at compile time (`[CT-6]`). |
 | `[GRM-33]` | III | A bodiless `fn_decl` is legal only in an `interface`, an … |
-| `[GRM-34]` | III | *(changed in 0.9.10)* `extend [T: needs B] Array[T] implements I:` … |
+| `[GRM-34]` | III | *(changed in 0.9.10)* *(changed in 0.9.20)* `extend [T: needs B] … |
 | `[GRM-35]` | XVI | *(changed in 0.9.15)* Overlay grammar. An overlay is a file whose … |
 | `[GRM-36]` | III | *(changed in 0.9.15)* `ref e`, `ref mut e` and `const ref mut e` name … |
 | `[GRM-37]` | III | *(changed in 0.9.15)* A directive is a line beginning `#!` before the … |
-| `[GRM-38]` | III | *(changed in 0.9.15)* A parenthesised comprehension `(e for x in it … |
+| `[GRM-38]` | III | *(changed in 0.9.15)* *(changed in 0.9.20)* A parenthesised … |
 | `[GRM-39]` | III | Nesting depth. Every compiler accepts expressions, statements, … |
 | `[GRM-40]` | III | *(new in 0.9.15)* Type parameters go on a line of their own, directly … |
 | `[GRM-41]` | III | *(new in 0.9.15)* A function's first line gives its parts in this … |
-| `[GRM-42]` | III | *(new in 0.9.15)* Capture words, and lists of names without types. A … |
-| `[GRM-43]` | III | *(new in 0.9.15)* Words before a value. `copy of`, `owns`, `shares`, … |
+| `[GRM-42]` | III | *(new in 0.9.15)* *(changed in 0.9.20)* Capture words, and lists of … |
+| `[GRM-43]` | III | *(new in 0.9.15)* *(changed in 0.9.20)* Words before a value. `copy … |
 | `[GRM-44]` | III | *(new in 0.9.15)* Opening an `Option` or a `weakref` link: `exists … |
 | `[GRM-45]` | III | *(new in 0.9.15)* The kind test. In an `if` or `elif` header, `s is … |
 | `[GRM-46]` | III | *(new in 0.9.15)* Clauses after a field's type. `from` after a view … |
+| `[GRM-47]` | III | *(new in 0.9.20)* `owns` is never an operand. An operator reads its … |
 
 ## HASH
 
@@ -726,16 +735,16 @@ Every rule of this document, by family, with the Part that defines it.
 | `[HEAP-2]` | IX | Growable buffers double, from a minimum of four elements; … |
 | `[HEAP-3]` | IX | *(changed in 0.9.15)* A value with several owners (`shares`, `shares … |
 | `[HEAP-6]` | IX | *(changed in 0.9.15)* `shares T`, `shares mut T`, `thread_shared T` … |
-| `[HEAP-7]` | IX | *(changed in 0.9.15)* `weakref T` links to a value that lives on its … |
+| `[HEAP-7]` | IX | *(changed in 0.9.15)* *(changed in 0.9.20)* A `weakref` link names a … |
 | `[HEAP-8]` | IX | Capacity arithmetic is checked: a requested capacity whose byte size … |
 | `[HEAP-9]` | IX | *(changed in 0.9.15)* Heap storage for elements of type `T` is … |
-| `[HEAP-10]` | IX | *(changed in 0.9.15)* A `shares` owner, and a `weakref` link to a … |
+| `[HEAP-10]` | IX | *(changed in 0.9.15)* *(changed in 0.9.20)* A `shares` owner, and a … |
 
 ## HND
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[HND-1]` | IX | A `Handle[T]` is a plain `Copy` value (index and generation). Every … |
+| `[HND-1]` | IX | *(changed in 0.9.20)* A `Handle[T]` is a plain `Copy` value (index … |
 | `[HND-2]` | IX | `Handle[T]` is a `u64`: 32 bits of index and 32 of generation. … |
 | `[HND-3]` | IX | *(changed in 0.9.15)* A slot whose generation is exhausted is retired … |
 
@@ -744,17 +753,17 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[HR-1]` | Annex B | An edit to one function body in a 50k-line reloadable package MUST be … |
-| `[HR-2]` | Annex B | *(changed in 0.9.15)* Reload is transactional. A failure in plan or … |
-| `[HR-2a]` | Annex B | *(changed in 0.9.15)* Plan reads schemas, the facts of `[HR-44]` and … |
+| `[HR-2]` | Annex B | *(changed in 0.9.15)* *(changed in 0.9.20)* Reload is transactional. … |
+| `[HR-2a]` | Annex B | *(changed in 0.9.15)* *(changed in 0.9.20)* Plan reads schemas, the … |
 | `[HR-3]` | Annex B | *(changed in 0.9.10)* A reload is applied only inside … |
 | `[HR-3a]` | Annex B | Every thread that can run Ember code is registered: host threads on … |
-| `[HR-3b]` | Annex B | *(new in 0.9.10)* *(changed in 0.9.15)* At a checkpoint the frames … |
+| `[HR-3b]` | Annex B | *(new in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* At a … |
 | `[HR-4]` | Annex B | Old images are never unloaded, so a stale return address or retired … |
 | `[HR-4a]` | Annex B | Statics live in a runtime-owned table, never in image memory. |
 | `[HR-5]` | Annex B | A call to a reloadable function goes through its thunk. |
 | `[HR-6]` | Annex B | Each reloadable function gets one thunk, at a fixed address for the … |
 | `[HR-6a]` | Annex B | *(changed in 0.9.15)* Hence function values (their code word), method … |
-| `[HR-7]` | Annex B | Call-table slots are identified by mangled name (`[MNG-1]`), never by … |
+| `[HR-7]` | Annex B | *(changed in 0.9.20)* Call-table slots are identified by mangled name … |
 | `[HR-8]` | Annex B | *(changed in 0.9.15)* Each image carries a reload manifest section … |
 | `[HR-9]` | Annex B | A call through a thunk costs one load and one indirect jump; the … |
 | `[HR-9a]` | Annex B | *(changed in 0.9.10)* A reloadable function is never inlined, … |
@@ -762,16 +771,17 @@ Every rule of this document, by family, with the Part that defines it.
 | `[HR-10a]` | Annex B | A `@noreload` function may call reloadable functions, through their … |
 | `[HR-11]` | Annex B | *(changed in 0.9.15)* Every type in a reloadable package has a … |
 | `[HR-11a]` | Annex B | Enum values are migrated by variant name, never by discriminant. |
-| `[HR-12]` | Annex B | *(changed in 0.9.15)* In a reloadable build, class instances are … |
+| `[HR-12]` | Annex B | *(changed in 0.9.15)* *(changed in 0.9.20)* In a reloadable build, … |
 | `[HR-12a]` | Annex B | The header size is a whole-process property: every package in a … |
 | `[HR-13]` | Annex B | Value-typed data (structs in arrays, `SoA` columns, ECS storage, … |
 | `[HR-13a]` | Annex B | Standard-library containers of a type from a reloadable package … |
-| `[HR-13b]` | Annex B | Value data reachable only through raw pointers or foreign memory … |
+| `[HR-13b]` | Annex B | *(changed in 0.9.20)* Value data reachable only through raw pointers … |
 | `[HR-14]` | Annex B | *(changed in 0.9.10)* *(changed in 0.9.15)* Migration is by name, and … |
 | `[HR-15]` | Annex B | *(changed in 0.9.10)* *(changed in 0.9.15)* Migration keeps an … |
 | `[HR-15a]` | Annex B | *(changed in 0.9.15)* An owner, link or view the runtime cannot … |
 | `[HR-15b]` | Annex B | Every refusal is decided in plan, before prepare runs. |
-| `[HR-16]` | Annex B | *(changed in 0.9.15)* `static fn migrate_from(old: OldSelf) -> … |
+| `[HR-15c]` | Annex B | *(new in 0.9.20)* A view into a part. A kept view (`[TYP-15]`) that … |
+| `[HR-16]` | Annex B | *(changed in 0.9.15)* *(changed in 0.9.20)* `static fn … |
 | `[HR-17]` | Annex B | A static whose type and initialiser are unchanged keeps its value; … |
 | `[HR-17a]` | Annex B | *(changed in 0.9.15)* Editing a static's initialiser changes its … |
 | `[HR-18]` | Annex B | A refusal returns a report naming each type and change that caused … |
@@ -782,7 +792,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[HR-21]` | Annex B | A foreign table of exported function pointers stays valid across … |
 | `[HR-22]` | Annex B | Foreign objects owned by Ember are carried across unchanged. |
 | `[HR-23]` | Annex B | *(changed in 0.9.10)* A changed C or C++ header refuses the reload … |
-| `[HR-24]` | Annex B | *(changed in 0.9.10)* An object in use by an in-flight GPU frame is … |
+| `[HR-24]` | Annex B | *(changed in 0.9.10)* *(changed in 0.9.20)* An object in use by an … |
 | `[HR-25]` | Annex B | `reload` is `"all"`, `"opt-in"`, `"bodies"` or `"none"` (`[MAN-7]`); … |
 | `[HR-27]` | Annex B | A `release` build is bit-identical whether or not the source uses any … |
 | `[HR-28]` | Annex B | `ember inspect --safety` reports the thunk indirection of each … |
@@ -793,18 +803,20 @@ Every rule of this document, by family, with the Part that defines it.
 | `[HR-33]` | Annex B | `ember run --hot` is the toolchain's own host: it builds under … |
 | `[HR-34]` | Annex B | Prepare cannot panic: every operation it performs is either free of … |
 | `[HR-35]` | Annex B | *(changed in 0.9.15)* `migrate_from` cannot abort the process. It may … |
-| `[HR-36]` | Annex B | Allocation during prepare comes from the transaction arena; … |
-| `[HR-37]` | Annex B | The transaction arena holds everything prepare allocates and is … |
+| `[HR-36]` | Annex B | *(changed in 0.9.20)* Allocation during prepare comes from the … |
+| `[HR-37]` | Annex B | *(changed in 0.9.20)* The transaction arena holds everything prepare … |
 | `[HR-38]` | Annex B | *(changed in 0.9.10)* `std.hot.ReloadError` is … |
 | `[HR-39]` | Annex B | A foreign call inside `migrate_from` returns its failure as … |
 | `[HR-41]` | Annex B | *(changed in 0.9.10)* *(changed in 0.9.15)* Failure matrix. |
-| `[HR-42]` | Annex B | Publication. Entering Ember code increments the thread's depth … |
-| `[HR-42a]` | Annex B | The counter is not a lock: entering Ember code is one relaxed … |
+| `[HR-42]` | Annex B | *(changed in 0.9.20)* Publication. Entering Ember code increments the … |
+| `[HR-42a]` | Annex B | *(changed in 0.9.20)* The counter is not a lock: entering Ember code … |
 | `[HR-43]` | Annex B | `@allow_reload_terminate` on a `migrate_from` admits such calls and … |
 | `[HR-44]` | Annex B | *(new in 0.9.15)* The facts the compiler worked out are part of what … |
+| `[HR-44a]` | Annex B | *(new in 0.9.20)* A stored function is a fact too. Plan enumerates … |
 | `[HR-45]` | Annex B | *(new in 0.9.15)* A suspended generator keeps its frame. A `gen fn`'s … |
 | `[HR-46]` | Annex B | *(new in 0.9.15)* Values made in a memory manager's instance. A value … |
 | `[HR-47]` | Annex B | *(new in 0.9.15)* `@reinit_on_reload` ends the static's old value … |
+| `[HR-48]` | Annex B | *(new in 0.9.20)* A lambda's state has a schema. The state of a … |
 
 ## IDE
 
@@ -822,7 +834,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[IFC-2]` | V | Adding inherent methods to a type from another package is `E2120`; … |
 | `[IFC-3]` | V | `interface Ord: needs Eq` requires implementers of `Ord` to implement … |
 | `[IFC-4]` | V | Interfaces may declare associated types and constants, not statics. … |
-| `[IFC-5]` | V | *(new in 0.9.15)* Interface values say who owns them. `owns dyn I` is … |
+| `[IFC-5]` | V | *(new in 0.9.15)* *(changed in 0.9.20)* Interface values say who owns … |
 | `[IFC-6]` | V | *(new in 0.9.15)* Bounds of a generic function. A function that is … |
 
 ## IMP
@@ -836,9 +848,9 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[JOB-1]` | XI | A job's captured state is stored inline in its queue slot when it … |
-| `[JOB-2]` | XI | *(changed in 0.9.15)* `jobs.scope()` follows `[THR-5]` and … |
-| `[JOB-3]` | XI | *(changed in 0.9.15)* `s.submit_after(deps, f)` starts `f` only after … |
-| `[JOB-5]` | XI | `jobs.local_arena()` returns an arena view for the current job, reset … |
+| `[JOB-2]` | XI | *(changed in 0.9.15)* *(changed in 0.9.20)* `jobs.scope()` follows … |
+| `[JOB-3]` | XI | *(changed in 0.9.15)* *(changed in 0.9.20)* `s.submit_after(deps, … |
+| `[JOB-5]` | XI | *(changed in 0.9.20)* `jobs.local_arena()` gives a `ref mut … |
 
 ## LAY
 
@@ -851,6 +863,7 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[LEX-1]` | II | Source files are UTF-8. A byte-order mark is accepted and ignored; … |
+| `[LEX-1a]` | II | *(new in 0.9.20)* A Unicode bidirectional format character (U+202A to … |
 | `[LEX-2]` | II | Line endings are LF or CRLF, both normalised to LF before … |
 | `[LEX-3]` | II | The source extension is `.em`. |
 | `[LEX-4]` | II | Indentation MUST use spaces. A tab at the start of a logical line is … |
@@ -860,17 +873,17 @@ Every rule of this document, by family, with the Part that defines it.
 | `[LEX-7]` | II | A backslash at the end of a physical line joins it to the next. The … |
 | `[LEX-8]` | II | Blank lines and comment-only lines do not affect indentation. |
 | `[LEX-9]` | II | An indented block MUST be introduced by a line ending in `:`. A `:` … |
-| `[LEX-10]` | II | There are no block comments. A line beginning `#!` before the first … |
-| `[LEX-11]` | II | A `##` comment attaches to the next declaration, ignoring blank … |
+| `[LEX-10]` | II | *(changed in 0.9.20)* There are no block comments. A line beginning … |
+| `[LEX-11]` | II | *(changed in 0.9.20)* A `##` comment attaches to the next … |
 | `[LEX-11a]` | II | A `##` comment on a comment-only line is emitted after the … |
 | `[LEX-12]` | II | Identifiers are NFC-normalised; two identifiers are the same iff … |
 | `[LEX-13]` | II | A lone `_` is the discard pattern and never names a variable. |
 | `[LEX-14]` | II | *(changed in 0.9.15)* A raw identifier `r#name` uses a keyword as a … |
-| `[LEX-15]` | II | *(changed in 0.9.10)* *(changed in 0.9.15)* The table above is the … |
-| `[LEX-16]` | II | An integer literal without a suffix is an untyped integer: it takes … |
+| `[LEX-15]` | II | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* The … |
+| `[LEX-16]` | II | *(changed in 0.9.20)* An integer literal without a suffix is an … |
 | `[LEX-17]` | II | A float literal without a suffix is an untyped float: it takes the … |
 | `[LEX-17a]` | II | A float literal that receives `f32` or `f16` and has more significant … |
-| `[LEX-18]` | II | `1.` followed by an identifier character is a method call on `1`; … |
+| `[LEX-18]` | II | *(changed in 0.9.20)* `1.` followed by an identifier character is a … |
 | `[LEX-19]` | II | An f-string `{…}` contains a full expression. `{{` and `}}` are … |
 | `[LEX-20]` | II | *(changed in 0.9.15)* A string literal has type `StrView` with the … |
 | `[LEX-21]` | II | *(changed in 0.9.15)* Tokenisation is maximal munch: `//=` before … |
@@ -878,7 +891,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[LEX-23]` | II | *(changed in 0.9.15)* A line comment whose text begins `SAFETY:` or … |
 | `[LEX-24]` | II | A unary minus applied directly to an untyped integer literal forms a … |
 | `[LEX-25]` | II | A raw string contains no escapes; a `r#"…"#` raw string may contain … |
-| `[LEX-26]` | II | *(new in 0.9.10)* A literal is written as the grammar above gives it: … |
+| `[LEX-26]` | II | *(new in 0.9.10)* *(changed in 0.9.20)* A literal is written as the … |
 
 ## LNT
 
@@ -895,9 +908,9 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[LT-1]` | VII | *(changed in 0.9.15)* Where a call's view points. A call's result … |
+| `[LT-1]` | VII | *(changed in 0.9.15)* *(changed in 0.9.20)* Where a call's view … |
 | `[LT-1a]` | VII | *(changed in 0.9.10)* *(changed in 0.9.15)* `from`. `-> T from name`, … |
-| `[LT-3]` | VII | String literals, `bytes` literals, `static` items and views of them … |
+| `[LT-3]` | VII | *(changed in 0.9.20)* String literals, `bytes` literals, `static` … |
 | `[LT-4]` | VII | *(changed in 0.9.15)* A value made in a memory manager's instance … |
 | `[LT-5]` | VII | *(changed in 0.9.15)* Regions of locals are inferred by non-lexical … |
 | `[LT-6]` | VII | *(changed in 0.9.15)* Named lifetimes are not part of Ember and will … |
@@ -908,7 +921,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[LT-18]` | VII | *(changed in 0.9.15)* Every view field is an ordinary view under … |
 | `[LT-20]` | VII | Moving, copying, destructuring, passing and returning a view … |
 | `[LT-21]` | VII | Assigning a new view into a field recomputes that field's region; the … |
-| `[LT-22]` | VII | *(changed in 0.9.15)* A function returning a view, or a view type, … |
+| `[LT-22]` | VII | *(changed in 0.9.15)* *(changed in 0.9.20)* A function returning a … |
 | `[LT-23]` | VII | *(changed in 0.9.15)* With `from` on a function returning a … |
 | `[LT-24]` | VII | A region slot ends at the last use of its own field, not of the whole … |
 | `[LT-25]` | VII | *(changed in 0.9.15)* A view field may not point into another field … |
@@ -926,7 +939,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[LT-45]` | VII | *(new in 0.9.15)* Kept views. A struct that holds a view (`ref T`, … |
 | `[LT-46]` | VII | *(new in 0.9.15)* *(changed in 0.9.20)* The three kinds of kept view, … |
 | `[LT-47]` | VII | *(new in 0.9.15)* A view put in through `ref mut`. After a call, a … |
-| `[LT-48]` | VII | *(new in 0.9.15)* *(changed in 0.9.20)* `runtime`: a `dyn` … |
+| `[LT-48]` | VII | *(new in 0.9.15)* *(changed in 0.9.20)* `runtime`: the kind of the … |
 
 ## MAN
 
@@ -937,17 +950,18 @@ Every rule of this document, by family, with the Part that defines it.
 | `[MAN-3]` | XVII | Every key in `[lints]` names a lint the compiler defines (`E9010` … |
 | `[MAN-7]` | XVII | *(changed in 0.9.10)* `[build] reload` is `"opt-in"`, `"all"`, … |
 | `[MAN-8]` | XVII | *(changed in 0.9.10)* *(changed in 0.9.20)* The sections are: … |
-| `[MAN-9]` | XVII | *(new in 0.9.15)* Every program is a package (verdict 127). A command … |
+| `[MAN-9]` | XVII | *(new in 0.9.15)* *(changed in 0.9.20)* Every program is a package … |
+| `[MAN-10]` | XVII | *(new in 0.9.20)* A dependency's manifest decides only its own code, … |
 
 ## MNG
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[MNG-1]` | XVIII | *(changed in 0.9.10)* *(changed in 0.9.15)* Mangling is injective. A … |
+| `[MNG-1]` | XVIII | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* … |
 | `[MNG-2]` | XVIII | *(changed in 0.9.15)* `@unsafe(export("name"))` sets the symbol … |
 | `[MNG-3]` | XVIII | *(changed in 0.9.10)* Non-ASCII identifier characters are … |
 | `[MNG-4]` | XVIII | *(changed in 0.9.10)* Object structs, method tables and type … |
-| `[MNG-6]` | XVIII | *(new in 0.9.10)* *(changed in 0.9.15)* The canonical spelling of a … |
+| `[MNG-6]` | XVIII | *(new in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* The … |
 
 ## MOD
 
@@ -959,8 +973,9 @@ Every rule of this document, by family, with the Part that defines it.
 | `[MOD-4]` | V | Import cycles within a package are allowed; cycles between packages … |
 | `[MOD-5]` | V | *(changed in 0.9.15)* The prelude. Every module implicitly imports … |
 | `[MOD-7]` | V | A field declared `pub(read)` (or `pub(package, read)`) may be read … |
-| `[MOD-8]` | V | `from m import *` binds every `pub` item of `m`. A name bound by two … |
-| `[MOD-9]` | V | *(new in 0.9.15)* A package's edge. What a dependant may rely on is … |
+| `[MOD-8]` | V | *(changed in 0.9.20)* `from m import *` binds every `pub` item of … |
+| `[MOD-9]` | V | *(new in 0.9.15)* *(changed in 0.9.20)* A package's edge. What a … |
+| `[MOD-9a]` | V | *(new in 0.9.20)* A library's call through what a dependant may fill. … |
 
 ## MONO
 
@@ -974,23 +989,23 @@ Every rule of this document, by family, with the Part that defines it.
 | `[MONO-7]` | XVIII | `@always_specialize` forbids sharing for a generic; … |
 | `[MONO-8]` | XVIII | A shared body computes exactly what the specialised ones would; it … |
 | `[MONO-9]` | XVIII | A shared body is its own symbol and is deduplicated like any … |
-| `[MONO-10]` | XVIII | *(new in 0.9.15)* One whole variable under two names. A call that the … |
+| `[MONO-10]` | XVIII | *(new in 0.9.15)* *(changed in 0.9.20)* One whole variable under two … |
 
 ## OBJ
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[OBJ-1]` | VIII | *(changed in 0.9.15)* The header is 8 bytes: a 32-bit count and a … |
+| `[OBJ-1]` | VIII | *(changed in 0.9.15)* *(changed in 0.9.20)* The header is 8 bytes: a … |
 | `[OBJ-2]` | VIII | *(changed in 0.9.10)* *(changed in 0.9.15)* An owner, a link or a … |
 | `[OBJ-3]` | VIII | *(changed in 0.9.15)* The weak count starts at 1 on behalf of all … |
-| `[OBJ-4]` | VIII | *(changed in 0.9.10)* *(changed in 0.9.15)* Objects are allocated … |
-| `[OBJ-5]` | VIII | *(changed in 0.9.15)* An ended object is never brought back. Inside a … |
+| `[OBJ-4]` | VIII | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* … |
+| `[OBJ-5]` | VIII | *(changed in 0.9.15)* *(changed in 0.9.20)* An ended object is never … |
 
 ## OPT
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[OPT-1]` | VIII | *(changed in 0.9.10)* *(changed in 0.9.15)* When escape analysis … |
+| `[OPT-1]` | VIII | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* … |
 | `[OPT-2]` | X | For a counted loop over `a..b` that indexes views at `i + c` for … |
 | `[OPT-3]` | X | The loop bound in `[OPT-2]` may be written `s.len()`, a separate … |
 
@@ -1006,11 +1021,11 @@ Every rule of this document, by family, with the Part that defines it.
 | `[OWN-6]` | VII | *(changed in 0.9.15)* `mem.take(ref mut place: T) -> T` (leaves … |
 | `[OWN-7]` | VII | *(changed in 0.9.15)* A value of a `Copy` type is duplicated bit for … |
 | `[OWN-8]` | VII | *(changed in 0.9.15)* *(changed in 0.9.20)* `copy of x` makes a copy … |
-| `[OWN-9]` | VII | *(new in 0.9.15)* `owns` hands over, for every type, numbers … |
+| `[OWN-9]` | VII | *(new in 0.9.15)* *(changed in 0.9.20)* `owns` hands over, for every … |
 | `[OWN-10]` | VII | *(new in 0.9.15)* `owns` on the line that makes a value for a place … |
 | `[OWN-11]` | VII | *(new in 0.9.15)* A part handed over on its own. A part of a struct … |
 | `[OWN-12]` | VII | *(new in 0.9.15)* Giving an object to C. A C function whose … |
-| `[OWN-13]` | VII | *(new in 0.9.15)* Words before a value. Before a value, a word acts … |
+| `[OWN-13]` | VII | *(new in 0.9.15)* *(changed in 0.9.20)* Words before a value. Before … |
 
 ## PAN
 
@@ -1037,7 +1052,7 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[PHIL-1]` | I | Two syntactically identical declarations in the same context have … |
-| `[PHIL-2]` | I | *(changed in 0.9.15)* No heap allocation happens that the source does … |
+| `[PHIL-2]` | I | *(changed in 0.9.15)* *(changed in 0.9.20)* No heap allocation … |
 | `[PHIL-3]` | I | *(changed in 0.9.15)* No implicit copy of a non-`Copy` value occurs: … |
 | `[PHIL-4]` | I | *(changed in 0.9.15)* No implicit synchronisation occurs except … |
 | `[PHIL-5]` | I | Every safety check the compiler removes, it removes because it proved … |
@@ -1058,7 +1073,7 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[PRF-1]` | XVII | *(changed in 0.9.15)* A profile never changes what a program means. … |
+| `[PRF-1]` | XVII | *(changed in 0.9.15)* *(changed in 0.9.20)* A profile never changes … |
 | `[PRF-2]` | XVII | *(changed in 0.9.10)* Hot reload is a build mode of `debug` and … |
 | `[PRF-3]` | XVII | *(changed in 0.9.10)* What a profile may set. |
 | `[PRF-4]` | XVII | *(new in 0.9.15)* The checks that run while a program runs are the … |
@@ -1115,15 +1130,15 @@ Every rule of this document, by family, with the Part that defines it.
 |---|---|---|
 | `[RT-1]` | XVIII | The runtime `ember_rt` is C11 depending on libc and the OS only. … |
 | `[RT-2]` | XVIII | The runtime has no global constructors; the generated `main` calls … |
-| `[RT-3]` | XVIII | `TypeInfo` holds size, alignment, flags, name, base, drop functions, … |
+| `[RT-3]` | XVIII | *(changed in 0.9.20)* `TypeInfo` holds size, alignment, flags (among … |
 | `[RT-4]` | XVIII | A panic prints `panic at <file>:<line>:<col>: <message>` naming Ember … |
 | `[RT-5]` | XVIII | Every runtime symbol, macro and header name derives from one … |
 | `[RT-6]` | XVIII | The runtime ABI version is `EMBER_RUNTIME_ABI`. |
-| `[RT-7]` | XVIII | *(changed in 0.9.15)* A count is checked before it rolls over. The … |
-| `[RT-8]` | XVIII | *(changed in 0.9.15)* A `thread_shared` value's away count and its … |
-| `[RT-10]` | XVIII | *(changed in 0.9.15)* Counting is inline. A count changes only where … |
+| `[RT-7]` | XVIII | *(changed in 0.9.15)* *(changed in 0.9.20)* A count is checked before … |
+| `[RT-8]` | XVIII | *(changed in 0.9.15)* *(changed in 0.9.20)* A `thread_shared` value's … |
+| `[RT-10]` | XVIII | *(changed in 0.9.15)* *(changed in 0.9.20)* Counting is inline. A … |
 | `[RT-11]` | XVIII | Allocation statistics are kept per thread, or only in `debug`; no … |
-| `[RT-12]` | XVIII | *(changed in 0.9.15)* Stack overflow faults. The backend compiles … |
+| `[RT-12]` | XVIII | *(changed in 0.9.15)* *(changed in 0.9.20)* Stack overflow faults. … |
 
 ## SEL
 
@@ -1151,13 +1166,13 @@ Every rule of this document, by family, with the Part that defines it.
 | `[SIMD-6]` | XII | The C compiler's own vectorisation report is corroborating evidence … |
 | `[SIMD-7]` | XII | *(changed in 0.9.20)* Grouped overflow checks. In a loop whose body … |
 | `[SIMD-8]` | XII | Vector operators are lane-wise and follow the scalar rules: integer … |
-| `[SIMD-9]` | XII | *(changed in 0.9.15)* SIMD memory operations are bounds-checked like … |
+| `[SIMD-9]` | XII | *(changed in 0.9.15)* *(changed in 0.9.20)* SIMD memory operations … |
 
 ## SOA
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[SOA-1]` | XII | `SoA[T]` is a compiler-known type constructor, like `Cell`: for any … |
+| `[SOA-1]` | XII | *(changed in 0.9.20)* `SoA[T]` is a compiler-known type constructor, … |
 | `[SOA-2]` | XII | *(changed in 0.9.15)* `ps.f` names the column of field `f`: a view of … |
 | `[SOA-3]` | XII | `SoA[T]` provides `len`, `is_empty`, `push`, `pop`, `swap_remove`, … |
 | `[SOA-4]` | XII | `ArenaSoA[T]` is the fixed-capacity, arena-backed form, under the … |
@@ -1179,9 +1194,9 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[STA-1]` | V | *(changed in 0.9.15)* `static NAME: T = e` is one value per program … |
+| `[STA-1]` | V | *(changed in 0.9.15)* *(changed in 0.9.20)* `static NAME: T = e` is … |
 | `[STA-2]` | V | There is no static-initialisation-order problem: statics are … |
-| `[STA-3]` | V | *(changed in 0.9.15)* A static whose initialiser can be evaluated at … |
+| `[STA-3]` | V | *(changed in 0.9.15)* *(changed in 0.9.20)* A static whose … |
 
 ## STD
 
@@ -1192,14 +1207,14 @@ Every rule of this document, by family, with the Part that defines it.
 | `[STD-3]` | XV | *(changed in 0.9.15)* `math.fma(a, b, c)` (and `mul_add`) is a fused … |
 | `[STD-4]` | XV | `NonZero[T]` for each integer `T` is a `Copy` wrapper with a niche … |
 | `[STD-5]` | XV | `sum` and `product` combine elements left to right in the element … |
-| `[STD-6]` | XV | *(changed in 0.9.15)* `std` is layered, and each layer depends only … |
+| `[STD-6]` | XV | *(changed in 0.9.15)* *(changed in 0.9.20)* `std` is layered, and … |
 | `[STD-7]` | XV | Fixed-capacity containers with no heap allocation: `FixedArray[T, … |
 | `[STD-8]` | XV | *(changed in 0.9.15)* `Contains`. `x in c` requires `c: … |
 | `[STD-8a]` | XV | `ember inspect --cost` reports which `contains` a use selects and its … |
 | `[STD-8b]` | XV | *(changed in 0.9.15)* `StrView` implements `Contains[char]` and … |
 | `[STD-9]` | XV | *(changed in 0.9.15)* `print(a, b, …, sep=" ", end="")` and … |
 | `[STD-10]` | XV | `input(prompt="") -> String` prints the prompt, flushes, reads one … |
-| `[STD-11]` | XV | *(changed in 0.9.15)* `Map[K, V, H = DefaultHasher]` is a hash map … |
+| `[STD-11]` | XV | *(changed in 0.9.15)* *(changed in 0.9.20)* `Map[K, V, H = … |
 | `[STD-12]` | XV | *(changed in 0.9.15)* Keys looked up by a view. Lookup methods, … |
 | `[STD-13]` | XV | One naming convention. Names are `snake_case` words joined by … |
 | `[STD-14]` | XV | *(changed in 0.9.10)* *(changed in 0.9.15)* Failure follows … |
@@ -1207,7 +1222,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[STD-16]` | XV | *(changed in 0.9.15)* `Map` operations. `m[k]` reads the value and … |
 | `[STD-17]` | XV | *(changed in 0.9.15)* Index assignment. `a[i] = v` calls … |
 | `[STD-18]` | XV | *(changed in 0.9.15)* `format(value, spec="") -> String` formats one … |
-| `[STD-19]` | XV | *(changed in 0.9.10)* *(changed in 0.9.15)* Every `Iterator` has the … |
+| `[STD-19]` | XV | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* … |
 | `[STD-20]` | XV | Integer methods, built into every integer type: `abs` (a signed `MIN` … |
 | `[STD-21]` | XV | *(changed in 0.9.15)* `std.math` provides `PI`, `TAU`, `E`; `sin`, … |
 | `[STD-22]` | XV | Every operation that touches the outside world returns `Result[T, … |
@@ -1224,11 +1239,11 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[STR-1]` | V | *(changed in 0.9.15)* Every struct has a memberwise constructor … |
-| `[STR-2]` | V | A field default is any expression; it is evaluated at each … |
-| `[STR-3]` | V | *(changed in 0.9.15)* A struct with a `drop` method, or with a field … |
+| `[STR-2]` | V | *(changed in 0.9.20)* A field default is any expression; at a … |
+| `[STR-3]` | V | *(changed in 0.9.15)* *(changed in 0.9.20)* A struct with a `drop` … |
 | `[STR-4]` | V | A struct may have no fields (`struct Marker: pass`). |
 | `[STR-5]` | V | *(changed in 0.9.15)* Implicit derives. A struct or enum implements … |
-| `[STR-6]` | V | *(changed in 0.9.15)* `fn init(…)` on a struct is its constructor; it … |
+| `[STR-6]` | V | *(changed in 0.9.15)* *(changed in 0.9.20)* `fn init(…)` on a struct … |
 | `[STR-7]` | V | *(changed in 0.9.15)* Inside the body of a `struct`, `enum`, `class` … |
 
 ## TCB
@@ -1246,7 +1261,7 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[THR-1]` | XI | *(changed in 0.9.15)* A value several threads own is made … |
+| `[THR-1]` | XI | *(changed in 0.9.15)* *(changed in 0.9.20)* A value several threads … |
 | `[THR-2]` | XI | *(changed in 0.9.15)* *(changed in 0.9.20)* A one-thread value never … |
 | `[THR-3]` | XI | *(changed in 0.9.15)* `Mutex[T]` is a value type. `m.lock()` blocks … |
 | `[THR-4]` | XI | In the `debug` profile the runtime records the order in which each … |
@@ -1255,18 +1270,18 @@ Every rule of this document, by family, with the Part that defines it.
 | `[THR-7]` | XI | *(changed in 0.9.15)* `thread_shared` means exactly: the value may … |
 | `[THR-8]` | XI | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* A … |
 | `[THR-9]` | XI | *(changed in 0.9.15)* *(changed in 0.9.20)* A type is `ThreadShared` … |
-| `[THR-10]` | XI | *(changed in 0.9.10)* *(changed in 0.9.15)* `thread.spawn` runs a … |
-| `[THR-11]` | XI | *(changed in 0.9.15)* `scope.spawn` takes a plain function, `[R]` … |
+| `[THR-10]` | XI | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* … |
+| `[THR-11]` | XI | *(changed in 0.9.15)* *(changed in 0.9.20)* `scope.spawn` takes a … |
 | `[THR-12]` | XI | *(changed in 0.9.15)* Tasks that must run in sequence and share data … |
 | `[THR-13]` | XI | *(changed in 0.9.15)* The data-race guarantee. In Safe Ember every … |
 | `[THR-14]` | XI | `Atomic[T]` exists for the integer types, `bool` and raw pointers. … |
-| `[THR-15]` | XI | *(changed in 0.9.15)* `channel[T](capacity=n) -> (Sender[T], … |
+| `[THR-15]` | XI | *(changed in 0.9.15)* *(changed in 0.9.20)* `channel[T](capacity=n) … |
 | `[THR-16]` | XI | When `main` returns, or `process.exit` is called, the process ends: … |
-| `[THR-17]` | XI | *(new in 0.9.15)* What an unscoped thread holds, and the loop's own … |
-| `[THR-18]` | XI | *(new in 0.9.15)* `Lock` and `guarded by`. A `Lock` is a lock with no … |
+| `[THR-17]` | XI | *(new in 0.9.15)* *(changed in 0.9.20)* What an unscoped thread … |
+| `[THR-18]` | XI | *(new in 0.9.15)* *(changed in 0.9.20)* `Lock` and `guarded by`. A … |
 | `[THR-19]` | XI | *(new in 0.9.15)* *(changed in 0.9.20)* A wait for a lock this thread … |
 | `[THR-20]` | XI | *(new in 0.9.15)* *(changed in 0.9.20)* Module variables and threads. … |
-| `[THR-21]` | XI | *(new in 0.9.15)* Reductions. A task's `total += e` (and `-=`, `*=`, … |
+| `[THR-21]` | XI | *(new in 0.9.15)* *(changed in 0.9.20)* Reductions. A task's … |
 
 ## TIER
 
@@ -1316,7 +1331,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[TXT-3]` | XV | *(changed in 0.9.15)* `StrView` and `String` are a pointer and a … |
 | `[TXT-4]` | XV | *(changed in 0.9.15)* Slicing a string, `s[a..b]`, is by byte offset … |
 | `[TXT-5]` | XV | *(changed in 0.9.15)* `StrView` → `String` allocates and copies, and … |
-| `[TXT-6]` | XV | *(changed in 0.9.15)* Across the C ABI a `StrView` is `{const uint8_t … |
+| `[TXT-6]` | XV | *(changed in 0.9.15)* *(changed in 0.9.20)* Across the C ABI a … |
 | `[TXT-7]` | XV | Text is UTF-8 everywhere. `std.ffi.WideString` converts, explicitly, … |
 | `[TXT-8]` | XV | *(changed in 0.9.15)* `StrView` is a view, like every `Span`: it … |
 | `[TXT-9]` | XV | *(changed in 0.9.15)* A string literal initialises a `String`. … |
@@ -1331,19 +1346,19 @@ Every rule of this document, by family, with the Part that defines it.
 | `[TYP-2]` | IV | Producing a `bool` other than 0 or 1 is undefined behaviour and … |
 | `[TYP-3]` | IV | Producing a `char` outside the Unicode scalar values is undefined … |
 | `[TYP-4]` | IV | *(changed in 0.9.10)* No value converts implicitly between scalar … |
-| `[TYP-5]` | IV | *(changed in 0.9.10)* *(changed in 0.9.15)* Coercions — the complete … |
-| `[TYP-6]` | IV | *(changed in 0.9.15)* `x as T` converts explicitly: * integer → … |
+| `[TYP-5]` | IV | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* … |
+| `[TYP-6]` | IV | *(changed in 0.9.15)* *(changed in 0.9.20)* `x as T` converts … |
 | `[TYP-7]` | IV | `as` between pointer types, or between a pointer and an integer, … |
 | `[TYP-8]` | IV | Integer overflow panics in every profile. An arithmetic operation (`+ … |
 | `[TYP-9]` | IV | *(changed in 0.9.15)* Floating point is strict IEEE 754: no … |
 | `[TYP-9a]` | IV | Contraction is off by default and the implementation MUST turn it off … |
 | `[TYP-9b]` | IV | *(changed in 0.9.15)* `@fp(allow_fma)` permits, and requires the … |
 | `[TYP-9c]` | IV | A toolchain that cannot honour `@fastmath` or `@fp(…)` for one … |
-| `[TYP-10]` | IV | Shifts. `a << n` and `a >> n` accept any integer type for `n`. If `n` … |
+| `[TYP-10]` | IV | *(changed in 0.9.20)* Shifts. `a << n` and `a >> n` accept any … |
 | `[TYP-11]` | IV | A struct's default layout is C's: declaration order, natural … |
-| `[TYP-12]` | IV | A unit-only enum is an integer (`@repr(u8)` and friends choose it; … |
+| `[TYP-12]` | IV | *(changed in 0.9.20)* A unit-only enum is stored as an integer … |
 | `[TYP-13]` | IV | *(changed in 0.9.15)* *(changed in 0.9.20)* `Option[T]` has the size … |
-| `[TYP-14]` | IV | *(changed in 0.9.15)* A reference, and an `owns T`, is read through … |
+| `[TYP-14]` | IV | *(changed in 0.9.15)* *(changed in 0.9.20)* A reference, and an `owns … |
 | `[TYP-15]` | IV | *(changed in 0.9.15)* Where views may be stored. A view may be stored … |
 | `[TYP-15a]` | IV | *(changed in 0.9.20)* The arena-backed containers (`ArenaArray`, … |
 | `[TYP-16]` | IV | Generic functions and types are monomorphised: each distinct … |
@@ -1351,8 +1366,8 @@ Every rule of this document, by family, with the Part that defines it.
 | `[TYP-18]` | IV | Generic arguments are inferred from the arguments of a call. Explicit … |
 | `[TYP-19]` | IV | *(changed in 0.9.15)* There is no specialisation and no higher-kinded … |
 | `[TYP-20]` | IV | Coherence is per package. An implementation of interface `I` for type … |
-| `[TYP-21]` | IV | *(changed in 0.9.15)* Operators desugar to these interfaces for … |
-| `[TYP-22]` | IV | *(changed in 0.9.10)* *(changed in 0.9.15)* An interface is usable as … |
+| `[TYP-21]` | IV | *(changed in 0.9.15)* *(changed in 0.9.20)* Operators desugar to … |
+| `[TYP-22]` | IV | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* An … |
 | `[TYP-23]` | IV | *(changed in 0.9.15)* Inference is local to a function body and … |
 | `[TYP-24]` | IV | *(changed in 0.9.15)* An interface method is found through any … |
 | `[TYP-25]` | IV | Arguments may be positional or named; positional arguments come … |
@@ -1365,7 +1380,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[TYP-32]` | IV | `some I` in a return type means "one concrete type, chosen by the … |
 | `[TYP-34]` | IV | *(replaces the 0.9.8 `@view` requirement)* *(changed in 0.9.15)* A … |
 | `[TYP-35]` | IV | *(changed in 0.9.15)* A type parameter need not appear in any field … |
-| `[TYP-36]` | IV | *(changed in 0.9.10)* *(changed in 0.9.15)* Which types implement … |
+| `[TYP-36]` | IV | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* … |
 | `[TYP-37]` | IV | Floats implement `Eq` with IEEE `==` (so `NaN != NaN`) and `Ord` with … |
 | `[TYP-38]` | VI | *(changed in 0.9.15)* Collection literals. * A list literal `[a, b, … |
 | `[TYP-39]` | IV | *(changed in 0.9.10)* *(changed in 0.9.15)* Collections, tuples and … |
@@ -1374,8 +1389,11 @@ Every rule of this document, by family, with the Part that defines it.
 | `[TYP-42]` | IV | *(new in 0.9.10)* The 256-bit counts. `u256` and `i256` are what the … |
 | `[TYP-43]` | IV | *(new in 0.9.10)* *(changed in 0.9.15)* The marker interfaces are … |
 | `[TYP-44]` | IV | *(new in 0.9.15)* Kind tests and casts. A value of an interface type … |
-| `[TYP-45]` | IV | *(new in 0.9.15)* Who owns a value, in its type. A type says how its … |
-| `[TYP-46]` | IV | *(new in 0.9.15)* Which memory manager. `using A` after a type whose … |
+| `[TYP-44a]` | IV | *(new in 0.9.20)* One index per type in a process. A type index is a … |
+| `[TYP-45]` | IV | *(new in 0.9.15)* *(changed in 0.9.20)* Who owns a value, in its … |
+| `[TYP-45a]` | IV | *(new in 0.9.20)* One word on a type. A word of `[TYP-45]` stands … |
+| `[TYP-46]` | IV | *(new in 0.9.15)* *(changed in 0.9.20)* Which memory manager. `using … |
+| `[TYP-46a]` | IV | *(new in 0.9.20)* A value made in an instance follows its manager … |
 | `[TYP-47]` | IV | *(new in 0.9.15)* Any number of types, and of values (verdicts 115 … |
 
 ## UNS
@@ -1386,7 +1404,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[UNS-2]` | IX | *(changed in 0.9.15)* `unsafe` permits exactly those operations. It … |
 | `[UNS-3]` | IX | *(changed in 0.9.15)* `L3010` reports an `unsafe` block containing … |
 | `[UNS-4]` | IX | *(changed in 0.9.15)* Unsafe code MUST uphold what safe code assumes: … |
-| `[UNS-5]` | IX | `std.mem` provides `Volatile[*T]` (volatile reads and writes), … |
+| `[UNS-5]` | IX | *(changed in 0.9.20)* `std.mem` provides `Volatile[*T]` (volatile … |
 | `[UNS-6]` | IX | Inline assembly is `unsafe asm("…", …)` on toolchains that support it … |
 | `[UNS-7]` | IX | *(changed in 0.9.15)* Every `unsafe fn` carries `@safety("…")` … |
 | `[UNS-8]` | IX | *(changed in 0.9.15)* Every `unsafe:` block, and every `unsafe` … |
@@ -1411,20 +1429,20 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[WK-1]` | VIII | *(changed in 0.9.15)* Ember has no cycle collector: a loop of owners, … |
+| `[WK-1]` | VIII | *(changed in 0.9.15)* *(changed in 0.9.20)* Ember has no cycle … |
 | `[WK-2]` | VIII | *(changed in 0.9.15)* An object is ended when its count of owners … |
 | `[WK-3]` | VIII | *(changed in 0.9.15)* An object is ended the moment its last owner … |
 | `[WK-4]` | VIII | *(changed in 0.9.15)* The report names, for each leaked object on a … |
-| `[WK-5]` | VIII | *(changed in 0.9.15)* The graph of owners. The compiler builds a … |
+| `[WK-5]` | VIII | *(changed in 0.9.15)* *(changed in 0.9.20)* The graph of owners. The … |
 | `[WK-6]` | VIII | *(changed in 0.9.15)* A loop of owners is refused unless it is proved … |
-| `[WK-7]` | VIII | *(changed in 0.9.15)* What counts as proof. Proved: a loop made and … |
+| `[WK-7]` | VIII | *(changed in 0.9.15)* *(changed in 0.9.20)* What counts as proof. … |
 | `[WK-8]` | VIII | *(changed in 0.9.15)* The run-time report (`[WK-15]`) lists each … |
 | `[WK-9]` | VIII | *(changed in 0.9.15)* `ember explain --cycle <path> <Class[.field]>` … |
-| `[WK-11]` | VIII | *(changed in 0.9.15)* `weakref` links. `weakref T` is a link that … |
-| `[WK-12]` | VIII | *(changed in 0.9.15)* Opening a link. A `weakref` link is read by … |
+| `[WK-11]` | VIII | *(changed in 0.9.15)* *(changed in 0.9.20)* `weakref` links. A … |
+| `[WK-12]` | VIII | *(changed in 0.9.15)* *(changed in 0.9.20)* Opening a link. A … |
 | `[WK-13]` | VIII | *(changed in 0.9.15)* A `weakref` link to a value held `shares` names … |
 | `[WK-14]` | VIII | *(changed in 0.9.15)* Ember's `weakref` and `shares` never convert to … |
 | `[WK-15]` | VIII | *(changed in 0.9.15)* `ember run` and `ember test` in the `debug` … |
-| `[WK-16]` | VIII | *(new in 0.9.15)* A `weakref` of a part (a field, or an element … |
-| `[WK-17]` | VIII | *(new in 0.9.15)* Parent links. A parent link is an ordinary … |
-| `[WK-18]` | VIII | *(new in 0.9.15)* A walk across a call that may change nodes holds a … |
+| `[WK-16]` | VIII | *(new in 0.9.15)* *(changed in 0.9.20)* A `weakref` of a part (a … |
+| `[WK-17]` | VIII | *(new in 0.9.15)* *(changed in 0.9.20)* Parent links. A parent link … |
+| `[WK-18]` | VIII | *(new in 0.9.15)* *(changed in 0.9.20)* A walk across a call that may … |
