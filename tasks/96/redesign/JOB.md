@@ -1244,6 +1244,16 @@ verdicts, 2026-10-29", items 1 to 18, with the review's other answers):
     with `Gpu` it runs. No function is needed only to carry the word. Owner (2026-11-02), shown (a) the check
     only through a function's input and (b) this, with the recommendation (b): "yes b".
 
+## The spec gap sweep of 0.9.15_Hardened_11 (owner, 2026-11-02)
+
+Each question from `tasks/96/redesign/spec-gaps-0.9.15/questions.md`, shown with its options and the lead's recommendation.
+
+164. **A `sharedref mut` link never goes to another thread**, as a `shares mut` owner does not: a type holding one is not `Send` and not `ThreadShared`, so `channel[Watcher]` for a `struct Watcher` holding `target: sharedref mut Player` is refused (as `thread.spawn` taking one already is, `E7015`); scoped tasks still reach the link where it is, through the caller's variables. Shown as (a) refuse it, (b) allow it with the race possible, recommendation (a). Owner (2026-11-02, gap-sweep group `K01-sharedref-send`): "yes a".
+
+165. **`thread_shared` is refused where the value is made, when something in it is not safe for several threads to read at once** (`ThreadShared`): `stats = thread_shared FrameStats()` with `draws: RwLock[Cell[int]]` is `E7015` at that line, naming the field and the fix (`draws: Atomic[int]`). Shown as (a) refuse it where it is made, (b) refuse it only where it reaches another thread, recommendation (a). Owner (2026-11-02, gap-sweep group `K02-thread-shared-not-threadshared`): "a".
+
+166. **A scoped task neither makes nor ends a `shares` owner** (whose count has no atomics), as it neither makes nor ends a `weakref` link to a one-thread value: `scope.spawn(owns fn(): level.enemies.clear())` with `enemies: Array[shares mut Enemy]` is `E7015`, the fix being to clear the list after the scope; the same for a task that ends an object `weakref` links on this thread point at. Shown as (a) this, (b) allowed unless the parent or another task touches the same type's counts, recommendation (a). Owner (2026-11-02, gap-sweep group `K03-task-ends-shares-owners`): "a, next question".
+
 ## Messages and tests: the lead's to settle (owner, 2026-11-01 evening)
 
 "your error messages are okay it's the language implementation part that concerns me most of the time so
