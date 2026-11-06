@@ -1,0 +1,891 @@
+{
+ "finished": true,
+ "groups": [
+  {
+   "gid": "P01",
+   "principle": "State made for one thread (a count without atomics, a link others change, a Cell, module state confined to one thread) is never reached from another thread by any route: each type's thread markers follow from everything it holds or can reach, a type-erased value by what it may hold, and every route to another thread (a channel, a spawn, a scoped task's work, a thread_shared owner, an export's calling thread) needs them.",
+   "shared_cause": "The specification lists the thread markers and the routes one case at a time instead of deriving them from one property. THR-8's Send list and THR-9's ThreadShared list leave out sharedref mut. THR-2's routes leave out scoped tasks. THR-11 limits a task's making of shares owners but says nothing of ending them. THR-1 checks only Send and direct changes at the thread_shared line. An erased error type (AnyError) has no stated markers. FFI-33/33c confine module statics differently under `main` and `creator` with no reason given. So each new holder, route or confinement falls between the lists.",
+   "members": [
+    "J2-06",
+    "J7-03",
+    "J7-04",
+    "J6-16",
+    "J8-10"
+   ],
+   "clusters": [
+    "K01-sharedref-send",
+    "K02-thread-shared-not-threadshared",
+    "K03-task-ends-shares-owners",
+    "K20-anyerror-send",
+    "K57-export-threads-main-creator"
+   ],
+   "answered": [
+    "J2-06: verdict 164 (a sharedref mut link never goes to another thread; a type holding one is neither Send nor ThreadShared; scoped tasks reach it through the caller's variables)",
+    "J7-03: verdict 165 (thread_shared is refused where the value is made when something in it is not ThreadShared, E7015)",
+    "J7-04: verdict 166 (a scoped task neither makes nor ends a shares owner, nor ends an object that weakref links on this thread point at)"
+   ],
+   "verdicts_involved": [
+    "3: sharedref mut changed on two threads only with a lock",
+    "23: a shares value is never used from two threads",
+    "61: thread_shared fn() says any thread may run it",
+    "77: a reduction through two sharedref mut links from scoped tasks",
+    "93: a task may take copy of t or ref t",
+    "94: thread.spawn takes a thread_shared fn()",
+    "101: two counts, the making thread deletes",
+    "104: after join the parent may use what the task used",
+    "114: a handed-over object's links here say gone",
+    "164",
+    "165",
+    "166"
+   ],
+   "other_places": "Every type-erased holder: dyn I without needs Send, owns dyn Error, function values (fn() against thread_shared fn()), iterators, generators and closures that capture shares owners or Cells. Channel ends (Sender/Receiver are Send only for a Send element: lead fix J7-07). JoinHandle results, jobs and job results, statics (STA-1 needs ThreadShared), the weak count in a one-thread object's header (written when a link is made or the object ends), callbacks C runs on threads C owns (FFI-22, HR-3a), export wrappers under each threads word, a one-thread memory manager reached from another thread (P02, J5-05), the queued drop of a thread_shared value (P05), hot-reload work done on another thread, and the vouching path for types the compiler cannot see into (P04, J7-06/J2-12).",
+   "severity": "high",
+   "rank": 1,
+   "depends_on": [],
+   "notes": "Three of the five members are answered, and they fix the rule's shape: markers derived from contents (164), ThreadShared checked at the making line (165), and an operation on a one-thread count from a task counts as a route (166). Open: J6-16 (A, AnyError Send and ThreadShared with a refusal at `?` of an error that is not, is the rule's 'an erased type by what it may hold'; state its cost, a one-thread error refused at `?` even in a program with one thread) and J8-10 (which thread a module's static mut belongs to, one rule for main and creator). After verdict 165 a C wrapper reaches thread_shared or static only through P04's ThreadShared vouch (J7-06): present them together, as phase 3 notes for K02."
+  },
+  {
+   "gid": "P02",
+   "principle": "Everything that points into or is served by a memory manager's memory (a value made in it, anything holding one, a view, a weakref link, a count in one of its blocks) ends before the manager gives that memory back, and nothing else is ended; `using` follows every type whose value owns heap memory of its own, a program's own types included, wherever the manager can serve that memory for the value's whole life, on the thread where the value may end.",
+   "shared_cause": "ALC-1, TYP-46 and LT-4 tie to a manager's life only 'a value made in an instance, and every value that holds one', and give a closed list of the types `using` may follow. They do not state the property that whatever lives in or points into the manager's memory is bounded by it and given back on its thread. So a weakref link (which holds no value), a scope's views (only part of the memory is released), a thread_shared value (released on another thread, with no runtime chunk header) and String, Deque and the rest (left off the list) each fall outside, and the list contradicts its own property sentence.",
+   "members": [
+    "J5-02",
+    "J5-05",
+    "J5-19",
+    "J2-02",
+    "J5-09"
+   ],
+   "clusters": [
+    "K04-weakref-outlives-arena",
+    "K05-thread-shared-using",
+    "K34-which-types-take-using",
+    "K61-arena-scope-views"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "19: using names a manager",
+    "24: the field names the kind, the making line names which; no value outlives its arena",
+    "47: an arena-made value carries a pointer to its arena",
+    "101: fix 1, the maker's id is read from the memory chunk",
+    "107: no manager word when the manager can do without it"
+   ],
+   "other_places": "sharedref mut links and shares owners whose count block sits in an arena. StrView or Span into an arena String or ArenaArray. Iterators over arena lists. into_raw and C-kept addresses of arena objects. A value made in an arena and handed to another thread (verdict 114 moves it). reset() (ALC-5) and nested scope(). Pools and their handles after the pool ends. A program's own Allocator implementations and containers (a SlotMap). Closure state blocks and AnyError's block made under a manager. Arena values reached from statics.",
+   "severity": "high",
+   "rank": 2,
+   "depends_on": [
+    "P01"
+   ],
+   "notes": "J5-02 was shown to the owner and is open. Ask J5-05 before J2-02/J5-09 (phase 3 conflict 2): a property-worded `using` lets thread_shared back in unless the rule names the manager's thread. Phase 3 changes J2-02's recommendation: the property must reach a program's own containers, not just 'every standard collection'. J5-05 also touches P01 (an Arena is one-thread state) and P03 (OBJ-1 reads the maker from the chunk header). J5-19 is low: a correct program refused for a reason that is untrue for it (ARN-1 against ARN-6)."
+  },
+  {
+   "gid": "P03",
+   "principle": "A value is made, once, in storage that fits everything the program later does with it (a counted block if any line shares it, the thread_shared header if any line shares it between threads, writable memory if links count it), so no later line moves it or changes its header while a view, a link or a C pointer points at it, and every sharing word may follow a local of the function alike.",
+   "shared_cause": "HEAP-3 puts a value in its counted block at the line that shares it, and CT-5 puts a static in read-only memory. Both decide storage from the line at hand, not from every use the program makes of the value. So a view taken before the sharing line points where the local used to be (J5-06). thread_shared of a local is refused (THR-1, OWN-13, E7017 against RC-1) only for the cost of a later header change that a whole-function placement avoids (J4-05, J7-05). And a weakref count must be written into read-only memory (J6-06).",
+   "members": [
+    "J5-06",
+    "J4-05",
+    "J7-05",
+    "J6-06"
+   ],
+   "clusters": [
+    "K06-sharing-a-local",
+    "K13-weakref-to-static"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "23: the first owner keeps what it could do after sharing; a local may be shared",
+    "81: adding to a list does not end a link to an object in its own block",
+    "101: the 32-byte thread_shared header",
+    "103: shares is not made from a one-owner place (its layout reason)",
+    "114: fix 3, an object C keeps never moves",
+    "165: the ThreadShared check stays at the thread_shared line"
+   ],
+   "other_places": "weakref of a local (WK-11 lets any name make a link), into_raw of a local, a local's address given to C under retained (verdict 114 fix 3), shares of a static's object, an inline struct in a list that a link points into (verdict 81), relocation at a thread hand-over (verdict 114), relocation at a reload (P09), a local captured by a function that outlives its maker, and generator frames holding locals that views point into.",
+   "severity": "high",
+   "rank": 3,
+   "depends_on": [],
+   "notes": "K06 asks J5-06 and J4-05 as one question. J7-05's lead-fix text is J4-05 option A's edit and is written only if the owner picks A (phase 3 reroute). Phase 3 changes J4-05's recommendation to B: the compiler sees the sharing line in the same function and places the block where the local is made, so A's cost reason does not hold. J6-06 A is the same mechanism for statics. E7017 rests on the redesign's rule R3, not a verdict; tell the owner what it rests on."
+  },
+  {
+   "gid": "P04",
+   "principle": "Safe code relies only on what the compiler checks or on a fact someone vouched for in unsafe code: every fact the compiler cannot check (what C does with a pointer, what C passes in, where a C++ reference points, whether a foreign global changes, what a header runs before main, what an unsafe body does when safe code reaches it, whether a wrapped C object is thread-safe) is refused in safe code until vouched, and one vouching spelling reaches every kind of item and every type.",
+   "shared_cause": "The rules that let safe code act on an unchecked fact are written per construct. FNI-10's safe-fn list checks parameters but not pointers inside a @layout(c) struct. FFI-31b types an export's C arguments as if checked. FFI-40 derives a C++ reference result's lifetime from a body that does not exist. FFI-41 exempts C++ const globals, ignores mutable members, and leaves C no way to assert. FFI-51 asks for unsafe on C imports only. UNS-1 does not reach drop or a safe virtual call landing in an unsafe override. TYP-43 vouches Send only, for structs and enums only. @ffi(handle) has no meaning. So an unchecked fact reaches safe code by an unlisted route, or a fact that could be vouched has no spelling.",
+   "members": [
+    "J8-08",
+    "J8-09",
+    "J8-06",
+    "J5-16",
+    "J8-07",
+    "J8-11",
+    "J7-06",
+    "J2-12",
+    "J8-14"
+   ],
+   "clusters": [
+    "K07-raw-pointer-struct-safe-call",
+    "K08-export-arguments-from-c",
+    "K09-cpp-reference-result",
+    "K11-unsafe-drop-override",
+    "K15-foreign-const-globals",
+    "K16-unsafe-import-cpp",
+    "K36-unsafe-extend-vouching",
+    "K46-ffi-handle-meaning"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "31: a forgotten mark must refuse, not crash",
+    "60: anything that can break safety only inside unsafe",
+    "118: an unsafe fn's body is unsafe",
+    "119: anything inside unsafe code is unsafe",
+    "120: a C function in unsafe extern carries @safety",
+    "125: C++ too, members included",
+    "126: lambdas carry @safety",
+    "130: overlay unsafe fn with @safety",
+    "132: an unwritten attribute never falls back to an inferred fact",
+    "133: hand-written declarations spell unsafe the same way",
+    "136: safe fn or unsafe fn, never plain fn",
+    "137: a result's view is read from the callee's code (C++ has none)",
+    "165: thread_shared needs ThreadShared"
+   ],
+   "other_places": "C function pointers arriving from C (FFI-56), C callback arguments, out-parameters and C struct fields in general, unions, variadic C calls (E5013), C strings returned, extern statics C writes, C++ mutable members and const_cast, C++ virtual calls and exceptions, [[clang::lifetimebound]], header-only C libraries and static initialisers in any compiled foreign code, another package's overlays (FFI-30c), Send/ThreadShared/other markers for every kind of type, an unsafe implementation of a safe interface method reached through dyn, interfaces whose correctness memory safety relies on (Hash/Eq for maps), unsafe code at compile time (P17), GPU bindings.",
+   "severity": "high",
+   "rank": 4,
+   "depends_on": [],
+   "notes": "J8-08 and J8-14 both rewrite XVI.4's Vulkan overlay: write it once, after both answers. J8-08's example line ref_to_ptr(ref mut x) takes P07's spelling (J2-11). J5-16 A also needs the missing rule that an interface implementation's signature must match. J7-06 is P01's only way out for a thread-safe C wrapper under verdict 165. J8-06 B is verdict 132's lesson and verdict 137's reading. J8-07 A has to agree with STA-1 and the rule that replaced ODR-163. ODR-111 (a delegation ruling) once allowed Send|Sync; ThreadShared was dropped without a verdict."
+  },
+  {
+   "gid": "P05",
+   "principle": "Every end the program does not write as a call (above all a thread_shared value's drop queued back to its making thread, and any drop the compiler places) counts as a call at each point where it may run, so the lock, walk and view rules see it, and it runs within a stated bound: before the thread waits idle, leaves Ember for C, or ends.",
+   "shared_cause": "RC-4 point 3, a lead choice and not verdict 101, puts the check points that run queued drops at loop back edges and blocking calls. No rule counts those drops as calls there: EFF-24 counts only what code calls, and THR-20 counts the drop only on the other thread. Nothing bounds when they run on a thread that is idle in the runtime or back in C. So the same hidden end can clash with a held lock or a walk (J7-01) or never run (J7-02).",
+   "members": [
+    "J7-01",
+    "J7-02"
+   ],
+   "clusters": [
+    "K10-queued-drop-check-points"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "43: a call that may take a lock this thread holds is refused when compiling",
+    "56: an object counts as ended before its drop runs",
+    "57: destroying an object counts as calling its drop",
+    "101: the making thread deletes at its next check point, always before the thread ends",
+    "114: the moved object's drop runs once, on the other thread"
+   ],
+   "other_places": "Drops at a scope's end inside a with block, clear() and replacement inside a walk (verdict 57), a weakref target's end (WK-3), statement-end temporaries (DRP-3) under a lock, a reload's reclaim (HR-2a), program exit (THR-16: no drop after main returns), pool workers that end only with the process, callbacks C runs into Ember at arbitrary points, generators abandoned mid-iteration.",
+   "severity": "high",
+   "rank": 5,
+   "depends_on": [
+    "P01"
+   ],
+   "notes": "Present J7-01 C and J7-02 B as one option ('never queued, all counts atomic'). J7-01 B must state its bound (phase 3 conflict): either refuse a loop with no clash-free check point (E7018, naming the lock), or also empty the queue when the clashing lock is released. With J7-02 A, every queued object is then ended within one job or one callback. J7-01 A is verdict 57's rule applied to queued drops."
+  },
+  {
+   "gid": "P06",
+   "principle": "A call does to each argument exactly what the word at the call says (no word lends it for the call, owns hands it over), for every callee (a function, a method, an operator, a written init, a standard-library or C function) and every argument (a function held in a variable included), and a callee keeps past the call only what was handed over.",
+   "shared_cause": "FN-2a and GRM-15 give each kind of callee its own call-word rule, with no single rule tying the word to what the callee does and keeps. A function from a variable is lent to std (verdict 150). A constructor's argument takes no word (159). String's + is built in outside the operator interfaces (TYP-21, TXT-11) and silently takes its left side. So a std function that keeps a lent function (spawn, push, a returned adapter), an init with owns parameters, and String + each get two answers or none.",
+   "members": [
+    "J3-02",
+    "J6-12",
+    "J2-04",
+    "J6-14",
+    "J1-07"
+   ],
+   "clusters": [
+    "K12-function-lent-to-std-and-kept",
+    "K18-string-plus",
+    "K19-written-init-call-words"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "3: Mutex, RwLock, Atomic and channel ends take no ref mut at the call",
+    "51: a named local function or a lambda in the call, both allowed (thread.spawn(push_a))",
+    "80: a function that outlives its maker takes what it keeps with owns",
+    "84: owns hands over every type the same way",
+    "94: scope.spawn keeps a plain fn()",
+    "145",
+    "146: owns before a read-only parameter's argument is an error",
+    "147: an owns parameter's argument says owns at the call",
+    "148: return takes no word",
+    "149: push too",
+    "150: a function from a variable given to std is borrowed",
+    "158: a function written in a std call says owns",
+    "159: a constructor's argument takes no word, as =",
+    "160: a value made with shares or weakref in the call takes no owns",
+    "161: owns binds as unary minus"
+   ],
+   "other_places": "thread.spawn, scope.spawn (verdict 94's exception), push, insert and extend, iterator adapters returned or stored in fields, Option.map, event-handler registration, C functions that keep callbacks (P08, J8-01), every operator of every type (+, ==, [], +=, in, comparisons) as a call of its interface, From conversions at `?`, channel send, methods taking owns this, and a lock or channel-end owns parameter (lead fix J3-04: verdict 3 against 147, one-line confirmation).",
+   "severity": "high",
+   "rank": 6,
+   "depends_on": [],
+   "notes": "Phase 3's unified rule for K12: a function from a variable passed with no word is lent; a loan the callee keeps past the call is refused at the call with help `owns h` or `owns copy of h`; for_each(h) and xs.iter().map(h).sum() stay loans. Show J6-12's `b.handlers.push(beep)` as the second line of J3-02's program. J3-02 A rewrites verdict 51's `thread.spawn(push_a)` as `thread.spawn(owns push_a)`, and option C reverses verdict 51: say both. J1-07 A narrows verdict 159 to memberwise constructors: quote it. K18: one B spelling, `(owns label) + \"!\"`. A is refined with C++'s rvalue rule, so `a + b + c` makes one String. Show J3-03 (verdicts 147/150's std/program split) beside it. J1-06's widening of verdict 160 to thread_shared and sharedref mut is a one-line confirmation under the same rule."
+  },
+  {
+   "gid": "P07",
+   "principle": "One name in one scope is one function, for everyone: where the library or a C++ header has several functions of one name (by a parameter's word, by parameter types, a const and a non-const operator), they reach Ember by one stated rule that a program could follow too, and an overlay names each one the way the importer names it.",
+   "shared_cause": "TYP-26 says there is no overloading and allows exceptions only for operator implementations and extend blocks. Yet the library declares two ref_to_ptr, and C++ headers bring overload sets, several constructors and const/non-const operator[] pairs. FFI-48 refuses only overloads that differ in return type. GRM-35's overlay entries match by name, count and parameter names, and have no form for an operator member. No rule says how a set of same-named functions reaches Ember, or how one is named or vouched.",
+   "members": [
+    "J8-04",
+    "J8-05",
+    "J2-11"
+   ],
+   "clusters": [
+    "K21-cpp-overloads",
+    "K47-overlay-operator-names",
+    "K51-ref-to-ptr-spelling"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "125: C++ members stay unsafe until an overlay entry vouches",
+    "131: C++ member lines go under their class",
+    "132: @ffi(const) on an entry"
+   ],
+   "other_places": "C++ default arguments, constructors chosen by super.init (FFI-39b), operator==, operator<< and operator(), templates and their specialisations, Index/IndexMut and other operator-interface pairs, an operator interface implemented for several right-hand types (String's Add[StrView] under P06's J2-04 A), extend blocks, the library's other twin functions, and the safe cast `ref x as *T` beside ref_to_ptr.",
+   "severity": "high",
+   "rank": 7,
+   "depends_on": [],
+   "notes": "Ask J8-04 before J8-05: the const and non-const operator[] are an overload pair. Ask J2-11 before P08's J8-12 (no third ref_to_ptr overload). J8-04 A (one Ember name, the call picks by argument types) would make imported C++ the one place with overloading, so it must give its reason or the rule must hold for programs too; J2-11 C is that wider rule. J2-11 B also meets P24's 'one idea, one spelling'. ODR-075 (a lead ruling) kept the name."
+  },
+  {
+   "gid": "P08",
+   "principle": "Ownership that crosses between Ember and C is written in Ember's own words and has one owner at every moment: what C keeps (a callback, an object's address, a raw owner) is tracked on Ember's side by an owner or token whose end releases C's hold exactly once, and what Ember takes from C (adopt) is ended by the type's own end (its drop, its C++ destructor, or the destroys(f) its declaration names).",
+   "shared_cause": "Part XVI defines these crossings piecemeal. FFI-21/23 give a token and an unregister requirement only to retained callbacks. FFI-52's own declaration of a kept callback breaks FFI-10. FFI-11 gives a retained non-callback pointer no safe type. into_raw has no inverse. adopt reads its end only from destroys(f), which an Ember class or a plain C++ class lacks. So several crossings have no Ember owner, no spelling, or no stated end.",
+   "members": [
+    "J8-01",
+    "J8-03",
+    "J8-12",
+    "J8-13",
+    "J8-16"
+   ],
+   "clusters": [
+    "K31-c-kept-callback-declaration",
+    "K53-once-callback-token",
+    "K52-c-keeps-address-ember-owns",
+    "K50-adopt-ends-by-own-destructor"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "31: a C call may run the callbacks C keeps",
+    "39: a function calling C names what kept callbacks change (now inferred, 86)",
+    "62: a callback that removes its own token stays alive until it finishes",
+    "91: into_raw only inside unsafe; a C function declared as keeping an object takes it by an ordinary hand-over",
+    "102: owns in a C contract",
+    "114: fix 3, an object C keeps never moves",
+    "147",
+    "150",
+    "158"
+   ],
+   "other_places": "once and retained callbacks, user-data pointers (glfwSetWindowUserPointer), std::unique_ptr and std::shared_ptr results, by-value opaque C++ results (FFI-32), borrowed C results, a buffer Ember made that C frees (manager mismatch), tokens ended after C has finished or on another thread, unregister functions that fail, objects C keeps that are then handed to another thread, and capacity of the callback table (P27).",
+   "severity": "high",
+   "rank": 8,
+   "depends_on": [
+    "P06",
+    "P07"
+   ],
+   "notes": "J8-01's call word follows P06's rule (`owns` before a named function C keeps). J8-03 and J8-18 then use J8-01's spelling. J8-12's spelling follows J2-11 (P07): the cast `body as ObjectPtr[Body]` or a function of its own, never a third ref_to_ptr. J8-13 and J8-16 answer together (phase 3's 'the way the type's own declaration ends it'). Lead fix J6-03 gives the kept-by-C mark a place in OBJ-1. Verdict 114 decided the stop for an object C keeps; this group gives it a program that compiles."
+  },
+  {
+   "gid": "P09",
+   "principle": "A reload carries every live value of a changed type to the new layout wherever it lives (a class object, a list, a shared block of its own), handing the old value's parts over (never copying an owner or an open resource), and ending what is left by its own drop.",
+   "shared_cause": "HR-12, HR-13 and HR-15 register and migrate only class instances and values inside containers. HR-16 gives migrate_from only a read-only view of the old instance. HR-2a frees the old version field by field without drop. The reload model was not extended to what 0.9.15 added (any shared value in a block of its own, with a 32-byte header for thread_shared), nor to owned resources a migration must carry.",
+   "members": [
+    "J7-16",
+    "J7-15"
+   ],
+   "clusters": [
+    "K14-reload-shared-block",
+    "K48-migrate-from-ownership"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "57: destroying an object counts as calling its drop",
+    "101: header sizes",
+    "147: owns on a parameter that takes the old value over",
+    "159: constructor arguments take no word (J7-15 A's code clashes)"
+   ],
+   "other_places": "Values made in arenas, statics, closure state blocks, values C keeps (retained, into_raw), values living on other threads, generator frames, boxed errors in AnyError, the weak-count-kept block of an ended object, and owner counts and links inside migrated values (a shares field migrated must keep its count right).",
+   "severity": "medium",
+   "rank": 9,
+   "depends_on": [],
+   "notes": "J7-15 option A's code writes owns before constructor arguments, which verdict 159 refused. Write `Session(sock=old.sock, target=old.target, hp=Health(value=old.hp))`; `owns old` on the parameter is unaffected. J7-16 A gives a thread_shared block a 48-byte header in reload builds (OBJ-1, COST-3). It is memory safety only in reload builds, hence the rank."
+  },
+  {
+   "gid": "P10",
+   "principle": "A promise that a value does not change (a read-only name's, a let field's, a @cached result's inputs) holds against every route that can change it (another name, a weakref or sharedref mut link opened from anywhere, a call), and binds exactly while some holder could see the change, so not inside drop once the object has ended.",
+   "shared_cause": "Each no-change promise names the routes it forbids, instead of being defined by what it protects. BRW-21/BCK-8 check only ending or moving. OWN-13 covers owners made from a read-only name, not a link opened `ref mut`. @cached's guard names sharedref mut links but not weakref. CLS-9a forbids every change after init, drop included, against CLS-7a. So a weakref link escapes the first three, while drop, where nobody can see, is caught by the last.",
+   "members": [
+    "J5-07",
+    "J6-02",
+    "J3-10"
+   ],
+   "clusters": [
+    "K17-read-only-parameter-promise",
+    "K43-weakref-into-cached",
+    "K44-drop-changes-let-field"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "3: sharedref mut",
+    "5: a read-only name promises what it reads does not change while it is in use",
+    "18: changes this promises nothing about other names",
+    "32: what a function may do with a parameter is set by its word",
+    "53: a callee changing what a view parameter views is caught at the call",
+    "54: this counts the same",
+    "56: an object is ended before its drop runs",
+    "69: drop changes its object as a given",
+    "87: the call check covers ref mut parameters"
+   ],
+   "other_places": "Read-only `this`, const names, non-mut statics, shares (read-only owner) beside a sharedref mut link to the same value, a list under a loop (verdict 95) reached through a link, map keys and hash inputs changed through a link, iterator sources, and every route: callbacks, C functions, another thread under a lock. J4-14 (rerouted to a lead fix by verdict 53) is the same promise against another name of the same place.",
+   "severity": "medium",
+   "rank": 10,
+   "depends_on": [],
+   "notes": "Ask J5-07 before J6-02: J5-07 A brings in exactly the link tracking that J6-02 rejected B for. J5-07's draft must show the observer case (a method that only reads `this` doing `BUS.push(weakref this)`), and A must say how far it reaches (only links the function itself opens, or the method says it may change `this`). Otherwise it refuses a common correct program and contradicts WK-11 ('making or ending a link is not a change of the target'). Edit LT-46 and the read-only lead fixes (J5-14, J4-14: EXC-17, BRW-21, BCK-8, FN-1) together. J3-10 marks the principle's limit (principle 6: an exception where the rule's reason is untrue)."
+  },
+  {
+   "gid": "P11",
+   "principle": "What a name, a return or a hand-over gets from a source is decided by one rule for every form that names a value (=, return, a parameter, for, match, exists as, a pattern, a destructuring) and every kind of source (a new value, a whole local, a part, a cast, a view, an iterator): the word before it (none, owns, copy of, ref, ref mut) means the same everywhere; a new value is owned by the name that takes it and lives exactly as long as a name holds it; owns before any place hands that place over; and a name that owns its value may change it.",
+   "shared_cause": "Each binding form has its own list of what a source gives (BRW-12, BRW-14, BRW-15, OWN-3, OWN-8, CTL-1, GRM-13, GRM-15, EXP-4). for takes a temporary over while exists as views it and match needs owns. if and while end temporaries before the block while match keeps them through the arms. owns before a value is listed for some sources only, not a part on `=` or a cast. A view-typed field is viewed where a Copy value is copied. copy of a Copy view is both allowed (OWN-8, verdict 68) and refused (E2116). Owner names are caught by the read-only rules. copy of and per-name words exist on some name lists and not others. The silent-copy guard names only structs. One table (source x word x form) is missing.",
+   "members": [
+    "J1-09",
+    "J3-07",
+    "J3-09",
+    "J4-04",
+    "J2-10",
+    "J5-12",
+    "J2-01",
+    "J4-08",
+    "J4-11",
+    "J4-03",
+    "J1-10",
+    "J4-09"
+   ],
+   "clusters": [
+    "K22-opened-name-owns-call-result",
+    "K23-match-subject-temporaries",
+    "K27-for-over-named-iterator",
+    "K25-owns-takes-a-place-out",
+    "K26-copying-a-view",
+    "K63-copied-array-tuple-changed",
+    "K24-owning-names-changeable",
+    "K62-copy-of-on-loop-names",
+    "K42-split-mutspan-halves"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "5: no silent aliasing, no silent copy",
+    "10: the copy word copies the thing itself, never a link",
+    "12: copy of",
+    "16: one rule for every loop",
+    "25/27: cast s as Circle, is Circle as c",
+    "26: exists as",
+    "66/67: exists as copy of v, changeable",
+    "68: a Copy type always works with copy of",
+    "78: a field handed over on its own",
+    "79: copy of a struct holding links copies the links",
+    "84/85/97: owns on every type and making line",
+    "93: copy of t or ref t",
+    "95: nothing changes a list while it is walked",
+    "145: owns hands over what = copies",
+    "147/149: owns at the call, push(owns p.name)",
+    "148: return takes no word",
+    "161"
+   ],
+   "other_places": "with bindings, lambda captures (copy of, ref, owns), `?` results, generator yield and next, `if s is Circle as c`, while ... exists as, else arms, tuple and struct destructuring, nested patterns, casts of temporaries, owns before an element (mem.take), shares and weakref sources, Option contents, a view of a view, slices of fixed arrays, and the read-only rules applied to every name that only views.",
+   "severity": "medium",
+   "rank": 11,
+   "depends_on": [],
+   "notes": "One rule with five facets. (a) A header over a new value (J1-09, J3-07): phase 3's option B, 'a value a call made, given to a header (for, match, exists as), is taken over with no word'. It drops `owns` in J3-07's `match owns JOBS.lock().pop()`, and the subject's temporaries (the guard) end before the arm unless an arm's names point into them. Ask J1-09 first. (b) A header over a place (J3-09). (c) owns before any place (J4-04, J2-10, J5-12); verdicts 78 and 149 already decide `push(owns p.name)`. (d) Copying (J2-01, J4-08, J4-11): J4-08 B's outcome holds only under J2-01 C, and J4-02's refutation does not hold for StrView; ask together. (e) Names' words and rights (J4-03; J1-10 after J2-01; J4-09 per phase 3's change, `ref mut left, ref mut right = samples.split_at(mid)`, beside `exists as (ref mut a, ref b)`). Phase 3: edit BRW-12, BRW-14, BRW-15, OWN-3, CTL-1, GRM-13 and GRM-15 together."
+  },
+  {
+   "gid": "P12",
+   "principle": "Every holder word (owns, shares, shares mut, thread_shared, weakref, sharedref mut) applies to every type that can be held that way, an interface value included, and the held value reads as itself wherever it is wanted (an argument, an operand, printing, ==, hashing), while `is` asks whether two holders hold the same value.",
+   "shared_cause": "TYP-14, TYP-36/39 and TYP-5 rule 7 give read-through and the value's interfaces only to references and owns T. IV.11 strips a shares level for method calls only. EXP-9 limits `is` to class objects and views while the E2150 row admits links. TYP-45 and DSP-4 list only owns, shares and shares mut before dyn I. The holder words are never stated as applying alike to every holdable type, or as transparent for reading.",
+   "members": [
+    "J2-09",
+    "J3-12",
+    "J5-13"
+   ],
+   "clusters": [
+    "K30-shared-owner-equality-and-identity",
+    "K35-weakref-dyn"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "3: sharedref mut",
+    "9/10/11: weakref, another link, every link counted",
+    "23: shares owners",
+    "27: `is` takes a second job only where it reads naturally",
+    "79: copy of a struct holding links"
+   ],
+   "other_places": "thread_shared dyn I, sharedref mut dyn I, shares mut dyn I (omitted by DSP-4: wording), Option of any held form, a shares owner as a Map key or Set element, `in` and iteration over a shared list, Display/Debug of held values, Ord and sorting of owners, and a class object's own == (identity) beside contents comparison.",
+   "severity": "medium",
+   "rank": 12,
+   "depends_on": [],
+   "notes": "J2-09 A relies on `is` comparing owners, which EXP-9 refuses until J3-12 A widens it: ask together, with J3-12's two weakref links as the second line. `==` has a real choice (Rust's Rc compares contents, C++'s shared_ptr compares addresses). J5-13 is the observer list of UI and game code, and P10's J5-07 must not refuse its registrations."
+  },
+  {
+   "gid": "P13",
+   "principle": "Every collection treats owned and viewed text alike: with no type written, a literal's text is owned in a list as in a set or map, and any text (a view or a String) finds, compares with and is looked for among String elements in every collection.",
+   "shared_cause": "TYP-38 makes untyped text in a set or map a String, because they own their text, but a list keeps the literal's StrView. The `in` rule for a list of Strings tests only a String, while sets and maps look a String key up by a view. Lists are treated unlike their siblings with no reason given (STD-11 shows maps may hold views too).",
+   "members": [
+    "J3-13",
+    "J6-13"
+   ],
+   "clusters": [
+    "K28-untyped-list-of-text",
+    "K29-text-view-in-list"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "72: the loop rule covers lists, maps, sets and strings alike",
+    "95: Rust's way for lists and maps"
+   ],
+   "other_places": "contains, index_of, find, remove and sorted search on lists; == between Array[String] and Array[StrView]; match against text; nested and tuple literals; the same owned/viewed pair for Array and Span; String + StrView (P06).",
+   "severity": "medium",
+   "rank": 13,
+   "depends_on": [],
+   "notes": "J3-13 A makes untyped text lists allocate, one allocation and copy per element: @noalloc (E4001) and PHIL-2's list of allocating forms must say so (P14). J6-13 A costs nothing and makes no String for a literal."
+  },
+  {
+   "gid": "P14",
+   "principle": "Every effect a written contract or layer forbids (Alloc, Panic(Explicit), RuntimeCheck(Aliasing), Nondet, heap memory in the core layer) is carried by exactly the operations that do it, decided by what the operation does and fixed by the language, never by a closed list of names or an implementation's choice, so a contract means all of, and only, what it says.",
+   "shared_cause": "The effect rules list their operations by name. EFF-9 says assert_disjoint is 'the one run-time alias check there is', and the Panic(Explicit) row is a list. DET-2 names 'thread completion order' and 'transcendental' functions. CLO-10 says a closure's one-word state 'may' stay inline. The core layer lists AnyError although its error lives in a heap block. Operations added since (runtime) or never named (a contested lock, cbrt, SIMD estimates, a closure's state, AnyError's block) fall between, so whether a contract accepts a program depends on a list or on the compiler.",
+   "members": [
+    "J1-02",
+    "J5-10",
+    "J6-01",
+    "J6-07",
+    "J6-08",
+    "J3-15",
+    "J6-11"
+   ],
+   "clusters": [
+    "K58-runtime-check-effect-kind",
+    "K54-nondet-contested-lock",
+    "K55-nondet-math-functions",
+    "K40-function-value-inline-state",
+    "K74-anyerror-core-layer"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "86: the compiler works out what each function does",
+    "92/105: reductions of scoped tasks are not Nondet",
+    "114: one compare at a hand-over",
+    "122: a call through a stored function has the effects of what reaches it",
+    "152/162/163: runtime and its run-time check",
+    "157: the runtime messages"
+   ],
+   "other_places": "Alloc in String +, collection literals (P13's J3-13 A), defaults made and dropped (P15's J3-06), thread_shared blocks, a hand-over of a weakref-targeted object (lead fix J6-03), check points emptying queues (P05), `?` into AnyError. Panic and RuntimeCheck kinds of cast, unwrap, index, stale and count roll-over checks. Nondet of channels, atomics, try_lock, clocks, hash iteration order and float reductions. Effects through dyn calls and stored functions, and C calls.",
+   "severity": "medium",
+   "rank": 14,
+   "depends_on": [],
+   "notes": "J1-02, J5-10 and J6-01 are one question found three times: use J1-02's three options. The answer sets J1-01's lead-fix wording and 'the one run-time alias check there is' in EFF-9, DSJ-6 and the E4030 row. Apply G1's resolution first (a bare dyn local stays legal) so the examples compile. J6-07 B must leave THR-21's reductions as they are. Lead fix J6-03 is an instance the owner should hear: @noalloc and @nopanic(explicit) refuse a hand-over of a weakref-targeted object."
+  },
+  {
+   "gid": "P15",
+   "principle": "Every way a value is built (a constructor call, super.init, reading it back from saved data, a migration) goes through the type's one init (the one written, or the one made from its fields, visible exactly as widely as every field it sets) and gives each field exactly one value: the one the builder sets, else the field's default, else its type's.",
+   "shared_cause": "The memberwise constructor and field defaults are stated case by case. CLS-3 gives a memberwise constructor only to a class with no init and no base. STR-6 copies only CLS-2's E2100 sentence. STR-2 makes a default 'at each construction that omits the field'. STR-1 knows only pub and not pub. The @ser rules cover default and since=N only. So super.init over a memberwise base, a struct init that sets a defaulted field, a pub(package) field's constructor, and a @ser(skip) field each have no rule.",
+   "members": [
+    "J3-05",
+    "J3-06",
+    "J3-18",
+    "J6-15"
+   ],
+   "clusters": [
+    "K32-super-init-memberwise",
+    "K33-init-and-field-defaults",
+    "K66-constructor-visibility",
+    "K49-ser-skip-field-value"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "74/85/97: owns on the making line for an owns field",
+    "159: a constructor's argument works as ="
+   ],
+   "other_places": "C++ bases (super.init picks by arity and types, FFI-39b), @derive(Default), clone and copy of, enum variant construction, MOD-7's pub(read), defaults with side effects (id: int = next_id()), @noalloc inits, migrate_from (P09), and adopted objects (P08).",
+   "severity": "medium",
+   "rank": 15,
+   "depends_on": [
+    "P06"
+   ],
+   "notes": "J1-07 (P06) decides the call words at a written init. Under every J1-07 option, `super.init(id=id)` over a memberwise base takes no words, so the dependency is wording only. J3-06 B changes CLS-2 for classes too: a default with a side effect no longer runs when init sets the field (C++'s member-initialiser behaviour), and whether it runs depends on init's body; say so (checklist 1, 15; MOD-9). J6-15 A reuses @derive(Default)'s rule."
+  },
+  {
+   "gid": "P16",
+   "principle": "Parallel code (scoped tasks and @parallel loops alike) has the result the same code has run one by one: every write is either to an element only one iteration or task touches (an element of any indexable container) or a reduction recognised from its ordinary spelling (+=, -=, *=, max(), min()), whose private copy starts at the operator's identity and combines in a fixed order; anything else needs a lock or an Atomic.",
+   "shared_cause": "PAR-2/PAR-3 for loops and THR-21 for tasks state the disjoint-write and reduction rules separately and by listed forms. Only MutSpan and SoA columns count as disjoint. Loops need reduce= declarations and tasks do not. The private accumulator is 'of the place's type' with no start value or combine for -=. max and min are listed with no spelling that compiles. So the same body gets two answers depending on loop or task, and listed reductions cannot be written.",
+   "members": [
+    "J7-11",
+    "J7-10",
+    "J7-09",
+    "J7-08"
+   ],
+   "clusters": [
+    "K37-parallel-array-elements",
+    "K38-parallel-reductions",
+    "K39-reduction-start-values"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "77: a field added to from several tasks is a reduction",
+    "92: decimal reductions allowed",
+    "93: copy of t or ref t in tasks",
+    "104: after join",
+    "105: a split sum stops where a task's own total overflows"
+   ],
+   "other_places": "SIMD-vectorised reductions (SIMD-5's reduce= permission), jobs, |=, &= and ^=, unsigned and narrow places, mixed operators on one place, Map values, nested containers, Atomics written in a body (E7010's own help), `?` in a body (lead fix J7-20), and repeated types in view_mut (lead fix J7-12).",
+   "severity": "medium",
+   "rank": 16,
+   "depends_on": [],
+   "notes": "J7-10 A withdraws @parallel(reduce=...), which SIMD-5 names as the permission for a float reduction in a vectorised loop: say what then permits it. J7-09 A's `best = max(best, e)` becomes the one max spelling for tasks and loops only under J7-10 A. J7-08 keeps verdict 105's promise; A also refuses mixed operators on one place (E7007)."
+  },
+  {
+   "gid": "P17",
+   "principle": "Code run while compiling is ordinary Ember under a checker that sees every access: a function means the same at compile time and at run time, unsafe code included (each access checked as it runs, never barred wholesale), and an operation that exists only while compiling (reading a source file) gives constant data and is done while compiling wherever it is written, or refused where it would run at run time.",
+   "shared_cause": "Part XIV states compile-time evaluation as restrictions on constructs, not as the property that compile-time code is checked ordinary code. One rule bars any function that contains unsafe code, far down its calls included. Another refuses only unsafe pointer access outside the compiler's memory. comptime.read_file is named with no result type, failure or run-time behaviour.",
+   "members": [
+    "J6-04",
+    "J6-05"
+   ],
+   "clusters": [
+    "K56-unsafe-at-compile-time",
+    "K72-comptime-read-file"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "60: unsafe only in unsafe blocks",
+    "118/119: unsafe code is unsafe as a whole"
+   ],
+   "other_places": "comptime(e), static initialisers (CT-5), const evaluation, allocation and C calls at compile time, other comptime builtins (environment, file lists), a library's private unsafe code reached by a caller's comptime, and the read-only results of comptime.",
+   "severity": "medium",
+   "rank": 17,
+   "depends_on": [],
+   "notes": "J6-04 is a contradiction between two rules; J6-05 is an undefined builtin. Both are settled by stating what compile-time evaluation is."
+  },
+  {
+   "gid": "P18",
+   "principle": "A word that states something about a value goes on every kind of declaration where such a value can sit (runtime on a field and a lambda parameter as on a parameter and a variable, and before every held form), with one meaning.",
+   "shared_cause": "LT-48 and the grammar give runtime to `param` and `var_decl` only, and E3021's help names only those two. A method whose unsafe line comes from a dyn field cannot have the check on the field, and the lambda-parameter and shares forms were written in without a verdict.",
+   "members": [
+    "J1-11"
+   ],
+   "clusters": [
+    "K59-runtime-placement-beyond-verdicts"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "152: runtime on a parameter",
+    "157: the runtime messages",
+    "162: before a class type",
+    "163: on a variable, 'no function is needed only to carry the word'"
+   ],
+   "other_places": "Lambda parameters and `runtime shares mut A` (J1-17's held-back parts), statics, captures, Option[dyn I] fields, array elements of dyn type, and runtime before every held form of a class or dyn type.",
+   "severity": "medium",
+   "rank": 18,
+   "depends_on": [],
+   "notes": "Add J1-17's held-back parts (a lambda's typed parameter, runtime before shares and shares mut forms) as further lines of this question (phase 3 reroute). The effect runtime carries is P14's."
+  },
+  {
+   "gid": "P19",
+   "principle": "An interface is usable as dyn exactly when every one of its methods can be called on any implementer with any argument its signature admits; a method that needs two values of one kind (a Self parameter, an Ord requirement) makes it unusable as dyn, and says why.",
+   "shared_cause": "TYP-22 makes an interface unusable as dyn only for a static method, a Self result or a generic method. A Self parameter passes, with no rule for a call on two different kinds. TYP-36 answers this for Eq only ('never equal') and says nothing of Ord.",
+   "members": [
+    "J2-08"
+   ],
+   "clusters": [
+    "K45-dyn-with-self-parameter"
+   ],
+   "answered": [],
+   "verdicts_involved": [],
+   "other_places": "Binary operator interfaces (Add[Self]), Ord and sorting an Array[owns dyn Shape], Hash, Clone through dyn (TYP-22), `where Self: needs Sized`, and Eq's existing answer.",
+   "severity": "medium",
+   "rank": 19,
+   "depends_on": [],
+   "notes": "Option A keeps Eq's stated answer and refuses an interface requiring Ord."
+  },
+  {
+   "gid": "P20",
+   "principle": "Implicit conversions compose: whatever a plain T place accepts, an Option[T] place accepts as Some of it (one level only).",
+   "shared_cause": "TYP-5 composes conversions 'only where stated' (rule 11 after rules 1 to 4), so a value accepted by `owns dyn I`, by a function type, or by widening is refused once the place is an Option of the same type.",
+   "members": [
+    "J2-05"
+   ],
+   "clusters": [
+    "K41-some-after-conversions"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "85/97: owns on the making line inside an Option"
+   ],
+   "other_places": "Option fields, arguments, returns, and values read through a view or an owns, every conversion of TYP-5 into an Option, and Result's Ok side if it ever wraps the same way.",
+   "severity": "medium",
+   "rank": 20,
+   "depends_on": [],
+   "notes": ""
+  },
+  {
+   "gid": "P21",
+   "principle": "A pack of types fills every type form it is written in (a tuple, a function type, once per type) to give exactly the type the form gives written out by hand, for every number of types, one and none included.",
+   "shared_cause": "TYP-47 defines packs only on functions, and TYP-27 says a tuple has two or more elements, so a tuple of a one-type or empty pack has no type. Verdict 115 started from the complaint that one type became `(A,)`.",
+   "members": [
+    "J2-07"
+   ],
+   "clusters": [
+    "K68-pack-tuple-sizes"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "115: typed variadic generics",
+    "116: C++'s dots",
+    "117: print and friends take a pack"
+   ],
+   "other_places": "fn(Ts...) with no types, View[Cs...] with one component, zip of one iterator, Event[] handlers, a tuple's interfaces written once for every size, and structs, classes and enums taking packs.",
+   "severity": "medium",
+   "rank": 21,
+   "depends_on": [],
+   "notes": "Rare in programs, but the library's own View[Cs...] and zip depend on it."
+  },
+  {
+   "gid": "P22",
+   "principle": "Lexical and line-start rules never take away a form the language offers: a token or line is read as what the grammar allows at its position (a match arm's list pattern, a tuple index after a dot), and a raw identifier reaches every word the lexer reserves, so every name a C header uses can be written.",
+   "shared_cause": "Text-level rules override the grammar. Verdict 155's 'every line that starts with [' refuses list-pattern arms the pattern grammar offers. Maximal munch reads t.0.1's `0.1` as a float. LEX-15 makes 'any use' of owned and self E1010 although LEX-14's r# lifts keywords.",
+   "members": [
+    "J1-05",
+    "J1-14",
+    "J1-15"
+   ],
+   "clusters": [
+    "K64-list-pattern-arms",
+    "K70-raw-identifier-reserved",
+    "K71-nested-tuple-access"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "154: a [T] line sits right above its declaration",
+    "155: every other line starting with [ is E0100",
+    "156: a keyword used as a name is E0005, help r#"
+   ],
+   "other_places": "Ranges `..` against `..rest`, f-strings, `#!` lines, comment lines between a [T] line and its declaration, C/C++ names that are Ember keywords (type, async, await, macro), and number literals after a dot.",
+   "severity": "medium",
+   "rank": 22,
+   "depends_on": [],
+   "notes": "J1-05 A narrows verdict 155: quote it. A also needs list patterns' meaning (the names are views, ..rest a Span) and a grammar that can produce [..rest]. (t.0).1 works today, so J1-15 is a corner."
+  },
+  {
+   "gid": "P23",
+   "principle": "A value that holds a resource is ended by its own drop on every path out of its scope, an early exit through `?` or return included, and that drop leaves the resource in a stated state.",
+   "shared_cause": "GPU-2 settles a frame that never began and a frame ended twice. Frame is not @must_drop and has no drop, so ending one without end_frame (an early `?`) leaves the acquired image and open recording undecided.",
+   "members": [
+    "J7-19"
+   ],
+   "clusters": [
+    "K60-gpu-frame-early-exit"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "56: an object is ended before its drop runs",
+    "57: destroying counts as calling its drop"
+   ],
+   "other_places": "Command buffers, GPU buffers and mappings, File, Socket, lock guards, Scope and JobScope (@must_drop, THR-6), transactions, arena scopes, and callback tokens (P08).",
+   "severity": "low",
+   "rank": 23,
+   "depends_on": [],
+   "notes": "Renderers meet it on every texture-load error inside a frame."
+  },
+  {
+   "gid": "P24",
+   "principle": "One idea has one spelling wherever it is written: a list of interfaces is written the same way after needs, dyn and some, and a function has the same name in std.math and in its deterministic twin.",
+   "shared_cause": "Two spellings of one idea, with no reason given. Verdicts 109 to 112 moved bound lists to `needs (A, B)`, but the dyn/some grammar keeps `+` because it was never asked. std.math.det calls the natural logarithm `log` where std.math calls it `ln`.",
+   "members": [
+    "J1-13",
+    "J6-10"
+   ],
+   "clusters": [
+    "K65-several-interfaces-after-dyn",
+    "K73-det-ln-name"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "109/110/111/112: needs everywhere a list of needs is written",
+    "133: a verdict replacing a spelling reaches every place"
+   ],
+   "other_places": "`where` clauses, interface parents, extend lines, other det names against std.math (log2, log10, exp, pow), any other twin module, and P07's J2-11 (ref_to_ptr beside the cast).",
+   "severity": "low",
+   "rank": 24,
+   "depends_on": [],
+   "notes": "For J1-13 do not widen verdicts 109-112 without the owner; show `[T: needs (Add, Copy)]` beside `owns dyn (Shape, Debug)` and say plainly that after dyn the brackets come without needs."
+  },
+  {
+   "gid": "P25",
+   "principle": "`as` converts between every pair of scalar types whose meaning is defined (a bool and a char to every integer type), and the conversion list says that it is complete.",
+   "shared_cause": "TYP-6 gives only char to u32 and u8 to char, nothing for bool, and unlike TYP-5 is not marked complete, so `visible as u8` and `c as int` are undecided.",
+   "members": [
+    "J2-14"
+   ],
+   "clusters": [
+    "K67-bool-char-casts"
+   ],
+   "answered": [],
+   "verdicts_involved": [],
+   "other_places": "Floats to and from char and bool, unit-only enums (ENM-3), narrowing char casts that keep low bits as integer casts do, and conversions into bool or char (x != 0, char.from_u32).",
+   "severity": "low",
+   "rank": 25,
+   "depends_on": [],
+   "notes": ""
+  },
+  {
+   "gid": "P26",
+   "principle": "A layout attribute changes only where data lives, never what an expression means: a field split into columns still reads and writes as the field.",
+   "shared_cause": "SOA-2 and SOA-6 define ps.f and ps[i].f by the column of f, but @soa(flatten) gives the field no column of its own, so ps.pos and ps[0].pos = v have no meaning.",
+   "members": [
+    "J7-13"
+   ],
+   "clusters": [
+    "K69-soa-flattened-field"
+   ],
+   "answered": [],
+   "verdicts_involved": [],
+   "other_places": "Nested flatten, @soa without flatten, @layout(c), packing and alignment attributes, SIMD lanes, views of columns, iteration over SoA, and hot reload of SoA layouts.",
+   "severity": "low",
+   "rank": 26,
+   "depends_on": [],
+   "notes": ""
+  },
+  {
+   "gid": "P27",
+   "principle": "Every fixed capacity the language imposes fails the same way when it runs out: a stop at the line naming the capacity, and a try_ form returning an error where the program may handle it.",
+   "shared_cause": "FFI-53 sizes the callback table and retires worn-out slots as HND-3 retires Pool slots, but says nothing of a full table, and a registering safe fn has no error result.",
+   "members": [
+    "J8-18"
+   ],
+   "clusters": [
+    "K76-callback-table-full"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "59: a count is checked before it rolls over, stopping in every profile",
+    "96: a real 8-bit counter for the limit tests"
+   ],
+   "other_places": "Pool insert/try_insert (HND-3), owner and weak counts (RC-1, RC-4), handle generations, bounded channels, SmallArray's inline capacity, thread-local queues.",
+   "severity": "low",
+   "rank": 27,
+   "depends_on": [],
+   "notes": "The example uses J8-01's spelling (P08). A 32-bit target reaches 65,536 live callbacks."
+  },
+  {
+   "gid": "P28",
+   "principle": "Each fact a declaration rests on is written in one place: the header an overlay describes is named once, and a second naming that could disagree is removed or checked.",
+   "shared_cause": "GRM-35 still names a header in every overlay line, the import names one, and verdict 121 records one in ember.overlays (FFI-30c applies an overlay 'only to the header it was written for'), so three places name it and nothing says which counts.",
+   "members": [
+    "J8-15"
+   ],
+   "clusters": [
+    "K75-overlay-header-mismatch"
+   ],
+   "answered": [],
+   "verdicts_involved": [
+    "121: the header is recorded by Ember in a package file of its own",
+    "127: every project has an ember.toml"
+   ],
+   "other_places": "`with (overlay = ...)` on imports, another package's overlays, project names in import cpp, C++ namespaces in overlays, and module paths.",
+   "severity": "low",
+   "rank": 28,
+   "depends_on": [],
+   "notes": ""
+  }
+ ],
+ "covered": [
+  "J2-06",
+  "J7-03",
+  "J7-04",
+  "J6-16",
+  "J8-10",
+  "J5-02",
+  "J5-05",
+  "J5-19",
+  "J2-02",
+  "J5-09",
+  "J5-06",
+  "J4-05",
+  "J7-05",
+  "J6-06",
+  "J8-08",
+  "J8-09",
+  "J8-06",
+  "J5-16",
+  "J8-07",
+  "J8-11",
+  "J7-06",
+  "J2-12",
+  "J8-14",
+  "J7-01",
+  "J7-02",
+  "J3-02",
+  "J6-12",
+  "J2-04",
+  "J6-14",
+  "J1-07",
+  "J8-04",
+  "J8-05",
+  "J2-11",
+  "J8-01",
+  "J8-03",
+  "J8-12",
+  "J8-13",
+  "J8-16",
+  "J7-16",
+  "J7-15",
+  "J5-07",
+  "J6-02",
+  "J3-10",
+  "J1-09",
+  "J3-07",
+  "J3-09",
+  "J4-04",
+  "J2-10",
+  "J5-12",
+  "J2-01",
+  "J4-08",
+  "J4-11",
+  "J4-03",
+  "J1-10",
+  "J4-09",
+  "J2-09",
+  "J3-12",
+  "J5-13",
+  "J3-13",
+  "J6-13",
+  "J1-02",
+  "J5-10",
+  "J6-01",
+  "J6-07",
+  "J6-08",
+  "J3-15",
+  "J6-11",
+  "J3-05",
+  "J3-06",
+  "J3-18",
+  "J6-15",
+  "J7-11",
+  "J7-10",
+  "J7-09",
+  "J7-08",
+  "J6-04",
+  "J6-05",
+  "J1-11",
+  "J2-08",
+  "J2-05",
+  "J2-07",
+  "J1-05",
+  "J1-14",
+  "J1-15",
+  "J7-19",
+  "J1-13",
+  "J6-10",
+  "J2-14",
+  "J7-13",
+  "J8-18",
+  "J8-15"
+ ],
+ "notes": "I placed 91 items in 28 groups: 20 groups of two or more and 8 groups of one. That is the 90 confirmed owner_odr items in phase2.json other than J4-14, plus J7-05, which sits in P03 with J4-05. J4-14 is in no group. It is a lead fix carried by verdict 53, and I list it under P10's other_places because it is the same read-only promise, broken through another name of the same place.\n\nFor every item I read the title, the problem, each option's summary and the checker's reason. Where a grouping turned on details I also read the example, the outcome and the recommendation. I checked JOB.md verdicts 1 to 166 (164 to 166 are answered) and OWNER-DIRECTION.md, and checked the spec for RC-1, HEAP-3 and CT-5.\n\nSeverity is the higher of the item's phase-2 severity and its phase-3 cluster's. Ranks put memory safety first (data races, use after free, dangling views, unchecked C facts, drops that clash or never run, a lent function kept past its owner), then the weaker safety cases (reload layout, read-only promises), then what ordinary programs meet often.\n\nThe dependencies follow phase 3's order:\n- K05 before K34 (inside P02).\n- K12 before K31 (P06 before P08).\n- K51 before K52 (P07 before P08).\n- K21 before K47 (inside P07).\n- K17 before K43 (inside P10).\n- K22 before K23 and K26 before K62 (inside P11).\n- K19 before K32 (P06 before P15, wording only).\n\nSix placements were judgment calls:\n- J5-05 is in P02 rather than P01 or P03, because of its K34 dependency. P02 depends on P01, and the notes name the P03 header link.\n- J7-06 and J2-12 are in P04 (vouching is the trust boundary) rather than P01. P01's notes say that after verdict 165 they are P01's only way out for C wrappers.\n- J8-13 and J8-16 are in P08 (ownership crossing to C) rather than with J7-19, which stays alone as P23.\n- J1-07 is in P06 (call words) rather than P15 (construction).\n- J3-07 is in P11, because a header's temporaries follow the same rule as the names it opens, per phase 3's resolution of the J1-09/J3-07 conflict.\n- J8-14 is in P04 because it decides what safe code may trust about a C handle. It also shares XVI.4 with J8-08.\n\nP11 is the largest group (12 items). It is still one rule: one table of source, word and form that decides what a name gets. Its notes split it into five facets, and phase 3 already edits those rules together.\n\nThe groups of one keep their own causes. P24 (J1-13, J6-10) is the most abstract group; it could be split into two groups of one if the designer prefers.\n\nPhase 3's draft corrections are attached to their groups:\n- P06: verdict 159 for J1-07, verdict 51 for J3-02, one spelling for K18.\n- P22: verdict 155 for J1-05.\n- P09: verdict 159 for J7-15's code.\n- P11: J4-08 B only under J2-01 C.\n- P10: J5-07's observer case.\n- P05: J7-01 B's bound.\n- P16: what replaces J7-10 A's reduce= permission.\n- P15: J3-06 B's side-effect note.\n- P13: J3-13 A's allocation note.\n\nJ5-02 (P02) was shown to the owner and is still open."
+}

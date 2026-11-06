@@ -1,5 +1,14 @@
 # Ember — handoff
 
+> **2026-11-02 to 2026-11-06 — the local session (attended). START HERE: `tasks/96/redesign/spec-gaps-0.9.15/FINDINGS.md`.**
+> On `main`, not on the cloud session's `spec-0.9.20-hardening` (which is built on Hardened_10): **0.9.15_Hardened_11**
+> (`4de795c4`, verdicts 161-163), **verdicts 164-166** in `tasks/96/redesign/JOB.md`, the gap sweep (76 open questions,
+> `questions.md`), four methods of agent review with their results and tests, and three open compiler defects
+> (D-966 with its fix ready in `pending/`, D-967, D-968). Against 0.9.20_Hardened_2 (`deep/check-0.9.20-H2.md`): verdicts
+> 161-164 and 166 are there, **165 is not**; K04 and K05 fixed, **K07 and K20 not**, K10 unclear; 13 of the 76 questions
+> had no rule touched. The owner's next step: the full check of the 76 against 0.9.20 "next week". Nothing in the
+> compiler changed since `5001ef9e`.
+
 > **2026-11-01 ~23:50 to 2026-11-02 night — AUTONOMOUS (owner: "after this I need you work autonomously and you can 2-3
 > helper agents to help you with coding, make sure you follow all the autonomous md file rules and run the power source
 > watcher, I'll see you in the morning"). START HERE.** Watcher: power only, pid 97416 (scratchpad
