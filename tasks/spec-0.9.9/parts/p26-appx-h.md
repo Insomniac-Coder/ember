@@ -3287,3 +3287,14 @@ Generated: every rule whose text differs from 0.9.20_Hardened_2.
 | `[UNS-12]` | changed |
 | `[WK-3]` | changed |
 | `[WK-6]` | changed |
+
+
+## H.55 Changes in 0.9.20_Hardened_4 (from 0.9.20_Hardened_3)
+
+(head to be written by the cut)
+
+Generated: every rule whose text differs from 0.9.20_Hardened_3.
+
+| Rule | 0.9.20_Hardened_3 → 0.9.20_Hardened_4 |
+|---|---|
+
