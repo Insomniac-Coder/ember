@@ -244,10 +244,11 @@ is a defect of the file.
   fields, a file's keys, the command line) is made with `RandomState` (`Map[K, V, RandomState]`,
   `[HASH-2]`), since a fixed seed lets that party choose keys that collide and make every operation
   linear.
-* `[STD-16]` *(new in 0.9.9)* *(changed in 0.9.15)* **`Map` operations.** `m[k]` reads the value and
+* `[STD-16]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **`Map` operations.** `m[k]` reads the value and
   panics when the key is missing (`key not found: <Debug of k>; use .get(k) for an Option`); `m[k] =
   v` inserts or replaces (`[STD-17]`); `m[k] += 1` requires the key to exist and panics with the
-  same message. The lookups take any `q: Q` with `Q: needs AsKey[K]` (`[STD-12]`): `get(q) ->
+  same message, except as a scoped task's reduction statement, whose join inserts the key
+  (`[THR-21]`). The lookups take any `q: Q` with `Q: needs AsKey[K]` (`[STD-12]`): `get(q) ->
   Option[ref V]`, `get_mut(q) -> Option[ref mut V]`, `get_or(q, default) -> V` (for `V: needs
   Copy`), `contains_key(q) -> bool`, `remove(q) -> Option[V]`, `m[q]` and `q in m`. `insert(k, v) ->
   Option[V]` and `entry(k)` take the key itself; `entry(k)` is a `MapEntry` with `or_insert(v)`,
@@ -299,12 +300,12 @@ is a defect of the file.
 * `[STD-7]` Fixed-capacity containers with no heap allocation: `FixedArray[T, N]`, `FixedString[N]`
   and `RingBuffer[T, N]`; `push` returns `Result[void, CapacityError]` and `push_or_drop` discards
   when full. Also `Deque[T]`, `SmallArray[T, N]` (inline up to `N`, then heap), `BitSet`.
-* `[STD-8]` *(changed in 0.9.15)* *(changed in 0.9.20)* **`Contains`.** `x in c` is `c.contains(x)` (`[STD-8b]`), so `c`
-  MUST implement `Contains[Q]` for the type of `x` (`E2226` otherwise, whose help is
-  `c.iter().any(owns fn(e) => x == e)`); a literal needle is a `StrView` (`[LEX-20]`) where an
-  implementation takes one, and makes a `String` (`[TXT-9]`, one allocation) only where none does.
-  `std` implements it for `Set` and `Map` (by key, for every `Q: needs AsKey[K]`, `[STD-12]`); for
-  `Array`, `Span`, `MutSpan` and `[T; N]` with `T: needs Eq`, as a linear scan, and for those of
+* `[STD-8]` *(changed in 0.9.15)* *(changed in 0.9.20)* **`Contains`.** `x in c` is `c.contains(x)`
+  (`[STD-8b]`), so `c` MUST implement `Contains[Q]` for the type of `x` (`E2226` otherwise, whose
+  help is `c.iter().any(owns fn(e) => x == e)`); a literal needle is a `StrView` (`[LEX-20]`) where
+  an implementation takes one, and makes a `String` (`[TXT-9]`, one allocation) only where none
+  does. `std` implements it for `Set` and `Map` (by key, for every `Q: needs AsKey[K]`, `[STD-12]`);
+  for `Array`, `Span`, `MutSpan` and `[T; N]` with `T: needs Eq`, as a linear scan, and for those of
   `String` with a `StrView` needle as well, each element read as a view (`[TYP-5]`), so a text view
   is looked for in any collection of `String`s alike and `who.trim() in names` or `"bob" in names`
   makes no `String`; for `StrView`/`String`, as a substring or character test; for ranges, as two

@@ -440,7 +440,9 @@ class Door(Script):
   same way to a class derived from it. The arguments of `super.init(…)` take the words a call of
   that constructor takes: none for a memberwise one, whose values are handed over as to every
   constructor (`[OWN-9]`, so the derived `init` holds them `owns`: `fn init(owns name: String, owns
-  label: String):`), and the words of the base `init`'s first line otherwise (`[FN-2a]`).
+  label: String):`), and, for a written base `init`, the words a call of that constructor takes
+  (`[FN-2a]`: none before an argument for its `owns` parameter, `ref mut` before one for its `ref
+  mut` parameter).
 * `[CLS-10]` *(new in 0.9.9)* *(changed in 0.9.20)* A derived class with no `init` gets its base's
   constructor: `Door(entity)` evaluates `Door`'s field defaults and then runs `Script.init(entity)`
   (the base's memberwise constructor where it declares no `init`, `[CLS-3]`). A derived class with a
@@ -453,19 +455,20 @@ class Door(Script):
   unless `virtual`; replacing one requires `override`; overriding a non-virtual method is `E2110`. A
   method named like an inherited one replaces it (ODR-028): over a virtual method without `override`
   it is `E2111`, and over a non-virtual one it is `E2110`, `override` or not; an `override` has the
-  first line of the method it replaces after its name: the same parameter names, words and types,
-  the same words on `this` and the same result, since a call through the base's slot (`[DSP-2]`)
-  passes what the base declared and reads what it promised, and one that differs is `E2113`
-  ("`KeyLog.on` takes `e: KeyEvent`, and the `Handler.on` it overrides takes `e: Event`; write
-  `override fn on(e: Event):` and test the kind inside: `if e is KeyEvent as k:`"); `init`, `drop`
-  and `static fn`s are each class's own. An `override` is itself virtual, so a further subclass may
-  override it again. `virtual` in a class that cannot be subclassed (neither `open` nor `abstract`)
-  is `E2112` ("`Door` cannot be subclassed, so `virtual` on `on_update` changes nothing; to let
-  subclasses replace it write `open class Door:`, or remove `virtual`"). A call through a `virtual`
-  method counts what every override the program has changes, worked out from their bodies
-  (`[DSP-5]`), so nothing is written about what an override changes. A derived `init` MUST call
-  `super.init(…)` exactly once (`[CLS-11]`). Fields cannot be overridden. Base fields are laid out
-  first; there is at most one base.
+  first line of the method it replaces after its name: the same parameter names, words and types (a
+  generic base's type parameters standing for the arguments the derived class gives them), the same
+  words on `this` and the same result, since a call through the base's slot (`[DSP-2]`) passes what
+  the base declared and reads what it promised, and one that differs is `E2113` ("`KeyLog.on` takes
+  `e: KeyEvent`, and the `Handler.on` it overrides takes `e: Event`; write `override fn on(e:
+  Event):` and test the kind inside: `if e is KeyEvent as k:`"); `init`, `drop` and `static fn`s are
+  each class's own. An `override` is itself virtual, so a further subclass may override it again.
+  `virtual` in a class that cannot be subclassed (neither `open` nor `abstract`) is `E2112` ("`Door`
+  cannot be subclassed, so `virtual` on `on_update` changes nothing; to let subclasses replace it
+  write `open class Door:`, or remove `virtual`"). A call through a `virtual` method counts what
+  every override the program has changes, worked out from their bodies (`[DSP-5]`), so nothing is
+  written about what an override changes. A derived `init` MUST call `super.init(…)` exactly once
+  (`[CLS-11]`). Fields cannot be overridden. Base fields are laid out first; there is at most one
+  base.
 * `[CLS-11]` *(new in 0.9.9)* *(changed in 0.9.15)* Construction is two-phase. In a derived `init`,
   the code before `super.init(…)` MUST set every field the class itself declares without a default,
   and MUST NOT read an inherited field or use `this` as a whole; the code after it may do anything
@@ -579,10 +582,12 @@ extend Square implements Shape2D:
   `T: needs IndexMut[int]` provides `Index[int]`'s methods too, and a binding it writes (`Output =
   f32`) names the parent's associated type (ODR-042). An implementation writes each of the
   interface's methods with the interface's first line after the name: the same parameter names,
-  words and types, the same words on `this` and the same result, since a call through `dyn I`
-  (`[DSP-3]`) passes what the interface declared; one that differs is `E2040`, naming the method and
-  the interface's line ("`Sq.scale` takes `k: i64`, and `Scaler.scale` takes `k: f64`; write `fn
-  scale(k: f64) -> f64:`").
+  words and types (with `Self`, the interface's type parameters and its associated types standing
+  for the implementing type and what the `implements` clause and the `type` lines give them, so `fn
+  eq(other: Point)` meets `fn eq(other: Self)`), the same words on `this` and the same result, since
+  a call through `dyn I` (`[DSP-3]`) passes what the interface declared; one that differs is
+  `E2040`, naming the method and the interface's line ("`Sq.scale` takes `k: i64`, and
+  `Scaler.scale` takes `k: f64`; write `fn scale(k: f64) -> f64:`").
 * `[IFC-4]` *(changed in 0.9.9)* *(changed in 0.9.20)* Interfaces may declare associated types and
   constants, not statics. An associated type may carry bounds (`type Real: needs Float`), and a type
   implementing the interface states it (`type Real = f64`) with a value that meets them (`E2040` if

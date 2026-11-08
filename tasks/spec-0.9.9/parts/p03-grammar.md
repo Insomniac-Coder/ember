@@ -579,14 +579,14 @@ field_pattern := pattern | IDENT "=" pattern
 path          := IDENT {"." IDENT}
 ```
 
-* `[GRM-12]` An identifier in pattern position names a unit variant or a `const` if one of that name is
-  in scope; otherwise it binds a new name. A binding that shadows a variant of another enum in scope is
-  `W1002`.
-* `[GRM-13]` *(changed in 0.9.15)* *(changed in 0.9.20)* A name a pattern binds in a place it does not take over is a
-  read-only view of the part it names, as a name for a part is (Part VII): a number, a `bool` or a
-  variant with no payload is copied, as Python binds a number, and nothing is changed through the
-  name (`E3023`). `ref mut` before it makes a name for that part that may change it
-  (`State.Walking(ref mut path):` then `path.pop()`); `mut` alone is `E0113` ("`mut path` says
+* `[GRM-12]` An identifier in pattern position names a unit variant or a `const` if one of that name
+  is in scope; otherwise it binds a new name. A binding that shadows a variant of another enum in
+  scope is `W1002`.
+* `[GRM-13]` *(changed in 0.9.15)* *(changed in 0.9.20)* A name a pattern binds in a place it does
+  not take over is a read-only view of the part it names, as a name for a part is (Part VII): a
+  number, a `bool` or a variant with no payload is copied, as Python binds a number, and nothing is
+  changed through the name (`E3023`). `ref mut` before it makes a name for that part that may change
+  it (`State.Walking(ref mut path):` then `path.pop()`); `mut` alone is `E0113` ("`mut path` says
   `path` may change but not whose list it is; to change that list through `path`, write
   `State.Walking(ref mut path):`"). `match owns e:` hands `e` over, and each name of the branch that
   runs owns its part. A list pattern `[p, q]` matches a `Span[T]`, `MutSpan[T]`, `Array[T]` or `[T;
@@ -595,18 +595,19 @@ path          := IDENT {"." IDENT}
   `[p, ..rest]` names the remaining elements `rest`, a `Span[T]` of them (a `MutSpan[T]` where the
   scrutinee is a `ref mut` name of the list), a view like every pattern name, which the list's rules
   govern (`[BRW-1]`), and `[..rest]` alone names the whole; a `..rest` name reads its list in place,
-  so under `match owns xs:` it is `E2020`, whose help is to match `xs` in place and take what is
-  needed with `copy of rest` or `xs.drain(1..)`. A list pattern against a `String` or `StrView` is
-  `E2020`, whose help gives `split`. A list pattern stands nested or on a `for` line, never first on
-  a line of its own (`[GRM-40]`).
+  so under `match owns xs:` it is `E3013` (it would view what the match hands over, `[OWN-11]`),
+  whose help is to match `xs` in place and take what is needed with
+  `rest.iter().copy_each().to_array()` (`[STD-19]`) or `xs.drain(1..)`. A list pattern against a
+  `String` or `StrView` is `E2020`, whose help gives `split`. A list pattern stands nested or on a
+  `for` line, never first on a line of its own (`[GRM-40]`).
 * `[ENM-1]` *(changed in 0.9.9)* Inside a pattern whose scrutinee type is known, a variant may be
   written unqualified (`Circle(r)`); in an expression it is qualified (`Shape.Circle(1.0)`) unless
   imported.
 * `[GRM-46]` *(new in 0.9.15)* **Clauses after a field's type.** `from` after a view field's type
-  names what the view points into: a `let` field of the same object whose contents live in a block of
-  their own (`words: Array[StrView] from text`), or `static`, text written in the program (`kind:
+  names what the view points into: a `let` field of the same object whose contents live in a block
+  of their own (`words: Array[StrView] from text`), or `static`, text written in the program (`kind:
   StrView from static`) (`[TYP-15]`). After a function's result type it names the parameter, or the
-  field of `this`, that the result points into (`-> StrView from src`, `[GRM-41]`). `guarded by` after
-  the type of a field or a `static mut` names the `Lock` that must be held to read or change it
-  outside `init` (`lines: Array[String] guarded by lock = []`; Part XI). `from`, `guarded` and `by`
-  are keywords only in these places (`[LEX-15]`).
+  field of `this`, that the result points into (`-> StrView from src`, `[GRM-41]`). `guarded by`
+  after the type of a field or a `static mut` names the `Lock` that must be held to read or change
+  it outside `init` (`lines: Array[String] guarded by lock = []`; Part XI). `from`, `guarded` and
+  `by` are keywords only in these places (`[LEX-15]`).

@@ -523,56 +523,57 @@ fn main():
   from the type of what `x` names, as it takes the target's kind from the words on the path
   (`[OWN-13]`), and a link given to a `weakref T` place of another kind is `E2020` ("`links` holds
   links to `Enemy` objects from the built-in manager (`Array[weakref Enemy]`), and `b` was made in
-  `level`, an `Arena`; say which kind: `links: Array[weakref Enemy using Arena]`, or make `a` in
-  `level` too"); after any other type, one with no heap memory of its own (an `int`, a struct held
-  inline, a `FixedArray`, a `RingBuffer`, a `BitSet`, an arena container, `[ARN-5]`), it is `E2114`
-  ("an `int` has no memory of its own to take from `LevelArena`; remove `using`"). Without `using`,
-  the memory comes from the built-in manager (`Global`). The line that makes such a value names the
-  instance after the value it makes (`owns Mesh(points=[0.0, 1.0]) using current`, `Enemy(hp=500)
-  using current`, `[0.0, 1.0] using current`; `[GRM-43]`), and takes the value's block from it by
-  calling `current.allocate(...)`; a manager with one instance (`Global`, `System`) needs none
-  there. A value given to a `using A` place that was not made in an instance of `A` (a place with no
-  `using` is a `using Global` place, so a place's type always names its values' manager) is `E2020`
-  ("`mesh` takes its memory from a `LevelArena` (`mesh: owns Mesh using LevelArena`), and this
-  `Mesh` comes from the built-in manager; say which arena: `mesh=owns Mesh(points=[0.0, 1.0]) using
-  current`"); a value made in an instance, and every value that holds one, lives no longer than that
-  instance (`E3063`, `[ALC-1]`). `using` names where that value's own memory comes from; what it
-  holds comes from where its own fields' types say (the `points` list of that `Mesh` from the
-  built-in manager). A value whose manager may have several instances keeps its instance's address,
-  one word, so that its growth and its end go back to the instance it came from.
-* `[TYP-46a]` *(new in 0.9.20)* *(changed in 0.9.20)* **A value made in an instance follows its manager between threads.**
-  For `Send` and `ThreadShared`, a value whose growth or end calls its instance's methods (one that
-  keeps the instance word, and one in a `FoundByAddress` manager, whose end finds the instance from
-  its address, `[ALC-1]`) holds a `ref A` to that instance: it is `Send`, and `ThreadShared`, only
-  when `A` is a manager any thread may call (below; `[THR-8]`, `[THR-9]`), since those calls run on
-  whichever thread holds or ends it. A value made in a manager that frees nothing one by one and
-  does not grow holds nothing. A manager **any thread may call** is a `ThreadShared` type whose
-  `deallocate` and `reallocate` read `this` (`[EXC-15]`, a fact of its summary, `[BLD-14]` item 1; a
-  `static` manager's do, `[ALC-1]`, and so do those of a type that locks inside, `inner:
-  Mutex[Slab]`), since a method a `ref A` may call is one that reads its object; a value whose end
-  or growth would call a method that changes its instance holds the `sharedref mut` link of `[LT-4]`
-  instead, which is neither `Send` nor `ThreadShared` (`[LT-46]`, verdict 164), whatever the
-  instance's type. So `thread_shared T using A` is `E7015` at the making line when the value made
-  would hold a link to an instance that is not one any thread may call: a value that grows made in
-  an `Arena` (`thread_shared [String("a")] using frame`, the list of verdict 165), or any value in a
-  manager whose `deallocate` changes `this` ("`msg` would end on whichever thread holds its last
-  owner, and that end gives its block back through `Pool.deallocate` (line 12), which changes
-  `pool`; make it in the built-in manager, `msg = thread_shared Msg()`, or in a manager any thread
-  may call, whose `deallocate` reads `this` and locks inside"); a place of such a type (`log:
-  thread_shared Log using Pool`) is `E7015` at the type, since no value could fill it. A
-  `thread_shared` value that holds nothing (one that does not grow, made in a manager that frees
-  nothing one by one: `stats = thread_shared Stats() using level` with `level` an `Arena`,
-  `[ARN-2]`) is `Send` and `ThreadShared` when `T` is, and is accepted: its end on any thread runs
-  its `drop` and touches the arena not at all, every owner of it is counted in its away count from
-  its making line (`[RC-4]` point 4), and the arena is neither reset nor ended while it lives
-  (`[ALC-5]`, `[LT-4]`). For `[THR-11]` a value's growth and end are changes of its instance where
-  they call its methods (a value that holds nothing changes it not at all), so two scoped tasks
-  growing values made in one instance are `E7007` naming the instance ("the tasks on lines 7 and 9
-  grow `xs` and `ys`, both made in `current`, so both change `current`; give each task an arena of
-  its own, `a = Arena(1 << 20)` inside its function, or make the lists in the built-in manager, `xs
-  = []`"), unless `A` is a manager any thread may call, whose `reallocate` and `deallocate` read the
-  instance. For the exclusivity rules `[ALC-5]` stands: growth and end are the changes of the
-  instance it allows.
+  `level`, an `Arena`; say which kind: `links: Array[weakref Enemy using Arena]`, or make `b` in the
+  built-in manager, `b = Enemy()`, as the links' other targets are"); after any other type, one with
+  no heap memory of its own (an `int`, a struct held inline, a `FixedArray`, a `RingBuffer`, a
+  `BitSet`, an arena container, `[ARN-5]`), it is `E2114` ("an `int` has no memory of its own to
+  take from `LevelArena`; remove `using`"). Without `using`, the memory comes from the built-in
+  manager (`Global`). The line that makes such a value names the instance after the value it makes
+  (`owns Mesh(points=[0.0, 1.0]) using current`, `Enemy(hp=500) using current`, `[0.0, 1.0] using
+  current`; `[GRM-43]`), and takes the value's block from it by calling `current.allocate(...)`; a
+  manager with one instance (`Global`, `System`) needs none there. A value given to a `using A`
+  place that was not made in an instance of `A` (a place with no `using` is a `using Global` place,
+  so a place's type always names its values' manager) is `E2020` ("`mesh` takes its memory from a
+  `LevelArena` (`mesh: owns Mesh using LevelArena`), and this `Mesh` comes from the built-in
+  manager; say which arena: `mesh=owns Mesh(points=[0.0, 1.0]) using current`"); a value made in an
+  instance, and every value that holds one, lives no longer than that instance (`E3063`, `[ALC-1]`).
+  `using` names where that value's own memory comes from; what it holds comes from where its own
+  fields' types say (the `points` list of that `Mesh` from the built-in manager). A value whose
+  manager may have several instances keeps its instance's address, one word, so that its growth and
+  its end go back to the instance it came from.
+* `[TYP-46a]` *(new in 0.9.20)* *(changed in 0.9.20)* **A value made in an instance follows its
+  manager between threads.** For `Send` and `ThreadShared`, a value whose growth or end calls its
+  instance's methods (one that keeps the instance word, and one in a `FoundByAddress` manager, whose
+  end finds the instance from its address, `[ALC-1]`) holds a `ref A` to that instance: it is
+  `Send`, and `ThreadShared`, only when `A` is a manager any thread may call (below; `[THR-8]`,
+  `[THR-9]`), since those calls run on whichever thread holds or ends it. A value made in a manager
+  that frees nothing one by one and does not grow holds nothing. A manager **any thread may call**
+  is a `ThreadShared` type whose `deallocate` and `reallocate` read `this` (`[EXC-15]`, a fact of
+  its summary, `[BLD-14]` item 1; a `static` manager's do, `[ALC-1]`, and so do those of a type that
+  locks inside, `inner: Mutex[Slab]`), since a method a `ref A` may call is one that reads its
+  object; a value whose end or growth would call a method that changes its instance holds the
+  `sharedref mut` link of `[LT-4]` instead, which is neither `Send` nor `ThreadShared` (`[LT-46]`,
+  verdict 164), whatever the instance's type. So `thread_shared T using A` is `E7015` at the making
+  line when the value made would hold a link to an instance that is not one any thread may call: a
+  value that grows made in an `Arena` (`thread_shared [String("a")] using frame`, the list of
+  verdict 165), or any value in a manager whose `deallocate` changes `this` ("`msg` would end on
+  whichever thread holds its last owner, and that end gives its block back through `Pool.deallocate`
+  (line 12), which changes `pool`; make it in the built-in manager, `msg = thread_shared Msg()`, or
+  in a manager any thread may call, whose `deallocate` reads `this` and locks inside"); a place of
+  such a type (`log: thread_shared Log using Pool`) is `E7015` at the type, since no value could
+  fill it. A `thread_shared` value that holds nothing (one that does not grow, made in a manager
+  that frees nothing one by one: `stats = thread_shared Stats() using level` with `level` an
+  `Arena`, `[ARN-2]`) is `Send` and `ThreadShared` when `T` is, and is accepted: its end on any
+  thread runs its `drop` and touches the arena not at all, every owner of it is counted in its away
+  count from its making line (`[RC-4]` point 4), and the arena is neither reset nor ended while it
+  lives (`[ALC-5]`, `[LT-4]`). For `[THR-11]` a value's growth and end are changes of its instance
+  where they call its methods (a value that holds nothing changes it not at all), so two scoped
+  tasks growing values made in one instance are `E7007` naming the instance ("the tasks on lines 7
+  and 9 grow `xs` and `ys`, both made in `current`, so both change `current`; give each task an
+  arena of its own, `a = Arena(1 << 20)` inside its function, or make the lists in the built-in
+  manager, `xs = []`"), unless `A` is a manager any thread may call, whose `reallocate` and
+  `deallocate` read the instance. For the exclusivity rules `[ALC-5]` stands: growth and end are the
+  changes of the instance it allows.
 
 ## IV.7 Generics
 
@@ -746,16 +747,16 @@ implements Display:` block.
   it is `E3100`: "say that you vouch for it: write `unsafe extend Counter implements Send:` with a
   `# SAFETY:` note above it"); a generic one (`unsafe extend[T: needs Send] W[T] implements Send:`)
   holds for each instance whose arguments meet the markers its parameters are bounded by.
-  `ThreadShared` is written only in bounds, `Copy` comes from `@derive(Copy)`, and `Sized` is never
-  written: each of these written by hand is `E2040`, as is an `unsafe extend` of any interface but
-  `Send`, an `unsafe interface`, or `ThreadShared` on an `extern type`, an opaque C++ class or a
-  `@ffi(handle)` type, whose contents the compiler cannot see (`[FFI-8]`; `E3100` without `unsafe`)
-  (ODR-111). A struct holding a raw pointer is never `ThreadShared` (`[THR-9]`): a wrapper several
-  threads read at once holds the foreign object as a `@ffi(handle)` type vouched `ThreadShared`, not
-  as a raw pointer. `Sync` is the name of an effect (Part X), not of a property: `T: needs Sync` in
-  a bound is `E1010`, whose message gives `T: needs ThreadShared`. An `unsafe interface`
-  (`Allocator`, `[ALC-2]`) is implemented only by an `unsafe extend`, with its members as for any
-  interface; without `unsafe` it is `E3100`.
+  `ThreadShared` is written only in bounds and in that header, `Copy` comes from `@derive(Copy)`,
+  and `Sized` is never written: each of these written by hand is `E2040`, as is an `unsafe extend`
+  of any interface but `Send`, an `unsafe interface`, or `ThreadShared` on an `extern type`, an
+  opaque C++ class or a `@ffi(handle)` type, whose contents the compiler cannot see (`[FFI-8]`;
+  `E3100` without `unsafe`) (ODR-111). A struct holding a raw pointer is never `ThreadShared`
+  (`[THR-9]`): a wrapper several threads read at once holds the foreign object as a `@ffi(handle)`
+  type vouched `ThreadShared`, not as a raw pointer. `Sync` is the name of an effect (Part X), not
+  of a property: `T: needs Sync` in a bound is `E1010`, whose message gives `T: needs ThreadShared`.
+  An `unsafe interface` (`Allocator`, `[ALC-2]`) is implemented only by an `unsafe extend`, with its
+  members as for any interface; without `unsafe` it is `E3100`.
 
 **Standard interfaces.** These are the definitions; `std.core` declares them and the prelude exports
 them (`[MOD-5]`).
@@ -1034,16 +1035,17 @@ implementation the program has (Part X).
   with it. A kind test or cast is then one compare of the header's index against a constant (§X.4);
   where the C toolchain cannot fill an immediate from a link-time value, one load of that constant
   per function, which `ember inspect` reports on the same row.
-* `[TYP-32]` *(new in 0.9.9)* *(changed in 0.9.20)* `some I` in a return type means "one concrete type, chosen by the
-  function body, that implements `I`". The caller sees only `I`; the compiler knows the type and
-  monomorphises through it, so there is no indirection. Every `return` in the body must produce the
-  same concrete type (`E2261` otherwise). A method returns one as a function does; an interface's
-  method does not (`[GRM-31]`). It is how a function returns an iterator pipeline whose type cannot
-  be written: A `some` list (`some (Iterator[Item = int], Send)`, `bound_list` in §III.2,
-  `[TYP-22]`) names one interface and any number of the marker interfaces (`Send`, `ThreadShared`,
-  `[TYP-43]`): the hidden type implements the interface and has each marker, checked at every
-  `return` of the function (`E2040` otherwise, naming the marker and the returned type), and a
-  caller may rely on the markers written and on nothing else of the hidden type.
+* `[TYP-32]` *(new in 0.9.9)* *(changed in 0.9.20)* `some I` in a return type means "one concrete
+  type, chosen by the function body, that implements `I`". The caller sees only `I`; the compiler
+  knows the type and monomorphises through it, so there is no indirection. Every `return` in the
+  body must produce the same concrete type (`E2261` otherwise). A method returns one as a function
+  does; an interface's method does not (`[GRM-31]`). It is how a function returns an iterator
+  pipeline whose type cannot be written: A `some` list (`some (Iterator[Item = int], Send)`,
+  `bound_list` in §III.2, `[TYP-22]`) names one or more interfaces and any number of the marker
+  interfaces (`Send`, `ThreadShared`, `[TYP-43]`): the hidden type implements each interface and has
+  each marker, checked at every `return` of the function (`E2040` otherwise, naming the interface or
+  marker and the returned type), and a caller may rely on the interfaces and markers written and on
+  nothing else of the hidden type.
 
 ```ember
 fn evens(xs: Span[int]) -> some Iterator[Item = int]:

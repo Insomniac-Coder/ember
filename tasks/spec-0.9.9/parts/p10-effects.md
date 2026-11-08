@@ -315,47 +315,49 @@ compute the same bits, on one machine and across machines running the same binar
 * `[DET-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `Nondet` is introduced
   by exactly: floating-point contraction, reassociation or any `@fastmath` relaxation; a
   floating-point function the platform's C library computes whose result IEEE 754 does not fix to
-  one correctly rounded answer (`[STD-27]`'s methods `sin` through `hypot`, `cbrt`, `hypot` and
-  `pow` among them, and `a ** b` on a float base, which is `pow` (`[TYP-30]`); not `sqrt`,
-  `fma`/`mul_add`, `abs`, `copysign`, `floor`, `ceil`, `trunc`, `round`, `round_half_away` or
-  `fract`, which every target computes alike, nor `rsqrt`, `lerp` and `smoothstep`, which `std.math`
-  builds from those), where `std.math.det`'s is not used, `E4070` naming the function or operator
-  and the line to write ("`boost` is `@deterministic`, and `x ** 2` (line 5) is the platform's
-  `pow`, whose last bits differ between C libraries; write `x * x`, or `det.pow(x, 2.0)`"); a SIMD
-  `_approx` operation (`[SIMD-4]`), whose bits are the processor's own; observing a pointer or an
-  object's address as an integer, or hashing one; making a `RandomState`, directly or as a `Map`'s
-  or `Set`'s hasher; the wall clock, the monotonic clock, the system random source, thread and job
-  completion order; a read whose value depends on which thread acted first: a receive on a channel
-  more than one thread may send to (one sender on one thread gives the sent order), `try_lock`'s and
-  `try_recv`'s answer, and a lock's view or an `Atomic` read of a place another thread, or a task
-  not yet joined, may change (`[THR-11]`; after the join the place holds what the joined tasks left,
-  in spawn order for a reduction, `[THR-21]`), `E4070` naming the senders ("`gather` is
-  `@deterministic`, and `rx.recv()` (line 9) receives from a channel two threads send to (lines 7
-  and 8), so which value comes first differs between runs; give each task its own result and join
-  them in order: write `h1 = scope.spawn(...)`, `h2 = scope.spawn(...)` returning the values, and
-  `out.push(owns h1.join())`, `out.push(owns h2.join())`"); reading padding bytes, recorded where a
-  pointer to a type with padding is reinterpreted as a pointer to another type; any `extern`
-  function not declared `@ffi(deterministic)`. Iterating a `Map` or `Set` is **not** `Nondet`: their
-  order is insertion order (`[STD-11]`). A reduction of scoped tasks, combined in spawn order, is
-  not `Nondet` either (`[THR-21]`). Reading uninitialised memory is not `Nondet` but undefined,
-  outside Safe Ember (`[PHIL-10]`): an `unsafe` obligation (ODR-136).
+  one correctly rounded answer (`[STD-27]`'s methods `sin` through `hypot`, `cbrt` and `pow` among
+  them, and `a ** b` on a float base, which is `pow` (`[TYP-30]`); not `sqrt`, `fma`/`mul_add`,
+  `abs`, `copysign`, `floor`, `ceil`, `trunc`, `round`, `round_half_away` or `fract`, which every
+  target computes alike, nor `rsqrt`, `lerp` and `smoothstep`, which `std.math` builds from those),
+  where `std.math.det`'s is not used, `E4070` naming the function or operator and the line to write
+  ("`boost` is `@deterministic`, and `x ** 2` (line 5) is the platform's `pow`, whose last bits
+  differ between C libraries; write `x * x`, or `det.pow(x, 2.0)`"); a SIMD `_approx` operation
+  (`[SIMD-4]`), whose bits are the processor's own; observing a pointer or an object's address as an
+  integer, or hashing one; making a `RandomState`, directly or as a `Map`'s or `Set`'s hasher; the
+  wall clock, the monotonic clock, the system random source, thread and job completion order; a read
+  whose value depends on which thread acted first: a receive on a channel more than one thread may
+  send to (one sender on one thread gives the sent order), `try_lock`'s and `try_recv`'s answer, and
+  a lock's view or an `Atomic` read of a place another thread, or a task not yet joined, may change
+  (`[THR-11]`; after the join the place holds what the joined tasks left, in spawn order for a
+  reduction, `[THR-21]`), `E4070` naming the senders ("`gather` is `@deterministic`, and `rx.recv()`
+  (line 9) receives from a channel two threads send to (lines 7 and 8), so which value comes first
+  differs between runs; give each task its own result and join them in order: write `h1 =
+  scope.spawn(...)`, `h2 = scope.spawn(...)` returning the values, and `out.push(owns h1.join())`,
+  `out.push(owns h2.join())`"); reading padding bytes, recorded where a pointer to a type with
+  padding is reinterpreted as a pointer to another type; any `extern` function not declared
+  `@ffi(deterministic)`. Iterating a `Map` or `Set` is **not** `Nondet`: their order is insertion
+  order (`[STD-11]`). A reduction of scoped tasks, combined in spawn order, is not `Nondet` either
+  (`[THR-21]`). Reading uninitialised memory is not `Nondet` but undefined, outside Safe Ember
+  (`[PHIL-10]`): an `unsafe` obligation (ODR-136).
 * `[DET-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* A `@deterministic` function may call only
   `Nondet`-free functions; a call through a function value counts every function the program can put
   there, and a function given through a type parameter is checked per instance (`[EFF-2]`). A call
   through a `dyn I` value or a `virtual` method of a `pub` interface or class is admitted under
   `@deterministic` only when the method declares `@deterministic` itself, as `[EFF-6]` says of every
   contract; otherwise it is `E4070` at the call.
-* `[DET-4]` *(changed in 0.9.20)* `std.math.det` provides, under the names `[STD-21]` gives them, every function of
-  `std.math` whose platform form is `Nondet` (`[DET-2]`): `sin`, `cos`, `tan`, `asin`, `acos`,
-  `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `exp`, `exp2`, `ln`, `log2`, `log10`, `pow`, `cbrt`,
-  `hypot` and `sqrt`, so that `E4070`'s help for a `std.math` call is always `det`'s function of the
-  same name ("`fall_off` is `@deterministic`, and `math.cbrt(d)` (line 6) is the platform's `cbrt`,
-  whose last bits differ between C libraries; write `det.cbrt(d)`"; `det.log` is `E1010`, whose help
-  is "the natural logarithm is `ln` in `std.math` and `std.math.det` alike: write `det.ln(p)`"), for
-  `f32` and `f64` returning the same bits on every supported target. Each takes either type and
-  answers in it (`det.sin(x)` of an `f32` is an `f32`); an `f32`'s result is its `f64` result
-  rounded once. Each is within one unit in the last place of the exact result, `atan2` within 1.3;
-  `sqrt` is IEEE 754's, correctly rounded. An integer is converted by the program (ODR-046).
+* `[DET-4]` *(changed in 0.9.20)* `std.math.det` provides, under the names `[STD-21]` gives them,
+  every function of `std.math` whose platform form is `Nondet` (`[DET-2]`): `sin`, `cos`, `tan`,
+  `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `exp`, `exp2`, `ln`, `log2`, `log10`,
+  `pow`, `cbrt` and `hypot`, and `sqrt` beside them (not `Nondet`, kept so that `det` has every name
+  a `@deterministic` body may need), so that `E4070`'s help for a `std.math` call is always `det`'s
+  function of the same name ("`fall_off` is `@deterministic`, and `math.cbrt(d)` (line 6) is the
+  platform's `cbrt`, whose last bits differ between C libraries; write `det.cbrt(d)`"; `det.log` is
+  `E1010`, whose help is "the natural logarithm is `ln` in `std.math` and `std.math.det` alike:
+  write `det.ln(p)`"), for `f32` and `f64` returning the same bits on every supported target. Each
+  takes either type and answers in it (`det.sin(x)` of an `f32` is an `f32`); an `f32`'s result is
+  its `f64` result rounded once. Each is within one unit in the last place of the exact result,
+  `atan2` within 1.3; `sqrt` is IEEE 754's, correctly rounded. An integer is converted by the
+  program (ODR-046).
 * `[DET-5]` *(changed in 0.9.15)* Inside a `@deterministic` function the backend never contracts,
   reassociates or fuses; a `@fastmath` or `@fp(allow_fma)` function there is `E4072` ("`dot` is
   `@deterministic`, and a fused multiply-add rounds once where two operations round twice; remove
@@ -398,7 +400,7 @@ compute the same bits, on one machine and across machines running the same binar
 | A walk up a tree across a call that may change nodes | guaranteed present | per step, one test of the node's header and one move of the link's weak count (a subtract and an add); where the node's class has no `drop` of its own (nor can a derived class the walk's package cannot see) and the walk's link is a `weakref T` (`[WK-18]`), the walk runs in a deferred-drop region and the count moves go, leaving the header test; a walk whose visit function changes no node keeps its views and pays nothing per step |
 | A view of an object reached through a link; a `sharedref mut` link | not observable | checked when compiling: no count and no deferred-drop region around the view |
 | Stale-handle check | guaranteed present, **every profile** | the guarantee is the check; `get_unchecked` in `unsafe` |
-| Kind test or cast | guaranteed present | one compare of the header's type index against a constant per `if s is Circle as c:` and per `cast s as Circle` (Part VIII, `[TYP-44a]`); where the C toolchain cannot fill an immediate from a link-time value, one load of that constant per function |
+| Kind test or cast | guaranteed present | one compare of the header's type index against a constant per `if s is Circle as c:` and per `cast s as Circle` (Part VIII, `[TYP-44a]`); where the C toolchain cannot fill an immediate from a link-time value, one load of that constant per function; a `dyn (A, B)` value given to a `dyn A` place is one load of the member's table pointer from the set's table (`[TYP-22]`), and a value converted to `dyn I` or `dyn (A, B)` costs nothing beyond the two words |
 | `assert_disjoint` | guaranteed present | two compares where the program writes it (two spans of one list given to one call, one of them changeable); the call is then compiled with noalias; none when the compiler knows the spans apart |
 | `Cell` access | not observable | a load or a store |
 | Interface call through `dyn` | guaranteed present | one indirect call |
@@ -429,7 +431,7 @@ compute the same bits, on one machine and across machines running the same binar
 | Scoped tasks and their reductions | guaranteed present | one private accumulator per task and one combine per task at the join, as C's per-thread counter; no atomic per change (`[THR-21]`) |
 | `@cached` method | guaranteed present | one flag test per call, and one store, clearing the flag, at each line that may change a field its body reads (`[EFF-27]`); on an object several threads reach, the result is filled once under a once-flag |
 | Stack probe | guaranteed present | one touch per page of a frame larger than a page (`[RT-12]`); none for smaller frames |
-| FFI call | guaranteed present | one direct call for an ABI-direct C function, and one direct call of the member's thunk for a C++ name declared several times (`[FFI-57]`); a call that leaves a default argument out runs the default's expression in the thunk, as the C++ call site that leaves it out would |
+| FFI call | guaranteed present | one direct call for an ABI-direct C function, and one direct call of the member's thunk for a C++ name declared several times (`[FFI-57]`); a call that leaves a default argument out runs the default's expression in the thunk, as the C++ call site that leaves it out would; a call with a `T&&` argument runs `T`'s destructor on the moved-from object when it returns, and an `override fn` with a `T&&` parameter runs `T`'s move constructor in the trampoline before the override (`[FFI-40]`, `[FFI-17f]`) |
 | An Ember function called by C through a function pointer (`[FFI-21]`) | guaranteed present | the thread-local attach check of its C entry (`[FFI-22]`) and one test of the thread's queue at its return (`[RC-4]` point 3), nothing else |
 | An override call or `delete` of a trampoline-class object under `threads=creator` (`[FFI-17d]`) | guaranteed present | one compare of the calling thread with the id the trampoline subobject holds, one word per object |
 | An `owns T` of a `threads(creator)` type (`[FFI-33b]`) | guaranteed present | one word more, the making thread's id, and one compare at its end |
