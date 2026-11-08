@@ -102,17 +102,22 @@ These words are used with these meanings throughout the specification.
   hands `a` over with no word, and so does a constructor's argument, as `=` does, and so does a
   value made in the call with a word that makes an owner or a link (`setup(shares mut game)`,
   `ROSTER.push(weakref this)`), whose word says what is given: `w = Words(names=xs)` hands `xs`
-  over, `Point(x=a)` copies `a`. A value `=` copies (a number, a `bool`, a `char`, a `StrView`, a
-  `ref T`, a `Span[T]`, a raw pointer, a tuple or fixed array of these, a struct or enum marked
-  `@derive(Copy)`) is copied with `=` too, so `b = owns n` is how `=` hands one over: `n` ends
-  there, and a later use is `E3040` (`f = owns flag` ends `flag`). `owns` is not written before a
-  name whose place already hands the value over, after `return`, nor before `fn` written on its own,
-  nor before a value made on the line for a place that is not an `owns T` (`[GRM-15]`) (`E0109`:
-  "`e.mesh = m` already hands `m` over; remove `owns`"; "`b = a` already hands `a` over; remove
-  `owns`"; "`return` always hands the value over; remove `owns`: `return xs`"; "`owns fn` does not
-  say what the function takes or copies; name it on each captured name: `fn() owns report:`");
-  before a function written as an argument for an `owns` parameter it is the call's word
-  (`xs.iter().for_each(owns fn(x: int): println(x))`).
+  over, `Point(x=a)` copies `a`, and `Emitter(label)` for a written `fn init(owns name: String):`
+  hands `label` over (an `init` parameter with no word reads its argument for the call only, and one
+  written `ref mut` takes `ref mut` at the call, `[FN-2a]`); an element of a collection literal is
+  given the same way (`xs = [a, b]` hands `a` and `b` over and a later use of `a` is `E3040`; `[copy
+  of a, b]` keeps `a`; a `Copy` value is copied; a part, or a value reached through a name that does
+  not own it, is `E3013` as elsewhere, `[OWN-11]`). A value `=` copies (a number, a `bool`, a
+  `char`, a `StrView`, a `ref T`, a `Span[T]`, a raw pointer, a tuple or fixed array of these, a
+  struct or enum marked `@derive(Copy)`) is copied with `=` too, so `b = owns n` is how `=` hands
+  one over: `n` ends there, and a later use is `E3040` (`f = owns flag` ends `flag`). `owns` is not
+  written before a name whose place already hands the value over, after `return`, nor before `fn`
+  written on its own, nor before a value made on the line for a place that is not an `owns T`
+  (`[GRM-15]`) (`E0109`: "`e.mesh = m` already hands `m` over; remove `owns`"; "`b = a` already
+  hands `a` over; remove `owns`"; "`return` always hands the value over; remove `owns`: `return
+  xs`"; "`owns fn` does not say what the function takes or copies; name it on each captured name:
+  `fn() owns report:`"); before a function written as an argument for an `owns` parameter it is the
+  call's word (`xs.iter().for_each(owns fn(x: int): println(x))`).
 * `[OWN-10]` *(new in 0.9.15)* **`owns` on the line that makes a value for a place that owns it
   alone.** An `owns` field, an `Option[owns T]` and a list of `owns` values each hold their value in
   a block of its own, and the line that makes a value for such a place says `owns`, at first and
@@ -126,18 +131,22 @@ These words are used with these meanings throughout the specification.
   view, before a `for` loop's or a `match`'s source (`for x in owns xs:`, `match owns e:`), which
   then hands the value over. `owns` before a class type, whose object always lives in its own block,
   is `E2114` ("a `Player` object always lives in its own block; remove `owns`: `p: Player`").
-* `[OWN-11]` *(new in 0.9.15)* **A part handed over on its own.** A part of a struct value stored
-  somewhere else (`push`, `return`, a field, an `owns` argument) is handed over on its own: for a
-  struct value `p`, `names.push(owns p.name)` moves `p`'s name into the list, and `p.hp` stays
-  usable; `p.name`, and `p` used whole, are `E3040` until `p.name` is given a new value (`p.name =
-  String("")`): "`p.name` was handed over to `names` on line 4; give it a new value first, or keep a
-  copy: `names.push(owns copy of p.name)`". A field of a class object is not handed out this way,
-  since other names may reach the object and would see the hole (`E3013`: "`q` is a `Player` object,
-  which other names may reach, so `q.name` cannot be taken out and leave a hole; take it and leave a
-  value in its place: `names.push(owns mem.take(ref mut q.name))`"). A hand-over out of a name or
-  place that does not own the value is `E3013` too: "`v.push(owns template)` would hand over the
-  caller's player, but `template` only reads it; to put a player of your own in the list write
-  `v.push(owns copy of template)`".
+* `[OWN-11]` *(new in 0.9.15)* *(changed in 0.9.20)* **A part handed over on its own.** A part of a
+  struct value stored somewhere else (`push`, `return`, a field, an `owns` argument, `body = owns
+  req.body` on the right of `=`, `[GRM-15]`) is handed over on its own: for a struct value `p`,
+  `names.push(owns p.name)` moves `p`'s name into the list, and `p.hp` stays usable; `p.name`, and
+  `p` used whole, are `E3040` until `p.name` is given a new value (`p.name = String("")`): "`p.name`
+  was handed over to `names` on line 4; give it a new value first, or keep a copy: `names.push(owns
+  copy of p.name)`". A field of a class object, and a part of a value that has several owners
+  (`shares mut inv`, `[RC-1]`), is not handed out this way, since other names may reach the value
+  and would see the hole (`E3013`, with the same help, `names.push(owns mem.take(ref mut
+  inv.items))`: "`q` is a `Player` object, which other names may reach, so `q.name` cannot be taken
+  out and leave a hole; take it and leave a value in its place: `names.push(owns mem.take(ref mut
+  q.name))`"). A hand-over out of a name or place that does not own the value is `E3013` too:
+  "`v.push(owns template)` would hand over the caller's player, but `template` only reads it; to put
+  a player of your own in the list write `v.push(owns copy of template)`"; for a name opened with
+  `exists as` over a call's result (`while jobs.pop() exists as job:` then `done.push(owns job)`)
+  the help also gives the owning form, `match owns jobs.pop():` with `Some(job):` (`[GRM-13]`).
 * `[OWN-12]` *(new in 0.9.15)* **Giving an object to C.** A C function whose declaration says it
   keeps the object it is given (`[FFI-11]`) takes it by an ordinary hand-over, `widget_take(owns
   first)`: the name ends and Ember frees nothing. For a C function whose declaration cannot say so
@@ -186,14 +195,15 @@ These words are used with these meanings throughout the specification.
   `thread_shared` when a method of it writes `thread_shared this` or `weakref thread_shared this`;
   neither otherwise, and such a class serves both kinds (`Log`, Annex A). A method pins the class
   that declares it and every class derived from it, whose objects run it; a class pinned both ways,
-  by its own methods or with a base's, is `E7015` at the one-thread line ("`Node.add_child` (line 9)
-  links its nodes on one thread (`weakref this`), and `Node.share` (line 12) shares them between
-  threads (`thread_shared this`); a class's objects are one or the other: for nodes shared between
-  threads write `child.parent = weakref thread_shared this` on line 9, for one-thread nodes remove
-  `share`"). A line that makes an object of the other kind is refused there: `thread_shared Node()`
-  for a one-thread class is `E7015` ("`Node` keeps links to its nodes on one thread (`add_child`,
-  line 7: `child.parent = weakref this`), and a `thread_shared Node` may be reached from any thread;
-  for nodes shared between threads write `parent: weakref thread_shared Node = None` (line 4) and
+  by its own methods or with a base's, or pinned one-thread while it or a base promises `Send`
+  (`[THR-8]`), is `E7015` at the one-thread line ("`Node.add_child` (line 9) links its nodes on one
+  thread (`weakref this`), and `Node.share` (line 12) shares them between threads (`thread_shared
+  this`); a class's objects are one or the other: for nodes shared between threads write
+  `child.parent = weakref thread_shared this` on line 9, for one-thread nodes remove `share`"). A
+  line that makes an object of the other kind is refused there: `thread_shared Node()` for a
+  one-thread class is `E7015` ("`Node` keeps links to its nodes on one thread (`add_child`, line 7:
+  `child.parent = weakref this`), and a `thread_shared Node` may be reached from any thread; for
+  nodes shared between threads write `parent: weakref thread_shared Node = None` (line 4) and
   `child.parent = weakref thread_shared this` (line 7), and make every node `thread_shared
   Node()`"), and `Node()` for a `thread_shared` class is `E7017` ("every `Node` is shared between
   threads (`add_child`, line 9: `child.parent = weakref thread_shared this`), and line 14 makes one
@@ -218,38 +228,46 @@ These words are used with these meanings throughout the specification.
   types) each word belongs to the one name after it, and a name with no word may not follow a name
   with a word, so that no word can be read as covering the next name (`E0116`: "`ref mut` here
   belongs to `pos` only; say what `vel` is: `for ref mut pos, ref vel in q:`, or `ref mut vel` to
-  change it too").
+  change it too"). A `weakref x` whose target was made `using` an instance (its type says `using A`,
+  `[TYP-46]`) is a `weakref T using A`, so the kind of manager travels with the link, and a
+  `weakref` of a `Global` value is a plain `weakref T`.
 
 ## VII.3 Copy and `copy of`
 
-* `[OWN-7]` *(changed in 0.9.15)* A value of a `Copy` type is duplicated bit for bit by `=` and on use,
-  and the source stays valid; the duplicate is independent, and no copy runs any code. A `Copy` type
-  holds no owner and no link: class objects, `shares` values, `weakref` and `sharedref mut` links,
-  `ref mut` views and `MutSpan`s are not `Copy`, and a type with a `drop` of its own is never `Copy`
-  (ODR-051). A `Copy` struct copied with `=` from a name that is still used afterwards is not then
-  changed through the new name (`E3023`): the line says `copy of` (a copy of your own) or `ref mut`
-  (the original), so that no copy is changed by mistake.
-* `[OWN-8]` *(changed in 0.9.15)* *(changed in 0.9.20)* **`copy of x`** makes a copy of the thing itself, by its type's
-  `Clone` (`fn clone() -> Self`, the explicit deep copy): of a class object, a new object
-  (`p2 = copy of player`); for a `shares`, `shares mut`, `thread_shared` or `sharedref mut` link, a
-  copy of its target, a `T` with one owner (`p2 = copy of p` for `p: shares mut Player` is a `Player`
-  that `p2` alone owns; `p3 = shares p2` starts a second group of owners). Every `Copy` type
-  has `Clone` (`@derive(Copy)` gives it), so `b = copy of a` works for a `Point` marked only `Copy`. A
-  value that holds links is copied field by field, as a C++ struct holding a `shared_ptr` and a
-  `weak_ptr` is: what it owns alone is copied itself, and each link is copied as a link to the same
-  target. For `struct Team:` with `captain: shares Player` and `scout: weakref Player`, `t2 = copy of t`
-  is a new `Team` whose `captain` is one more owner of the same player and whose `scout` is one more
-  link to it; a `sharedref mut` field is copied as one more holder of the same link. `copy of` is
-  `E2116` before what it cannot copy as itself:
-  * a `weakref` link, whose target may be gone: "`copy of this.keep` would copy the link, not the node;
-    for another link to the same node write `a = weakref this.keep`; for a copy of the node itself write
-    `if this.keep exists as n:` and then `c = copy of n`";
-  * a value of a view type (`StrView`, `Span[T]`, a struct holding a `ref mut` field): "`w` is a view of
-    `line`'s text; to make your own copy write `String(w)`";
+* `[OWN-7]` *(changed in 0.9.15)* *(changed in 0.9.20)* A value of a `Copy` type is duplicated bit for bit by `=` and on
+  use, and the source stays valid; the duplicate is independent, and no copy runs any code. A `Copy`
+  type holds no owner and no link: class objects, `shares` values, `weakref` and `sharedref mut`
+  links, `ref mut` views and `MutSpan`s are not `Copy`, and a type with a `drop` of its own is never
+  `Copy` (ODR-051). A `Copy` value with parts (a struct, a tuple, a fixed array) copied with `=`
+  from a name that is still used afterwards is not then changed through its parts or whole through
+  the new name (`E3023`): the line says `copy of` (a copy of your own) or `ref mut` (the original),
+  so that no copy is changed by mistake.
+* `[OWN-8]` *(changed in 0.9.15)* *(changed in 0.9.20)* **`copy of x`** makes a copy of the thing
+  itself, by its type's `Clone` (`fn clone() -> Self`, the explicit deep copy): of a class object, a
+  new object (`p2 = copy of player`); for a `shares`, `shares mut`, `thread_shared` or `sharedref
+  mut` link, a copy of its target, a `T` with one owner (`p2 = copy of p` for `p: shares mut Player`
+  is a `Player` that `p2` alone owns; `p3 = shares p2` starts a second group of owners). Every
+  `Copy` type has `Clone` (`@derive(Copy)` gives it), so `b = copy of a` works for a `Point` marked
+  only `Copy`. A value that holds links is copied field by field, as a C++ struct holding a
+  `shared_ptr` and a `weak_ptr` is: what it owns alone is copied itself, and each link is copied as
+  a link to the same target. For `struct Team:` with `captain: shares Player` and `scout: weakref
+  Player`, `t2 = copy of t` is a new `Team` whose `captain` is one more owner of the same player and
+  whose `scout` is one more link to it; a `sharedref mut` field is copied as one more holder of the
+  same link. `copy of` is `E2116` before what it cannot copy as itself:
+  * a `weakref` link, whose target may be gone: "`copy of this.keep` would copy the link, not the
+    node; for another link to the same node write `a = weakref this.keep`; for a copy of the node
+    itself write `if this.keep exists as n:` and then `c = copy of n`";
+  * a `ref mut T` view, a `MutSpan[T]`, or a struct holding one, which have no `Clone` (`[TYP-36]`),
+    since no second changing view of a place can be made: "`d` is the one name that writes `xs`'s
+    elements, and a copy of it would be a second; for a copy of the elements write `copy of xs`"; a
+    read-only view (`StrView`, `Span[T]`, `ref T`), and a `Copy` struct holding one, is `Copy`
+    (verdict 68), so `copy of w` is one more view of the same text, as `w2 = w` is, and text of
+    one's own is `String(w)`;
   * a type with no `Clone`: "`Player` has no `Clone`, so `copy of` cannot make one; write
     `@derive(Clone)` above `class Player`, or keep a view of it: `p2 = ref p`";
   * a value whose views point into its own `let` field: "`d.words` points into `d.text`, so a copy's
-    words would point into `d`'s text; make the copy from its text: `d2 = Document(String(d.text))`".
+    words would point into `d`'s text; make the copy from its text: `d2 =
+    Document(String(d.text))`".
 
 ## VII.4 Views: names, parameters and calls
 
@@ -258,20 +276,25 @@ given to a plain or `ref mut` parameter, walked by a loop, opened or tested, or 
 `MutSpan` or `StrView`, and where a line writes `ref`, `ref mut` or `sharedref mut` before a place. A
 view hands nothing over and makes no copy.
 
-* `[BRW-12]` *(new in 0.9.15)* **A name for a part is a read-only view.** A name is declared by the
-  line that first gives it a value; a line inside a loop's body declares it once per round
-  (`[GRM-4]`). A name bound to a part (`n = p.name`, `boss = enemies[0]`), or to a call whose result
-  is a view (`ref T`, `StrView`, `Span[T]`, a `ref` or `ref mut` place, `[LT-1]`), such as `word =
-  line.to_lower().trim()` or `best = a.as_span()`, is a read-only view of it: never a hand-over, and
-  never a silent copy, except that a part with no fields of its own (a number, a `bool`, a variant
-  with no payload) is copied, as Python binds a number. A call whose result is a new value the
-  callee made (a list it built, a list of views included) hands that value to the name, which owns
-  it (`[LT-45]` bounds the life of a value that holds views). A word before the part says otherwise:
-  `ref mut` makes a name for that very place that may change it (`boss = ref mut enemies[0]`, `r =
-  ref mut first_even(ref mut xs)`), and before a `MutSpan` a call gives it says the name may write
-  the span's elements (`d = ref mut tracks[dst_name].as_mut_span()`); `copy of` makes a copy of your
-  own (`boss = copy of enemies[0]`); the link words make a link (`[OWN-13]`); and `ref` states the
-  default, needed before a part only to view a number (`r = ref counts[0]`).
+* `[BRW-12]` *(new in 0.9.15)* *(changed in 0.9.20)* **A name for a part is a read-only view.** A
+  name is declared by the line that first gives it a value; a line inside a loop's body declares it
+  once per round (`[GRM-4]`). A name bound to a part (`n = p.name`, `boss = enemies[0]`), or to a
+  call whose result is a view (`ref T`, `StrView`, `Span[T]`, a `ref` or `ref mut` place, `[LT-1]`),
+  such as `word = line.to_lower().trim()` or `best = a.as_span()`, is a read-only view of it: never
+  a hand-over, and never a silent copy, except that a part of a `Copy` type (a number, a `bool`, a
+  `char`, a variant with no payload, a `StrView`, a `Span[T]`, a `ref T`, a `Copy` struct) is
+  copied, as `=` copies a whole name of that type (`[OWN-7]`, `[OWN-9]`): `w = this.rest` for `rest:
+  StrView` is a `StrView` of its own that looks at what the field looks at, so `this.rest = w[i +
+  1..]` while `w` is used changes nothing `w` reads, and a copied `Copy` struct is not then changed
+  through the new name while the source is used (`[OWN-7]`, `E3023`). A call whose result is a new
+  value the callee made (a list it built, a list of views included) hands that value to the name,
+  which owns it (`[LT-45]` bounds the life of a value that holds views). A word before the part says
+  otherwise: `ref mut` makes a name for that very place that may change it (`boss = ref mut
+  enemies[0]`, `r = ref mut first_even(ref mut xs)`), and before a `MutSpan`, or a tuple of them, a
+  call gives it says the names bound from it may write the spans' elements (`d = ref mut
+  tracks[dst_name].as_mut_span()`, `left, right = ref mut xs.split_at(mid)`, `[SPN-3]`); `copy of`
+  makes a copy of your own (`boss = copy of enemies[0]`); the link words make a link (`[OWN-13]`);
+  and `ref` states the default, needed before a part only to view a number (`r = ref counts[0]`).
 * `[BRW-13]` *(new in 0.9.15)* **`=` on a name that has a value** puts the new value in the place
   the name stands for. A name declared with `=` stands for its own place: its old value is replaced
   (and ends, if it owned something), and if the value is a view, the name now views something else
@@ -286,23 +309,32 @@ view hands nothing over and makes no copy.
   means it never changes: `r = const ref mut a` then `r = ref mut b` is `E3023` ("`r` is `const ref
   mut a`, so it always refers to `a`; to refer to `b` use a new name, `rb = ref mut b`, or make `r`
   with plain `ref mut`: `r = ref mut a`").
-* `[BRW-14]` *(new in 0.9.15)* **Names that keep their place.** A parameter, a loop name, a pattern
-  name and a name opened with `exists as` (`[GRM-44]`) or named by a kind test (`[DSP-4]`) stand for
+* `[BRW-14]` *(new in 0.9.15)* *(changed in 0.9.20)* **Names that keep their place.** A parameter
+  that is not `owns`, a loop or pattern name that views its value (one under `for x in e:` or `match
+  e:`) and a name opened with `exists as` (`[GRM-44]`) or named by a kind test (`[DSP-4]`) stand for
   what the caller, the loop, the opening or the test gave, and keep it for their whole scope: `=` on
   one is `E3023` ("`line` is the text the caller passed and stays that text for the whole call; for
   a view of your own write `rest = line.trim()`"; "`n` is the number the caller passed; for a number
   of your own write `count = n` and change `count`"), and so is any other change through one that is
-  plain (`[BRW-15]`). The one exception is a name opened `exists as copy of v`, a copy of your own,
+  plain (`[BRW-15]`). A name that was handed its value owns it, as a local does, and keeps no place:
+  an `owns` parameter (`[FN-1]`), a loop name under `for x in owns e:` (`[CTL-1]`) and a name of the
+  branch that runs under `match owns e:` (`[GRM-13]`) may be changed and given a new value with no
+  word (`job.retries += 1` under `for job in owns jobs:`; `name = String("unnamed")` on `owns name:
+  String` ends the string the caller handed over, as `=` on a local does, `[OWN-3]`), and `kept =
+  job` hands it over. The one exception is a name opened `exists as copy of v`, a copy of your own,
   which may be changed (`if scores.get(name) exists as copy of v:` then `v += 1`; the map is
   untouched). A `ref mut` one writes the caller's place, and may be given another ref, as any `ref
   mut` name may: a `ref mut dst: MutSpan[float]` parameter given another span points the caller's
   `d` at it, and `ref mut c: Counter` given another ref points `c`, for the rest of the call, at
   that place. `const ref mut dst: MutSpan[float]` writes the caller's elements and is never given
   another ref, so the caller's `d` is the same span after the call.
-* `[BRW-15]` *(new in 0.9.15)* **A plain name never changes anything.** A plain parameter, a plain
-  loop, pattern or opened name, and a plain local that holds a view never change what they name or
-  what it leads to (a `Cell` field, an object behind a `shares` link, the elements of a `MutSpan`).
-  A change through one is `E3023`, with the line to write: "`path.pop()` changes the list in
+* `[BRW-15]` *(new in 0.9.15)* *(changed in 0.9.20)* **A plain name never changes anything.** A
+  plain parameter, a plain loop, pattern or opened name (one that views its value; a name handed its
+  value is an owner, `[BRW-14]`), and a plain local that holds a view (a `StrView`, a `Span`, a
+  `ref`, a name for a part, `[BRW-12]`; not a value of its own that holds views, such as an iterator
+  a call made, which the name owns and may advance, `[CTL-1]`) never change what they name or what
+  it leads to (a `Cell` field, an object behind a `shares` link, the elements of a `MutSpan`). A
+  change through one is `E3023`, with the line to write: "`path.pop()` changes the list in
   `n.state`, but `path` only reads it; to change that list through `path`, write `State.Walking(ref
   mut path):`"; "`tick` sets `s.frame`, but `s` only reads the caller's clock; write `fn tick(ref
   mut s: Clock):` and call `tick(ref mut clock)`"; "`dst[i] += src[i]` writes an element of the
@@ -401,54 +433,55 @@ view hands nothing over and makes no copy.
 * `[BRW-21]` *(new in 0.9.15)* *(changed in 0.9.20)* **The call check: a view argument and what the
   callee does.** A view whose last use is an argument of a call (of a plain, `Span` or `ref mut`
   parameter) does not live across the call: inside it, the parameter makes the promise of `[BRW-1]`,
-  and the compiler holds the callee to it. It works out from each function's body which of its view
-  parameters, `this` included, it uses after a line that may end or move what they view (a reshape;
-  the end of an object, `[RC-5]`), through its own lines and the same fact of the functions it calls
-  (a call through a function value, or through an interface, `dyn` or virtual method, by every
-  function the program can put there, `[EFF-1]`), with the body's precise facts (a change inside `if
-  a is not b:` is not one for `a`). It keeps that fact with the function (in the package's interface
-  file across a package's edge, `[EFF-4]`) and checks it at each call: an argument that points into
-  what the callee may end or move before its last use of that parameter is `E3031`. Writing a number
-  or a `bool` ends and moves nothing, so a method that writes `this.health` through a link that may
-  lead to its own object (a turret aimed at itself) is allowed; leaving a lock's `with` block ends
-  nothing either. With `fn note(s: StrView):` whose body is `LOG.clear()` then `println(s)`,
-  `note(LOG[0])` is refused ("`note` clears `LOG` (its line 3) and then uses `s` (its line 4), and
-  `LOG[0]` is part of `LOG`; give it a copy: `note(copy of LOG[0])`, or in `note` use `s` before
-  `LOG.clear()`"); `note("bye")` is allowed, and so is `note(LOG[0])` for a `note` that prints
-  before it clears. The object a method is called on counts the same way: with `fn hit():` whose
-  body is `ENEMIES.clear()` then `this.hp -= 1`, `ENEMIES[0].hit()` is refused ("`hit` clears
-  `ENEMIES` (its line 3) and then changes `this.hp` (its line 4), and `ENEMIES[0]` is part of
-  `ENEMIES`; in `hit`, change `this.hp` before `ENEMIES.clear()`"), and a `hit` that uses `this`
-  only before the clear is allowed. A `ref mut` parameter counts the same way: with `fn rename(ref
-  mut s: String):` whose body is `LOG.clear()` then `s = String("renamed")`, `rename(ref mut
-  LOG[0])` is refused ("`rename` clears `LOG` (its line 2) and then writes `s` (its line 3), and
-  `LOG[0]` is part of `LOG`, so `s` would point at freed memory; rename a copy of your own: write
-  `mine = copy of LOG[0]` and `rename(ref mut mine)` in place of this line, or in `rename` write `s`
-  before `LOG.clear()`"). Since a `ref mut` parameter is compiled with noalias (`[BRW-22]`), the
-  check is wider for it: while it is used, the callee reaches its place through no other name, so an
-  argument for it that points into a place the callee reads or changes by another name while the
-  parameter is used is refused too (with `fn heal(ref mut p: Player):` whose body is
-  `println(PARTY[0].hp)` then `p.hp += 10`, `heal(ref mut PARTY[0])`: "`heal` reads `PARTY[0]` by
-  its own name (its line 2) while `p` is still used (its line 3), and `p` is `PARTY[0]`; in `heal`,
-  read it through `p`: `println(p.hp)`"), unless it is that same whole variable, proved when
-  compiling (`[BRW-11]`, exception 1). Where the fault is in one function stored in a function value
-  (it ends what its parameter views and then uses the parameter), the refusal stands on the line
-  that stores it, not on the call through the value, which is right for every other function
-  ("`on_visit` is called with a node of the tree (line 21), and this function removes its node from
-  the parent's list (line 41) and then reads it (line 42); read it before removing it: move line 42
-  above line 41"). Only a C function's code is unseen; `[FFI-52]` covers it. A foreign call without
-  `@ffi(no_callbacks)` is an **open line** of the function's summary: for each view parameter,
-  `this` included, and each `static` of its own, that the function uses after such a call
-  (`[FFI-52]`), the summary records the call and what the parameter is used as (walked, read,
-  changed through `ref mut`), without resolving which callbacks run (`[EFF-4]`, `[BLD-14]` item 15).
-  At each call from another package the caller resolves the open lines against the callbacks its
-  program keeps, its exports and its overrides (`[FFI-52]`): where one of them changes what that
-  parameter's argument reaches, the call is `E3031`, naming the chain ("`sim.tick(game)` (line 9)
-  walks `game.names` after it calls `poll_events()` (sim/game.em:9), a C function that may run the
-  callback C keeps from `register_cb` (line 8), which pushes to `game.names`; register the callback
-  after the call, or, if `poll_events` never calls back into Ember, mark it `@ffi(no_callbacks)` in
-  `sim`'s declaration"). Nothing in a library is refused for callbacks it cannot see. Nothing is
-  checked while the program runs.
+  and the compiler holds the callee to it: for a plain or `Span` parameter, that what it views is
+  not ended or moved; for a `ref mut` parameter, that its place is reached by no other name (below).
+  It works out from each function's body which of its view parameters, `this` included, it uses
+  after a line that may end or move what they view (a reshape; the end of an object, `[RC-5]`),
+  through its own lines and the same fact of the functions it calls (a call through a function
+  value, or through an interface, `dyn` or virtual method, by every function the program can put
+  there, `[EFF-1]`), with the body's precise facts (a change inside `if a is not b:` is not one for
+  `a`). It keeps that fact with the function (in the package's interface file across a package's
+  edge, `[EFF-4]`) and checks it at each call: an argument that points into what the callee may end
+  or move before its last use of that parameter is `E3031`. Writing a number or a `bool` ends and
+  moves nothing, so a method that writes `this.health` through a link that may lead to its own
+  object (a turret aimed at itself) is allowed; leaving a lock's `with` block ends nothing either.
+  With `fn note(s: StrView):` whose body is `LOG.clear()` then `println(s)`, `note(LOG[0])` is
+  refused ("`note` clears `LOG` (its line 3) and then uses `s` (its line 4), and `LOG[0]` is part of
+  `LOG`; give it a copy: `note(copy of LOG[0])`, or in `note` use `s` before `LOG.clear()`");
+  `note("bye")` is allowed, and so is `note(LOG[0])` for a `note` that prints before it clears. The
+  object a method is called on counts the same way: with `fn hit():` whose body is `ENEMIES.clear()`
+  then `this.hp -= 1`, `ENEMIES[0].hit()` is refused ("`hit` clears `ENEMIES` (its line 3) and then
+  changes `this.hp` (its line 4), and `ENEMIES[0]` is part of `ENEMIES`; in `hit`, change `this.hp`
+  before `ENEMIES.clear()`"), and a `hit` that uses `this` only before the clear is allowed. A `ref
+  mut` parameter counts the same way: with `fn rename(ref mut s: String):` whose body is
+  `LOG.clear()` then `s = String("renamed")`, `rename(ref mut LOG[0])` is refused ("`rename` clears
+  `LOG` (its line 2) and then writes `s` (its line 3), and `LOG[0]` is part of `LOG`, so `s` would
+  point at freed memory; rename a copy of your own: write `mine = copy of LOG[0]` and `rename(ref
+  mut mine)` in place of this line, or in `rename` write `s` before `LOG.clear()`"). Since a `ref
+  mut` parameter is compiled with noalias (`[BRW-22]`), the check is wider for it: while it is used,
+  the callee reaches its place through no other name, so an argument for it that points into a place
+  the callee reads or changes by another name while the parameter is used is refused too (with `fn
+  heal(ref mut p: Player):` whose body is `println(PARTY[0].hp)` then `p.hp += 10`, `heal(ref mut
+  PARTY[0])`: "`heal` reads `PARTY[0]` by its own name (its line 2) while `p` is still used (its
+  line 3), and `p` is `PARTY[0]`; in `heal`, read it through `p`: `println(p.hp)`"), unless it is
+  that same whole variable, proved when compiling (`[BRW-11]`, exception 1). Where the fault is in
+  one function stored in a function value (it ends what its parameter views and then uses the
+  parameter), the refusal stands on the line that stores it, not on the call through the value,
+  which is right for every other function ("`on_visit` is called with a node of the tree (line 21),
+  and this function removes its node from the parent's list (line 41) and then reads it (line 42);
+  read it before removing it: move line 42 above line 41"). Only a C function's code is unseen;
+  `[FFI-52]` covers it. A foreign call without `@ffi(no_callbacks)` is an **open line** of the
+  function's summary: for each view parameter, `this` included, and each `static` of its own, that
+  the function uses after such a call (`[FFI-52]`), the summary records the call and what the
+  parameter is used as (walked, read, changed through `ref mut`), without resolving which callbacks
+  run (`[EFF-4]`, `[BLD-14]` item 15). At each call from another package the caller resolves the
+  open lines against the callbacks its program keeps, its exports and its overrides (`[FFI-52]`):
+  where one of them changes what that parameter's argument reaches, the call is `E3031`, naming the
+  chain ("`sim.tick(game)` (line 9) walks `game.names` after it calls `poll_events()`
+  (sim/game.em:9), a C function that may run the callback C keeps from `register_cb` (line 8), which
+  pushes to `game.names`; register the callback after the call, or, if `poll_events` never calls
+  back into Ember, mark it `@ffi(no_callbacks)` in `sim`'s declaration"). Nothing in a library is
+  refused for callbacks it cannot see. Nothing is checked while the program runs.
 * `[BRW-22]` *(new in 0.9.15)* **Noalias.** Every `ref mut` parameter, a `MutSpan` one included, is
   compiled with noalias (C's `restrict`): while it is used, nothing else the function uses reaches
   its place (`[BRW-1]`, `[BRW-21]`); a call compiled against a copy with one name (`[BRW-11]`,
@@ -738,7 +771,7 @@ fn find_word(haystack: StrView, needle: StrView) -> Option[StrView] from haystac
   result lives is `E3060` at the later use ("`LOG.clear()` (line 7) may free the text `s` views
   (`head()` returns a view of `LOG`, its line 4), and `s` is used on line 8; keep your own copy: `s
   = String(head())`") and a change `E3021`.
-* `[LT-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* A value made in a memory manager's instance
+* `[LT-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A value made in a memory manager's instance
   (`owns Mesh(points=[0.0, 1.0]) using current`, `[ALC-1]`), and every value that holds one, lives
   no longer than that instance, wherever it is kept: keeping or returning it where it would outlive
   the instance is `E3063` ("`boss` holds a mesh made in `current` (line 12), and `current` ends when
@@ -747,9 +780,11 @@ fn find_word(haystack: StrView, needle: StrView) -> Option[StrView] from haystac
   arena`, and in the caller `current = LevelArena()` and `boss = load_level(ref mut current)`"). A
   value whose manager may have several instances keeps its instance's address, one word, so that its
   growth and its end go back to the instance it came from; that address is a kept `sharedref mut`
-  link to the instance (`[LT-46]`): the program may use the instance while values made in it live,
-  and each value's growth and end change the instance through it. A manager with one instance
-  (`Global`, `System`) costs no word. Arena allocations point into the arena (`[ARN-1]`).
+  link to the instance (`[LT-46]`) for the exclusivity rules, and between threads what `[TYP-46a]`
+  says (a `ref A` to a manager any thread may call, else this link, which never leaves its thread):
+  the program may use the instance while values made in it live, and each value's growth and end
+  change the instance through it. A manager with one instance (`Global`, `System`) costs no word.
+  Arena allocations point into the arena (`[ARN-1]`).
 * `[LT-44]` *(new in 0.9.9)* *(changed in 0.9.15)* A plain or `ref mut` `Arena`, `FixedArena` or
   `ScopedArena` parameter is a source parameter because it is not `Copy` (`[LT-1]`): a function
   whose only source parameter is one arena returns views that point into it, with no word. `from
@@ -913,7 +948,13 @@ fn main():
   type; remove it: `fn make() -> owns dyn Picker:`, and write it where the result is held: `q:
   runtime owns dyn Picker = make()`"). It is a word only after the `:` of a parameter or of a local
   declared with its type (`[LEX-15]`); it costs one load at the call and one bit test at each line
-  it guards, and nothing where no line needs them (§X.4).
+  it guards, and nothing where no line needs them (§X.4). Where a test is emitted it enters the
+  function's effect set as `RuntimeCheck(Aliasing)` (`[EFF-9]`), with the reason
+  `not_provable_in_principle` (`[EFF-11]`), as the compare of `assert_disjoint` does: inside
+  `@no_alias_checks` the word is `E4030` (`[EFF-12]`), naming the kind known when compiling that
+  needs no test; `@nopanic(explicit)` admits it, as it admits every `RuntimeCheck` (`[EFF-16]`). A
+  `runtime` name whose every kind is known when compiling, where nothing is tested, carries nothing,
+  and `ember inspect --safety` lists each test with its line (`[EFF-10]`).
 
 ### Views with several regions
 
@@ -1015,67 +1056,75 @@ fn main():
 ```
 
 * `[SPN-1]` *(changed in 0.9.15)* An `Array[T]`, a `[T; N]` or a `String` converts to `Span[T]` or
-  `StrView` where one is expected, and to `MutSpan[T]` where one is expected (a `ref mut` parameter, a
-  `ref mut` name, or a `MutSpan`-typed field made with `ref mut`, `[BRW-12]`). **The conversion makes a
-  view** of the source place with the ordinary rules: the source is not changed through another name,
-  handed over or ended while the view is used (`[BRW-1]`), whether the conversion is written implicitly,
-  as `as_span()`/`as_mut_span()`, or produced by a call.
-* `[SPN-2]` Indexing a view is bounds-checked; `get(i) -> Option[ref T]` does not panic;
-  `unsafe: s.get_unchecked(i)` does not check.
-* `[SPN-3]` *(changed in 0.9.15)* `Span[T]` is `Copy`; `MutSpan[T]` is not. A name or parameter that
-  writes a `MutSpan`'s elements says `ref mut` (`d = ref mut a.as_mut_span()`,
-  `fn blend(ref mut dst: MutSpan[float], src: Span[float]):`), and a plain one only reads them
-  (`E3023`, `[BRW-15]`). A `MutSpan` is lent to a call with `ref mut` before the argument
-  (`blend(ref mut d, s)`), which before a span names its elements, so it may stand before a span made in
-  the call (`integrate(ref mut p.as_mut_span(), v.as_span(), 0.5)`); a callee that points such a span
+  `StrView` where one is expected, and to `MutSpan[T]` where one is expected (a `ref mut` parameter,
+  a `ref mut` name, or a `MutSpan`-typed field made with `ref mut`, `[BRW-12]`). **The conversion
+  makes a view** of the source place with the ordinary rules: the source is not changed through
+  another name, handed over or ended while the view is used (`[BRW-1]`), whether the conversion is
+  written implicitly, as `as_span()`/`as_mut_span()`, or produced by a call.
+* `[SPN-2]` Indexing a view is bounds-checked; `get(i) -> Option[ref T]` does not panic; `unsafe:
+  s.get_unchecked(i)` does not check.
+* `[SPN-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* `Span[T]` is `Copy`; `MutSpan[T]` is not. A name or parameter that
+  writes a `MutSpan`'s elements says `ref mut` (`d = ref mut a.as_mut_span()`, `fn blend(ref mut
+  dst: MutSpan[float], src: Span[float]):`), and a plain one only reads them (`E3023`, `[BRW-15]`).
+  A `MutSpan` is lent to a call with `ref mut` before the argument (`blend(ref mut d, s)`), which
+  before a span names its elements, so it may stand before a span made in the call (`integrate(ref
+  mut p.as_mut_span(), v.as_span(), 0.5)`) and before a tuple of spans a call gives, on an `=` line
+  whose targets bind them: `left, right = ref mut samples.split_at(mid)` gives each name the right
+  to write its half's elements, as `d = ref mut a.as_mut_span()` does for one span, and without `ref
+  mut` the names only read (`E3023`, whose help gives that line); a callee that points such a span
   elsewhere changes only that span, which ends with the line. Where a `Span[T]` is expected, a
-  `MutSpan[T]` converts to one: a read-only view, so the `MutSpan` is not written while the `Span` lives
-  (`[TYP-5]` rule 6, ODR-116).
+  `MutSpan[T]` converts to one: a read-only view, so the `MutSpan` is not written while the `Span`
+  lives (`[TYP-5]` rule 6, ODR-116).
 * `[SPN-4]` *(changed in 0.9.15)* `iter()` on a `Span` or `MutSpan` gives read-only views of its
-  elements; `for ref mut x in s:` walks a `MutSpan` a `ref mut` name holds and may change each element
-  it is on (`[BRW-18]`). `chunks(n)` and `chunks_mut(n)` give consecutive non-overlapping views of `n`
-  elements (the last may be shorter); `n == 0` panics in every profile.
-* `[SPN-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* `split_at(i)` on a `Span` returns two `Span`s; on
-  a `MutSpan` it lends the view and returns two disjoint `MutSpan`s. `i > len` panics. (There is no
-  separate `split_at_mut`: an `Array` is split for changing as `a.as_mut_span().split_at(i)`.) A
-  `MutSpan` also has `get_pair_mut(i, j)` (`[BRW-5]`).
-* `[SPN-8]` `as_ptr()` and `as_mut_ptr()` return raw pointers; extracting one is safe, using one needs
-  `unsafe`, and extraction extends no region.
+  elements; `for ref mut x in s:` walks a `MutSpan` a `ref mut` name holds and may change each
+  element it is on (`[BRW-18]`). `chunks(n)` and `chunks_mut(n)` give consecutive non-overlapping
+  views of `n` elements (the last may be shorter); `n == 0` panics in every profile.
+* `[SPN-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* `split_at(i)` on a `Span` returns two
+  `Span`s; on a `MutSpan` it lends the view and returns two disjoint `MutSpan`s. `i > len` panics.
+  (There is no separate `split_at_mut`: an `Array` is split for changing as
+  `a.as_mut_span().split_at(i)`.) A `MutSpan` also has `get_pair_mut(i, j)` (`[BRW-5]`).
+* `[SPN-8]` `as_ptr()` and `as_mut_ptr()` return raw pointers; extracting one is safe, using one
+  needs `unsafe`, and extraction extends no region.
 
 ## VII.8 Destruction
 
-* `[DRP-1]` *(changed in 0.9.15)* `fn drop():` runs exactly once per value, at the end of its life.
-  It changes its own object as a given, since it ends it, and its first line says nothing about that.
-  Calling it explicitly is `E3070`; `mem.drop(owns x)` ends a value early.
+* `[DRP-1]` *(changed in 0.9.15)* *(changed in 0.9.20)* `fn drop():` runs exactly once per value, at
+  the end of its life. It changes its own object as a given, since it ends it, and its first line
+  says nothing about that; what is `let` stays unchanged in it too (`[CLS-9a]`), since a view field
+  `from` a `let` field is still read while `drop` runs. Calling it explicitly is `E3070`;
+  `mem.drop(owns x)` ends a value early.
 * `[DRP-2]` Locals drop at the end of their block in reverse declaration order; fields after their
-  owner's `drop`, in reverse declaration order; collection elements in index order; the active variant
-  of an enum; tuple elements in reverse order.
+  owner's `drop`, in reverse declaration order; collection elements in index order; the active
+  variant of an enum; tuple elements in reverse order.
 * `[DRP-3]` Temporaries drop at the end of the statement that created them (`[EXP-4]`).
-* `[DRP-4]` *(changed in 0.9.9)* A panic inside `drop` aborts the process (`[PAN-1]`). A `drop` SHOULD
-  NOT block; `@noalloc` on a type's `drop` is honoured wherever that type is dropped.
-* `[DRP-5]` *(changed in 0.9.15)* A `drop` body may not take fields out of `this` (`[EXP-6]`); it uses
-  `mem.take(ref mut this.f)` on `Option` or `Default` fields. It makes no owner of its own object
-  (`[OBJ-5]`).
-* `[DRP-6]` *(changed in 0.9.15)* Ending an `owns T` ends the `T` and frees its block; ending a class
-  object's owner ends the object (its `drop`, then its fields) and frees its block unless `weakref`
-  links still hold it (`[OBJ-3]`); ending a `shares`, `shares mut` or `thread_shared` owner subtracts
-  one from the count, and the subtraction that reaches zero ends the value (`[RC-1]`); ending a
-  `weakref` link subtracts one from its target's weak count (`[WK-11]`); ending a plain view (`ref`,
-  `Span`, `StrView`, a `sharedref mut` link) does nothing; ending a guard (`MutexGuard`, an `RwLock`'s)
-  unlocks; and ending a view type ends whatever in it needs ending. Carrying a region and needing drop
-  are independent properties (`[TYP-1]`) (ODR-053).
-* `[DRP-7]` *(new in 0.9.9)* *(changed in 0.9.15)* A value whose `drop` may read through a view it holds must be dropped
-  while that view's region is valid. A generic type parameter is assumed to be read by `drop` unless the
-  type has no `drop` of its own. Violations are `E3060` (shape B7).
-* `[DRP-8]` *(new in 0.9.15)* **Ending a value counts as a call of its `drop`.** Anything that may end a
-  value whose type has a `drop` (a list cleared, a value replaced, a local ending with its function, a
-  function value or an `owns dyn I` value replaced or ended with what its state owns, `[CLO-10]`) makes
-  the changes that `drop` makes, wherever a value of its type may end, for every rule that needs them
-  (`[EFF-1]`). With `class Enemy:` whose `fn drop():` pushes to `LOG`, `enemies.clear()` inside
-  `for line in LOG:` is `E3020` ("`enemies.clear()` (line 5) ends every `Enemy` in `enemies`, and an
-  `Enemy`'s `drop` pushes to `LOG` (its line 12), which this loop walks (line 4); clear after the loop:
-  move line 5, `enemies.clear()`, below the loop"), and a function that may end an `Enemy` changes `LOG`.
-  A `drop` may change things outside its object (a log line, leaving a list).
+* `[DRP-4]` *(changed in 0.9.9)* A panic inside `drop` aborts the process (`[PAN-1]`). A `drop`
+  SHOULD NOT block; `@noalloc` on a type's `drop` is honoured wherever that type is dropped.
+* `[DRP-5]` *(changed in 0.9.15)* A `drop` body may not take fields out of `this` (`[EXP-6]`); it
+  uses `mem.take(ref mut this.f)` on `Option` or `Default` fields. It makes no owner of its own
+  object (`[OBJ-5]`).
+* `[DRP-6]` *(changed in 0.9.15)* Ending an `owns T` ends the `T` and frees its block; ending a
+  class object's owner ends the object (its `drop`, then its fields) and frees its block unless
+  `weakref` links still hold it (`[OBJ-3]`); ending a `shares`, `shares mut` or `thread_shared`
+  owner subtracts one from the count, and the subtraction that reaches zero ends the value
+  (`[RC-1]`); ending a `weakref` link subtracts one from its target's weak count (`[WK-11]`); ending
+  a plain view (`ref`, `Span`, `StrView`, a `sharedref mut` link) does nothing; ending a guard
+  (`MutexGuard`, an `RwLock`'s) unlocks; and ending a view type ends whatever in it needs ending.
+  Carrying a region and needing drop are independent properties (`[TYP-1]`) (ODR-053).
+* `[DRP-7]` *(new in 0.9.9)* *(changed in 0.9.15)* A value whose `drop` may read through a view it
+  holds must be dropped while that view's region is valid. A generic type parameter is assumed to be
+  read by `drop` unless the type has no `drop` of its own. Violations are `E3060` (shape B7).
+* `[DRP-8]` *(new in 0.9.15)* *(changed in 0.9.20)* **Ending a value counts as a call of its `drop`.** Anything that may
+  end a value whose type has a `drop` (a list cleared, a value replaced, a local ending with its
+  function, a function value or an `owns dyn I` value replaced or ended with what its state owns,
+  `[CLO-10]`) makes the changes that `drop` makes, wherever a value of its type may end, for every
+  rule that needs them (`[EFF-1]`). With `class Enemy:` whose `fn drop():` pushes to `LOG`,
+  `enemies.clear()` inside `for line in LOG:` is `E3020` ("`enemies.clear()` (line 5) ends every
+  `Enemy` in `enemies`, and an `Enemy`'s `drop` pushes to `LOG` (its line 12), which this loop walks
+  (line 4); clear after the loop: move line 5, `enemies.clear()`, below the loop"), and a function
+  that may end an `Enemy` changes `LOG`. A `drop` may change things outside its object (a log line,
+  leaving a list). The one end no line writes, a queued `thread_shared` value's at a check point, is
+  the end of a plain type (`[RC-4]` point 4), whose `drop` changes nothing outside its object, and
+  `[RC-4]` point 3 says what it is for the rules that judge the lines around it.
 
 ## VII.9 What a newcomer sees
 

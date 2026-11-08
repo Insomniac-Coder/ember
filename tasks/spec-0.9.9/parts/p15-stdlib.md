@@ -175,28 +175,31 @@ is a defect of the file.
   nearest `T`; a `bool` is `true` or `false`; a `char` is exactly one character. `ParseError`, in
   `std.string`, is a unit-only enum, `Empty`, `Invalid` or `Overflow`, naming the first problem from
   the left.
-* `[TXT-11]` *(new in 0.9.9)* *(changed in 0.9.15)* **`String` operations.** Everything `StrView`
+* `[TXT-11]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **`String` operations.** Everything `StrView`
   has (by read-through), plus `String()`, `String(s)` (a `String` of your own made from text),
   `with_capacity(n)`, `push(c: char)`, `push_str(s)`, `insert`, `remove`, `truncate`, `clear`,
   `capacity`, `reserve`, and `as_str` (a `StrView` of the whole text). `a + b` for `a: String, b:
-  StrView` takes `a` over and returns it extended; `s += t` appends. `StrView + StrView` is `E2040`
-  whose help is an f-string. ODR-098 defines the mutation and capacity methods:
-  `String.with_capacity(n) -> String` makes an empty string with room for at least `n` bytes; zero
-  allocates nothing. `capacity() -> int` reads the allocated byte capacity. `reserve(additional)`
-  makes room for at least `len() + additional` bytes, without changing the text, and does nothing
-  when that capacity already exists. `insert(i, c: char)` inserts one character at byte offset `i`,
-  which must be in `0..=len()` and on a character boundary. `remove(i) -> char` removes and returns
-  the character starting at byte offset `i`, which must be in `0..len()` and on a character
-  boundary. Both close up or move the suffix as necessary; neither scans the prefix for a character
-  position. `truncate(n)` retains the first `n` bytes when `n < len()` (then `n` must be a character
-  boundary), and otherwise does nothing. `clear()` removes all text. `remove`, `truncate` and
-  `clear` keep the capacity. These change the string, through a name that may change it, and return
-  `void` unless a result is named above; each is a reshape, which ends every view into the text.
-  Counts and offsets accept any integer type; a negative literal is `E2011`, and a negative run-time
-  value or one not representable as a native length panics before conversion. An invalid offset or
-  character boundary panics in every profile. Growth uses the checked allocation rules of
-  `[HEAP-8]`. The arguments are evaluated before the string is changed, as for `Array`'s methods
-  that change it.
+  StrView` reads both operands in place and gives a new `String`, `a`'s text then `b`'s, in one
+  allocation (`String` implements `Add[StrView, Output = String]`, `[TYP-21]`; a `b: String` is read
+  as a `StrView`, `[TXT-8]`), so `a` stays usable, as in Python; `s += t` appends to `s` in place
+  (`AddAssign[StrView]`) and allocates only to grow, which is how text is built in a loop (`s = s +
+  t` copies `s` each round). `StrView + StrView` is `E2040` whose help is an f-string. ODR-098
+  defines the mutation and capacity methods: `String.with_capacity(n) -> String` makes an empty
+  string with room for at least `n` bytes; zero allocates nothing. `capacity() -> int` reads the
+  allocated byte capacity. `reserve(additional)` makes room for at least `len() + additional` bytes,
+  without changing the text, and does nothing when that capacity already exists. `insert(i, c:
+  char)` inserts one character at byte offset `i`, which must be in `0..=len()` and on a character
+  boundary. `remove(i) -> char` removes and returns the character starting at byte offset `i`, which
+  must be in `0..len()` and on a character boundary. Both close up or move the suffix as necessary;
+  neither scans the prefix for a character position. `truncate(n)` retains the first `n` bytes when
+  `n < len()` (then `n` must be a character boundary), and otherwise does nothing. `clear()` removes
+  all text. `remove`, `truncate` and `clear` keep the capacity. These change the string, through a
+  name that may change it, and return `void` unless a result is named above; each is a reshape,
+  which ends every view into the text. Counts and offsets accept any integer type; a negative
+  literal is `E2011`, and a negative run-time value or one not representable as a native length
+  panics before conversion. An invalid offset or character boundary panics in every profile. Growth
+  uses the checked allocation rules of `[HEAP-8]`. The arguments are evaluated before the string is
+  changed, as for `Array`'s methods that change it.
 
 ## XV.4 Collections
 
@@ -296,10 +299,15 @@ is a defect of the file.
 * `[STD-7]` Fixed-capacity containers with no heap allocation: `FixedArray[T, N]`, `FixedString[N]`
   and `RingBuffer[T, N]`; `push` returns `Result[void, CapacityError]` and `push_or_drop` discards
   when full. Also `Deque[T]`, `SmallArray[T, N]` (inline up to `N`, then heap), `BitSet`.
-* `[STD-8]` *(changed in 0.9.15)* **`Contains`.** `x in c` requires `c: Contains[typeof(x)]`
-  (`E2226` otherwise, whose help is `c.iter().any(owns fn(e) => e == x)`). `std` implements it for
-  `Set` and `Map` (by key); for `Array`, `Span`, `MutSpan` and `[T; N]` with `T: needs Eq`, as a
-  linear scan; for `StrView`/`String`, as a substring or character test; for ranges, as two
+* `[STD-8]` *(changed in 0.9.15)* *(changed in 0.9.20)* **`Contains`.** `x in c` is `c.contains(x)` (`[STD-8b]`), so `c`
+  MUST implement `Contains[Q]` for the type of `x` (`E2226` otherwise, whose help is
+  `c.iter().any(owns fn(e) => x == e)`); a literal needle is a `StrView` (`[LEX-20]`) where an
+  implementation takes one, and makes a `String` (`[TXT-9]`, one allocation) only where none does.
+  `std` implements it for `Set` and `Map` (by key, for every `Q: needs AsKey[K]`, `[STD-12]`); for
+  `Array`, `Span`, `MutSpan` and `[T; N]` with `T: needs Eq`, as a linear scan, and for those of
+  `String` with a `StrView` needle as well, each element read as a view (`[TYP-5]`), so a text view
+  is looked for in any collection of `String`s alike and `who.trim() in names` or `"bob" in names`
+  makes no `String`; for `StrView`/`String`, as a substring or character test; for ranges, as two
   comparisons. The compiler never synthesises an implementation.
 * `[STD-8a]` `ember inspect --cost` reports which `contains` a use selects and its complexity, so `x
   in array` is visibly linear and `x in set` visibly constant.
@@ -426,68 +434,69 @@ is a defect of the file.
 
 ## XV.6 Numbers and math
 
-* `[STD-20]` *(new in 0.9.9)* Integer methods, built into every integer type: `abs` (a signed
-  `MIN` panics), `pow(e)` (`x ** e` under the default panic policy), `signum` (`-1`, `0` or `1`), `div_trunc` and `rem_trunc`
-  (C's truncating quotient and remainder: both panic on a zero divisor, and `div_trunc` also
-  panics on signed `MIN / -1`, while `MIN.rem_trunc(-1)` is zero); for each arithmetic operator
-  `OP` — `add`, `sub`, `mul`, `floordiv` (`//`), `rem` (`%`), `pow` (`**`) and `neg` (unary `-`) —
-  `checked_OP -> Option[T]` (`None` for a mathematical result out of range, a zero
-  divisor, a negative exponent), `wrapping_OP -> T` (the result modulo 2^N), `saturating_OP -> T`
-  (the nearest of `MIN` and `MAX`) and `overflowing_OP -> (T, bool)` (the wrapping result and
+* `[STD-20]` *(new in 0.9.9)* Integer methods, built into every integer type: `abs` (a signed `MIN`
+  panics), `pow(e)` (`x ** e` under the default panic policy), `signum` (`-1`, `0` or `1`),
+  `div_trunc` and `rem_trunc` (C's truncating quotient and remainder: both panic on a zero divisor,
+  and `div_trunc` also panics on signed `MIN / -1`, while `MIN.rem_trunc(-1)` is zero); for each
+  arithmetic operator `OP` — `add`, `sub`, `mul`, `floordiv` (`//`), `rem` (`%`), `pow` (`**`) and
+  `neg` (unary `-`) — `checked_OP -> Option[T]` (`None` for a mathematical result out of range, a
+  zero divisor, a negative exponent), `wrapping_OP -> T` (the result modulo 2^N), `saturating_OP ->
+  T` (the nearest of `MIN` and `MAX`) and `overflowing_OP -> (T, bool)` (the wrapping result and
   whether it wrapped), the last three still panicking on a zero divisor or a negative exponent; for
   the shifts, `checked_shl`/`shr` (`None` for an amount outside `0 ≤ n < width`),
   `wrapping_shl`/`shr` (the amount modulo the width) and `overflowing_shl`/`shr` (whether it was
   outside); `count_ones`, `leading_zeros` and `trailing_zeros`, each an `int` counted over the
   type's width; `is_power_of_two`; `next_power_of_two` (the least power of two at or above the
   value, overflowing past `MAX`); and the constants `T.MIN` and `T.MAX` (`int.MAX` through the
-  alias). An operator method's other operand has the receiver's type; a shift amount and an
-  exponent may be any integer type (`[TYP-10]`, `[TYP-30]`). All these integer methods have fixed
-  contracts independent of the caller's lexical overflow policy (ODR-084): in particular, `abs`
-  of signed `MIN`, an overflowing `pow` or `next_power_of_two`, and `MIN.div_trunc(-1)` panic;
-  named `checked_`, `wrapping_`, `saturating_` and `overflowing_` families retain their stated
-  behavior. Float methods: `abs`, `sqrt`, `floor`,
-  `ceil`, `trunc`, `fract`, `round` (**half to even**, as Python's `round` and IEEE's default),
-  `round_half_away` (C's `round`), `is_nan`, `is_finite`, `is_infinite`, `copysign`, `mul_add`, and
-  the constants `INF`, `NAN`, `EPSILON` (the gap between `1.0` and the next value), `MAX` (the
-  greatest finite value) and `MIN` (the least finite value, `-MAX`, as an integer's `MIN` is its
-  least) (ODR-039). Every float type has the constants, `f16` included (`f16.MAX` is 65504 and
-  `f16.EPSILON` 2^-10), though only `f32` and `f64` have the methods (ODR-041). A float's `Display` is the shortest text that reads back as the same value, with `.0`
-  for an integral value, as Python's `repr`: `0.1 + 0.2` prints `0.30000000000000004`, `1.0` prints
-  `1.0`, and `1e300` prints `1e+300`; a format spec overrides it.
-* `[STD-3]` *(changed in 0.9.15)* `math.fma(a, b, c)` (and `mul_add`) is a fused multiply-add with a single rounding, on every
-  target; it is how fused arithmetic is written without `@fp(allow_fma)`. `std.math` uses it for matrix
-  products and transforms.
-* `[STD-4]` `NonZero[T]` for each integer `T` is a `Copy` wrapper with a niche (`Option[NonZero[T]]` is
-  `T`-sized), made by `NonZero.new(v) -> Option[NonZero[T]]`. Dividing by a `NonZero` needs no
-  division-by-zero check. It is `std.core`'s, imported by name. `get()` returns the integer; the field
-  and the memberwise constructor are private, so no `NonZero` holds 0. `T` is one of the twelve
-  integer types, and any other type is `E2040`. `x // d` and `x % d` take `d: NonZero[T]` for `x: T`
-  and answer a `T`; an overflow still panics (`[TYP-8]`) (ODR-047).
-* `[STD-21]` *(new in 0.9.9)* *(changed in 0.9.15)* `std.math` provides `PI`, `TAU`, `E`; `sin`, `cos`, `tan`, `asin`, `acos`,
-  `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `exp`, `exp2`, `ln`, `log2`, `log10`, `pow`, `sqrt`, `rsqrt`, `cbrt`,
-  `hypot`, `lerp`, `smoothstep`, each taking any number type (`[T: needs Number]` above
-  `fn f(x: T) -> T.Real`, `[STD-27]`): an integer's answer is an `f64` (`math.sqrt(9)` is `3.0`), an `f16`'s and an `f32`'s
-  an `f32`, and an `f64`'s an `f64`; and the vector, matrix, rotation and shape types of `[STD-28]`,
-  with `dot`, `cross`, `length`, `normalize` (panics on a zero vector; `normalize_or_zero` does not)
-  and the arithmetic operators. `PI`, `TAU` and `E` are
-  untyped constants (V.7): `x: f32 = math.PI` is `PI` rounded to `f32`, and with nothing to fix its
-  type a use is `f64`.
-* `[STD-27]` *(new in 0.9.9)* `std.math.Number` is every number type. `std.math` adds each with an
-  `extend … implements Number` block stating its `type Real: needs Float`, the decimal type its answers
-  come back as (`f64` for every integer type, `f32` for `f16`, which it holds exactly (ODR-041), and
-  itself for `f32` and `f64`), and `to_real`, which turns it into one. `[STD-21]`'s functions take `T: needs Number` and answer in `T.Real` (`[IFC-4]`); a program
-  may add its own number types the same way (ODR-038). `std.math.Float` is the decimal types:
-  `std.math` makes `f32` and `f64` implement it (`extend f32 implements Float`), and implementing it
-  for any other type is `E2042`. A bound `T: needs Float` provides, inside a generic body, `Copy`, `Eq`, `Ord` (`[TYP-37]`) and `Default`;
-  the arithmetic operators `+`, `-`, `*`, `/`, `//`, `%`, `**` and unary `-` on two `T`s, with a `T`
-  result; an untyped numeric literal adopting `T` wherever a `T` is expected, as it would adopt `f32`
-  or `f64`; and as methods the float methods of `[STD-20]` and `[STD-21]`'s `sin` through `hypot`
-  (`x.sqrt()`, `y.atan2(x)`, `a.hypot(b)`), which are built into `f32` and `f64`: each free function
-  turns its number into its `Real` and calls the method (`math.sqrt(x)` is `x.to_real().sqrt()`);
-  `rsqrt`, `lerp` and `smoothstep` are free functions only. A method is the C
-  library's function of its name for `f64` and its `f` form for `f32` (`ln` is C's `log`, `round` its
-  `nearbyint`, `round_half_away` its `round`, `mul_add` its `fma`); the transcendental ones are
-  `[DET-2]`'s platform functions.
+  alias). An operator method's other operand has the receiver's type; a shift amount and an exponent
+  may be any integer type (`[TYP-10]`, `[TYP-30]`). All these integer methods have fixed contracts
+  independent of the caller's lexical overflow policy (ODR-084): in particular, `abs` of signed
+  `MIN`, an overflowing `pow` or `next_power_of_two`, and `MIN.div_trunc(-1)` panic; named
+  `checked_`, `wrapping_`, `saturating_` and `overflowing_` families retain their stated behavior.
+  Float methods: `abs`, `sqrt`, `floor`, `ceil`, `trunc`, `fract`, `round` (**half to even**, as
+  Python's `round` and IEEE's default), `round_half_away` (C's `round`), `is_nan`, `is_finite`,
+  `is_infinite`, `copysign`, `mul_add`, and the constants `INF`, `NAN`, `EPSILON` (the gap between
+  `1.0` and the next value), `MAX` (the greatest finite value) and `MIN` (the least finite value,
+  `-MAX`, as an integer's `MIN` is its least) (ODR-039). Every float type has the constants, `f16`
+  included (`f16.MAX` is 65504 and `f16.EPSILON` 2^-10), though only `f32` and `f64` have the
+  methods (ODR-041). A float's `Display` is the shortest text that reads back as the same value,
+  with `.0` for an integral value, as Python's `repr`: `0.1 + 0.2` prints `0.30000000000000004`,
+  `1.0` prints `1.0`, and `1e300` prints `1e+300`; a format spec overrides it.
+* `[STD-3]` *(changed in 0.9.15)* `math.fma(a, b, c)` (and `mul_add`) is a fused multiply-add with a
+  single rounding, on every target; it is how fused arithmetic is written without `@fp(allow_fma)`.
+  `std.math` uses it for matrix products and transforms.
+* `[STD-4]` `NonZero[T]` for each integer `T` is a `Copy` wrapper with a niche (`Option[NonZero[T]]`
+  is `T`-sized), made by `NonZero.new(v) -> Option[NonZero[T]]`. Dividing by a `NonZero` needs no
+  division-by-zero check. It is `std.core`'s, imported by name. `get()` returns the integer; the
+  field and the memberwise constructor are private, so no `NonZero` holds 0. `T` is one of the
+  twelve integer types, and any other type is `E2040`. `x // d` and `x % d` take `d: NonZero[T]` for
+  `x: T` and answer a `T`; an overflow still panics (`[TYP-8]`) (ODR-047).
+* `[STD-21]` *(new in 0.9.9)* *(changed in 0.9.15)* `std.math` provides `PI`, `TAU`, `E`; `sin`,
+  `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `exp`, `exp2`, `ln`,
+  `log2`, `log10`, `pow`, `sqrt`, `rsqrt`, `cbrt`, `hypot`, `lerp`, `smoothstep`, each taking any
+  number type (`[T: needs Number]` above `fn f(x: T) -> T.Real`, `[STD-27]`): an integer's answer is
+  an `f64` (`math.sqrt(9)` is `3.0`), an `f16`'s and an `f32`'s an `f32`, and an `f64`'s an `f64`;
+  and the vector, matrix, rotation and shape types of `[STD-28]`, with `dot`, `cross`, `length`,
+  `normalize` (panics on a zero vector; `normalize_or_zero` does not) and the arithmetic operators.
+  `PI`, `TAU` and `E` are untyped constants (V.7): `x: f32 = math.PI` is `PI` rounded to `f32`, and
+  with nothing to fix its type a use is `f64`.
+* `[STD-27]` *(new in 0.9.9)* *(changed in 0.9.20)* `std.math.Number` is every number type. `std.math` adds each with an
+  `extend … implements Number` block stating its `type Real: needs Float`, the decimal type its
+  answers come back as (`f64` for every integer type, `f32` for `f16`, which it holds exactly
+  (ODR-041), and itself for `f32` and `f64`), and `to_real`, which turns it into one. `[STD-21]`'s
+  functions take `T: needs Number` and answer in `T.Real` (`[IFC-4]`); a program may add its own
+  number types the same way (ODR-038). `std.math.Float` is the decimal types: `std.math` makes `f32`
+  and `f64` implement it (`extend f32 implements Float`), and implementing it for any other type is
+  `E2042`. A bound `T: needs Float` provides, inside a generic body, `Copy`, `Eq`, `Ord`
+  (`[TYP-37]`) and `Default`; the arithmetic operators `+`, `-`, `*`, `/`, `//`, `%`, `**` and unary
+  `-` on two `T`s, with a `T` result; an untyped numeric literal adopting `T` wherever a `T` is
+  expected, as it would adopt `f32` or `f64`; and as methods the float methods of `[STD-20]` and
+  `[STD-21]`'s `sin` through `hypot` (`x.sqrt()`, `y.atan2(x)`, `a.hypot(b)`), which are built into
+  `f32` and `f64`: each free function turns its number into its `Real` and calls the method
+  (`math.sqrt(x)` is `x.to_real().sqrt()`); `rsqrt`, `lerp` and `smoothstep` are free functions
+  only. A method is the C library's function of its name for `f64` and its `f` form for `f32` (`ln`
+  is C's `log`, `round` its `nearbyint`, `round_half_away` its `round`, `mul_add` its `fma`); those
+  of them whose result IEEE 754 does not fix are `[DET-2]`'s platform functions, and carry `Nondet`.
 * `[STD-28]` *(new in 0.9.9)* **Vectors, matrices, rotations and shapes** (ODR-043). `std.math` has
   `Vec2`, `Vec3`, `Vec4` (`f32` components `x`, `y`, `z`, `w`), `IVec2/3/4` (`i32`), `UVec2/3/4`
   (`u32`), `Mat2`, `Mat3`, `Mat4` (`f32`, column-major: the columns are `x_axis`, `y_axis`,
@@ -497,20 +506,20 @@ is a defect of the file.
   `p` with `normal.dot(p) + d == 0`) and `Frustum` (six planes facing in: `left`, `right`, `bottom`,
   `top`, `near`, `far`). Each is `@layout(c)` and `Copy`, with a public memberwise constructor.
   * Vectors have the constants `ZERO`, `ONE` and the unit axes (`X`, `Y`, `Z`, `W`); `splat`;
-    component-wise `+`, `-`, `*`, `/` (`//` and `%` for the integer ones), the same with a scalar
-    on either side (`2.0 * v`, `[TYP-21]`), and unary `-` (not `UVec`); `min`, `max` and `abs` (not
+    component-wise `+`, `-`, `*`, `/` (`//` and `%` for the integer ones), the same with a scalar on
+    either side (`2.0 * v`, `[TYP-21]`), and unary `-` (not `UVec`); `min`, `max` and `abs` (not
     `UVec`), component-wise; `dot`; for the float vectors `length`, `length_squared`, `distance`,
-    `distance_squared`, `normalize`, `normalize_or_zero`, `lerp` and `mul_add` (component-wise,
-    each rounded once, `[STD-3]`); `Vec3.cross`; and `extend` and `truncate` between sizes.
+    `distance_squared`, `normalize`, `normalize_or_zero`, `lerp` and `mul_add` (component-wise, each
+    rounded once, `[STD-3]`); `Vec3.cross`; and `extend` and `truncate` between sizes.
   * Matrices have `IDENTITY`, `ZERO`, `from_cols` and `from_diagonal`; `m * n` (which applies `n`
     first), `m * v`, `m * s` and `s * m` for an `f32` `s`, `+`, `-` and unary `-`; `transpose`,
     `determinant`, `col(i)`, `row(i)`, `inverse` (a matrix with none panics) and `try_inverse` (an
-    `Option`). `m * v` is `m.x_axis * v.x + m.y_axis * v.y + …`, each term after the first added
-    by a fused multiply-add (`[STD-3]`). `Mat2` and `Mat3` have `from_angle` (a rotation in the
-    plane); `Mat3` and `Mat4` `from_quat` and `from_scale`; `Mat4` `from_translation`,
-    `from_rotation_x`/`y`/`z`, `from_scale_rotation_translation`, `look_at_rh`, `perspective_rh`
-    and `orthographic_rh` (right-handed, depth in `[0, 1]`), `transform_point3` (`w` = 1, divided
-    by the result's `w`) and `transform_vector3` (`w` = 0).
+    `Option`). `m * v` is `m.x_axis * v.x + m.y_axis * v.y + …`, each term after the first added by
+    a fused multiply-add (`[STD-3]`). `Mat2` and `Mat3` have `from_angle` (a rotation in the plane);
+    `Mat3` and `Mat4` `from_quat` and `from_scale`; `Mat4` `from_translation`,
+    `from_rotation_x`/`y`/`z`, `from_scale_rotation_translation`, `look_at_rh`, `perspective_rh` and
+    `orthographic_rh` (right-handed, depth in `[0, 1]`), `transform_point3` (`w` = 1, divided by the
+    result's `w`) and `transform_vector3` (`w` = 0).
   * Rotations are right-handed. `Quat` has `IDENTITY`, `from_axis_angle` and
     `from_rotation_x`/`y`/`z`; `q * p` (the rotation `p`, then `q`) and `q * v` (the vector
     rotated); `length`, `normalize`, `conjugate`, `inverse`, `dot` and `slerp`. `Transform` has

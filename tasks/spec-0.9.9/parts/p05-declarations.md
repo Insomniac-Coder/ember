@@ -101,23 +101,26 @@ pub fn blend(dst: Array[f32], ref mut out: Array[f32], owns scratch: Array[f32],
     return scratch.len()
 ```
 
-* `[FN-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Parameter words.** What a function may do with
-  a parameter is set by the word in front of its name, for every type; the type after the colon says
-  what the caller's value is, never what the function may do with it.
+* `[FN-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **Parameter words.** What a function may do
+  with a parameter is set by the word in front of its name, for every type; the type after the colon
+  says what the caller's value is, never what the function may do with it.
   * `a: A`: **reads**. The callee reads the caller's `a` (a number is copied in); it changes nothing
-    through `a` (`[BRW-15]`) and hands nothing over out of it (`[OWN-11]`), and what `a` reads does not
-    change while `a` is used (`[BRW-1]`). Some parameters are passed as a copy instead, such as a small
-    `Copy` value in registers (`[BRW-8]`); the meaning is the same.
+    through `a` (`[BRW-15]`) and hands nothing over out of it (`[OWN-11]`), and what `a` reads is
+    not ended or moved while `a` is used (`[BRW-1]`, `[BRW-21]`); a number another name of the same
+    place writes across the call (a module variable, a name opened `ref mut` from a link, `[WK-11]`)
+    shows through `a`, since the compiler never assumes a value unchanged where it cannot prove the
+    names apart (`[EXC-15]`). Some parameters are passed as a copy instead, such as a small `Copy`
+    value in registers (`[BRW-8]`); the meaning is the same.
   * `ref mut b: B`: **in-out**. `b` names the caller's place: every change through `b` reaches the
-    caller's value, `b = v` puts `v` there, and while `b` is used nothing else the function uses reaches
-    that place (`[BRW-22]`). Where the caller's value is a link or a view, the place holds it:
-    `ref mut p: shares mut Player` may point the caller's link at another player and change the
-    player, and `ref mut best: Span[int]` may point the caller's view elsewhere. `const ref mut b: B`
-    changes the caller's value but is never given another ref (`[BRW-14]`).
-  * `owns c: C`: **handed over**, for every type, numbers included. The caller's name ends, and a later
-    use is `E3040`; a caller that keeps its own passes `copy of x` (`[OWN-9]`). `owns c: shares C` makes
-    the callee one more owner that reads a shared value, and `owns c: shares mut C` one that may also
-    change it.
+    caller's value, `b = v` puts `v` there, and while `b` is used nothing else the function uses
+    reaches that place (`[BRW-22]`). Where the caller's value is a link or a view, the place holds
+    it: `ref mut p: shares mut Player` may point the caller's link at another player and change the
+    player, and `ref mut best: Span[int]` may point the caller's view elsewhere. `const ref mut b:
+    B` changes the caller's value but is never given another ref (`[BRW-14]`).
+  * `owns c: C`: **handed over**, for every type, numbers included. The caller's name ends, and a
+    later use is `E3040`; a caller that keeps its own passes `copy of x` (`[OWN-9]`). `owns c:
+    shares C` makes the callee one more owner that reads a shared value, and `owns c: shares mut C`
+    one that may also change it.
 
   So a plain `game: shares mut Game` reads the caller's shared value, with no count, and an owner
   that may change the game is not made from it: `fn() shares mut game` is `E3023` ("`game` only
@@ -160,31 +163,38 @@ pub fn blend(dst: Array[f32], ref mut out: Array[f32], owns scratch: Array[f32],
   before something this function may not change (a plain parameter, a temporary, a place reached
   through a read-only name) is `E3027` ("`p` only reads the caller's player, so it cannot be given
   to `heal` as `ref mut`; take it as `ref mut p: Player` on `revive`'s first line, or walk the list
-  with `for ref mut p in players:`"). `return a` and a constructor's argument take no word: they
-  hand a value over as `=` does (`[OWN-9]`); nor does a value made in the call with a word that
-  makes an owner or a link (`setup(shares mut game)`, `ROSTER.push(weakref this)`, `thread_shared
-  x`, `sharedref mut x`), since that word says what is given (verdicts 147 and 160; `owns shares mut
-  game` is `E0109`). A function from a variable given to a parameter whose type is a type parameter
-  bounded by a function type (`owns f: F` under `[F: needs fn(int)]`, `[CLO-14]`), in any package,
-  is lent for the call: `F` names that very function, the callee runs it and keeps nothing of it, so
-  after `xs.iter().for_each(h)` and after `apply(h)` alike `h` is the caller's still. It takes no
-  word when its functions keep no state or only read it; one whose functions may change their own
-  state is given `ref mut h`, since the call changes it (`[CLO-18]`, `E3023` without the word:
-  "`counter` changes its own `n` each time it runs, and `apply` runs it; say so at the call:
-  `apply(ref mut counter)`"). `owns h` before such an argument is `E0109` ("`apply` runs `h` and
-  keeps nothing of it; remove `owns`: `apply(h)`"); a function written in the call is given with
-  `owns` (verdict 158), and a value the call gives back that keeps the lent function (an iterator
-  adapter, `[STD-19]`) is a value holding a view of `h`, which lives no longer than `h` (`[LT-45]`).
-  A parameter of a callable type (`owns f: fn(int)`) keeps what it is given and takes `owns` as any
-  `owns` parameter does. An argument for a `Mutex`, `RwLock` or `Atomic` parameter, or a channel
-  end, takes no word, since its own "only me" is the lock's block (`E3028`: "`top` takes the lock of
-  `scores` itself; a `Mutex` takes no word at the call: `top(scores)`"); an `owns` parameter of one
-  of these types takes `owns` as every such argument does (`start_worker(owns rx)` for `fn
-  start_worker(owns rx: Receiver[Job]):`). The object a method is called on is not marked
-  (`a.reset()`): what the method does to it is worked out from its body (`[EXC-15]`). The arguments
-  of one call do not overlap a changeable one (`[BRW-11]`), and a call is checked against what the
-  callee does with each view argument (`[BRW-21]`). The editor shows a parameter's word as an inlay
-  hint where the call does not write one.
+  with `for ref mut p in players:`"). `return a` and a constructor's argument take no `owns`: a
+  value given to a memberwise constructor, or to an `owns` parameter of a written `init`, is handed
+  over as `=` does (`[OWN-9]`; `Emitter(label)` for `fn init(owns name: String):`, after which
+  `label` is `E3040`; `Emitter(copy of label)` keeps it; `Emitter(owns label)` is `E0109`,
+  "`Emitter(...)` already hands `label` over; remove `owns`"); a value given to an `init` parameter
+  with no word is read for the call and stays the caller's, as at every call (`Label(caption)` for
+  `fn init(name: String):`, then `println(caption)` prints); and `ref mut` is written before an
+  argument for an `init`'s `ref mut` parameter as at every call (`Widget(ref mut reg, label)` for
+  `fn init(ref mut registry: Registry, owns name: String):`, `E3028` without it); nor does a value
+  made in the call with a word that makes an owner or a link (`setup(shares mut game)`,
+  `ROSTER.push(weakref this)`, `thread_shared x`, `sharedref mut x`), since that word says what is
+  given (verdicts 147 and 160; `owns shares mut game` is `E0109`). A function from a variable given
+  to a parameter whose type is a type parameter bounded by a function type (`owns f: F` under `[F:
+  needs fn(int)]`, `[CLO-14]`), in any package, is lent for the call: `F` names that very function,
+  the callee runs it and keeps nothing of it, so after `xs.iter().for_each(h)` and after `apply(h)`
+  alike `h` is the caller's still. It takes no word when its functions keep no state or only read
+  it; one whose functions may change their own state is given `ref mut h`, since the call changes it
+  (`[CLO-18]`, `E3023` without the word: "`counter` changes its own `n` each time it runs, and
+  `apply` runs it; say so at the call: `apply(ref mut counter)`"). `owns h` before such an argument
+  is `E0109` ("`apply` runs `h` and keeps nothing of it; remove `owns`: `apply(h)`"); a function
+  written in the call is given with `owns` (verdict 158), and a value the call gives back that keeps
+  the lent function (an iterator adapter, `[STD-19]`) is a value holding a view of `h`, which lives
+  no longer than `h` (`[LT-45]`). A parameter of a callable type (`owns f: fn(int)`) keeps what it
+  is given and takes `owns` as any `owns` parameter does. An argument for a `Mutex`, `RwLock` or
+  `Atomic` parameter, or a channel end, takes no word, since its own "only me" is the lock's block
+  (`E3028`: "`top` takes the lock of `scores` itself; a `Mutex` takes no word at the call:
+  `top(scores)`"); an `owns` parameter of one of these types takes `owns` as every such argument
+  does (`start_worker(owns rx)` for `fn start_worker(owns rx: Receiver[Job]):`). The object a method
+  is called on is not marked (`a.reset()`): what the method does to it is worked out from its body
+  (`[EXC-15]`). The arguments of one call do not overlap a changeable one (`[BRW-11]`), and a call
+  is checked against what the callee does with each view argument (`[BRW-21]`). The editor shows a
+  parameter's word as an inlay hint where the call does not write one.
 * `[FN-9]` *(new in 0.9.9)* *(changed in 0.9.15)* A parameter of a class type takes its word as one
   of any type does, since a class object has one owner unless a line says `shares` (`[CLS-1]`): `p:
   Player` reads the object, which neither changes nor ends while `p` is used; `ref mut p: Player`
@@ -240,11 +250,13 @@ pub fn blend(dst: Array[f32], ref mut out: Array[f32], owns scratch: Array[f32],
   `unsafe` form; an `unsafe fn` coerces only to an `unsafe` callable type (`E2020` otherwise). Where
   an `unsafe fn(…)` is wanted, any function or lambda that meets `fn(…)` may be given, and so may an
   `unsafe fn`. A function that captures nothing also coerces to `extern "C" fn(…)` when every type
-  is FFI-safe; it then gets a C entry that attaches the calling thread (`[FFI-22]`) and runs it, and
-  its body is checked as an export under `threads=any` is (`[FFI-21]`, `[FFI-33]`), since the
-  compiler cannot see which thread C calls it from. A view that a call through a callable value
-  gives points into that call's own view arguments (`[LT-7]`). What a callable type means in each
-  position is `[CLO-3]`.
+  is FFI-safe: its parameters and result are those `[FFI-31b]` admits in an export's signature,
+  written with the same words and lowered to the same carriers (`ref mut x: T` as `T*`, `Span[T]` as
+  a pointer and a `size_t`), and any other is `E2020`, naming the parameter; it then gets a C entry
+  that attaches the calling thread (`[FFI-22]`) and runs it, and its body is checked as an export
+  under `threads=any` is (`[FFI-21]`, `[FFI-33]`), since the compiler cannot see which thread C
+  calls it from. A view that a call through a callable value gives points into that call's own view
+  arguments (`[LT-7]`). What a callable type means in each position is `[CLO-3]`.
 * `[FN-7]` Recursion is permitted; tail calls are not guaranteed to be eliminated.
 * `[FN-8]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* `main` is `fn main()`,
   `fn main() -> Result[void, E]` for any `E: needs Display`, or either form with a first parameter
@@ -284,22 +296,28 @@ pub struct Vec2:
         this.y *= k
 ```
 
-* `[STR-1]` *(changed in 0.9.15)* Every struct has a **memberwise constructor** `Name(field0,
-  field1, …)` taking positional or named arguments in field order; a field with a default may be
-  omitted. It is `pub` iff every field is `pub`. A declared `fn init(…)` replaces it (`[STR-6]`). An
-  argument for an `owns` field is made with `owns` on its line (`mesh=owns Mesh(points=[0.0])`,
-  `[OWN-10]`).
+* `[STR-1]` *(changed in 0.9.15)* *(changed in 0.9.20)* Every struct has a **memberwise
+  constructor** `Name(field0, field1, …)` taking positional or named arguments in field order; a
+  field with a default may be omitted. Its visibility is the narrowest among its fields', since
+  construction writes every field: `pub` when every field is `pub` (a struct with no fields
+  included), `pub(package)` when every field is `pub` or `pub(package)`, and private to its module
+  otherwise (a private, `pub(read)` or `pub(package, read)` field, `[MOD-7]`); a call from where it
+  is not visible is `E1052`, naming the field that narrows it ("`Packet(...)` is not visible here:
+  `seq` is `pub(package)`, so a `Packet` is built only inside the `net` package"). A declared `fn
+  init(…)` replaces it (`[STR-6]`). An argument for an `owns` field is made with `owns` on its line
+  (`mesh=owns Mesh(points=[0.0])`, `[OWN-10]`).
 * `[STR-2]` *(changed in 0.9.9)* *(changed in 0.9.20)* A field default is any expression; at a
   construction that omits the field, the written arguments are evaluated first, left to right
-  (`[EXP-1]`, `[FN-5]`), then the omitted fields' defaults in field order, each at that
-  construction, and a default may allocate (`items: Array[int] = []`). Names and type expressions in
-  a field default resolve in the type's declaration scope, with the type's generic parameters
-  substituted at instantiation, as `[FN-5]`'s do; a field is named only through `this`, which a
-  default has not, since it runs before the value exists (`E1010`: "`this` can only be used in a
-  method, and a field default runs before `init`, when there is no object yet; set `on_tick` in
-  `init`: write `this.on_tick = fn(): ...` below `this.name = n`"; "`cap`'s default reads `n`, a
-  field of the same `Buf`, which has no value when defaults run; set `cap` in an `init`: `fn init(n:
-  int):` with `this.n = n` and `this.cap = n * 2`").
+  (`[EXP-1]`, `[FN-5]`), then the omitted fields' defaults in field order, each at that construction
+  (every field's, before the body, where the type declares an `init`, `[STR-6]`, `[CLS-2]`), and a
+  default may allocate (`items: Array[int] = []`). Names and type expressions in a field default
+  resolve in the type's declaration scope, with the type's generic parameters substituted at
+  instantiation, as `[FN-5]`'s do; a field is named only through `this`, which a default has not,
+  since it runs before the value exists (`E1010`: "`this` can only be used in a method, and a field
+  default runs before `init`, when there is no object yet; set `on_tick` in `init`: write
+  `this.on_tick = fn(): ...` below `this.name = n`"; "`cap`'s default reads `n`, a field of the same
+  `Buf`, which has no value when defaults run; set `cap` in an `init`: `fn init(n: int):` with
+  `this.n = n` and `this.cap = n * 2`").
 * `[STR-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* A struct with a `drop` method, or with a
   field that is not `Copy`, is not `Copy`: `=` from a whole name hands it over (`[OWN-3]`). `Copy`
   is never implicit: `@derive(Copy)` requests it, and is `E2080` if a field is not `Copy` or the
@@ -412,22 +430,42 @@ class Door(Script):
   the object to its caller, so every such field is set on that path too. `owns this` on `init` is
   `E2108` ("`init` builds the object, so it cannot take it over; write `fn init(name: String):`").
   Several constructors are written as `static fn`s that call `Self(…)`.
-* `[CLS-3]` A class with no `init` and no base class gets a memberwise constructor as a struct does.
-* `[CLS-10]` *(new in 0.9.9)* A derived class with no `init` gets its base's constructor:
-  `Door(entity)` evaluates `Door`'s field defaults and then runs `Script.init(entity)`. A derived
-  class with a field that has no default MUST declare an `init` (`E2101`).
-* `[CLS-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* A class is final unless declared `open` or
-  `abstract`. Methods are non-virtual unless `virtual`; replacing one requires `override`;
-  overriding a non-virtual method is `E2110`. A method named like an inherited one replaces it
-  (ODR-028): over a virtual method without `override` it is `E2111`, and over a non-virtual one it
-  is `E2110`, `override` or not; `init`, `drop` and `static fn`s are each class's own. An `override`
-  is itself virtual, so a further subclass may override it again. `virtual` in a class that cannot
-  be subclassed (neither `open` nor `abstract`) is `E2112` ("`Door` cannot be subclassed, so
-  `virtual` on `on_update` changes nothing; to let subclasses replace it write `open class Door:`,
-  or remove `virtual`"). A call through a `virtual` method counts what every override the program
-  has changes, worked out from their bodies (`[DSP-5]`), so nothing is written about what an
-  override changes. A derived `init` MUST call `super.init(…)` exactly once (`[CLS-11]`). Fields
-  cannot be overridden. Base fields are laid out first; there is at most one base.
+* `[CLS-3]` *(changed in 0.9.20)* A class with no `init` and no base class gets a memberwise
+  constructor as a struct does (`[STR-1]`), and that constructor is its `init` for every purpose: a
+  derived `init` calls it as `super.init(…)`, with positional or named arguments in field order, a
+  field with a default left out keeping the default `[CLS-2]` has already stored
+  (`super.init(name=name)` for a base with `name: String` and `visible: bool = true`); `[CLS-11]`'s
+  two phases hold around that call as around any `super.init(…)`; and a derived class with no `init`
+  gets it as its base's constructor (`[CLS-10]`: `Panel(name=String("side"))`), and passes it on the
+  same way to a class derived from it. The arguments of `super.init(…)` take the words a call of
+  that constructor takes: none for a memberwise one, whose values are handed over as to every
+  constructor (`[OWN-9]`, so the derived `init` holds them `owns`: `fn init(owns name: String, owns
+  label: String):`), and the words of the base `init`'s first line otherwise (`[FN-2a]`).
+* `[CLS-10]` *(new in 0.9.9)* *(changed in 0.9.20)* A derived class with no `init` gets its base's
+  constructor: `Door(entity)` evaluates `Door`'s field defaults and then runs `Script.init(entity)`
+  (the base's memberwise constructor where it declares no `init`, `[CLS-3]`). A derived class with a
+  field that has no default MUST declare an `init` (`E2101`).
+* `[CLS-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A class is final unless
+  declared `open` or `abstract`. An `open` or `abstract` class that another package may derive from
+  says in its header whether any thread may hold its objects, `implements Send`, `implements
+  ThreadShared`, or an interface that needs them, a promise every class derived from it keeps
+  (`[THR-8]`, `[THR-9]`); a final class's markers are read from its fields. Methods are non-virtual
+  unless `virtual`; replacing one requires `override`; overriding a non-virtual method is `E2110`. A
+  method named like an inherited one replaces it (ODR-028): over a virtual method without `override`
+  it is `E2111`, and over a non-virtual one it is `E2110`, `override` or not; an `override` has the
+  first line of the method it replaces after its name: the same parameter names, words and types,
+  the same words on `this` and the same result, since a call through the base's slot (`[DSP-2]`)
+  passes what the base declared and reads what it promised, and one that differs is `E2113`
+  ("`KeyLog.on` takes `e: KeyEvent`, and the `Handler.on` it overrides takes `e: Event`; write
+  `override fn on(e: Event):` and test the kind inside: `if e is KeyEvent as k:`"); `init`, `drop`
+  and `static fn`s are each class's own. An `override` is itself virtual, so a further subclass may
+  override it again. `virtual` in a class that cannot be subclassed (neither `open` nor `abstract`)
+  is `E2112` ("`Door` cannot be subclassed, so `virtual` on `on_update` changes nothing; to let
+  subclasses replace it write `open class Door:`, or remove `virtual`"). A call through a `virtual`
+  method counts what every override the program has changes, worked out from their bodies
+  (`[DSP-5]`), so nothing is written about what an override changes. A derived `init` MUST call
+  `super.init(…)` exactly once (`[CLS-11]`). Fields cannot be overridden. Base fields are laid out
+  first; there is at most one base.
 * `[CLS-11]` *(new in 0.9.9)* *(changed in 0.9.15)* Construction is two-phase. In a derived `init`,
   the code before `super.init(…)` MUST set every field the class itself declares without a default,
   and MUST NOT read an inherited field or use `this` as a whole; the code after it may do anything
@@ -455,39 +493,58 @@ class Door(Script):
   given (`[DRP-1]`).
 * `[CLS-9]` *(changed in 0.9.10)* *(changed in 0.9.15)* A `let` field is set only in `init`
   (`E2104`).
-* `[CLS-9a]` *(changed in 0.9.15)* After `init`, nothing is changed through a `let` field, for every
-  type: a number or struct field never changes, a list field is never added to, and a class-object
-  field is never pointed at another object nor its object changed through it (`E2104`: "`items` is
-  `let`: it is set in `init` and never changed after; to add to it, write the field without `let`:
-  `items: Array[int]`"). Other owners of a `shares` object change it as `shares` allows (`[RC-7]`);
-  `let` speaks only of the field it is written on.
+* `[CLS-9a]` *(changed in 0.9.15)* *(changed in 0.9.20)* After `init`, nothing is changed through a
+  `let` field, for every type, inside `drop` included (`[DRP-1]` waives only the word `changes
+  this`; a view field `from` a `let` field is still read in `drop`, `[GRM-46]`, and a `let` field
+  that must be flushed or closed does that in its own type's `drop`, which runs when the field ends,
+  after the object's, `[CLS-6]`): a number or struct field never changes, a list field is never
+  added to, and a class-object field is never pointed at another object nor its object changed
+  through it (`E2104`: "`items` is `let`: it is set in `init` and never changed after; to add to it,
+  write the field without `let`: `items: Array[int]`"). Other owners of a `shares` object change it
+  as `shares` allows (`[RC-7]`); `let` speaks only of the field it is written on.
 * `[CLS-12]` *(new in 0.9.15)* *(changed in 0.9.20)* **`@cached`.** `@cached` above a class method
   with no parameters keeps the method's result after the first call, in the object (a struct or enum
   has no hidden state, `[PHIL-9]`, `[TYP-11]`), and gives it again until a change, through any name,
   of a field the method's body reads clears it (`[EFF-27]`). A `Copy` result is returned by value,
   any other as a `ref T` view into the kept value, which clearing it ends (a later use is `E3060`).
-  On an object several threads reach, the kept result is filled once under a once-flag. It costs one
-  flag test per call and one store per change of a field the body reads. `@cached` is `E2117`, each
-  message giving the `@cached` line to remove: on a method of a struct or an enum ("a `Vec2` has no
-  hidden state to keep a result in; keep it in a field of a class, or remove `@cached` (line 2)");
-  on a method with parameters ("`@cached` keeps one result, and `radius` takes `scale`; remove
-  `@cached` (line 2), or keep the results in a field: `radii: Map[f64, f64]`"); on one whose body
-  changes anything ("a cached method keeps one result, so it only reads, and `radius` changes
-  `this.verts` (its line 4); remove `@cached` (line 2)"); and on one whose body reads a `shares`,
-  `shares mut`, `thread_shared`, `weakref`, `sharedref mut` or `Cell` field, or a field another
-  thread may change by its own operations, under a lock or not (an `Atomic`, a `Mutex`, an `RwLock`,
-  a channel end, a field `guarded by` a lock): on an object several threads reach, a kept result is
-  filled under a once-flag and never cleared, so the method reads only fields that never change
-  after `init` ("`radius` reads `verts`, which other threads change under `lock`; a kept result
-  could be stale; remove `@cached` (line 18)"; "`summary` reads `hits`, an `Atomic` other threads
-  change, and a kept result on a shared object is never cleared; remove `@cached` (line 6)"); and on
-  a `virtual` method or an `override` ("`label` is `virtual`, and a kept result follows one body;
-  keep it in a method no subclass replaces, or remove `@cached` (line 3)"). For a method that reads
-  a value its other owners may change: E2117 ("`radius` reads `mesh`, which its other owners may
-  change without `Mesh` seeing it, so a kept result could be stale; remove `@cached` (line 13)"). A
-  change made by foreign code, or through a raw pointer, passes through no name the compiler sees:
-  unsafe code that changes a field a `@cached` method reads answers for it, as for every obligation
-  of `unsafe` (`[UNS-4]`).
+  On an object of a class whose objects several threads may reach, read from the class's declaration
+  (it promises `ThreadShared` or implements an interface that needs it, `[THR-8]`, or its methods
+  pin it `thread_shared`, `[OWN-13]`; never from which values a program makes `thread_shared`,
+  `[BLD-16]`), the kept result is filled once under a once-flag. It costs one flag test per call and
+  one store per change of a field the body reads. `@cached` is `E2117`, each message giving the
+  `@cached` line to remove: on a method of a struct or an enum ("a `Vec2` has no hidden state to
+  keep a result in; keep it in a field of a class, or remove `@cached` (line 2)"); on a method with
+  parameters ("`@cached` keeps one result, and `radius` takes `scale`; remove `@cached` (line 2), or
+  keep the results in a field: `radii: Map[f64, f64]`"); on one whose body changes anything ("a
+  cached method keeps one result, so it only reads, and `radius` changes `this.verts` (its line 4);
+  remove `@cached` (line 2)"); and on one whose body reads a `shares`, `shares mut`,
+  `thread_shared`, `weakref`, `sharedref mut` or `Cell` field, or a field another thread may change
+  by its own operations, under a lock or not (an `Atomic`, a `Mutex`, an `RwLock`, a channel end, a
+  field `guarded by` a lock): on an object of such a class a kept result is filled under a once-flag
+  and never cleared, so the method reads only fields that never change after `init` ("`radius` reads
+  `verts`, which other threads change under `lock`; a kept result could be stale; remove `@cached`
+  (line 18)"; "`summary` reads `hits`, an `Atomic` other threads change, and a kept result on a
+  shared object is never cleared; remove `@cached` (line 6)"); and on a `virtual` method or an
+  `override` ("`label` is `virtual`, and a kept result follows one body; keep it in a method no
+  subclass replaces, or remove `@cached` (line 3)"). For a method that reads a value its other
+  owners may change: E2117 ("`radius` reads `mesh`, which its other owners may change without `Mesh`
+  seeing it, so a kept result could be stale; remove `@cached` (line 13)"). A change made by foreign
+  code, or through a raw pointer, passes through no name the compiler sees: unsafe code that changes
+  a field a `@cached` method reads answers for it, as for every obligation of `unsafe` (`[UNS-4]`).
+  A `@cached` body reads nothing a link may change without passing through the holder: reading a
+  field of a class object reached through a field or element of `this` (not `this` itself), of a
+  class that carries a weak count (`[OBJ-1]`), is `E2117` ("`first_name` reads `items[0].name`, and
+  a `Book` may be changed through a `weakref Book` link, made from any name before or after the book
+  entered `shelf` (`[WK-11]`) and opened `ref mut` (`[GRM-44]`), without `Shelf` seeing it, so a
+  kept result could be stale; remove `@cached` (line 7), or keep the names in `Shelf` itself:
+  `names: Array[String]`"); a class that carries no weak count is named by no link, and a `sharedref
+  mut` link or `shares mut` owner into the read set is refused where it is made (`[EFF-27]`).
+  `@cached` is `E2117` too on a method whose body reads anything not reached through `this` that may
+  change (a `static mut`, or a `static` `Mutex`, `RwLock`, `Atomic`, `Cell`, channel end or `guarded
+  by` variable, `[STA-1]`, directly or through a call, `[EFF-24]`), since a change of it passes
+  through no name of the object and clears nothing ("`area` reads `SCALE`, a `static mut` that may
+  change without `Circle` seeing it, so a kept result could be stale; remove `@cached` (line 5), or
+  keep the scale in the object: `scale: float`").
 
 ## V.6 Interfaces and `extend`
 
@@ -509,10 +566,23 @@ extend Square implements Shape2D:
   is legal in any module of `T`'s package.
 * `[IFC-2]` Adding inherent methods to a type from another package is `E2120`; use an interface or a
   wrapper type.
-* `[IFC-3]` *(changed in 0.9.9)* `interface Ord: needs Eq` requires implementers of `Ord` to
-  implement `Eq`. So a bound brings its parents: `T: needs IndexMut[int]` provides `Index[int]`'s
-  methods too, and a binding it writes (`Output = f32`) names the parent's associated type
-  (ODR-042).
+* `[IFC-3]` *(changed in 0.9.9)* *(changed in 0.9.20)* `interface Ord: needs Eq` requires
+  implementers of `Ord` to implement `Eq`: an implementation meets its interface's parents for every
+  type it covers, checked where it is written (`E2040`, naming the part that does not and giving the
+  line that compiles). A generic implementation covers every instance its brackets allow, so it
+  writes the needs the parents put on its parameters (`extend[T: needs (Send, ThreadShared)]
+  PoolFull[T] implements Error:`; `extend[T] PoolFull[T] implements Error:` is `E2040` with that
+  line, never read as holding for some arguments only), as a `pub` generic function writes its
+  bounds (`[IFC-6]`). A class that implements an interface with marker parents (`Send`,
+  `ThreadShared`) promises them for every class derived from it, each checked where it is declared
+  (`[THR-8]`), and the implementation itself is never checked again. So a bound brings its parents:
+  `T: needs IndexMut[int]` provides `Index[int]`'s methods too, and a binding it writes (`Output =
+  f32`) names the parent's associated type (ODR-042). An implementation writes each of the
+  interface's methods with the interface's first line after the name: the same parameter names,
+  words and types, the same words on `this` and the same result, since a call through `dyn I`
+  (`[DSP-3]`) passes what the interface declared; one that differs is `E2040`, naming the method and
+  the interface's line ("`Sq.scale` takes `k: i64`, and `Scaler.scale` takes `k: f64`; write `fn
+  scale(k: f64) -> f64:`").
 * `[IFC-4]` *(changed in 0.9.9)* *(changed in 0.9.20)* Interfaces may declare associated types and
   constants, not statics. An associated type may carry bounds (`type Real: needs Float`), and a type
   implementing the interface states it (`type Real = f64`) with a value that meets them (`E2040` if
@@ -597,8 +667,8 @@ extend Square implements Shape2D:
   and a module holds declarations; for a module variable that may change write `static mut FRAME:
   int = 0`"). A foreign `static mut` (declared in an `extern` block) is reached only inside `unsafe`
   (`[UNS-1]`). A foreign static read only in `unsafe` need not be `ThreadShared`: the programmer
-  answers for sharing it between threads; one read without `unsafe` under `@ffi(immutable)`
-  (`[FFI-10]`) must be (ODR-163).
+  answers for sharing it between threads; one read without `unsafe`, under `@ffi(immutable)`
+  (`[FFI-10]`) or as a header's `const` object (`[FFI-8]`, `[FFI-41]`), must be (ODR-163).
 * `[STA-3]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A static whose initialiser
   can be evaluated at compile time is placed in the image with no initialisation code, except a
   value that owns heap memory (an `Array`, `String`, `Map`, `Set`, an `owns T`, a class object) in a

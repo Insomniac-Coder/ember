@@ -63,7 +63,7 @@ fail), **reclaim** (end what the old image owned).
   function, the line of its call and the view, and one that must move is refused too, since a
   frame's views are not counted (`[HR-15a]`). A change a frame depends on is refused, naming the
   function and the line of its call. A static's change still waits for a poll from the host.
-* `[HR-44]` *(new in 0.9.15)* **The facts the compiler worked out are part of what a reload
+* `[HR-44]` *(new in 0.9.15)* *(changed in 0.9.20)* **The facts the compiler worked out are part of what a reload
   compares.** Every rule that decides when compiling whether a line is safe — a loop and a call that
   may change what it walks, a read-only view and a call that may change what it reads, a view
   argument and a callee that may end or move what it points into, a view of an object reached
@@ -86,7 +86,13 @@ fail), **reclaim** (end what the old image owned).
   again when it compiles, so a change that only it relies on is no refusal. A change to a `@cached`
   method's body clears the result each instance of its type keeps: the kept result is migrated as a
   removed field and an added one with no value (`[HR-14]`), and is computed again on the next call.
-  Nothing of this runs while the program runs.
+  Whether a type is plain (`[RC-4]` point 4) is such a fact for every line that makes a
+  `thread_shared` value of it; when a reload takes it away, prepare, which walks the live instances
+  while every registered thread is at depth zero (`[HR-3]`, `[HR-12]`), hands over every live
+  `thread_shared` value of the type as `[RC-4]` point 4 does (its home count moved into its away
+  count, the handed-over mark set), and ends one it finds queued whose two counts add up to zero
+  with the old image's `drop`, which is plain, so none waits in a queue whose check points may no
+  longer run its `drop`. Nothing else of this runs while the program runs.
 * `[HR-44a]` *(new in 0.9.20)* **A stored function is a fact too.** Plan enumerates (`[HR-15]`)
   every function value held in a live instance, a registered container, a static or a lambda's
   state, and every callback C keeps (`[HR-20]`), and compares each, by its code word, which `[HR-6]`
@@ -206,6 +212,7 @@ fail), **reclaim** (end what the old image owned).
   | fields reordered, `let` changed | carried over by name |
   | methods added, removed or changed | no instance change, except as `[HR-44]` says for a `@cached` method |
   | base class changed | refused |
+| the promise an `open` or `abstract` class's header makes (`implements Send`, `implements ThreadShared`, an interface that needs them, `[THR-8]`) added or removed | refused (`E9030`) unless the image rebuilds every package that imports the class, whose derived classes and hand-overs are then checked again when they compile (`[HR-44]`) |
   | class removed while instances live | refused, naming the class and the count |
   | enum variant added, reordered or renamed with `@renamed_from` | discriminants rewritten |
   | enum variant removed while a value holds it | refused, naming the variant and the count |
@@ -215,16 +222,17 @@ fail), **reclaim** (end what the old image owned).
   | a value made `using` an instance moved, or a memory manager's type changed while values made in it live | refused (`[HR-46]`) |
   | static's initialiser changed | refused unless the static is `@reinit_on_reload` (`[HR-17a]`, `[HR-47]`) |
 
-* `[HR-15]` *(changed in 0.9.10)* *(changed in 0.9.15)* Migration keeps an instance's address where the new size fits;
-  otherwise commit rewrites every owner, link and view of it that the runtime can enumerate: the
-  one-owner fields and elements that hold it (`T`, `owns T`), its `shares`, `shares mut` and
-  `thread_shared` owners, its `weakref` links, and the kept views into it (`ref T`, `ref mut T`,
-  `sharedref mut T`, `Span[T]`, `MutSpan[T]`, `StrView`), in live instances and registered containers,
-  in statics, and inside tuples, `owns` blocks and function values' state held by any of these; and the
-  instance address a value made `using` an instance keeps (`[HR-46]`), where that instance moves.
-* `[HR-15a]` *(changed in 0.9.15)* An owner, link or view the runtime cannot enumerate — in foreign memory, behind a raw
-  pointer, in an object handed to C (`[HR-20]`) — cannot be rewritten, and the reload is refused when
-  what it names must move.
+* `[HR-15]` *(changed in 0.9.10)* *(changed in 0.9.15)* Migration keeps an instance's address where
+  the new size fits; otherwise commit rewrites every owner, link and view of it that the runtime can
+  enumerate: the one-owner fields and elements that hold it (`T`, `owns T`), its `shares`, `shares
+  mut` and `thread_shared` owners, its `weakref` links, and the kept views into it (`ref T`, `ref
+  mut T`, `sharedref mut T`, `Span[T]`, `MutSpan[T]`, `StrView`), in live instances and registered
+  containers, in statics, and inside tuples, `owns` blocks and function values' state held by any of
+  these; and the instance address a value made `using` an instance keeps (`[HR-46]`), where that
+  instance moves.
+* `[HR-15a]` *(changed in 0.9.15)* An owner, link or view the runtime cannot enumerate — in foreign
+  memory, behind a raw pointer, in an object handed to C (`[HR-20]`) — cannot be rewritten, and the
+  reload is refused when what it names must move.
 * `[HR-15c]` *(new in 0.9.20)* **A view into a part.** A kept view (`[TYP-15]`) that points into a
   part of a value, a field, an element, a range of a `String` or an array, is rewritten to the
   part's new place when the part is carried over by name (reordered, its holder resized or moved):
@@ -251,28 +259,29 @@ fail), **reclaim** (end what the old image owned).
   the old instance until commit, and commit's map (`[HR-2a]`) repoints it to the migrated one; so
   `migrate_from` never reads the new instance of another type, and never stores a view of an `Old`
   value (`E3063`, since the old block is freed in reclaim).
-* `[HR-34]` Prepare cannot panic: every operation it performs is either free of panics or reported as
-  a `ReloadError`.
-* `[HR-35]` *(changed in 0.9.9)* *(changed in 0.9.15)* `migrate_from` cannot abort the process. It
+* `[HR-34]` Prepare cannot panic: every operation it performs is either free of panics or reported
+  as a `ReloadError`.
+* `[HR-35]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `migrate_from` cannot abort the process. It
   may not contain an explicit panic (`panic`, `unwrap`, `expect`, `assert`: `E2225`, whose help
   names the fallible form); and every run-time check inside it — overflow, bounds, a cast, a count
-  at its maximum, a stale handle — returns `Err(ReloadError.Migration(type_name, instance,
-  message))` instead of stopping the program. The rule covers what `migrate_from` runs, not only
-  what it writes: every function it calls, directly or through what it calls, and every `drop` it
-  may run, is compiled for that use as an instance of itself under this rule (`[MNG-6]`: `[reload]`
-  among its arguments), with the same `E2225` for an explicit panic and the same `Err` returns for a
-  check; a call through a function value, an interface, `dyn` or `virtual` method, in `migrate_from`
-  or in what it calls, reaches a body compiled to stop the program, and is `E2225` ("`sum_all` calls
-  `parts.reduce(f)` on line 9 through a function value, which may stop the program during a reload;
-  call the function by its name, or write `@allow_reload_terminate` on `migrate_from`"), which
-  `[HR-43]` admits as it admits a `noexcept` call; a call to an `extern` function follows `[HR-39]`,
-  whose refusal is `E2225` ("`finish` is asserted `noexcept` and may end the process; call it
-  outside the migration, or write `@allow_reload_terminate`"). A field default or
-  `Default.default()` that prepare runs for an added field (`[HR-14]`) is compiled the same way, and
-  an explicit panic in it makes the row `field added, neither` (refused, naming the field and the
-  panic's line).
-* `[HR-39]` A foreign call inside `migrate_from` returns its failure as `ReloadError.Foreign`; a call to
-  a C++ function asserted `noexcept`, which could terminate the process, is rejected at compile time.
+  at its maximum, a stale handle, a `runtime` name's test (`[LT-48]`) — returns
+  `Err(ReloadError.Migration(type_name, instance, message))` instead of stopping the program. The
+  rule covers what `migrate_from` runs, not only what it writes: every function it calls, directly
+  or through what it calls, and every `drop` it may run, is compiled for that use as an instance of
+  itself under this rule (`[MNG-6]`: `[reload]` among its arguments), with the same `E2225` for an
+  explicit panic and the same `Err` returns for a check; a call through a function value, an
+  interface, `dyn` or `virtual` method, in `migrate_from` or in what it calls, reaches a body
+  compiled to stop the program, and is `E2225` ("`sum_all` calls `parts.reduce(f)` on line 9 through
+  a function value, which may stop the program during a reload; call the function by its name, or
+  write `@allow_reload_terminate` on `migrate_from`"), which `[HR-43]` admits as it admits a
+  `noexcept` call; a call to an `extern` function follows `[HR-39]`, whose refusal is `E2225`
+  ("`finish` is asserted `noexcept` and may end the process; call it outside the migration, or write
+  `@allow_reload_terminate`"). A field default or `Default.default()` that prepare runs for an added
+  field (`[HR-14]`) is compiled the same way, and an explicit panic in it makes the row `field
+  added, neither` (refused, naming the field and the panic's line).
+* `[HR-39]` A foreign call inside `migrate_from` returns its failure as `ReloadError.Foreign`; a
+  call to a C++ function asserted `noexcept`, which could terminate the process, is rejected at
+  compile time.
 * `[HR-43]` `@allow_reload_terminate` on a `migrate_from` admits such calls and states that this
   migration may end the process rather than refuse; `ember tcb` lists every use.
 * `[HR-36]` *(changed in 0.9.20)* Allocation during prepare comes from the transaction arena;
@@ -290,15 +299,15 @@ fail), **reclaim** (end what the old image owned).
 * `[HR-38]` *(changed in 0.9.10)* `std.hot.ReloadError` is `SchemaRefused(type_name: String, reason:
   String)`, `Migration(type_name: String, instance: u64, message: String)`, `Allocation`,
   `Foreign(error: String)` or `Timeout`; `instance` counts the type's live instances from 0.
-* `[HR-45]` *(new in 0.9.15)* **A suspended generator keeps its frame.** A `gen fn`'s frame (`[CORO-3]`) has a schema:
-  its layout and its states, one per suspension point, each with what lives across it. The runtime
-  finds the live frames of each reloadable `gen fn` among the values it can enumerate (`[HR-15]`). A
-  body change that leaves the frame's layout and states as they were applies: a live frame resumes in
-  the new code at the state it was suspended in, and a paused generator walking a list counts, for
-  `[HR-44]`, as a frame that still calls what its body calls. A body change that changes them is
-  refused in plan while a frame lives, naming the `gen fn` and the count; with no live frame it
-  applies as any body change does. A frame the runtime cannot enumerate (in foreign memory, behind a
-  raw pointer) is treated as live.
+* `[HR-45]` *(new in 0.9.15)* **A suspended generator keeps its frame.** A `gen fn`'s frame
+  (`[CORO-3]`) has a schema: its layout and its states, one per suspension point, each with what
+  lives across it. The runtime finds the live frames of each reloadable `gen fn` among the values it
+  can enumerate (`[HR-15]`). A body change that leaves the frame's layout and states as they were
+  applies: a live frame resumes in the new code at the state it was suspended in, and a paused
+  generator walking a list counts, for `[HR-44]`, as a frame that still calls what its body calls. A
+  body change that changes them is refused in plan while a frame lives, naming the `gen fn` and the
+  count; with no live frame it applies as any body change does. A frame the runtime cannot enumerate
+  (in foreign memory, behind a raw pointer) is treated as live.
 * `[HR-48]` *(new in 0.9.20)* **A lambda's state has a schema.** The state of a lambda (`[CLO-10]`)
   is a value of a generated struct whose fields are its captures, in order, with their words
   (`[HR-11]`), kept in the state word or in the state block; the lambda's name (`[MNG-1]`: its
@@ -309,30 +318,31 @@ fail), **reclaim** (end what the old image owned).
   body change that leaves the captures as they were applies through the thunk. A state the runtime
   cannot enumerate (kept by C, `[HR-20]`; behind a raw pointer, `[HR-13b]`) refuses a change of its
   schema.
-* `[HR-46]` *(new in 0.9.15)* **Values made in a memory manager's instance.** A value made `using` an instance of a
-  memory manager that may have several (`[ALC-1]`) came from that instance and goes back to it, through
-  the instance address it keeps. Its migration keeps it in that instance's block: it is migrated in
-  place where its new layout has the same size and alignment, so that its end hands the instance back
-  the layout it was given; one that would have to move or change size is refused in plan, naming its
-  type, the manager's type and the count. Where the instance itself moves (`[HR-15]`), commit rewrites
-  the instance address every such value keeps; a value whose instance address the runtime cannot
-  enumerate is refused as `[HR-15a]` says. A type that implements `Allocator` is changed only through its
-  own methods while values made in one of its instances live, so a change of its schema while such
-  values live is refused in plan, naming the type and the count; with none live it migrates as any
-  type does.
-* `[HR-17]` A static whose type and initialiser are unchanged keeps its value; one whose type changed
-  migrates by `[HR-14]`; a new static is initialised normally.
-* `[HR-17a]` *(changed in 0.9.9)* *(changed in 0.9.15)* Editing a static's initialiser changes its schema: the reload is
-  refused, naming the static, unless the static is `@reinit_on_reload`, which re-runs the initialiser
-  and ends the old value. Keeping the old value silently is never an outcome.
-* `[HR-47]` *(new in 0.9.15)* `@reinit_on_reload` ends the static's old value when the reload is applied, so nothing may
-  still point into it: plan refuses it (naming both statics, or the static and the type) where a view, a `sharedref mut` link
-  or the instance address of a value made `using` it, held by another static, a live instance or a
-  registered container, may point into the static's value or what it owns, judged from the types that
-  can hold one. `shares` owners of what it held keep their objects alive, and `weakref` links to them
-  find them ended, as anywhere else.
-* What the compiler works out from bodies (where each view is used, what each function changes, reads
-  and ends) plays no part in schemas or migration; a change to it is judged by `[HR-44]`.
+* `[HR-46]` *(new in 0.9.15)* **Values made in a memory manager's instance.** A value made `using`
+  an instance of a memory manager that may have several (`[ALC-1]`) came from that instance and goes
+  back to it, through the instance address it keeps. Its migration keeps it in that instance's
+  block: it is migrated in place where its new layout has the same size and alignment, so that its
+  end hands the instance back the layout it was given; one that would have to move or change size is
+  refused in plan, naming its type, the manager's type and the count. Where the instance itself
+  moves (`[HR-15]`), commit rewrites the instance address every such value keeps; a value whose
+  instance address the runtime cannot enumerate is refused as `[HR-15a]` says. A type that
+  implements `Allocator` is changed only through its own methods while values made in one of its
+  instances live, so a change of its schema while such values live is refused in plan, naming the
+  type and the count; with none live it migrates as any type does.
+* `[HR-17]` A static whose type and initialiser are unchanged keeps its value; one whose type
+  changed migrates by `[HR-14]`; a new static is initialised normally.
+* `[HR-17a]` *(changed in 0.9.9)* *(changed in 0.9.15)* Editing a static's initialiser changes its
+  schema: the reload is refused, naming the static, unless the static is `@reinit_on_reload`, which
+  re-runs the initialiser and ends the old value. Keeping the old value silently is never an
+  outcome.
+* `[HR-47]` *(new in 0.9.15)* `@reinit_on_reload` ends the static's old value when the reload is
+  applied, so nothing may still point into it: plan refuses it (naming both statics, or the static
+  and the type) where a view, a `sharedref mut` link or the instance address of a value made `using`
+  it, held by another static, a live instance or a registered container, may point into the static's
+  value or what it owns, judged from the types that can hold one. `shares` owners of what it held
+  keep their objects alive, and `weakref` links to them find them ended, as anywhere else.
+* What the compiler works out from bodies (where each view is used, what each function changes,
+  reads and ends) plays no part in schemas or migration; a change to it is judged by `[HR-44]`.
 
 ## B.4 Refusal, scope and cost
 

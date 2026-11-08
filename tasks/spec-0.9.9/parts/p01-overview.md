@@ -29,16 +29,17 @@ platform that has a C compiler (`[CG-LL-1]`).
 | **Contract** | `@noalloc`, `@nosync`, `@noblock`, `@nopanic(explicit)`, `@no_alias_checks`, `@deterministic` | everything in Safe, plus the declared contract, checked at compile time | hot loops, real-time and lock-step code |
 | **Unsafe** | an `unsafe` boundary (`[TIER-1]`) | type checking and diagnostics only; the programmer upholds `[UNS-4]` | allocators, FFI shims, intrinsics |
 
-* `[TIER-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* Anything that can break a safety promise is
-  possible only inside an `unsafe` boundary. Safe code MUST NOT invoke an operation with an unverifiable
-  precondition unless an `unsafe` boundary in the same package discharges it. The boundaries are each
-  written with the word `unsafe`: an `unsafe:` block lexically enclosing the operation, or the
-  `unsafe fn` whose body encloses it, outside the body's `safe:` blocks (`[UNS-12]`); an
-  `unsafe extern` declaration (`[FFI-10]`); an `unsafe overlay` (`[GRM-35]`, `[FFI-2]`); an
-  `unsafe import c` of C source compiled into the program (`[FFI-51]`); an export that names its own
-  symbol, `@unsafe(export("name"))` (`[FFI-26]`); and an `unsafe extend` (a `Send` declared by hand, an
-  `unsafe interface` implemented, `[THR-8]`). No other attribute, and no profile, manifest key or
-  contract, introduces another.
+* `[TIER-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* Anything that can break a safety promise is
+  possible only inside an `unsafe` boundary. Safe code MUST NOT invoke an operation with an
+  unverifiable precondition unless an `unsafe` boundary in the same package discharges it. The
+  boundaries are each written with the word `unsafe`: an `unsafe:` block lexically enclosing the
+  operation, or the `unsafe fn` whose body encloses it, outside the body's `safe:` blocks
+  (`[UNS-12]`); an `unsafe extern` declaration (`[FFI-10]`); an `unsafe overlay` (`[GRM-35]`,
+  `[FFI-2]`); an `unsafe import c` or `unsafe import cpp` of foreign code compiled into the program
+  that runs uncalled (`[FFI-51]`); an export that names its own symbol, `@unsafe(export("name"))`
+  (`[FFI-26]`); and an `unsafe extend` (a `Send` declared by hand, an `unsafe interface`
+  implemented, `[THR-8]`). No other attribute, and no profile, manifest key or contract, introduces
+  another.
 
 ## I.3 Principles the language is held to
 
@@ -225,11 +226,12 @@ it is passed to.
 Ember deliberately has none of these: a tracing garbage collector or a cycle collector (a loop of
 owners is proved opened again or rejected, and a link back is a `weakref`, `[WK-6]`); exceptions or
 unwinding (failures are values or panics, Part XIII); implicit numeric narrowing; function
-overloading and C's untyped variadic functions outside `unsafe` (Ember's own take any number of
-typed values, `[TYP-47]`); macros (`macro` is reserved); named lifetimes, ever (`[LEX-22]`); an
-aliasing or exclusivity check the program did not ask for (`[BRW-1]`; the checks it may ask for are
-`runtime`, `[LT-48]`, and `assert_disjoint`, `[DSJ-5]`) (`[BRW-1]`); specialisation or higher-kinded
-types; dynamic or structural typing (`[TYP-40]`); a safety check that depends on the profile
-(`[PRF-1]`); a correctness property that depends on whole-program optimisation or LTO; a stable
-Ember-to-Ember ABI (the C ABI is the stable boundary, Part XVI); shader compilation and `async` in
-this version (both reserved).
+overloading (a C++ header's several functions of one name reach Ember as one name of several
+members, each use standing for one, `[FFI-57]`) and C's untyped variadic functions outside `unsafe`
+(Ember's own take any number of typed values, `[TYP-47]`); macros (`macro` is reserved); named
+lifetimes, ever (`[LEX-22]`); an aliasing or exclusivity check the program did not ask for
+(`[BRW-1]`; the checks it may ask for are `runtime`, `[LT-48]`, and `assert_disjoint`, `[DSJ-5]`)
+(`[BRW-1]`); specialisation or higher-kinded types; dynamic or structural typing (`[TYP-40]`); a
+safety check that depends on the profile (`[PRF-1]`); a correctness property that depends on
+whole-program optimisation or LTO; a stable Ember-to-Ember ABI (the C ABI is the stable boundary,
+Part XVI); shader compilation and `async` in this version (both reserved).

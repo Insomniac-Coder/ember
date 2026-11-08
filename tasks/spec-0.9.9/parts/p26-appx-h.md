@@ -451,7 +451,7 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-163 | the owner's ruling: a foreign static read only in `unsafe` need not be `Sync`; a C or C++ variable holding a pointer imports as any other, used in `unsafe` | `[STA-1]`, `[FFI-41]`, `[FFI-10]` |
 | ODR-164 | the owner's ruling, reversing ODR-021: float `//` is `floor(a / b)` and `%` is `a - b * floor(a / b)`, each step rounded | `[TYP-29]` |
 | ODR-165 | delegated: an inline namespace adds nothing to a C++ name in an import | `[FFI-41]`, `[FFI-17b]` |
-| ODR-166 | delegated: a C++ function returning an opaque class by value gives a `ForeignBox[T]` | `[FFI-32]`, Annex C's import table |
+| ODR-166 | delegated: a C++ function returning an opaque class by value gives an `owns T` (written `ForeignBox[T]` when ruled, a name since gone, §II) | `[FFI-32]`, Annex C's import table |
 | ODR-167 | delegated: `[CXX-1]`'s corpus is nlohmann/json until the owner approves more downloads | `[CXX-1]` |
 | ODR-168 | delegated: `format`'s spec is a string literal, checked where it is written | `[STD-18]`, `[LEX-19]` |
 | ODR-169 | delegated: `lto = "thin"` is `on` where the toolchain does only `off` and `on` (cl, gcc) | `[BLD-6]` |
@@ -2997,3 +2997,279 @@ Generated: every rule whose text differs from 0.9.20_Hardened_1.
 | `[WK-16]` | changed |
 | `[WK-17]` | changed |
 | `[WK-18]` | changed |
+
+
+## H.54 Changes in 0.9.20_Hardened_3 (from 0.9.20_Hardened_2)
+
+**0.9.20_Hardened_3** is the third hardening pass, of 2026-11-08, made under the owner's delegation
+(`docs/AUTOPILOT.md` §3). It combines the gap review of 0.9.15_Hardened_11 that another session left on
+`main` (76 clusters of open questions and 47 further gaps, `tasks/96/redesign/spec-gaps-0.9.15/`) with
+the text of Hardened_2: ten readers decided each cluster against the current text, ten refuters checked
+each decision and offered the better fix, fourteen designers and nine judges ruled the five questions
+that needed a design (K05, K07, K10, K20, K21), and a critic read the whole, with the records in
+`tasks/96/redesign/audit-0.9.20/round2/`. Every change below is a rule that refuses a program that was
+unsafe, a fact a compiler would otherwise have to guess, a rule that let a fact of the whole program
+decide a package's code, or a correction of the text; no feature is taken away. The accepted set
+changes, so the language version stays 0.9.20 and the hardening number moves (`[VER-9]`).
+
+The five rulings:
+
+* **A `thread_shared` value made `using` a manager** is allowed, counted away from its making line, its
+  instance word in the header's queue place, and refused (`E7015`) only where the value would hold a
+  link to an instance of a manager that not every thread may call (K05: `[TYP-46a]`, `[TYP-46]`,
+  `[ALC-1]`, `[OBJ-1]`, `[OBJ-4]`, `[OPT-1]`, `[RC-4]` point 4, `[LT-4]`, the marker table, the
+  `[COST-3]` row); for the owner (ODR-260).
+* **The safe-to-call fact has a limit on raw pointers** (K07, `[FFI-2]`): no `safe fn`, plain overlay
+  entry, `@ffi(safe)` or `@ffi(std_function, safe)` covers a raw pointer or C function pointer the
+  caller supplies, at any depth of what an argument passes or returned by an Ember function given to the
+  call; a `std::function` value is `unsafe fn(A…) -> R` until its entry says `safe` (`[FFI-17a]`,
+  `[FFI-10]`, `[FFI-11]`, `[FFI-21]`, `[FFI-56]`, `[TCB-4]`, `[CLI-5]`, the Vulkan example). Giving
+  foreign code a raw pointer by any route no declaration covers (a callback's or an export's return, an
+  override of a C++ virtual, a store through a foreign view or into an imported aggregate) is an unsafe
+  operation (`[UNS-1]`, `[FFI-8]`, `[FFI-31b]`, `[FFI-39]`).
+* **Where a queued `thread_shared` value's `drop` runs** (K10): a value whose type is not plain (its
+  `drop` has an effect a contract may forbid, reaches a `static mut` or runs code its package cannot
+  read), and a value made on a scoped task's or job's thread, a worker or a host thread, is marked handed
+  over at its making line, so the queue holds only plain values made on the main thread or a
+  `thread.spawn` thread, a check point may stand anywhere, and `[THR-19]`'s promise holds with nothing
+  checked while running (`[RC-4]` points 3 to 5, `[THR-11]`, `[THR-20]`, `[DRP-8]`, `[WK-3]`,
+  `[OBJ-1]`, `[HR-44]`, `[THR-5]`, the `[COST-3]` rows).
+* **An `open` or `abstract` class says in its header whether any thread may hold its objects**, and
+  `Error` requires `Send` and `ThreadShared`, so `AnyError` and every `Result[T]` cross threads (K20:
+  `[THR-8]`, `[THR-9]`, `[TYP-43]`, `[CLS-4]`, `[OWN-13]`, `[IFC-3]`, `[DRV-1]`, `[ERR-3]`, `[ERR-8]`,
+  `[BLD-14]`, `[BLD-16]`, Annex B §B.3, the marker table); for the owner (ODR-261).
+* **A C++ name declared several times is one Ember name of several members**, each use standing for
+  the one its own words fit, a `const` and non-`const` pair split into `at` and `at_mut` (K21: new
+  `[FFI-57]`, new `[FFI-40b]`, `[TYP-26]`, `[FFI-12]`, `[FFI-17]`, `[FFI-39]`, `[FFI-39b]`, `[GRM-35]`,
+  `[FFI-55]`, `[MNG-1]`, `E5035`); for the owner (ODR-262).
+
+Holes in the memory-safety rules:
+
+* A `drop`, an `override` of a safe method and an interface method's implementation are never `unsafe
+  fn` (`[UNS-12]`); a `match` subject's temporaries follow the condition rule, and a lock guard that is
+  a temporary holds its lock (`[EXP-4]`, `[THR-19]`); a `weakref T` link never names what every thread
+  may reach, a `static` included (`[THR-2]`, `[CT-5]`); a `thread_shared` value's type is
+  `ThreadShared`, judged by components, a `Receiver` and a `thread_shared fn()`'s state included
+  (`[THR-1]`, `[THR-9]`); a channel of a non-`Send` `T` is refused where it is made (`[THR-15]`,
+  verdict 164); a part of a value with several owners is not handed out (`[OWN-11]`, `[EXP-6]`); a
+  `@cached` body reads no weak-counted object behind `this` and no `static mut` (`[CLS-12]`,
+  `[EFF-27]`); a `thread_shared` value in a `static` is placed writable and handed over (`[CT-5]`).
+* A foreign `const` object is read safely only when `ThreadShared` with no `mutable` member
+  (`[FFI-41]`, `[FFI-8]`, `[FFI-2a]`, `[STA-1]`, `[UNS-1]`); a C++ header whose code runs before `main`
+  is `unsafe import cpp` (`[FFI-51]`, `[TCB-4]`, `[TIER-1]`); a function pointer C hands an export is
+  `unsafe extern "C" fn` (`[FFI-31b]`, `[FFI-56]`); a result that points somewhere needs a lifetime
+  word, a view included (`[FFI-2a]`, `[FFI-17a]`, `[FFI-11a]`); an operator is unsafe until its entry
+  (`[FFI-42]`); a `@ffi(newtype)` over a pointer is a raw pointer (`[FFI-8]`); `T&&` on each side of
+  the boundary (`[FFI-40]`, `[FFI-17f]`); an override and an implementation have the first line of the
+  method they replace (`[CLS-4]`, `E2113`; `[IFC-3]`); a thread-bound foreign type is never vouched
+  `ThreadShared` (`[FFI-8]`).
+* A `runtime` name's test is a `RuntimeCheck(Aliasing)` (`[EFF-9]`, `[EFF-12]`, `[DSJ-6]`, `[LT-48]`,
+  `[COST-6]`, `[PRF-4]`, `[HR-35]`); a `@parallel` loop's reductions are declared and `[THR-11]`'s
+  exceptions hold in a body (`[PAR-2]`, `[PAR-3]`); what a reduction's accumulator starts from
+  (`[THR-21]`); `Nondet` is what IEEE 754 does not fix, `det` has a twin for each (`[DET-2]`, `[DET-4]`,
+  `[STD-27]`); `unsafe` code runs at compile time under the evaluator's checks (`[CT-1]`, `[CT-2]`).
+
+Facts the text left unsaid:
+
+* `a + b` on a `String` reads both operands (`[TXT-11]`, `[TYP-21]`, §X.4); an owner is read through and
+  has its value's interfaces, and `is` compares owners and links (`[TYP-14]`, `[TYP-5]`, `[TYP-36]`,
+  `[EXP-9]`); a context-free list keeps its elements' type (`[TYP-38]`); how the conversions compose
+  (`[TYP-5]`); list patterns (`[GRM-13]`, the grammar); several interfaces after `dyn` or `some` in
+  round brackets, with the set's table and a marker in the list (`[TYP-17]`, `[TYP-22]`, `[TYP-32]`,
+  the grammar); a pack in a tuple or function type (`[TYP-47]`, the grammar); a literal's element is
+  handed over (`[OWN-9]`); which interfaces `owns dyn I` has (`[TYP-36]`).
+* A written `init`'s words at the call (`[FN-2a]`, `[OWN-9]`); a memberwise base constructor is the
+  base's `init` (`[CLS-3]`, `[CLS-10]`); where a function value keeps the addresses of real variables
+  (`[CLO-10]`, §X.4); the `let` check holds in `drop` (`[CLS-9a]`, `[DRP-1]`); a constructor's visibility
+  across three levels (`[STR-1]`); a name handed its value owns it (`[BRW-14]`, `[BRW-15]`, `[CTL-1]`);
+  `owns` before a part on `=` and the words before a cast (`[GRM-15]`, `[OWN-11]`, `[TYP-44]`,
+  `[DSP-6]`); a `Copy` part is copied by `=`, and `copy of` a view is one more view (`[BRW-12]`,
+  `[OWN-8]`, `[TYP-36]`, verdict 68); `ref mut` before a tuple of spans (`[SPN-3]`, `[BRW-12]`); every
+  `Copy` value with parts (`[OWN-7]`); a read-only parameter's promise across a call (`[FN-1]`,
+  `[BRW-21]`).
+* `using` after a `weakref T` type, the give-back read from the link's type, and a class made `using A`
+  as a type of its own (`[TYP-46]`, `[ALC-5a]`, `[OWN-13]`, `[GRM-3]`, `[ALC-1]`); which types take
+  `using` (`[TYP-46]`, `[ALC-1]`); `x in c` for a text view (`[STD-8]`); a `@ser(skip)` field's value
+  (`[SER-1]`, §XIV.2); a flattened field is a proxy (`[SOA-1]`, `[SOA-6]`); `comptime.read_file`'s
+  type, effect and meaning (`[CT-2]`); `AnyError`'s markers (`[ERR-8]`); the `std_function`, handle
+  and callback declarations (`[FFI-17a]`, `[FFI-8]`, `[FFI-11]`, `[FFI-21]`, `[FFI-10]`, `[FFI-52]`);
+  what ends an adopted C++ object (`[FFI-36]`, `[FFI-36a]`); what a registering call returns
+  (`[FFI-21]`); the overlay line's header (`[GRM-35]`, `[FFI-55]`); a full callback table (`[FFI-53]`,
+  `[COST-6]`); the words an `extern "C" fn` type carries and an imported struct's function-pointer field
+  (`[FN-6]`, `[FFI-56]`); a hand-declared `type`'s words (`[FFI-10]`); `E2020`'s help for `c as int`
+  (`[TYP-6]`).
+
+Words made consistent: `[CLO-12]` and `[GRM-28]` spell `thread.spawn(owns push_a)`; `[DSP-4]`'s list of
+interface types; `[TYP-45]` names the views of a `dyn` value; `[DIA-18]` and the `E5002` row agree; the
+`E0119` row is true of every operator; `[THR-2]`'s message shows a line the language accepts; `[FFI-10]`'s
+tagged-number width follows the target; `[FFI-48]` loses the return-type row; the registry rows of 26
+codes follow their rules.
+
+New rules: `[FFI-57]`, `[FFI-40b]`. New codes: `E2113`, `E5035`. Owner verdicts touched, each reported
+in `decisions.md` §14: 159 (a plain `init` parameter lends), 150 and 51 (already in Hardened_2), 5
+(across a call only, the lead's area-2 ruling), 101 (as N84: which values keep a home count), 164 (its
+letter restored), 165 (extended to a type and a derived class), 61 (extended to an open class's
+header), 109 (extended to `dyn` and `some`), 68 (brought to its letter); ODR-199's shape changes.
+
+Generated: every rule whose text differs from 0.9.20_Hardened_2.
+
+| Rule | 0.9.20_Hardened_2 → 0.9.20_Hardened_3 |
+|---|---|
+| `[ALC-1]` | changed |
+| `[ALC-5a]` | changed |
+| `[ARN-5c]` | changed |
+| `[ARN-5d]` | changed |
+| `[BLD-14]` | changed |
+| `[BLD-16]` | changed |
+| `[BRW-12]` | changed |
+| `[BRW-14]` | changed |
+| `[BRW-15]` | changed |
+| `[BRW-18]` | changed |
+| `[BRW-21]` | changed |
+| `[CELL-1]` | changed |
+| `[CLI-5]` | changed |
+| `[CLO-10]` | changed |
+| `[CLO-12]` | changed |
+| `[CLS-3]` | changed |
+| `[CLS-4]` | changed |
+| `[CLS-9a]` | changed |
+| `[CLS-10]` | changed |
+| `[CLS-12]` | changed |
+| `[COST-6]` | changed |
+| `[CT-1]` | changed |
+| `[CT-2]` | changed |
+| `[CT-5]` | changed |
+| `[CTL-1]` | changed |
+| `[CTL-10]` | changed |
+| `[DET-2]` | changed |
+| `[DET-4]` | changed |
+| `[DIA-18]` | changed |
+| `[DRP-1]` | changed |
+| `[DRP-8]` | changed |
+| `[DRV-1]` | changed |
+| `[DSJ-6]` | changed |
+| `[DSP-4]` | changed |
+| `[DSP-6]` | changed |
+| `[EFF-9]` | changed |
+| `[EFF-12]` | changed |
+| `[EFF-27]` | changed |
+| `[ERR-3]` | changed |
+| `[ERR-8]` | changed |
+| `[EXC-17]` | changed |
+| `[EXP-4]` | changed |
+| `[EXP-6]` | changed |
+| `[EXP-9]` | changed |
+| `[FFI-2]` | changed |
+| `[FFI-2a]` | changed |
+| `[FFI-8]` | changed |
+| `[FFI-10]` | changed |
+| `[FFI-11]` | changed |
+| `[FFI-11a]` | changed |
+| `[FFI-12]` | changed |
+| `[FFI-17]` | changed |
+| `[FFI-17a]` | changed |
+| `[FFI-17b]` | changed |
+| `[FFI-17d]` | changed |
+| `[FFI-17f]` | changed |
+| `[FFI-21]` | changed |
+| `[FFI-22]` | changed |
+| `[FFI-30c]` | changed |
+| `[FFI-31b]` | changed |
+| `[FFI-36]` | changed |
+| `[FFI-36a]` | changed |
+| `[FFI-39]` | changed |
+| `[FFI-39b]` | changed |
+| `[FFI-40]` | changed |
+| `[FFI-40a]` | changed |
+| `[FFI-40b]` | added |
+| `[FFI-41]` | changed |
+| `[FFI-42]` | changed |
+| `[FFI-44]` | changed |
+| `[FFI-48]` | changed |
+| `[FFI-51]` | changed |
+| `[FFI-52]` | changed |
+| `[FFI-53]` | changed |
+| `[FFI-55]` | changed |
+| `[FFI-56]` | changed |
+| `[FFI-57]` | added |
+| `[FN-1]` | changed |
+| `[FN-2a]` | changed |
+| `[FN-6]` | changed |
+| `[GRM-3]` | changed |
+| `[GRM-13]` | changed |
+| `[GRM-15]` | changed |
+| `[GRM-28]` | changed |
+| `[GRM-35]` | changed |
+| `[HND-2]` | changed |
+| `[HR-11]` | changed |
+| `[HR-14]` | changed |
+| `[HR-35]` | changed |
+| `[HR-44]` | changed |
+| `[IFC-3]` | changed |
+| `[IFC-4]` | changed |
+| `[LEX-11]` | changed |
+| `[LEX-23]` | changed |
+| `[LT-1]` | changed |
+| `[LT-4]` | changed |
+| `[LT-46]` | changed |
+| `[LT-48]` | changed |
+| `[MNG-1]` | changed |
+| `[OBJ-1]` | changed |
+| `[OBJ-4]` | changed |
+| `[OPT-1]` | changed |
+| `[OWN-7]` | changed |
+| `[OWN-8]` | changed |
+| `[OWN-9]` | changed |
+| `[OWN-11]` | changed |
+| `[OWN-13]` | changed |
+| `[PAR-2]` | changed |
+| `[PAR-2b]` | changed |
+| `[PAR-3]` | changed |
+| `[PHIL-8]` | changed |
+| `[PRF-4]` | changed |
+| `[RC-4]` | changed |
+| `[SER-1]` | changed |
+| `[SIMD-5]` | changed |
+| `[SOA-1]` | changed |
+| `[SOA-6]` | changed |
+| `[SPN-3]` | changed |
+| `[STA-1]` | changed |
+| `[STD-8]` | changed |
+| `[STD-15]` | changed |
+| `[STD-27]` | changed |
+| `[STR-1]` | changed |
+| `[STR-2]` | changed |
+| `[STR-5]` | changed |
+| `[TCB-4]` | changed |
+| `[THR-1]` | changed |
+| `[THR-2]` | changed |
+| `[THR-5]` | changed |
+| `[THR-8]` | changed |
+| `[THR-9]` | changed |
+| `[THR-11]` | changed |
+| `[THR-15]` | changed |
+| `[THR-19]` | changed |
+| `[THR-20]` | changed |
+| `[THR-21]` | changed |
+| `[TIER-1]` | changed |
+| `[TXT-11]` | changed |
+| `[TYP-5]` | changed |
+| `[TYP-6]` | changed |
+| `[TYP-14]` | changed |
+| `[TYP-17]` | changed |
+| `[TYP-21]` | changed |
+| `[TYP-22]` | changed |
+| `[TYP-26]` | changed |
+| `[TYP-32]` | changed |
+| `[TYP-36]` | changed |
+| `[TYP-38]` | changed |
+| `[TYP-43]` | changed |
+| `[TYP-44]` | changed |
+| `[TYP-45]` | changed |
+| `[TYP-46]` | changed |
+| `[TYP-46a]` | changed |
+| `[TYP-47]` | changed |
+| `[UNS-1]` | changed |
+| `[UNS-12]` | changed |
+| `[WK-3]` | changed |
+| `[WK-6]` | changed |

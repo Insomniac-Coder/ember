@@ -72,7 +72,7 @@ generic_params:= "[" generic_param {"," generic_param} [","] "]"
 generic_param := IDENT ["..."] [":" "needs" needs] ["=" type]   -- `...`: a pack ([TYP-47])
                | "const" IDENT ":" type ["=" expression]
 needs         := type | "(" type {"," type} [","] ")"     -- one bare, several in round brackets ([TYP-17])
-bound_list    := type {"+" type}                        -- after `dyn` and `some` only
+bound_list    := type | "(" type {"," type} [","] ")"     -- after `dyn` and `some`: one bare, several in round brackets, as `needs` ([TYP-17], [TYP-22])
 where_clause  := "where" type ":" "needs" needs {"," type ":" "needs" needs}
 param_list    := param {"," param} [","]
 param         := [param_word] IDENT ":" ["runtime"] type ["..."] ["=" expression]   -- `Ts...`: the pack's values; `runtime` before `dyn` or an open class ([LT-48])
@@ -184,21 +184,25 @@ path_segment  := IDENT [generic_args]
 generic_args  := "[" generic_arg {"," generic_arg} [","] "]"
 generic_arg   := type | expression | IDENT "=" type          -- const argument; associated-type binding
                | IDENT "..."                               -- a pack spelled out ([TYP-47])
-tuple_type    := "(" ")" | "(" type "," type {"," type} [","] ")"        -- two or more elements ([TYP-27])
+tuple_type    := "(" ")" | "(" tuple_elem "," tuple_elem {"," tuple_elem} [","] ")" | "(" IDENT "..." ")"
+                                                     -- two or more elements once a pack is spelled out ([TYP-27], [TYP-47])
+tuple_elem    := type | IDENT "..."                        -- a pack spelled out ([TYP-47])
 fn_type       := ["once"] ["unsafe"] ["extern" STRING] "fn" "(" [fn_type_param {"," fn_type_param} [","]] ")"
                  ["->" type]
-fn_type_param := [param_word] type
+fn_type_param := [param_word] (type | IDENT "...")       -- a pack spelled out ([TYP-47])
 ```
 
-* `[GRM-3]` *(changed in 0.9.15)* `Array[T]`, `Map[K, V]`, `Option[T]`, `Result[T, E]`, `Span[T]`, and the other
-  library types are ordinary `path_type`s; the grammar does not special-case them. Generic arguments
-  may appear on any path segment: `SoA[Particle].Ref`. The words before a type (`owns`, `shares`,
-  `shares mut`, `thread_shared`, `weakref`, `ref`, `ref mut`, `sharedref mut`) and `using` after one
-  say who owns the value, how it may be reached and where its memory comes from (`[TYP-45]`,
-  `[TYP-46]`); `using` applies to the whole type before it, so `owns Mesh using LevelArena` is an
-  `owns Mesh` whose block comes from a `LevelArena`. A function type's parameter words are the
-  parameters' own (`fn(ref mut Ui)`, `fn(owns String) -> int`), and `thread_shared fn()` is a function
-  any thread may run.
+* `[GRM-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* `Array[T]`, `Map[K, V]`, `Option[T]`, `Result[T, E]`, `Span[T]`,
+  and the other library types are ordinary `path_type`s; the grammar does not special-case them.
+  Generic arguments may appear on any path segment: `SoA[Particle].Ref`. The words before a type
+  (`owns`, `shares`, `shares mut`, `thread_shared`, `weakref`, `ref`, `ref mut`, `sharedref mut`)
+  and `using` after one say who owns the value, how it may be reached and where its memory comes
+  from (`[TYP-45]`, `[TYP-46]`); `using` applies to the whole type before it, so `owns Mesh using
+  LevelArena` is an `owns Mesh` whose block comes from a `LevelArena`, and `weakref Enemy using
+  Arena` a `weakref Enemy` whose target's block comes from an `Arena`, the kind the link's end gives
+  that block back to (`[TYP-46]`, `[ALC-5a]`). A function type's parameter words are the parameters'
+  own (`fn(ref mut Ui)`, `fn(owns String) -> int`), and `thread_shared fn()` is a function any
+  thread may run.
 * `[GRM-3a]` *(new in 0.9.20)* **What follows `weakref`.** After `weakref` stands the target's own
   type, with `thread_shared` before it for a link to a `thread_shared` value: `parent: weakref Node
   = None` links a node with one owner or with `shares` owners, `parent: weakref thread_shared Node =
@@ -212,10 +216,10 @@ fn_type_param := [param_word] type
   T` and `weakref *T` ("a link names the value itself, not a view, a link or a pointer to it; write
   `target: weakref Player = None`"). In a capture list and before a value, `weakref thread_shared`
   stands only before `this` (`[OWN-13]`).
-* `[GRM-31]` *(new in 0.9.9)* *(changed in 0.9.10)* A `some` type (`[TYP-32]`) is legal only as a function's or a
-  method's return type, or nested inside one; elsewhere it is `E2260`. A method an interface declares
-  is not one: each implementation would choose its own type, so an associated type states it
-  (`type Iter: needs Iterator[Item = T]`) (ODR-144).
+* `[GRM-31]` *(new in 0.9.9)* *(changed in 0.9.10)* A `some` type (`[TYP-32]`) is legal only as a
+  function's or a method's return type, or nested inside one; elsewhere it is `E2260`. A method an
+  interface declares is not one: each implementation would choose its own type, so an associated
+  type states it (`type Iter: needs Iterator[Item = T]`) (ODR-144).
 
 ## III.4 Statements
 
@@ -273,12 +277,13 @@ comptime_stmt := "comptime" ":" block
 * `[GRM-7]` `defer` blocks run in reverse order at the exit of the enclosing block, on every path
   out of it, including `return`, `break` and `continue`. A `defer` block may not itself jump out
   (`E2160`).
-* `[GRM-28]` *(new in 0.9.9)* *(changed in 0.9.15)* A `fn_decl` inside a block declares a **local
+* `[GRM-28]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A `fn_decl` inside a block declares a **local
   function**. It may capture locals of the enclosing function exactly as a lambda does (`[CLO-2]`),
   with the same capture words after its brackets (`fn push_a() thread_shared log:`), may call itself
   recursively, and is in scope from its declaration to the end of the block. It is a value of its
   function type and may be passed by its name, so a long lambda may be written inside the call or as
-  a local function passed by its name (`a = thread.spawn(push_a)`).
+  a local function passed by its name (`a = thread.spawn(owns push_a)`, the call's word as for any
+  argument, `[FN-2a]`; `apply(push_a)` for an `F`-bounded parameter, which lends it).
 * `[GRM-18]` `;` never separates statements. `a = 1; b = 2` is `E0105`, whose help puts each
   statement on its own line. `;` appears only inside `[T; N]` and `[v; N]`.
 * `[GRM-19]` *(changed in 0.9.9)* *(changed in 0.9.15)* The pattern of a `condition` MUST be
@@ -430,17 +435,21 @@ match_expr    := "match" expression ":" NEWLINE INDENT {pattern ["if" expression
   `ROSTER.push(weakref this)`, `thread_shared x` and `sharedref mut x` alike), and a constructor's
   argument, which takes no word and works as `=` does (`Words(names=xs)`, `[FN-2a]`); and in `b =
   owns n` for a value `=` would copy (a number, a `bool`, a `StrView`, `[OWN-9]`), so that `n` ends
-  there. `owns` before a lambda covers the whole lambda, whose body extends as far right as possible
-  (level 2) and, inside a call, ends at the closing bracket or the next comma at the same depth
-  (`[LEX-6a]`); another word before a lambda (`copy of fn ...`) is refused as `[GRM-42]` says.
-  Before a value made on the line that is given to a place that is not an `owns T` (`b = owns (n *
-  2)`, `b = owns f()`, `xs = owns [1, 2]`; the required case is `[TYP-45]`'s) it ends nothing and is
-  `E0109`: "`=` already hands a value made on the line over; remove `owns`: `b = n * 2`". Before a
-  name whose place already hands the value over with no word (`e.mesh = m`, `b = a` for a value `=`
-  hands over, `return a`), and before `fn` anywhere but an argument for an `owns` parameter, it is
-  `E0109`, whose message says to remove it (for `owns fn`, to name what the function takes on each
-  captured name: `fn() owns report:`). Before an argument for a parameter that only reads
-  (`show(owns xs)`) it is `E3028`, "`show` only reads its argument; remove `owns`: `show(xs)`".
+  there, and before a part on the right of `=` (`body = owns req.body`), which hands the part over
+  into the new name as `names.push(owns req.body)` does (`[OWN-11]`, with its refusals: a field of a
+  type with `drop` `E3010`, an element `E3011`, a field of a class object or a part reached through
+  a name that does not own it `E3013`), where `=` alone makes a view (`[BRW-12]`). `owns` before a
+  lambda covers the whole lambda, whose body extends as far right as possible (level 2) and, inside
+  a call, ends at the closing bracket or the next comma at the same depth (`[LEX-6a]`); another word
+  before a lambda (`copy of fn ...`) is refused as `[GRM-42]` says. Before a value made on the line
+  that is given to a place that is not an `owns T` (`b = owns (n * 2)`, `b = owns f()`, `xs = owns
+  [1, 2]`; the required case is `[TYP-45]`'s) it ends nothing and is `E0109`: "`=` already hands a
+  value made on the line over; remove `owns`: `b = n * 2`". Before a name whose place already hands
+  the value over with no word (`e.mesh = m`, `b = a` for a value `=` hands over, `return a`), and
+  before `fn` anywhere but an argument for an `owns` parameter, it is `E0109`, whose message says to
+  remove it (for `owns fn`, to name what the function takes on each captured name: `fn() owns
+  report:`). Before an argument for a parameter that only reads (`show(owns xs)`) it is `E3028`,
+  "`show` only reads its argument; remove `owns`: `show(xs)`".
 * `[GRM-17]` *(changed in 0.9.10)* *(changed in 0.9.20)* A lambda with a `:` body inside brackets
   holds exactly one simple statement (`[LEX-6a]`). More is `E0106`, whose help is to declare a local
   function on the preceding line (`[GRM-28]`). A lambda's `:` body is one simple statement, inside
@@ -562,7 +571,7 @@ primary_pattern := "_" | literal_pattern | range_pattern | IDENT
                | path "(" [field_pattern {"," field_pattern}] ["," ".."] ")"
                | path
                | "(" [pattern "," pattern {"," pattern} [","]] ")"
-               | "[" [pattern {"," pattern}] ["," ".." [IDENT]] "]"
+               | "[" [pattern {"," pattern}] ["," ".." [IDENT]] "]" | "[" ".." [IDENT] "]"   -- a list pattern ([GRM-13])
                | "ref" ["mut"] IDENT
 literal_pattern := ["-"] INT | STRING | CHAR | "true" | "false"
 range_pattern := literal_pattern (".." | "..=") literal_pattern
@@ -573,13 +582,23 @@ path          := IDENT {"." IDENT}
 * `[GRM-12]` An identifier in pattern position names a unit variant or a `const` if one of that name is
   in scope; otherwise it binds a new name. A binding that shadows a variant of another enum in scope is
   `W1002`.
-* `[GRM-13]` *(changed in 0.9.15)* A name a pattern binds in a place it does not take over is a read-only view of the
-  part it names, as a name for a part is (Part VII): a number, a `bool` or a variant with no payload is
-  copied, as Python binds a number, and nothing is changed through the name (`E3023`). `ref mut`
-  before it makes a name for that part that may change it (`State.Walking(ref mut path):` then
-  `path.pop()`); `mut` alone is `E0113` ("`mut path` says `path` may change but not whose list it is;
-  to change that list through `path`, write `State.Walking(ref mut path):`"). `match owns e:` hands `e`
-  over, and each name of the branch that runs owns its part.
+* `[GRM-13]` *(changed in 0.9.15)* *(changed in 0.9.20)* A name a pattern binds in a place it does not take over is a
+  read-only view of the part it names, as a name for a part is (Part VII): a number, a `bool` or a
+  variant with no payload is copied, as Python binds a number, and nothing is changed through the
+  name (`E3023`). `ref mut` before it makes a name for that part that may change it
+  (`State.Walking(ref mut path):` then `path.pop()`); `mut` alone is `E0113` ("`mut path` says
+  `path` may change but not whose list it is; to change that list through `path`, write
+  `State.Walking(ref mut path):`"). `match owns e:` hands `e` over, and each name of the branch that
+  runs owns its part. A list pattern `[p, q]` matches a `Span[T]`, `MutSpan[T]`, `Array[T]` or `[T;
+  N]` of exactly that many elements and binds each name to its element as above (an `N` that can
+  never equal the count is `E2020`, naming both); `[p, q, ..]` matches one with at least that many;
+  `[p, ..rest]` names the remaining elements `rest`, a `Span[T]` of them (a `MutSpan[T]` where the
+  scrutinee is a `ref mut` name of the list), a view like every pattern name, which the list's rules
+  govern (`[BRW-1]`), and `[..rest]` alone names the whole; a `..rest` name reads its list in place,
+  so under `match owns xs:` it is `E2020`, whose help is to match `xs` in place and take what is
+  needed with `copy of rest` or `xs.drain(1..)`. A list pattern against a `String` or `StrView` is
+  `E2020`, whose help gives `split`. A list pattern stands nested or on a `for` line, never first on
+  a line of its own (`[GRM-40]`).
 * `[ENM-1]` *(changed in 0.9.9)* Inside a pattern whose scrutinee type is known, a variant may be
   written unqualified (`Circle(r)`); in an expression it is qualified (`Shape.Circle(1.0)`) unless
   imported.

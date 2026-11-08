@@ -213,8 +213,10 @@ fn main():
 
 * `[ALC-1]` *(changed in 0.9.15)* *(changed in 0.9.20)* **The place names the kind, the making line
   names the instance.** `using A` after a type whose value has heap memory of its own (an `owns`,
-  `shares` or `shares mut` value, a class object, an `Array`, `Map`, `Set` or `String`; never a
-  `thread_shared` value, whose block carries its making thread's record, `[OBJ-4]`, `E2114`) names
+  `shares`, `shares mut` or `thread_shared` value, a class object, a standard collection whose
+  storage is on the heap: an `Array`, `Map`, `Set`, `String`, `Deque`, `SoA`, or a `SmallArray`
+  beyond its `N`; a `thread_shared` value's block then comes from the instance and never from the
+  runtime's chunks, so it is counted away from its making line, `[RC-4]` point 4, `[TYP-46a]`) names
   the kind of memory manager that memory comes from, a type implementing `Allocator`: `mesh: owns
   Mesh using LevelArena`, `names: Array[String] using LevelArena`, `Map[K, V, H] using A`, `Set[T,
   H] using A`. Without `using`, it comes from the built-in manager, `Global`. The line that makes
@@ -244,19 +246,26 @@ fn main():
   manager, whose values keep no word (verdict 107): (1) a manager that frees nothing one by one,
   whose `deallocate` does nothing (an empty body, checked when compiling): nothing it hands out is
   given back value by value, and all of it is freed together when the instance is cleared or ends; a
-  value that grows (an `Array`, `Map`, `Set` or `String`) made in it keeps the word, since its
-  growth goes back to the instance; (2) a manager that implements `FoundByAddress` (`[ALC-2]`),
-  whose values' instance is found from their address, as C's `free(p)` finds its heap. Neither
-  changes what is checked: that no value outlives its instance or is used after a reset is checked
-  when compiling and never reads the word (`[LT-4]`). Between threads a value made in an instance
-  follows its manager: it holds a `ref A` to the instance for `Send` and `ThreadShared`, and its
-  growth and end are changes of the instance for `[THR-11]` (`[TYP-46a]`). An instance held inline
-  in a struct beside values made in it would be a view into another field of the same value
-  (`[LT-25]`, `E3024`) and would move with the struct: such an instance is held in a block of its
-  own (`arena: owns LevelArena`), or the values are made `using` an instance the struct does not
-  hold; a manager with one instance needs none of this. An allocator type parameter is not Ember:
-  `Box[T, A]` and `Array[T, A]` are `E1010`, whose help gives `owns T using A` and `Array[T] using
-  A`.
+  value that grows (an `Array`, `Map`, `Set`, `String`, `Deque`, `SoA` or `SmallArray`) made in it
+  keeps the word, since its growth goes back to the instance; (2) a manager that implements
+  `FoundByAddress` (`[ALC-2]`), whose values' instance is found from their address, as C's `free(p)`
+  finds its heap. Neither changes what is checked: that no value outlives its instance or is used
+  after a reset is checked when compiling and never reads the word (`[LT-4]`). Between threads a
+  value made in an instance follows its manager: for `Send` and `ThreadShared` it holds a `ref A` to
+  the instance when `A` is a manager any thread may call, else the `sharedref mut` link of `[LT-4]`,
+  and its growth and end are changes of the instance for `[THR-11]` where they call its methods
+  (`[TYP-46a]`). An instance held inline in a struct beside values made in it would be a view into
+  another field of the same value (`[LT-25]`, `E3024`) and would move with the struct: such an
+  instance is held in a block of its own (`arena: owns LevelArena`), or the values are made `using`
+  an instance the struct does not hold; a manager with one instance needs none of this. An allocator
+  type parameter is not Ember: `Box[T, A]` and `Array[T, A]` are `E1010`, whose help gives `owns T
+  using A` and `Array[T] using A`. A class whose objects a program makes `using A` is, with that
+  kind, a type of its own, as `Array[T] using A` is: `Node using Arena` is distinct from `Node`, its
+  methods are compiled for that kind (its summaries recorded per kind, `[EFF-4]`), inside them
+  `this` carries the kind, and a field of the class written with the class's own type (`parent:
+  weakref Node`, `children: Array[Node]`) takes the kind of the object that holds it, so `weakref
+  this`, `shares this` and `Node() using current` in a method all name one kind, read from `this`; a
+  field written `using B` names `B` whatever kind the object is.
 * `[ALC-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* `std.mem` declares `pub unsafe interface
   Allocator` with `fn allocate(layout: Layout) -> *mut u8` (null on failure), `unsafe fn
   deallocate(p: *mut u8, layout: Layout)` and `unsafe fn reallocate(p: *mut u8, old: Layout,
@@ -298,7 +307,7 @@ fn main():
   so the rule is checked as written; one handed to an unscoped thread (`[THR-2]`) lives, for this
   rule, as long as the instance, so no change of this rule's kind is made to that instance after the
   hand-over (`E3021`, naming the hand-over's line).
-* `[ALC-5a]` *(new in 0.9.20)* **A link holds the block.** A `weakref` link to a value made in a
+* `[ALC-5a]` *(new in 0.9.20)* *(changed in 0.9.20)* **A link holds the block.** A `weakref` link to a value made in a
   memory manager's instance counts, for `[LT-4]` and `[ALC-5]`, as a value that holds one, since the
   target's block stays until the link ends (`[WK-11]`, `[OBJ-3]`): the link carries the instance's
   region from the line that makes it (`w = weakref n`) through every place it is copied or stored,
@@ -312,7 +321,10 @@ fn main():
   list that holds it lives no longer than the instance (`E3063`). Nothing runs for this: the block a
   link keeps is given back by the manager's own `deallocate` when the weak count reaches 0, as any
   other, which for a manager that frees nothing one by one is a no-op, so this check is what keeps
-  the block from reuse.
+  the block from reuse. Which give-back that is, the built-in manager's, a call through the instance
+  word the block keeps, nothing, or the instance found from the block's address, is read from the
+  link's type (`weakref Enemy`, `weakref Enemy using Arena`, `[TYP-46]`) when the link's end is
+  compiled, never from the block, which carries no mark for it (`[OBJ-1]`).
 * `[ALC-6]` *(new in 0.9.20)* **A making line has its instance's effects, and fails as a container
   does.** A line that makes a value `using x`, and every growth and end of that value, carries the
   effects of the `Allocator` methods it calls on `x`'s type (`[EFF-1]`); `Alloc` is the effect of
@@ -341,26 +353,41 @@ fn parse(data: Span[u8]) -> Option[u32]:
         return Some(read_u32_le(data.as_ptr()))
 ```
 
-* `[UNS-1]` *(changed in 0.9.15)* An `unsafe` context is required to: dereference, read or write
-  through `*T`/`*mut T`; offset a pointer; cast between pointers or pointers and integers; call an
-  `unsafe fn` (`Allocator.deallocate` and `reallocate` among them, `[ALC-2]`), or through a value of
-  an `unsafe` callable type (`[FN-6]`); call an `extern` function without a verified contract (Part
-  XVI); access a foreign `static mut` (`[STA-1]`); `transmute`, `copy` or `copy_nonoverlapping`
-  (`[UNS-5]`); call `get_unchecked`, `assume_init` or `assume_disjoint`; give an object to C with
-  `into_raw()` (`[OWN-12]`); make or write a `MaybeUninit` of a type that needs drop (`[ARN-8]`);
-  implement an `unsafe` interface, or declare `Send` by hand (`unsafe extend T implements Send:`,
-  `[TYP-43]`). Each of these outside unsafe code (an `unsafe:` block, or an `unsafe fn` body outside
-  its `safe:` blocks, `[UNS-12]`) is `E3100`, whose message says what the code must vouch for and
-  gives the block to write ("`read_u32_le(buf.as_ptr())` (line 9) calls an `unsafe fn`, whose
-  callers must make true what its `@safety` says; put line 9 in an `unsafe:` block with a `#
-  SAFETY:` note saying why that holds here: above line 9 write `# SAFETY:` and the reason, then
-  `unsafe:`, and indent line 9 under it"). The block to write goes around the whole statement the
-  operation is in: the compound statement for one in its header (`elif p.read() > 0:` is its `if`'s,
-  "put lines 9 to 12 in an `unsafe:` block"), every line of a statement written over several, and
-  "put the statement on line 7 on a line of its own, in an `unsafe:` block" for one on the line of a
-  header; outside a function's body (a constant's value), where no block can be written, the message
-  gives none. The unsafe operations of one statement are one `E3100`, naming them together ("the
-  reads through `p` on line 9"); a pointer's offset is named with the read or write it leads to.
+* `[UNS-1]` *(changed in 0.9.15)* *(changed in 0.9.20)* An `unsafe` context is required to:
+  dereference, read or write through `*T`/`*mut T`; offset a pointer; cast between pointers or
+  pointers and integers; call an `unsafe fn` (`Allocator.deallocate` and `reallocate` among them,
+  `[ALC-2]`), or through a value of an `unsafe` callable type (`[FN-6]`); call an `extern` function
+  without a verified contract (Part XVI); access a foreign `static mut`, or read a foreign static
+  outside the safe reads of `[FFI-8]`'s static row and `[FFI-41]` (`[STA-1]`); give foreign code a
+  raw pointer, as `into_raw()` does: return a raw pointer, or a value holding one at any depth, from
+  a function foreign code may call (one whose value becomes an `extern "C" fn`, `[FN-6]`,
+  `[FFI-21]`; an export or an `@export_table` field's function, `[FFI-26]`; an `override fn` of a
+  C++ virtual method, `[FFI-39]`: the functions `[FFI-52]` lists), or store one into a place foreign
+  code reads with no call Ember sees (a `ref mut` or `MutSpan` parameter of such a function, or a
+  field of one; a place reached through the `ref mut` view a foreign result's lifetime word gives,
+  `[FFI-11]`, `[FFI-40]`; a foreign `static mut`; a raw-pointer or C function-pointer field of an
+  imported C or C++ aggregate, or a whole value holding one written into such an aggregate, whose
+  memory foreign code reads, `[FFI-8]`), since safe code may make a pointer that is null, dangling
+  or shorter than a count beside it (§IV.5, `[SPN-8]`) and code nothing checks reads it there
+  (`E3100`: "`spare` returns `ref_to_ptr(ref mut x)` (line 7) to C, which uses the pointer after
+  `spare` has returned; put line 7 in an `unsafe:` block with a `# SAFETY:` note saying why C may
+  use it"); a pointer into a parameter C passes as a copy stays refused outright (`E5042`,
+  `[FFI-21a]`); `transmute`, `copy` or `copy_nonoverlapping` (`[UNS-5]`); call `get_unchecked`,
+  `assume_init` or `assume_disjoint`; give an object to C with `into_raw()` (`[OWN-12]`); make or
+  write a `MaybeUninit` of a type that needs drop (`[ARN-8]`); implement an `unsafe` interface, or
+  declare `Send` by hand (`unsafe extend T implements Send:`, `[TYP-43]`). Each of these outside
+  unsafe code (an `unsafe:` block, or an `unsafe fn` body outside its `safe:` blocks, `[UNS-12]`) is
+  `E3100`, whose message says what the code must vouch for and gives the block to write
+  ("`read_u32_le(buf.as_ptr())` (line 9) calls an `unsafe fn`, whose callers must make true what its
+  `@safety` says; put line 9 in an `unsafe:` block with a `# SAFETY:` note saying why that holds
+  here: above line 9 write `# SAFETY:` and the reason, then `unsafe:`, and indent line 9 under it").
+  The block to write goes around the whole statement the operation is in: the compound statement for
+  one in its header (`elif p.read() > 0:` is its `if`'s, "put lines 9 to 12 in an `unsafe:` block"),
+  every line of a statement written over several, and "put the statement on line 7 on a line of its
+  own, in an `unsafe:` block" for one on the line of a header; outside a function's body (a
+  constant's value), where no block can be written, the message gives none. The unsafe operations of
+  one statement are one `E3100`, naming them together ("the reads through `p` on line 9"); a
+  pointer's offset is named with the read or write it leads to.
 * `[UNS-2]` *(changed in 0.9.15)* `unsafe` permits exactly those operations. It does not turn off
   the checks of Parts VII and VIII, bounds checks on safe types, overflow checks or type checking.
 * `[UNS-3]` *(changed in 0.9.15)* `L3010` reports an `unsafe` block containing statements that need
@@ -437,20 +464,32 @@ fn parse(data: Span[u8]) -> Option[u32]:
   (`unsafe:`, `unsafe extend`, `unsafe extern`, `unsafe overlay`) it says that this code vouches,
   with `# SAFETY:` saying why (`[UNS-8]`); `safe:` inside unsafe code says the opposite, that its
   code is checked as safe code (`[UNS-12]`).
-* `[UNS-12]` *(new in 0.9.15)* **An `unsafe fn` is unsafe as a whole** (verdict 118: "the function
-  literally says that it is unsafe"). Its body is unsafe code, as the inside of an `unsafe:` block
-  is. Everything written in unsafe code is unsafe (verdict 119): a function declared there is an
-  `unsafe fn`, whose body is unsafe, whose calls need unsafe code, and which carries `@safety`
-  (`[UNS-7]`); a lambda written there is a value of an `unsafe` callable type, `unsafe fn(…)`
-  (`[FN-6]`), which only unsafe code calls (`fn make() -> unsafe fn(*mut u8):` may return one made
-  in an `unsafe:` block; `-> fn(*mut u8)` may not). Code inside unsafe code that is to be checked as
-  safe code is written in a `safe:` block, which needs no note: in it each operation of `[UNS-1]` is
-  `E3100` again ("`p.write(1)` (line 7) is in a `safe:` block, which is checked as safe code; move
-  it out of the `safe:` block, or put it in an `unsafe:` block with a `# SAFETY:` note"), a function
-  or lambda written in it is safe, and an `unsafe:` block in it is unsafe again. A `safe:` block
-  outside unsafe code changes nothing and is `L3020` ("this `safe:` block is not inside unsafe code,
-  so it changes nothing: remove `safe:`"); an `unsafe:` block directly inside unsafe code is `L3010`
-  (`[UNS-3]`).
+* `[UNS-12]` *(new in 0.9.15)* *(changed in 0.9.20)* **An `unsafe fn` is unsafe as a whole**
+  (verdict 118: "the function literally says that it is unsafe"). Its body is unsafe code, as the
+  inside of an `unsafe:` block is. Everything written in unsafe code is unsafe (verdict 119): a
+  function declared there is an `unsafe fn`, whose body is unsafe, whose calls need unsafe code, and
+  which carries `@safety` (`[UNS-7]`); a lambda written there is a value of an `unsafe` callable
+  type, `unsafe fn(…)` (`[FN-6]`), which only unsafe code calls (`fn make() -> unsafe fn(*mut u8):`
+  may return one made in an `unsafe:` block; `-> fn(*mut u8)` may not). Code inside unsafe code that
+  is to be checked as safe code is written in a `safe:` block, which needs no note: in it each
+  operation of `[UNS-1]` is `E3100` again ("`p.write(1)` (line 7) is in a `safe:` block, which is
+  checked as safe code; move it out of the `safe:` block, or put it in an `unsafe:` block with a `#
+  SAFETY:` note"), a function or lambda written in it is safe, and an `unsafe:` block in it is
+  unsafe again. A `safe:` block outside unsafe code changes nothing and is `L3020` ("this `safe:`
+  block is not inside unsafe code, so it changes nothing: remove `safe:`"); an `unsafe:` block
+  directly inside unsafe code is `L3010` (`[UNS-3]`). A function that safe code runs without naming
+  it is never an `unsafe fn`: `drop`, which runs wherever a value ends (`[DRP-1]`, `[DRP-8]`); an
+  `override` of a method that is not `unsafe`, which a virtual call through the base reaches
+  (`[DSP-2]`); and a method implementing an interface method the interface declares without
+  `unsafe`, which a call through `dyn I` or through a bound reaches. Each written `unsafe fn` is
+  `E2020`, an `unsafe fn` where a safe one is wanted (`[FN-6]`): "`drop` runs wherever a `Window`
+  ends, in safe code, so it cannot be an `unsafe fn`; write `fn drop():` and put
+  `destroy_window(this.handle)` in an `unsafe:` block with a `# SAFETY:` note"; "`show` overrides
+  `Widget.show`, which safe code calls through any `Widget`; write `override fn show():` and put
+  `p.write(1)` in an `unsafe:` block with a `# SAFETY:` note". A `virtual` method or an interface
+  method declared `unsafe fn` is called in unsafe code through the base or the interface as any
+  `unsafe fn` is (`[UNS-1]`), with its `@safety` (`[UNS-7]`); a safe override or implementation of
+  one is allowed, as a safe function converts to an `unsafe fn(…)` type (`[FN-6]`).
 
 ## IX.5 Layout
 
@@ -612,12 +651,12 @@ fn mix_any(ref mut tracks: Map[String, Array[float]], dst_name: StrView, src_nam
   through the other; and two names already given the fact by an earlier `assert_disjoint` or
   `check_disjoint` (`[DSJ-2]`). Nothing else is, whatever an implementation could see: this is the
   one disjointness proof, and `[EFF-15]` names it.
-* `[DSJ-6]` *(changed in 0.9.15)* `check_disjoint` and `assert_disjoint` are usable in `@noalloc`
-  and `@nosync` code. They are the one run-time alias check there is, so inside `@no_alias_checks`
-  each is `E4030` ("`mix` is `@no_alias_checks`, and `assert_disjoint(d, s)` (line 18) compares the
-  two spans while running; blend from a copy, which needs no check: instead of lines 16 to 19 write
-  `old = copy of tracks[src_name]` and `blend(ref mut tracks[dst_name].as_mut_span(),
-  old.as_span())`, or remove `@no_alias_checks`", `[EFF-12]`).
+* `[DSJ-6]` *(changed in 0.9.15)* *(changed in 0.9.20)* `check_disjoint` and `assert_disjoint` are usable in `@noalloc`
+  and `@nosync` code. They are, with a `runtime` name's test (`[LT-48]`), the run-time alias checks
+  there are, so inside `@no_alias_checks` each is `E4030` ("`mix` is `@no_alias_checks`, and
+  `assert_disjoint(d, s)` (line 18) compares the two spans while running; blend from a copy, which
+  needs no check: instead of lines 16 to 19 write `old = copy of tracks[src_name]` and `blend(ref
+  mut tracks[dst_name].as_mut_span(), old.as_span())`, or remove `@no_alias_checks`", `[EFF-12]`).
 * `[DSJ-7]` *(changed in 0.9.15)* `assume_disjoint(a, b)`, an `unsafe fn`, gives the two names the
   fact without checking; violating it is undefined behaviour.
 * `[DSJ-8]` There is no form that checks in one profile and assumes in another (`[PHIL-13]`).

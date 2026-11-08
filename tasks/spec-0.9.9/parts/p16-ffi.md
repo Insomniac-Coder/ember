@@ -23,77 +23,145 @@ fn main():
 
 ## XVI.1 Principles
 
-* `[FFI-1]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* Every foreign declaration has a **contract**: for each pointer-typed
-  parameter and result, its ownership, mutability, nullability, count and lifetime (§XVI.4), and for
-  the function its effects, its thread rule, whether it may call back into Ember (`[FFI-52]`) and
-  whether it is **safe to call** at all. Facts derivable
-  from the C declaration are derived (`[FFI-2a]`); the rest are `unknown` until a contract supplies
-  them. `threads(creator)` and `handle` are words of a type's or a result's contract, not a function's:
-  on a function each is a contract error (`E5002`).
-* `[FFI-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* A call to a foreign function whose contract contains an `unknown` fact
-  requires `unsafe`. Supplying the facts, in an `@ffi(…)` attribute or an overlay (§XVI.4), makes the
-  call safe. The safe-to-call fact is never derived, because a scalar can be an address
-  (`void free_addr(uintptr_t)`): it is asserted by `safe fn` in an extern block (`[FFI-10]`), or by an
-  overlay entry for the function, which asserts that a call within its contract cannot break memory
-  safety; such an overlay is an `unsafe overlay` (`[GRM-35]`). An entry written `unsafe fn` asserts
-  nothing of the kind, nor does a hand declaration written so (verdict 133): the function stays unsafe
-  to call, and its `@safety` says what its callers must make true (`[UNS-7]`, verdict 130). A header function with no overlay entry therefore
-  stays unsafe to call. The diagnostic,
-  `E5002`, names each missing fact and the overlay line that supplies it (`[DIA-18]`).
-* `[FFI-2a]` *(changed in 0.9.15)* Derived facts need no `unsafe`: `const T*` is a read-only view, `T*`
-  one through which C may write; the layouts of structs and unions, enum underlying types, packing and
-  alignment, and the calling convention. In **result** position a pointer's lifetime is never derived.
+* `[FFI-1]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* Every foreign
+  declaration has a **contract**: for each pointer-typed parameter and result, its ownership,
+  mutability, nullability, count and lifetime (§XVI.4), and for the function its effects, its thread
+  rule, whether it may call back into Ember (`[FFI-52]`) and whether it is **safe to call** at all.
+  Facts derivable from the C declaration are derived (`[FFI-2a]`); the rest are `unknown` until a
+  contract supplies them. `threads(creator)` and `handle` are words of a type's or a result's
+  contract, not a function's: on a function each is a contract error (`E5002`).
+* `[FFI-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A call to a foreign function whose contract
+  contains an `unknown` fact requires `unsafe`. Supplying the facts, in an `@ffi(…)` attribute or an
+  overlay (§XVI.4), makes the call safe, within the limit on raw pointers below. The safe-to-call
+  fact is never derived, because a scalar can be an address (`void free_addr(uintptr_t)`): it is
+  asserted by `safe fn` in an extern block (`[FFI-10]`), or by an overlay entry for the function,
+  which asserts that a call within its contract cannot break memory safety; such an overlay is an
+  `unsafe overlay` (`[GRM-35]`). An entry written `unsafe fn` asserts nothing of the kind, nor does
+  a hand declaration written so (verdict 133): the function stays unsafe to call, and its `@safety`
+  says what its callers must make true (`[UNS-7]`, verdict 130). A header function with no overlay
+  entry therefore stays unsafe to call. The diagnostic, `E5002`, names each missing fact and the
+  overlay line that supplies it (`[DIA-18]`). **The limit on raw pointers.** Safe code never hands
+  foreign code an address it made up. No assertion of the fact — `safe fn` (`[FFI-10]`), an overlay
+  function entry not written `unsafe fn` (`[GRM-35]`), `@ffi(safe)` on a function-pointer typedef
+  (`[FFI-56]`) or `@ffi(std_function, safe)` on a `std::function` type (`[FFI-17a]`) — covers a
+  value the caller supplies that names memory or code nothing checks: a raw pointer (`*T`, `*mut T`,
+  an `ObjectPtr[C]`, `[FFI-54]`) or a C function pointer (`unsafe extern "C" fn(…)`, `[FFI-56]`),
+  alone or inside an `Option`, that the call carries to foreign code: an argument itself; one held,
+  at any depth, by what an argument passes, by value or behind a contracted pointer (`one`,
+  `count(n)`, `fixed(N)`, `exclusive`, `owns`, `nullable`), a C++ method's object included, read
+  from the argument's Ember type as it is declared, its fields, a union's fields, its elements, its
+  type arguments (`[T; N]`, `Span[T]`, `MutSpan[T]`, `Option[T]`, `CppVector[T]`, `Volatile[T]`) and
+  the representation of a `@ffi(newtype)` (`[FFI-8]`); and the result, itself or at any depth in it,
+  of a safe callable type among them (a `callback(…)` parameter's `fn(P…) -> R`, `[FFI-21]`; a field
+  of a safe `extern "C" fn` type, which only an Ember function fills, `[FFI-56]`), since that is
+  what an Ember function given to the call returns to foreign code, its parameters being what
+  foreign code hands the function. A type that declares no field holds none: an `extern type`, an
+  opaque class, a `@ffi(handle)` type (`[FFI-8]`), `CppString`; a `Span`, a `MutSpan` and a
+  `CStrView` are checked views, not raw pointers, and only a span's elements are read. Safe code can
+  make such a value null (`null[P]()`, `None`), pointing at fewer elements than a count beside it
+  says or at a value already ended (`ref_to_ptr`, `as_mut_ptr()`, §IV.5, `[SPN-8]`), or holding any
+  address (a pointer-cast constant, `[FFI-6a]`; a function pointer C handed back, whose target
+  nothing describes), and no contract reaches it: words attach to parameters and results only
+  (`[FFI-1]`, `[FFI-11]`), no overlay touches a field (`[FFI-30a]`), and a `safe fn`'s own
+  function-pointer parameter, a safe `fn(P…) -> R`, takes no such value (`[FFI-21]`, `[FN-6]`). So
+  an assertion of the fact for a function whose calls the other rules make safe, and whose calls
+  would carry one, is `E5002` where it is written, naming where the value is held: "`clear_pixels`
+  is declared `safe fn`, but `buf.data` is a raw pointer (`*mut u8`, line 3) that its call hands C,
+  and safe code can put any address in it and any count in `buf.len` (line 12); write
+  `@safety(\"…\")` above `unsafe fn clear_pixels(buf: PixelBuf)`, saying what `buf.data` must point
+  to, and put line 12 in an `unsafe:` block with a `# SAFETY:` note, or give safe callers a wrapper
+  that fills `PixelBuf` from a `MutSpan[u8]` inside `unsafe:`". The lines that leave the calls
+  unsafe are `@safety("…")` above the declaration or entry written `unsafe fn` (a hand declaration
+  keeping its C ABI parameters, `[FFI-10]`), or the typedef's or type's entry without `safe`; each
+  call then goes in an `unsafe:` block with a `# SAFETY:` note (`[UNS-1]`), or behind a wrapper in
+  an `extend` block (`[FFI-13]`) that fills the value from a checked view inside `unsafe:`; for an
+  entry in another package's overlay, the message gives that entry as an `override` in the importing
+  package's own overlay (`[FFI-30c]`). A message elsewhere that offers an assertion of the fact
+  (`safe fn lib_step`, a `callback(…)` word, `@ffi(safe)`) offers it only where this limit allows it
+  (`[DIA-25]`). An entry whose own words already leave its calls unsafe (an unknown fact, a
+  `TODO(…)` word, `retained` on a plain pointer; `[FFI-11]`, `[FFI-11c]`) is as it was. A value
+  foreign code hands Ember (a result, an `out` value, a callback's parameter, a field of what it
+  returns) is outside this limit: reading or writing through it is unsafe code (`[UNS-1]`), and
+  `[FFI-10]` decides a hand declaration's raw-pointer result. The limit is read from the declaration
+  and the header's types, which every package importing the header sees alike (`[FFI-30a]`,
+  `[BLD-16]`), and nothing runs for it while the program runs.
+* `[FFI-2a]` *(changed in 0.9.15)* *(changed in 0.9.20)* Derived facts need no `unsafe`: `const T*`
+  is a read-only view, `T*` one through which C may write; the layouts of structs and unions, enum
+  underlying types, packing and alignment, and the calling convention; and the `const` of an object
+  a header declares (`[FFI-8]`, `[FFI-41]`): in C it is never changed, in C++ only through a
+  `mutable` member, which is why an object whose type has one is read in `unsafe`. In **result**
+  position a lifetime is never derived: a pointer's, a C++ reference's (`[FFI-40]`), or that of a
+  view a C++ type maps to (`std::span`, a fixed-extent span, `std::string_view`, `[FFI-17a]`), from
+  a method or from a function outside a class alike. The entry gives it a lifetime word
+  (`[FFI-11]`); without one the function stays unsafe to call (`E3100` outside `unsafe:`), its
+  result a raw pointer (`*T`, `*mut T`) for a pointer or a reference and, for a view, the pointer
+  with the count C++ returned, `(*T, usize)` or `(*mut T, usize)`, read inside `unsafe:` by an
+  `extend` wrapper that copies the value (`[FFI-13]`); `ember bind --report` lists each
+  (`[FFI-35a]`).
 * `[FFI-4]` No Ember panic crosses into foreign code (`[FFI-25]`).
 * `[FFI-5]` Layouts are verified, not assumed: the importer records `sizeof`, `alignof` and field
   offsets from Clang for the project's target and flags, and the compiler checks its own layout
   against them (`E5001`, naming the type, field and both numbers).
-* `[FFI-5a]` The generated shim (`[FFI-29]`) contains a `_Static_assert` for the size and alignment of
-  every imported aggregate Ember constructs, passes, returns or embeds, and for the offset of every
-  field Ember accesses, so the project's own C compiler re-verifies the layout on every build.
+* `[FFI-5a]` The generated shim (`[FFI-29]`) contains a `_Static_assert` for the size and alignment
+  of every imported aggregate Ember constructs, passes, returns or embeds, and for the offset of
+  every field Ember accesses, so the project's own C compiler re-verifies the layout on every build.
 
 ## XVI.2 Declaring C functions by hand
 
 * `[FFI-10]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* An `unsafe extern
-  "C":` block declares foreign functions, statics and opaque types; `unsafe` records that the
-  programmer asserts the signatures. The declared names are items of the enclosing module. Each
-  function in the block says whether it is safe to call (verdict 136): `safe fn` (a contextual
-  keyword, `[LEX-15]`), safe to call only when every parameter and result is a scalar, a
-  `@layout(c)` value type, or a pointer whose contract is complete (given with `@ffi(…)` on the
-  declaration), `safe` on any other function being `E5002`, naming the fact that is missing; or
-  `unsafe fn`, whose calls are in unsafe code, with `@safety("…")` above it saying what its callers
-  must make true (`[UNS-7]`), as an overlay entry is (`[GRM-35]`, verdict 133). A plain `fn`, which
-  everywhere else in Ember is safe to call, says neither and is `E5002`: "`lib_step` does not say
-  whether it is safe to call: write `unsafe fn lib_step`, with `@safety("…")` above it saying what
-  its callers must make true, or `safe fn lib_step` if a call within its contract cannot break
-  memory safety", which `ember fmt --migrate` rewrites to `unsafe fn` (`[CLI-20]`); `safe unsafe fn`
-  is `E5002` too ("`lib_step` is declared both `safe` and `unsafe`"). A call of an `unsafe fn`
-  outside unsafe code is `E3100`, as any `unsafe fn`'s: "`raw_abs(-3)` (line 11) calls an `unsafe
-  fn`, whose callers must make true what its `@safety` says". `unsafe` is no word of `@ffi(…)`:
-  `@ffi(unsafe)`, `param(p, unsafe)` and `result(unsafe)` are `E0104` ("`unsafe` is no contract
-  word; write the declaration `unsafe fn peek(…)`, with `@safety("…")` above it saying what its
-  callers must make true"), which `ember fmt --migrate` rewrites (`[CLI-20]`); `@ffi(…)` keeps its
-  other words. `safe fn` is an asserted fact, listed by `ember tcb` (`[TCB-1]`). Its effects are
-  those its `@ffi(effects=[…])` states plus `FFI`, and every effect when none are stated
-  (`[EFF-3]`); which Ember code a call of it may run is `[FFI-52]`'s, and `@ffi(no_callbacks)` says
-  it runs none. On a hand declaration, `@ffi(param(name, word, …), result(word, …))` attaches
-  `[FFI-11]`'s contract words to each named pointer parameter and the pointer result (ODR-073). Each
-  slot is named at most once; `link_name`, `effects` and `no_callbacks` can share the same `@ffi`. A
-  `safe fn` writes the safe Ember types and the words in front of its parameters' names (`ref mut`,
-  `owns`) produced by those words; the compiler checks that mapping and lowers it to the C ABI
-  carrier. A raw `*T` can be declared for an unsafe call, but complete facts do not make a
-  raw-pointer parameter or result safe to expose; `safe fn` with one is `E5002`. Missing facts or a
-  type/contract mismatch is `E5002`, naming the slot. On a hand-declared `safe fn` with `count(n)`,
-  `n` is written as an integer scalar parameter at its C ABI position (ODR-074). The contract marks
-  it as an ABI witness: it is absent from the callable Ember signature, and the compiler supplies
-  the corresponding `Span[T]` or `MutSpan[T]` length at the call. The written integer type fixes the
-  C width and signedness. A length that does not fit that type, or unequal lengths from two pointer
-  clauses sharing `n`, panics before the foreign call. A missing or non-integer witness or an
-  incompatible pointer surface is `E5002`. An unsafe raw-pointer declaration keeps its written C ABI
-  parameters; only a mapped `safe fn` erases the witness. A `user_data=p` parameter of a
-  `callback(…)` contract is an ABI witness as `count(n)`'s `n` is: `p` is written as a raw pointer,
-  or an integer wide enough for the tagged number (`E5002` otherwise, since `[FFI-53]`'s number is
-  64 bits), at its C ABI position, is absent from the callable signature, and the call supplies the
-  callback's tagged number for it; a `safe fn` may name it (`[FFI-21]`). For an input `param(p,
+  "C":` block declares foreign functions, statics and opaque types (`type Widget`, which takes the
+  words an overlay `type` entry takes: `@ffi(destroys(f))`, `@ffi(handle)`,
+  `@ffi(threads(creator))`, `[FFI-54]`, `[FFI-8]`); `unsafe` records that the programmer asserts the
+  signatures. The declared names are items of the enclosing module. Each function in the block says
+  whether it is safe to call (verdict 136): `safe fn` (a contextual keyword, `[LEX-15]`), safe to
+  call only when every parameter and result is a scalar, a `@layout(c)` value type, or a pointer
+  whose contract is complete (given with `@ffi(…)` on the declaration), and within `[FFI-2]`'s limit
+  on raw pointers, `safe` on any other function being `E5002`, naming the fact that is missing or,
+  under that limit, where the pointer is held; or `unsafe fn`, whose calls are in unsafe code, with
+  `@safety("…")` above it saying what its callers must make true (`[UNS-7]`), as an overlay entry is
+  (`[GRM-35]`, verdict 133). A plain `fn`, which everywhere else in Ember is safe to call, says
+  neither and is `E5002`: "`lib_step` does not say whether it is safe to call: write `unsafe fn
+  lib_step`, with `@safety("…")` above it saying what its callers must make true, or `safe fn
+  lib_step` if a call within its contract cannot break memory safety", which `ember fmt --migrate`
+  rewrites to `unsafe fn` (`[CLI-20]`); `safe unsafe fn` is `E5002` too ("`lib_step` is declared
+  both `safe` and `unsafe`"). A call of an `unsafe fn` outside unsafe code is `E3100`, as any
+  `unsafe fn`'s: "`raw_abs(-3)` (line 11) calls an `unsafe fn`, whose callers must make true what
+  its `@safety` says". `unsafe` is no word of `@ffi(…)`: `@ffi(unsafe)`, `param(p, unsafe)` and
+  `result(unsafe)` are `E0104` ("`unsafe` is no contract word; write the declaration `unsafe fn
+  peek(…)`, with `@safety("…")` above it saying what its callers must make true"), which `ember fmt
+  --migrate` rewrites (`[CLI-20]`); `@ffi(…)` keeps its other words. `safe fn` is an asserted fact,
+  listed by `ember tcb` (`[TCB-1]`). Its effects are those its `@ffi(effects=[…])` states plus
+  `FFI`, and every effect when none are stated (`[EFF-3]`); which Ember code a call of it may run is
+  `[FFI-52]`'s, and `@ffi(no_callbacks)` says it runs none. On a hand declaration, `@ffi(param(name,
+  word, …), result(word, …))` attaches `[FFI-11]`'s contract words to each named pointer parameter
+  and the pointer result (ODR-073). Each slot is named at most once; `link_name`, `effects` and
+  `no_callbacks` can share the same `@ffi`. A `safe fn` writes the safe Ember types and the words in
+  front of its parameters' names (`ref mut`, `owns`) produced by those words; the compiler checks
+  that mapping and lowers it to the C ABI carrier. A `callback(…)` parameter is so written too: its
+  type is `[FFI-21]`'s callable type (`cb: fn()`; `thread_shared fn()` under `threads(any)`, `once
+  fn()` under `callback(once)`), with `owns` in front of its name under `retained` or `once` (`owns
+  cb: fn()`), as `exclusive` puts `ref mut` there, and the compiler lowers it to the C function
+  pointer, giving C the trampoline (`[FFI-53]`) and the witness; the C pointer type written there,
+  or the word missing, is `E5002` ("`register_cb` keeps `cb` for C (`callback(retained)`), so it is
+  handed over, and a `safe fn` writes the Ember type: write `owns cb: fn()`"). A raw `*T` can be
+  declared for an unsafe call, but complete facts do not make a raw-pointer parameter or result safe
+  to expose; `safe fn` with one is `E5002`, the argument's own case of `[FFI-2]`'s limit, which
+  reaches a raw pointer at any depth of what a parameter passes (a field of a `@layout(c)` value, an
+  element of a fixed array or of a bridge type, `CppVector[T]`, the payload of an `Option`, the
+  pointee of a contracted pointer, a value passed by a C++ reference, `[FFI-40]`). Missing facts or
+  a type/contract mismatch is `E5002`, naming the slot. On a hand-declared `safe fn` with
+  `count(n)`, `n` is written as an integer scalar parameter at its C ABI position (ODR-074). The
+  contract marks it as an ABI witness: it is absent from the callable Ember signature, and the
+  compiler supplies the corresponding `Span[T]` or `MutSpan[T]` length at the call. The written
+  integer type fixes the C width and signedness. A length that does not fit that type, or unequal
+  lengths from two pointer clauses sharing `n`, panics before the foreign call. A missing or
+  non-integer witness or an incompatible pointer surface is `E5002`. An unsafe raw-pointer
+  declaration keeps its written C ABI parameters; only a mapped `safe fn` erases the witness. A
+  `user_data=p` parameter of a `callback(…)` contract is an ABI witness as `count(n)`'s `n` is: `p`
+  is written as a raw pointer, or an integer wide enough for the tagged number (`E5002` otherwise,
+  since `[FFI-53]`'s number is a pointer's width: 64 bits on a 64-bit target, 32 on a 32-bit one,
+  `[FFI-53]`), at its C ABI position, is absent from the callable signature, and the call supplies
+  the callback's tagged number for it; a `safe fn` may name it (`[FFI-21]`). For an input `param(p,
   borrowed, count(n), nullable)`, the safe type is `Option[Span[T]]`, or, with `exclusive`,
   `Option[MutSpan[T]]` on a `ref mut` parameter, whose argument the call marks `ref mut` (`[FN-2a]`)
   (ODR-079). `None` sends C a null pointer and integer zero. A `borrowed one nullable` input is a
@@ -135,20 +203,29 @@ import c "vulkan/vulkan.h" with (
 ) as vk
 ```
 
-* `[FFI-6]` `import c "header" with (…) [as name]` parses the header with libclang under the project's
-  target, language standard, defines and include paths, and exposes its functions, structs, unions,
-  enums, typedefs, globals and constant macros as a module (`c`, or `name`). Options: `include_paths`,
-  `defines`, `link`, `overlay`, `implementation` (`[FFI-29b]`). An unknown option is `E0104`.
-* `[FFI-51]` *(new in 0.9.15)* **C compiled into the program is vouched for.** An import that compiles C
-  into the program — a C source file (`import c "./bridge.c"`, `[BLD-FFI-1]`), or a header with
-  `implementation = [...]` (`[FFI-29b]`) — runs C code that nothing checks, a constructor in it even
-  before `main`, so it is written `unsafe import c`, with a `# SAFETY:` note above it saying why that
-  code is sound (`W3012` when missing). Without `unsafe` it is `E3100`: "`import c "./bridge.c"`
-  compiles `bridge.c` into the program, where its code runs unchecked, before `main` too; say that
-  you vouch for it: write `unsafe import c "./bridge.c" as b` with a `# SAFETY:` note above it". An
-  import of a header alone needs no word: its functions run only when they are called, and those
-  calls are fenced by `[FFI-2]`. A library linked by name or path (`link = [...]`, `[link] libs`) is
-  listed by `ember tcb` as an external library (`[TCB-4]`).
+* `[FFI-6]` `import c "header" with (…) [as name]` parses the header with libclang under the
+  project's target, language standard, defines and include paths, and exposes its functions,
+  structs, unions, enums, typedefs, globals and constant macros as a module (`c`, or `name`).
+  Options: `include_paths`, `defines`, `link`, `overlay`, `implementation` (`[FFI-29b]`). An unknown
+  option is `E0104`.
+* `[FFI-51]` *(new in 0.9.15)* *(changed in 0.9.20)* **C compiled into the program is vouched for.** An import that
+  compiles into the program foreign code that runs with no call from Ember — a C source file
+  (`import c "./bridge.c"`, `[BLD-FFI-1]`), a header with `implementation = [...]` (`[FFI-29b]`), or
+  a C or C++ header that declares, in it or in a header it includes, a function with a constructor
+  attribute or a variable at namespace scope, `inline` or a static member, whose initialiser is not
+  a constant expression (the shim, `[FFI-29]`, or the thunk unit, `[FFI-3]`, `[FFI-17]`, compiles
+  it, and it runs before `main`), as the importer reads the header, one it cannot decide counting as
+  running (`[FFI-38]`) — runs code that nothing checks, so it is written `unsafe import c` or
+  `unsafe import cpp`, with a `# SAFETY:` note above it saying why that code is sound (`W3012` when
+  missing). Without `unsafe` it is `E3100`: "`import c "./bridge.c"` compiles `bridge.c` into the
+  program, where its code runs unchecked, before `main` too; say that you vouch for it: write
+  `unsafe import c "./bridge.c" as b` with a `# SAFETY:` note above it"; for a header the message
+  names what runs: "`import cpp "json.hpp"` compiles the initialiser of `g_default` (json.hpp, line
+  12) into the program, where it runs unchecked before `main`; write `unsafe import cpp "json.hpp"
+  with (project="engine") as js` with a `# SAFETY:` note above it". An import of a header that
+  declares nothing that runs uncalled needs no word: its functions run only when they are called,
+  and those calls are fenced by `[FFI-2]`. A library linked by name or path (`link = [...]`, `[link]
+  libs`) is listed by `ember tcb` as an external library (`[TCB-4]`).
 
   ```ember,fragment # SAFETY: bridge.c is ours: it defines `add` and runs nothing before `main`
   unsafe import c "./bridge.c" as b ```
@@ -182,16 +259,17 @@ import c "vulkan/vulkan.h" with (
   time uses an object of it, and `ThreadShared` only where the program declares it, `unsafe extend
   Ctx implements ThreadShared:` with a `# SAFETY:` note saying that the library reads one object
   from several threads at once (as `Send` is declared for a type holding a raw pointer, `[THR-8]`;
-  `E3100` without `unsafe`), an asserted fact `ember tcb` lists; C's `const` says what the pointer's
-  holder may do, not what the callee does (`[FFI-40a]` for C++), so reading one object from several
-  threads is a fact only the library's documentation gives. A view of one reaching another thread
-  otherwise is `E7015` ("`ctx` is a C object (`Ctx`, line 4), and two tasks read it at once (lines
-  14 and 15); C's `const` does not promise that `ctx_lookup` writes nothing: give each task a
-  context of its own, or, if the library allows it, declare `unsafe extend Ctx implements
-  ThreadShared:` with a `# SAFETY:` note"). A `handle` is an opaque pointer-sized `Copy` value with
-  no destructor of its own (`destroys(f)` applies to an `owns T` of its type, never to the handle),
-  `nullable` as an `Option` of it, and bound to its thread under `threads(creator)` (`[FFI-33b]`,
-  `E7008`).
+  `E3100` without `unsafe`), an asserted fact `ember tcb` lists, and never for a type whose contract
+  says `threads(creator)` or `threads(main)`, which binds every object to one thread: the
+  declaration is `E7008` at its line ("`Ctx` is used by the thread that made it
+  (`threads(creator)`), so no other thread may read one; remove the `unsafe extend`, or change the
+  contract if the library allows any thread"); C's `const` says what the pointer's holder may do,
+  not what the callee does (`[FFI-40a]` for C++), so reading one object from several threads is a
+  fact only the library's documentation gives. A view of one reaching another thread otherwise is
+  `E7015` ("`ctx` is a C object (`Ctx`, line 4), and two tasks read it at once (lines 14 and 15);
+  C's `const` does not promise that `ctx_lookup` writes nothing: give each task a context of its
+  own, or, if the library allows it, declare `unsafe extend Ctx implements ThreadShared:` with a `#
+  SAFETY:` note"). A `handle` is an opaque `Copy` value with the C type's representation (a pointer or an integer: Vulkan's `VkBuffer` is a `uint64_t` on 32-bit targets), passed and returned by value and never read through, with no destructor of its own (`destroys(f)` applies to an `owns T` of its type, never to the handle), `nullable` as an `Option` of it (the null pointer or zero is `None`), and bound to its thread under `threads(creator)` (`[FFI-33b]`, `E7008`). A parameter or result of a handle type is no pointer contract: it is passed by value, so a count, lifetime or aliasing word or `borrowed` on it is `E5002` ("`device` is a `VkDevice`, a `handle` passed by value; remove `borrowed`"); it takes `nullable`, and the ownership words where the call transfers the handle's object, `returns_owned(destructor=f)` on a result and `owns` on a parameter, which give and take an `owns T` of the handle type (`[FFI-33b]`, two words under `threads(creator)`).
 
   | C | Ember |
   |---|---|
@@ -205,11 +283,11 @@ import c "vulkan/vulkan.h" with (
   | `__attribute__((packed))`, `#pragma pack`, `alignas` | `@packed`, `@align(N)` |
   | `T*`, `const T*` | `*mut T`, `*T`; with a contract (`[FFI-11]`), a parameter `x: T` or `ref mut x: T`, `Span[T]`/`MutSpan[T]`, `Option[…]`, `owns T`, `CStrView` |
   | `T[N]` field | `[T; N]` |
-  | complete `struct`, `union` | `@layout(c) struct` (`Copy` when every field is plain data); a union, `@layout(c, union) struct`, whose fields are read only in `unsafe` |
+  | complete `struct`, `union` | `@layout(c) struct` (`Copy` when every field is plain data); a union, `@layout(c, union) struct`, whose fields are read only in `unsafe`; a field of a raw-pointer type or of a C function-pointer type (`[FFI-56]`) is read in safe code and written only in `unsafe:`, and so is the whole value of an aggregate that holds one, written into a place foreign code reads (through a `ref mut` to it, `mem.swap`, `mem.replace`) (`E3100`: "`second.data = first.data` (line 14) writes a raw pointer into a `blob`, which C reads later (`blob_free`, its destructor, `[FFI-36a]`); put line 14 in an `unsafe:` block with a `# SAFETY:` note saying what C may do with that address"), since an imported aggregate is memory foreign code reads, and what it does with the address nothing checks |
   | incomplete `struct` | `extern type S`, used only behind pointers |
   | `enum` | `@repr(<underlying>) enum`, `@non_exhaustive` (any value may arrive) |
-  | `typedef` | a type alias; with `@ffi(newtype)` a nominal type with the typedef's representation, passed to C as the typedef is, converted with `as` only |
-  | `static const` global, `extern` global | `extern static`; reading it needs `unsafe` unless `@ffi(immutable)` asserts a `const` C object and an unchanged value (ODR-082). The generated C declaration is `extern const T` with that assertion, or `extern T` without it; a safe read also requires `T: needs ThreadShared`. `@ffi(immutable)` on `static mut` is `E5002`. A global read only in `unsafe` need not be `ThreadShared` (`[STA-1]`), so one holding a pointer imports as any other (ODR-163). |
+  | `typedef` | a type alias; with `@ffi(newtype)` a nominal type with the typedef's representation, passed to C as the typedef is, converted with `as` only; one whose representation is a pointer is a raw pointer for `[THR-8]`, `[UNS-1]` and `[FFI-2]`'s limit, and `as` into it from a pointer or an integer is unsafe (`[TYP-7]`), so safe code never makes one |
+  | `static const` global, `extern` global | `extern static`; reading it needs `unsafe` unless the header declares the object `const`, a derived fact (`[FFI-2a]`), read as `[FFI-41]` reads a C++ one (its type `ThreadShared`, no pointer), or, on a hand declaration, which has no header to read, `@ffi(immutable)` asserts a `const` C object and an unchanged value (ODR-082). The generated C declaration is `extern const T` with that assertion, or `extern T` without it; a safe read also requires `T: needs ThreadShared`. `@ffi(immutable)` on `static mut` is `E5002`. A global read only in `unsafe` need not be `ThreadShared` (`[STA-1]`), so one holding a pointer imports as any other (ODR-163). |
   | `#define S "text"` | `const S: CStrView = c"text"` |
   | function pointer | `unsafe extern "C" fn(…) -> R` (`[FFI-56]`), `Option[…]` when nullable; another calling convention is `unsafe extern "<conv>" fn` (`[FFI-9]`), and an unsupported one is skipped with `W5002` |
   | bit-field | `get_<f>`/`set_<f>` methods; not addressable |
@@ -224,29 +302,30 @@ import c "vulkan/vulkan.h" with (
   wrapper for every `static inline` function Ember calls, and the wrappers of `[FFI-6b]`.
 * `[FFI-29a]` A binding never names a symbol with internal linkage.
 * `[FFI-29b]` *(changed in 0.9.15)* `implementation = ["MINIAUDIO_IMPLEMENTATION"]` compiles a
-  single-header library's implementation exactly once per build, in an `unsafe import c` (`[FFI-51]`);
-  two packages requesting it for one header is `E5014`.
-* `[FFI-29c]` A call to a wrapped `static inline` function costs one extra call unless the shim takes
-  part in LTO; `ember inspect` reports it as `wrapped (static inline)`. A variadic `static inline`
-  function cannot be wrapped and is skipped with `W5002`.
-* `[FFI-30]` Two imports of one C declaration (by Clang's USR, through typedefs) with the same layout
-  are **one** Ember entity, whichever module, alias or overlay imports them; the same declaration with
-  different layouts in one build is `E5011`, whose help is to give one import its own alias, making its
-  entities distinct.
-* `[FFI-30a]` An overlay changes the signatures, safety and names of *functions* and adds wrappers; it
-  never changes a type's identity, layout or fields, so packages with different overlays for one header
-  still exchange its values.
-* `[FFI-30b]` `pub import c "…" as vk` re-exports the module under the ordinary visibility rules; the
-  package's interface hash (`[BLD-2]`) includes the imported layouts, so a header change rebuilds
-  dependants.
-* `[FFI-30c]` *(changed in 0.9.10)* *(changed in 0.9.15)* A package may distribute an overlay for a foreign module, and several overlays for one
-  module compose in a declared order; they may add aliases and wrappers and replace an entry only with
-  an explicit `override`. Incompatible entries are an error, never a silent choice, and no overlay may
-  change a foreign type's identity or layout. The order is declared where the module is imported:
-  `overlay` takes one file or a list, applied first to last (a dependency's before the package's
-  own); a later file's `override` entry replaces an earlier file's for that name, and any other
-  second entry for one name is `E5010` (ODR-149). An overlay of another package is applied only to the
-  header it was written for (`[FFI-55]`).
+  single-header library's implementation exactly once per build, in an `unsafe import c`
+  (`[FFI-51]`); two packages requesting it for one header is `E5014`.
+* `[FFI-29c]` A call to a wrapped `static inline` function costs one extra call unless the shim
+  takes part in LTO; `ember inspect` reports it as `wrapped (static inline)`. A variadic `static
+  inline` function cannot be wrapped and is skipped with `W5002`.
+* `[FFI-30]` Two imports of one C declaration (by Clang's USR, through typedefs) with the same
+  layout are **one** Ember entity, whichever module, alias or overlay imports them; the same
+  declaration with different layouts in one build is `E5011`, whose help is to give one import its
+  own alias, making its entities distinct.
+* `[FFI-30a]` An overlay changes the signatures, safety and names of *functions* and adds wrappers;
+  it never changes a type's identity, layout or fields, so packages with different overlays for one
+  header still exchange its values.
+* `[FFI-30b]` `pub import c "…" as vk` re-exports the module under the ordinary visibility rules;
+  the package's interface hash (`[BLD-2]`) includes the imported layouts, so a header change
+  rebuilds dependants.
+* `[FFI-30c]` *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* A package may distribute an overlay for a
+  foreign module, and several overlays for one module compose in a declared order; they may add
+  aliases and wrappers and replace an entry only with an explicit `override`. Incompatible entries
+  are an error, never a silent choice, and no overlay may change a foreign type's identity or
+  layout. The order is declared where the module is imported: `overlay` takes one file or a list,
+  applied first to last (a dependency's before the package's own); a later file's `override` entry
+  replaces an earlier file's for that function (for a name declared several times, the member its
+  words name, `[FFI-57]`), and any other second entry for one function is `E5010` (ODR-149). An
+  overlay of another package is applied only to the header it was written for (`[FFI-55]`).
 
 ## XVI.4 Contracts and overlays
 
@@ -262,43 +341,64 @@ unsafe overlay c "vulkan/vulkan.h":
     @ffi(status=VkResult, ok=VK_SUCCESS, error=VkError)
     enum VkResult
 
+    @safety("`pCreateInfo.pNext` is null or a valid chain, `pCreateInfo.pQueueFamilyIndices` points at `queueFamilyIndexCount` indices, and `pAllocator`, when given, holds valid callbacks and user data")
     @ffi(effects=[FFI, Alloc], no_callbacks)
-    fn vkCreateBuffer(device: borrowed, pCreateInfo: borrowed one,
-                      pAllocator: nullable borrowed one, pBuffer: out one) -> status
+    unsafe fn vkCreateBuffer(device, pCreateInfo: borrowed one,
+                             pAllocator: nullable borrowed one, pBuffer: out one) -> status
 
     @ffi(no_callbacks)
-    fn vkCmdSetViewport(commandBuffer: borrowed, firstViewport, viewportCount,
+    fn vkCmdSetViewport(commandBuffer, firstViewport, viewportCount,
                         pViewports: borrowed count(viewportCount))
 
     rename VkPhysicalDeviceFeatures2 as PhysicalDeviceFeatures2
     hide vkAllocationFunction
 ```
 
-* `[GRM-35]` *(new in 0.9.9)* *(changed in 0.9.15)* **Overlay grammar.** An overlay is a file whose items are:
+`vkCreateBuffer` is an `unsafe fn` entry because the structs its call hands Vulkan hold raw pointers
+(`pNext`, `pQueueFamilyIndices`, `pUserData`; `[FFI-2]`'s limit), while `vkCmdSetViewport` is safe to
+call: a `VkViewport` holds only numbers, `pViewports` is a counted view, and `commandBuffer` is a
+`handle`, which declares no field (`[FFI-8]`). A wrapper in an `extend` block of the overlay
+(`[FFI-13]`) gives safe callers a create call, building those structs from checked views inside
+`unsafe:`.
+
+* `[GRM-35]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **Overlay grammar.** An overlay is a file whose items are:
 
   ```text
   overlay_decl  := ["unsafe"] "overlay" ("c" | "cpp") STRING
                    ":" NEWLINE INDENT {overlay_item} DEDENT
   overlay_item  := {attribute} (overlay_fn | "type" IDENT NEWLINE | "enum" IDENT NEWLINE
-                   | "rename" IDENT "as" IDENT NEWLINE | "hide" IDENT NEWLINE | extend_decl
-                   | overlay_class)
-  overlay_class := "class" IDENT ":" NEWLINE INDENT {{attribute} overlay_fn} DEDENT
+                   | overlay_name | extend_decl | overlay_class)
+  overlay_name  := "rename" member_ref "as" IDENT NEWLINE | "hide" member_ref NEWLINE
+  overlay_class := "class" IDENT ":" NEWLINE INDENT {{attribute} (overlay_fn | overlay_name)} DEDENT
   overlay_fn    := ["unsafe"] "fn" IDENT "(" [overlay_param {"," overlay_param} [","]] ")"
-                   ["->" contract {contract}] NEWLINE
-  overlay_param := IDENT [":" contract {contract}]
+                   ["->" (type {contract} | contract {contract})] NEWLINE
+  overlay_param := [param_word] IDENT [":" [type] {contract}]
+  member_ref    := IDENT ["(" [overlay_param {"," overlay_param} [","]] ")" ["->" type]]
   contract      := IDENT ["(" [attr_arg {"," attr_arg} [","]] ")"]
   ```
 
-  In an entry marked `@ffi(macro_fn)` (`[FFI-6b]`) a parameter's and the result's words are one Ember
-  type each (`IDENT ":" type`, `"->" type`), since a macro has no C declaration to read (ODR-147). An
-  item may begin with `override`, replacing an earlier overlay's entry for that name (`[FFI-30c]`,
-  ODR-149). An `overlay_class` section holds the entries of a C++ class's members (verdict 131): its
-  methods, which list no receiver, its constructors (`new`) and its static functions, each written as
-  any other entry; `@ffi(const)` above a method's entry asserts that the method only reads its object,
-  and an entry without it makes the method one that changes its object (`[FFI-40a]`, ODR-160, verdict
-  132). An entry outside a class section is a function outside any class
-  (`[FFI-12]`). Ember records the header each overlay was written for in `ember.overlays`,
-  never in the overlay (`[FFI-55]`).
+  In an entry marked `@ffi(macro_fn)` (`[FFI-6b]`) a parameter's and the result's words are one
+  Ember type each (`IDENT ":" type`, `"->" type`), since a macro has no C declaration to read
+  (ODR-147). In any other entry a parameter may carry, before its contract words, the word and the
+  type the import gives it from the header's declaration (`owns tex: Texture`, `value: c_int`, `s:
+  *c_char`), by the spelling of `[FFI-8]`'s, `[FFI-17a]`'s and `[FFI-40]`'s tables, so that `c_long`
+  names C++'s `long` on every target; each is checked against the header (`[FFI-12]`), and is
+  written where the entry's name and parameter names fit several members of one name (`[FFI-57]`).
+  After the colon, a word of `[FFI-11]`'s vocabulary is a contract word and any other word is the
+  type; a type of the header whose name is a contract word is first given another (`rename status as
+  Status`), which the message of `E5010` says. A `rename` or a `hide` with a parameter list names
+  one member of such a name (`rename put(v: c_long) as put_long`, `hide put(v: c_long)`, `rename
+  get() -> f64 as get_f64` for two members alike in every parameter), inside a class section one of
+  its members (verdict 131); without one it names every member of the name; a `rename` gives the
+  member a name of its own, outside the set. An item may begin with `override`, replacing an earlier
+  overlay's entry for that function (`[FFI-30c]`, ODR-149). An `overlay_class` section holds the
+  entries of a C++ class's members (verdict 131): its methods, which list no receiver, its
+  constructors (`new`) and its static functions, each written as any other entry; `@ffi(const)`
+  above a method's entry asserts that the method only reads its object, and an entry without it
+  makes the method one that changes its object (`[FFI-40a]`, ODR-160, verdict 132). An entry outside
+  a class section is a function outside any class (`[FFI-12]`). Ember records the header each
+  overlay was written for in `ember.overlays`, never in the overlay (`[FFI-55]`). The STRING names
+  the header the overlay is written for, the one the import that applies it names (`[FFI-55]`).
 
   Contract words take the place of types and are separated by spaces. `overlay`, `rename` and `hide`
   are contextual keywords (`[LEX-15]`). An overlay whose items state any fact — a contract word, an
@@ -334,17 +434,20 @@ unsafe overlay c "vulkan/vulkan.h":
   `ember bind --report` lists beside the retention assumptions, `[FFI-35a]`; a function that may
   leave its out-parameter unwritten is declared `unsafe fn`, with `@safety` saying when the value is
   written); `status` (with `@ffi(status=E, ok=X, error=N)` on the enum, `[FFI-16]`); `handle` (an
-  opaque pointer-sized `Copy` value, `[FFI-8]`); `callback(borrowed | retained | once, user_data=p)`
-  (`[FFI-21]`); `threads(any | main | creator)`; `destroys(f)` (`f`'s parameters may be the
-  registering call's own and its result, `id = listen(…)` then `unlisten(id)`: the token keeps
-  them); and, on a function, `no_callbacks` (it never calls back into Ember, `[FFI-52]`), and on a
-  function-pointer typedef, `safe` (`[FFI-56]`). `@ffi(effects=[…])` states effects. An overlay
-  entry and a hand declaration leave their calls unsafe by being written `unsafe fn` (`[GRM-35]`,
-  `[FFI-10]`, verdicts 130 and 133); `unsafe` is no contract word, in an overlay or in `@ffi(…)`
-  (`E0104`).
-* `[FFI-11a]` A pointer contract with no count word is `E5012`, which lists the five count words and
-  names any sibling parameter that looks like a length (an unsigned integer, or a name ending
-  `Count`, `Len`, `Size` or `N`).
+  opaque `Copy` value passed by value, taking no pointer words, `[FFI-8]`); `callback(borrowed |
+  retained | once, user_data=p)` (`[FFI-21]`); `threads(any | main | creator)`; `destroys(f)` (`f`'s
+  parameters may be the registering call's own and its result, `id = listen(…)` then `unlisten(id)`:
+  the token keeps them); and, on a function, `no_callbacks` (it never calls back into Ember,
+  `[FFI-52]`), and on a function-pointer typedef or beside `std_function` on a `std::function`
+  type's entry, `safe` (`[FFI-56]`, `[FFI-17a]`), within `[FFI-2]`'s limit on raw pointers.
+  `@ffi(effects=[…])` states effects. An overlay entry and a hand declaration leave their calls
+  unsafe by being written `unsafe fn` (`[GRM-35]`, `[FFI-10]`, verdicts 130 and 133); `unsafe` is no
+  contract word, in an overlay or in `@ffi(…)` (`E0104`).
+* `[FFI-11a]` *(changed in 0.9.20)* A pointer contract with no count word is `E5012`, which lists
+  the five count words and names any sibling parameter that looks like a length (an unsigned
+  integer, or a name ending `Count`, `Len`, `Size` or `N`). A result whose C++ type carries its
+  count (a span, a fixed-extent span or `std::string_view`, `[FFI-17a]`) takes its lifetime word
+  alone (`-> from(this)`), with no count word.
 * `[FFI-11b]` *(changed in 0.9.10)* *(changed in 0.9.15)* The two-call enumeration idiom (call once
   for the count, again to fill) is `pCount: inout_count(pItems)` with `pItems: nullable
   count(pCount)`; the Ember function takes an `Option[MutSpan[T]]` on a `ref mut` parameter and
@@ -355,20 +458,34 @@ unsafe overlay c "vulkan/vulkan.h":
   words that mark a fact as still unknown: the declaration stays uncontracted and its calls stay
   `unsafe`. A header can be adopted on the first day with everything behind `unsafe:`, and made safe
   one function at a time.
-* `[FFI-12]` *(changed in 0.9.15)* An overlay entry whose name, parameter count or parameter names
-  do not match the header is `E5010`, so overlays cannot drift. So is an entry outside a class
-  section that names only members of classes (verdict 131): "`new` is a member of `Handle` and of
-  `MutHandle`: write it under `class Handle:` or `class MutHandle:`".
+* `[FFI-12]` *(changed in 0.9.15)* *(changed in 0.9.20)* An overlay entry whose name, parameter
+  count or parameter names, or the words and types it writes (`[GRM-35]`), do not match one
+  declaration of the header, or that fits none or several members of a name declared several times
+  (`[FFI-57]`), is `E5010`, so overlays cannot drift and no entry vouches for a function its writer
+  did not name; for several, the message gives each member's entry line with the type that tells
+  them apart: "`fn set(name: borrowed nul_terminated, value)` fits `void set(const char*, int)` and
+  `void set(const char*, float)` of `gl::Shader`; write one entry per member: `fn set(name: borrowed
+  nul_terminated, value: c_int)` and `fn set(name: borrowed nul_terminated, value: f32)`". A
+  `rename` or a `hide` with a parameter list is matched as an entry is. So is an entry outside a
+  class section that names only members of classes (verdict 131): "`new` is a member of `Handle` and
+  of `MutHandle`: write it under `class Handle:` or `class MutHandle:`".
 * `[FFI-55]` *(new in 0.9.15)* *(changed in 0.9.20)* **Every overlay is checked against the header
   it was written for, by a record Ember keeps** (verdict 121). A package with an overlay of a C or
   C++ header has a file `ember.overlays` beside its `ember.toml`, written by Ember and never by
   hand. For each overlay it holds the overlay's file, its header and one `blake3:` fingerprint of
-  each declaration the overlay describes, as the importer binds it (`[FFI-14]`): the blake3 of the
-  declaration as `[FFI-14]` records it, its name, its canonical type with every typedef resolved,
-  its parameter names (`[FFI-12]`), and the size, alignment and field offsets of each complete
-  aggregate it names (`[FFI-5]`), so that a renamed parameter or a changed layout is a changed
-  declaration, and a comment, a macro the declaration does not use, or a C++ default argument is
-  not:
+  each declaration the overlay describes, as the importer binds it (`[FFI-14]`), keyed by the
+  declaration's name and, for a member of a C++ name declared several times (`[FFI-57]`), by the
+  declaration as the header spells it, quoted as TOML asks (`"gfx::Renderer::draw(const gfx::Mesh&)"
+  = "blake3:…"`), one line per member, which a `rename` in the overlay does not change: the blake3
+  of the declaration as `[FFI-14]` records it, its name, its canonical type with every typedef
+  resolved, its parameter names (`[FFI-12]`), and the size, alignment and field offsets of each
+  complete aggregate it names (`[FFI-5]`), so that a renamed parameter or a changed layout is a
+  changed declaration, and a comment, a macro the declaration does not use, or a C++ default
+  argument is not: An overlay is applied only by an import of the header its first line names
+  (`[GRM-35]`), the two spellings resolving to one file under the import's include paths
+  (`[FFI-6]`), and the record's `header` is that name; an import of another header with it is
+  `E5010`: "`overlays/sdl.em` is written for `SDL.h` (line 1), and this import is of
+  `SDL2/SDL_video.h`; import `SDL.h` here, or write an overlay for `SDL2/SDL_video.h`".
 
   ```text
   # ember.overlays: the headers this package's overlays were checked against.
@@ -434,9 +551,10 @@ unsafe overlay c "vulkan/vulkan.h":
   parameters (or `void`).
 * `[FFI-36a]` *(changed in 0.9.15)* *(changed in 0.9.20)* `std.ffi.adopt[T](h) -> owns T` is an
   `unsafe fn` that takes ownership of a foreign object, reading its destructor from the contract of
-  `T`'s declaration, `@ffi(destroys(f))` on `type T`; the `owns T` value's end calls `f` once. Where
-  the contract already records the transfer (`returns_owned(destructor=f)`), the import returns an
-  `owns T` directly and no `adopt` is written. A foreign type has one destructor: every
+  `T`'s declaration, `@ffi(destroys(f))` on `type T`, or, for an imported C++ class with no such
+  entry, the class's own destructor and `delete` (`[FFI-36]`); the `owns T` value's end calls `f`
+  once. Where the contract already records the transfer (`returns_owned(destructor=f)`), the import
+  returns an `owns T` directly and no `adopt` is written. A foreign type has one destructor: every
   `returns_owned(destructor=f)` giving an `owns T` and `T`'s `@ffi(destroys(f))` name the same `f`,
   and two different ones are `E5002` ("`Widget` is ended by `widget_free` (line 3), and line 12 says
   `widget_destroy`; a foreign type has one destructor"), so an `owns T` foreign value stays one
@@ -460,7 +578,15 @@ unsafe overlay c "vulkan/vulkan.h":
   `@ffi(no_callbacks)` on a function whose contract takes a function pointer is `E5069`, as for a
   `callback(…)` parameter. The callable type of a `callback(…)` parameter is `fn(P…) -> R`: the C
   function pointer's parameters mapped by `[FFI-8]` with the user-data one removed, a raw pointer
-  among them staying raw (a lambda's body uses it in `unsafe:`); `thread_shared fn(P…) -> R` under
+  among them staying raw (a lambda's body uses it in `unsafe:`), while a raw pointer as `R` is what
+  the function returns to C, which `[FFI-2]`'s limit refuses on a `safe fn` or a plain overlay entry
+  (`E5002`, naming the parameter's result); under `callback(retained)` or `callback(once)` C keeps
+  the function, so the parameter is an `owns` parameter, `owns cb: fn(P…) -> R`, and its argument
+  says `owns` at the call as every argument for an `owns` parameter does (`[FN-2a]`, verdicts 147
+  and 158), a function written in the call (`register_cb(owns fn() owns game: …)`) and a named one
+  (`register_cb(owns add)`, after which `add` is handed over, `E3040` at a later use) alike, `E3028`
+  without it; under `callback(borrowed)` the parameter is plain and the function is lent for the
+  call with no word, as to any call that runs it then; `thread_shared fn(P…) -> R` under
   `threads(any)` (`[FFI-22]`), and `once fn(P…) -> R` under `callback(once)`; a function given to it
   is written as any function value is (`fn() owns game: …`). A function that captures anything is
   `E5040` unless the parameter's contract names a `user_data` parameter, in which case the importer
@@ -481,22 +607,25 @@ unsafe overlay c "vulkan/vulkan.h":
   write `log = thread_shared Log()` in place of line 12, with `lines` `guarded by` a lock, or
   register the callback from `main`"); `[FFI-22]`), and a name it uses with no word is `E7004`: "C
   keeps this function after `setup` returns (`callback(retained)`), so it cannot use `setup`'s
-  `game`; say what it holds: write `return register_cb(fn() owns game: game.add_point())` in place
-  of line 17 (`setup`'s owner of the game), or capture `fn() weakref game` with `if game exists as
-  ref mut g: g.add_point()` as its body (a link that lets the game end)". `retained` and `once`
-  return a `Retained[ForeignCallback]` token (`[FFI-23]`) whose end unregisters the callback through
-  the declared `destroys(f)` (`E5041` if none is declared, for `once` too, since a token that ends
-  before C runs the function must unregister it); with `once` the trampoline ends the block after
-  the first call, and the token, which keeps the block until C has run the function or the token
-  ends, whichever is first, records that the call ran: a token ending before the call unregisters
-  the callback through `destroys(f)` and ends the block, and one ending after it calls nothing,
-  since C gave the registration up by running it, and frees the slot's record. A callback with
-  several parameters of its user data's type names the one that receives it: `user_data=p@N`, the
-  callback's `N`th parameter (1-based, as in the C signature); without `@N`, exactly one parameter
-  has that type, or the contract is `E5002`, whose help shows the `@N` form. A `nullable` callback
-  with user data is an `Option` of a function value: `None` passes `NULL` and no user data. Handing
-  a function to a `callback(retained)` or `callback(once)` parameter counts as making what it
-  changes, now and whenever C runs it (`[FFI-52]`).
+  `game`; say what it holds: write `return register_cb(owns fn() owns game: game.add_point())` in
+  place of line 17 (`setup`'s owner of the game), or capture `fn() weakref game` with `if game
+  exists as ref mut g: g.add_point()` as its body (a link that lets the game end)". `retained` and
+  `once` return a `Retained[ForeignCallback]` token (`[FFI-23]`), the call's result (where the C
+  function has a result of its own, the Ember function returns both as `[FFI-11b]` orders, that
+  result first, then the token, or under `-> status` the token as the `Result`'s value, `[FFI-16]`;
+  the token keeps the result for `destroys(f)`, `[FFI-11]`), whose end unregisters the callback
+  through the declared `destroys(f)` (`E5041` if none is declared, for `once` too, since a token
+  that ends before C runs the function must unregister it); with `once` the trampoline ends the
+  block after the first call, and the token, which keeps the block until C has run the function or
+  the token ends, whichever is first, records that the call ran: a token ending before the call
+  unregisters the callback through `destroys(f)` and ends the block, and one ending after it calls
+  nothing, since C gave the registration up by running it, and frees the slot's record. A callback
+  with several parameters of its user data's type names the one that receives it: `user_data=p@N`,
+  the callback's `N`th parameter (1-based, as in the C signature); without `@N`, exactly one
+  parameter has that type, or the contract is `E5002`, whose help shows the `@N` form. A `nullable`
+  callback with user data is an `Option` of a function value: `None` passes `NULL` and no user data.
+  Handing a function to a `callback(retained)` or `callback(once)` parameter counts as making what
+  it changes, now and whenever C runs it (`[FFI-52]`).
 * `[FFI-21a]` *(new in 0.9.10)* *(changed in 0.9.15)* **A parameter C passes as a copy.** C passes a
   function's arguments by value. When a function's value becomes an `extern "C" fn` (`[FN-6]`), a
   plain parameter (`[FN-1]`) whose type is not a pointer is, for a call from C, a copy the call
@@ -508,28 +637,28 @@ unsafe overlay c "vulkan/vulkan.h":
   `extern "C" fn`. A value read through the parameter, and a pointer stored in it, are not into the
   copy. A pointer returned from a call to another function is not followed. A function that must
   give C back a pointer it was given takes that parameter as a pointer (`*T`).
-* `[FFI-22]` *(changed in 0.9.9)* *(changed in 0.9.15)* Every exported function and trampoline first
-  attaches the calling thread to the runtime (`ember_rt_thread_attach()`, a thread-local check after
-  the first time). The compiler cannot see which thread C calls a callback from, so the callback's
-  contract is the only evidence, and it is an asserted fact (`[TCB-1]`): `threads(main)` or
-  `threads(creator)`, which the trampoline checks in every profile (`[FFI-53]`), or `threads(any)`,
-  the default. A callback C may call from any thread, borrowed or kept, is a `thread_shared fn()`
-  (Part VI): every value it holds is `Send` (`[THR-8]`): a one-thread owner (`shares`, `shares mut`,
-  a `weakref` link of one) is `E7015`, a thread-bound value (a lock's guard, a raw pointer, a
-  `threads(creator)` handle) `E7008`; and it changes the caller's real variables only by their own
-  operations, as an `Atomic`, a lock or a `guarded by` field under its lock is changed (`E7015`: "C
-  may call `visit` from any thread at once (`visit_each`'s `visit` has no `threads(...)` word), and
-  it pushes to `seen`, a list of this thread; count with an atomic, or, if C calls it only on this
-  thread, say so in the overlay: `visit: callback(borrowed, user_data=data) threads(creator)`"). The
-  `E7015` message for a kept callback that holds a `shares` owner gives the lines that share the
-  value between threads (`thread_shared`, with `Atomic` fields). Its message: E7015 ("C may call
-  this function from any thread (`threads(any)`), and `shares` owners stay on one thread; share the
-  game between threads: write `game = thread_shared Game(names=[String("ann"), String("bo")])` and
-  `token = setup(game)` in `main`, `fn setup(game: thread_shared Game) ->
-  Retained[ForeignCallback]:` and `return register_cb(fn() thread_shared game: game.add_point())` in
-  `setup`, and, since `add_point` changes `score`, `from std.sync import Atomic` at the top, `score:
-  Atomic[i32] = Atomic(0)`, `this.score.fetch_add(1)` as `add_point`'s body, and
-  `println(game.score.load())`").
+* `[FFI-22]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* Every exported
+  function and trampoline first attaches the calling thread to the runtime
+  (`ember_rt_thread_attach()`, a thread-local check after the first time). The compiler cannot see
+  which thread C calls a callback from, so the callback's contract is the only evidence, and it is
+  an asserted fact (`[TCB-1]`): `threads(main)` or `threads(creator)`, which the trampoline checks
+  in every profile (`[FFI-53]`), or `threads(any)`, the default. A callback C may call from any
+  thread, borrowed or kept, is a `thread_shared fn()` (Part VI): every value it holds is `Send`
+  (`[THR-8]`): a one-thread owner (`shares`, `shares mut`, a `weakref` link of one) is `E7015`, a
+  thread-bound value (a lock's guard, a raw pointer, a `threads(creator)` handle) `E7008`; and it
+  changes the caller's real variables only by their own operations, as an `Atomic`, a lock or a
+  `guarded by` field under its lock is changed (`E7015`: "C may call `visit` from any thread at once
+  (`visit_each`'s `visit` has no `threads(...)` word), and it pushes to `seen`, a list of this
+  thread; count with an atomic, or, if C calls it only on this thread, say so in the overlay:
+  `visit: callback(borrowed, user_data=data) threads(creator)`"). The `E7015` message for a kept
+  callback that holds a `shares` owner gives the lines that share the value between threads
+  (`thread_shared`, with `Atomic` fields). Its message: E7015 ("C may call this function from any
+  thread (`threads(any)`), and `shares` owners stay on one thread; share the game between threads:
+  write `game = thread_shared Game(names=[String("ann"), String("bo")])` and `token = setup(game)`
+  in `main`, `fn setup(game: thread_shared Game) -> Retained[ForeignCallback]:` and `return
+  register_cb(owns fn() thread_shared game: game.add_point())` in `setup`, and, since `add_point`
+  changes `score`, `from std.sync import Atomic` at the top, `score: Atomic[i32] = Atomic(0)`,
+  `this.score.fetch_add(1)` as `add_point`'s body, and `println(game.score.load())`").
 * `[FFI-52]` *(new in 0.9.15)* *(changed in 0.9.20)* **What a foreign call may run.** The compiler
   cannot read a foreign function's code, so a call of one counts as possibly running, on the calling
   thread, every Ember function C can reach then: every callback C keeps (one handed to a
@@ -576,13 +705,13 @@ unsafe overlay c "vulkan/vulkan.h":
       @safety("`cb` and `ud` are a pair `register_cb` was given")
       unsafe fn unregister(cb: extern "C" fn(*mut void), ud: *mut void)
       @ffi(param(cb, callback(retained, user_data=ud), threads(creator)), destroys(unregister))
-      safe fn register_cb(cb: extern "C" fn(*mut void), ud: *mut void)
+      safe fn register_cb(owns cb: fn(), ud: *mut void)
       safe fn poll_events()
       @ffi(no_callbacks)
       safe fn sqrt(x: f64) -> f64
 
   fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:
-      return register_cb(fn() owns game: game.add_point())
+      return register_cb(owns fn() owns game: game.add_point())
 
   fn main():
       game = shares mut Game(names=[String("ann"), String("bo")])
@@ -623,13 +752,18 @@ unsafe overlay c "vulkan/vulkan.h":
 
   A slot whose generation reaches its last value is retired and never reused, as `[HND-3]` retires a
   `Pool` slot, so a stale number can never name a later callback: one compare per registration,
-  nothing per call. A `threads(any)` callback that can be unregistered while it runs marks its slot
-  as running, and unregistering waits until it returns. A callback that ends its own token while it
-  runs (its body sets the field holding the `Retained` token to `None` and then uses its state) is
-  unregistered at once, so C never runs it again, and the block that holds its state is ended and
-  freed only when it returns, so the rest of its body runs as written. The trampoline costs 1.02x to
-  1.05x of a plain C call through a function pointer, and, in the `release` profile, one compare of
-  the thread per `threads(creator)` or `threads(main)` callback.
+  nothing per call. The table grows by chunks and never moves a slot, as an `Arena` grows
+  (`[ARN-4]`), so a slot is free while memory is and the slot field is wide; when every slot the
+  number can name is live or retired, which only a 32-bit target's 65,536 slots can reach, the
+  registering call stops the program, in every profile, as a full `Pool` does: "`on_click(...)` on
+  line 16: no callback slot is free; every one of the 65,536 slots a 32-bit target has is live or
+  retired" (`[COST-6]`). A `threads(any)` callback that can be unregistered while it runs marks its
+  slot as running, and unregistering waits until it returns. A callback that ends its own token
+  while it runs (its body sets the field holding the `Retained` token to `None` and then uses its
+  state) is unregistered at once, so C never runs it again, and the block that holds its state is
+  ended and freed only when it returns, so the rest of its body runs as written. The trampoline
+  costs 1.02x to 1.05x of a plain C call through a function pointer, and, in the `release` profile,
+  one compare of the thread per `threads(creator)` or `threads(main)` callback.
 * `[FFI-23]` *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)*
   `Retained[ForeignCallback]` is the token a registering call returns for a callback C keeps
   (`[FFI-21]`): it keeps the callback's block on Ember's side while C holds its tagged number, and
@@ -692,18 +826,23 @@ unsafe overlay c "vulkan/vulkan.h":
   fn main(): first = widget_new(1) widget_take(owns first) second = widget_new(2) p =
   address_for_c(owns second) # SAFETY: C keeps the widget as its user data and frees it with
   `widget_free` unsafe: set_user_data(p) ```
-* `[FFI-56]` *(new in 0.9.15)* **A C function pointer is unsafe to call.** A function pointer that
-  comes from C — a field of an imported struct, a typedef, a result, an `extern static`, an argument
-  C passes to a callback — imports as `unsafe extern "C" fn(…)` (`Option[…]` when nullable,
-  `[FN-6]`), so a call through it is in `unsafe:` (`E3100`: "`release` is a C function pointer from
-  `hooks.h`, with no contract; put line 6 in an `unsafe:` block with a `# SAFETY:` note saying why
-  the call is safe"): nothing tells the compiler what the function it points to does with its
-  arguments (`void free_addr(uintptr_t)`, `[FFI-2]`). An overlay may assert one safe to call with
-  `@ffi(safe)` on the typedef's entry (`@ffi(safe) type PFN_log_message`) when every parameter and
-  result is a scalar or a `@layout(c)` value type (`E5002` otherwise): an asserted fact, listed by
-  `ember tcb`. A function pointer made from an Ember function is a safe `extern "C" fn` (`[FN-6]`).
-  The end of an `owns T` foreign value calls the destructor its asserted `destroys(f)` names, which
-  the compiler generates.
+* `[FFI-56]` *(new in 0.9.15)* *(changed in 0.9.20)* **A C function pointer is unsafe to call.** A
+  function pointer that comes from C — a field of an imported struct, a typedef, a result, an
+  `extern static`, an argument C passes to a callback or to an export, itself or in a `@layout(c)`
+  value (`[FFI-31b]`) — imports as `unsafe extern "C" fn(…)` (`Option[…]` when its slot's contract
+  says `nullable`, `[FFI-11]`; a field of an imported struct, which no contract reaches
+  (`[FFI-30a]`), is always the `Option`, since C may leave it null and safe code must be able to
+  read what C wrote), so a call through it is in `unsafe:` (`E3100`: "`release` is a C function
+  pointer from `hooks.h`, with no contract; put line 6 in an `unsafe:` block with a `# SAFETY:` note
+  saying why the call is safe"): nothing tells the compiler what the function it points to does with
+  its arguments (`void free_addr(uintptr_t)`, `[FFI-2]`). An overlay may assert one safe to call
+  with `@ffi(safe)` on the typedef's entry (`@ffi(safe) type PFN_log_message`) when every parameter
+  and result is a scalar or a `@layout(c)` value type, within `[FFI-2]`'s limit on raw pointers
+  (`E5002` otherwise, naming where the pointer is held): an asserted fact, listed by `ember tcb`; a
+  `std::function` value is unsafe to call for the same reason, and `safe` beside `std_function` on
+  its type's entry asserts it so under the same limit (`[FFI-17a]`). A function pointer made from an
+  Ember function is a safe `extern "C" fn` (`[FN-6]`). The end of an `owns T` foreign value calls
+  the destructor its asserted `destroys(f)` names, which the compiler generates.
 * `[FFI-33b]` *(changed in 0.9.15)* *(changed in 0.9.20)* `returns_owned` results and callbacks may
   carry `threads(creator)`: an `owns T` foreign value of such a type is two words, the address and
   the id of the thread that made it, and its end is one compare of that id with the current
@@ -757,8 +896,7 @@ pub extern "C" fn on_update(entity: u64, dt: f32) -> i32:
   boundary: class objects, `owns T`, `shares T`, `thread_shared T`, `weakref T`, `String`, `Array`,
   `Map`, function values and any type with a `drop` MUST NOT appear in an exported signature or be
   reachable through a pointer in one (`E5015`), except a `thread_shared` value of a class in a
-  package built with the C++ header (`[BLD-FFI-5a]`). `@layout(c)` values, scalars, opaque handles,
-  `CStrView` and `extern "C" fn` may. `char` may not appear in a foreign signature, an export's or a
+  package built with the C++ header (`[BLD-FFI-5a]`). `@layout(c)` values, scalars, opaque handles and `CStrView` may, and so may an `extern "C" fn` that Ember hands C: a result, or a field of an `@export_table` (`[FFI-26]`; a function Ember made, `[FN-6]`). A function pointer C hands an export — a parameter of it, or a field, at any depth, of a `@layout(c)` value a parameter passes, by value, behind `ref mut` or as a span's element — is one nothing describes (`[FFI-56]`), so its type is `unsafe extern "C" fn(…)`, called inside `unsafe:` with a `# SAFETY:` note; a raw pointer in an export's result, or in a `@layout(c)` value it returns, is given to C out of an `unsafe:` block with a `# SAFETY:` note (`[UNS-1]`, `E3100` otherwise), and one in an export's parameter is read through only in unsafe code, as any raw pointer is; a safe `extern "C" fn` there is `E5015`: "`fill` is a function pointer the host supplies, and nothing says what the function does with its arguments (`[FFI-56]`); write `fill: unsafe extern "C" fn(*mut u8)` and call it inside `unsafe:` with a `# SAFETY:` note". `char` may not appear in a foreign signature, an export's or a
   hand declaration's, directly or in a `@layout(c)` aggregate passed by value or behind a pointer
   (`E5054`), as a range type may not (`[RNG-10b]`): C may pass any `uint32_t`, a surrogate included,
   which no `char` holds (`[UNS-4]`): "`char` has no C equivalent, and C may pass any `uint32_t`;

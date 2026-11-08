@@ -89,14 +89,29 @@ fn main() -> Result[void]:
 ## XIII.2 Error types and `AnyError`
 
 * `[ERR-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `Error` is the
-  interface of error types: `Display + Debug` with `fn source() -> Option[ref dyn Error]` (default
-  `None`) (§IV.8). `@derive(Error)` on an enum or struct implements `Display` from `@error("…")`
-  attributes — one per variant, whose `{name}` and `{0}` placeholders name the variant's fields —
-  and implements `Debug` if it is not already derived. A variant marked `@from` whose single field
-  is of a type `E: needs Error` gets `From[E]` and returns the field from `source`; `@from` on a
-  variant with no field, two fields, or a field of another type (`AnyError` included, `[ERR-8]`) is
-  `E2080`, naming the field.
-* `[ERR-8]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **`AnyError`** is the
+  interface of error types, `interface Error: needs (Debug, Display, Send, ThreadShared):` with `fn
+  source() -> Option[ref dyn Error]` (default `None`) (§IV.8): an error is a value any thread may
+  hold and read, so `dyn Error`, and `AnyError` with it, are `Send` and `ThreadShared` (`[THR-8]`,
+  `[THR-9]`, `[ERR-8]`), and a `Result` whose error is one goes to a worker thread, through a
+  channel and into a scoped task's view as any such value does (`[THR-10]`, `[THR-15]`, `[THR-11]`,
+  `[THR-2]`). A type holding a value that stays on one thread (a `shares` or `shares mut` owner, a
+  `weakref T` or `sharedref mut` link, a `Cell`, an object held by the type of an `open` or
+  `abstract` class another package may derive from whose header promises neither marker, `[THR-8]`)
+  is not an `Error`: where it implements `Error` it is `E2040`, naming the field and giving the line
+  that compiles (`[IFC-3]`: "`Error` needs `Send` and `ThreadShared`, since any thread may hold an
+  error, and `LoadError.script` is a `Script`, an `open` class whose header does not say that any
+  thread may hold its objects, so a `LoadError` may hold an object of a class another package
+  derives from `Script`; keep what the error reports as a copy, `entity: int`, or write `pub open
+  class Script implements Send, ThreadShared:` (line 3), which every class derived from `Script`
+  then keeps"), and at `@derive(Error)` it is `E2080`, naming the field (`[DRV-1]`); it may still be
+  a `Result`'s error, matched or printed by its `Display` (`[ERR-1]`, `[ERR-12]`, ODR-050), and it
+  does not pass through `?` into `AnyError`. `@derive(Error)` on an enum or struct implements
+  `Display` from `@error("…")` attributes — one per variant, whose `{name}` and `{0}` placeholders
+  name the variant's fields — and implements `Debug` if it is not already derived. A variant marked
+  `@from` whose single field is of a type `E: needs Error` gets `From[E]` and returns the field from
+  `source`; `@from` on a variant with no field, two fields, or a field of another type (`AnyError`
+  included, `[ERR-8]`) is `E2080`, naming the field.
+* `[ERR-8]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* **`AnyError`** is the
   prelude's "any error" type: a `dyn Error` held alone (`owns dyn Error`) plus an optional chain of
   context messages. It implements `From[E]` for every `E: needs Error`, so `?` converts any error
   into it, and `Display`, `Debug`, `source`, `[E]` above `fn downcast_ref() -> Option[ref E]`, and
@@ -104,9 +119,17 @@ fn main() -> Result[void]:
   `std.core.type_id[E]()`), never a hash of a name, so two majors of one package (`[VER-5]`) are
   never confused. **`AnyError` does not implement `Error`** — otherwise `[ERR-7]` and `[ERR-8]`
   would both supply `From[AnyError]` for `AnyError`. An `AnyError` passed through `?` into another
-  `AnyError` is handed over (`[ERR-7]`). `AnyError.msg(owns text: String)`, a `static fn`, is an
-  error whose text is `text`, so a function whose error type is `AnyError` fails with a message as
-  `return Err(AnyError.msg(f"no such file: {p}"))`.
+  `AnyError` is handed over (`[ERR-7]`). `AnyError` is `Send` and `ThreadShared` as its parts are:
+  its `owns dyn Error` because `Error` requires both (`[ERR-3]`, `[THR-8]`, `[THR-9]`), its identity
+  a number, its context a list of `String`; so a worker returns `Result[int]` through `thread.spawn`
+  or a channel, a `thread_shared` holder keeps one under its lock and a scoped task reads one
+  through `ref`, with nothing written (`[THR-10]`, `[THR-15]`, `[THR-1]`, `[THR-11]`). Nothing is
+  checked at `?`: every `E: needs Error` met the requirement where it implemented `Error`, in its
+  own package, so the one-thread error an `AnyError` cannot carry was refused there, never at the
+  `?`; an `AnyError` handed to another thread walks the error it holds by that error's kind's
+  hand-over routine, as any `owns dyn I` value is walked (`[THR-2]`). `AnyError.msg(owns text:
+  String)`, a `static fn`, is an error whose text is `text`, so a function whose error type is
+  `AnyError` fails with a message as `return Err(AnyError.msg(f"no such file: {p}"))`.
 * `[ERR-10]` *(new in 0.9.9)* `r.context(msg)` on a `Result[T, E]` whose `E` converts into
   `AnyError` (`AnyError: From[E]`, `[ERR-8]`) returns a `Result[T, AnyError]` whose error, if any,
   displays as `msg: <original>`; `r.with_context(owns fn() => …)` builds the message only on

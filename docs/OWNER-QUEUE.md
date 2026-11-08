@@ -131,6 +131,13 @@ out of an import), rejected before it was committed and replaced by the owner's 
 | ODR-033 | **CLOSED** — `DefaultHasher`'s values are the same on every target for one Ember version and may change between versions; making a `RandomState` is `Nondet`; a panicking `hash` or `eq` aborts; `Map`'s costs are amortised | Standard library / hashing | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_13 |
 | ODR-032 | **CLOSED** — `Map[K, V, H = DefaultHasher, A = Global]` and `Set[T, H, A]` get their full method lists; `AsKey[K]` (`is_key`, `to_key`) is what lookups take, and every `K: Eq + Hash` is `AsKey[K]`; owned iteration yields keys | Standard library / collections | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_13 |
 | ODR-031 | **CLOSED** — `Array`'s `sort_by`/`sort_by_key` are stable (`f` once per element), `windows(n)` yields shared overlapping views and panics on `0`, `drain(r)` returns an `Array` and takes any integer range | Standard library / collections | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_12 |
+| ODR-260 | **OPEN** — applied under the delegation, for the owner's review | Memory Model | **P1** | **Yes** — 2026-11-08 |
+| ODR-261 | **OPEN** — applied under the delegation, for the owner's review | Concurrency / Types | **P1** | **Yes** — 2026-11-08 |
+| ODR-262 | **OPEN** — applied under the delegation, for the owner's review | C Interop / C++ | **P1** | **Yes** — 2026-11-08 |
+| ODR-263 | **OPEN** — applied under the delegation, for the owner's review | Memory Model / C Interop | **P1** | **Yes** — 2026-11-08 |
+| ODR-264 | **OPEN** — applied under the delegation, for the owner's review | Language / Grammar | **P1** | **Yes** — 2026-11-08 |
+| ODR-265 | **OPEN** — applied under the delegation, for the owner's review | Language / Types | **P1** | **Yes** — 2026-11-08 |
+| ODR-266 | **OPEN** — applied under the delegation, for the owner's review | C Interop | **P1** | **Yes** — 2026-11-08 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -1656,6 +1663,97 @@ diagnostic suggestion ordering and does not require a language-version bump.
 **The question.** A debugger could not stop on an Ember line of a `debug` build: the compiler inlined a function called once and copied its loops (a vectorised copy kept the running total in a temporary), so the line had eight places in the code and the local had no name there.
 
 **Ruling.** The owner, 2026-10-22: a `debug` build skips Ember's own speed rewrites, so a debugger follows the program as written ("give the option to turn the speed rewrite on or off for debug"; "yes, off by default"); a package turns them on with `[profiles.debug] rewrites = true`. The lead's, under `[PRF-1]`: what the rewrites decide that a program is told (the `@simd` verdicts) is decided the same in every profile.
+
+---
+
+## ODR-260 — A `thread_shared` value made `using` a memory manager — **OPEN**
+
+    ID:        ODR-260
+    Status:    OPEN — for the owner, 2026-11-08 (applied under the delegation, docs/AUTOPILOT.md §3; the owner may reverse)
+    Category:  MEMORY MODEL
+    Location:  0.9.20_Hardened_3 [TYP-46a], [RC-4] point 4, [OBJ-1], [OBJ-4], [ALC-1]
+
+**The question.** Hardened_2 wrote both halves of one ruling (N84): four rules refused `thread_shared T using A` with `E2114`, and four described the value as made, marked handed over at its making line. The gap review's K05 asked which holds. Shape A refuses every manager (the method-3 team's answer; safe, drops a feature verdict 19 lists). Shape B allows it, counts every owner away from the making line, puts the instance word in the header's queue place (0 bytes beyond verdict 101's 32), and refuses with `E7015` only where the value would hold a link to an instance of a manager that not every thread may call (a `deallocate` that changes `this`; a growing value in a one-thread `Arena`). Two designers and one judge chose B.
+
+**Ruling.** The lead applied shape B as the judge merged it (the better shape, no feature dropped, verdicts 19, 47, 101, 107, 164 and 165 kept). For the owner: whether B is what he wants, or A; and whether the instance word may sit in the header's queue place (verdict 47 said "accepted for now").
+
+---
+
+## ODR-261 — An `open` class's objects across threads; `Error` requires `Send` and `ThreadShared` — **OPEN**
+
+    ID:        ODR-261
+    Status:    OPEN — for the owner, 2026-11-08 (applied under the delegation, docs/AUTOPILOT.md §3; the owner may reverse)
+    Category:  CONCURRENCY / TYPES
+    Location:  0.9.20_Hardened_3 [THR-8], [THR-9], [TYP-43], [CLS-4], [ERR-3], [ERR-8], [IFC-3]
+
+**The question.** A value held by the type of an `open` or `abstract` class may be an object of a class another package derives from it, which the holder's package never sees (`[BLD-16]`), so `[THR-8]`'s "class objects are `Send` when every component is" read the wrong fields; and `Error` required neither marker, so by the rules no `Result[int]` could leave its thread (K20, J6-16, routed to the owner and not ruled). Three designers and two judges agreed on the shape: the class writes `implements Send, ThreadShared` (or an interface that needs them) in its header, a promise every derived class is checked against where it is declared; `Error` needs both markers, so `AnyError` crosses threads with nothing written.
+
+**Ruling.** Applied as the second judge merged it (verdict 61's choice of a word over a whole-program search, extended from function types to a class header; verdict 110's example line changed). For the owner: the shape itself; the cost (an error type holding a one-thread part is `E2040` where it implements `Error`, even in a one-thread program; a `pub open` class's objects cross threads only when its author writes the promise); and whether `ThreadShared` as well as `Send` should be required of an error.
+
+---
+
+## ODR-262 — How C++ overloaded functions and constructors import — **OPEN**
+
+    ID:        ODR-262
+    Status:    OPEN — for the owner, 2026-11-08 (applied under the delegation, docs/AUTOPILOT.md §3; the owner may reverse)
+    Category:  C INTEROP / C++
+    Location:  0.9.20_Hardened_3 [FFI-57], [FFI-40b], [TYP-26], [FFI-12], [FFI-39], [GRM-35], [FFI-55], [MNG-1]
+
+**The question.** `[TYP-26]` refuses two functions of one name, `[FFI-48]` refused only overloads differing in result, and nothing said what two constructors or two `draw` methods become; a `const`/non-`const` accessor pair (`at`) had no spelling either (K21, NG-26, NG-27, NG-31). Three designers and two judges: one Ember name of several members, each use standing for the one its own words fit (exact before coercion, argument by argument, a literal as C++ types it), `E5035` for none or a tie; the pair split into `at` and `at_mut`, as `get`/`get_mut` already are; an overlay entry may write a parameter's type where names do not tell members apart; `rename`/`hide` take a member reference.
+
+**Ruling.** Applied as the second judge merged it (a lead ruling; the method-3 team's decision 4 on the pair reversed: two names instead of the object's kind). For the owner: whether a name the header never wrote (`at_mut`) is acceptable under "what a programmer means stays written down"; the C aliases (`c_int`, `c_long`) staying transparent aliases, so `put(int)`/`put(long)` tie for a typed `i32` on Windows until an overlay `hide`/`rename` (NG-28).
+
+---
+
+## ODR-263 — A check point where an Ember function returns to C — **OPEN**
+
+    ID:        ODR-263
+    Status:    OPEN — for the owner, 2026-11-08 (applied under the delegation, docs/AUTOPILOT.md §3; the owner may reverse)
+    Category:  MEMORY MODEL / C INTEROP
+    Location:  0.9.20_Hardened_3 [RC-4] point 3, the two [COST-3] rows of C entries
+
+**The question.** A `thread_shared` value queued to the main thread while it lives inside a C event loop (`ui_run()`) waited until C returned (NG-10). The K10 ruling and the gap review's reader both place a check point at the return of every export and trampoline (one thread-local load and a branch per return into C), and at a foreign call, which may block.
+
+**Ruling.** Applied (the by-thread mark of the K10 ruling makes a host thread's own values never wait at all). For the owner: the cost, one queue test per return into C, against holding memory for the life of C's loop.
+
+---
+
+## ODR-264 — A list pattern as a `match` arm's first line — **OPEN**
+
+    ID:        ODR-264
+    Status:    OPEN — for the owner, 2026-11-08 (applied under the delegation, docs/AUTOPILOT.md §3; the owner may reverse)
+    Category:  LANGUAGE / GRAMMAR
+    Location:  0.9.20_Hardened_3 [GRM-13], [GRM-40]
+
+**The question.** Verdict 155 makes every line that starts with `[` and is not directly above a function, struct or class `E0100`, which refuses a top-level list-pattern arm (`["quit"]:`) as a side effect; the nested form (`Some([first, ..rest]):`) now has its meaning (K64).
+
+**Ruling.** Not changed: the arm stays `E0100` (the verdict's letter). For the owner: whether a `[` line whose next line is an indented block inside a `match` may be an arm.
+
+---
+
+## ODR-265 — Several interfaces after `dyn` or `some` — **OPEN**
+
+    ID:        ODR-265
+    Status:    OPEN — for the owner, 2026-11-08 (applied under the delegation, docs/AUTOPILOT.md §3; the owner may reverse)
+    Category:  LANGUAGE / TYPES
+    Location:  0.9.20_Hardened_3 [TYP-17], [TYP-22], [TYP-32], the grammar's `bound_list`
+
+**The question.** The grammar admitted `dyn A + B` and `some I + Send` with no meaning (K65, NG-23). The readers applied verdict 109's sentence ("the same spelling goes everywhere a list of needs is written"): round brackets, `owns dyn (Shape, Debug)`, `some (Iterator[Item = int], Send)`, with the set's table and a marker in the list giving the marker.
+
+**Ruling.** Applied as a lead ruling extending verdict 109 beyond `needs` lists. For the owner: the spelling (brackets without `needs` after `dyn`/`some`).
+
+---
+
+## ODR-266 — A full callback table on a 32-bit target — **OPEN**
+
+    ID:        ODR-266
+    Status:    OPEN — for the owner, 2026-11-08 (applied under the delegation, docs/AUTOPILOT.md §3; the owner may reverse)
+    Category:  C INTEROP
+    Location:  0.9.20_Hardened_3 [FFI-53], [COST-6]
+
+**The question.** On a 32-bit target the tagged number has 65,536 slots; nothing said what a registering `safe fn` does when every slot is live or retired (K76). The text now stops the program there, in every profile, as a full `Pool` does; `docs/AUTOPILOT.md` §4 forbids a panic "for a limit of the implementation", and the reader read this limit as C's 32-bit pointer's, not Ember's.
+
+**Ruling.** Applied. For the owner: whether the stop stands, or every kept-callback registration returns a `Result` (the finder's option B), which every 64-bit program would then handle for a case it cannot reach.
 
 ---
 

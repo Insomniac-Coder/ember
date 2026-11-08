@@ -19,12 +19,14 @@
   every view made from it, lists of views included (`word = line.to_lower().trim()` keeps the
   lowered string until `word`'s last use), and a view of it that would outlive it is refused
   (`[BRW-19]`, `E3063`). A temporary created while evaluating the **condition** of an `if`, `elif`
-  or `while` is dropped before the chosen block runs, unless the condition names what it holds
-  (`exists as`, a kind test, a pattern): the temporary the name refers to, and every temporary of
-  the condition that the name's value views, directly or through what it holds (`[BRW-19]`: `if
-  names().first() exists as p:` keeps the list `names()` made while `p` views a string in it), then
-  live to the end of that block only, never into an `elif` or `else`; the rest are dropped before
-  the block runs. A temporary bound by `with` lives to the end of the `with` block; one created by a
+  or `while`, or the **subject** of a `match` (`match owns JOBS.lock().pop():` holds the lock for
+  the pop and lets the guard go before the arm runs), is dropped before the chosen block or arm
+  runs, unless the condition or the arm's pattern names what it holds (`exists as`, a kind test, a
+  pattern): the temporary the name refers to, and every temporary of the condition that the name's
+  value views, directly or through what it holds (`[BRW-19]`: `if names().first() exists as p:`
+  keeps the list `names()` made while `p` views a string in it), then live to the end of that block
+  or arm only, never into an `elif`, an `else` or another arm; the rest are dropped before the block
+  or arm runs. A temporary bound by `with` lives to the end of the `with` block; one created by a
   `for` iterable lives to the end of the loop.
 
 ## VI.2 Places, values and hand-overs
@@ -46,12 +48,12 @@ object, a `static`. A call whose result type is `ref T` or `ref mut T` is a plac
   over on its own, and neither the part nor the struct used whole is used until the part has a new
   value (`E3040`, `[OWN-11]`). Handing over a field of a type with `drop` is `E3010`; an element of
   an array, `Array` or `Span` is `E3011` (use `mem.take`, `mem.replace`, `mem.swap`, `pop`,
-  `remove`); a field of a class object, which other names may reach and would see the hole, and
-  anything reached through a name that does not own it, are `E3013` (`[OWN-11]`). The value inside
-  an `owns T` place belongs to that place: handing it out on its own (`m: Mesh = b` for `b: owns
-  Mesh`) is `E3013` too ("`b` holds its mesh in a block of its own; hand the block over, `m = b`, or
-  take the value out and leave one: `mem.take(ref mut b)`"), while reading through it stays a view
-  (`[TYP-14]`).
+  `remove`); a field of a class object, a part of a value with several owners (`shares mut`), which
+  other names may reach and would see the hole, and anything reached through a name that does not
+  own it, are `E3013` (`[OWN-11]`). The value inside an `owns T` place belongs to that place:
+  handing it out on its own (`m: Mesh = b` for `b: owns Mesh`) is `E3013` too ("`b` holds its mesh
+  in a block of its own; hand the block over, `m = b`, or take the value out and leave one:
+  `mem.take(ref mut b)`"), while reading through it stays a view (`[TYP-14]`).
 
 ## VI.3 Operators and literals
 
@@ -64,7 +66,7 @@ object, a `static`. A call whose result type is `ref T` or `ref mut T` is a plac
 | `a == b`, `a != b` | `Eq` | built in for scalars |
 | `a < b` etc. | comparison | scalars built in, in generic code too (a float's is IEEE, `[TYP-37]`); other types through `Ord.cmp`; chains (`[GRM-25]`) |
 | `x in c`, `x not in c` | `c.contains(x)` | `Contains` (`[STD-8]`) |
-| `a is b`, `a is not b` | the same object | class objects and views (`[EXP-9]`) |
+| `a is b`, `a is not b` | the same object | class objects, views, owners and links (`[EXP-9]`) |
 | `x is None`, `x is not None` | option test | `Option` (`[EXP-9]`) |
 | `x is T`, `if x is T as name:` | kind test | a value of an interface or base-class type (`[EXP-9]`, `[DSP-4]`) |
 | `a[i]` | `Index` / `IndexMut` / `IndexSet` | read; written in place; `a[i] = v` per `[STD-17]` |
@@ -78,42 +80,49 @@ object, a `static`. A call whose result type is `ref T` or `ref mut T` is a plac
 | `f"…{e}…"` | formatting | allocates a `String`; `E4001` in `@noalloc` (use `format_to`) |
 | `[a, b]`, `{k: v}`, `{a, b}` | collection literals | `[TYP-38]` |
 
-* `[EXP-9]` *(new in 0.9.9)* *(changed in 0.9.9)* *(changed in 0.9.15)* `a is b` tests whether two class
-  objects (or two views) are the same object, by comparing addresses. `x is None` and `x is not None`
-  test an `Option` for absence and presence. Before a type name `is` asks for a kind: `x is T` is a
-  `bool` that says whether `x`, a value of an interface type (`dyn I`, `owns dyn I`, `shares dyn I`) or
-  of a base class, is a `T`, and `if x is T as name:` names it there (`[GRM-45]`, `[DSP-4]`); each is one
-  type-id compare. A kind test that always passes is `E2036`, and one that can never pass, of a type
-  that does not implement the interface or derive from the base class, is `E2037` (`[DSP-4]`). Any other
-  operand of `is` is `E2150`, whose help names `==`.
-* `[EXP-10]` *(new in 0.9.10)* *(changed in 0.9.15)* **Optional chaining.** `a?.f` and `a?.m[T](…)` take an `Option`
-  (or a view of one; anything else is `E2020`): `None` when `a` is `None`, and otherwise the
-  field or the method's result of the value inside, wrapped in `Some`, unless it is an `Option`
-  itself, which is then the result (a chain is one `Option`, never an `Option` of an `Option`), or
-  nothing, which is then what the chain is. `a` is read as `[GRM-13]` reads a place it does not
-  hand over: a `Copy` value inside is copied and any other viewed, so a field that is not `Copy` comes
-  as a view (`p?.name` is an `Option[ref String]`) and `a` keeps its value; from a temporary it is
-  handed over (ODR-107).
-* `[TYP-38]` *(new in 0.9.9)* *(changed in 0.9.15)* **Collection literals.**
-  * A list literal `[a, b, c]` has the type its context expects: `Array[T]` (allocates), `[T; N]` (no
-    allocation) or `Span[T]` (a view of a temporary fixed array). With no context it is `Array[T]`.
-    `[v; N]` is always the fixed array of `N` copies of `v`. A list literal is never a `Set`: in a
-    `Set` position it is `E2020`, whose help is `{a, b}`.
-  * A map literal `{k: v, …}` is a `Map[K, V]` (insertion-ordered, `[STD-11]`); a set literal
-    `{a, …}` is a `Set[T]`. A repeated key keeps its first position and its last value, as Python's
-    `dict` does; `{1, 1}` is `{1}`. With no context a text key, value or element is a `String`, since
-    a map written with no type owns its text; it holds `StrView` only where the program says so
-    (`labels: Map[StrView, int]`, `[STD-11]`).
+* `[EXP-9]` *(new in 0.9.9)* *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `a is b` tests whether two
+  class objects, two views, two owners (`shares`, `shares mut`, `thread_shared`) or two links
+  (`weakref`, `weakref thread_shared`, `sharedref mut`) name the same object or value, by comparing
+  addresses; two links that hold nothing are `is` each other, and a link whose target has ended
+  still names its block, which stays while a link points at it (`[WK-11]`), so the compare is exact
+  and reads nothing of the target. A class object's `==` is this test (`[TYP-36]`). `x is None` and
+  `x is not None` test an `Option` for absence and presence. Before a type name `is` asks for a
+  kind: `x is T` is a `bool` that says whether `x`, a value of an interface type (`dyn I`, `owns dyn
+  I`, `shares dyn I`) or of a base class, is a `T`, and `if x is T as name:` names it there
+  (`[GRM-45]`, `[DSP-4]`); each is one type-id compare. A kind test that always passes is `E2036`,
+  and one that can never pass, of a type that does not implement the interface or derive from the
+  base class, is `E2037` (`[DSP-4]`). Any other operand of `is` is `E2150`, whose help names `==`.
+* `[EXP-10]` *(new in 0.9.10)* *(changed in 0.9.15)* **Optional chaining.** `a?.f` and `a?.m[T](…)`
+  take an `Option` (or a view of one; anything else is `E2020`): `None` when `a` is `None`, and
+  otherwise the field or the method's result of the value inside, wrapped in `Some`, unless it is an
+  `Option` itself, which is then the result (a chain is one `Option`, never an `Option` of an
+  `Option`), or nothing, which is then what the chain is. `a` is read as `[GRM-13]` reads a place it
+  does not hand over: a `Copy` value inside is copied and any other viewed, so a field that is not
+  `Copy` comes as a view (`p?.name` is an `Option[ref String]`) and `a` keeps its value; from a
+  temporary it is handed over (ODR-107).
+* `[TYP-38]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **Collection literals.**
+  * A list literal `[a, b, c]` has the type its context expects: `Array[T]` (allocates), `[T; N]`
+    (no allocation) or `Span[T]` (a view of a temporary fixed array). With no context it is
+    `Array[T]`, `T` the elements' own type: `["ann", "bob"]` is an `Array[StrView]` of text written
+    in the program, allocating no `String` (`[TYP-15]`), unlike a map or set literal (below); a list
+    that is to own its text says so (`names: Array[String] = ["ann", "bob"]`). `[v; N]` is always
+    the fixed array of `N` copies of `v`. A list literal is never a `Set`: in a `Set` position it is
+    `E2020`, whose help is `{a, b}`.
+  * A map literal `{k: v, …}` is a `Map[K, V]` (insertion-ordered, `[STD-11]`); a set literal `{a,
+    …}` is a `Set[T]`. A repeated key keeps its first position and its last value, as Python's
+    `dict` does; `{1, 1}` is `{1}`. With no context a text key, value or element is a `String`,
+    since a map written with no type owns its text; it holds `StrView` only where the program says
+    so (`labels: Map[StrView, int]`, `[STD-11]`).
   * `[]` and `{}` need their element type from the context or from later uses in the function
     (`[TYP-23]`); left open, they are `E2060`.
   * Every element converts to the element type by `[TYP-5]`, so `["ann", "bob"]` in an
     `Array[String]` position is two `String`s, and in an `Array[StrView]` position is two static
     `StrView`s. An element for a list of `owns` values is made with `owns` (`[owns Circle(r=1.0)]`,
     `[OWN-10]`).
-  * A literal that allocates carries `Alloc`; in a `@noalloc` function it is `E4001`, whose help names
-    the fixed-array form. A generator expression (`[GRM-38]`) is not a collection and never allocates.
-    A literal followed by `using m` takes its memory from the memory manager's instance `m`
-    (`[0.0, 1.0] using current`, `[ALC-1]`).
+  * A literal that allocates carries `Alloc`; in a `@noalloc` function it is `E4001`, whose help
+    names the fixed-array form. A generator expression (`[GRM-38]`) is not a collection and never
+    allocates. A literal followed by `using m` takes its memory from the memory manager's instance
+    `m` (`[0.0, 1.0] using current`, `[ALC-1]`).
 
 ```ember
 fn main():
@@ -146,8 +155,9 @@ fn main():
     values), and `for k in owns m:` hands its keys over, ending the values (`into_items()` keeps
     both); a `String` or `StrView` yields its `char`s. A loop's names follow the comma rule (`for
     ref mut pos, ref vel in q:`; a name with no word after one with a word is `E0116`, `[OWN-13]`).
-    A plain loop name changes nothing: `for v in xs.iter_mut(): v += 1` is `E3023`, whose help gives
-    `for ref mut v in xs:`.
+    A loop name that views its element changes nothing: `for v in xs.iter_mut(): v += 1` is `E3023`,
+    whose help gives `for ref mut v in xs:`; a loop name under `for x in owns e:` owns its element
+    and may be changed (`[BRW-14]`).
 * `[CTL-2]` *(changed in 0.9.15)* *(changed in 0.9.20)* While a `for` loop walks a collection,
   nothing changes it but the loop's own handle on the item it is on, whatever the change and through
   whatever name or call (`[BRW-18]`): `xs[0] = 5` inside `for x in xs:` is `E3020`, whose help gives
@@ -300,26 +310,39 @@ fn main():
   captured with a word, in one block of its own made with the value (it carries `Alloc` and is
   reported by `ember inspect --alloc`), except that a state of one word or less that the function's
   body never writes is kept in the state word itself, with no block and no `Alloc`: a `copy of` of a
-  `Copy` value it only reads, or an owner or a link it only reads through (a body writes its state
-  when, in the body or in a function it calls with the captured name, the name is assigned or
-  augmented, named `ref mut`, given to a `ref mut` or `owns` parameter, handed over, or has a method
-  called on it that changes it, worked out as `[EFF-24]` works out what a function changes); such a
-  state lives in a block of its own, so that a call through a copy of the two words (a list element,
-  a field, `[BRW-1]`) changes the state the holder keeps; which of the two a function value has is
-  decided from its captures and its body alone, the same in every implementation (`[PHIL-13]`), its
-  `Alloc` is at the line that makes the function value, which `ember inspect --alloc` lists, and
-  `E4001` there names it ("`counter` is `@noalloc`, and the function made on line 4 keeps `n`, which
-  it changes (`n += 1`), in a block of its own; keep the count in the caller's variable instead: `fn
-  counter(ref mut n: int)`"); and where the real variables it uses live, which costs nothing beyond
-  their addresses. A named function, or a lambda that captures nothing, has no state and allocates
-  nothing, and is `Copy`; a function value with state is not, and `=` hands it over. Calling one is
-  one indirect call. A call through a list element or a field copies the two words out before the
-  arguments are given and keeps no pointer into the list or field. Replacing or ending a function
-  value ends what its state owns, as ending an object runs its `drop` (`[DRP-8]`): `h.keep = fn():
-  pass` ends the function stored there before and what its `owns` captures held, so a view of that
-  is not used after that line (`E3060`, `[RC-5]`). Whether another thread may run it is said by its
-  type, `thread_shared fn()` (`[CLO-16]`); two are equal (`==`) when they call the same function
-  with the same state (ODR-102).
+  `Copy` value it only reads, or an owner or a link, whether the body only reads through it or
+  changes its target through it (a change of the target through a `shares mut`, `thread_shared` or
+  `sharedref mut` owner or link, or under a lock, writes the target and not the word, and every copy
+  of the two words reaches the same target; such a capture never needs a block, and a call through
+  it is a change of the target, `[EFF-24]`, not of the function value's own state, `[CLO-18]`) (a
+  body writes its state when, in the body or in a function it calls with the captured name, the name
+  is assigned or augmented, named `ref mut`, given to a `ref mut` or `owns` parameter, handed over,
+  or has a method called on it that changes it, worked out as `[EFF-24]` works out what a function
+  changes); such a state lives in a block of its own, so that a call through a copy of the two words
+  (a list element, a field, `[BRW-1]`) changes the state the holder keeps; which of the two a
+  function value has is decided from its captures and its body alone, the same in every
+  implementation (`[PHIL-13]`), its `Alloc` is at the line that makes the function value, which
+  `ember inspect --alloc` lists, and `E4001` there names it ("`counter` is `@noalloc`, and the
+  function made on line 4 keeps `n`, which it changes (`n += 1`), in a block of its own; keep the
+  count in the caller's variable instead: `fn counter(ref mut n: int)`"); and where the real
+  variables it uses live, which is one address whatever their number: that of the frame of the
+  function that made it, through which every real variable it uses is reached (a variable of an
+  enclosing function through that frame's own state word), and which `[CLO-4]` keeps alive for the
+  value's whole life. A function value that uses real variables and captured nothing with a word
+  keeps that address in its state word, with no block and no `Alloc`; one that uses real variables
+  and also captured something with a word keeps the frame's address and its captures together in a
+  block of its own, since the state word holds one of them (`Alloc` at its line; in a `@noalloc`
+  function `E4001`: "`fall` is `@noalloc`, and the function made on line 4 uses the real `dt` and
+  keeps its own copy of `k`, so its state is two words and lives in a block of its own; use the real
+  `k` too: `fn(ref mut p): p.vy *= k * dt`"). A named function, or a lambda that captures nothing,
+  has no state and allocates nothing, and is `Copy`; a function value with state is not, and `=`
+  hands it over. Calling one is one indirect call. A call through a list element or a field copies
+  the two words out before the arguments are given and keeps no pointer into the list or field.
+  Replacing or ending a function value ends what its state owns, as ending an object runs its `drop`
+  (`[DRP-8]`): `h.keep = fn(): pass` ends the function stored there before and what its `owns`
+  captures held, so a view of that is not used after that line (`E3060`, `[RC-5]`). Whether another
+  thread may run it is said by its type, `thread_shared fn()` (`[CLO-16]`); two are equal (`==`)
+  when they call the same function with the same state (ODR-102).
 * `[CLO-4]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **A function value does
   not outlive what it uses and does not own.** The real variables a lambda uses are checked in the
   function that writes it, which sees every place the function value goes: the value must provably
@@ -372,11 +395,14 @@ fn main():
   XI).
 * `[CLO-11]` *(new in 0.9.9)* A call `recv.name(args)` where `recv`'s type has no method `name` but
   has a field `name` of callable type calls that field. A method of that name takes precedence.
-* `[CLO-12]` *(new in 0.9.9)* *(changed in 0.9.15)* A local function (`[GRM-28]`) is a named lambda:
-  it takes the same capture words after its brackets (`fn push_a() thread_shared log:`), follows
-  `[CLO-1]` to `[CLO-6]`, and may be passed by its name, so a long lambda may be written inside the
-  call (`a = thread.spawn(owns fn() thread_shared log: log.push("a"))`) or as a local function (`fn
-  push_a() thread_shared log:` with the body `log.push("a")`, then `a = thread.spawn(push_a)`).
+* `[CLO-12]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A local function
+  (`[GRM-28]`) is a named lambda: it takes the same capture words after its brackets (`fn push_a()
+  thread_shared log:`), follows `[CLO-1]` to `[CLO-6]`, and may be passed by its name, so a long
+  lambda may be written inside the call (`a = thread.spawn(owns fn() thread_shared log:
+  log.push("a"))`) or as a local function (`fn push_a() thread_shared log:` with the body
+  `log.push("a")`, then `a = thread.spawn(owns push_a)`, with `owns` as before every argument for an
+  `owns` parameter (`[FN-2a]`): `spawn` keeps the function past the call (`[THR-10]`), so `push_a`
+  is handed over, and `push_a()` after that line is `E3040`; `a = thread.spawn(push_a)` is `E3028`).
 * `[CLO-16]` *(new in 0.9.15)* *(changed in 0.9.20)* **`thread_shared fn()`: a function any thread
   may run.** A callable type says whether any thread may run its functions. A list, field or
   parameter whose functions may run on any thread says so in its type (`handlers:

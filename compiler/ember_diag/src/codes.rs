@@ -243,6 +243,7 @@ codes! {
     E2110 = (Error, 2110, Types, "[CLS-4]", "override of a method that is not virtual");
     E2111 = (Error, 2111, Types, "[CLS-4]", "a method that replaces an inherited virtual one without `override`");
     E2112 = (Error, 2112, Types, "[CLS-4]", "`virtual` in a class that cannot be subclassed");
+    E2113 = (Error, 2113, Types, "[CLS-4]", "an `override` whose first line differs from the virtual method it replaces: a parameter's name, word or type, the words on `this`, or the result");
     E2114 = (Error, 2114, Types, "[TYP-45], [TYP-46], [ALC-1]", "a type word that cannot apply to its type: `owns` on a class type (it always has its own block); `using` after a type with no heap memory of its own");
     E2115 = (Error, 2115, Types, "[GRM-41], [FN-4]", "`static fn` outside a type body");
     E2116 = (Error, 2116, Types, "[OWN-8]", "`copy of` before what it cannot copy as itself: a `weakref` link, a value of a view type (a struct holding a `ref mut` field included), a type with no `Clone`, a value whose views point into its own `let` field");
@@ -391,6 +392,7 @@ codes! {
 
     // --- grades, adoption, C++ boundary, text (0.6, 0.7.x) --------------------
     E5034 = (Error, 5034, Ffi, "[FFI-48]", "unsupported C++ construct");
+    E5035 = (Error, 5035, Ffi, "[FFI-57]", "a use of a C++ name of several members that fits no member, fits two that neither beats, or chooses one declared `= delete`");
     E5050 = (Error, 5050, Ffi, "[TCB-1]", "a foreign fact claims a grade whose evidence is absent or stale");
     E5051 = (Error, 5051, Ffi, "[FFI-35a]", "a foreign callee retains a pointer its contract does not declare `retained`");
     E5052 = (Error, 5052, Ffi, "[FFI-36b]", "`adopt` on a handle whose overlay declares `adopt = false`");

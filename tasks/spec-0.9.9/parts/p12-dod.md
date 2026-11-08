@@ -36,20 +36,25 @@ fn main():
   `@soa(flatten)` whose type is a struct is split into one column per field of its own (`ps.pos.x`);
   otherwise a struct field is one column. A flattened field has no column of its own: `ps.pos` is
   `E2072` ("`pos` is `@soa(flatten)`, so `ps` has no `pos` column; name one of its columns:
-  `ps.pos.x`, `ps.pos.y`, `ps.pos.z`"), while `ps[i].pos` is a `Vec3` gathered from them by `copy
-  of`, and `ps[i].pos.x` is a place in the column `pos.x`.
-* `[SOA-2]` *(changed in 0.9.15)* `ps.f` names the column of field `f`: a view of that column's elements, a `MutSpan[F]`,
-  which supports everything a `MutSpan` supports and converts to `Span[F]` where one is expected
-  (`[SPN-3]`). Like every `MutSpan`, it writes the elements only through a name or argument that says
-  `ref mut` (`d = ref mut ps.pos`; `integrate(ref mut ps.pos, ps.vel, dt)`), and only where `ps` itself
-  is reached through a name that may change it (`E3027` otherwise); a plain name holding a column only
-  reads it (`E3023`). Different columns
-  are different places, as different fields are (`[BRW-4]`), so any number of them may be named or
-  given to one call at once, changeable or not. A length-changing operation (`push`, `pop`,
-  `swap_remove`, `retain`, `clear`) is a reshape of all of `ps`: it may move the block every column
-  lives in, so it ends every view of a column (`E3060` at a later use), and it may not run while a loop
-  walks `ps` or one of its columns (`E3020`).
-* `[SOA-6]` *(new in 0.9.9)* *(changed in 0.9.15)* `ps[i]` is an **element proxy**: `SoARef[T]`, a
+  `ps.pos.x`, `ps.pos.y`, `ps.pos.z`"), while `ps[i].pos` names the element's `pos` over those
+  columns as `ps[i]` names the element over all of them (`[SOA-6]`): a proxy, read-only through
+  `ps[i]` and changeable through `ref mut ps[i]` or a name that may change `ps`, whose field
+  `ps[i].pos.x` is a place in the column `pos.x`; `copy of ps[i].pos` gathers a `Vec3` of your own
+  from them (`load()` at a use is `E1010`, as for `ps[i]`); `ps[i].pos = v` scatters `v`'s fields
+  into them, as `ps[i] = v` scatters an element, and `ps[i].pos += d` is a proxy's compound
+  assignment (`[SOA-6]`).
+* `[SOA-2]` *(changed in 0.9.15)* `ps.f` names the column of field `f`: a view of that column's
+  elements, a `MutSpan[F]`, which supports everything a `MutSpan` supports and converts to `Span[F]`
+  where one is expected (`[SPN-3]`). Like every `MutSpan`, it writes the elements only through a
+  name or argument that says `ref mut` (`d = ref mut ps.pos`; `integrate(ref mut ps.pos, ps.vel,
+  dt)`), and only where `ps` itself is reached through a name that may change it (`E3027`
+  otherwise); a plain name holding a column only reads it (`E3023`). Different columns are different
+  places, as different fields are (`[BRW-4]`), so any number of them may be named or given to one
+  call at once, changeable or not. A length-changing operation (`push`, `pop`, `swap_remove`,
+  `retain`, `clear`) is a reshape of all of `ps`: it may move the block every column lives in, so it
+  ends every view of a column (`E3060` at a later use), and it may not run while a loop walks `ps`
+  or one of its columns (`E3020`).
+* `[SOA-6]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `ps[i]` is an **element proxy**: `SoARef[T]`, a
   read-only name of element `i`, and `ref mut ps[i]` an `SoAMut[T]`, a name of it that may change
   it. A proxy is a position: it finds element `i` again at each use, so adding to `ps` keeps it, and
   a removal, reorder or clear ends it (`E3060` at a later use). A proxy's field `ps[i].f` is a place
@@ -57,24 +62,28 @@ fn main():
   assembled. `ps.get(i) -> Option[SoARef[T]]` names element `i` as `ps[i]` does, with no copy, as
   `Array.get` does. `copy of ps[i]` gathers a `T` of your own (for `T: needs Clone`) by the proxy's
   `load()`, the method `copy of` runs here as it runs `clone` elsewhere; `load()` written at a use
-  is `E1010` ("write `copy of ps[0]`"). `ps[i] = v` scatters a value. `for p in ps:` yields
-  `SoARef[T]`, `for ref mut p in ps:` yields `SoAMut[T]`. While an `SoAMut[T]` is still used it is
-  the only name of its element: a column named separately that reaches the element is refused
-  (`E3021` to read it, `E3022` to change it); while an `SoARef[T]` is still used, a change of its
-  element through another name is `E3021`. An element of a `T` with a `drop` (`[DRP-1]`) is ended as
-  one value: where an element leaves `ps` without being handed over (`pop`'s and `swap_remove`'s
-  result is handed over; `retain`, `clear`, `ps[i] = v` over the old element, and the end of `ps`
-  discard theirs), the compiler gathers its fields from the columns into a `T` and ends that `T`
-  (its `drop` runs once, then its fields end), so `drop` runs exactly once per element. A `T` with a
-  `drop` is otherwise an `SoA` element like any other: its field `ps[i].f` is a place of its column,
-  as `b.f` is a place of `b`. The same holds for a flattened field's struct (`@soa(flatten)`). The
-  gather is a row of §X.4, shown by `ember inspect --cost`.
+  is `E1010` ("write `copy of ps[0]`"). `ps[i] = v` scatters a value, through a name that may change
+  `ps` (`E3023` otherwise); `ps[i] op= v`, for a `T` with the operator, is the gather, the operation
+  on the gathered value and the scatter, one load and one store per column, the stores that writing
+  its fields one by one would make (the same for a flattened field's proxy, `ps[i].pos += d`,
+  `[SOA-1]`). `for p in ps:` yields `SoARef[T]`, `for ref mut p in ps:` yields `SoAMut[T]`. While an
+  `SoAMut[T]` is still used it is the only name of its element: a column named separately that
+  reaches the element is refused (`E3021` to read it, `E3022` to change it); while an `SoARef[T]` is
+  still used, a change of its element through another name is `E3021`. An element of a `T` with a
+  `drop` (`[DRP-1]`) is ended as one value: where an element leaves `ps` without being handed over
+  (`pop`'s and `swap_remove`'s result is handed over; `retain`, `clear`, `ps[i] = v` over the old
+  element, and the end of `ps` discard theirs), the compiler gathers its fields from the columns
+  into a `T` and ends that `T` (its `drop` runs once, then its fields end), so `drop` runs exactly
+  once per element. A `T` with a `drop` is otherwise an `SoA` element like any other: its field
+  `ps[i].f` is a place of its column, as `b.f` is a place of `b`. The same holds for a flattened
+  field's struct (`@soa(flatten)`). The gather is a row of §X.4, shown by `ember inspect --cost`.
 * `[SOA-3]` `SoA[T]` provides `len`, `is_empty`, `push`, `pop`, `swap_remove`, `retain`, `clear`,
   `reserve`, `with_capacity`, and `sort_by_key` over any column; every operation keeps the columns
   aligned element for element.
 * `[SOA-7]` *(new in 0.9.9)* All columns of one `SoA[T]` live in **one heap block**, each column
   starting at an address aligned to the larger of 64 bytes and its element type's alignment. Growth
-  reallocates the block once. A column's base pointer is therefore suitable for aligned vector loads.
+  reallocates the block once. A column's base pointer is therefore suitable for aligned vector
+  loads.
 * `[SOA-4]` `ArenaSoA[T]` is the fixed-capacity, arena-backed form, under the rules of `[ARN-5]`.
 
 ## XII.2 SIMD

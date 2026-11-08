@@ -60,16 +60,17 @@ Ember is indentation-sensitive exactly as Python 3 is, with stricter rules:
   (`E0100`, `[GRM-40]`), a comment never affects compilation, including by producing a diagnostic.
 * `[LEX-11a]` A `##` comment on a comment-only line is emitted after the `INDENT`/`DEDENT` tokens of
   the next content line, so a doc comment written inside a block attaches inside that block.
-* `[LEX-23]` *(new in 0.9.9)* *(changed in 0.9.15)* A line comment whose text begins `SAFETY:` or
+* `[LEX-23]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A line comment whose text begins `SAFETY:` or
   `SAFETY(<category>):`, placed on the line immediately before an `unsafe:` block, an `unsafe`
-  implementation (`unsafe extend`, `unsafe extern`, `unsafe overlay`), an `unsafe import c` of C
-  source (`[FFI-51]`) or an `@unsafe(...)` attribute (`[FFI-26]`), or at the end of the `unsafe:`
-  line itself, is that construct's **safety note**: it says why that code is sound. The lexer
-  records it in the comment side table (§II.7); `[UNS-8]` reads it. `<category>` is one of `ffi`,
-  `layout`, `aliasing`, `intrinsic`, `performance`, `uninit`. An `unsafe fn` carries none: what its
-  callers must make true is its `@safety` (`[UNS-7]`), and a safety note before an `unsafe fn` or at
-  the end of its line is warning `W3013`, whose message says to remove it, a safety note going above
-  each `unsafe:` block inside the function.
+  implementation (`unsafe extend`, `unsafe extern`, `unsafe overlay`), an `unsafe import c` or
+  `unsafe import cpp` of code compiled into the program (`[FFI-51]`) or an `@unsafe(...)` attribute
+  (`[FFI-26]`), or at the end of the `unsafe:` line itself, is that construct's **safety note**: it
+  says why that code is sound. The lexer records it in the comment side table (§II.7); `[UNS-8]`
+  reads it. `<category>` is one of `ffi`, `layout`, `aliasing`, `intrinsic`, `performance`,
+  `uninit`. An `unsafe fn` carries none: what its callers must make true is its `@safety`
+  (`[UNS-7]`), and a safety note before an `unsafe fn` or at the end of its line is warning `W3013`,
+  whose message says to remove it, a safety note going above each `unsafe:` block inside the
+  function.
 
 ## II.4 Identifiers and keywords
 

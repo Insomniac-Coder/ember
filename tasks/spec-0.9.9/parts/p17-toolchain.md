@@ -113,13 +113,16 @@ ember --help | --version [--matrix]
   every Part, rule family, command and flag of this document, whether this compiler implements it. A
   command, flag, attribute or construct the compiler does not implement is rejected with `E0900`
   naming it (`[PHIL-12]`), never ignored.
-* `[CLI-5]` *(changed in 0.9.10)* `ember bind --init <header>` writes a starter overlay,
-  `<stem>.overlay.em` beside the header (ODR-148): every derived contract, every unknown fact as a
-  `TODO(…)` word (`[FFI-11c]`), every skipped declaration as a comment with its reason. It compiles
-  unchanged and never overwrites a file; with `--merge` it adds only the declarations missing from
-  an existing overlay, keeping hand-written contracts and comments, and records the header as it now
-  is in that overlay's line of the package's `ember.overlays` (`[FFI-55]`). A declaration it leaves
-  unsafe to call is written `unsafe fn` (verdict 130).
+* `[CLI-5]` *(changed in 0.9.10)* *(changed in 0.9.20)* `ember bind --init <header>` writes a
+  starter overlay, `<stem>.overlay.em` beside the header (ODR-148): every derived contract, every
+  unknown fact as a `TODO(…)` word (`[FFI-11c]`), every skipped declaration as a comment with its
+  reason, and each member of a name declared several times as its own entry, with the words and
+  types that tell it from the others and no more (`[FFI-57]`, `[GRM-35]`). It compiles unchanged and
+  never overwrites a file; with `--merge` it adds only the declarations missing from an existing
+  overlay, keeping hand-written contracts and comments, and records the header as it now is in that
+  overlay's line of the package's `ember.overlays` (`[FFI-55]`). A declaration it leaves unsafe to
+  call, one whose calls `[FFI-2]`'s limit on raw pointers keeps from being safe among them, is
+  written `unsafe fn` (verdict 130).
 * `[CLI-6]` `ember bind --report` lists every skipped declaration and every declaration still
   `unsafe` with its unknown facts, and exits non-zero on a skip (`--baseline` limits that to new
   ones).
@@ -281,7 +284,13 @@ large_copy = { level = "warn", threshold = 256 }
      `@ffi(no_callbacks)`;
   8. for a class, whether its own methods, and its bases', say that its objects are on one thread
      (`weakref this`), `thread_shared` (`thread_shared this`, `weakref thread_shared this`), or
-     neither, which a line that makes an object of the class checks (`[OWN-13]`); and
+     neither, which a line that makes an object of the class checks (`[OWN-13]`); for an `open` or
+     `abstract` class another package may derive from, the markers its header promises (`Send`,
+     `ThreadShared`, an interface that needs them), which each class derived from it in another
+     package is checked against where it is declared (`[THR-8]`, `E7015`); and for an `open` or
+     `abstract` class no other package can derive from, whether its objects are `Send` and
+     `ThreadShared`, read from the classes its package derives from it, which a dependant holding
+     one through a `pub` type's field reads (`[THR-8]`); and
   9. for each function, the parameters, `this` included, of which it makes a `weakref T` link,
      directly or through a call, which a caller giving one a value reached through a `thread_shared`
      value checks (`[OWN-13]`, `E7015`);
@@ -322,13 +331,14 @@ large_copy = { level = "warn", threshold = 256 }
       is made unsafe by a package it never saw, and nothing runs for it while the program runs; the
       record lives in the interface file beside item 7, and in a reloadable image's manifest
       (`[HR-8]`), which `[HR-44]` compares.
-* `[BLD-16]` *(new in 0.9.20)* **No fact of the whole program decides a package's code or layout.**
+* `[BLD-16]` *(new in 0.9.20)* *(changed in 0.9.20)* **No fact of the whole program decides a package's code or layout.**
   The layout of a package's types and the instructions it emits for a line are decided by the
   package's own source, by the interface files of the packages it imports (`[MOD-9]`, `[EFF-4]`,
   `[BLD-14]`) and by the generic instances it makes (`[MONO-1]`); never by a package that depends on
   it, and never by the program as a whole, which the package never sees (`[BLD-1]`): not by which
   lines, anywhere, write a word on a value of one of its types, not by which of its values are made
-  `thread_shared`, not by which of its classes a `weakref` names. A rule whose condition would be
+  `thread_shared`, not by which of its classes a `weakref` names, not by which classes a dependant
+  derives from one of its `open` or `abstract` classes (`[THR-8]`). A rule whose condition would be
   such a fact states it so that the package compiling the line reads it from a declaration it sees
   (a type's words, its `pub`, whether it is `Send`: `[OBJ-1]`, `[WK-18]`), from the type of the
   place at the line (`[THR-2]`, `[OWN-13]`), or, where the fact is one of a kind known only while
@@ -442,17 +452,18 @@ large_copy = { level = "warn", threshold = 256 }
   A key outside the table is `E9001`.
 * `[PRF-2]` *(changed in 0.9.10)* Hot reload is a build mode of `debug` and `development`, not a
   profile; a `release` build is never reloadable (Annex B).
-* `[PRF-4]` *(new in 0.9.15)* **The checks that run while a program runs** are the same in every
+* `[PRF-4]` *(new in 0.9.15)* *(changed in 0.9.20)* **The checks that run while a program runs** are the same in every
   profile, and none is compiled for `debug` only: bounds checks; the arithmetic checks (overflow,
-  division by zero, shift amounts); `assert_disjoint`'s compare of two spans; the compare of a count
-  of owners, and of a weak count, with its limit before each +1 (`[RC-4]`); the test of a `weakref` link's
-  target when it is opened; the type compare of `cast x as T`; a `Handle`'s generation; and the
-  checked trampoline's checks of a foreign callback, its thread checks included (`[FFI-33a]`,
-  `[FFI-33b]`); the check against adopting one object twice (`[FFI-36b]`); and the ranges of every GPU draw
-  (`[GPU-12]`). No check of exclusive access runs while a program runs: every rule about who may
-  change or read a place is checked when compiling (§VII). §X.4 gives each check's cost. A check that
-  stops the program says so in the program's own names (`[DIA-23]`), in every profile with the same
-  text; §X.4 gives each stop's text (`[COST-6]`).
+  division by zero, shift amounts); `assert_disjoint`'s compare of two spans and the test of a
+  `runtime` name's fact at a line that changes what a call's result may point into (`[LT-48]`); the
+  compare of a count of owners, and of a weak count, with its limit before each +1 (`[RC-4]`); the
+  test of a `weakref` link's target when it is opened; the type compare of `cast x as T`; a
+  `Handle`'s generation; and the checked trampoline's checks of a foreign callback, its thread
+  checks included (`[FFI-33a]`, `[FFI-33b]`); the check against adopting one object twice
+  (`[FFI-36b]`); and the ranges of every GPU draw (`[GPU-12]`). No check of exclusive access runs
+  while a program runs: every rule about who may change or read a place is checked when compiling
+  (§VII). §X.4 gives each check's cost. A check that stops the program says so in the program's own
+  names (`[DIA-23]`), in every profile with the same text; §X.4 gives each stop's text (`[COST-6]`).
 
 ## XVII.5 Tests, gates and conformance
 
@@ -626,8 +637,9 @@ fn main():
   showing the help applied, which must compile.
 * `[DIA-15]` Suggestions are computed from data the compiler already holds (scope tables, type
   information, an index of exported names); none requires speculative type checking.
-* `[DIA-18]` A foreign call rejected because its contract has unknown facts (`E5002`) names each
-  missing fact and prints the overlay line that supplies it.
+* `[DIA-18]` *(changed in 0.9.20)* A foreign declaration rejected because its contract has unknown facts (`E5002`,
+  `[FFI-2]`; a call of it outside `unsafe` is `E3100`) names each missing fact and prints the
+  overlay line that supplies it.
 * `[DIA-12]` Every name and type error is classified into a shape of §XVII.6.2. An unclassified
   error is logged, and CI fails on the log.
 * `[DIA-9]` *(changed in 0.9.15)* A diagnostic never suggests `unsafe` while a fix without it
@@ -737,7 +749,7 @@ The ids O3, O4, O5, B8, B14, B15 and X1 are no longer used: their cases are O1 (
 | N8 | argument does not fit the word in front of the parameter | the parameter's words in the callee's first line and the caller's fix (`copy of x`, `ref mut x` at the call, or ending the value's use before the call) (`[FN-2a]`) |
 | N9 | missing bound (`E2040`) | the bound to add, and the one module where `extend` may be written (`[TYP-20]`) |
 | N10 | not usable as `dyn` (`E2050`) | the method and the clause it violates |
-| N11 | ambiguous method (`E2070`) | `I.m(recv, …)` for each candidate |
+| N11 | ambiguous method (`E2070`); a use of a C++ name of several members that fits none or two (`E5035`) | `I.m(recv, …)` for each candidate; each member as the header declares it, and the cast, `rename` or `hide` line to write (`[FFI-57]`) |
 | N12 | indentation (`E0002`–`E0004`) | the expected column and the line that set it |
 | N13 | a field assigned (`this.x = …`) but not declared (`E2072`) | `field 'x' is not declared in class C`, with a machine-applicable fix-it adding `x: <inferred type>` to the class body |
 | N14 | an item has the path of a module or the name of a built-in type (`E1032`) | rename the item, or the module's file |

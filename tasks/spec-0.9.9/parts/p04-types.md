@@ -81,8 +81,8 @@
   6. `Array[T]`, `[T; N]` to `Span[T]` (a read-only view) or, given with `ref mut`, to `MutSpan[T]`
      (`[SPN-1]`), and `MutSpan[T]` to `Span[T]`, a read-only view of the same elements (`[SPN-3]`,
      ODR-116);
-  7. `ref T` from a place (a read-only view of it), and reading through a `ref` or an `owns T` where
-     a `T` is expected (`[TYP-14]`);
+  7. `ref T` from a place (a read-only view of it), and reading through a `ref`, an `owns T` or a
+     `shares`, `shares mut` or `thread_shared` owner where a `T` is expected (`[TYP-14]`);
   8. a value to an interface its type implements, keeping the word that says who owns it: a value
      read in place to `dyn I`, an `owns T` to `owns dyn I`, a `shares T` to `shares dyn I`, a
      `shares mut T` to `shares mut dyn I` (`[TYP-45]`); and a class object to a base class (upcast),
@@ -106,9 +106,14 @@
       numbers, lengths). It converts as `as` does (`[TYP-6]`), which then loses nothing. After `n =
       5`, `y: u64 = n` is accepted; `y: u64 = x` for a parameter `x: int` is `E2020`. In a function
       written for any type, a number whose type each use decides (`[STD-19]`) is checked at each use
-      (the owner's ruling of 2026-10-06). Each rule composes with the others only where stated
-      (widening after range erasure, and rule 11 after rules 1–4). Nothing converts implicitly to or
-      from `bool` or `char`.
+      (the owner's ruling of 2026-10-06). Each rule composes with the others only where stated:
+      widening after range erasure; rule 7 before any rule, since a read through a view or an `owns
+      T` converts nothing but reaches the value (`greet(n)` for `n: ref String` and `fn greet(s:
+      StrView)`, rule 7 then 4; `f(b)` for `b: owns Array[int]` and `fn f(xs: Span[int])`, rule 7
+      then 6); and rule 11 after any one of the other rules, so an `Option[T]` place accepts as
+      `Some` whatever a `T` place accepts (`cap: Option[u64] = n` after `n = 5`; `slot: Option[owns
+      dyn Weapon] = owns Sword(edge=4)`; `on_hit: Option[Handler] = log_hit`), still one level only.
+      Nothing converts implicitly to or from `bool` or `char`.
 * `[TYP-6]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `x as T` converts
   explicitly:
   * integer → integer: keeps the low bits (truncation or sign/zero extension);
@@ -126,7 +131,9 @@
     variants and `Option[Color]` keeps `None` in an unused discriminant (`[TYP-13]`): `7 as Color`
     is `E2020` ("an integer may be no `Color`; write `Color.from_repr(7)`, an `Option[Color]`, and
     open it: `if Color.from_repr(7) exists as c:`");
-  * `as` between any other pair of types is `E2020`, naming both.
+  * `as` between any other pair of types is `E2020`, naming both, and where two of the conversions
+    above join them its help gives the chain (`c as int` for a `char`: "a `char` converts to a `u32`
+    only; write `(c as u32) as int`").
 * `[TYP-7]` `as` between pointer types, or between a pointer and an integer, requires `unsafe`.
 
 ### Integer arithmetic
@@ -309,18 +316,20 @@ endpoints; `E2213` `in` clause on a non-numeric or generic alias; `E2214` arithm
   of the same place. `sharedref mut T` may change its target, and several holders, and its owner,
   may name one object; it is not `Copy` either, and another holder is made with `sharedref mut`
   (`[TYP-45]`).
-* `[TYP-14]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A reference, and an
-  `owns T`, is read through wherever a `T` is wanted — a field access, a method call, an operand, an
-  argument to a plain parameter. So a recursive enum whose payload is `owns Tree` is traversed by
-  passing the payload to a function taking `Tree`, and `.get()` on an `owns` value is `E2072` ("an
-  `owns Mesh` reads as a `Mesh`; remove `.get()`"). `=` on a `ref mut` name writes the place it
-  names: `r = ref mut a` then `r = 20` writes `a`. `r = ref mut b` gives it another ref, after which
-  `r = 30` writes `b`; the line that gives another ref says `ref mut` again, for every type, and a
-  read-only `ref b` given to a `ref mut` name is `E3023` ("to point `r` at `b` write `r = ref mut
-  b`, or for a read-only name `rb = ref b`"). A name written `const ref mut` is never given another
-  ref (`E3023`): `const` says the name itself stays as it is, as on a value. A read-only view name
-  given a new view with `=` views that instead (`rest = tail.trim()`). `=` on a `ref mut` name of a
-  `dyn I` type never gives the place a whole value, since the place's own kind is known only while
+* `[TYP-14]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A reference, an `owns
+  T`, and a `shares T`, `shares mut T` or `thread_shared T` owner, is read through wherever a `T` is
+  wanted — a field access, a method call, an operand, an argument to a plain parameter (a
+  `thread_shared T` as a read, which `[THR-1]` allows every owner; the owner word says who owns the
+  value, not what it is). So a recursive enum whose payload is `owns Tree` is traversed by passing
+  the payload to a function taking `Tree`, and `.get()` on an `owns` value is `E2072` ("an `owns
+  Mesh` reads as a `Mesh`; remove `.get()`"). `=` on a `ref mut` name writes the place it names: `r
+  = ref mut a` then `r = 20` writes `a`. `r = ref mut b` gives it another ref, after which `r = 30`
+  writes `b`; the line that gives another ref says `ref mut` again, for every type, and a read-only
+  `ref b` given to a `ref mut` name is `E3023` ("to point `r` at `b` write `r = ref mut b`, or for a
+  read-only name `rb = ref b`"). A name written `const ref mut` is never given another ref
+  (`E3023`): `const` says the name itself stays as it is, as on a value. A read-only view name given
+  a new view with `=` views that instead (`rest = tail.trim()`). `=` on a `ref mut` name of a `dyn
+  I` type never gives the place a whole value, since the place's own kind is known only while
   running and its size is the kind's: it is `E3023` ("`v` views a value of a kind known only while
   running; change it through its methods, `v.scale(2.0)`, or take the value over, `owns v: owns dyn
   Shape`, and return the new one").
@@ -466,10 +475,12 @@ fn main():
     a field or a list as a kept view; `sharedref` without `mut` is `E0114` (`[GRM-43]`);
   * `owns dyn I`, `shares dyn I` and `shares mut dyn I`: a value of some type implementing `I`, held
     as the word says; `dyn I` alone is a parameter's type, a read-only view of the value (`ref mut
-    v: dyn I` may change it). An interface named bare as a type does not say who owns its values and
-    is `E2173` ("`Shape` is an interface, so `Array[Shape]` does not say who owns the shapes; say
-    who owns them: write `shapes: Array[owns dyn Shape]` in place of line 19, and `scene =
-    Scene(shapes=[owns Square(side=2)])` in place of line 22");
+    v: dyn I` may change it); anywhere else a view of such a value is `ref dyn I`, `ref mut dyn I`
+    or `sharedref mut dyn I` (`[IFC-5]`, `[TYP-45a]`), one pointer and one table, governed as every
+    view of its word is (`[LT-46]`, `[TYP-15]`). An interface named bare as a type does not say who
+    owns its values and is `E2173` ("`Shape` is an interface, so `Array[Shape]` does not say who
+    owns the shapes; say who owns them: write `shapes: Array[owns dyn Shape]` in place of line 19,
+    and `scene = Scene(shapes=[owns Square(side=2)])` in place of line 22");
   * a function type says its parameters with their words, its result, and whether any thread may run
     its functions (`fn()`, `fn(ref mut Ui)`, `fn(owns String) -> int`, `thread_shared fn()`), and
     nothing about what its functions change, which the compiler works out from every function the
@@ -501,102 +512,151 @@ fn main():
   type whose value has heap memory of its own names the kind of memory manager that memory comes
   from, a type implementing `Allocator` (`[ALC-2]`): `mesh: owns Mesh using LevelArena`, `mesh:
   shares Mesh using LevelArena`, `names: Array[String] using LevelArena`. It may follow an `owns`,
-  `shares` or `shares mut` type, a class type, or an `Array`, a `Map`, a `Set` or a `String` (`name:
-  String using LevelArena = String("") using current`); after any other type, a `thread_shared` type
-  included (`[OBJ-4]`), it is `E2114` ("an `int` has no memory of its own to take from `LevelArena`;
-  remove `using`"). Without `using`, the memory comes from the built-in manager (`Global`). The line
-  that makes such a value names the instance after the value it makes (`owns Mesh(points=[0.0, 1.0])
-  using current`, `Enemy(hp=500) using current`, `[0.0, 1.0] using current`; `[GRM-43]`), and takes
-  the value's block from it by calling `current.allocate(...)`; a manager with one instance
-  (`Global`, `System`) needs none there. A value given to a `using A` place that was not made in an
-  instance of `A` is `E2020` ("`mesh` takes its memory from a `LevelArena` (`mesh: owns Mesh using
-  LevelArena`), and this `Mesh` comes from the built-in manager; say which arena: `mesh=owns
-  Mesh(points=[0.0, 1.0]) using current`"); a value made in an instance, and every value that holds
-  one, lives no longer than that instance (`E3063`, `[ALC-1]`). `using` names where that value's own
-  memory comes from; what it holds comes from where its own fields' types say (the `points` list of
-  that `Mesh` from the built-in manager). A value whose manager may have several instances keeps its
-  instance's address, one word, so that its growth and its end go back to the instance it came from.
-* `[TYP-46a]` *(new in 0.9.20)* **A value made in an instance follows its manager between threads.**
+  `shares`, `shares mut` or `thread_shared` type (a `thread_shared T using A` is a `thread_shared T`
+  whose block comes from an `A` and whose owners are counted away from its making line, `[RC-4]`
+  point 4, allowed where `[TYP-46a]` says), a class type, a standard collection whose storage is on
+  the heap: an `Array`, a `Map`, a `Set`, a `String` (`name: String using LevelArena = String("")
+  using current`), a `Deque`, an `SoA` (`[SOA-1]`), and a `SmallArray`, whose elements beyond `N`
+  are (`[STD-7]`), and a `weakref T` type, where it names the kind of manager the target's block
+  comes from (`last: weakref Enemy using Arena`, `Array[weakref Enemy using Arena]`), since the
+  link's end gives that block back (`[ALC-5a]`) and must know to whom: a `weakref x` takes the kind
+  from the type of what `x` names, as it takes the target's kind from the words on the path
+  (`[OWN-13]`), and a link given to a `weakref T` place of another kind is `E2020` ("`links` holds
+  links to `Enemy` objects from the built-in manager (`Array[weakref Enemy]`), and `b` was made in
+  `level`, an `Arena`; say which kind: `links: Array[weakref Enemy using Arena]`, or make `a` in
+  `level` too"); after any other type, one with no heap memory of its own (an `int`, a struct held
+  inline, a `FixedArray`, a `RingBuffer`, a `BitSet`, an arena container, `[ARN-5]`), it is `E2114`
+  ("an `int` has no memory of its own to take from `LevelArena`; remove `using`"). Without `using`,
+  the memory comes from the built-in manager (`Global`). The line that makes such a value names the
+  instance after the value it makes (`owns Mesh(points=[0.0, 1.0]) using current`, `Enemy(hp=500)
+  using current`, `[0.0, 1.0] using current`; `[GRM-43]`), and takes the value's block from it by
+  calling `current.allocate(...)`; a manager with one instance (`Global`, `System`) needs none
+  there. A value given to a `using A` place that was not made in an instance of `A` (a place with no
+  `using` is a `using Global` place, so a place's type always names its values' manager) is `E2020`
+  ("`mesh` takes its memory from a `LevelArena` (`mesh: owns Mesh using LevelArena`), and this
+  `Mesh` comes from the built-in manager; say which arena: `mesh=owns Mesh(points=[0.0, 1.0]) using
+  current`"); a value made in an instance, and every value that holds one, lives no longer than that
+  instance (`E3063`, `[ALC-1]`). `using` names where that value's own memory comes from; what it
+  holds comes from where its own fields' types say (the `points` list of that `Mesh` from the
+  built-in manager). A value whose manager may have several instances keeps its instance's address,
+  one word, so that its growth and its end go back to the instance it came from.
+* `[TYP-46a]` *(new in 0.9.20)* *(changed in 0.9.20)* **A value made in an instance follows its manager between threads.**
   For `Send` and `ThreadShared`, a value whose growth or end calls its instance's methods (one that
   keeps the instance word, and one in a `FoundByAddress` manager, whose end finds the instance from
   its address, `[ALC-1]`) holds a `ref A` to that instance: it is `Send`, and `ThreadShared`, only
-  when `A` is `ThreadShared` (`[THR-8]`, `[THR-9]`), since those calls run on whichever thread holds
-  or ends it. A value made in a manager that frees nothing one by one and does not grow holds
-  nothing. `thread_shared T using A` with an `A` that is not `ThreadShared` is `E7015` at the making
-  line ("`st` would end on whichever thread holds its last owner, and `current`, an `Arena`, is used
-  by one thread; make it in the built-in manager, `st = thread_shared Stats()`, or in a manager any
-  thread may call"). For `[THR-11]` a value's growth and end are changes of its instance, so two
-  scoped tasks growing values made in one instance are `E7007` naming the instance ("the tasks on
-  lines 7 and 9 grow `xs` and `ys`, both made in `current`, so both change `current`; give each task
-  an arena of its own, `a = Arena(1 << 20)` inside its function, or make the lists in the built-in
-  manager, `xs = []`"), unless `A` is `ThreadShared`. For the exclusivity rules `[ALC-5]` stands:
-  growth and end are the changes of the instance it allows.
+  when `A` is a manager any thread may call (below; `[THR-8]`, `[THR-9]`), since those calls run on
+  whichever thread holds or ends it. A value made in a manager that frees nothing one by one and
+  does not grow holds nothing. A manager **any thread may call** is a `ThreadShared` type whose
+  `deallocate` and `reallocate` read `this` (`[EXC-15]`, a fact of its summary, `[BLD-14]` item 1; a
+  `static` manager's do, `[ALC-1]`, and so do those of a type that locks inside, `inner:
+  Mutex[Slab]`), since a method a `ref A` may call is one that reads its object; a value whose end
+  or growth would call a method that changes its instance holds the `sharedref mut` link of `[LT-4]`
+  instead, which is neither `Send` nor `ThreadShared` (`[LT-46]`, verdict 164), whatever the
+  instance's type. So `thread_shared T using A` is `E7015` at the making line when the value made
+  would hold a link to an instance that is not one any thread may call: a value that grows made in
+  an `Arena` (`thread_shared [String("a")] using frame`, the list of verdict 165), or any value in a
+  manager whose `deallocate` changes `this` ("`msg` would end on whichever thread holds its last
+  owner, and that end gives its block back through `Pool.deallocate` (line 12), which changes
+  `pool`; make it in the built-in manager, `msg = thread_shared Msg()`, or in a manager any thread
+  may call, whose `deallocate` reads `this` and locks inside"); a place of such a type (`log:
+  thread_shared Log using Pool`) is `E7015` at the type, since no value could fill it. A
+  `thread_shared` value that holds nothing (one that does not grow, made in a manager that frees
+  nothing one by one: `stats = thread_shared Stats() using level` with `level` an `Arena`,
+  `[ARN-2]`) is `Send` and `ThreadShared` when `T` is, and is accepted: its end on any thread runs
+  its `drop` and touches the arena not at all, every owner of it is counted in its away count from
+  its making line (`[RC-4]` point 4), and the arena is neither reset nor ended while it lives
+  (`[ALC-5]`, `[LT-4]`). For `[THR-11]` a value's growth and end are changes of its instance where
+  they call its methods (a value that holds nothing changes it not at all), so two scoped tasks
+  growing values made in one instance are `E7007` naming the instance ("the tasks on lines 7 and 9
+  grow `xs` and `ys`, both made in `current`, so both change `current`; give each task an arena of
+  its own, `a = Arena(1 << 20)` inside its function, or make the lists in the built-in manager, `xs
+  = []`"), unless `A` is a manager any thread may call, whose `reallocate` and `deallocate` read the
+  instance. For the exclusivity rules `[ALC-5]` stands: growth and end are the changes of the
+  instance it allows.
 
 ## IV.7 Generics
 
-* `[TYP-16]` Generic functions and types are monomorphised: each distinct instantiation is a distinct
-  function or type in the output. `ember build --report=instantiations` counts them (`[MONO-2]`).
-* `[TYP-17]` *(changed in 0.9.10)* *(changed in 0.9.15)* Type parameters are bounded by interfaces: `[T: needs (Add[Output = T], Default)]`
-  above `fn sum(xs: Span[T]) -> T` (`[GRM-40]`). What a type parameter needs is written after `needs`:
-  one bare (`[T: needs Copy]`), several in round brackets, separated by commas
-  (`[T: needs (Add[T, Output = T], Copy)]`), since a comma also separates the type parameters
-  (`[K: needs (Eq, Hash), V]`); the same in an `extend` block's brackets
-  (`extend[T: needs Display] Array[T] implements Display:`), an interface's parents
-  (`interface Error: needs (Debug, Display):`), an associated type (`type Iter: needs Iterator[Item =
-  Item]`) and a `where` clause. A bound without `needs`, or needs joined with `+`, is `E0100`, whose
-  message gives the line with `needs` (`[T: Add + Copy]` gives `[T: needs (Add, Copy)]`). Inside a generic body only the operations the bounds
-  provide are available, plus copy for `T: needs Copy`, hand-over, drop and `size_of`. A `pub` function
-  writes its bounds: a missing one is `E2040`, one message on the first line of the body that needs a
-  bound the function does not write, giving every bound the body needs ("`total` is `pub`, so its
-  bound is written: write `[T: needs Add[T, Output = T]]` in place of `[T]` above `pub fn total(a: T, b: T)
-  -> T:`"). A function that is not `pub` writes all of them or none: with none, its bounds are worked out from its body,
-  each method called on a parameter giving the interface in scope that declares it (two that declare
-  it are `E2070`, `[TYP-24]`), and a method no interface in scope declares is `E2072` ("`T` has no
+* `[TYP-16]` Generic functions and types are monomorphised: each distinct instantiation is a
+  distinct function or type in the output. `ember build --report=instantiations` counts them
+  (`[MONO-2]`).
+* `[TYP-17]` *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* Type parameters are
+  bounded by interfaces: `[T: needs (Add[Output = T], Default)]` above `fn sum(xs: Span[T]) -> T`
+  (`[GRM-40]`). What a type parameter needs is written after `needs`: one bare (`[T: needs Copy]`),
+  several in round brackets, separated by commas (`[T: needs (Add[T, Output = T], Copy)]`), since a
+  comma also separates the type parameters (`[K: needs (Eq, Hash), V]`); the same in an `extend`
+  block's brackets (`extend[T: needs Display] Array[T] implements Display:`), an interface's parents
+  (`interface Error: needs (Debug, Display, Send, ThreadShared):`), an associated type (`type Iter:
+  needs Iterator[Item = Item]`) and a `where` clause. A bound without `needs`, or needs joined with
+  `+`, is `E0100`, whose message gives the line with `needs` (`[T: Add + Copy]` gives `[T: needs
+  (Add, Copy)]`); interfaces joined with `+` after `dyn` or `some` are `E0100` too, whose message
+  gives the brackets (`owns dyn Shape + Debug` gives `owns dyn (Shape, Debug)`; after `dyn` and
+  `some` the brackets stand without `needs`, the word before them saying what the value is). Inside
+  a generic body only the operations the bounds provide are available, plus copy for `T: needs
+  Copy`, hand-over, drop and `size_of`. A `pub` function writes its bounds: a missing one is
+  `E2040`, one message on the first line of the body that needs a bound the function does not write,
+  giving every bound the body needs ("`total` is `pub`, so its bound is written: write `[T: needs
+  Add[T, Output = T]]` in place of `[T]` above `pub fn total(a: T, b: T) -> T:`"). A function that
+  is not `pub` writes all of them or none: with none, its bounds are worked out from its body, each
+  method called on a parameter giving the interface in scope that declares it (two that declare it
+  are `E2070`, `[TYP-24]`), and a method no interface in scope declares is `E2072` ("`T` has no
   `weight`: no interface in scope declares `fn weight`; declare one, `interface Weighed:` with `fn
   weight() -> int`, and write `struct Crate implements Weighed:` for the type the function is given;
   the bound follows"); a list that leaves out one the body needs is `E2040`, whose message gives the
-  whole line ("`direct_add` writes what `T` needs, so it writes all of it: `a + b` (line 2) needs `Add`,
-  which `Lookalike` does not give; write `[T: needs (Lookalike, Add[T, Output = T])]` in place of
-  `[T: needs Lookalike]`").
-  The body is checked once with its parameters standing for any type, except where the type of
-  `enumerate`'s numbers depends on a parameter (`[STD-19]`): that type, and every line using those
-  numbers, is checked for each use, with the parameters filled in.
-* `[TYP-40]` *(new in 0.9.9)* **Interfaces are nominal.** A type implements an interface only through an
-  `implements` clause or an `extend … implements` block; having methods of the right names and types is
-  not enough. This is what gives every implementation one place of declaration (`[TYP-20]`) and one
-  method table for `dyn`.
+  whole line ("`direct_add` writes what `T` needs, so it writes all of it: `a + b` (line 2) needs
+  `Add`, which `Lookalike` does not give; write `[T: needs (Lookalike, Add[T, Output = T])]` in
+  place of `[T: needs Lookalike]`"). The body is checked once with its parameters standing for any
+  type, except where the type of `enumerate`'s numbers depends on a parameter (`[STD-19]`): that
+  type, and every line using those numbers, is checked for each use, with the parameters filled in.
+* `[TYP-40]` *(new in 0.9.9)* **Interfaces are nominal.** A type implements an interface only
+  through an `implements` clause or an `extend … implements` block; having methods of the right
+  names and types is not enough. This is what gives every implementation one place of declaration
+  (`[TYP-20]`) and one method table for `dyn`.
 * `[TYP-18]` Generic arguments are inferred from the arguments of a call. Explicit arguments may be
   written: `f[int](x)`, `Array[f32]()`. A constructor's explicit type arguments always fix the
   instantiation, whatever else the context says.
-* `[TYP-19]` *(changed in 0.9.15)* There is no specialisation and no higher-kinded type; a generic may take any number of types
-  (`[TYP-47]`, verdict 115). Two
-  implementations whose applicable types overlap are `E2041`. Whether two overlap is decided where
-  they are declared, whether or not any instance meets both: they overlap when one type could be
-  both, each implementation's type parameters standing for any type (`extend[T] Pair[T, int]` and
-  `extend[U] Pair[StrView, U]` overlap at `Pair[StrView, int]`), and when their interface's arguments could
-  be the same too. A bound separates two only where the type it bounds is written out in full and
-  does not meet it (`extend[T: needs Copy] Pair[T, int]` and `extend Pair[String, int]` do not overlap); a
-  bound on a type left open never does, as a type meeting both bounds can be declared later, in
-  another package (ODR-092).
-* `[TYP-47]` *(new in 0.9.15)* **Any number of types, and of values** (verdicts 115 and 116, C++'s
-  spelling). `...` after a type parameter's name makes it a **pack**: any number of types, none
-  included (`[Cs...]` above `fn view() -> View[Cs...]:`). A pack's needs apply to each of its types
-  (`[Ts...: needs Display]`). A function's last parameter may take the pack's values, any number of
-  them, each of its own type: `[Ts...: needs Display]` above `fn log(values: Ts...):`, called
-  `log("hp", hp, pos)`. `Cs...` among type arguments spells the pack's types out (`View[Cs...]`),
-  `values...` among a call's arguments passes the values on (`log(values...)`), and `values.len()` is
-  their number, known when compiling. `for v in values:` is written out by the compiler once per value,
-  each `v` of its own type, and nothing runs for the loop itself. Each use is made for its exact types,
-  as any generic is (`[MONO-1]`): nothing is looked up while the program runs, and each value is
-  checked as an ordinary parameter's is, its word included (`owns values: Ts...` takes each one over).
-  A pack is the last of its type parameters, and its values' parameter is the function's last
+* `[TYP-19]` *(changed in 0.9.15)* There is no specialisation and no higher-kinded type; a generic
+  may take any number of types (`[TYP-47]`, verdict 115). Two implementations whose applicable types
+  overlap are `E2041`. Whether two overlap is decided where they are declared, whether or not any
+  instance meets both: they overlap when one type could be both, each implementation's type
+  parameters standing for any type (`extend[T] Pair[T, int]` and `extend[U] Pair[StrView, U]`
+  overlap at `Pair[StrView, int]`), and when their interface's arguments could be the same too. A
+  bound separates two only where the type it bounds is written out in full and does not meet it
+  (`extend[T: needs Copy] Pair[T, int]` and `extend Pair[String, int]` do not overlap); a bound on a
+  type left open never does, as a type meeting both bounds can be declared later, in another package
+  (ODR-092).
+* `[TYP-47]` *(new in 0.9.15)* *(changed in 0.9.20)* **Any number of types, and of values**
+  (verdicts 115 and 116, C++'s spelling). `...` after a type parameter's name makes it a **pack**:
+  any number of types, none included (`[Cs...]` above `fn view() -> View[Cs...]:`). A pack's needs
+  apply to each of its types (`[Ts...: needs Display]`). A function's last parameter may take the
+  pack's values, any number of them, each of its own type: `[Ts...: needs Display]` above `fn
+  log(values: Ts...):`, called `log("hp", hp, pos)`. `Cs...` among type arguments spells the pack's
+  types out (`View[Cs...]`), and so does it among a tuple type's elements (`(Entity, Cs...)`) and a
+  function type's parameters (`fn(Ts...)`, `Array[fn(Ts...)]`); a type written over a pack is formed
+  once the pack is spelled out, so a tuple type that then has two or more elements is a tuple, one
+  that has one is that type itself, and one that has none is `void` (`[TYP-27]`: there is no
+  one-element tuple; `View[Position]`'s items are `(Entity, Position)`, `zip(xs)` of one iterable
+  gives each item plainly, and a tuple's interfaces are written once from two elements up, `[A, B,
+  Ts...]` above `extend (A, B, Ts...) implements Display:`). A `struct` or `class` takes a pack as a
+  function does (`[Cs...]` above `struct View:`), its last type parameter. `values...` among a
+  call's arguments passes the values on (`log(values...)`), and `values.len()` is their number,
+  known when compiling. `for v in values:` is written out by the compiler once per value, each `v`
+  of its own type, and nothing runs for the loop itself. Each use is made for its exact types, as
+  any generic is (`[MONO-1]`): nothing is looked up while the program runs, and each value is
+  checked as an ordinary parameter's is, its word included (`owns values: Ts...` takes each one
+  over). A pack is the last of its type parameters, and its values' parameter is the function's last
   positional one: a parameter after it has a default and is passed by name only, as after Python's
-  `*args` (`fn println(values: Ts..., sep: StrView = " ", end: StrView = "\n")`, called
-  `println(a, b, sep=", ")`); anywhere else either is `E0100`. C's untyped `...` stays as `[FFI-8]` says, in `unsafe` only.
-* `[TYP-35]` *(new in 0.9.9)* *(changed in 0.9.15)* A type parameter need not appear in any field (a **phantom** parameter): `[Tag]`
-  above `struct Handle:` with the one field `index: u32` is legal. A phantom parameter affects type
-  identity and counts for `Send` and `ThreadShared` as a field of that type would, so a marker type
-  can make a type thread-confined without a field; it does not make the type a view.
+  `*args` (`fn println(values: Ts..., sep: StrView = " ", end: StrView = "\n")`, called `println(a,
+  b, sep=", ")`); anywhere else either is `E0100`. C's untyped `...` stays as `[FFI-8]` says, in
+  `unsafe` only. `...` is written after a pack's name only (`Cs...`, `values...`); a type formed
+  over each type of the pack (`Option[Cs]...`, C++'s pattern expansion) is not Ember and is `E0100`,
+  whose help is a second pack over the types the use needs (`[Cs..., Os...]` is not it either, two
+  packs being `E0100`, `[TYP-47]`: write the function over the pack it takes and form the other
+  types in its body).
+* `[TYP-35]` *(new in 0.9.9)* *(changed in 0.9.15)* A type parameter need not appear in any field (a
+  **phantom** parameter): `[Tag]` above `struct Handle:` with the one field `index: u32` is legal. A
+  phantom parameter affects type identity and counts for `Send` and `ThreadShared` as a field of
+  that type would, so a marker type can make a type thread-confined without a field; it does not
+  make the type a view.
 * Const generics: `[const N: int]` above `fn zeros() -> [f32; N]`. Associated types: `interface
   Iterator: type Item`. Default type parameters: `interface Add[Rhs = Self]`.
 * `[TYP-41]` *(new in 0.9.9)* **Const arguments.** A `const` generic argument, like an array length,
@@ -608,19 +668,19 @@ fn main():
      substitution) is its value, evaluated as `[CT-1]` evaluates; two are equal when their values
      are. An evaluation that overflows or panics is `E6004`, and one past `[CT-3]`'s limits `E6001`,
      where the argument is written; neither is ever reported as a type mismatch.
-  2. In generic code, an integer argument that names the declaration's `const` parameters is compared
-     by its **normal form**: a sum of terms, each an integer coefficient times a product of
+  2. In generic code, an integer argument that names the declaration's `const` parameters is
+     compared by its **normal form**: a sum of terms, each an integer coefficient times a product of
      parameters and opaque terms, with like terms collected and zero terms dropped, computed in
      mathematical integers. `+`, `-`, multiplication and parentheses are what the normal form sees
      through; any other operation (`/`, `%`, a shift, a comparison, a call) is an **opaque term**,
      equal to another only when it is the same operation, or a call of the same function, on
      arguments whose normal forms are equal. Two arguments are equal when their normal forms are the
-     same: `N + 1` and `1 + N` are, and `2 * N` and `N + N`; `N / 2 * 2` and `N` are not. An argument
-     of another type is equal to another only when both are the same parameter.
+     same: `N + 1` and `1 + N` are, and `2 * N` and `N + N`; `N / 2 * 2` and `N` are not. An
+     argument of another type is equal to another only when both are the same parameter.
   3. Arguments rules 1 and 2 do not show equal make different types (`E2020`). When either names a
      parameter, the diagnostic says the two could not be shown equal, rather than that they differ;
-     it prints both normal forms and suggests computing the value once, in one shared expression or a
-     `const` parameter taken for it.
+     it prints both normal forms and suggests computing the value once, in one shared expression or
+     a `const` parameter taken for it.
 
   The rules depend only on the source, never on what an optimiser can prove. Each instance
   evaluates its arguments again (rule 1), so an equality rule 2 accepts holds at every instance whose
@@ -654,33 +714,48 @@ implements Display:` block.
   `Drawable.area(x)`). An operator chooses
   among instances as its method's call does (`[TYP-21]`, ODR-096).
 
-**Marker interfaces**, derived automatically (`Send` written by hand only with `unsafe extend`, `[TYP-43]`):
+**Marker interfaces**, derived automatically (`Send` written by hand only with `unsafe extend`, and `Send` and `ThreadShared` as the checked promise in the header of an `open` or `abstract` class, `[TYP-43]`):
 
 | Marker | Holds when |
 |---|---|
 | `Copy` | declared with `@derive(Copy)` on a struct or enum whose fields are all `Copy` and which has no `drop`, which gives it `Clone` too; always for scalars, `ref T`, `Span`, `StrView`, raw pointers, `extern fn`, tuples and fixed arrays of `Copy` elements; never for a class object, an `owns`, `shares`, `shares mut` or `thread_shared` value, a `weakref` or `sharedref mut` link, `ref mut T` or `MutSpan[T]` |
-| `Send` | inferred: every component is `Send`, so nothing reachable from the value is a one-thread owner (`shares`, `shares mut`), a `weakref T` link, a `sharedref mut` link (a view several holders on one thread may change), or bound to its thread (a lock's guard, a `Scope`, a raw pointer, a `Retained[ForeignCallback]` token (`[FFI-23]`), an object of a trampoline class under `threads=creator` (`[FFI-17d]`); the `ref A` a value made in a manager's instance holds, unless `A` is `ThreadShared`, `[TYP-46a]`); `ref T` and `Span[T]` are when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is `Send`; a class object is when its fields are; a `thread_shared T` value, and a `weakref thread_shared T` link, are when `T` is `ThreadShared` and `Send` (`[THR-8]`) |
-| `ThreadShared` | inferred: several threads may hold and read one value of the type at once; every component is `ThreadShared` (the `ref A` a value made in a manager's instance holds included, `[TYP-46a]`); `ref mut`, `MutSpan`, `sharedref mut`, `Cell`, `UnsafeCell`, raw pointers, a `Retained[ForeignCallback]` token, a `shares` or `shares mut` value and a `weakref T` link are not; an `extern type`, an opaque C++ class or a `@ffi(handle)` type is only where the program declares it (`[FFI-8]`); a `weakref thread_shared T` link is when `T` is `Send` and `ThreadShared` (`[THR-9]`) |
+| `Send` | inferred: every component is `Send`, so nothing reachable from the value is a one-thread owner (`shares`, `shares mut`), a `weakref T` link, a `sharedref mut` link (a view several holders on one thread may change), or bound to its thread (a lock's guard, a `Scope`, a raw pointer, a `Retained[ForeignCallback]` token (`[FFI-23]`), an object of a trampoline class under `threads=creator` (`[FFI-17d]`); the link to its instance a value made in a manager's instance holds, unless `A` is a manager any thread may call, `[TYP-46a]`); `ref T` and `Span[T]` are when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is `Send`; a class object is when its fields are, where its class is neither `open` nor `abstract`; an object held by the type of an `open` or `abstract` class another package may derive from only when the class's header promises `Send` (`implements Send`, or an interface that needs it), which every class derived from it is checked against where it is declared, and one held by the type of such a class no other package can derive from when the fields of every class its package derives from it are (`[THR-8]`); `dyn I` when `I` requires it; a `thread_shared T` value, and a `weakref thread_shared T` link, are when `T` is `ThreadShared` and `Send` (`[THR-8]`) |
+| `ThreadShared` | inferred: several threads may hold and read one value of the type at once; every component is `ThreadShared` (the link to its instance a value made in a manager's instance holds included: a `ref A` for a manager any thread may call, else a `sharedref mut` link, `[TYP-46a]`); a class object as for `Send`, by its class's header promise (`implements ThreadShared`, or an interface that needs it) where another package may derive from it, each derived class checked where it is declared (`[THR-9]`); `dyn I` when `I` requires it; `ref mut`, `MutSpan`, `sharedref mut`, `Cell`, `UnsafeCell`, raw pointers, a `Retained[ForeignCallback]` token, a `shares` or `shares mut` value and a `weakref T` link are not; an `extern type`, an opaque C++ class or a `@ffi(handle)` type is only where the program declares it (`[FFI-8]`); a `weakref thread_shared T` link is when `T` is `Send` and `ThreadShared`, and `thread_shared fn()` is, its state being `ThreadShared` (`[THR-9]`, `[THR-1]`) |
 | `Sized` | everything except `dyn I` and unsized foreign types |
 
-* `[TYP-43]` *(new in 0.9.10)* *(changed in 0.9.15)* The marker interfaces are interfaces of `std.core`, exported by the
-  prelude, so a bound names them as it names any (`T: needs (Send, ThreadShared)`, `where Self: needs Sized`), and
-  the table answers them. `Send` and `ThreadShared` are inferred from what a type holds, which its
-  words say. The types the compiler declares itself (a `Cell`, the counted block of a `shares` value)
-  are recognised by the module that declares them, never by their names, so a program's own struct
-  whose name begins `Cell_` is judged by all of its fields like any other. A program writes `Send` by
-  hand, for a struct or enum of its own package that holds a raw pointer, only as `unsafe extend T
-  implements Send:` with no members and a `# SAFETY:` note, taking the responsibility the compiler
-  cannot check (written without `unsafe` it is `E3100`: "say that you vouch for it: write `unsafe
-  extend Counter implements Send:` with a `# SAFETY:` note above it"); a generic one (`unsafe
-  extend[T: needs Send] W[T] implements Send:`) holds for each instance whose arguments meet the markers its
-  parameters are bounded by. `ThreadShared` is written only in bounds, `Copy` comes from
-  `@derive(Copy)`, and `Sized` is never written: each of these written by hand is `E2040`, as is an
-  `unsafe extend` of any interface but `Send` or an `unsafe interface` (ODR-111). `Sync` is the name
-  of an effect (Part X), not of a property: `T: needs Sync` in a bound is `E1010`, whose message gives
-  `T: needs ThreadShared`.
-  An `unsafe interface` (`Allocator`, `[ALC-2]`) is implemented only by an `unsafe extend`, with its
-  members as for any interface; without `unsafe` it is `E3100`.
+* `[TYP-43]` *(new in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* The marker interfaces are
+  interfaces of `std.core`, exported by the prelude, so a bound names them as it names any (`T:
+  needs (Send, ThreadShared)`, `where Self: needs Sized`), and the table answers them. `Send` and
+  `ThreadShared` are inferred from what a type holds, which its words say. The types the compiler
+  declares itself (a `Cell`, the counted block of a `shares` value) are recognised by the module
+  that declares them, never by their names, so a program's own struct whose name begins `Cell_` is
+  judged by all of its fields like any other. A program writes `Send` or `ThreadShared` in one
+  checked place, the header of an `open` or `abstract` class (`pub open class Script implements
+  Send, ThreadShared:`), a promise about every class derived from it that the compiler checks at
+  each class's declaration (`[THR-8]`, `[THR-9]`), so it needs no `unsafe`; on a generic class it
+  holds for each instance whose arguments meet the needs its parameters are bounded by; on a struct,
+  an enum or a class that is neither `open` nor `abstract`, whose markers are inferred, the word is
+  refused as below (`E3100` for `Send`: "`Door` cannot be subclassed, so whether any thread may have
+  a `Door` is read from its fields; remove `implements Send`"; `E2040` for `ThreadShared`).
+  Otherwise a program writes `Send` by hand, for a struct, enum or class of its own package that
+  holds a raw pointer (the vouching is about the pointer, not the kind of type holding it,
+  `[THR-8]`), only as `unsafe extend T implements Send:` with no members and a `# SAFETY:` note,
+  taking the responsibility the compiler cannot check; the declaration vouches for the type's raw
+  pointers alone, and every other component is inferred as for any type, so a `shares` owner or a
+  `weakref T` link in such a type still keeps it on one thread (`E7015`) (written without `unsafe`
+  it is `E3100`: "say that you vouch for it: write `unsafe extend Counter implements Send:` with a
+  `# SAFETY:` note above it"); a generic one (`unsafe extend[T: needs Send] W[T] implements Send:`)
+  holds for each instance whose arguments meet the markers its parameters are bounded by.
+  `ThreadShared` is written only in bounds, `Copy` comes from `@derive(Copy)`, and `Sized` is never
+  written: each of these written by hand is `E2040`, as is an `unsafe extend` of any interface but
+  `Send`, an `unsafe interface`, or `ThreadShared` on an `extern type`, an opaque C++ class or a
+  `@ffi(handle)` type, whose contents the compiler cannot see (`[FFI-8]`; `E3100` without `unsafe`)
+  (ODR-111). A struct holding a raw pointer is never `ThreadShared` (`[THR-9]`): a wrapper several
+  threads read at once holds the foreign object as a `@ffi(handle)` type vouched `ThreadShared`, not
+  as a raw pointer. `Sync` is the name of an effect (Part X), not of a property: `T: needs Sync` in
+  a bound is `E1010`, whose message gives `T: needs ThreadShared`. An `unsafe interface`
+  (`Allocator`, `[ALC-2]`) is implemented only by an `unsafe extend`, with its members as for any
+  interface; without `unsafe` it is `E3100`.
 
 **Standard interfaces.** These are the definitions; `std.core` declares them and the prelude exports
 them (`[MOD-5]`).
@@ -758,7 +833,7 @@ interface IndexMut[Idx]: needs Index[Idx]:
 interface IndexSet[Idx, V]:
     fn index_set(i: Idx, owns v: V)                                 # a[i] = v (Map inserts)
 
-interface Error: needs (Debug, Display):
+interface Error: needs (Debug, Display, Send, ThreadShared):      # any thread may hold and read an error ([ERR-3])
     fn source() -> Option[ref dyn Error]                            # default: None
 
 interface From[T]:
@@ -771,21 +846,31 @@ implementation the program has (Part X).
 
 * `[TYP-36]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)*
   **Which types implement which interfaces.** The table is normative; a `—` means the implementation
-  does not exist and a bound requiring it is `E2040`. A read-only view `ref T` implements `Eq`,
-  `Ord`, `Hash`, `Display` and `Debug` as `T` does (so `sorted(m.keys())` works). An `owns T` is
-  `Clone` when `T` is, and `owns dyn I` when `I` requires `Clone` (§IX.1, `[TYP-22]`). Two `owns`
-  values compare with `==` when what they hold does; `owns dyn I` compares when `I` requires `Eq`
-  (`interface Shape: needs Eq:`, a method-table entry as for `Clone`): values of two different kinds
-  are never equal, and two of one kind compare their contents; that entry is the one way `Eq` is
-  reached through `dyn` (`[TYP-22]`). `copy of x` makes a value with `Clone` (`[OWN-8]`), and every
-  `Copy` type is `Clone`; before what it cannot copy as itself (a `weakref` link, a value of a view
-  type, a type with no `Clone`) it is `E2116`. Before an `owns`, `shares` or `sharedref mut` value
-  it copies what that value holds, never the link; a struct that holds links among its fields is
-  copied field by field, as a C++ struct holding a `shared_ptr` and a `weak_ptr` is: what it owns
-  alone is copied itself, a `shares` or `thread_shared` field becomes one more owner of the same
-  value, a `weakref` field one more link to the same target and a `sharedref mut` field one more
-  holder of the same link (`struct Team:` with `captain: shares Player` and `scout: weakref Player`:
-  `t2 = copy of t` is a new `Team` whose captain and scout are the same player).
+  does not exist and a bound requiring it is `E2040`. A read-only view `ref T`, and a `shares T`,
+  `shares mut T` or `thread_shared T` owner, implements `Eq`, `Ord`, `Hash`, `Display` and `Debug`
+  as `T` does, on the value it views or owns (so `sorted(m.keys())` works, `a == b` on two owners
+  compares the two values, and `println(scores)` prints the list as `[10, 20, 30]`); whether two
+  owners own one value is `a is b` (`[EXP-9]`), and a class object's `==` stays its identity. An
+  `owns T` is `Clone` when `T` is, and `owns dyn I` when `I` requires `Clone` (§IX.1, `[TYP-22]`).
+  Two `owns` values compare with `==` when what they hold does; `owns dyn I` compares when `I`
+  requires `Eq` (`interface Shape: needs Eq:`, a method-table entry as for `Clone`): values of two
+  different kinds are never equal, and two of one kind compare their contents; that entry is the one
+  way `Eq` is reached through `dyn` (`[TYP-22]`). Of the other interfaces `I` requires, `owns dyn I`
+  (and `shares dyn I`, `shares mut dyn I`, and `dyn I` where a view may stand) has those whose
+  methods `[TYP-22]` reaches through `dyn`, `Display`, `Debug` and `Hash` (each method names `Self`
+  only as `this`, and `hash`'s hasher is a parameter that views its value, so it gets one entry),
+  and never `Ord` (`cmp` takes `other: Self`): a bound needing `Ord` on it is `E2040`, whose help is
+  `sort_by` with the kinds tested first. `copy of x` makes a value with `Clone` (`[OWN-8]`), and
+  every `Copy` type is `Clone`; before what it cannot copy as itself (a `weakref` link, a `ref mut
+  T` view, a `MutSpan[T]`, a struct holding one, a type with no `Clone`) it is `E2116`; a read-only
+  view is `Copy`, so `copy of` before one gives one more view of the same place (`[OWN-8]`). Before
+  an `owns`, `shares` or `sharedref mut` value it copies what that value holds, never the link; a
+  struct that holds links among its fields is copied field by field, as a C++ struct holding a
+  `shared_ptr` and a `weak_ptr` is: what it owns alone is copied itself, a `shares` or
+  `thread_shared` field becomes one more owner of the same value, a `weakref` field one more link to
+  the same target and a `sharedref mut` field one more holder of the same link (`struct Team:` with
+  `captain: shares Player` and `scout: weakref Player`: `t2 = copy of t` is a new `Team` whose
+  captain and scout are the same player).
 
 | Type | Clone | Copy | Eq | Ord | Hash | Default | Display | Debug |
 |---|---|---|---|---|---|---|---|---|
@@ -827,20 +912,20 @@ implementation the program has (Part X).
   ones to `cmp` throughout, the equality-based ones (`contains`, `index_of`, `dedup`) to `==`
   (ODR-055). Floats do not implement `Hash`; a float map key is written with `f.to_bits()`.
 * `[TYP-21]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* Operators desugar to
-  these interfaces for non-scalar operands, but one: `a + b` calls `Add.add(a, b)` with both
-  operands read in place, and `String`'s `+` is the language's own, taking `a` over (`[TXT-11]`), so
-  `String` implements no operator interface and does not meet `T: needs Add`. `a += b` calls
-  `AddAssign.add_assign` if implemented, else `a = a + b`. Scalar operators are built in. The
-  interfaces' methods are `add`, `sub`, `mul`, `div`, `floordiv`, `rem`, `pow`, `bitand`, `bitor`,
-  `bitxor`, `shl`, `shr`, `neg` and `not`, and each `…Assign` form's is its operator's followed by
-  `_assign` (ODR-040). A type has an operator only by implementing its interface (`[TYP-40]`); a
-  method that merely shares the name is not one. Each number type implements the interface of each
-  operator it has, with `Rhs = Self` and `Output = Self`: every integer type `Add`, `Sub`, `Mul`,
-  `FloorDiv`, `Rem`, `Pow`, `Neg`, `Not`, `BitAnd`, `BitOr`, `BitXor`, `Shl`, `Shr` and their
-  `…Assign` forms, and every float type `Add`, `Sub`, `Mul`, `Div`, `FloorDiv`, `Rem`, `Pow`, `Neg`
-  and theirs, so `[TYP-17]`'s `sum` takes numbers. Such a method is the operator: `3.add(4)` is `3 +
-  4`. `bool`, `char` and `String` implement none of them. Likewise a type is indexed only through
-  `Index`, `IndexMut` and `IndexSet` (ODR-042).
+  these interfaces for non-scalar operands: `a + b` calls `Add.add(a, b)` with both operands read in
+  place, for `String` too (`String` implements `Add[StrView, Output = String]` and
+  `AddAssign[StrView]`, `[TXT-11]`, so it meets `T: needs Add[StrView, Output = T]`, and `a + b` on
+  it makes a new `String`). `a += b` calls `AddAssign.add_assign` if implemented, else `a = a + b`.
+  Scalar operators are built in. The interfaces' methods are `add`, `sub`, `mul`, `div`, `floordiv`,
+  `rem`, `pow`, `bitand`, `bitor`, `bitxor`, `shl`, `shr`, `neg` and `not`, and each `…Assign`
+  form's is its operator's followed by `_assign` (ODR-040). A type has an operator only by
+  implementing its interface (`[TYP-40]`); a method that merely shares the name is not one. Each
+  number type implements the interface of each operator it has, with `Rhs = Self` and `Output =
+  Self`: every integer type `Add`, `Sub`, `Mul`, `FloorDiv`, `Rem`, `Pow`, `Neg`, `Not`, `BitAnd`,
+  `BitOr`, `BitXor`, `Shl`, `Shr` and their `…Assign` forms, and every float type `Add`, `Sub`,
+  `Mul`, `Div`, `FloorDiv`, `Rem`, `Pow`, `Neg` and theirs, so `[TYP-17]`'s `sum` takes numbers.
+  Such a method is the operator: `3.add(4)` is `3 + 4`. `bool` and `char` implement none of them.
+  Likewise a type is indexed only through `Index`, `IndexMut` and `IndexSet` (ODR-042).
 * `[HASH-1]` *(changed in 0.9.15)* `Hash.hash` is generic over `H: needs Hasher` and monomorphised;
   hashing a value MUST feed a deterministic representation of it into the hasher, and values equal
   under `Eq` MUST hash equally. `Hasher` (in `std.collections`, not the prelude) is a hashing state,
@@ -897,29 +982,50 @@ implementation the program has (Part X).
   open; write `owns dyn Iterator[Item = int]`"). An interface that requires `Clone` (`interface
   Shape: needs Clone:`) is usable as `dyn` all the same: every type implementing it must be `Clone`,
   as for any required interface, and its method table holds an entry that copies the value into a
-  new block, so `owns dyn Shape` is `Clone` (§IX.1).
-* `[TYP-44]` *(new in 0.9.15)* **Kind tests and casts.** A value of an interface type (`dyn I`,
-  `owns dyn I`, `shares dyn I`, `shares mut dyn I`) or of a base class is tested for its kind with
-  `is` (`[GRM-45]`). `if s is Circle as c:` runs its block when `s` is a `Circle` and names it `c`
-  there, declared with its words as a name opened with `exists as` is (`[GRM-44]`): plain `c` is a
-  read-only view, and, since a value tested in its place stays a place, `if this.pools[k] is Pool[T]
-  as ref mut pool:` names a view of that pool that may change it, where the function may change the
-  place. `if s is Circle:` tests without a name. A choice among kinds is `if`, `elif` and `else` of
-  kind tests; there is no "maybe a `Circle`" value to `match` on. A test that always passes (`s` is
-  a `Circle` already) is `E2036` ("to name it write `c = s` in place of the `if` line, and use `c`
-  in its block, moved out one level"); a test that can never pass, of a type that does not implement
-  the interface or derive from the base class, is `E2037` ("`s` is a `Shape`, which can never be a
-  `Path`; remove the test: the `if` line and its block"); a name already in use is `E2106` ("`as`
-  declares a new name: write `if s is Circle as c:`, and `c.r` for `s.r` in its block"). `cast s as
-  Circle` gives the `Circle`, on `owns dyn` and `shares dyn` values too, and stops the program when
-  `s` is not one, with the text "`cast s as Circle` on line 9: `s` is a `Square`, not a `Circle`",
-  in the program's own names and line. A cast of a place is a place: the name bound from it is
-  read-only unless written `ref mut` (`pool = ref mut cast this.pools[k] as Pool[T]`), and `ref mut`
-  taken through a plain one (`return ref mut pool.dense[pool.sparse[e]]`) is `E3027`. A cast between
-  unrelated types is `E2020`. Before a type name `is` means "is of this kind"; before a value it
-  means "the same object" (`a is b`, `x is None`). Each test and each cast is one compare of type
-  indices. `as?`, `as!`, `cast s if Circle` and `cast s when Circle` are not Ember (`E1010`,
-  `[GRM-30]`).
+  new block, so `owns dyn Shape` is `Clone` (§IX.1). `dyn (A, B)` is a value of one type
+  implementing every listed interface, each of which is itself usable as `dyn`, held with one data
+  pointer and one table pointer as `dyn I` is. The table of the set for a type is written by the
+  package that converts a value of that type to `dyn (A, B)` (`[TYP-5]` rule 8), which sees both,
+  under one symbol per set and type (`[MNG-4]`), so the linker keeps one copy (`[MONO-1]`) and every
+  package lays it out and reads it alike (`[BLD-16]`): first the type's index (`[TYP-44a]`), then a
+  pointer to each listed interface's own table for the type, then `A`'s entries and `B`'s, each
+  interface's in its declaration order. A call through it is `[DSP-3]`'s, one indirect call; a kind
+  test is one compare, as on `dyn I`; a `dyn (A, B)` value given to a `dyn A` place converts by
+  `[TYP-5]` rule 8 with one load of the member's table pointer, and to a `dyn C` of an interface not
+  listed it is `E2020`. `some (A, B)` is one concrete type meeting both, with no table (`[TYP-32]`).
+  A marker interface in the list (`Send`, `ThreadShared`, `[TYP-43]`) has no entries and gives the
+  value the marker (`owns dyn (Command, Send)` is `Send`, `[THR-8]`), as `interface I: needs Send:`
+  does. One interface takes no brackets (`owns dyn Shape`).
+* `[TYP-44]` *(new in 0.9.15)* *(changed in 0.9.20)* **Kind tests and casts.** A value of an
+  interface type (`dyn I`, `owns dyn I`, `shares dyn I`, `shares mut dyn I`) or of a base class is
+  tested for its kind with `is` (`[GRM-45]`). `if s is Circle as c:` runs its block when `s` is a
+  `Circle` and names it `c` there, declared with its words as a name opened with `exists as` is
+  (`[GRM-44]`): plain `c` is a read-only view, and, since a value tested in its place stays a place,
+  `if this.pools[k] is Pool[T] as ref mut pool:` names a view of that pool that may change it, where
+  the function may change the place. `if s is Circle:` tests without a name. A choice among kinds is
+  `if`, `elif` and `else` of kind tests; there is no "maybe a `Circle`" value to `match` on. A test
+  that always passes (`s` is a `Circle` already) is `E2036` ("to name it write `c = s` in place of
+  the `if` line, and use `c` in its block, moved out one level"); a test that can never pass, of a
+  type that does not implement the interface or derive from the base class, is `E2037` ("`s` is a
+  `Shape`, which can never be a `Path`; remove the test: the `if` line and its block"); a name
+  already in use is `E2106` ("`as` declares a new name: write `if s is Circle as c:`, and `c.r` for
+  `s.r` in its block"). `cast s as Circle` gives the `Circle`, on `owns dyn` and `shares dyn` values
+  too, and stops the program when `s` is not one, with the text "`cast s as Circle` on line 9: `s`
+  is a `Square`, not a `Circle`", in the program's own names and line. A cast of a place is a place:
+  the name bound from it is read-only unless written `ref mut` (`pool = ref mut cast this.pools[k]
+  as Pool[T]`), and `ref mut` taken through a plain one (`return ref mut
+  pool.dense[pool.sparse[e]]`) is `E3027`. The words before a value act on a cast as on any value
+  (`[GRM-43]`), after the kind test, which runs first and stops the program before anything is
+  handed over: `owns cast s as Circle` hands the whole owner `s` over as its kind, the same block
+  and no copy (an `owns Circle` from an `owns dyn Shape`; a `Circle` object with one owner from a
+  `Unit`), `shares cast s as Circle` makes one more owner typed `shares Circle` from a `shares dyn
+  Shape` or a `shares Shape`, and `return cast u as Player` hands `u` over as a `Player`, as `return
+  u` would (`[FN-2a]`); a cast of a part is a part (`[OWN-11]`), and a cast of a name that does not
+  own its value is handed over by nobody (`E3013`). A cast of a temporary gives the value, held as
+  the temporary was. A cast between unrelated types is `E2020`. Before a type name `is` means "is of
+  this kind"; before a value it means "the same object" (`a is b`, `x is None`). Each test and each
+  cast is one compare of type indices. `as?`, `as!`, `cast s if Circle` and `cast s when Circle` are
+  not Ember (`E1010`, `[GRM-30]`).
 * `[TYP-44a]` *(new in 0.9.20)* **One index per type in a process.** A type index is a number no two
   types in one process share, given when the program is linked, and for a reload image when it is
   loaded (`[HR-12a]`), never when a package is compiled: compiled code names a kind by its
@@ -928,12 +1034,16 @@ implementation the program has (Part X).
   with it. A kind test or cast is then one compare of the header's index against a constant (§X.4);
   where the C toolchain cannot fill an immediate from a link-time value, one load of that constant
   per function, which `ember inspect` reports on the same row.
-* `[TYP-32]` *(new in 0.9.9)* `some I` in a return type means "one concrete type, chosen by the
+* `[TYP-32]` *(new in 0.9.9)* *(changed in 0.9.20)* `some I` in a return type means "one concrete type, chosen by the
   function body, that implements `I`". The caller sees only `I`; the compiler knows the type and
   monomorphises through it, so there is no indirection. Every `return` in the body must produce the
   same concrete type (`E2261` otherwise). A method returns one as a function does; an interface's
   method does not (`[GRM-31]`). It is how a function returns an iterator pipeline whose type cannot
-  be written:
+  be written: A `some` list (`some (Iterator[Item = int], Send)`, `bound_list` in §III.2,
+  `[TYP-22]`) names one interface and any number of the marker interfaces (`Send`, `ThreadShared`,
+  `[TYP-43]`): the hidden type implements the interface and has each marker, checked at every
+  `return` of the function (`E2040` otherwise, naming the marker and the returned type), and a
+  caller may rely on the markers written and on nothing else of the hidden type.
 
 ```ember
 fn evens(xs: Span[int]) -> some Iterator[Item = int]:
@@ -977,10 +1087,13 @@ For `recv.m(args)`:
    object is not called through a name that only reads it (`E3023`), and one written `owns this`
    takes its object over, so the caller's name ends (`E3040` at a later use) (`[FN-4]`).
 
-* `[TYP-25]` Arguments may be positional or named; positional arguments come first; a parameter with a
-  default may be omitted.
-* `[TYP-26]` *(changed in 0.9.9)* There is no overloading: two functions of one name in one scope are
-  `E1030`, except operator-interface implementations and `extend` blocks for different types. A
-  function whose last positional parameter takes a pack's values (`[TYP-47]`) takes any number of
-  arguments; the output functions `print`, `println`, `eprint`, `eprintln` (`[STD-9]`) and `format_to`
-  (`[STD-18]`) are such functions of the library, not known to the compiler by name (verdict 117).
+* `[TYP-25]` Arguments may be positional or named; positional arguments come first; a parameter with
+  a default may be omitted.
+* `[TYP-26]` *(changed in 0.9.9)* *(changed in 0.9.20)* There is no overloading: two functions of one name in one scope
+  are `E1030`, except operator-interface implementations and `extend` blocks for different types. A
+  C++ name a header declares several times is one Ember name of several members, each use standing
+  for one (`[FFI-57]`): the header, not the program, declared them, and a function the program
+  declares beside an imported name is `E1030` as any other. A function whose last positional
+  parameter takes a pack's values (`[TYP-47]`) takes any number of arguments; the output functions
+  `print`, `println`, `eprint`, `eprintln` (`[STD-9]`) and `format_to` (`[STD-18]`) are such
+  functions of the library, not known to the compiler by name (verdict 117).

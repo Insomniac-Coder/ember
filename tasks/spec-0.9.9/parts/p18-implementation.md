@@ -88,19 +88,21 @@ The reference implementation compiles Ember to C11 and hands it to the platform'
   with its captures (`[MNG-6]`), so that a lambda moved by an edit above it keeps its name and one
   whose text or captures changed gets a new one, which `[HR-7]` treats as a removal and an addition.
   A method's path is its type's path and its name, with the interface's path before the name for a
-  method told apart by the interface it implements (`[TYP-24]`). A built-in type's path is under
-  `std.core` (`std.core.StrView`), so a program's own `struct StrView`, `Never` or `CStrView` never
-  shares one with it; a structural type (a tuple, fixed array, function, pointer or `dyn` type) that
-  owns a method is `std.core.<kind>`, with its whole spelling as its arguments; `[CLO-3]`'s copy of
-  a function for a function passed to it is an instance of that function, the passed function among
-  its arguments; and `[MONO-10]`'s copy for one whole variable under two names is an instance too.
-  Two distinct items therefore never share a name (`[MOD-1]`). Beside each instance's symbol the
-  package records the canonical spelling it hashed, in its interface file and in the object's
-  manifest section; before the linker runs, the build compares the spellings of every instance
-  symbol two packages both define, and two that differ are `E9040`, naming both spellings and both
-  packages, never an internal error and never one body for two instances; within one package the
-  same compare runs when the instance is named. The compare runs once per build, over the interface
-  files, and nothing of it is in the program.
+  method told apart by the interface it implements (`[TYP-24]`); a member of a C++ name declared
+  several times (`[FFI-57]`) adds, after its name, `O` and the 32 hex digits of the BLAKE3 hash of
+  its declaration as the header spells it (the key of `[FFI-55]`), so that no two members share a
+  symbol or a thunk name. A built-in type's path is under `std.core` (`std.core.StrView`), so a
+  program's own `struct StrView`, `Never` or `CStrView` never shares one with it; a structural type
+  (a tuple, fixed array, function, pointer or `dyn` type) that owns a method is `std.core.<kind>`,
+  with its whole spelling as its arguments; `[CLO-3]`'s copy of a function for a function passed to
+  it is an instance of that function, the passed function among its arguments; and `[MONO-10]`'s
+  copy for one whole variable under two names is an instance too. Two distinct items therefore never
+  share a name (`[MOD-1]`). Beside each instance's symbol the package records the canonical spelling
+  it hashed, in its interface file and in the object's manifest section; before the linker runs, the
+  build compares the spellings of every instance symbol two packages both define, and two that
+  differ are `E9040`, naming both spellings and both packages, never an internal error and never one
+  body for two instances; within one package the same compare runs when the instance is named. The
+  compare runs once per build, over the interface files, and nothing of it is in the program.
 * `[MNG-2]` *(changed in 0.9.15)* `@unsafe(export("name"))` sets the symbol exactly (`[FFI-26]`).
 * `[MNG-3]` *(changed in 0.9.10)* Non-ASCII identifier characters are transliterated as `_uXXXX_`
   before the length is taken, and so is an ASCII `_` that begins what would otherwise read as an

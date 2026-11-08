@@ -98,14 +98,15 @@ The compiler infers, for every function, an **effect set** drawn from:
   other package can change it or the places that own its holders. What a generic function changes
   through its type parameters' methods is worked out for each instance, by the package that compiles
   that instance.
-* `[EFF-9]` *(changed in 0.9.9)* *(changed in 0.9.15)* `RuntimeCheck(k)` enters a function's effect
+* `[EFF-9]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `RuntimeCheck(k)` enters a function's effect
   set when a check of kind `k` survives the compiler's profile-independent proofs in its body.
   `Arithmetic` covers integer overflow, division by zero, shift amounts and negative integer
   exponents, and the compare of an owner count or a weak count with its limit before it grows;
   `Bounds` covers indices, slices and chunk sizes; `Aliasing` covers the compare of
-  `assert_disjoint` and `check_disjoint` (`[DSJ-1]`), the one run-time alias check there is; `Stale`
-  covers handle generations and the test of a target's header that opens a `weakref` link (`exists
-  as`).
+  `assert_disjoint` and `check_disjoint` (`[DSJ-1]`) and the test of a `runtime` name's fact at a
+  line that changes what the call's result may point into (`[LT-48]`), the two run-time alias checks
+  there are; `Stale` covers handle generations and the test of a target's header that opens a
+  `weakref` link (`exists as`).
 * `[EFF-10]` The effect set records only which kinds occur. Per-site detail — every emitted check
   with its kind, location, mechanism and reason, and every removed check with the proof that removed
   it — is written to the safety side table that `ember inspect --safety` reads.
@@ -173,37 +174,40 @@ The compiler infers, for every function, an **effect set** drawn from:
   error[E3020]: `tick()` (line 13) adds to `LOG` (through `note`, line 4) while this loop walks `LOG` (line 11); call `tick()` after the loop: move line 13 below the loop
   ```
 
-* `[EFF-26]` *(new in 0.9.15)* **A call that runs a function makes its changes; storing one does not.** A
-  call through a function value makes the changes of every function it may run, and a function value
-  given to a call counts as an argument that changes every place its functions change and every real
-  variable they capture (`[BRW-11]`). A call that runs a function by itself counts as making everything
-  that function changes, now or later: `thread.spawn`, `scope.spawn`, `jobs.submit` and a job scope's
-  `submit` (Part XI); a library function that calls the function it is given
-  (`scores.for_each(owns fn(s): LOG.push(owns copy of s.name))` changes `LOG`); whatever drives an iterator
-  adapter that keeps one (`for x in it:`, `it.sum()`); and a foreign function's parameter whose contract
-  says `callback(retained)` or `callback(once)`, through which C keeps the function and runs it during
-  later foreign calls (a `callback(borrowed)` parameter runs it during the call, as `for_each` does).
-  Putting a function value in a field, a list, a local or an iterator adapter changes nothing the
-  function changes; the call that later runs it does. **A foreign call may run the callbacks C keeps**:
-  C code cannot be read, so a call of a foreign function counts as possibly running every callback C
-  keeps, on the threads their contracts allow, and makes the changes they make, for its caller and every
-  function that calls it, unless the foreign function's declaration says `@ffi(no_callbacks)`, a fact
-  the programmer vouches for (`[TCB-1]`; Part XVI says which Ember code C may run). A generic body's
-  calls of its type parameters' methods make the changes those methods make for the types it is given,
-  worked out for each instance.
-  Its message: E3020 ("`scores.for_each(...)` (line 4) pushes to `LOG` (through the function it is given) while this loop walks `LOG` (line 3); call it after the loop: move line 4 below the loop").
-* `[EFF-27]` *(new in 0.9.15)* *(changed in 0.9.20)* **What a `@cached` result depends on.** A `@cached` method's result
-  depends on the fields its body reads, worked out from its body (`[EFF-24]`), and the kept result is
-  cleared by every change, through any name, to one of them: the compiler places the clear at each line
-  that may make such a change. A change that does not pass through the method's object cannot be cleared
-  that way, so a `sharedref mut` link, or a `shares mut` owner, made into anything a `@cached` method of
-  its holder reads is `E2117` at the line that makes it ("`s.items[0]` is read by `Shelf.first_name`,
-  which is `@cached` and would not see a change made through this link; link the shelf instead,
-  `sharedref mut s`, or remove `@cached`"); a link to the whole holder is allowed, since every change
-  through it passes through the holder. A reload that changes a `@cached` method's body clears every
-  kept result of its type (Annex B). A change made by foreign code, or through a raw pointer, passes
-  through no name the compiler sees: unsafe code that changes a field a `@cached` method reads answers
-  for it (`[UNS-4]`, `[CLS-12]`).
+* `[EFF-26]` *(new in 0.9.15)* **A call that runs a function makes its changes; storing one does
+  not.** A call through a function value makes the changes of every function it may run, and a
+  function value given to a call counts as an argument that changes every place its functions change
+  and every real variable they capture (`[BRW-11]`). A call that runs a function by itself counts as
+  making everything that function changes, now or later: `thread.spawn`, `scope.spawn`,
+  `jobs.submit` and a job scope's `submit` (Part XI); a library function that calls the function it
+  is given (`scores.for_each(owns fn(s): LOG.push(owns copy of s.name))` changes `LOG`); whatever
+  drives an iterator adapter that keeps one (`for x in it:`, `it.sum()`); and a foreign function's
+  parameter whose contract says `callback(retained)` or `callback(once)`, through which C keeps the
+  function and runs it during later foreign calls (a `callback(borrowed)` parameter runs it during
+  the call, as `for_each` does). Putting a function value in a field, a list, a local or an iterator
+  adapter changes nothing the function changes; the call that later runs it does. **A foreign call
+  may run the callbacks C keeps**: C code cannot be read, so a call of a foreign function counts as
+  possibly running every callback C keeps, on the threads their contracts allow, and makes the
+  changes they make, for its caller and every function that calls it, unless the foreign function's
+  declaration says `@ffi(no_callbacks)`, a fact the programmer vouches for (`[TCB-1]`; Part XVI says
+  which Ember code C may run). A generic body's calls of its type parameters' methods make the
+  changes those methods make for the types it is given, worked out for each instance. Its message:
+  E3020 ("`scores.for_each(...)` (line 4) pushes to `LOG` (through the function it is given) while
+  this loop walks `LOG` (line 3); call it after the loop: move line 4 below the loop").
+* `[EFF-27]` *(new in 0.9.15)* *(changed in 0.9.20)* **What a `@cached` result depends on.** A
+  `@cached` method's result depends on the fields its body reads, worked out from its body
+  (`[EFF-24]`), and the kept result is cleared by every change, through any name, to one of them:
+  the compiler places the clear at each line that may make such a change. A change that does not
+  pass through the method's object cannot be cleared that way, so a `sharedref mut` link, or a
+  `shares mut` owner, made into anything a `@cached` method of its holder reads is `E2117` at the
+  line that makes it ("`s.items[0]` is read by `Shelf.first_name`, which is `@cached` and would not
+  see a change made through this link; link the shelf instead, `sharedref mut s`, or remove
+  `@cached`"); a link to the whole holder is allowed, since every change through it passes through
+  the holder; a `weakref` link may be made from any name at any time, so the class objects it may
+  name are kept out of a `@cached` body's reads instead (`[CLS-12]`). A reload that changes a
+  `@cached` method's body clears every kept result of its type (Annex B). A change made by foreign
+  code, or through a raw pointer, passes through no name the compiler sees: unsafe code that changes
+  a field a `@cached` method reads answers for it (`[UNS-4]`, `[CLS-12]`).
 
 ## X.2 Contracts
 
@@ -245,16 +249,19 @@ A contract attribute states an effect the function must not have.
     cull -> collect_visible -> Array.push -> ember_alloc
   ```
 
-* `[EFF-12]` *(changed in 0.9.15)* `@no_alias_checks` permits `RuntimeCheck(Bounds)`, `(Arithmetic)`
+* `[EFF-12]` *(changed in 0.9.15)* *(changed in 0.9.20)* `@no_alias_checks` permits `RuntimeCheck(Bounds)`, `(Arithmetic)`
   and `(Stale)`; it forbids only `RuntimeCheck(Aliasing)`, the run-time compare of `assert_disjoint`
-  or `check_disjoint`, because a data-oriented inner loop can always do without it: spans the
-  compiler proves apart need no compare, and a copy needs none (`E4030`: "`mix` is
-  `@no_alias_checks`, and `assert_disjoint(d, s)` (line 18) compares the two spans while running;
-  blend from a copy, which needs no check: instead of lines 16 to 19 write `old = copy of
-  tracks[src_name]` and `blend(ref mut tracks[dst_name].as_mut_span(), old.as_span())`, or remove
-  `@no_alias_checks`"). `@static_safe` is `E0104` ("`@static_safe` is now `@no_alias_checks`: it
-  forbids run-time alias checks only; bounds and overflow checks still run; write
-  `@no_alias_checks`").
+  or `check_disjoint` and the test of a `runtime` name (`[LT-48]`), because a data-oriented inner
+  loop can always do without it: spans the compiler proves apart need no compare, a copy needs none,
+  and a kind known when compiling is checked when compiling (`E4030` at the word: "`present` is
+  `@no_alias_checks`, and `runtime` on `r` (line 19) tests while running whether `scratch` changes
+  while `frame` looks at it; give `present` a kind known when compiling, `fn present(r: Gpu, ref mut
+  scratch: Array[u8]):`, or remove `@no_alias_checks`"; `E4030`: "`mix` is `@no_alias_checks`, and
+  `assert_disjoint(d, s)` (line 18) compares the two spans while running; blend from a copy, which
+  needs no check: instead of lines 16 to 19 write `old = copy of tracks[src_name]` and `blend(ref
+  mut tracks[dst_name].as_mut_span(), old.as_span())`, or remove `@no_alias_checks`").
+  `@static_safe` is `E0104` ("`@static_safe` is now `@no_alias_checks`: it forbids run-time alias
+  checks only; bounds and overflow checks still run; write `@no_alias_checks`").
 * `[EFF-17]` `@nopanic(explicit)` is spelled with its argument; bare `@nopanic` is `E0104` with a
   fix-it, so that no reader takes it to mean "cannot abort" (`[EFF-16]`).
 * `[EFF-20]` `@noio` forbids `Io`, including console output; `println` in a `@noio` function is
@@ -307,30 +314,44 @@ compute the same bits, on one machine and across machines running the same binar
   facts is reported as such, not as verified.
 * `[DET-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `Nondet` is introduced
   by exactly: floating-point contraction, reassociation or any `@fastmath` relaxation; a
-  transcendental function from the platform library instead of `std.math.det`; observing a pointer
-  or an object's address as an integer, or hashing one; making a `RandomState`, directly or as a
-  `Map`'s or `Set`'s hasher; the wall clock, the monotonic clock, the system random source, thread
-  and job completion order; a read whose value depends on which thread acted first: a receive on a
-  channel more than one thread may send to (one sender on one thread gives the sent order),
-  `try_lock`'s and `try_recv`'s answer, and a lock's view or an `Atomic` read of a place another
-  thread, or a task not yet joined, may change (`[THR-11]`; after the join the place holds what the
-  joined tasks left, in spawn order for a reduction, `[THR-21]`), `E4070` naming the senders
-  ("`gather` is `@deterministic`, and `rx.recv()` (line 9) receives from a channel two threads send
-  to (lines 7 and 8), so which value comes first differs between runs; give each task its own result
-  and join them in order: write `h1 = scope.spawn(...)`, `h2 = scope.spawn(...)` returning the
-  values, and `out.push(owns h1.join())`, `out.push(owns h2.join())`"); reading padding bytes,
-  recorded where a pointer to a type with padding is reinterpreted as a pointer to another type; any
-  `extern` function not declared `@ffi(deterministic)`. Iterating a `Map` or `Set` is **not**
-  `Nondet`: their order is insertion order (`[STD-11]`). A reduction of scoped tasks, combined in
-  spawn order, is not `Nondet` either (`[THR-21]`). Reading uninitialised memory is not `Nondet` but
-  undefined, outside Safe Ember (`[PHIL-10]`): an `unsafe` obligation (ODR-136).
+  floating-point function the platform's C library computes whose result IEEE 754 does not fix to
+  one correctly rounded answer (`[STD-27]`'s methods `sin` through `hypot`, `cbrt`, `hypot` and
+  `pow` among them, and `a ** b` on a float base, which is `pow` (`[TYP-30]`); not `sqrt`,
+  `fma`/`mul_add`, `abs`, `copysign`, `floor`, `ceil`, `trunc`, `round`, `round_half_away` or
+  `fract`, which every target computes alike, nor `rsqrt`, `lerp` and `smoothstep`, which `std.math`
+  builds from those), where `std.math.det`'s is not used, `E4070` naming the function or operator
+  and the line to write ("`boost` is `@deterministic`, and `x ** 2` (line 5) is the platform's
+  `pow`, whose last bits differ between C libraries; write `x * x`, or `det.pow(x, 2.0)`"); a SIMD
+  `_approx` operation (`[SIMD-4]`), whose bits are the processor's own; observing a pointer or an
+  object's address as an integer, or hashing one; making a `RandomState`, directly or as a `Map`'s
+  or `Set`'s hasher; the wall clock, the monotonic clock, the system random source, thread and job
+  completion order; a read whose value depends on which thread acted first: a receive on a channel
+  more than one thread may send to (one sender on one thread gives the sent order), `try_lock`'s and
+  `try_recv`'s answer, and a lock's view or an `Atomic` read of a place another thread, or a task
+  not yet joined, may change (`[THR-11]`; after the join the place holds what the joined tasks left,
+  in spawn order for a reduction, `[THR-21]`), `E4070` naming the senders ("`gather` is
+  `@deterministic`, and `rx.recv()` (line 9) receives from a channel two threads send to (lines 7
+  and 8), so which value comes first differs between runs; give each task its own result and join
+  them in order: write `h1 = scope.spawn(...)`, `h2 = scope.spawn(...)` returning the values, and
+  `out.push(owns h1.join())`, `out.push(owns h2.join())`"); reading padding bytes, recorded where a
+  pointer to a type with padding is reinterpreted as a pointer to another type; any `extern`
+  function not declared `@ffi(deterministic)`. Iterating a `Map` or `Set` is **not** `Nondet`: their
+  order is insertion order (`[STD-11]`). A reduction of scoped tasks, combined in spawn order, is
+  not `Nondet` either (`[THR-21]`). Reading uninitialised memory is not `Nondet` but undefined,
+  outside Safe Ember (`[PHIL-10]`): an `unsafe` obligation (ODR-136).
 * `[DET-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* A `@deterministic` function may call only
   `Nondet`-free functions; a call through a function value counts every function the program can put
   there, and a function given through a type parameter is checked per instance (`[EFF-2]`). A call
   through a `dyn I` value or a `virtual` method of a `pub` interface or class is admitted under
   `@deterministic` only when the method declares `@deterministic` itself, as `[EFF-6]` says of every
   contract; otherwise it is `E4070` at the call.
-* `[DET-4]` `std.math.det` provides `sin`, `cos`, `tan`, `exp`, `log`, `pow`, `atan2` and `sqrt` for
+* `[DET-4]` *(changed in 0.9.20)* `std.math.det` provides, under the names `[STD-21]` gives them, every function of
+  `std.math` whose platform form is `Nondet` (`[DET-2]`): `sin`, `cos`, `tan`, `asin`, `acos`,
+  `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `exp`, `exp2`, `ln`, `log2`, `log10`, `pow`, `cbrt`,
+  `hypot` and `sqrt`, so that `E4070`'s help for a `std.math` call is always `det`'s function of the
+  same name ("`fall_off` is `@deterministic`, and `math.cbrt(d)` (line 6) is the platform's `cbrt`,
+  whose last bits differ between C libraries; write `det.cbrt(d)`"; `det.log` is `E1010`, whose help
+  is "the natural logarithm is `ln` in `std.math` and `std.math.det` alike: write `det.ln(p)`"), for
   `f32` and `f64` returning the same bits on every supported target. Each takes either type and
   answers in it (`det.sin(x)` of an `f32` is an `f32`); an `f32`'s result is its `f64` result
   rounded once. Each is within one unit in the last place of the exact result, `atan2` within 1.3;
@@ -368,7 +389,7 @@ compute the same bits, on one machine and across machines running the same binar
 | Floor `//` and `%` on signed integers | guaranteed present, small | one compare-and-adjust over C's truncation; free for a positive constant divisor; `div_trunc`/`rem_trunc` give C's |
 | Division-by-zero and shift-range checks | conditionally elided | removed for constants, `NonZero` divisors and range facts |
 | Owner count +1 / -1 | guaranteed present | only where a line makes or ends a `shares`, `shares mut` or `thread_shared` owner (`[THR-1]`), and nowhere else; a plain add for `shares`, and for `thread_shared` on the thread that made the value until it is handed over (`[RC-4]`); an atomic one on other threads; each +1 is checked against the count's limit, one compare and a branch never taken (`[COST-6]`) |
-| A `thread_shared` value's two counts | guaranteed present | blocks made in `Global` come in chunks of the configured allocator, each chunk's header naming its thread, read with one load on the away path (`[OBJ-1]`); a value made `using` an instance counts every owner atomically, as if handed over at its making line (`[RC-4]` point 4); on the making thread, one load and one branch on the handed-over mark before each count operation and each opening of a `weakref thread_shared T` link (`[RC-4]` point 4); a 32-byte header, 16 bytes more than one atomic count's (`[OBJ-1]`); a test of the thread's queue at each check point (`[RC-4]`), and the queue's work for a value whose last owner ends on another thread without a hand-over. Measured against one atomic count (`tasks/96/redesign/measure-0.9.15/brc/REPORT.md`, 15 runs per cell): a thread's own values 25% faster on 1 to 8 threads, the camera program 89 ms against 544 ms; reading another thread's values 3% slower on 1 thread and 17% to 28% faster on 2 to 8; one thread handing copies to all 0.93x to 1.05x; a random mix 9% to 13% slower; a pipeline (made on one thread, ended on the next) 27% slower on 1 thread and the same on 2 to 8 |
+| A `thread_shared` value's two counts | guaranteed present | blocks made in `Global` come in chunks of the configured allocator, each chunk's header naming its thread, read with one load on the away path (`[OBJ-1]`); a value made `using` any manager but `Global` counts every owner atomically from its making line, the path chosen from the type of the place at each line, so it pays no test of the mark, no read of a chunk and never the queue (`[RC-4]` point 4), and gives its block back through its manager's `deallocate` on the thread that ends it, nothing for a manager that frees nothing one by one (`[ALC-1]`); against a value made in `Global` it gives up the home count's plain adds (a thread's own values 25% faster, below) for the manager's allocation (a bump for an arena) and no runtime free, a trade the programmer makes per value by the word; on the making thread, one load and one branch on the handed-over mark before each count operation and each opening of a `weakref thread_shared T` link (`[RC-4]` point 4); a 32-byte header, 16 bytes more than one atomic count's (`[OBJ-1]`); a test of the thread's queue at each check point (`[RC-4]` point 3), one thread-local load and a branch, at the back edge of a loop whose body makes a call or an operation on an `Atomic` or a channel end and never in a loop of plain operations, around a blocking call, at the return of an export or a trampoline and at the thread's end; the queue's work, out of line, for a value whose last owner ends on another thread without a hand-over, a plain `drop` only; a value of a type that is not plain, and a value made on a thread other than the main thread or a `thread.spawn` thread (`[RC-4]` point 4), count every owner atomically as if handed over at the making line, the second marked by the runtime in the header it writes (one load of the thread's kind and one store, inside the allocation), and for such a value this row's measurements read the other way (a pipeline, made on one thread and ended on another, 27% faster on one thread and the same on 2 to 8; a thread's own values 25% slower); no copy of a function per call place, no per-thread count of held locks and no wake of a worker is paid. Measured against one atomic count (`tasks/96/redesign/measure-0.9.15/brc/REPORT.md`, 15 runs per cell): a thread's own values 25% faster on 1 to 8 threads, the camera program 89 ms against 544 ms; reading another thread's values 3% slower on 1 thread and 17% to 28% faster on 2 to 8; one thread handing copies to all 0.93x to 1.05x; a random mix 9% to 13% slower; a pipeline (made on one thread, ended on the next) 27% slower on 1 thread and the same on 2 to 8 |
 | The weak count in a header | guaranteed present | 4 bytes, and 8 where the first field is 8-aligned, in every object of a class family that carries a weak count and in every `shares` value of a type that does (`[OBJ-1]`: a type that can be named from outside its package, or that a `weakref` type in its own package names); none in a value of a private type its package never links to; a `thread_shared` value's 32-byte header carries it always; nothing runs for it |
 | `weakref` link made, given another target, or ended | guaranteed present | one add or one subtract of the target's weak count, the add checked against its limit; plain for a `weakref T`, one atomic add or subtract for a `weakref thread_shared T` (`[RT-10]`), chosen by the link's type; a parent link pays it too, one add when `child.parent = weakref this` runs and one subtract when the link changes or the child ends |
 | Opening a `weakref` link (`if w exists as p:`) | conditionally elided | for a `weakref T`, one load of the target's header and one compare, with no flag read and no branch choosing the path (during the target's `drop` the object is already ended, and the same test finds it gone); a parent-link read the compiler proves (Part VIII) is a load and a test for no link |
@@ -387,7 +408,7 @@ compute the same bits, on one machine and across machines running the same binar
 | Generic call, shared (`[MONO-6]`) | guaranteed present | one indirect call per bound method; only above a declared instantiation budget |
 | A function given through a type parameter (`[F: needs fn(Item)]`) | not observable | a direct, inlinable call; one instance per function given |
 | A call through a function value (a parameter, field, list element or local of a function type) | guaranteed present | one indirect call; a call through a list element or a field first copies the value's two words, its code and its state, out of it |
-| A function value's state | guaranteed present | a variable kept with a capture word (`owns`, `copy of`, `shares`, `thread_shared`, `weakref`) lives in the function value's own state (`[CLO-10]`), and costs nothing beyond it; a captured real variable stays at its own address and costs nothing; a function value is never stored where its own run could end or move its state (`[CLO-17]`), so nothing is held across a call |
+| A function value's state | guaranteed present | a variable kept with a capture word (`owns`, `copy of`, `shares`, `thread_shared`, `weakref`) lives in the function value's own state (`[CLO-10]`), and costs nothing beyond it; a captured real variable stays at its own address and costs nothing beyond the one frame address the state word holds; a function value that both uses real variables and captured a value with a word has a block of its own, as one with two words of captures has (`[CLO-10]`; `scope.spawn(owns fn() ref t: ...)` inside a loop over `texts` that also uses the parent's `total` makes one block per task); a function value is never stored where its own run could end or move its state (`[CLO-17]`), so nothing is held across a call |
 | `some I` return | not observable | the concrete type is known |
 | Generator resume | guaranteed present | one jump on the state; the frame never allocates; a `for` over a list inside the generator reads its position again after each resume |
 | Collection literal producing a heap collection | guaranteed present | one allocation (`Alloc`); a fixed-array context allocates nothing |
@@ -401,22 +422,22 @@ compute the same bits, on one machine and across machines running the same binar
 | Sorting floats | not observable | `sort` on floats compares by IEEE totalOrder (`[TYP-37]`), a few integer instructions per compare |
 | Arena allocation | guaranteed present | a pointer bump |
 | A value made `using` a memory manager | guaranteed present | each allocation and free of the value is the manager's own work (an arena: a pointer bump, nothing freed one by one); a value whose manager may have several instances keeps one word, its instance's address, so that its growth and its end go back to that instance; none for `Global` or `System`, none for a value that does not grow in a manager that frees nothing one by one, and none in a manager that implements `FoundByAddress` (a mask and a load find its instance; verdict 107, measured in `tasks/96/redesign/measure-0.9.15/RESULTS.md` section 7: a million small values 191 ms and 28.2 MB with no word, 241 ms and 44.7 MB with it, C 191 ms and 28.2 MB) |
-| Allocation | guaranteed present | a call that allocates (a collection growing, a `String` built), reported per site; `@noalloc` refuses it (`[EFF-1]`) |
+| Allocation | guaranteed present | a call that allocates (a collection growing, a `String` built, `a + b` on a `String`, `[TXT-11]`: one allocation, where `s += t` grows in place), reported per site; `@noalloc` refuses it (`[EFF-1]`) |
 | `contains` | guaranteed present | the `contains` an `x in c` selects: linear for an array or view, constant for a set or map (`[STD-8a]`) |
 | A lock | guaranteed present | where the program takes one (`with x.lock:`, `m.lock()`): the lock C takes; nothing per use of a `guarded by` field (`[THR-18]`) |
 | The gather of an `SoA` element of a type with `drop` (`[SOA-6]`) | guaranteed present | once per element discarded (`retain`, `clear`, `ps[i] = v`, the end of `ps`): its fields read from the columns into one `T`, whose `drop` then runs; none for a type with no `drop`; shown by `ember inspect --cost` |
 | Scoped tasks and their reductions | guaranteed present | one private accumulator per task and one combine per task at the join, as C's per-thread counter; no atomic per change (`[THR-21]`) |
 | `@cached` method | guaranteed present | one flag test per call, and one store, clearing the flag, at each line that may change a field its body reads (`[EFF-27]`); on an object several threads reach, the result is filled once under a once-flag |
 | Stack probe | guaranteed present | one touch per page of a frame larger than a page (`[RT-12]`); none for smaller frames |
-| FFI call | guaranteed present | one direct call for an ABI-direct C function |
-| An Ember function called by C through a function pointer (`[FFI-21]`) | guaranteed present | the thread-local attach check of its C entry (`[FFI-22]`), nothing else |
+| FFI call | guaranteed present | one direct call for an ABI-direct C function, and one direct call of the member's thunk for a C++ name declared several times (`[FFI-57]`); a call that leaves a default argument out runs the default's expression in the thunk, as the C++ call site that leaves it out would |
+| An Ember function called by C through a function pointer (`[FFI-21]`) | guaranteed present | the thread-local attach check of its C entry (`[FFI-22]`) and one test of the thread's queue at its return (`[RC-4]` point 3), nothing else |
 | An override call or `delete` of a trampoline-class object under `threads=creator` (`[FFI-17d]`) | guaranteed present | one compare of the calling thread with the id the trampoline subobject holds, one word per object |
 | An `owns T` of a `threads(creator)` type (`[FFI-33b]`) | guaranteed present | one word more, the making thread's id, and one compare at its end |
 | Entering Ember code from C in a reloadable build (`[HR-42]`) | guaranteed present | one increment, one fence and one load; a thread waits only for the length of a commit it meets |
 | Registering an object in a reloadable build (`[HR-12]`) | guaranteed present | two stores when it is made and two when it ends; a lock or an atomic exchange for a `thread_shared` object; a `thread_shared` header of 48 bytes |
 | A value handed over on some paths only (`[OWN-3]`) | guaranteed present | one hidden drop flag in the frame: a store at the hand-over and one test where the owner would end; none where every path hands it over or none does |
 | First access of a `static` built on first access (`[STA-3]`) | guaranteed present | one test of its once-flag per access, and the initialiser once, during which a first access on another thread waits; none for a static placed in the image |
-| An export's or a trampoline's entry (`[FFI-22]`, `[FFI-33]`) | guaranteed present | the thread-local attach test, and under `threads=creator` or `main` one compare of the calling thread |
+| An export's or a trampoline's entry (`[FFI-22]`, `[FFI-33]`) | guaranteed present | the thread-local attach test, under `threads=creator` or `main` one compare of the calling thread, and one test of the thread's queue at the return (`[RC-4]` point 3) |
 | A C callback | guaranteed present | the checked trampoline (Part XVI): C holds a tagged number, never an address; each call compares the callback's generation, and, in every profile, the thread of a `threads(creator)` callback and the used-up mark of a `callback(once)` one |
 | What a function changes, reads and ends; the thread rules; the arena checks | not observable | all checked when compiling (`[EFF-24]`); a library function given a function is one instance per function, as Rust's generic `F: FnMut`; a call that names one whole variable twice is compiled against its own copy of the function (`[BRW-11]`), one more copy of its code and nothing while running |
 
@@ -437,6 +458,7 @@ compute the same bits, on one machine and across machines running the same binar
   | Check | The stop's text |
   |---|---|
   | `assert_disjoint` (`[DSJ-1]`) | "`assert_disjoint(d, s)` on line 11: the two spans overlap (`dst_name` and `src_name` name one track)" |
+  | a `runtime` name's test (`[LT-48]`) | "`xs` changes while `r` looks at it: `p` is a `Yours`, whose `pick` gives back the list it was handed" |
   | a one-thread owner count at its maximum | "too many owners of a `Player` (4,294,967,295)" |
   | a one-thread weak count at its maximum | "too many `weakref` links to a `Player` (4,294,967,295)" |
   | a `thread_shared` owner count at its limit (`[RC-4]`) | "too many owners of a `Log` (2,147,483,647)" |
@@ -457,6 +479,7 @@ compute the same bits, on one machine and across machines running the same binar
 | an invalid `Layout` (`[ALC-2]`) | "`invalid Layout`: `Layout(3, 3)` on line 7, an alignment that is not a power of two" |
 | a `FixedArena` exhausted (`[ARN-4]`) | "`fixed.alloc_zeroed(...)` on line 9: `fixed` has 16 bytes free and 32 were asked; use `try_alloc_zeroed` for an `Option`" |
 | a full `Pool` (`[HND-3]`) | "`pool.insert(...)` on line 11: every slot is live or retired; use `try_insert` for a `Result`" |
+| the callback table full (`[FFI-53]`) | "`on_click(...)` on line 16: no callback slot is free; every one of the 65,536 slots a 32-bit target has is live or retired" |
 | a stale handle in `pool[h]` (`[HND-1]`) | "`pool[h]` on line 12: the handle is stale (slot 3, generation 2 of 5); use `pool.get(h)` for an `Option`" |
   | adopting one live object twice (`[FFI-36b]`) | a panic naming both places that adopted it |
   | a GPU draw reading past what is bound (`[GPU-12]`) | the text `[GPU-12]` gives |

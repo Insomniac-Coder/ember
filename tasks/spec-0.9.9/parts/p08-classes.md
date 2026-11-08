@@ -88,12 +88,21 @@ offset  size  field
   allocator (`[ALC-3]`, `[FFI-27]`, else `[RT-1]`'s), writes the making thread into each chunk's
   header once, and a chunk belongs to that thread for the life of the process, never given to
   another thread's allocator, and a block freed goes back to that thread's own pool, so the record
-  never changes. A `thread_shared` value made `using` an instance (`[ALC-1]`) lies in memory the
-  runtime did not lay out, so it is marked handed over at the line that makes it (`[RC-4]` point 4)
-  and no thread asks which thread made it. The header is part of the runtime ABI (`[VER-4]`).
-  Foreign code never reads it; it calls `ember_rt`. An object carries nothing else for the memory
-  model: no access words, and no flags but a `thread_shared` value's three marks and the kept-by-C
-  mark, the top bit of the type index (`[FFI-35a]`), so a type index is below 2^31.
+  never changes. A chunk taken by a thread that keeps no home count (`[RC-4]` point 4: a scoped
+  task's or job's thread, a job worker, a host thread) names no thread, and a `thread_shared` block
+  from it is marked handed over in the header the runtime writes as it lays the block out, so no
+  thread ever finds itself its maker and every count operation on it takes the away path; a block of
+  a type that is not plain is marked the same by the line that makes it. A `thread_shared` value
+  made `using` any manager but `Global` (`[ALC-1]`, `[TYP-46a]`; `System` and a one-instance manager
+  a program declares included) lies in memory the runtime did not lay out, so it is marked handed
+  over at the line that makes it (`[RC-4]` point 4) and no thread asks which thread made it; it is
+  never queued, so where it keeps its instance's address (`[ALC-1]`) that address stands in the
+  header's queue place, and the value costs no word beyond the 32 bytes; so is a `thread_shared`
+  value a `static` or a `comptime(e)` holds, placed in the image when compiling (`[CT-5]`). The
+  header is part of the runtime ABI (`[VER-4]`). Foreign code never reads it; it calls `ember_rt`.
+  An object carries nothing else for the memory model: no access words, and no flags but a
+  `thread_shared` value's three marks and the kept-by-C mark, the top bit of the type index
+  (`[FFI-35a]`), so a type index is below 2^31.
 * `[OBJ-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* An owner, a link or a view of a class object
   is one pointer, to offset 0. An object's interface tables are reached through its type index, so a
   `dyn I` value of a class object, and an `Option` of one, is one pointer wide. A bare interface
@@ -111,10 +120,11 @@ offset  size  field
   through the runtime allocator (`[RT-1]`), or from the memory manager the class names with `using`
   (`[ALC-1]`), except as `[OPT-1]` permits. An object made in a manager keeps its instance's address
   only as `[ALC-1]` says: none in a manager that frees nothing one by one, or in one that implements
-  `FoundByAddress`. A `thread_shared` value's block always comes from the runtime allocator
-  (`[RT-1]`), whatever manager its class names: `thread_shared` before a value made `using m` is
-  `E2114` ("a `thread_shared` value's block carries its making thread's record, which only the
-  runtime allocator keeps; remove `using m`: `names = thread_shared Names()`").
+  `FoundByAddress`. A `thread_shared` value's block comes from the runtime's chunks (`[OBJ-1]`) when
+  it is made with no `using`, and from the instance named when it is made `using` one, by calling
+  `m.allocate(…)` as for any value made in `m` (`[TYP-46a]` says when): the first has its making
+  thread read from its chunk's header, the second keeps its instance word as `[ALC-1]` says, is
+  counted away from the line that makes it and asks no thread which made it (`[RC-4]` point 4).
 * `[OBJ-5]` *(changed in 0.9.15)* *(changed in 0.9.20)* **An ended object is never brought back.**
   Inside a `drop`, and in everything it calls (by their summaries, `[EFF-1]`), no owner is made of
   the object being ended: an owner made from `this` (`shares this`, `shares mut this`,
@@ -225,17 +235,31 @@ offset  size  field
      compare-exchange on the away word that succeeds only if the count is the one it read; an
      opening of a `weakref thread_shared T` link that added to the count meanwhile (`[WK-12]`) makes
      it fail, and the thread reads again.
-  3. **Check points.** The compiler places them: at every loop's back edge, before and after every
-     call that may block the thread (waiting for a lock, a `join`, the end of a `with scope` block,
-     a channel's receive, a sleep) and when the thread ends; the one after a `join` or a scope's end
-     makes a value a joined task ended on its own thread end before the parent's next line. A value
-     whose making thread has ended is ended at once by the thread that ends its last owner: a
-     thread's end empties and closes its queue in one atomic step, and a subtract that finds the
-     queue closed reads the home count, which nothing changes once the making thread has ended (the
-     close is a release and the subtract that finds it an acquire, `[RT-8]`), and ends the value
-     only when the home count and the away count after its subtract add up to zero, with the step of
-     point 2; so no value waits for a thread that is gone, and none ends while an owner the making
-     thread counted still holds it.
+  3. **Check points.** The compiler places them: at the back edge of every loop whose body makes a
+     call or an operation on an `Atomic` or a channel end (a loop that may wait for another thread,
+     which may be ending values this thread made; a loop of plain operations has none, and its end
+     is the next point), before and after every call that may block the thread (waiting for a lock,
+     a `join`, `jobs.wait`, the end of a `with scope` block, a channel's receive, a sleep, and a
+     foreign call, whose code the compiler cannot read, `[FFI-52]`), at the return of every exported
+     function and trampoline (the entries C calls, `[FFI-22]`), and when the thread ends, before its
+     `join` returns; the one after a `join` or a scope's end makes a value a joined task ended on
+     its own thread end before the parent's next line. What a check point ends is a value this
+     thread made whose type is plain (point 4): its `drop` frees memory and ends what the value
+     owns, and does nothing else; the values it ends have no owner left, so no view, walk or task of
+     this thread reads them (a name opened from a `weakref thread_shared T` link holds a count,
+     `[RC-5]` point 2, and a `weakref T` link reaches no `thread_shared` value, `[THR-2]`). A check
+     point is therefore not a line or a call for the rules that judge where it stands (`[THR-19]`,
+     `[BRW-18]`, `[RC-5]`, `[THR-11]`, `[EFF-1]`, §X.2), adds nothing to its function's effects or
+     summary (`[EFF-24]`, `[DRP-8]`), and may stand inside a lock's `with` block or a guard's life,
+     a walk, a view's life, a `with scope` block or a function with a contract; its own work (the
+     test of the queue, the merge of point 2, a plain `drop`) is the runtime's, as the handed-over
+     test before a count operation is (point 4). A value whose making thread has ended is ended at
+     once by the thread that ends its last owner: a thread's end empties and closes its queue in one
+     atomic step, and a subtract that finds the queue closed reads the home count, which nothing
+     changes once the making thread has ended (the close is a release and the subtract that finds it
+     an acquire, `[RT-8]`), and ends the value only when the home count and the away count after its
+     subtract add up to zero, with the step of point 2; so no value waits for a thread that is gone,
+     and none ends while an owner the making thread counted still holds it.
   4. **Handed over at once.** The making thread, when it stores an owner of a `thread_shared` value
      where other threads can reach it (into any place reachable from a `thread_shared` value, a
      `guarded by` field or container under its lock; through a channel; into the state of a
@@ -243,21 +267,62 @@ offset  size  field
      starts; into the token of a callback C keeps; every such place is known when compiling), first
      adds its own count of the value into the away count and marks the value handed over; from then
      on every thread, the making thread included, counts in the away count, and a later end on
-     another thread never goes through the queue. A `thread_shared` value made `using` an instance
-     of a manager that may have several instances (`[ALC-1]`) is marked handed over at the line that
-     makes it: its instance may be reset or end as soon as the compiler sees its last owner end
-     (`[ALC-5]`, `[LT-4]`), which an end delayed to a check point would miss, so every owner of such
-     a value is counted in its away count and its end is never delayed; a value made in `Global` or
-     `System` keeps the two counts, its block waits for the check point and nothing reuses it.
-     Another thread's store of an owner it holds moves nothing: its owners are counted away already.
-     On the making thread every count operation on a `thread_shared` value, and every opening of a
-     `weakref thread_shared T` link to one, first tests the handed-over mark, one load and one
-     branch (§X.4), and a name opened on the home count (`[RC-5]` point 2) is undone on the count
-     the mark names at the name's end.
-  5. **So a value's end is delayed only** when its last owner ends on a thread that did not make it
-     and the value was not handed over at a place of point 4 (it travelled inside another object):
-     it is ended at its making thread's next check point. Until then it is intact, and a `weakref`
-     link opened on another thread may still find it (`[WK-3]`).
+     another thread never goes through the queue. A `thread_shared` value made `using` any manager
+     but `Global` (`System`, a `static` manager and every instance alike, `[ALC-1]`, `[TYP-46a]`) is
+     marked handed over at the line that makes it, in the header's first store, before any other
+     thread can reach it: its block lies in memory the runtime did not lay out, so no chunk header
+     names its making thread (`[OBJ-1]`), and its instance may be reset or end as soon as the
+     compiler sees its last owner end (`[ALC-5]`, `[LT-4]`), which an end delayed to a check point
+     would miss; so every owner of such a value is counted in its away count, its end is never
+     delayed, and the thread that ends it gives the block back through the manager's `deallocate`
+     there. Where the type of the place at the line says `using A` (`[TYP-46]`, `[BLD-16]`) the
+     compiler emits the away path with no test of the mark and no read of a chunk; where it does
+     not, the mark decides, as after any hand-over; the runtime's own routines, which see no type
+     (`ember_rt_object_release`, the hand-over walk of `[THR-2]`, a reload's registration,
+     `[HR-12]`), test the mark before anything reads a chunk header, so a block the runtime did not
+     lay out is never asked for its making thread. A value made in `Global`, with or without `using
+     Global` written, keeps the two counts, its block waits for the check point and nothing reuses
+     it. Two more values are marked handed over at the line that makes them, for the same reason: an
+     end delayed to a check point would come at a place, or on a thread, where its `drop` may not
+     run. **By its type.** A type is plain when it has no `drop`, or its `drop`, taken with the
+     `drop`s of everything the value owns, all the way down, has an effect set (`[EFF-1]`) with none
+     of the effects a contract may forbid (§X.2: `Alloc`, `Sync`, `Block`, `Io`, `Lock`,
+     `Panic(Explicit)`, `RuntimeCheck(Aliasing)`, `Nondet`) apart from the count steps of ending the
+     owners and `weakref thread_shared T` links the value holds, which every end performs; its
+     summary (`[EFF-24]`) reaches no `static mut`; it runs no code its package cannot read whole (a
+     call through a function value, a call through a `dyn`, `virtual` or interface method that a
+     package it does not see may implement, `[EFF-6]`, a foreign call not declared
+     `@ffi(no_callbacks)`); and every type the value owns is plain, the target of a `thread_shared`
+     owner it holds included (a `dyn I`, a function value and an object of an `open` or `abstract`
+     class it owns are not plain). The package that declares the type decides, from its own text and
+     its imports' interface files, and records the fact beside the type's layout in its interface
+     file and in its `TypeInfo` (`[BLD-14]`, `[BLD-16]`, `[RT-3]`), as it records the weak count
+     (`[OBJ-1]`). A `thread_shared` value of a type that is not plain is marked handed over at the
+     line that makes it, so its `drop` never waits in a queue and runs where its last owner ends, as
+     a written call there (`[DRP-8]`, `[THR-20]`). **By its thread.** A `thread_shared` value made
+     on any thread other than the main thread or a `thread.spawn` thread (the thread of a scope's
+     task or job, which the runtime runs on a thread it owns and never on the thread that opened the
+     scope, `[THR-5]`, `[THR-11]`, `[JOB-2]`; a job worker running `jobs.submit` or a chunk of a
+     `@parallel` loop, §XI.5; a host thread attached by `[FFI-22]`; a chunk the calling thread runs
+     itself, `[PAR-4]`, is made on that thread) is marked handed over at its making: those threads
+     run Ember code only while given a task, a job or a call from C, no `join` of the program waits
+     for their end, and a task's claims are checked only until its join (`[THR-11]`), so a queue to
+     them would have no bound and could run a `drop` after the window the rules checked. The
+     runtime, which lays out the block and knows its thread's kind, sets the mark in the header it
+     writes (`[OBJ-1]`, §X.4). So the queue of point 2 holds only a value of a plain type made on
+     the main thread or a `thread.spawn` thread. Another thread's store of an owner it holds moves
+     nothing: its owners are counted away already. On the making thread every count operation on a
+     `thread_shared` value, and every opening of a `weakref thread_shared T` link to one, first
+     tests the handed-over mark, one load and one branch (§X.4), and a name opened on the home count
+     (`[RC-5]` point 2) is undone on the count the mark names at the name's end.
+  5. **So a value's end is delayed only** for a value of a plain type made on the main thread or a
+     `thread.spawn` thread (point 4), when its last owner ends on a thread that did not make it and
+     the value was not handed over at a place of point 4 (it travelled inside another object): it is
+     ended at its making thread's next check point, and its `drop`, which is plain, runs there; a
+     making thread that waits in one call for its life (`rx.recv()`) ends it when the call returns
+     or at its own end, holding only memory meanwhile. Every other `thread_shared` value is ended
+     where its last owner ends. Until then it is intact, and a `weakref` link opened on another
+     thread may still find it (`[WK-3]`).
 
   The weak count of a `thread_shared` value is atomic. The away count, and the weak count, are
   raised with one atomic add and their limit is checked on the value the add returns: when the count
@@ -381,29 +446,30 @@ no access words, and no change of a field begins or ends anything at run time.
   `[LT-22]` records for it, in the width the interface's declaration fixes, read by a `runtime`
   check (`[LT-48]`).
 * `[DSP-4]` *(changed in 0.9.15)* **Kind tests.** A value of an interface type (`dyn I`, `owns dyn
-  I`, `shares dyn I`) or of a base class is tested for its kind with `is`: `if s is Circle as c:`
-  runs its block when `s` is a `Circle` and names it `c` there; `if s is Circle:` tests without a
-  name; other kinds are tested with `elif s is Square as q:` and `else:`, which is how a choice
-  among kinds is written (there is no "maybe a `Circle`" value to `match` on). The name is declared
-  with its words, as a name opened with `exists as` is (`[BRW-14]`): plain `c` is a read-only view,
-  and since a value tested in its place stays a place, `if this.pools[k] is Pool[T] as ref mut
-  pool:` names a view of the registry's pool that may change it, where the function may change the
-  place. `is` before a type name means "is of this kind"; before a value it means "the same object"
-  (`a is b`, which compares addresses) or tests for absence (`x is None`). A test that always passes
-  is `E2036` ("`s` is a `Circle` already, so this `if` would always run; to name it write `c = s` in
-  place of the `if` line, and use `c` in its block, moved out one level"); a test of a type that
-  does not implement the interface or derive from the base class, which can never pass, is `E2037`
-  ("`s` is a `Shape`, which can never be a `Path`; remove the test: the `if` line and its block"); a
-  name already in use is `E2106` ("`s` already names a value (line 1); `as` declares a new name:
-  write `if s is Circle as c:`, and `c.r` for `s.r` in its block"). Each test is one type-id
-  compare.
-* `[DSP-6]` *(new in 0.9.15)* **Casts.** `cast s as Circle` gives the `Circle` and stops the program
-  if `s` is not one, in every profile: "`cast s as Circle` on line 9: `s` is a `Square`, not a
-  `Circle`". A cast of a place is a place: the name bound from it is read-only unless written `ref
-  mut` (`pool = ref mut cast this.pools[k] as Pool[T]`), and `ref mut` taken through a plain one
-  (`return ref mut pool.dense[pool.sparse[e]]`) is `E3027` ("`pool` only reads the pool in
-  `this.pools`, so `ref mut pool.dense[...]` cannot be taken through it; name it so it may change:
-  `pool = ref mut cast this.pools[k] as Pool[T]`"). Each cast is one type-id compare.
+  I`, `shares dyn I`, `shares mut dyn I`) or of a base class is tested for its kind with `is`: `if s
+  is Circle as c:` runs its block when `s` is a `Circle` and names it `c` there; `if s is Circle:`
+  tests without a name; other kinds are tested with `elif s is Square as q:` and `else:`, which is
+  how a choice among kinds is written (there is no "maybe a `Circle`" value to `match` on). The name
+  is declared with its words, as a name opened with `exists as` is (`[BRW-14]`): plain `c` is a
+  read-only view, and since a value tested in its place stays a place, `if this.pools[k] is Pool[T]
+  as ref mut pool:` names a view of the registry's pool that may change it, where the function may
+  change the place. `is` before a type name means "is of this kind"; before a value it means "the
+  same object" (`a is b`, which compares addresses) or tests for absence (`x is None`). A test that
+  always passes is `E2036` ("`s` is a `Circle` already, so this `if` would always run; to name it
+  write `c = s` in place of the `if` line, and use `c` in its block, moved out one level"); a test
+  of a type that does not implement the interface or derive from the base class, which can never
+  pass, is `E2037` ("`s` is a `Shape`, which can never be a `Path`; remove the test: the `if` line
+  and its block"); a name already in use is `E2106` ("`s` already names a value (line 1); `as`
+  declares a new name: write `if s is Circle as c:`, and `c.r` for `s.r` in its block"). Each test
+  is one type-id compare.
+* `[DSP-6]` *(new in 0.9.15)* *(changed in 0.9.20)* **Casts.** `cast s as Circle` gives the `Circle`
+  and stops the program if `s` is not one, in every profile: "`cast s as Circle` on line 9: `s` is a
+  `Square`, not a `Circle`". A cast of a place is a place: the name bound from it is read-only
+  unless written `ref mut` (`pool = ref mut cast this.pools[k] as Pool[T]`), and `ref mut` taken
+  through a plain one (`return ref mut pool.dense[pool.sparse[e]]`) is `E3027` ("`pool` only reads
+  the pool in `this.pools`, so `ref mut pool.dense[...]` cannot be taken through it; name it so it
+  may change: `pool = ref mut cast this.pools[k] as Pool[T]`"). Each cast is one type-id compare;
+  what the words before a cast hand over or share is `[TYP-44]`'s.
 * `[DSP-5]` *(changed in 0.9.15)* With the whole program visible, a virtual call with exactly one
   reachable implementation may become a direct call; `--emit-optimization-report` lists each. What a
   call through a `virtual` or interface method may change, read and end is worked out from every
@@ -473,7 +539,7 @@ no access words, and no change of a field begins or ends anything at run time.
   away count, undone when the value is marked ended.
 * `[WK-2]` *(changed in 0.9.15)* An object is ended when its count of owners reaches zero, whatever
   `weakref` links remain; those links then find nothing when opened.
-* `[WK-3]` *(changed in 0.9.15)* **An object is ended the moment its last owner lets it go, before
+* `[WK-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* **An object is ended the moment its last owner lets it go, before
   its `drop` runs**, as C++'s `weak_ptr` and Rust's `Weak` see it: a `weakref` link opened during
   its `drop`, or during the `drop` of anything it owns (a child's `drop` opening `this.parent` while
   the parent is being ended), finds it ended (a one-owner object's count is written 0 at its end,
@@ -482,8 +548,10 @@ no access words, and no change of a field begins or ends anything at run time.
   `[WK-17]` exists only where ending a node runs no `drop`. Ending the link itself (`this.parent =
   None`) stays allowed: it only subtracts the link's weak count in the target's header, which that
   count keeps in memory. A `thread_shared` value whose last owner ends on a thread that did not make
-  it, and that was not handed over, is ended at its making thread's next check point (`[RC-4]` point
-  5), and its `drop` runs there.
+  it, and that was not handed over (a value of a plain type made on the main thread or a
+  `thread.spawn` thread, `[RC-4]` point 4), is ended at its making thread's next check point
+  (`[RC-4]` point 5), and its `drop`, which frees memory and does nothing else, runs there; every
+  other `thread_shared` value is ended where its last owner ends (`[THR-20]`).
 * `[WK-13]` *(changed in 0.9.15)* A `weakref` link to a value held `shares` names the same block as
   its owners.
 * `[WK-14]` *(changed in 0.9.15)* Ember's `weakref` and `shares` never convert to or from C++'s
@@ -668,7 +736,8 @@ fn make_pair():
 * `[OPT-1]` *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* When escape analysis
   proves that no owner, link or view of an object, a `weakref` link included, outlives the function
   that made it, the compiler MAY place the object in the function's frame with the same header and
-  run its `drop` at scope end. A `thread_shared` value is never placed in a frame, and never in a
-  memory manager's instance: its making thread is read from its chunk (`[RC-4]`), which only the
-  runtime allocator's blocks have. This cannot be observed: how many times an embedding host's
-  allocation functions (`[FFI-27]`) are called is not behaviour.
+  run its `drop` at scope end. A `thread_shared` value is never placed in a frame: one made with no
+  `using` has its making thread read from its chunk (`[OBJ-1]`), which a frame has not, and one made
+  `using` an instance stays in the block that instance gave, since the instance's `allocate` and
+  `deallocate` are the program's own work (`[RC-4]` point 4). This cannot be observed: how many
+  times an embedding host's allocation functions (`[FFI-27]`) are called is not behaviour.
