@@ -771,14 +771,21 @@ fn find_word(haystack: StrView, needle: StrView) -> Option[StrView] from haystac
   result lives is `E3060` at the later use ("`LOG.clear()` (line 7) may free the text `s` views
   (`head()` returns a view of `LOG`, its line 4), and `s` is used on line 8; keep your own copy: `s
   = String(head())`") and a change `E3021`.
-* `[LT-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A value made in a memory manager's instance
-  (`owns Mesh(points=[0.0, 1.0]) using current`, `[ALC-1]`), and every value that holds one, lives
-  no longer than that instance, wherever it is kept: keeping or returning it where it would outlive
-  the instance is `E3063` ("`boss` holds a mesh made in `current` (line 12), and `current` ends when
-  `load_level` returns, so `boss` cannot be returned; make it in an arena the caller keeps: `fn
-  load_level(ref mut arena: LevelArena) -> Enemy:`, with `mesh=owns Mesh(points=[0.0, 1.0]) using
-  arena`, and in the caller `current = LevelArena()` and `boss = load_level(ref mut current)`"). A
-  value whose manager may have several instances keeps its instance's address, one word, so that its
+* `[LT-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A value made in a memory
+  manager's instance (`owns Mesh(points=[0.0, 1.0]) using current`, `[ALC-1]`), and every value that
+  holds one, lives no longer than that instance, wherever it is kept: keeping or returning it where
+  it would outlive the instance is `E3063` ("`boss` holds a mesh made in `current` (line 12), and
+  `current` ends when `load_level` returns, so `boss` cannot be returned; make it in an arena the
+  caller keeps: `fn load_level(ref mut arena: LevelArena) -> Enemy:`, with `mesh=owns
+  Mesh(points=[0.0, 1.0]) using arena`, and in the caller `current = LevelArena()` and `boss =
+  load_level(ref mut current)`"). An unscoped thread, a job outside a scope and a callback foreign
+  code keeps may outlive every instance but a `static` (`[THR-10]`, `[JOB-2]`, `[FFI-21]`), so a
+  value made in an instance, a `thread_shared` one included (`[TYP-46a]`), goes to one of them only
+  when its instance is a `static` or `static mut`, which lives as long as the program (`[LT-3]`);
+  from a local, a parameter or a field it is `E3063` at the hand-over ("`st` was made in `level`
+  (line 7), which ends when `start` returns, and the thread started on line 8 may outlive `start`;
+  make it in the built-in manager, `st = thread_shared Stats()`, or in a `static` arena"). A value
+  whose manager may have several instances keeps its instance's address, one word, so that its
   growth and its end go back to the instance it came from; that address is a kept `sharedref mut`
   link to the instance (`[LT-46]`) for the exclusivity rules, and between threads what `[TYP-46a]`
   says (a `ref A` to a manager any thread may call, else this link, which never leaves its thread):

@@ -334,16 +334,20 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   names it by the method of the interface it maps to (§IV.8: the `const` `operator[]` is `index` and
   the other `index_mut`, `operator+` is `add`, `operator*`/`->` are `get` and `get_mut`), and that
   name matches the header's operator for `[FFI-12]`; a class whose only `operator[]` is not `const`
-  has it as `index_mut`, and `index` with it from the one entry, since `IndexMut` needs `Index` and
-  C++ reads through it. A `T&` or `const T&` result takes its lifetime word in that entry as
-  `[FFI-40]` says (`@ffi(const)` then `fn index(i) -> borrowed one from(this)`; `fn index_mut(i) ->
-  borrowed one exclusive from(this)`), and the entry asserts, as every entry does, that a call
-  within its contract cannot break memory safety (`[FFI-2]`): that the operator checks its index is
-  the asserter's fact (`[TCB-1]`). The class implements the interface once its methods have entries;
-  until then it implements none (`[TYP-40]`), the operator is reached only as a method of that name
-  inside `unsafe:`, its reference result a `*mut T` or `*T` (`[FFI-40]`), and the operator's syntax
-  on the class is `E3100`: "`g[3]` calls `Grid`'s `operator[]`, a C++ reference result whose target
-  no contract names; call `g.index(3)` in an `unsafe:` block with a `# SAFETY:` note, or give the
+  has it as `index_mut` alone: `Index.index` promises a read of `this` (`[IFC-3]`), which a
+  non-`const` operator does not (`[FFI-40]`; `std::map`'s inserts), so the class implements neither
+  `Index` nor `IndexMut` (`IndexMut` needs `Index`), and `g[3]` on it is `E2072`, whose help names
+  the method and what it says ("`Grid`'s one `operator[]` is not `const`, so it may change `g`, and
+  `Grid` has no `index`; write `g.index_mut(3)`, or declare a `const operator[]` in the header"). A
+  `T&` or `const T&` result takes its lifetime word in that entry as `[FFI-40]` says (`@ffi(const)`
+  then `fn index(i) -> borrowed one from(this)`; `fn index_mut(i) -> borrowed one exclusive
+  from(this)`), and the entry asserts, as every entry does, that a call within its contract cannot
+  break memory safety (`[FFI-2]`): that the operator checks its index is the asserter's fact
+  (`[TCB-1]`). The class implements the interface once its methods have entries; until then it
+  implements none (`[TYP-40]`), the operator is reached only as a method of that name inside
+  `unsafe:`, its reference result a `*mut T` or `*T` (`[FFI-40]`), and the operator's syntax on the
+  class is `E3100`: "`g[3]` calls `Grid`'s `operator[]`, a C++ reference result whose target no
+  contract names; call `g.index(3)` in an `unsafe:` block with a `# SAFETY:` note, or give the
   operator an entry in the overlay: under `class Grid:` write `@ffi(const)` then `fn index(i) ->
   borrowed one from(this)` for the `const` one, and `fn index_mut(i) -> borrowed one exclusive
   from(this)` for the other". A free operator function is a method of the imported class that is its

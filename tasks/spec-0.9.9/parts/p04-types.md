@@ -563,17 +563,19 @@ fn main():
   such a type (`log: thread_shared Log using Pool`) is `E7015` at the type, since no value could
   fill it. A `thread_shared` value that holds nothing (one that does not grow, made in a manager
   that frees nothing one by one: `stats = thread_shared Stats() using level` with `level` an
-  `Arena`, `[ARN-2]`) is `Send` and `ThreadShared` when `T` is, and is accepted: its end on any
-  thread runs its `drop` and touches the arena not at all, every owner of it is counted in its away
-  count from its making line (`[RC-4]` point 4), and the arena is neither reset nor ended while it
-  lives (`[ALC-5]`, `[LT-4]`). For `[THR-11]` a value's growth and end are changes of its instance
-  where they call its methods (a value that holds nothing changes it not at all), so two scoped
-  tasks growing values made in one instance are `E7007` naming the instance ("the tasks on lines 7
-  and 9 grow `xs` and `ys`, both made in `current`, so both change `current`; give each task an
-  arena of its own, `a = Arena(1 << 20)` inside its function, or make the lists in the built-in
-  manager, `xs = []`"), unless `A` is a manager any thread may call, whose `reallocate` and
-  `deallocate` read the instance. For the exclusivity rules `[ALC-5]` stands: growth and end are the
-  changes of the instance it allows.
+  `Arena`, `[ARN-2]`) is `Send` and `ThreadShared` when `T` is, and is accepted, to a scoped task or
+  a job of a scope from any instance and to an unscoped thread, a job outside a scope or a callback
+  foreign code keeps from a `static` or `static mut` instance alone (`[LT-4]`, `E3063` otherwise):
+  its end on any thread runs its `drop` and touches the arena not at all, every owner of it is
+  counted in its away count from its making line (`[RC-4]` point 4), and the arena is neither reset
+  nor ended while it lives (`[ALC-5]`, `[LT-4]`). For `[THR-11]` a value's growth and end are
+  changes of its instance where they call its methods (a value that holds nothing changes it not at
+  all), so two scoped tasks growing values made in one instance are `E7007` naming the instance
+  ("the tasks on lines 7 and 9 grow `xs` and `ys`, both made in `current`, so both change `current`;
+  give each task an arena of its own, `a = Arena(1 << 20)` inside its function, or make the lists in
+  the built-in manager, `xs = []`"), unless `A` is a manager any thread may call, whose `reallocate`
+  and `deallocate` read the instance. For the exclusivity rules `[ALC-5]` stands: growth and end are
+  the changes of the instance it allows.
 
 ## IV.7 Generics
 
@@ -994,8 +996,9 @@ implementation the program has (Part X).
   test is one compare, as on `dyn I`; a `dyn (A, B)` value given to a `dyn A` place converts by
   `[TYP-5]` rule 8 with one load of the member's table pointer, and to a `dyn C` of an interface not
   listed it is `E2020`. `some (A, B)` is one concrete type meeting both, with no table (`[TYP-32]`).
-  A marker interface in the list (`Send`, `ThreadShared`, `[TYP-43]`) has no entries and gives the
-  value the marker (`owns dyn (Command, Send)` is `Send`, `[THR-8]`), as `interface I: needs Send:`
+  A marker interface in the list (`Send`, `ThreadShared`, `[TYP-43]`) has no entries and records the
+  marker, which the type converted must have (`[TYP-5]` rule 8, `E2020` otherwise), so that the
+  value has it (`owns dyn (Command, Send)` is `Send`, `[THR-8]`), as `interface I: needs Send:`
   does. One interface takes no brackets (`owns dyn Shape`).
 * `[TYP-44]` *(new in 0.9.15)* *(changed in 0.9.20)* **Kind tests and casts.** A value of an
   interface type (`dyn I`, `owns dyn I`, `shares dyn I`, `shares mut dyn I`) or of a base class is

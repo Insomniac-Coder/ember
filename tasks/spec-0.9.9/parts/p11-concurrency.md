@@ -110,16 +110,23 @@ change one place unordered.
   ThreadShared:`), as for `Send` (ODR-255), so `dyn Error` is (`[ERR-3]`); a `thread_shared T` and a
   `weakref thread_shared T` of an `open` or `abstract` `T` whatever its class promises, as `[THR-8]`
   says. `ref mut T`, `MutSpan[T]`, `sharedref mut T`, `Cell`, `UnsafeCell`, raw pointers, a
-  `Retained[ForeignCallback]` token (`[FFI-23]`), `shares T`, `shares mut T`, and a `weakref T` link
-  are not; an `extern type`, an opaque C++ class or a `@ffi(handle)` type is only where the program
-  declares it (`[FFI-8]`). `Atomic[T]`, `Once`, `Lock`, `Mutex[T]` for a `Send` `T` (one thread at a
-  time holds its `ref mut T`), `RwLock[T]` and `thread_shared T` for a `T` that is `Send` and
-  `ThreadShared` (several threads hold a `ref T` at once: `RwLock[Cell[int]]` is not
-  `ThreadShared`), a `weakref thread_shared T` for such a `T`, a channel's `Sender[T]` for a `Send`
-  `T` (`[THR-15]`), and `thread_shared fn()`, whose state is `ThreadShared` (`[THR-1]`), are; a
-  `thread_shared once fn()` is `Send` and not `ThreadShared`, since it is handed over and run once
-  (`[CLO-6]`, `[THR-10]`), and a `Receiver[T]` is `Send` and not `ThreadShared`, one consumer's
-  (`[THR-15]`).
+  `Retained[ForeignCallback]` token (`[FFI-23]`), `shares T`, `shares mut T`, a `weakref T` link,
+  and an object of a class with a `@cached` method that declares nothing saying its objects are
+  shared (`[CLS-12]`: no `ThreadShared` promise in its header or a base's, no interface that needs
+  it, no method that pins it `thread_shared`, `[OWN-13]`), whose kept result is then filled with
+  plain stores, are not, so that `static UNIT: Circle` is `E7002` and `thread_shared Circle(r=1.0)`
+  is `E7015` (`[THR-1]`, verdict 165), each naming the `@cached` line ("`Circle.label` is `@cached`
+  (line 4), and `Circle` says nowhere that threads share its objects, so its kept result is filled
+  with plain stores; say so in the class, `class Circle implements Shared:` with `interface Shared:
+  needs ThreadShared:`, or remove `@cached` (line 4)"); an `extern type`, an opaque C++ class or a
+  `@ffi(handle)` type is only where the program declares it (`[FFI-8]`). `Atomic[T]`, `Once`,
+  `Lock`, `Mutex[T]` for a `Send` `T` (one thread at a time holds its `ref mut T`), `RwLock[T]` and
+  `thread_shared T` for a `T` that is `Send` and `ThreadShared` (several threads hold a `ref T` at
+  once: `RwLock[Cell[int]]` is not `ThreadShared`), a `weakref thread_shared T` for such a `T`, a
+  channel's `Sender[T]` for a `Send` `T` (`[THR-15]`), and `thread_shared fn()`, whose state is
+  `ThreadShared` (`[THR-1]`), are; a `thread_shared once fn()` is `Send` and not `ThreadShared`,
+  since it is handed over and run once (`[CLO-6]`, `[THR-10]`), and a `Receiver[T]` is `Send` and
+  not `ThreadShared`, one consumer's (`[THR-15]`).
 * `[THR-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **A value several
   threads own is made `thread_shared`.** `thread_shared x` makes one more owner of `x`, which may be
   on any thread; it is written before a new value (`st = thread_shared Stats()`) or on a value

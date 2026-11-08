@@ -1,5 +1,26 @@
 # Ember — handoff
 
+> **2026-11-08 — the same cloud session (branch `spec-0.9.20-hardening`), AUTONOMOUS, a workflow of 44 agents and
+> two exit checks applied by the lead (the owner: "take that spec sheet into account and combine it with the latest
+> one you have prepared and also verify and fix the other agent's findings before you create a newer version of
+> 0.9.20"; "a complete, without holes spec that takes care of speed, performance, readability and memory
+> safety"). START HERE.** **Hardened_3 of 0.9.20 is cut** and is the development target
+> (`docs/spec-source/Ember_v0.9.20_Hardened_3.md`, 17603 lines, 1,020 rules, SHA-256 `0D4F458B163D…`): `main`'s gap
+> review of 0.9.15_Hardened_11 (76 clusters, 47 gaps) was merged and judged against Hardened_2's text by 10 readers
+> and 10 refuters (66 confirmed, 54 narrowed, 3 refuted, 34 missed items), its five design questions ruled by 14
+> designers and 9 judges (K05 `thread_shared … using` allowed and counted away; K07 the limit on raw pointers
+> under the safe-to-call fact; K10 plain types and home threads for the queue; K20 an open class's header promise
+> and `Error: needs (Send, ThreadShared)`; K21 a C++ name of several members, `at`/`at_mut`), a critic and two exit
+> checks read the whole; 160 rules changed or added (§H.54), 2 new rules (`[FFI-57]`, `[FFI-40b]`), 2 new codes
+> (`E2113`, `E5035`). **The record:** `docs/AUDIT-0.9.20.md` §8, `decisions.md` §14 (N89–N128), `docs/OWNER-QUEUE.md`
+> ODR-260–266 (the owner's seven open items, each applied under the delegation and reversible),
+> `tasks/96/redesign/audit-0.9.20/round2/` (`applied.md` every disposition, `results/` the 44 returns digested,
+> `critic.md`). **Checked:** `check_ids`, `check_citations`, `code_registry --check`, `split_inline` (UNS-8 only),
+> `rule_index`, `spec_check`, `phase_progress --check`, `ember_diag`, `ember_parser` and the three spec-tied
+> milestone tests green; the implementer's read found 11 defects of the text, each applied (`scratchpad/edit31.py`: `[CLS-3]`, `[TYP-32]`, `[IFC-3]`, `[CLS-4]`, `[GRM-13]`, `[TYP-43]`, `[DET-2]`/`[DET-4]`, `[TYP-46]`, §X.4, `[STD-16]`, three registry rows); the attacker's read against `[PHIL-10]` found two safe programs the text accepted, both fixed (`scratchpad/edit32.py`): an object of a class with a `@cached` method that declares nothing saying its objects are shared could be made `thread_shared` or held by a `static`, a data race on the kept result, and is now not `ThreadShared` (`[THR-9]`, `[CLS-12]`, `E7002`, `E7015`); a `thread_shared` value made in a local arena could be handed to an unscoped thread that outlives the arena, and is now `E3063` unless the instance is a `static` (`[LT-4]`, `[ALC-5]`, `[TYP-46a]`); with them an ambiguity (`[FFI-42]`: a class's one non-`const` `operator[]` is `index_mut` alone, `E2072`, since `Index.index` would promise a read) and two wordings (`[TYP-22]`, `[OBJ-1]`), four registry rows; the full record is `round2/applied.md`. The compiler builds none of the 0.9.20 changes yet (`codes.rs` gained the two
+> codes only); `std/src/math/det.em`'s `log` is now a defect of the file (`[DET-4]` names `ln`). **Next:** the owner's
+> seven answers; then each 0.9.20 change lands with the milestone that owns it.
+
 > **2026-11-03 (later) — the same cloud session, AUTONOMOUS, a workflow of 29 agents applied by the lead (the
 > owner: "the final mile ... make it as foolproof as possible ... remove all the gaps, flaws and memory issues ...
 > near 100% complete ... answer all the open questions"). START HERE.** **Hardened_2 of 0.9.20 is cut** and is the

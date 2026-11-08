@@ -3102,8 +3102,8 @@ Facts the text left unsaid:
 Words made consistent: `[CLO-12]` and `[GRM-28]` spell `thread.spawn(owns push_a)`; `[DSP-4]`'s list of
 interface types; `[TYP-45]` names the views of a `dyn` value; `[DIA-18]` and the `E5002` row agree; the
 `E0119` row is true of every operator; `[THR-2]`'s message shows a line the language accepts; `[FFI-10]`'s
-tagged-number width follows the target; `[FFI-48]` loses the return-type row; the registry rows of 26
-codes follow their rules.
+tagged-number width follows the target; `[FFI-48]` loses the return-type row; the registry rows of 33
+codes follow their rules (26 by the rulings, 3 by the implementer's check, 4 by the attacker's).
 
 New rules: `[FFI-57]`, `[FFI-40b]`. New codes: `E2113`, `E5035`. Owner verdicts touched, each reported
 in `decisions.md` §14: 159 (a plain `init` parameter lends), 150 and 51 (already in Hardened_2), 5
@@ -3111,11 +3111,24 @@ in `decisions.md` §14: 159 (a plain `init` parameter lends), 150 and 51 (alread
 letter restored), 165 (extended to a type and a derived class), 61 (extended to an open class's
 header), 109 (extended to `dyn` and `some`), 68 (brought to its letter); ODR-199's shape changes.
 
+Two exit checks read the whole diff before the cut: an implementer's, which found eleven defects of
+the text (each applied: `[CLS-3]`, `[TYP-32]`, `[IFC-3]`, `[CLS-4]`, `[GRM-13]`, `[TYP-43]`, `[DET-2]`,
+`[DET-4]`, `[TYP-46]`, §X.4, `[STD-16]`, three registry rows), and an attacker's against `[PHIL-10]`,
+which found two safe programs the text accepted and the fix for each: a class with a `@cached` method
+that declares nothing saying its objects are shared is not `ThreadShared`, since its kept result is
+filled with plain stores (`[THR-9]`, `[CLS-12]`, `E7002`, `E7015`), and a value made in a memory
+manager's instance goes to an unscoped thread, a job outside a scope or a kept callback only from a
+`static` instance (`[LT-4]`, `[ALC-5]`, `[TYP-46a]`, `E3063`); with them, a non-`const` `operator[]`
+alone imports as `index_mut` and nothing promises a read (`[FFI-42]`, `E2072`), a marker in a `dyn` list
+is checked, not granted (`[TYP-22]`), and a block freed on another thread returns to its chunk's pool
+by a synchronised hand-over (`[OBJ-1]`).
+
 Generated: every rule whose text differs from 0.9.20_Hardened_2.
 
 | Rule | 0.9.20_Hardened_2 → 0.9.20_Hardened_3 |
 |---|---|
 | `[ALC-1]` | changed |
+| `[ALC-5]` | changed |
 | `[ALC-5a]` | changed |
 | `[ARN-5c]` | changed |
 | `[ARN-5d]` | changed |
@@ -3236,6 +3249,7 @@ Generated: every rule whose text differs from 0.9.20_Hardened_2.
 | `[STA-1]` | changed |
 | `[STD-8]` | changed |
 | `[STD-15]` | changed |
+| `[STD-16]` | changed |
 | `[STD-27]` | changed |
 | `[STR-1]` | changed |
 | `[STR-2]` | changed |

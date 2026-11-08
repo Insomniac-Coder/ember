@@ -513,41 +513,44 @@ class Door(Script):
   On an object of a class whose objects several threads may reach, read from the class's declaration
   (it promises `ThreadShared` or implements an interface that needs it, `[THR-8]`, or its methods
   pin it `thread_shared`, `[OWN-13]`; never from which values a program makes `thread_shared`,
-  `[BLD-16]`), the kept result is filled once under a once-flag. It costs one flag test per call and
-  one store per change of a field the body reads. `@cached` is `E2117`, each message giving the
-  `@cached` line to remove: on a method of a struct or an enum ("a `Vec2` has no hidden state to
-  keep a result in; keep it in a field of a class, or remove `@cached` (line 2)"); on a method with
-  parameters ("`@cached` keeps one result, and `radius` takes `scale`; remove `@cached` (line 2), or
-  keep the results in a field: `radii: Map[f64, f64]`"); on one whose body changes anything ("a
-  cached method keeps one result, so it only reads, and `radius` changes `this.verts` (its line 4);
-  remove `@cached` (line 2)"); and on one whose body reads a `shares`, `shares mut`,
-  `thread_shared`, `weakref`, `sharedref mut` or `Cell` field, or a field another thread may change
-  by its own operations, under a lock or not (an `Atomic`, a `Mutex`, an `RwLock`, a channel end, a
-  field `guarded by` a lock): on an object of such a class a kept result is filled under a once-flag
-  and never cleared, so the method reads only fields that never change after `init` ("`radius` reads
-  `verts`, which other threads change under `lock`; a kept result could be stale; remove `@cached`
-  (line 18)"; "`summary` reads `hits`, an `Atomic` other threads change, and a kept result on a
-  shared object is never cleared; remove `@cached` (line 6)"); and on a `virtual` method or an
-  `override` ("`label` is `virtual`, and a kept result follows one body; keep it in a method no
-  subclass replaces, or remove `@cached` (line 3)"). For a method that reads a value its other
-  owners may change: E2117 ("`radius` reads `mesh`, which its other owners may change without `Mesh`
-  seeing it, so a kept result could be stale; remove `@cached` (line 13)"). A change made by foreign
-  code, or through a raw pointer, passes through no name the compiler sees: unsafe code that changes
-  a field a `@cached` method reads answers for it, as for every obligation of `unsafe` (`[UNS-4]`).
-  A `@cached` body reads nothing a link may change without passing through the holder: reading a
-  field of a class object reached through a field or element of `this` (not `this` itself), of a
-  class that carries a weak count (`[OBJ-1]`), is `E2117` ("`first_name` reads `items[0].name`, and
-  a `Book` may be changed through a `weakref Book` link, made from any name before or after the book
-  entered `shelf` (`[WK-11]`) and opened `ref mut` (`[GRM-44]`), without `Shelf` seeing it, so a
-  kept result could be stale; remove `@cached` (line 7), or keep the names in `Shelf` itself:
-  `names: Array[String]`"); a class that carries no weak count is named by no link, and a `sharedref
-  mut` link or `shares mut` owner into the read set is refused where it is made (`[EFF-27]`).
-  `@cached` is `E2117` too on a method whose body reads anything not reached through `this` that may
-  change (a `static mut`, or a `static` `Mutex`, `RwLock`, `Atomic`, `Cell`, channel end or `guarded
-  by` variable, `[STA-1]`, directly or through a call, `[EFF-24]`), since a change of it passes
-  through no name of the object and clears nothing ("`area` reads `SCALE`, a `static mut` that may
-  change without `Circle` seeing it, so a kept result could be stale; remove `@cached` (line 5), or
-  keep the scale in the object: `scale: float`").
+  `[BLD-16]`), the kept result is filled once under a once-flag. A class with a `@cached` method
+  that declares none of these is not `ThreadShared` (`[THR-9]`): no object of it is made
+  `thread_shared` or held by a `static` (`E7015`, `E7002`, naming the `@cached` line), since the
+  stores below would race. It costs one flag test per call and one store per change of a field the
+  body reads. `@cached` is `E2117`, each message giving the `@cached` line to remove: on a method of
+  a struct or an enum ("a `Vec2` has no hidden state to keep a result in; keep it in a field of a
+  class, or remove `@cached` (line 2)"); on a method with parameters ("`@cached` keeps one result,
+  and `radius` takes `scale`; remove `@cached` (line 2), or keep the results in a field: `radii:
+  Map[f64, f64]`"); on one whose body changes anything ("a cached method keeps one result, so it
+  only reads, and `radius` changes `this.verts` (its line 4); remove `@cached` (line 2)"); and on
+  one whose body reads a `shares`, `shares mut`, `thread_shared`, `weakref`, `sharedref mut` or
+  `Cell` field, or a field another thread may change by its own operations, under a lock or not (an
+  `Atomic`, a `Mutex`, an `RwLock`, a channel end, a field `guarded by` a lock): on an object of
+  such a class a kept result is filled under a once-flag and never cleared, so the method reads only
+  fields that never change after `init` ("`radius` reads `verts`, which other threads change under
+  `lock`; a kept result could be stale; remove `@cached` (line 18)"; "`summary` reads `hits`, an
+  `Atomic` other threads change, and a kept result on a shared object is never cleared; remove
+  `@cached` (line 6)"); and on a `virtual` method or an `override` ("`label` is `virtual`, and a
+  kept result follows one body; keep it in a method no subclass replaces, or remove `@cached` (line
+  3)"). For a method that reads a value its other owners may change: E2117 ("`radius` reads `mesh`,
+  which its other owners may change without `Mesh` seeing it, so a kept result could be stale;
+  remove `@cached` (line 13)"). A change made by foreign code, or through a raw pointer, passes
+  through no name the compiler sees: unsafe code that changes a field a `@cached` method reads
+  answers for it, as for every obligation of `unsafe` (`[UNS-4]`). A `@cached` body reads nothing a
+  link may change without passing through the holder: reading a field of a class object reached
+  through a field or element of `this` (not `this` itself), of a class that carries a weak count
+  (`[OBJ-1]`), is `E2117` ("`first_name` reads `items[0].name`, and a `Book` may be changed through
+  a `weakref Book` link, made from any name before or after the book entered `shelf` (`[WK-11]`) and
+  opened `ref mut` (`[GRM-44]`), without `Shelf` seeing it, so a kept result could be stale; remove
+  `@cached` (line 7), or keep the names in `Shelf` itself: `names: Array[String]`"); a class that
+  carries no weak count is named by no link, and a `sharedref mut` link or `shares mut` owner into
+  the read set is refused where it is made (`[EFF-27]`). `@cached` is `E2117` too on a method whose
+  body reads anything not reached through `this` that may change (a `static mut`, or a `static`
+  `Mutex`, `RwLock`, `Atomic`, `Cell`, channel end or `guarded by` variable, `[STA-1]`, directly or
+  through a call, `[EFF-24]`), since a change of it passes through no name of the object and clears
+  nothing ("`area` reads `SCALE`, a `static mut` that may change without `Circle` seeing it, so a
+  kept result could be stale; remove `@cached` (line 5), or keep the scale in the object: `scale:
+  float`").
 
 ## V.6 Interfaces and `extend`
 

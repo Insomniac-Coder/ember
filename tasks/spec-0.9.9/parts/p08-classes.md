@@ -87,22 +87,25 @@ offset  size  field
   takes the memory for `thread_shared` blocks made in `Global` in chunks from the configured
   allocator (`[ALC-3]`, `[FFI-27]`, else `[RT-1]`'s), writes the making thread into each chunk's
   header once, and a chunk belongs to that thread for the life of the process, never given to
-  another thread's allocator, and a block freed goes back to that thread's own pool, so the record
-  never changes. A chunk taken by a thread that keeps no home count (`[RC-4]` point 4: a scoped
-  task's or job's thread, a job worker, a host thread) names no thread, and a `thread_shared` block
-  from it is marked handed over in the header the runtime writes as it lays the block out, so no
-  thread ever finds itself its maker and every count operation on it takes the away path; a block of
-  a type that is not plain is marked the same by the line that makes it. A `thread_shared` value
-  made `using` any manager but `Global` (`[ALC-1]`, `[TYP-46a]`; `System` and a one-instance manager
-  a program declares included) lies in memory the runtime did not lay out, so it is marked handed
-  over at the line that makes it (`[RC-4]` point 4) and no thread asks which thread made it; it is
-  never queued, so where it keeps its instance's address (`[ALC-1]`) that address stands in the
-  header's queue place, and the value costs no word beyond the 32 bytes; so is a `thread_shared`
-  value a `static` or a `comptime(e)` holds, placed in the image when compiling (`[CT-5]`). The
-  header is part of the runtime ABI (`[VER-4]`). Foreign code never reads it; it calls `ember_rt`.
-  An object carries nothing else for the memory model: no access words, and no flags but a
-  `thread_shared` value's three marks and the kept-by-C mark, the top bit of the type index
-  (`[FFI-35a]`), so a type index is below 2^31.
+  another thread's allocator, and a block freed, on whichever thread its last owner ends, goes back
+  to the chunk's own pool, the making thread's, by a return the runtime synchronises (a thread that
+  is not the chunk's pushes the block onto that pool's list of blocks returned from other threads
+  with one atomic exchange, and the making thread takes that list over when it next allocates from
+  the pool), so the record never changes. A chunk taken by a thread that keeps no home count
+  (`[RC-4]` point 4: a scoped task's or job's thread, a job worker, a host thread) names no thread,
+  and a `thread_shared` block from it is marked handed over in the header the runtime writes as it
+  lays the block out, so no thread ever finds itself its maker and every count operation on it takes
+  the away path; a block of a type that is not plain is marked the same by the line that makes it. A
+  `thread_shared` value made `using` any manager but `Global` (`[ALC-1]`, `[TYP-46a]`; `System` and
+  a one-instance manager a program declares included) lies in memory the runtime did not lay out, so
+  it is marked handed over at the line that makes it (`[RC-4]` point 4) and no thread asks which
+  thread made it; it is never queued, so where it keeps its instance's address (`[ALC-1]`) that
+  address stands in the header's queue place, and the value costs no word beyond the 32 bytes; so is
+  a `thread_shared` value a `static` or a `comptime(e)` holds, placed in the image when compiling
+  (`[CT-5]`). The header is part of the runtime ABI (`[VER-4]`). Foreign code never reads it; it
+  calls `ember_rt`. An object carries nothing else for the memory model: no access words, and no
+  flags but a `thread_shared` value's three marks and the kept-by-C mark, the top bit of the type
+  index (`[FFI-35a]`), so a type index is below 2^31.
 * `[OBJ-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* An owner, a link or a view of a class object
   is one pointer, to offset 0. An object's interface tables are reached through its type index, so a
   `dyn I` value of a class object, and an `Option` of one, is one pointer wide. A bare interface

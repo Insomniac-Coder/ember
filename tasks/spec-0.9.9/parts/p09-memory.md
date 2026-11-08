@@ -295,7 +295,7 @@ fn main():
   embedding host may pass allocation functions to `ember_rt_init` (`[FFI-27]`).
 * `[ALC-4]` Allocation failure in a standard container panics (`out of memory`). `try_reserve` and
   `try_push` report it as a value.
-* `[ALC-5]` *(new in 0.9.15)* **An instance stays as its values need it.** While a value made in a
+* `[ALC-5]` *(new in 0.9.15)* *(changed in 0.9.20)* **An instance stays as its values need it.** While a value made in a
   memory manager's instance lives, the instance is changed only by what allocates from it and gives
   blocks back to it: the `Allocator` methods that value's growth and end call, the making of other
   values in it, and an `Arena`'s `alloc*` (`[ARN-1]`), none of which touches a block already given
@@ -304,27 +304,29 @@ fn main():
   lives; end it first: write `mem.drop(owns names)` above line 26"). So no safe method of a memory
   manager rewinds it, frees it or gives its bytes out again under a value made in it. A
   `thread_shared` value made in an instance is ended where its last owner ends (`[RC-4]` point 4),
-  so the rule is checked as written; one handed to an unscoped thread (`[THR-2]`) lives, for this
-  rule, as long as the instance, so no change of this rule's kind is made to that instance after the
-  hand-over (`E3021`, naming the hand-over's line).
-* `[ALC-5a]` *(new in 0.9.20)* *(changed in 0.9.20)* **A link holds the block.** A `weakref` link to a value made in a
-  memory manager's instance counts, for `[LT-4]` and `[ALC-5]`, as a value that holds one, since the
-  target's block stays until the link ends (`[WK-11]`, `[OBJ-3]`): the link carries the instance's
-  region from the line that makes it (`w = weakref n`) through every place it is copied or stored,
-  as a kept view does (`[LT-45]`); keeping it where it would outlive the instance is `E3063` ("`w`
-  links to a `Node` made in `frame` (line 10), and `frame` ends when `main` returns; end the link
-  first: write `w = None` above the return"), and while it lives a change of the instance that
-  `[ALC-5]` does not allow is `E3021` ("`frame.reset()` (line 13) reuses the memory of the `Node`
-  that `w` links to (made in `frame` on line 10), and `w` is used on line 15; end the link first:
-  write `w = None` above line 13"). A field or element of a `weakref` type whose target was made in
-  an instance carries that instance's region as a kept view field does (`[LT-45]`), so the object or
-  list that holds it lives no longer than the instance (`E3063`). Nothing runs for this: the block a
-  link keeps is given back by the manager's own `deallocate` when the weak count reaches 0, as any
-  other, which for a manager that frees nothing one by one is a no-op, so this check is what keeps
-  the block from reuse. Which give-back that is, the built-in manager's, a call through the instance
-  word the block keeps, nothing, or the instance found from the block's address, is read from the
-  link's type (`weakref Enemy`, `weakref Enemy using Arena`, `[TYP-46]`) when the link's end is
-  compiled, never from the block, which carries no mark for it (`[OBJ-1]`).
+  so the rule is checked as written; one goes to an unscoped thread, a job outside a scope or a
+  callback foreign code keeps only from a `static` or `static mut` instance (`[LT-4]`, `E3063`
+  otherwise), and from then on lives, for this rule, as long as the instance, so no change of this
+  rule's kind is made to that instance after the hand-over (`E3021`, naming the hand-over's line).
+* `[ALC-5a]` *(new in 0.9.20)* *(changed in 0.9.20)* **A link holds the block.** A `weakref` link to
+  a value made in a memory manager's instance counts, for `[LT-4]` and `[ALC-5]`, as a value that
+  holds one, since the target's block stays until the link ends (`[WK-11]`, `[OBJ-3]`): the link
+  carries the instance's region from the line that makes it (`w = weakref n`) through every place it
+  is copied or stored, as a kept view does (`[LT-45]`); keeping it where it would outlive the
+  instance is `E3063` ("`w` links to a `Node` made in `frame` (line 10), and `frame` ends when
+  `main` returns; end the link first: write `w = None` above the return"), and while it lives a
+  change of the instance that `[ALC-5]` does not allow is `E3021` ("`frame.reset()` (line 13) reuses
+  the memory of the `Node` that `w` links to (made in `frame` on line 10), and `w` is used on line
+  15; end the link first: write `w = None` above line 13"). A field or element of a `weakref` type
+  whose target was made in an instance carries that instance's region as a kept view field does
+  (`[LT-45]`), so the object or list that holds it lives no longer than the instance (`E3063`).
+  Nothing runs for this: the block a link keeps is given back by the manager's own `deallocate` when
+  the weak count reaches 0, as any other, which for a manager that frees nothing one by one is a
+  no-op, so this check is what keeps the block from reuse. Which give-back that is, the built-in
+  manager's, a call through the instance word the block keeps, nothing, or the instance found from
+  the block's address, is read from the link's type (`weakref Enemy`, `weakref Enemy using Arena`,
+  `[TYP-46]`) when the link's end is compiled, never from the block, which carries no mark for it
+  (`[OBJ-1]`).
 * `[ALC-6]` *(new in 0.9.20)* **A making line has its instance's effects, and fails as a container
   does.** A line that makes a value `using x`, and every growth and end of that value, carries the
   effects of the `Allocator` methods it calls on `x`'s type (`[EFF-1]`); `Alloc` is the effect of

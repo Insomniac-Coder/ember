@@ -22,7 +22,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[ALC-2]` | IX | *(changed in 0.9.10)* *(changed in 0.9.15)* `std.mem` declares `pub … |
 | `[ALC-3]` | IX | A binary package may replace the global allocator with `[build] … |
 | `[ALC-4]` | IX | Allocation failure in a standard container panics (`out of memory`). … |
-| `[ALC-5]` | IX | *(new in 0.9.15)* An instance stays as its values need it. While a … |
+| `[ALC-5]` | IX | *(new in 0.9.15)* *(changed in 0.9.20)* An instance stays as its … |
 | `[ALC-5a]` | IX | *(new in 0.9.20)* *(changed in 0.9.20)* A link holds the block. A … |
 | `[ALC-6]` | IX | *(new in 0.9.20)* A making line has its instance's effects, and fails … |
 
@@ -1221,7 +1221,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[STD-13]` | XV | One naming convention. Names are `snake_case` words joined by … |
 | `[STD-14]` | XV | *(changed in 0.9.10)* *(changed in 0.9.15)* Failure follows … |
 | `[STD-15]` | XV | *(changed in 0.9.15)* *(changed in 0.9.20)* `Array[T]` is a growable … |
-| `[STD-16]` | XV | *(changed in 0.9.15)* `Map` operations. `m[k]` reads the value and … |
+| `[STD-16]` | XV | *(changed in 0.9.15)* *(changed in 0.9.20)* `Map` operations. `m[k]` … |
 | `[STD-17]` | XV | *(changed in 0.9.15)* Index assignment. `a[i] = v` calls … |
 | `[STD-18]` | XV | *(changed in 0.9.15)* `format(value, spec="") -> String` formats one … |
 | `[STD-19]` | XV | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* … |

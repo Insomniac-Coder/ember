@@ -11,16 +11,18 @@ session, or a workflow the owner allows, starts here and does not redo the readi
 
 ## 0. State, and how to resume
 
-* **Cut and pinned (second pass):** `docs/spec-source/Ember_v0.9.20_Hardened_2.md` (16,317 lines, 1,018
+* **Cut and pinned (third pass):** `docs/spec-source/Ember_v0.9.20_Hardened_3.md` (17603 lines, 1,020
   rules) is the development target (`docs/spec-source/development-target.json`); sources frozen in
-  `tasks/spec-0.9.9/parts-0.9.20-h2/` (Hardened_1's in `parts-0.9.20-h1/`); `tasks/spec-0.9.9/parts/` is
-  the working copy. On branch `ccr-f5aedc9d-5l4mab` (the session's designated branch, not `main`);
-  Hardened_1 was commit `2dd9d26`. **§7 below is the second pass's record**; §§1–6 are the first's.
-* **The change logs** are Appendix H §H.51 (Hardened_1) and §H.52 (Hardened_2; `H51_HEAD` and
-  `H52_HEAD` in `tasks/spec-0.9.9/tools/appx_h.py`); the rulings are N52 to N75 (§12) and N76 to N88 (§13)
-  in `tasks/96/redesign/compiler-0.9.15/decisions.md`; the cuts' records are in
-  `tasks/spec-0.9.9/HANDOFF.md` ("0.9.20_Hardened_1 CUT", "0.9.20_Hardened_2 CUT") and
-  `docs/HANDOFF.md`'s first entries.
+  `tasks/spec-0.9.9/parts-0.9.20-h3/` (Hardened_2's in `parts-0.9.20-h2/`, Hardened_1's in
+  `parts-0.9.20-h1/`); `tasks/spec-0.9.9/parts/` is the working copy. On branch `spec-0.9.20-hardening`
+  (not `main`); Hardened_1 was commit `2dd9d26`, Hardened_2 `d03df6b`. **§8 below is the third pass's
+  record**, §7 the second's, §§1–6 the first's.
+* **The change logs** are Appendix H §H.52 (Hardened_1), §H.53 (Hardened_2) and §H.54 (Hardened_3;
+  `H52_HEAD`, `H53_HEAD` and `H54_HEAD` in `tasks/spec-0.9.9/tools/appx_h.py`; §H.51 is
+  0.9.15_Hardened_11's, merged from `main`); the rulings are N52 to N75 (§12), N76 to N88 (§13) and N89
+  to N128 (§14) in `tasks/96/redesign/compiler-0.9.15/decisions.md`; the owner's open items are ODR-260 to
+  ODR-266 in `docs/OWNER-QUEUE.md`; the cuts' records are in `tasks/spec-0.9.9/HANDOFF.md`
+  ("0.9.20_Hardened_1 CUT" to "0.9.20_Hardened_3 CUT") and `docs/HANDOFF.md`'s first entries.
 * **35 rules changed, none added or removed** (§2 below). Every change refuses a program that was unsafe,
   states a fact a compiler had to guess, or corrects the text; nothing new runs while a program runs, and
   no feature is taken away.
@@ -50,12 +52,13 @@ session, or a workflow the owner allows, starts here and does not redo the readi
 * The repository gates (from the root): `python3 tools/rule_index.py`, `tools/spec_check.py` (needs the
   built compiler), `tools/phase_progress.py --write` then `--check` (rewrites README's table and
   `docs/conformance.json`), `tools/error_pages.py` (needs libclang and Ninja; not run here).
-* **To cut 0.9.20_Hardened_2:** edit `parts/`; in `tools/appx_h.py` bump `CURRENT = ('0.9.20', 2)`, add
-  `V0920_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h1')`, make `v0920_h1()` diff
-  `V0915_H10_PARTS` against `V0920_H1_PARTS`, add `H52_HEAD` and `def v0920_h2()` diffing
-  `V0920_H1_PARTS` against `parts/`, append `+ v0920_h2() + '\n'` in `main()`; run the regeneration;
-  `cat parts/p*.md > ../../docs/spec-source/Ember_v0.9.20_Hardened_2.md`; run the checks;
-  `cp -r parts parts-0.9.20-h2`; re-pin `development-target.json` (upper-case SHA-256 of the LF bytes);
+* **To cut 0.9.20_Hardened_4:** edit `parts/`; in `tools/appx_h.py` bump `CURRENT = ('0.9.20', 4)`, point
+  `V0920_H3_PARTS` at `parts-0.9.20-h3` (it is), add `V0920_H4_PARTS` for `parts/`, `H55_HEAD` and
+  `def v0920_h4()` diffing `V0920_H3_PARTS` against it, append `+ v0920_h4() + '\n'` in `main()`; run the
+  regeneration (`scratchpad/cut3.sh` of the third pass is the recipe as a script: `code_registry --write`,
+  `check_findings --write`, `appx_h`, `appx_i`, the checks);
+  `cat parts/p*.md > ../../docs/spec-source/Ember_v0.9.20_Hardened_4.md`; run the checks;
+  `cp -r parts parts-0.9.20-h4`; re-pin `development-target.json` (upper-case SHA-256 of the LF bytes);
   `tools/phase_progress.py --write`; the README's version table (`phase_progress` writes the file name,
   not the words around it); the two handoffs. A rule whose meaning changes takes `*(changed in 0.9.20)*`
   (appended after its older markers; `check_ids.py` accepts `0.9.20`, `tools/phase_progress.py` treats a
@@ -453,3 +456,56 @@ any disruptions. Also answer all the open questions in this pass with the best j
 * **To resume or to cut Hardened_3:** the recipe of §0 with the numbers moved by one (`CURRENT`,
   `V0920_H2_PARTS`, `H53_HEAD`, `v0920_h3()`); the exit checks the plan named (an implementer and an
   attacker over the changed Parts) were not run, for the owner's credits: a small pass may run them.
+
+## 8. The third pass: 0.9.20_Hardened_3 (2026-11-08, a workflow of 44 agents and two exit checks, applied by the lead)
+
+The owner's task: take the gap review of 0.9.15_Hardened_11 that another session pushed to `main` (its findings
+and its spec, which this branch had never seen), combine it with Hardened_2, verify and fix the other agent's
+findings, and cut a newer 0.9.20, "a complete, without holes spec that takes care of speed, performance,
+readability and memory safety", with a thorough analysis by up to 50 agents first.
+
+* **What was combined.** `main` was merged (commit `d81c99b`): 0.9.15_Hardened_11 (its §H.51 kept as the log of
+  verdicts 161–163, which Hardened_2 already carried; its `E3028` is 0.9.20's `E0119`), verdicts 164–166 of
+  `JOB.md`, and `tasks/96/redesign/spec-gaps-0.9.15/` (76 clusters K01–K76 of open questions, 47 new gaps NG-01–NG-47,
+  four review methods' notes, the pending compiler fix D-966). Verdict 165 and the review's 35 lead-fix items were
+  applied first (commit `dd99380`, `scratchpad/edit19.py`).
+* **The analysis** (`tasks/96/redesign/audit-0.9.20/round2/`, the workflow script and journal under the session's
+  `workflows/`): 10 readers decided each cluster and gap against the current text (22 answered, 30 answered
+  differently from the finder, 66 not answered, 4 for the owner, 1 not a defect; 198 edits), 10 refuters checked
+  each (66 confirmed, 54 narrowed with 135 better edits, 3 refuted) and listed 34 missed items (39 edits), 14
+  designers and 9 judges ruled K05, K07, K10, K20 and K21 (161 final edits), a critic read the whole (19 missing
+  points, 15 contradictions between results, 10 verdict clashes); then two exit checks, an implementer's and an
+  attacker's, over the changed Parts. The critic's first point stands as a lesson: the readers read a snapshot
+  (`inputs/CURRENT-SPEC.md`) 44 rules behind HEAD, so every anchor was re-checked against HEAD before it was
+  applied (`scratchpad/anchor_check.py`: 489 of 533 matched; the rest were re-anchored or found already applied).
+* **Applied** (`round2/applied.md` has every item's disposition; `scratchpad/edit20.py` to `edit30.py`, each
+  asserting what it replaces; `registry3.py` the registry): 160 rules changed or added (the rows of §H.54), 2 new
+  rules (`[FFI-57]` a C++ name declared several times, `[FFI-40b]` a `const`/non-`const` pair), 2 new codes
+  (`E2113` an override's first line, `E5035` a use of a C++ name of several members), 33 registry rows
+  rewritten (26 by the rulings, 3 by the implementer's check, 4 by the attacker's), none retired; the rulings are N89–N128 (`decisions.md` §14). Verdicts touched, none overridden:
+  159 (a plain `init` parameter lends), 150 and 51 (as Hardened_2 already did), 5 (across a call), 101 (which
+  values keep a home count, as N84), 164 (its letter restored), 165 (extended to a type and a derived class), 61
+  (extended to an open class's header), 109 (extended to `dyn`/`some`), 68 (brought to its letter); ODR-199's
+  shape changes (`std_function` is `unsafe fn(A…) -> R` until its entry says `safe`).
+* **For the owner** (OPEN ODRs 260–266, all applied under the delegation and reversible): K05 `thread_shared …
+  using` (shape B), K20 the open-class header promise and `Error: needs (Send, ThreadShared)`, K21 overloads and
+  the `_mut` split, NG-10 the check point at a return to C, K64 a list pattern as an arm, K65 `dyn (A, B)`, K76 the
+  stop on a full callback table; and still N83 and N87 from Hardened_2. Not applied, by the refuters' verdicts:
+  NG-08 (`using` binds the same on both sides already), NG-28 (the C aliases stay aliases), NG-39 (safe code
+  cannot forge a C function pointer); NG-46/47's wake of a waiting maker is left to a later K10 round.
+* **Exit checks:** the implementer's read found 11 defects of the text, each applied (`scratchpad/edit31.py`: `[CLS-3]`, `[TYP-32]`, `[IFC-3]`, `[CLS-4]`, `[GRM-13]`, `[TYP-43]`, `[DET-2]`/`[DET-4]`, `[TYP-46]`, §X.4, `[STD-16]`, three registry rows); the attacker's read against `[PHIL-10]` found two safe programs the text accepted, both fixed (`scratchpad/edit32.py`): an object of a class with a `@cached` method that declares nothing saying its objects are shared could be made `thread_shared` or held by a `static`, a data race on the kept result, and is now not `ThreadShared` (`[THR-9]`, `[CLS-12]`, `E7002`, `E7015`); a `thread_shared` value made in a local arena could be handed to an unscoped thread that outlives the arena, and is now `E3063` unless the instance is a `static` (`[LT-4]`, `[ALC-5]`, `[TYP-46a]`); with them an ambiguity (`[FFI-42]`: a class's one non-`const` `operator[]` is `index_mut` alone, `E2072`, since `Index.index` would promise a read) and two wordings (`[TYP-22]`, `[OBJ-1]`), four registry rows; the full record is `round2/applied.md`.
+* **Checked at the cut:** `check_ids` 0 problems (1,020 rules), `check_citations` 0 undefined, `code_registry
+  --check` 0 problems (271 live, 36 retired), `split_inline` the one known flag (UNS-8; the FFI-52 flag went with
+  the example's rewrite), `rule_index` (baseline rewritten with growth), `spec_check`, `phase_progress --check`,
+  `check_examples` (see the handoff for the counts); `ember_diag` (the registry test reads the pinned target) and
+  `ember_parser` green after the pin; the three spec-tied milestone tests green. The full milestones suite was
+  not re-run for this pass (nothing of the compiler changed but `codes.rs`'s two new entries; Hardened_2's run
+  stands).
+* **Known debts the text now states and the implementation does not have:** `std/src/math/det.em` declares `log`
+  where `[DET-4]` now names `ln` (a defect of the file by Part XV's preamble, with the other `det` twins `[DET-4]`
+  lists); the conformance tests the rulings name (the K10 ruling's run-pass and break tests, K07's must-refuse
+  programs, `tests/conformance/`) are not written, since the compiler builds none of 0.9.20 yet; the compiler
+  defects D-966–D-968 stay as `main` left them (D-966's fix in `spec-gaps-0.9.15/pending/`, not applied: compiler
+  work was not asked for).
+* **To resume:** the recipe of §0 ("To cut 0.9.20_Hardened_4"); `round2/results/critic.md` lists what no result
+  took (missing 5's 33 missed items are applied; missing 15 is the exit checks, run; missing 18 the tests above).
