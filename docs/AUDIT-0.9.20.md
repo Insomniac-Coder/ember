@@ -542,7 +542,7 @@ was weighed, shape by shape, is `tasks/96/redesign/audit-0.9.20/round3/rulings.m
   --check` 0 problems (271 live, 36 retired), `split_inline` UNS-8 only, `rule_index`, `spec_check`, `phase_progress
   --check`, `check_examples` 41 of 54 as before; `ember_diag`, `ember_parser` and the three spec-tied milestone tests
   green against the new pin (SHA-256 `1CA5A9336C7C…`). The compiler is untouched.
-* **For the owner:** the departure from verdict 155 (ODR-264) and the restoration of verdict 110 (ODR-261); the
-  generic-bound doubt left open under ODR-260 (a bound cannot say that a manager's `deallocate` reads `this`, so a
-  `thread_shared T using a` line in a generic body is refused per instance, sound but late).
+* **For the owner:** the departure from verdict 155 (ODR-264) and the restoration of verdict 110 (ODR-261). No ODR
+  is open: the designers' doubt under ODR-260 (a bound cannot say that a manager's `deallocate` reads `this`) is
+  decided by `[TYP-17]`, which makes a `thread_shared T using a` line in a generic body a refusal at the definition.
 * **To resume:** the recipe of §0 ("To cut 0.9.20_Hardened_5").

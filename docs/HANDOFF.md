@@ -12,8 +12,8 @@
 > and a list pattern may open a `match` arm (**departs from verdict 155**, reported); a `@ffi(handle)` value read out of
 > its owner is a view of it (ODR-267). 19 rules changed (§H.55), six registry rows, no new code. **Checked:** all spec
 > gates green, `ember_diag`, `ember_parser` and the three spec-tied milestone tests green against the pin; the compiler is
-> untouched. **Next:** the owner's word on the two departures (155 departed from, 110 restored) and on the generic-bound
-> doubt under ODR-260; then each 0.9.20 change lands with the milestone that owns it.
+> untouched. **Next:** the owner's word on the two departures (155 departed from, 110 restored); no ODR is open; then each
+> 0.9.20 change lands with the milestone that owns it.
 
 > **2026-11-08 — the same cloud session (branch `spec-0.9.20-hardening`), AUTONOMOUS, a workflow of 44 agents and
 > two exit checks applied by the lead (the owner: "take that spec sheet into account and combine it with the latest
