@@ -200,29 +200,30 @@ is a defect of the file.
 
 ## XV.4 Collections
 
-* `[STD-15]` *(new in 0.9.9)* *(changed in 0.9.15)* **`Array[T]`** is a growable contiguous list
-  (Python's `list`). `len`, `is_empty`, `capacity`, `reserve`, `push`, `pop -> Option[T]`,
-  `insert(i, v)`, `remove(i) -> T`, `swap_remove(i) -> T`, `extend(iterable)`, `truncate`, `clear`,
-  `retain(keep)`, `drain(r) -> Array[T]`, `dedup`, `reverse`, `sort` (stable; `T: needs Ord`; an
-  inconsistent order permutes but never corrupts, `[HASH-3]`), `sort_by_key(f)`, `sort_by(cmp)`,
-  `sorted() -> Array[T]`, `binary_search(x) -> Result[int, int]`, `index_of(x) -> Option[int]`,
-  `first`, `last`, `get(i) -> Option[ref T]`, `get_mut`, `get_pair_mut(i, j) -> Option[(ref mut T,
-  ref mut T)]` (`[BRW-5]`), `iter`, `iter_mut`, `split_at`, `chunks(n)`, `chunks_mut(n)`,
-  `windows(n)`, `join(sep)` (for elements that are `Display`), and `x in xs` (`[STD-8]`). `xs[i]`
-  takes any integer and panics when `i < 0` or `i >= len` (`[TYP-31]`); `xs.get(i)` names an element
-  as `xs[i]` does, as a position. The methods given a function call it right away and take it as a
-  type parameter: `[F: needs fn(T) -> bool]` above `fn retain(owns keep: F):`, `[K: needs Ord, F:
-  needs fn(T) -> K]` above `fn sort_by_key(owns f: F):`, and `[F: needs fn(T, T) -> Ordering]` above
-  `fn sort_by(owns cmp: F):`; the call counts as making what the function given changes
-  (`[STD-19]`), so `LOG.retain(keep)` with a `keep` that pushes to `LOG` is `E3022`. Each changes
-  the list it is called on, and every method that adds, removes, reorders or replaces elements is a
-  reshape: it ends every view into the list, and may not run while a loop walks the list (`E3020`).
-  `sort_by` and `sort_by_key` are stable, and `sort_by_key` calls `f` once for each element, in
-  order. `windows(n)` yields every run of `n` neighbours, one step apart, as read-only views (there
-  is no `windows_mut`); none when `n > len`, and `n == 0` panics as `chunks(0)` does (`[SPN-4]`).
-  `drain(r)` hands the elements in `r`, any range of integers (`a..b`, `a..=b`, `a..`, `..b`), over
-  to a new `Array` in order, and the rest close up; a range reaching outside `0..=len`, or starting
-  after it ends, panics.
+* `[STD-15]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **`Array[T]`** is a
+  growable contiguous list (Python's `list`). `len`, `is_empty`, `capacity`, `reserve`, `push`, `pop
+  -> Option[T]`, `insert(i, owns v)`, `remove(i) -> T`, `swap_remove(i) -> T`, `extend(owns items)`
+  (an iterable of `T`, taken over as `push(owns value: T)` takes its value; a caller that keeps its
+  list writes `xs.extend(owns copy of ys)`), `truncate`, `clear`, `retain(keep)`, `drain(r) ->
+  Array[T]`, `dedup`, `reverse`, `sort` (stable; `T: needs Ord`; an inconsistent order permutes but
+  never corrupts, `[HASH-3]`), `sort_by_key(f)`, `sort_by(cmp)`, `sorted() -> Array[T]`,
+  `binary_search(x) -> Result[int, int]`, `index_of(x) -> Option[int]`, `first`, `last`, `get(i) ->
+  Option[ref T]`, `get_mut`, `get_pair_mut(i, j) -> Option[(ref mut T, ref mut T)]` (`[BRW-5]`),
+  `iter`, `iter_mut`, `split_at`, `chunks(n)`, `chunks_mut(n)`, `windows(n)`, `join(sep)` (for
+  elements that are `Display`), and `x in xs` (`[STD-8]`). `xs[i]` takes any integer and panics when
+  `i < 0` or `i >= len` (`[TYP-31]`); `xs.get(i)` names an element as `xs[i]` does, as a position.
+  The methods given a function call it right away and take it as a type parameter: `[F: needs fn(T)
+  -> bool]` above `fn retain(owns keep: F):`, `[K: needs Ord, F: needs fn(T) -> K]` above `fn
+  sort_by_key(owns f: F):`, and `[F: needs fn(T, T) -> Ordering]` above `fn sort_by(owns cmp: F):`;
+  the call counts as making what the function given changes (`[STD-19]`), so `LOG.retain(keep)` with
+  a `keep` that pushes to `LOG` is `E3022`. Each changes the list it is called on, and every method
+  that adds, removes, reorders or replaces elements is a reshape: it ends every view into the list,
+  and may not run while a loop walks the list (`E3020`). `sort_by` and `sort_by_key` are stable, and
+  `sort_by_key` calls `f` once for each element, in order. `windows(n)` yields every run of `n`
+  neighbours, one step apart, as read-only views (there is no `windows_mut`); none when `n > len`,
+  and `n == 0` panics as `chunks(0)` does (`[SPN-4]`). `drain(r)` hands the elements in `r`, any
+  range of integers (`a..b`, `a..=b`, `a..`, `..b`), over to a new `Array` in order, and the rest
+  close up; a range reaching outside `0..=len`, or starting after it ends, panics.
 * `[STD-11]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **`Map[K, V, H =
   DefaultHasher]`** is a hash map that **iterates in insertion order**, like Python's `dict`.
   Re-assigning an existing key keeps its position; removing a key keeps the order of the others.

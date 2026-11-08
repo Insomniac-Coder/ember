@@ -354,7 +354,7 @@ expression    := jump_expr | lambda | ternary
 jump_expr     := "return" [expr_list] | "break" [IDENT] | "continue" [IDENT] | "yield" [expression]
 lambda        := ["@safety" "(" STRING ")"] ["once"] "fn" "(" [lambda_param {"," lambda_param} [","]] ")" [capture_list]
                  ["->" type] ("=>" expression | ":" simple_stmt)   -- one simple statement ([GRM-17])
-lambda_param  := [param_word] IDENT [":" type]
+lambda_param  := [param_word] IDENT [":" ["runtime"] type]      -- `runtime` as on a parameter ([LT-48])
 capture_list  := capture {"," capture}
 capture       := capture_word (IDENT | "this")
 capture_word  := "copy" "of" | "owns" | "shares" ["mut"] | "thread_shared" | "weakref" ["thread_shared"] | "ref"
@@ -372,7 +372,7 @@ shift         := additive {("<<" | ">>") additive}
 additive      := multiplicative {("+" | "-") multiplicative}
 multiplicative:= conversion {("*" | "/" | "//" | "%") conversion}
 conversion    := unary {"as" type}
-unary         := ("-" | "~") unary | value_word unary | "cast" postfix_expr "as" type | power
+unary         := ("-" | "~") unary | "owns" lambda | value_word unary | "cast" postfix_expr "as" type | power
 value_word    := "ref" ["mut"] | "const" "ref" "mut" | "copy" "of" | "owns"
                | "shares" ["mut"] | "thread_shared" | "weakref" ["thread_shared"] | "sharedref" "mut"
 power         := made ["**" unary]
@@ -424,17 +424,23 @@ match_expr    := "match" expression ":" NEWLINE INDENT {pattern ["if" expression
   (`[GRM-27]`) and before the scrutinee of a `match`, where the default is a view, so that the loop
   or the branches take the value over (`for x in owns xs:`, `match owns e:`); before an argument for
   an `owns` parameter, whatever is given (`take(owns xs)`, `take(owns copy of xs)`, `take(owns [1,
-  2])`, `xs.iter().for_each(owns fn(x: int): println(x))`; `[FN-2a]`, `E3028` without it); and in `b
-  = owns n` for a value `=` would copy (a number, a `bool`, a `StrView`, `[OWN-9]`), so that `n`
-  ends there. Before a value made on the line that is given to a place that is not an `owns T` (`b =
-  owns (n * 2)`, `b = owns f()`, `xs = owns [1, 2]`; the required case is `[TYP-45]`'s) it ends
-  nothing and is `E0109`: "`=` already hands a value made on the line over; remove `owns`: `b = n *
-  2`". Before a name whose place already hands the value over with no word (`e.mesh = m`, `b = a`
-  for a value `=` hands over, `return a`), and before `fn` anywhere but an argument for an `owns`
-  parameter, it is `E0109`, whose message says to remove it (for `owns fn`, to name what the
-  function takes on each captured name: `fn() owns report:`). Before an argument for a parameter
-  that only reads (`show(owns xs)`) it is `E3028`, "`show` only reads its argument; remove `owns`:
-  `show(xs)`".
+  2])`, `xs.iter().for_each(owns fn(x: int): println(x))`; `[FN-2a]`, `E3028` without it), except a
+  value made in the call with a word that makes an owner or a link, which says what is given and
+  takes no `owns` before it (`setup(shares mut game)` for `fn setup(owns game: shares mut Game)`,
+  `ROSTER.push(weakref this)`, `thread_shared x` and `sharedref mut x` alike), and a constructor's
+  argument, which takes no word and works as `=` does (`Words(names=xs)`, `[FN-2a]`); and in `b =
+  owns n` for a value `=` would copy (a number, a `bool`, a `StrView`, `[OWN-9]`), so that `n` ends
+  there. `owns` before a lambda covers the whole lambda, whose body extends as far right as possible
+  (level 2) and, inside a call, ends at the closing bracket or the next comma at the same depth
+  (`[LEX-6a]`); another word before a lambda (`copy of fn ...`) is refused as `[GRM-42]` says.
+  Before a value made on the line that is given to a place that is not an `owns T` (`b = owns (n *
+  2)`, `b = owns f()`, `xs = owns [1, 2]`; the required case is `[TYP-45]`'s) it ends nothing and is
+  `E0109`: "`=` already hands a value made on the line over; remove `owns`: `b = n * 2`". Before a
+  name whose place already hands the value over with no word (`e.mesh = m`, `b = a` for a value `=`
+  hands over, `return a`), and before `fn` anywhere but an argument for an `owns` parameter, it is
+  `E0109`, whose message says to remove it (for `owns fn`, to name what the function takes on each
+  captured name: `fn() owns report:`). Before an argument for a parameter that only reads
+  (`show(owns xs)`) it is `E3028`, "`show` only reads its argument; remove `owns`: `show(xs)`".
 * `[GRM-17]` *(changed in 0.9.10)* *(changed in 0.9.20)* A lambda with a `:` body inside brackets
   holds exactly one simple statement (`[LEX-6a]`). More is `E0106`, whose help is to declare a local
   function on the preceding line (`[GRM-28]`). A lambda's `:` body is one simple statement, inside

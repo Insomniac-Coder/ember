@@ -194,12 +194,13 @@ fn main():
 * `[CTL-8]` On every exit from a block, its `defer` blocks run first and then its locals are dropped
   in reverse declaration order.
 * `[CTL-9]` `pass` does nothing; an empty block is written `pass`.
-* `[CTL-10]` *(new in 0.9.9)* **Names assigned in every branch.** In an `if`/`elif`/`else` that has
-  an `else`, or an exhaustive `match` statement, a name that is not in scope before the statement
-  and is declared (by `x = e`) in **every** arm that completes normally, at the **same type**, is
-  declared in the enclosing block and is initialised after the statement. An arm that ends in
-  `return`, `break`, `continue` or a panic does not need to declare it. Different types in different
-  arms are `E2230`, naming each arm.
+* `[CTL-10]` *(new in 0.9.9)* *(changed in 0.9.20)* **Names assigned in every branch.** In an
+  `if`/`elif`/`else` that has an `else`, or an exhaustive `match` statement, a name that is not in
+  scope before the statement and is declared (by `x = e`) in **every** arm that completes normally,
+  at the **same type**, or, where the arms give it different functions, at the callable type they
+  all convert to (`[CLO-1]`), is declared in the enclosing block and is initialised after the
+  statement. An arm that ends in `return`, `break`, `continue` or a panic does not need to declare
+  it. Different types in different arms are `E2230`, naming each arm.
 * `[CTL-11]` *(new in 0.9.15)* **Headers that name what they test.** An `if` or `while` header that
   opens an `Option` or a `weakref` link (`if cam.target exists as p:`, `while cur.parent exists as
   p:`, `[GRM-44]`), and an `if` or `elif` header that tests a value's kind (`if s is Circle as c:`,

@@ -72,16 +72,21 @@ fail), **reclaim** (end what the old image owned).
   on what each function may change, read and end, worked out from its body and from every function
   the program can put in a function value, behind an interface, `dyn` or virtual method, or in C's
   keeping (`[EFF-4]`). The image records these facts for every reloadable function, as a package's
-  interface file does. Plan refuses a reload (`E9030`) whose new image changes such a fact of a
-  function that code the reload does not rebuild was checked against: a frame below a checkpoint
-  that may still call it (`[HR-3b]`), a suspended generator (`[HR-45]`), and another package
-  compiled against this package's facts. The report names the function, the fact and the caller that
-  relies on it ("`note` now adds to `LOG`, and `run`, still running below the checkpoint on line 10,
-  walks `LOG` across its call of `note` on line 11; restart, or let `run` return before the
-  reload"). Code the reload rebuilds is checked again when it compiles, so a change that only it
-  relies on is no refusal. A change to a `@cached` method's body clears the result each instance of
-  its type keeps: the kept result is migrated as a removed field and an added one with no value
-  (`[HR-14]`), and is computed again on the next call. Nothing of this runs while the program runs.
+  interface file does, and with them the proofs that read through a reloadable callee (a `@parallel`
+  loop's or a vectorised loop's, `[PAR-2b]`, `[SIMD-5]`) and the lock each field is `guarded by`
+  (`[HR-11]`), so that a reload that changes the callee so the proof no longer holds, or changes a
+  field's lock while code the reload does not rebuild uses the field, is refused in plan (`E9030`),
+  naming the loop and the callee, or the field, its new lock and the code that uses it. Plan refuses
+  a reload (`E9030`) whose new image changes such a fact of a function that code the reload does not
+  rebuild was checked against: a frame below a checkpoint that may still call it (`[HR-3b]`), a
+  suspended generator (`[HR-45]`), and another package compiled against this package's facts. The
+  report names the function, the fact and the caller that relies on it ("`note` now adds to `LOG`,
+  and `run`, still running below the checkpoint on line 10, walks `LOG` across its call of `note` on
+  line 11; restart, or let `run` return before the reload"). Code the reload rebuilds is checked
+  again when it compiles, so a change that only it relies on is no refusal. A change to a `@cached`
+  method's body clears the result each instance of its type keeps: the kept result is migrated as a
+  removed field and an added one with no value (`[HR-14]`), and is computed again on the next call.
+  Nothing of this runs while the program runs.
 * `[HR-44a]` *(new in 0.9.20)* **A stored function is a fact too.** Plan enumerates (`[HR-15]`)
   every function value held in a live instance, a registered container, a static or a lambda's
   state, and every callback C keeps (`[HR-20]`), and compares each, by its code word, which `[HR-6]`
@@ -145,11 +150,12 @@ fail), **reclaim** (end what the old image owned).
 
 ## B.3 Types, schemas and migration
 
-* `[HR-11]` *(changed in 0.9.15)* Every type in a reloadable package has a **schema**: its kind,
-  base, layout attributes, and the ordered list of fields (name, type schema hash, offset, size) or
-  variants (name, discriminant, payload). A field's type schema includes the words its type is
-  written with (`owns`, `shares`, `shares mut`, `thread_shared`, `weakref`, `sharedref mut`, `ref`,
-  `ref mut`, `using A`), so a change of one is a change of the field's type.
+* `[HR-11]` *(changed in 0.9.15)* *(changed in 0.9.20)* Every type in a reloadable package has a
+  **schema**: its kind, base, layout attributes, and the ordered list of fields (name, type schema
+  hash, offset, size) or variants (name, discriminant, payload). A field's type schema includes the
+  words its type is written with (`owns`, `shares`, `shares mut`, `thread_shared`, `weakref`,
+  `sharedref mut`, `ref`, `ref mut`, `using A`) and the lock it is `guarded by` (none, or the lock
+  field's name), so a change of one is a change of the field.
 * `[HR-11a]` Enum values are migrated by variant name, never by discriminant.
 * `[HR-12]` *(changed in 0.9.15)* *(changed in 0.9.20)* In a reloadable build, class instances are
   registered in a live-instance list, which adds 16 bytes to the object header of `[OBJ-1]` (24

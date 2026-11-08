@@ -7,17 +7,19 @@
 Ember is a statically typed, ahead-of-time compiled language with Python's indentation syntax and
 Python's everyday vocabulary — list, map and set literals, f-strings, comprehensions, generators,
 keyword arguments, `in`, `is None`, chained comparisons — compiled to native code with no garbage
-collector. Every value has one owner unless a line says `shares`; a name that points into what someone
-else owns is a view, and the word in front of a name says whether it may change what it names
-(`ref mut`) or takes it over (`owns`); a call says `ref mut` before an argument the callee may change.
-What every function changes and reads is worked out by the compiler from its code, and all of it is
-checked when compiling: nothing about ownership, views or aliasing is checked while the program runs,
-and lifetimes are inferred and never named. Class objects live in their own blocks, with identity and
-deterministic destruction; several owners are counted (`shares`), and a link back is a `weakref`. There
-is no null, no exceptions, and no undefined behaviour outside `unsafe`. Performance-critical code uses
-value types, views, structure-of-arrays containers, arenas and enforceable contracts (`@noalloc`,
-`@nosync`). C headers are imported directly. The reference compiler has two backends: LLVM, the
-default, and C11, which reaches every platform that has a C compiler (`[CG-LL-1]`).
+collector. Every value has one owner unless a line says `shares`; a name that points into what
+someone else owns is a view, and the word in front of a name says whether it may change what it
+names (`ref mut`) or takes it over (`owns`); a call says `ref mut` before an argument the callee may
+change. What every function changes and reads is worked out by the compiler from its code, and all
+of it is checked when compiling: nothing about ownership, views or aliasing is checked while the
+program runs except where a line asks for it (a value marked `runtime`, `[LT-48]`, and
+`assert_disjoint`, `[DSJ-5]`), and lifetimes are inferred and never named. Class objects live in
+their own blocks, with identity and deterministic destruction; several owners are counted
+(`shares`), and a link back is a `weakref`. There is no null, no exceptions, and no undefined
+behaviour outside `unsafe`. Performance-critical code uses value types, views, structure-of-arrays
+containers, arenas and enforceable contracts (`@noalloc`, `@nosync`). C headers are imported
+directly. The reference compiler has two backends: LLVM, the default, and C11, which reaches every
+platform that has a C compiler (`[CG-LL-1]`).
 
 ## I.2 The three tiers
 
@@ -65,16 +67,18 @@ default, and C11, which reaches every platform that has a C compiler (`[CG-LL-1]
 * `[PHIL-6]` Every expensive or dangerous conversion at an FFI boundary is explicit in source or
   reported by the compiler.
 * `[PHIL-7]` Panics are for programmer errors. Recoverable failures use `Result`.
-* `[PHIL-8]` *(changed in 0.9.15)* **The enforcement ladder.** Ember guarantees memory safety,
-  lifetime safety and data-race freedom for Safe code, and proves them when compiling: ownership,
-  views, changes through several names, lifetimes and threads are checked by the compiler, and
-  nothing is paid for them while the program runs. A check runs while the program runs only where
-  the property is data the program computes as it runs: an index in bounds, an integer that may
-  overflow, whether a `weakref` link's target still lives, a downcast, a count at its limit, a
-  resource handle's generation, a foreign callback's token, and a disjointness test the program
-  writes itself (`assert_disjoint`); each has a row in §X.4. A program whose safety the compiler
-  cannot prove is rejected, and the diagnostic MUST name the line that expresses the same intent in
-  a way it can prove (`[DIA-25]`); an operation that neither can make safe requires `unsafe`.
+* `[PHIL-8]` *(changed in 0.9.15)* *(changed in 0.9.20)* **The enforcement ladder.** Ember
+  guarantees memory safety, lifetime safety and data-race freedom for Safe code, and proves them
+  when compiling: ownership, views, changes through several names, lifetimes and threads are checked
+  by the compiler, and nothing is paid for them while the program runs. A check runs while the
+  program runs only where the property is data the program computes as it runs: an index in bounds,
+  an integer that may overflow, whether a `weakref` link's target still lives, a downcast, a count
+  at its limit, a resource handle's generation, a foreign callback's token, the kind of a value
+  marked `runtime` at a line one of its kinds would make unsafe (`[LT-48]`), and a disjointness test
+  the program writes itself (`assert_disjoint`); each has a row in §X.4. A program whose safety the
+  compiler cannot prove is rejected, and the diagnostic MUST name the line that expresses the same
+  intent in a way it can prove (`[DIA-25]`); an operation that neither can make safe requires
+  `unsafe`.
 * `[PHIL-8a]` Every rejection shape in §XVII.6 has a mandated `help` that, applied literally to the
   rejected program, produces a program that compiles. `tests/ui/` holds a before/after pair per
   shape.
@@ -153,7 +157,7 @@ programmer, and it is always visible (`ember inspect --safety`) and restrictable
 | Guarantee | Proven when compiling | Checked while running | Mechanism |
 |---|---|---|---|
 | No use-after-free, no dangling view | always, for views, positions and names opened from links (`[BRW-1]`, `[RC-5]`) | opening a `weakref` link tests its target's header (`[WK-12]`), except a parent-link read proved (`[WK-17]`) | the view rules, zero cost; the weak count |
-| One name changes a place, or any number read it | always, for every type, class objects included (`[BRW-1]`, `[EXC-1]`) | never | the view rules; zero cost |
+| One name changes a place, or any number read it | always, for every type, class objects included (`[BRW-1]`, `[EXC-1]`) | where a parameter or a typed local says `runtime` and its kind is known only while running: one load and one bit test at each line it guards (`[LT-48]`) | the view rules; zero cost, or one compare where a line says `runtime` |
 | Two elements of one list changed together | the positions are proved different (`if i != j:`, `j` from `i + 1..`, `[BRW-5]`); otherwise rejected | where the program writes `assert_disjoint` for two spans (`[DSJ-5]`) | the view rules; two compares the program writes |
 | Changes through several owners or links | always (`[RC-7]`, `[LT-46]`) | never | the view and loop rules; zero cost |
 | Index in bounds | the index comes from the container's own range, or a range fact (`[RNG-4]`) | otherwise | compare and branch |
@@ -220,11 +224,12 @@ it is passed to.
 
 Ember deliberately has none of these: a tracing garbage collector or a cycle collector (a loop of
 owners is proved opened again or rejected, and a link back is a `weakref`, `[WK-6]`); exceptions or
-unwinding (failures are values or panics, Part XIII); implicit numeric narrowing; function overloading
-and C's untyped variadic functions outside `unsafe` (Ember's own take any number of typed values,
-`[TYP-47]`); macros (`macro` is reserved);
-named lifetimes, ever (`[LEX-22]`); an aliasing or exclusivity check while the program runs
-(`[BRW-1]`); specialisation or higher-kinded types; dynamic or structural typing (`[TYP-40]`); a safety
-check that depends on the profile (`[PRF-1]`); a correctness property that depends on whole-program
-optimisation or LTO; a stable Ember-to-Ember ABI (the C ABI is the stable boundary, Part XVI); shader
-compilation and `async` in this version (both reserved).
+unwinding (failures are values or panics, Part XIII); implicit numeric narrowing; function
+overloading and C's untyped variadic functions outside `unsafe` (Ember's own take any number of
+typed values, `[TYP-47]`); macros (`macro` is reserved); named lifetimes, ever (`[LEX-22]`); an
+aliasing or exclusivity check the program did not ask for (`[BRW-1]`; the checks it may ask for are
+`runtime`, `[LT-48]`, and `assert_disjoint`, `[DSJ-5]`) (`[BRW-1]`); specialisation or higher-kinded
+types; dynamic or structural typing (`[TYP-40]`); a safety check that depends on the profile
+(`[PRF-1]`); a correctness property that depends on whole-program optimisation or LTO; a stable
+Ember-to-Ember ABI (the C ABI is the stable boundary, Part XVI); shader compilation and `async` in
+this version (both reserved).

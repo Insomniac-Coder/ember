@@ -714,7 +714,7 @@ fn main():
 | B11 | two single-object references given to `assert_disjoint` | `E3095` | for two elements of one list, their positions proved apart when compiling: `if i != j:` above the call (`[DSJ-4]`) |
 | B12 | a view, or a value holding views, kept or returned where it would outlive what it points into; a value made in a memory manager's instance outliving the instance | `E3063` | a value of your own (`return String(word)`, `return copy of g[0]`), an index, or a `shares` owner; the value made in an instance the caller keeps |
 | B16 | a call that hands the callee a part of what its body may end or move before its last use of that parameter (a method's object included) | `E3031` | `copy of` the argument (`note(copy of LOG[0])`), or, in the callee, the use moved above the line that ends what it views |
-| B17 | a loop of owners that nothing opens again before its objects lose their last owner from outside | `E3032` | the loop opened before they end (`b.next = None`), or the link back made `weakref` (`next: Option[weakref Node]`) |
+| B17 | a loop of owners that nothing opens again before its objects lose their last owner from outside | `E3032` | the loop opened before they end (`b.next = None`), or the link back made `weakref` (`next: weakref Node = None`) |
 | S1 | `assert_disjoint` inside `@no_alias_checks` | `E4030` | lines that need no check while running (`[DIA-11]`), or `@no_alias_checks` removed |
 | A1 | arena allocation of a type with `drop`; parent used during a scope | `E3090`, `E3096` | move the arena outward, copy out, or end the scope first |
 | U1 | operation needs `unsafe` | `E3100`, `E3105` | the safe API that does the same, else an `unsafe:` block with a `# SAFETY:` note |

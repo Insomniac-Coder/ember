@@ -1,0 +1,94 @@
+{
+ "R1-parts-I-IV": [
+  "K18-string-plus",
+  "K28-untyped-list-of-text",
+  "K30-shared-owner-equality-and-identity",
+  "K41-some-after-conversions",
+  "K45-dyn-with-self-parameter",
+  "K59-runtime-placement-beyond-verdicts",
+  "K62-copy-of-on-loop-names",
+  "K64-list-pattern-arms",
+  "K65-several-interfaces-after-dyn",
+  "K68-pack-tuple-sizes",
+  "K70-raw-identifier-reserved",
+  "K71-nested-tuple-access"
+ ],
+ "R2-parts-V-VI": [
+  "K12-function-lent-to-std-and-kept",
+  "K19-written-init-call-words",
+  "K22-opened-name-owns-call-result",
+  "K27-for-over-named-iterator",
+  "K32-super-init-memberwise",
+  "K33-init-and-field-defaults",
+  "K40-function-value-inline-state",
+  "K44-drop-changes-let-field",
+  "K66-constructor-visibility"
+ ],
+ "R3-parts-VII-VIII": [
+  "K04-weakref-outlives-arena",
+  "K05-thread-shared-using",
+  "K06-sharing-a-local",
+  "K11-unsafe-drop-override",
+  "K17-read-only-parameter-promise",
+  "K23-match-subject-temporaries",
+  "K24-owning-names-changeable",
+  "K25-owns-takes-a-place-out",
+  "K26-copying-a-view",
+  "K35-weakref-dyn",
+  "K42-split-mutspan-halves",
+  "K43-weakref-into-cached",
+  "K63-copied-array-tuple-changed"
+ ],
+ "R4-parts-IX-X-XVIII-annexes": [
+  "K34-which-types-take-using",
+  "K54-nondet-contested-lock",
+  "K58-runtime-check-effect-kind",
+  "K61-arena-scope-views",
+  "K14-reload-shared-block",
+  "K48-migrate-from-ownership",
+  "K51-ref-to-ptr-spelling",
+  "K60-gpu-frame-early-exit",
+  "K67-bool-char-casts"
+ ],
+ "R5-parts-XI-XVII": [
+  "K01-sharedref-send",
+  "K02-thread-shared-not-threadshared",
+  "K03-task-ends-shares-owners",
+  "K10-queued-drop-check-points",
+  "K36-unsafe-extend-vouching",
+  "K37-parallel-array-elements",
+  "K38-parallel-reductions",
+  "K39-reduction-start-values"
+ ],
+ "R6-parts-XII-XV": [
+  "K13-weakref-to-static",
+  "K20-anyerror-send",
+  "K29-text-view-in-list",
+  "K49-ser-skip-field-value",
+  "K55-nondet-math-functions",
+  "K56-unsafe-at-compile-time",
+  "K69-soa-flattened-field",
+  "K72-comptime-read-file",
+  "K73-det-ln-name",
+  "K74-anyerror-core-layer"
+ ],
+ "R7-part-XVI-a": [
+  "K07-raw-pointer-struct-safe-call",
+  "K08-export-arguments-from-c",
+  "K09-cpp-reference-result",
+  "K15-foreign-const-globals",
+  "K16-unsafe-import-cpp",
+  "K21-cpp-overloads",
+  "K31-c-kept-callback-declaration",
+  "K46-ffi-handle-meaning"
+ ],
+ "R8-part-XVI-b": [
+  "K47-overlay-operator-names",
+  "K50-adopt-ends-by-own-destructor",
+  "K52-c-keeps-address-ember-owns",
+  "K53-once-callback-token",
+  "K57-export-threads-main-creator",
+  "K75-overlay-header-mismatch",
+  "K76-callback-table-full"
+ ]
+}

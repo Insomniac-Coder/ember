@@ -586,7 +586,7 @@ unsafe overlay c "vulkan/vulkan.h":
 
   fn main():
       game = shares mut Game(names=[String("ann"), String("bo")])
-      token = setup(owns shares mut game)
+      token = setup(shares mut game)
       for name in game.names:
           println(name, sqrt(name.len() as f64))
       poll_events()

@@ -92,10 +92,15 @@ change one place unordered.
     where the object is made: write `names = thread_shared Names(items=[copy of s])` instead of
     lines 5 and 6"); its state changes only through an `Atomic`, a `Mutex`, an `RwLock`, a channel
     end, or a field `guarded by` a lock, under that lock (`[THR-18]`);
-  * everything reachable from it is `Send` (`[THR-8]`): a one-thread owner, a `weakref T` link, or a
-    plain `fn()` value reachable from it is `E7015` at the line that makes it `thread_shared`
-    ("`Bus.handlers` holds plain `fn()` values, and a `thread_shared Bus` may run them on any
-    thread; write `handlers: Array[thread_shared fn()] = []` in `Bus`");
+  * everything reachable from it is `Send` and `ThreadShared` (`[THR-8]`, `[THR-9]`), since any
+    thread may hold it and several may read it at once: a one-thread owner, a `weakref T` link, a
+    plain `fn()` value, or a value whose type is not `ThreadShared` (a `Cell`, a `sharedref mut`
+    link, an `RwLock[Cell[int]]`) reachable from it is `E7015` at the line that makes it
+    `thread_shared`, naming the field and the fix (verdict 165: "`FrameStats.draws` is an
+    `RwLock[Cell[int]]`, which several threads may not read at once, and a `thread_shared
+    FrameStats` may be read from any thread; write `draws: Atomic[int] = Atomic(0)` in
+    `FrameStats`"; "`Bus.handlers` holds plain `fn()` values, and a `thread_shared Bus` may run them
+    on any thread; write `handlers: Array[thread_shared fn()] = []` in `Bus`");
   * **`thread_shared fn()`** is a function any thread may run. It holds only `thread_shared` owners,
     values handed over to it and copies, never a one-thread owner or a `weakref T` link (`E7015`:
     "`on_event` keeps functions any thread may run (`thread_shared fn()`), and this one holds
@@ -543,47 +548,54 @@ fn hurt_all(ref mut players: Array[Player]):
         p.hp -= 1
 ```
 
-* `[PAR-1]` *(changed in 0.9.15)* A `@parallel` loop splits a range (`for i in 0..n:`) or a list walked by
-  element (`for ref mut p in players:`) into chunks, and runs its body over each chunk on the job system
-  (§XI.5). Over anything else it is `E7016` ("`@parallel` splits a range or a list into chunks, and
-  `while i < idx.len():` (line 4) in `place` is neither; instead of `i = 0`, the `while` line and
-  `i += 1`, write `for i in 0..idx.len():`").
-* `[PAR-2]` *(changed in 0.9.15)* **Iterations MUST be independent.** The body MUST NOT contain `break`,
-  `return`, `yield`, or a `continue` naming an outer loop, and what it uses from outside follows the
-  rules of a scoped task (`[THR-11]`, `[THR-2]`). In a loop over a range, for each place `P` written in
-  the body the compiler collects every index expression through which `P` is accessed in the body,
-  **reads included**. The loop is accepted only if (a) each has the form `i + k` for a constant `k`;
-  (b) all of them share **one** `k`; and (c) `P` is the elements of a `MutSpan` or an `SoA` column the
-  loop uses, not a place reached through a link (`shares`, `shares mut`, `sharedref mut`,
-  `thread_shared`), a `Cell` or a raw pointer. A loop walked by element hands each chunk its own elements
-  through the loop's `ref mut` name, and writes nothing else but declared reductions (`[PAR-3]`); its
-  list holds each element once, so a list whose objects may be in it twice (`Array[shares mut Player]`)
-  is refused. Otherwise `E7010`, whose message gives the lines that make the loop compile ("the parallel
-  loop writes `xs[idx[i]]`, and two rounds may have the same `idx[i]`, so two threads could write one
-  element; run the loop on one thread: remove `@parallel` (line 7)"; "`players` holds `shares mut
-  Player` objects, and one object may be in the list twice, so two chunks could change it at once; give
-  each player one owner: write `players: Array[Player] = []` in place of line 3, and
-  `players.push(owns Player(hp=10))` in place of `players.push(shares mut p)` on line 5"); where an `Atomic`,
-  `chunks_mut` or `@parallel(reduce=…)` makes the loop compile, the message gives that line.
+* `[PAR-1]` *(changed in 0.9.15)* A `@parallel` loop splits a range (`for i in 0..n:`) or a list
+  walked by element (`for ref mut p in players:`) into chunks, and runs its body over each chunk on
+  the job system (§XI.5). Over anything else it is `E7016` ("`@parallel` splits a range or a list
+  into chunks, and `while i < idx.len():` (line 4) in `place` is neither; instead of `i = 0`, the
+  `while` line and `i += 1`, write `for i in 0..idx.len():`").
+* `[PAR-2]` *(changed in 0.9.15)* *(changed in 0.9.20)* **Iterations MUST be independent.** The body
+  MUST NOT contain `break`, `return`, `?`, `yield`, or a `continue` naming an outer loop (`E7010`,
+  for `?`: "`?` on line 4 would return from `parse_all` in the middle of the parallel loop; keep
+  each result instead: write `out[i] = parse_int(lines[i])` into an `Array[Result[int, ParseError]]`
+  and check them after the loop"), and what it uses from outside follows the rules of a scoped task
+  (`[THR-11]`, `[THR-2]`). In a loop over a range, for each place `P` written in the body the
+  compiler collects every index expression through which `P` is accessed in the body, **reads
+  included**. The loop is accepted only if (a) each has the form `i + k` for a constant `k`; (b) all
+  of them share **one** `k`; and (c) `P` is the elements of a `MutSpan` or an `SoA` column the loop
+  uses, not a place reached through a link (`shares`, `shares mut`, `sharedref mut`,
+  `thread_shared`), a `Cell` or a raw pointer. A loop walked by element hands each chunk its own
+  elements through the loop's `ref mut` name, and writes nothing else but declared reductions
+  (`[PAR-3]`); its list holds each element once, so a list whose objects may be in it twice
+  (`Array[shares mut Player]`) is refused. Otherwise `E7010`, whose message gives the lines that
+  make the loop compile ("the parallel loop writes `xs[idx[i]]`, and two rounds may have the same
+  `idx[i]`, so two threads could write one element; run the loop on one thread: remove `@parallel`
+  (line 7)"; "`players` holds `shares mut Player` objects, and one object may be in the list twice,
+  so two chunks could change it at once; give each player one owner: write `players: Array[Player] =
+  []` in place of line 3, and `players.push(owns Player(hp=10))` in place of `players.push(shares
+  mut p)` on line 5"); where an `Atomic`, `chunks_mut` or `@parallel(reduce=…)` makes the loop
+  compile, the message gives that line.
 * `[PAR-2a]` A violation of clause (b) is `E7011`, `parallel loop has a loop-carried dependency on
   <place>`, naming both offsets and offering: two `@parallel` loops, a reduction, or a serial loop.
-* `[PAR-2b]` The analysis reads through the body's calls as if inlined: each call to a function
-  `[CG-C-3]` places in the inline header, recursively until a call is recursive — never according to
-  what the C compiler chose to inline. A call it cannot see into that receives a captured `MutSpan`
-  or column defeats the proof for everything reachable through that argument (`E7010`) (ODR-062).
-* `[PAR-3]` *(changed in 0.9.9)* `@parallel(reduce=[total: +, best: max])` declares variables combined
-  after the loop; inside the body each chunk has its own copy. Each chunk reduces its iterations left
-  to right, and the chunk results are then combined in chunk order, so the result is the same on
-  every machine (`[PAR-5]`); for floats it can differ from the serial left-to-right sum, which is
-  why a float reduction must be declared. A whole-number reduction's chunk results have the variable's
-  type and stop the program on overflow, as `[THR-21]`'s task totals do (verdict 105): the result is the
-  serial one whenever no chunk's own total overflows, and since chunk boundaries depend only on the trip
-  count and `chunk`, whether it stops does not depend on the machine.
+* `[PAR-2b]` *(changed in 0.9.20)* The analysis reads through the body's calls as if inlined: each
+  call to a function that meets `[CG-C-3]`'s criteria (`@inline`, an operator on a type of at most
+  64 bytes, the listed accessors, or at most 40 statements and no foreign call), whether or not this
+  build places it in the inline header (a reloadable function in a hot-reload build, `[HR-9a]`, or a
+  build on the LLVM backend), recursively until a call is recursive, and never according to what the
+  C compiler chose to inline. A call it cannot see into that receives a captured `MutSpan` or column
+  defeats the proof for everything reachable through that argument (`E7010`) (ODR-062).
+* `[PAR-3]` *(changed in 0.9.9)* `@parallel(reduce=[total: +, best: max])` declares variables
+  combined after the loop; inside the body each chunk has its own copy. Each chunk reduces its
+  iterations left to right, and the chunk results are then combined in chunk order, so the result is
+  the same on every machine (`[PAR-5]`); for floats it can differ from the serial left-to-right sum,
+  which is why a float reduction must be declared. A whole-number reduction's chunk results have the
+  variable's type and stop the program on overflow, as `[THR-21]`'s task totals do (verdict 105):
+  the result is the serial one whenever no chunk's own total overflows, and since chunk boundaries
+  depend only on the trip count and `chunk`, whether it stops does not depend on the machine.
 * `[PAR-4]` *(changed in 0.9.9)* A `@parallel` loop has the effects `Sync` and `Block` (it waits for
-  its chunks) and not `Alloc`: its chunk descriptors live in the calling frame and the job queues have
-  a fixed capacity; when they are full the calling thread runs the chunk itself.
-* `[PAR-5]` *(new in 0.9.9)* **Parallel results do not depend on the machine.** Chunk boundaries are a
-  function of the trip count and `chunk` only (a default `chunk` is a function of the trip count
+  its chunks) and not `Alloc`: its chunk descriptors live in the calling frame and the job queues
+  have a fixed capacity; when they are full the calling thread runs the chunk itself.
+* `[PAR-5]` *(new in 0.9.9)* **Parallel results do not depend on the machine.** Chunk boundaries are
+  a function of the trip count and `chunk` only (a default `chunk` is a function of the trip count
   only), and reductions combine per-chunk results in chunk order. A `@parallel` loop therefore
   computes the same bits whatever the worker count and scheduling, and is not `Nondet` (`[DET-2]`).
 

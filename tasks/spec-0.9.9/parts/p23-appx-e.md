@@ -49,7 +49,7 @@ are rejected with a fix-it (`[DIA-21]`) rather than given a different meaning (`
 | `int(s)`, `float(s)` | `s.parse[int]()`, `s.parse[float]()` (a `Result`) |
 | `int(x)` for a float | `x as int` (saturates; NaN is 0) |
 | `range(a, b)` in a loop | `a..b` is the usual spelling; `range` also works |
-| `xs.append(x)`, `xs.extend(ys)` | `xs.push(owns x)`, `xs.extend(ys)` |
+| `xs.append(x)`, `xs.extend(ys)` | `xs.push(owns x)`, `xs.extend(owns ys)` (`xs.extend(owns copy of ys)` to keep `ys`) |
 | `xs.pop()` | `xs.pop()` returns an `Option` |
 | `xs.index(x)` | `xs.index_of(x)` (an `Option`) |
 | `xs.sort(key=f)` | `xs.sort_by_key(f)` |

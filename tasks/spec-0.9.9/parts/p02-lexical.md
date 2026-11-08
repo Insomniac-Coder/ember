@@ -55,8 +55,9 @@ Ember is indentation-sensitive exactly as Python 3 is, with stricter rules:
   first; move it above `import std.io`").
 * `[LEX-11]` *(changed in 0.9.9)* *(changed in 0.9.20)* A `##` comment attaches to the next
   declaration, ignoring blank lines. One not followed by a declaration documents nothing and is
-  discarded in silence. Apart from `[LEX-23]` and `[LEX-1a]`, a comment never affects compilation,
-  including by producing a diagnostic.
+  discarded in silence. Apart from `[LEX-23]` and `[LEX-1a]`, and a comment line between a
+  type-parameter line and its declaration, which leaves the bracket line not directly above it
+  (`E0100`, `[GRM-40]`), a comment never affects compilation, including by producing a diagnostic.
 * `[LEX-11a]` A `##` comment on a comment-only line is emitted after the `INDENT`/`DEDENT` tokens of
   the next content line, so a doc comment written inside a block attaches inside that block.
 * `[LEX-23]` *(new in 0.9.9)* *(changed in 0.9.15)* A line comment whose text begins `SAFETY:` or

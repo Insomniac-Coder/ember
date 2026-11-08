@@ -141,17 +141,17 @@ fn scale(xs: Span[f32], ref mut out: MutSpan[f32], k: f32):
   count is known before entry; every memory access is to a local or to a view at a unit-stride
   affine index of the induction variable; every written place is accessed at one constant offset
   (`[PAR-2]`(b)); every written view is disjoint from every other accessed view by `[SIMD-3]`; every
-  call in the body is to a function `[CG-C-3]` places in the inline header, read through as
-  `[PAR-2b]` says, whatever the C compiler then does (ODR-062); the body has none of `Alloc`,
-  `Sync`, `Block`, `Io`, `FFI`, `Panic(Explicit)`; no integer division or remainder in the body is
-  by a divisor that is not a constant, nor, at 64 bits or more, by a constant that is not a power of
-  two, since no vector instruction set does either and such a loop runs one iteration at a time
-  (ODR-088); every `RuntimeCheck(Bounds)` has been removed by `[OPT-2]`; every
-  `RuntimeCheck(Arithmetic)` is removed, is one `[SIMD-7]` permits grouping (grouping is then
-  required), or belongs to a running total `[SIMD-7]` proves safe block by block; the loop has one
-  exit; and every floating-point reduction is declared by `@parallel(reduce=…)` or the function is
-  `@fastmath`. `E4020` names the first clause that fails, and for a remaining check its reason
-  (`[EFF-11]`).
+  call in the body is to a function that meets `[CG-C-3]`'s criteria, read through as `[PAR-2b]`
+  says, whether or not this build inlines it and whatever the C compiler then does (ODR-062); the
+  body has none of `Alloc`, `Sync`, `Block`, `Io`, `FFI`, `Panic(Explicit)`; no integer division or
+  remainder in the body is by a divisor that is not a constant, nor, at 64 bits or more, by a
+  constant that is not a power of two, since no vector instruction set does either and such a loop
+  runs one iteration at a time (ODR-088); every `RuntimeCheck(Bounds)` has been removed by
+  `[OPT-2]`; every `RuntimeCheck(Arithmetic)` is removed, is one `[SIMD-7]` permits grouping
+  (grouping is then required), or belongs to a running total `[SIMD-7]` proves safe block by block;
+  the loop has one exit; and every floating-point reduction is declared by `@parallel(reduce=…)` or
+  the function is `@fastmath`. `E4020` names the first clause that fails, and for a remaining check
+  its reason (`[EFF-11]`).
 * `[SIMD-7]` *(new in 0.9.9)* *(changed in 0.9.20)* **Grouped overflow checks.** In a loop whose
   body has none of `Sync`, `Io`, `FFI`, `Unsafe` and `Block`, and no operation on an `Atomic` (a
   relaxed store is not `Sync`, and another thread could read what it stored before the process

@@ -161,26 +161,30 @@ pub fn blend(dst: Array[f32], ref mut out: Array[f32], owns scratch: Array[f32],
   through a read-only name) is `E3027` ("`p` only reads the caller's player, so it cannot be given
   to `heal` as `ref mut`; take it as `ref mut p: Player` on `revive`'s first line, or walk the list
   with `for ref mut p in players:`"). `return a` and a constructor's argument take no word: they
-  hand a value over as `=` does (`[OWN-9]`). A function from a variable given to a parameter whose
-  type is a type parameter bounded by a function type (`owns f: F` under `[F: needs fn(int)]`,
-  `[CLO-14]`), in any package, is lent for the call: `F` names that very function, the callee runs
-  it and keeps nothing of it, so after `xs.iter().for_each(h)` and after `apply(h)` alike `h` is the
-  caller's still. It takes no word when its functions keep no state or only read it; one whose
-  functions may change their own state is given `ref mut h`, since the call changes it (`[CLO-18]`,
-  `E3023` without the word: "`counter` changes its own `n` each time it runs, and `apply` runs it;
-  say so at the call: `apply(ref mut counter)`"). `owns h` before such an argument is `E0109`
-  ("`apply` runs `h` and keeps nothing of it; remove `owns`: `apply(h)`"); a function written in the
-  call is given with `owns` (verdict 158), and a value the call gives back that keeps the lent
-  function (an iterator adapter, `[STD-19]`) is a value holding a view of `h`, which lives no longer
-  than `h` (`[LT-45]`). A parameter of a callable type (`owns f: fn(int)`) keeps what it is given
-  and takes `owns` as any `owns` parameter does. An argument for a `Mutex`, `RwLock` or `Atomic`
-  parameter, or a channel end, takes no word, since its own "only me" is the lock's block (`E3028`:
-  "`top` takes the lock of `scores` itself; a `Mutex` takes no word at the call: `top(scores)`").
-  The object a method is called on is not marked (`a.reset()`): what the method does to it is worked
-  out from its body (`[EXC-15]`). The arguments of one call do not overlap a changeable one
-  (`[BRW-11]`), and a call is checked against what the callee does with each view argument
-  (`[BRW-21]`). The editor shows a parameter's word as an inlay hint where the call does not write
-  one.
+  hand a value over as `=` does (`[OWN-9]`); nor does a value made in the call with a word that
+  makes an owner or a link (`setup(shares mut game)`, `ROSTER.push(weakref this)`, `thread_shared
+  x`, `sharedref mut x`), since that word says what is given (verdicts 147 and 160; `owns shares mut
+  game` is `E0109`). A function from a variable given to a parameter whose type is a type parameter
+  bounded by a function type (`owns f: F` under `[F: needs fn(int)]`, `[CLO-14]`), in any package,
+  is lent for the call: `F` names that very function, the callee runs it and keeps nothing of it, so
+  after `xs.iter().for_each(h)` and after `apply(h)` alike `h` is the caller's still. It takes no
+  word when its functions keep no state or only read it; one whose functions may change their own
+  state is given `ref mut h`, since the call changes it (`[CLO-18]`, `E3023` without the word:
+  "`counter` changes its own `n` each time it runs, and `apply` runs it; say so at the call:
+  `apply(ref mut counter)`"). `owns h` before such an argument is `E0109` ("`apply` runs `h` and
+  keeps nothing of it; remove `owns`: `apply(h)`"); a function written in the call is given with
+  `owns` (verdict 158), and a value the call gives back that keeps the lent function (an iterator
+  adapter, `[STD-19]`) is a value holding a view of `h`, which lives no longer than `h` (`[LT-45]`).
+  A parameter of a callable type (`owns f: fn(int)`) keeps what it is given and takes `owns` as any
+  `owns` parameter does. An argument for a `Mutex`, `RwLock` or `Atomic` parameter, or a channel
+  end, takes no word, since its own "only me" is the lock's block (`E3028`: "`top` takes the lock of
+  `scores` itself; a `Mutex` takes no word at the call: `top(scores)`"); an `owns` parameter of one
+  of these types takes `owns` as every such argument does (`start_worker(owns rx)` for `fn
+  start_worker(owns rx: Receiver[Job]):`). The object a method is called on is not marked
+  (`a.reset()`): what the method does to it is worked out from its body (`[EXC-15]`). The arguments
+  of one call do not overlap a changeable one (`[BRW-11]`), and a call is checked against what the
+  callee does with each view argument (`[BRW-21]`). The editor shows a parameter's word as an inlay
+  hint where the call does not write one.
 * `[FN-9]` *(new in 0.9.9)* *(changed in 0.9.15)* A parameter of a class type takes its word as one
   of any type does, since a class object has one owner unless a line says `shares` (`[CLS-1]`): `p:
   Player` reads the object, which neither changes nor ends while `p` is used; `ref mut p: Player`
@@ -305,15 +309,17 @@ pub struct Vec2:
   objects, `shares` values, `weakref` and `sharedref mut` links, `ref mut` views and `MutSpan`s are
   not `Copy` (`[OWN-7]`), so a struct holding one is not.
 * `[STR-4]` A struct may have no fields (`struct Marker: pass`).
-* `[STR-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Implicit derives.** A struct or enum
-  implements `Eq`, `Debug` and `Clone` field-wise, automatically, when every field implements the
-  interface; `@no_derive(Eq)` (or `Debug`, `Clone`) opts out, and a hand-written implementation
-  replaces the implicit one. A field-wise `Clone` copies what the value owns alone itself, and each
-  link as one more link to the same target: a `shares` field as one more owner, a `weakref` field as
-  one more link, a `sharedref mut` field as one more holder (`[OWN-8]`). A type that declares `drop`
-  is not implicitly `Clone`: a field-wise copy would release twice what its `drop` releases, so it
-  is `Clone` through `@derive(Clone)` or a written `clone` (ODR-026). `Copy`, `Ord`, `Hash`,
-  `Default` and `Display` are never implicit and are requested with `@derive(…)` or written by hand.
+* `[STR-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **Implicit derives.** A
+  struct or enum implements `Eq`, `Debug` and `Clone` field-wise, automatically, when every field
+  implements the interface; `@no_derive(Eq)` (or `Debug`, `Clone`) opts out, and a hand-written
+  implementation replaces the implicit one. A field-wise `Clone` copies what the value owns alone
+  itself, and each link as one more link to the same target: a `shares` field as one more owner, a
+  `weakref` field as one more link, a `sharedref mut` field as one more holder (`[OWN-8]`). A type
+  that declares `drop` is not implicitly `Clone`: a field-wise copy would release twice what its
+  `drop` releases, so it is `Clone` through `@derive(Clone)` or a written `clone` (ODR-026). `Copy`,
+  `Ord`, `Hash`, `Default` and `Display` are never implicit, except that a unit-only enum is `Copy`,
+  `Ord` and `Hash` automatically (`[ENM-3]`), and are requested with `@derive(…)` or written by
+  hand.
 * `[STR-7]` *(new in 0.9.9)* *(changed in 0.9.15)* Inside the body of a `struct`, `enum`, `class` or
   `extend` block, `Self` names the type being declared with its own generic parameters, and the
   type's name may be written with any arguments: with `[T]` above `struct Pair:`, a method may
@@ -507,23 +513,23 @@ extend Square implements Shape2D:
   implement `Eq`. So a bound brings its parents: `T: needs IndexMut[int]` provides `Index[int]`'s
   methods too, and a binding it writes (`Output = f32`) names the parent's associated type
   (ODR-042).
-* `[IFC-4]` *(changed in 0.9.9)* Interfaces may declare associated types and constants, not statics.
-  An associated type may carry bounds (`type Real: needs Float`), and a type implementing the
-  interface states it (`type Real = f64`) with a value that meets them (`E2040` if it is missing or
-  does not). `T.Name` names the associated type `Name` of a type parameter `T` whose bound declares
-  it: inside the generic body it has what its declared bounds provide, and each call takes it from
-  what the argument's type states (ODR-038). An `extend` block that implements several interfaces
-  states an associated type once, for each of them that declares it (`extend i32 implements Add,
-  Sub: type Output = i32`). `Name = T` inside an interface's brackets is written only in a bound
-  (`T: Add[Output = T]`), and is `E2020` in an `implements` list. A bound that leaves an associated
-  type unsaid (`T: needs Add`) makes `a + b` a `T.Output`, which only a signature naming it (`->
-  T.Output`) can hold (`E2040` otherwise) (ODR-040). An interface may give an associated type a
-  **default** (`type Out = Self`): an implementation that does not state it takes the default, read
-  with `Self` as the implementing type, and the default must meet the associated type's bounds
-  (`E2040`). A default is not an equality: a bound `T: needs I` leaves `T.Out` abstract whatever the
-  default says, and a default method body sees `Out` as itself, never as its default, since an
-  implementation may override it (ODR-049). A default that leads back to itself, directly or through
-  other defaults, is `E2043`.
+* `[IFC-4]` *(changed in 0.9.9)* *(changed in 0.9.20)* Interfaces may declare associated types and
+  constants, not statics. An associated type may carry bounds (`type Real: needs Float`), and a type
+  implementing the interface states it (`type Real = f64`) with a value that meets them (`E2040` if
+  it is missing or does not). `T.Name` names the associated type `Name` of a type parameter `T`
+  whose bound declares it: inside the generic body it has what its declared bounds provide, and each
+  call takes it from what the argument's type states (ODR-038). An `extend` block that implements
+  several interfaces states an associated type once, for each of them that declares it (`extend i32
+  implements Add, Sub: type Output = i32`). `Name = T` inside an interface's brackets is written
+  only in a bound (`T: needs Add[Output = T]`), and is `E2020` in an `implements` list. A bound that
+  leaves an associated type unsaid (`T: needs Add`) makes `a + b` a `T.Output`, which only a
+  signature naming it (`-> T.Output`) can hold (`E2040` otherwise) (ODR-040). An interface may give
+  an associated type a **default** (`type Out = Self`): an implementation that does not state it
+  takes the default, read with `Self` as the implementing type, and the default must meet the
+  associated type's bounds (`E2040`). A default is not an equality: a bound `T: needs I` leaves
+  `T.Out` abstract whatever the default says, and a default method body sees `Out` as itself, never
+  as its default, since an implementation may override it (ODR-049). A default that leads back to
+  itself, directly or through other defaults, is `E2043`.
 * `[IFC-5]` *(new in 0.9.15)* *(changed in 0.9.20)* **Interface values say who owns them.** `owns
   dyn I` is a value of some type implementing `I`, held alone in a block of its own; `shares dyn I`
   and `shares mut dyn I` are one of several owners of such a value, reading it or changing it too;

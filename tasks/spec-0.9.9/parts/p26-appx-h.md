@@ -2466,8 +2466,34 @@ Generated: every rule whose text differs from 0.9.15_Hardened_9.
 | `[THR-21]` | changed |
 | `[WK-17]` | changed |
 
+## H.51 Changes in 0.9.15_Hardened_11 (from 0.9.15_Hardened_10)
 
-## H.51 Changes in 0.9.20_Hardened_1 (from 0.9.15_Hardened_10)
+**0.9.15_Hardened_11** writes in the owner's verdicts 161 to 163 from the review of 2026-11-02, morning
+(`tasks/96/redesign/JOB.md`; each shown with its options and the lead's recommendation):
+
+* Verdict 161: `owns` binds as `-` does, so an argument of more than one name, number or call is
+  written in brackets, `tx.send(owns (i * i))`; `tx.send(owns i * i)` is `(owns i) * i` and `E3028`,
+  whose help writes the brackets (`[GRM-15]`). The grammar already said so; the rule now says it.
+* Verdict 162: `runtime` goes before a class type too, `fn pick(a: runtime A):`, and a `virtual`
+  call's kind is checked while the program runs as a `runtime dyn` value's is (`[LT-48]`).
+* Verdict 163: `runtime` goes right after a variable's `:` too, `p: runtime dyn Picker = ...`, and
+  guards the lines of its function after it, with no function written only to carry the word
+  (`[LT-48]`, `[LEX-15]`, the grammar's `var_decl`; the cost row in §X.4 and `E3021`'s help).
+
+Hardened_11 was cut on the owner's machine on 2026-11-02; 0.9.20_Hardened_1 and Hardened_2 (§H.52,
+§H.53) were cut from Hardened_10 in a cloud session on 2026-11-03, and the two lines met in
+0.9.20_Hardened_3 (§H.54), which carries all three verdicts in 0.9.20's words.
+
+Generated: every rule whose text differs from 0.9.15_Hardened_10.
+
+| Rule | 0.9.15_Hardened_10 → 0.9.15_Hardened_11 |
+|---|---|
+| `[GRM-15]` | changed |
+| `[LEX-15]` | changed |
+| `[LT-48]` | changed |
+
+
+## H.52 Changes in 0.9.20_Hardened_1 (from 0.9.15_Hardened_10)
 
 **0.9.20_Hardened_1** is the hardening audit of 2026-11-03, a reading of the whole of 0.9.15_Hardened_10
 for holes in its memory-safety rules, facts it left unsaid and words that disagreed with each other, made
@@ -2590,7 +2616,7 @@ Generated: every rule whose text differs from 0.9.15_Hardened_10.
 | `[TYP-47]` | changed |
 
 
-## H.52 Changes in 0.9.20_Hardened_2 (from 0.9.20_Hardened_1)
+## H.53 Changes in 0.9.20_Hardened_2 (from 0.9.20_Hardened_1)
 
 **0.9.20_Hardened_2** is the second hardening pass of 2026-11-03, made under the owner's delegation
 (`docs/AUTOPILOT.md` §3): a reading of the whole of 0.9.20_Hardened_1 by nine readers, each over a few

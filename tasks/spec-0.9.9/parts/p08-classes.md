@@ -341,12 +341,14 @@ no access words, and no change of a field begins or ends anything at run time.
 * `[EXC-16]` *(new in 0.9.9)* *(changed in 0.9.15)* Giving a field that owns memory a new value
   (`h.items = []`, `h.name = other`) is a reshape: inside a `for` loop over the same field it is
   `E3020` (`[BRW-18]`), and a view into the old value is not used after it (`E3060`, `[BRW-17]`).
-* `[EXC-17]` *(new in 0.9.9)* *(changed in 0.9.15)* Writing a number or a `bool` (a field of a
-  `Copy` type) moves and frees nothing, so it is not a reshape and ends no view; a method that
-  writes `this.health` through a link that may lead to its own object is allowed (`[EXC-15]`). While
-  a read-only view of that field is still used, a write through another name that may reach it is
-  `E3021` (`[BRW-1]`). Through a `sharedref mut` link, any holder may write it at any time on one
-  thread (`[LT-46]`); such a view gets no alias fact another holder could break (`[SIMD-3]`).
+* `[EXC-17]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* Writing a number or a
+  `bool` (a field of a `Copy` type) moves and frees nothing, so it is not a reshape and ends no
+  view; a method that writes `this.health` through a link that may lead to its own object is allowed
+  (`[EXC-15]`). While a read-only view of that field is still used, a write through another name
+  that may reach it is `E3021` (`[BRW-1]`). Through a `sharedref mut` link, any holder may write it
+  at any time on one thread (`[LT-46]`), except while a read-only view of it made through another
+  name is still used (`E3021`, the sentence before); such a view gets no alias fact another holder
+  could break (`[SIMD-3]`).
 * `[EXC-15]` *(new in 0.9.9)* *(changed in 0.9.15)* **A method and its object.** Inside a method its
   object is `this`. What a method does to it is worked out from its body (`[BRW-10]`): a method
   whose body changes `this` may change it, one whose body neither changes nor ends anything of
@@ -588,8 +590,8 @@ while up exists as n:            # the node still lives: call it `n`
   unless the compiler proves that the loop is opened again before its objects lose their last owner
   from outside (`E3032`: "this closes a loop of owners (`a` → `b` → `a`) that nothing opens again
   before `a` and `b` end, so neither node is ever freed; open it before the function ends: `b.next =
-  None`, or make the link back `weakref`: `next: Option[weakref Node]`") (a deliberate error
-  example, so the block is not compiled):
+  None`, or make the link back `weakref`: `next: weakref Node = None`") (a deliberate error example,
+  so the block is not compiled):
 
 ```ember,ignore
 ## deliberate error example: a loop of owners nothing opens again (`E3032`)

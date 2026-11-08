@@ -1,0 +1,761 @@
+[
+ {
+  "cid": "K01-sharedref-send",
+  "severity": "high",
+  "rules": [
+   "THR-13",
+   "THR-8",
+   "THR-9",
+   "TYP-36",
+   "marker table (Send, ThreadShared)"
+  ]
+ },
+ {
+  "cid": "K02-thread-shared-not-threadshared",
+  "severity": "high",
+  "rules": [
+   "THR-1",
+   "THR-13",
+   "THR-8",
+   "THR-9"
+  ]
+ },
+ {
+  "cid": "K03-task-ends-shares-owners",
+  "severity": "high",
+  "rules": [
+   "OBJ-3",
+   "RC-1",
+   "THR-11",
+   "THR-13",
+   "THR-2"
+  ]
+ },
+ {
+  "cid": "K04-weakref-outlives-arena",
+  "severity": "high",
+  "rules": [
+   "ALC-1",
+   "ALC-5",
+   "LT-4",
+   "OBJ-3",
+   "WK-11"
+  ]
+ },
+ {
+  "cid": "K05-thread-shared-using",
+  "severity": "high",
+  "rules": [
+   "ALC-1",
+   "LT-4",
+   "OBJ-1",
+   "RC-4",
+   "TYP-46"
+  ]
+ },
+ {
+  "cid": "K06-sharing-a-local",
+  "severity": "high",
+  "rules": [
+   "BCK-4",
+   "HEAP-3",
+   "OWN-13",
+   "RC-1",
+   "RC-7",
+   "THR-1"
+  ]
+ },
+ {
+  "cid": "K07-raw-pointer-struct-safe-call",
+  "severity": "high",
+  "rules": [
+   "FFI-10",
+   "FFI-11",
+   "FFI-30a",
+   "FFI-56"
+  ]
+ },
+ {
+  "cid": "K08-export-arguments-from-c",
+  "severity": "high",
+  "rules": [
+   "FFI-21a",
+   "FFI-26",
+   "FFI-31b",
+   "FFI-56"
+  ]
+ },
+ {
+  "cid": "K09-cpp-reference-result",
+  "severity": "high",
+  "rules": [
+   "FFI-11f",
+   "FFI-17a",
+   "FFI-2a",
+   "FFI-40",
+   "LT-1"
+  ]
+ },
+ {
+  "cid": "K10-queued-drop-check-points",
+  "severity": "high",
+  "rules": [
+   "BRW-18",
+   "EFF-6",
+   "HR-3a",
+   "JOB-2",
+   "RC-4",
+   "THR-16",
+   "THR-19",
+   "THR-20",
+   "WK-3"
+  ]
+ },
+ {
+  "cid": "K11-unsafe-drop-override",
+  "severity": "high",
+  "rules": [
+   "DRP-8",
+   "DSP-2",
+   "UNS-1",
+   "UNS-12"
+  ]
+ },
+ {
+  "cid": "K12-function-lent-to-std-and-kept",
+  "severity": "high",
+  "rules": [
+   "CLO-12",
+   "CLO-7",
+   "FN-2a",
+   "GRM-15",
+   "GRM-28",
+   "OWN-9",
+   "STD-19",
+   "THR-10"
+  ]
+ },
+ {
+  "cid": "K13-weakref-to-static",
+  "severity": "medium",
+  "rules": [
+   "CT-5",
+   "STA-1",
+   "THR-9",
+   "WK-11"
+  ]
+ },
+ {
+  "cid": "K14-reload-shared-block",
+  "severity": "medium",
+  "rules": [
+   "HR-12",
+   "HR-13",
+   "HR-15",
+   "OBJ-1"
+  ]
+ },
+ {
+  "cid": "K15-foreign-const-globals",
+  "severity": "medium",
+  "rules": [
+   "FFI-40a",
+   "FFI-41",
+   "FFI-8",
+   "STA-1"
+  ]
+ },
+ {
+  "cid": "K16-unsafe-import-cpp",
+  "severity": "medium",
+  "rules": [
+   "FFI-17",
+   "FFI-3",
+   "FFI-51",
+   "TCB-4"
+  ]
+ },
+ {
+  "cid": "K17-read-only-parameter-promise",
+  "severity": "medium",
+  "rules": [
+   "BRW-15",
+   "GRM-44",
+   "OWN-13",
+   "WK-11",
+   "WK-12"
+  ]
+ },
+ {
+  "cid": "K18-string-plus",
+  "severity": "high",
+  "rules": [
+   "FN-2a",
+   "OWN-9",
+   "TXT-11",
+   "TYP-21",
+   "TYP-40"
+  ]
+ },
+ {
+  "cid": "K19-written-init-call-words",
+  "severity": "high",
+  "rules": [
+   "CLS-2",
+   "FN-2a",
+   "GRM-15",
+   "OWN-9",
+   "STR-6"
+  ]
+ },
+ {
+  "cid": "K20-anyerror-send",
+  "severity": "high",
+  "rules": [
+   "ERR-3",
+   "ERR-8",
+   "THR-2",
+   "THR-8"
+  ]
+ },
+ {
+  "cid": "K21-cpp-overloads",
+  "severity": "high",
+  "rules": [
+   "FFI-12",
+   "FFI-39b",
+   "FFI-48",
+   "GRM-35",
+   "TYP-26"
+  ]
+ },
+ {
+  "cid": "K22-opened-name-owns-call-result",
+  "severity": "medium",
+  "rules": [
+   "BRW-14",
+   "CTL-1",
+   "CTL-11",
+   "GRM-13",
+   "GRM-44"
+  ]
+ },
+ {
+  "cid": "K23-match-subject-temporaries",
+  "severity": "medium",
+  "rules": [
+   "DRP-3",
+   "EXP-4",
+   "GRM-15",
+   "THR-19"
+  ]
+ },
+ {
+  "cid": "K24-owning-names-changeable",
+  "severity": "medium",
+  "rules": [
+   "BRW-14",
+   "BRW-15",
+   "CTL-1",
+   "GRM-13",
+   "OWN-3"
+  ]
+ },
+ {
+  "cid": "K25-owns-takes-a-place-out",
+  "severity": "medium",
+  "rules": [
+   "BRW-12",
+   "DSP-4",
+   "DSP-6",
+   "GRM-15",
+   "OWN-10",
+   "OWN-11",
+   "TYP-44"
+  ]
+ },
+ {
+  "cid": "K26-copying-a-view",
+  "severity": "medium",
+  "rules": [
+   "BRW-1",
+   "BRW-12",
+   "LT-1a",
+   "LT-20",
+   "OWN-7",
+   "OWN-8",
+   "STR-3",
+   "TYP-36"
+  ]
+ },
+ {
+  "cid": "K27-for-over-named-iterator",
+  "severity": "medium",
+  "rules": [
+   "CTL-1",
+   "FN-2a"
+  ]
+ },
+ {
+  "cid": "K28-untyped-list-of-text",
+  "severity": "medium",
+  "rules": [
+   "LEX-20",
+   "TXT-9",
+   "TYP-23",
+   "TYP-38"
+  ]
+ },
+ {
+  "cid": "K29-text-view-in-list",
+  "severity": "medium",
+  "rules": [
+   "STD-12",
+   "STD-8",
+   "TXT-9"
+  ]
+ },
+ {
+  "cid": "K30-shared-owner-equality-and-identity",
+  "severity": "medium",
+  "rules": [
+   "EXP-9",
+   "IV.11",
+   "TYP-14",
+   "TYP-36",
+   "TYP-39",
+   "TYP-5"
+  ]
+ },
+ {
+  "cid": "K31-c-kept-callback-declaration",
+  "severity": "high",
+  "rules": [
+   "FFI-10",
+   "FFI-11",
+   "FFI-21",
+   "FFI-52"
+  ]
+ },
+ {
+  "cid": "K32-super-init-memberwise",
+  "severity": "medium",
+  "rules": [
+   "CLS-10",
+   "CLS-11",
+   "CLS-3",
+   "CLS-4"
+  ]
+ },
+ {
+  "cid": "K33-init-and-field-defaults",
+  "severity": "medium",
+  "rules": [
+   "CLS-2",
+   "STR-2",
+   "STR-6"
+  ]
+ },
+ {
+  "cid": "K34-which-types-take-using",
+  "severity": "medium",
+  "rules": [
+   "ALC-1",
+   "IV.1",
+   "TYP-46"
+  ]
+ },
+ {
+  "cid": "K35-weakref-dyn",
+  "severity": "medium",
+  "rules": [
+   "DSP-4",
+   "OBJ-1",
+   "TYP-45",
+   "WK-11"
+  ]
+ },
+ {
+  "cid": "K36-unsafe-extend-vouching",
+  "severity": "medium",
+  "rules": [
+   "STA-1",
+   "THR-8",
+   "THR-9",
+   "TYP-43"
+  ]
+ },
+ {
+  "cid": "K37-parallel-array-elements",
+  "severity": "medium",
+  "rules": [
+   "PAR-1",
+   "PAR-2"
+  ]
+ },
+ {
+  "cid": "K38-parallel-reductions",
+  "severity": "medium",
+  "rules": [
+   "E7007",
+   "PAR-2",
+   "PAR-3",
+   "THR-11",
+   "THR-21"
+  ]
+ },
+ {
+  "cid": "K39-reduction-start-values",
+  "severity": "medium",
+  "rules": [
+   "PAR-3",
+   "THR-21",
+   "TYP-8"
+  ]
+ },
+ {
+  "cid": "K40-function-value-inline-state",
+  "severity": "medium",
+  "rules": [
+   "CLO-10",
+   "PHIL-2"
+  ]
+ },
+ {
+  "cid": "K41-some-after-conversions",
+  "severity": "medium",
+  "rules": [
+   "TYP-5"
+  ]
+ },
+ {
+  "cid": "K42-split-mutspan-halves",
+  "severity": "medium",
+  "rules": [
+   "BRW-12",
+   "GRM-5",
+   "SPN-3",
+   "SPN-5"
+  ]
+ },
+ {
+  "cid": "K43-weakref-into-cached",
+  "severity": "medium",
+  "rules": [
+   "CLS-12",
+   "EFF-27",
+   "WK-11",
+   "WK-12"
+  ]
+ },
+ {
+  "cid": "K44-drop-changes-let-field",
+  "severity": "medium",
+  "rules": [
+   "CLS-7a",
+   "CLS-9a",
+   "DRP-1"
+  ]
+ },
+ {
+  "cid": "K45-dyn-with-self-parameter",
+  "severity": "medium",
+  "rules": [
+   "TYP-22",
+   "TYP-36"
+  ]
+ },
+ {
+  "cid": "K46-ffi-handle-meaning",
+  "severity": "medium",
+  "rules": [
+   "FFI-1",
+   "FFI-11",
+   "FFI-11a",
+   "FFI-31b"
+  ]
+ },
+ {
+  "cid": "K47-overlay-operator-names",
+  "severity": "medium",
+  "rules": [
+   "FFI-2",
+   "FFI-40a",
+   "FFI-42",
+   "GRM-35"
+  ]
+ },
+ {
+  "cid": "K48-migrate-from-ownership",
+  "severity": "medium",
+  "rules": [
+   "HR-14",
+   "HR-15",
+   "HR-16",
+   "HR-2a"
+  ]
+ },
+ {
+  "cid": "K49-ser-skip-field-value",
+  "severity": "medium",
+  "rules": [
+   "DRV-1",
+   "SER-1",
+   "SER-2"
+  ]
+ },
+ {
+  "cid": "K50-adopt-ends-by-own-destructor",
+  "severity": "medium",
+  "rules": [
+   "FFI-11",
+   "FFI-23",
+   "FFI-32",
+   "FFI-36",
+   "FFI-36a",
+   "FFI-54"
+  ]
+ },
+ {
+  "cid": "K51-ref-to-ptr-spelling",
+  "severity": "low",
+  "rules": [
+   "IV.5",
+   "TYP-26"
+  ]
+ },
+ {
+  "cid": "K52-c-keeps-address-ember-owns",
+  "severity": "medium",
+  "rules": [
+   "FFI-11",
+   "FFI-23",
+   "FFI-35a",
+   "THR-2"
+  ]
+ },
+ {
+  "cid": "K53-once-callback-token",
+  "severity": "medium",
+  "rules": [
+   "FFI-21",
+   "FFI-23",
+   "FFI-52",
+   "FFI-53"
+  ]
+ },
+ {
+  "cid": "K54-nondet-contested-lock",
+  "severity": "medium",
+  "rules": [
+   "DET-1",
+   "DET-2",
+   "THR-21"
+  ]
+ },
+ {
+  "cid": "K55-nondet-math-functions",
+  "severity": "medium",
+  "rules": [
+   "DET-2",
+   "DET-4",
+   "STD-21",
+   "STD-27",
+   "STD-28"
+  ]
+ },
+ {
+  "cid": "K56-unsafe-at-compile-time",
+  "severity": "medium",
+  "rules": [
+   "CT-1",
+   "CT-2",
+   "EFF-1"
+  ]
+ },
+ {
+  "cid": "K57-export-threads-main-creator",
+  "severity": "medium",
+  "rules": [
+   "FFI-33",
+   "FFI-33c",
+   "GRM-37",
+   "STA-1"
+  ]
+ },
+ {
+  "cid": "K58-runtime-check-effect-kind",
+  "severity": "medium",
+  "rules": [
+   "COST-6",
+   "DSJ-6",
+   "EFF-12",
+   "EFF-16",
+   "EFF-9",
+   "LT-48",
+   "TIER-1 table (Contract tier)"
+  ]
+ },
+ {
+  "cid": "K59-runtime-placement-beyond-verdicts",
+  "severity": "medium",
+  "rules": [
+   "GRM-42",
+   "LEX-15",
+   "LT-48"
+  ]
+ },
+ {
+  "cid": "K60-gpu-frame-early-exit",
+  "severity": "low",
+  "rules": [
+   "GPU-2",
+   "GPU-3",
+   "THR-6"
+  ]
+ },
+ {
+  "cid": "K61-arena-scope-views",
+  "severity": "low",
+  "rules": [
+   "ARN-1",
+   "ARN-6",
+   "ARN-7"
+  ]
+ },
+ {
+  "cid": "K62-copy-of-on-loop-names",
+  "severity": "low",
+  "rules": [
+   "BRW-14",
+   "CTL-1",
+   "GRM-13",
+   "GRM-42",
+   "GRM-44"
+  ]
+ },
+ {
+  "cid": "K63-copied-array-tuple-changed",
+  "severity": "low",
+  "rules": [
+   "OWN-7"
+  ]
+ },
+ {
+  "cid": "K64-list-pattern-arms",
+  "severity": "low",
+  "rules": [
+   "CTL-5",
+   "GRM-10",
+   "GRM-40"
+  ]
+ },
+ {
+  "cid": "K65-several-interfaces-after-dyn",
+  "severity": "low",
+  "rules": [
+   "GRM-3",
+   "TYP-17",
+   "TYP-32"
+  ]
+ },
+ {
+  "cid": "K66-constructor-visibility",
+  "severity": "low",
+  "rules": [
+   "IFC-6",
+   "MOD-2",
+   "MOD-7",
+   "MOD-9",
+   "STR-1"
+  ]
+ },
+ {
+  "cid": "K67-bool-char-casts",
+  "severity": "low",
+  "rules": []
+ },
+ {
+  "cid": "K68-pack-tuple-sizes",
+  "severity": "medium",
+  "rules": [
+   "TYP-47"
+  ]
+ },
+ {
+  "cid": "K69-soa-flattened-field",
+  "severity": "low",
+  "rules": [
+   "SIMD-3",
+   "SOA-1",
+   "SOA-2",
+   "SOA-6"
+  ]
+ },
+ {
+  "cid": "K70-raw-identifier-reserved",
+  "severity": "low",
+  "rules": [
+   "FFI identifier table",
+   "LEX-14",
+   "LEX-15"
+  ]
+ },
+ {
+  "cid": "K71-nested-tuple-access",
+  "severity": "low",
+  "rules": [
+   "GRM postfix \".\" INT",
+   "LEX-18",
+   "LEX-21"
+  ]
+ },
+ {
+  "cid": "K72-comptime-read-file",
+  "severity": "low",
+  "rules": [
+   "CT-1",
+   "CT-2",
+   "CT-6"
+  ]
+ },
+ {
+  "cid": "K73-det-ln-name",
+  "severity": "low",
+  "rules": [
+   "DET-4",
+   "STD-21",
+   "STD-27"
+  ]
+ },
+ {
+  "cid": "K74-anyerror-core-layer",
+  "severity": "low",
+  "rules": [
+   "BLD-11",
+   "ERR-11",
+   "ERR-8",
+   "ERR-9",
+   "STD-6"
+  ]
+ },
+ {
+  "cid": "K75-overlay-header-mismatch",
+  "severity": "low",
+  "rules": [
+   "FFI-12",
+   "FFI-30c",
+   "FFI-55",
+   "GRM-35"
+  ]
+ },
+ {
+  "cid": "K76-callback-table-full",
+  "severity": "low",
+  "rules": [
+   "FFI-21",
+   "FFI-53",
+   "HND-3"
+  ]
+ }
+]

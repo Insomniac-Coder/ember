@@ -152,14 +152,14 @@ fn main():
   move, so views of their elements stay valid while the element and the arena do. Adding past
   capacity returns `Err(CapacityError.Full)` and changes nothing. Their elements, keys and values
   must not need drop. They live in `std.collections` and are not in the prelude.
-* `[ARN-5c]` `ArenaArray[T]` provides `len`, `capacity`, `is_empty`, `get(i) -> Option[ref T]`,
-  `get_mut`, `push(v) -> Result[void, CapacityError]`, `insert(i, v) -> Result[void,
-  CapacityError]`, `remove(i) -> Option[T]`, `clear`, `iter` and `iter_mut` (in index order);
-  indices follow the `Array` rules.
-* `[ARN-5d]` `ArenaMap[K, V]` (with `K: needs (Eq, Hash)`) provides `len`, `capacity`, `is_empty`,
-  `get`, `get_mut`, `insert(k, v) -> Result[Option[V], CapacityError]` (replacing returns the old
-  value), `remove`, `contains_key`, `clear` and `iter`, which follows insertion order like `Map`
-  (`[STD-11]`).
+* `[ARN-5c]` *(changed in 0.9.20)* `ArenaArray[T]` provides `len`, `capacity`, `is_empty`, `get(i)
+  -> Option[ref T]`, `get_mut`, `push(owns v) -> Result[void, CapacityError]`, `insert(i, owns v) ->
+  Result[void, CapacityError]`, `remove(i) -> Option[T]`, `clear`, `iter` and `iter_mut` (in index
+  order); indices follow the `Array` rules.
+* `[ARN-5d]` *(changed in 0.9.20)* `ArenaMap[K, V]` (with `K: needs (Eq, Hash)`) provides `len`,
+  `capacity`, `is_empty`, `get`, `get_mut`, `insert(owns k, owns v) -> Result[Option[V],
+  CapacityError]` (replacing returns the old value), `remove`, `contains_key`, `clear` and `iter`,
+  which follows insertion order like `Map` (`[STD-11]`).
 * `[ARN-5g]` No operation of either container touches the arena after construction: nothing grows,
   moves the arena's cursor or allocates elsewhere.
 * `[ARN-6]` *(changed in 0.9.15)* `arena.scope() -> ScopedArena` is called through a name that may
@@ -492,9 +492,12 @@ fn main():
   Every lookup compares the generation, in every profile, and a stale handle yields `None` (or
   panics in `pool[h]`: "`pool[h]` on line 12: the handle is stale (slot 3, generation 2 of 5); use
   `pool.get(h)` for an `Option`"). `unsafe: pool.get_unchecked(h)` skips the comparison.
-* `[HND-2]` *(changed in 0.9.9)* `Handle[T]` is a `u64`: 32 bits of index and 32 of generation.
-  `Pool[T, Bits]` may narrow it (`Pool[T, Split20]` gives a 20-bit index and a 12-bit generation in
-  a `u32`).
+* `[HND-2]` *(changed in 0.9.9)* *(changed in 0.9.20)* `Handle[T]` is a `u64`: 32 bits of index and
+  32 of generation. `Pool[T, Bits]` may narrow it (`Pool[T, Split20]` gives a 20-bit index and a
+  12-bit generation in a `u32`), and its handle names the split as the pool does: `Pool[T,
+  B].insert` gives a `Handle[T, B]`, with `B` defaulting to `Split32`, so `Handle[T]` is `Handle[T,
+  Split32]`, a `u64`, and `Handle[T, Split20]` a `u32`; handles of pools with different splits are
+  different types (an `Array[Handle[Texture]]` takes no `Split20` handle, `E2020`).
 * `[HND-3]` *(new in 0.9.9)* *(changed in 0.9.15)* A slot whose generation is exhausted is retired
   and never reused, so an old handle can never become valid again. A retired slot's memory stays
   with the pool until the pool ends: a pool keeps one retired slot for each slot reused as many
@@ -510,7 +513,7 @@ struct Sprite:
     frame: Cell[int]
 
 fn advance(ref mut s: Sprite):          # setting a `Cell` needs a name that may change its holder
-    s.frame.set(s.frame.get() + 1)
+    s.frame.set(owns (s.frame.get() + 1))
 
 struct Scene:
     entities: Array[int] = []
@@ -526,28 +529,30 @@ fn main():
     println(s.frame.get(), scene.entities.len())
 ```
 
-* `[CELL-1]` *(changed in 0.9.15)* `Cell[T]` holds a `T` that is replaced whole: `Cell(v)`, `set(v)`,
-  `replace(v) -> T`, `take() -> T` (for `T: needs Default`), `into_inner()`, `get() -> T` for `T: needs Copy`, and
-  `update(f)` for `T: needs Copy` or `T: needs Default`. Setting it is a change of the place that holds it, made
-  through a name that may change that place: a `ref mut` name, `this` in a method called through such a
-  name, or an owner of a `shares mut` value (through a plain name, `E3023`, `[BRW-15]`). `set` and
-  `replace` store the new value before dropping the old one, since the old value's `drop` may read the
-  cell.
-* `[CELL-2]` *(changed in 0.9.15)* `Cell` never hands out a view of its contents, so it needs no run-time check; `get` is
-  a load and `set` a store, with the count changes of any owner or link in the value (`[HEAP-6]`).
+* `[CELL-1]` *(changed in 0.9.15)* *(changed in 0.9.20)* `Cell[T]` holds a `T` that is replaced
+  whole: `Cell(v)` (a constructor's argument takes no word, `[FN-2a]`), `set(owns v)`, `replace(owns
+  v) -> T`, `take() -> T` (for `T: needs Default`), `into_inner()`, `get() -> T` for `T: needs
+  Copy`, and `update(f)` for `T: needs Copy` or `T: needs Default`. Setting it is a change of the
+  place that holds it, made through a name that may change that place: a `ref mut` name, `this` in a
+  method called through such a name, or an owner of a `shares mut` value (through a plain name,
+  `E3023`, `[BRW-15]`). `set` and `replace` store the new value before dropping the old one, since
+  the old value's `drop` may read the cell.
+* `[CELL-2]` *(changed in 0.9.15)* `Cell` never hands out a view of its contents, so it needs no
+  run-time check; `get` is a load and `set` a store, with the count changes of any owner or link in
+  the value (`[HEAP-6]`).
 * `[CELL-3]` *(changed in 0.9.15)* `Cell[T]` is not `ThreadShared`; it is `Send` if `T` is.
 * `[CELL-4]` `Cell[T]` is `Copy` when `T` is.
-* `[CELL-13]` *(new in 0.9.15)* **No change is checked while the program runs.** Every change is made
-  through a name that may make it, and the checks of Parts VII and VIII are made when compiling: no value
-  carries a borrow flag or an access word. A value several owners change on one thread is held
-  `shares mut` (`[RC-7]`); a value threads share and change is `thread_shared`, with an `Atomic`, a
-  `Mutex`, an `RwLock` or `guarded by` fields (Part XI); a field a method changes is changed through
-  `this` (`[EXC-15]`). `RefCell`, `Ref`, `RefMut`, `borrow` and `borrow_mut` are not Ember (`E1010`:
-  "`RefCell` is not part of Ember; write the field plainly, `entities: Array[int]`, and change it in a
-  method: `fn add(owns e: int):` with the body `this.entities.push(owns e)`; for a scene several objects own and
-  change, make it once, `s = Scene(entities=[])`, write the field that keeps it in each owner as
-  `scene: shares mut Scene`, and give each owner its share where it is made, for example
-  `Panel(scene=shares mut s)`").
+* `[CELL-13]` *(new in 0.9.15)* **No change is checked while the program runs.** Every change is
+  made through a name that may make it, and the checks of Parts VII and VIII are made when
+  compiling: no value carries a borrow flag or an access word. A value several owners change on one
+  thread is held `shares mut` (`[RC-7]`); a value threads share and change is `thread_shared`, with
+  an `Atomic`, a `Mutex`, an `RwLock` or `guarded by` fields (Part XI); a field a method changes is
+  changed through `this` (`[EXC-15]`). `RefCell`, `Ref`, `RefMut`, `borrow` and `borrow_mut` are not
+  Ember (`E1010`: "`RefCell` is not part of Ember; write the field plainly, `entities: Array[int]`,
+  and change it in a method: `fn add(owns e: int):` with the body `this.entities.push(owns e)`; for
+  a scene several objects own and change, make it once, `s = Scene(entities=[])`, write the field
+  that keeps it in each owner as `scene: shares mut Scene`, and give each owner its share where it
+  is made, for example `Panel(scene=shares mut s)`").
 
 ## IX.8 Establishing disjointness
 
