@@ -23,6 +23,15 @@
 > owns its rule; a small pass may run the two exit checks the plan named (an implementer and an attacker over the
 > changed Parts).
 
+> **2026-11-02 to 2026-11-06 — the local session (attended). START HERE: `tasks/96/redesign/spec-gaps-0.9.15/FINDINGS.md`.**
+> On `main`, not on the cloud session's `spec-0.9.20-hardening` (which is built on Hardened_10): **0.9.15_Hardened_11**
+> (`4de795c4`, verdicts 161-163), **verdicts 164-166** in `tasks/96/redesign/JOB.md`, the gap sweep (76 open questions,
+> `questions.md`), four methods of agent review with their results and tests, and three open compiler defects
+> (D-966 with its fix ready in `pending/`, D-967, D-968). Against 0.9.20_Hardened_2 (`deep/check-0.9.20-H2.md`): verdicts
+> 161-164 and 166 are there, **165 is not**; K04 and K05 fixed, **K07 and K20 not**, K10 unclear; 13 of the 76 questions
+> had no rule touched. The owner's next step: the full check of the 76 against 0.9.20 "next week". Nothing in the
+> compiler changed since `5001ef9e`.
+
 > **2026-11-03 — a cloud session, AUTONOMOUS, solo (the owner: "find the security holes, memory safety issues,
 > consistency problems and missing spec detail problems and fix them ... the latest version will be called
 > 0.9.20_Hardened_1"). START HERE.** **Hardened_1 of 0.9.20 is cut** and is the development target
