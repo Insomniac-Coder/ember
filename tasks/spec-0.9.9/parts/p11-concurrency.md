@@ -53,44 +53,44 @@ change one place unordered.
   `abstract` class that **another package may derive from** (it, or an `open` or `abstract` class
   derived from it in its package, is `pub`) only when the class **promises** it in its header,
   `implements Send`, `implements ThreadShared`, or an interface that needs them (`pub open class
-  Script implements Send, ThreadShared:`, `open class GameError implements Error:`), written without
-  `unsafe` since the compiler checks it (`[TYP-43]`): the promise holds the class's own fields and
-  methods (`[OWN-13]`) and those of every class derived from it, each checked where that class is
-  declared, by the package that declares it, from the base's declaration in its source or in its
-  interface file (`[MOD-9]`, `[BLD-14]` item 8), so a derived class that breaks it is `E7015` at its
-  own line, naming the field and the promise and giving a copy line, and the `thread_shared` line
-  only where `[THR-1]` then holds ("`Enemy.level` is a `shares Level` owner, which stays on one
-  thread, and `Script` promises that any thread may hold its objects (`pub open class Script
-  implements Send, ThreadShared:`, gamekit/src/lib.em line 3), a promise every class derived from it
-  keeps; keep what the enemy reads from the level as a copy, `level_name: String`"); a derived class
-  may promise what its base does not, for itself and the classes derived from it, never for the
-  base; a generic class's promise holds for each instance whose arguments meet the needs its
-  parameters are bounded by, as a generic `unsafe extend` does (`[TYP-43]`); an object of such a
-  class whose header promises nothing is one no thread may be handed, whatever classes the program
-  derives, which no package can see (`[BLD-16]`): a value held by its type reaching another thread
-  by any route of `[THR-2]` is `E7015` at that line ("`s` is a `Script`, an `open` class whose
-  header does not say that any thread may hold its objects, so it may be an object of a class
-  another package derives from `Script`; write `pub open class Script implements Send:`
-  (gamekit/src/lib.em line 3), after which every class derived from `Script` is checked for it where
-  it is declared, or hand the object over by its own class, `d: Door`"); and an object of an `open`
-  or `abstract` class that no other package can derive from when its fields and those of every class
-  its package derives from it are, with nothing written, as a call through its `virtual` methods
-  counts every override the package has (`[EFF-2a]`), a refusal naming the derived class and its
-  field; an `owns T` when `T` is; `ref T` and `Span[T]` when `T` is `ThreadShared`, `ref mut T` and
-  `MutSpan[T]` when `T` is `Send`; a `thread_shared T`, and a `weakref thread_shared T`, when `T` is
-  `Send` and `ThreadShared`, and for an `open` or `abstract` `T` whatever its class promises, since
-  a `thread_shared` object is made only by a line that checks the object's own class (`[THR-1]`,
-  verdict 165; `E7017` anywhere else) and an upcast keeps the word (`[TYP-5]` rule 8); `dyn I` when
-  `I` requires it (`interface I: needs Send:`). Of the function types, `thread_shared fn()` is
-  `Send` (`[THR-1]`). A `Send` view still goes only where it cannot outlive what it views: to a
-  scoped task or a job of a scope, never to an unscoped thread (`[THR-2]`). `Send` is inferred from
-  the words and written only in bounds and in the header of an `open` or `abstract` class, where it
-  is a promise about every class derived from it that the compiler checks (above); the author of a
-  type that holds a raw pointer declares it with `unsafe extend T implements Send:` and a `#
-  SAFETY:` note (`E3100` without `unsafe`: "`Counter` holds a raw pointer, so the compiler cannot
-  tell that another thread may have it; say that you vouch for it: write `unsafe extend Counter
-  implements Send:` with a `# SAFETY:` note above it"). A thread-bound value sent to another thread
-  is `E7008`. So a class with a `weakref T` field has no `thread_shared` objects: `root =
+  Script implements Send, ThreadShared:`; `open class Step implements Job:` for an `interface Job:
+  needs (Send, ThreadShared):`), written without `unsafe` since the compiler checks it (`[TYP-43]`):
+  the promise holds the class's own fields and methods (`[OWN-13]`) and those of every class derived
+  from it, each checked where that class is declared, by the package that declares it, from the
+  base's declaration in its source or in its interface file (`[MOD-9]`, `[BLD-14]` item 8), so a
+  derived class that breaks it is `E7015` at its own line, naming the field and the promise and
+  giving a copy line, and the `thread_shared` line only where `[THR-1]` then holds ("`Enemy.level`
+  is a `shares Level` owner, which stays on one thread, and `Script` promises that any thread may
+  hold its objects (`pub open class Script implements Send, ThreadShared:`, gamekit/src/lib.em line
+  3), a promise every class derived from it keeps; keep what the enemy reads from the level as a
+  copy, `level_name: String`"); a derived class may promise what its base does not, for itself and
+  the classes derived from it, never for the base; a generic class's promise holds for each instance
+  whose arguments meet the needs its parameters are bounded by, as a generic `unsafe extend` does
+  (`[TYP-43]`); an object of such a class whose header promises nothing is one no thread may be
+  handed, whatever classes the program derives, which no package can see (`[BLD-16]`): a value held
+  by its type reaching another thread by any route of `[THR-2]` is `E7015` at that line ("`s` is a
+  `Script`, an `open` class whose header does not say that any thread may hold its objects, so it
+  may be an object of a class another package derives from `Script`; write `pub open class Script
+  implements Send:` (gamekit/src/lib.em line 3), after which every class derived from `Script` is
+  checked for it where it is declared, or hand the object over by its own class, `d: Door`"); and an
+  object of an `open` or `abstract` class that no other package can derive from when its fields and
+  those of every class its package derives from it are, with nothing written, as a call through its
+  `virtual` methods counts every override the package has (`[EFF-2a]`), a refusal naming the derived
+  class and its field; an `owns T` when `T` is; `ref T` and `Span[T]` when `T` is `ThreadShared`,
+  `ref mut T` and `MutSpan[T]` when `T` is `Send`; a `thread_shared T`, and a `weakref thread_shared
+  T`, when `T` is `Send` and `ThreadShared`, and for an `open` or `abstract` `T` whatever its class
+  promises, since a `thread_shared` object is made only by a line that checks the object's own class
+  (`[THR-1]`, verdict 165; `E7017` anywhere else) and an upcast keeps the word (`[TYP-5]` rule 8);
+  `dyn I` when `I` requires it (`interface I: needs Send:`). Of the function types, `thread_shared
+  fn()` is `Send` (`[THR-1]`). A `Send` view still goes only where it cannot outlive what it views:
+  to a scoped task or a job of a scope, never to an unscoped thread (`[THR-2]`). `Send` is inferred
+  from the words and written only in bounds and in the header of an `open` or `abstract` class,
+  where it is a promise about every class derived from it that the compiler checks (above); the
+  author of a type that holds a raw pointer declares it with `unsafe extend T implements Send:` and
+  a `# SAFETY:` note (`E3100` without `unsafe`: "`Counter` holds a raw pointer, so the compiler
+  cannot tell that another thread may have it; say that you vouch for it: write `unsafe extend
+  Counter implements Send:` with a `# SAFETY:` note above it"). A thread-bound value sent to another
+  thread is `E7008`. So a class with a `weakref T` field has no `thread_shared` objects: `root =
   thread_shared Node()` for a `class Node:` with `parent: weakref Node = None` is `E7015` at that
   line ("`Node.parent` is a `weakref Node`, a link kept on one thread, so a `Node` is not `Send`;
   for nodes shared between threads write `parent: weakref thread_shared Node = None` (line 3), link
@@ -107,26 +107,27 @@ change one place unordered.
   by the class's promise (`implements ThreadShared`, or an interface that needs it) when another
   package may derive from it, each derived class checked where it is declared (`E7015`), and by its
   package's derived classes when none can; `dyn I` when `I` requires it (`interface I: needs
-  ThreadShared:`), as for `Send` (ODR-255), so `dyn Error` is (`[ERR-3]`); a `thread_shared T` and a
-  `weakref thread_shared T` of an `open` or `abstract` `T` whatever its class promises, as `[THR-8]`
-  says. `ref mut T`, `MutSpan[T]`, `sharedref mut T`, `Cell`, `UnsafeCell`, raw pointers, a
-  `Retained[ForeignCallback]` token (`[FFI-23]`), `shares T`, `shares mut T`, a `weakref T` link,
-  and an object of a class with a `@cached` method that declares nothing saying its objects are
-  shared (`[CLS-12]`: no `ThreadShared` promise in its header or a base's, no interface that needs
-  it, no method that pins it `thread_shared`, `[OWN-13]`), whose kept result is then filled with
-  plain stores, are not, so that `static UNIT: Circle` is `E7002` and `thread_shared Circle(r=1.0)`
-  is `E7015` (`[THR-1]`, verdict 165), each naming the `@cached` line ("`Circle.label` is `@cached`
-  (line 4), and `Circle` says nowhere that threads share its objects, so its kept result is filled
-  with plain stores; say so in the class, `class Circle implements Shared:` with `interface Shared:
-  needs ThreadShared:`, or remove `@cached` (line 4)"); an `extern type`, an opaque C++ class or a
-  `@ffi(handle)` type is only where the program declares it (`[FFI-8]`). `Atomic[T]`, `Once`,
-  `Lock`, `Mutex[T]` for a `Send` `T` (one thread at a time holds its `ref mut T`), `RwLock[T]` and
-  `thread_shared T` for a `T` that is `Send` and `ThreadShared` (several threads hold a `ref T` at
-  once: `RwLock[Cell[int]]` is not `ThreadShared`), a `weakref thread_shared T` for such a `T`, a
-  channel's `Sender[T]` for a `Send` `T` (`[THR-15]`), and `thread_shared fn()`, whose state is
-  `ThreadShared` (`[THR-1]`), are; a `thread_shared once fn()` is `Send` and not `ThreadShared`,
-  since it is handed over and run once (`[CLO-6]`, `[THR-10]`), and a `Receiver[T]` is `Send` and
-  not `ThreadShared`, one consumer's (`[THR-15]`).
+  ThreadShared:`), as for `Send` (ODR-255), so the `dyn (Error, Send, ThreadShared)` an `AnyError`
+  holds is (`[ERR-8]`, `[TYP-22]`); a `thread_shared T` and a `weakref thread_shared T` of an `open`
+  or `abstract` `T` whatever its class promises, as `[THR-8]` says. `ref mut T`, `MutSpan[T]`,
+  `sharedref mut T`, `Cell`, `UnsafeCell`, raw pointers, a `Retained[ForeignCallback]` token
+  (`[FFI-23]`), `shares T`, `shares mut T`, a `weakref T` link, and an object of a class with a
+  `@cached` method that declares nothing saying its objects are shared (`[CLS-12]`: no
+  `ThreadShared` promise in its header or a base's, no interface that needs it, no method that pins
+  it `thread_shared`, `[OWN-13]`), whose kept result is then filled with plain stores, are not, so
+  that `static UNIT: Circle` is `E7002` and `thread_shared Circle(r=1.0)` is `E7015` (`[THR-1]`,
+  verdict 165), each naming the `@cached` line ("`Circle.label` is `@cached` (line 4), and `Circle`
+  says nowhere that threads share its objects, so its kept result is filled with plain stores; say
+  so in the class, `class Circle implements Shared:` with `interface Shared: needs ThreadShared:`,
+  or remove `@cached` (line 4)"); an `extern type`, an opaque C++ class or a `@ffi(handle)` type is
+  only where the program declares it (`[FFI-8]`). `Atomic[T]`, `Once`, `Lock`, `Mutex[T]` for a
+  `Send` `T` (one thread at a time holds its `ref mut T`), `RwLock[T]` and `thread_shared T` for a
+  `T` that is `Send` and `ThreadShared` (several threads hold a `ref T` at once: `RwLock[Cell[int]]`
+  is not `ThreadShared`), a `weakref thread_shared T` for such a `T`, a channel's `Sender[T]` for a
+  `Send` `T` (`[THR-15]`), and `thread_shared fn()`, whose state is `ThreadShared` (`[THR-1]`), are;
+  a `thread_shared once fn()` is `Send` and not `ThreadShared`, since it is handed over and run once
+  (`[CLO-6]`, `[THR-10]`), and a `Receiver[T]` is `Send` and not `ThreadShared`, one consumer's
+  (`[THR-15]`).
 * `[THR-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **A value several
   threads own is made `thread_shared`.** `thread_shared x` makes one more owner of `x`, which may be
   on any thread; it is written before a new value (`st = thread_shared Stats()`) or on a value

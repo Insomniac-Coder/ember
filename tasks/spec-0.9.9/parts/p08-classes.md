@@ -100,12 +100,17 @@ offset  size  field
   a one-instance manager a program declares included) lies in memory the runtime did not lay out, so
   it is marked handed over at the line that makes it (`[RC-4]` point 4) and no thread asks which
   thread made it; it is never queued, so where it keeps its instance's address (`[ALC-1]`) that
-  address stands in the header's queue place, and the value costs no word beyond the 32 bytes; so is
-  a `thread_shared` value a `static` or a `comptime(e)` holds, placed in the image when compiling
-  (`[CT-5]`). The header is part of the runtime ABI (`[VER-4]`). Foreign code never reads it; it
-  calls `ember_rt`. An object carries nothing else for the memory model: no access words, and no
-  flags but a `thread_shared` value's three marks and the kept-by-C mark, the top bit of the type
-  index (`[FFI-35a]`), so a type index is below 2^31.
+  address stands in the header's queue place, which only the subtract that takes the away count
+  below zero writes (`[RC-4]` point 2), as the away count of a value every owner of which it counts
+  never does, so the value costs no word beyond the 32 bytes and its fields lie at the offset they
+  have in `Global`, one method body serving every manager (`[OBJ-2]`); so is a `thread_shared` value
+  a `static` or a `comptime(e)` holds, placed in the image when compiling (`[CT-5]`). The header is
+  part of the runtime ABI (`[VER-4]`). Foreign code never reads it; it calls `ember_rt`. An object
+  carries nothing else for the memory model: no access words, and no flags but a `thread_shared`
+  value's three marks and the kept-by-C mark, the top bit of the type index (`[FFI-35a]`), so a type
+  index is below 2^31, and a kind test, a cast and a table load read the index with that bit
+  cleared, one `and` on the loaded word (`[TYP-44a]`, §X.4), so a marked object still answers `is`
+  and a `dyn` call.
 * `[OBJ-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* An owner, a link or a view of a class object
   is one pointer, to offset 0. An object's interface tables are reached through its type index, so a
   `dyn I` value of a class object, and an `Option` of one, is one pointer wide. A bare interface
@@ -274,50 +279,51 @@ offset  size  field
      but `Global` (`System`, a `static` manager and every instance alike, `[ALC-1]`, `[TYP-46a]`) is
      marked handed over at the line that makes it, in the header's first store, before any other
      thread can reach it: its block lies in memory the runtime did not lay out, so no chunk header
-     names its making thread (`[OBJ-1]`), and its instance may be reset or end as soon as the
-     compiler sees its last owner end (`[ALC-5]`, `[LT-4]`), which an end delayed to a check point
-     would miss; so every owner of such a value is counted in its away count, its end is never
-     delayed, and the thread that ends it gives the block back through the manager's `deallocate`
-     there. Where the type of the place at the line says `using A` (`[TYP-46]`, `[BLD-16]`) the
-     compiler emits the away path with no test of the mark and no read of a chunk; where it does
-     not, the mark decides, as after any hand-over; the runtime's own routines, which see no type
-     (`ember_rt_object_release`, the hand-over walk of `[THR-2]`, a reload's registration,
-     `[HR-12]`), test the mark before anything reads a chunk header, so a block the runtime did not
-     lay out is never asked for its making thread. A value made in `Global`, with or without `using
-     Global` written, keeps the two counts, its block waits for the check point and nothing reuses
-     it. Two more values are marked handed over at the line that makes them, for the same reason: an
-     end delayed to a check point would come at a place, or on a thread, where its `drop` may not
-     run. **By its type.** A type is plain when it has no `drop`, or its `drop`, taken with the
-     `drop`s of everything the value owns, all the way down, has an effect set (`[EFF-1]`) with none
-     of the effects a contract may forbid (§X.2: `Alloc`, `Sync`, `Block`, `Io`, `Lock`,
-     `Panic(Explicit)`, `RuntimeCheck(Aliasing)`, `Nondet`) apart from the count steps of ending the
-     owners and `weakref thread_shared T` links the value holds, which every end performs; its
-     summary (`[EFF-24]`) reaches no `static mut`; it runs no code its package cannot read whole (a
-     call through a function value, a call through a `dyn`, `virtual` or interface method that a
-     package it does not see may implement, `[EFF-6]`, a foreign call not declared
-     `@ffi(no_callbacks)`); and every type the value owns is plain, the target of a `thread_shared`
-     owner it holds included (a `dyn I`, a function value and an object of an `open` or `abstract`
-     class it owns are not plain). The package that declares the type decides, from its own text and
-     its imports' interface files, and records the fact beside the type's layout in its interface
-     file and in its `TypeInfo` (`[BLD-14]`, `[BLD-16]`, `[RT-3]`), as it records the weak count
-     (`[OBJ-1]`). A `thread_shared` value of a type that is not plain is marked handed over at the
-     line that makes it, so its `drop` never waits in a queue and runs where its last owner ends, as
-     a written call there (`[DRP-8]`, `[THR-20]`). **By its thread.** A `thread_shared` value made
-     on any thread other than the main thread or a `thread.spawn` thread (the thread of a scope's
-     task or job, which the runtime runs on a thread it owns and never on the thread that opened the
-     scope, `[THR-5]`, `[THR-11]`, `[JOB-2]`; a job worker running `jobs.submit` or a chunk of a
-     `@parallel` loop, §XI.5; a host thread attached by `[FFI-22]`; a chunk the calling thread runs
-     itself, `[PAR-4]`, is made on that thread) is marked handed over at its making: those threads
-     run Ember code only while given a task, a job or a call from C, no `join` of the program waits
-     for their end, and a task's claims are checked only until its join (`[THR-11]`), so a queue to
-     them would have no bound and could run a `drop` after the window the rules checked. The
-     runtime, which lays out the block and knows its thread's kind, sets the mark in the header it
-     writes (`[OBJ-1]`, §X.4). So the queue of point 2 holds only a value of a plain type made on
-     the main thread or a `thread.spawn` thread. Another thread's store of an owner it holds moves
-     nothing: its owners are counted away already. On the making thread every count operation on a
-     `thread_shared` value, and every opening of a `weakref thread_shared T` link to one, first
-     tests the handed-over mark, one load and one branch (§X.4), and a name opened on the home count
-     (`[RC-5]` point 2) is undone on the count the mark names at the name's end.
+     names its making thread and no pool of the runtime takes it back (`[OBJ-1]`), and its instance
+     may be reset or end as soon as the compiler sees its last owner end (`[ALC-5]`, `[LT-4]`),
+     which an end delayed to a check point would miss; so every owner of such a value is counted in
+     its away count, its end is never delayed, and the thread that ends it gives the block back
+     through the manager's `deallocate` there. Where the type of the place at the line says `using
+     A` (`[TYP-46]`, `[BLD-16]`) the compiler emits the away path with no test of the mark and no
+     read of a chunk; where it does not, the mark decides, as after any hand-over; the runtime's own
+     routines, which see no type (`ember_rt_object_release`, the hand-over walk of `[THR-2]`, a
+     reload's registration, `[HR-12]`), test the mark before anything reads a chunk header, so a
+     block the runtime did not lay out is never asked for its making thread. A value made in
+     `Global`, with or without `using Global` written, keeps the two counts, its block waits for the
+     check point and nothing reuses it. Two more values are marked handed over at the line that
+     makes them, for the same reason: an end delayed to a check point would come at a place, or on a
+     thread, where its `drop` may not run. **By its type.** A type is plain when it has no `drop`,
+     or its `drop`, taken with the `drop`s of everything the value owns, all the way down, has an
+     effect set (`[EFF-1]`) with none of the effects a contract may forbid (§X.2: `Alloc`, `Sync`,
+     `Block`, `Io`, `Lock`, `Panic(Explicit)`, `RuntimeCheck(Aliasing)`, `Nondet`) apart from the
+     count steps of ending the owners and `weakref thread_shared T` links the value holds, which
+     every end performs; its summary (`[EFF-24]`) reaches no `static mut`; it runs no code its
+     package cannot read whole (a call through a function value, a call through a `dyn`, `virtual`
+     or interface method that a package it does not see may implement, `[EFF-6]`, a foreign call not
+     declared `@ffi(no_callbacks)`); and every type the value owns is plain, the target of a
+     `thread_shared` owner it holds included (a `dyn I`, a function value and an object of an `open`
+     or `abstract` class it owns are not plain). The package that declares the type decides, from
+     its own text and its imports' interface files, and records the fact beside the type's layout in
+     its interface file and in its `TypeInfo` (`[BLD-14]`, `[BLD-16]`, `[RT-3]`), as it records the
+     weak count (`[OBJ-1]`). A `thread_shared` value of a type that is not plain is marked handed
+     over at the line that makes it, so its `drop` never waits in a queue and runs where its last
+     owner ends, as a written call there (`[DRP-8]`, `[THR-20]`). **By its thread.** A
+     `thread_shared` value made on any thread other than the main thread or a `thread.spawn` thread
+     (the thread of a scope's task or job, which the runtime runs on a thread it owns and never on
+     the thread that opened the scope, `[THR-5]`, `[THR-11]`, `[JOB-2]`; a job worker running
+     `jobs.submit` or a chunk of a `@parallel` loop, §XI.5; a host thread attached by `[FFI-22]`; a
+     chunk the calling thread runs itself, `[PAR-4]`, is made on that thread) is marked handed over
+     at its making: those threads run Ember code only while given a task, a job or a call from C, no
+     `join` of the program waits for their end, and a task's claims are checked only until its join
+     (`[THR-11]`), so a queue to them would have no bound and could run a `drop` after the window
+     the rules checked. The runtime, which lays out the block and knows its thread's kind, sets the
+     mark in the header it writes (`[OBJ-1]`, §X.4). So the queue of point 2 holds only a value of a
+     plain type made on the main thread or a `thread.spawn` thread. Another thread's store of an
+     owner it holds moves nothing: its owners are counted away already. On the making thread every
+     count operation on a `thread_shared` value, and every opening of a `weakref thread_shared T`
+     link to one, first tests the handed-over mark, one load and one branch (§X.4), and a name
+     opened on the home count (`[RC-5]` point 2) is undone on the count the mark names at the name's
+     end.
   5. **So a value's end is delayed only** for a value of a plain type made on the main thread or a
      `thread.spawn` thread (point 4), when its last owner ends on a thread that did not make it and
      the value was not handed over at a place of point 4 (it travelled inside another object): it is

@@ -19,7 +19,7 @@
         "XV.6"
       ],
       "rules": 436,
-      "done": 177,
+      "done": 176,
       "missing": [
         "ATT-1",
         "ATT-2",
@@ -114,6 +114,7 @@
         "EFF-4",
         "EFF-6",
         "EFF-9",
+        "ERR-1",
         "ERR-13",
         "ERR-2",
         "ERR-3",
@@ -294,7 +295,7 @@
         "XV.7"
       ],
       "rules": 627,
-      "done": 220,
+      "done": 219,
       "missing": [
         "ALC-1",
         "ALC-2",
@@ -440,6 +441,7 @@
         "EFF-4",
         "EFF-6",
         "EFF-9",
+        "ERR-1",
         "ERR-13",
         "ERR-2",
         "ERR-3",
@@ -711,7 +713,7 @@
         "XVI"
       ],
       "rules": 690,
-      "done": 249,
+      "done": 248,
       "missing": [
         "ALC-1",
         "ALC-2",
@@ -860,6 +862,7 @@
         "EFF-4",
         "EFF-6",
         "EFF-9",
+        "ERR-1",
         "ERR-13",
         "ERR-2",
         "ERR-3",
@@ -1162,7 +1165,7 @@
         "Annex B"
       ],
       "rules": 756,
-      "done": 282,
+      "done": 281,
       "missing": [
         "ALC-1",
         "ALC-2",
@@ -1311,6 +1314,7 @@
         "EFF-4",
         "EFF-6",
         "EFF-9",
+        "ERR-1",
         "ERR-13",
         "ERR-2",
         "ERR-3",

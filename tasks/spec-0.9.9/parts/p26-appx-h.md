@@ -3291,10 +3291,64 @@ Generated: every rule whose text differs from 0.9.20_Hardened_2.
 
 ## H.55 Changes in 0.9.20_Hardened_4 (from 0.9.20_Hardened_3)
 
-(head to be written by the cut)
+**0.9.20_Hardened_4** is the fourth hardening pass, of 2026-11-08, made on the owner's instruction to rule
+the open owner-decision records for "the best solution possible, that matches all the goals we are trying
+to achieve", by the lead alone (`tasks/96/redesign/audit-0.9.20/round3/rulings.md`). Each of ODR-260 to
+ODR-266 and ODR-238, and a new ODR-267, was weighed against the four goals (C-like speed, Python-like
+readability, Rust-like memory safety without lifetime names, a complete and consistent text) and against
+the owner's verdicts, and closed in `docs/OWNER-QUEUE.md`. Five stand as Hardened_3 applied them (ODR-262
+the import of C++ overloads and the `at`/`at_mut` pair, ODR-263 the check point at a return into C, ODR-265
+the brackets after `dyn` and `some`, ODR-238 a kept callback's captures, answered by `[CLO-4]` and `[CLO-7]`,
+and ODR-266 the stop on a full callback table, now named as the allocation-failure panic); ODR-260 stands
+with its text made exact; two change the language. The accepted set changes, so the language version stays
+0.9.20 and the hardening number moves (`[VER-9]`).
+
+* **`Error` keeps verdict 110's line and `AnyError` carries the markers** (ODR-261): `interface Error: needs
+  (Debug, Display):`, so an error type holding a one-thread part is an `Error` on its thread, printed, matched,
+  returned and passed through `?` into a `Result` of its own type; `AnyError` holds `owns dyn (Error, Send,
+  ThreadShared)` and its `From[E]` needs `E: needs (Error, Send, ThreadShared)`, so a one-thread error is
+  refused where the property is first needed, at its conversion into `AnyError` (`E2040`), decided when
+  compiling. The open-class header promise of Hardened_3 stands (`[ERR-3]`, `[ERR-8]`, `[ERR-1]`, `[DRV-1]`,
+  `[THR-8]`, `[THR-9]`, `[TYP-17]`, §IV.8).
+* **A list pattern may open a `match` arm** (ODR-264): `["quit"]:` and `[first, ..rest]:` under `match
+  words:`, since an arm's line is a pattern ending in `:` where no bound list and no statement can stand;
+  every other line beginning with `[` stays `E0100` (`[GRM-40]`, `[GRM-13]`). Departs from verdict 155 in a
+  case it did not consider.
+* **A handle read out of its owner is a view of it** (ODR-267): a `@ffi(handle)` value taken from an `owns T`
+  lives no longer than the owner, whose end destroys the object, and is `E3063` where kept beyond it; a
+  handle no `owns T` gave stays the plain `Copy` value (`[FFI-8]`).
+* **`thread_shared … using` made exact** (ODR-260): growth and end count for `[THR-11]` as the calls they
+  make, by the methods' summaries; the hand-over to an unscoped thread, a job outside a scope or a kept
+  callback is from a `static` instance only, a `static mut` being resettable by a line no package can see;
+  why the queue place is free; `using x` through any name where `allocate` reads the instance; the §X.4 rows
+  price the mark and the give-back; `into_raw()` on a value made `using` another manager is `E2114`
+  (`[TYP-46a]`, `[LT-4]`, `[ALC-5]`, `[OBJ-1]`, `[RC-4]`, `[ALC-1]`, `[FFI-54]`, `[COST-3]`).
+* **Facts stated**: the stop on a full callback table is the failure `Panic(Explicit)` lists, on every target
+  (`[FFI-53]`); a kind test reads the type index with the kept-by-C mark cleared (`[OBJ-1]`).
+
+Registry rows: E0100, E2040, E2080, E2114, E3063. No new rule, no new code, none retired. Owner verdicts
+touched: 155 (departed from, reported), 110 (restored to its letter).
 
 Generated: every rule whose text differs from 0.9.20_Hardened_3.
 
 | Rule | 0.9.20_Hardened_3 → 0.9.20_Hardened_4 |
 |---|---|
-
+| `[ALC-1]` | changed |
+| `[ALC-5]` | changed |
+| `[DRV-1]` | changed |
+| `[ERR-1]` | changed |
+| `[ERR-3]` | changed |
+| `[ERR-8]` | changed |
+| `[FFI-8]` | changed |
+| `[FFI-53]` | changed |
+| `[FFI-54]` | changed |
+| `[GRM-13]` | changed |
+| `[GRM-40]` | changed |
+| `[LT-4]` | changed |
+| `[OBJ-1]` | changed |
+| `[RC-4]` | changed |
+| `[THR-8]` | changed |
+| `[THR-9]` | changed |
+| `[TYP-17]` | changed |
+| `[TYP-44a]` | changed |
+| `[TYP-46a]` | changed |

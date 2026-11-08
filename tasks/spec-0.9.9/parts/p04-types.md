@@ -565,17 +565,19 @@ fn main():
   that frees nothing one by one: `stats = thread_shared Stats() using level` with `level` an
   `Arena`, `[ARN-2]`) is `Send` and `ThreadShared` when `T` is, and is accepted, to a scoped task or
   a job of a scope from any instance and to an unscoped thread, a job outside a scope or a callback
-  foreign code keeps from a `static` or `static mut` instance alone (`[LT-4]`, `E3063` otherwise):
-  its end on any thread runs its `drop` and touches the arena not at all, every owner of it is
-  counted in its away count from its making line (`[RC-4]` point 4), and the arena is neither reset
-  nor ended while it lives (`[ALC-5]`, `[LT-4]`). For `[THR-11]` a value's growth and end are
-  changes of its instance where they call its methods (a value that holds nothing changes it not at
-  all), so two scoped tasks growing values made in one instance are `E7007` naming the instance
-  ("the tasks on lines 7 and 9 grow `xs` and `ys`, both made in `current`, so both change `current`;
-  give each task an arena of its own, `a = Arena(1 << 20)` inside its function, or make the lists in
-  the built-in manager, `xs = []`"), unless `A` is a manager any thread may call, whose `reallocate`
-  and `deallocate` read the instance. For the exclusivity rules `[ALC-5]` stands: growth and end are
-  the changes of the instance it allows.
+  foreign code keeps from a `static` instance alone (`[LT-4]`, `E3063` otherwise): its end on any
+  thread runs its `drop` and touches the arena not at all, every owner of it is counted in its away
+  count from its making line (`[RC-4]` point 4), and the arena is neither reset nor ended while it
+  lives (`[ALC-5]`, `[LT-4]`). For `[THR-11]` a value's growth and end count as the calls they make
+  on its instance, by those methods' summaries (`[EFF-24]`): a change of the instance where the
+  method changes it, a read where it reads it (a manager any thread may call), nothing where the
+  value holds nothing; so two scoped tasks growing values made in one instance are `E7007` naming
+  the instance ("the tasks on lines 7 and 9 grow `xs` and `ys`, both made in `current`, so both
+  change `current`; give each task an arena of its own, `a = Arena(1 << 20)` inside its function, or
+  make the lists in the built-in manager, `xs = []`"), unless `A` is a manager any thread may call,
+  whose `reallocate` and `deallocate` read the instance, and two tasks ending values made in such a
+  manager read it, which conflicts with nothing but a change of what they read. For the exclusivity
+  rules `[ALC-5]` stands: growth and end are the changes of the instance it allows.
 
 ## IV.7 Generics
 
@@ -588,28 +590,28 @@ fn main():
   several in round brackets, separated by commas (`[T: needs (Add[T, Output = T], Copy)]`), since a
   comma also separates the type parameters (`[K: needs (Eq, Hash), V]`); the same in an `extend`
   block's brackets (`extend[T: needs Display] Array[T] implements Display:`), an interface's parents
-  (`interface Error: needs (Debug, Display, Send, ThreadShared):`), an associated type (`type Iter:
-  needs Iterator[Item = Item]`) and a `where` clause. A bound without `needs`, or needs joined with
-  `+`, is `E0100`, whose message gives the line with `needs` (`[T: Add + Copy]` gives `[T: needs
-  (Add, Copy)]`); interfaces joined with `+` after `dyn` or `some` are `E0100` too, whose message
-  gives the brackets (`owns dyn Shape + Debug` gives `owns dyn (Shape, Debug)`; after `dyn` and
-  `some` the brackets stand without `needs`, the word before them saying what the value is). Inside
-  a generic body only the operations the bounds provide are available, plus copy for `T: needs
-  Copy`, hand-over, drop and `size_of`. A `pub` function writes its bounds: a missing one is
-  `E2040`, one message on the first line of the body that needs a bound the function does not write,
-  giving every bound the body needs ("`total` is `pub`, so its bound is written: write `[T: needs
-  Add[T, Output = T]]` in place of `[T]` above `pub fn total(a: T, b: T) -> T:`"). A function that
-  is not `pub` writes all of them or none: with none, its bounds are worked out from its body, each
-  method called on a parameter giving the interface in scope that declares it (two that declare it
-  are `E2070`, `[TYP-24]`), and a method no interface in scope declares is `E2072` ("`T` has no
-  `weight`: no interface in scope declares `fn weight`; declare one, `interface Weighed:` with `fn
-  weight() -> int`, and write `struct Crate implements Weighed:` for the type the function is given;
-  the bound follows"); a list that leaves out one the body needs is `E2040`, whose message gives the
-  whole line ("`direct_add` writes what `T` needs, so it writes all of it: `a + b` (line 2) needs
-  `Add`, which `Lookalike` does not give; write `[T: needs (Lookalike, Add[T, Output = T])]` in
-  place of `[T: needs Lookalike]`"). The body is checked once with its parameters standing for any
-  type, except where the type of `enumerate`'s numbers depends on a parameter (`[STD-19]`): that
-  type, and every line using those numbers, is checked for each use, with the parameters filled in.
+  (`interface Error: needs (Debug, Display):`), an associated type (`type Iter: needs Iterator[Item
+  = Item]`) and a `where` clause. A bound without `needs`, or needs joined with `+`, is `E0100`,
+  whose message gives the line with `needs` (`[T: Add + Copy]` gives `[T: needs (Add, Copy)]`);
+  interfaces joined with `+` after `dyn` or `some` are `E0100` too, whose message gives the brackets
+  (`owns dyn Shape + Debug` gives `owns dyn (Shape, Debug)`; after `dyn` and `some` the brackets
+  stand without `needs`, the word before them saying what the value is). Inside a generic body only
+  the operations the bounds provide are available, plus copy for `T: needs Copy`, hand-over, drop
+  and `size_of`. A `pub` function writes its bounds: a missing one is `E2040`, one message on the
+  first line of the body that needs a bound the function does not write, giving every bound the body
+  needs ("`total` is `pub`, so its bound is written: write `[T: needs Add[T, Output = T]]` in place
+  of `[T]` above `pub fn total(a: T, b: T) -> T:`"). A function that is not `pub` writes all of them
+  or none: with none, its bounds are worked out from its body, each method called on a parameter
+  giving the interface in scope that declares it (two that declare it are `E2070`, `[TYP-24]`), and
+  a method no interface in scope declares is `E2072` ("`T` has no `weight`: no interface in scope
+  declares `fn weight`; declare one, `interface Weighed:` with `fn weight() -> int`, and write
+  `struct Crate implements Weighed:` for the type the function is given; the bound follows"); a list
+  that leaves out one the body needs is `E2040`, whose message gives the whole line ("`direct_add`
+  writes what `T` needs, so it writes all of it: `a + b` (line 2) needs `Add`, which `Lookalike`
+  does not give; write `[T: needs (Lookalike, Add[T, Output = T])]` in place of `[T: needs
+  Lookalike]`"). The body is checked once with its parameters standing for any type, except where
+  the type of `enumerate`'s numbers depends on a parameter (`[STD-19]`): that type, and every line
+  using those numbers, is checked for each use, with the parameters filled in.
 * `[TYP-40]` *(new in 0.9.9)* **Interfaces are nominal.** A type implements an interface only
   through an `implements` clause or an `extend … implements` block; having methods of the right
   names and types is not enough. This is what gives every implementation one place of declaration
@@ -836,7 +838,7 @@ interface IndexMut[Idx]: needs Index[Idx]:
 interface IndexSet[Idx, V]:
     fn index_set(i: Idx, owns v: V)                                 # a[i] = v (Map inserts)
 
-interface Error: needs (Debug, Display, Send, ThreadShared):      # any thread may hold and read an error ([ERR-3])
+interface Error: needs (Debug, Display):                          # [ERR-3]; the error any thread may hold is AnyError ([ERR-8])
     fn source() -> Option[ref dyn Error]                            # default: None
 
 interface From[T]:
@@ -1035,9 +1037,10 @@ implementation the program has (Part X).
   loaded (`[HR-12a]`), never when a package is compiled: compiled code names a kind by its
   type-information symbol (`em_ti_…`, `[MNG-4]`), the linker gives each such symbol in the process
   one index, so a generic instance deduplicated at link (`[MONO-1]`) has one, and fills each compare
-  with it. A kind test or cast is then one compare of the header's index against a constant (§X.4);
-  where the C toolchain cannot fill an immediate from a link-time value, one load of that constant
-  per function, which `ember inspect` reports on the same row.
+  with it. A kind test or cast is then one load of the header's index, one `and` clearing the
+  kept-by-C mark (`[OBJ-1]`) and one compare against a constant (§X.4); where the C toolchain cannot
+  fill an immediate from a link-time value, one load of that constant per function, which `ember
+  inspect` reports on the same row.
 * `[TYP-32]` *(new in 0.9.9)* *(changed in 0.9.20)* `some I` in a return type means "one concrete
   type, chosen by the function body, that implements `I`". The caller sees only `I`; the compiler
   knows the type and monomorphises through it, so there is no indirection. Every `return` in the

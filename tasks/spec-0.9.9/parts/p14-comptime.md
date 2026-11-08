@@ -195,14 +195,14 @@ its declared default, else its type's `Default`), as a `@ser(skip)` field does (
   | `Serialize`, `Deserialize` | §XIV.4 |
   | `Zeroable` | `[ARN-11]` |
 
-  A derive whose requirement a field does not meet is `E2080`, naming the field (`@derive(Error)` on
-  a type with a `shares` field: `Error` needs `Send`, `[ERR-3]`). On a generic type the generated
-  `extend` writes, as its parameters' needs, what its fields need of them (`@derive(Error)` above
-  `[T]` and `enum SpawnError:` with `Rejected(T)` generates `extend[T: needs (Debug, Send,
-  ThreadShared)] SpawnError[T] implements Error:`), so the derive holds for the instances that meet
-  them, as `@derive(Copy)` above `[T]` and `pub struct Range:` is `Copy` when `T` is (ODR-027,
-  `[STR-5]`, `[IFC-3]`); `E2080` stays for a field whose written type fails. The generated code is
-  ordinary Ember that `ember inspect --expand <type>` prints.
+  A derive whose requirement a field does not meet is `E2080`, naming the field (`@derive(Copy)` on
+  a type with a `String` field, which is not `Copy`). On a generic type the generated `extend`
+  writes, as its parameters' needs, what its fields need of them (`@derive(Error)` above `[T]` and
+  `enum SpawnError:` with `Rejected(T)` generates `extend[T: needs Debug] SpawnError[T] implements
+  Error:`), so the derive holds for the instances that meet them, as `@derive(Copy)` above `[T]` and
+  `pub struct Range:` is `Copy` when `T` is (ODR-027, `[STR-5]`, `[IFC-3]`); `E2080` stays for a
+  field whose written type fails. The generated code is ordinary Ember that `ember inspect --expand
+  <type>` prints.
 * `[DRV-2]` User-defined derives are not in this version; `macro` is reserved for them.
 
 ## XIV.4 Serialisation (`std.ser`)

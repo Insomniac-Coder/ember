@@ -1,5 +1,20 @@
 # Ember — handoff
 
+> **2026-11-08 (later) — the same cloud session (branch `spec-0.9.20-hardening`), the owner present: "for the ODRs
+> go for the best solution possible, that matches all the goals", then "go solo no agents". START HERE.** **Hardened_4
+> of 0.9.20 is cut** and is the development target (`docs/spec-source/Ember_v0.9.20_Hardened_4.md`, 17703 lines, 1,020
+> rules, SHA-256 `1CA5A9336C7C…`): every open owner-decision record ruled by the lead alone and CLOSED in
+> `docs/OWNER-QUEUE.md` (ODR-260 to ODR-266, ODR-238, new ODR-267), the record of what was weighed in
+> `tasks/96/redesign/audit-0.9.20/round3/rulings.md`, the rulings N129 to N139 in `decisions.md` §15, the pass in
+> `docs/AUDIT-0.9.20.md` §9. Five stand as Hardened_3 applied them; ODR-260 stands with its text made exact (and
+> `into_raw()` on a value made `using` another manager is `E2114`); two change the language: `Error` keeps verdict 110's
+> line and `AnyError` carries `Send` and `ThreadShared` (a one-thread error is `E2040` at its conversion into `AnyError`),
+> and a list pattern may open a `match` arm (**departs from verdict 155**, reported); a `@ffi(handle)` value read out of
+> its owner is a view of it (ODR-267). 19 rules changed (§H.55), six registry rows, no new code. **Checked:** all spec
+> gates green, `ember_diag`, `ember_parser` and the three spec-tied milestone tests green against the pin; the compiler is
+> untouched. **Next:** the owner's word on the two departures (155 departed from, 110 restored) and on the generic-bound
+> doubt under ODR-260; then each 0.9.20 change lands with the milestone that owns it.
+
 > **2026-11-08 — the same cloud session (branch `spec-0.9.20-hardening`), AUTONOMOUS, a workflow of 44 agents and
 > two exit checks applied by the lead (the owner: "take that spec sheet into account and combine it with the latest
 > one you have prepared and also verify and fix the other agent's findings before you create a newer version of

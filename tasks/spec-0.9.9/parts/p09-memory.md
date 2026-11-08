@@ -224,8 +224,10 @@ fn main():
   1.0]) using current)` takes the mesh's block from the arena `current` by calling
   `current.allocate(…)`; a class object is made `Enemy(hp=5) using current`, a list `[0.0, 1.0]
   using current`, and `Array.new_in(current)` makes an empty one. `using x` names the instance
-  through a name that may change it (its owner, a `ref mut` name, or a `sharedref mut` link), since
-  `allocate` changes the instance (`[EXC-15]`, `[ALC-5]`); through a plain parameter it is `E3023`
+  through a name that may change it (its owner, a `ref mut` name, or a `sharedref mut` link) where
+  its `allocate` changes the instance (`[EXC-15]`, `[ALC-5]`), and through any name where its
+  `allocate` reads it (a `static`, `[STA-1]`; a manager any thread may call, which locks inside,
+  `[TYP-46a]`); through a plain parameter of a manager whose `allocate` changes it, `E3023`
   ("`allocate` changes the arena (`LevelArena.allocate`, its line 4), and `current` only reads it;
   write `fn fill(ref mut current: LevelArena)`"); a manager with one instance is a `static` whose
   `allocate` reads `this` (`[STA-1]`). Whether a `pub` manager type's `deallocate` is empty, and
@@ -295,19 +297,19 @@ fn main():
   embedding host may pass allocation functions to `ember_rt_init` (`[FFI-27]`).
 * `[ALC-4]` Allocation failure in a standard container panics (`out of memory`). `try_reserve` and
   `try_push` report it as a value.
-* `[ALC-5]` *(new in 0.9.15)* *(changed in 0.9.20)* **An instance stays as its values need it.** While a value made in a
-  memory manager's instance lives, the instance is changed only by what allocates from it and gives
-  blocks back to it: the `Allocator` methods that value's growth and end call, the making of other
-  values in it, and an `Arena`'s `alloc*` (`[ARN-1]`), none of which touches a block already given
-  out. Reading it stays allowed (`current.made`); any other change, through any name, is `E3021`
-  ("`frame.reset()` (line 26) changes the arena `names` was made in (line 25), and `names` still
-  lives; end it first: write `mem.drop(owns names)` above line 26"). So no safe method of a memory
-  manager rewinds it, frees it or gives its bytes out again under a value made in it. A
-  `thread_shared` value made in an instance is ended where its last owner ends (`[RC-4]` point 4),
-  so the rule is checked as written; one goes to an unscoped thread, a job outside a scope or a
-  callback foreign code keeps only from a `static` or `static mut` instance (`[LT-4]`, `E3063`
-  otherwise), and from then on lives, for this rule, as long as the instance, so no change of this
-  rule's kind is made to that instance after the hand-over (`E3021`, naming the hand-over's line).
+* `[ALC-5]` *(new in 0.9.15)* *(changed in 0.9.20)* **An instance stays as its values need it.**
+  While a value made in a memory manager's instance lives, the instance is changed only by what
+  allocates from it and gives blocks back to it: the `Allocator` methods that value's growth and end
+  call, the making of other values in it, and an `Arena`'s `alloc*` (`[ARN-1]`), none of which
+  touches a block already given out. Reading it stays allowed (`current.made`); any other change,
+  through any name, is `E3021` ("`frame.reset()` (line 26) changes the arena `names` was made in
+  (line 25), and `names` still lives; end it first: write `mem.drop(owns names)` above line 26"). So
+  no safe method of a memory manager rewinds it, frees it or gives its bytes out again under a value
+  made in it. A `thread_shared` value made in an instance is ended where its last owner ends
+  (`[RC-4]` point 4), so the rule is checked as written; one goes to an unscoped thread, a job
+  outside a scope or a callback foreign code keeps only from a `static` instance (`[LT-4]`, `E3063`
+  otherwise), which never changes (`[STA-1]`), so no change of this rule's kind is ever made to it
+  and nothing is checked after the hand-over.
 * `[ALC-5a]` *(new in 0.9.20)* *(changed in 0.9.20)* **A link holds the block.** A `weakref` link to
   a value made in a memory manager's instance counts, for `[LT-4]` and `[ALC-5]`, as a value that
   holds one, since the target's block stays until the link ends (`[WK-11]`, `[OBJ-3]`): the link

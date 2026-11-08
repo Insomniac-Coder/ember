@@ -269,7 +269,7 @@ import c "vulkan/vulkan.h" with (
   `E7015` ("`ctx` is a C object (`Ctx`, line 4), and two tasks read it at once (lines 14 and 15);
   C's `const` does not promise that `ctx_lookup` writes nothing: give each task a context of its
   own, or, if the library allows it, declare `unsafe extend Ctx implements ThreadShared:` with a `#
-  SAFETY:` note"). A `handle` is an opaque `Copy` value with the C type's representation (a pointer or an integer: Vulkan's `VkBuffer` is a `uint64_t` on 32-bit targets), passed and returned by value and never read through, with no destructor of its own (`destroys(f)` applies to an `owns T` of its type, never to the handle), `nullable` as an `Option` of it (the null pointer or zero is `None`), and bound to its thread under `threads(creator)` (`[FFI-33b]`, `E7008`). A parameter or result of a handle type is no pointer contract: it is passed by value, so a count, lifetime or aliasing word or `borrowed` on it is `E5002` ("`device` is a `VkDevice`, a `handle` passed by value; remove `borrowed`"); it takes `nullable`, and the ownership words where the call transfers the handle's object, `returns_owned(destructor=f)` on a result and `owns` on a parameter, which give and take an `owns T` of the handle type (`[FFI-33b]`, two words under `threads(creator)`).
+  SAFETY:` note"). A `handle` is an opaque `Copy` value with the C type's representation (a pointer or an integer: Vulkan's `VkBuffer` is a `uint64_t` on 32-bit targets), passed and returned by value and never read through, with no destructor of its own (`destroys(f)` applies to an `owns T` of its type, never to the handle), `nullable` as an `Option` of it (the null pointer or zero is `None`), and bound to its thread under `threads(creator)` (`[FFI-33b]`, `E7008`). A parameter or result of a handle type is no pointer contract: it is passed by value, so a count, lifetime or aliasing word or `borrowed` on it is `E5002` ("`device` is a `VkDevice`, a `handle` passed by value; remove `borrowed`"); it takes `nullable`, and the ownership words where the call transfers the handle's object, `returns_owned(destructor=f)` on a result and `owns` on a parameter, which give and take an `owns T` of the handle type (`[FFI-33b]`, two words under `threads(creator)`). A handle read out of an `owns T` (`dev` given where a `VkDevice` is taken, `copy of dev`) is a view of that owner for the lifetime rules (`[LT-1]`, `[LT-45]`): the owner's end destroys the object the handle names, so the handle lives no longer than the owner, a call that gives it reads the owner for the call, and keeping or returning it where it would outlive the owner is `E3063` ("`q` is `dev`'s handle (`VkDevice`, line 7), and `dev` ends when `open` returns, destroying the device; return `dev` itself, `-> owns VkDevice`, or use `q` while `dev` lives"); a handle no `owns T` gave (a result with no ownership word, the devices `vkEnumeratePhysicalDevices` fills in, a callback's argument) is the plain `Copy` value above, whose life the library's own documentation governs (`[TCB-1]`).
 
   | C | Ember |
   |---|---|
@@ -755,7 +755,10 @@ call: a `VkViewport` holds only numbers, `pViewports` is a counted view, and `co
   nothing per call. The table grows by chunks and never moves a slot, as an `Arena` grows
   (`[ARN-4]`), so a slot is free while memory is and the slot field is wide; when every slot the
   number can name is live or retired, which only a 32-bit target's 65,536 slots can reach, the
-  registering call stops the program, in every profile, as a full `Pool` does: "`on_click(...)` on
+  registering call stops the program, in every profile, as a full `Pool`'s `insert` does
+  (`[HND-3]`), the failure `Panic(Explicit)` lists (`[EFF-16]`), on every target, so that a
+  program's text means one thing wherever it is built (a `@nopanic(explicit)` function that
+  registers a kept callback is `E4040`, as one that allocates is, `[ALC-6]`): "`on_click(...)` on
   line 16: no callback slot is free; every one of the 65,536 slots a 32-bit target has is live or
   retired" (`[COST-6]`). A `threads(any)` callback that can be unregistered while it runs marks its
   slot as running, and unregistering waits until it returns. A callback that ends its own token
@@ -790,6 +793,12 @@ call: a `VkViewport` holds only numbers, `pViewports` is a counted view, and `co
   dyn I`) or a class object with one owner (as an `ObjectPtr[C]`), and stops Ember freeing it, as
   C++'s `unique_ptr::release()` does; the name ends. `into_raw()` is built into the compiler, which
   makes that step itself, so nothing else can skip a value's clean-up (`mem.forget` is not Ember).
+  It is written on a value whose block the runtime laid out or C gave (an `owns T` of a foreign
+  type, a value made in the built-in manager: a place with no `using` is a `using Global` place,
+  `[TYP-46]`), which `ember_rt_object_release` can end; on a value Ember made `using` another
+  manager it is `E2114` ("`w` was made in `frame`, an `Arena`, and C would end it through the
+  runtime, which gives back only blocks of the built-in manager; make it there: `second = owns
+  Widget(id=2)`"), and `from_raw` gives back a value of the built-in manager, as its type says.
   Outside `unsafe:` it is `E3100`: "`into_raw()` stops Ember from freeing the widget, so a mistake
   leaks it or frees it twice; write it inside `unsafe:`: above line 18 write `# SAFETY:` and the
   reason, then `unsafe:`, and indent line 18 under it". On an object of a trampoline class

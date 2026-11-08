@@ -11,18 +11,19 @@ session, or a workflow the owner allows, starts here and does not redo the readi
 
 ## 0. State, and how to resume
 
-* **Cut and pinned (third pass):** `docs/spec-source/Ember_v0.9.20_Hardened_3.md` (17603 lines, 1,020
+* **Cut and pinned (fourth pass):** `docs/spec-source/Ember_v0.9.20_Hardened_4.md` (17703 lines, 1,020
   rules) is the development target (`docs/spec-source/development-target.json`); sources frozen in
-  `tasks/spec-0.9.9/parts-0.9.20-h3/` (Hardened_2's in `parts-0.9.20-h2/`, Hardened_1's in
-  `parts-0.9.20-h1/`); `tasks/spec-0.9.9/parts/` is the working copy. On branch `spec-0.9.20-hardening`
-  (not `main`); Hardened_1 was commit `2dd9d26`, Hardened_2 `d03df6b`. **§8 below is the third pass's
-  record**, §7 the second's, §§1–6 the first's.
-* **The change logs** are Appendix H §H.52 (Hardened_1), §H.53 (Hardened_2) and §H.54 (Hardened_3;
-  `H52_HEAD`, `H53_HEAD` and `H54_HEAD` in `tasks/spec-0.9.9/tools/appx_h.py`; §H.51 is
-  0.9.15_Hardened_11's, merged from `main`); the rulings are N52 to N75 (§12), N76 to N88 (§13) and N89
-  to N128 (§14) in `tasks/96/redesign/compiler-0.9.15/decisions.md`; the owner's open items are ODR-260 to
-  ODR-266 in `docs/OWNER-QUEUE.md`; the cuts' records are in `tasks/spec-0.9.9/HANDOFF.md`
-  ("0.9.20_Hardened_1 CUT" to "0.9.20_Hardened_3 CUT") and `docs/HANDOFF.md`'s first entries.
+  `tasks/spec-0.9.9/parts-0.9.20-h4/` (Hardened_3's in `parts-0.9.20-h3/`, Hardened_2's in `parts-0.9.20-h2/`,
+  Hardened_1's in `parts-0.9.20-h1/`); `tasks/spec-0.9.9/parts/` is the working copy. On branch
+  `spec-0.9.20-hardening` (not `main`); Hardened_1 was commit `2dd9d26`, Hardened_2 `d03df6b`, Hardened_3
+  `cc5510c`. **§9 below is the fourth pass's record**, §8 the third's, §7 the second's, §§1–6 the first's.
+* **The change logs** are Appendix H §H.52 (Hardened_1), §H.53 (Hardened_2), §H.54 (Hardened_3) and §H.55
+  (Hardened_4; `H52_HEAD` to `H55_HEAD` in `tasks/spec-0.9.9/tools/appx_h.py`; §H.51 is 0.9.15_Hardened_11's,
+  merged from `main`); the rulings are N52 to N75 (§12), N76 to N88 (§13), N89 to N128 (§14) and N129 to N139
+  (§15) in `tasks/96/redesign/compiler-0.9.15/decisions.md`; the owner-decision records ODR-260 to ODR-267 and
+  ODR-238 are CLOSED in `docs/OWNER-QUEUE.md`, ruled on the owner's instruction of 2026-11-08 (§9); the cuts'
+  records are in `tasks/spec-0.9.9/HANDOFF.md` ("0.9.20_Hardened_1 CUT" to "0.9.20_Hardened_4 CUT") and
+  `docs/HANDOFF.md`'s first entries.
 * **35 rules changed, none added or removed** (§2 below). Every change refuses a program that was unsafe,
   states a fact a compiler had to guess, or corrects the text; nothing new runs while a program runs, and
   no feature is taken away.
@@ -52,13 +53,13 @@ session, or a workflow the owner allows, starts here and does not redo the readi
 * The repository gates (from the root): `python3 tools/rule_index.py`, `tools/spec_check.py` (needs the
   built compiler), `tools/phase_progress.py --write` then `--check` (rewrites README's table and
   `docs/conformance.json`), `tools/error_pages.py` (needs libclang and Ninja; not run here).
-* **To cut 0.9.20_Hardened_4:** edit `parts/`; in `tools/appx_h.py` bump `CURRENT = ('0.9.20', 4)`, point
-  `V0920_H3_PARTS` at `parts-0.9.20-h3` (it is), add `V0920_H4_PARTS` for `parts/`, `H55_HEAD` and
-  `def v0920_h4()` diffing `V0920_H3_PARTS` against it, append `+ v0920_h4() + '\n'` in `main()`; run the
-  regeneration (`scratchpad/cut3.sh` of the third pass is the recipe as a script: `code_registry --write`,
+* **To cut 0.9.20_Hardened_5:** edit `parts/`; in `tools/appx_h.py` bump `CURRENT = ('0.9.20', 5)`, point
+  `V0920_H4_PARTS` at `parts-0.9.20-h4` (it is), add `V0920_H5_PARTS` for `parts/`, `H56_HEAD` and
+  `def v0920_h5()` diffing `V0920_H4_PARTS` against it, append `+ v0920_h5() + '\n'` in `main()`; run the
+  regeneration (`scratchpad/cut4.sh` of the fourth pass is the recipe as a script: `code_registry --write`,
   `check_findings --write`, `appx_h`, `appx_i`, the checks);
-  `cat parts/p*.md > ../../docs/spec-source/Ember_v0.9.20_Hardened_4.md`; run the checks;
-  `cp -r parts parts-0.9.20-h4`; re-pin `development-target.json` (upper-case SHA-256 of the LF bytes);
+  `cat parts/p*.md > ../../docs/spec-source/Ember_v0.9.20_Hardened_5.md`; run the checks;
+  `cp -r parts parts-0.9.20-h5`; re-pin `development-target.json` (upper-case SHA-256 of the LF bytes);
   `tools/phase_progress.py --write`; the README's version table (`phase_progress` writes the file name,
   not the words around it); the two handoffs. A rule whose meaning changes takes `*(changed in 0.9.20)*`
   (appended after its older markers; `check_ids.py` accepts `0.9.20`, `tools/phase_progress.py` treats a
@@ -509,3 +510,39 @@ readability and memory safety", with a thorough analysis by up to 50 agents firs
   work was not asked for).
 * **To resume:** the recipe of §0 ("To cut 0.9.20_Hardened_4"); `round2/results/critic.md` lists what no result
   took (missing 5's 33 missed items are applied; missing 15 is the exit checks, run; missing 18 the tests above).
+
+## 9. The fourth pass: 0.9.20_Hardened_4 (2026-11-08, the open ODRs ruled for the best solution, by the lead alone)
+
+The owner's instruction: "for the ODRs can you go for the best solution possible? that matches all the goals we are
+trying to achieve?", then "go solo no agents" (a design workflow had been started and was stopped at that word; two
+designer results for ODR-260 had finished and are kept in `tasks/96/redesign/audit-0.9.20/round3/results/`). Every
+open owner-decision record was weighed against the four goals and the owner's verdicts and closed; the record of what
+was weighed, shape by shape, is `tasks/96/redesign/audit-0.9.20/round3/rulings.md`, the rulings N129 to N139
+(`decisions.md` §15), the queue entries ODR-260 to ODR-267 and ODR-238 (`docs/OWNER-QUEUE.md`, all CLOSED).
+
+* **Stand as Hardened_3 applied them:** ODR-262 (one Ember name of several C++ members, `at`/`at_mut`, transparent C
+  aliases), ODR-263 (a check point at every return into C), ODR-265 (`dyn (A, B)`, `some (A, B)`), ODR-238 (answered
+  by `[CLO-4]` and `[CLO-7]`: a kept lambda's captures are checked at its maker through the callee's summary), ODR-266
+  (the stop on a full callback table, now named as the failure `Panic(Explicit)` lists, on every target), N83 and N87
+  (with one fact stated: a kind test reads the type index with the kept-by-C mark cleared, `[OBJ-1]`, `[TYP-44a]`).
+* **ODR-260 stands** (shape B of `thread_shared T using A`) with its text made exact: growth and end count for
+  `[THR-11]` as the calls they make; the hand-over to an unscoped thread, a job outside a scope or a kept callback is
+  from a `static` instance only (a `static mut` may be reset by a line no package can see); why the queue place is
+  free; `using x` through any name where `allocate` reads the instance; the §X.4 rows price the mark and the
+  give-back; and an adjacent hole closed: `into_raw()` on a value made `using` another manager is `E2114` (`[FFI-54]`).
+* **Two change the language.** ODR-261: `interface Error: needs (Debug, Display):` (verdict 110's line restored),
+  `AnyError` holds `owns dyn (Error, Send, ThreadShared)` and its `From[E]` needs the markers, so a one-thread error
+  is refused at its conversion into `AnyError` (`E2040`), never at `implements Error`; the open-class header promise
+  stands. ODR-264: a list pattern may open a `match` arm (`["quit"]:`), every other `[` line staying `E0100`;
+  **departs from verdict 155** in a case it did not consider, reported. New ODR-267: a `@ffi(handle)` value read out
+  of an `owns T` is a view of the owner, `E3063` where kept beyond it (`[FFI-8]`).
+* **Applied** by `scratchpad/edit33.py`, `edit34.py` and `registry4.py`, each asserting what it replaces: 19 rules
+  changed (§H.55), registry rows E0100, E2040, E2080, E2114, E3063, E4040; no new rule, no new code, none retired.
+* **Checked at the cut:** `check_ids` 0 problems (1,020 rules), `check_citations` 0 undefined, `code_registry
+  --check` 0 problems (271 live, 36 retired), `split_inline` UNS-8 only, `rule_index`, `spec_check`, `phase_progress
+  --check`, `check_examples` 41 of 54 as before; `ember_diag`, `ember_parser` and the three spec-tied milestone tests
+  green against the new pin (SHA-256 `1CA5A9336C7C…`). The compiler is untouched.
+* **For the owner:** the departure from verdict 155 (ODR-264) and the restoration of verdict 110 (ODR-261); the
+  generic-bound doubt left open under ODR-260 (a bound cannot say that a manager's `deallocate` reads `this`, so a
+  `thread_shared T using a` line in a generic body is refused per instance, sound but late).
+* **To resume:** the recipe of §0 ("To cut 0.9.20_Hardened_5").

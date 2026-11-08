@@ -131,13 +131,14 @@ out of an import), rejected before it was committed and replaced by the owner's 
 | ODR-033 | **CLOSED** — `DefaultHasher`'s values are the same on every target for one Ember version and may change between versions; making a `RandomState` is `Nondet`; a panicking `hash` or `eq` aborts; `Map`'s costs are amortised | Standard library / hashing | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_13 |
 | ODR-032 | **CLOSED** — `Map[K, V, H = DefaultHasher, A = Global]` and `Set[T, H, A]` get their full method lists; `AsKey[K]` (`is_key`, `to_key`) is what lookups take, and every `K: Eq + Hash` is `AsKey[K]`; owned iteration yields keys | Standard library / collections | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_13 |
 | ODR-031 | **CLOSED** — `Array`'s `sort_by`/`sort_by_key` are stable (`f` once per element), `windows(n)` yields shared overlapping views and panics on `0`, `drain(r)` returns an `Array` and takes any integer range | Standard library / collections | — | Delegated for 0.9.9 — ruled 2026-09-25, 0.9.9_Hardened_12 |
-| ODR-260 | **OPEN** — applied under the delegation, for the owner's review | Memory Model | **P1** | **Yes** — 2026-11-08 |
-| ODR-261 | **OPEN** — applied under the delegation, for the owner's review | Concurrency / Types | **P1** | **Yes** — 2026-11-08 |
-| ODR-262 | **OPEN** — applied under the delegation, for the owner's review | C Interop / C++ | **P1** | **Yes** — 2026-11-08 |
-| ODR-263 | **OPEN** — applied under the delegation, for the owner's review | Memory Model / C Interop | **P1** | **Yes** — 2026-11-08 |
-| ODR-264 | **OPEN** — applied under the delegation, for the owner's review | Language / Grammar | **P1** | **Yes** — 2026-11-08 |
-| ODR-265 | **OPEN** — applied under the delegation, for the owner's review | Language / Types | **P1** | **Yes** — 2026-11-08 |
-| ODR-266 | **OPEN** — applied under the delegation, for the owner's review | C Interop | **P1** | **Yes** — 2026-11-08 |
+| ODR-260 | **CLOSED** — ruled on the owner's instruction (the best solution), 2026-11-08; Hardened_4 | Memory Model | **P1** | **Yes** — 2026-11-08 |
+| ODR-261 | **CLOSED** — ruled on the owner's instruction (the best solution), 2026-11-08; Hardened_4 | Concurrency / Types | **P1** | **Yes** — 2026-11-08 |
+| ODR-262 | **CLOSED** — ruled on the owner's instruction (the best solution), 2026-11-08; Hardened_4 | C Interop / C++ | **P1** | **Yes** — 2026-11-08 |
+| ODR-263 | **CLOSED** — ruled on the owner's instruction (the best solution), 2026-11-08; Hardened_4 | Memory Model / C Interop | **P1** | **Yes** — 2026-11-08 |
+| ODR-264 | **CLOSED** — ruled on the owner's instruction (the best solution), 2026-11-08; Hardened_4 | Language / Grammar | **P1** | **Yes** — 2026-11-08 |
+| ODR-265 | **CLOSED** — ruled on the owner's instruction (the best solution), 2026-11-08; Hardened_4 | Language / Types | **P1** | **Yes** — 2026-11-08 |
+| ODR-266 | **CLOSED** — ruled on the owner's instruction (the best solution), 2026-11-08; Hardened_4 | C Interop | **P1** | **Yes** — 2026-11-08 |
+| ODR-267 | **CLOSED** — ruled on the owner's instruction (the best solution), 2026-11-08; Hardened_4 | C Interop / Memory Model | **P1** | **Yes** — 2026-11-08 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -1666,107 +1667,120 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
-## ODR-260 — A `thread_shared` value made `using` a memory manager — **OPEN**
+## ODR-267 — A `@ffi(handle)` copy outliving the `owns T` whose end destroys its object — **CLOSED**
+
+    ID:        ODR-267
+    Status:    CLOSED — ruled on the owner's instruction of 2026-11-08 ("for the ODRs go for the best solution possible"), by the lead alone; incorporated in 0.9.20_Hardened_4; `tasks/96/redesign/audit-0.9.20/round3/rulings.md`
+    Category:  C INTEROP / MEMORY MODEL
+    Location:  0.9.20_Hardened_4 [FFI-8], [FFI-33b], [LT-1], [LT-45], [TCB-1]; the Vulkan overlay of §XVI.4
+
+**The question.** A `@ffi(handle)` value is an opaque `Copy` value, and an `owns T` of a handle type ends by the contract's destructor (`returns_owned(destructor=f)`, `destroys(f)`). So `q = copy of dev` outlived the `owns VkDevice` whose end ran `vkDestroyDevice`, and a later `vkGetDeviceQueue(q, …)` through a `safe fn` used a destroyed object, which Hardened_3 left to the asserter (`[TCB-1]`), though no overlay author can assert away a copy the program makes. Noted by Hardened_3's exit check; no ODR covered it.
+
+**Ruling.** A handle read out of an `owns T` (`dev` given where a `VkDevice` is taken, `copy of dev`) is a view of that owner for the lifetime rules (`[LT-1]`, `[LT-45]`): the owner's end destroys the object the handle names, so the handle lives no longer than the owner, a call that gives it reads the owner for the call, and keeping or returning it where it would outlive the owner is `E3063`, whose message gives `-> owns VkDevice` as the line to write; a handle no `owns T` gave (a result with no ownership word, the devices `vkEnumeratePhysicalDevices` fills in, a callback's argument) stays the plain `Copy` value, whose life only the library's documentation governs (`[TCB-1]`). Weighed and set aside: handles as `Clone` children of the owner (a new value kind for what a view already means); a generation-checked wrapper at run time (a check per call, refused by `docs/AUTOPILOT.md` §4); leaving the stale copy to the asserter (not a fact an overlay author can assert). Nothing runs for it; the K46 ruling's meaning of a handle is kept. Edits: `[FFI-8]`, registry row E3063. Verdicts 130, 132 and 136 kept.
+
+---
+
+## ODR-260 — A `thread_shared` value made `using` a memory manager — **CLOSED**
 
     ID:        ODR-260
-    Status:    OPEN — for the owner, 2026-11-08 (applied under the delegation, docs/AUTOPILOT.md §3; the owner may reverse)
+    Status:    CLOSED — ruled on the owner's instruction of 2026-11-08 ("for the ODRs go for the best solution possible"), by the lead alone; incorporated in 0.9.20_Hardened_4; `tasks/96/redesign/audit-0.9.20/round3/rulings.md`
     Category:  MEMORY MODEL
     Location:  0.9.20_Hardened_3 [TYP-46a], [RC-4] point 4, [OBJ-1], [OBJ-4], [ALC-1]
 
 **The question.** Hardened_2 wrote both halves of one ruling (N84): four rules refused `thread_shared T using A` with `E2114`, and four described the value as made, marked handed over at its making line. The gap review's K05 asked which holds. Shape A refuses every manager (the method-3 team's answer; safe, drops a feature verdict 19 lists). Shape B allows it, counts every owner away from the making line, puts the instance word in the header's queue place (0 bytes beyond verdict 101's 32), and refuses with `E7015` only where the value would hold a link to an instance of a manager that not every thread may call (a `deallocate` that changes `this`; a growing value in a one-thread `Arena`). Two designers and one judge chose B.
 
-**Ruling.** The lead applied shape B as the judge merged it (the better shape, no feature dropped, verdicts 19, 47, 101, 107, 164 and 165 kept). For the owner: whether B is what he wants, or A; and whether the instance word may sit in the header's queue place (verdict 47 said "accepted for now").
+**Ruling.** Shape B stands as the best of the shapes weighed: A (refuse every manager) drops a feature C++'s `std::allocate_shared` over a `pmr` resource and Rust's `Arc::new_in` have, for a hazard that counting away from the making line removes; a manager-any-thread-may-call-only or arena-only limit fixes a form where B states the property; dropping the word by `FoundByAddress` for every manager asks more of every manager than B's placement, which already costs no byte; a smaller header, or the maker's id kept in the header with two counts, would depart from verdict 101 for a figure. The instance word sits in the header's queue place because nothing else ever writes that place for such a value: only the subtract that takes the away count below zero does (`[RC-4]` point 2), and a value every owner of which is counted away never goes below zero; so the object's fields stay at one offset whatever manager made it and one method body serves every manager (`[OBJ-1]`, `[OBJ-2]`). What such a value loses by never being queued is nothing it could use: the queue lets a maker merge a home count it alone writes, and this value has none. The hand-over to an unscoped thread, a job outside a scope or a kept callback is allowed from a `static` instance only, since a `static mut` may be reset by a line of the main thread while the thread runs, a fact of the whole program (`[BLD-16]`); the message gives the three lines to write (the built-in manager; a `static` manager that locks inside; a scope that ends before the arena). Wording made exact in Hardened_4: a value's growth and end count for `[THR-11]` as the calls they make, by the methods' summaries (`[TYP-46a]`); `using x` goes through any name where the manager's `allocate` reads it (`[ALC-1]`); `[RC-4]` point 4 names both reasons for the mark; the §X.4 rows price the mark (a constant store) and the give-back (one load). Found on the way and closed: `into_raw()` on a value Ember made `using` another manager is `E2114`, since C ends it through the runtime, which gives back only blocks of the built-in manager (`[FFI-54]`). Left open, no change: a bound cannot say that `A.deallocate` reads `this`, so `thread_shared T using a` in a generic body is refused per instance (`[BLD-16]`'s last sentence), sound but late; a spelling in a bound waits on `[ALC-2]`'s receiver words. Verdicts 19, 47 (the pointer kept where `[ALC-1]` keeps it, at no byte: the drop in cost 47 asked for), 101, 107, 164 and 165 kept to their letter. Two designers' results that had finished before the design workflow was stopped (`round3/results/odr-260-designs.json`) agreed and supplied five of the wording fixes.
 
 ---
 
-## ODR-261 — An `open` class's objects across threads; `Error` requires `Send` and `ThreadShared` — **OPEN**
+## ODR-261 — An `open` class's objects across threads; `Error` requires `Send` and `ThreadShared` — **CLOSED**
 
     ID:        ODR-261
-    Status:    OPEN — for the owner, 2026-11-08 (applied under the delegation, docs/AUTOPILOT.md §3; the owner may reverse)
+    Status:    CLOSED — ruled on the owner's instruction of 2026-11-08 ("for the ODRs go for the best solution possible"), by the lead alone; incorporated in 0.9.20_Hardened_4; `tasks/96/redesign/audit-0.9.20/round3/rulings.md`
     Category:  CONCURRENCY / TYPES
     Location:  0.9.20_Hardened_3 [THR-8], [THR-9], [TYP-43], [CLS-4], [ERR-3], [ERR-8], [IFC-3]
 
 **The question.** A value held by the type of an `open` or `abstract` class may be an object of a class another package derives from it, which the holder's package never sees (`[BLD-16]`), so `[THR-8]`'s "class objects are `Send` when every component is" read the wrong fields; and `Error` required neither marker, so by the rules no `Result[int]` could leave its thread (K20, J6-16, routed to the owner and not ruled). Three designers and two judges agreed on the shape: the class writes `implements Send, ThreadShared` (or an interface that needs them) in its header, a promise every derived class is checked against where it is declared; `Error` needs both markers, so `AnyError` crosses threads with nothing written.
 
-**Ruling.** Applied as the second judge merged it (verdict 61's choice of a word over a whole-program search, extended from function types to a class header; verdict 110's example line changed). For the owner: the shape itself; the cost (an error type holding a one-thread part is `E2040` where it implements `Error`, even in a one-thread program; a `pub open` class's objects cross threads only when its author writes the promise); and whether `ThreadShared` as well as `Send` should be required of an error.
+**Ruling.** The class half stands: an `open` or `abstract` class another package may derive from says in its header whether any thread may hold its objects, a promise checked at each derived class where it is declared, the one shape a package can decide from a declaration it sees (`[BLD-16]`; verdict 61's choice of a word over a search). The `Error` half changes to the shape Rust settled on (`std::error::Error` requires neither `Send` nor `Sync`; `anyhow::Error` and `Box<dyn Error + Send + Sync>` do): `interface Error: needs (Debug, Display):`, verdict 110's own line, so an error type holding a one-thread part is an `Error` on its thread, printed, matched, returned and passed through `?` into a `Result` of its own type as any other; `AnyError`, the error any thread may hold, holds `owns dyn (Error, Send, ThreadShared)` (`[TYP-22]`'s bracket form) and its `From[E]` needs `E: needs (Error, Send, ThreadShared)`, so a one-thread error is refused where the property is first needed, at its conversion into `AnyError` (`E2040`, naming the field and giving `Result[T, LoadError]` as the first line to write), decided when compiling from the error's declaration. Against the applied shape it refuses no one-thread program, keeps std's `Error` declaration as it is, and costs nothing at run time; `Result[T]` still crosses threads with nothing written; `dyn Error` alone is not `Send` or `ThreadShared`, as `Box<dyn Error>` is not, and a program that wants an erased error across threads writes `AnyError` or `owns dyn (Error, Send, ThreadShared)`; `@derive(Error)` no longer needs `Send` of a field. Requiring `Send` alone was set aside: a scoped task reads a `Result` through `ref`, so `AnyError` needs both markers. Edits: `[ERR-3]`, `[ERR-8]`, `[ERR-1]`, `[DRV-1]`, `[THR-8]`'s example, `[THR-9]`, `[TYP-17]`, the §IV.8 listing, registry rows E2040 and E2080. Verdict 110 restored to its letter; verdict 61 extended as Hardened_3 reported.
 
 ---
 
-## ODR-262 — How C++ overloaded functions and constructors import — **OPEN**
+## ODR-262 — How C++ overloaded functions and constructors import — **CLOSED**
 
     ID:        ODR-262
-    Status:    OPEN — for the owner, 2026-11-08 (applied under the delegation, docs/AUTOPILOT.md §3; the owner may reverse)
+    Status:    CLOSED — ruled on the owner's instruction of 2026-11-08 ("for the ODRs go for the best solution possible"), by the lead alone; incorporated in 0.9.20_Hardened_4; `tasks/96/redesign/audit-0.9.20/round3/rulings.md`
     Category:  C INTEROP / C++
     Location:  0.9.20_Hardened_3 [FFI-57], [FFI-40b], [TYP-26], [FFI-12], [FFI-39], [GRM-35], [FFI-55], [MNG-1]
 
 **The question.** `[TYP-26]` refuses two functions of one name, `[FFI-48]` refused only overloads differing in result, and nothing said what two constructors or two `draw` methods become; a `const`/non-`const` accessor pair (`at`) had no spelling either (K21, NG-26, NG-27, NG-31). Three designers and two judges: one Ember name of several members, each use standing for the one its own words fit (exact before coercion, argument by argument, a literal as C++ types it), `E5035` for none or a tie; the pair split into `at` and `at_mut`, as `get`/`get_mut` already are; an overlay entry may write a parameter's type where names do not tell members apart; `rename`/`hide` take a member reference.
 
-**Ruling.** Applied as the second judge merged it (a lead ruling; the method-3 team's decision 4 on the pair reversed: two names instead of the object's kind). For the owner: whether a name the header never wrote (`at_mut`) is acceptable under "what a programmer means stays written down"; the C aliases (`c_int`, `c_long`) staying transparent aliases, so `put(int)`/`put(long)` tie for a typed `i32` on Windows until an overlay `hide`/`rename` (NG-28).
+**Ruling.** Stands. `at_mut` is not a name the header wrote, but it is the language's own spelling of the same thing everywhere (`get`/`get_mut`, `iter`/`iter_mut`, `index`/`index_mut`, `span`/`span_mut`), so a programmer writes at the call what the object does and nothing is read from the name the object is reached through (`[FFI-40b]`); reading the member from the object's kind would make one line mean two things. The C aliases stay transparent (`c_int` is `i32`), as Rust's `c_int` and Swift's `CInt` are: a distinct nominal `c_int` (Zig's) would tax every C call with a conversion for one case, two C++ overloads differing only in `int`/`long` on a target where both are 32 bits, which `E5035` names and one `rename` or `hide` in the overlay settles (`[FFI-57]`, NG-28). A class whose only `operator[]` is non-`const` imports `index_mut` alone (`[FFI-42]`, Hardened_3's exit check). Verdicts 131, 132 and 60 kept.
 
 ---
 
-## ODR-263 — A check point where an Ember function returns to C — **OPEN**
+## ODR-263 — A check point where an Ember function returns to C — **CLOSED**
 
     ID:        ODR-263
-    Status:    OPEN — for the owner, 2026-11-08 (applied under the delegation, docs/AUTOPILOT.md §3; the owner may reverse)
+    Status:    CLOSED — ruled on the owner's instruction of 2026-11-08 ("for the ODRs go for the best solution possible"), by the lead alone; incorporated in 0.9.20_Hardened_4; `tasks/96/redesign/audit-0.9.20/round3/rulings.md`
     Category:  MEMORY MODEL / C INTEROP
     Location:  0.9.20_Hardened_3 [RC-4] point 3, the two [COST-3] rows of C entries
 
 **The question.** A `thread_shared` value queued to the main thread while it lives inside a C event loop (`ui_run()`) waited until C returned (NG-10). The K10 ruling and the gap review's reader both place a check point at the return of every export and trampoline (one thread-local load and a branch per return into C), and at a foreign call, which may block.
 
-**Ruling.** Applied (the by-thread mark of the K10 ruling makes a host thread's own values never wait at all). For the owner: the cost, one queue test per return into C, against holding memory for the life of C's loop.
+**Ruling.** Stands. A check point at the return of every export and trampoline and around a foreign call is one thread-local load and a branch at a boundary that already costs a call (`[COST-3]`), and it is what lets a value queued to the main thread end while C's loop runs rather than when it returns. Weighed and set aside: a check point only on threads that keep a home count, which the by-thread mark already gives for a host thread's own values, but a value made on the main thread and released on a host thread is queued to main, and the package compiling the export cannot know which thread runs it (`[BLD-16]`), so the test is emitted and paid; a maker marking itself away on entering C so that other threads free at once, which needs an atomic protocol against the maker's re-entry through a callback (two stores and a compare-exchange per foreign call) and makes a plain `drop` run on a foreign thread, which the K10 ruling's by-type mark exists to avoid; draining from the callback side, which is the trampoline's return and already a check point. Verdict 101's check point, placed by the compiler and always before the thread ends, kept.
 
 ---
 
-## ODR-264 — A list pattern as a `match` arm's first line — **OPEN**
+## ODR-264 — A list pattern as a `match` arm's first line — **CLOSED**
 
     ID:        ODR-264
-    Status:    OPEN — for the owner, 2026-11-08 (applied under the delegation, docs/AUTOPILOT.md §3; the owner may reverse)
+    Status:    CLOSED — ruled on the owner's instruction of 2026-11-08 ("for the ODRs go for the best solution possible"), by the lead alone; incorporated in 0.9.20_Hardened_4; `tasks/96/redesign/audit-0.9.20/round3/rulings.md`
     Category:  LANGUAGE / GRAMMAR
     Location:  0.9.20_Hardened_3 [GRM-13], [GRM-40]
 
 **The question.** Verdict 155 makes every line that starts with `[` and is not directly above a function, struct or class `E0100`, which refuses a top-level list-pattern arm (`["quit"]:`) as a side effect; the nested form (`Some([first, ..rest]):`) now has its meaning (K64).
 
-**Ruling.** Not changed: the arm stays `E0100` (the verdict's letter). For the owner: whether a `[` line whose next line is an indented block inside a `match` may be an arm.
+**Ruling.** Changed: a list pattern may open a `match` arm (`["quit"]:` and `[first, ..rest]:` under `match words:`). An arm's line is a pattern that ends in `:`; no bound list and no statement can stand in a `match` block, so the parser decides from the block's kind alone and the form reads as Python's `case [x, y]:`. Everywhere else a line that begins with `[` stays `E0100` with verdict 155's message (`[GRM-40]`, `[GRM-13]`, the `E0100` row). **Departs from verdict 155** in a case it did not consider: the verdict's two targets were a misplaced bound list and a list as a statement, and an arm is neither; refusing it made a programmer wrap every list arm in `Some(...)` or a guard for no gain in safety or speed. Reported for the owner, who may reinstate the refusal.
 
 ---
 
-## ODR-265 — Several interfaces after `dyn` or `some` — **OPEN**
+## ODR-265 — Several interfaces after `dyn` or `some` — **CLOSED**
 
     ID:        ODR-265
-    Status:    OPEN — for the owner, 2026-11-08 (applied under the delegation, docs/AUTOPILOT.md §3; the owner may reverse)
+    Status:    CLOSED — ruled on the owner's instruction of 2026-11-08 ("for the ODRs go for the best solution possible"), by the lead alone; incorporated in 0.9.20_Hardened_4; `tasks/96/redesign/audit-0.9.20/round3/rulings.md`
     Category:  LANGUAGE / TYPES
     Location:  0.9.20_Hardened_3 [TYP-17], [TYP-22], [TYP-32], the grammar's `bound_list`
 
 **The question.** The grammar admitted `dyn A + B` and `some I + Send` with no meaning (K65, NG-23). The readers applied verdict 109's sentence ("the same spelling goes everywhere a list of needs is written"): round brackets, `owns dyn (Shape, Debug)`, `some (Iterator[Item = int], Send)`, with the set's table and a marker in the list giving the marker.
 
-**Ruling.** Applied as a lead ruling extending verdict 109 beyond `needs` lists. For the owner: the spelling (brackets without `needs` after `dyn`/`some`).
+**Ruling.** Stands. Round brackets after `dyn` and `some` are verdict 109's spelling for a list of needs, the word before them saying what the value is; `+` is refused with the brackets in the message (`[TYP-17]`). A named interface (`interface Drawable: needs (Shape, Debug)`) is not a substitute, since interfaces are nominal (`[TYP-40]`): a type implementing `Shape` and `Debug` does not implement `Drawable` until its author says so, while `dyn (Shape, Debug)` takes any type that implements both. The set's one table, written by the converting package under one symbol per set and type, keeps a call at one indirect load and the conversion to a member's `dyn A` at one load (§X.4). No grammar ambiguity: a tuple type never follows `dyn` or `some`.
 
 ---
 
-## ODR-266 — A full callback table on a 32-bit target — **OPEN**
+## ODR-266 — A full callback table on a 32-bit target — **CLOSED**
 
     ID:        ODR-266
-    Status:    OPEN — for the owner, 2026-11-08 (applied under the delegation, docs/AUTOPILOT.md §3; the owner may reverse)
+    Status:    CLOSED — ruled on the owner's instruction of 2026-11-08 ("for the ODRs go for the best solution possible"), by the lead alone; incorporated in 0.9.20_Hardened_4; `tasks/96/redesign/audit-0.9.20/round3/rulings.md`
     Category:  C INTEROP
     Location:  0.9.20_Hardened_3 [FFI-53], [COST-6]
 
 **The question.** On a 32-bit target the tagged number has 65,536 slots; nothing said what a registering `safe fn` does when every slot is live or retired (K76). The text now stops the program there, in every profile, as a full `Pool` does; `docs/AUTOPILOT.md` §4 forbids a panic "for a limit of the implementation", and the reader read this limit as C's 32-bit pointer's, not Ember's.
 
-**Ruling.** Applied. For the owner: whether the stop stands, or every kept-callback registration returns a `Result` (the finder's option B), which every 64-bit program would then handle for a case it cannot reach.
+**Ruling.** Stands, with the stop named. On a 32-bit target the tagged number has 16 bits of slot and 16 of generation, so 65,536 callbacks live at once is the width's limit, not Ember's; slots are reused through their generations (`[FFI-53]`), so the limit is on live callbacks, and exhausting it is a resource exhaustion like an allocation that fails (`[ALC-6]`): the registering call stops the program as a full `Pool`'s `insert` does, the failure `Panic(Explicit)` lists, on every target, so that a program's text means one thing wherever it is built (a `@nopanic(explicit)` function that registers a kept callback is `E4040`). A `Result` from every registration would make every 64-bit program handle a case it cannot reach; a pointer to the token's record in place of the tag would let a stale number C hands back run a later callback, since the generation is what detects it; a wider slot field would shrink the generation and weaken that detection. Verdicts 114 and 130 kept.
 
 ---
 
-## ODR-238 — How a user's callback registry marks its parameter — **OPEN**
+## ODR-238 — How a user's callback registry marks its parameter — **CLOSED**
 
     ID:        ODR-238
-    Status:    OPEN — for the owner, 2026-10-22 (not ruled)
+    Status:    CLOSED — ruled on the owner's instruction of 2026-11-08 ("for the ODRs go for the best solution possible"), by the lead alone; incorporated in 0.9.20_Hardened_4; `tasks/96/redesign/audit-0.9.20/round3/rulings.md`
     Category:  LANGUAGE / CALLABLES
     Location:  Ember_v0.9.10_Hardened_33.md [CLO-15], [CLO-7], [BRW-10]
 
 **The question.** `[CLO-15]` makes a lambda written at a consumed callable parameter "whose captured state MUST carry only the static region" capture by move, but says how only for std's (`thread.spawn`, `jobs.submit`); a user's registry (`bus.subscribe(fn(e) => use(total))`) is refused with `E3026` inside the callee (helper W's question 2). Options: (a) inferred from the body storing the parameter where it outlives the call (W's recommendation; but a `pub` function's body would then change what its callers may pass, which `[BRW-10]` avoids for methods); (b) a mark in the signature (a new word). Under ODR-100 (the owner's).
 
-**Ruling.** Not ruled: for the owner. `[CLO-15]` is unchanged.
+**Ruling.** Answered by the current text, no change. `[CLO-4]` checks the real variables a lambda uses in the function that writes it, which sees every place the function value goes, a callee that keeps it beyond the call included, by that callee's summary (`[EFF-24]`, recorded in its interface file, `[BLD-14]`), and refuses a handler kept after its maker returns with `E3026`, whose message names the word for the place (`fn() owns count`, `fn() shares mut count`); `[CLO-7]` has a callback registry take an `owns` function value and says nothing is captured by a rule of the call: the function says after its brackets what it holds. So option (a) holds through the summary a `pub` function records, which is how every effect of a callee reaches its callers, and no new word is needed. `[CLO-15]` was removed in 0.9.10_Hardened_35; ODR-100's choice stands untouched.
 
 ---
 

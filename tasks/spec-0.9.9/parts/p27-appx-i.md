@@ -485,7 +485,7 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[ERR-1]` | XIII | `Option[T]` is absence: `Some(v)` or `None`. `Result[T, E = … |
+| `[ERR-1]` | XIII | *(changed in 0.9.20)* `Option[T]` is absence: `Some(v)` or `None`. … |
 | `[ERR-2]` | XIII | *(changed in 0.9.15)* `e?` on a `Result[T, E]` in a function … |
 | `[ERR-3]` | XIII | *(changed in 0.9.15)* *(changed in 0.9.20)* `Error` is the interface … |
 | `[ERR-4]` | XIII | *(changed in 0.9.15)* *(changed in 0.9.20)* `Option` and `Result` … |
@@ -711,7 +711,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[GRM-37]` | III | *(changed in 0.9.15)* A directive is a line beginning `#!` before the … |
 | `[GRM-38]` | III | *(changed in 0.9.15)* *(changed in 0.9.20)* A parenthesised … |
 | `[GRM-39]` | III | Nesting depth. Every compiler accepts expressions, statements, … |
-| `[GRM-40]` | III | *(new in 0.9.15)* Type parameters go on a line of their own, directly … |
+| `[GRM-40]` | III | *(new in 0.9.15)* *(changed in 0.9.20)* Type parameters go on a line … |
 | `[GRM-41]` | III | *(new in 0.9.15)* A function's first line gives its parts in this … |
 | `[GRM-42]` | III | *(new in 0.9.15)* *(changed in 0.9.20)* Capture words, and lists of … |
 | `[GRM-43]` | III | *(new in 0.9.15)* *(changed in 0.9.20)* Words before a value. `copy … |

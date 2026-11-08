@@ -112,8 +112,9 @@ comptime_block:= "comptime" ":" block
 ```
 
 * `[GRM-1]` A class has at most one base class, written in parentheses: `class Door(Script):`.
-* `[GRM-33]` *(new in 0.9.9)* A bodiless `fn_decl` is legal only in an `interface`, an `extern_block`, or as a
-  `virtual` method of an `abstract class`. Elsewhere it is `E0110` with the help `add ':' and a body`.
+* `[GRM-33]` *(new in 0.9.9)* A bodiless `fn_decl` is legal only in an `interface`, an
+  `extern_block`, or as a `virtual` method of an `abstract class`. Elsewhere it is `E0110` with the
+  help `add ':' and a body`.
 * `[GRM-34]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.20)* `extend [T: needs B]
   Array[T] implements I:` declares a generic extension; the generic parameters after `extend` scope
   over the whole block. A parameter the target does not name and an implemented interface does makes
@@ -130,43 +131,45 @@ comptime_block:= "comptime" ":" block
   write `y: int = 0` in `struct P:`").
 * `[GRM-8d]` A `type_alias` with an `in` clause declares a range type (`[RNG-1]`). The clause is
   legal only on an item-level alias with no generic parameters (`E2213` otherwise).
-* `[GRM-40]` *(new in 0.9.15)* **Type parameters go on a line of their own**, directly above the
+* `[GRM-40]` *(new in 0.9.15)* *(changed in 0.9.20)* **Type parameters go on a line of their own**, directly above the
   function, method, struct or class they belong to, at its indentation and below its attributes:
-  `[T: needs (Add[Output = T], Default)]` above `fn sum(xs: Span[T]) -> T:`, `[F: needs fn(Item)]` above
-  `fn for_each(owns f: F) owns this:`, `[T]` above `struct Pool:`. The type or function is used as
-  before (`Pool[int]`, `sum(xs)`, `f[int](x)`), and a lambda has none. An enum, an interface, a
-  `type` alias and an `extend` block keep their brackets after the name or after `extend`
-  (`interface Add[Rhs = Self]:`, `type Pair[T] = (T, T)`, `extend[T: needs B] Array[T]`). Brackets after the
-  name of a function, method, struct or class are `E0100`, whose message gives the two lines to
-  write (`[T]` above `fn first(xs: Array[T]) -> T:`); a bracket line not directly above one of them is
-  `E0100`: a blank line or a comment line between `[T]` and its `fn` is `E0100` too, and so is every
-  line that begins with `[` anywhere else, one that begins with a list included (`[10, 20].len()` on a
-  line of its own; `n = [10, 20].len()` is the way), with one message: "a `[...]` line gives type
+  `[T: needs (Add[Output = T], Default)]` above `fn sum(xs: Span[T]) -> T:`, `[F: needs fn(Item)]`
+  above `fn for_each(owns f: F) owns this:`, `[T]` above `struct Pool:`. The type or function is
+  used as before (`Pool[int]`, `sum(xs)`, `f[int](x)`), and a lambda has none. An enum, an
+  interface, a `type` alias and an `extend` block keep their brackets after the name or after
+  `extend` (`interface Add[Rhs = Self]:`, `type Pair[T] = (T, T)`, `extend[T: needs B] Array[T]`).
+  Brackets after the name of a function, method, struct or class are `E0100`, whose message gives
+  the two lines to write (`[T]` above `fn first(xs: Array[T]) -> T:`); a bracket line not directly
+  above one of them is `E0100`: a blank line or a comment line between `[T]` and its `fn` is `E0100`
+  too, and so is every line that begins with `[` anywhere else, one that begins with a list included
+  (`[10, 20].len()` on a line of its own; `n = [10, 20].len()` is the way), except the line of a
+  `match` arm, a pattern that ends in `:` where no bound list and no statement can stand
+  (`["quit"]:` under `match words:`, `[GRM-13]`), with one message: "a `[...]` line gives type
   parameters, and goes on the line right above the function, struct or class they belong to" (for an
-  enum, an interface, a `type` alias or an `extend` block, the help gives the brackets after the name:
-  `enum E[T]:`). A line that begins with `[` is a type-parameter line when the line after it begins a
-  function, struct or class declaration (with `pub`, `open`, `abstract`, `static`, `virtual`,
-  `override`, `gen`, `unsafe` or `extern` before it, or none); this is the one place where the parser
-  looks past a line's end, at the next line's first tokens.
+  enum, an interface, a `type` alias or an `extend` block, the help gives the brackets after the
+  name: `enum E[T]:`). A line that begins with `[` is a type-parameter line when the line after it
+  begins a function, struct or class declaration (with `pub`, `open`, `abstract`, `static`,
+  `virtual`, `override`, `gen`, `unsafe` or `extern` before it, or none); this is the one place
+  where the parser looks past a line's end, at the next line's first tokens.
 * `[GRM-41]` *(new in 0.9.15)* **A function's first line** gives its parts in this order: the
   parameters, each with the word in front of its name; `owns this`, for a method that takes its
   object over, or, for a local function, its capture words (`[GRM-42]`); `->` and the result type;
-  `from` and what the result points into (`fn finish() owns this -> u64:`, `fn next_word() -> StrView
-  from src:`). A first line in another order is `E0118`, whose message gives it in order. A
+  `from` and what the result points into (`fn finish() owns this -> u64:`, `fn next_word() ->
+  StrView from src:`). A first line in another order is `E0118`, whose message gives it in order. A
   parameter's word is `ref` (a read-only view, the default, which may be left out), `ref mut`,
-  `const ref mut` or `owns` (`[FN-1]`), written on its name: written in its type instead
-  (`c: ref mut Counter`) it is `E0117` ("the mode goes on the name: write `ref mut c: Counter`"), and
-  `mut` alone on a name, here, on a lambda parameter, on a pattern name or on `this`, is `E0113`,
-  whose message gives the line with `ref mut` in the program's own names. A method does not list its
+  `const ref mut` or `owns` (`[FN-1]`), written on its name: written in its type instead (`c: ref
+  mut Counter`) it is `E0117` ("the mode goes on the name: write `ref mut c: Counter`"), and `mut`
+  alone on a name, here, on a lambda parameter, on a pattern name or on `this`, is `E0113`, whose
+  message gives the line with `ref mut` in the program's own names. A method does not list its
   object among its parameters; inside it the object is `this` (`[FN-4]`), and `self` anywhere is
   `E1010` ("inside a method its object is `this`"). A function in a type body is a method unless it
-  is written `static fn`, which has no object and is called on the type
-  (`static fn starting_at(k: int) -> Counter:`, called `Counter.starting_at(5)`); `static fn`
-  outside a type body is `E2115`, whose message says to remove `static`, and `this` where there is no
-  object (a function outside a type body, a `static fn`) is `E1010`. Nothing else follows the
-  brackets: a clause that says what the function changes or reads (`changes FRAME`, `reads
-  renderer`) is `E0100`, whose message gives the first line without it, since the compiler works out
-  what every function changes and reads from its code (Part X).
+  is written `static fn`, which has no object and is called on the type (`static fn starting_at(k:
+  int) -> Counter:`, called `Counter.starting_at(5)`); `static fn` outside a type body is `E2115`,
+  whose message says to remove `static`, and `this` where there is no object (a function outside a
+  type body, a `static fn`) is `E1010`. Nothing else follows the brackets: a clause that says what
+  the function changes or reads (`changes FRAME`, `reads renderer`) is `E0100`, whose message gives
+  the first line without it, since the compiler works out what every function changes and reads from
+  its code (Part X).
 
 ## III.3 Types
 
@@ -598,8 +601,10 @@ path          := IDENT {"." IDENT}
   so under `match owns xs:` it is `E3013` (it would view what the match hands over, `[OWN-11]`),
   whose help is to match `xs` in place and take what is needed with
   `rest.iter().copy_each().to_array()` (`[STD-19]`) or `xs.drain(1..)`. A list pattern against a
-  `String` or `StrView` is `E2020`, whose help gives `split`. A list pattern stands nested or on a
-  `for` line, never first on a line of its own (`[GRM-40]`).
+  `String` or `StrView` is `E2020`, whose help gives `split`. A list pattern stands nested, on a
+  `for` line, or first on the line of a `match` arm, which ends in `:` and so is neither a bound
+  list nor a statement (`["quit"]:` and `[first, ..rest]:` under `match words:`); first on any other
+  line it is `E0100` (`[GRM-40]`).
 * `[ENM-1]` *(changed in 0.9.9)* Inside a pattern whose scrutinee type is known, a variant may be
   written unqualified (`Circle(r)`); in an expression it is qualified (`Shape.Circle(1.0)`) unless
   imported.

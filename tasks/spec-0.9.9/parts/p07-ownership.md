@@ -781,17 +781,22 @@ fn find_word(haystack: StrView, needle: StrView) -> Option[StrView] from haystac
   load_level(ref mut current)`"). An unscoped thread, a job outside a scope and a callback foreign
   code keeps may outlive every instance but a `static` (`[THR-10]`, `[JOB-2]`, `[FFI-21]`), so a
   value made in an instance, a `thread_shared` one included (`[TYP-46a]`), goes to one of them only
-  when its instance is a `static` or `static mut`, which lives as long as the program (`[LT-3]`);
-  from a local, a parameter or a field it is `E3063` at the hand-over ("`st` was made in `level`
-  (line 7), which ends when `start` returns, and the thread started on line 8 may outlive `start`;
-  make it in the built-in manager, `st = thread_shared Stats()`, or in a `static` arena"). A value
-  whose manager may have several instances keeps its instance's address, one word, so that its
-  growth and its end go back to the instance it came from; that address is a kept `sharedref mut`
-  link to the instance (`[LT-46]`) for the exclusivity rules, and between threads what `[TYP-46a]`
-  says (a `ref A` to a manager any thread may call, else this link, which never leaves its thread):
-  the program may use the instance while values made in it live, and each value's growth and end
-  change the instance through it. A manager with one instance (`Global`, `System`) costs no word.
-  Arena allocations point into the arena (`[ARN-1]`).
+  when its instance is a `static`, which lives as long as the program (`[LT-3]`) and never changes
+  (`[STA-1]`), so nothing rewinds or frees its memory under the value; from a local, a parameter, a
+  field or a `static mut` (which a line of the main thread may reset while the thread runs, a fact
+  of the program's run that no package compiling that line can see, `[BLD-16]`) it is `E3063` at the
+  hand-over ("`st` was made in `level` (line 7), which ends when `start` returns, and the thread
+  started on line 8 may outlive `start`; make it in the built-in manager, `st = thread_shared
+  Stats()`, in a `static` manager whose `allocate` reads it (a pool that locks inside), or run the
+  thread as a task of a scope that ends before `level`: `with thread.scope() as scope:` and
+  `scope.spawn(owns fn() owns st: ...)` in place of line 8"). A value whose manager may have several
+  instances keeps its instance's address, one word, so that its growth and its end go back to the
+  instance it came from; that address is a kept `sharedref mut` link to the instance (`[LT-46]`) for
+  the exclusivity rules, and between threads what `[TYP-46a]` says (a `ref A` to a manager any
+  thread may call, else this link, which never leaves its thread): the program may use the instance
+  while values made in it live, and each value's growth and end change the instance through it. A
+  manager with one instance (`Global`, `System`) costs no word. Arena allocations point into the
+  arena (`[ARN-1]`).
 * `[LT-44]` *(new in 0.9.9)* *(changed in 0.9.15)* A plain or `ref mut` `Arena`, `FixedArena` or
   `ScopedArena` parameter is a source parameter because it is not `Copy` (`[LT-1]`): a function
   whose only source parameter is one arena returns views that point into it, with no word. `from
