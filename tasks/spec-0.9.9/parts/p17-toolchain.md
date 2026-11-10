@@ -60,7 +60,7 @@ ember --help | --version [--matrix]
   rewrites source written for an earlier version into the current one where the change is
   mechanical, and lists, with the file and line, what it could not rewrite. From 0.9.15: the `#!
   language` directive to the current version; the changes of 0.9.20 refuse programs that were unsafe
-  and rewrite nothing (§H.52 to §H.59). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
+  and rewrite nothing (§H.52 to §H.60). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
   removal, `for k, v in m:` over a `Map` to `for k, v in m.items():` (`[CTL-1]`). From 0.9.10:
   `Box[T]` and `ForeignBox[T]` to `owns T`, `Box[T, A]` to `owns T using A`, `Array[T, A]` to
   `Array[T] using A`, `Weak[T]` to `weakref T`, the mode `owned` to `owns`, `mut x: T` on a
@@ -214,7 +214,7 @@ large_copy = { level = "warn", threshold = 256 }
   dependency's own root (`[CT-2]`), `-std=<c-standard>`, `-O<n>`, and `-W<name>` other than `-Wl,…`,
   `-Wa,…` and `-Wp,…`, which pass arguments to the linker, assembler and preprocessor; its `[link]
   unsafe_libs` entries are taken for names with no path separator (`"m"`) and for paths under its
-  own root, resolved the same way (a library one of its headers names counting as an entry,
+  own root, resolved the same way (a library one of its headers asks for is named there too,
   `[FFI-51]`); and its `[cpp.<project>]` section (whose configuration runs the project's own build
   code, Annex C), any other `[c] flags` entry, any other `[link]` path, and its `[build]`,
   `[profiles]`, `[jobs]` and `[comptime]` sections are honoured only when the root package's

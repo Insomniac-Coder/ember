@@ -1279,6 +1279,8 @@ After the lead's check of 0.9.20_Hardened_4 (`tasks/96/redesign/spec-gaps-0.9.15
 
     Applied in 0.9.20_Hardened_8 (N154). A new requirement adds its own word and changes nothing else in how a thing is written.
 
+173. **A library a header itself asks for is listed under `unsafe_libs` too.** Some headers have the linker add a library (`windows.h`: `#pragma comment(lib, "uuid.lib")`); verdict 171 already makes such an import `unsafe import`, and the manifest said nothing of the library. Asked whether it must also be listed under `[link] unsafe_libs` (verdict 172): owner (2026-11-10): "Yes, list it too". Applied in 0.9.20_Hardened_9 (N155).
+
 ## Messages and tests: the lead's to settle (owner, 2026-11-01 evening)
 
 "your error messages are okay it's the language implementation part that concerns me most of the time so

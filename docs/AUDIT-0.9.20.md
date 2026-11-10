@@ -11,7 +11,12 @@ session, or a workflow the owner allows, starts here and does not redo the readi
 
 ## 0. State, and how to resume
 
-* **Cut and pinned (eighth pass, 2026-11-10, the local session):** `docs/spec-source/Ember_v0.9.20_Hardened_8.md`
+* **Cut and pinned (ninth pass, 2026-11-10, the local session):** `docs/spec-source/Ember_v0.9.20_Hardened_9.md`
+  (18197 lines, 1,020 rules, SHA-256 `ED8D26128947…`) is the development target; sources frozen in
+  `tasks/spec-0.9.9/parts-0.9.20-h9/`, change log §H.60, the owner's verdict 173 (`JOB.md`), N155 (`decisions.md`
+  §20), record §14 below. To cut Hardened_10: `CURRENT = ('0.9.20', 10)`, point `V0920_H9_PARTS` at
+  `parts-0.9.20-h9`, add `V0920_H10_PARTS`, `H61_HEAD`, `v0920_h10()` and its term in `main()`.
+* **Cut and pinned (eighth pass, 2026-11-10, the local session), superseded the same day:** `docs/spec-source/Ember_v0.9.20_Hardened_8.md`
   (18166 lines, 1,020 rules, SHA-256 `CF76212AFD8D…`) is the development target; sources frozen in
   `tasks/spec-0.9.9/parts-0.9.20-h8/`, change log §H.59, the owner's verdict 172 (`JOB.md`), N154 (`decisions.md`
   §19), record §13 below. To cut Hardened_9: `CURRENT = ('0.9.20', 9)`, point `V0920_H8_PARTS` at
@@ -683,3 +688,13 @@ build ties a library to its imports itself, from the names the library defines (
 the import check exists. **Checked at the cut** as in §11, all green. **Not run:** the full suite, the bench, the
 push gate. **Put to the owner, not changed:** whether a library a header itself asks for must also be listed
 under `unsafe_libs`.
+
+## 14. The ninth pass: 0.9.20_Hardened_9 (2026-11-10, the local session, attended, the lead solo)
+
+One verdict (173): a library a header itself asks for is named under `[link] unsafe_libs` too ("Yes, list it
+too"); an import whose header asks for one the manifest does not name is `E9001` with the line to add
+(`[FFI-51]`, `[BLD-FFI-3]`, `[MAN-10]`; registry row E9001). From the pilot of §11: `windows.h` asks for
+`uuid.lib`, and with MSVC every C++ standard header asks for `libcpmt`, so those programs name them. **Checked
+at the cut** as in §11, all green; the compiler is untouched. **Not run:** the full suite, the bench, the push
+gate. **Put to the owner, not changed:** the manifest names a library for every target; it has no way to name
+one for Windows only.

@@ -3576,3 +3576,28 @@ Generated: every rule whose text differs from 0.9.20_Hardened_7.
 | `[MAN-8]` | changed |
 | `[MAN-10]` | changed |
 
+
+## H.60 Changes in 0.9.20_Hardened_9 (from 0.9.20_Hardened_8)
+
+**0.9.20_Hardened_9**, of 2026-11-10, is one verdict of the owner's (173). Some headers ask the
+linker for a library themselves (`windows.h` for `uuid.lib`). Since Hardened_7 that makes the
+import `unsafe import`, but the manifest said nothing of the library, where verdict 172 has the
+manifest name every library a program links. Asked whether such a library must be listed too, the
+owner: "Yes, list it too".
+
+* **A library a header asks for is named in the manifest**, under `[link] unsafe_libs`, as every
+  linked library is; where it is not, the import is refused with the line to add. So with MSVC a
+  program that imports a C++ header reaching the standard library names `libcpmt`, and one that
+  imports `windows.h` names `uuid` (`[FFI-51]`, `[BLD-FFI-3]`, `[MAN-10]`).
+
+Registry row: E9001. No new rule, no new code, none retired. Owner verdicts: 173 applied.
+
+Generated: every rule whose text differs from 0.9.20_Hardened_8.
+
+| Rule | 0.9.20_Hardened_8 → 0.9.20_Hardened_9 |
+|---|---|
+| `[BLD-FFI-3]` | changed |
+| `[CLI-20]` | changed |
+| `[FFI-51]` | changed |
+| `[MAN-10]` | changed |
+

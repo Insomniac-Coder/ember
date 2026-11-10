@@ -1,7 +1,19 @@
 # Ember — handoff
 
-> **2026-11-10, late night — the local session (branch `spec-0.9.20-hardening`), attended, the lead solo. START
-> HERE.** **Hardened_8 of 0.9.20 is cut** and is the development target
+> **2026-11-10, end of the session — the local session (branch `spec-0.9.20-hardening`), attended, the lead
+> solo. START HERE.** **Hardened_9 of 0.9.20 is cut** and is the development target
+> (`docs/spec-source/Ember_v0.9.20_Hardened_9.md`, 18197 lines, 1,020 rules, SHA-256 `ED8D26128947…`). One verdict of the
+> owner's (173, `tasks/96/redesign/JOB.md`): a library a header itself asks for (`windows.h`: `uuid.lib`) is
+> named under `[link] unsafe_libs` too, `E9001` where it is not (N155, `decisions.md` §20; `docs/AUDIT-0.9.20.md`
+> §14; §H.60). Five cuts were made on 2026-11-10 (Hardened_5 to _9); the blocks below record each, newest
+> first, and verdicts 167 to 173 are the owner's words. **Checked:** every spec gate, `ember_diag`,
+> `ember_parser` and the three spec-tied milestone tests green against the pin; the compiler is untouched.
+> **Not done:** nothing is pushed and `main` is not moved (the owner: "Not yet"); the full suite and the bench
+> were not run. **Open with the owner:** the manifest has no way to name a library for one target only; his look
+> at N140 to N155.
+
+> **2026-11-10, late night — the local session (branch `spec-0.9.20-hardening`), attended, the lead solo. (The
+> block above is newer.)** **Hardened_8 of 0.9.20 was cut** and was the development target
 > (`docs/spec-source/Ember_v0.9.20_Hardened_8.md`, 18166 lines, 1,020 rules, SHA-256 `CF76212AFD8D…`). One verdict of the
 > owner's (172, `tasks/96/redesign/JOB.md`): a linked library is named under `[link] unsafe_libs` in `ember.toml`
 > and the import of its header is `unsafe import` with a `# SAFETY:` note; the key `libs` and an import's `link =
