@@ -3445,3 +3445,66 @@ Generated: every rule whose text differs from 0.9.20_Hardened_4.
 | `[TYP-36]` | changed |
 | `[WK-7]` | changed |
 
+
+## H.57 Changes in 0.9.20_Hardened_6 (from 0.9.20_Hardened_5)
+
+**0.9.20_Hardened_6**, of 2026-11-10, follows a second review of Hardened_5
+(`tasks/96/redesign/spec-gaps-0.9.15/deep/review-0.9.20-H5.md`, §8: three holes and four notes, none
+in the rules of ownership, threads or types). The lead checked each against the text and by runs
+before writing a line (`docs/AUDIT-0.9.20.md` §11), and the owner said: "Fix them and cut a new
+hardened version". The rulings are N147 to N152 (`decisions.md` §17). Each change closes a way for
+code to run, or a file to be read, that nothing vouched for, restores an owner's verdict, or makes
+the text say one thing where it said two; no feature is taken away. The accepted set changes, so
+the language version stays 0.9.20 and the hardening number moves (`[VER-9]`).
+
+* **The list hot reload keeps of objects** (N147): an object whose own type is `Send` may be ended
+  by another thread than the one that made it, which would unlink it from a list its maker is
+  changing, so it is registered as a `thread_shared` object is, ordered by the runtime; only an
+  object whose type is not `Send` keeps the plain stores in its own thread's list. A registered
+  container follows the same rule. Adding an object to the list is four stores, not two
+  (`[HR-12]`, `[HR-13]`, the row of `[COST-3]`). Reloadable builds only.
+* **A header that does more than declare** (N148): the import of a C or C++ header needs no
+  `unsafe` only where the header holds declarations and nothing the linker or the loader acts on;
+  the rule listed two ways for a header to run code before `main` and there are more (a pointer
+  placed in a start-up section, a destructor attribute, an order to the linker, assembly, a
+  definition the linker may give to other code). A library a header asks for by name is an entry
+  of `[link] libs`, listed by `ember tcb`; the toolchain's own headers are the toolchain. Measured
+  before it was written: of the repository's 49 C headers none needs the word for it, nor do
+  `vulkan.h`, `windows.h` or the C++ standard headers (`[FFI-51]`, `[TCB-4]`).
+* **What a dependency's C reads** (N149): the compile of a dependency's C reads only files under
+  its own root and the toolchain's headers, checked against what the C compiler reports it read
+  (`#embed` of a file of the build machine was accepted), and holds no assembly, whose `.incbin`
+  reads a file no report names; `native` in the root's manifest lifts both. Each flag reaches the C
+  compiler as one argument (`[MAN-10]`).
+* **The shared function type** (N150, verdict 38): a parameter of a function type is the shared
+  type again, one body and one indirect call, as the cost table has said throughout; only a
+  function given through a type parameter is compiled once for each function given. Hardened_2 had
+  made the two alike in two rules and left the table as it was. A function another package passes
+  to a `pub` function's function-typed parameter is checked at that package's own line, as the
+  interface file's records already provide (`[EFF-2]`, `[EFF-2a]`).
+* **A C++ call as C++ ranks it** (N151): among the members a call fits, a promotion C++ makes
+  comes before any other number type and every other number type counts alike; "the narrowest
+  type" chose `set(short)` for an `i8` where C++ chooses `set(int)` (`[FFI-57]`).
+* **Form** (N152): three rules new in 0.9.20 also said "changed in 0.9.20" (`[BLD-16]`,
+  `[TYP-46a]`, `[ALC-5a]`), and one cited itself (`[BLD-16]`).
+
+Registry rows: E3100, E9001. No new rule, no new code, none retired. Owner verdicts: 38 restored
+to its letter.
+
+Generated: every rule whose text differs from 0.9.20_Hardened_5.
+
+| Rule | 0.9.20_Hardened_5 → 0.9.20_Hardened_6 |
+|---|---|
+| `[ALC-5a]` | changed |
+| `[BLD-16]` | changed |
+| `[CLI-20]` | changed |
+| `[EFF-2]` | changed |
+| `[EFF-2a]` | changed |
+| `[FFI-51]` | changed |
+| `[FFI-57]` | changed |
+| `[HR-12]` | changed |
+| `[HR-13]` | changed |
+| `[MAN-10]` | changed |
+| `[TCB-4]` | changed |
+| `[TYP-46a]` | changed |
+

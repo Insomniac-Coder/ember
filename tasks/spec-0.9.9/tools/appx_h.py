@@ -796,7 +796,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.20', 5)
+CURRENT = ('0.9.20', 6)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -848,7 +848,8 @@ V0920_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h1')
 V0920_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h2')
 V0920_H3_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h3')
 V0920_H4_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h4')
-V0920_H5_PARTS = os.path.join(HERE, '..', 'parts')
+V0920_H5_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h5')
+V0920_H6_PARTS = os.path.join(HERE, '..', 'parts')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -2172,6 +2173,64 @@ def v0920_h5():
     return H56_HEAD + rule_diff(V0920_H4_PARTS, V0920_H5_PARTS)
 
 
+H57_HEAD = r'''
+
+## H.57 Changes in 0.9.20_Hardened_6 (from 0.9.20_Hardened_5)
+
+**0.9.20_Hardened_6**, of 2026-11-10, follows a second review of Hardened_5
+(`tasks/96/redesign/spec-gaps-0.9.15/deep/review-0.9.20-H5.md`, §8: three holes and four notes, none
+in the rules of ownership, threads or types). The lead checked each against the text and by runs
+before writing a line (`docs/AUDIT-0.9.20.md` §11), and the owner said: "Fix them and cut a new
+hardened version". The rulings are N147 to N152 (`decisions.md` §17). Each change closes a way for
+code to run, or a file to be read, that nothing vouched for, restores an owner's verdict, or makes
+the text say one thing where it said two; no feature is taken away. The accepted set changes, so
+the language version stays 0.9.20 and the hardening number moves (`[VER-9]`).
+
+* **The list hot reload keeps of objects** (N147): an object whose own type is `Send` may be ended
+  by another thread than the one that made it, which would unlink it from a list its maker is
+  changing, so it is registered as a `thread_shared` object is, ordered by the runtime; only an
+  object whose type is not `Send` keeps the plain stores in its own thread's list. A registered
+  container follows the same rule. Adding an object to the list is four stores, not two
+  (`[HR-12]`, `[HR-13]`, the row of `[COST-3]`). Reloadable builds only.
+* **A header that does more than declare** (N148): the import of a C or C++ header needs no
+  `unsafe` only where the header holds declarations and nothing the linker or the loader acts on;
+  the rule listed two ways for a header to run code before `main` and there are more (a pointer
+  placed in a start-up section, a destructor attribute, an order to the linker, assembly, a
+  definition the linker may give to other code). A library a header asks for by name is an entry
+  of `[link] libs`, listed by `ember tcb`; the toolchain's own headers are the toolchain. Measured
+  before it was written: of the repository's 49 C headers none needs the word for it, nor do
+  `vulkan.h`, `windows.h` or the C++ standard headers (`[FFI-51]`, `[TCB-4]`).
+* **What a dependency's C reads** (N149): the compile of a dependency's C reads only files under
+  its own root and the toolchain's headers, checked against what the C compiler reports it read
+  (`#embed` of a file of the build machine was accepted), and holds no assembly, whose `.incbin`
+  reads a file no report names; `native` in the root's manifest lifts both. Each flag reaches the C
+  compiler as one argument (`[MAN-10]`).
+* **The shared function type** (N150, verdict 38): a parameter of a function type is the shared
+  type again, one body and one indirect call, as the cost table has said throughout; only a
+  function given through a type parameter is compiled once for each function given. Hardened_2 had
+  made the two alike in two rules and left the table as it was. A function another package passes
+  to a `pub` function's function-typed parameter is checked at that package's own line, as the
+  interface file's records already provide (`[EFF-2]`, `[EFF-2a]`).
+* **A C++ call as C++ ranks it** (N151): among the members a call fits, a promotion C++ makes
+  comes before any other number type and every other number type counts alike; "the narrowest
+  type" chose `set(short)` for an `i8` where C++ chooses `set(int)` (`[FFI-57]`).
+* **Form** (N152): three rules new in 0.9.20 also said "changed in 0.9.20" (`[BLD-16]`,
+  `[TYP-46a]`, `[ALC-5a]`), and one cited itself (`[BLD-16]`).
+
+Registry rows: E3100, E9001. No new rule, no new code, none retired. Owner verdicts: 38 restored
+to its letter.
+
+Generated: every rule whose text differs from 0.9.20_Hardened_5.
+
+| Rule | 0.9.20_Hardened_5 → 0.9.20_Hardened_6 |
+|---|---|
+'''
+
+
+def v0920_h6():
+    return H57_HEAD + rule_diff(V0920_H5_PARTS, V0920_H6_PARTS)
+
+
 def h1_to_h2():
     return rule_diff(H1_PARTS, H2_PARTS)
 
@@ -2242,7 +2301,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n' + v0915_h3_to_h4() + '\n' + v0915_h4_to_h5() + '\n' + v0915_h5_to_h6() + '\n' + v0915_h6_to_h7() + '\n' + v0915_h7_to_h8() + '\n' + v0915_h8_to_h9() + '\n' + v0915_h9_to_h10() + '\n' + v0915_h10_to_h11() + '\n' + v0920_h1() + '\n' + v0920_h2() + '\n' + v0920_h3() + '\n' + v0920_h4() + '\n' + v0920_h5() + '\n\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n' + v0915_h3_to_h4() + '\n' + v0915_h4_to_h5() + '\n' + v0915_h5_to_h6() + '\n' + v0915_h6_to_h7() + '\n' + v0915_h7_to_h8() + '\n' + v0915_h8_to_h9() + '\n' + v0915_h9_to_h10() + '\n' + v0915_h10_to_h11() + '\n' + v0920_h1() + '\n' + v0920_h2() + '\n' + v0920_h3() + '\n' + v0920_h4() + '\n' + v0920_h5() + '\n' + v0920_h6() + '\n\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

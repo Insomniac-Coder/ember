@@ -1264,6 +1264,8 @@ After the lead's check of 0.9.20_Hardened_4 (`tasks/96/redesign/spec-gaps-0.9.15
 
 169. **Read the rest, fix what the check found, then cut a new hardening.** Owner (2026-11-10): "and read the parts you haven't read and fix them too, before creating a new hardened spec". Done as 0.9.20_Hardened_5: the lead's rulings for the fixes are N140 to N146 in `tasks/96/redesign/compiler-0.9.15/decisions.md` §16, each the lead's under the delegation and the owner's to overturn.
 
+170. **Fix what the second review of Hardened_5 found, and cut a new hardening.** Owner (2026-11-10), shown the other agent's review (`tasks/96/redesign/spec-gaps-0.9.15/deep/review-0.9.20-H5.md`, §8: three holes and four notes) and the lead's check of each by runs: "Fix them and cut a new hardened version". (Asked earlier the same day whether to run the push gate and push the branch: "Not yet".) Done as 0.9.20_Hardened_6: the lead's rulings are N147 to N152 in `tasks/96/redesign/compiler-0.9.15/decisions.md` §17, each the lead's under the delegation and the owner's to overturn. N150 is not a ruling of the lead's own: it puts verdict 38 back (a parameter of a function type is the shared type, one body; only a type parameter is compiled once for each function given), which 0.9.20_Hardened_2 had changed in two rules without reporting it as a departure.
+
 ## Messages and tests: the lead's to settle (owner, 2026-11-01 evening)
 
 "your error messages are okay it's the language implementation part that concerns me most of the time so

@@ -23,7 +23,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[ALC-3]` | IX | A binary package may replace the global allocator with `[build] … |
 | `[ALC-4]` | IX | Allocation failure in a standard container panics (`out of memory`). … |
 | `[ALC-5]` | IX | *(new in 0.9.15)* *(changed in 0.9.20)* An instance stays as its … |
-| `[ALC-5a]` | IX | *(new in 0.9.20)* *(changed in 0.9.20)* A link holds the block. A … |
+| `[ALC-5a]` | IX | *(new in 0.9.20)* A link holds the block. A `weakref` link to a value … |
 | `[ALC-6]` | IX | *(new in 0.9.20)* A making line has its instance's effects, and fails … |
 
 ## ARN
@@ -96,7 +96,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[BLD-13]` | XVII | Builds are reproducible: the same inputs give a byte-identical … |
 | `[BLD-14]` | XVII | *(new in 0.9.15)* *(changed in 0.9.20)* Facts worked out at a … |
 | `[BLD-15]` | XVII | *(new in 0.9.15)* A link that hangs is an error (verdict 124). Each … |
-| `[BLD-16]` | XVII | *(new in 0.9.20)* *(changed in 0.9.20)* No fact of the whole program … |
+| `[BLD-16]` | XVII | *(new in 0.9.20)* No fact of the whole program decides a package's … |
 
 ## BLD-FFI
 
@@ -447,7 +447,7 @@ Every rule of this document, by family, with the Part that defines it.
 |---|---|---|
 | `[EFF-1]` | X | *(changed in 0.9.15)* *(changed in 0.9.20)* Effects, and the … |
 | `[EFF-2]` | X | *(changed in 0.9.15)* *(changed in 0.9.20)* A call through a function … |
-| `[EFF-2a]` | X | *(new in 0.9.20)* A place another package can fill. A function-typed … |
+| `[EFF-2a]` | X | *(new in 0.9.20)* A place another package can fill. A function given … |
 | `[EFF-3]` | X | *(changed in 0.9.15)* An `extern` function carries the effects its … |
 | `[EFF-4]` | X | *(changed in 0.9.15)* *(changed in 0.9.20)* Effects and summaries are … |
 | `[EFF-5]` | X | Each contract in the table forbids its effect in the function's … |
@@ -775,7 +775,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[HR-11a]` | Annex B | Enum values are migrated by variant name, never by discriminant. |
 | `[HR-12]` | Annex B | *(changed in 0.9.15)* *(changed in 0.9.20)* In a reloadable build, … |
 | `[HR-12a]` | Annex B | The header size is a whole-process property: every package in a … |
-| `[HR-13]` | Annex B | Value-typed data (structs in arrays, `SoA` columns, ECS storage, … |
+| `[HR-13]` | Annex B | *(changed in 0.9.20)* Value-typed data (structs in arrays, `SoA` … |
 | `[HR-13a]` | Annex B | Standard-library containers of a type from a reloadable package … |
 | `[HR-13b]` | Annex B | *(changed in 0.9.20)* Value data reachable only through raw pointers … |
 | `[HR-14]` | Annex B | *(changed in 0.9.10)* *(changed in 0.9.15)* Migration is by name, and … |
@@ -1395,7 +1395,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[TYP-45]` | IV | *(new in 0.9.15)* *(changed in 0.9.20)* Who owns a value, in its … |
 | `[TYP-45a]` | IV | *(new in 0.9.20)* One word on a type. A word of `[TYP-45]` stands … |
 | `[TYP-46]` | IV | *(new in 0.9.15)* *(changed in 0.9.20)* Which memory manager. `using … |
-| `[TYP-46a]` | IV | *(new in 0.9.20)* *(changed in 0.9.20)* A value made in an instance … |
+| `[TYP-46a]` | IV | *(new in 0.9.20)* A value made in an instance follows its manager … |
 | `[TYP-47]` | IV | *(new in 0.9.15)* *(changed in 0.9.20)* Any number of types, and of … |
 
 ## UNS

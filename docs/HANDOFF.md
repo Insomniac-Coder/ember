@@ -1,7 +1,25 @@
 # Ember — handoff
 
+> **2026-11-10, later — the local session (branch `spec-0.9.20-hardening`), attended, the lead solo, no agents.
+> START HERE.** **Hardened_6 of 0.9.20 is cut** and is the development target
+> (`docs/spec-source/Ember_v0.9.20_Hardened_6.md`, 18074 lines, 1,020 rules, SHA-256 `48668BE18F1D…`). Another agent reviewed
+> Hardened_5 (`tasks/96/redesign/spec-gaps-0.9.15/deep/review-0.9.20-H5.md`, §8: three holes, four notes); the lead
+> ran each first, and the owner said "Fix them and cut a new hardened version" (`JOB.md` verdict 170). **The
+> record:** `docs/AUDIT-0.9.20.md` §11 (the runs and the pilot), `decisions.md` §17 (N147 to N152), Appendix H
+> §H.57. **What changed:** an object of a `Send` type is registered for hot reload the ordered way, since another
+> thread may end it (`[HR-12]`); a header imported with no `unsafe` may only declare, a library it names is a
+> `[link] libs` entry and the toolchain's own headers are the toolchain (`[FFI-51]`); a dependency's C reads only
+> its own folder and the toolchain's headers and holds no assembly (`[MAN-10]`); a parameter of a function type
+> is the shared type again, one body (verdict 38 restored: `[EFF-2]`, `[EFF-2a]`); a C++ call is chosen as C++
+> ranks it (`[FFI-57]`). 12 rules changed, no new rule or code. **Checked:** every spec gate, `ember_diag`,
+> `ember_parser` and the three spec-tied milestone tests green against the pin; the compiler is untouched.
+> **Not done:** nothing is pushed and `main` is not moved (the owner, asked about the push gate: "Not yet"); the
+> full suite and the bench were not run. **Next:** the owner's look at N140 to N152; his word on pushing. **For
+> the compiler:** none of `[FFI-51]`'s header check exists (a constructor attribute in a header is accepted
+> today); messages still use the retired words; `std` still uses `Box`, `Shared`, `Weak`.
+
 > **2026-11-10 — the local session (branch `spec-0.9.20-hardening`, checked out locally), attended, the lead solo, no
-> agents. START HERE.** **Hardened_5 of 0.9.20 is cut** and is the development target
+> agents (the block above is newer).** **Hardened_5 of 0.9.20 was cut** and was the development target
 > (`docs/spec-source/Ember_v0.9.20_Hardened_5.md`, 17951 lines, 1,020 rules, SHA-256 `18A862E05717…`). The owner asked for a check
 > of Hardened_4 ("gaps, memory safety flaws and implementation discrepencies that can affect readability"), then: a
 > departure from his verdicts stands where the lead judges it better (ODR-264, ODR-261 and N87 do), "Yes, restore them"

@@ -11,12 +11,17 @@ session, or a workflow the owner allows, starts here and does not redo the readi
 
 ## 0. State, and how to resume
 
-* **Cut and pinned (fifth pass, 2026-11-10, the local session):** `docs/spec-source/Ember_v0.9.20_Hardened_5.md`
+* **Cut and pinned (sixth pass, 2026-11-10, the local session):** `docs/spec-source/Ember_v0.9.20_Hardened_6.md`
+  (18074 lines, 1,020 rules, SHA-256 `48668BE18F1D…`) is the development target; its sources are frozen in
+  `tasks/spec-0.9.9/parts-0.9.20-h6/`, its change log is §H.57 (`H57_HEAD` in `tools/appx_h.py`), its rulings N147
+  to N152 (`decisions.md` §17), the owner's word verdict 170 (`JOB.md`), and **§11 below is its record**. To cut
+  Hardened_7: `CURRENT = ('0.9.20', 7)`, point `V0920_H6_PARTS` at `parts-0.9.20-h6`, add `V0920_H7_PARTS`,
+  `H58_HEAD`, `v0920_h7()` and its term in `main()`; then the recipe below.
+* **Cut and pinned (fifth pass, 2026-11-10, the local session), superseded:** `docs/spec-source/Ember_v0.9.20_Hardened_5.md`
   (17951 lines, 1,020 rules, SHA-256 `18A862E05717…`) is the development target; its sources are frozen in
   `tasks/spec-0.9.9/parts-0.9.20-h5/`, its change log is §H.56 (`H56_HEAD` in `tools/appx_h.py`), its rulings N140
   to N146 (`decisions.md` §16), the owner's words verdicts 167 to 169 (`JOB.md`), and **§10 below is its record**.
-  To cut Hardened_6, follow the recipe below with the numbers moved by one (`CURRENT = ('0.9.20', 6)`, point
-  `V0920_H5_PARTS` at `parts-0.9.20-h5`, add `V0920_H6_PARTS`, `H57_HEAD`, `v0920_h6()`).
+  Hardened_6 was cut from it the same day (§11).
 * **Cut and pinned (fourth pass), superseded:** `docs/spec-source/Ember_v0.9.20_Hardened_4.md` (17703 lines, 1,020
   rules) was the development target (`docs/spec-source/development-target.json`); sources frozen in
   `tasks/spec-0.9.9/parts-0.9.20-h4/` (Hardened_3's in `parts-0.9.20-h3/`, Hardened_2's in `parts-0.9.20-h2/`,
@@ -589,3 +594,53 @@ haven't read and fix them too, before creating a new hardened spec". No agents a
 * **For the owner:** the rulings N140 to N145 are the lead's and his to overturn; N143 names a feature that was not
   added (a pin for one-thread shared classes); N139's "costs nothing measurable" is to be measured against the mark
   in the weak word when `[FFI-35a]` is built; the readability costs of findings 13 to 16 follow from his own verdicts.
+
+## 11. The sixth pass: 0.9.20_Hardened_6 (2026-11-10, the local session, attended, the lead solo)
+
+Another agent reviewed Hardened_5 (`tasks/96/redesign/spec-gaps-0.9.15/deep/review-0.9.20-H5.md`) and found three holes and four smaller notes, none in the
+rules of ownership, threads or types. The owner asked the lead what he thought, then: "Fix them and cut a new
+hardened version". No agents and no workflow.
+
+* **Each finding was run before a line was written** (C backend with Clang 22.1.8; MSVC 14.51 for plain C and
+  C++; the probe folders were under `target/` and are deleted):
+  * Hole 1, `[HR-12]`: by reading. The runtime takes one lock for every object (`rl_live_insert` and
+    `rl_live_remove` in `runtime/ember_rt/src/ember_rt.c`; the insert is four stores), so the hole was only in
+    the cheaper design the text describes.
+  * Hole 2, `[FFI-51]`: `import c "lib.h"` with no `unsafe`, the header holding a pointer in `.CRT$XCU`:
+    `ember check` passed and the program printed the header's line before "main starts"; the same in plain C on
+    MSVC at `/O2`. **The compiler builds none of the header check**: it accepted `__attribute__((constructor))`
+    too. Two more routes passed: `__attribute__((destructor))`, and `#pragma comment(lib, "winmm.lib")` with
+    `#pragma comment(linker, "/include:timeGetTime")`, after which the program imported `WINMM.dll`.
+  * Hole 3, `[MAN-10]`: Clang compiled `#embed "C:/Windows/win.ini"` with a warning in its default mode and its
+    `-MD` output named the file; `.incbin` inside a function body's `__asm__` read `C:/Windows/system.ini` and
+    `-MD` did not name it. MSVC 14.51 rejects `#embed` (C1021) and has no inline assembly on x64.
+  * Note 3, `[FFI-57]`: `f(signed char)` with `f(short)` and `f(int)` calls `f(int)` on both compilers;
+    `g(int)` with `g(long long)` and `g(double)` is ambiguous on both.
+* **The pilot for `[FFI-51]`'s new shape** (owner rule: pilot before scaling). Of 353 MSVC and 2,558 Windows SDK
+  headers, 81 hold `#pragma comment(lib`, 6 `#pragma comment(linker`. After preprocessing: `<stdio.h>`,
+  `<stdlib.h>`, `<string.h>`, `<math.h>` and `<time.h>` give none; `<windows.h>` asks for `uuid.lib`; every C++
+  standard header asks for `libcpmt`, passes `/alternatename:…` and states `detect_mismatch`. Of the 49 C
+  headers under `tests/`, `examples/`, `std/` and `bench/`, 48 define no symbol the linker sees and the other's
+  one symbol is the platform kit's (`<wchar.h>`); `vulkan.h` defines none. So the rule counts a library named by
+  a header as a `[link] libs` entry and the toolchain's own headers as the toolchain, and no header the
+  repository imports newly needs `unsafe`.
+* **Applied** by three asserting scripts kept with the session (`edit_h6_1_spec.py`, run first on a copy of
+  `parts/`, `edit_h6_2_tools.py`, `edit_h6_3_records.py`): 12 rules changed (the rows of §H.57), registry rows
+  E3100 and E9001; no new rule, no new code, none retired.
+* **Found on the way, and the larger part of note 1:** `[EFF-2]` and `[EFF-2a]` had said since Hardened_2 that a
+  parameter of a function type is compiled once for each function given, against verdict 38, `[COST-3]`'s row
+  and `[BLD-14]` item 16. Verdict 38 is restored (N150). It is a fifth departure of the cloud session from the
+  owner's verdicts, beside the four it reported.
+* **Checked at the cut:** `check_ids` 0 problems (1,020 rules), `check_citations` 0 undefined, `code_registry
+  --check` 0 problems (271 live, 36 retired), `split_inline` UNS-8 only, `rule_index` no new problems,
+  `spec_check` no new failures, `spec_check --emit-appendix` no change, `phase_progress --write` then `--check`
+  green, `check_examples` 41 of 56 with 0 malformed fences; `ember_diag`, `ember_parser` and the three milestone
+  tests that read the pinned document green. The compiler is untouched. **Not run:** the full workspace suite,
+  the bench, the push gate (the owner: "Not yet").
+* **The README moved, by the tool:** phases 5, 7 and 7a each fell by one point, because `[HR-13]` is now marked
+  changed in 0.9.20 and its new behaviour is not built (`docs/conformance.json`: 281 to 280 rules done).
+* **For the compiler, when these rules are built:** the header check of `[FFI-51]` (none of it exists); the
+  file check and the assembly refusal of `[MAN-10]`; the runtime's registration already orders every object and
+  may take the plain path for a type that is not `Send`; the reviewer's queue variant is to be measured before
+  it is considered.
+* **Not covered by either review:** the generated appendices G and I, and the change log before §H.52.

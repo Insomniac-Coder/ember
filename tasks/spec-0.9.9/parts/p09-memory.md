@@ -310,7 +310,7 @@ fn main():
   outside a scope or a callback foreign code keeps only from a `static` instance (`[LT-4]`, `E3063`
   otherwise), which never changes (`[STA-1]`), so no change of this rule's kind is ever made to it
   and nothing is checked after the hand-over.
-* `[ALC-5a]` *(new in 0.9.20)* *(changed in 0.9.20)* **A link holds the block.** A `weakref` link to
+* `[ALC-5a]` *(new in 0.9.20)* **A link holds the block.** A `weakref` link to
   a value made in a memory manager's instance counts, for `[LT-4]` and `[ALC-5]`, as a value that
   holds one, since the target's block stays until the link ends (`[WK-11]`, `[OBJ-3]`): the link
   carries the instance's region from the line that makes it (`w = weakref n`) through every place it

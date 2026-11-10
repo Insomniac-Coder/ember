@@ -541,7 +541,7 @@ fn main():
   fields' types say (the `points` list of that `Mesh` from the built-in manager). A value whose
   manager may have several instances keeps its instance's address, one word, so that its growth and
   its end go back to the instance it came from.
-* `[TYP-46a]` *(new in 0.9.20)* *(changed in 0.9.20)* **A value made in an instance follows its
+* `[TYP-46a]` *(new in 0.9.20)* **A value made in an instance follows its
   manager between threads.** For `Send` and `ThreadShared`, a value whose growth or end calls its
   instance's methods (one that keeps the instance word, and one in a `FoundByAddress` manager, whose
   end finds the instance from its address, `[ALC-1]`) holds a `ref A` to that instance: it is

@@ -208,24 +208,48 @@ import c "vulkan/vulkan.h" with (
   structs, unions, enums, typedefs, globals and constant macros as a module (`c`, or `name`).
   Options: `include_paths`, `defines`, `link`, `overlay`, `implementation` (`[FFI-29b]`). An unknown
   option is `E0104`.
-* `[FFI-51]` *(new in 0.9.15)* *(changed in 0.9.20)* **C compiled into the program is vouched for.** An import that
-  compiles into the program foreign code that runs with no call from Ember — a C source file
-  (`import c "./bridge.c"`, `[BLD-FFI-1]`), a header with `implementation = [...]` (`[FFI-29b]`), or
-  a C or C++ header that declares, in it or in a header it includes, a function with a constructor
-  attribute or a variable at namespace scope, `inline` or a static member, whose initialiser is not
-  a constant expression (the shim, `[FFI-29]`, or the thunk unit, `[FFI-3]`, `[FFI-17]`, compiles
-  it, and it runs before `main`), as the importer reads the header, one it cannot decide counting as
-  running (`[FFI-38]`) — runs code that nothing checks, so it is written `unsafe import c` or
-  `unsafe import cpp`, with a `# SAFETY:` note above it saying why that code is sound (`W3012` when
-  missing). Without `unsafe` it is `E3100`: "`import c "./bridge.c"` compiles `bridge.c` into the
-  program, where its code runs unchecked, before `main` too; say that you vouch for it: write
-  `unsafe import c "./bridge.c" as b` with a `# SAFETY:` note above it"; for a header the message
-  names what runs: "`import cpp "json.hpp"` compiles the initialiser of `g_default` (json.hpp, line
-  12) into the program, where it runs unchecked before `main`; write `unsafe import cpp "json.hpp"
-  with (project="engine") as js` with a `# SAFETY:` note above it". An import of a header that
-  declares nothing that runs uncalled needs no word: its functions run only when they are called,
-  and those calls are fenced by `[FFI-2]`. A library linked by name or path (`link = [...]`, `[link]
-  libs`) is listed by `ember tcb` as an external library (`[TCB-4]`).
+* `[FFI-51]` *(new in 0.9.15)* *(changed in 0.9.20)* **C compiled into the program is vouched for.**
+  An import that compiles into the program foreign code that runs with no call from Ember — a C
+  source file (`import c "./bridge.c"`, `[BLD-FFI-1]`), a header with `implementation = [...]`
+  (`[FFI-29b]`), or a C or C++ header that does more than declare, in it or in a header it includes
+  (the shim, `[FFI-29]`, or the thunk unit, `[FFI-3]`, `[FFI-17]`, compiles what it holds) — runs
+  code that nothing checks, so it is written `unsafe import c` or `unsafe import cpp`, with a `#
+  SAFETY:` note above it saying why that code is sound (`W3012` when missing). Without `unsafe` it
+  is `E3100`: "`import c "./bridge.c"` compiles `bridge.c` into the program, where its code runs
+  unchecked, before `main` too; say that you vouch for it: write `unsafe import c "./bridge.c" as b`
+  with a `# SAFETY:` note above it"; for a header the message names what runs: "`import cpp
+  "json.hpp"` compiles the initialiser of `g_default` (json.hpp, line 12) into the program, where it
+  runs unchecked before `main`; write `unsafe import cpp "json.hpp" with (project="engine") as js`
+  with a `# SAFETY:` note above it"; "`import c "lib.h"` compiles `lib_run_setup` (lib.h, line 7)
+  into the start-up section `.CRT$XCU`, so `lib_setup` runs unchecked before `main`; write `unsafe
+  import c "lib.h" as lib` with a `# SAFETY:` note above it". **A header that only declares needs no
+  word.** It holds nothing but types, macros, declarations of functions and variables, definitions
+  of `inline` and `static` functions with no assembly in their bodies, and variables that are
+  `static`, `inline` or `constexpr` with a constant initialiser, no destructor to run and no section
+  named for them: its functions run only when they are called, and those calls are fenced by
+  `[FFI-2]`. Anything else a header holds counts as running, as the importer reads the header, one
+  it cannot decide counting as running (`[FFI-38]`): a function the loader or the C runtime calls (a
+  constructor or a destructor attribute, an `ifunc` resolver); a variable at namespace scope,
+  `inline` or a static member, whose initialiser is not a constant expression or whose type has a
+  destructor to run; a function or a variable the header defines with external linkage and not
+  `inline`, which the linker may give to code that never meant it; anything the header places in a
+  section it names (`__attribute__((section(…)))`, `__declspec(allocate(…))`, `#pragma section`,
+  `data_seg`, `code_seg`, `init_seg`), which is how a start-up table is filled with no initialiser
+  to see; assembly, at file scope or in the body of a function the shim compiles; and an order to
+  the linker (`#pragma comment(linker, …)`) other than the two that follow. A header may ask for a
+  library by name (`#pragma comment(lib, "uuid.lib")`): that is an entry of `[link] libs` written in
+  the header, listed by `ember tcb` as an external library with the header and line that names it
+  (`[TCB-4]`) and, in a dependency, admitted as `[MAN-10]` admits its `[link] libs`; and it may
+  state a check that can only stop the link (`#pragma detect_mismatch`), which changes nothing that
+  runs. The headers of the toolchain itself are the toolchain: the C or C++ compiler's own, its
+  standard libraries' and the platform kit's, in the directories of those installations as the build
+  finds them (`[TOOL-2]`), never a directory a manifest, a flag or an import's `include_paths` adds,
+  and never a file for calling itself a system header. What one of them links, tells the linker or
+  runs before `main` is the start-up of the C runtime the program is linked with in any case, and
+  `ember tcb` lists that compiler and kit by version (`[TCB-4]`). So `import c "windows.h"` and an
+  `import cpp` of a header that includes `<string>` need no word, and a header of the program's own
+  or of a dependency that fills a start-up section does. A library linked by name or path (`link =
+  [...]`, `[link] libs`) is listed by `ember tcb` as an external library (`[TCB-4]`).
 
   ```ember,fragment
   # SAFETY: bridge.c is ours: it defines `add` and runs nothing before `main`

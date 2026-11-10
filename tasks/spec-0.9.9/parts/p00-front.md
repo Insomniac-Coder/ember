@@ -1,7 +1,7 @@
 # Ember Programming Language — Specification
 
-**Version:** 0.9.20_Hardened_5
-**Supersedes:** 0.9.20_Hardened_4 (development target until this one), 0.9.20_Hardened_3 to
+**Version:** 0.9.20_Hardened_6
+**Supersedes:** 0.9.20_Hardened_5 (development target until this one), 0.9.20_Hardened_4 to
 0.9.20_Hardened_1, 0.9.15_Hardened_11 to 0.9.15_Hardened_1 and every earlier file:
 0.9.10_Hardened_1 to 0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3
 and 0.8.5_Hardened_1 (adopted). This document is the single specification of Ember; the earlier
@@ -41,9 +41,13 @@ its own, and a library's call through what a dependant may fill is checked where
 added; **0.9.20_Hardened_3** the third pass, of 2026-11-08 (§H.54), which joins the gap review of
 0.9.15_Hardened_11 and the owner's verdicts 164 to 166; **0.9.20_Hardened_4** the fourth, of
 2026-11-08 (§H.55), in which the lead ruled the open owner-decision records on the owner's
-instruction; and **0.9.20_Hardened_5**, of 2026-11-10 (§H.56): the owner's review of those rulings
+instruction; **0.9.20_Hardened_5**, of 2026-11-10 (§H.56): the owner's review of those rulings
 (three stand on the lead's judgement as he asked, and the default manifest of verdicts 127 and 135
-is written again), and the repairs from a reading of the whole of Hardened_4. Each of them changes
+is written again), and the repairs from a reading of the whole of Hardened_4; and
+**0.9.20_Hardened_6**, of 2026-11-10 (§H.57): three holes a second review found outside the core
+language (the list hot reload keeps of objects, code a C header runs with no call from Ember, the
+files a dependency's C reads), a C++ call chosen as C++ ranks it, and the shared function type of
+verdict 38 restored. Each of them changes
 the set of accepted programs, so the language version moves (`[VER-9]`). What a program means is written in
 words on the thing it describes: one owner unless a line says `shares`; `owns` for a hand-over and a
 value held alone, at the call too; `copy of` for a copy; `ref mut` on a name, and at the call, for a
@@ -54,7 +58,7 @@ cost (§X.4). It replaces `Box`, `Shared`, `Weak`, `RefCell`, `SyncShared`, `For
 `@borrows`, the mode `owned`, `self`, `mem.forget`, effect clauses on a first line and every check of
 exclusive access made while the program runs. It changes the set of accepted programs, so the
 language version moves (`[VER-9]`); Appendix H §H.41 to §H.51 list every change of 0.9.15, and §H.52
-to §H.56 those of 0.9.20. The revisions before it were
+to §H.57 those of 0.9.20. The revisions before it were
 authored at the owner's direction of 2026-09-23 with delegated authority to decide open language
 questions against the project goal; Appendix H lists each one's changes (§H.1 to §H.40), and every
 finding of the 2026-09-23 research pass (`tasks/audit/FINDINGS.md`, F-001–F-214) is resolved in
@@ -116,7 +120,7 @@ invariant (`[PHIL-10]`) with its conformance tests.
 | Appendix E | Coming from Python (non-normative) |
 | Appendix F | Glossary |
 | Appendix G | Resolution of findings F-001–F-214 |
-| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.51) and in 0.9.20 (§H.52 to §H.56) |
+| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.51) and in 0.9.20 (§H.52 to §H.57) |
 | Appendix I | Rule index |
 
 **Normative words.** MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119. Text marked

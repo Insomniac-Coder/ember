@@ -34,14 +34,14 @@ The compiler infers, for every function, an **effect set** drawn from:
 * `[EFF-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A call through a
   function value contributes the effects of every function the program can put there. For a type
   parameter bounded by a function type (`[F: needs fn(Item)]` above `fn for_each(owns f: F) owns
-  this:`) that is the function given, per instance. A parameter of a function type is the function
-  given, per instance, as a type parameter bounded by a function type is (`[COST-3]`): the package
-  that gives the function compiles that instance and sees the function. For a field, a list element
-  or a local of a function type, it is every lambda and named function the program puts in that
-  place, a library's included (verdict 122): each field of each struct and class apart from every
-  other, a list's elements with the place that holds the list, a parameter with every argument given
-  to it, and a place a value is copied into with the functions of the place it came from. A value
-  the compiler cannot follow, read through a raw pointer or given by C, has those of every function
+  this:`) that is the function given, per instance: the package that gives the function compiles
+  that instance and sees the function (`[COST-3]`). For a field, a list element, a parameter or a
+  local of a function type, the shared type, which is compiled once and keeps functions of different
+  kinds together (verdict 38), it is every lambda and named function the program puts in that place,
+  a library's included (verdict 122): each field of each struct and class apart from every other, a
+  list's elements with the place that holds the list, a parameter with every argument given to it,
+  and a place a value is copied into with the functions of the place it came from. A value the
+  compiler cannot follow, read through a raw pointer or given by C, has those of every function
   stored into its type. A place no function ever reaches is called by no code that runs, and
   contributes nothing. Dropping a function value has the effects of dropping each function that
   reaches its place: none for a named function, its captured values' drops for a lambda. For an
@@ -52,31 +52,34 @@ The compiler infers, for every function, an **effect set** drawn from:
   place of that type is checked against it, with the contract's code, and a call through such a
   place has no effect the contract excludes. An interface method may declare contracts; its
   implementations MUST satisfy them (`E4010`).
-* `[EFF-2a]` *(new in 0.9.20)* **A place another package can fill.** A function-typed parameter is
-  compiled once per function given, by the package that gives it, as a generic is (`[EFF-4]`,
-  `[COST-3]`), so every function reaching it is seen where its line compiles. Every other place a
-  function value is called through, and every `virtual` or interface method, is compiled by the
-  package that declares it, which sees only its own stores and overrides (`[EFF-2]`, `[BLD-16]`).
-  Where another package can fill such a place (a `pub` field, a `pub` static, an element of a list
-  or map one of them holds, a place a `pub` function stores a function-typed parameter into, and
-  every place a value from one of these is copied into), override such a method (a `virtual` method
-  of a `pub` class) or implement it (a method of a `pub` interface called through `dyn`), a call
-  through it counts, beside the functions this package puts there, a function another package may
-  put there: one that may call every `pub` function of this package, change and end every place a
-  `pub` name of this package reaches (a `pub static mut`; the fields of an object a `pub` function
-  is given, returns or holds), take every lock a `pub` function takes, and have every effect the
-  place's or method's declared contracts do not exclude (verdict 106); what it keeps of what the
-  call gives it, an owner it stores or a `weakref T` link it makes, is judged where the function is
-  seen (`[WK-7]`, `[OWN-13]`). A place or method no other package can reach keeps `[EFF-2]`'s rule,
-  and so does a `virtual` method of a class that cannot be subclassed outside its package. The
-  message names the route: `E3020` "`h()` (line 11) may add to `HANDLERS` (through `add`, which a
-  function another package stores into a `Handler` may call) while this loop walks `HANDLERS` (line
-  10); walk a list of your own: write `todo = mem.take(ref mut HANDLERS)` above line 10, `for h in
-  todo:` in place of line 10, and `HANDLERS.extend(owns todo)` below the loop"; `E4001` "`run_all`
-  is `@noalloc`, and `h()` (line 11) may run a function another package stores into a `Handler`; say
-  what a `Handler` may do: write `@noalloc` above `type Handler = fn()`". A dependant's stores and
-  overrides are counted by the dependant at its own lines (`[EFF-4]`, `[CLO-17]`, `[MOD-9a]`), and
-  `[DET-3]` counts the same way.
+* `[EFF-2a]` *(new in 0.9.20)* **A place another package can fill.** A function given through a type
+  parameter (`[F: needs fn(Item)]`) is compiled once per function given, by the package that gives
+  it, as any generic instance is (`[EFF-4]`, `[COST-3]`), so every function reaching it is seen
+  where its line compiles. Every place of a function type a function value is called through, a
+  parameter of a function type included (the shared type: one body and one indirect call, verdict
+  38), and every `virtual` or interface method, is compiled by the package that declares it, which
+  sees only its own stores, calls and overrides (`[EFF-2]`, `[BLD-16]`). Where another package can
+  fill such a place (a function-typed parameter of a `pub` function, a `pub` field, a `pub` static,
+  an element of a list or map one of them holds, a place a `pub` function stores a function-typed
+  parameter into, and every place a value from one of these is copied into), override such a method
+  (a `virtual` method of a `pub` class) or implement it (a method of a `pub` interface called
+  through `dyn`), a call through it counts, beside the functions this package puts there, a function
+  another package may put there: one that may call every `pub` function of this package, change and
+  end every place a `pub` name of this package reaches (a `pub static mut`; the fields of an object
+  a `pub` function is given, returns or holds), take every lock a `pub` function takes, and have
+  every effect the place's or method's declared contracts do not exclude (verdict 106); what it
+  keeps of what the call gives it, an owner it stores or a `weakref T` link it makes, is judged
+  where the function is seen (`[WK-7]`, `[OWN-13]`). A place or method no other package can reach
+  keeps `[EFF-2]`'s rule, and so does a `virtual` method of a class that cannot be subclassed
+  outside its package. The message names the route: `E3020` "`h()` (line 11) may add to `HANDLERS`
+  (through `add`, which a function another package stores into a `Handler` may call) while this loop
+  walks `HANDLERS` (line 10); walk a list of your own: write `todo = mem.take(ref mut HANDLERS)`
+  above line 10, `for h in todo:` in place of line 10, and `HANDLERS.extend(owns todo)` below the
+  loop"; `E4001` "`run_all` is `@noalloc`, and `h()` (line 11) may run a function another package
+  stores into a `Handler`; say what a `Handler` may do: write `@noalloc` above `type Handler =
+  fn()`". A dependant's stores and overrides, and the functions it passes to a `pub` function's
+  function-typed parameter, are counted by the dependant at its own lines (`[EFF-4]`, `[CLO-17]`,
+  `[MOD-9a]`, `[BLD-14]` item 16), and `[DET-3]` counts the same way.
 * `[EFF-3]` *(changed in 0.9.15)* An `extern` function carries the effects its contract declares
   (`@ffi(effects=[…])`), `FFI` at least. What a call of one may change through the callbacks C keeps
   is `[EFF-26]`'s.
@@ -438,7 +441,7 @@ compute the same bits, on one machine and across machines running the same binar
 | An override call or `delete` of a trampoline-class object under `threads=creator` (`[FFI-17d]`) | guaranteed present | one compare of the calling thread with the id the trampoline subobject holds, one word per object |
 | An `owns T` of a `threads(creator)` type (`[FFI-33b]`) | guaranteed present | one word more, the making thread's id, and one compare at its end |
 | Entering Ember code from C in a reloadable build (`[HR-42]`) | guaranteed present | one increment, one fence and one load; a thread waits only for the length of a commit it meets |
-| Registering an object in a reloadable build (`[HR-12]`) | guaranteed present | two stores when it is made and two when it ends; a lock or an atomic exchange for a `thread_shared` object; a `thread_shared` header of 48 bytes |
+| Registering an object in a reloadable build (`[HR-12]`) | guaranteed present | four stores when it is made and two when it ends, plain for an object whose own type is not `Send`; with one lock or one atomic exchange for an object of a `Send` type and for a `thread_shared` object, either of which another thread may end; a `thread_shared` header of 48 bytes |
 | A value handed over on some paths only (`[OWN-3]`) | guaranteed present | one hidden drop flag in the frame: a store at the hand-over and one test where the owner would end; none where every path hands it over or none does |
 | First access of a `static` built on first access (`[STA-3]`) | guaranteed present | one test of its once-flag per access, and the initialiser once, during which a first access on another thread waits; none for a static placed in the image |
 | An export's or a trampoline's entry (`[FFI-22]`, `[FFI-33]`) | guaranteed present | the thread-local attach test, under `threads=creator` or `main` one compare of the calling thread, and one test of the thread's queue at the return (`[RC-4]` point 3) |

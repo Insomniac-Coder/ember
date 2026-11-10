@@ -167,18 +167,27 @@ fail), **reclaim** (end what the old image owned).
   registered in a live-instance list, which adds 16 bytes to the object header of `[OBJ-1]` (24
   bytes instead of 8, and 28 instead of 12 for an object `weakref` links may reach); non-reloadable
   builds keep `[OBJ-1]`'s layout. A `thread_shared` value's 32-byte header (`[OBJ-1]`) is 48 bytes
-  in a reloadable build. Registering costs two stores when an object is made and two when it ends,
-  and for an object that is not `thread_shared` touches nothing another thread touches (`[RT-11]`);
-  a `thread_shared` object's registration is ordered by the runtime, one lock or one atomic
-  exchange, on whichever thread makes or ends it. Plan and prepare walk the list only while every
-  other registered thread is at depth zero (`[HR-3]`). A value made shared in a block of its own
-  (`[RC-1]`) is registered as a class instance is, with its type's schema, and migrated once,
-  whatever the number of owners and links that reach it.
+  in a reloadable build. Registering links the object into a list through those 16 bytes: four
+  stores when it is made (two of them into its own header) and two when it ends. An object whose own
+  type is not `Send` never leaves the thread that made it (`[THR-8]`), so it is linked into that
+  thread's list with plain stores, which touch nothing another thread touches (`[RT-11]`); the
+  runtime keeps a thread's list when the thread ends, for what unsafe code gave to C from it
+  (`[FFI-54]`). An object whose own type is `Send` may be ended by another thread than the one that
+  made it (a task's result, a value sent down a channel or handed to a spawned thread), and that
+  thread would unlink it from a list its maker is changing, so its registration, like a
+  `thread_shared` object's, is ordered by the runtime, one lock or one atomic exchange, on whichever
+  thread makes or ends it. Which of the two an object takes is read from its own type, where it is
+  made and where it ends, never from the place that holds it (`[BLD-16]`). Plan and prepare walk the
+  list only while every other registered thread is at depth zero (`[HR-3]`). A value made shared in
+  a block of its own (`[RC-1]`) is registered as a class instance is, with its type's schema, and
+  migrated once, whatever the number of owners and links that reach it.
 * `[HR-12a]` The header size is a whole-process property: every package in a process agrees on
   whether reload is enabled, enforced at link time (`E9035`). A reload image's new kinds take type
   indices above the process's when the image is loaded (`[TYP-44a]`).
-* `[HR-13]` Value-typed data (structs in arrays, `SoA` columns, ECS storage, arena contents) is
-  migrated through its container, which registers itself with its element type's schema.
+* `[HR-13]` *(changed in 0.9.20)* Value-typed data (structs in arrays, `SoA` columns, ECS storage,
+  arena contents) is migrated through its container, which registers itself with its element type's
+  schema, as an object registers: with plain stores in its thread's list where the container's own
+  type is not `Send`, ordered by the runtime where it is (`[HR-12]`).
 * `[HR-13a]` Standard-library containers of a type from a reloadable package register themselves;
   the instantiating package emits the registration, so `std` needs no reload support.
 * `[HR-13b]` *(changed in 0.9.20)* Value data reachable only through raw pointers or foreign memory

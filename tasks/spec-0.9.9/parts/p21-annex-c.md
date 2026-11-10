@@ -117,32 +117,37 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   `f64` for one with a point, and any other type it may take (`[LEX-16]`, `[LEX-17]`) it reaches as
   by a coercion. Of the members a call fits, one beats another when, argument by argument, it takes
   each at least as directly — the argument's own type before a coercion and, for an argument of a
-  known type, among coercions the nearer type (the narrowest number type it widens to, the nearest
-  base class) before a farther; an untyped literal reaches every type not its own alike — and takes
-  one more directly; the call stands for the member that beats every other it fits, so where C++
-  chooses one Ember chooses the same, and never one C++ would not consider. A member declared `=
-  delete` takes part and, chosen, is refused. A name used without a call stands for the member whose
-  first line is exactly the callable type expected there (`[CLO-3]`), and with none expected is
-  `E5035`. What the code around the use allows — unsafe code (`[FFI-2]`, `E3100`), a read-only name
-  (`E3023`), its effects, the loop and view rules — is checked after, on the member chosen, so one
-  line stands for one member wherever it is written. A use that fits no member, or two with neither
-  beating the other, is `E5035`, naming each member as the header declares it and why it does or
-  does not fit, and the way out, the argument written with its type or the overlay line:
-  "`w.value(7)` (line 8) fits `void value(long long)` and `void value(double)` of `ui::Widget`
-  alike: `7` is C++'s `int`, which neither takes as it is, and reaches each; write `w.value(7 as
-  i64)` or `w.value(7.0)`". Two members alike in every parameter as the import spells them (two
-  instances of one template differing only in the result), or alike on this target (`put(int)` and
-  `put(long)` for an `i32` argument where `long` is 32 bits; a literal still takes `int`), fit such
-  a call together; the overlay tells them apart by the tables' spelling or by the result, which no
-  target changes (`rename put(v: c_long) as put_long`, `hide put(v: c_long)`, `rename get() -> f64
-  as get_f64`, `[GRM-35]`), and the message of `E5035` gives that line. An `override fn` matches one
-  virtual member by its first line exactly (`[FFI-39]`), never through this ranking; a class derived
-  from a C++ class whose header declares one virtual name several times writes one `override fn` per
-  member it replaces, each matched so, and two overrides fitting one member are `E1030`. `ember bind
-  --report` lists each such name with its members as the header writes them; `ember bind --emit-cpp`
-  writes one thunk per member, named by the member's mangled name (`[MNG-1]`); `ember bind --init`
-  writes one entry per member (`[CLI-5]`). Nothing runs for this while the program runs: a use is
-  one direct call of its member's thunk, as any imported C++ function's (§X.4, "FFI call").
+  known type, among coercions as C++ ranks them, a promotion C++ makes (an integer type narrower
+  than `c_int` taken as `c_int`, `f32` taken as `f64`) before any other number type, every other
+  number type alike whatever its size, and the nearer base class before a farther; an untyped
+  literal reaches every type not its own alike — and takes one more directly; the call stands for
+  the member that beats every other it fits, so where C++ chooses one Ember chooses the same, where
+  C++ calls two alike so does Ember, and Ember never chooses one C++ would not consider: for `n:
+  i8`, `w.set(n)` with `set(short)` and `set(int)` stands for `set(int)`, as in C++, and with
+  `set(short)` and `set(long long)` it fits both alike (`E5035`: "write `w.set(n as i16)` or
+  `w.set(n as i64)`"). A member declared `= delete` takes part and, chosen, is refused. A name used
+  without a call stands for the member whose first line is exactly the callable type expected there
+  (`[CLO-3]`), and with none expected is `E5035`. What the code around the use allows — unsafe code
+  (`[FFI-2]`, `E3100`), a read-only name (`E3023`), its effects, the loop and view rules — is
+  checked after, on the member chosen, so one line stands for one member wherever it is written. A
+  use that fits no member, or two with neither beating the other, is `E5035`, naming each member as
+  the header declares it and why it does or does not fit, and the way out, the argument written with
+  its type or the overlay line: "`w.value(7)` (line 8) fits `void value(long long)` and `void
+  value(double)` of `ui::Widget` alike: `7` is C++'s `int`, which neither takes as it is, and
+  reaches each; write `w.value(7 as i64)` or `w.value(7.0)`". Two members alike in every parameter
+  as the import spells them (two instances of one template differing only in the result), or alike
+  on this target (`put(int)` and `put(long)` for an `i32` argument where `long` is 32 bits; a
+  literal still takes `int`), fit such a call together; the overlay tells them apart by the tables'
+  spelling or by the result, which no target changes (`rename put(v: c_long) as put_long`, `hide
+  put(v: c_long)`, `rename get() -> f64 as get_f64`, `[GRM-35]`), and the message of `E5035` gives
+  that line. An `override fn` matches one virtual member by its first line exactly (`[FFI-39]`),
+  never through this ranking; a class derived from a C++ class whose header declares one virtual
+  name several times writes one `override fn` per member it replaces, each matched so, and two
+  overrides fitting one member are `E1030`. `ember bind --report` lists each such name with its
+  members as the header writes them; `ember bind --emit-cpp` writes one thunk per member, named by
+  the member's mangled name (`[MNG-1]`); `ember bind --init` writes one entry per member
+  (`[CLI-5]`). Nothing runs for this while the program runs: a use is one direct call of its
+  member's thunk, as any imported C++ function's (§X.4, "FFI call").
 * `[FFI-11f]` A result lifetime derived from `[[clang::lifetimebound]]` imports as an asserted fact:
   the attribute is not enforced by C++, so it never counts as checked.
 * `[FFI-48]` *(changed in 0.9.10)* *(changed in 0.9.20)* **Unsupported constructs** (`E5034`, naming
@@ -376,12 +381,15 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
 * `[TCB-3]` Every assumption a guarantee relies on appears in the report with its source and grade.
 * `[TCB-4]` *(changed in 0.9.15)* *(changed in 0.9.20)* Entries are categorised — language,
   compiler, runtime, standard library, unsafe, C FFI, C++ bridge, external library, driver, hardware
-  — and the compiler is in the list, with its version and known-defect list. The unsafe section
-  lists each `unsafe:` block, `unsafe fn`, `unsafe import c` and `unsafe import cpp` (`[FFI-51]`)
-  and `@unsafe(export(…))` or `@unsafe(export_table(…))` (`[FFI-26]`) with its note; the C FFI
-  section lists each `safe fn`, `@ffi(no_callbacks)` (`[FFI-52]`), `@ffi(safe)` (`[FFI-56]`) and
-  thread contract, and the C++ bridge section each `@ffi(const)` (`[FFI-40a]`) and
-  `@ffi(std_function, safe)` (`[FFI-17a]`).
+  — and the compiler is in the list, with its version and known-defect list, and with it the C or
+  C++ compiler the build uses for shims, thunk units and C sources, its standard libraries and the
+  platform kit, by version, whose own headers are part of it (`[FFI-51]`); an external library a
+  header names is listed with the header and line that names it. The unsafe section lists each
+  `unsafe:` block, `unsafe fn`, `unsafe import c` and `unsafe import cpp` (`[FFI-51]`) and
+  `@unsafe(export(…))` or `@unsafe(export_table(…))` (`[FFI-26]`) with its note; the C FFI section
+  lists each `safe fn`, `@ffi(no_callbacks)` (`[FFI-52]`), `@ffi(safe)` (`[FFI-56]`) and thread
+  contract, and the C++ bridge section each `@ffi(const)` (`[FFI-40a]`) and `@ffi(std_function,
+  safe)` (`[FFI-17a]`).
 * `[TCB-5]` An instrumented fact is valid only for the foreign library, header, overlay, toolchain
   and test binary it was measured against; its evidence record stores their identities and hashes.
 * `[TCB-6]` A change to any identity input makes the record stale; a change to an environment input
