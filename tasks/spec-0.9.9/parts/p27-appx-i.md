@@ -614,7 +614,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-43]` | Annex C | An overlay that marks a function both `noexcept` and throwing, or two … |
 | `[FFI-44]` | Annex C | *Automatic* means no overlay is needed; *overlay* means a contract … |
 | `[FFI-48]` | Annex C | *(changed in 0.9.10)* *(changed in 0.9.20)* Unsupported constructs … |
-| `[FFI-49]` | XVI | `@ffi(link_name="sym")` binds a declaration to a differently named … |
+| `[FFI-49]` | XVI | *(changed in 0.9.20)* `@ffi(link_name="sym")` binds a declaration to … |
 | `[FFI-50]` | Annex C | The manifest section `[cpp.<project>]` names the C++ project: … |
 | `[FFI-51]` | XVI | *(new in 0.9.15)* *(changed in 0.9.20)* C compiled into the program … |
 | `[FFI-52]` | XVI | *(new in 0.9.15)* *(changed in 0.9.20)* What a foreign call may run. … |

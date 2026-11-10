@@ -1268,6 +1268,17 @@ After the lead's check of 0.9.20_Hardened_4 (`tasks/96/redesign/spec-gaps-0.9.15
 
 171. **Any code that cannot be guaranteed safe is written with `unsafe`; no header is exempt.** The lead had ruled in 0.9.20_Hardened_6 (N148) that the toolchain's own headers need no `unsafe import` and that a library a header names counts as a `[link] libs` entry, on the ground that `import c "windows.h"` and every MSVC C++ import would otherwise carry the word and it would "lose its meaning", and asked whether the allowance should stand. Owner (2026-11-10): "ANY code and I mean ANY code that we can NOT guarantee is safe needs a unsafe keyword" "idk how you came to the conclusion that it would lose the meaning". Both allowances are withdrawn in 0.9.20_Hardened_7 (N153). How often the word is written is never a reason to leave it out.
 
+172. **A linked library is named in the manifest under `unsafe_libs`, and its import is written `unsafe import`.** Asked whether a library linked from `ember.toml` (`[link] libs = ["vulkan-1"]`), which no `unsafe` word covered, needs one. The lead first proposed moving the library's name onto the import (`with (link = ["vulkan-1"])`); owner: "the way it works rn requires no "with" but adding unsafe would change things? that is such a horrible suggestion". Then, to the import alone carrying the word: owner (2026-11-10): "I want the toml and the code both to be explicit, the toml says we are using unsafe libraries and the code imports unsafe libraries", written out by him:
+
+    # ember.toml
+    [link]
+    unsafe_libs = ["vulkan-1"]
+
+    # SAFETY: vulkan-1 is the official Vulkan library
+    unsafe import c "vulkan/vulkan.h" as vk
+
+    Applied in 0.9.20_Hardened_8 (N154). A new requirement adds its own word and changes nothing else in how a thing is written.
+
 ## Messages and tests: the lead's to settle (owner, 2026-11-01 evening)
 
 "your error messages are okay it's the language implementation part that concerns me most of the time so

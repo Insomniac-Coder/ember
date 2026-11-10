@@ -60,7 +60,7 @@ ember --help | --version [--matrix]
   rewrites source written for an earlier version into the current one where the change is
   mechanical, and lists, with the file and line, what it could not rewrite. From 0.9.15: the `#!
   language` directive to the current version; the changes of 0.9.20 refuse programs that were unsafe
-  and rewrite nothing (§H.52 to §H.58). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
+  and rewrite nothing (§H.52 to §H.59). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
   removal, `for k, v in m:` over a `Map` to `for k, v in m.items():` (`[CTL-1]`). From 0.9.10:
   `Box[T]` and `ForeignBox[T]` to `owns T`, `Box[T, A]` to `owns T using A`, `Array[T, A]` to
   `Array[T] using A`, `Weak[T]` to `weakref T`, the mode `owned` to `owns`, `mut x: T` on a
@@ -182,7 +182,7 @@ workers = "auto"
 contracts = ["noalloc", "nolock", "noblock", "nopanic(explicit)"]
 
 [link]
-libs = ["m"]
+unsafe_libs = ["m"]
 
 [lints]
 unused = "warn"
@@ -213,32 +213,32 @@ large_copy = { level = "warn", threshold = 256 }
   `-U<name>`, `-I<path>` for a path that, with every symbolic link followed, lies under the
   dependency's own root (`[CT-2]`), `-std=<c-standard>`, `-O<n>`, and `-W<name>` other than `-Wl,…`,
   `-Wa,…` and `-Wp,…`, which pass arguments to the linker, assembler and preprocessor; its `[link]
-  libs` entries are taken for names with no path separator (`"m"`) and for paths under its own root,
-  resolved the same way (a library one of its headers names counting as an entry, `[FFI-51]`); and
-  its `[cpp.<project>]` section (whose configuration runs the project's own build code, Annex C),
-  any other `[c] flags` entry, any other `[link]` path, and its `[build]`, `[profiles]`, `[jobs]`
-  and `[comptime]` sections are honoured only when the root package's manifest names the dependency
-  in `[build] native = ["parser"]`, and are `E9001` otherwise, naming the dependency, the key and
-  the line to add ("`parser`'s manifest sets `[c] flags = [\"-fplugin=./vendor/helper.so\"]`, which
-  would run its code inside this build's C compiler; a dependency's flags are limited to defines,
-  include paths under its root, a C standard, an optimisation level and warnings; to take the rest
-  as written, add `native = [\"parser\"]` under `[build]` in `ember.toml`"). What a dependency's C
-  is compiled from is limited the same way, since a header names any file of the machine itself,
-  whatever its `-I` paths (`#include "/home/ci/.ssh/config"`, C23's `#embed`): the compile of a
-  dependency's shim, thunk unit or C source reads only files under the dependency's own root and the
-  headers of the toolchain itself (the C or C++ compiler's own, its standard libraries' and the
-  platform kit's, in the directories of those installations as the build finds them, `[TOOL-2]`,
-  never a directory a manifest, a flag or an import's `include_paths` adds; reading one is not
-  vouching for it, `[FFI-51]`), which the build checks against the files the C compiler reports it
-  read, included and embedded alike (a build that cannot learn what a compiler embedded refuses
-  `#embed` there), and that C holds no assembly, at file scope or in a function's body, since an
-  assembler directive reads a file no report names (`.incbin`). A file from anywhere else, or
-  assembly, is `E9001` unless the root names the dependency in `native` ("`parser`'s `lexer.h` (line
-  3) reads `/home/ci/.aws/credentials` into the program with `#embed`; a dependency's C reads only
-  its own folder and the toolchain's headers; to allow it, add `native = [\"parser\"]` under
-  `[build]` in `ember.toml`"). Each flag reaches the C compiler as one argument of its own, never
-  through a shell, so a define's value cannot add a second flag. `ember tcb` lists every dependency
-  so named as an external library (`[TCB-4]`).
+  unsafe_libs` entries are taken for names with no path separator (`"m"`) and for paths under its
+  own root, resolved the same way (a library one of its headers names counting as an entry,
+  `[FFI-51]`); and its `[cpp.<project>]` section (whose configuration runs the project's own build
+  code, Annex C), any other `[c] flags` entry, any other `[link]` path, and its `[build]`,
+  `[profiles]`, `[jobs]` and `[comptime]` sections are honoured only when the root package's
+  manifest names the dependency in `[build] native = ["parser"]`, and are `E9001` otherwise, naming
+  the dependency, the key and the line to add ("`parser`'s manifest sets `[c] flags =
+  [\"-fplugin=./vendor/helper.so\"]`, which would run its code inside this build's C compiler; a
+  dependency's flags are limited to defines, include paths under its root, a C standard, an
+  optimisation level and warnings; to take the rest as written, add `native = [\"parser\"]` under
+  `[build]` in `ember.toml`"). What a dependency's C is compiled from is limited the same way, since
+  a header names any file of the machine itself, whatever its `-I` paths (`#include
+  "/home/ci/.ssh/config"`, C23's `#embed`): the compile of a dependency's shim, thunk unit or C
+  source reads only files under the dependency's own root and the headers of the toolchain itself
+  (the C or C++ compiler's own, its standard libraries' and the platform kit's, in the directories
+  of those installations as the build finds them, `[TOOL-2]`, never a directory a manifest, a flag
+  or an import's `include_paths` adds; reading one is not vouching for it, `[FFI-51]`), which the
+  build checks against the files the C compiler reports it read, included and embedded alike (a
+  build that cannot learn what a compiler embedded refuses `#embed` there), and that C holds no
+  assembly, at file scope or in a function's body, since an assembler directive reads a file no
+  report names (`.incbin`). A file from anywhere else, or assembly, is `E9001` unless the root names
+  the dependency in `native` ("`parser`'s `lexer.h` (line 3) reads `/home/ci/.aws/credentials` into
+  the program with `#embed`; a dependency's C reads only its own folder and the toolchain's headers;
+  to allow it, add `native = [\"parser\"]` under `[build]` in `ember.toml`"). Each flag reaches the
+  C compiler as one argument of its own, never through a shell, so a define's value cannot add a
+  second flag. `ember tcb` lists every dependency so named as an external library (`[TCB-4]`).
 * `[MAN-3]` *(changed in 0.9.9)* Every key in `[lints]` names a lint the compiler defines (`E9010`
   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
   parameters.
@@ -247,7 +247,7 @@ large_copy = { level = "warn", threshold = 256 }
   (`{ path }`, `{ git, rev }`, or `{ git, version }`, `[VER-5]`); `[build]` (`entry`, `target`,
   `backend`, `c_compiler`, `runtime`, `max_instantiations` `[MONO-3]`, `reload` `[MAN-7]`, `native`
   `[MAN-10]`); `[profiles.<name>]` (`[PRF-3]`); `[c]` (`compiler`, `flags`, `[BLD-FFI-1]`); `[link]`
-  (`libs`, `timeout` `[BLD-15]`); `[jobs]` (`workers`, `[JOB-1]`); `[realtime]` (`contracts`,
+  (`unsafe_libs`, `timeout` `[BLD-15]`); `[jobs]` (`workers`, `[JOB-1]`); `[realtime]` (`contracts`,
   `[EFF-19]`); `[comptime]` (`max_steps`, `max_heap_mb`, `[CT-3]`; `env`, `[CT-2]`); `[lints]`
   (`[MAN-3]`); and `[cpp.<project>]` and `[ffi]` (`evidence`, Annex C). A key a section does not
   take, or a section not listed, is `E9001`, naming what is accepted (ODR-110). **No manifest key

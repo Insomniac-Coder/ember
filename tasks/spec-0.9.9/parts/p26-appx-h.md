@@ -3544,3 +3544,35 @@ Generated: every rule whose text differs from 0.9.20_Hardened_6.
 | `[MAN-10]` | changed |
 | `[TCB-4]` | changed |
 
+
+## H.59 Changes in 0.9.20_Hardened_8 (from 0.9.20_Hardened_7)
+
+**0.9.20_Hardened_8**, of 2026-11-10, is one verdict of the owner's (172). A library linked from the
+manifest (`[link] libs = ["vulkan-1"]`) put its code into the program with no `unsafe` written
+anywhere; verdict 171 says any code that cannot be guaranteed safe is written with the word. The
+owner, shown the question: "I want the toml and the code both to be explicit, the toml says we are
+using unsafe libraries and the code imports unsafe libraries", with the two lines as he wants them:
+`unsafe_libs = ["vulkan-1"]` under `[link]`, and `unsafe import c "vulkan/vulkan.h" as vk` under its
+`# SAFETY:` note. More is written; no program changes what it does.
+
+* **The manifest says it**: a linked library is named under `[link] unsafe_libs`; the key `libs` is
+  not Ember, and an import no longer links a library by an option of its own, so the manifest is the
+  one place that names them (`[BLD-FFI-3]`, `[FFI-49]`, `[MAN-8]`, `[MAN-10]`).
+* **The code says it**: the import of a header that declares a function or a variable one of those
+  libraries defines is written `unsafe import`, with its note. The build reads from each library
+  the names it defines, so nothing more is written to tie the import to the library (tried with
+  `llvm-nm` on `vulkan-1.lib`, which lists `vkCreateInstance`) (`[FFI-51]`).
+
+Registry row: E3100. No new rule, no new code, none retired. Owner verdicts: 172 applied.
+
+Generated: every rule whose text differs from 0.9.20_Hardened_7.
+
+| Rule | 0.9.20_Hardened_7 → 0.9.20_Hardened_8 |
+|---|---|
+| `[BLD-FFI-3]` | changed |
+| `[CLI-20]` | changed |
+| `[FFI-49]` | changed |
+| `[FFI-51]` | changed |
+| `[MAN-8]` | changed |
+| `[MAN-10]` | changed |
+

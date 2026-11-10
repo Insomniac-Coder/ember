@@ -1,7 +1,23 @@
 # Ember — handoff
 
-> **2026-11-10, night — the local session (branch `spec-0.9.20-hardening`), attended, the lead solo. START
-> HERE.** **Hardened_7 of 0.9.20 is cut** and is the development target
+> **2026-11-10, late night — the local session (branch `spec-0.9.20-hardening`), attended, the lead solo. START
+> HERE.** **Hardened_8 of 0.9.20 is cut** and is the development target
+> (`docs/spec-source/Ember_v0.9.20_Hardened_8.md`, 18166 lines, 1,020 rules, SHA-256 `CF76212AFD8D…`). One verdict of the
+> owner's (172, `tasks/96/redesign/JOB.md`): a linked library is named under `[link] unsafe_libs` in `ember.toml`
+> and the import of its header is `unsafe import` with a `# SAFETY:` note; the key `libs` and an import's `link =
+> [...]` are gone (N154, `decisions.md` §19; `docs/AUDIT-0.9.20.md` §13; §H.59). Three cuts were made this
+> evening: Hardened_6 (the second review's holes; verdict 38 restored), Hardened_7 (verdict 171: no header is
+> exempt from `unsafe import`) and this one; the blocks below record the first two. **Two lessons the owner
+> taught tonight:** how often `unsafe` would be written is never a reason to leave it out; a new requirement
+> adds its own word and changes nothing else in how a thing is written. **Checked:** every spec gate,
+> `ember_diag`, `ember_parser` and the three spec-tied milestone tests green against the pin; the compiler is
+> untouched (it still reads `libs`, and builds none of the import checks). **Not done:** nothing is pushed and
+> `main` is not moved (the owner: "Not yet"); the full suite and the bench were not run. **Open with the
+> owner:** whether a library a header itself asks for (`#pragma comment(lib, …)`) must also be listed under
+> `unsafe_libs`; his look at N140 to N154.
+
+> **2026-11-10, night — the local session (branch `spec-0.9.20-hardening`), attended, the lead solo. (The block
+> above is newer.)** **Hardened_7 of 0.9.20 was cut** and was the development target
 > (`docs/spec-source/Ember_v0.9.20_Hardened_7.md`, 18119 lines, 1,020 rules, SHA-256 `2D6D5796B44F…`). It is one verdict of
 > the owner's (171, `tasks/96/redesign/JOB.md`): "ANY code and I mean ANY code that we can NOT guarantee is safe needs a unsafe keyword". Hardened_6 (the block below)
 > had let the toolchain's own headers, and a library a header names, pass with no `unsafe`; both allowances are

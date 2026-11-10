@@ -11,7 +11,12 @@ session, or a workflow the owner allows, starts here and does not redo the readi
 
 ## 0. State, and how to resume
 
-* **Cut and pinned (seventh pass, 2026-11-10, the local session):** `docs/spec-source/Ember_v0.9.20_Hardened_7.md`
+* **Cut and pinned (eighth pass, 2026-11-10, the local session):** `docs/spec-source/Ember_v0.9.20_Hardened_8.md`
+  (18166 lines, 1,020 rules, SHA-256 `CF76212AFD8D…`) is the development target; sources frozen in
+  `tasks/spec-0.9.9/parts-0.9.20-h8/`, change log §H.59, the owner's verdict 172 (`JOB.md`), N154 (`decisions.md`
+  §19), record §13 below. To cut Hardened_9: `CURRENT = ('0.9.20', 9)`, point `V0920_H8_PARTS` at
+  `parts-0.9.20-h8`, add `V0920_H9_PARTS`, `H60_HEAD`, `v0920_h9()` and its term in `main()`.
+* **Cut and pinned (seventh pass, 2026-11-10, the local session), superseded the same day:** `docs/spec-source/Ember_v0.9.20_Hardened_7.md`
   (18119 lines, 1,020 rules, SHA-256 `2D6D5796B44F…`) is the development target; sources frozen in
   `tasks/spec-0.9.9/parts-0.9.20-h7/`, change log §H.58, the owner's verdict 171 (`JOB.md`), N153 (`decisions.md`
   §18), record §12 below. To cut Hardened_8: `CURRENT = ('0.9.20', 8)`, point `V0920_H7_PARTS` at
@@ -667,3 +672,14 @@ including file as a definition the linker sees, and allows only `static` ones an
 where they are called. **Checked at the cut** as in §11, all green; the compiler is untouched and
 still builds none of the header check. **Not run:** the full suite, the bench, the push gate. **Put to the
 owner, not changed:** a library linked from the manifest (`[link] libs`) has no `unsafe` word of its own.
+
+## 13. The eighth pass: 0.9.20_Hardened_8 (2026-11-10, the local session, attended, the lead solo)
+
+One verdict (172): "I want the toml and the code both to be explicit, the toml says we are using unsafe libraries and the code imports unsafe libraries". A linked library is named under `[link] unsafe_libs` and the import of a
+header that declares what it defines is `unsafe import` with its note (`[BLD-FFI-3]`, `[FFI-49]`, `[FFI-51]`,
+`[MAN-8]`, `[MAN-10]`; registry row E3100). The key `libs` and an import's `link = [...]` option are gone. The
+build ties a library to its imports itself, from the names the library defines (`llvm-nm` of LLVM 22.1.8 on
+`vulkan-1.lib` lists `vkCreateInstance`). **For the compiler:** the manifest reader still takes `libs`; nothing of
+the import check exists. **Checked at the cut** as in §11, all green. **Not run:** the full suite, the bench, the
+push gate. **Put to the owner, not changed:** whether a library a header itself asks for must also be listed
+under `unsafe_libs`.

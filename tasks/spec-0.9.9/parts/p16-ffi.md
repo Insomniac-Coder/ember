@@ -189,9 +189,9 @@ fn main():
   is `stdcall` on 32-bit Windows and C elsewhere; `extern "vectorcall"` and `extern "fastcall"`
   exist on x86. Struct arguments and results follow the ABI exactly. An ABI-direct call is one
   `call` instruction and nothing else.
-* `[FFI-49]` *(new in 0.9.9)* `@ffi(link_name="sym")` binds a declaration to a differently named
-  symbol. Libraries are linked by `[link] libs = ["m", "vulkan-1"]` in the manifest or `link =
-  [...]` on an `import c` (`[BLD-FFI-3]`).
+* `[FFI-49]` *(new in 0.9.9)* *(changed in 0.9.20)* `@ffi(link_name="sym")` binds a declaration to a
+  differently named symbol. Libraries are linked by `[link] unsafe_libs = ["m", "vulkan-1"]` in the
+  manifest, and by nothing else (`[BLD-FFI-3]`).
 
 ## XVI.3 Importing C headers
 
@@ -254,9 +254,18 @@ import c "vulkan/vulkan.h" with (
   Windows C runtime `<stdio.h>` defines `sprintf` and its family in every file that includes it, so
   an import that reaches it is written `unsafe import c` there, and one that reaches only
   `<stdlib.h>`, `<string.h>` or `<math.h>` is not. A library a header names is listed by `ember tcb`
-  as an external library with the header and line that names it (`[TCB-4]`). A library linked by
-  name or path (`link = [...]`, `[link] libs`) is listed by `ember tcb` as an external library
-  (`[TCB-4]`).
+  as an external library with the header and line that names it (`[TCB-4]`). **A linked library is
+  named in the manifest and vouched for in the code** (verdict 172). The manifest names it under
+  `[link] unsafe_libs` (`[BLD-FFI-3]`), and the import of a header that declares a function or a
+  variable the library defines is written `unsafe import`, with its note: `unsafe_libs =
+  ["vulkan-1"]` in `ember.toml`, and `# SAFETY: vulkan-1 is the official Vulkan library` above
+  `unsafe import c "vulkan/vulkan.h" as vk`. The library's code is in the program, with whatever it
+  runs when it loads, and nothing checks it. The build reads from each named library the names it
+  defines, so it knows which imports those are, and nothing more is written to tie the two; an
+  import of such a header without the word is `E3100` ("`vkCreateInstance` of `import c
+  "vulkan/vulkan.h"` (line 3) comes from `vulkan-1` (`ember.toml`, line 7), whose code nothing
+  checks; write `unsafe import c "vulkan/vulkan.h" as vk` with a `# SAFETY:` note above it"). Each
+  library is listed by `ember tcb` as an external library (`[TCB-4]`).
 
   ```ember,fragment
   # SAFETY: bridge.c is ours: it defines `add` and runs nothing before `main`
@@ -1029,7 +1038,11 @@ pub extern "C" fn on_update(entity: u64, dt: f32) -> i32:
   KIND staticlib|cdylib SOURCES …)` and `ember_add_executable(…)` build Ember packages as ordinary
   targets of a C or C++ project, taking the target's compiler and flags with `--cc-flags-from-target
   <target>` or, for C++, through the CMake File API (Annex C).
-* `[BLD-FFI-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* Existing libraries are linked by name
-  (`[link] libs = ["vulkan-1"]`, `[MAN-8]`) or path; link order follows declaration order. Each is
-  listed by `ember tcb` as an external library (`[TCB-4]`).
+* `[BLD-FFI-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* Existing libraries are linked by name or
+  path, each named in the manifest under `[link] unsafe_libs` (`unsafe_libs = ["vulkan-1"]`,
+  `[MAN-8]`) and nowhere else, so that the manifest says the program uses libraries nothing checks,
+  as the import of each says in the code (`unsafe import`, `[FFI-51]`; verdict 172); link order
+  follows declaration order. The key `libs` is not Ember (`E9001`: "`libs = [\"vulkan-1\"]` links
+  code that nothing checks; write `unsafe_libs = [\"vulkan-1\"]`"). Each is listed by `ember tcb` as
+  an external library (`[TCB-4]`).
 
