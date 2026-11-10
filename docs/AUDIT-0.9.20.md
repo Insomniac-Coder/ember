@@ -11,7 +11,13 @@ session, or a workflow the owner allows, starts here and does not redo the readi
 
 ## 0. State, and how to resume
 
-* **Cut and pinned (ninth pass, 2026-11-10, the local session):** `docs/spec-source/Ember_v0.9.20_Hardened_9.md`
+* **Cut and pinned (tenth pass, 2026-11-10, the local session):** `docs/spec-source/Ember_v0.9.20_Hardened_10.md`
+  (18234 lines, 1,020 rules, SHA-256 `D88B6EF1D687…`) is the development target; sources frozen in
+  `tasks/spec-0.9.9/parts-0.9.20-h10/`, change log §H.61, the owner's verdict 174 (`JOB.md`), N156
+  (`decisions.md` §21), record §15 below. To cut Hardened_11: `CURRENT = ('0.9.20', 11)`, point
+  `V0920_H10_PARTS` at `parts-0.9.20-h10`, add `V0920_H11_PARTS`, `H62_HEAD`, `v0920_h11()` and its term in
+  `main()`.
+* **Cut and pinned (ninth pass, 2026-11-10, the local session), superseded the same day:** `docs/spec-source/Ember_v0.9.20_Hardened_9.md`
   (18197 lines, 1,020 rules, SHA-256 `ED8D26128947…`) is the development target; sources frozen in
   `tasks/spec-0.9.9/parts-0.9.20-h9/`, change log §H.60, the owner's verdict 173 (`JOB.md`), N155 (`decisions.md`
   §20), record §14 below. To cut Hardened_10: `CURRENT = ('0.9.20', 10)`, point `V0920_H9_PARTS` at
@@ -698,3 +704,14 @@ too"); an import whose header asks for one the manifest does not name is `E9001`
 at the cut** as in §11, all green; the compiler is untouched. **Not run:** the full suite, the bench, the push
 gate. **Put to the owner, not changed:** the manifest names a library for every target; it has no way to name
 one for Windows only.
+
+## 15. The tenth pass: 0.9.20_Hardened_10 (2026-11-10, the local session, attended, the lead solo)
+
+One verdict (174), which closes the question §14 left: `[link.windows]`, `[link.linux]` and `[link.macos]` each
+take `unsafe_libs`, linked after `[link]`'s own in a build for that system and not looked for in another's
+(`[BLD-FFI-3]`, `[MAN-8]`, `[MAN-10]`, `[FFI-51]`; no registry row). **Checked at the cut** as in §11, all green;
+the compiler is untouched and reads none of these sections. **Not run:** the full suite, the bench, the push
+gate. **For the compiler, from the six cuts of 2026-11-10 (Hardened_5 to _10):** the manifest keys
+`unsafe_libs` and the per-system sections, with `libs` refused; the import checks of `[FFI-51]` (a header that
+does more than declare; a header that declares what a named library defines; a library a header asks for
+that the manifest does not name); the limits of `[MAN-10]` on what a dependency's C reads.

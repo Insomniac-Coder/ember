@@ -254,21 +254,23 @@ import c "vulkan/vulkan.h" with (
   Windows C runtime `<stdio.h>` defines `sprintf` and its family in every file that includes it, so
   an import that reaches it is written `unsafe import c` there, and one that reaches only
   `<stdlib.h>`, `<string.h>` or `<math.h>` is not. A library a header asks for is named in the
-  manifest too, under `[link] unsafe_libs`, as every linked library is (verdict 173); where the
-  manifest does not name it the import is `E9001` ("`windows.h` has the linker add `uuid.lib`, and
-  `ember.toml` does not name it; add `unsafe_libs = [\"uuid\"]` under `[link]`"). `ember tcb` lists
-  it as an external library with the header and line that asks for it (`[TCB-4]`). **A linked
-  library is named in the manifest and vouched for in the code** (verdict 172). The manifest names
-  it under `[link] unsafe_libs` (`[BLD-FFI-3]`), and the import of a header that declares a function
-  or a variable the library defines is written `unsafe import`, with its note: `unsafe_libs =
-  ["vulkan-1"]` in `ember.toml`, and `# SAFETY: vulkan-1 is the official Vulkan library` above
-  `unsafe import c "vulkan/vulkan.h" as vk`. The library's code is in the program, with whatever it
-  runs when it loads, and nothing checks it. The build reads from each named library the names it
-  defines, so it knows which imports those are, and nothing more is written to tie the two; an
-  import of such a header without the word is `E3100` ("`vkCreateInstance` of `import c
-  "vulkan/vulkan.h"` (line 3) comes from `vulkan-1` (`ember.toml`, line 7), whose code nothing
-  checks; write `unsafe import c "vulkan/vulkan.h" as vk` with a `# SAFETY:` note above it"). Each
-  library is listed by `ember tcb` as an external library (`[TCB-4]`).
+  manifest too, under `[link] unsafe_libs` or the list of the system the build is for
+  (`[link.windows]`, `[BLD-FFI-3]`), as every linked library is (verdict 173); where the manifest
+  does not name it the import is `E9001` ("`windows.h` has the linker add `uuid.lib`, and
+  `ember.toml` does not name it; add `unsafe_libs = [\"uuid\"]` under `[link.windows]`, or under
+  `[link]` if every system needs it"). `ember tcb` lists it as an external library with the header
+  and line that asks for it (`[TCB-4]`). **A linked library is named in the manifest and vouched for
+  in the code** (verdict 172). The manifest names it under `[link] unsafe_libs` (`[BLD-FFI-3]`), and
+  the import of a header that declares a function or a variable the library defines is written
+  `unsafe import`, with its note: `unsafe_libs = ["vulkan-1"]` in `ember.toml`, and `# SAFETY:
+  vulkan-1 is the official Vulkan library` above `unsafe import c "vulkan/vulkan.h" as vk`. The
+  library's code is in the program, with whatever it runs when it loads, and nothing checks it. The
+  build reads from each named library the names it defines, so it knows which imports those are, and
+  nothing more is written to tie the two; an import of such a header without the word is `E3100`
+  ("`vkCreateInstance` of `import c "vulkan/vulkan.h"` (line 3) comes from `vulkan-1` (`ember.toml`,
+  line 7), whose code nothing checks; write `unsafe import c "vulkan/vulkan.h" as vk` with a `#
+  SAFETY:` note above it"). Each library is listed by `ember tcb` as an external library
+  (`[TCB-4]`).
 
   ```ember,fragment
   # SAFETY: bridge.c is ours: it defines `add` and runs nothing before `main`
@@ -1046,7 +1048,13 @@ pub extern "C" fn on_update(entity: u64, dt: f32) -> i32:
   `[MAN-8]`) and nowhere else, so that the manifest says the program uses libraries nothing checks,
   as the import of each says in the code (`unsafe import`, `[FFI-51]`; verdict 172), a library a
   header itself asks for included (`#pragma comment(lib, "uuid.lib")`; verdict 173); link order
-  follows declaration order. The key `libs` is not Ember (`E9001`: "`libs = [\"vulkan-1\"]` links
-  code that nothing checks; write `unsafe_libs = [\"vulkan-1\"]`"). Each is listed by `ember tcb` as
-  an external library (`[TCB-4]`).
+  follows declaration order. A library only one system has is named for that system (verdict 174):
+  `[link.windows]`, `[link.linux]` and `[link.macos]` each take `unsafe_libs`, linked after
+  `[link]`'s own when the build is for that system (the system of `--target` or `[build] target`,
+  the host's when neither is written) and not looked for when it is for another, so `unsafe_libs =
+  ["libcpmt", "uuid"]` under `[link.windows]` leaves a Linux build as it was; a library named in
+  both lists is linked once, and the import of its header is written `unsafe import` on every
+  system, one line of source serving them all. The key `libs` is not Ember (`E9001`: "`libs =
+  [\"vulkan-1\"]` links code that nothing checks; write `unsafe_libs = [\"vulkan-1\"]`"). Each is
+  listed by `ember tcb` as an external library (`[TCB-4]`).
 

@@ -1281,6 +1281,8 @@ After the lead's check of 0.9.20_Hardened_4 (`tasks/96/redesign/spec-gaps-0.9.15
 
 173. **A library a header itself asks for is listed under `unsafe_libs` too.** Some headers have the linker add a library (`windows.h`: `#pragma comment(lib, "uuid.lib")`); verdict 171 already makes such an import `unsafe import`, and the manifest said nothing of the library. Asked whether it must also be listed under `[link] unsafe_libs` (verdict 172): owner (2026-11-10): "Yes, list it too". Applied in 0.9.20_Hardened_9 (N155).
 
+174. **A library only one system has is named for that system.** `ember.toml` named a library for every system at once, so `libcpmt`, which verdict 173 has an MSVC program name, was named for Linux too. Owner (2026-11-10): "how can we address that gap?"; shown `[link]` for every system and `[link.windows]`, `[link.linux]`, `[link.macos]` each taking `unsafe_libs`, with the code unchanged: "Yes, add them". Applied in 0.9.20_Hardened_10 (N156).
+
 ## Messages and tests: the lead's to settle (owner, 2026-11-01 evening)
 
 "your error messages are okay it's the language implementation part that concerns me most of the time so

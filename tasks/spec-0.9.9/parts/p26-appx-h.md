@@ -3601,3 +3601,29 @@ Generated: every rule whose text differs from 0.9.20_Hardened_8.
 | `[FFI-51]` | changed |
 | `[MAN-10]` | changed |
 
+
+## H.61 Changes in 0.9.20_Hardened_10 (from 0.9.20_Hardened_9)
+
+**0.9.20_Hardened_10**, of 2026-11-10, is one verdict of the owner's (174). The manifest named a
+library for every system at once, so a program that names `libcpmt` for MSVC (verdict 173) named it
+for Linux too, where no such library exists; the same was already true of any program that links
+different libraries on different systems. Shown sections for one system each, the owner: "Yes, add
+them". A feature is added; nothing is taken away.
+
+* **A library only one system has is named for that system**: `[link.windows]`, `[link.linux]` and
+  `[link.macos]` each take `unsafe_libs`, linked after `[link]`'s own when the build is for that
+  system and not looked for when it is for another. The key, the word and the import in the code
+  are as they were (`[BLD-FFI-3]`, `[MAN-8]`, `[MAN-10]`, `[FFI-51]`).
+
+No registry row, no new rule, no new code, none retired. Owner verdicts: 174 applied.
+
+Generated: every rule whose text differs from 0.9.20_Hardened_9.
+
+| Rule | 0.9.20_Hardened_9 → 0.9.20_Hardened_10 |
+|---|---|
+| `[BLD-FFI-3]` | changed |
+| `[CLI-20]` | changed |
+| `[FFI-51]` | changed |
+| `[MAN-8]` | changed |
+| `[MAN-10]` | changed |
+

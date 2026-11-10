@@ -1,7 +1,19 @@
 # Ember — handoff
 
 > **2026-11-10, end of the session — the local session (branch `spec-0.9.20-hardening`), attended, the lead
-> solo. START HERE.** **Hardened_9 of 0.9.20 is cut** and is the development target
+> solo. START HERE.** **Hardened_10 of 0.9.20 is cut** and is the development target
+> (`docs/spec-source/Ember_v0.9.20_Hardened_10.md`, 18234 lines, 1,020 rules, SHA-256 `D88B6EF1D687…`). One verdict of the
+> owner's (174, `tasks/96/redesign/JOB.md`): a library only one system has is named for that system, in
+> `[link.windows]`, `[link.linux]` or `[link.macos]`, each taking `unsafe_libs` (N156, `decisions.md` §21;
+> `docs/AUDIT-0.9.20.md` §15; §H.61). **Six cuts were made on 2026-11-10** (Hardened_5 to _10); the blocks below
+> record each, newest first; verdicts 167 to 174 are the owner's words, and `docs/AUDIT-0.9.20.md` §15 lists
+> what the compiler now owes them. **Checked:** every spec gate, `ember_diag`, `ember_parser` and the three
+> spec-tied milestone tests green against the pin; the compiler is untouched. **Not done:** nothing is pushed
+> and `main` is not moved (the owner: "Not yet"); the full suite and the bench were not run. **Open with the
+> owner:** his look at the lead's rulings N140 to N156; his word on pushing.
+
+> **2026-11-10, the ninth cut — the local session (branch `spec-0.9.20-hardening`), attended, the lead
+> solo. (The block above is newer.)** **Hardened_9 of 0.9.20 was cut** and was the development target
 > (`docs/spec-source/Ember_v0.9.20_Hardened_9.md`, 18197 lines, 1,020 rules, SHA-256 `ED8D26128947…`). One verdict of the
 > owner's (173, `tasks/96/redesign/JOB.md`): a library a header itself asks for (`windows.h`: `uuid.lib`) is
 > named under `[link] unsafe_libs` too, `E9001` where it is not (N155, `decisions.md` §20; `docs/AUDIT-0.9.20.md`

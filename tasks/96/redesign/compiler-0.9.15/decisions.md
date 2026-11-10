@@ -842,3 +842,9 @@ The findings are §8 of `tasks/96/redesign/spec-gaps-0.9.15/deep/review-0.9.20-H
 | N | Rules | Ruling | Why |
 |---|---|---|---|
 | N155 | FFI-51, BLD-FFI-3, MAN-10, E9001 row (verdict 173) | A library a header asks for is named under `[link] unsafe_libs`; an import whose header asks for one the manifest does not name is `E9001`, with the line to add. | The owner's word: "Yes, list it too". The code is the manifest's (`E9001`), since what is missing is a manifest line; the wording is the lead's. Seen and put to the owner, not decided: the manifest has no way to name a library for one target only, so a program that must name `libcpmt` for MSVC names it for every target, where no such library exists. The same was already true of any program that links different libraries on different systems. |
+
+## 21. 0.9.20_Hardened_10: the owner's verdict 174 applied (lead, 2026-11-10, the local session, attended, solo)
+
+| N | Rules | Ruling | Why |
+|---|---|---|---|
+| N156 | BLD-FFI-3, MAN-8, MAN-10, FFI-51 (verdict 174) | `[link.windows]`, `[link.linux]` and `[link.macos]` each take `unsafe_libs`; a build links `[link]`'s list and then the list of the system it is for (that of `--target` or `[build] target`, the host's otherwise) and does not look for another system's. Filled in by the lead, his to overturn: a library named in both lists is linked once; the import of its header is `unsafe import` on every system; a dependency's per-system lists are limited as its `[link]` list is; `E9001`'s help for a library a header asks for names the system's section first. | The owner's word: "Yes, add them". The section form is the manifest's own (`[profiles.debug]`); the three names are the three systems Ember's toolchain is published for (`[TOOL-1]`). No rule warns of an `unsafe` word that is not needed, so one import line serves every system. |

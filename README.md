@@ -22,8 +22,8 @@ pages, and the records that keep them consistent.
 
 | | |
 |---|---|
-| Language version being implemented | **0.9.20**, specification `Ember_v0.9.20_Hardened_9` (what changed: its Appendix H, §H.41 to §H.60) |
-| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.20_Hardened_9.md`](docs/spec-source/Ember_v0.9.20_Hardened_9.md) |
+| Language version being implemented | **0.9.20**, specification `Ember_v0.9.20_Hardened_10` (what changed: its Appendix H, §H.41 to §H.61) |
+| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.20_Hardened_10.md`](docs/spec-source/Ember_v0.9.20_Hardened_10.md) |
 | Specification sources | [`tasks/spec-0.9.9/parts/`](tasks/spec-0.9.9/parts/), one file per Part; each `Hardened_N` is their concatenation and is never edited afterwards |
 | Last adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), 0.8.5_Hardened_1 (0.9.10 is adopted when its gates pass and the owner installs it) |
 | Tests | Rust unit and integration suites; Ember run and conformance suites in [`tests/`](tests/) |
@@ -43,7 +43,7 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 | 2 | Ownership, borrowing, regions | 10% |
 | 3 | Classes, reference counting, exclusivity | 0% |
 | 4 | Effects, compile time, reflection, derives | 13% |
-| 5 | C interoperability | 15% |
+| 5 | C interoperability | 14% |
 | 6 | Concurrency and data-oriented design | 8% |
 | 7 | C++ interoperability and the interpreter | 17% |
 | 7a | Iteration, determinism, cost control | 18% |
@@ -53,7 +53,7 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 | | After 1.0: the GPU host model (v0.6) | 0% |
 
 The latest language work is the memory-model rework, which makes the language 0.9.15, hardened as
-0.9.20 by the nine hardening passes of 2026-11-03, 2026-11-08 and 2026-11-10 (`docs/spec-source/Ember_v0.9.20_Hardened_9.md`, its §H.52 to §H.60; the
+0.9.20 by the ten hardening passes of 2026-11-03, 2026-11-08 and 2026-11-10 (`docs/spec-source/Ember_v0.9.20_Hardened_10.md`, its §H.52 to §H.61; the
 owner's verdicts in
 [`tasks/96/redesign/JOB.md`](tasks/96/redesign/JOB.md), the build plan in
 [`tasks/96/redesign/compiler-0.9.15/MILESTONES.md`](tasks/96/redesign/compiler-0.9.15/MILESTONES.md)):
