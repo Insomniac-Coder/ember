@@ -3508,3 +3508,39 @@ Generated: every rule whose text differs from 0.9.20_Hardened_5.
 | `[TCB-4]` | changed |
 | `[TYP-46a]` | changed |
 
+
+## H.58 Changes in 0.9.20_Hardened_7 (from 0.9.20_Hardened_6)
+
+**0.9.20_Hardened_7**, of 2026-11-10, is one verdict of the owner's. Hardened_6 had let two things a
+header does pass with no `unsafe`: asking the linker for a library by name, and anything at all in
+the toolchain's own headers (N148; the lead's reason was that `windows.h` and every MSVC C++
+standard header would otherwise need the word). Asked whether that allowance should stand, the
+owner (verdict 171): "ANY code and I mean ANY code that we can NOT guarantee is safe needs a unsafe
+keyword". Both allowances are withdrawn (N153, `decisions.md` §18). More imports are written
+`unsafe import`; no program changes what it does.
+
+* **No header is exempt** (verdict 171, N153): a header that has the linker add a library, or gives
+  it any other order, does more than declare, whoever wrote it; the C or C++ compiler's own
+  headers, its standard libraries' and the platform's are judged as every other header is. So
+  `import c "windows.h"` and, with MSVC, an `import cpp` of a header that includes a C++ standard
+  header are written `unsafe import`, with a note. What decides is what the compiled header leaves
+  in the program on its target: an `inline` function the C compiler emits in every file that
+  includes it is a definition the linker sees, so with the Windows C runtime an import that
+  reaches `<stdio.h>` (which defines `sprintf` and its family so) or `<wchar.h>` needs the word,
+  and one that reaches only `<stdlib.h>`, `<string.h>`, `<math.h>` or `<time.h>` does not. Of the
+  repository's 49 C headers one needs it (through `<wchar.h>`). What `ember tcb` lists is as
+  before the allowance (`[FFI-51]`, `[TCB-4]`).
+* **What a dependency's C reads** keeps its limit, and now says itself which headers are the
+  toolchain's; reading one is not vouching for it (`[MAN-10]`).
+
+No registry row, no new rule, no new code, none retired. Owner verdicts: 171 applied.
+
+Generated: every rule whose text differs from 0.9.20_Hardened_6.
+
+| Rule | 0.9.20_Hardened_6 → 0.9.20_Hardened_7 |
+|---|---|
+| `[CLI-20]` | changed |
+| `[FFI-51]` | changed |
+| `[MAN-10]` | changed |
+| `[TCB-4]` | changed |
+

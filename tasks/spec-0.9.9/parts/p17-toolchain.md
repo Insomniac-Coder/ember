@@ -60,7 +60,7 @@ ember --help | --version [--matrix]
   rewrites source written for an earlier version into the current one where the change is
   mechanical, and lists, with the file and line, what it could not rewrite. From 0.9.15: the `#!
   language` directive to the current version; the changes of 0.9.20 refuse programs that were unsafe
-  and rewrite nothing (§H.52 to §H.57). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
+  and rewrite nothing (§H.52 to §H.58). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
   removal, `for k, v in m:` over a `Map` to `for k, v in m.items():` (`[CTL-1]`). From 0.9.10:
   `Box[T]` and `ForeignBox[T]` to `owns T`, `Box[T, A]` to `owns T using A`, `Array[T, A]` to
   `Array[T] using A`, `Weak[T]` to `weakref T`, the mode `owned` to `owns`, `mut x: T` on a
@@ -226,13 +226,16 @@ large_copy = { level = "warn", threshold = 256 }
   is compiled from is limited the same way, since a header names any file of the machine itself,
   whatever its `-I` paths (`#include "/home/ci/.ssh/config"`, C23's `#embed`): the compile of a
   dependency's shim, thunk unit or C source reads only files under the dependency's own root and the
-  toolchain's own headers (`[FFI-51]`), which the build checks against the files the C compiler
-  reports it read, included and embedded alike (a build that cannot learn what a compiler embedded
-  refuses `#embed` there), and that C holds no assembly, at file scope or in a function's body,
-  since an assembler directive reads a file no report names (`.incbin`). A file from anywhere else,
-  or assembly, is `E9001` unless the root names the dependency in `native` ("`parser`'s `lexer.h`
-  (line 3) reads `/home/ci/.aws/credentials` into the program with `#embed`; a dependency's C reads
-  only its own folder and the toolchain's headers; to allow it, add `native = [\"parser\"]` under
+  headers of the toolchain itself (the C or C++ compiler's own, its standard libraries' and the
+  platform kit's, in the directories of those installations as the build finds them, `[TOOL-2]`,
+  never a directory a manifest, a flag or an import's `include_paths` adds; reading one is not
+  vouching for it, `[FFI-51]`), which the build checks against the files the C compiler reports it
+  read, included and embedded alike (a build that cannot learn what a compiler embedded refuses
+  `#embed` there), and that C holds no assembly, at file scope or in a function's body, since an
+  assembler directive reads a file no report names (`.incbin`). A file from anywhere else, or
+  assembly, is `E9001` unless the root names the dependency in `native` ("`parser`'s `lexer.h` (line
+  3) reads `/home/ci/.aws/credentials` into the program with `#embed`; a dependency's C reads only
+  its own folder and the toolchain's headers; to allow it, add `native = [\"parser\"]` under
   `[build]` in `ember.toml`"). Each flag reaches the C compiler as one argument of its own, never
   through a shell, so a define's value cannot add a second flag. `ember tcb` lists every dependency
   so named as an external library (`[TCB-4]`).

@@ -11,7 +11,12 @@ session, or a workflow the owner allows, starts here and does not redo the readi
 
 ## 0. State, and how to resume
 
-* **Cut and pinned (sixth pass, 2026-11-10, the local session):** `docs/spec-source/Ember_v0.9.20_Hardened_6.md`
+* **Cut and pinned (seventh pass, 2026-11-10, the local session):** `docs/spec-source/Ember_v0.9.20_Hardened_7.md`
+  (18119 lines, 1,020 rules, SHA-256 `2D6D5796B44F…`) is the development target; sources frozen in
+  `tasks/spec-0.9.9/parts-0.9.20-h7/`, change log §H.58, the owner's verdict 171 (`JOB.md`), N153 (`decisions.md`
+  §18), record §12 below. To cut Hardened_8: `CURRENT = ('0.9.20', 8)`, point `V0920_H7_PARTS` at
+  `parts-0.9.20-h7`, add `V0920_H8_PARTS`, `H59_HEAD`, `v0920_h8()` and its term in `main()`.
+* **Cut and pinned (sixth pass, 2026-11-10, the local session), superseded the same day:** `docs/spec-source/Ember_v0.9.20_Hardened_6.md`
   (18074 lines, 1,020 rules, SHA-256 `48668BE18F1D…`) is the development target; its sources are frozen in
   `tasks/spec-0.9.9/parts-0.9.20-h6/`, its change log is §H.57 (`H57_HEAD` in `tools/appx_h.py`), its rulings N147
   to N152 (`decisions.md` §17), the owner's word verdict 170 (`JOB.md`), and **§11 below is its record**. To cut
@@ -644,3 +649,21 @@ hardened version". No agents and no workflow.
   may take the plain path for a type that is not `Send`; the reviewer's queue variant is to be measured before
   it is considered.
 * **Not covered by either review:** the generated appendices G and I, and the change log before §H.52.
+
+## 12. The seventh pass: 0.9.20_Hardened_7 (2026-11-10, the local session, attended, the lead solo)
+
+One verdict. In Hardened_6 the lead had let a header ask the linker for a library, and let the toolchain's own
+headers do anything, with no `unsafe` (N148), because the pilot of §11 showed `windows.h` and every MSVC C++
+standard header would otherwise need the word. Asked whether that should stand, the owner: "ANY code and I mean ANY code that we can NOT guarantee is safe needs a unsafe keyword".
+Both allowances are withdrawn (verdict 171, N153): `[FFI-51]`, `[TCB-4]`, `[MAN-10]`, three rules, no registry
+row. **What follows for programs, from the same pilot:** `import c "windows.h"` is `unsafe import c` (it has the
+linker add `uuid.lib`); with MSVC every `import cpp` of a header that includes a C++ standard header is `unsafe
+import cpp`; of the repository's 49 C headers one needs the word (`tests/conformance/FFI-8/c_types.h`, through
+`<wchar.h>`), whose test changes when the rule is built; `<stdlib.h>`, `<string.h>`, `<math.h>`, `<time.h>` and
+`vulkan.h` need none. **`<stdio.h>` needs it with the Windows C runtime**: the lead's check of his own
+sentence before the commit (Clang 22.1.8, `llvm-nm`) showed it defines `sprintf`, `vsprintf`, `_snprintf` and
+four more in every file that includes it, so the rule counts an `inline` function the compiler emits in every
+including file as a definition the linker sees, and allows only `static` ones and `inline` ones compiled
+where they are called. **Checked at the cut** as in §11, all green; the compiler is untouched and
+still builds none of the header check. **Not run:** the full suite, the bench, the push gate. **Put to the
+owner, not changed:** a library linked from the manifest (`[link] libs`) has no `unsafe` word of its own.

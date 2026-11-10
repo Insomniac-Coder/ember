@@ -381,15 +381,13 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
 * `[TCB-3]` Every assumption a guarantee relies on appears in the report with its source and grade.
 * `[TCB-4]` *(changed in 0.9.15)* *(changed in 0.9.20)* Entries are categorised — language,
   compiler, runtime, standard library, unsafe, C FFI, C++ bridge, external library, driver, hardware
-  — and the compiler is in the list, with its version and known-defect list, and with it the C or
-  C++ compiler the build uses for shims, thunk units and C sources, its standard libraries and the
-  platform kit, by version, whose own headers are part of it (`[FFI-51]`); an external library a
-  header names is listed with the header and line that names it. The unsafe section lists each
-  `unsafe:` block, `unsafe fn`, `unsafe import c` and `unsafe import cpp` (`[FFI-51]`) and
-  `@unsafe(export(…))` or `@unsafe(export_table(…))` (`[FFI-26]`) with its note; the C FFI section
-  lists each `safe fn`, `@ffi(no_callbacks)` (`[FFI-52]`), `@ffi(safe)` (`[FFI-56]`) and thread
-  contract, and the C++ bridge section each `@ffi(const)` (`[FFI-40a]`) and `@ffi(std_function,
-  safe)` (`[FFI-17a]`).
+  — and the compiler is in the list, with its version and known-defect list; an external library a
+  header names is listed with the header and line that names it (`[FFI-51]`). The unsafe section
+  lists each `unsafe:` block, `unsafe fn`, `unsafe import c` and `unsafe import cpp` (`[FFI-51]`)
+  and `@unsafe(export(…))` or `@unsafe(export_table(…))` (`[FFI-26]`) with its note; the C FFI
+  section lists each `safe fn`, `@ffi(no_callbacks)` (`[FFI-52]`), `@ffi(safe)` (`[FFI-56]`) and
+  thread contract, and the C++ bridge section each `@ffi(const)` (`[FFI-40a]`) and
+  `@ffi(std_function, safe)` (`[FFI-17a]`).
 * `[TCB-5]` An instrumented fact is valid only for the foreign library, header, overlay, toolchain
   and test binary it was measured against; its evidence record stores their identities and hashes.
 * `[TCB-6]` A change to any identity input makes the record stale; a change to an environment input

@@ -1,7 +1,20 @@
 # Ember — handoff
 
+> **2026-11-10, night — the local session (branch `spec-0.9.20-hardening`), attended, the lead solo. START
+> HERE.** **Hardened_7 of 0.9.20 is cut** and is the development target
+> (`docs/spec-source/Ember_v0.9.20_Hardened_7.md`, 18119 lines, 1,020 rules, SHA-256 `2D6D5796B44F…`). It is one verdict of
+> the owner's (171, `tasks/96/redesign/JOB.md`): "ANY code and I mean ANY code that we can NOT guarantee is safe needs a unsafe keyword". Hardened_6 (the block below)
+> had let the toolchain's own headers, and a library a header names, pass with no `unsafe`; both allowances are
+> withdrawn (`[FFI-51]`, `[TCB-4]`, `[MAN-10]`; N153 in `decisions.md` §18; `docs/AUDIT-0.9.20.md` §12; §H.58).
+> So `import c "windows.h"` and, with MSVC, any `import cpp` that reaches a C++ standard header are `unsafe
+> import`. **A lesson for every later ruling:** how often `unsafe` would be written is never a reason to leave it
+> out. **Checked:** every spec gate, `ember_diag`, `ember_parser` and the three spec-tied milestone tests green
+> against the pin; the compiler is untouched. **Not done:** nothing is pushed and `main` is not moved (the
+> owner: "Not yet"); the full suite and the bench were not run. **Open with the owner:** whether a library
+> linked from the manifest (`[link] libs`) needs a word of its own; his look at N140 to N153.
+
 > **2026-11-10, later — the local session (branch `spec-0.9.20-hardening`), attended, the lead solo, no agents.
-> START HERE.** **Hardened_6 of 0.9.20 is cut** and is the development target
+> (The block above is newer.)** **Hardened_6 of 0.9.20 was cut** and was the development target
 > (`docs/spec-source/Ember_v0.9.20_Hardened_6.md`, 18074 lines, 1,020 rules, SHA-256 `48668BE18F1D…`). Another agent reviewed
 > Hardened_5 (`tasks/96/redesign/spec-gaps-0.9.15/deep/review-0.9.20-H5.md`, §8: three holes, four notes); the lead
 > ran each first, and the owner said "Fix them and cut a new hardened version" (`JOB.md` verdict 170). **The

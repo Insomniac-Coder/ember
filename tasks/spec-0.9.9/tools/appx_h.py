@@ -796,7 +796,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.20', 6)
+CURRENT = ('0.9.20', 7)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -849,7 +849,8 @@ V0920_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h2')
 V0920_H3_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h3')
 V0920_H4_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h4')
 V0920_H5_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h5')
-V0920_H6_PARTS = os.path.join(HERE, '..', 'parts')
+V0920_H6_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h6')
+V0920_H7_PARTS = os.path.join(HERE, '..', 'parts')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -2231,6 +2232,45 @@ def v0920_h6():
     return H57_HEAD + rule_diff(V0920_H5_PARTS, V0920_H6_PARTS)
 
 
+H58_HEAD = r'''
+
+## H.58 Changes in 0.9.20_Hardened_7 (from 0.9.20_Hardened_6)
+
+**0.9.20_Hardened_7**, of 2026-11-10, is one verdict of the owner's. Hardened_6 had let two things a
+header does pass with no `unsafe`: asking the linker for a library by name, and anything at all in
+the toolchain's own headers (N148; the lead's reason was that `windows.h` and every MSVC C++
+standard header would otherwise need the word). Asked whether that allowance should stand, the
+owner (verdict 171): "ANY code and I mean ANY code that we can NOT guarantee is safe needs a unsafe
+keyword". Both allowances are withdrawn (N153, `decisions.md` §18). More imports are written
+`unsafe import`; no program changes what it does.
+
+* **No header is exempt** (verdict 171, N153): a header that has the linker add a library, or gives
+  it any other order, does more than declare, whoever wrote it; the C or C++ compiler's own
+  headers, its standard libraries' and the platform's are judged as every other header is. So
+  `import c "windows.h"` and, with MSVC, an `import cpp` of a header that includes a C++ standard
+  header are written `unsafe import`, with a note. What decides is what the compiled header leaves
+  in the program on its target: an `inline` function the C compiler emits in every file that
+  includes it is a definition the linker sees, so with the Windows C runtime an import that
+  reaches `<stdio.h>` (which defines `sprintf` and its family so) or `<wchar.h>` needs the word,
+  and one that reaches only `<stdlib.h>`, `<string.h>`, `<math.h>` or `<time.h>` does not. Of the
+  repository's 49 C headers one needs it (through `<wchar.h>`). What `ember tcb` lists is as
+  before the allowance (`[FFI-51]`, `[TCB-4]`).
+* **What a dependency's C reads** keeps its limit, and now says itself which headers are the
+  toolchain's; reading one is not vouching for it (`[MAN-10]`).
+
+No registry row, no new rule, no new code, none retired. Owner verdicts: 171 applied.
+
+Generated: every rule whose text differs from 0.9.20_Hardened_6.
+
+| Rule | 0.9.20_Hardened_6 → 0.9.20_Hardened_7 |
+|---|---|
+'''
+
+
+def v0920_h7():
+    return H58_HEAD + rule_diff(V0920_H6_PARTS, V0920_H7_PARTS)
+
+
 def h1_to_h2():
     return rule_diff(H1_PARTS, H2_PARTS)
 
@@ -2301,7 +2341,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n' + v0915_h3_to_h4() + '\n' + v0915_h4_to_h5() + '\n' + v0915_h5_to_h6() + '\n' + v0915_h6_to_h7() + '\n' + v0915_h7_to_h8() + '\n' + v0915_h8_to_h9() + '\n' + v0915_h9_to_h10() + '\n' + v0915_h10_to_h11() + '\n' + v0920_h1() + '\n' + v0920_h2() + '\n' + v0920_h3() + '\n' + v0920_h4() + '\n' + v0920_h5() + '\n' + v0920_h6() + '\n\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n' + v0915_h3_to_h4() + '\n' + v0915_h4_to_h5() + '\n' + v0915_h5_to_h6() + '\n' + v0915_h6_to_h7() + '\n' + v0915_h7_to_h8() + '\n' + v0915_h8_to_h9() + '\n' + v0915_h9_to_h10() + '\n' + v0915_h10_to_h11() + '\n' + v0920_h1() + '\n' + v0920_h2() + '\n' + v0920_h3() + '\n' + v0920_h4() + '\n' + v0920_h5() + '\n' + v0920_h6() + '\n' + v0920_h7() + '\n\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

@@ -224,32 +224,39 @@ import c "vulkan/vulkan.h" with (
   into the start-up section `.CRT$XCU`, so `lib_setup` runs unchecked before `main`; write `unsafe
   import c "lib.h" as lib` with a `# SAFETY:` note above it". **A header that only declares needs no
   word.** It holds nothing but types, macros, declarations of functions and variables, definitions
-  of `inline` and `static` functions with no assembly in their bodies, and variables that are
-  `static`, `inline` or `constexpr` with a constant initialiser, no destructor to run and no section
-  named for them: its functions run only when they are called, and those calls are fenced by
-  `[FFI-2]`. Anything else a header holds counts as running, as the importer reads the header, one
-  it cannot decide counting as running (`[FFI-38]`): a function the loader or the C runtime calls (a
-  constructor or a destructor attribute, an `ifunc` resolver); a variable at namespace scope,
-  `inline` or a static member, whose initialiser is not a constant expression or whose type has a
-  destructor to run; a function or a variable the header defines with external linkage and not
-  `inline`, which the linker may give to code that never meant it; anything the header places in a
-  section it names (`__attribute__((section(…)))`, `__declspec(allocate(…))`, `#pragma section`,
-  `data_seg`, `code_seg`, `init_seg`), which is how a start-up table is filled with no initialiser
-  to see; assembly, at file scope or in the body of a function the shim compiles; and an order to
-  the linker (`#pragma comment(linker, …)`) other than the two that follow. A header may ask for a
-  library by name (`#pragma comment(lib, "uuid.lib")`): that is an entry of `[link] libs` written in
-  the header, listed by `ember tcb` as an external library with the header and line that names it
-  (`[TCB-4]`) and, in a dependency, admitted as `[MAN-10]` admits its `[link] libs`; and it may
-  state a check that can only stop the link (`#pragma detect_mismatch`), which changes nothing that
-  runs. The headers of the toolchain itself are the toolchain: the C or C++ compiler's own, its
-  standard libraries' and the platform kit's, in the directories of those installations as the build
-  finds them (`[TOOL-2]`), never a directory a manifest, a flag or an import's `include_paths` adds,
-  and never a file for calling itself a system header. What one of them links, tells the linker or
-  runs before `main` is the start-up of the C runtime the program is linked with in any case, and
-  `ember tcb` lists that compiler and kit by version (`[TCB-4]`). So `import c "windows.h"` and an
-  `import cpp` of a header that includes `<string>` need no word, and a header of the program's own
-  or of a dependency that fills a start-up section does. A library linked by name or path (`link =
-  [...]`, `[link] libs`) is listed by `ember tcb` as an external library (`[TCB-4]`).
+  of `static` functions, and of `inline` functions the C compiler compiles only where they are
+  called, with no assembly in their bodies, and variables that are `static`, `inline` or `constexpr`
+  with a constant initialiser, no destructor to run and no section named for them: its functions run
+  only when they are called, and those calls are fenced by `[FFI-2]`. Anything else a header holds
+  counts as running, as the importer reads the header, one it cannot decide counting as running
+  (`[FFI-38]`): a function the loader or the C runtime calls (a constructor or a destructor
+  attribute, an `ifunc` resolver); a variable at namespace scope, `inline` or a static member, whose
+  initialiser is not a constant expression or whose type has a destructor to run; a function or a
+  variable whose definition the linker sees whether or not anything calls it (one defined with
+  external linkage and not `inline`, and an `inline` one the C compiler emits in every file that
+  includes it, as Microsoft's `__inline` is), which the linker may give to code that never meant it;
+  anything the header places in a section it names (`__attribute__((section(…)))`,
+  `__declspec(allocate(…))`, `#pragma section`, `data_seg`, `code_seg`, `init_seg`), which is how a
+  start-up table is filled with no initialiser to see; assembly, at file scope or in the body of a
+  function the shim compiles; and an order to the linker, a library asked for by name included
+  (`#pragma comment(linker, …)`, `#pragma comment(lib, "uuid.lib")`), since what is linked brings
+  code of its own; only a check that can do nothing but stop the link (`#pragma detect_mismatch`) is
+  none of these. **No header is exempt** (verdict 171: any code that cannot be guaranteed safe is
+  written with `unsafe`): the C or C++ compiler's own headers, its standard libraries' and the
+  platform's are judged as every other header is, by what they hold. So `import c "windows.h"`,
+  which has the linker add `uuid.lib`, and with MSVC an `import cpp` of a header that includes
+  `<string>`, which asks for the C++ library and gives the linker an order, are written `unsafe
+  import`, the note saying what is vouched for ("`import c "windows.h"` has the linker add
+  `uuid.lib`, asked for by a header it includes, which brings code nothing checks; write `unsafe
+  import c "windows.h" as win` with a `# SAFETY:` note above it"), and a header that declares its
+  own functions and types, and includes only headers that do the same, needs no word. What decides
+  is what the compiled header leaves in the program, on the target it is compiled for: with the
+  Windows C runtime `<stdio.h>` defines `sprintf` and its family in every file that includes it, so
+  an import that reaches it is written `unsafe import c` there, and one that reaches only
+  `<stdlib.h>`, `<string.h>` or `<math.h>` is not. A library a header names is listed by `ember tcb`
+  as an external library with the header and line that names it (`[TCB-4]`). A library linked by
+  name or path (`link = [...]`, `[link] libs`) is listed by `ember tcb` as an external library
+  (`[TCB-4]`).
 
   ```ember,fragment
   # SAFETY: bridge.c is ours: it defines `add` and runs nothing before `main`
