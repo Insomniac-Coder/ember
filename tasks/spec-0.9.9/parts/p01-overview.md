@@ -96,17 +96,17 @@ platform that has a C compiler (`[CG-LL-1]`).
   the construct and the rule; a construct this specification does not define is `E0901`. Accepting a
   construct and ignoring it is a defect of the worst class, because the programmer believes the
   effect holds.
-* `[PHIL-13]` *(new in 0.9.9)* **One meaning per program.** No build profile, compiler flag,
-  manifest key or optimisation level changes what a Safe program computes, which branch it takes,
-  whether it panics, or whether it is accepted, and none turns off a check Safe Ember's guarantees
-  need. What a build accepts depends on its semantic inputs alone — the language version, the target
-  and its layout, the resolved dependencies and the library layers selected; a build may also stop
-  for its policy (warnings made errors, `[MAN-3]`) or an exhausted budget (`[CT-3]`), each reported
-  as that and never as a language error. `@realtime` means the declaring package's set (`[EFF-19]`),
-  in every caller (ODR-061). Profiles change only speed, debug information, and the amount of detail
-  in diagnostics and panic messages (`[PRF-1]`). `debug_assert` is the one check a profile turns
-  off; it may not have side effects, so it cannot change what a program whose assertions hold
-  computes.
+* `[PHIL-13]` *(new in 0.9.9)* *(changed in 0.9.20)* **One meaning per program.** No build profile,
+  compiler flag, manifest key or optimisation level changes what a Safe program computes, which
+  branch it takes, whether it panics, or whether it is accepted, and none turns off a check Safe
+  Ember's guarantees need. What a build accepts depends on its semantic inputs alone — the language
+  version, the target and its layout, the resolved dependencies and the library layers selected; a
+  build may also stop for its policy (warnings made errors, `[MAN-3]`) or an exhausted budget
+  (`[CT-3]`), each reported as that and never as a language error. `@realtime` means the declaring
+  package's set (`[EFF-19]`), in every caller (ODR-061). Profiles change only speed, debug
+  information, and the amount of detail in diagnostics and panic messages (`[PRF-1]`).
+  `debug_assert` is the one check a profile turns off; its argument changes nothing (`E3023`,
+  §VI.6), so it cannot change what a program whose assertions hold computes.
 * `[PHIL-14]` *(new in 0.9.9)* *(changed in 0.9.10)* **Python spelling, Python meaning.** Where
   Ember accepts a spelling that Python also has — `/`, `//`, `%`, `**`, `a < b < c`, `x in xs`, `x
   is None`, `[1, 2]`, `{"k": v}`, f-strings, `for … else`, keyword arguments — it gives it Python's
@@ -230,8 +230,9 @@ overloading (a C++ header's several functions of one name reach Ember as one nam
 members, each use standing for one, `[FFI-57]`) and C's untyped variadic functions outside `unsafe`
 (Ember's own take any number of typed values, `[TYP-47]`); macros (`macro` is reserved); named
 lifetimes, ever (`[LEX-22]`); an aliasing or exclusivity check the program did not ask for
-(`[BRW-1]`; the checks it may ask for are `runtime`, `[LT-48]`, and `assert_disjoint`, `[DSJ-5]`)
-(`[BRW-1]`); specialisation or higher-kinded types; dynamic or structural typing (`[TYP-40]`); a
+(`[BRW-1]`; the checks it may ask for are `runtime`, `[LT-48]`, and `assert_disjoint`, `[DSJ-5]`);
+specialisation or higher-kinded types; dynamic or structural typing (`[TYP-40]`); a
 safety check that depends on the profile (`[PRF-1]`); a correctness property that depends on
 whole-program optimisation or LTO; a stable Ember-to-Ember ABI (the C ABI is the stable boundary,
 Part XVI); shader compilation and `async` in this version (both reserved).
+

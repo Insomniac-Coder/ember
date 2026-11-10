@@ -61,18 +61,27 @@
   place it calls through; the collections walked across it and the generators still used after it
   (`[BRW-18]`); the read-only views, `ref mut` names and positions live across it, with what each
   points into (`[BRW-1]`, `[BRW-17]`); the names opened from links live across it, with their class
-  families (`[RC-5]`); the parameters and `this` used after it (`[BRW-21]`); and the locks held at
-  it (`[THR-19]`). A package that adds an override, an implementation or a stored function value
-  checks it, at its declaration or at the storing line, against every recorded line it may be called
-  from, with the chain named: a body whose summary changes what such a line walks is `E3020`
+  families (`[RC-5]`); the parameters and `this` used after it (`[BRW-21]`); the locks held at it
+  (`[THR-19]`); and, for its object and each argument, which of the others owns it at that line by
+  the package's own stores, or will by a later line of the function (`[WK-7]`), and whether it is
+  reached through a `thread_shared` value, a `static` or another place every thread may reach
+  (`[OWN-13]`, `[THR-2]`). A package that adds an override, an implementation or a stored function
+  value checks it, at its declaration or at the storing line, against every recorded line it may be
+  called from, with the chain named: a body whose summary changes what such a line walks is `E3020`
   ("`Door.on_update` clears `WORLD.scripts` (line 9), which `Script.run_all` walks while it calls
   `on_update` (its line 4); clear after the walk: give `run_all`'s caller the list of doors to
   remove"), one that changes what it holds or has lent is `E3022`, one that may end what a name
-  opened from a link reads `E3060`, and one that takes a lock held there `E7018`, each at the line
-  that adds the member ("`b.on(...)` (line 7) stores a function that pushes to `b2.log`, and
-  `Bus.flush` (`bus`, line 10) walks `this.log` while it runs the handlers (its line 12); push to a
-  list of your own in the handler and move it into the log after `flush`"). A member no recorded
-  line refuses is accepted; nothing runs for it while the program runs.
+  opened from a link reads `E3060`, one that takes a lock held there `E7018`, one that stores an
+  owner of its object or of one of its parameters into another that the line's record says owns it
+  `E3032` ("`Keeper.attach` keeps an owner of the host it is given (line 4), and `Host.start`
+  (`lib`, line 12) gives each plugin in `host.plugins` the host that owns it, so the two would own
+  each other; keep a link instead: write `host: weakref Host = None` (line 2) and `this.host =
+  weakref host` in place of line 4"), and one that makes a `weakref T` link of a parameter the
+  record says a `thread_shared` value reaches `E7015`, each at the line that adds the member
+  ("`b.on(...)` (line 7) stores a function that pushes to `b2.log`, and `Bus.flush` (`bus`, line 10)
+  walks `this.log` while it runs the handlers (its line 12); push to a list of your own in the
+  handler and move it into the log after `flush`"). A member no recorded line refuses is accepted;
+  nothing runs for it while the program runs.
 * `[MOD-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* **The prelude.** Every module implicitly
   imports these names from `std`, and this list is the only definition of the prelude:
 
@@ -409,9 +418,9 @@ class Door(Script):
   no word. Before any `init` body runs, every field default of the class and of its bases is
   evaluated and stored. Every field without a default MUST then be set on every path before `this`
   is used as a whole (`E2100`): `this` is used as a whole when it is passed, stored, returned or
-  captured, when a link or an owner of it is made (`weakref this`, `shares this`), and by a call of
-  a method whose body lets `this` out in any of those ways, which the compiler works out from that
-  body, and for a `virtual` method from every override's body the program has (`[DSP-5]`,
+  captured, when a link or an owner of it is made (`weakref this`, `thread_shared this`), and by a
+  call of a method whose body lets `this` out in any of those ways, which the compiler works out
+  from that body, and for a `virtual` method from every override's body the program has (`[DSP-5]`,
   `[EFF-24]`), since a base `init` cannot know which kind it builds. In a class that is `pub` and
   `open` or `abstract`, an override of a `virtual` method may be any dependant's, which this package
   never sees (`[BLD-16]`): its `init` calls a `virtual` method only after every field is set, and a
@@ -491,9 +500,9 @@ class Door(Script):
   changes its object through `this` with no word: `mut this` is `E0113` and `mut self` `E1010`, each
   with the help `fn reset():`.
 * `[CLS-7a]` *(changed in 0.9.15)* Inside `drop`, `this` MUST NOT be stored anywhere that outlives
-  the call, and no owner of it is made (`shares this`, `thread_shared this`): the object has already
-  ended (`E3016`, `[OBJ-5]`). A `drop`'s first line is `fn drop():`; it changes its object as a
-  given (`[DRP-1]`).
+  the call, and no owner of it is made (`thread_shared this`; `shares this` is refused in every
+  method, `[RC-1]`): the object has already ended (`E3016`, `[OBJ-5]`). A `drop`'s first line is `fn
+  drop():`; it changes its object as a given (`[DRP-1]`).
 * `[CLS-9]` *(changed in 0.9.10)* *(changed in 0.9.15)* A `let` field is set only in `init`
   (`E2104`).
 * `[CLS-9a]` *(changed in 0.9.15)* *(changed in 0.9.20)* After `init`, nothing is changed through a
@@ -757,3 +766,4 @@ fn tick():
 
 *Reserved* (recognised and rejected with `E0104` naming the version): `@nopanic` (without
 `(explicit)`), `@allocator(Name)`, `@gpu`.
+

@@ -1254,6 +1254,16 @@ Each question from `tasks/96/redesign/spec-gaps-0.9.15/questions.md`, shown with
 
 166. **A scoped task neither makes nor ends a `shares` owner** (whose count has no atomics), as it neither makes nor ends a `weakref` link to a one-thread value: `scope.spawn(owns fn(): level.enemies.clear())` with `enemies: Array[shares mut Enemy]` is `E7015`, the fix being to clear the list after the scope; the same for a task that ends an object `weakref` links on this thread point at. Shown as (a) this, (b) allowed unless the parent or another task touches the same type's counts, recommendation (a). Owner (2026-11-02, gap-sweep group `K03-task-ends-shares-owners`): "a, next question".
 
+## The review of 0.9.20_Hardened_4 (owner, 2026-11-10)
+
+After the lead's check of 0.9.20_Hardened_4 (`tasks/96/redesign/spec-gaps-0.9.15/deep/check-0.9.20-H4.md`).
+
+167. **A departure of 0.9.20_Hardened_2 to _4 from a verdict stands where the lead judges it the better solution.** Owner (2026-11-10), of the four departures the cloud session reported (N83/N138 from 135 and 127, N87/N139 touching 101 and 114, ODR-264 from 155, ODR-261 restoring 110): "the cloud session might have departed a bit from my rulings but at the same time I am open to to accepting better solutions, so if your judgement says they are the better solutions then yes go for it". The lead's judgement, with its reasons in the check file: ODR-264 (a list pattern may open a `match` arm; verdict 155's two cases stay `E0100`), ODR-261 (`interface Error: needs (Debug, Display):`, verdict 110's own line; `AnyError` carries `Send` and `ThreadShared`) and N87/N139 (the kept-by-C mark in the type index; its cost to be measured when built) stand; N83/N138 is not the better solution and went back to the owner (verdict 168).
+
+168. **Verdicts 127 and 135 are restored: a compile of a file with no `ember.toml` writes the default one.** Owner (2026-11-10), asked "Restore your verdicts 127 and 135, so a compile writes the default ember.toml again?" after the lead showed that with no manifest file a single file's overlay is applied "as at a first build" on every build, so the record of `[FFI-55]` (verdict 121) is never kept for it: "Yes, restore them". N83 and N138 are withdrawn (`[MAN-9]`, `[FFI-55]`, `[CLI-4]`; 0.9.20_Hardened_5).
+
+169. **Read the rest, fix what the check found, then cut a new hardening.** Owner (2026-11-10): "and read the parts you haven't read and fix them too, before creating a new hardened spec". Done as 0.9.20_Hardened_5: the lead's rulings for the fixes are N140 to N146 in `tasks/96/redesign/compiler-0.9.15/decisions.md` §16, each the lead's under the delegation and the owner's to overturn.
+
 ## Messages and tests: the lead's to settle (owner, 2026-11-01 evening)
 
 "your error messages are okay it's the language implementation part that concerns me most of the time so

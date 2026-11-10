@@ -553,3 +553,4 @@ is a defect of the file.
   `rng.int_in(a..b)`, `rng.float()` (in `[0, 1)`), `rng.choice(span) -> Option[ref T]`,
   `rng.shuffle(ref mut span)` (its parameter is `ref mut s: MutSpan[T]`). Each call changes `rng`,
   which is therefore a name that may change it.
+

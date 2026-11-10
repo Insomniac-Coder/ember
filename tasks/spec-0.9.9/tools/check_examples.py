@@ -70,6 +70,19 @@ def desugar(body, used=None, keep=None):
     return lift_script('\n'.join(out))
 
 
+def malformed_fences(text):
+    """Lines where a code fence shares its line with other text: a block opened or closed so is
+    not seen as a block, and the blocks after it are read wrongly (0.9.20_Hardened_2 to _4)."""
+    bad = []
+    for n, line in enumerate(text.split('\n'), 1):
+        s = line.strip()
+        opens = s.startswith('```') and not re.match(r'^```[\w,]*$', s)
+        closes = s.endswith('```') and not s.startswith('```')
+        if opens or closes:
+            bad.append((n, line))
+    return bad
+
+
 def blocks(text):
     out, heading, lines, i = [], '', text.split('\n'), 0
     while i < len(lines):
@@ -95,7 +108,11 @@ def check(body, path):
 
 
 def main():
-    bl = blocks(open(DOC, encoding='utf-8').read())
+    text = open(DOC, encoding='utf-8').read()
+    bad = malformed_fences(text)
+    for n, line in bad:
+        print(f'--- line {n}: a code fence shares its line with other text: {line.strip()[:70]}')
+    bl = blocks(text)
     tmp = tempfile.mkdtemp()
     unbuilt, errors, features = 0, 0, []
     for n, (heading, tag, body) in enumerate(bl):
@@ -130,7 +147,9 @@ def main():
                 print(f'  {msg}\n    L{k}: {src[k - 1] if k <= len(src) else ""}')
                 msg = None
     print(f'blocks {len(bl)}: {len(bl) - unbuilt - errors} compile, {unbuilt} show unbuilt features'
-          f' ({", ".join(features) or "none"}), {errors} errors')
+          f' ({", ".join(features) or "none"}), {errors} errors, {len(bad)} malformed fences')
+    if bad:
+        sys.exit(1)
 
 
 if __name__ == '__main__':

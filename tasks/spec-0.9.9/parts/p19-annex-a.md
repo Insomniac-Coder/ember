@@ -170,3 +170,4 @@ fn demo(xs: Array[int], m: Map[String, int], opt: Option[Point]):
     for i in 0..xs.len():
         consume_item(xs[i])
 ```
+

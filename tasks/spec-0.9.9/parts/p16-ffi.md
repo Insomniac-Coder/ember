@@ -227,8 +227,10 @@ import c "vulkan/vulkan.h" with (
   and those calls are fenced by `[FFI-2]`. A library linked by name or path (`link = [...]`, `[link]
   libs`) is listed by `ember tcb` as an external library (`[TCB-4]`).
 
-  ```ember,fragment # SAFETY: bridge.c is ours: it defines `add` and runs nothing before `main`
-  unsafe import c "./bridge.c" as b ```
+  ```ember,fragment
+  # SAFETY: bridge.c is ours: it defines `add` and runs nothing before `main`
+  unsafe import c "./bridge.c" as b
+  ```
 * `[FFI-6a]` *(changed in 0.9.10)* An object-like macro is imported when, after expansion, it is a
   constant expression of integer, floating, string, null-pointer or pointer-cast type as Clang
   evaluates it; its type is the C type of that value. A null-pointer or pointer-cast macro
@@ -507,9 +509,9 @@ call: a `VkViewport` holds only numbers, `pViewports` is a counted view, and `co
   was checked: the `SDL.h` imported here declares `void SDL_FreeSurface(SDL_Surface*, int)`; check
   the overlay against this header, then run `ember bind SDL.h --check overlays/sdl.em --merge`"); in
   another package's build, an overlay or a declaration its package's record lacks is `E5010` too. A
-  change to a declaration the overlay does not describe changes nothing. A program with a manifest
-  keeps the record beside it; a single file with none (`[MAN-9]`) applies its overlay as at a first
-  build, and gets a record once a manifest is written. An overlay in no package's folder is the
+  change to a declaration the overlay does not describe changes nothing. Every program has a
+  manifest, a single file with none being given a default one by its first compile (`[MAN-9]`), so
+  every program keeps the record beside it. An overlay in no package's folder is the
   importing program's own: its record is that package's, naming the overlay by its path from the
   package (`../vendor/sdl.em`). Nothing of this is written in the overlay or in the program.
 * `[FFI-13]` An overlay may contain `extend` blocks with ordinary Ember wrapper methods; this is how
@@ -832,9 +834,15 @@ call: a `VkViewport` holds only numbers, `pViewports` is a counted view, and `co
       unsafe:
           return w.into_raw()
 
-  fn main(): first = widget_new(1) widget_take(owns first) second = widget_new(2) p =
-  address_for_c(owns second) # SAFETY: C keeps the widget as its user data and frees it with
-  `widget_free` unsafe: set_user_data(p) ```
+  fn main():
+      first = widget_new(1)
+      widget_take(owns first)
+      second = widget_new(2)
+      p = address_for_c(owns second)
+      # SAFETY: C keeps the widget as its user data and frees it with `widget_free`
+      unsafe:
+          set_user_data(p)
+  ```
 * `[FFI-56]` *(new in 0.9.15)* *(changed in 0.9.20)* **A C function pointer is unsafe to call.** A
   function pointer that comes from C — a field of an imported struct, a typedef, a result, an
   `extern static`, an argument C passes to a callback or to an export, itself or in a `@layout(c)`
@@ -993,3 +1001,4 @@ pub extern "C" fn on_update(entity: u64, dt: f32) -> i32:
 * `[BLD-FFI-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* Existing libraries are linked by name
   (`[link] libs = ["vulkan-1"]`, `[MAN-8]`) or path; link order follows declaration order. Each is
   listed by `ember tcb` as an external library (`[TCB-4]`).
+

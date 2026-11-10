@@ -1,5 +1,27 @@
 # Ember — handoff
 
+> **2026-11-10 — the local session (branch `spec-0.9.20-hardening`, checked out locally), attended, the lead solo, no
+> agents. START HERE.** **Hardened_5 of 0.9.20 is cut** and is the development target
+> (`docs/spec-source/Ember_v0.9.20_Hardened_5.md`, 17951 lines, 1,020 rules, SHA-256 `18A862E05717…`). The owner asked for a check
+> of Hardened_4 ("gaps, memory safety flaws and implementation discrepencies that can affect readability"), then: a
+> departure from his verdicts stands where the lead judges it better (ODR-264, ODR-261 and N87 do), "Yes, restore them"
+> for verdicts 127 and 135 (the default manifest is written again; N83 and N138 withdrawn), and "read the parts you
+> haven't read and fix them too, before creating a new hardened spec" (`tasks/96/redesign/JOB.md` verdicts 167 to 169).
+> **The record:** `tasks/96/redesign/spec-gaps-0.9.15/deep/check-0.9.20-H4.md` (every finding, what was read, the four
+> departures judged), `docs/AUDIT-0.9.20.md` §10, `decisions.md` §16 (N140 to N146),
+> Appendix H §H.56. **What changed:** one hole closed (a member another package adds that keeps an owner, or makes a
+> one-thread link, of what a library's call gives it is now judged where it is seen: `[WK-7]`, `[OWN-13]`, `[MOD-9a]`,
+> `[BLD-14]` items 11 and 12); one `owns` where two rules asked (`[GRM-15]`); `thread_shared this` allowed and `shares
+> this` refused (`[RC-1]`); the job's arena (`[JOB-5]`); `debug_assert` changes nothing (`E3023`, §VI.6); positions
+> (`[BRW-16]`); two example blocks, the front matter and thirteen table rows repaired. 32 rules changed, no new rule or
+> code. **Checked:** every spec gate green, `ember_diag` and `ember_parser` green against the pin; the compiler is
+> untouched. **Not done:** nothing is pushed and `main` is not moved (the branch is 16 commits of the cloud session
+> plus this cut ahead of `main`); the full suite, the bench and the push gate were not run. **Next:** the owner's word
+> on pushing the branch and on bringing it to `main`; his look at N140 to N145; then each 0.9.20 change lands with the
+> milestone that owns it. **Known gaps between the compiler and this spec** (`docs/AUDIT-0.9.20.md` §10): the value
+> words, capture words, `guarded by` and `using` are not built; messages still say "borrowed", "moved", "clone"; `std`
+> still uses `Box`, `Shared`, `Weak`; `check_examples.py` checks parsing only, where `[TST-7]` says `ember check`.
+
 > **2026-11-08 (later) — the same cloud session (branch `spec-0.9.20-hardening`), the owner present: "for the ODRs
 > go for the best solution possible, that matches all the goals", then "go solo no agents". START HERE.** **Hardened_4
 > of 0.9.20 is cut** and is the development target (`docs/spec-source/Ember_v0.9.20_Hardened_4.md`, 17703 lines, 1,020

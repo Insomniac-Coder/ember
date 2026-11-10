@@ -130,8 +130,9 @@ change one place unordered.
   (`[THR-15]`).
 * `[THR-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **A value several
   threads own is made `thread_shared`.** `thread_shared x` makes one more owner of `x`, which may be
-  on any thread; it is written before a new value (`st = thread_shared Stats()`) or on a value
-  already `thread_shared` (`fn() thread_shared st:`), and on a value made otherwise it is `E7017`,
+  on any thread; it is written before a new value (`st = thread_shared Stats()`), on a value already
+  `thread_shared` (`fn() thread_shared st:`) or before `this` in a method, which says that every
+  object of its class is `thread_shared` (`[OWN-13]`), and on a value made otherwise it is `E7017`,
   as `shares` or `shares mut` on a `thread_shared` owner is (`[RC-1]`) ("`names` is
   `share_and_keep`'s own object, which it may change; to share it between threads, create it shared:
   `names = thread_shared Names()`"). A `thread_shared` value lives until its last owner ends. Its
@@ -738,11 +739,21 @@ fn step(ref mut pos: MutSpan[Vec3], vel: Span[Vec3], ref mut life: MutSpan[f32],
   it does not relax `[THR-11]`, which treats every job of a scope as running at once. (The 0.9.8
   declared read/write access sets, verified only in debug builds, are removed: a safety property
   checked in one profile is not a guarantee, `[PHIL-13]`.)
-* `[JOB-5]` *(changed in 0.9.20)* `jobs.local_arena()` gives a `ref mut ThreadArena` whose region is
-  the function the job runs, as a local of that function has, and the arena is reset when the job
-  ends: a value made in it that would leave that function is `E3063` (`[LT-4]`), and a call of it
-  outside a job stops the program ("`jobs.local_arena()` on line 7: `tick` is not running as a
-  job").
+* `[JOB-5]` *(changed in 0.9.20)* `jobs.local_arena()` gives a `ref mut ThreadArena`, the arena of
+  the job the calling code runs in. Its region is the function the job runs, as a local of that
+  function has: a value made in it that would leave that function is `E3063` (`[LT-4]`). **The arena
+  is the job's own.** When a job starts, the runtime opens a scope of its worker thread's arena for
+  it (`[ARN-6]`) and ends that scope when the job ends, so the arena is reset by giving back the
+  job's own bytes and no others: a job that runs inside another job's wait on the same thread (a
+  chunk the calling thread runs itself, `[PAR-4]`; a job a waiting worker takes up) allocates above
+  the waiting job's bytes and gives back only its own, and every view the waiting job holds stays
+  valid. **It is one place for each job:** every call of `jobs.local_arena()` in one job names the
+  same arena, so a second call while the first's result is still used is a second `ref mut` name of
+  one place (`E3022`: "`b` would be a second name for this job's arena, which `a` (line 3) may
+  change until line 9; use `a`, or give it on: `fill(ref mut a)`"), and a function that calls it is
+  recorded as changing its job's arena (`[BCK-8]`), so a call of such a function while the job's own
+  name for the arena is still used is refused the same way. A call of it outside a job stops the
+  program ("`jobs.local_arena()` on line 7: `tick` is not running as a job").
 
 ## XI.6 Async
 
@@ -751,3 +762,4 @@ jobs and generators (§VI.5a); a later version may add structured async over the
 a view may not cross an `await` unless the future is scoped. Generators are designed so that this
 remains possible: a generator frame is a sized value, and the same frame lowering serves an
 `async fn`.
+

@@ -135,12 +135,13 @@ offset  size  field
   counted away from the line that makes it and asks no thread which made it (`[RC-4]` point 4).
 * `[OBJ-5]` *(changed in 0.9.15)* *(changed in 0.9.20)* **An ended object is never brought back.**
   Inside a `drop`, and in everything it calls (by their summaries, `[EFF-1]`), no owner is made of
-  the object being ended: an owner made from `this` (`shares this`, `shares mut this`,
-  `thread_shared this`) is `E3016`, as storing `this` anywhere that outlives the call is
-  (`[CLS-7a]`): "`drop` ends this `Player`; an owner made from it would point at a freed object;
-  keep a copy of what you need: `NAMES.push(owns copy of this.name)`". `weakref this` and `weakref
-  thread_shared this` stay allowed (`[OWN-13]`): the weak count keeps the block, and opening the
-  link finds the object ended (`[WK-3]`). Nothing is checked for it while the program runs.
+  the object being ended: an owner made from `this` (`thread_shared this`; `shares this` and `shares
+  mut this` are refused in every method, `[RC-1]`) is `E3016`, as storing `this` anywhere that
+  outlives the call is (`[CLS-7a]`): "`drop` ends this `Player`; an owner made from it would point
+  at a freed object; keep a copy of what you need: `NAMES.push(owns copy of this.name)`". `weakref
+  this` and `weakref thread_shared this` stay allowed (`[OWN-13]`): the weak count keeps the block,
+  and opening the link finds the object ended (`[WK-3]`). Nothing is checked for it while the
+  program runs.
 
 ## VIII.2 Owners and counts
 
@@ -163,23 +164,27 @@ offset  size  field
   that is already a `shares` or `shares mut` owner (for an `owns` parameter, which this function
   owns from its first line, the block is made at the function's entry, before any view of it is
   made, so that the parameter's type is the shared type throughout the function and the caller's
-  line is unchanged); `thread_shared x` is written only before a new value or a name that is already
-  a `thread_shared` owner (`E7017`, `[OWN-13]`, `[THR-1]`), since its header and its making thread's
-  record are written where the value is made, and `shares` or `shares mut` written before a
-  `thread_shared` owner is `E7017` too, since its owners are counted for several threads and a plain
-  count would race them ("`p` is `thread_shared` (made on line 10), so its owners are counted for
-  several threads; for one more owner write `q = thread_shared p`, and for a name that only reads it
-  `q = ref p`"). A place that has one owner and is not a local of this function, a list element
-  (`shares mut players[1]` of an `Array[Player]`), a field (`shares this.items`) or a plain
-  parameter (`fn keep(p: Player): LIST.push(shares p)`), is `E2122`: "`players[1]` has one owner,
-  the list `players`, and no second owner can be made of one element; to let other names own the
-  players, make the list share them from the start: write `players = [shares mut Player(), shares
-  mut Player()]` in place of line 15". So a value in a one-owner place is ended by that place at
-  once, with no count to test. **A count is checked before it rolls over:** before each +1 of an
-  owner count it is compared with its maximum, and at the maximum the program stops, in every
-  profile: "too many owners of a `Player` (4,294,967,295)" (`[RT-7]`), as Rust's `Rc` and `Arc` stop
-  (a `thread_shared` count stops at the lower limit of `[RC-4]`). That is one compare per added
-  owner and no extra memory.
+  line is unchanged); `thread_shared x` is written only before a new value, a name that is already a
+  `thread_shared` owner, or `this` in a method, which says that every object of the class is
+  `thread_shared`, so that `this` is one (`[OWN-13]`) (`E7017` anywhere else, `[THR-1]`), since its
+  header and its making thread's record are written where the value is made, and `shares` or `shares
+  mut` written before a `thread_shared` owner is `E7017` too, since its owners are counted for
+  several threads and a plain count would race them ("`p` is `thread_shared` (made on line 10), so
+  its owners are counted for several threads; for one more owner write `q = thread_shared p`, and
+  for a name that only reads it `q = ref p`"). A place that has one owner and is not a local of this
+  function, a list element (`shares mut players[1]` of an `Array[Player]`), a field (`shares
+  this.items`), a plain parameter (`fn keep(p: Player): LIST.push(shares p)`) or `this` in a method
+  (`shares this`, `shares mut this`: the object may have one owner, which ends it with no count to
+  test; "no second owner of a `Node` is made from inside its own method, since this `Node` may have
+  one owner; let the caller give one: write `static fn enrol(owns me: shares mut Node):` and call it
+  `Node.enrol(shares mut n)`"), is `E2122`: "`players[1]` has one owner, the list `players`, and no
+  second owner can be made of one element; to let other names own the players, make the list share
+  them from the start: write `players = [shares mut Player(), shares mut Player()]` in place of line
+  15". So a value in a one-owner place is ended by that place at once, with no count to test. **A
+  count is checked before it rolls over:** before each +1 of an owner count it is compared with its
+  maximum, and at the maximum the program stops, in every profile: "too many owners of a `Player`
+  (4,294,967,295)" (`[RT-7]`), as Rust's `Rc` and `Arc` stop (a `thread_shared` count stops at the
+  lower limit of `[RC-4]`). That is one compare per added owner and no extra memory.
 * `[RC-7]` *(new in 0.9.15)* **Changing a shared value.** A value made shared is changed by its
   owners that may change it: an owner made with `shares mut`, and the name it was first shared from,
   which keeps what it could do. After `other = shares mut items` (or `other = shares items`),
@@ -721,7 +726,35 @@ fn make_pair():
   the dependant's call (`h.add(owns b)` for a `Host.add` that pushes its parameter into
   `this.plugins`, with `b.host` a `shares mut lib.Host`: `E3032`, "this closes a loop of owners (`h`
   → `b` → `h`): `add` stores `b` in `h.plugins` (`lib`, its line 7), and `b.host` owns `h`; make the
-  link back `weakref`: `host: weakref lib.Host`").
+  link back `weakref`: `host: weakref lib.Host`"). **A function another package adds.** Where
+  another package may put a function behind a call (`[EFF-2a]`: a method of a `pub` interface called
+  through `dyn`, a `virtual` method of a `pub` class, a function-typed place another package can
+  fill), what that function stores of what the call gives it is judged where the function is seen,
+  by one of two routes, so that no loop is closed by a member no judging package saw (`[BCK-8]`). *A
+  kind the caller gives:* for a call through a `dyn`, interface or base-class parameter of a
+  function (`this` of an `open` or `abstract` class's method included), the function's summary
+  records the call with which of the function's own parameters, or what holds them, its object and
+  each of its arguments are (`[BLD-14]` item 11); a call of the function applies, for each kind it
+  gives, the called method's own record of the owners it stores (item 10) as the function's, and is
+  judged with them. With `pub fn install(owns host: shares mut Host, owns p: owns dyn Plugin):` in
+  `lib`, whose body is `p.attach(host)` and then `host.plugins.push(owns p)`, and a program's
+  `struct MyPlugin implements Plugin:` whose `fn attach(host: shares mut Host):` is `this.host =
+  Some(shares host)`, the call `install(shares mut h, owns MyPlugin())` is `E3032` ("this closes a
+  loop of owners (`h` → the plugin → `h`): `install` gives `h` to `MyPlugin.attach` (`lib`, its line
+  7), which keeps an owner of it (line 4), and then stores the plugin in `h.plugins` (its line 8);
+  keep a link in the plugin instead: write `host: weakref Host = None` in `MyPlugin` (line 2) and
+  `this.host = weakref host` in place of line 4"), and the same call with a plugin whose `attach`
+  keeps nothing compiles. *A kind a place holds:* for a call through such a method or place whose
+  object the package holds (a field, an element, a `static`), the line's record (`[MOD-9a]`) names,
+  for its object and each argument an owner can be made of (a `shares`, `shares mut` or
+  `thread_shared` owner, or a value holding one), which of the others owns it there by the package's
+  own stores, or will by a later line of the function; a package that adds an implementation, an
+  override or a stored function whose record stores an owner of one of them into another that the
+  line's record says owns it is refused at the line that adds it (`E3032`, naming the library's line
+  and its own store). A kind the judging package cannot see (a `dyn` value another package made and
+  gave it) counts as storing an owner of every argument an owner can be made of: where that closes a
+  loop the call is `E3032`, whose help is to make the value where its type is seen, or the `weakref`
+  link. Nothing runs for any of it while the program runs.
 * `[WK-15]` *(new in 0.9.9)* *(changed in 0.9.15)* `ember run` and `ember test` in the `debug`
   profile report the objects still alive when the program exits, by default; `--no-leak-check` turns
   the report off. In Safe Ember nothing leaks through a loop of owners (`[WK-6]`) and nothing ends
@@ -750,3 +783,4 @@ fn make_pair():
   `using` an instance stays in the block that instance gave, since the instance's `allocate` and
   `deallocate` are the program's own work (`[RC-4]` point 4). This cannot be observed: how many
   times an embedding host's allocation functions (`[FFI-27]`) are called is not behaviour.
+

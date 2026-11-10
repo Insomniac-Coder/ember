@@ -1,10 +1,11 @@
 # Ember Programming Language — Specification
 
-**Version:** 0.9.20_Hardened_4
-**Supersedes:** 0.9.15_Hardened_10 (development target until this one), 0.9.15_Hardened_9 to
-0.9.15_Hardened_1 and every earlier file: 0.9.10_Hardened_1 to 0.9.10_Hardened_35, 0.9.9_Hardened_1
-to 0.9.9_Hardened_52, 0.9.8_Hardened_3 and 0.8.5_Hardened_1 (adopted). This document is the single
-specification of Ember; the earlier files are history.
+**Version:** 0.9.20_Hardened_5
+**Supersedes:** 0.9.20_Hardened_4 (development target until this one), 0.9.20_Hardened_3 to
+0.9.20_Hardened_1, 0.9.15_Hardened_11 to 0.9.15_Hardened_1 and every earlier file:
+0.9.10_Hardened_1 to 0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3
+and 0.8.5_Hardened_1 (adopted). This document is the single specification of Ember; the earlier
+files are history.
 **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
 profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
 are tracked separately (§XVII.5, §XVII.8) and are not claimed by this text.
@@ -24,14 +25,25 @@ declaration says `safe fn` or `unsafe fn`, and a plain `fn` there is refused); *
 owner's verdict 137 (what a call's result views is read from the called function's code);
 **0.9.15_Hardened_9** the owner's verdicts 138 to 144; **0.9.15_Hardened_10** the owner's verdicts 145
 to 160 (`owns` at the call for every `owns` parameter, a `dyn` call checked for each kind that may reach
-it and `runtime` where only the running program knows it); **0.9.20_Hardened_1** the hardening audit
-of 2026-11-03 (§H.51), ruled under the owner's delegation (`docs/AUTOPILOT.md` §3): it closes the holes
+it and `runtime` where only the running program knows it); **0.9.15_Hardened_11** the owner's
+verdicts 161 to 163 (`owns` at a call binds as a prefix `-` does; `runtime` before a class type and
+on a typed local; §H.51); **0.9.20_Hardened_1** the hardening audit
+of 2026-11-03 (§H.52), ruled under the owner's delegation (`docs/AUTOPILOT.md` §3): it closes the holes
 the audit found in the memory-safety rules (a `sharedref mut` link never leaves its thread; a function
 value is never stored where its own run could end its state; a `runtime` check reads the kind's own
 fact, so it holds across packages; a hand-over is a reshape; a view opened from a link counts the
 whole class family; sharing a local moves nothing; an arena never moves what it gave out), says what
 the text left unsaid (a `defer` block's uses, a position's index, `comptime.env` from a dependency,
-the type of a `comptime` value) and makes its words consistent, taking no feature away; it changes
+the type of a `comptime` value) and makes its words consistent, taking no feature away;
+**0.9.20_Hardened_2** the second pass of 2026-11-03 (§H.53), under the same delegation: no fact of
+the whole program decides a package's code or layout, a link to a `thread_shared` value is a type of
+its own, and a library's call through what a dependant may fill is checked where the member is
+added; **0.9.20_Hardened_3** the third pass, of 2026-11-08 (§H.54), which joins the gap review of
+0.9.15_Hardened_11 and the owner's verdicts 164 to 166; **0.9.20_Hardened_4** the fourth, of
+2026-11-08 (§H.55), in which the lead ruled the open owner-decision records on the owner's
+instruction; and **0.9.20_Hardened_5**, of 2026-11-10 (§H.56): the owner's review of those rulings
+(three stand on the lead's judgement as he asked, and the default manifest of verdicts 127 and 135
+is written again), and the repairs from a reading of the whole of Hardened_4. Each of them changes
 the set of accepted programs, so the language version moves (`[VER-9]`). What a program means is written in
 words on the thing it describes: one owner unless a line says `shares`; `owns` for a hand-over and a
 value held alone, at the call too; `copy of` for a copy; `ref mut` on a name, and at the call, for a
@@ -41,8 +53,8 @@ Every memory rule is checked when compiling; what still runs while a program run
 cost (§X.4). It replaces `Box`, `Shared`, `Weak`, `RefCell`, `SyncShared`, `ForeignBox`, `@sync`,
 `@borrows`, the mode `owned`, `self`, `mem.forget`, effect clauses on a first line and every check of
 exclusive access made while the program runs. It changes the set of accepted programs, so the
-language version moves (`[VER-9]`); Appendix H §H.41 to §H.50 list every change of 0.9.15, and §H.51
-those of 0.9.20. The revisions before it were
+language version moves (`[VER-9]`); Appendix H §H.41 to §H.51 list every change of 0.9.15, and §H.52
+to §H.56 those of 0.9.20. The revisions before it were
 authored at the owner's direction of 2026-09-23 with delegated authority to decide open language
 questions against the project goal; Appendix H lists each one's changes (§H.1 to §H.40), and every
 finding of the 2026-09-23 research pass (`tasks/audit/FINDINGS.md`, F-001–F-214) is resolved in
@@ -104,7 +116,7 @@ invariant (`[PHIL-10]`) with its conformance tests.
 | Appendix E | Coming from Python (non-normative) |
 | Appendix F | Glossary |
 | Appendix G | Resolution of findings F-001–F-214 |
-| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.50) and in 0.9.20 (§H.51) |
+| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.51) and in 0.9.20 (§H.52 to §H.56) |
 | Appendix I | Rule index |
 
 **Normative words.** MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119. Text marked
@@ -151,3 +163,4 @@ not-yet-specified diagnostic `E0901` (`[PHIL-12]`) and the gap is raised with th
   such change as a change to the language and `ember fmt --migrate` rewrites every program it can. The
   change log of each revision (Appendix H for this one) lists every rule it adds, removes or changes;
   a change without a row is a defect in the document.
+

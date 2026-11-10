@@ -157,3 +157,4 @@ What changed: fields are declared, with types, in the class body; `roll` says it
 draws from a half-open range; `print` with a newline is `println`. Everything else — the script at
 the top level, `range`, `len`, `sorted`, iterating a map's keys, f-strings, `//` — reads as in Python.
 The two programs print different numbers only because their generators differ.
+

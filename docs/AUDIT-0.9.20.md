@@ -11,8 +11,14 @@ session, or a workflow the owner allows, starts here and does not redo the readi
 
 ## 0. State, and how to resume
 
-* **Cut and pinned (fourth pass):** `docs/spec-source/Ember_v0.9.20_Hardened_4.md` (17703 lines, 1,020
-  rules) is the development target (`docs/spec-source/development-target.json`); sources frozen in
+* **Cut and pinned (fifth pass, 2026-11-10, the local session):** `docs/spec-source/Ember_v0.9.20_Hardened_5.md`
+  (17951 lines, 1,020 rules, SHA-256 `18A862E05717…`) is the development target; its sources are frozen in
+  `tasks/spec-0.9.9/parts-0.9.20-h5/`, its change log is §H.56 (`H56_HEAD` in `tools/appx_h.py`), its rulings N140
+  to N146 (`decisions.md` §16), the owner's words verdicts 167 to 169 (`JOB.md`), and **§10 below is its record**.
+  To cut Hardened_6, follow the recipe below with the numbers moved by one (`CURRENT = ('0.9.20', 6)`, point
+  `V0920_H5_PARTS` at `parts-0.9.20-h5`, add `V0920_H6_PARTS`, `H57_HEAD`, `v0920_h6()`).
+* **Cut and pinned (fourth pass), superseded:** `docs/spec-source/Ember_v0.9.20_Hardened_4.md` (17703 lines, 1,020
+  rules) was the development target (`docs/spec-source/development-target.json`); sources frozen in
   `tasks/spec-0.9.9/parts-0.9.20-h4/` (Hardened_3's in `parts-0.9.20-h3/`, Hardened_2's in `parts-0.9.20-h2/`,
   Hardened_1's in `parts-0.9.20-h1/`); `tasks/spec-0.9.9/parts/` is the working copy. On branch
   `spec-0.9.20-hardening` (not `main`); Hardened_1 was commit `2dd9d26`, Hardened_2 `d03df6b`, Hardened_3
@@ -546,3 +552,40 @@ was weighed, shape by shape, is `tasks/96/redesign/audit-0.9.20/round3/rulings.m
   is open: the designers' doubt under ODR-260 (a bound cannot say that a manager's `deallocate` reads `this`) is
   decided by `[TYP-17]`, which makes a `thread_shared T using a` line in a generic body a refusal at the definition.
 * **To resume:** the recipe of §0 ("To cut 0.9.20_Hardened_5").
+
+## 10. The fifth pass: 0.9.20_Hardened_5 (2026-11-10, the local session, attended, the lead solo)
+
+The owner's task: pull the latest, and check the 0.9.20 spec "for gaps, memory safety flaws and implementation
+discrepencies that can affect readability"; then "Yes, read the rest"; then "Yes, restore them and read the parts you
+haven't read and fix them too, before creating a new hardened spec". No agents and no workflow.
+
+* **The check.** The whole of Hardened_4 was read by one reader in three sittings (every hand-written line: Parts I to XVIII,
+  Annexes A to D, Appendices E and F; not the three generated appendices G to I, but §H.52 to §H.55). Its record is
+  `tasks/96/redesign/spec-gaps-0.9.15/deep/check-0.9.20-H4.md`: findings 1 to 23 and T1 to T9, what was attacked and
+  held, the four departures from the owner's verdicts judged, and how to rerun the two measurements.
+* **Found.** One hole (finding 17: an owner stored, or a `weakref T` link made, by a member another package adds and a
+  library calls was judged by no build); four places the text left a fact unsaid or said it twice differently (one
+  `owns` for two rules, `shares this`, the job's arena, `debug_assert`); two example blocks that Hardened_2's re-wrap
+  script had turned into run-on lines, which hid three examples from `check_examples.py` for three cuts; front matter
+  that described Hardened_1; thirteen table rows without their indent; three glossary lines that said other than the rules; smaller text. Finding 7's first half was wrong
+  (the containers it called unspecified are in `std/src/collections.em`, normative by Part XV's preamble).
+* **The owner's answers** (`JOB.md` verdicts 167 to 169): a departure stands where the lead judges it better (ODR-264,
+  ODR-261 and N87 do); verdicts 127 and 135 are restored (N83 and N138 withdrawn); fix and cut.
+* **Applied** by seven asserting scripts kept with the session (`edit_h5_1_text.py` to `edit_h5_7_records2.py`, each
+  replacement asserting that its old text occurs once; no script re-wraps a code block or a table): 32 rules changed
+  (the rows of §H.56), registry rows E0109, E2122, E3022, E3023, E3032, E7015, W2016; no new rule, no new code, none
+  retired; `tools/check_examples.py` now fails on a code fence that shares its line with other text.
+* **Checked at the cut:** `check_ids` 0 problems (1,020 rules), `check_citations` 0 undefined, `code_registry --check`
+  0 problems (271 live, 36 retired), `split_inline` UNS-8 only, `rule_index` no new problems, `spec_check` no new
+  failures (46 blocks, 36 parse; baseline 10), `spec_check --emit-appendix` no change, `phase_progress --write` then
+  `--check` green (the percentages did not move), `check_examples` 41 of 56 with 0 malformed fences (the 15 are
+  unbuilt syntax: the value words, capture words, `guarded by`, `using`, `unsafe import c`, `@unsafe(export(…))`);
+  `cargo test --profile ci -p ember_diag --lib` and `-p ember_parser` green against the new pin. The compiler is
+  untouched. **Not run:** the full workspace suite, the bench, the push gate.
+* **Known, and not the text's:** `check_examples.py` runs `ember check --syntax-only` on every block where `[TST-7]`
+  says `ember check`; with the whole check, 21 of the 45 complete programs of Hardened_4 passed. The compiler writes
+  its messages in the words 0.9.15 retired ("borrowed", "moved", "clone"). `std` is still written with `Box`,
+  `Shared`, `Weak` and `@sync`. Each lands with the milestone that owns its rule.
+* **For the owner:** the rulings N140 to N145 are the lead's and his to overturn; N143 names a feature that was not
+  added (a pin for one-thread shared classes); N139's "costs nothing measurable" is to be measured against the mark
+  in the weak word when `[FFI-35a]` is built; the readability costs of findings 13 to 16 follow from his own verdicts.

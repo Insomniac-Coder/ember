@@ -227,3 +227,4 @@ doc comments are tokens; other comments are dropped from the stream and recorded
 a side table used by the formatter and by `[LEX-23]`. The lexer never stops at the first error: an
 invalid character produces one `Error` token per maximal run of invalid characters (`[DIA-20]`), and
 parsing continues.
+

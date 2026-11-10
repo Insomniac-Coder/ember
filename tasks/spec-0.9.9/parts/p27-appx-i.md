@@ -191,7 +191,7 @@ Every rule of this document, by family, with the Part that defines it.
 |---|---|---|
 | `[CLI-1]` | XVII | Every command accepts `--json` and exits non-zero on error. |
 | `[CLI-2]` | XVII | *(changed in 0.9.15)* `ember build --emit c --out-dir <dir>` writes … |
-| `[CLI-4]` | XVII | `ember run file.em` and `ember build file.em` accept a single file … |
+| `[CLI-4]` | XVII | *(changed in 0.9.20)* `ember run file.em` and `ember build file.em` … |
 | `[CLI-5]` | XVII | *(changed in 0.9.10)* *(changed in 0.9.20)* `ember bind --init … |
 | `[CLI-6]` | XVII | `ember bind --report` lists every skipped declaration and every … |
 | `[CLI-7]` | XVII | *(changed in 0.9.15)* `ember bind <header> --check <overlay>` checks … |
@@ -1066,7 +1066,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[PHIL-10]` | I | *(changed in 0.9.15)* A program containing no `unsafe` boundary … |
 | `[PHIL-11]` | I | *(changed in 0.9.15)* What remains possible, and is therefore not a … |
 | `[PHIL-12]` | I | No silent acceptance. Every construct a program writes — an … |
-| `[PHIL-13]` | I | One meaning per program. No build profile, compiler flag, manifest … |
+| `[PHIL-13]` | I | *(changed in 0.9.20)* One meaning per program. No build profile, … |
 | `[PHIL-14]` | I | *(changed in 0.9.10)* Python spelling, Python meaning. Where Ember … |
 | `[PHIL-15]` | I | *(changed in 0.9.15)* Costs are named. Every cost the language can … |
 | `[PHIL-16]` | I | *(new in 0.9.15)* The words say what the code does. Whether a name … |

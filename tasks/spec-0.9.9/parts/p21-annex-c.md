@@ -54,7 +54,7 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   | other classes | automatic, opaque behind a pointer; methods through thunks |
   | the standard-library types of `[FFI-17a]` | automatic |
   | explicit template instantiations | automatic (`[FFI-17b]`) |
-| a name declared several times (overloads, default arguments, a `const` and non-`const` pair) | automatic (`[FFI-57]`, `[FFI-40b]`) |
+  | a name declared several times (overloads, default arguments, a `const` and non-`const` pair) | automatic (`[FFI-57]`, `[FFI-40b]`) |
   | other templates, metaprogramming, concepts, compiler extensions | native island |
   | function-like macros, `std::function` | overlay |
   | single inheritance from a C++ base | automatic, bounded (`[FFI-39]`) |
@@ -153,7 +153,7 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   | multiple inheritance, virtual bases | the pointer adjustment is ABI-private and differs between MSVC and Itanium | a single-inheritance facade in C++ |
   | C++20 modules | no stable AST for a compiled module interface | parse the headers |
   | C++ coroutines | promise and frame layout are implementation-defined | a callback or completion handle |
-    | casts across a hierarchy the importer did not model | no Ember equivalent of `dynamic_cast` there | cast in C++ and export the result |
+  | casts across a hierarchy the importer did not model | no Ember equivalent of `dynamic_cast` there | cast in C++ and export the result |
   | non-type template parameters of class type | mangling differs between compilers | instantiate in C++ and export a typedef |
   | allocator-parameterised containers | the allocator is part of the type and opaque | expose a span, or keep it native |
 
@@ -404,3 +404,4 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   (by value, opaque, behind an overlay, or refused with a named diagnostic) and its generated thunks
   committed and diffed; it runs under MSVC and Clang, with debug and release runtimes and RTTI on
   and off, and two configurations that disagree must fail with `E9020`, never bind differently.
+

@@ -281,8 +281,9 @@ points, and with each call standing for what its callee's summary (`[BCK-8]`) sa
   value) is checked by its own package with what that build sees (`[EFF-2a]`), and checked again,
   with the same rules, by every package that puts a new function, implementation, override or
   callback there, at the line that puts it (`[MOD-9a]`, `[BLD-14]` items 12 and 16, `[BRW-21]`'s
-  open lines); a line checked this way by no build is a defect of the build (`[PHIL-12]`). Nothing
-  is checked while the program runs.
+  open lines), or, for a kind a caller gives through a parameter, by that caller at its call
+  (`[BLD-14]` item 11); a line checked this way by no build is a defect of the build (`[PHIL-12]`).
+  Nothing is checked while the program runs.
 
 ## XVIII.5 The runtime
 
@@ -392,3 +393,4 @@ Restored from 0.9.8 by ODR-087.
   governs the C backend's `restrict` (`[SIMD-3]`: derived, never assumed); emits DWARF or CodeView
   debug information with Ember's type names; and supports profile-guided optimisation through LLVM's
   instrumentation and ThinLTO (`[BLD-6]`).
+

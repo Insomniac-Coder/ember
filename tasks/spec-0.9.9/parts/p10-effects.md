@@ -65,16 +65,18 @@ The compiler infers, for every function, an **effect set** drawn from:
   put there: one that may call every `pub` function of this package, change and end every place a
   `pub` name of this package reaches (a `pub static mut`; the fields of an object a `pub` function
   is given, returns or holds), take every lock a `pub` function takes, and have every effect the
-  place's or method's declared contracts do not exclude (verdict 106). A place or method no other
-  package can reach keeps `[EFF-2]`'s rule, and so does a `virtual` method of a class that cannot be
-  subclassed outside its package. The message names the route: `E3020` "`h()` (line 11) may add to
-  `HANDLERS` (through `add`, which a function another package stores into a `Handler` may call)
-  while this loop walks `HANDLERS` (line 10); walk a list of your own: write `todo = mem.take(ref
-  mut HANDLERS)` above line 10, `for h in todo:` in place of line 10, and `HANDLERS.extend(owns
-  todo)` below the loop"; `E4001` "`run_all` is `@noalloc`, and `h()` (line 11) may run a function
-  another package stores into a `Handler`; say what a `Handler` may do: write `@noalloc` above `type
-  Handler = fn()`". A dependant's stores and overrides are counted by the dependant at its own lines
-  (`[EFF-4]`, `[CLO-17]`, `[MOD-9a]`), and `[DET-3]` counts the same way.
+  place's or method's declared contracts do not exclude (verdict 106); what it keeps of what the
+  call gives it, an owner it stores or a `weakref T` link it makes, is judged where the function is
+  seen (`[WK-7]`, `[OWN-13]`). A place or method no other package can reach keeps `[EFF-2]`'s rule,
+  and so does a `virtual` method of a class that cannot be subclassed outside its package. The
+  message names the route: `E3020` "`h()` (line 11) may add to `HANDLERS` (through `add`, which a
+  function another package stores into a `Handler` may call) while this loop walks `HANDLERS` (line
+  10); walk a list of your own: write `todo = mem.take(ref mut HANDLERS)` above line 10, `for h in
+  todo:` in place of line 10, and `HANDLERS.extend(owns todo)` below the loop"; `E4001` "`run_all`
+  is `@noalloc`, and `h()` (line 11) may run a function another package stores into a `Handler`; say
+  what a `Handler` may do: write `@noalloc` above `type Handler = fn()`". A dependant's stores and
+  overrides are counted by the dependant at its own lines (`[EFF-4]`, `[CLO-17]`, `[MOD-9a]`), and
+  `[DET-3]` counts the same way.
 * `[EFF-3]` *(changed in 0.9.15)* An `extern` function carries the effects its contract declares
   (`@ffi(effects=[…])`), `FFI` at least. What a call of one may change through the callbacks C keeps
   is `[EFF-26]`'s.
@@ -87,17 +89,17 @@ The compiler infers, for every function, an **effect set** drawn from:
   `thread_shared`, or neither, and for a function the parameters, `this` included, of which it makes
   a `weakref T` link (`[OWN-13]`, `[BLD-14]` items 8 and 9), which parameter it stores an owner of
   into a place of which other parameter or of `this` (`[WK-7]`, item 10), and what its body needs of
-  the kinds that reach a `dyn`, interface or base-class parameter (`[LT-1]`, item 11); and the
-  function values the package stores into a function type and the callbacks it hands to C, which a
-  program that uses the package counts wherever such a value is called and at every foreign call
-  (`[EFF-26]`). A change to any of them is reported as an interface change and re-checks every
-  caller, and every line checked against a place the change fills (`[BCK-8]`, `[MOD-9a]`): an edit
-  inside one function, or a library update (two lines of a function swapped, so that a use of a
-  parameter falls below a line that clears what it views), can make a line elsewhere stop compiling,
-  and the message names the chain of calls. A parent link proves itself (Part VIII) only when no
-  other package can change it or the places that own its holders. What a generic function changes
-  through its type parameters' methods is worked out for each instance, by the package that compiles
-  that instance.
+  the kinds that reach a `dyn`, interface or base-class parameter (`[LT-1]`, `[OWN-13]`, `[WK-7]`,
+  item 11); and the function values the package stores into a function type and the callbacks it
+  hands to C, which a program that uses the package counts wherever such a value is called and at
+  every foreign call (`[EFF-26]`). A change to any of them is reported as an interface change and
+  re-checks every caller, and every line checked against a place the change fills (`[BCK-8]`,
+  `[MOD-9a]`): an edit inside one function, or a library update (two lines of a function swapped, so
+  that a use of a parameter falls below a line that clears what it views), can make a line elsewhere
+  stop compiling, and the message names the chain of calls. A parent link proves itself (Part VIII)
+  only when no other package can change it or the places that own its holders. What a generic
+  function changes through its type parameters' methods is worked out for each instance, by the
+  package that compiles that instance.
 * `[EFF-9]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `RuntimeCheck(k)` enters a function's effect
   set when a check of kind `k` survives the compiler's profile-independent proofs in its body.
   `Arithmetic` covers integer overflow, division by zero, shift amounts and negative integer
@@ -473,16 +475,16 @@ compute the same bits, on one machine and across machines running the same binar
   | a C++ override call or `delete` of a trampoline-class object on another thread (`[FFI-17d]`) | "C++ called `on_click` of a `Button` made on another thread (line 16); its class says `threads=creator`" |
   | the checked trampoline: a `threads(creator)` callback on another thread, checked in every profile | "C called the callback registered on line 16 on another thread, but its contract says `threads(creator)`" |
   | a bounds check | "index 3 is out of bounds for a length of 3; use `.get(i)` for an `Option`" |
-| an overflow check (`[TYP-8]`) | "`integer overflow in '+'`: `x + 1` on line 3 (9,223,372,036,854,775,807 + 1); use `x.checked_add(1)` for an `Option`" |
-| division by zero (`[TYP-6]`) | "`division by zero`: `7 // (y - y)` on line 4" |
-| a shift out of range (`[TYP-10]`) | "`shift out of range`: `1 << n` on line 9 shifts an `int` by 70; use `wrapping_shl`" |
-| capacity overflow (`[HEAP-8]`) | "`capacity overflow`: `xs.reserve(...)` on line 6 asks for 18,446,744,073,709,551,615 elements" |
-| allocation failure (`[ALC-4]`, `[ALC-6]`) | "`out of memory`: `xs.reserve(...)` on line 6 asked `Global` for 1,073,741,824 bytes; use `try_reserve`" |
-| an invalid `Layout` (`[ALC-2]`) | "`invalid Layout`: `Layout(3, 3)` on line 7, an alignment that is not a power of two" |
-| a `FixedArena` exhausted (`[ARN-4]`) | "`fixed.alloc_zeroed(...)` on line 9: `fixed` has 16 bytes free and 32 were asked; use `try_alloc_zeroed` for an `Option`" |
-| a full `Pool` (`[HND-3]`) | "`pool.insert(...)` on line 11: every slot is live or retired; use `try_insert` for a `Result`" |
-| the callback table full (`[FFI-53]`) | "`on_click(...)` on line 16: no callback slot is free; every one of the 65,536 slots a 32-bit target has is live or retired" |
-| a stale handle in `pool[h]` (`[HND-1]`) | "`pool[h]` on line 12: the handle is stale (slot 3, generation 2 of 5); use `pool.get(h)` for an `Option`" |
+  | an overflow check (`[TYP-8]`) | "`integer overflow in '+'`: `x + 1` on line 3 (9,223,372,036,854,775,807 + 1); use `x.checked_add(1)` for an `Option`" |
+  | division by zero (`[TYP-6]`) | "`division by zero`: `7 // (y - y)` on line 4" |
+  | a shift out of range (`[TYP-10]`) | "`shift out of range`: `1 << n` on line 9 shifts an `int` by 70; use `wrapping_shl`" |
+  | capacity overflow (`[HEAP-8]`) | "`capacity overflow`: `xs.reserve(...)` on line 6 asks for 18,446,744,073,709,551,615 elements" |
+  | allocation failure (`[ALC-4]`, `[ALC-6]`) | "`out of memory`: `xs.reserve(...)` on line 6 asked `Global` for 1,073,741,824 bytes; use `try_reserve`" |
+  | an invalid `Layout` (`[ALC-2]`) | "`invalid Layout`: `Layout(3, 3)` on line 7, an alignment that is not a power of two" |
+  | a `FixedArena` exhausted (`[ARN-4]`) | "`fixed.alloc_zeroed(...)` on line 9: `fixed` has 16 bytes free and 32 were asked; use `try_alloc_zeroed` for an `Option`" |
+  | a full `Pool` (`[HND-3]`) | "`pool.insert(...)` on line 11: every slot is live or retired; use `try_insert` for a `Result`" |
+  | the callback table full (`[FFI-53]`) | "`on_click(...)` on line 16: no callback slot is free; every one of the 65,536 slots a 32-bit target has is live or retired" |
+  | a stale handle in `pool[h]` (`[HND-1]`) | "`pool[h]` on line 12: the handle is stale (slot 3, generation 2 of 5); use `pool.get(h)` for an `Option`" |
   | adopting one live object twice (`[FFI-36b]`) | a panic naming both places that adopted it |
   | a GPU draw reading past what is bound (`[GPU-12]`) | the text `[GPU-12]` gives |
 
@@ -490,3 +492,4 @@ compute the same bits, on one machine and across machines running the same binar
   maximum; for a `thread_shared` count, the limit Part VIII keeps below its maximum. The two count
   limits are tested with a count that is easy to fill (`[TST-31]`); the language has no test-only
   shortcut.
+

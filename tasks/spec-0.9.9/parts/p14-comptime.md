@@ -223,3 +223,4 @@ its declared default, else its type's `Default`), as a `@ser(skip)` field does (
 * `[SER-2]` *(new in 0.9.9)* Deserialising never produces an invalid value: a range-typed field is
   checked (`[RNG-10a]`), an unknown enum tag is an error, and a missing field without
   `@ser(default)` or `@ser(since=…)` is an error.
+

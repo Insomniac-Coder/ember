@@ -266,8 +266,8 @@ fn main():
   methods are compiled for that kind (its summaries recorded per kind, `[EFF-4]`), inside them
   `this` carries the kind, and a field of the class written with the class's own type (`parent:
   weakref Node`, `children: Array[Node]`) takes the kind of the object that holds it, so `weakref
-  this`, `shares this` and `Node() using current` in a method all name one kind, read from `this`; a
-  field written `using B` names `B` whatever kind the object is.
+  this`, `thread_shared this` and `Node() using current` in a method all name one kind, read from
+  `this`; a field written `using B` names `B` whatever kind the object is.
 * `[ALC-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* `std.mem` declares `pub unsafe interface
   Allocator` with `fn allocate(layout: Layout) -> *mut u8` (null on failure), `unsafe fn
   deallocate(p: *mut u8, layout: Layout)` and `unsafe fn reallocate(p: *mut u8, old: Layout,
@@ -649,7 +649,7 @@ fn mix_any(ref mut tracks: Map[String, Array[float]], dst_name: StrView, src_nam
   which case no site is recorded and no comparison is emitted.
 * `[DSJ-11]` *(new in 0.9.20)* **Views known apart.** Two views are known apart, with no compare,
   exactly when the compiler proves them apart as `[BRW-11]` and §IX.8 say: the two results of one
-  `split_at`, `split_at_mut`, `get_pair_mut` or `chunks_mut` call; two columns of one SoA; two
+  `split_at`, `get_pair_mut` or `chunks_mut` call; two columns of one SoA; two
   `alloc*` results of one arena (`[ARN-1]`); two ranges of one list whose bounds are constants, or
   `j` from `i + 1..`, that do not overlap; views of two different whole variables neither reached
   through the other; and two names already given the fact by an earlier `assert_disjoint` or
@@ -671,3 +671,4 @@ fn mix_any(ref mut tracks: Map[String, Array[float]], dst_name: StrView, src_nam
   `ref mut` name of a list's elements, is in use, and the first element read through `s`, in
   `blend`, comes after the two are proved apart. A read of an element through `s` before the proof
   is `E3021` (`[BRW-1]`).
+

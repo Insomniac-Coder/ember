@@ -6,7 +6,7 @@
 
 ```text
 ember new <name> [--lib | --bin | --cdylib]    create a package
-ember run [file.em] [args…] [--hot | --interp] build and run; a single file needs no manifest
+ember run [file.em] [args…] [--hot | --interp] build and run; a single file gets a default manifest
 ember build [--profile <name>] [--target <triple>] [--backend c|llvm]
             [--emit tokens|ast|hir|mir|c|obj|header] [--out-dir <dir>]
             [--emit-optimization-report] [--report=engine|instantiations] [--timings[=json]]
@@ -30,15 +30,17 @@ ember bind <header> [--init [--merge] | --report [--baseline <file> | --write-ba
                      | --emit-cpp [--out <file>]] [--flag <flag>] [--instantiate <template-id>]
 ember shader-bind <reflection.json>            Annex D
 ember tcb [--module <m>]                       the trusted-base report (Annex C)
+ember audit <file>                             a one-page summary of the safety surface
 ember toolchain list|install|default           manage installed C toolchains
 ember clean
 ember --help | --version [--matrix]
 ```
 
 * `[CLI-1]` Every command accepts `--json` and exits non-zero on error.
-* `[CLI-4]` *(changed in 0.9.9)* `ember run file.em` and `ember build file.em` accept a single file
-  with no manifest, as a package named after the file with default settings. A first program needs
-  no manifest and no `main`: `println("hello")` on its own is a complete program (`[FN-8]`).
+* `[CLI-4]` *(changed in 0.9.9)* *(changed in 0.9.20)* `ember run file.em` and `ember build file.em`
+  accept a single file with no manifest: the first compile writes a default one beside it, which
+  names the package after the file's folder (`[MAN-9]`). A first program needs no manifest written
+  by hand and no `main`: `println("hello")` on its own is a complete program (`[FN-8]`).
 * `[CLI-2]` *(changed in 0.9.15)* `ember build --emit c --out-dir <dir>` writes the C sources
   without invoking a C compiler, for build systems that compile them themselves, and beside them
   `<dir>/cflags.txt`, the C compiler flags those sources need for Ember's guarantees on the target,
@@ -58,28 +60,29 @@ ember --help | --version [--matrix]
   rewrites source written for an earlier version into the current one where the change is
   mechanical, and lists, with the file and line, what it could not rewrite. From 0.9.15: the `#!
   language` directive to the current version; the changes of 0.9.20 refuse programs that were unsafe
-  and rewrite nothing (§H.51). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views` removal,
-  `for k, v in m:` over a `Map` to `for k, v in m.items():` (`[CTL-1]`). From 0.9.10: `Box[T]` and
-  `ForeignBox[T]` to `owns T`, `Box[T, A]` to `owns T using A`, `Array[T, A]` to `Array[T] using A`,
-  `Weak[T]` to `weakref T`, the mode `owned` to `owns`, `mut x: T` on a parameter to `ref mut x: T`
-  with `ref mut` written before each argument given to it, `self` to `this` with the object removed
-  from a method's parameters (`fn reset(mut self):` to `fn reset():`, `owned self` to `owns this`
-  after the parameters), a function in a type body with no object to `static fn`, `str` to
-  `StrView`, `cstr` to `CStrView`, `x.clone()` to `copy of x`, `.copied()` to `.copy_each()`, `if
-  Some(x) = e:` to `if e exists as x:`, `w.upgrade()` opened in an `if` to `if w exists as p:`,
-  `cast x if D` and `as?` to `if x is D as d:`, `as!` to `cast x as D`, `@borrows(p)` to `from p`,
-  `@static_safe` to `@no_alias_checks`, `@fp(contract)` to `@fp(allow_fma)`, `assert_disjoint` to
-  `check_disjoint` and `assert_disjoint_or_panic` to `assert_disjoint`, a function's type parameters
-  in brackets after its name to a line of their own above it (`fn f[T: Add](x: T)` to `[T: needs
-  Add]` above `fn f(x: T)`, `[GRM-40]`), an `x: ref T` parameter to `x: T`, a `T: Sync` bound to `T:
-  needs ThreadShared`, `for x in xs.iter_mut():` to `for ref mut x in xs:`, and a declaration left
-  unsafe to call by the word `unsafe` to `unsafe fn`: an overlay entry's `unsafe` contract words
-  (verdict 130), and `@ffi(unsafe)`, `param(p, unsafe)` and `result(unsafe)` on a hand declaration
-  (verdict 133), the word taken out and an `@ffi(…)` left empty removed, and a plain `fn` in an
-  `unsafe extern` block (verdict 136). It writes no `@safety` text: `L3015` asks for any that is
-  missing (`[UNS-7]`). It does not rewrite what needs a choice the source does not say: `Shared[T]`
-  (`shares T` or `shares mut T`), `RefCell`, `SyncShared` and `@sync` classes (`thread_shared` with
-  `guarded by` fields or `Atomic`), `owned fn` (the capture words), and `mem.forget`.
+  and rewrite nothing (§H.52 to §H.56). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
+  removal, `for k, v in m:` over a `Map` to `for k, v in m.items():` (`[CTL-1]`). From 0.9.10:
+  `Box[T]` and `ForeignBox[T]` to `owns T`, `Box[T, A]` to `owns T using A`, `Array[T, A]` to
+  `Array[T] using A`, `Weak[T]` to `weakref T`, the mode `owned` to `owns`, `mut x: T` on a
+  parameter to `ref mut x: T` with `ref mut` written before each argument given to it, `self` to
+  `this` with the object removed from a method's parameters (`fn reset(mut self):` to `fn reset():`,
+  `owned self` to `owns this` after the parameters), a function in a type body with no object to
+  `static fn`, `str` to `StrView`, `cstr` to `CStrView`, `x.clone()` to `copy of x`, `.copied()` to
+  `.copy_each()`, `if Some(x) = e:` to `if e exists as x:`, `w.upgrade()` opened in an `if` to `if w
+  exists as p:`, `cast x if D` and `as?` to `if x is D as d:`, `as!` to `cast x as D`, `@borrows(p)`
+  to `from p`, `@static_safe` to `@no_alias_checks`, `@fp(contract)` to `@fp(allow_fma)`,
+  `assert_disjoint` to `check_disjoint` and `assert_disjoint_or_panic` to `assert_disjoint`, a
+  function's type parameters in brackets after its name to a line of their own above it (`fn f[T:
+  Add](x: T)` to `[T: needs Add]` above `fn f(x: T)`, `[GRM-40]`), an `x: ref T` parameter to `x:
+  T`, a `T: Sync` bound to `T: needs ThreadShared`, `for x in xs.iter_mut():` to `for ref mut x in
+  xs:`, and a declaration left unsafe to call by the word `unsafe` to `unsafe fn`: an overlay
+  entry's `unsafe` contract words (verdict 130), and `@ffi(unsafe)`, `param(p, unsafe)` and
+  `result(unsafe)` on a hand declaration (verdict 133), the word taken out and an `@ffi(…)` left
+  empty removed, and a plain `fn` in an `unsafe extern` block (verdict 136). It writes no `@safety`
+  text: `L3015` asks for any that is missing (`[UNS-7]`). It does not rewrite what needs a choice
+  the source does not say: `Shared[T]` (`shares T` or `shares mut T`), `RefCell`, `SyncShared` and
+  `@sync` classes (`thread_shared` with `guarded by` fields or `Atomic`), `owned fn` (the capture
+  words), and `mem.forget`.
 * `[CLI-21]` *(new in 0.9.9)* *(changed in 0.9.20)* `ember run --interp` runs a program on the
   compile-time evaluator instead of compiling it: no C compiler is needed; console and file I/O
   work; foreign calls, `thread.spawn`, `thread.scope`, `jobs.submit` and `jobs.scope` are
@@ -194,14 +197,15 @@ large_copy = { level = "warn", threshold = 256 }
   hand.
 * `[MAN-9]` *(new in 0.9.15)* *(changed in 0.9.20)* **Every program is a package** (verdict 127). A
   command that compiles a file (`ember build`, `check`, `run`, `test`, `lint`) with no `ember.toml`
-  in its folder or any folder above it compiles it as a package named after the file's folder, with
-  `version = "0.1.0"` and every other setting its default, and says so once on standard error:
-  "note: `tools/` has no `ember.toml`, so `tools` is compiled as a package with default settings;
-  write one with `ember new`, or by hand, to change them". No compile command writes a file the
-  program did not ask for, so a check leaves nothing behind (verdict 135 had the manifest written on
-  the first compile; reversed in 0.9.20 under the delegation, and reported); `ember bind` in a
-  header's folder no package holds treats the folder the same way. `ember.overlays` is kept only
-  beside a manifest that exists (`[FFI-55]`).
+  in its folder or any folder above it first writes a default one in the file's folder, `[package]`
+  with the folder's name as `name` and `version = "0.1.0"`, and says so on standard error: "note:
+  created `tools/ember.toml`: every program needs one, and this folder had none" (verdict 135);
+  `ember bind` does so in a header's folder no package holds. The program is then that package, and
+  `ember.overlays` sits beside its manifest (`[FFI-55]`), so the record of what each overlay was
+  checked against is kept for every program, a single file's included, and no program is compiled
+  apart from the others with settings no file shows. (0.9.20_Hardened_2 to 0.9.20_Hardened_4 wrote
+  no file and kept no record for such a program; the owner restored verdicts 127 and 135 on
+  2026-11-10, §H.56.)
 * `[MAN-10]` *(new in 0.9.20)* **A dependency's manifest decides only its own code, never what runs
   on the builder's machine.** Of a dependency's manifest the build reads `[package]`,
   `[dependencies]`, `[lints]`, `[realtime]` and `[ffi]`. Its `[c]` section is taken with `compiler`
@@ -297,14 +301,20 @@ large_copy = { level = "warn", threshold = 256 }
   10. for each function, which parameter, `this` included, or value holding one, it stores an owner
       of into a place of which other parameter or of `this`, directly or through a call, which each
       call judges as that store (`[WK-7]`); and
-  11. for each `pub` function with a `dyn`, interface or base-class parameter, what its body needs
-      of the kinds that reach it: for each call through the parameter and each argument of that
-      call, whether the called method's result may point into it (`[LT-1]`), which a call from
-      another package checks against the kinds it gives; and
+  11. for each `pub` function with a `dyn`, interface or base-class parameter (`this` of an `open`
+      or `abstract` class's method included), what its body needs of the kinds that reach it: for
+      each call through the parameter and each argument of that call, whether the called method's
+      result may point into it (`[LT-1]`), and which of the function's own parameters, or what
+      holds them, the call's object and each argument are, so that the links the called method
+      makes of them and the owners it stores (items 9 and 10) count as the function's for that
+      kind (`[OWN-13]`, `[WK-7]`), which a call from another package checks against the kinds it
+      gives; and
   12. for each line that calls through a `virtual` method of a `pub` class, a method of a `pub`
       interface used as `dyn`, or a `pub` function-typed place, what the line walks, holds `ref mut`
-      and has lent, which a package adding an override, an implementation or a stored function
-      checks that member against (`[MOD-9a]`);
+      and has lent, and, for its object and each argument, which of the others owns it there or
+      will by a later line of the function, and whether it is reached through a `thread_shared`
+      value (`[WK-7]`, `[OWN-13]`), which a package adding an override, an implementation or a
+      stored function checks that member against (`[MOD-9a]`);
   13. for each `pub` function, the places each of its function-typed parameters flows into
       (`[EFF-2]`: a place a value is copied into), so that a dependant checks `[CLO-17]` at the call
       that hands the function over ("`on_click` would keep it in `b.handlers`"); and
@@ -421,11 +431,12 @@ large_copy = { level = "warn", threshold = 256 }
   changes what a program means.** Every profile accepts the same programs, performs the same safety
   checks while the program runs (`[PRF-4]`), stops in the same places with the same messages, and
   computes the same results. The one check that differs is `debug_assert`, checked only where
-  `[PRF-3]` says: it may not have side effects (`W2016`), so a program whose assertions hold
-  computes the same results in every profile; a C sanitizer (`[PRF-3]`) is a tool for finding
-  defects in foreign and `unsafe` code, outside Ember's checks: it stops the program only where that
-  code is already outside the guarantee (`[PHIL-10]`), and never changes where Safe Ember stops.
-  Only the following differ between profiles.
+  `[PRF-3]` says: its argument changes nothing (`E3023`, §VI.6; an effect of its own that changes
+  nothing is `W2016`), so a program whose assertions hold computes the same results in every
+  profile; a C sanitizer (`[PRF-3]`) is a tool for finding defects in foreign and `unsafe` code,
+  outside Ember's checks: it stops the program only where that code is already outside the guarantee
+  (`[PHIL-10]`), and never changes where Safe Ember stops. Only the following differ between
+  profiles.
 * `[PRF-3]` *(new in 0.9.9)* *(changed in 0.9.10)* **What a profile may set.**
 
   | Setting (key) | `debug` | `development` | `release` |
@@ -852,3 +863,4 @@ The ids O3, O4, O5, B8, B14, B15 and X1 are no longer used: their cases are O1 (
   the C ABI of exports.
 The runtime ABI (the object header, `TypeInfo`, `ember_rt.h`) is stable within a major version
 (`[VER-4]`).
+

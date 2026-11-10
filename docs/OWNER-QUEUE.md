@@ -1696,7 +1696,7 @@ diagnostic suggestion ordering and does not require a language-version bump.
 ## ODR-261 — An `open` class's objects across threads; `Error` requires `Send` and `ThreadShared` — **CLOSED**
 
     ID:        ODR-261
-    Status:    CLOSED — ruled on the owner's instruction of 2026-11-08 ("for the ODRs go for the best solution possible"), by the lead alone; incorporated in 0.9.20_Hardened_4; `tasks/96/redesign/audit-0.9.20/round3/rulings.md`
+    Status:    CLOSED — ruled on the owner's instruction of 2026-11-08 ("for the ODRs go for the best solution possible"), by the lead alone; incorporated in 0.9.20_Hardened_4; `tasks/96/redesign/audit-0.9.20/round3/rulings.md`; **accepted by the owner on 2026-11-10** on the lead's judgement (`JOB.md` verdict 167)
     Category:  CONCURRENCY / TYPES
     Location:  0.9.20_Hardened_3 [THR-8], [THR-9], [TYP-43], [CLS-4], [ERR-3], [ERR-8], [IFC-3]
 
@@ -1735,7 +1735,7 @@ diagnostic suggestion ordering and does not require a language-version bump.
 ## ODR-264 — A list pattern as a `match` arm's first line — **CLOSED**
 
     ID:        ODR-264
-    Status:    CLOSED — ruled on the owner's instruction of 2026-11-08 ("for the ODRs go for the best solution possible"), by the lead alone; incorporated in 0.9.20_Hardened_4; `tasks/96/redesign/audit-0.9.20/round3/rulings.md`
+    Status:    CLOSED — ruled on the owner's instruction of 2026-11-08 ("for the ODRs go for the best solution possible"), by the lead alone; incorporated in 0.9.20_Hardened_4; `tasks/96/redesign/audit-0.9.20/round3/rulings.md`; **accepted by the owner on 2026-11-10** on the lead's judgement (`JOB.md` verdict 167)
     Category:  LANGUAGE / GRAMMAR
     Location:  0.9.20_Hardened_3 [GRM-13], [GRM-40]
 

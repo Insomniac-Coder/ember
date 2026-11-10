@@ -223,3 +223,4 @@ clarified and the implementation must meet it. **GATE**: a test or CI obligation
 | F-212 — two errata are marked open that the grammar already fixed | OUT | The errata ledger is outside the document. | — |
 | F-213 — `i32.MIN % -1` | SPEC | `MIN % -1 == 0`; `MIN // -1` panics as overflow, naming the right operator. | `[TYP-28]` |
 | F-214 — the test suite is green (263 tests) but has a flaky UI pair, and `cargo test` hides everything after the first failure | GATE | The runner reports all failures and quarantines flaky tests by name. | `[TST-30]` |
+

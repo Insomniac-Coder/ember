@@ -796,7 +796,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.20', 4)
+CURRENT = ('0.9.20', 5)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -848,6 +848,7 @@ V0920_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h1')
 V0920_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h2')
 V0920_H3_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h3')
 V0920_H4_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h4')
+V0920_H5_PARTS = os.path.join(HERE, '..', 'parts')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -2104,6 +2105,73 @@ def v0920_h4():
     return H55_HEAD + rule_diff(V0920_H3_PARTS, V0920_H4_PARTS)
 
 
+H56_HEAD = r'''
+
+## H.56 Changes in 0.9.20_Hardened_5 (from 0.9.20_Hardened_4)
+
+**0.9.20_Hardened_5**, of 2026-11-10, follows the owner's review of Hardened_4 and a reading of the
+whole of it by the lead, solo (`tasks/96/redesign/spec-gaps-0.9.15/deep/check-0.9.20-H4.md`, findings 1
+to 23). The owner (2026-11-10): the departures of Hardened_2 to Hardened_4 from his verdicts stand
+where the lead judges them the better solution, which three do (ODR-264's list pattern on a `match`
+arm, ODR-261's `Error` and `AnyError`, N87's kept-by-C mark), and verdicts 127 and 135 are restored
+("Yes, restore them"); then "read the parts you haven't read and fix them too, before creating a new
+hardened spec". The rulings are N140 to N146 (`decisions.md` §16). Every change below restores an
+owner's verdict, refuses a program that was unsafe, states a fact a compiler would otherwise have to
+guess, or repairs the text; no feature is taken away. The accepted set changes, so the language
+version stays 0.9.20 and the hardening number moves (`[VER-9]`).
+
+* **The default manifest is written again** (N146, verdicts 127 and 135): a command that compiles a
+  file with no `ember.toml` writes one and says so, and `ember.overlays` sits beside it, so every
+  program keeps the record its overlays were checked against, a single file's included. Hardened_2's
+  "no compile command writes a file" had left a single file's overlay unchecked against its header on
+  every build (`[MAN-9]`, `[FFI-55]`, `[CLI-4]`, §XVII.1's listing).
+* **What a function another package adds keeps of what a call gives it** (N142): an owner stored, or
+  a `weakref T` link made, by an implementation, an override or a stored function that a library
+  calls and never saw is judged where the function is seen: at the call that gives its kind through
+  a parameter, by the kind's own record, or at the line that adds the member, against the library's
+  recorded line. Before, such a store closed a loop of owners that no package judged, and such a
+  link was counted on one thread for a value another thread may end (`[WK-7]`, `[OWN-13]`,
+  `[MOD-9a]`, `[BLD-14]` items 11 and 12, `[EFF-2a]`, `[EFF-4]`, `[BCK-8]`).
+* **One `owns` where the call's word and the making word meet** (N140): for a parameter whose type
+  is an `owns T`, one `owns` says both the block and the hand-over, and a second is `E0109`
+  (`[GRM-15]`, `[OWN-10]`).
+* **An owner of `this`** (N143): `thread_shared this` is written in a method, which pins the class;
+  `shares this` and `shares mut this` are `E2122`, since the object may have one owner (`[RC-1]`,
+  `[OWN-13]`, `[THR-1]`, `[CLS-2]`, `[CLS-7a]`, `[OBJ-5]`, `[ALC-1]`).
+* **The job's arena** (N144): it is the job's own, a scope of the worker's arena that gives back
+  only the job's bytes, and one place for each job (`[JOB-5]`).
+* **`debug_assert` changes nothing** (N145): a call in its argument of a function that changes or
+  ends anything that outlives the argument is `E3023`, so no profile changes what a program
+  computes; an effect that changes nothing stays `W2016` (§VI.6, `[PHIL-13]`, `[PRF-1]`).
+* **Positions** (N141): a position is made by indexing an `Array`, and an `SoA` proxy is one; a name
+  for an element of any other container is an address (`[BRW-16]`).
+* **Text repaired**: two example blocks whose line breaks Hardened_2's re-wrap had removed, which hid
+  three examples from the example check (`[FFI-51]`, `[FFI-54]`); the front matter, which described
+  Hardened_1; thirteen table rows that had lost their table's indent (`[COST-6]`, `[HR-14]`,
+  `[FFI-44]`, `[FFI-48]`); a help line the grammar does not accept (`[LT-4]`); `split_at_mut`, which
+  `[SPN-5]` says does not exist (`[DSJ-11]`); `ember audit` in the command listing (`[CLI-11]`,
+  `[CLI-15]`); the change log `[CLI-20]` cites; a sentence of `[TYP-32]`; a citation written twice
+  in §I.6; the glossary's lines for a `Copy` type, a hand-over and a position, which said other
+  than `[STR-5]`, `[OWN-9]` and `[BRW-16]`; unit-only enums in the lists of `Copy` types
+  (`[ENM-3]`); a parenthesis of `[TYP-36]` that read against `[OWN-8]`; a name split in two in
+  `[HASH-2]`; and a blank line at the end of every Part, the generated ones included, so that the
+  next Part's divider stands alone.
+
+Registry rows: E0109, E2122, E3022, E3023, E3032, E7015, W2016. No new rule, no new code, none
+retired. Owner verdicts: 127 and 135 restored to their letter; 155 and 110 as Hardened_4 left them,
+accepted by the owner on the lead's judgement; 160 extended to the word `owns` itself (N140).
+
+Generated: every rule whose text differs from 0.9.20_Hardened_4.
+
+| Rule | 0.9.20_Hardened_4 → 0.9.20_Hardened_5 |
+|---|---|
+'''
+
+
+def v0920_h5():
+    return H56_HEAD + rule_diff(V0920_H4_PARTS, V0920_H5_PARTS)
+
+
 def h1_to_h2():
     return rule_diff(H1_PARTS, H2_PARTS)
 
@@ -2174,7 +2242,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n' + v0915_h3_to_h4() + '\n' + v0915_h4_to_h5() + '\n' + v0915_h5_to_h6() + '\n' + v0915_h6_to_h7() + '\n' + v0915_h7_to_h8() + '\n' + v0915_h8_to_h9() + '\n' + v0915_h9_to_h10() + '\n' + v0915_h10_to_h11() + '\n' + v0920_h1() + '\n' + v0920_h2() + '\n' + v0920_h3() + '\n' + v0920_h4() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n' + v0915_h3_to_h4() + '\n' + v0915_h4_to_h5() + '\n' + v0915_h5_to_h6() + '\n' + v0915_h6_to_h7() + '\n' + v0915_h7_to_h8() + '\n' + v0915_h8_to_h9() + '\n' + v0915_h9_to_h10() + '\n' + v0915_h10_to_h11() + '\n' + v0920_h1() + '\n' + v0920_h2() + '\n' + v0920_h3() + '\n' + v0920_h4() + '\n' + v0920_h5() + '\n\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

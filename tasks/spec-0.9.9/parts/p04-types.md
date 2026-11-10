@@ -723,7 +723,7 @@ implements Display:` block.
 
 | Marker | Holds when |
 |---|---|
-| `Copy` | declared with `@derive(Copy)` on a struct or enum whose fields are all `Copy` and which has no `drop`, which gives it `Clone` too; always for scalars, `ref T`, `Span`, `StrView`, raw pointers, `extern fn`, tuples and fixed arrays of `Copy` elements; never for a class object, an `owns`, `shares`, `shares mut` or `thread_shared` value, a `weakref` or `sharedref mut` link, `ref mut T` or `MutSpan[T]` |
+| `Copy` | declared with `@derive(Copy)` on a struct or enum whose fields are all `Copy` and which has no `drop`, which gives it `Clone` too; always for scalars, unit-only enums (`[ENM-3]`), `ref T`, `Span`, `StrView`, raw pointers, `extern fn`, tuples and fixed arrays of `Copy` elements; never for a class object, an `owns`, `shares`, `shares mut` or `thread_shared` value, a `weakref` or `sharedref mut` link, `ref mut T` or `MutSpan[T]` |
 | `Send` | inferred: every component is `Send`, so nothing reachable from the value is a one-thread owner (`shares`, `shares mut`), a `weakref T` link, a `sharedref mut` link (a view several holders on one thread may change), or bound to its thread (a lock's guard, a `Scope`, a raw pointer, a `Retained[ForeignCallback]` token (`[FFI-23]`), an object of a trampoline class under `threads=creator` (`[FFI-17d]`); the link to its instance a value made in a manager's instance holds, unless `A` is a manager any thread may call, `[TYP-46a]`); `ref T` and `Span[T]` are when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is `Send`; a class object is when its fields are, where its class is neither `open` nor `abstract`; an object held by the type of an `open` or `abstract` class another package may derive from only when the class's header promises `Send` (`implements Send`, or an interface that needs it), which every class derived from it is checked against where it is declared, and one held by the type of such a class no other package can derive from when the fields of every class its package derives from it are (`[THR-8]`); `dyn I` when `I` requires it; a `thread_shared T` value, and a `weakref thread_shared T` link, are when `T` is `ThreadShared` and `Send` (`[THR-8]`) |
 | `ThreadShared` | inferred: several threads may hold and read one value of the type at once; every component is `ThreadShared` (the link to its instance a value made in a manager's instance holds included: a `ref A` for a manager any thread may call, else a `sharedref mut` link, `[TYP-46a]`); a class object as for `Send`, by its class's header promise (`implements ThreadShared`, or an interface that needs it) where another package may derive from it, each derived class checked where it is declared (`[THR-9]`); `dyn I` when `I` requires it; `ref mut`, `MutSpan`, `sharedref mut`, `Cell`, `UnsafeCell`, raw pointers, a `Retained[ForeignCallback]` token, a `shares` or `shares mut` value and a `weakref T` link are not; an `extern type`, an opaque C++ class or a `@ffi(handle)` type is only where the program declares it (`[FFI-8]`); a `weakref thread_shared T` link is when `T` is `Send` and `ThreadShared`, and `thread_shared fn()` is, its state being `ThreadShared` (`[THR-9]`, `[THR-1]`) |
 | `Sized` | everything except `dyn I` and unsized foreign types |
@@ -866,15 +866,15 @@ implementation the program has (Part X).
   only as `this`, and `hash`'s hasher is a parameter that views its value, so it gets one entry),
   and never `Ord` (`cmp` takes `other: Self`): a bound needing `Ord` on it is `E2040`, whose help is
   `sort_by` with the kinds tested first. `copy of x` makes a value with `Clone` (`[OWN-8]`), and
-  every `Copy` type is `Clone`; before what it cannot copy as itself (a `weakref` link, a `ref mut
-  T` view, a `MutSpan[T]`, a struct holding one, a type with no `Clone`) it is `E2116`; a read-only
-  view is `Copy`, so `copy of` before one gives one more view of the same place (`[OWN-8]`). Before
-  an `owns`, `shares` or `sharedref mut` value it copies what that value holds, never the link; a
-  struct that holds links among its fields is copied field by field, as a C++ struct holding a
-  `shared_ptr` and a `weak_ptr` is: what it owns alone is copied itself, a `shares` or
-  `thread_shared` field becomes one more owner of the same value, a `weakref` field one more link to
-  the same target and a `sharedref mut` field one more holder of the same link (`struct Team:` with
-  `captain: shares Player` and `scout: weakref Player`: `t2 = copy of t` is a new `Team` whose
+  every `Copy` type is `Clone`; before what it cannot copy as itself (a `weakref` link; a `ref mut
+  T` view, a `MutSpan[T]` or a struct holding one of the two; a type with no `Clone`) it is `E2116`;
+  a read-only view is `Copy`, so `copy of` before one gives one more view of the same place
+  (`[OWN-8]`). Before an `owns`, `shares` or `sharedref mut` value it copies what that value holds,
+  never the link; a struct that holds links among its fields is copied field by field, as a C++
+  struct holding a `shared_ptr` and a `weak_ptr` is: what it owns alone is copied itself, a `shares`
+  or `thread_shared` field becomes one more owner of the same value, a `weakref` field one more link
+  to the same target and a `sharedref mut` field one more holder of the same link (`struct Team:`
+  with `captain: shares Player` and `scout: weakref Player`: `t2 = copy of t` is a new `Team` whose
   captain and scout are the same player).
 
 | Type | Clone | Copy | Eq | Ord | Hash | Default | Display | Debug |
@@ -940,7 +940,7 @@ implementation the program has (Part X).
 * `[HASH-2]` *(changed in 0.9.9)* `std.collections.DefaultHasher` is a fixed-seed hasher: the same
   keys hash the same way in every run and on every machine. It is a fast non-cryptographic hash, no
   slower on integer keys than one multiply and one rotate per word (FxHash's class).
-  `std.collections. RandomState` is a per-process randomly seeded hasher for maps keyed by untrusted
+  `std.collections.RandomState` is a per-process randomly seeded hasher for maps keyed by untrusted
   input; a `Map[K, V, RandomState]` still iterates in insertion order (`[STD-11]`), so the seed
   never becomes visible. `DefaultHasher`'s values are the same for one Ember version on every target
   (its state is 64 bits on a 32-bit target too), so a table built at compile time is valid at run
@@ -1046,7 +1046,8 @@ implementation the program has (Part X).
   knows the type and monomorphises through it, so there is no indirection. Every `return` in the
   body must produce the same concrete type (`E2261` otherwise). A method returns one as a function
   does; an interface's method does not (`[GRM-31]`). It is how a function returns an iterator
-  pipeline whose type cannot be written: A `some` list (`some (Iterator[Item = int], Send)`,
+  pipeline whose type cannot be written (the example below). A `some` list (`some (Iterator[Item =
+  int], Send)`,
   `bound_list` in §III.2, `[TYP-22]`) names one or more interfaces and any number of the marker
   interfaces (`Send`, `ThreadShared`, `[TYP-43]`): the hidden type implements each interface and has
   each marker, checked at every `return` of the function (`E2040` otherwise, naming the interface or
@@ -1105,3 +1106,4 @@ For `recv.m(args)`:
   parameter takes a pack's values (`[TYP-47]`) takes any number of arguments; the output functions
   `print`, `println`, `eprint`, `eprintln` (`[STD-9]`) and `format_to` (`[STD-18]`) are such
   functions of the library, not known to the compiler by name (verdict 117).
+

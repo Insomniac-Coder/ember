@@ -586,8 +586,14 @@ class Door:
   profile; `debug_assert(…)` is evaluated only in `debug`, so its argument is checked as a read in
   every profile: a `ref mut` argument inside it is `E3027` and a hand-over inside it `E3013`
   ("`debug_assert` only reads its argument, since a `release` build never runs it; remove `owns`:
-  `debug_assert(check(s))`"), and a call in it of a function with effects other than `Panic` is
-  `W2016`.
+  `debug_assert(check(s))`"), a call in it of a function that changes or ends anything that
+  outlives the argument, by its summary (`[EFF-24]`: a module variable, a value reached through a
+  link or a captured name, a value changed by its own operations as an `Atomic` or a `guarded by`
+  field is), is `E3023` ("`debug_assert` only reads, since a `release` build never runs it, and
+  `bump()` changes `COUNT` (its line 3); call it on a line of its own and assert what it gave:
+  write `ok = bump()` above this line and `debug_assert(ok)`"), and a call in it of a function
+  with an effect other than `Panic` that changes nothing (it prints, or takes a lock and lets it
+  go) is `W2016`.
 * `panic(msg)`, `todo()`, `unreachable()` have type `Never`.
 * `[PAN-1]` A panic prints `panic at <file>:<line>:<col>: <message>` (and a backtrace outside
   `release`) to standard error and calls `abort()`. There is no unwinding in this version; `defer`
@@ -595,3 +601,4 @@ class Door:
 * `[PAN-2]` Formatting a panic message allocates only for an f-string; `panic("literal")` and
   `panic(some_str)` are `@noalloc`.
 * `[PAN-3]` A panic inside a `drop` that runs while the process is already panicking aborts at once.
+

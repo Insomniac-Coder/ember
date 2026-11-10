@@ -100,3 +100,4 @@ later).
 * `[GPU-11]` Ember assumes no shader language: anything that produces SPIR-V and reflection works.
 * A kernel language (`@gpu fn`) is reserved for a later version; `@gpu` and `std.gpu.kernel` are
   reserved names.
+

@@ -162,3 +162,4 @@ fn main() -> Result[void]:
 Python's `try`, `except`, `raise` and `finally` are not Ember syntax; each is diagnosed with the Ember
 form (`[DIA-21]`): `raise e` → `return Err(e)`, a `try` body → `?` on each fallible call, `except E`
 → `match` on the result, `finally` → `defer:`.
+

@@ -212,7 +212,7 @@ fail), **reclaim** (end what the old image owned).
   | fields reordered, `let` changed | carried over by name |
   | methods added, removed or changed | no instance change, except as `[HR-44]` says for a `@cached` method |
   | base class changed | refused |
-| the promise an `open` or `abstract` class's header makes (`implements Send`, `implements ThreadShared`, an interface that needs them, `[THR-8]`) added or removed | refused (`E9030`) unless the image rebuilds every package that imports the class, whose derived classes and hand-overs are then checked again when they compile (`[HR-44]`) |
+  | the promise an `open` or `abstract` class's header makes (`implements Send`, `implements ThreadShared`, an interface that needs them, `[THR-8]`) added or removed | refused (`E9030`) unless the image rebuilds every package that imports the class, whose derived classes and hand-overs are then checked again when they compile (`[HR-44]`) |
   | class removed while instances live | refused, naming the class and the count |
   | enum variant added, reordered or renamed with `@renamed_from` | discriminants rewritten |
   | enum variant removed while a value holds it | refused, naming the variant and the count |
@@ -408,3 +408,4 @@ fail), **reclaim** (end what the old image owned).
   program, watches the sources and polls at the point the program declares with
   `std.hot.checkpoint()`; a program that declares none is told so after ten seconds rather than
   appearing to hang.
+

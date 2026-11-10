@@ -22,7 +22,8 @@ These words are used with these meanings throughout the specification.
   of` copies the thing itself, never the link it is written before (`[OWN-8]`).
 - **`Copy` type**: a type whose `=` makes such a copy bit for bit: the numbers, `bool`, `char`, `ref
   T`, `Span[T]`, `StrView`, raw pointers, `extern "C" fn` values, tuples and fixed arrays of `Copy`
-  elements, and structs and enums marked `@derive(Copy)` (all of whose fields are `Copy`). Class
+  elements, structs and enums marked `@derive(Copy)` (all of whose fields are `Copy`), and
+  unit-only enums (`[ENM-3]`). Class
   objects, `shares` values, `weakref` and `sharedref mut` links, `ref mut` views and `MutSpan`s are
   not `Copy`.
 - **place**: where a value lives: a local, a field, a list element, an enum variant's payload.
@@ -109,23 +110,24 @@ These words are used with these meanings throughout the specification.
   of a, b]` keeps `a`; a `Copy` value is copied; a part, or a value reached through a name that does
   not own it, is `E3013` as elsewhere, `[OWN-11]`). A value `=` copies (a number, a `bool`, a
   `char`, a `StrView`, a `ref T`, a `Span[T]`, a raw pointer, a tuple or fixed array of these, a
-  struct or enum marked `@derive(Copy)`) is copied with `=` too, so `b = owns n` is how `=` hands
-  one over: `n` ends there, and a later use is `E3040` (`f = owns flag` ends `flag`). `owns` is not
-  written before a name whose place already hands the value over, after `return`, nor before `fn`
-  written on its own, nor before a value made on the line for a place that is not an `owns T`
-  (`[GRM-15]`) (`E0109`: "`e.mesh = m` already hands `m` over; remove `owns`"; "`b = a` already
-  hands `a` over; remove `owns`"; "`return` always hands the value over; remove `owns`: `return
-  xs`"; "`owns fn` does not say what the function takes or copies; name it on each captured name:
-  `fn() owns report:`"); before a function written as an argument for an `owns` parameter it is the
-  call's word (`xs.iter().for_each(owns fn(x: int): println(x))`).
+  struct or enum marked `@derive(Copy)`, a unit-only enum) is copied with `=` too, so `b = owns n`
+  is how `=` hands one over: `n` ends there, and a later use is `E3040` (`f = owns flag` ends
+  `flag`). `owns` is not written before a name whose place already hands the value over, after
+  `return`, nor before `fn` written on its own, nor before a value made on the line for a place that
+  is not an `owns T` (`[GRM-15]`) (`E0109`: "`e.mesh = m` already hands `m` over; remove `owns`";
+  "`b = a` already hands `a` over; remove `owns`"; "`return` always hands the value over; remove
+  `owns`: `return xs`"; "`owns fn` does not say what the function takes or copies; name it on each
+  captured name: `fn() owns report:`"); before a function written as an argument for an `owns`
+  parameter it is the call's word (`xs.iter().for_each(owns fn(x: int): println(x))`).
 * `[OWN-10]` *(new in 0.9.15)* **`owns` on the line that makes a value for a place that owns it
   alone.** An `owns` field, an `Option[owns T]` and a list of `owns` values each hold their value in
   a block of its own, and the line that makes a value for such a place says `owns`, at first and
   later: `e = Entity(mesh=owns Mesh(points=[0.0]))`; `boss = Enemy(hp=500, mesh=owns
   Mesh(points=[0.0, 1.0]) using current)` (`[ALC-1]`); `t = Tree(value=1, left=Some(owns
   Tree(value=2)))` for `left: Option[owns Tree]`; `r.pools.push(owns IntPool(items=[1, 2]))` for
-  `pools: Array[owns dyn Pool]`; `e.mesh = owns Mesh(points=[1.0, 2.0])`, which frees the old mesh.
-  The line without it is `E2123` ("`mesh` owns its mesh; say so where it is made: `mesh=owns
+  `pools: Array[owns dyn Pool]`, where the one `owns` says both the block and the hand-over to
+  `push` (`[GRM-15]`); `e.mesh = owns Mesh(points=[1.0, 2.0])`, which frees the old mesh. The line
+  without it is `E2123` ("`mesh` owns its mesh; say so where it is made: `mesh=owns
   Mesh(points=[0.0, 1.0]) using current`"; "`left` holds its tree in a block of its own; say so
   where it is made: `left=Some(owns Tree(value=2))`"). `owns` is also written where the default is a
   view, before a `for` loop's or a `match`'s source (`for x in owns xs:`, `match owns e:`), which
@@ -160,77 +162,87 @@ These words are used with these meanings throughout the specification.
   (`[OWN-8]`); `owns x` (`[OWN-9]`); `shares x`, one more owner, on this thread, that reads it, and
   `shares mut x`, one more owner that may also change it, each written only before a new value, a
   local or an owner (`[RC-1]`, `E2122`); `thread_shared x`, one more owner on any thread, written
-  only before a new value (`names = thread_shared Names()`) or a value already `thread_shared`
-  (`E7017` otherwise: "`names` is `share_and_keep`'s own object, which it may change; to share it
-  between threads, create it shared: `names = thread_shared Names()`"); `weakref x`, a link that
-  does not keep it alive (`[WK-11]`), whose type is read from the words on the path to `x`: `weakref
-  thread_shared T` when the value `x` names is a `thread_shared T` (an owner `log: thread_shared
-  Log`, a parameter or a capture of that type, a field of that type crossed last on the path, a name
-  opened from a `weakref thread_shared Log`), and `weakref T` otherwise (a class object with one
-  owner, a `shares` or `shares mut` owner, a `weakref T` link, a name opened from one, a view of any
-  of these), so that `w = weakref log` is a `weakref thread_shared Log` and `cam.target = weakref p`
-  a `weakref Player`, with no second word. **A `weakref T` link is made only to a value that no
-  `thread_shared` value reaches**, so that only this thread can end it and count its links: a value
-  reached through a `thread_shared` value with no `thread_shared` word on the value itself takes no
-  `weakref T` (`E7015`: "`tree.items[0]` is reached through `tree`, which threads share, so another
-  thread may end the item, and `weakref tree.items[0]` would count its links on this thread alone;
-  share the items between threads: write `items: Array[thread_shared Item]` in `Tree` (line 3),
-  after which `weakref tree.items[0]` is a `weakref thread_shared Item`"). In the package the path
-  says it (for a view, what it points into, `[LT-1]`); across a call it is the callee's summary
-  (`[BLD-14]` item 9): a function that makes a `weakref T` link to what a parameter names, `this`
-  included, directly or through a call, records it, and a call that gives that parameter a value
-  reached through a `thread_shared` value is `E7015` at the call, naming the chain ("`f` makes a
-  link to the item `n` names (`w = weakref n`, its line 2), counted on one thread, and
-  `tree.items[0]` is reached through `tree`, which threads share; share the items between threads:
-  write `items: Array[thread_shared Item]` in `Tree` (line 3) and `fn f(n: thread_shared Item):`").
-  Inside a method `this` carries no word, so its link says it: `weakref this`, and a `weakref` of
-  anything reached through `this` with no `thread_shared` word on the way (`weakref this.root`), is
-  a `weakref` link to an object on one thread and says that every object of the class is on one
-  thread; `weakref thread_shared this`, the one place `weakref thread_shared` is written before a
-  value, is a `weakref thread_shared C` and says, as `thread_shared this` does, that every object of
-  the class is `thread_shared`. **A class's kind is read from its own methods** and recorded in its
-  interface (`[EFF-4]`, `[BLD-14]` item 8): one-thread when a method of it makes a one-thread owner
-  or link of `this` (`weakref this`, `weakref this.f` with no `thread_shared` word on the way,
-  `sharedref mut this`, and `shares this` or `shares mut this` where `[RC-1]` allows them);
-  `thread_shared` when a method of it writes `thread_shared this` or `weakref thread_shared this`;
-  neither otherwise, and such a class serves both kinds (`Log`, Annex A). A method pins the class
-  that declares it and every class derived from it, whose objects run it; a class pinned both ways,
-  by its own methods or with a base's, or pinned one-thread while it or a base promises `Send`
-  (`[THR-8]`), is `E7015` at the one-thread line ("`Node.add_child` (line 9) links its nodes on one
-  thread (`weakref this`), and `Node.share` (line 12) shares them between threads (`thread_shared
-  this`); a class's objects are one or the other: for nodes shared between threads write
-  `child.parent = weakref thread_shared this` on line 9, for one-thread nodes remove `share`"). A
-  line that makes an object of the other kind is refused there: `thread_shared Node()` for a
-  one-thread class is `E7015` ("`Node` keeps links to its nodes on one thread (`add_child`, line 7:
-  `child.parent = weakref this`), and a `thread_shared Node` may be reached from any thread; for
-  nodes shared between threads write `parent: weakref thread_shared Node = None` (line 4) and
-  `child.parent = weakref thread_shared this` (line 7), and make every node `thread_shared
-  Node()`"), and `Node()` for a `thread_shared` class is `E7017` ("every `Node` is shared between
-  threads (`add_child`, line 9: `child.parent = weakref thread_shared this`), and line 14 makes one
-  with one owner; write `root = thread_shared Node()`"). `weakref thread_shared x` before any value
-  but `this` is `E0109` where `x`'s type already says `thread_shared` ("`log` is a `thread_shared
-  Log`, so a link to it is a `weakref thread_shared Log` without the word; write `w = weakref log`")
-  and `E7017` where it does not ("`names` was not created `thread_shared`, so no link to a shared
-  value can name it; write `w = weakref names`, or create it shared: `names = thread_shared
-  Names()`"). `weakref` before a new value (`weakref Player()`) is `E2119` ("the player would end at
-  the end of the line and the link would find nothing; keep it in a name first: write `p = Player()`
-  above, then `cam.target = weakref p`"); `sharedref mut x`, a changeable link other holders may
-  share (`[LT-46]`); and `ref x` and `ref mut x`, views (`[BRW-12]`). An owner made from another may
-  do no more than it: `shares mut x` needs `x` to be a name that may change the value (`E3023`: "`g2
-  = shares mut game` would change the `Game` through `game`, which only reads it (`game = shares
-  Game()`, line 1), and an owner made from it only reads too; write `g2 = shares game`, or, for two
-  owners that both change the game, write `game = shares mut Game()` instead of line 1"). A plain
-  parameter of a `shares mut` type only reads the caller's value (`[FN-1]`), so an owner made from
-  it only reads too; a function that hands on an owner that may change takes one: `fn setup(owns
-  game: shares mut Game)`, called `setup(shares mut game)`. In a lambda's capture list each word
-  means what it means before a value (`[CLO-2]`). In a list of names declared without types of their
-  own (a capture list, a loop's names, a pattern's names, a lambda's parameters written without
-  types) each word belongs to the one name after it, and a name with no word may not follow a name
-  with a word, so that no word can be read as covering the next name (`E0116`: "`ref mut` here
-  belongs to `pos` only; say what `vel` is: `for ref mut pos, ref vel in q:`, or `ref mut vel` to
-  change it too"). A `weakref x` whose target was made `using` an instance (its type says `using A`,
-  `[TYP-46]`) is a `weakref T using A`, so the kind of manager travels with the link, and a
-  `weakref` of a `Global` value is a plain `weakref T`.
+  only before a new value (`names = thread_shared Names()`), a value already `thread_shared` or
+  `this` in a method of a class it pins (below) (`E7017` otherwise: "`names` is `share_and_keep`'s
+  own object, which it may change; to share it between threads, create it shared: `names =
+  thread_shared Names()`"); `weakref x`, a link that does not keep it alive (`[WK-11]`), whose type
+  is read from the words on the path to `x`: `weakref thread_shared T` when the value `x` names is a
+  `thread_shared T` (an owner `log: thread_shared Log`, a parameter or a capture of that type, a
+  field of that type crossed last on the path, a name opened from a `weakref thread_shared Log`),
+  and `weakref T` otherwise (a class object with one owner, a `shares` or `shares mut` owner, a
+  `weakref T` link, a name opened from one, a view of any of these), so that `w = weakref log` is a
+  `weakref thread_shared Log` and `cam.target = weakref p` a `weakref Player`, with no second word.
+  **A `weakref T` link is made only to a value that no `thread_shared` value reaches**, so that only
+  this thread can end it and count its links: a value reached through a `thread_shared` value with
+  no `thread_shared` word on the value itself takes no `weakref T` (`E7015`: "`tree.items[0]` is
+  reached through `tree`, which threads share, so another thread may end the item, and `weakref
+  tree.items[0]` would count its links on this thread alone; share the items between threads: write
+  `items: Array[thread_shared Item]` in `Tree` (line 3), after which `weakref tree.items[0]` is a
+  `weakref thread_shared Item`"). In the package the path says it (for a view, what it points into,
+  `[LT-1]`); across a call it is the callee's summary (`[BLD-14]` item 9): a function that makes a
+  `weakref T` link to what a parameter names, `this` included, directly or through a call, records
+  it, and a call that gives that parameter a value reached through a `thread_shared` value is
+  `E7015` at the call, naming the chain ("`f` makes a link to the item `n` names (`w = weakref n`,
+  its line 2), counted on one thread, and `tree.items[0]` is reached through `tree`, which threads
+  share; share the items between threads: write `items: Array[thread_shared Item]` in `Tree` (line
+  3) and `fn f(n: thread_shared Item):`"). A call through a method another package may implement or
+  override, or a function-typed place it may fill (`[EFF-2a]`), is judged by the two routes of
+  `[WK-7]`: for a kind the caller gives through a `dyn`, interface or base-class parameter, the call
+  applies that kind's own record of the links it makes (item 9) as the function's (`[BLD-14]` item
+  11: a library's `visit(ref mut v: dyn Visitor, n: Item)` whose body is `v.see(n)`, given a
+  `Keeper` whose `see` does `this.last = weakref n` and `tree.items[0]` of a `thread_shared` tree,
+  is `E7015` at that call, naming `Keeper.see`'s line); for a kind a place holds, the line's record
+  names each argument reached through a `thread_shared` value, and a member that makes a `weakref T`
+  link of that parameter is `E7015` at the line that adds it (`[MOD-9a]`); a kind the judging
+  package cannot see counts as making the link. Inside a method `this` carries no word, so its link
+  says it: `weakref this`, and a `weakref` of anything reached through `this` with no
+  `thread_shared` word on the way (`weakref this.root`), is a `weakref` link to an object on one
+  thread and says that every object of the class is on one thread; `weakref thread_shared this`, the
+  one place `weakref thread_shared` is written before a value, is a `weakref thread_shared C` and
+  says, as `thread_shared this` does, that every object of the class is `thread_shared`. **A class's
+  kind is read from its own methods** and recorded in its interface (`[EFF-4]`, `[BLD-14]` item 8):
+  one-thread when a method of it makes a one-thread link of `this` (`weakref this`, `weakref this.f`
+  with no `thread_shared` word on the way, `sharedref mut this`; an owner of `this` on one thread,
+  `shares this` or `shares mut this`, is `E2122` in every method, `[RC-1]`); `thread_shared` when a
+  method of it writes `thread_shared this` or `weakref thread_shared this`; neither otherwise, and
+  such a class serves both kinds (`Log`, Annex A). A method pins the class that declares it and
+  every class derived from it, whose objects run it; a class pinned both ways, by its own methods or
+  with a base's, or pinned one-thread while it or a base promises `Send` (`[THR-8]`), is `E7015` at
+  the one-thread line ("`Node.add_child` (line 9) links its nodes on one thread (`weakref this`),
+  and `Node.share` (line 12) shares them between threads (`thread_shared this`); a class's objects
+  are one or the other: for nodes shared between threads write `child.parent = weakref thread_shared
+  this` on line 9, for one-thread nodes remove `share`"). A line that makes an object of the other
+  kind is refused there: `thread_shared Node()` for a one-thread class is `E7015` ("`Node` keeps
+  links to its nodes on one thread (`add_child`, line 7: `child.parent = weakref this`), and a
+  `thread_shared Node` may be reached from any thread; for nodes shared between threads write
+  `parent: weakref thread_shared Node = None` (line 4) and `child.parent = weakref thread_shared
+  this` (line 7), and make every node `thread_shared Node()`"), and `Node()` for a `thread_shared`
+  class is `E7017` ("every `Node` is shared between threads (`add_child`, line 9: `child.parent =
+  weakref thread_shared this`), and line 14 makes one with one owner; write `root = thread_shared
+  Node()`"). `weakref thread_shared x` before any value but `this` is `E0109` where `x`'s type
+  already says `thread_shared` ("`log` is a `thread_shared Log`, so a link to it is a `weakref
+  thread_shared Log` without the word; write `w = weakref log`") and `E7017` where it does not
+  ("`names` was not created `thread_shared`, so no link to a shared value can name it; write `w =
+  weakref names`, or create it shared: `names = thread_shared Names()`"). `weakref` before a new
+  value (`weakref Player()`) is `E2119` ("the player would end at the end of the line and the link
+  would find nothing; keep it in a name first: write `p = Player()` above, then `cam.target =
+  weakref p`"); `sharedref mut x`, a changeable link other holders may share (`[LT-46]`); and `ref
+  x` and `ref mut x`, views (`[BRW-12]`). An owner made from another may do no more than it: `shares
+  mut x` needs `x` to be a name that may change the value (`E3023`: "`g2 = shares mut game` would
+  change the `Game` through `game`, which only reads it (`game = shares Game()`, line 1), and an
+  owner made from it only reads too; write `g2 = shares game`, or, for two owners that both change
+  the game, write `game = shares mut Game()` instead of line 1"). A plain parameter of a `shares
+  mut` type only reads the caller's value (`[FN-1]`), so an owner made from it only reads too; a
+  function that hands on an owner that may change takes one: `fn setup(owns game: shares mut Game)`,
+  called `setup(shares mut game)`. In a lambda's capture list each word means what it means before a
+  value (`[CLO-2]`). In a list of names declared without types of their own (a capture list, a
+  loop's names, a pattern's names, a lambda's parameters written without types) each word belongs to
+  the one name after it, and a name with no word may not follow a name with a word, so that no word
+  can be read as covering the next name (`E0116`: "`ref mut` here belongs to `pos` only; say what
+  `vel` is: `for ref mut pos, ref vel in q:`, or `ref mut vel` to change it too"). A `weakref x`
+  whose target was made `using` an instance (its type says `using A`, `[TYP-46]`) is a `weakref T
+  using A`, so the kind of manager travels with the link, and a `weakref` of a `Global` value is a
+  plain `weakref T`.
 
 ## VII.3 Copy and `copy of`
 
@@ -552,7 +564,12 @@ view hands nothing over and makes no copy.
   or name the enemy again after it: `boss = ref mut enemies[0]`"), a call that reads elements and
   removes included. Growing the list is not a use of the element. A list reached through a link (a
   local or field holding a `shares`, `shares mut` or `sharedref mut` link) gives addresses,
-  `[BRW-17]`.
+  `[BRW-17]`. A list here is an `Array[T]`, whose `xs[i]` and `xs.get(i)` are its own built-in
+  indexing (`[STD-15]`, `[STD-17]`), and an `SoA[T]`'s element proxy is a position likewise
+  (`[SOA-6]`); a name for an element of any other container (a `Deque`, a `SmallArray`, a `Map`'s
+  value, a type of the program's own that implements `Index`) is made by a call of that container's
+  `index`, a view a call gives, and is an address (`[BRW-17]`), which every reshape of the container
+  ends, adding to it included.
 * `[BRW-17]` *(new in 0.9.15)* *(changed in 0.9.20)* **Addresses.** Every other view (a kept view; a
   view reached through a link; a view into a value's own contents: a `String`'s text, an `Array`
   field's elements, an enum's payload; every view a call gives, `[LT-1]`) ends at any change that
@@ -788,7 +805,7 @@ fn find_word(haystack: StrView, needle: StrView) -> Option[StrView] from haystac
   hand-over ("`st` was made in `level` (line 7), which ends when `start` returns, and the thread
   started on line 8 may outlive `start`; make it in the built-in manager, `st = thread_shared
   Stats()`, in a `static` manager whose `allocate` reads it (a pool that locks inside), or run the
-  thread as a task of a scope that ends before `level`: `with thread.scope() as scope:` and
+  thread as a task of a scope that ends before `level`: `with scope = thread.scope():` and
   `scope.spawn(owns fn() owns st: ...)` in place of line 8"). A value whose manager may have several
   instances keeps its instance's address, one word, so that its growth and its end go back to the
   instance it came from; that address is a kept `sharedref mut` link to the instance (`[LT-46]`) for
@@ -1171,3 +1188,4 @@ Each name says what it is: `players` in `total_health` reads the caller's list, 
 says that `ps` may be changed; `take(owns ps)` hands `ps` over, and using `ps` after it is `E3040`,
 labelled at the hand-over. Nothing in this program names a lifetime, and nothing in it is checked while
 it runs.
+
