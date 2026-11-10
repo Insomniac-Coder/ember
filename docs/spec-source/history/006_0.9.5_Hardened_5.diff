@@ -1,0 +1,271 @@
+--- Ember_v0.9.5_Hardened_4.md
++++ Ember_v0.9.5_Hardened_5.md
+@@ -1,8 +1,8 @@
+ # Ember Programming Language — Design & Implementation Specification
+ 
+-**Version:** 0.9.5_Hardened_4
+-**Status:** Frozen development target; implementation/conformance evidence is not claimed and normative repository adoption is blocked by the source-recovery item below
+-**Immediate predecessor:** 0.9.5_Hardened_3
++**Version:** 0.9.5_Hardened_5
++**Status:** Frozen development target; implementation/conformance evidence is not claimed and normative repository adoption still requires the recorded adoption gates
++**Immediate predecessor:** 0.9.5_Hardened_4
+ **Versioning model:** A hardening increments `Hardened_N` when it only adds implementation detail,
+ invariants, tooling requirements, or editorial clarification without changing accepted language
+ semantics. A language revision is required when the accepted-program set or another normative
+@@ -10,21 +10,21 @@
+ The 0.9.5 language revision
+ introduced inferred multi-region view structs; this revision is a subsequent hardening that
+ consolidates the inherited 0.8.5 contract, makes supersession explicit, repairs mechanical
+-extraction defects, and records evidence status honestly. No implementation or conformance result
+-is asserted merely because the specification requires one.
++extraction defects, recovers the owner-supplied Hardened 14 callback-composition rules, and records
++evidence status honestly. No implementation or conformance result is asserted merely because the
++specification requires one.
+ 
+ > **Authority boundary:** This frozen hardening records the owner-selected 0.9.5 development target, but
+ > `docs/spec-source/ember-spec.md` remains the repository's sole normative source until this
+ > target passes the adoption gates and is explicitly installed. The immutable received file
+ > is preserved under `docs/spec-source/as-received/`.
+ 
+-> **SOURCE RECOVERY REQUIRED — `[LT-8]`–`[LT-13]`:** the received H3 file says these
+-> `std.borrow.with_views2/3/4` rules were recovered, but it contains no definition of any of the six
+-> rules. Their exact text must be recovered from an authoritative predecessor or supplied by the
+-> owner before this target can be adopted as the normative repository specification. No implementation agent may infer the missing
+-> signatures, mutability combinations, callback-result constraints, allocation guarantees, or
+-> escape behavior. Because this H4 identity is frozen, that later source repair must be issued as
+-> `0.9.5_Hardened_5`. See `docs/OWNER-QUEUE.md` ODR-004.
++> **SOURCE RECOVERY COMPLETED — `[LT-8]`–`[LT-13]`:** on 2026-09-12 the owner supplied the
++> missing Hardened 14 definitions reproduced in §H14.3. The transport-only Markdown escaping and
++> broken code fences were normalized; the rule substance was not inferred. H4 remains frozen as the
++> audit record of the gap, and this H5 successor is the recovered development target. The supplied
++> shared-`Span` signatures do not by themselves define a `MutSpan` overload surface; that distinct
++> accepted-program question is recorded rather than guessed in `docs/OWNER-QUEUE.md` ODR-005.
+ 
+ # 0.9_Hardened_12 Owner-Decision Resolution Cycle (historical record)
+ 
+@@ -114,7 +114,7 @@
+ 
+ 7. `[WK-5]`–`[WK-10]` are specified as diagnostic-only ownership-cycle analysis and do not alter ARC semantics;
+ 8. `[EXC-8]`–`[EXC-14]` are specified and generated-code tests MUST demonstrate safe loop hoisting without weakening checked semantics;
+-9. `[LT-8]`–`[LT-13]` are source-recovery blockers for the `std.borrow.with_views2/3/4` helper surface: the supplied lineage describes their intent but contains none of their definitions; this gap does not restore the former single-region `@view struct` restriction, which `0.9.5_Hardened_1` independently supersedes;
++9. `[LT-8]`–`[LT-13]` define the recovered `std.borrow.with_views2/3/4` helper surface; their Hardened 14 single-region context does not restore the former single-region `@view struct` restriction, which `0.9.5_Hardened_1` independently supersedes;
+ 10. `[TST-14]`–`[TST-16]` and `[BUD-7]` are present in the conformance/performance plan;
+ 11. the current revision's immediate predecessor is `0.9_Hardened_13`.
+ 
+@@ -195,8 +195,8 @@
+ 
+ This cycle was a **hardening-only predecessor**. It did not add a tracing collector, change ARC ownership,
+ permit multiple independent regions inside a storable `@view struct`, or weaken class
+-exclusivity. The surviving record says its `std.borrow.with_views2/3/4` helpers remain valid and
+-useful, but their exact `[LT-8]`–`[LT-13]` definitions are missing and are not reconstructed here.
++exclusivity. Its `std.borrow.with_views2/3/4` helpers remain valid and useful, and their recovered
++`[LT-8]`–`[LT-13]` definitions are reproduced in §H14.3.
+ The multi-view composition limitation they worked around is independently superseded by the
+ source-language feature in `0.9.5_Hardened_1`. The ARC and exclusivity hardenings remain normative
+ unchanged.
+@@ -315,12 +315,63 @@
+ 
+ ## H14.3 Independent-lifetime view composition — predecessor mechanism
+ 
+-The supplied lineage intends `std.borrow.with_views2/3/4` to remain conforming library APIs and
+-describes them as a predecessor mechanism for independently-lived views. However, the definitions
+-of `[LT-8]`–`[LT-13]` are absent. Until those definitions are recovered, this section records intent
+-and provenance only; it cannot establish the helpers' exact API or semantics. `0.9.5_Hardened_1`
+-separately adds inferred multi-region `@view struct` semantics below. Once recovered, the helpers
+-MUST NOT be used as a reason to reject a conforming multi-region `@view struct`.
++The owner supplied the following Hardened 14 definitions on 2026-09-12. They remain normative
++language/library contracts in this revision.
++
++* `[LT-8]` **Canonical `with_views` helpers.** `std.borrow` MUST provide canonical,
++  allocation-free helpers for two, three and four borrowed views. The normative signatures are
++  structurally:
++
++  ```text
++  with_views2[A, B, R](a: Span[A], b: Span[B],
++                       f: fn(Span[A], Span[B]) -> R) -> R
++  with_views3[A, B, C, R](a: Span[A], b: Span[B], c: Span[C],
++                          f: fn(Span[A], Span[B], Span[C]) -> R) -> R
++  with_views4[A, B, C, D, R](a: Span[A], b: Span[B], c: Span[C], d: Span[D],
++                             f: fn(Span[A], Span[B], Span[C], Span[D]) -> R) -> R
++  ```
++
++  The exact public spelling MAY use the module's overload convention, but the arity and type
++  relationships MUST remain these. Their callback boundary uses `[LT-7]` late-bound regions, so
++  each supplied view receives its own invocation-local region. The callback MUST complete before
++  those regions end, and the helpers MUST return only values that do not contain those borrowed
++  regions. The helpers are ordinary library APIs; they are not compiler-special ownership types.
++
++* `[LT-9]` **Independent regions are preserved.** A `with_views` invocation MUST NOT force all
++  input views into the same region merely because they are passed to one callback. Each callback
++  argument retains the region of its corresponding source for the duration of the invocation.
++  This is an application of `[LT-7]`, not an extension of `[LT-2]`.
++
++* `[LT-10]` **No escape.** A callback passed to `with_views` MUST NOT return, store, capture into an
++  `owned fn`, or otherwise publish a value whose type contains one of the invocation-local view
++  regions. Such an escape is diagnosed with the existing view/region diagnostics. An owned result
++  is permitted.
++
++* `[LT-11]` **Mutability follows ordinary borrowing.** `with_views` does not grant overlapping
++  mutable access. Two mutable inputs whose sources may alias are rejected by the ordinary borrow
++  checker; structurally disjoint inputs remain expressible through `split_at_mut`, `columns_mut`,
++  `SoA`, or an established disjointness fact.
++
++* `[LT-12]` **No hidden allocation.** The canonical helpers MUST be `@noalloc` and MUST NOT allocate
++  a wrapper object, closure environment, heap box, or temporary container solely to represent the
++  view bundle. A conforming implementation MAY inline the helper completely.
++
++* `[LT-13]` **Persistent multi-owner aggregates remain explicit.** When a program genuinely needs
++  a long-lived aggregate containing independently-lived views, v1 continues to require one of the
++  existing designs: nested view structs, separate fields at the owning abstraction boundary,
++  indices/handles, or an owned copy. `with_views` is not a back door around `[TYP-15]` or `[LT-2]`.
++
++**0.9.5 interaction.** The recovered `[LT-13]` sentence records the pre-0.9.5 design boundary.
++`0.9.5_Hardened_1` subsequently and intentionally generalized `[LT-2]` to inferred multi-region
++`@view struct`s. That later language revision supersedes only the old requirement to encode every
++persistent independent-view aggregate through the listed alternatives. It does not weaken
++`[LT-10]`, `[TYP-15]`, `[TYP-15a]`, ordinary borrow checking, or the rule that `with_views` is an
++ordinary allocation-free library API rather than a compiler intrinsic.
++
++> **API-surface boundary:** the recovered structural signatures spell shared `Span` inputs, while
++> `[LT-11]` also states the safety rule for mutable inputs. This recovery does not invent unprovided
++> `MutSpan` overload signatures or combinations. Their exact public surface, if intended, remains
++> ODR-005; the ordinary borrow rule itself is not in doubt.
+ 
+ ## H14.4 Regression and implementation obligations
+ 
+@@ -1485,6 +1536,7 @@
+ | 0.9.5_Hardened_2 | Hardening | callable field-access summaries, whole-value versus projection validity, opaque-call conservatism, summary invalidation, and ECS-plan reconciliation |
+ | 0.9.5_Hardened_3 | Hardening | honest evidence status, inherited-contract consolidation, and explicit E3065 artifact requirements |
+ | 0.9.5_Hardened_4 | Hardening | repaired source authority, missing-rule accounting, rule-ID collisions, single-source extraction, examples, and inherited editorial corruption |
++| 0.9.5_Hardened_5 | Hardening/source recovery | restored owner-supplied `[LT-8]`–`[LT-13]` callback-composition rules, preserved their 0.9.5 supersession boundary, and exposed the unprovided mutable-overload surface as ODR-005 |
+ 
+ ---
+ 
+@@ -1494,7 +1546,7 @@
+ |---|---|---|
+ | AUD-014-01 | High | Accidental ARC cycles now receive package-level SCC analysis, actionable `L3001` diagnostics, runtime correlation, and `ember explain/inspect --cycle`; ownership semantics remain unchanged. |
+ | AUD-014-02 | High | Repeated dynamic class-exclusivity checks in provably stable loops are lowered to one preheader/postheader check with an internal MIR token; failed proofs retain the original checked path. |
+-| AUD-014-03 | High | The historical record says independent view lifetimes remained forbidden in storable `@view struct`s while canonical `std.borrow.with_views` helpers provided allocation-free late-bound callback composition; the exact helper definitions are the H4 source-recovery gap. |
++| AUD-014-03 | High | The historical record says independent view lifetimes remained forbidden in storable `@view struct`s while canonical `std.borrow.with_views` helpers provided allocation-free late-bound callback composition; the exact helper definitions were recovered in H5 from the owner-supplied Hardened 14 text. |
+ | AUD-014-04 | Medium | Added conformance and performance gates for cycle analysis, exclusivity hoisting, and multi-view composition. |
+ | AUD-014-05 | Medium | Corrected the revision lineage so `0.9_Hardened_14` names `0.9_Hardened_13` as its immediate predecessor. |
+ 
+@@ -1540,13 +1592,27 @@
+ | AUD-095-24 | Version-selection clarity | Removed the circular statement that `MOD-6a` adds `0.9.5` beyond a `MOD-6` set that already contains it; `0.9` and `0.9.5` remain distinct contracts in one exact supported set. |
+ 
+ **Amendment:** `HC-095-03` — non-semantic H4 consolidation, source-accounting, ID-integrity,
+-tooling-structure, and inherited editorial repairs. The only unresolved item is the exact normative
+-text of LT-8 through LT-13; it is not supplied by this amendment.
+-
+-### 0.9.5_Hardened_4 language-conformance condition
+-
+-`0.9.5_Hardened_4` MUST NOT be declared conformant unless the definitions of `[LT-8]`–`[LT-13]`
+-have first been recovered; `[LT-14]`–`[LT-43]` including `[LT-31a]`, `[MIR-REG-1]`,
++tooling-structure, and inherited editorial repairs. At H4 freeze, the only unresolved item was the
++exact normative text of LT-8 through LT-13; it was not supplied by that amendment and is recovered
++by H5 below.
++
++## 0.9.5_Hardened_5 Audit Record
++
++| ID | Classification | Resolution |
++|---|---|---|
++| AUD-095-25 | Source recovery | Restored the owner-supplied Hardened 14 definitions of `[LT-8]`–`[LT-13]`; normalized transport-only Markdown corruption without inferring rule substance. |
++| AUD-095-26 | Supersession integrity | Preserved the callback helpers and their no-escape/allocation/borrowing contract while making explicit that 0.9.5's later multi-region `[LT-2]` supersedes only Hardened 14's former aggregate-workaround boundary. |
++| AUD-095-27 | Owner boundary | Did not invent `MutSpan` overload signatures from `[LT-11]`; the exact mutable helper surface is isolated as ODR-005 because it can affect accepted programs. |
++| AUD-095-28 | Frozen lineage | Preserved H4 unchanged as the immediate predecessor and issued the source repair as H5 under the repository hardening protocol. |
++
++**Amendment:** `HC-095-04` — owner-supplied `[LT-8]`–`[LT-13]` source recovery, 0.9.5
++supersession reconciliation, and explicit mutable-helper API boundary. This is a hardening/source
++recovery amendment, not a language-semantic change.
++
++### 0.9.5_Hardened_5 language-conformance condition
++
++`0.9.5_Hardened_5` MUST NOT be declared conformant unless `[LT-8]`–`[LT-13]`,
++`[LT-14]`–`[LT-43]` including `[LT-31a]`, `[MIR-REG-1]`,
+ `[TYP-15]`, `[TYP-15a]`, `[VERIFY-3]`, `[TST-17]`–`[TST-19]`, and `[BUD-8]` all have
+ passing conformance evidence; the MIR verifier proves region-slot preservation and checks callable
+ access summaries against actual MIR field accesses; unknown calls conservatively require all
+@@ -1556,29 +1622,30 @@
+ parameters after equivalent optimisation.
+ 
+ 
+-This revision incorporates the available Hardened_14 hardening record except for the explicitly
+-missing `[LT-8]`–`[LT-13]` source, the accepted 0.9.5 multi-region-view language revision, and the
++This revision incorporates the Hardened_14 hardening record including the owner-supplied
++`[LT-8]`–`[LT-13]` source, the accepted 0.9.5 multi-region-view language revision, and the
+ callable-provenance hardening of Hardened_2. The current revision identity, consolidated-body
+ boundary, feature lineage, owner-decision guidance, standard-library ownership, hot-reload
+ transaction contract, and multi-region view safety contract are explicit.
+ 
+ ### Acceptance condition
+ 
+-`0.9.5_Hardened_4` MUST NOT be declared clean unless:
++`0.9.5_Hardened_5` MUST NOT be declared clean unless:
+ 1. the document has one current version identity;
+ 2. the consolidated Parts I–XXIII body and the current addenda form one normative source;
+-3. the active revision lineage ends at `0.9.5_Hardened_4`;
+-4. the current consistency checklist targets `0.9.5_Hardened_4`;
++3. the active revision lineage ends at `0.9.5_Hardened_5`;
++4. the current consistency checklist targets `0.9.5_Hardened_5`;
+ 5. `std.cell` is the sole defining owner of interior-mutability types;
+ 6. post-publication hot-reload failure has no unspecified recovery semantics;
+ 7. closed owner decisions are not presented as open implementation choices;
+ 8. multi-region view provenance is verified by the MIR verifier and all negative escape tests pass;
+ 9. no runtime region bookkeeping appears in C/LLVM output for conforming multi-region views.
+-10. the source-recovery blocker for `[LT-8]`–`[LT-13]` is closed without inferred semantics.
++10. the source-recovery record for `[LT-8]`–`[LT-13]` is traceable to the owner-supplied text and H4 remains unchanged;
++11. ODR-005 is resolved before conformance claims require a mutable `with_views` overload surface.
+ 
+ ---
+ 
+-## 0.9.5_Hardened_4 Evidence Status — No Implementation Claim
++## 0.9.5_Hardened_5 Evidence Status — No Implementation Claim
+ 
+ The current document is a specification artifact, not a report of repository state.
+ 
+@@ -1694,7 +1761,7 @@
+ 
+ ---
+ 
+-## 0.9.5_Hardened_4 consolidation record
++## 0.9.5_Hardened_5 consolidation record
+ 
+ The body below originated in `0.8.5_Hardened_1`, incorporates the accepted 0.9/0.9.5 changes in
+ place, and is normative within this target together with the current addenda above. Frozen predecessor files are
+@@ -1706,8 +1773,9 @@
+ 
+ If a rule ID, diagnostic, grammar production, attribute, ABI field, or standard-library API is
+ referenced but has no recoverable definition in the complete lineage, it is a `SPEC_GAP` and
+-blocks conformance. It MUST NOT be fabricated from another language's behavior. LT-8 through
+-LT-13 are the current source-recovery gap.
++blocks conformance. It MUST NOT be fabricated from another language's behavior. The former
++LT-8-through-LT-13 source gap is closed by the owner-supplied definitions in §H14.3; ODR-005
++separately records the mutable-overload surface that those definitions do not spell.
+ 
+ ## Non-normative heading index
+ 
+@@ -7395,12 +7463,12 @@
+ Everything between the consolidated-body markers is current normative text. Material after this
+ marker is specification tooling guidance for the current revision, not inherited 0.8.5 text.
+ 
+-# Appendix B — 0.9.5_Hardened_4 Consistency Checklist
++# Appendix B — 0.9.5_Hardened_5 Consistency Checklist
+ 
+ The following checks are mandatory CI checks for the consolidated specification itself:
+ 
+-1. Exactly one current version declaration exists and names `0.9.5_Hardened_4`.
+-2. The immediate predecessor is `0.9.5_Hardened_3`.
++1. Exactly one current version declaration exists and names `0.9.5_Hardened_5`.
++2. The immediate predecessor is `0.9.5_Hardened_4`.
+ 3. `[MOD-6]` and `[MOD-6a]` name the supported `0.9.5`, `0.9`, and 0.8.x source-language contracts explicitly, and `0.9` does not silently enable `0.9.5`.
+ 4. `EMBER_RUNTIME_ABI` is canonical; `EMBER_RT_ABI` can occur only in compatibility-alias documentation.
+ 5. Every `dyn Writer`/`dyn Reader` serialization signature uses a legal indirection.
+@@ -7410,7 +7478,7 @@
+ 9. The consolidated normative body has exactly one begin marker and one end marker.
+ 10. The current addenda and consolidated body form one normative source; frozen predecessors remain separate historical artifacts.
+ 11. Every rule ID has exactly one definition without a duplicated registry or position-based supersession algorithm.
+-12. `[LT-8]`–`[LT-13]` are present as recovered canonical library rules before this target is adopted and have regression coverage obligations.
++12. `[LT-8]`–`[LT-13]` are present as recovered canonical library rules, their source and 0.9.5 supersession boundary are explicit, and they have regression coverage obligations.
+ 13. `[LT-14]`–`[LT-43]` have both accept and reject conformance coverage where applicable.
+ 14. `[MIR-REG-1]` is in the active rule index.
+ 15. `[CLI-15]` retains the 0.6.3 CLI-surface completeness rule and `[CLI-17]` owns cycle inspection; `[RT-1]`–`[RT-4]` and `[DIA-18]` likewise retain their inherited meanings.

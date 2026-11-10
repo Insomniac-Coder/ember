@@ -1,0 +1,345 @@
+--- Ember_v0.9.6_Hardened_4.md
++++ Ember_v0.9.6_Hardened_5.md
+@@ -1,8 +1,8 @@
+ # Ember Programming Language — Design & Implementation Specification
+ 
+-**Version:** 0.9.6_Hardened_4
++**Version:** 0.9.6_Hardened_5
+ **Status:** Frozen development target; implementation/conformance evidence is not claimed and normative repository adoption still requires the recorded adoption gates
+-**Immediate predecessor:** 0.9.6_Hardened_3
++**Immediate predecessor:** 0.9.6_Hardened_4
+ **Versioning model:** A hardening increments `Hardened_N` when it only adds implementation detail,
+ invariants, tooling requirements, or editorial clarification without changing accepted language
+ semantics. A language revision is required when the accepted-program set or another normative
+@@ -13,10 +13,12 @@
+ analysis/verification boundaries, and one capability model. It also incorporates the owner-approved
+ clarification of `[ARN-10]` under v1's abort-only panic policy. The new `0.9.6` version selector is
+ additive; it does not silently change a module that selected an older contract. No implementation or
+-conformance result is asserted merely because the specification requires one. This H4 successor
++conformance result is asserted merely because the specification requires one. This H5 successor
+ incorporates the owner-approved ODR-011 completion of the previously named but under-specified
+ Arena-backed collection surface and the owner-approved ODR-012 completion of the `Hash`/`Hasher`
+-boundary on which the Map contracts already depended.
++boundary on which the Map contracts already depended, and materializes the owner-approved post-H4
++simplicity consolidation as binding reference-compiler, tooling, documentation, and development
++requirements without changing source-language semantics.
+ 
+ > **Authority boundary:** This frozen revision records the owner-selected 0.9.6 development target, but
+ > `docs/spec-source/ember-spec.md` remains the repository's sole normative source until this
+@@ -73,6 +75,51 @@
+ > dispatch or compiler-only interface coercion. `DefaultHasher` is a move-only concrete type
+ > implementing `Hasher`. An intentionally dynamic `dyn Hasher` API requires a separate explicit
+ > contract.
++
++> **POST-H4 SIMPLICITY CONSOLIDATION ADOPTED:** on 2026-09-13 the owner approved Revision 5 of the
++> second 0.9.6 Simplicity Consolidation RFC and clarified that approval was intended to produce the
++> next hardened target. H4 remains immutable. This H5 materializes the RFC's architecture/process
++> contract: one authority per semantic invariant, derived-only caches and aggregates, conservative
++> treatment of unknown facts, reuse and inference before new public concepts, semantic diagnostics,
++> explicit complexity accounting, generated view-contract documentation where possible, and strict
++> separation of specification, implementation, owner-decision, and conformance evidence. It preserves
++> every H4 semantic distinction and introduces no new public abstraction, runtime metadata, accepted
++> program, or rejected program.
++
++# 0.9.6_Hardened_5 Simplicity-Consolidation Adoption Record
++
++**Version treatment:** owner-approved architecture, tooling, documentation, and development-contract
++hardening. **Amendment class:** REFERENCE-IMPLEMENTATION, TOOLCHAIN, DOCUMENTATION, and PROCESS;
++SEMANTIC CHANGE: NONE. H4 remains the immutable predecessor. The received RFC is preserved
++byte-for-byte as
++`docs/spec-source/as-received/Ember_0.9.6_Simplicity_RFC_Revision_5.md` (SHA-256
++`0AB0F9C2F4F52E10492A0CD94897BBD9C8B47C08D86E7246EA2FA29F18007525`).
++
++**Owner clarification.** The RFC's original statements that adoption alone would not create H5 were
++procedural safeguards against an unreviewed document silently becoming normative. The owner has now
++explicitly approved materialization as H5. That later ruling supersedes only the RFC's no-version-bump
++statements; it does not convert the RFC into an implementation-status ledger or authorize any source
++semantic change.
++
++**Adopted contract.** Ember keeps the smallest practical programmer-visible vocabulary while allowing
++sophisticated compiler internals. Each semantic invariant has one authoritative representation.
++Indexes, caches, summaries, and `CallInfo`-style aggregates are derived, invalidated with their source
++facts, and never independently trusted. Absence of proof grants no capability. Existing generic,
++interface, parameter-mode, metadata, and concrete APIs are considered before a new public abstraction;
++inference is attempted before new annotations. Initialization retains `Uninit | Maybe | Init` and all
++required finer-grained facts. `AccessContract`, `EffectSet`, provenance, retention, storage identity,
++permission, representation, ownership, checking mechanism, unsafe authority, synchronization,
++validity, escape constraints, and initialization remain independent where H4 requires them.
++
++**Surface result.** This hardening adds no `Len` or `Capacity` interface, no parallel safety system,
++no new runtime capability representation, and no automatic dynamic-borrow fallback. Existing
++collections reuse existing interfaces only when their semantics match. Programmer documentation and
++primary diagnostics explain source-level ownership, permission, provenance, escape, effects, and
++allocation rather than exposing compiler bookkeeping as a second language vocabulary.
++
++**Evidence boundary.** H5 is a target contract, not evidence that the compiler has completed the
++consolidation. Existing behavior, specified-but-unimplemented behavior, and conformance evidence remain
++separate ledgers. Adoption of H5 as `docs/spec-source/ember-spec.md` still requires all recorded gates.
+ 
+ # 0.9.6_Hardened_4 Static Hasher Boundary Completion Record
+ 
+@@ -1148,6 +1195,20 @@
+ `OwnershipGraph`, `AccessContract`, `InitializationState`, `LayoutDescriptor`, and `EffectSet`.
+ Their concrete Rust representation is implementation-defined, but their semantic boundaries are not.
+ 
++Each semantic invariant MUST have one authoritative representation. Derived indexes, caches,
++summaries, serialized metadata, and backend-specific forms MAY exist only when they are mechanically
++derived from that authority, checked for consistency, and invalidated whenever an input authority
++changes. A stale derived fact MUST NOT be used to accept a program. A call-level aggregate such as
++`CallInfo { access_contract, effect_set, provenance, retention }` is therefore permitted only as a
++derived cache: it MUST NOT replace, redefine, or become independently authoritative over any member.
++
++For explanation and implementation organization, the facts MAY be grouped as provenance, storage,
++authority, validity, initialization, and effects. Grouping MUST NOT collapse independent facts.
++In particular, `AccessContract` and `EffectSet` remain separate; provenance and storage identity remain
++separate; and `InitializationState` retains `Uninit | Maybe | Init` plus field, element, range, and
++other refinements required by dataflow. Unknown initialization is `Maybe` or not proven initialized;
++it is never silently treated as definitely uninitialized.
++
+ A `BorrowCapability` conceptually contains:
+ 
+ ```text
+@@ -1187,6 +1248,21 @@
+ extend a forbidden borrow; and H10's dynamic class-exclusivity mechanism MUST NOT turn an ordinary
+ borrow conflict into a runtime-checked acceptance.
+ 
++Across every domain, absence of proof grants no capability. Unknown borrow overlap supplies no
++disjointness or `noalias` fact; unknown callable access covers all relevant fields; unknown foreign
++retention covers all relevant regions; a soundly bounded dynamic target uses the union of its targets
++and an unbounded target is conservative; and an unsafe validity claim supplies no automatic proof.
++This least-permissive policy MUST preserve compile-time safety guarantees rather than replacing them
++with an unrequested runtime best effort.
++
++Before adding a public type, interface, syntax form, annotation, or feature-specific safety subsystem,
++the design and implementation MUST determine whether an existing generic parameter, interface,
++parameter mode, concrete API, compiler fact, or existing explicit proof path expresses the requirement.
++Inference and existing metadata MUST be attempted before new source syntax. A new abstraction is
++permitted only when the existing mechanisms cannot express the requirement without loss of safety,
++clarity, ABI guarantees, or required performance. The reference compiler MUST NOT create a parallel
++safety authority merely because two feature paths currently use different code.
++
+ These canonical fields are compiler facts, not a new public type or ordinary-diagnostic vocabulary.
+ The compiler MUST NOT expose a public helper merely because internal analysis paths differ. Normal
+ diagnostics name source values, places, and semantic causes; existing expert inspection tooling MAY
+@@ -1204,6 +1280,12 @@
+ extracted as a current definition. Rule-index, grammar, version-selection, owner-decision, and
+ conformance tools consume this one source directly; no duplicated registry or position-based
+ supersession algorithm is a second source of truth.
++
++The normative specification, implementation ledger, owner-decision ledger, and conformance evidence
++are separate artifacts with separate jobs. None may silently override another: the specification
++defines required behavior, the implementation ledger records current support, the owner ledger records
++authority for changes, and executable conformance records evidence. An implementation document SHOULD
++map an existing rule to architecture rather than restating that rule as a second semantic contract.
+ 
+ ## [IMP-9] Canonical standard-library definition ownership
+ 
+@@ -1872,6 +1954,7 @@
+ | 0.9.6_Hardened_2 | Owner-approved semantic completion | closed ODR-011 with fixed-capacity Arena-backed collections, `CapacityError.Full`, named iterator view types, exact provenance/drop/failure behavior, and `[TST-24]` |
+ | 0.9.6_Hardened_3 | Owner-approved standard-library API completion | closed ODR-012 by defining the `Hash`/`Hasher` protocol, `DefaultHasher`, Eq/hash coherence, Map key bounds, and the read-only safe key-access boundary without freezing a mixing algorithm |
+ | 0.9.6_Hardened_4 | Owner-approved callable/interface completion | closed ODR-013 by making `Hash.hash` statically generic over `H: Hasher`, confirming `DefaultHasher implements Hasher`, and excluding implicit dynamic/interface coercion |
++| 0.9.6_Hardened_5 | Owner-approved architecture/process hardening | materialized the post-H4 simplicity RFC through derived-only compiler aggregates, conservative unknown handling, reuse/inference gates, semantic diagnostics, complexity accounting, generated view-contract documentation, and separate authority/evidence ledgers without changing source semantics |
+ 
+ ---
+ 
+@@ -2075,10 +2158,17 @@
+ 5. Missing implementation artifacts are reported as gaps; the specification does not simulate their
+    existence.
+ 
+-## 0.9.6_Hardened_4 Audit Record
++## 0.9.6_Hardened_5 Audit Record
+ 
+ | ID | Classification | Resolution |
+ |---|---|---|
++| AUD-096-22 | Owner-approved architecture/process hardening | Materialized the approved post-H4 Simplicity Consolidation RFC as H5 while preserving H4 unchanged. |
++| AUD-096-23 | Single semantic authority | Required indexes, caches, summaries, serialized metadata, backend forms, and `CallInfo`-style aggregates to remain derived, checked, and invalidated with their authoritative inputs. |
++| AUD-096-24 | Conservative uncertainty | Unified unknown-boundary handling under “absence of proof grants no capability” without replacing any domain's existing H4 rule. |
++| AUD-096-25 | Surface restraint | Required reuse and inference review before new syntax, annotations, public abstractions, or feature-specific safety systems; added no `Len`/`Capacity` interface. |
++| AUD-096-26 | Documentation and diagnostics | Required source-semantic primary diagnostics and derivable view-contract documentation while keeping compiler bookkeeping expert-only. |
++| AUD-096-27 | Process and evidence | Added explicit complexity accounting and preserved separate normative, implementation, owner-decision, and conformance ledgers. |
++| AUD-096-28 | Semantic preservation | Preserved H4's accepted/rejected sets, observable behavior, ABI, diagnostics identities, safety guarantees, initialization lattice, and independent semantic axes. |
+ | AUD-096-19 | Owner-approved callable completion | Closed ODR-013 with `fn hash[H: Hasher](self, mut h: H)`, ordinary inference/monomorphization, and no mandatory dynamic dispatch. |
+ | AUD-096-20 | Interface consistency | Confirmed `DefaultHasher implements Hasher`; rejected bare-interface concrete parameters and compiler-only coercions under `[TYP-22]`. |
+ | AUD-096-21 | Source normalization | Removed transport angle brackets around the ordinary parameter list while preserving the owner-selected generic bound exactly. |
+@@ -2104,13 +2194,14 @@
+ **Amendments:** `HC-096-01` records the owner-approved simplicity consolidation and
+ `[ARN-10]` clarification in H1; `HC-096-02` records the owner-approved ODR-011
+ Arena-backed collection completion in H2; and `HC-096-03` records the owner-approved ODR-012
+-hashing-contract completion in H3; and `HC-096-04` records the owner-approved ODR-013
+-static Hasher boundary in H4. ADR-030 through ADR-033 preserve the four decisions.
+-H1 through H3 remain unchanged; H3 is H4's immediate predecessor.
+-
+-### 0.9.6_Hardened_4 language-conformance condition
+-
+-`0.9.6_Hardened_4` MUST NOT be declared conformant until all H1, H2, and H3 conditions remain satisfied and
++hashing-contract completion in H3; `HC-096-04` records the owner-approved ODR-013
++static Hasher boundary in H4; and `HC-096-05` records materialization of the approved
++post-H4 simplicity RFC in H5. ADR-030 through ADR-034 preserve the five decisions.
++H1 through H4 remain unchanged; H4 is H5's immediate predecessor.
++
++### 0.9.6_Hardened_5 language-conformance condition
++
++`0.9.6_Hardened_5` MUST NOT be declared conformant until all H1 through H4 conditions remain satisfied and
+ repository evidence additionally proves that:
+ 
+ 1. equivalent borrow relationships represented by `Span`, `MutSpan`, `ref`, `ref mut`, `@view`
+@@ -2144,23 +2235,37 @@
+ 12. ODR-013's statically generic `H: Hasher` representation is reflected consistently in signatures,
+     inference, monomorphization, implementation, and conformance without bare-interface or
+     compiler-only dynamic coercion.
+-
+-### 0.9.6_Hardened_4 acceptance condition
+-
+-H4 MUST NOT replace `docs/spec-source/ember-spec.md` unless it has one version identity and predecessor,
++13. every `CallInfo`-style aggregate, cache, index, summary, and serialized compiler artifact is
++    derived from authoritative semantic facts, invalidated with them, and rejected when stale;
++14. `AccessContract`, `EffectSet`, provenance, retention, storage identity, permission,
++    representation, ownership, checking, unsafe authority, synchronization, validity, escape, and
++    initialization remain independent wherever H4 distinguishes them;
++15. initialization analysis retains `Uninit | Maybe | Init` plus required field/element/range facts,
++    and no unknown fact becomes a capability or definite-uninitialized proof;
++16. same-Arena distinct allocations retain distinct storage identities, unknown overlap never emits
++    `noalias`, and unknown callable/foreign/dynamic boundaries use their domain's conservative result;
++17. no `Len`/`Capacity` interface, parallel safety system, automatic dynamic-borrow fallback, or
++    compiler-only runtime metadata is introduced by this hardening;
++18. public feature proposals carry the required reuse, inference, complexity, and performance review;
++19. primary diagnostics and generated view API documentation are derived from authoritative facts and
++    expose source semantics without becoming duplicate semantic authorities.
++
++### 0.9.6_Hardened_5 acceptance condition
++
++H5 MUST NOT replace `docs/spec-source/ember-spec.md` unless it has one version identity and predecessor,
+ the complete alternate-spec rule/index/grammar/diagnostic audit has no unintended regression, the
+ implementation and conformance matrices separate `SPECIFIED` from evidence-backed states, all required
+ compiler/runtime/test work passes, generated-code inspection proves runtime erasure and ordering where
+-source observation is insufficient, and every difference from H3 is classified and traceable to the
+-owner-approved ODR-013 ruling.
+-
+-## 0.9.6_Hardened_4 Evidence Status — No Implementation Claim
+-
+-This H4 file is a frozen development target. The adopted repository specification remains
+-`docs/spec-source/ember-spec.md` (`0.8.5_Hardened_1`). H4's architecture, 0.9.5 multi-region semantics,
++source observation is insufficient, and every difference from H4 is classified and traceable to the
++owner-approved post-H4 simplicity ruling and ADR-034.
++
++## 0.9.6_Hardened_5 Evidence Status — No Implementation Claim
++
++This H5 file is a frozen development target. The adopted repository specification remains
++`docs/spec-source/ember-spec.md` (`0.8.5_Hardened_1`). H5's architecture, 0.9.5 multi-region semantics,
+ Arena-backed collections, hashing contract, and later phases are `SPECIFIED` unless the repository's
+ implementation matrix and executable evidence say otherwise. Passing the six gates against the adopted
+-source does not constitute H4 adoption or H4 conformance.
++source does not constitute H5 adoption or H5 conformance.
+ 
+ # 1.0 Readiness Gate
+ 
+@@ -2263,12 +2368,13 @@
+ 
+ ---
+ 
+-## 0.9.6_Hardened_4 consolidation record
++## 0.9.6_Hardened_5 consolidation record
+ 
+ The body below originated in `0.8.5_Hardened_1`, incorporates the accepted 0.9/0.9.5 changes in
+ place, carries the owner-selected 0.9.6 reference-compiler consolidation, and
+ completes ODR-011's Arena-backed collection contract, ODR-012's hashing
+-protocol/API contract, and ODR-013's static Hasher call boundary. It is normative within
++protocol/API contract, ODR-013's static Hasher call boundary, and the owner-approved post-H4
++simplicity architecture/process contract. It is normative within
+ this target together with the current addenda above. Frozen predecessor files are
+ the historical diff bases. Existing rule IDs retain their meanings; newly added rules use unused
+ IDs. In particular, the 0.8.5 `CLI-15`, `RT-1`–`RT-4`, and `DIA-18` definitions remain intact;
+@@ -2312,12 +2418,12 @@
+ 
+ **Consolidated normative body:** the still-valid 0.8.5 language contract is incorporated below,
+ with owner-approved 0.9/0.9.5 replacements applied in place. This is current normative text inside
+-the H4 target, not a verbatim historical snapshot. The front-matter authority boundary controls
++the H5 target, not a verbatim historical snapshot. The front-matter authority boundary controls
+ repository adoption, and the exact frozen 0.8.5 source remains a separate repository file.
+ 
+ **Historical lineage:** 0.8.5 is additive over 0.8.4, which is additive over 0.8.3. S1 made
+ 0.8.4; owner-approved S2, S3, and S4 made 0.8.5. This is ancestry, not the immediate predecessor
+-of the current H4 document, which is identified in the front matter.
++of the current H5 document, which is identified in the front matter.
+ 
+ **Compatibility:** 0.9.5 retains the supported 0.9 and 0.8.x source contracts except where a
+ language revision explicitly selected new semantics. Version selection is governed by `[MOD-6]`
+@@ -7203,7 +7309,7 @@
+ ```
+ 
+ * `[DIA-1]` Every diagnostic has: code, one primary span, zero or more secondary spans with labels, optional `help` (with a machine-applicable fix-it when possible) and `note`. `--json` emits the same structure.
+-* `[DIA-2]` Message style: lowercase first letter, no trailing period, name the thing (`` `ps` ``), say what is wrong and, in `help`, what to do. Never say "you"; never blame the user.
++* `[DIA-2]` Message style: lowercase first letter, no trailing period, name the thing (`` `ps` ``), say what is wrong and, in `help`, what to do. Never say "you"; never blame the user. The primary message MUST explain the source-level semantic failure. Compiler-internal region numbers, capability identities, storage identities, and MIR facts MAY appear as secondary expert evidence, but MUST NOT replace the source value, place, lifetime, ownership, permission, or contract relationship that failed.
+ * `[DIA-3]` Borrow/ownership diagnostics MUST include the "later used here" label (`[BRW-2]` explanation) and a concrete fix drawn from the catalogue in §XX.6.1 (`[DIA-7]`).
+ * `[DIA-4]` Contract diagnostics MUST print the full call chain (`[EFF-5]`).
+ * `[DIA-5]` FFI diagnostics name the header and the C declaration (`vkCreateBuffer in vulkan_core.h:1234`).
+@@ -7445,8 +7551,8 @@
+ ---
+ 
+ * `[DOC-1]` **Error pages ship with their errors.** Each phase's exit criteria include `docs/errors/EXXXX.md` for every code that phase introduces. A page contains: a minimal program that triggers the error; the rendered diagnostic; one paragraph on **why the rule exists** (not a restatement of the rule); and the fix as compilable code. Every fenced `ember` block under `docs/errors/` is built by `ember test --doc`: the failing example MUST fail with that exact code and the fixed example MUST compile. `[TST-4]`'s index generator fails CI for a code with no page.
+-* `[DOC-2]` **The user guide is a 1.0 artefact**, not v1.1. `docs/book/` MUST exist, MUST be the landing page with the specification linked from it as the reference, and every sample in it MUST be compiled and run by `ember test --doc`. Its "getting started" chapter is identical to milestone M0 and is tested against it; it MUST include a "coming from Python" chapter carrying the three-column table of silent and diagnosed differences (`/`, `%`, the `f32` literal default, `if xs:`, `is None`, chained comparison, `xs[-1]`, `let`, `with … as`, multi-statement closures) **and the short list of things that behave exactly as in Python**, because the absence of a row is not reassurance.
+-* `[DOC-3]` `ember doc` moves from Phase 8 to **Phase 4**, whose effects and derives it depends on; from that point each phase documents its own surface as it lands.
++* `[DOC-2]` **The user guide is a 1.0 artefact**, not v1.1. `docs/book/` MUST exist, MUST be the landing page with the specification linked from it as the reference, and every sample in it MUST be compiled and run by `ember test --doc`. Its "getting started" chapter is identical to milestone M0 and is tested against it; it MUST include a "coming from Python" chapter carrying the three-column table of silent and diagnosed differences (`/`, `%`, the `f32` literal default, `if xs:`, `is None`, chained comparison, `xs[-1]`, `let`, `with … as`, multi-statement closures) **and the short list of things that behave exactly as in Python**, because the absence of a row is not reassurance. Its learning path SHOULD introduce values, functions, ownership, borrowing/exclusivity, structs, classes/ARC, containers, interfaces/generics, views, and only then advanced memory, FFI, and unsafe. Compiler-only region vectors, capability identities, storage identities, `CallInfo`, and initialization lattices are not prerequisite source-language vocabulary.
++* `[DOC-3]` `ember doc` moves from Phase 8 to **Phase 4**, whose effects and derives it depends on; from that point each phase documents its own surface as it lands. Every view-producing or view-consuming API SHOULD present a consistent generated contract covering ownership, permission, source, provenance, escape, effects, and allocation. Tooling SHOULD derive that presentation from the authoritative signature and contract; it MUST NOT maintain a hand-written semantic duplicate.
+ * `[DOC-4]` Guide, error pages and specification are published together each release.
+ 
+ ## XX.10 Editor and language-server architecture
+@@ -7540,6 +7646,12 @@
+   principled basis on which Ember has no macros, no specialisation, no
+   higher-kinded types and no unbounded trait-solver search — each is a known
+   multi-second tax in a language that has it.
++  The proposal MUST also declare public concepts, syntax, public APIs, compiler
++  facts, compiler passes, and runtime mechanisms added, plus existing mechanisms
++  reused, and classify itself as `SIMPLIFIES`, `NEUTRAL`, or
++  `ADDS COMPLEXITY — JUSTIFIED`. The last classification MUST explain why existing
++  generic, interface, parameter-mode, metadata, inference, proof, and concrete API
++  mechanisms cannot express the requirement safely and clearly.
+ * `[BUD-5a]` **The rule applies to the features already accepted.** Part XVIII's
+   hot reload costs `[HR-9]`'s ≤ 3% run-time indirection and no measurable B3 time,
+   because thunk emission is per function and the reload manifest is written from
+@@ -8258,13 +8370,13 @@
+ Everything between the consolidated-body markers is current normative text. Material after this
+ marker is specification tooling guidance for the current revision, not inherited 0.8.5 text.
+ 
+-# Appendix B — 0.9.6_Hardened_4 Consistency Checklist
++# Appendix B — 0.9.6_Hardened_5 Consistency Checklist
+ 
+ The following checks are mandatory CI checks for the consolidated specification itself:
+ 
+-1. Exactly one current version declaration exists and names `0.9.6_Hardened_4`.
+-2. The immediate predecessor is frozen `0.9.6_Hardened_3`, which remains byte-for-byte unchanged.
+-3. `[MOD-6]` and `[MOD-6a]` name the supported `0.9.6`, `0.9.5`, `0.9`, and 0.8.x source-language contracts explicitly; `0.9` does not silently enable later semantics, and H4 changes H3 only through the owner-approved ODR-013 completion.
++1. Exactly one current version declaration exists and names `0.9.6_Hardened_5`.
++2. The immediate predecessor is frozen `0.9.6_Hardened_4`, which remains byte-for-byte unchanged.
++3. `[MOD-6]` and `[MOD-6a]` name the supported `0.9.6`, `0.9.5`, `0.9`, and 0.8.x source-language contracts explicitly; `0.9` does not silently enable later semantics, and H5 changes H4 only through the owner-approved post-H4 simplicity architecture/process contract.
+ 4. `EMBER_RUNTIME_ABI` is canonical; `EMBER_RT_ABI` can occur only in compatibility-alias documentation.
+ 5. Every `dyn Writer`/`dyn Reader` serialization signature uses a legal indirection.
+ 6. Manifest examples use current versions unless explicitly marked historical.
+@@ -8315,5 +8427,27 @@
+     `fn hash[H: Hasher](self, mut h: H)` contract. `DefaultHasher implements Hasher`,
+     ordinary inference and monomorphization apply, and no bare-interface or
+     compiler-only dynamic conversion is inferred.
++42. The received post-H4 Revision 5 RFC remains byte-for-byte preserved at its recorded SHA-256,
++    ADR-034 records the owner's approval and later H5-materialization clarification, and H4 remains
++    byte-for-byte unchanged.
++43. One authoritative representation exists per semantic invariant; all indexes, caches, summaries,
++    serialization forms, backend forms, and `CallInfo`-style aggregates are derived and invalidated.
++44. `AccessContract`, `EffectSet`, initialization, provenance, retention, storage identity, access,
++    representation, ownership, checking, unsafe authority, synchronization, validity, and escape are
++    not collapsed by implementation grouping.
++45. Initialization retains `Uninit | Maybe | Init` plus required refinements, and absence of proof
++    grants no capability in every unknown-boundary domain.
++46. No `Len`/`Capacity` interface, duplicate collection abstraction, parallel safety system,
++    automatic dynamic-borrow fallback, or runtime capability metadata is introduced by H5.
++47. New feature work documents public/compiler/runtime complexity and reuses inference, generics,
++    interfaces, parameter modes, concrete APIs, metadata, and existing proof paths before adding a
++    programmer-visible concept.
++48. Primary diagnostics describe source semantics; compiler bookkeeping is secondary expert evidence.
++    View API documentation is generated from authoritative signatures/contracts where practical and
++    never becomes a hand-maintained semantic duplicate.
++49. Specification, implementation, owner-decision, and conformance ledgers remain separate, and no
++    implementation status is inferred merely from H5's requirements.
++50. The H4-to-H5 classified diff contains no source-language semantic, accepted-program,
++    rejected-program, observable-behavior, ABI, safety, effect, reload, or diagnostic-identity change.
+ 
+ A failure of any checklist item is a specification CI failure, not a compiler implementation choice.

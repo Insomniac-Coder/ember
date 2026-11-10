@@ -1,0 +1,89 @@
+--- Ember_v0.9.9_Hardened_5.md
++++ Ember_v0.9.9_Hardened_6.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_5
+-**Supersedes:** 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_6
++**Supersedes:** 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -1222,8 +1222,11 @@
+   is the type expected at the literal itself, and an unannotated declaration supplies none, so
+   `total = 0` declares an `int` whatever the later uses (ODR-022); a later use that needs another
+   type is `E2020`, whose help names the declaration and the annotation (`total: i32 = 0`). Expected
+-  types flow into literals, lambdas, `None`, `Ok(…)`, `Err(…)` and generic calls. A lambda with
+-  unannotated parameters and no expected callable type is `E2061`. Within one expression, untyped
++  types flow into literals, lambdas, `None`, `Ok(…)`, `Err(…)` and generic calls; a branch of a
++  conditional expression that cannot type itself (`None`, `[]`) takes the other branch's type. A
++  lambda with unannotated parameters and no expected callable type is `E2061`. An unannotated lambda
++  parameter also takes `owned` from the expected callable type (ODR-025); `mut` is never inferred, so
++  a lambda that writes its parameter says `mut` (`E2228`, shape B15). Within one expression, untyped
+   literals are resolved last (`1 + x` takes `x`'s type).
+ 
+ ## IV.11 Method resolution and calls
+@@ -1768,7 +1771,7 @@
+   collection, is callable: the call moves the value out of its place (the place becomes empty, and a
+   collection element is removed by the calling API, e.g. `jobs.pop_front()`).
+ * `[CLO-7]` *(changed in 0.9.9)* Standard-library APIs that store or send a callback (`thread.spawn`,
+-  `jobs.submit`, `Option.map` returning a value computed later, event registries) take it as a
++  `jobs.submit`, event registries) take it as a
+   consumed callable parameter (`owned f: fn(A) -> R`) or `once fn`, so a lambda written at the call
+   site captures by move (`[CLO-15]`).
+ * `[CLO-15]` *(new in 0.9.9)* A lambda written directly as the argument of a consumed callable
+@@ -3381,10 +3384,23 @@
+   same type the conversion is a move with no call. `?` in a function returning neither is `E2180`.
+   `?` on an `Option` in a function returning `Result`, or on a `Result` in a function returning
+   `Option`, is `E2181`, whose fix-its are `.ok_or(err)?` and `.ok()?`.
+-* `[ERR-4]` `Option` and `Result` provide `is_some`/`is_none`, `is_ok`/`is_err`, `unwrap`, `expect`,
+-  `unwrap_or`, `unwrap_or_else`, `unwrap_or_default`, `map`, `map_err`, `and_then`, `or_else`, `ok`,
+-  `err`, `ok_or`, `ok_or_else`, `filter`, `take`, `replace`, `as_ref`, `as_mut`, `iter`, and
+-  `context` (`[ERR-10]`). `unwrap` and `expect` panic with the error's `Display` text.
++* `[ERR-4]` *(changed in 0.9.9)* `Option` and `Result` provide `is_some`/`is_none`, `is_ok`/`is_err`,
++  `unwrap`, `expect`, `unwrap_or`, `unwrap_or_else`, `unwrap_or_default`, `map`, `map_err`,
++  `and_then`, `or_else`, `ok`, `err`, `ok_or`, `ok_or_else`, `filter`, `take`, `replace`, `as_ref`,
++  `as_mut`, `iter`, and `context` (`[ERR-10]`). `unwrap` and `expect` panic with the error's `Display`
++  text. The methods that take a function are eager: each consumes its receiver and calls the function
++  at most once, before it returns, moving the payload into it except for `filter` (ODR-025):
++  * `Option[T]`: `map[U](owned self, f: once fn(owned T) -> U) -> Option[U]`,
++    `and_then[U](owned self, f: once fn(owned T) -> Option[U]) -> Option[U]`,
++    `filter(owned self, f: once fn(T) -> bool) -> Option[T]`,
++    `or_else(owned self, f: once fn() -> Option[T]) -> Option[T]`,
++    `unwrap_or_else(owned self, f: once fn() -> T) -> T` and
++    `ok_or_else[E](owned self, f: once fn() -> E) -> Result[T, E]`;
++  * `Result[T, E]`: `map[U](owned self, f: once fn(owned T) -> U) -> Result[U, E]`,
++    `map_err[F](owned self, f: once fn(owned E) -> F) -> Result[T, F]`,
++    `and_then[U](owned self, f: once fn(owned T) -> Result[U, E]) -> Result[U, E]`,
++    `or_else[F](owned self, f: once fn(owned E) -> Result[T, F]) -> Result[T, F]` and
++    `unwrap_or_else(owned self, f: once fn(owned E) -> T) -> T`.
+ * `[ERR-5]` `Result` is `@must_use`: discarding one is `W2190` (an error under `-D warnings`). A value
+   is used when it is bound, returned, passed, matched, or has `?` or a method applied.
+ * `[ERR-7]` **Identity conversion.** The prelude provides `From[T]` for every `T` (`from(v) = v`), so
+@@ -6305,7 +6321,7 @@
+ 
+ Each ambiguity found while implementing 0.9.9 is an owner decision request (`docs/OWNER-QUEUE.md`),
+ ruled under the owner's delegation and recorded here. Hardened_3 carries ODR-021 and ODR-022;
+-Hardened_4 adds ODR-023; Hardened_5 adds ODR-024.
++Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6313,13 +6329,16 @@
+ | ODR-022 | an untyped literal is never left open: `total = 0` declares an `int` whatever the later uses | `[TYP-23]` |
+ | ODR-023 | a function returning a value that can reach the end of its body is `E2182` (Hardened_4) | `[FN-10]`, §XVII.9 |
+ | ODR-024 | a borrowed or `mut` parameter whose type is not `Copy` is a source parameter a returned view may borrow, and a borrowed parameter is passed by address except a view or a `Copy` value holding no `Cell` (Hardened_5) | `[LT-1]`, `[LT-1a]`, `[LT-1b]`, `[LT-7]`, `[LT-44]`, `[FN-1]`, `[FN-3]`, `[FN-6]`, `[BRW-8]`, `[CORO-6]`, §VIII.3, §XVII.6 B7, §XVII.9, Appendix F |
++| ODR-025 | `[ERR-4]`'s methods that take a function are eager, move the payload in (`filter` borrows it) and take `once fn`; an unannotated lambda parameter takes `owned` from the expected callable type, never `mut` (Hardened_6) | `[ERR-4]`, `[CLO-7]`, `[TYP-23]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+ | Rule | H2 → now |
+ |---|---|
+ | `[BRW-8]` | changed |
++| `[CLO-7]` | changed |
+ | `[CORO-6]` | changed |
++| `[ERR-4]` | changed |
+ | `[FN-1]` | changed |
+ | `[FN-3]` | changed |
+ | `[FN-6]` | changed |

@@ -1,0 +1,52 @@
+--- Ember_v0.9.9_Hardened_7.md
++++ Ember_v0.9.9_Hardened_8.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_7
+-**Supersedes:** 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_8
++**Supersedes:** 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -1670,7 +1670,12 @@
+ * `[CTL-2]` The iterated place is borrowed for the whole loop; mutating it inside the loop is `E3020`,
+   whose help names `retain`, `drain`, collecting first, or an index loop.
+ * `[CTL-3]` `a..b` (`Range`), `a..=b` (`RangeInclusive`) and `a..` (`RangeFrom`) over integers are
+-  iterable and compile to a counted loop with no iterator object. `a..=MAX` terminates after `MAX`.
++  iterable and compile to a counted loop with no iterator object. `a..=MAX` terminates after `MAX`;
++  `a..` has no end, and counting up to its type's maximum is an overflow (`[TYP-8]`). A range is a
++  value (ODR-027): `Range[T]`, `RangeInclusive[T]`, `RangeFrom[T]` and `RangeTo[T]` (`..b`) are
++  prelude structs with public bounds, `start` and `end` (a `RangeFrom` has only `start`, a `RangeTo`
++  only `end`), and are `Copy` when `T` is. A `for` over a range value counts over a copy of its
++  bounds, so the range is unchanged and can be iterated again, as Python's `range` can.
+ * `[CTL-3b]` *(changed in 0.9.9)* Iteration over ranges, `Span`, `MutSpan`, `Array`, `[T; N]`, `SoA`
+   columns, and `enumerate`, `zip`, `take`, `skip`, `step_by`, `copied` and `rev` composed over them,
+   MUST compile to an induction-variable loop over base pointers and lengths, with no iterator object in
+@@ -6323,7 +6328,8 @@
+ 
+ Each ambiguity found while implementing 0.9.9 is an owner decision request (`docs/OWNER-QUEUE.md`),
+ ruled under the owner's delegation and recorded here. Hardened_3 carries ODR-021 and ODR-022;
+-Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026.
++Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026;
++Hardened_8 adds ODR-027.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6333,6 +6339,7 @@
+ | ODR-024 | a borrowed or `mut` parameter whose type is not `Copy` is a source parameter a returned view may borrow, and a borrowed parameter is passed by address except a view or a `Copy` value holding no `Cell` (Hardened_5) | `[LT-1]`, `[LT-1a]`, `[LT-1b]`, `[LT-7]`, `[LT-44]`, `[FN-1]`, `[FN-3]`, `[FN-6]`, `[BRW-8]`, `[CORO-6]`, §VIII.3, §XVII.6 B7, §XVII.9, Appendix F |
+ | ODR-025 | `[ERR-4]`'s methods that take a function are eager, move the payload in (`filter` borrows it) and take `once fn`; an unannotated lambda parameter takes `owned` from the expected callable type, never `mut` (Hardened_6) | `[ERR-4]`, `[CLO-7]`, `[TYP-23]` |
+ | ODR-026 | a type that declares `drop` is not implicitly `Clone`; `@derive(Clone)` or a written `clone` gives it one (Hardened_7) | `[STR-5]` |
++| ODR-027 | a range is a value: the prelude's range types are structs with public bounds, `Copy` when the bound is, and a `for` over one counts over a copy of its bounds, leaving it unchanged; `a..` overflows at its type's maximum (Hardened_8) | `[CTL-3]`, `[STD-8]`, `[STD-26]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6341,6 +6348,7 @@
+ | `[BRW-8]` | changed |
+ | `[CLO-7]` | changed |
+ | `[CORO-6]` | changed |
++| `[CTL-3]` | changed |
+ | `[ERR-4]` | changed |
+ | `[FN-1]` | changed |
+ | `[FN-3]` | changed |

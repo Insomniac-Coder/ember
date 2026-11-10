@@ -1,0 +1,65 @@
+--- Ember_v0.9.9_Hardened_36.md
++++ Ember_v0.9.9_Hardened_37.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_36
+-**Supersedes:** 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_37
++**Supersedes:** 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -3869,7 +3869,8 @@
+   profile when a bound is not on a character boundary; `s.get(a..b) -> Option[str]` is the total form.
+   There is no indexing by character position, because it would be O(n).
+ * `[TXT-5]` `str` → `String` allocates and copies; `String` → `str` is free; `Span[u8]` → `str`
+-  validates in O(n) without allocating; `str` → `CString` allocates.
++  validates in O(n) without allocating; `str` → `CString` is the fallible allocating
++  `.to_cstring()` of `[FFI-15]` (ODR-081).
+ * `[TXT-6]` Across the C ABI a `str` is `{const uint8_t *ptr; size_t len}`.
+ * `[TXT-7]` Text is UTF-8 everywhere. `std.ffi.WideString` converts, explicitly, for APIs that need
+   UTF-16.
+@@ -4383,9 +4384,13 @@
+ ## XVI.5 Strings, status codes and handles
+ 
+ * `[FFI-15]` `cstr` is a borrowed, NUL-terminated C string (`c"…"` literals are `cstr`); `CString`
+-  owns one. `s.to_cstring()` allocates and fails on an interior NUL; `c.to_str() -> Result[str,
+-  Utf8Error]` validates without copying. Passing a `str` where a `cstr` is expected is `E5020`, whose
+-  fix-its are `.to_cstring()` and a `c"…"` literal. For a safe hand-declared borrowed
++  owns one. `s.to_cstring() -> Result[CString, NulError]` scans a `str` for its first interior NUL
++  before allocating; `NulError.index` is that byte offset (ODR-081). On success it copies the bytes
++  and appends one terminator. `CString.as_cstr() -> cstr` borrows its owner and never allocates;
++  there is no implicit `CString` to `cstr` conversion. `c.to_str() -> Result[str,
++  Utf8Error]` validates without copying. Passing a `str` where a `cstr` is expected is `E5020`,
++  which suggests a `c"…"` literal or handling `.to_cstring()`'s result and borrowing the
++  successful `CString` with `.as_cstr()`. For a safe hand-declared borrowed
+   `nul_terminated` pointer with `nullable`, the parameter or result type is `Option[cstr]`
+   (ODR-080). `None` crosses as a null C pointer and `Some` as its non-null character pointer.
+   A null result becomes `None`; a non-null result becomes `Some` and retains the contract's
+@@ -6723,7 +6728,8 @@
+ borrowed counted C pointer result; Hardened_34 adds ODR-078, the exclusive counted result's
+ mutable view and C pointer; Hardened_35 adds ODR-079, the nullable counted input's distinction
+ between absent and present-empty views; Hardened_36 adds ODR-080, nullable borrowed C strings and
+-their null-pointer niche.
++their null-pointer niche; Hardened_37 adds ODR-081, the fallible owned C-string conversion and
++explicit borrowed view.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6787,6 +6793,7 @@
+ | ODR-078 | an `exclusive` borrowed `count(n)` result is `MutSpan[T]` (nullable as `Option[MutSpan[T]]`) through mutable C `T*`, using ODR-077's input witness length (Hardened_34) | `[FFI-10]`, `[FFI-11]` |
+ | ODR-079 | a nullable hand-declared borrowed `count(n)` input sends `None` as null pointer and zero, but preserves `Some(empty)` with a non-null aligned static sentinel and zero (Hardened_35) | `[FFI-10]`, `[FFI-11]` |
+ | ODR-080 | `Option[cstr]` has a null-pointer niche; nullable borrowed NUL-terminated C inputs and results use it without changing their lifetime contract (Hardened_36) | `[TYP-13]`, `[FFI-11]`, `[FFI-15]` |
++| ODR-081 | `str.to_cstring()` returns `Result[CString, NulError]`, checking for interior NUL before allocation; `.as_cstr()` is an explicit borrow of its owner (Hardened_37) | `[TXT-5]`, `[FFI-15]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6873,6 +6880,7 @@
+ | `[THR-6]` | changed |
+ | `[THR-8]` | changed |
+ | `[THR-9]` | changed |
++| `[TXT-5]` | changed |
+ | `[TXT-10]` | changed |
+ | `[TYP-13]` | changed |
+ | `[TYP-15]` | changed |

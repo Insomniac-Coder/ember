@@ -1,0 +1,243 @@
+--- Ember_v0.9.9_Hardened_12.md
++++ Ember_v0.9.9_Hardened_13.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_12
+-**Supersedes:** 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_13
++**Supersedes:** 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -371,8 +371,10 @@
+   it extends follows, directly or after generic parameters (`[GRM-34]`); `gen` and `once` immediately before `fn`; `safe` before `fn` in an extern block; `some`
+   at the start of a type; `c` and `cpp` between `import` or `overlay` and a string; `language` and
+   `threads` after `#!`; `overlay` at the start of an item, and `rename` and `hide` inside an overlay
+-  (`[GRM-35]`). **Reserved for a future version** (lexed as keywords; using one as a name is `E0005`,
+-  whose message names the reservation): `async`, `await`, `macro`, `union`.
++  (`[GRM-35]`); `union` at the start of an item followed by a name, where it is reserved for a future
++  version (`E0005`), so `Set` can have its `union` method (`[STD-16]`). **Reserved for a future
++  version** (lexed as keywords; using one as a name is `E0005`, whose message names the
++  reservation): `async`, `await`, `macro`.
+ * `[LEX-22]` *(changed in 0.9.9)* Ember has no lifetime syntax and never will. A `'` begins a
+   character literal and nothing else; an unterminated one is `E0008`.
+ 
+@@ -1170,7 +1172,10 @@
+ * `[TYP-39]` *(new in 0.9.9)* Collections, tuples and `Option`/`Result` implement `Display` the way Python's `str()`
+   shows them: `[1, 2, 3]`, `{'a': 1}`, `{1, 2}`, `(1, 'x')`, `Some(3)`, `None`, with each element
+   formatted by its `Debug` implementation (strings quoted). So `println(xs)` prints a list as Python
+-  would.
++  would. A `Map` prints its entries in insertion order and an empty one prints `{}`; an empty `Set`
++  prints `set()`. A collection's `Debug` text is its `Display` text. A string's `Debug` text is
++  Python's `repr`: single quotes, or double quotes when the text holds a `'` and no `"`; `\`, the
++  chosen quote, `\n`, `\r` and `\t` are escaped, and any other control character is `\xNN`.
+ * `[TYP-37]` *(new in 0.9.9)* Floats implement `Eq` with IEEE `==` (so `NaN != NaN`) and `Ord` with the IEEE-754
+   totalOrder predicate (`-NaN < -inf < … < -0.0 < +0.0 < … < +inf < +NaN`). The comparison
+   *operators* on float values keep IEEE meaning (`[TYP-9]`); generic code bounded by `Ord`, `sort()`,
+@@ -1181,17 +1186,24 @@
+   else `a = a + b`. Scalar operators are built in.
+ * `[HASH-1]` `Hash.hash` is generic over `H: Hasher` and monomorphised; hashing a value MUST feed a
+   deterministic representation of it into the hasher, and values equal under `Eq` MUST hash equally.
+-  `Hasher` (in `std.collections`, not the prelude) is a move-only hashing state with `write_u8`,
+-  `write_u64`, `write_bytes` and friends, and `finish(owned self) -> u64`.
++  `Hasher` (in `std.collections`, not the prelude) is a move-only hashing state with `write_bytes`,
++  `write_u8`, `write_u16`, `write_u32`, `write_u64`, `write_i8`, `write_i16`, `write_i32`,
++  `write_i64`, `write_usize`, `write_isize` and `finish(owned self) -> u64`. A user type may
++  implement it and serve as a map's hasher.
+ * `[HASH-2]` *(changed in 0.9.9)* `std.collections.DefaultHasher` is a fixed-seed hasher: the same
+   keys hash the same way in every run and on every machine. It is a fast non-cryptographic hash, no
+   slower on integer keys than one multiply and one rotate per word (FxHash's class). `std.collections.
+   RandomState` is a per-process randomly seeded hasher for maps keyed by untrusted input; a `Map[K, V,
+   RandomState]` still iterates in insertion order (`[STD-11]`), so the seed never becomes visible.
++  `DefaultHasher`'s values are the same for one Ember version on every target (its state is 64 bits
++  on a 32-bit target too), so a table built at compile time is valid at run time; they may change
++  between versions, and a program MUST NOT depend on them.
+ * `[HASH-3]` *(changed in 0.9.9)* `Map` and `Set` MUST NOT weaken equality to compensate for an
+   incoherent `Hash`. An incoherent `Hash`, a key changed through a `Cell`, or an inconsistent `Ord`
+   given to `sort` gives wrong answers (a missing key, any permutation of the elements) but never
+-  undefined behaviour, an out-of-bounds access or an operation that does not terminate.
++  undefined behaviour, an out-of-bounds access or an operation that does not terminate. A `hash` or
++  `eq` that panics aborts the process (`[PAN-1]`), so no map is seen half-changed; one that reaches
++  the map again can do so only through a `RefCell`, whose borrow panics.
+ * `[HASH-4]` `Map[K, V]` requires `K: Eq + Hash`. A map may call `hash` any number of times per
+   operation. Safe map APIs never expose `ref mut K`.
+ 
+@@ -1635,10 +1647,13 @@
+   `is` on a non-handle type. Any other operand of `is` is `E2150`, whose help names `==`.
+ * `[TYP-38]` *(new in 0.9.9)* **Collection literals.**
+   * A list literal `[a, b, c]` has the type its context expects: `Array[T]` (allocates), `[T; N]` (no
+-    allocation), `Span[T]` (a view of a temporary fixed array), or `Set[T]` when written `{a, b}`.
+-    With no context it is `Array[T]`. `[v; N]` is always the fixed array of `N` copies of `v`.
++    allocation) or `Span[T]` (a view of a temporary fixed array). With no context it is `Array[T]`.
++    `[v; N]` is always the fixed array of `N` copies of `v`. A list literal is never a `Set`: in a
++    `Set` position it is `E2020`, whose help is `{a, b}`.
+   * A map literal `{k: v, …}` is a `Map[K, V]` (insertion-ordered, `[STD-11]`); a set literal
+-    `{a, …}` is a `Set[T]`.
++    `{a, …}` is a `Set[T]`. A repeated key keeps its first position and its last value, as Python's
++    `dict` does; `{1, 1}` is `{1}`. With no context a text key, value or element is a `String`, since
++    a map holds no views (`[STD-11]`).
+   * `[]` and `{}` need their element type from the context or from later uses in the function
+     (`[TYP-23]`); left open, they are `E2060`.
+   * Every element converts to the element type by `[TYP-5]`, so `["ann", "bob"]` in an
+@@ -1669,7 +1684,8 @@
+   * an `Iterator` value: calls `next` until `None`.
+   `Array`, `[T; N]`, `Span`, `MutSpan`, `Set`, `Map`, ranges and generators are iterable; a `Map`
+   yields its keys, as Python's `dict` does (`for k, v in m.items():` gives pairs, `m.values()` the
+-  values); a `str` yields its `char`s. `for x in
++  values), and `for k in owned m:` yields them owned, dropping the values (`into_items()` keeps
++  both); a `str` yields its `char`s. `for x in
+   xs.iter_mut():` yields `ref mut T`.
+ * `[CTL-2]` The iterated place is borrowed for the whole loop; mutating it inside the loop is `E3020`,
+   whose help names `retain`, `drain`, collecting first, or an index loop.
+@@ -2555,7 +2571,8 @@
+ ## IX.3 Allocators
+ 
+ * `[ALC-1]` `Array[T, A: Allocator = Global]`, `Map`, `Set` and `Box` accept an allocator type
+-  parameter; an allocator instance is passed at construction (`Array.new_in(a)`).
++  parameter; an allocator instance is passed at construction (`Array.new_in(a)`). In `Map[K, V, H,
++  A]` and `Set[T, H, A]` it follows the hasher (`[STD-11]`).
+ * `[ALC-2]` Implementing `Allocator` is `unsafe`: the implementer promises valid, aligned, unaliased
+   memory.
+ * `[ALC-3]` *(changed in 0.9.9)* A binary package may replace the global allocator with
+@@ -2858,8 +2875,8 @@
+   reported as such, not as verified.
+ * `[DET-2]` *(changed in 0.9.9)* `Nondet` is introduced by exactly: floating-point contraction,
+   reassociation or any `@fastmath` relaxation; a transcendental function from the platform library
+-  instead of `std.math.det`; observing a pointer or handle as an integer, or hashing one; a
+-  `RandomState` hasher; the wall clock, the monotonic clock, the system random source, thread and job
++  instead of `std.math.det`; observing a pointer or handle as an integer, or hashing one; making a
++  `RandomState`, directly or as a `Map`'s or `Set`'s hasher; the wall clock, the monotonic clock, the system random source, thread and job
+   completion order; reading uninitialised or padding bytes; any `extern` function not declared
+   `@ffi(deterministic)`. Iterating a `Map` or `Set` is **not** `Nondet`: their order is insertion order
+   (`[STD-11]`).
+@@ -3714,24 +3731,48 @@
+   does (`[SPN-4]`). `drain(r)` moves the elements in `r`, any range of integers (`a..b`, `a..=b`,
+   `a..`, `..b`), out into a new `Array` in order, and the rest close up; a range reaching outside
+   `0..=len`, or starting after it ends, panics.
+-* `[STD-11]` *(new in 0.9.9)* **`Map[K, V, H = DefaultHasher]`** is a hash map that **iterates in
++* `[STD-11]` *(new in 0.9.9)* **`Map[K, V, H = DefaultHasher, A = Global]`** is a hash map that **iterates in
+   insertion order**, like Python's `dict`. Re-assigning an existing key keeps its position; removing
+-  a key keeps the order of the others. Lookup, insertion and removal take expected constant time;
+-  iteration is linear in the number of entries. `Set[T, H]` is the same with no values. Because order
+-  is fixed by the program's operations and the default hasher is fixed-seed (`[HASH-2]`), iterating
+-  a `Map` or `Set` is not `Nondet`.
++  a key keeps the order of the others. Lookup, insertion and removal take expected constant time,
++  amortised: a map may grow, or close up removed entries, inside an insertion or a removal;
++  iteration is linear in the number of entries. `H: Hasher + Default`, and a map makes a fresh `H`
++  for each hash; `A` is its allocator (`[ALC-1]`). `Set[T, H = DefaultHasher, A = Global]` is the
++  same with no values. Keys, values and elements are not view types (`E3063`, whose help names
++  `String`): a view inside would make the map a view (`[TYP-34]`), confined to locals (`[TYP-15]`). Because order is fixed by the program's operations and the default hasher is
++  fixed-seed (`[HASH-2]`), iterating a `Map` or `Set` is not `Nondet`.
+ * `[STD-16]` *(new in 0.9.9)* **`Map` operations.** `m[k]` reads the value and panics when the key is
+   missing (`key not found: <Debug of k>; use .get(k) for an Option`); `m[k] = v` inserts or replaces
+-  (`[STD-17]`); `m[k] += 1` requires the key to exist. `get(k) -> Option[ref V]`, `get_mut`,
+-  `get_or(k, default) -> V` (for `V: Copy`), `insert(k, v) -> Option[V]`, `remove(k) -> Option[V]`,
+-  `entry(k).or_insert(v) -> ref mut V`, `k in m` and `for k in m:` (by key, as Python's `dict`), `keys`,
+-  `values`, `values_mut`, `items` (`(ref K, ref V)` pairs: `for k, v in m.items():`), `len`, `is_empty`, `clear`, `retain`.
+-  `Set`: `add`, `remove`, `x in s`, `union`, `intersection`, `difference`, `is_subset`, and the
+-  operators `|`, `&`, `-`.
++  (`[STD-17]`); `m[k] += 1` requires the key to exist and panics with the same message. The
++  lookups take any `q: Q` with `Q: AsKey[K]` (`[STD-12]`): `get(q) -> Option[ref V]`,
++  `get_mut(q) -> Option[ref mut V]`, `get_or(q, default) -> V` (for `V: Copy`),
++  `contains_key(q) -> bool`, `remove(q) -> Option[V]`, `m[q]` and `q in m`. `insert(k, v) ->
++  Option[V]` and `entry(k)` take the key itself; `entry(k)` is a `MapEntry` with `or_insert(v)`,
++  `or_insert_with(f: fn() -> V)` and `or_default()` (for `V: Default`), each returning `ref mut V`.
++  `keys()`, `values()`, `values_mut()` and `items()` are the view iterators
++  `MapKeys`, `MapValues`, `MapValuesMut` and `MapItems`, yielding `ref K`, `ref V`, `ref mut V` and
++  `(ref K, ref V)` in insertion order (`for k, v in m.items():`); `for k in m:` is by key, as
++  Python's `dict`. Also `Map[K, V]()`, `with_capacity(n)`, `len`, `is_empty`, `capacity`,
++  `reserve(n)`, `try_reserve(n)`, `clear`, `retain(keep: fn(ref K, ref V) -> bool)`,
++  `pop_item() -> Option[(K, V)]` (the newest entry, as `dict.popitem`), `update(other)` (inserts
++  `other`'s entries in its order) and `into_items() -> Array[(K, V)]` (consumes the map, in order).
++  `m1 == m2` compares as sets of entries: the same length, and every key of one in the other with an
++  equal value; order does not matter. `sorted(m)` sorts the keys into an `Array[K]` of clones.
++  `Set`: `Set[T]()`, `with_capacity(n)`, `len`, `is_empty`, `capacity`, `reserve(n)`,
++  `try_reserve(n)`, `clear`; `add(x) -> bool` (whether `x` was new; an element already there keeps
++  its position); taking `q: AsKey[T]`, `remove(q) -> bool`, `contains(q) -> bool` and `q in s`;
++  `retain(keep: fn(ref T) -> bool)`, `pop() -> Option[T]` (the newest), `iter()` (a `SetIter`
++  yielding `ref T`); `union`, `intersection`, `difference` and `symmetric_difference` of a borrowed
++  `Set` return a new `Set` (for `T: Clone`), this set's elements first in its order and then the
++  other's; `is_subset`, `is_superset`, `is_disjoint`; and the operators `|`, `&`, `-` and `^`.
++  `s1 == s2` compares as sets.
+ * `[STD-12]` *(new in 0.9.9)* **Borrowed keys.** Lookup methods, `m[k]` and `k in m` accept any key
+-  type `Q` with `Q: AsKey[K]`: `K` itself, and `str` for `K = String`. `AsKey[K]` requires that `q` and
+-  `q.to_key()` hash and compare alike. `m[k] = v` with a `str` key converts it with `to_key()`, which
+-  allocates only when the key is new.
++  type `Q` with `Q: AsKey[K]`: `K` itself, and `str` for `K = String`. `interface AsKey[K]: Hash` (in
++  `std.collections`, not the prelude) has `is_key(self, key: K) -> bool` and `to_key(self) -> K`. A
++  lookup hashes `q` and compares it with `is_key`, so it never converts; `m[k] = v` converts with
++  `to_key()` only when the key is new. Every `K: Eq + Hash` is `AsKey[K]` (`is_key` is `==`;
++  `to_key` clones, so `m[k] = v` with a `K` needs `K: Clone`, where `insert` moves the key); std
++  implements `AsKey[String]` for `str`. An implementation MUST hash and compare as `to_key()` would;
++  one that does not gives `[HASH-3]`'s wrong answers, never undefined behaviour.
+ * `[STD-17]` *(new in 0.9.9)* **Index assignment.** `a[i] = v` calls `IndexSet.index_set(i, v)` when
+   the type implements `IndexSet[Idx, V]`, and otherwise assigns through `IndexMut` (dropping the old
+   value). `Map` implements `IndexSet`; `Array` does not need to. A compound assignment `a[i] op= v`
+@@ -6348,7 +6389,7 @@
+ ruled under the owner's delegation and recorded here. Hardened_3 carries ODR-021 and ODR-022;
+ Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026;
+ Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
+-Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031.
++Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6363,32 +6404,48 @@
+ | ODR-029 | `parse[T]()` reads the whole text strictly (no white space; an optional sign and digits for integers, Rust's float grammar with `inf`/`nan`, `true`/`false`, one character), and `ParseError` is `Empty`, `Invalid` or `Overflow` (Hardened_10) | `[TXT-10]` |
+ | ODR-030 | `extend` is a contextual keyword, a keyword only at the start of an item before the type it extends, so `Array` can have its `extend` method (Hardened_11) | `[LEX-15]` |
+ | ODR-031 | `Array`'s `sort_by(cmp: fn(T, T) -> Ordering)` and `sort_by_key[K: Ord](f: fn(T) -> K)` are stable, and `f` is called once per element; `windows(n)` yields shared, overlapping views one step apart, none when `n > len`, and panics on `0`; `drain(r) -> Array[T]` takes any integer range and panics outside `0..=len` (Hardened_12) | `[STD-15]` |
++| ODR-032 | `Map[K, V, H, A]` and `Set[T, H, A]`: the hasher before the allocator; the full method lists with signatures; `AsKey[K]: Hash` has `is_key` and `to_key`, and every `K: Eq + Hash` is `AsKey[K]`; owned iteration of a `Map` yields its keys (Hardened_13) | `[STD-11]`, `[STD-12]`, `[STD-16]`, `[ALC-1]`, `[CTL-1]` |
++| ODR-033 | the `Hasher` methods, and users may implement it; `DefaultHasher`'s values are fixed for one version on every target; making a `RandomState` is `Nondet`; a panicking `hash` or `eq` aborts; `Map`'s constant time is amortised (Hardened_13) | `[HASH-1]`, `[HASH-2]`, `[HASH-3]`, `[DET-2]`, `[STD-11]` |
++| ODR-034 | an empty `Map` prints `{}` and an empty `Set` `set()`; strings `Debug` as Python's `repr`; `Map`/`Set` `==` compares as sets; a repeated literal key keeps its first position and last value; a list literal is never a `Set`; `sorted(m)` sorts the keys (Hardened_13) | `[TYP-39]`, `[STD-16]`, `[TYP-38]` |
++| ODR-035 | `union` is contextual: reserved only where an item would begin `union` and a name, so `Set` can have its `union` method (Hardened_13) | `[LEX-15]` |
++| ODR-036 | a `Map`'s keys and values and a `Set`'s elements are not views (`E3063`); text in a `{…}` literal with no context is `String` (Hardened_13) | `[STD-11]`, `[TYP-38]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+ | Rule | H2 → now |
+ |---|---|
++| `[ALC-1]` | changed |
+ | `[BRW-8]` | changed |
+ | `[CLO-7]` | changed |
+ | `[CLS-4]` | changed |
+ | `[CORO-6]` | changed |
++| `[CTL-1]` | changed |
+ | `[CTL-3]` | changed |
++| `[DET-2]` | changed |
+ | `[ERR-4]` | changed |
+ | `[FN-1]` | changed |
+ | `[FN-3]` | changed |
+ | `[FN-6]` | changed |
+ | `[FN-10]` | changed |
++| `[HASH-1]` | changed |
++| `[HASH-2]` | changed |
++| `[HASH-3]` | changed |
+ | `[LEX-15]` | changed |
+ | `[LT-1]` | changed |
+ | `[LT-1a]` | changed |
+ | `[LT-1b]` | changed |
+ | `[LT-7]` | changed |
+ | `[LT-44]` | changed |
++| `[STD-11]` | changed |
++| `[STD-12]` | changed |
+ | `[STD-15]` | changed |
++| `[STD-16]` | changed |
+ | `[STR-5]` | changed |
+ | `[TXT-10]` | changed |
+ | `[TYP-23]` | changed |
+ | `[TYP-29]` | changed |
++| `[TYP-38]` | changed |
++| `[TYP-39]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -7532,7 +7589,7 @@
+ | `[STD-8b]` | XV | `str` implements `Contains[char]` and `Contains[str]` only; matching … |
+ | `[STD-9]` | XV | `print(a, b, …, sep=" ", end="")` and `println(a, b, …, sep=" ", … |
+ | `[STD-10]` | XV | `input(prompt="") -> String` prints the prompt, flushes, reads one … |
+-| `[STD-11]` | XV | `Map[K, V, H = DefaultHasher]` is a hash map that iterates in … |
++| `[STD-11]` | XV | `Map[K, V, H = DefaultHasher, A = Global]` is a hash map that … |
+ | `[STD-12]` | XV | Borrowed keys. Lookup methods, `m[k]` and `k in m` accept any key … |
+ | `[STD-13]` | XV | One naming convention. Names are `snake_case` words joined by … |
+ | `[STD-14]` | XV | Failure follows `[ERR-13]`: a caller's bug panics and has a … |

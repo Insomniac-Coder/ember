@@ -1,0 +1,596 @@
+--- Ember_v0.9.5_Hardened_10.md
++++ Ember_v0.9.6_Hardened_1.md
+@@ -1,22 +1,21 @@
+ # Ember Programming Language — Design & Implementation Specification
+ 
+-**Version:** 0.9.5_Hardened_10
++**Version:** 0.9.6_Hardened_1
+ **Status:** Frozen development target; implementation/conformance evidence is not claimed and normative repository adoption still requires the recorded adoption gates
+-**Immediate predecessor:** 0.9.5_Hardened_9
++**Immediate predecessor:** 0.9.5_Hardened_10
+ **Versioning model:** A hardening increments `Hardened_N` when it only adds implementation detail,
+ invariants, tooling requirements, or editorial clarification without changing accepted language
+ semantics. A language revision is required when the accepted-program set or another normative
+ language semantic changes; implementation completion by itself does not move the language version.
+-The 0.9.5 language revision
+-introduced inferred multi-region view structs; this revision is a subsequent hardening that
+-consolidates the inherited 0.8.5 contract, makes supersession explicit, repairs mechanical
+-extraction defects, recovers the owner-supplied Hardened 14 callback-composition rules, resolves
+-their mutable API family, callable-type mode syntax, helper input modes, `Callable` bridge, the
+-narrow Arena-backed return-provenance boundary, and the Arena bulk-initialization safety contract
+-by owner decision, and records evidence status honestly. No implementation or conformance result is
+-asserted merely because the specification requires one.
+-
+-> **Authority boundary:** This frozen hardening records the owner-selected 0.9.5 development target, but
++The 0.9.5 language revision introduced inferred multi-region view structs. This owner-selected
++0.9.6 architecture-line revision preserves the 0.9.5 accepted/rejected program sets and observable
++semantics while consolidating the reference compiler around shared semantic facts, explicit MIR
++analysis/verification boundaries, and one capability model. It also incorporates the owner-approved
++clarification of `[ARN-10]` under v1's abort-only panic policy. The new `0.9.6` version selector is
++additive; it does not silently change a module that selected an older contract. No implementation or
++conformance result is asserted merely because the specification requires one.
++
++> **Authority boundary:** This frozen revision records the owner-selected 0.9.6 development target, but
+ > `docs/spec-source/ember-spec.md` remains the repository's sole normative source until this
+ > target passes the adoption gates and is explicitly installed. The immutable received file
+ > is preserved under `docs/spec-source/as-received/`.
+@@ -43,6 +42,78 @@
+ > `assume_init` APIs, uninitialized Arena allocation, and Phase 2 availability. H9 remains frozen;
+ > this H10 preserves its existing Arena rule IDs and assigns the new clauses unused continuation
+ > IDs `[ARN-8]`–`[ARN-13]` plus numeric conformance rule `[TST-23]`.
++
++> **SIMPLICITY CONSOLIDATION APPROVED:** on 2026-09-13 the owner approved Revision 5 of the
++> simplicity-consolidation RFC as the design basis for `0.9.6_Hardened_1`, then explicitly approved
++> the final `[ARN-10]` clarification. H10 remains immutable. This H1 revises existing implementation
++> contracts in place instead of introducing a parallel rule family, and it does not claim that the
++> corresponding compiler refactor or conformance evidence already exists.
++
++# 0.9.6_Hardened_1 Simplicity-Consolidation Record
++
++**Version treatment:** owner-selected architecture line. **Amendment classes:** IMPLEMENTATION
++INVARIANT and SEMANTICALLY NEUTRAL CLARIFICATION, plus an OWNER-APPROVED SEMANTIC CHANGE limited to
++accepting the new `0.9.6` version selector. Apart from that selector, H1 preserves H10's
++source-language accepted/rejected program sets,
++observable behavior, ownership and destruction, borrowing and regions, initialization validity,
++unsafe obligations, FFI and ABI behavior, coroutine restrictions, determinism, and stable diagnostic
++identities.
++
++**Source and authority.** The received design basis is preserved byte-for-byte as
++`docs/spec-source/as-received/Ember_0.9.5_Simplicity_Consolidation_RFC_Revision_5.md` (SHA-256
++`593E86A61738B32DCFAAB14875C12EA3A7BBF1A16BAD5286260EE1BAFD803923`). The owner's subsequent
++message is the authority for the final `[ARN-10]` wording. This record is navigation and rationale;
++the amended existing rules in this specification are the executable contract.
++
++## Consolidated reference-compiler model
++
++The reference compiler is organized around reusable facts rather than feature-specific safety
++systems:
++
++```text
++TypeIdentity
++BorrowCapability
++OwnershipGraph
++AccessContract
++InitializationState
++LayoutDescriptor
++EffectSet
++```
++
++`BorrowCapability` conceptually keeps lifetime provenance separate from concrete storage identity,
++and keeps each of access permission, representation kind, ownership relation, acquisition/checking,
++unsafe authority, synchronization, validity, and escape constraints on an independent axis. A raw
++pointer is a representation kind, not an access permission; a mutable raw pointer combines mutable
++permission with raw-pointer representation and an unsafe authority boundary. Escape constraints are
++a set/predicate rather than one mutually exclusive enum.
++
++Feature-specific semantics remain distinct applications of those facts. Arena is a region allocator,
++not an interior-mutability primitive. `Cell`, `RefCell`, synchronization guards, and `UnsafeCell`
++retain their different authority and runtime invariants. ECS remains library-owned. Foreign calls
++remain contract-driven. Coroutines do not acquire an escape exemption. Shared machinery never
++generalizes H10's dynamic class-exclusivity policy into ordinary borrow checking.
++
++## Preservation boundaries
++
++The consolidation preserves three intentionally different replacement paths:
++
++```text
++ordinary assignment:          evaluate new -> drop old live value -> store new
++Cell.set:                     evaluate/receive new -> store new -> drop old
++MaybeUninit.write/write_at:   evaluate/receive new -> store new -> do not drop prior bytes
++```
++
++It also preserves H10's mandatory cycle diagnostics, exact/declared/unknown callable-access model,
++field-to-region provenance summaries, conservative opaque-call behavior, summary invalidation,
++FFI exception policy, and runtime erasure of compiler-only region/capability metadata.
++
++## Evidence boundary
++
++This file specifies the target architecture. It does not establish that the current compiler uses the
++canonical facts, implements 0.9.5 multi-region views, or passes the target's conformance conditions.
++Existing conformance-backed behavior, specified-but-unimplemented behavior, and current divergences
++remain separate evidence classes. The current compiler is not an oracle for rules it has not
++implemented; differences are classified against this specification and owner decisions.
+ 
+ # 0.9_Hardened_12 Owner-Decision Resolution Cycle (historical record)
+ 
+@@ -454,7 +525,10 @@
+   8. rejection of source use after consuming `assume_init`;
+   9. zeroed bytes not being treated as initialized `T` unless `T: Zeroable`;
+   10. `alloc_array`'s `Zeroable`-before-`Default` precedence, `E2040` fallback,
+-      `!needs_drop` rejection, and transactional cursor rollback.
++      `!needs_drop` rejection, successful `Default` construction, v1 process termination through
++      `[PAN-1]` on a `Default` panic, no continuation or compiler-invented unwinding after that panic,
++      and no observation of post-panic Arena state. A future recoverable construction API is tested
++      against its own explicitly specified rollback contract.
+ 
+   The supplied mnemonic `[TST-ARN-MU]` is normalized to this numeric rule ID. No test may imply
+   that an unsafe `assume_init` call proves its own precondition; the caller remains responsible.
+@@ -827,7 +901,11 @@
+   generic monomorphisation and shared-generic conservative summaries; opaque function-pointer calls;
+   reflection-selected fields; closure captures; whole-value copy/move after a slot expires; partial
+   field moves; and stale interface-summary invalidation. Every case MUST include an accept and, where
+-  the rule can reject, a reject case.
++  the rule can reject, a reject case. The 0.9.6 consolidation additionally requires equivalent safety
++  decisions for semantically equivalent capabilities produced as `Span`, `MutSpan`, `ref`, `ref mut`,
++  a view field, an Arena-backed result, a `RefCell` guard, or a foreign view; tests MUST keep provenance,
++  storage identity, access permission, representation kind, runtime checking, and synchronization
++  distinct rather than asserting that those public abstractions are semantically identical.
+ 
+ * `[BUD-8]` The performance suite MUST compare multi-region views against equivalent hand-written
+   separate `Span` parameters and against the legacy one-region representation where applicable. The
+@@ -841,7 +919,10 @@
+   with actual field accesses, that call sites require every slot named by the callee summary, that
+   unknown summaries conservatively require all slots, that no region slot is widened to `'static` without
+   a static source fact, and that code generation cannot emit a runtime operation corresponding solely to
+-  region bookkeeping.
++  region bookkeeping. Under the 0.9.6 consolidated representation it additionally verifies that lifetime
++  provenance is not substituted for storage identity or disjointness, that raw-pointer representation is
++  not encoded as an access permission, and that any shared replacement lowering declares and preserves
++  the ordering required for ordinary assignment, `Cell.set`, or `MaybeUninit.write`/`write_at`.
+ 
+ * `[IMP-10]` The implementation matrix MUST track parser/resolver changes (expected: none for the
+   region feature), typechecker/borrowck/MIR/verifier/codegen changes, diagnostics, FFI probes, and
+@@ -969,7 +1050,7 @@
+ 
+ Optimisation passes MUST preserve provenance or explicitly merge it according to a documented rule.
+ 
+-## [IMP-7] Compiler pass contracts
++## [IMP-7] Compiler pass and canonical-fact contracts
+ 
+ Every compiler pass MUST declare:
+ 
+@@ -982,6 +1063,55 @@
+ ```
+ 
+ The verifier MUST run after every safety-critical MIR transformation.
++
++The 0.9.6 reference compiler MUST exchange shared semantic facts rather than re-solving the same
++relationship independently in each feature. The canonical set is `TypeIdentity`, `BorrowCapability`,
++`OwnershipGraph`, `AccessContract`, `InitializationState`, `LayoutDescriptor`, and `EffectSet`.
++Their concrete Rust representation is implementation-defined, but their semantic boundaries are not.
++
++A `BorrowCapability` conceptually contains:
++
++```text
++provenance_root
++source_place?                  # absent for static/non-place sources
++storage_identity
++projection_path
++region
++access_permission             # shared | mut
++reference_kind                # reference | raw_pointer | value | view | handle | runtime_guard
++ownership_relation            # owned | borrowed | observing
++acquisition_or_check          # static | runtime_checked | lock_acquired
++safety_authority              # safe | unsafe
++synchronization_domain
++validity_interval
++escape_constraints            # a set/predicate, not one exclusive enum
++```
++
++Lifetime provenance and concrete storage identity MUST remain separate. A static provenance root need
++not have a local source place; distinct Arena allocations may share one Arena region while retaining
++distinct storage identities. Access permission, representation kind, ownership, checking mechanism,
++unsafe authority, and synchronization MUST remain orthogonal: `raw_pointer` is a reference kind, not
++an access permission, and `unsafe` is an authority boundary, not a proof algorithm. Region equality or
++inequality alone MUST NOT establish storage overlap, disjointness, or `noalias`.
++
++`synchronization_domain` distinguishes `none`, `thread_confined`, and `synchronized` without changing
++the ownership relation. `validity_interval` records where use is permitted; it MUST NOT be substituted
++for ownership or storage identity. `escape_constraints` can simultaneously express such existing
++questions as return, storage, capture, FFI publication, statement/block survival, and crossing `yield`.
++Storage identity plus projection may establish disjointness only through an existing proof such as
++distinct allocation identities or non-overlapping Arena ranges, disjoint fields or SoA columns,
++`split_at`-style structure, or a proof-carrying disjointness API.
++
++Feature modules consume these facts while retaining their authoritative semantics. Arena remains a
++region allocator; `Cell`, `RefCell`, synchronization guards, and `UnsafeCell` retain different
++invariants; ECS remains library-owned; FFI remains contract-driven; coroutine suspension does not
++extend a forbidden borrow; and H10's dynamic class-exclusivity mechanism MUST NOT turn an ordinary
++borrow conflict into a runtime-checked acceptance.
++
++These canonical fields are compiler facts, not a new public type or ordinary-diagnostic vocabulary.
++The compiler MUST NOT expose a public helper merely because internal analysis paths differ. Normal
++diagnostics name source values, places, and semantic causes; existing expert inspection tooling MAY
++show region, storage, projection, capability, access-summary, and MIR details.
+ 
+ 
+ ## [IMP-8] One consolidated normative source
+@@ -1018,17 +1148,15 @@
+   ↓
+ name resolution
+   ↓
++type/interface solving
++  ↓
+ HIR
+   ↓
+-type/interface solving
++initial MIR lowering
+   ↓
+-borrow/lifetime checking
++callable access/provenance summary computation
+   ↓
+-drop checking
+-  ↓
+-MIR construction
+-  ↓
+-MIR verification
++initialization + ownership + borrow + region analysis
+   ↓
+ drop elaboration
+   ↓
+@@ -1036,7 +1164,9 @@
+   ↓
+ monomorphisation
+   ↓
+-optimisation
++target-independent MIR optimisation
++  ↓
++effect analysis under the contract profile
+   ↓
+ MIR verification
+   ↓
+@@ -1046,6 +1176,12 @@
+   ↓
+ link/runtime
+ ```
++
++Initial MIR is the analysis substrate; verified MIR is the code-generation boundary. Summary
++derivation and interprocedural analysis MAY iterate to a fixed point or be interleaved where recursion,
++generic substitution, or dynamic target sets require it, but an unverified summary MUST NOT be consumed
++as trusted interface metadata. The verifier runs after every safety-critical MIR transformation as
++required by `[IMP-7]`.
+ 
+ ## [COMP-1] Drop-check phase
+ 
+@@ -1653,6 +1789,7 @@
+ | 0.9.5_Hardened_8 | Owner-approved hardening clarification | made mutable helper inputs explicit `mut` reborrows; preserved callable mode vectors as compiler-known metadata through `Callable[Args, R]`; added `[FN-6a]`, `[LT-8a]`, and `[TST-21]` |
+ | 0.9.5_Hardened_9 | Owner-approved hardening clarification | permitted the narrow `@borrows(arena)` return-provenance contract for Arena-backed views; added `[LT-4a]`, `[LT-4b]`, and `[TST-22]` |
+ | 0.9.5_Hardened_10 | Owner-approved hardening clarification | defined Arena bulk initialization, `Zeroable`, `MaybeUninit`, canonical initialization APIs, rollback, and Phase 2 availability; added `[ARN-8]`–`[ARN-13]` and `[TST-23]` |
++| 0.9.6_Hardened_1 | **Owner-selected architecture-line revision** | consolidated reference-compiler semantic facts and MIR boundaries without weakening H10 behavior; clarified `[ARN-10]` for v1 abort-only panic; accepted `0.9.6` as an additive version selector |
+ 
+ ---
+ 
+@@ -1784,22 +1921,22 @@
+ 0.8.5 source remains unchanged; H9 is the new frozen, not-yet-adopted development target and makes
+ no blanket implementation or conformance claim.
+ 
+-## 0.9.5_Hardened_10 Audit Record
++## 0.9.5_Hardened_10 Historical Audit Record
+ 
+ | ID | Classification | Resolution |
+ |---|---|---|
+ | AUD-095-49 | Owner-approved initialization contract | Closed ODR-009 with deterministic `Zeroable` then `Default` selection, `E2040` when neither capability exists, and an unconditional `!needs_drop(T)` boundary for ordinary Arena bulk allocation. |
+ | AUD-095-50 | Unsafe-state boundary | Defined `MaybeUninit[T]` layout, non-dropping ownership behavior, `Copy` condition, safe initialization, unsafe consumption, full-span conversion, and partial-initialization prohibition. |
+ | AUD-095-51 | Canonical API | Fixed the v1 spellings `MaybeUninit.uninit`, `write`, `assume_init`, and the corresponding `MutSpan[MaybeUninit[T]]` `write_at`/`assume_init` operations; no implementation-defined second conversion is allowed. |
+-| AUD-095-52 | Failure and phase ordering | Made `Default` initialization transactional and required the core `Zeroable` predicate/built-ins during the Arena phase while leaving general derive generation in its later phase. |
++| AUD-095-52 | Failure and phase ordering | H10 described `Default` initialization as transactional and required the core `Zeroable` predicate/built-ins during the Arena phase while leaving general derive generation in its later phase. H1's owner-approved `[ARN-10]` clarification governs the abort-only failure boundary. |
+ | AUD-095-53 | Rule-ID integrity | Preserved H9's existing `[ARN-4]`–`[ARN-7]` meanings. The owner feed's colliding headings were normalized to unused `[ARN-8]`–`[ARN-13]`; `[TST-ARN-MU]` became numeric `[TST-23]`. The owner-approved substance is unchanged. |
+ 
+ **Amendment:** `HC-095-09` — owner-approved Arena allocation and initialization contract.
+-Because H9 was already frozen, ADR-023 requires this clarification to be issued as H10. The adopted
+-0.8.5 source remains unchanged; H10 is the new frozen, not-yet-adopted development target and makes
++Because H9 was already frozen, ADR-023 required this clarification to be issued as H10. At issuance,
++the adopted 0.8.5 source remained unchanged and H10 became the new frozen, not-yet-adopted development target; it made
+ no blanket implementation or conformance claim.
+ 
+-### 0.9.5_Hardened_10 language-conformance condition
++### 0.9.5_Hardened_10 historical language-conformance condition
+ 
+ `0.9.5_Hardened_10` MUST NOT be declared conformant unless `[LT-8]`–`[LT-13]`,
+ `[LT-8a]`, `[LT-11a]`, `[FN-6a]`, `[TST-20]`, `[TST-21]`,
+@@ -1814,19 +1951,19 @@
+ parameters after equivalent optimisation.
+ 
+ 
+-This revision incorporates the Hardened_14 hardening record including the owner-supplied
++H10 incorporates the Hardened_14 hardening record including the owner-supplied
+ `[LT-8]`–`[LT-13]` source, the accepted 0.9.5 multi-region-view language revision, and the
+-callable-provenance hardening of Hardened_2. The current revision identity, consolidated-body
++callable-provenance hardening of Hardened_2. H10's revision identity, consolidated-body
+ boundary, feature lineage, owner-decision guidance, standard-library ownership, hot-reload
+ transaction contract, and multi-region view safety contract are explicit.
+ 
+-### Acceptance condition
++### 0.9.5_Hardened_10 historical acceptance condition
+ 
+ `0.9.5_Hardened_10` MUST NOT be declared clean unless:
+-1. the document has one current version identity;
+-2. the consolidated Parts I–XXIII body and the current addenda form one normative source;
+-3. the active revision lineage ends at `0.9.5_Hardened_10`;
+-4. the current consistency checklist targets `0.9.5_Hardened_10`;
++1. the H10 document has one version identity;
++2. H10's consolidated Parts I–XXIII body and then-current addenda form one normative source;
++3. H10's then-active revision lineage ends at `0.9.5_Hardened_10`;
++4. H10's consistency checklist targets `0.9.5_Hardened_10`;
+ 5. `std.cell` is the sole defining owner of interior-mutability types;
+ 6. post-publication hot-reload failure has no unspecified recovery semantics;
+ 7. closed owner decisions are not presented as open implementation choices;
+@@ -1841,7 +1978,7 @@
+ 
+ ---
+ 
+-## 0.9.5_Hardened_10 Evidence Status — No Implementation Claim
++## 0.9.5_Hardened_10 Historical Evidence Status — No Implementation Claim
+ 
+ The current document is a specification artifact, not a report of repository state.
+ 
+@@ -1855,6 +1992,66 @@
+    `VERIFIED`, and `CONFORMANT`.
+ 5. Missing implementation artifacts are reported as gaps; the specification does not simulate their
+    existence.
++
++## 0.9.6_Hardened_1 Audit Record
++
++| ID | Classification | Resolution |
++|---|---|---|
++| AUD-096-01 | Source authority | Preserved the owner-supplied Revision 5 RFC byte-for-byte; H10 is the immutable construction source, while `ember-spec.md` remains the adopted 0.8.5 contract until H1 passes explicit adoption gates. |
++| AUD-096-02 | Owner-approved architecture | Consolidated compiler facts around `TypeIdentity`, `BorrowCapability`, `OwnershipGraph`, `AccessContract`, `InitializationState`, `LayoutDescriptor`, and `EffectSet`; no public type or parallel ownership/lifetime system was introduced. |
++| AUD-096-03 | Capability safety | Separated provenance root, optional source place, storage identity, projection, region, access permission, reference kind, ownership, acquisition/checking, safety authority, synchronization, validity, and escape constraints. Region equality is not storage overlap or `noalias`. |
++| AUD-096-04 | Compiler boundaries | Made type/interface solving construct completed typed HIR from the resolved AST, then lowered initial MIR before initialization/ownership/borrow/region analyses and retained MIR verification after safety-critical transformations. |
++| AUD-096-05 | Callable contracts | Preserved field-access and field-to-region provenance summaries, trusted metadata boundaries, conservative opaque/dynamic calls, caller/cache invalidation, stale-summary hard failure, and runtime erasure. |
++| AUD-096-06 | Semantic preservation | Preserved mandatory cycle reporting, class-only dynamic exclusivity, interior-mutability distinctions, FFI/coroutine/ECS boundaries, stable diagnostics, and all three replacement/destruction orderings. |
++| AUD-096-07 | Owner-approved `[ARN-10]` clarification | Removed the impossible v1 requirement to recover from an aborting `T.default()` panic. No post-panic Arena state is observable; no unwinder is introduced; future recoverable APIs receive rollback only from their own explicit contract. |
++| AUD-096-08 | Rule-ID discipline | Amended existing implementation rules rather than copying the RFC's architecture labels into the normative rule index. No suffixed Arena rule or parallel `SIMP-*` rule family was introduced. The raw extractor's inherited `IDE-2`/`IDE-5`/`IDE-10` reservations and historical `HOT-10` citation are not normative rule references under the existing ERR-042 inventory; the classified dangling-normative-reference count is zero. |
++| AUD-096-09 | Evidence integrity | Classified this as a specification target only. No compiler, runtime, conformance, or performance status was inferred from the document. |
++
++**Amendment:** `HC-096-01` — owner-approved simplicity consolidation and `[ARN-10]`
++clarification. ADR-030 records the decision. This is the first 0.9.6 cut, so the hardening counter
++resets to 1. H10 remains unchanged and becomes the historical immediate predecessor.
++
++### 0.9.6_Hardened_1 language-conformance condition
++
++`0.9.6_Hardened_1` MUST NOT be declared conformant until all H10 conditions remain satisfied and
++repository evidence additionally proves that:
++
++1. equivalent borrow relationships represented by `Span`, `MutSpan`, `ref`, `ref mut`, `@view`
++   fields, Arena-backed views, `RefCell` guards, and foreign views receive equivalent safety decisions
++   where their semantic axes are equivalent;
++2. lifetime provenance and concrete storage identity remain distinct, and neither region equality nor
++   region inequality is used as a substitute for an overlap/disjointness proof;
++3. exact, trusted-declared, and conservative-unknown callable facts preserve both access and
++   field-to-region provenance, including generic, separately compiled, dynamic, and hot-reload target
++   sets;
++4. changing either callable summary rechecks affected callers and invalidates all dependent interface,
++   generic, and cache artifacts; stale metadata is a hard compiler failure;
++5. compiler-only capability, region, access-summary, and initialization-proof metadata is absent from
++   runtime layout, ABI, serialization, and hot-reload schemas;
++6. ordinary assignment, `Cell.set`, and `MaybeUninit.write`/`write_at` preserve their distinct ordering
++   contracts in MIR and generated code;
++7. `[ARN-10]` tests show successful `Default` construction, v1 process termination through `[PAN-1]`
++   on panic, no continuation after panic, no compiler-invented unwind path, and no observation of
++   post-panic Arena state;
++8. existing H10 safety regressions remain present and green; implementation-path consolidation is not
++   used to delete an adversarial test.
++
++### 0.9.6_Hardened_1 acceptance condition
++
++H1 MUST NOT replace `docs/spec-source/ember-spec.md` unless it has one version identity and predecessor,
++the complete alternate-spec rule/index/grammar/diagnostic audit has no unintended regression, the
++implementation and conformance matrices separate `SPECIFIED` from evidence-backed states, all required
++compiler/runtime/test work passes, generated-code inspection proves runtime erasure and ordering where
++source observation is insufficient, and every difference from H10 is classified and traceable to the
++owner-approved RFC or final `[ARN-10]` ruling.
++
++## 0.9.6_Hardened_1 Evidence Status — No Implementation Claim
++
++This H1 file is a frozen development target. The adopted repository specification remains
++`docs/spec-source/ember-spec.md` (`0.8.5_Hardened_1`). H1's architecture, 0.9.5 multi-region semantics,
++remaining H10 Arena initialization surface, and later phases are `SPECIFIED` unless the repository's
++implementation matrix and executable evidence say otherwise. Passing the six gates against the adopted
++source does not constitute H1 adoption or H1 conformance.
+ 
+ # 1.0 Readiness Gate
+ 
+@@ -1957,10 +2154,11 @@
+ 
+ ---
+ 
+-## 0.9.5_Hardened_10 consolidation record
++## 0.9.6_Hardened_1 consolidation record
+ 
+ The body below originated in `0.8.5_Hardened_1`, incorporates the accepted 0.9/0.9.5 changes in
+-place, and is normative within this target together with the current addenda above. Frozen predecessor files are
++place, and carries the owner-selected 0.9.6 reference-compiler consolidation. It is normative within
++this target together with the current addenda above. Frozen predecessor files are
+ the historical diff bases. Existing rule IDs retain their meanings; newly added rules use unused
+ IDs. In particular, the 0.8.5 `CLI-15`, `RT-1`–`RT-4`, and `DIA-18` definitions remain intact;
+ the new cycle-inspection, runtime-hardening, and E3065-artifact rules are `CLI-17`, `RT-6`–`RT-9`,
+@@ -3423,8 +3621,8 @@
+ * `[MOD-3]` `import a.b.c` binds `c` as a namespace; `from a.b import x, y as z` binds items; `import a.b.c as d` renames. `from a.b import *` is permitted only for `prelude` modules declared `@prelude` (`E1040` otherwise).
+ * `[MOD-4]` Import cycles within a package are allowed (name resolution is package-wide); cycles between packages are `E1041`.
+ * `[MOD-5]` `std.prelude` is imported implicitly into every module: `Option, Some, None, Result, Ok, Err, Array, String, str, Span, MutSpan, Box, Shared, Weak, print, println, assert, assert_eq, panic, Copy, Clone, Drop, Eq, Ord, Hash, Debug, Display, Default, Iterator, Iterable, Send, Sync`.
+-* `[MOD-6]` A module MAY declare a supported language version with `#! language "X.Y"` on its first line; the package's `ember.toml` `language` key is the default. Mismatch with the compiler's supported set is `E0006`. The compiler's supported set MUST include every language version whose source it still accepts. For this revision the supported set MUST include `"0.9.5"`, `"0.9"`, `"0.8.5"`, `"0.8.4"`, and `"0.8.3"`. Selecting an older version selects that version's accepted-program and semantic rules; it does not silently opt the module into later language semantics. *(hardened 2026-09-10; HC-095-01)*
+-* `[MOD-6a]` **Patch-level language revisions.** A language version MAY be written as `X.Y` or `X.Y.Z`. `0.9` remains the pre-0.9.5 0.9 language contract; `0.9.5` selects the inferred multi-region-view semantics of this revision. The compiler MUST NOT silently enable `0.9.5` semantics for a module that explicitly selects `0.9`. The supported set is exactly the set stated by `[MOD-6]`; this rule explains why `"0.9"` and `"0.9.5"` denote distinct contracts rather than adding another version entry. The package manifest and module directive MUST resolve to the same exact language contract after normalization.
++* `[MOD-6]` A module MAY declare a supported language version with `#! language "X.Y"` on its first line; the package's `ember.toml` `language` key is the default. Mismatch with the compiler's supported set is `E0006`. The compiler's supported set MUST include every language version whose source it still accepts. For this revision the supported set MUST include `"0.9.6"`, `"0.9.5"`, `"0.9"`, `"0.8.5"`, `"0.8.4"`, and `"0.8.3"`. Selecting an older version selects that version's accepted-program and semantic rules; it does not silently opt the module into later language semantics. *(hardened 2026-09-13; HC-096-01)*
++* `[MOD-6a]` **Patch-level language revisions.** A language version MAY be written as `X.Y` or `X.Y.Z`. `0.9` remains the pre-0.9.5 0.9 language contract; `0.9.5` selects inferred multi-region-view semantics; and `0.9.6` preserves the complete 0.9.5 source-language accepted/rejected program sets and observable semantics while selecting this revision's reference-implementation and conformance contract. The compiler MUST NOT silently enable `0.9.5` or `0.9.6` semantics for a module that explicitly selects `0.9`. The supported set is exactly the set stated by `[MOD-6]`; this rule explains why `"0.9"`, `"0.9.5"`, and `"0.9.6"` remain distinct selectable contracts even where the latter two accept and interpret ordinary source identically. The package manifest and module directive MUST resolve to the same exact language contract after normalization.
+ * `[MOD-7]` **Read-only visibility for fields.** A field declared `pub(read)` (or `pub(package, read)`) may be **read** wherever a `pub` (respectively `pub(package)`) field could be read, but may be **written only from the declaring module**. Outside the declaring module, the following are errors `E1050 field is read-only outside its module`: assignment (`h.value = x`, augmented assignment), taking `ref mut h.value`, passing `h.value` to a `mut` parameter or `mut self` method, and destructuring it with a mutable binding. Reading, copying, taking `ref h.value`, and passing it to a borrowed parameter are allowed. `read` applies to fields of structs and classes only; on any other item it is `E1051`. Because construction is a write, a `pub(read)` field does not count as `pub` for the purpose of the synthesised memberwise constructor (`[STR-1]`).
+ 
+   Summary of field visibility:
+@@ -4038,7 +4236,15 @@
+   ```
+ 
+   `write_at` bounds-checks by the ordinary `MutSpan` rules, initializes exactly one element without dropping its previous bytes, and returns a mutable reference to it. Span `assume_init` consumes the source span and asserts that every element exposed by the result is initialized. Calling either `assume_init` outside an `unsafe` context is rejected by `[UNS-1]`; calling it inside `unsafe` without satisfying its full-initialization precondition is undefined behavior. Partial initialization never establishes a safe full-span conversion. An implementation MAY track individual initialized elements or ranges for diagnostics, but soundness MUST NOT depend on a particular tracking precision.
+-* `[ARN-10]` **Transactional `Default` initialization.** `alloc_array[T](count)` is transactional with respect to the Arena's allocation cursor. If any `T.default()` construction fails or panics, the cursor MUST be restored to its state immediately before the call and no partial result becomes reachable. Because `[ARN-3]` requires `!needs_drop(T)`, rollback requires no element destructor. `alloc_uninit` has no constructor-failure phase.
++* `[ARN-10]` **Transactional Arena initialization.** When `arena.alloc_array[T](count)` uses `T: Default`, the implementation constructs each element using `T.default()`.
++
++  If a separately specified recoverable construction failure occurs, the Arena allocation cursor MUST be restored to its state immediately before the `alloc_array` operation, and no partially initialized result may become reachable.
++
++  In v1, `T.default()` has no recoverable construction-failure path. A panic terminates according to `[PAN-1]` through process termination via `abort()`. No post-panic Arena state is observable, so this rule does not require panic recovery or unwinding.
++
++  No rollback obligation arises unless a separate API explicitly defines both a recoverable construction-failure path and transactional rollback semantics.
++
++  Because ordinary `Arena.alloc_array[T]` requires `!needs_drop(T)`, rollback does not require execution of element destructors. Conformance MUST establish successful `Default` construction, process termination through the `[PAN-1]` abort path on panic, no continuation after that panic, no compiler-invented unwinding solely for this rule, and no observation of post-panic Arena state. Any future recoverable construction API is tested against its own explicitly specified rollback contract.
+ * `[ARN-11]` **`Zeroable` validity.** `Zeroable` is an unsafe marker whose sole semantic claim is that an all-zero object representation is a valid initialized `T`. It implies neither `Copy`, `Send`, `Sync`, FFI safety, nor any ownership property. The compiler MAY implement it automatically only when it proves the property recursively from representation. Automatic derivation MUST reject any field for which all-zero validity is unproven, including `ref T`, a range excluding zero, or an enum layout whose zero discriminant or payload is invalid. A manual implementation, if exposed, requires `unsafe` and the existing `@safety` contract machinery.
+ * `[ARN-12]` **Phase ordering.** The core `Zeroable` validity predicate and built-in implementations needed by `alloc_array` MUST exist in the Arena implementation phase. General `@derive(Zeroable)` generation MAY remain in the later derive phase. Phase ordering MUST NOT make the already-normative `alloc_array` behavior impossible to implement.
+ * `[ARN-13]` **Canonical initialization boundary.** The v1 spellings are `MaybeUninit.uninit`, `MaybeUninit.write`, `MaybeUninit.assume_init`, `MutSpan[MaybeUninit[T]].write_at`, and `MutSpan[MaybeUninit[T]].assume_init`. Implementations MUST NOT add a second safe conversion from `MaybeUninit[T]` to `T`, or from `MutSpan[MaybeUninit[T]]` to `MutSpan[T]`, with different semantics. A future checked conversion is an additive language revision, not an implementation-defined alias. `write`/`write_at` are the safe initialized-state transitions; both `assume_init` forms are the one explicit unchecked boundary.
+@@ -6134,22 +6340,33 @@
+                                                                                          │
+                           ┌──────────────────────────────────────────────────────────────┘
+                           ▼
+-   HIR ─► MIR lowering ─► Definite-init ─► Borrow check (NLL) ─► Drop elaboration
+-                                                                        │
+-                          ┌─────────────────────────────────────────────┘
++   HIR ─► initial MIR ─► callable/provenance summaries ─► definite-init/ownership/borrow/region analysis
++                                                                                         │
++                          ┌──────────────────────────────────────────────────────────────┘
+                           ▼
+-   Monomorphisation ─► MIR optimisations (RC elision, inlining of tiny fns, SROA, const-prop, bounds-check elim,
+-                       exclusivity-check elision) ─► Effect analysis (under the contract profile, `[EFF-15]`)
+-                          │
+-            ┌─────────────┴─────────────┐
+-            ▼                           ▼
+-     C11 backend (v1)             LLVM backend (v2)
+-            │                           │
+-     project C compiler           LLVM opt + codegen
+-            └─────────────┬─────────────┘
+-                          ▼
+-                      linker (lld / link.exe / ld)  + ember_rt.lib
+-```
++   Drop elaboration ─► MIR verification ─► Monomorphisation ─► MIR optimisations
++                                                              │
++                                                              ▼
++                                  Effect analysis (contract profile, `[EFF-15]`)
++                                                              │
++                                                              ▼
++                                                       MIR verification
++                                                              │
++                                               ┌──────────────┴──────────────┐
++                                               ▼                             ▼
++                                        C11 backend (v1)              LLVM backend (v2)
++                                               │                             │
++                                        project C compiler            LLVM opt + codegen
++                                               └──────────────┬──────────────┘
++                                                              ▼
++                                                  linker + ember_rt.lib
++```
++
++Initial MIR is an analysis substrate and is not codegen-ready. The verified post-analysis and
++post-optimisation MIR is the code-generation boundary. Summary derivation and interprocedural
++analysis may iterate or interleave to reach a sound fixed point, but only summaries derived from
++verified MIR or supplied by an existing audited `unsafe`/FFI contract may become trusted interface
++metadata.
+ 
+ Effect analysis runs **after** monomorphisation and after the target-independent subset of MIR optimisation, because `[EFF-9]`'s `RuntimeCheck(k)` describes generated code: a check that elision removes must not appear in the effect set. It runs under the **contract profile** (`[EFF-15]`), so a contract has one verdict for a given source rather than one per build profile.
+ 
+@@ -6266,20 +6483,26 @@
+ ### 4.4 Type checking algorithm (`ember_typeck`)
+ 
+ 1. **Collect** item signatures for the whole package (types, function signatures, interface impls, associated types) into `ember_types`. Cycles in struct definitions by value are `E2200 infinite size`.
+-2. **Per function**: allocate inference variables for each local declared without a type and for each generic argument at call sites; walk the HIR in **checking mode** where an expected type exists (`check(expr, ty)`) and **synthesis mode** otherwise (`synth(expr) -> ty`); unify with union–find; record coercions at coercion sites (`[TYP-5]`, `Array→Span`, `String→str`, handle upcast, `!`→any, closure→fn type); collect obligations `Ty: Interface`.
++2. **Per function**: allocate inference variables for each local declared without a type and for each generic argument at call sites; walk the resolved AST while constructing typed HIR, in **checking mode** where an expected type exists (`check(expr, ty)`) and **synthesis mode** otherwise (`synth(expr) -> ty`); unify with union–find; record coercions at coercion sites (`[TYP-5]`, `Array→Span`, `String→str`, handle upcast, `!`→any, closure→fn type); collect obligations `Ty: Interface`.
+ 3. **Solve obligations** by searching impls (inherent + interface impls in scope, then blanket `extend[T: B]` impls) with unification; ambiguity is `E2062`; unsatisfied is `E2040`.
+ 4. **Method resolution** per `[TYP-24]` with auto-ref/deref adjustments recorded.
+ 5. **Default literals** (`[LEX-16/17]`), then **report** any unresolved variables (`E2060`).
+ 6. **Pattern compilation** and exhaustiveness.
+-7. Emit HIR.
++7. Emit the completed typed HIR.
+ 
+ ### 4.5 MIR lowering
+ 
+ Standard: expressions lowered to temporaries; places preserved; short-circuit ops to branches; `match` decision trees to `SwitchInt`; `with`/`defer` to explicit block structure; every local gets `StorageLive`/`StorageDead`; every non-`Copy` local gets a `Drop` terminator at scope exit on every path (including the `return` path); temporaries get drops at statement end; class-handle copies get `Retain`; class-handle drops get `Release`; class-field long-term accesses get `BeginAccess`/`EndAccess` (`[EXC-*]`); bounds checks become `Assert` before `Index` projections; overflow checks become `CheckedBinaryOp` + `Assert` when the profile/attribute asks for it.
+ 
++A shared storage-lowering helper MUST preserve the operation's explicit replacement mode. Ordinary
++assignment evaluates the new value, drops the old live value, then stores the new value (`[OWN-5]`).
++`Cell.set` stores the new value before dropping the old value (`[CELL-1]`). `MaybeUninit.write` and
++`write_at` store the new value without dropping prior bytes (`[ARN-8]`, `[ARN-9]`). These orderings
++MUST NOT be generalized into one universal assignment rule.
++
+ ### 4.6 Definite initialisation
+ 
+-Forward dataflow over MIR with a lattice per local (`Uninit | Init | Maybe`), also per field path for structs (partial moves/inits) and for `self` fields inside `init` methods (`[CLS-2]`). Reading `Uninit`/`Maybe` is `E3050`/`E2100`; `Maybe` at a drop point introduces a **drop flag**.
++Forward dataflow over MIR with a lattice per local (`Uninit | Init | Maybe`), also per field path for structs (partial moves/inits) and for `self` fields inside `init` methods (`[CLS-2]`). Reading `Uninit`/`Maybe` is `E3050`/`E2100`; `Maybe` at a drop point introduces a **drop flag**. Storage represented as `MaybeUninit[T]` uses the same analysis infrastructure while preserving its two-state language contract: layout alone never establishes initialization, `write`/`write_at` establish initialized slots, and consuming `assume_init` is the explicit unsafe assertion. Finer element/range tracking may improve diagnostics or optimization but MUST NOT become a runtime tag or an implementation-dependent safe conversion (`[ARN-8]`–`[ARN-13]`).
+ 
+ ### 4.7 Borrow checking (NLL)
+ 
+@@ -6288,12 +6511,22 @@
+ 1. **Regions.** Every reference/view-typed local, temporary and projection gets a region variable `'r`. A function's signature regions are per `[LT-1]`: `'self`, one `'p_i` per view-typed parameter, `'ret` = the elided/`@borrows` choice, plus `'static`. Struct view fields use their inferred region slots; the legacy single-region case is represented as a one-slot vector.
+ 
+ `[MIR-REG-1]` Every callable that can receive or return a multi-region view carries compiler-internal
+-field-access and field-to-region provenance summaries in its interface artifact. The summaries are
+-erased from source syntax and runtime ABI but participate in interface hashing and invalidate dependent
+-borrow/type checking when they change. The summaries MUST be sufficient for a caller to determine which
++field-access and field-to-region provenance summaries in its interface artifact. For visible code the
++compiler derives exact summaries from MIR. Separately compiled or intentionally opaque code may supply
++a narrower declared summary only through compiler metadata derived from verified MIR or an existing
++audited `unsafe`/FFI contract whose obligations cover access and retention; safe source code cannot lie
++about this contract. Where neither source exists, the summary conservatively names all relevant fields
++and all regions permitted by the callable type. Dynamic/interface dispatch uses the union of every
++contractually valid current, separately compiled, and hot-reload target, or the conservative result when
++that set cannot be bounded soundly.
++
++Both summaries are erased from source syntax and runtime ABI but participate in interface hashing,
++incremental-cache keys, and generic dependencies. Changing either summary MUST recheck affected callers
++and invalidate dependent artifacts. The summaries MUST be sufficient for a caller to determine which
+ region slots are required by each call and where every returned view field derives from without
+-re-reading the callee body. An unavailable or stale summary is a hard compiler failure, not permission
+-to assume a narrower access set.
++re-reading the callee body. Unavailable, stale, or incompatible trusted metadata is a hard compiler
++failure, never permission to assume a narrower access set or an optimization hint. No summary or region
++metadata enters runtime layout, serialization, ABI, or hot-reload schemas.
+ 2. **Constraints** are generated by walking MIR: assignment `a = b` of reference types yields `'b: 'a` (b outlives a, i.e. `points('a) ⊆ points('b)`); calls instantiate the callee's signature regions with fresh variables and add its constraints; `Ref{place}` creates a **loan** `L = (place, mut?, region)`; reborrows add constraints from the base reference's region.
+ 3. **Liveness.** Compute the set of CFG points at which each local is live (used later on some path). A region `'r` includes every point at which any local with a type mentioning `'r` is live, and `[LT-*]` closure under constraints (fixpoint).
+ 4. **Loan scope.** Loan `L` is **in scope** at point `P` iff `P ∈ points(region(L))` and `L` has not been **killed** (its base local was overwritten or went out of scope before `P` on that path).
+@@ -7640,7 +7873,7 @@
+ construct below parses under Part III; nothing here is illustrative shorthand.
+ 
+ ```ember
+-#! language "0.9.5"
++#! language "0.9.6"
+ import std.io                              # namespace import
+ from std.math import Vec3, sin as sine     # item import
+ import c "vulkan/vulkan.h" with (overlay="overlays/vulkan.em")
+@@ -7728,13 +7961,13 @@
+ Everything between the consolidated-body markers is current normative text. Material after this
+ marker is specification tooling guidance for the current revision, not inherited 0.8.5 text.
+ 
+-# Appendix B — 0.9.5_Hardened_10 Consistency Checklist
++# Appendix B — 0.9.6_Hardened_1 Consistency Checklist
+ 
+ The following checks are mandatory CI checks for the consolidated specification itself:
+ 
+-1. Exactly one current version declaration exists and names `0.9.5_Hardened_10`.
+-2. The immediate predecessor is `0.9.5_Hardened_9`.
+-3. `[MOD-6]` and `[MOD-6a]` name the supported `0.9.5`, `0.9`, and 0.8.x source-language contracts explicitly, and `0.9` does not silently enable `0.9.5`.
++1. Exactly one current version declaration exists and names `0.9.6_Hardened_1`.
++2. The immediate predecessor is frozen `0.9.5_Hardened_10`, which remains byte-for-byte unchanged.
++3. `[MOD-6]` and `[MOD-6a]` name the supported `0.9.6`, `0.9.5`, `0.9`, and 0.8.x source-language contracts explicitly; `0.9` does not silently enable later semantics, and 0.9.6 preserves the ordinary-source accepted/rejected sets and observable semantics of 0.9.5.
+ 4. `EMBER_RUNTIME_ABI` is canonical; `EMBER_RT_ABI` can occur only in compatibility-alias documentation.
+ 5. Every `dyn Writer`/`dyn Reader` serialization signature uses a legal indirection.
+ 6. Manifest examples use current versions unless explicitly marked historical.
+@@ -7760,6 +7993,15 @@
+ 26. ODR-006 and ODR-007 are closed with traceable owner authority and are not presented as implementation choices.
+ 27. `[LT-1a]`, `[LT-4]`, `[LT-4a]`, `[LT-4b]`, and `[TST-22]` agree that `Arena` is a narrow non-view provenance source for Arena-backed returns, while arbitrary non-view parameters remain forbidden.
+ 28. `[ARN-2]`, `[ARN-3]`, and `[ARN-8]`–`[ARN-13]` agree on one deterministic, drop-safe Arena initialization contract and one canonical `MaybeUninit` transition API.
+-29. `[TST-23]` covers safe writes, unsafe assertions, full-span initialization, ownership transfer, layout, zero validity, capability precedence, and rollback without turning unsafe preconditions into implementation-defined runtime tracking.
++29. `[TST-23]` covers safe writes, unsafe assertions, full-span initialization, ownership transfer, layout, zero validity, capability precedence, and the owner-approved `[ARN-10]` abort-only clarification without inventing unwinding or observable post-panic state.
++30. `[IMP-7]`, the compiler-pipeline addendum, Part XIX, `[MIR-REG-1]`, and `[VERIFY-3]` agree that initial MIR precedes initialization/ownership/borrow/region analyses and verified MIR is the code-generation boundary.
++31. The canonical capability model separates lifetime provenance from storage identity and keeps permission, representation, ownership, checking, unsafe authority, synchronization, validity, and escape constraints orthogonal.
++32. A raw pointer is represented by `reference_kind = raw_pointer`; mutable raw access uses mutable permission and does not introduce a `raw` permission value.
++33. Exact and trusted declared callable summaries come only from visible/verified MIR or an audited unsafe/FFI contract; unknown access is conservative across every contractually valid static, separate-compilation, dynamic, and hot-reload target.
++34. Field-access and field-to-region summaries invalidate affected callers, interface hashes, generic artifacts, and caches together; stale metadata is a hard compiler failure and none of it enters runtime ABI or reload schemas.
++35. Ordinary assignment, `Cell.set`, and `MaybeUninit.write`/`write_at` retain their three distinct replacement/destruction orderings in the normative rules, MIR lowering, verifier obligations, and generated-code tests.
++36. H10's cycle diagnostics, class-only dynamic exclusivity, interior-mutability distinctions, ECS library boundary, FFI exception/retention contracts, coroutine restrictions, and runtime-erasure guarantees are not weakened by shared compiler machinery.
++37. The received Revision 5 RFC hash, owner-approved `[ARN-10]` wording, ADR-030, HC-096-01, migration intake, and H1 audit record form one traceable decision chain.
++38. No RFC architecture label has become a parallel normative rule family; the alternate rule-index audit has no duplicate definition and zero genuine dangling normative references. Its raw inherited `IDE-2`/`IDE-5`/`IDE-10` reservations and historical `HOT-10` citation remain classified by ERR-042 rather than misrepresented as rules. Every unimplemented requirement remains identified as `SPECIFIED` rather than evidence-backed.
+ 
+ A failure of any checklist item is a specification CI failure, not a compiler implementation choice.

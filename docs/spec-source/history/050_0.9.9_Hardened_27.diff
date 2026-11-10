@@ -1,0 +1,100 @@
+--- Ember_v0.9.9_Hardened_26.md
++++ Ember_v0.9.9_Hardened_27.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_26
+-**Supersedes:** 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_27
++**Supersedes:** 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -1017,10 +1017,22 @@
+ * `[TYP-15]` *(changed in 0.9.9)* **Where views may be stored.** A view value may be stored only in a
+   place whose lifetime is bounded by every region the view carries. Locals, parameters, return values,
+   and fields of other view types are bounded. Class fields, statics, `Box` and `Shared` contents,
+-  heap-collection elements and `owned fn` captures are not bounded, so they may hold only views whose
+-  every region is `static` — which admits string literals, `bytes` literals and views of `static`
+-  items: `names = ["ann", "bob"]` is an `Array[str]` of static strings. Any other stored view is
+-  `E3063 stored view may not outlive its source`, shape B12.
++  heap-collection elements (an `Array`'s, a `Map`'s keys and values, a `Set`'s elements), a span's
++  elements and `owned fn` captures are not bounded, so they may hold only views whose every region is
++  `static` — which admits string literals, `bytes` literals and views of `static` items: `names =
++  ["ann", "bob"]` is an `Array[str]` of static strings, and a view copied out of such storage is
++  `static` too. Any other stored view is `E3063 stored view may not outlive its source`, shape B12.
++  The rule is about the stored value, wherever the store happens (ODR-069):
++  * a view stored through a `mut` parameter or a reference is stored in the place it points to, which
++    carries the view's regions afterwards (`[LT-21]`): `mem.replace(name, v)` and `put(name, v)` for
++    `fn put(mut x: str, v: str): x = v` leave `name` borrowing what `v` borrows;
++  * a function that stores a view it was given where only a `static` view may go, or into the place a
++    `mut` parameter points to, passes that to its callers: a call must give it a `static` view there
++    (`E3063` at the call otherwise), or is taken to store the view in the argument's place. So a
++    generic `Map[str, V].insert(k, v)` takes a literal key and refuses one borrowed from a local;
++  * a function called where its callers are not checked — a virtual method, a closure, a function
++    value, a `dyn` interface's method — must store only `static` views there, or views already in
++    that place.
+ * `[TYP-15a]` The arena-backed containers (`ArenaArray`, `ArenaMap`, §IX.2) and the view containers
+   `BorrowList[T]` may hold views bounded by the container's own region.
+ 
+@@ -1740,7 +1752,8 @@
+   * A map literal `{k: v, …}` is a `Map[K, V]` (insertion-ordered, `[STD-11]`); a set literal
+     `{a, …}` is a `Set[T]`. A repeated key keeps its first position and its last value, as Python's
+     `dict` does; `{1, 1}` is `{1}`. With no context a text key, value or element is a `String`, since
+-    a map holds no views (`[STD-11]`).
++    a map written with no type owns its text; it holds `str` only where the program says so
++    (`labels: Map[str, int]`, `[STD-11]`).
+   * `[]` and `{}` need their element type from the context or from later uses in the function
+     (`[TYP-23]`); left open, they are `E2060`.
+   * Every element converts to the element type by `[TYP-5]`, so `["ann", "bob"]` in an
+@@ -2110,7 +2123,11 @@
+   reference or view. Which parameters are sources depends only on the declared signature. In an
+   instance of a generic, a parameter whose type there is a reference or view is a source of that
+   instance too, of the first kind: `Tree[str].leaf(v: T)` may return a view of what `v` views, and
+-  its callers, which call that instance, know it (ODR-048).
++  its callers, which call that instance, know it (ODR-048). Where rule 1 below ties the result to a
++  borrowed receiver, such a parameter is a source alongside it when its declared type names a type
++  parameter the declared result names too: the result's type says it can hold one, so
++  `Map[str, V].entry(k) -> MapEntry[K, V, H]` returns an entry holding `k`, while `get(q) ->
++  Option[ref V]` borrows only the map (ODR-069).
+   For a function whose result is a reference or view:
+   1. if it has a borrowed receiver (`self` or `mut self`), of any type, the result borrows from the
+      receiver;
+@@ -3891,8 +3908,10 @@
+   amortised: a map may grow, or close up removed entries, inside an insertion or a removal;
+   iteration is linear in the number of entries. `H: Hasher + Default`, and a map makes a fresh `H`
+   for each hash; `A` is its allocator (`[ALC-1]`). `Set[T, H = DefaultHasher, A = Global]` is the
+-  same with no values. Keys, values and elements are not view types (`E3063`, whose help names
+-  `String`): a view inside would make the map a view (`[TYP-34]`), confined to locals (`[TYP-15]`). Because order is fixed by the program's operations and the default hasher is
++  same with no values. Keys, values and elements may be views under `[TYP-15]`'s rule for heap
++  storage: only `static` ones, such as string literals (`labels: Map[str, int] = {"start": 1}`), and a
++  view that borrows a local is `E3063` at the call that would store it (ODR-069). A map of `static`
++  views is not itself a view. Because order is fixed by the program's operations and the default hasher is
+   fixed-seed (`[HASH-2]`), iterating a `Map` or `Set` is not `Nondet`.
+ * `[STD-16]` *(new in 0.9.9)* **`Map` operations.** `m[k]` reads the value and panics when the key is
+   missing (`key not found: <Debug of k>; use .get(k) for an Option`); `m[k] = v` inserts or replaces
+@@ -6639,7 +6658,7 @@
+ Hardened_21 adds ODR-046; Hardened_22 adds ODR-047; Hardened_23 adds ODR-048; Hardened_24 adds
+ ODR-049 to ODR-064, the owner's simplification pass (`docs/proposals/Ember_Simplification_Pass_Revised.md`);
+ Hardened_25 adds ODR-065, the review of SP-010's access question; Hardened_26 adds ODR-066 to
+-ODR-068, the owner's Part II adoptions SP-007, SP-016 and SP-031.
++ODR-068, the owner's Part II adoptions SP-007, SP-016 and SP-031; Hardened_27 adds ODR-069, SP-013.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6691,6 +6710,7 @@
+ | ODR-066 | a const argument is any compile-time expression; two are equal by value when known, else by a stated integer normal form (`+`, `-`, `*`; other operations opaque), and not shown equal is a mismatch that says so — SP-007 (Hardened_26) | `[TYP-41]` |
+ | ODR-067 | `AsKey[K]` only matches; `ToKey[K]: AsKey[K]` makes the key, and `m[q] = v` needs it; every `K: Eq + Hash` is `AsKey[K]`, and `ToKey[K]` when also `Clone` — SP-016 (Hardened_26) | `[STD-12]`, `[STD-17]` |
+ | ODR-068 | `get_pair_mut(i, j)` on an `Array` or `MutSpan` gives two mutable references, or `None` for an index out of range or equal indices, after checking — SP-031 (Hardened_26) | `[BRW-5]`, `[STD-15]`, `[SPN-5]` |
++| ODR-069 | one storage rule for every owning container: a `Map`, `Set` or `Array` may hold `static` views, checked at each store wherever it happens (through a `mut` parameter or reference, or in a callee, whose callers answer for its parameters); an instance ties a result to a parameter its type names — SP-013 (Hardened_27) | `[TYP-15]`, `[STD-11]`, `[TYP-38]`, `[LT-1]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6774,6 +6794,7 @@
+ | `[THR-9]` | changed |
+ | `[TXT-10]` | changed |
+ | `[TYP-13]` | changed |
++| `[TYP-15]` | changed |
+ | `[TYP-21]` | changed |
+ | `[TYP-23]` | changed |
+ | `[TYP-26]` | changed |

@@ -1,0 +1,269 @@
+--- Ember_v0.9.10_Hardened_1.md
++++ Ember_v0.9.10_Hardened_2.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.10_Hardened_1
+-**Supersedes:** 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.10_Hardened_2
++**Supersedes:** 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -17,7 +17,12 @@
+ numbers its items in a type that holds every count and number it can have, stepping up only as far
+ as the values need; it replaces ODR-089's `int` counts and ODR-091's backwards-`enumerate` panic and
+ adds the count types `u256` and `i256`. It changes the set of accepted programs, so the language
+-version moves (`[VER-9]`); Appendix H §H.6 lists every change.
++version moves (`[VER-9]`); Appendix H §H.6 lists every change. **0.9.10_Hardened_2** records the
++owner's rulings of 2026-10-06 on three of the audit's decisions: `parse` reads the 256-bit counts;
++the known-numbers rule, which reads what names set once, loop counters and lengths hold; and
++`enumerate` numbers in a type that holds every number, so none overflows; and the one that followed:
++a whole number converts by itself to another whole-number type where it is known to fit. Appendix H
++§H.7 lists every change.
+ 
+ ---
+ 
+@@ -69,7 +74,7 @@
+ | Appendix E | Coming from Python (non-normative) |
+ | Appendix F | Glossary |
+ | Appendix G | Resolution of findings F-001–F-214 |
+-| Appendix H | Changes from 0.9.8_Hardened_3, from 0.9.9_Hardened_1 (§H.4) and from 0.9.9_Hardened_2 (§H.5) |
++| Appendix H | Changes from 0.9.8_Hardened_3, from 0.9.9_Hardened_1 (§H.4), from 0.9.9_Hardened_2 (§H.5), in 0.9.10 (§H.6) and from 0.9.10_Hardened_1 (§H.7) |
+ | Appendix I | Rule index |
+ 
+ **Normative words.** MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119. Text marked
+@@ -853,8 +858,9 @@
+   as every integer cast does; the narrower unsigned integers widen to `u256` and every integer to
+   `i256` (`[TYP-5]`). Each implements the operator interfaces of what it does: `Add`, `Sub`, `Neg`,
+   `AddAssign` and `SubAssign` (ODR-040). Nothing else: `*`, `/`, `//`, `%`, `**`, the bitwise
+-  operators and shifts, the integer methods, `MIN` and `MAX`, a conversion to or from a float,
+-  `parse`, and a range of one are `E2020` (a range of 256-bit numbers would need a 512-bit count).
++  operators and shifts, the integer methods, `MIN` and `MAX`, a conversion to or from a float, and
++  a range of one are `E2020` (a range of 256-bit numbers would need a 512-bit count). `parse` reads
++  one over its whole range (`[TXT-10]`; the owner's ruling of 2026-10-06).
+   As an index or a size (`[TYP-31]`), one that `usize` does not hold is out of bounds. A literal of one is within
+   `i128`'s range for an `i256` and `u128`'s for a `u256`. They are 32 bytes, aligned as `i128` is.
+ * `[TYP-27]` *(new in 0.9.9)* `()` is the value of type `void`; `Ok(())` is the success value of `Result[void, E]`. A
+@@ -863,11 +869,15 @@
+ 
+ ### Conversions
+ 
+-* `[TYP-4]` *(changed in 0.9.9)* No value converts implicitly between scalar types in an operator.
+-  `i32 + i64` is `E2020`, whose note appears only when both operands are numeric and names the exact
+-  `as` cast on the narrower operand. Untyped literals are not values yet and take their type from
+-  context (`[LEX-16]`, `[LEX-17]`).
+-* `[TYP-5]` *(changed in 0.9.9)* **Coercions — the complete list.** At a coercion site (assignment or
++* `[TYP-4]` *(changed in 0.9.9)* *(changed in 0.9.10)* No value converts implicitly between scalar
++  types in an operator, but one: of two whole numbers of different types, one whose every value the
++  other's type holds, by the numbers the compiler knows (`[STD-19]`), converts to it, to `int` where
++  each would (`[TYP-5]` rule 12; the owner's ruling of 2026-10-06): an `i32` always fits an `i64`, so
++  `i32 + i64` is an `i64` addition. `a + b` for an `int` and a `u64` that may be any of their values is
++  `E2020` (the `int` may be negative, the `u64` may pass `int`'s top), whose note appears only when
++  both operands are numeric and names the exact `as` cast on the narrower operand. Untyped literals
++  are not values yet and take their type from context (`[LEX-16]`, `[LEX-17]`).
++* `[TYP-5]` *(changed in 0.9.9)* *(changed in 0.9.10)* **Coercions — the complete list.** At a coercion site (assignment or
+   initialisation, argument, return, field initialiser, collection element, default value), and only
+   there, a value converts implicitly by exactly these rules:
+   1. lossless integer widening: `iN → iM`, `uN → uM`, `uN → iM` for M > N;
+@@ -882,7 +892,15 @@
+   10. a function or lambda to a callable type it satisfies (`[CLO-3]`);
+   11. a value of type `T` to `Option[T]`, as `Some(value)`, where `T` is not itself an `Option`: one
+       level only, so nothing becomes `Option[Option[T]]` (`return v` in a function returning
+-      `Option[T]`, `f(5)` for a parameter `x: Option[int] = None`).
++      `Option[T]`, `f(5)` for a parameter `x: Option[int] = None`);
++  12. a whole number (a signed or unsigned integer of any size: `int`, `i8` to `i256`, `u8` to
++      `u256`, `isize`, `usize`) to another whole-number type, where the compiler knows every value it
++      can have fits that type, by the known-numbers rule (`[STD-19]`: numbers written as numbers,
++      names set once and never changed, loop counters, `enumerate`'s numbers, arithmetic on known
++      numbers, lengths). It converts as `as` does (`[TYP-6]`), which then loses nothing. After
++      `n = 5`, `y: u64 = n` is accepted; `y: u64 = x` for a parameter `x: int` is `E2020`. In a
++      function written for any type, a number whose type each use decides (`[STD-19]`) is checked
++      at each use (the owner's ruling of 2026-10-06).
+   Each rule composes with the others only where stated (widening after range erasure, and rule 11
+   after rules 1–4). Nothing
+   converts implicitly to or from `bool` or `char`.
+@@ -1121,9 +1139,12 @@
+ 
+ * `[TYP-16]` Generic functions and types are monomorphised: each distinct instantiation is a distinct
+   function or type in the output. `ember build --report=instantiations` counts them (`[MONO-2]`).
+-* `[TYP-17]` Type parameters are bounded by interfaces: `fn sum[T: Add[Output = T] + Default](xs:
++* `[TYP-17]` *(changed in 0.9.10)* Type parameters are bounded by interfaces: `fn sum[T: Add[Output = T] + Default](xs:
+   Span[T]) -> T`. Inside a generic body only the operations the bounds provide are available, plus
+   copy for `T: Copy`, move, drop and `size_of`. A missing bound is `E2040` naming the bound to add.
++  The body is checked once with its parameters standing for any type, except where the type of
++  `enumerate`'s numbers depends on a parameter (`[STD-19]`): that type, and every line using those
++  numbers, is checked for each use, with the parameters filled in.
+ * `[TYP-40]` *(new in 0.9.9)* **Interfaces are nominal.** A type implements an interface only through an
+   `implements` clause or an `extend … implements` block; having methods of the right names and types is
+   not enough. This is what gives every implementation one place of declaration (`[TYP-20]`) and one
+@@ -1900,11 +1921,12 @@
+   MUST compile to an induction-variable loop over base pointers and lengths, with no iterator object in
+   memory and no call per element, independent of the host C compiler's optimiser. `step_by(k)` becomes
+   the increment `k` (a `k` that is not a positive constant is checked once before the loop). An
+-  `enumerate` numbers in its position type (`[STD-19]`): over a range of 64-bit numbers whose
+-  numbers are not visible, an `i128`, which no number of such a range passes. The loop has a copy
+-  that computes such numbers as `int`s, taken after one test before it when every number fits one,
+-  and computes them in their own type otherwise (G8-4 decision C); the numbers are the same either
+-  way. `tests/conformance/CTL-3b/` asserts it on the emitted C.
++  `enumerate` numbers in the type the known-numbers rule gives it (`[STD-19]`), which holds every
++  number it can give, so the loop computes each number with no check: over a range of 64-bit
++  numbers the compiler knows nothing of, an `i128`. The loop has a copy that computes numbers wider
++  than 64 bits as `int`s, taken after one test before it when every number fits one, and computes
++  them in their own type otherwise (G8-4 decision C); the numbers are the same either way.
++  `tests/conformance/CTL-3b/` asserts it on the emitted C.
+ * `[CTL-4]` The `else` of `while` or `for` runs when the loop ends without `break`.
+ * `[CTL-5]` A `match` tests arms top to bottom; the first that matches runs; a guard is evaluated after
+   binding; the arms MUST be exhaustive (`E2090`); an unreachable arm is `W2091`.
+@@ -3917,7 +3939,7 @@
+ * `[STD-26]` *(new in 0.9.9)* *(changed in 0.9.10)* **Python's built-in functions.** The prelude has these functions, with
+   Python's meaning; each borrows its argument as a `for` loop would (`[CTL-1]`):
+   * `len(x)` is `x.len()`: an `int` for a collection or view, and for a range its count
+-    (`[STD-19]`), in the smallest type that holds it where its numbers are written in place
++    (`[STD-19]`), in the smallest type that holds it by the numbers the compiler knows
+     (`len(0..n)` with `n: int` is an `int`). `len` of a `str` or `String` is
+     `E2073`: Python counts characters and Ember's `s.len()` counts bytes, so the help offers both
+     `s.char_count()` and `s.len()`.
+@@ -4001,7 +4023,7 @@
+   literal produces a new `String` holding its text. The allocation happens at the literal and is
+   reported there (`Alloc`); where a `str` is expected, a literal is a static `str` and allocates
+   nothing. A `str` *value* never converts implicitly: `s.to_string()` or `String.from(s)` is written.
+-* `[TXT-10]` *(new in 0.9.9)* **`str` operations.** `len()` is the length in bytes and
++* `[TXT-10]` *(new in 0.9.9)* *(changed in 0.9.10)* **`str` operations.** `len()` is the length in bytes and
+   `char_count()` in characters; `is_empty`, `chars`, `char_indices`, `bytes`, `as_bytes`, `lines`,
+   `split(sep)`, `split_whitespace()` (Python's `split()` with no argument), `split_once(sep) ->
+   Option[(str, str)]`, `partition(sep) -> (str, str, str)` (Python's), `trim`, `trim_start`, `trim_end`,
+@@ -4010,7 +4032,8 @@
+   `to_string`, `get(range)`, `is_char_boundary(i)`, and `x in s` (`[STD-8b]`). Methods returning
+   several strings return iterators of `str` borrowing `s`. Case mapping and `char_count` are
+   Unicode-aware; nothing depends on the locale. `parse[T]()` (ODR-029) reads the whole text as an
+-  integer type, a float type, `bool` or `char`, skipping no white space (`s.trim().parse[int]()`): an
++  integer type (the 256-bit counts included, over their whole range), a float type, `bool` or `char`,
++  skipping no white space (`s.trim().parse[int]()`): an
+   integer is an optional sign (`-` only for a signed type) and ASCII decimal digits, and must fit `T`;
+   a float is an optional sign and `inf`, `infinity` or `nan` in any case, or decimal digits with an
+   optional `.`, fraction and exponent (`e` or `E`, an optional sign, digits), rounded to the nearest
+@@ -4158,13 +4181,29 @@
+   and it numbers in the type that holds both sides' numbers; `flatten` and `flat_map` count in the
+   level that holds the outer count times the inner one (an `int` by an `int` stays an `int`).
+   `u256` is the limit: a count past it panics. In generic code these are the counts of the types
+-  involved, filled in for each use. **The visible-numbers rule:** where a range's numbers are
+-  written at the place it is numbered or measured (`(0..n).iter().enumerate()`,
+-  `(0..10).iter().len()`, `len(0..n)`), `enumerate` numbers, and `len` and `count` measure, in the
+-  smallest of `int`, `u64`, `i128`, `u128` and `i256` that holds every value the loop can give,
+-  read from the bounds written as numbers, the bounds' types, what `take`, `skip`, `step_by`, `zip` and `chain` allow, and
+-  `enumerate`'s start; never in a wider type than the iterator's own. An iterator kept in a
+-  variable shows no numbers. An iterator can run backwards when it implements
++  involved, filled in for each use. **The known-numbers rule** (the owner's rulings of 2026-10-06,
++  which widen the visible-numbers rule): where `enumerate` is called, and where `len` or `count` is
++  called on an iterator, the numbers it gives, and the count, are in the smallest of `int`, `u64`,
++  `i128`, `u128` and `i256` that holds every value it can give, read from the numbers the compiler
++  knows. It knows a number written as one; a name set once and never changed anywhere in its
++  function (no assignment, augmented assignment, mutable borrow, `mut` argument or `mut self` call
++  of it, in the function or a closure in it) holds what its value held, and a range or an `Array`
++  literal so set has its bounds or its length; a loop's counter (`for i in a..b`, `range(a, b,
++  step)`, and a range's value through `rev`, `skip`, `take` and `step_by`) holds its range's
++  numbers; `+`, `-`, `*`, `//` and `%` give what their known operands allow; a list's, a view's or
++  a text's length is at most what its items' bytes allow (`[HEAP-8]`: at most `PTRDIFF_MAX` bytes,
++  an item of no size counting as one) and a fixed array's is its `N`; `take`, `skip`, `step_by`,
++  `zip` and `chain` give what their known arguments allow. Anything else may be any value of its
++  type, and an iterator gives at most what its `Count` holds. `enumerate` numbers from `start` to
++  `start + n - 1` over at most `n` items, so its type steps up from the iterator's own `Position`
++  where the numbers could pass that type's top (`ys.enumerate(start=int.MAX - 1)` over three items
++  numbers in `u64`): no number of an `enumerate` overflows. In generic code an `enumerate` numbers
++  in its iterator's `Position`; where what it numbers in depends on the item type (a list of `T`,
++  whose most items depend on `T`'s size), the function's own check leaves it, and every line that
++  uses those numbers, to the check of each use (`[TYP-17]`), which numbers by what it knows. A use
++  that a line does not fit is refused there, naming the use (`in labels used with T = u8`); with
++  `[TYP-5]` rule 12, `last = i` takes the numbers of a list of `int`s from 2 whether `last` is an
++  `int` or a `u64`. An iterator can run backwards when it implements
+   `DoubleEndedIterator`, whose `next_back(mut self) -> Option[Item]` gives the last item not yet
+   given from either end (with `next`, the two ends meet and no item comes twice) and whose method
+   `rev` is, so `rev` is exactly where an iterator can run backwards; `ExactSizeIterator`'s
+@@ -4178,8 +4217,8 @@
+   backwards and know their length; `copied`, `cloned` and `chain` run backwards when what they wrap
+   does, and `take`, `skip`, `step_by`, `enumerate` and `zip` when it also knows its length, giving
+   the items `next` would, last first; each knows its length when what it wraps does. Run backwards,
+-  `enumerate` numbers its last item `start + len - 1` first; a number past its type's top panics,
+-  as `int.MAX + 1` does. `collect[C]()` builds any `C` that implements `FromIterator[Item]` (ODR-094), an interface of
++  `enumerate` numbers its last item `start + len - 1` first, and the items `skip_back` leaves out
++  need no numbers. `collect[C]()` builds any `C` that implements `FromIterator[Item]` (ODR-094), an interface of
+   `std.core` that is not a prelude name: `interface FromIterator[T]: fn from_iter[I: Iterator[Item =
+   T]](owned it: I) -> Self`. `Array[T]`, `Set[T]`, `Map[K, V]` (from `(K, V)` pairs, a later pair's
+   value replacing an earlier one's for the same key) and `String` (from `char`s and from `String`s)
+@@ -7222,6 +7261,46 @@
+ | `[STD-26]` | changed |
+ | `[TYP-31]` | changed |
+ | `[TYP-42]` | added |
++
++## H.7 Changes in 0.9.10_Hardened_2 (from 0.9.10_Hardened_1)
++
++**0.9.10_Hardened_2** records the owner's rulings of 2026-10-06 on three decisions of the audit of
++the delegated rulings, and on the type of `enumerate`'s numbers in a function written for any type
++(`docs/DECISIONS.md`, ADR-140). It changes what programs are accepted
++(`docs/MIGRATION-0.9.10.md`):
++
++* `parse` reads `u256` and `i256` over their whole range, with the statuses the narrower integers
++  give; `Overflow` only past the real top or below the real bottom (`[TXT-10]`, `[TYP-42]`). D-528
++  had refused them (`E2020`).
++* The known-numbers rule replaces the visible-numbers rule: `enumerate`'s numbers, and `len` and
++  `count`, are in the smallest type that holds every value, read from the numbers the compiler
++  knows: numbers written as numbers, names set once and never changed, a loop's counter,
++  arithmetic on known numbers, and lengths (`[STD-19]`, `[STD-26]`). Before, a variable counted as
++  any value of its type.
++* `enumerate` numbers in a type that holds every number it can give, stepping up from its
++  iterator's `Position` where the numbers could pass that type's top, so no number of an
++  `enumerate` overflows; a counted loop computes its numbers with no check (`[STD-19]`,
++  `[CTL-3b]`). This replaces G8-4 decision F (a number past `int`'s top panicked) and ODR-091's
++  backwards panic.
++* A whole number converts by itself to another whole-number type where the compiler knows every
++  value it can have fits, at a coercion site and in an operator (`[TYP-5]` rule 12, `[TYP-4]`):
++  after `n = 5`, `y: u64 = n` is accepted. Floats, `bool` and `char` keep their rules.
++* In a function written for any type, where the type of `enumerate`'s numbers depends on the item
++  type, that type and the lines using the numbers are checked for each use, which numbers by what
++  it knows; a use a line does not fit is refused there, naming it (`[TYP-17]`, `[STD-19]`).
++
++Generated: every rule whose text differs from 0.9.10_Hardened_1.
++
++| Rule | 0.9.10_Hardened_1 → 0.9.10_Hardened_2 |
++|---|---|
++| `[CTL-3b]` | changed |
++| `[STD-19]` | changed |
++| `[STD-26]` | changed |
++| `[TXT-10]` | changed |
++| `[TYP-4]` | changed |
++| `[TYP-5]` | changed |
++| `[TYP-17]` | changed |
++| `[TYP-42]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -8488,7 +8567,7 @@
+ | `[TXT-7]` | XV | Text is UTF-8 everywhere. `std.ffi.WideString` converts, explicitly, … |
+ | `[TXT-8]` | XV | `str` is a view type and carries a region, like every `Span`. |
+ | `[TXT-9]` | XV | A string literal initialises a `String`. Wherever a `String` is … |
+-| `[TXT-10]` | XV | `str` operations. `len()` is the length in bytes and `char_count()` … |
++| `[TXT-10]` | XV | *(changed in 0.9.10)* `str` operations. `len()` is the length in … |
+ | `[TXT-11]` | XV | `String` operations. Everything `str` has (by read-through), plus … |
+ 
+ ## TYP
+@@ -8498,8 +8577,8 @@
+ | `[TYP-1]` | IV | Every concrete type has, at compile time, a size, an alignment, and … |
+ | `[TYP-2]` | IV | Producing a `bool` other than 0 or 1 is undefined behaviour and … |
+ | `[TYP-3]` | IV | Producing a `char` outside the Unicode scalar values is undefined … |
+-| `[TYP-4]` | IV | No value converts implicitly between scalar types in an operator. … |
+-| `[TYP-5]` | IV | Coercions — the complete list. At a coercion site (assignment or … |
++| `[TYP-4]` | IV | *(changed in 0.9.10)* No value converts implicitly between scalar … |
++| `[TYP-5]` | IV | *(changed in 0.9.10)* Coercions — the complete list. At a coercion … |
+ | `[TYP-6]` | IV | `x as T` converts explicitly: * integer → integer: keeps the low bits … |
+ | `[TYP-7]` | IV | `as` between pointer types, or between a pointer and an integer, … |
+ | `[TYP-8]` | IV | Integer overflow panics in every profile. An arithmetic operation (`+ … |
+@@ -8515,7 +8594,7 @@
+ | `[TYP-15]` | IV | Where views may be stored. A view value may be stored only in a place … |
+ | `[TYP-15a]` | IV | The arena-backed containers (`ArenaArray`, `ArenaMap`, §IX.2) and the … |
+ | `[TYP-16]` | IV | Generic functions and types are monomorphised: each distinct … |
+-| `[TYP-17]` | IV | Type parameters are bounded by interfaces: `fn sum[T: Add[Output = T] … |
++| `[TYP-17]` | IV | *(changed in 0.9.10)* Type parameters are bounded by interfaces: `fn … |
+ | `[TYP-18]` | IV | Generic arguments are inferred from the arguments of a call. Explicit … |
+ | `[TYP-19]` | IV | There is no specialisation, no higher-kinded type and no variadic … |
+ | `[TYP-20]` | IV | Coherence is per package. An implementation of interface `I` for type … |

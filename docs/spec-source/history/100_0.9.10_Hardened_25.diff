@@ -1,0 +1,126 @@
+--- Ember_v0.9.10_Hardened_24.md
++++ Ember_v0.9.10_Hardened_25.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.10_Hardened_24
+-**Supersedes:** 0.9.10_Hardened_23, 0.9.10_Hardened_22, 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.10_Hardened_25
++**Supersedes:** 0.9.10_Hardened_24, 0.9.10_Hardened_23, 0.9.10_Hardened_22, 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -3279,7 +3279,7 @@
+   **guaranteed present**; **conditionally elided** (the compiler MAY remove it with a proof and reports
+   whether it did); **implementation-defined** (not constrained, such as code size; two conforming
+   implementations may differ); **not observable** (erased).
+-* `[COST-3]` *(changed in 0.9.9)* **The costs.**
++* `[COST-3]` *(changed in 0.9.9)* *(changed in 0.9.10)* **The costs.**
+ 
+ | Cost | Class | Condition, and what the programmer can do |
+ |---|---|---|
+@@ -3292,9 +3292,12 @@
+ | Dynamic exclusivity check | conditionally elided | removed per `[EXC-3]`, including when nothing held anywhere could fail it; hoisted per `[EXC-8]`; covered by `mut self` (`[EXC-15]`); a load and a compare when the access is not held (`[EXC-19]`) |
+ | Per-field access word | guaranteed present | one `u32` per non-`Copy` field of a non-`@sync` class, packed per class with a zero word after an odd count, and at most one check per such field on entry to a `mut self` method (`[EXC-19]`) |
+ | Stale-handle check | guaranteed present, **every profile** | the guarantee is the check; `get_unchecked` in `unsafe` |
++| Downcast check | guaranteed present | `as?` and `as!` walk the base chain (`[DSP-4]`) |
++| `assert_disjoint` comparison | guaranteed present | one comparison of the two ranges, which later checks rely on; none when the ranges are known disjoint (`[DSJ-5]`) |
+ | `RefCell` borrow | guaranteed present | one counter update |
+ | `Cell` access | not observable | a load or a store |
+ | Interface call through `dyn` | guaranteed present | one indirect call |
++| Virtual method call | conditionally elided | a load of the slot and one indirect call (`[DSP-2]`); direct when one implementation is reachable (`[DSP-5]`) |
+ | Generic call, monomorphised | not observable | a direct, inlinable call |
+ | Generic call, shared (`[MONO-6]`) | guaranteed present | one indirect call per bound method; only above a declared instantiation budget |
+ | Callable parameter (`fn(A) -> R` as a parameter) | not observable | a direct call |
+@@ -3310,6 +3313,8 @@
+ | 64-bit `int` | guaranteed present | `int` is `i64`, so an `Array[int]` moves twice the bytes of C's 32-bit `int`; dense numeric data uses `i32`/`f32` elements (`L4003`) |
+ | Sorting floats | not observable | `sort` on floats compares by IEEE totalOrder (`[TYP-37]`), a few integer instructions per compare |
+ | Arena allocation | guaranteed present | a pointer bump |
++| Allocation | guaranteed present | a call that allocates (a collection growing, a `String` built), reported per site; `@noalloc` refuses it (`[EFF-1]`) |
++| `contains` | guaranteed present | the `contains` an `x in c` selects: linear for an array or view, constant for a set or map (`[STD-8a]`) |
+ | Stack probe | guaranteed present | one touch per page of a frame larger than a page (`[RT-12]`); none for smaller frames |
+ | FFI call | guaranteed present | one direct call for an ABI-direct C function |
+ 
+@@ -5396,13 +5401,16 @@
+ 
+ ## XVII.8 Conformance profiles and ABI versions
+ 
+-* `[CONF-1]` *(changed in 0.9.9)* A compiler declares the profile it implements, and claims it only
+-  when every conformance test of every rule in it passes; a partial implementation claims the profile
+-  below, never the one above with exceptions.
+-* `[CONF-2]` **Ember Core**: Parts II–VII, X, XIII and XV's core and alloc layers.
+-* `[CONF-3]` **Ember Systems**: adds Parts VIII, IX, XI, XII and XIV.
++* `[CONF-1]` *(changed in 0.9.9)* *(changed in 0.9.10)* A compiler declares the profile it implements,
++  as `ember --version`'s `profile:` line (`none`, `core`, `systems`, `native` or `dynamic`), and claims
++  it only when every conformance test of every rule in it passes; a partial implementation claims the
++  profile below, never the one above with exceptions. Each profile holds the one before it.
++* `[CONF-2]` *(changed in 0.9.10)* **Ember Core**: Parts II–VII, X, XIII and XV's core and alloc
++  layers, which are XV.1 and XV.3–XV.6.
++* `[CONF-3]` *(changed in 0.9.10)* **Ember Systems**: adds Parts VIII, IX, XI, XII and XIV, and XV.2
++  and XV.7 (console, files, time and processes: the io layer).
+ * `[CONF-4]` **Ember Native**: adds Part XVI. Annex C (C++) is a separate, optional claim.
+-* `[CONF-5]` **Ember Dynamic**: adds Annex B (hot reload).
++* `[CONF-5]` *(changed in 0.9.10)* **Ember Dynamic**: adds Annex B (hot reload) to Ember Native.
+ * `[ABI-1]` *(changed in 0.9.10)* The runtime ABI, the hot-reload protocol, the module protocol and the
+   export-table protocol are versioned independently of the language; each version is a symbol whose
+   name encodes the number (`ember_rt_init_vN`, `ember_reload_protocol_vN`, a module's marker
+@@ -7331,6 +7339,8 @@
+ | ODR-148 | ruled under the delegation: `ember bind --init <header>` writes `<stem>.overlay.em` beside the header | `[CLI-5]` |
+ | ODR-149 | ruled under the delegation: `overlay` takes one file or a list applied in order; `override` before an item replaces an earlier file's entry, any other second entry for one name is `E5010` | `[FFI-30c]`, `[GRM-35]` |
+ | ODR-150 | ruled under the delegation: the examples are corrected to the rules (`mut` on written `MutSpan` parameters, `[FN-1]`; `ember,fragment` where a block names undeclared items; XVII.5's expected diagnostic); every block is checked as `[TST-7]` says | `[TST-7]`, `[FN-1]`, `[TST-1]` |
++| ODR-151 | ruled under the delegation: a compiler declares its profile as `ember --version`'s `profile:` line; each profile holds the one before it; Ember Core's part of XV is XV.1 and XV.3–XV.6, and XV.2 and XV.7 (the io layer) join Ember Systems; Ember Dynamic adds Annex B to Ember Native | `[CONF-1]`, `[CONF-2]`, `[CONF-3]`, `[CONF-5]` |
++| ODR-152 | ruled under the delegation: the cost table gains the rows `Virtual method call` (conditionally elided, `[DSP-2]`, `[DSP-5]`), `Downcast check` (`[DSP-4]`), `assert_disjoint` comparison (`[DSJ-5]`), `Allocation` (`[EFF-1]`) and `contains` (`[STD-8a]`), the five costs `ember inspect --cost` reported with no row; `rule_index.py` compares the rows the compiler reports with the table | `[COST-3]`, `[COST-5]` |
+ 
+ Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
+ 0.9.9.
+@@ -7955,6 +7965,25 @@
+ | Rule | 0.9.10_Hardened_23 → 0.9.10_Hardened_24 |
+ |---|---|
+ 
++
++## H.30 Changes in 0.9.10_Hardened_25 (from 0.9.10_Hardened_24)
++
++**0.9.10_Hardened_25** records ODR-151 and ODR-152, ruled under the delegation when `[CONF-1]`'s declaration and `[COST-5]`'s check were built (`docs/DECISIONS.md` ADR-236, ADR-237):
++
++* A compiler declares (`[CONF-1]`) its profile as `ember --version`'s `profile:` line (`none`, `core`, `systems`, `native` or `dynamic`), and each profile holds the one before it.
++* Ember Core (`[CONF-2]`) named XV's core and alloc layers, which are not sections of Part XV: they are XV.1 and XV.3–XV.6. `[CONF-3]` takes XV.2 and XV.7, the io layer's console, files, time and processes, which no profile named.
++* Ember Dynamic (`[CONF-5]`) adds Annex B to Ember Native.
++* The cost table (`[COST-3]`) gains five rows, the costs `ember inspect --cost` already reported without one: `Virtual method call`, `Downcast check`, `assert_disjoint` comparison, `Allocation` and `contains`. `[COST-5]`'s check found them.
++
++Generated: every rule whose text differs from 0.9.10_Hardened_24.
++
++| Rule | 0.9.10_Hardened_24 → 0.9.10_Hardened_25 |
++|---|---|
++| `[CONF-1]` | changed |
++| `[CONF-2]` | changed |
++| `[CONF-3]` | changed |
++| `[CONF-5]` | changed |
++| `[COST-3]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -8192,11 +8221,11 @@
+ 
+ | Rule | Part | Begins |
+ |---|---|---|
+-| `[CONF-1]` | XVII | A compiler declares the profile it implements, and claims it only … |
+-| `[CONF-2]` | XVII | Ember Core: Parts II–VII, X, XIII and XV's core and alloc layers. |
+-| `[CONF-3]` | XVII | Ember Systems: adds Parts VIII, IX, XI, XII and XIV. |
++| `[CONF-1]` | XVII | *(changed in 0.9.10)* A compiler declares the profile it implements, … |
++| `[CONF-2]` | XVII | *(changed in 0.9.10)* Ember Core: Parts II–VII, X, XIII and XV's core … |
++| `[CONF-3]` | XVII | *(changed in 0.9.10)* Ember Systems: adds Parts VIII, IX, XI, XII and … |
+ | `[CONF-4]` | XVII | Ember Native: adds Part XVI. Annex C (C++) is a separate, optional … |
+-| `[CONF-5]` | XVII | Ember Dynamic: adds Annex B (hot reload). |
++| `[CONF-5]` | XVII | *(changed in 0.9.10)* Ember Dynamic: adds Annex B (hot reload) to … |
+ 
+ ## CORO
+ 
+@@ -8222,7 +8251,7 @@
+ |---|---|---|
+ | `[COST-1]` | X | Zero cost, defined. An abstraction is zero-cost *for a use* whose … |
+ | `[COST-2]` | X | Every implicit cost is one of: guaranteed elided (emitting it is a … |
+-| `[COST-3]` | X | The costs. |
++| `[COST-3]` | X | *(changed in 0.9.10)* The costs. |
+ | `[COST-4]` | X | `ember inspect --cost <item>` prints every row that applies to an … |
+ | `[COST-5]` | X | A rule that introduces an implicit cost MUST add a row to this table; … |
+ 

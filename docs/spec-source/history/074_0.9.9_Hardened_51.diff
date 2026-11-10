@@ -1,0 +1,71 @@
+--- Ember_v0.9.9_Hardened_50.md
++++ Ember_v0.9.9_Hardened_51.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_50
+-**Supersedes:** 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_51
++**Supersedes:** 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -1292,7 +1292,9 @@
+   would. A `Map` prints its entries in insertion order and an empty one prints `{}`; an empty `Set`
+   prints `set()`. A collection's `Debug` text is its `Display` text. A string's `Debug` text is
+   Python's `repr`: single quotes, or double quotes when the text holds a `'` and no `"`; `\`, the
+-  chosen quote, `\n`, `\r` and `\t` are escaped, and any other control character is `\xNN`.
++  chosen quote, `\n`, `\r` and `\t` are escaped, and any other control character is `\xNN`. A
++  `Box[T]` and a `Cell[T]` show as the `T` they hold, in `Display` and `Debug` alike (`Box(5)` prints
++  `5`; ODR-094).
+ * `[TYP-37]` *(new in 0.9.9)* Floats implement `Eq` with IEEE `==` (so `NaN != NaN`) and `Ord` with the IEEE-754
+   totalOrder predicate (`-NaN < -inf < … < -0.0 < +0.0 < … < +inf < +NaN`). The comparison
+   *operators* on float values keep IEEE meaning (`[TYP-9]`) in concrete and generic code alike: `a < b`
+@@ -3682,7 +3684,10 @@
+   `unwrap`, `expect`, `unwrap_or`, `unwrap_or_else`, `unwrap_or_default`, `map`, `map_err`,
+   `and_then`, `or_else`, `ok`, `err`, `ok_or`, `ok_or_else`, `filter`, `take`, `replace`, `as_ref`,
+   `as_mut`, `iter`, and `context` (`[ERR-10]`). `unwrap` and `expect` panic with the error's `Display`
+-  text. The methods that take a function are eager: each consumes its receiver and calls the function
++  text. `Option[T]`'s `as_ref(self) -> Option[ref T]` and `as_mut(mut self) -> Option[ref mut T]` give
++  a reference to the payload where it is, whatever `T` is (ODR-094): a pattern binds a `Copy` payload
++  by value (`[GRM-13]`), so these are how a function hands out a reference into an `Option` it holds.
++  The methods that take a function are eager: each consumes its receiver and calls the function
+   at most once, before it returns, moving the payload into it except for `filter` (ODR-025):
+   * `Option[T]`: `map[U](owned self, f: once fn(owned T) -> U) -> Option[U]`,
+     `and_then[U](owned self, f: once fn(owned T) -> Option[U]) -> Option[U]`,
+@@ -4104,7 +4109,16 @@
+   `skip`, `step_by`, `enumerate` and `zip` when it also knows its length, giving the items `next`
+   would, last first; each knows its length when what it wraps does. Run backwards, `enumerate`
+   numbers its last item `start + len - 1` first, so a number past `int`'s top panics at the first
+-  item.
++  item. `collect[C]()` builds any `C` that implements `FromIterator[Item]` (ODR-094), an interface of
++  `std.core` that is not a prelude name: `interface FromIterator[T]: fn from_iter[I: Iterator[Item =
++  T]](owned it: I) -> Self`. `Array[T]`, `Set[T]`, `Map[K, V]` (from `(K, V)` pairs, a later pair's
++  value replacing an earlier one's for the same key) and `String` (from `char`s and from `String`s)
++  implement it, and so may a program's own types. `C` is written (`it.collect[Array[int]]()`) or is
++  the type the call is expected to give (`a: Array[int] = it.collect()`). `flatten` is for items that
++  are themselves iterable (`IntoIterator`). `peekable()` gives the same items with `peek(mut self) ->
++  Option[ref Item]` and `peek_mut(mut self) -> Option[ref mut Item]`, which take the next item early
++  and keep it where it is until `next` gives it; `next_if(pred)` gives the next item when `pred` holds
++  for it and leaves it otherwise, and `next_if_eq(v)` when it equals `v` (`Item: Eq`).
+ * `[STD-5]` *(changed in 0.9.9)* `sum` and `product` combine elements left to right in the element
+   type; an empty sum is zero. Integer sums panic on overflow (`[TYP-8]`). Float sums are never
+   reassociated outside `@fastmath` (`[TYP-9]`), so they are deterministic; `sum_f64()` accumulates
+@@ -6887,7 +6901,8 @@
+ run backwards; Hardened_47 adds ODR-092, when two implementations overlap; Hardened_48 adds
+ ODR-093, what a range type implements; Hardened_49 adds ODR-096, how a call chooses between two
+ instances of one generic interface; Hardened_50 adds ODR-095, which operators a range value has,
+-and ODR-097, where an implementation may be written.
++and ODR-097, where an implementation may be written; Hardened_51 adds ODR-094, the owner's
++ruling on `collect`'s target, `peekable`'s methods, and how `Box` and `Cell` show.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6967,6 +6982,7 @@
+ | ODR-096 | of two instances of one generic interface a call's or an operator's arguments fit, one whose parameter types are the arguments' own (an untyped literal as its default type) is chosen before one reached through a coercion, for every type; two that fit equally are `E2070`, and an operator chooses as its method does (Hardened_49) | `[TYP-24]`, `[RNG-5a2]`, `[TYP-21]` |
+ | ODR-095 | a range type has every operator its representation implements over itself, `**` and the bitwise operators included, each generated as `[RNG-5a1]`'s are with the representation as its `Output` (Hardened_50) | `[RNG-5]`, `[RNG-5a1]` |
+ | ODR-097 | an implementation may also be written in the package that declares one of its interface's arguments, where, reading its type and then those arguments, the first type the package declares comes before any of the implementation's type parameters standing alone; anywhere else it is `E2121` (Hardened_50) | `[TYP-20]` |
++| ODR-094 | the owner's: `collect[C]()` builds any `C` implementing `std.core.FromIterator[Item]` (`Array`, `Set`, `Map` from pairs, `String` from `char`s and `String`s, and a program's types), `C` written or the type the call is expected to give; `peekable` gives `peek`, `peek_mut`, `next_if` and `next_if_eq`; `Option`'s `as_ref` and `as_mut` reference the payload where it is; `Box[T]` and `Cell[T]` show as the `T` they hold (Hardened_51) | `[STD-19]`, `[ERR-4]`, `[TYP-39]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 

@@ -1,0 +1,48 @@
+--- Ember_v0.9.9_Hardened_6.md
++++ Ember_v0.9.9_Hardened_7.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_6
+-**Supersedes:** 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_7
++**Supersedes:** 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -1383,7 +1383,9 @@
+ * `[STR-4]` A struct may have no fields (`struct Marker: pass`).
+ * `[STR-5]` *(changed in 0.9.9)* **Implicit derives.** A struct or enum implements `Eq`, `Debug` and
+   `Clone` field-wise, automatically, when every field implements the interface; `@no_derive(Eq)`
+-  (or `Debug`, `Clone`) opts out, and a hand-written implementation replaces the implicit one.
++  (or `Debug`, `Clone`) opts out, and a hand-written implementation replaces the implicit one. A type
++  that declares `drop` is not implicitly `Clone`: a field-wise copy would release twice what its
++  `drop` releases, so it is `Clone` through `@derive(Clone)` or a written `clone` (ODR-026).
+   `Copy`, `Ord`, `Hash`, `Default` and `Display` are never implicit and are requested with
+   `@derive(…)` or written by hand.
+ * `[STR-7]` *(new in 0.9.9)* Inside the body of a `struct`, `enum`, `class` or `extend` block, `Self`
+@@ -6321,7 +6323,7 @@
+ 
+ Each ambiguity found while implementing 0.9.9 is an owner decision request (`docs/OWNER-QUEUE.md`),
+ ruled under the owner's delegation and recorded here. Hardened_3 carries ODR-021 and ODR-022;
+-Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025.
++Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6330,6 +6332,7 @@
+ | ODR-023 | a function returning a value that can reach the end of its body is `E2182` (Hardened_4) | `[FN-10]`, §XVII.9 |
+ | ODR-024 | a borrowed or `mut` parameter whose type is not `Copy` is a source parameter a returned view may borrow, and a borrowed parameter is passed by address except a view or a `Copy` value holding no `Cell` (Hardened_5) | `[LT-1]`, `[LT-1a]`, `[LT-1b]`, `[LT-7]`, `[LT-44]`, `[FN-1]`, `[FN-3]`, `[FN-6]`, `[BRW-8]`, `[CORO-6]`, §VIII.3, §XVII.6 B7, §XVII.9, Appendix F |
+ | ODR-025 | `[ERR-4]`'s methods that take a function are eager, move the payload in (`filter` borrows it) and take `once fn`; an unannotated lambda parameter takes `owned` from the expected callable type, never `mut` (Hardened_6) | `[ERR-4]`, `[CLO-7]`, `[TYP-23]` |
++| ODR-026 | a type that declares `drop` is not implicitly `Clone`; `@derive(Clone)` or a written `clone` gives it one (Hardened_7) | `[STR-5]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6348,6 +6351,7 @@
+ | `[LT-1b]` | changed |
+ | `[LT-7]` | changed |
+ | `[LT-44]` | changed |
++| `[STR-5]` | changed |
+ | `[TYP-23]` | changed |
+ | `[TYP-29]` | changed |
+ ---

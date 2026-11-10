@@ -1,0 +1,282 @@
+--- Ember_v0.9.5_Hardened_7.md
++++ Ember_v0.9.5_Hardened_8.md
+@@ -1,8 +1,8 @@
+ # Ember Programming Language — Design & Implementation Specification
+ 
+-**Version:** 0.9.5_Hardened_7
++**Version:** 0.9.5_Hardened_8
+ **Status:** Frozen development target; implementation/conformance evidence is not claimed and normative repository adoption still requires the recorded adoption gates
+-**Immediate predecessor:** 0.9.5_Hardened_6
++**Immediate predecessor:** 0.9.5_Hardened_7
+ **Versioning model:** A hardening increments `Hardened_N` when it only adds implementation detail,
+ invariants, tooling requirements, or editorial clarification without changing accepted language
+ semantics. A language revision is required when the accepted-program set or another normative
+@@ -11,23 +11,24 @@
+ introduced inferred multi-region view structs; this revision is a subsequent hardening that
+ consolidates the inherited 0.8.5 contract, makes supersession explicit, repairs mechanical
+ extraction defects, recovers the owner-supplied Hardened 14 callback-composition rules, resolves
+-their mutable API family and callable-type mode syntax by owner decision, and records evidence
+-status honestly. No implementation or conformance result is asserted merely because the
+-specification requires one.
++their mutable API family, callable-type mode syntax, helper input modes, and `Callable` bridge by
++owner decision, and records evidence status honestly. No implementation or conformance result is
++asserted merely because the specification requires one.
+ 
+ > **Authority boundary:** This frozen hardening records the owner-selected 0.9.5 development target, but
+ > `docs/spec-source/ember-spec.md` remains the repository's sole normative source until this
+ > target passes the adoption gates and is explicitly installed. The immutable received file
+ > is preserved under `docs/spec-source/as-received/`.
+ 
+-> **SOURCE RECOVERY AND CALLABLE-MODE BOUNDARY:** on 2026-09-12 the owner supplied the missing
++> **SOURCE RECOVERY AND CALLABLE-MODE BOUNDARY COMPLETED:** on 2026-09-12 the owner supplied the missing
+ > Hardened 14 definitions (H5), selected explicit all-mutable `_mut` variants (H6), and then extended
+-> callable types with borrowed/default, `mut`, and `owned` parameter modes (this H7). H4, H5, and H6
+-> remain frozen predecessor records. This revision consistently uses Ember's canonical type name
++> callable types with borrowed/default, `mut`, and `owned` parameter modes (H7). The owner then ruled
++> that mutable helper inputs are `mut` reborrows and that the existing `Callable[Args, R]` abstraction
++> preserves the full mode signature as compiler-known type metadata (this H8). H4 through H7 remain
++> frozen predecessor records. This revision consistently uses Ember's canonical type name
+ > `MutSpan[T]`; the rulings' `SpanMut[T]` spelling was normalized to the type already defined
+-> throughout the language. ODR-004 and ODR-005 are closed. ODR-006 is narrowed to the helper
+-> functions' own still-unmarked mutable input parameters, and ODR-007 records the unresolved bridge
+-> from mode-bearing `fn(...)` types to the existing `Callable[Args, R]` abstraction.
++> throughout the language. ODR-004 through ODR-007 are closed. No helper consumes its input view,
++> callable modes are compile-time-only, and neither ruling creates a separate ownership system.
+ 
+ # 0.9_Hardened_12 Owner-Decision Resolution Cycle (historical record)
+ 
+@@ -323,7 +324,11 @@
+ 
+ * `[LT-8]` **Canonical `with_views` helpers.** `std.borrow` MUST provide canonical,
+   allocation-free helpers for two, three and four borrowed views, with both shared and mutable
+-  variants. The normative signatures are structurally:
++  variants. The helper inputs themselves use the ordinary Ember parameter-mode rules: shared
++  helpers receive their `Span[T]` inputs as shared (`borrowed`) parameters; mutable helpers receive
++  their `MutSpan[T]` inputs as `mut` parameters; and neither family consumes (`owned`) an input view.
++  The callback receives the corresponding view values using the callable parameter modes shown
++  below. The normative signatures are structurally:
+ 
+   ```text
+   with_views2[A, B, R](a: Span[A], b: Span[B],
+@@ -333,13 +338,14 @@
+   with_views4[A, B, C, D, R](a: Span[A], b: Span[B], c: Span[C], d: Span[D],
+                              f: fn(Span[A], Span[B], Span[C], Span[D]) -> R) -> R
+ 
+-  with_views2_mut[A, B, R](a: MutSpan[A], b: MutSpan[B],
++  with_views2_mut[A, B, R](mut a: MutSpan[A], mut b: MutSpan[B],
+                            f: fn(mut MutSpan[A], mut MutSpan[B]) -> R) -> R
+-  with_views3_mut[A, B, C, R](a: MutSpan[A], b: MutSpan[B], c: MutSpan[C],
++  with_views3_mut[A, B, C, R](mut a: MutSpan[A], mut b: MutSpan[B],
++                              mut c: MutSpan[C],
+                               f: fn(mut MutSpan[A], mut MutSpan[B],
+                                     mut MutSpan[C]) -> R) -> R
+-  with_views4_mut[A, B, C, D, R](a: MutSpan[A], b: MutSpan[B],
+-                                 c: MutSpan[C], d: MutSpan[D],
++  with_views4_mut[A, B, C, D, R](mut a: MutSpan[A], mut b: MutSpan[B],
++                                 mut c: MutSpan[C], mut d: MutSpan[D],
+                                  f: fn(mut MutSpan[A], mut MutSpan[B],
+                                        mut MutSpan[C], mut MutSpan[D]) -> R) -> R
+   ```
+@@ -350,6 +356,12 @@
+   those regions end, and the helpers MUST return only values that do not contain those borrowed
+   regions. The helpers are ordinary library APIs; they are not compiler-special ownership types.
+ 
++* `[LT-8a]` **Callbacks retain callable modes.** The callback parameter of each `with_views` helper
++  MUST use `[FN-6a]`'s canonical callable representation. Shared helpers require corresponding
++  shared (`borrowed`) callback parameters; `_mut` helpers require corresponding `mut` callback
++  parameters. The compiler MUST reject an incompatible callable and MUST NOT erase callback modes
++  merely because the callable passes through `Callable[Args, R]`.
++
+ * `[LT-9]` **Independent regions are preserved.** A `with_views` invocation MUST NOT force all
+   input views into the same region merely because they are passed to one callback. Each callback
+   argument retains the region of its corresponding source for the duration of the invocation.
+@@ -358,7 +370,10 @@
+ * `[LT-10]` **No escape.** A callback passed to `with_views` MUST NOT return, store, capture into an
+   `owned fn`, or otherwise publish a value whose type contains one of the invocation-local view
+   regions. Such an escape is diagnosed with the existing view/region diagnostics. An owned result
+-  is permitted.
++  is permitted. The helper does not acquire ownership of the underlying storage: passing a view to
++  either helper family creates or uses only the borrow represented by that view. A helper MUST NOT
++  extend the source storage lifetime beyond the invocation or convert a borrowed view into an owned
++  value.
+ 
+ * `[LT-11]` **Mutability follows ordinary borrowing.** `with_views` does not grant overlapping
+   mutable access. The `_mut` variants accept `MutSpan[T]` and their callbacks explicitly declare
+@@ -384,6 +399,22 @@
+   ownership or as requiring a special ownership rule for `MutSpan[T]`. `_mut` identifies the API
+   family; `mut` in the callable type expresses the actual parameter mode.
+ 
++* `[TST-21]` Conformance MUST additionally cover:
++
++  1. shared helper inputs using the default shared parameter mode;
++  2. mutable helper inputs using `mut`;
++  3. rejection of an `owned` helper-input contract and preservation of caller usability after the
++     helper returns;
++  4. preservation of `mut` callback parameters through `Callable[Args, R]`;
++  5. rejection when `Callable[Args, R]` would erase or mismatch a required parameter mode;
++  6. generic forwarding of a mode-bearing callable without loss of its borrow or mutability
++     semantics.
++
++  This closes the two formerly deferred boundaries: helper input modes follow ordinary Ember
++  parameter rules, and `Callable[Args, R]` preserves modes as part of the canonical callable type
++  rather than erasing them. The supplied mnemonic `[TST-LT-MODE]` is normalized to this next unused
++  numeric test-rule ID so the normative rule index can enforce it.
++
+ * `[LT-12]` **No hidden allocation.** The canonical helpers MUST be `@noalloc` and MUST NOT allocate
+   a wrapper object, closure environment, heap box, or temporary container solely to represent the
+   view bundle. A conforming implementation MAY inline the helper completely.
+@@ -403,8 +434,11 @@
+ > **API-surface resolution:** the owner resolved ODR-005 on 2026-09-12 by selecting distinct
+ > all-mutable `_mut` helpers rather than making the shared names magically generic over `Span` and
+ > `MutSpan`, then resolved the callback side of ODR-006 by making `mut` explicit in each callable
+-> type. Mixed shared/mutable overloads are not specified. Both families use the same ordinary region
+-> and borrow machinery; the mutable family creates no new aliasing rule.
++> type. The owner completed ODR-006 by selecting `mut` rather than `owned` for each mutable helper
++> input, and closed ODR-007 by preserving callable modes as compile-time canonical type metadata
++> through the existing `Callable[Args, R]` abstraction. Mixed shared/mutable overloads are not
++> specified. Both families use the same ordinary region and borrow machinery; the mutable family
++> creates no new aliasing rule.
+ 
+ ## H14.4 Regression and implementation obligations
+ 
+@@ -1572,6 +1606,7 @@
+ | 0.9.5_Hardened_5 | Hardening/source recovery | restored owner-supplied `[LT-8]`–`[LT-13]` callback-composition rules, preserved their 0.9.5 supersession boundary, and exposed the unprovided mutable-overload surface as ODR-005 |
+ | 0.9.5_Hardened_6 | Owner-approved hardening clarification | resolved ODR-005 with explicit all-mutable `with_views2_mut/3_mut/4_mut` helpers using canonical `MutSpan[T]`; mixed-mutable overloads remain outside the contract |
+ | 0.9.5_Hardened_7 | Owner-approved hardening clarification | added borrowed/default, `mut`, and `owned` callable-type parameter modes; applied explicit `mut` callback modes to the all-mutable helpers; added `[LT-11a]` and `[TST-20]` |
++| 0.9.5_Hardened_8 | Owner-approved hardening clarification | made mutable helper inputs explicit `mut` reborrows; preserved callable mode vectors as compiler-known metadata through `Callable[Args, R]`; added `[FN-6a]`, `[LT-8a]`, and `[TST-21]` |
+ 
+ ---
+ 
+@@ -1673,10 +1708,25 @@
+ contract. Because H6 was already frozen, ADR-023 requires this clarification to be issued as H7.
+ The adopted 0.8.5 program set remains unchanged; H7 is still a not-yet-adopted development target.
+ 
+-### 0.9.5_Hardened_7 language-conformance condition
+-
+-`0.9.5_Hardened_7` MUST NOT be declared conformant unless `[LT-8]`–`[LT-13]`,
+-`[LT-11a]`, `[TST-20]`,
++## 0.9.5_Hardened_8 Audit Record
++
++| ID | Classification | Resolution |
++|---|---|---|
++| AUD-095-39 | Owner-approved helper-mode clarification | Closed the remaining half of ODR-006: shared inputs remain borrowed, every mutable helper input is `mut`, and neither helper family consumes an input view. |
++| AUD-095-40 | Owner-approved callable abstraction clarification | Closed ODR-007 by preserving the full parameter-mode vector as compiler-known canonical type metadata through the existing `Callable[Args, R]` abstraction. |
++| AUD-095-41 | Borrow/region boundary | Added `[LT-8a]` and tightened `[LT-10]`: forwarding through `Callable` cannot erase modes, and helpers neither own source storage nor extend its lifetime. |
++| AUD-095-42 | Conformance integrity | Added `[TST-21]`; normalized the supplied non-indexable mnemonic `[TST-LT-MODE]` to the next unused numeric test-rule ID without changing its obligations. |
++| AUD-095-43 | Terminology consistency | Continued to normalize `SpanMut[T]` to Ember's canonical `MutSpan[T]`; no second mutable-span type or alias was introduced. |
++
++**Amendment:** `HC-095-07` — owner-approved helper input modes and callable-mode preservation.
++Because H7 was already frozen, ADR-023 requires this clarification to be issued as H8. The adopted
++0.8.5 program set remains unchanged; H8 is still a not-yet-adopted development target and makes no
++implementation or conformance claim.
++
++### 0.9.5_Hardened_8 language-conformance condition
++
++`0.9.5_Hardened_8` MUST NOT be declared conformant unless `[LT-8]`–`[LT-13]`,
++`[LT-8a]`, `[LT-11a]`, `[FN-6a]`, `[TST-20]`, `[TST-21]`,
+ `[LT-14]`–`[LT-43]` including `[LT-31a]`, `[MIR-REG-1]`,
+ `[TYP-15]`, `[TYP-15a]`, `[VERIFY-3]`, `[TST-17]`–`[TST-19]`, and `[BUD-8]` all have
+ passing conformance evidence; the MIR verifier proves region-slot preservation and checks callable
+@@ -1695,11 +1745,11 @@
+ 
+ ### Acceptance condition
+ 
+-`0.9.5_Hardened_7` MUST NOT be declared clean unless:
++`0.9.5_Hardened_8` MUST NOT be declared clean unless:
+ 1. the document has one current version identity;
+ 2. the consolidated Parts I–XXIII body and the current addenda form one normative source;
+-3. the active revision lineage ends at `0.9.5_Hardened_7`;
+-4. the current consistency checklist targets `0.9.5_Hardened_7`;
++3. the active revision lineage ends at `0.9.5_Hardened_8`;
++4. the current consistency checklist targets `0.9.5_Hardened_8`;
+ 5. `std.cell` is the sole defining owner of interior-mutability types;
+ 6. post-publication hot-reload failure has no unspecified recovery semantics;
+ 7. closed owner decisions are not presented as open implementation choices;
+@@ -1707,12 +1757,12 @@
+ 9. no runtime region bookkeeping appears in C/LLVM output for conforming multi-region views.
+ 10. the source-recovery record for `[LT-8]`–`[LT-13]` is traceable to the owner-supplied text and H4 remains unchanged;
+ 11. ODR-005 is closed by the explicit all-mutable `_mut` signatures, and no mixed-mutability overload is inferred.
+-12. ODR-006 is resolved before the mutable helper functions' own input modes are claimed conformant;
+-13. ODR-007 is resolved before mode-bearing callable types are mapped to `Callable` or claimed conformant.
++12. ODR-006 is closed by explicit borrowed/shared and `mut` helper input modes; no helper consumes an input view;
++13. ODR-007 is closed by compile-time preservation of the full mode vector through `Callable[Args, R]`, with no runtime mode bookkeeping.
+ 
+ ---
+ 
+-## 0.9.5_Hardened_7 Evidence Status — No Implementation Claim
++## 0.9.5_Hardened_8 Evidence Status — No Implementation Claim
+ 
+ The current document is a specification artifact, not a report of repository state.
+ 
+@@ -1828,7 +1878,7 @@
+ 
+ ---
+ 
+-## 0.9.5_Hardened_7 consolidation record
++## 0.9.5_Hardened_8 consolidation record
+ 
+ The body below originated in `0.8.5_Hardened_1`, incorporates the accepted 0.9/0.9.5 changes in
+ place, and is normative within this target together with the current addenda above. Frozen predecessor files are
+@@ -3341,6 +3391,20 @@
+   callable ownership model. A function with no captures and no generic parameters may also coerce
+   to `extern "C" fn(...) -> R`; that form remains valid only when every parameter and return type,
+   including the parameter modes, satisfies the existing FFI-safety rules.
++* `[FN-6a]` **`Callable` preserves parameter modes.** The existing `Callable[Args, R]` abstraction
++  MUST preserve whether each represented callable parameter is borrowed, `mut`, or `owned`; `Args`
++  MUST NOT erase that information. Conceptually, its canonical type identity distinguishes
++  `Callable[(A, B), R]`, `Callable[(mut A, mut B), R]`, and
++  `Callable[(owned A, B), R]`. These forms describe canonical type identity, not an additional
++  source grammar for tuple values. An omitted mode remains borrowed under `[FN-2]` and is not
++  reinterpreted as a new callable ownership mode.
++
++  The complete mode vector is compile-time metadata. It MUST survive generic callable bounds, type
++  checking, borrow checking, overload resolution, and monomorphisation, but MUST NOT introduce
++  runtime parameter-mode bookkeeping or alter callable ABI beyond the existing ABI rules. Where
++  `Callable[Args, R]` source notation cannot directly spell the modes, the compiler carries the
++  callable's full mode-bearing signature in its internal canonical callable type. This is not a
++  second ownership system.
+ * `[FN-7]` Recursion is permitted; the compiler does not guarantee tail-call elimination in v1.
+ * `[FN-8]` `main` is `fn main()`, `fn main() -> Result[void, E]` (`E: Error`), or `fn main(args: Span[str])` variants. A non-`Ok` result prints the error with `Display` to stderr and exits with code 1.
+ * `[FN-2a]` The compiler forms the borrow the callee's declared mode requires. If the argument is not a suitable place for that mode, it reports shape **B10** naming the place required. **A call site never writes the mode** (owner decision `OQ-13`): `f(x)` is written whether `f` declares `x`, `mut x` or `owned x`, preserving Part 0 row 3's guarantee that call sites never carry a sigil. The mode is read from the callee's signature, and `ember inspect` and the editor's inlay hints (`[IDE-7]`) surface it at the argument.
+@@ -3545,12 +3609,12 @@
+ 
+ * `[CLO-1]` A closure's type is a unique anonymous struct type implementing `Callable`. It is a **view type** if it captures anything by reference (the default). It is a plain value type if declared `owned fn` (captures by move/copy/retain) or captures nothing.
+ * `[CLO-2]` Capture mode is inferred per variable: read-only use ⇒ shared borrow; mutation ⇒ mutable borrow (the closure then requires a mutable place to call: `mut f`); `owned fn` ⇒ move (or copy/retain). A closure that moves a captured non-`Copy` value out of its own storage implements `CallableOnce` but not `Callable` (`[CLO-6]`).
+-* `[CLO-3]` Calling: `f(args)`. A parameter declared `f: fn(A) -> R` is a generic over `Callable` (static dispatch, monomorphised). A boxed dynamic closure is `Box[dyn fn(A) -> R]` (`E4001` in `@noalloc` because boxing allocates). An `extern "C" fn` parameter accepts only capture-free closures and named functions. **`fn(A) -> R` is a bound, not a representation.** It denotes an implicit generic parameter bounded by `Callable[(A), R]` — or by `CallableOnce` under `[CLO-6]`'s `owned` mode — so each argument monomorphises the callee against its own type. As an **implementation invariant, not an observable property a program may rely on**: a named function has a zero-sized function type, so its call becomes a direct call, and a lambda has an anonymous type whose fields are its `[CLO-2]` captures and whose `call` is its body. **A conforming implementation MUST NOT realise `fn(A) -> R` as a function pointer**, which erases the captures and so admits only capture-free lambdas; the ABI-level function pointer is `extern "C" fn(A) -> R`, and keeping the two distinct is what lets `[COST-3]` report a direct call for the ordinary case. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
++* `[CLO-3]` Calling: `f(args)`. A parameter declared `f: fn(A) -> R` is a generic over `Callable` (static dispatch, monomorphised). A boxed dynamic closure is `Box[dyn fn(A) -> R]` (`E4001` in `@noalloc` because boxing allocates). An `extern "C" fn` parameter accepts only capture-free closures and named functions. **`fn(A) -> R` is a bound, not a representation.** It denotes an implicit generic parameter bounded by `Callable[(A), R]` — or by `CallableOnce` under `[CLO-6]`'s `owned` mode — so each argument monomorphises the callee against its own type. For a mode-bearing `fn` type, this implicit bound retains the complete parameter-mode vector as canonical compile-time metadata under `[FN-6a]`; the `Args` tuple notation does not erase it. As an **implementation invariant, not an observable property a program may rely on**: a named function has a zero-sized function type, so its call becomes a direct call, and a lambda has an anonymous type whose fields are its `[CLO-2]` captures and whose `call` is its body. **A conforming implementation MUST NOT realise `fn(A) -> R` as a function pointer**, which erases the captures and so admits only capture-free lambdas; the ABI-level function pointer is `extern "C" fn(A) -> R`, and keeping the two distinct is what lets `[COST-3]` report a direct call for the ordinary case. *(clarified 2026-09-09 and 2026-09-12; see `docs/spec-amendments.md`)*
+ * `[CLO-4]` A non-`owned` closure cannot escape the scope of what it borrows: storing it, returning it, or passing it to a function whose parameter is `owned`/stored triggers the normal view-type rules (`[TYP-15]`).
+ * `[CLO-5]` Closures capturing class handles retain them (a strong reference) — the usual cycle caution applies (Part VIII §5).
+ * `[CLO-6a]` **`CallableOnce` is not `dyn`-compatible in v1**: `call_once` takes `owned self`, which `[TYP-22]` does not admit through a vtable. `[CLO-3]`'s `Box[dyn fn(A) -> R]` therefore remains a `Callable`, and a boxed once-callable payload is expressed by moving the payload into the closure's captures and having the boxed closure take it by `mem.take` from an `Option` field — the one place the `Option` dance survives, and the reason `[TYP-22]`'s by-value-self restriction is worth revisiting in v2.
+ * `[CLO-7]` `thread.spawn`, `jobs.submit`, `jobs.submit_after`, `Option.map`/`and_then`/`unwrap_or_else`, and `Result.map`/`map_err`/`and_then`/`unwrap_or_else` MUST declare their callable parameter `owned f:`. `[JOB-1]`'s inline job slot is unaffected: the closure remains a value moved into the slot.
+-* `[CLO-6]` **Once-callable closures.** `std.core` declares `interface CallableOnce[Args, R]: fn call_once(owned self, args: Args) -> R`, and `interface Callable[Args, R]: CallableOnce[Args, R]`, so every reusable closure is also once-callable. A parameter written `owned f: fn(A) -> R` is a generic bounded by `CallableOnce`; `f: fn(A) -> R` and `mut f: fn(A) -> R` are bounded by `Callable`. **No call site changes**: the mode already selects the bound, exactly as `[FN-1]`'s three modes already work for every other type. Calling a value bounded by `CallableOnce` consumes it; a second call is `E3040 use of moved value` under `[OWN-3]` and requires no additional analysis. `E3030` is emitted only when a closure implementing `CallableOnce` alone is supplied where `Callable` is required, and MUST use shape O5's help.
++* `[CLO-6]` **Once-callable closures.** `std.core` declares `interface CallableOnce[Args, R]: fn call_once(owned self, args: Args) -> R`, and `interface Callable[Args, R]: CallableOnce[Args, R]`, so every reusable closure is also once-callable. A parameter written `owned f: fn(A) -> R` is a generic bounded by `CallableOnce`; `f: fn(A) -> R` and `mut f: fn(A) -> R` are bounded by `Callable`. In each case `[FN-6a]` preserves the callable arguments' own parameter modes independently of the mode on `f` itself. **No call site changes**: the mode already selects the bound, exactly as `[FN-1]`'s three modes already work for every other type. Calling a value bounded by `CallableOnce` consumes it; a second call is `E3040 use of moved value` under `[OWN-3]` and requires no additional analysis. `E3030` is emitted only when a closure implementing `CallableOnce` alone is supplied where `Callable` is required, and MUST use shape O5's help.
+ 
+ ## VI.5a Coroutines
+ 
+@@ -7546,12 +7610,12 @@
+ Everything between the consolidated-body markers is current normative text. Material after this
+ marker is specification tooling guidance for the current revision, not inherited 0.8.5 text.
+ 
+-# Appendix B — 0.9.5_Hardened_7 Consistency Checklist
++# Appendix B — 0.9.5_Hardened_8 Consistency Checklist
+ 
+ The following checks are mandatory CI checks for the consolidated specification itself:
+ 
+-1. Exactly one current version declaration exists and names `0.9.5_Hardened_7`.
+-2. The immediate predecessor is `0.9.5_Hardened_6`.
++1. Exactly one current version declaration exists and names `0.9.5_Hardened_8`.
++2. The immediate predecessor is `0.9.5_Hardened_7`.
+ 3. `[MOD-6]` and `[MOD-6a]` name the supported `0.9.5`, `0.9`, and 0.8.x source-language contracts explicitly, and `0.9` does not silently enable `0.9.5`.
+ 4. `EMBER_RUNTIME_ABI` is canonical; `EMBER_RT_ABI` can occur only in compatibility-alias documentation.
+ 5. Every `dyn Writer`/`dyn Reader` serialization signature uses a legal indirection.
+@@ -7573,7 +7637,8 @@
+ 21. Every canonical artifact named by `[IMP-3]` has exactly one authoritative owner.
+ 22. A specification CI failure never changes language semantics automatically; it blocks release/conformance until reconciled.
+ 23. `[FN-6]`, `fn_type`, `[LT-8]`, `[LT-11]`, `[LT-11a]`, and `[TST-20]` agree that `_mut` identifies the helper family while explicit `mut` carries callback mutation authority.
+-24. ODR-006 is resolved before the helper functions' own unmarked mutable inputs are treated as implementation-ready or conformant.
+-25. ODR-007 is resolved before mode-bearing `fn(...)` types are lowered through `Callable[Args, R]` or claimed conformant.
++24. `[LT-8]` makes shared helper inputs borrowed and mutable helper inputs `mut`; neither family consumes an input view.
++25. `[FN-6a]`, `[CLO-3]`, `[CLO-6]`, `[LT-8a]`, and `[TST-21]` preserve the full callable mode vector as compile-time-only canonical metadata through `Callable[Args, R]`.
++26. ODR-006 and ODR-007 are closed with traceable owner authority and are not presented as implementation choices.
+ 
+ A failure of any checklist item is a specification CI failure, not a compiler implementation choice.

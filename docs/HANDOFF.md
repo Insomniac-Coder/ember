@@ -1,5 +1,18 @@
 # Ember — handoff
 
+> **2026-11-10, the spec's old copies are now diffs — the local session, attended, solo. READ BEFORE THE
+> NEXT CUT.** The owner: "keep the first copy and then consecutively create diff files for each cut and
+> keep the final spec that is being use". `docs/spec-source/history/` holds the first copy whole
+> (`000_0.6_spec.md`), one diff per cut (`001_…` to `131_0.9.20_Hardened_10.diff`), each cut's checksum and
+> each frozen folder's layout; `tasks/spec-0.9.9/tools/spec_history.py` builds, verifies (`verify`: all 132
+> cuts and all 3,132 part files of the 108 old folders rebuilt byte for byte, 0 mismatches), writes any old
+> cut out (`at 0.9.20_Hardened_5 <dir>`) and adds a new cut (`add`). The 131 old full files and the 108
+> `parts-*` folders are deleted (176 MB; every file was in git); kept: `Ember_v0.9.20_Hardened_10.md` (the
+> development target), `parts/`, `ember-spec.md`, `as-received/`. `appx_h.py`, `check_ids.py` and
+> `check_examples.py` read old cuts from the history; every spec gate prints what it printed before
+> (`appx_h.py` rewrites `p26-appx-h.md` and `p00-front.md` unchanged). **A cut now records its diff with
+> `spec_history.py add` and keeps no copy** (the recipe "A new hardening" below, step 5). Not committed.
+
 > **2026-11-10, end of the session — the local session (branch `spec-0.9.20-hardening`), attended, the lead
 > solo. START HERE.** **Hardened_10 of 0.9.20 is cut** and is the development target
 > (`docs/spec-source/Ember_v0.9.20_Hardened_10.md`, 18234 lines, 1,020 rules, SHA-256 `D88B6EF1D687…`). One verdict of the
@@ -15702,11 +15715,19 @@ unless named otherwise):
      `tools/appx_h.py`.
   2. Run `tools/code_registry.py --write`, `tools/check_findings.py --write`,
      `tools/appx_h.py` and `tools/appx_i.py`.
-  3. `cat parts/p*.md > ../../docs/spec-source/Ember_v0.9.9_Hardened_N.md`
+  3. `cat parts/p*.md > ../../docs/spec-source/Ember_v<version>_Hardened_N.md`
   4. Run `check_ids`, `check_citations`, `split_inline` (EFF-17 and CXX-1
      are the known flags) and `check_examples <ember.exe> <doc>` (4 are known
      to fail).
-  5. `cp -r parts parts-hN`
+  5. **Record the cut in the history, and keep no copy** (the owner,
+     2026-11-10: "keep the first copy and then consecutively create diff files
+     for each cut and keep the final spec that is being use"):
+     `python tools/spec_history.py add ../../docs/spec-source/Ember_v<version>_Hardened_N.md parts`
+     writes `docs/spec-source/history/NNN_<version>_Hardened_N.diff` (what the
+     cut changed), its checksum and its parts layout; then
+     `python tools/spec_history.py verify` (0 mismatches), then delete the
+     previous cut's full file, which the history now holds. Never copy
+     `parts/` to a `parts-hN/` folder, and never keep an old full file.
   6. Re-pin `development-target.json`: the SHA-256 of the file's LF bytes,
      in upper-case hex.
   7. Update `tasks/spec-0.9.9/HANDOFF.md` ("HN is the latest") and the ODR's

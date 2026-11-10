@@ -15,8 +15,10 @@ import re, os, sys, subprocess, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ARGS = [a for a in sys.argv[1:] if not a.startswith('--')]
 EMBER = ARGS[0]
+ROOT = os.path.join(HERE, '..', '..', '..')
+# With no document named, the development target (the old default, 0.9.9_Hardened_2, is in the history now).
 DOC = ARGS[1] if len(ARGS) > 1 else os.path.join(
-    HERE, '..', '..', '..', 'docs', 'spec-source', 'Ember_v0.9.9_Hardened_2.md')
+    ROOT, __import__('json').load(open(os.path.join(ROOT, 'docs', 'spec-source', 'development-target.json')))['path'])
 LOC = re.compile(r'--> .*:(\d+):(\d+)\s*$')
 
 OPERAND = r'[\w.\[\]()]+'

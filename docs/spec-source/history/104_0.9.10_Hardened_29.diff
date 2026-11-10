@@ -1,0 +1,63 @@
+--- Ember_v0.9.10_Hardened_28.md
++++ Ember_v0.9.10_Hardened_29.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.10_Hardened_28
+-**Supersedes:** 0.9.10_Hardened_27, 0.9.10_Hardened_26, 0.9.10_Hardened_25, 0.9.10_Hardened_24, 0.9.10_Hardened_23, 0.9.10_Hardened_22, 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.10_Hardened_29
++**Supersedes:** 0.9.10_Hardened_28, 0.9.10_Hardened_27, 0.9.10_Hardened_26, 0.9.10_Hardened_25, 0.9.10_Hardened_24, 0.9.10_Hardened_23, 0.9.10_Hardened_22, 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -3977,6 +3977,20 @@
+   max=1.0)` is checked exactly like the constructor call `Range(min=0.0, max=1.0)`, and its value is
+   readable through `TypeDesc` and `TypeInfo`. An attribute that names no built-in attribute and no
+   visible `@attribute` struct is `E0104` (`[PHIL-12]`).
++
++`std.ser` declares the descriptions (ODR-158): `TypeDesc` (`name`, `kind: TypeKind`, `size`, `align`,
++`fields: Array[FieldDesc]`, `variants: Array[VariantDesc]`, `attributes: Array[AttributeDesc]`), and
++`TypeInfo` is the same type. A description owns its text (`String`), so it is no view and lives in a
++`static`; it owns arrays, so it is no `const` (`static D: TypeDesc = reflect[Point]()`). A field names
++its type by name (`type_name`): a description of each field's type would not end for a recursive
++type. A class field's offset is counted from the end of the object header, which the runtime owns
++(`[OBJ-1]`). An attribute is its name and its arguments as `(name, AttrValue)` pairs, `AttrValue`
++being `Int(i64)`, `Float(f64)`, `Str(String)`, `Bool(bool)` or `Char(char)`: a user attribute's
++argument is named by the field it sets, a built-in attribute's positional argument by its position,
++and a name written as an argument (`@derive(Eq)`) is its text. An `@attribute` struct's fields are
++of those types (`E0104` otherwise). `@reflect` implements `std.ser.Reflect`, which `type_info[T: Reflect]()`
++asks for (`E2040` without it), and a class derived from a `@reflect` class is `@reflect` too;
++`reflect[T]()` outside what compile time evaluates is `E6010`.
+ 
+ ## XIV.3 Derives
+ 
+@@ -7356,6 +7370,7 @@
+ | ODR-155 | ruled under the delegation: Annex A's map comprehension names its type (`index: Map[str, int] = …`), and its `unsafe:` block carries a safety note; the annex is generated from `docs/spec-source/appendix-a.em`, which compiles | `[TST-6]`, `[TYP-38]`, `[UNS-8]` |
+ | ODR-156 | the owner's answer: a C++ parameter that keeps the pointer takes a `Retained` token the program holds (`tok = Retained.pin(self)`, then `tok`); `self` there is `E5060`; a parameter borrowed for the call takes `self` | `[FFI-39c]`, `[FFI-23]` |
+ | ODR-157 | ruled under the delegation: a `@packed` type holding a SIMD vector is `E0104`, as one holding an `@align` type is (ODR-138); a vector's alignment is its size (`[SIMD-1]`) | `[LAY-2]`, `[SIMD-1]` |
++| ODR-158 | ruled under the delegation: `std.ser`'s descriptions own their text (`String`) and arrays; a field names its type by name; a class field's offset counts from the end of the header; attribute arguments are `(name, AttrValue)` pairs and an `@attribute` struct's fields are numbers, text, `bool` or `char` (`E0104`); `@reflect` implements `std.ser.Reflect` (`type_info` needs it, `E2040`), inherited by derived classes; `reflect[T]()` outside compile time is `E6010` | `[RFL-1]`, `[RFL-2]`, `[RFL-3]`, `[RT-3]` |
+ 
+ Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
+ 0.9.9.
+@@ -8039,6 +8054,21 @@
+ | Rule | 0.9.10_Hardened_27 → 0.9.10_Hardened_28 |
+ |---|---|
+ | `[FFI-39c]` | changed |
++
++## H.34 Changes in 0.9.10_Hardened_29 (from 0.9.10_Hardened_28)
++
++**0.9.10_Hardened_29** records ODR-158, ruled under the delegation when reflection was built (`[RFL-1]`..`[RFL-3]`, `[RT-3]`, `docs/DECISIONS.md` ADR-250). The rules name `TypeDesc`, `TypeInfo` and their descriptors without declaring them; §XIV.2 now says what `std.ser` declares:
++
++* A description owns its text and arrays (`String`, `Array`), so it is no view and lives in a `static`, not a `const`; `TypeInfo` is `TypeDesc`.
++* A field names its type by name, since a description of each field's type would not end for a recursive type; a class field's offset is counted from the end of the runtime's object header.
++* An attribute is its name and `(name, AttrValue)` pairs: a user attribute's arguments named by the fields they set, a built-in's positional ones by position, a name argument as its text; an `@attribute` struct's fields are `int`, `float`, `str`, `String`, `bool` or `char` (`E0104`).
++* `@reflect` implements `std.ser.Reflect`, which `type_info[T]()` asks for (`E2040`); a class derived from a `@reflect` class is `@reflect`; `reflect[T]()` where compile time does not evaluate is `E6010`.
++
++Generated: every rule whose text differs from 0.9.10_Hardened_28.
++
++| Rule | 0.9.10_Hardened_28 → 0.9.10_Hardened_29 |
++|---|---|
++
+ ---
+ 
+ # Appendix I — Rule Index

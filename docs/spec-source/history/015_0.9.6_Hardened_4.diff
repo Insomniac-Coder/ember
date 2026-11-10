@@ -1,0 +1,237 @@
+--- Ember_v0.9.6_Hardened_3.md
++++ Ember_v0.9.6_Hardened_4.md
+@@ -1,8 +1,8 @@
+ # Ember Programming Language — Design & Implementation Specification
+ 
+-**Version:** 0.9.6_Hardened_3
++**Version:** 0.9.6_Hardened_4
+ **Status:** Frozen development target; implementation/conformance evidence is not claimed and normative repository adoption still requires the recorded adoption gates
+-**Immediate predecessor:** 0.9.6_Hardened_2
++**Immediate predecessor:** 0.9.6_Hardened_3
+ **Versioning model:** A hardening increments `Hardened_N` when it only adds implementation detail,
+ invariants, tooling requirements, or editorial clarification without changing accepted language
+ semantics. A language revision is required when the accepted-program set or another normative
+@@ -13,7 +13,7 @@
+ analysis/verification boundaries, and one capability model. It also incorporates the owner-approved
+ clarification of `[ARN-10]` under v1's abort-only panic policy. The new `0.9.6` version selector is
+ additive; it does not silently change a module that selected an older contract. No implementation or
+-conformance result is asserted merely because the specification requires one. This H3 successor
++conformance result is asserted merely because the specification requires one. This H4 successor
+ incorporates the owner-approved ODR-011 completion of the previously named but under-specified
+ Arena-backed collection surface and the owner-approved ODR-012 completion of the `Hash`/`Hasher`
+ boundary on which the Map contracts already depended.
+@@ -67,14 +67,29 @@
+ > the other two names out of the prelude, requires equal values to hash equally, and leaves the
+ > concrete mixing algorithm implementation-defined. Safe Map APIs never expose `ref mut K`.
+ 
+-> **REMAINING CALLABLE-TYPE BOUNDARY — OWNER DECISION REQUIRED:** the approved
+-> `Hash.hash(self, mut h: Hasher)` spelling does not state how a concrete, move-only
+-> `DefaultHasher` becomes the interface-typed parameter under `[TYP-22]`. That rule defines `dyn I`
+-> as unsized behind an explicit indirection and permits bare `I` only in class-handle position;
+-> `DefaultHasher` is not specified as a class handle. ODR-013/ERR-054 preserve the unresolved choice
+-> between a generic `H: Hasher` method and an explicit dynamic-interface representation. H3 does not
+-> choose an ABI or dispatch model by inference, and custom-key Hash conformance is blocked until the
+-> owner resolves this boundary.
++> **HASH CALLABLE-TYPE BOUNDARY COMPLETED:** the owner resolved ODR-013 by selecting the statically
++> generic `fn hash[H: Hasher](self, mut h: H)` signature. A concrete hasher supplies `H`, normal
++> generic inference and monomorphization apply, and `Hash.hash` introduces no mandatory dynamic
++> dispatch or compiler-only interface coercion. `DefaultHasher` is a move-only concrete type
++> implementing `Hasher`. An intentionally dynamic `dyn Hasher` API requires a separate explicit
++> contract.
++
++# 0.9.6_Hardened_4 Static Hasher Boundary Completion Record
++
++**Version treatment:** owner-approved hardening of the public hashing protocol completed in H3.
++**Amendment class:** OWNER-APPROVED SEMANTIC COMPLETION. H3 remains the immutable predecessor. This
++cut changes only the previously unresolved callable/interface representation of `Hash.hash`; it does
++not change the remaining hashing, equality, collection, ownership, borrowing, ABI, effect, reload,
++or determinism contracts.
++
++**Resolved contract.** `Hash.hash` is generic over `H: Hasher`. The concrete argument type is
++inferred and normally monomorphized through the existing generic/interface machinery. Bare `Hasher`
++is not treated as a concrete parameter type, and no implicit `dyn` conversion is introduced.
++`DefaultHasher` implements `Hasher`. Runtime-polymorphic hashing remains available only to a future
++API that explicitly specifies a legal `dyn Hasher` representation.
++
++**Evidence boundary.** This specification completion does not claim compiler or conformance support
++for the public hashing surface. Executable status remains external repository evidence.
+ 
+ # 0.9.6_Hardened_3 Hashing Contract Completion Record
+ 
+@@ -1856,6 +1871,7 @@
+ | 0.9.6_Hardened_1 | **Owner-selected architecture-line revision** | consolidated reference-compiler semantic facts and MIR boundaries without weakening H10 behavior; clarified `[ARN-10]` for v1 abort-only panic; accepted `0.9.6` as an additive version selector |
+ | 0.9.6_Hardened_2 | Owner-approved semantic completion | closed ODR-011 with fixed-capacity Arena-backed collections, `CapacityError.Full`, named iterator view types, exact provenance/drop/failure behavior, and `[TST-24]` |
+ | 0.9.6_Hardened_3 | Owner-approved standard-library API completion | closed ODR-012 by defining the `Hash`/`Hasher` protocol, `DefaultHasher`, Eq/hash coherence, Map key bounds, and the read-only safe key-access boundary without freezing a mixing algorithm |
++| 0.9.6_Hardened_4 | Owner-approved callable/interface completion | closed ODR-013 by making `Hash.hash` statically generic over `H: Hasher`, confirming `DefaultHasher implements Hasher`, and excluding implicit dynamic/interface coercion |
+ 
+ ---
+ 
+@@ -2059,20 +2075,23 @@
+ 5. Missing implementation artifacts are reported as gaps; the specification does not simulate their
+    existence.
+ 
+-## 0.9.6_Hardened_3 Audit Record
++## 0.9.6_Hardened_4 Audit Record
+ 
+ | ID | Classification | Resolution |
+ |---|---|---|
++| AUD-096-19 | Owner-approved callable completion | Closed ODR-013 with `fn hash[H: Hasher](self, mut h: H)`, ordinary inference/monomorphization, and no mandatory dynamic dispatch. |
++| AUD-096-20 | Interface consistency | Confirmed `DefaultHasher implements Hasher`; rejected bare-interface concrete parameters and compiler-only coercions under `[TYP-22]`. |
++| AUD-096-21 | Source normalization | Removed transport angle brackets around the ordinary parameter list while preserving the owner-selected generic bound exactly. |
+ | AUD-096-14 | Owner-approved API completion | Closed ODR-012 by defining the public `Hash`/`Hasher` protocol and concrete `DefaultHasher` required by the existing Map contracts. |
+ | AUD-096-15 | Coherence and safety | Required `a == b` to imply equal hashes, prohibited retention of supplied byte spans, kept hashing state move-only, and prohibited safe mutable key exposure. |
+ | AUD-096-16 | Implementation freedom | Kept the exact mixing algorithm outside the source-level compatibility contract while retaining deterministic input and equality-coherence requirements. |
+ | AUD-096-17 | Public identity | Assigned `Hash`, `Hasher`, and `DefaultHasher` to `std.collections`; preserved inherited `[MOD-5]` prelude export of `Hash` and added neither remaining name to the prelude. |
+-| AUD-096-18 | Owner decision required | The approved `mut h: Hasher` spelling does not determine how a concrete move-only hasher crosses `[TYP-22]`'s interface-value boundary. ODR-013/ERR-054 block custom-key implementation from inventing generic versus dynamic dispatch. |
++| AUD-096-18 | Historical H3 boundary | H3 exposed that `mut h: Hasher` did not determine how a concrete move-only hasher crossed `[TYP-22]`; ODR-013/ERR-054 stopped implementation until the owner selected the static generic contract now recorded by AUD-096-19. |
+ | AUD-096-10 | Owner-approved API completion | Closed ODR-011 with fixed-capacity `ArenaArray`/`ArenaMap` semantics, exact construction/provenance, minimum operations, failure, invalidation, destruction, and ordering requirements. |
+ | AUD-096-11 | Type-system consistency | Replaced the proposed generic-looking `Iterator[ref T]` spelling with named `@view` iterator types implementing the existing associated-type `Iterator[Item = ...]` contract; no opaque-return or second iterator mechanism was introduced. |
+ | AUD-096-12 | Public identity | Assigned all six Arena-backed collection names to `std.collections`, kept them out of the prelude, made construction observably empty, and defined the sole capacity-exhaustion value as `CapacityError.Full`. |
+ | AUD-096-13 | Evidence integrity | Added `[TST-24]` but made no implementation/conformance claim merely from the completed specification. |
+-| AUD-096-01 | Source authority | Preserved the owner-supplied Revision 5 RFC and ODR-011 ruling byte-for-byte, preserved H1 and H2 unchanged, and recorded the ODR-012 authority separately; H2 is the immutable immediate predecessor, while `ember-spec.md` remains the adopted 0.8.5 contract until H3 passes explicit adoption gates. |
++| AUD-096-01 | Source authority | Preserved the owner-supplied Revision 5 RFC and ODR-011 ruling byte-for-byte, preserved H1 through H3 unchanged, and recorded the ODR-012/ODR-013 authorities separately; H3 is the immutable immediate predecessor, while `ember-spec.md` remains the adopted 0.8.5 contract until H4 passes explicit adoption gates. |
+ | AUD-096-02 | Owner-approved architecture | Consolidated compiler facts around `TypeIdentity`, `BorrowCapability`, `OwnershipGraph`, `AccessContract`, `InitializationState`, `LayoutDescriptor`, and `EffectSet`; no public type or parallel ownership/lifetime system was introduced. |
+ | AUD-096-03 | Capability safety | Separated provenance root, optional source place, storage identity, projection, region, access permission, reference kind, ownership, acquisition/checking, safety authority, synchronization, validity, and escape constraints. Region equality is not storage overlap or `noalias`. |
+ | AUD-096-04 | Compiler boundaries | Made type/interface solving construct completed typed HIR from the resolved AST, then lowered initial MIR before initialization/ownership/borrow/region analyses and retained MIR verification after safety-critical transformations. |
+@@ -2085,12 +2104,13 @@
+ **Amendments:** `HC-096-01` records the owner-approved simplicity consolidation and
+ `[ARN-10]` clarification in H1; `HC-096-02` records the owner-approved ODR-011
+ Arena-backed collection completion in H2; and `HC-096-03` records the owner-approved ODR-012
+-hashing-contract completion in H3. ADR-030 through ADR-032 preserve the three decisions.
+-H1 and H2 remain unchanged; H2 is H3's immediate predecessor.
+-
+-### 0.9.6_Hardened_3 language-conformance condition
+-
+-`0.9.6_Hardened_3` MUST NOT be declared conformant until all H1 and H2 conditions remain satisfied and
++hashing-contract completion in H3; and `HC-096-04` records the owner-approved ODR-013
++static Hasher boundary in H4. ADR-030 through ADR-033 preserve the four decisions.
++H1 through H3 remain unchanged; H3 is H4's immediate predecessor.
++
++### 0.9.6_Hardened_4 language-conformance condition
++
++`0.9.6_Hardened_4` MUST NOT be declared conformant until all H1, H2, and H3 conditions remain satisfied and
+ repository evidence additionally proves that:
+ 
+ 1. equivalent borrow relationships represented by `Span`, `MutSpan`, `ref`, `ref mut`, `@view`
+@@ -2121,26 +2141,26 @@
+     move-only state, custom Map keys satisfy `Eq + Hash`, and no safe Map API exposes mutable keys;
+ 11. implementation and conformance evidence does not freeze `DefaultHasher`'s current mixing
+     algorithm as source-level behavior;
+-12. ODR-013 is owner-resolved and the selected generic or dynamic interface representation is
+-    reflected consistently in signatures, implementation, ABI, and conformance without a
+-    compiler-only coercion.
+-
+-### 0.9.6_Hardened_3 acceptance condition
+-
+-H3 MUST NOT replace `docs/spec-source/ember-spec.md` unless it has one version identity and predecessor,
++12. ODR-013's statically generic `H: Hasher` representation is reflected consistently in signatures,
++    inference, monomorphization, implementation, and conformance without bare-interface or
++    compiler-only dynamic coercion.
++
++### 0.9.6_Hardened_4 acceptance condition
++
++H4 MUST NOT replace `docs/spec-source/ember-spec.md` unless it has one version identity and predecessor,
+ the complete alternate-spec rule/index/grammar/diagnostic audit has no unintended regression, the
+ implementation and conformance matrices separate `SPECIFIED` from evidence-backed states, all required
+ compiler/runtime/test work passes, generated-code inspection proves runtime erasure and ordering where
+-source observation is insufficient, and every difference from H2 is classified and traceable to the
+-owner-approved ODR-012 ruling.
+-
+-## 0.9.6_Hardened_3 Evidence Status — No Implementation Claim
+-
+-This H3 file is a frozen development target. The adopted repository specification remains
+-`docs/spec-source/ember-spec.md` (`0.8.5_Hardened_1`). H3's architecture, 0.9.5 multi-region semantics,
++source observation is insufficient, and every difference from H3 is classified and traceable to the
++owner-approved ODR-013 ruling.
++
++## 0.9.6_Hardened_4 Evidence Status — No Implementation Claim
++
++This H4 file is a frozen development target. The adopted repository specification remains
++`docs/spec-source/ember-spec.md` (`0.8.5_Hardened_1`). H4's architecture, 0.9.5 multi-region semantics,
+ Arena-backed collections, hashing contract, and later phases are `SPECIFIED` unless the repository's
+ implementation matrix and executable evidence say otherwise. Passing the six gates against the adopted
+-source does not constitute H3 adoption or H3 conformance.
++source does not constitute H4 adoption or H4 conformance.
+ 
+ # 1.0 Readiness Gate
+ 
+@@ -2243,12 +2263,12 @@
+ 
+ ---
+ 
+-## 0.9.6_Hardened_3 consolidation record
++## 0.9.6_Hardened_4 consolidation record
+ 
+ The body below originated in `0.8.5_Hardened_1`, incorporates the accepted 0.9/0.9.5 changes in
+ place, carries the owner-selected 0.9.6 reference-compiler consolidation, and
+-completes ODR-011's Arena-backed collection contract and ODR-012's hashing
+-protocol/API contract. It is normative within
++completes ODR-011's Arena-backed collection contract, ODR-012's hashing
++protocol/API contract, and ODR-013's static Hasher call boundary. It is normative within
+ this target together with the current addenda above. Frozen predecessor files are
+ the historical diff bases. Existing rule IDs retain their meanings; newly added rules use unused
+ IDs. In particular, the 0.8.5 `CLI-15`, `RT-1`–`RT-4`, and `DIA-18` definitions remain intact;
+@@ -3618,7 +3638,7 @@
+     fn partial_cmp(self, other: Self) -> Option[Ordering]
+ 
+ interface Hash:
+-    fn hash(self, mut h: Hasher)
++    fn hash[H: Hasher](self, mut h: H)
+ 
+ interface Hasher:
+     fn write_bytes(mut self, bytes: Span[u8])
+@@ -3689,7 +3709,12 @@
+ 
+ * `[HASH-1]` **Hashing contract.** `std.collections` publicly exports the `Hash` and `Hasher`
+   interfaces. `Hash` remains a prelude name under `[MOD-5]`; `Hasher` is not a prelude name. Their
+-  canonical interfaces are the declarations above. `Hasher` is a stateful, move-only hashing
++  canonical interfaces are the declarations above. The hasher parameter to `Hash.hash` is statically
++  generic: `H` is inferred from the concrete argument and is normally monomorphized through the
++  existing `[TYP-17]`/`[TYP-18]` machinery. `Hash.hash` MUST NOT use bare `Hasher` as a concrete
++  parameter type and introduces no mandatory dynamic dispatch. A separately specified API MAY use
++  an explicit legal `dyn Hasher` representation when it intentionally requires runtime
++  polymorphism; `Hash.hash` is not such an API. `Hasher` is a stateful, move-only hashing
+   context. `finish(owned self)` consumes the hasher and returns the final `u64` hash value. The
+   owner's prose explicitly requires consumption; the canonical signature therefore spells the
+   existing `owned self` mode rather than the contradictory borrowed `self` shorthand present in the
+@@ -3698,7 +3723,8 @@
+   not required. `Hash.hash` MUST NOT inspect or retain the hasher after returning, and a hasher MUST
+   NOT retain any supplied `Span` beyond the corresponding call.
+ * `[HASH-2]` **Canonical hasher.** `std.collections` publicly exports the default concrete hasher
+-  `DefaultHasher`, with constructor `DefaultHasher.new() -> DefaultHasher`. `DefaultHasher` is not a
++  `DefaultHasher`, which implements `Hasher`, with constructor
++  `DefaultHasher.new() -> DefaultHasher`. `DefaultHasher` is not a
+   prelude name. `Map` and `Set` MUST use `DefaultHasher` unless a future language/library revision
+   explicitly specifies a custom-hasher API. The exact mixing algorithm is an implementation detail
+   and is not part of the source-level compatibility contract unless a future rule explicitly freezes
+@@ -8232,13 +8258,13 @@
+ Everything between the consolidated-body markers is current normative text. Material after this
+ marker is specification tooling guidance for the current revision, not inherited 0.8.5 text.
+ 
+-# Appendix B — 0.9.6_Hardened_3 Consistency Checklist
++# Appendix B — 0.9.6_Hardened_4 Consistency Checklist
+ 
+ The following checks are mandatory CI checks for the consolidated specification itself:
+ 
+-1. Exactly one current version declaration exists and names `0.9.6_Hardened_3`.
+-2. The immediate predecessor is frozen `0.9.6_Hardened_2`, which remains byte-for-byte unchanged.
+-3. `[MOD-6]` and `[MOD-6a]` name the supported `0.9.6`, `0.9.5`, `0.9`, and 0.8.x source-language contracts explicitly; `0.9` does not silently enable later semantics, and H3 changes H2 only through the owner-approved ODR-012 completion.
++1. Exactly one current version declaration exists and names `0.9.6_Hardened_4`.
++2. The immediate predecessor is frozen `0.9.6_Hardened_3`, which remains byte-for-byte unchanged.
++3. `[MOD-6]` and `[MOD-6a]` name the supported `0.9.6`, `0.9.5`, `0.9`, and 0.8.x source-language contracts explicitly; `0.9` does not silently enable later semantics, and H4 changes H3 only through the owner-approved ODR-013 completion.
+ 4. `EMBER_RUNTIME_ABI` is canonical; `EMBER_RT_ABI` can occur only in compatibility-alias documentation.
+ 5. Every `dyn Writer`/`dyn Reader` serialization signature uses a legal indirection.
+ 6. Manifest examples use current versions unless explicitly marked historical.
+@@ -8285,8 +8311,9 @@
+     `DefaultHasher` do not enter it, `finish` consumes the move-only context,
+     equal values hash equally, supplied spans do not escape, safe Map APIs expose
+     no mutable key, and no concrete mixing algorithm is frozen.
+-41. ODR-013/ERR-054 remain explicit until the owner determines whether a concrete
+-    `DefaultHasher` reaches `Hash.hash` through a generic `H: Hasher` method or an
+-    explicit `dyn Hasher` representation. No compiler-only interface conversion is inferred.
++41. ODR-013/ERR-054 are closed by the owner-selected generic
++    `fn hash[H: Hasher](self, mut h: H)` contract. `DefaultHasher implements Hasher`,
++    ordinary inference and monomorphization apply, and no bare-interface or
++    compiler-only dynamic conversion is inferred.
+ 
+ A failure of any checklist item is a specification CI failure, not a compiler implementation choice.

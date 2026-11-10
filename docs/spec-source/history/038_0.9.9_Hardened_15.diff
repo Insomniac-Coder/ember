@@ -1,0 +1,104 @@
+--- Ember_v0.9.9_Hardened_14.md
++++ Ember_v0.9.9_Hardened_15.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_14
+-**Supersedes:** 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_15
++**Supersedes:** 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -1515,7 +1515,12 @@
+ * `[IFC-2]` Adding inherent methods to a type from another package is `E2120`; use an interface or a
+   wrapper type.
+ * `[IFC-3]` `interface Ord: Eq` requires implementers of `Ord` to implement `Eq`.
+-* `[IFC-4]` Interfaces may declare associated types and constants, not statics.
++* `[IFC-4]` *(changed in 0.9.9)* Interfaces may declare associated types and constants, not statics.
++  An associated type may carry bounds (`type Real: Float`), and a type implementing the interface
++  states it (`type Real = f64`) with a value that meets them (`E2040` if it is missing or does not).
++  `T.Name` names the associated type `Name` of a type parameter `T` whose bound declares it: inside
++  the generic body it has what its declared bounds provide, and each call takes it from what the
++  argument's type states (ODR-038).
+ 
+ ## V.7 Constants and statics
+ 
+@@ -3830,21 +3835,27 @@
+   division-by-zero check.
+ * `[STD-21]` *(new in 0.9.9)* `std.math` provides `PI`, `TAU`, `E`; `sin`, `cos`, `tan`, `asin`, `acos`,
+   `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `exp`, `exp2`, `ln`, `log2`, `log10`, `pow`, `sqrt`, `rsqrt`, `cbrt`,
+-  `hypot`, `lerp`, `smoothstep`, generic over `f32` and `f64` (each `fn f[T: Float](…)`, `[STD-27]`);
+-  and the vector types `Vec2`, `Vec3`,
++  `hypot`, `lerp`, `smoothstep`, each taking any number type (`fn f[T: Number](x: T) -> T.Real`,
++  `[STD-27]`): an integer's answer is an `f64` (`math.sqrt(9)` is `3.0`), an `f32`'s an `f32` and an
++  `f64`'s an `f64`; and the vector types `Vec2`, `Vec3`,
+   `Vec4` (of `f32`, `@layout(c)`), `IVec2/3/4`, `Mat3`, `Mat4` (column-major), `Quat`, `Transform`,
+   `Aabb`, `Ray`, `Plane`, `Frustum`, with `dot`, `cross`, `length`, `normalize` (panics on a zero
+   vector; `normalize_or_zero` does not) and the arithmetic operators. `PI`, `TAU` and `E` are
+   untyped constants (V.7): `x: f32 = math.PI` is `PI` rounded to `f32`, and with nothing to fix its
+   type a use is `f64`.
+-* `[STD-27]` *(new in 0.9.9)* `std.math.Float` is the bound of the generic float functions. It is
+-  implemented by `f32` and `f64` and by no other type: `implements Float` anywhere else is `E2042`.
+-  A bound `T: Float` provides, inside a generic body, `Copy`, `Eq`, `Ord` (`[TYP-37]`) and `Default`;
++* `[STD-27]` *(new in 0.9.9)* `std.math.Number` is every number type. `std.math` adds each with an
++  `extend … implements Number` block stating its `type Real: Float`, the decimal type its answers
++  come back as (`f64` for every integer type, itself for `f32` and `f64`), and `to_real`, which turns
++  it into one. `[STD-21]`'s functions take `T: Number` and answer in `T.Real` (`[IFC-4]`); a program
++  may add its own number types the same way (ODR-038). `std.math.Float` is the decimal types:
++  `std.math` makes `f32` and `f64` implement it (`extend f32 implements Float`), and implementing it
++  for any other type is `E2042`. A bound `T: Float` provides, inside a generic body, `Copy`, `Eq`, `Ord` (`[TYP-37]`) and `Default`;
+   the arithmetic operators `+`, `-`, `*`, `/`, `//`, `%`, `**` and unary `-` on two `T`s, with a `T`
+   result; an untyped numeric literal adopting `T` wherever a `T` is expected, as it would adopt `f32`
+   or `f64`; and as methods the float methods of `[STD-20]` and `[STD-21]`'s `sin` through `hypot`
+-  (`x.sqrt()`, `y.atan2(x)`, `a.hypot(b)`). Each of those free functions is its method: `math.sqrt(x)`
+-  is `x.sqrt()`; `rsqrt`, `lerp` and `smoothstep` are free functions only. A method is the C
++  (`x.sqrt()`, `y.atan2(x)`, `a.hypot(b)`), which are built into `f32` and `f64`: each free function
++  turns its number into its `Real` and calls the method (`math.sqrt(x)` is `x.to_real().sqrt()`);
++  `rsqrt`, `lerp` and `smoothstep` are free functions only. A method is the C
+   library's function of its name for `f64` and its `f` form for `f32` (`ln` is C's `log`, `round` its
+   `nearbyint`, `round_half_away` its `round`, `mul_add` its `fma`); the transcendental ones are
+   `[DET-2]`'s platform functions.
+@@ -6407,7 +6418,7 @@
+ Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026;
+ Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
+ Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036;
+-Hardened_14 adds ODR-037.
++Hardened_14 adds ODR-037; Hardened_15 adds ODR-038.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6428,6 +6439,7 @@
+ | ODR-035 | `union` is contextual: reserved only where an item would begin `union` and a name, so `Set` can have its `union` method (Hardened_13) | `[LEX-15]` |
+ | ODR-036 | a `Map`'s keys and values and a `Set`'s elements are not views (`E3063`); text in a `{…}` literal with no context is `String` (Hardened_13) | `[STD-11]`, `[TYP-38]` |
+ | ODR-037 | `std.math.Float`, implemented by `f32` and `f64` only (`E2042`), is the bound of the generic float functions and provides their operators, typed literals and methods; `PI`, `TAU` and `E` are untyped constants (Hardened_14) | `[STD-21]`, `[STD-27]`, V.7 |
++| ODR-038 | ruled by the owner: `std.math`'s functions take any number type through `std.math.Number`, answering in `T.Real` (`f64` for an integer, `f32` for an `f32`); `T.Name` names a type parameter's associated type (Hardened_15) | `[IFC-4]`, `[STD-21]`, `[STD-27]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6449,6 +6461,7 @@
+ | `[HASH-1]` | changed |
+ | `[HASH-2]` | changed |
+ | `[HASH-3]` | changed |
++| `[IFC-4]` | changed |
+ | `[LEX-15]` | changed |
+ | `[LT-1]` | changed |
+ | `[LT-1a]` | changed |
+@@ -7250,7 +7263,7 @@
+ | `[IFC-1]` | V | `extend T:` without `implements` adds inherent methods to `T`; it is … |
+ | `[IFC-2]` | V | Adding inherent methods to a type from another package is `E2120`; … |
+ | `[IFC-3]` | V | `interface Ord: Eq` requires implementers of `Ord` to implement `Eq`. |
+-| `[IFC-4]` | V | Interfaces may declare associated types and constants, not statics. |
++| `[IFC-4]` | V | Interfaces may declare associated types and constants, not statics. … |
+ 
+ ## IMP
+ 
+@@ -7626,7 +7639,7 @@
+ | `[STD-24]` | XV | `process.exit(code) -> Never` flushes the standard streams and exits … |
+ | `[STD-25]` | XV | `random.Rng.seeded(seed)` is a deterministic generator (the same seed … |
+ | `[STD-26]` | XV | Python's built-in functions. The prelude has these functions, with … |
+-| `[STD-27]` | XV | `std.math.Float` is the bound of the generic float functions. It is … |
++| `[STD-27]` | XV | `std.math.Number` is every number type. `std.math` adds each with an … |
+ 
+ ## STR
+ 

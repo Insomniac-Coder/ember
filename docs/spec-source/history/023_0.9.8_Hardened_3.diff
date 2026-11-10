@@ -1,0 +1,158 @@
+--- Ember_v0.9.8_Hardened_2.md
++++ Ember_v0.9.8_Hardened_3.md
+@@ -1,12 +1,13 @@
+ # Ember Programming Language — Design & Implementation Specification
+ 
+-**Version:** 0.9.8_Hardened_2
+-**Immediate predecessor:** 0.9.8_Hardened_1 (immutable; preserved as the diff base)
++**Version:** 0.9.8_Hardened_3
++**Immediate predecessor:** 0.9.8_Hardened_2 (immutable; preserved as the diff base)
+ **Status:** Frozen development target. Implementation and conformance evidence is **not** claimed; normative repository adoption still requires the recorded adoption gates.
+ 
+-    Specification    frozen for this target. ODR-018 is closed here by one
+-                     explicit cycle-analysis root shared by `inspect` and
+-                     `explain`. ODR-017's ownership API remains unchanged.
++    Specification    frozen for this target. ODR-019 is closed here with one
++                     deterministic N1 ranking algorithm. ODR-018 remains closed
++                     by the shared cycle-analysis root for `inspect`/`explain`;
++                     ODR-017's ownership API remains unchanged.
+                      Both figures are measurements, not constants — 0.8.4_Hardened_1
+                      records 826 against 833 for the same document — and XXIII.4 requires
+                      an extractor to tell a definition from a citation without saying how
+@@ -39,7 +40,14 @@
+ neither Ember source-language acceptance nor ownership or lifetime semantics,
+ and introduces no ABI, runtime, metadata, or ownership-graph mechanism.
+ 
+-**What Hardened_3 changed.** It closes ODR-016 by giving the three rules that stated a
++**What 0.9.8_Hardened_3 changes.** It closes ODR-019 by specifying
++deterministic N1 suggestion ordering: Damerau–Levenshtein distance first,
++same-file candidates before cross-file candidates only at equal distance,
++same-file declaration proximity only within that file, and canonical qualified
++identity for cross-file ties. This changes diagnostic suggestion ordering
++only; candidate discovery and Ember source-program validity are unchanged.
++
++**What 0.9.7_Hardened_3 changed.** It closes ODR-016 by giving the three rules that stated a
+ rejection without naming one a diagnostic code, and it withdraws two gap reports Hardened_2
+ made in error: `[MAN-7]` was defined all along, and `§XIX.4.7` resolves. Both were artifacts
+ of a rule detector that only recognised an identifier at the start of a line. No rule changes
+@@ -63,8 +71,9 @@
+ `0.8.4_Hardened_1` rather than `0.8.3_Hardened_2` when S1 landed; 0.9.5 moved for inferred
+ multi-region views; 0.9.7 moved for the `@latebound` callable boundary; and
+ **`0.9.8_Hardened_1` supplied the public ownership and borrowing semantics for
+-this language version; this file is `0.9.8_Hardened_2` because ODR-018 only
+-completes their explicit CLI/tooling boundary.**
++this language version; 0.9.8_Hardened_2 completes ODR-018's explicit CLI/tooling
++boundary, and this file is `0.9.8_Hardened_3` because ODR-019 completes N1's
++diagnostic-ranking boundary.**
+ 
+ **Compatibility.** Additive. `0.9.8` ⊃ `0.9.7` ⊃ `0.9.6` ⊃ `0.9.5` ⊃ `0.9` ⊃ `0.8.5` ⊃ `0.8.4` ⊃ `0.8.3`.
+ No program valid under an earlier contract becomes invalid, and a source file may declare
+@@ -85,17 +94,19 @@
+ 
+ ---
+ 
+-## 0.9.8_Hardened_2 authority and evidence status
+-
+-This file is the frozen development target selected by the owner ruling that
+-closes ODR-018. It carries the inherited `Shared[T]`/`Weak[O]` work from
+-0.9.8_Hardened_1 and the canonical cycle-analysis-root tooling contract after
+-its recorded source hash is accepted through
++## 0.9.8_Hardened_3 authority and evidence status
++
++This file is the frozen development target selected by the owner rulings that
++close ODR-018 and ODR-019. It carries the inherited `Shared[T]`/`Weak[O]` work
++from 0.9.8_Hardened_1, the canonical cycle-analysis-root tooling contract from
++0.9.8_Hardened_2, and the N1 ranking hardening after its recorded source hash
++is accepted through
+ `docs/spec-source/development-target.json`; the adopted source remains
+ `ember-spec.md` at `0.8.5_Hardened_1` until the repository's adoption gates
+ are met.  The ruling is preserved byte-for-byte in
+-`as-received/ODR-018_Cycle_explanation_analysis_root.md`; ADR-038 records its
+-application here.
++`as-received/ODR-018_Cycle_explanation_analysis_root.md` and
++`as-received/ODR-019_N1_cross_file_suggestion_ranking.md`; ADR-038 records
++ODR-018's application here.
+ 
+ The rules added for this language revision are specified, not yet evidence of
+ an implementation: adoption requires the `[TST-26]` matrix, implementation
+@@ -183,6 +194,28 @@
+ | 15 | Thread-safety of `shared` decided per-object at runtime ("upgrade the control block"). | Reference counts are **atomic iff the class is `Sync`**; a non-`Sync` class is thread-confined and uses plain counters. Decided per type at compile time. | No runtime upgrade machinery; the count is atomic exactly when handles can cross threads. |
+ | 16 | GPU kernels as an eventual core language feature. | Shaders remain a separate language (as RageV already does with `.rvshader` → SPIR-V). Ember owns the **host-side** model: generational handles, command-scoped GPU ownership, deferred destruction, frame-in-flight tracking, and a typed shader interface generated from SPIR-V reflection. Kernel DSL is v3 and out of scope for this document beyond reservations. | Matches RageV's architecture exactly; keeps the core compiler small. |
+ | 17 | Specification written as prose. | Normative rules carry IDs; every ID maps to conformance tests; every compiler pass has an input/output contract. | So that an agent can implement and verify without reinterpreting. |
++
++## Change log — 0.9.8_Hardened_3
++
++**0.9.8_Hardened_3 closes ODR-019.** Option 1 is adopted as diagnostic/tooling
++hardening only. Declaration proximity applies only within the same source
++file; for equal spelling distance, same-file candidates rank before cross-file
++candidates; cross-file ties use canonical qualified-name ordering. No
++project-wide file/module proximity model is introduced. Candidate discovery
++semantics are unchanged, no source program changes validity, and no runtime,
++ABI, ownership, lifetime, overload, import, or type-system semantics change.
++
++| # | Change | Class | Where |
++|---|---|---|---|
++| H3.1 | `[DIA-12]` defines one N1 ranking algorithm: spelling distance, locality class on distance ties, unchanged same-file proximity, canonical qualified identity for cross-file ties, and top-N selection after complete ordering. | DIAGNOSTIC / TOOLING HARDENING | XX.6.2, N1 ranking algorithm |
++| H3.2 | Cross-file identity is independent of unrelated offsets, import/alias positions, filesystem/source discovery, hash iteration, import order, operating-system directory order, and build/cache order; visible suggestion spelling remains unchanged. | DETERMINISTIC DIAGNOSTIC ORDERING | XX.6.2, N1 ranking algorithm |
++| H3.3 | Unit, conformance, and UI regression coverage verifies suggestion order, aliases/imports, inherited fields, prelude candidates, top-three truncation, and repeated runs under reversed file/import discovery order. | IMPLEMENTATION / CONFORMANCE EVIDENCE | `compiler/ember_typeck/src/name_suggestions.rs`, `compiler/ember_driver/tests/ui.rs`, `tests/conformance/DIA-12/` |
++
++**This change log is exhaustive for the 0.9.8_Hardened_3 delta.** The H1
++source-language revision remains the complete 0.9.8 language delta; H2 and H3
++are tooling/diagnostic hardenings.
++
++---
+ 
+ ## Change log — 0.9.8_Hardened_2
+ 
+@@ -5592,7 +5625,7 @@
+ 
+ | Shape | Trigger | Required primary suggestion |
+ |---|---|---|
+-| **N1** unknown name | a path resolves to nothing | the in-scope binding, field, method or item within Damerau–Levenshtein distance ≤ 2 (or ≤ ⅓ of the name's length), named exactly; at most 3, ranked by distance then declaration proximity |
++| **N1** unknown name | a path resolves to nothing | the in-scope binding, field, method or item within Damerau–Levenshtein distance ≤ 2 (or ≤ ⅓ of the name's length), named exactly; at most 3, ranked by the N1 ranking algorithm below |
+ | **N2** name exists elsewhere | nothing in scope matches, but items of that name are exported by modules in the dependency graph | the import line to add, verbatim, as a machine-applicable fix-it (`from std.math import Transform`); with several candidates, up to 5 with module paths |
+ | **N3** unknown method | the receiver's type has no such member | the nearest member by N1's rule; if the name exists after one auto-deref or on `Self`'s base (`[TYP-24]`), name that; if it exists on an interface the type does not implement, name the interface and the `extend` block that would supply it |
+ | **N4** scalar type mismatch | `[TYP-4]` rejects an operator, or a coercion site is not a `[TYP-5]` widening | the exact `as` cast on the operand that loses nothing (`xs.len() as f32`); the note MUST state which side supplied the expected type |
+@@ -5604,6 +5637,42 @@
+ | **N10** `dyn` incompatibility (`E2050`) | `[TYP-22]` | the offending method and which clause it violates (no receiver / generic / returns `Self` by value), never a bare "interface is not object safe" |
+ | **N11** ambiguous method (`E2070`) | two candidates | the `I.m(recv, …)` disambiguation for each candidate interface |
+ | **N12** indentation (`E0002`–`E0004`) | | the exact column expected and the line whose indentation established it |
++
++#### N1 candidate ranking algorithm
++
++N1 candidate discovery, visibility, and the candidate set are unchanged. Rank
++every eligible candidate by this single deterministic ordering before
++selecting the existing maximum of three suggestions:
++
++1. **Primary — spelling distance.** Use the existing Damerau–Levenshtein
++   distance between the unresolved name and the candidate's visible spelling.
++   Preserve the existing eligibility threshold.
++2. **Secondary — locality, only when spelling distances tie.** A candidate is
++   `SAME_FILE` when its declaration and the unresolved use have the same source
++   file identity; otherwise it is `CROSS_FILE`. `SAME_FILE` ranks before
++   `CROSS_FILE`. A strictly better spelling distance always ranks first,
++   regardless of locality.
++3. **Tertiary — same-file proximity.** Among `SAME_FILE` candidates, use the
++   existing declaration-proximity calculation unchanged. Source offsets are
++   compared only when both spans belong to the same file.
++4. **Tertiary — cross-file identity.** Among `CROSS_FILE` candidates, do not
++   compute declaration proximity. Compare their canonical qualified
++   declaration identities lexicographically by UTF-8 bytes, independent of
++   locale. The canonical identity is the symbol's module/type/member identity,
++   not an importing alias, import span, or user-facing spelling.
++5. **Final fallback.** If all specified keys tie, compare the visible
++   suggestion spellings lexicographically by UTF-8 bytes. This only resolves
++   an otherwise identical ranking key; it does not replace canonical identity
++   as the cross-file ordering key.
++
++The ranking MUST NOT compare source offsets from different files or use
++filesystem traversal, import-graph distance, import/source discovery order,
++hash-table iteration, operating-system directory order, build/cache order, or
++another project-wide proximity metric. The visible spelling remains the text
++shown to the programmer; canonical identity is only an ordering key. Apply the
++complete ordering before top-three truncation. This rule applies uniformly to
++ordinary imports, aliases, inherited members, and prelude candidates; it adds
++no diagnostic code or candidate-discovery mechanism.
+ 
+ ## XX.6a Trusted base and audit reporting
+ 

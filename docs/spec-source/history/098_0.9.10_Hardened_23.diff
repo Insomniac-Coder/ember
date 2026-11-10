@@ -1,0 +1,162 @@
+--- Ember_v0.9.10_Hardened_22.md
++++ Ember_v0.9.10_Hardened_23.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.10_Hardened_22
+-**Supersedes:** 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.10_Hardened_23
++**Supersedes:** 0.9.10_Hardened_22, 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -3926,9 +3926,11 @@
+ * `[CT-7]` *(new in 0.9.9)* A `comptime:` block at item level, or as a statement, runs once during
+   compilation for its checks. A failed `assert` or any other panic there is `E6004`, which shows the
+   panic message and the compile-time call chain.
+-* `[CT-2]` *(changed in 0.9.9)* An operation that cannot run at compile time — an `extern` call, a
++* `[CT-2]` *(changed in 0.9.9)* *(changed in 0.9.10)* An operation that cannot run at compile time — an `extern` call, a
+   thread, a clock, `unsafe` pointer access outside the evaluator's heap, I/O — is `E6010`, naming the
+-  call chain. Two inputs are provided: `comptime.read_file(path)` (relative to the package root, and only inside the
++  call chain. A raw pointer made from an integer (`0 as *mut T`, `-1 as *mut T`) is a compile-time
++  value: it is an address, read by nothing, and a `const` of pointer type may hold one; a pointer into
++  the evaluator's heap may not leave it (`E6010`) (ODR-145). Two inputs are provided: `comptime.read_file(path)` (relative to the package root, and only inside the
+   package directory, `E6010` otherwise, so a dependency's build cannot read the builder's files) and
+   `comptime.env(name)`. Both are recorded as build inputs.
+ * `[CT-3]` Each evaluation is limited to 10⁸ steps and 256 MB of evaluator heap by default
+@@ -4562,12 +4564,16 @@
+   target, language standard, defines and include paths, and exposes its functions, structs, unions,
+   enums, typedefs, globals and constant macros as a module (`c`, or `name`). Options: `include_paths`,
+   `defines`, `link`, `overlay`, `implementation` (`[FFI-29b]`). An unknown option is `E0104`.
+-* `[FFI-6a]` An object-like macro is imported when, after expansion, it is a constant expression of
++* `[FFI-6a]` *(changed in 0.9.10)* An object-like macro is imported when, after expansion, it is a constant expression of
+   integer, floating, string, null-pointer or pointer-cast type as Clang evaluates it; its type is the
+-  C type of that value. Any other macro is skipped with `W5001`, giving Clang's reason.
+-* `[FFI-6b]` A function-like macro is exposed only when an overlay declares its signature
++  C type of that value. A null-pointer or pointer-cast macro (`((void*)0)`, `((HANDLE)-1)`) is a
++  `const` of that pointer type holding the address as an integer (`[CT-2]`, ODR-145). A macro that
++  expands to nothing (an include guard, a feature flag) declares nothing and is not reported
++  (ODR-146). Any other macro is skipped with `W5001`, giving Clang's reason.
++* `[FFI-6b]` *(changed in 0.9.10)* A function-like macro is exposed only when an overlay declares its signature
+   (`@ffi(macro_fn)`); the importer emits a C wrapper function for it into the shim. Ember gains no
+-  macro facility. When every argument is a constant the importer may fold the call, so the result can
++  macro facility. A macro has no C types to derive contracts from, so its entry writes Ember types in
++  their place: `@ffi(macro_fn) fn SQUARE(x: i32) -> i32` (`[GRM-35]`, ODR-147). When every argument is a constant the importer may fold the call, so the result can
+   initialise a `const`.
+ * `[FFI-7]` A header is re-parsed only when its content, its overlay, or a setting that can change a
+   binding's meaning or ABI changes (defines, target, language standard, packing, the C runtime); the
+@@ -4625,10 +4631,13 @@
+ * `[FFI-30b]` `pub import c "…" as vk` re-exports the module under the ordinary visibility rules; the
+   package's interface hash (`[BLD-2]`) includes the imported layouts, so a header change rebuilds
+   dependants.
+-* `[FFI-30c]` A package may distribute an overlay for a foreign module, and several overlays for one
++* `[FFI-30c]` *(changed in 0.9.10)* A package may distribute an overlay for a foreign module, and several overlays for one
+   module compose in a declared order; they may add aliases and wrappers and replace an entry only with
+   an explicit `override`. Incompatible entries are an error, never a silent choice, and no overlay may
+-  change a foreign type's identity or layout.
++  change a foreign type's identity or layout. The order is declared where the module is imported:
++  `overlay` takes one file or a list, applied first to last (a dependency's before the package's
++  own); a later file's `override` entry replaces an earlier file's for that name, and any other
++  second entry for one name is `E5010` (ODR-149).
+ 
+ ## XVI.4 Contracts and overlays
+ 
+@@ -4666,6 +4675,11 @@
+   overlay_param := IDENT [":" contract {contract}]
+   contract      := IDENT ["(" [attr_arg {"," attr_arg}] ")"]
+   ```
++
++  In an entry marked `@ffi(macro_fn)` (`[FFI-6b]`) a parameter's and the result's words are one Ember
++  type each (`IDENT ":" type`, `"->" type`), since a macro has no C declaration to read (ODR-147). An
++  item may begin with `override`, replacing an earlier overlay's entry for that name (`[FFI-30c]`,
++  ODR-149).
+ 
+   Contract words take the place of types and are separated by spaces. `overlay`, `rename` and `hide`
+   are contextual keywords (`[LEX-15]`). An overlay whose items state any fact — a contract word, an
+@@ -4937,7 +4951,8 @@
+   every Part, rule family, command and flag of this document, whether this compiler implements it.
+   A command, flag, attribute or construct the compiler does not implement is rejected with `E0900`
+   naming it (`[PHIL-12]`), never ignored.
+-* `[CLI-5]` `ember bind --init <header>` writes a starter overlay: every derived contract, every unknown
++* `[CLI-5]` *(changed in 0.9.10)* `ember bind --init <header>` writes a starter overlay, `<stem>.overlay.em` beside the header
++  (ODR-148): every derived contract, every unknown
+   fact as a `TODO(…)` word (`[FFI-11c]`), every skipped declaration as a comment with its reason. It
+   compiles unchanged and never overwrites a file; with `--merge` it adds only the declarations missing
+   from an existing overlay, keeping hand-written contracts and comments.
+@@ -7310,6 +7325,11 @@
+ | ODR-142 | ruled under the delegation: a query none of whose parameters requires a component iterates every live entity, in the world's order (creation order with swap-remove holes) | `[ECS-3]`, `[ECS-6]` |
+ | ODR-143 | ruled under the delegation: a shared method called on `self` inside a `mut self` method is lent the method's access as a read: its reads are not checked again, and a write to the object under it is | `[EXC-5]` |
+ | ODR-144 | ruled under the delegation: `some I` is legal as a function's or a method's return type; in an interface's method (declared or default) it is `E2260`, and an associated type bounded by `I` states what each implementation returns | `[GRM-31]`, `[TYP-32]` |
++| ODR-145 | ruled under the delegation: a raw pointer made from an integer is a compile-time value and a `const` of pointer type may hold one; a pointer into the evaluator's heap may not leave it (`E6010`); a null-pointer or pointer-cast macro is imported as such a `const` | `[FFI-6a]`, `[CT-2]` |
++| ODR-146 | ruled under the delegation: an object-like macro that expands to nothing is not a declaration and is not reported | `[FFI-6a]` |
++| ODR-147 | ruled under the delegation: an overlay entry marked `@ffi(macro_fn)` writes one Ember type for each parameter and for the result | `[FFI-6b]`, `[GRM-35]` |
++| ODR-148 | ruled under the delegation: `ember bind --init <header>` writes `<stem>.overlay.em` beside the header | `[CLI-5]` |
++| ODR-149 | ruled under the delegation: `overlay` takes one file or a list applied in order; `override` before an item replaces an earlier file's entry, any other second entry for one name is `E5010` | `[FFI-30c]`, `[GRM-35]` |
+ 
+ Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
+ 0.9.9.
+@@ -7899,6 +7919,26 @@
+ |---|---|
+ | `[GRM-31]` | changed |
+ | `[TYP-32]` | changed |
++
++## H.28 Changes in 0.9.10_Hardened_23 (from 0.9.10_Hardened_22)
++
++**0.9.10_Hardened_23** records ODR-145..ODR-149, ruled under the delegation on the questions helper N raised building the C header importer (`tasks/90/owner-questions.md`, `docs/DECISIONS.md` ADR-231):
++
++* A raw pointer made from an integer is a compile-time value (an address, read by nothing), so a `const` of pointer type may hold one; a null-pointer or pointer-cast macro is imported as such a `const` (ODR-145).
++* An object-like macro that expands to nothing declares nothing and is not reported (ODR-146).
++* An overlay entry marked `@ffi(macro_fn)` writes Ember types for the macro's parameters and result (ODR-147).
++* `ember bind --init <header>` writes `<stem>.overlay.em` beside the header (ODR-148).
++* `overlay` takes one file or a list applied first to last; a later file's `override` entry replaces an earlier one, any other second entry for one name is `E5010` (ODR-149).
++
++Generated: every rule whose text differs from 0.9.10_Hardened_22.
++
++| Rule | 0.9.10_Hardened_22 → 0.9.10_Hardened_23 |
++|---|---|
++| `[CLI-5]` | changed |
++| `[CT-2]` | changed |
++| `[FFI-6a]` | changed |
++| `[FFI-6b]` | changed |
++| `[FFI-30c]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -8081,7 +8121,7 @@
+ | `[CLI-1]` | XVII | Every command accepts `--json` and exits non-zero on error. |
+ | `[CLI-2]` | XVII | `ember build --emit c --out-dir <dir>` writes the C sources without … |
+ | `[CLI-4]` | XVII | `ember run file.em` and `ember build file.em` accept a single file … |
+-| `[CLI-5]` | XVII | `ember bind --init <header>` writes a starter overlay: every derived … |
++| `[CLI-5]` | XVII | *(changed in 0.9.10)* `ember bind --init <header>` writes a starter … |
+ | `[CLI-6]` | XVII | `ember bind --report` lists every skipped declaration and every … |
+ | `[CLI-7]` | XVII | `ember bind --check <overlay>` checks `[FFI-12]` and prints how many … |
+ | `[CLI-9]` | XVII | `ember check --syntax-only` lexes and parses only, reporting `E00xx` … |
+@@ -8175,7 +8215,7 @@
+ | Rule | Part | Begins |
+ |---|---|---|
+ | `[CT-1]` | XIV | These are evaluated during compilation: `comptime(e)`; `comptime:` … |
+-| `[CT-2]` | XIV | An operation that cannot run at compile time — an `extern` call, a … |
++| `[CT-2]` | XIV | *(changed in 0.9.10)* An operation that cannot run at compile time — … |
+ | `[CT-3]` | XIV | Each evaluation is limited to 10⁸ steps and 256 MB of evaluator heap … |
+ | `[CT-4]` | XIV | Compile-time evaluation is deterministic by construction: the … |
+ | `[CT-5]` | XIV | Where results live. A compile-time result is placed in the image as … |
+@@ -8418,8 +8458,8 @@
+ | `[FFI-5]` | XVI | Layouts are verified, not assumed: the importer records `sizeof`, … |
+ | `[FFI-5a]` | XVI | The generated shim (`[FFI-29]`) contains a `_Static_assert` for the … |
+ | `[FFI-6]` | XVI | `import c "header" with (…) [as name]` parses the header with … |
+-| `[FFI-6a]` | XVI | An object-like macro is imported when, after expansion, it is a … |
+-| `[FFI-6b]` | XVI | A function-like macro is exposed only when an overlay declares its … |
++| `[FFI-6a]` | XVI | *(changed in 0.9.10)* An object-like macro is imported when, after … |
++| `[FFI-6b]` | XVI | *(changed in 0.9.10)* A function-like macro is exposed only when an … |
+ | `[FFI-7]` | XVI | A header is re-parsed only when its content, its overlay, or a … |
+ | `[FFI-8]` | XVI | Type mapping. |
+ | `[FFI-9]` | XVI | `extern "C"` is the platform C ABI (SysV AMD64, Windows x64, … |
+@@ -8461,7 +8501,7 @@
+ | `[FFI-30]` | XVI | Two imports of one C declaration (by Clang's USR, through typedefs) … |
+ | `[FFI-30a]` | XVI | An overlay changes the signatures, safety and names of *functions* … |
+ | `[FFI-30b]` | XVI | `pub import c "…" as vk` re-exports the module under the ordinary … |
+-| `[FFI-30c]` | XVI | A package may distribute an overlay for a foreign module, and several … |
++| `[FFI-30c]` | XVI | *(changed in 0.9.10)* A package may distribute an overlay for a … |
+ | `[FFI-31]` | XVI | *(changed in 0.9.10)* A `cdylib` links its own copy of the runtime. … |
+ | `[FFI-31a]` | XVI | Its thread detachment never relies on a TLS destructor in the … |
+ | `[FFI-31b]` | XVI | No owning Ember value crosses a module boundary: class handles, … |

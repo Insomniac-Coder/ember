@@ -1,0 +1,1823 @@
+--- Ember_v0.9.9_Hardened_1.md
++++ Ember_v0.9.9_Hardened_2.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_1
+-**Supersedes:** 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_2
++**Supersedes:** 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -9,7 +9,8 @@
+ **Authority:** Authored at the owner's direction of 2026-09-23 with delegated authority to decide open
+ language questions against the project goal. Every decision that changes 0.9.8's meaning is listed in
+ Appendix H, and every finding of the 2026-09-23 research pass (`tasks/audit/FINDINGS.md`, F-001–F-214)
+-is resolved in Appendix G.
++is resolved in Appendix G. Hardened_2 applies the memory-safety, consistency-and-speed and
++ergonomics passes over Hardened_1 (`tasks/spec-0.9.9/passes/`); Appendix H §H.4 lists every change.
+ 
+ ---
+ 
+@@ -61,7 +62,7 @@
+ | Appendix E | Coming from Python (non-normative) |
+ | Appendix F | Glossary |
+ | Appendix G | Resolution of findings F-001–F-214 |
+-| Appendix H | Changes from 0.9.8_Hardened_3 |
++| Appendix H | Changes from 0.9.8_Hardened_3, and from 0.9.9_Hardened_1 (§H.4) |
+ | Appendix I | Rule index |
+ 
+ **Normative words.** MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119. Text marked
+@@ -98,10 +99,13 @@
+   stable within a major version; any change bumps `EMBER_RUNTIME_ABI`. `ember_rt_init` compares the
+   runtime's ABI version with the one its caller was compiled against and fails, naming both, on a
+   mismatch; fields may be added to `ember_rt_config` only at its end, behind a leading size field.
+-* `[VER-9]` *(new in 0.9.9)* A language revision that changes the set of accepted programs or their meaning moves the
+-  language version and resets the hardening number to 1. A hardening adds precision without changing
+-  any accepted program's meaning. The change log of each revision (Appendix H for this one) lists every
+-  rule it adds, removes or changes; a change without a row is a defect in the document.
++* `[VER-9]` *(new in 0.9.9)* A language revision that changes the set of accepted programs or their
++  meaning moves the language version and resets the hardening number to 1. From 1.0, a hardening adds
++  precision without changing any accepted program's meaning (`[VER-2]`). Before 1.0 there is one
++  language (`[VER-8]`), so a hardening may change the language, provided its change log lists every
++  such change as a change to the language and `ember fmt --migrate` rewrites every program it can. The
++  change log of each revision (Appendix H for this one) lists every rule it adds, removes or changes;
++  a change without a row is a defect in the document.
+ 
+ ---
+ 
+@@ -127,10 +131,10 @@
+ | **Contract** | `@noalloc`, `@nosync`, `@noblock`, `@nopanic(explicit)`, `@static_safe`, `@deterministic` | everything in Safe, plus the declared contract, checked at compile time | hot loops, real-time and lock-step code |
+ | **Unsafe** | `unsafe:` block, `unsafe fn`, `unsafe extern` | type checking and diagnostics only; the programmer upholds `[UNS-4]` | allocators, FFI shims, intrinsics |
+ 
+-* `[TIER-1]` Safe code MUST NOT invoke an operation with an unverifiable precondition unless an
++* `[TIER-1]` *(changed in 0.9.9)* Safe code MUST NOT invoke an operation with an unverifiable precondition unless an
+   `unsafe` boundary in the same package discharges it. There are exactly three such boundaries: an
+   `unsafe:` block or `unsafe fn` lexically enclosing the call; an `unsafe extern` declaration
+-  (`[FFI-10]`); an `unsafe overlay` (`[FFI-2]`). No attribute, profile, manifest key or contract
++  (`[FFI-10]`); an `unsafe overlay` (`[GRM-35]`, `[FFI-2]`). No attribute, profile, manifest key or contract
+   introduces a fourth.
+ 
+ ## I.3 Principles the language is held to
+@@ -170,7 +174,8 @@
+ * `[PHIL-13]` *(new in 0.9.9)* **One meaning per program.** No build profile, compiler flag, manifest key or
+   optimisation level changes what a Safe program computes, which branch it takes, whether it panics,
+   or whether it is accepted. Profiles change only speed, debug information, and the amount of detail
+-  in diagnostics and panic messages (`[PRF-1]`).
++  in diagnostics and panic messages (`[PRF-1]`). `debug_assert` is the one check a profile turns off; it
++  may not have side effects, so it cannot change what a program whose assertions hold computes.
+ * `[PHIL-14]` *(new in 0.9.9)* **Python spelling, Python meaning.** Where Ember accepts a spelling that Python also
+   has — `/`, `//`, `%`, `**`, `a < b < c`, `x in xs`, `x is None`, `[1, 2]`, `{"k": v}`, f-strings,
+   `for … else`, keyword arguments — it gives it Python's meaning, restricted to Ember's types. Where
+@@ -208,7 +213,7 @@
+ |---|---|---|---|
+ | No use-after-free, no dangling reference | always, for references and views | never | borrow checker; zero cost |
+ | Value aliasing (`ref mut` xor `ref`) | always, for value types | never | borrow checker; zero cost |
+-| Object aliasing (long-term access through a class handle) | the accesses go through one handle local and are statically ordered (`[EXC-3]`) | otherwise | header access word; a load, a compare and a store |
++| Object aliasing (long-term access through a class handle) | the accesses go through one handle local and are statically ordered (`[EXC-3]`) | otherwise | the field's access word (`[EXC-19]`); a load, a compare and a store |
+ | Interior mutability of a value | never (the programmer chose it) | always | `Cell` (no check needed) / `RefCell` borrow counter |
+ | Index in bounds | the index comes from the container's own range, or a range fact (`[RNG-4]`) | otherwise | compare and branch |
+ | Integer arithmetic does not overflow | a range fact proves it | otherwise | overflow flag test (`[TYP-8]`) |
+@@ -264,14 +269,14 @@
+ *Note.* `Emitter("fountain")` passes a string literal where a `String` is expected; the literal
+ allocates the `String` there (`[TXT-9]`). `particles: Array[Particle] = []` is an empty list literal
+ in an `Array` position. `integrate` receives the class field as a `MutSpan` through a checked write
+-access on the emitter (`[EXC-1]`). `1.0 / 60.0` takes `f32` from the parameter it is passed to.
++access to the emitter's `particles` field (`[EXC-1]`, `[EXC-19]`). `1.0 / 60.0` takes `f32` from the parameter it is passed to.
+ 
+ ## I.6 Non-goals
+ 
+ Ember deliberately has none of these: a tracing garbage collector or a cycle collector (cycles are
+ broken with `Weak` and reported, `[WK-15]`); exceptions or unwinding (failures are values or panics,
+-Part XIII); implicit numeric narrowing; function overloading, apart from the output functions
+-(`[TYP-26]`); macros (`macro` is reserved); named lifetimes, ever (`[LEX-22]`); specialisation or
++Part XIII); implicit numeric narrowing; function overloading and variadic functions, apart from the output
++functions (`[TYP-26]`); macros (`macro` is reserved); named lifetimes, ever (`[LEX-22]`); specialisation or
+ higher-kinded types; dynamic or structural typing (`[TYP-40]`); a safety check that depends on the
+ profile (`[PRF-1]`); a correctness property that depends on whole-program optimisation or LTO; a stable
+ Ember-to-Ember ABI (the C ABI is the stable boundary, Part XVI); shader compilation and `async` in this
+@@ -360,7 +365,7 @@
+ 
+ * `[LEX-15]` *(changed in 0.9.9)* The table above is the complete reserved set. **Contextual
+   keywords** are keywords only in the stated position and identifiers everywhere else: `abstract`
+-  before `class`; `from` at the start of an import; `gen` and `once` immediately before `fn`; `some`
++  before `class`; `from` at the start of an import; `gen` and `once` immediately before `fn`; `safe` before `fn` in an extern block; `some`
+   at the start of a type; `c` and `cpp` between `import` or `overlay` and a string; `language` and
+   `threads` after `#!`; `overlay` at the start of an item, and `rename` and `hide` inside an overlay
+   (`[GRM-35]`). **Reserved for a future version** (lexed as keywords; using one as a name is `E0005`,
+@@ -396,9 +401,10 @@
+ * `[LEX-17]` *(changed in 0.9.9)* A float literal without a suffix is an **untyped float**: it takes
+   the float type its context expects, and with no context it is `float` (`f64`). Literals are the only
+   values that convert implicitly (`[TYP-4]`).
+-* `[LEX-17a]` A float literal that receives `f32` or `f16` and whose decimal value is not the value of
+-  the nearest representable number to within one unit in the last place produces
+-  `W2015 literal loses precision at f32`, offering the `f64` spelling.
++* `[LEX-17a]` *(changed in 0.9.9)* A float literal that receives `f32` or `f16` and has more significant
++  digits than the type keeps (more than 9 for `f32`, 5 for `f16`) produces
++  `W2015 literal loses precision at f32`, offering the `f64` spelling. `0.1` at `f32` is not warned: the
++  program chose the type, and every decimal literal is rounded to it.
+ * `[LEX-24]` *(new in 0.9.9)* A unary minus applied directly to an untyped integer literal forms a negative constant
+   of the literal's eventual type. If that type is unsigned the program is rejected with `E2010`
+   (`-1` does not fit `u32`), and where the context is an index (`xs[-1]`) with `E2011` whose fix-its
+@@ -406,7 +412,8 @@
+ * `[LEX-18]` `1.` followed by an identifier character is a method call on `1`; `1.0` is a float.
+ * `[LEX-19]` *(changed in 0.9.9)* An f-string `{…}` contains a full expression. `{{` and `}}` are
+   literal braces. `{expr=}` prints the expression's source text, `=`, then its value (Python's
+-  debugging form); `{expr!r}` uses `Debug` instead of `Display`. The format spec follows Python's
++  debugging form). `{expr}` uses `Display`, or `Debug` when the type has no `Display`, as printing
++  does (`[STD-9]`); `{expr!r}` always uses `Debug`. The format spec follows Python's
+   mini-language: `[[fill]align][sign][#][0][width][,|_][.precision][type]`, `align ∈ {<,>,^}`,
+   `type ∈ {d,x,X,b,o,e,E,f,F,g,G,%,s,?}` (`?` is `Debug`). A spec that does not apply to the value's
+   type is `E2250`, naming both.
+@@ -468,8 +475,10 @@
+ ffi_opt       := IDENT "=" expression
+ ```
+ 
+-* `[GRM-2]` A file contains only imports and items. A statement at file scope is `E0100` with the
+-  help `put statements inside 'fn main():'`.
++* `[GRM-2]` *(changed in 0.9.9)* A file contains imports and items and, in the **entry file** only
++  (the file given to `ember run`/`ember build`, or the manifest's `entry`), statements at file scope,
++  which form the implicit `main` (`[FN-8]`). A statement at file scope in any other module is `E0100`
++  with the help `move it into a function`.
+ * `[GRM-37]` *(new in 0.9.9)* A **directive** is a line beginning `#!` before the imports.
+   `#! language "<version>"` is accepted only for the current version (`[VER-8]`, `E0006`);
+   `#! threads main|any|creator` sets the default thread contract of the file's exports (`[FFI-33]`).
+@@ -525,7 +534,7 @@
+ static_decl   := "static" ["mut"] IDENT ":" type "=" expression NEWLINE
+ type_alias    := "type" IDENT [generic_params] "=" type ["in" expression] NEWLINE
+ extern_block  := ["unsafe"] "extern" STRING ":" NEWLINE INDENT {extern_item} DEDENT
+-extern_item   := {attribute} (fn_header NEWLINE
++extern_item   := {attribute} (["safe"] fn_header NEWLINE
+                | "static" ["mut"] IDENT ":" type NEWLINE
+                | "type" IDENT NEWLINE)
+ comptime_block:= "comptime" ":" block
+@@ -667,7 +676,8 @@
+ unary         := ("-" | "~") unary | "ref" ["mut"] unary | power
+ power         := postfix_expr ["**" unary]
+ postfix_expr  := atom {postfix}
+-postfix       := "(" [arg {"," arg} [","]] ")" | "[" expr_list "]" | "." IDENT | "." INT
++postfix       := "(" [arg {"," arg} [","]] ")" | "(" expression comp_clauses ")"
++               | "[" expr_list "]" | "." IDENT | "." INT
+                | "?." IDENT | "?"
+ arg           := expression | IDENT "=" expression
+ atom          := literal | IDENT | "self" | "Self" | "(" expression ")" | tuple_lit | list_lit
+@@ -677,6 +687,7 @@
+ map_lit       := "{" "}" | "{" expression ":" expression {"," expression ":" expression} [","] "}"
+ set_lit       := "{" expression {"," expression} [","] "}"
+ comprehension := "[" expression comp_clauses "]"
++               | "(" expression comp_clauses ")"
+                | "{" expression ":" expression comp_clauses "}"
+                | "{" expression comp_clauses "}"
+ comp_clauses  := "for" for_target "in" or_expr {"for" for_target "in" or_expr | "if" or_expr}
+@@ -721,6 +732,11 @@
+   cost: `[f(x) for x in xs if p(x)]` is `xs.iter().filter(fn(x) => p(x)).map(fn(x) => f(x)).collect()`
+   into an `Array`; `{…}` forms collect into a `Set` or a `Map`. Clauses nest left to right as in
+   Python. The loop variables are scoped to the comprehension.
++* `[GRM-38]` *(new in 0.9.9)* A parenthesised comprehension `(e for x in it if c)` is a **generator
++  expression**: the pipeline of `[GRM-27]` without the `collect`, a lazy `Iterator` that borrows what it
++  iterates and allocates nothing. As the only argument of a call it needs no extra parentheses:
++  `sum(x * x for x in xs)`, `any(p.hp <= 0 for p in players)`. `(e)` without `for` is a parenthesised
++  expression, and `(e,)` a tuple.
+ * `[GRM-30]` *(new in 0.9.9)* `as?` and `as!` are single tokens (`[LEX-21]`): `h as? D` is a checked downcast
+   (`[TYP-6]`).
+ * `[GRM-32]` *(new in 0.9.9)* `comptime(e)` evaluates the expression `e` at compile time (`[CT-6]`).
+@@ -813,8 +829,12 @@
+   7. `ref T` from a place (auto-borrow), and reading through a `ref` where a `T` is expected (`[TYP-14]`);
+   8. a class handle to a base class or to an interface it implements (upcast);
+   9. `Never` to any type;
+-  10. a function or lambda to a callable type it satisfies (`[CLO-3]`).
+-  Each rule composes with the others only where stated (widening after range erasure). Nothing
++  10. a function or lambda to a callable type it satisfies (`[CLO-3]`);
++  11. a value of type `T` to `Option[T]`, as `Some(value)`, where `T` is not itself an `Option`: one
++      level only, so nothing becomes `Option[Option[T]]` (`return v` in a function returning
++      `Option[T]`, `f(5)` for a parameter `x: Option[int] = None`).
++  Each rule composes with the others only where stated (widening after range erasure, and rule 11
++  after rules 1–4). Nothing
+   converts implicitly to or from `bool` or `char`.
+ * `[TYP-6]` *(changed in 0.9.9)* `x as T` converts explicitly:
+   * integer → integer: keeps the low bits (truncation or sign/zero extension);
+@@ -906,10 +926,12 @@
+   whose known range lies inside the target's, emits no check; a constant outside the range is `E2211`.
+ * `[RNG-3a]` Every range type with finite endpoints has `T.clamped(v) -> T`, total, with no panic path;
+   NaN clamps to the lower endpoint.
+-* `[RNG-4]` The compiler tracks a known range for numeric expressions — literals, `min`, `max`,
+-  `clamp`, the arms of a comparison, and arithmetic on known ranges — and uses it to remove `[RNG-3]`'s
+-  check, `[TYP-8]`'s overflow check and bounds checks (`[OPT-2]`). A fact is derived from an operation's
+-  mathematical result only when that result provably fits; never inside `@fastmath`.
++* `[RNG-4]` *(changed in 0.9.9)* The compiler tracks a known range for numeric expressions — literals,
++  `min`, `max`, `clamp`, the arms of a comparison, and arithmetic on known ranges — and uses it to remove
++  `[RNG-3]`'s check, `[TYP-8]`'s overflow check and bounds checks (`[OPT-2]`). The variable of a range
++  loop `for i in a..b` carries the fact `a <= i < b` in the body (`a <= i <= b` for `a..=b`), and its
++  increment has no overflow check. A fact is derived from an operation's mathematical result only when
++  that result provably fits; never inside `@fastmath`.
+ * `[RNG-4a]` For floats, a range fact comes only from the true arm of a comparison and records whether
+   NaN is excluded; a fact that does not exclude NaN never removes a construction check.
+ * `[RNG-5]` Arithmetic on a range value yields its representation: `r * 2.0` is `f32`. Arithmetic
+@@ -1011,8 +1033,9 @@
+ * `[TYP-19]` There is no specialisation, no higher-kinded type and no variadic generic. Two
+   implementations whose applicable types overlap are `E2041`.
+ * `[TYP-35]` *(new in 0.9.9)* A type parameter need not appear in any field (a **phantom** parameter): `struct
+-  Handle[Tag]: index: u32` is legal. A phantom parameter affects type identity only; it is `Send` and
+-  `Sync` and does not make the type a view.
++  Handle[Tag]: index: u32` is legal. A phantom parameter affects type identity and counts for `Send` and
++  `Sync` as a field of that type would, so a marker type can make a type thread-confined without a
++  field; it does not make the type a view.
+ * Const generics: `fn zeros[const N: int]() -> [f32; N]`. Associated types: `interface Iterator: type
+   Item`. Default type parameters: `interface Add[Rhs = Self]`.
+ 
+@@ -1154,10 +1177,14 @@
+   `Hasher` (in `std.collections`, not the prelude) is a move-only hashing state with `write_u8`,
+   `write_u64`, `write_bytes` and friends, and `finish(owned self) -> u64`.
+ * `[HASH-2]` *(changed in 0.9.9)* `std.collections.DefaultHasher` is a fixed-seed hasher: the same
+-  keys hash the same way in every run and on every machine. `std.collections.RandomState` is a
+-  per-process randomly seeded hasher for maps keyed by untrusted input; a `Map[K, V, RandomState]`
+-  still iterates in insertion order (`[STD-11]`), so the seed never becomes visible.
+-* `[HASH-3]` `Map` and `Set` MUST NOT weaken equality to compensate for an incoherent `Hash`.
++  keys hash the same way in every run and on every machine. It is a fast non-cryptographic hash, no
++  slower on integer keys than one multiply and one rotate per word (FxHash's class). `std.collections.
++  RandomState` is a per-process randomly seeded hasher for maps keyed by untrusted input; a `Map[K, V,
++  RandomState]` still iterates in insertion order (`[STD-11]`), so the seed never becomes visible.
++* `[HASH-3]` *(changed in 0.9.9)* `Map` and `Set` MUST NOT weaken equality to compensate for an
++  incoherent `Hash`. An incoherent `Hash`, a key changed through a `Cell`, or an inconsistent `Ord`
++  given to `sort` gives wrong answers (a missing key, any permutation of the elements) but never
++  undefined behaviour, an out-of-bounds access or an operation that does not terminate.
+ * `[HASH-4]` `Map[K, V]` requires `K: Eq + Hash`. A map may call `hash` any number of times per
+   operation. Safe map APIs never expose `ref mut K`.
+ 
+@@ -1180,12 +1207,14 @@
+ 
+ ## IV.10 Type inference
+ 
+-* `[TYP-23]` Inference is local to a function body and bidirectional. Function signatures, fields,
+-  statics and constants are annotated (an omitted return type is `void`). A local declared by `x = e`
+-  takes `e`'s type; a type left open by `e` (`[]`, `Map()`, `None`) is fixed by later uses in the same
+-  function, and one still open at the end is `E2060`, highlighting the first use. Expected types flow
+-  into literals, lambdas, `None`, `Ok(…)`, `Err(…)` and generic calls. A lambda with unannotated
+-  parameters and no expected callable type is `E2061`. Untyped literals are resolved last.
++* `[TYP-23]` *(changed in 0.9.9)* Inference is local to a function body and bidirectional. Function
++  signatures, fields, statics and constants are annotated (an omitted return type is `void`). A local
++  declared by `x = e` takes `e`'s type; a type left open by `e` (`[]`, `Map()`, `None`) is fixed by
++  later uses in the same function, and one still open at the end is `E2060`, highlighting the first
++  use. In particular `x = None` followed by `x = v` with `v: T` gives `x` the type `Option[T]`, and the
++  later assignment converts by `[TYP-5]` rule 11. Expected types flow into literals, lambdas, `None`,
++  `Ok(…)`, `Err(…)` and generic calls. A lambda with unannotated parameters and no expected callable
++  type is `E2061`. Untyped literals are resolved last.
+ 
+ ## IV.11 Method resolution and calls
+ 
+@@ -1220,9 +1249,12 @@
+   constructor that is not visible is `E1052`, naming where it is declared and its visibility; `E1020`
+   means only a name declared twice in one block (`[GRM-4]`).
+ * `[MOD-3]` *(changed in 0.9.9)* `import a.b.c` binds the name `c` to module `a.b.c`, and
+-  `import a.b.c as d` binds `d`. `from a.b import x, y as z` binds items. A module path that names no
+-  module is `E1060 no module named 'a.b.c'` at the import, whose help lists the nearest existing module
+-  paths; an item missing from an existing module is `E1061`. Neither is ever deferred to the first use
++  `import a.b.c as d` binds `d`. `from a.b import x, y as z` binds items. A standard module may be
++  named without `std.`, as in Python: `import math` is `import std.math`, and `from random import Rng`
++  is `from std.random import Rng`; when the package itself or one of its dependencies has that name,
++  the package wins, with warning `W1003` naming both. A module path that names no module is
++  `E1060 no module named 'a.b.c'` at the import, whose help lists the nearest existing module paths;
++  an item missing from an existing module is `E1061`. Neither is ever deferred to the first use
+   (`[PHIL-12]`).
+ * `[MOD-8]` *(new in 0.9.9)* `from m import *` binds every `pub` item of `m`. A name bound by two glob imports and then
+   used is `E1031`, naming both sources; an explicit import or a local declaration shadows a glob.
+@@ -1242,8 +1274,8 @@
+   | Collections | `Array`, `Map`, `Set`, `Span`, `MutSpan` |
+   | Ranges | `Range`, `RangeInclusive`, `RangeFrom`, `RangeTo` |
+   | Heap and cells | `Box`, `Shared`, `Weak`, `Cell`, `RefCell` |
+-  | Interfaces | `Copy`, `Clone`, `Drop`, `Default`, `Eq`, `Ord`, `Ordering`, `Hash`, `Debug`, `Display`, `Iterator`, `Iterable`, `IntoIterator`, `Contains`, `From`, `Send`, `Sync`, and the operator interfaces `Add`, `Sub`, `Mul`, `Div`, `FloorDiv`, `Rem`, `Pow`, `Neg`, `Not`, `BitAnd`, `BitOr`, `BitXor`, `Shl`, `Shr`, `Index`, `IndexMut`, `IndexSet`, with the `…Assign` forms of the arithmetic and bitwise interfaces |
+-  | Functions | `print`, `println`, `eprint`, `eprintln`, `input`, `assert`, `assert_eq`, `assert_ne`, `debug_assert`, `panic`, `todo`, `unreachable`, `min`, `max`, `abs`, `clamp` |
++  | Interfaces | `Copy`, `Clone`, `Drop`, `Default`, `Eq`, `Ord`, `Ordering`, `Hash`, `Debug`, `Display`, `Iterator`, `Iterable`, `IntoIterator`, `Generator`, `Contains`, `From`, `Send`, `Sync`, and the operator interfaces `Add`, `Sub`, `Mul`, `Div`, `FloorDiv`, `Rem`, `Pow`, `Neg`, `Not`, `BitAnd`, `BitOr`, `BitXor`, `Shl`, `Shr`, `Index`, `IndexMut`, `IndexSet`, with the `…Assign` forms of the arithmetic and bitwise interfaces |
++  | Functions | `print`, `println`, `eprint`, `eprintln`, `input`, `assert`, `assert_eq`, `assert_ne`, `debug_assert`, `panic`, `todo`, `unreachable`, `min`, `max`, `abs`, `clamp`, and Python's `len`, `range`, `sum`, `sorted`, `enumerate`, `zip`, `reversed`, `any`, `all` (`[STD-26]`) |
+   | Modules | `mem` (the module `std.mem`) |
+ 
+   A local declaration or explicit import shadows a prelude name. Everything else in the standard
+@@ -1296,7 +1328,16 @@
+   `E: Display`, or either form with a first parameter `args: Array[String]`. `args` holds the command
+   line, decoded as UTF-8 with invalid bytes replaced by U+FFFD; `std.process.args_os()` returns the raw
+   bytes. An `Err` returned from `main` is printed with `Display` to standard error and the process
+-  exits with status 1.
++  exits with status 1. **Scripts:** the statements at file scope of the entry file (`[GRM-2]`) form, in
++  source order, the body of an implicit `fn main()`, or `fn main() -> Result[void, AnyError]` when one
++  of them uses `?`; items anywhere in the file are declared as usual. A file with such statements that
++  also declares `main` has two items named `main` (`E1030`). The names the statements bind are locals
++  of the implicit `main`: a function of the file that uses one is `E1010`, whose help names a
++  parameter, a `const` or a `static` (unlike Python, where it would read a global). `return` and
++  `yield` at file scope are `E0100`, as in Python; `process.exit(code)` ends a script early.
++* `[FN-10]` *(new in 0.9.9)* A function whose return type is `Result[void, E]` returns `Ok(())` when
++  control reaches the end of its body, as a `void` function returns; an explicit `return Ok(())` is
++  still allowed. No other return type has an implicit value.
+ 
+ ## V.3 Structs
+ 
+@@ -1386,25 +1427,32 @@
+ 
+ * `[CLS-1]` A class instance lives on the heap with the header of `[OBJ-1]`. `Name(args)` allocates,
+   runs the constructor and returns a handle with strong count 1.
+-* `[CLS-2]` `fn init(self, …)` is the constructor. Every field without a default MUST be assigned on
+-  every path before `self` is used as a whole (`E2100`). Several constructors are written as associated
+-  functions that call `Self(…)`.
++* `[CLS-2]` *(changed in 0.9.9)* `fn init(self, …)` is the constructor. Before any `init` body runs,
++  every field default of the class and of its bases is evaluated and stored. Every field without a
++  default MUST then be assigned on every path before `self` is used as a whole (`E2100`); `self` is
++  used as a whole by a method call on it, by passing, storing or returning it, and by a closure
++  capturing it. Several constructors are written as associated functions that call `Self(…)`.
+ * `[CLS-3]` A class with no `init` and no base class gets a memberwise constructor as a struct does.
+-* `[CLS-10]` *(new in 0.9.9)* A derived class with no `init` gets its base's constructor: `Door(entity)` runs
+-  `Script.init(entity)` and initialises `Door`'s own fields from their defaults. A derived class with a
+-  field that has no default MUST declare an `init` (`E2101`).
+-* `[CLS-4]` A class is final unless declared `open` or `abstract`. Methods are non-virtual unless
+-  `virtual`; replacing one requires `override`; overriding a non-virtual method is `E2110`. A derived
+-  `init` MUST call `super.init(…)` exactly once, before using inherited fields. Fields cannot be
++* `[CLS-10]` *(new in 0.9.9)* A derived class with no `init` gets its base's constructor: `Door(entity)`
++  evaluates `Door`'s field defaults and then runs `Script.init(entity)`. A derived class with a field
++  that has no default MUST declare an `init` (`E2101`).
++* `[CLS-4]` *(changed in 0.9.9)* A class is final unless declared `open` or `abstract`. Methods are
++  non-virtual unless `virtual`; replacing one requires `override`; overriding a non-virtual method is
++  `E2110`. A derived `init` MUST call `super.init(…)` exactly once (`[CLS-11]`). Fields cannot be
+   overridden. Base fields are laid out first; there is at most one base.
++* `[CLS-11]` *(new in 0.9.9)* Construction is two-phase. In a derived `init`, the code before
++  `super.init(…)` MUST assign every field the class itself declares without a default, and MUST NOT
++  read an inherited field or use `self` as a whole; the code after it may do anything (`E2102`,
++  naming the field or the use). So when any method runs, even a `virtual` method called from a base
++  `init`, every field of the object holds a value.
+ * `[CLS-5]` Interface calls on a class are dispatched statically unless the receiver is `dyn`.
+ * `[CLS-6]` Destruction runs the derived `drop`, then the base's, then drops the fields in reverse
+   declaration order, then frees the memory once no weak handle remains.
+ * `[CLS-7]` *(changed in 0.9.9)* Inside a class method, `self` is a handle. **Any method may read and
+   write the object's fields through `self`**; each access is checked on its own by Part VIII's rules,
+   so a class method needs no `mut` to mutate its object (reference semantics, as in Python). `mut self`
+-  on a class method declares that the method holds one write access to the whole object for its whole
+-  duration, which the compiler may use to remove the per-access checks inside it (`[EXC-15]`).
++  on a class method declares that the method holds a write access to every field of the object for its
++  whole duration, which the compiler may use to remove the per-access checks inside it (`[EXC-15]`).
+ * `[CLS-7a]` Inside `drop`, `self` MUST NOT be stored anywhere that outlives the call (`E3016`).
+ * `[CLS-8]` *(changed in 0.9.9)* A class is `Sync` only as `[THR-1]` allows; every field of a `Sync`
+   class is immutable after `init`.
+@@ -1574,7 +1622,7 @@
+   * Every element converts to the element type by `[TYP-5]`, so `["ann", "bob"]` in an
+     `Array[String]` position is two `String`s, and in an `Array[str]` position is two static `str`s.
+   * A literal that allocates carries `Alloc`; in a `@noalloc` function it is `E4001`, whose help names
+-    the fixed-array form.
++    the fixed-array form. A generator expression (`[GRM-38]`) is not a collection and never allocates.
+ 
+ ```ember
+ fn main():
+@@ -1597,18 +1645,20 @@
+     `ref T` (read through wherever a `T` is expected);
+   * `owned e`, or a value `e` whose type is `IntoIterator`: consumes `e`;
+   * an `Iterator` value: calls `next` until `None`.
+-  `Array`, `[T; N]`, `Span`, `MutSpan`, `Set`, ranges and generators are iterable; a `Map` yields
+-  `(key, value)` pairs, destructured by `for k, v in m:`; a `str` yields its `char`s. `for x in
++  `Array`, `[T; N]`, `Span`, `MutSpan`, `Set`, `Map`, ranges and generators are iterable; a `Map`
++  yields its keys, as Python's `dict` does (`for k, v in m.items():` gives pairs, `m.values()` the
++  values); a `str` yields its `char`s. `for x in
+   xs.iter_mut():` yields `ref mut T`.
+ * `[CTL-2]` The iterated place is borrowed for the whole loop; mutating it inside the loop is `E3020`,
+   whose help names `retain`, `drain`, collecting first, or an index loop.
+ * `[CTL-3]` `a..b` (`Range`), `a..=b` (`RangeInclusive`) and `a..` (`RangeFrom`) over integers are
+   iterable and compile to a counted loop with no iterator object. `a..=MAX` terminates after `MAX`.
+-* `[CTL-3b]` Iteration over `Span`, `MutSpan`, `Array`, `[T; N]`, `SoA` columns, and `enumerate`,
+-  `zip`, `take`, `skip`, `copied` and `rev` composed over them, MUST compile to an induction-variable
+-  loop over base pointers and lengths, with no iterator object in memory and no call per element,
+-  independent of the host C compiler's optimiser. `tests/conformance/CTL-3b/` asserts it on the
+-  emitted C.
++* `[CTL-3b]` *(changed in 0.9.9)* Iteration over ranges, `Span`, `MutSpan`, `Array`, `[T; N]`, `SoA`
++  columns, and `enumerate`, `zip`, `take`, `skip`, `step_by`, `copied` and `rev` composed over them,
++  MUST compile to an induction-variable loop over base pointers and lengths, with no iterator object in
++  memory and no call per element, independent of the host C compiler's optimiser. `step_by(k)` becomes
++  the increment `k` (a `k` that is not a positive constant is checked once before the loop).
++  `tests/conformance/CTL-3b/` asserts it on the emitted C.
+ * `[CTL-4]` The `else` of `while` or `for` runs when the loop ends without `break`.
+ * `[CTL-5]` A `match` tests arms top to bottom; the first that matches runs; a guard is evaluated after
+   binding; the arms MUST be exhaustive (`E2090`); an unreachable arm is `W2091`.
+@@ -1662,9 +1712,13 @@
+ * `[CLO-1]` A lambda or local function has a unique anonymous type implementing its callable type. If
+   it captures anything by reference it is a view type; if it is `owned fn` or captures nothing it is a
+   plain value.
+-* `[CLO-2]` Captures are inferred per variable: read only ⇒ shared borrow; written ⇒ mutable borrow
+-  (and the closure needs a mutable place to be called: `mut f`); `owned fn` ⇒ each captured variable
+-  is moved in (copied if `Copy`, retained if a handle).
++* `[CLO-2]` *(changed in 0.9.9)* Captures are inferred per variable: read only ⇒ shared borrow; written ⇒
++  mutable borrow; `owned fn` ⇒ each captured variable is moved in (copied if `Copy`, retained if a
++  handle). A closure that writes its captures is called from a mutable place (`mut f` for a
++  parameter). An **owned callable value** (`[CLO-3]`) is always called from a mutable place, because
++  its type does not say whether it writes its captured state; one stored in a class field is called
++  under a write access to that field (§VIII.3), so the closure cannot replace or free itself while it
++  runs.
+ * `[CLO-13]` *(new in 0.9.9)* A read-only capture of a `Copy` variable whose storage would end while
+   the closure is still live, and which is not assigned after the closure is created, is captured by
+   **copy** instead of by borrow (for a handle, a retain). The difference cannot be observed; it lets a
+@@ -1687,8 +1741,10 @@
+ * `[CLO-10]` *(new in 0.9.9)* An owned callable value holds up to **three pointer-sized words** of captured state inline
+   and makes no allocation; larger captured state is placed in one heap allocation, which carries the
+   `Alloc` effect and is reported by `ember inspect --alloc`. Calling one is one indirect call.
+-* `[CLO-4]` A non-`owned` lambda cannot outlive what it borrows: storing it, returning it or passing it
+-  to an `owned` parameter follows the view rules (`[TYP-15]`).
++* `[CLO-4]` *(changed in 0.9.9)* A non-`owned` lambda cannot outlive what it borrows: storing it,
++  returning it or passing it to an `owned` parameter follows the view rules (`[TYP-15]`), except that a
++  lambda written directly as the argument of a consumed callable parameter captures by move
++  (`[CLO-15]`).
+ * `[CLO-5]` A closure capturing a class handle holds a strong reference; the usual cycle caution
+   applies (`[WK-1]`).
+ * `[CLO-6]` *(changed in 0.9.9)* A lambda that moves one of its captures out of itself (into an
+@@ -1698,9 +1754,15 @@
+ * `[CLO-6a]` *(changed in 0.9.9)* An owned `once fn` value, including one inside a `Box` or a
+   collection, is callable: the call moves the value out of its place (the place becomes empty, and a
+   collection element is removed by the calling API, e.g. `jobs.pop_front()`).
+-* `[CLO-7]` Standard-library APIs that store or send a callback (`thread.spawn`, `jobs.submit`,
+-  `Option.map` returning a value computed later, event registries) declare it `owned fn` or
+-  `once fn` in an owned-value position, so the call site passes an `owned fn` lambda.
++* `[CLO-7]` *(changed in 0.9.9)* Standard-library APIs that store or send a callback (`thread.spawn`,
++  `jobs.submit`, `Option.map` returning a value computed later, event registries) take it as a
++  consumed callable parameter (`owned f: fn(A) -> R`) or `once fn`, so a lambda written at the call
++  site captures by move (`[CLO-15]`).
++* `[CLO-15]` *(new in 0.9.9)* A lambda written directly as the argument of a consumed callable
++  parameter (`owned f: fn(A) -> R`, which `thread.spawn`, `jobs.submit` and callback registries
++  declare, `[CLO-7]`) captures by move, as if written `owned fn`: `thread.spawn(fn() => work(x))` moves
++  `x` into the thread. `owned fn` is needed only for a lambda that is stored before it is passed, or
++  stored in a field or a local.
+ * `[CLO-11]` *(new in 0.9.9)* A call `recv.name(args)` where `recv`'s type has no method `name` but has a field `name`
+   of callable type calls that field. A method of that name takes precedence.
+ * `[CLO-12]` *(new in 0.9.9)* A local function (`[GRM-28]`) is a named closure: it captures like a lambda and follows
+@@ -1762,8 +1824,12 @@
+   `@safety`.
+ * `[CORO-10]` A `gen fn` may not be `extern`, `@export`ed or passed to C (`E2222`).
+ * `[CORO-12]` *(new in 0.9.9)* A `gen fn` **method of a class** takes `self` (the frame retains the handle). Each access
+-  to the object inside it is checked on its own; a long-term access to the object (`[EXC-1]`) may not
+-  be live across a `yield` (`E2229`). `mut self` is not permitted on a `gen fn` (`E2229`).
++  to the object inside it is checked on its own; a long-term access to a field of the object
++  (`[EXC-1]`) may not be live across a `yield` (`E2229`). `mut self` is not permitted on a `gen fn` (`E2229`).
++* `[CORO-13]` *(new in 0.9.9)* A `yield` while a `@must_drop` value (`[THR-6]`) is live is `E2231`: a
++  suspended generator can be forgotten or leaked, so the value's `drop`, on which a safety guarantee
++  depends, might never run (a `thread.scope()` whose tasks borrow the generator's parameters). A scope
++  that closes before the next `yield` is unaffected.
+ * `[CORO-11]` `std.coroutine` builds gameplay sequencing on generators with no further compiler
+   support: `Scheduler` resumes a set of `Generator[Wait]` once per frame and drops the finished ones;
+   `wait(seconds)`, `wait_frames(n)` and `wait_until(pred)` produce `Wait` values.
+@@ -1816,10 +1882,11 @@
+ * `[OWN-5]` Assigning to a place that holds a live value evaluates the new value, then drops the old
+   one, then stores the new one. `Cell.set` stores first and drops after (`[CELL-1]`); `MaybeUninit.write`
+   stores without dropping (`[ARN-8]`). These three orders are distinct and none generalises the others.
+-* `[OWN-6]` `mem.take(mut place) -> T` (leaves `Default`), `mem.replace(mut place, new) -> T`,
+-  `mem.swap(mut a, mut b)`, `mem.drop(owned x)` (drops now) and `mem.forget(owned x)` (never drops;
+-  `E3015` for `@must_drop` types, `[THR-6]`) are the operations that move values out of places a move
+-  may not otherwise leave empty.
++* `[OWN-6]` *(changed in 0.9.9)* `mem.take(mut place: T) -> T` (leaves `Default`),
++  `mem.replace(mut place: T, owned new: T) -> T`, `mem.swap(mut a: T, mut b: T)`, `mem.drop(owned x: T)`
++  (drops now) and `mem.forget(owned x: T)` (never drops; `E3015` for `@must_drop` types, `[THR-6]`) are
++  the operations that move values out of places a move may not otherwise leave empty. Calls are
++  written without modes: `mem.take(self.items)` (`[FN-2a]`).
+ 
+ ## VII.2 Copy and Clone
+ 
+@@ -1848,8 +1915,9 @@
+   argument list begins and **activated** at the call. Between reservation and activation the place may
+   be read, and values computed from it may be passed (`v.push(v.len())`); but a borrow of the place that
+   is still live at activation — because it is itself an argument, or is held by one — conflicts with the
+-  activation and is `E3021`. `f(mut v, v[0])` where the second parameter takes `ref int` is therefore
+-  rejected; `f(mut v, v[0])` where it takes `int` is accepted.
++  activation and is `E3021`. For `fn f(mut v: Array[int], x: ref int)`, the call `f(v, v[0])` is
++  therefore rejected; for `fn f(mut v: Array[int], x: int)` it is accepted, because `v[0]` is copied
++  before activation.
+ * `[BRW-11]` *(new in 0.9.9)* **All borrows a call makes are live together.** The borrows formed for every argument and
+   the receiver of one call are live simultaneously for the duration of the call. Two of them that
+   conflict under `[BRW-1]` — two `mut` arguments naming overlapping places, or a `mut` argument and a
+@@ -2110,16 +2178,19 @@
+ 
+ ```text
+ offset  size  field
+-0       4     strong   u32   atomic iff the class is Sync
++0       4     strong   u32   atomic iff the class is Sync or the block is a SyncShared
+ 4       4     weak     u32   same atomicity
+-8       4     access   u32   dynamic exclusivity (bit 31 writer, bits 0..30 reader count); unused by Sync classes
++8       4     access   u32   dynamic exclusivity of a Shared payload (bit 31 writer, bits 0..30 reader count);
++                             unused by class objects, whose fields carry their own (`[EXC-19]`)
+ 12      4     flags    u32   bit 0 deinitialising, bit 1 pinned by foreign code
+ 16      8     type     *const TypeInfo
+-24      …     base-class fields, then own fields (or the Shared payload), naturally aligned
++24      …     base-class fields, then own fields (or the Shared payload), naturally aligned;
++              each non-`Copy` field of a class that is not `@sync` is preceded by its u32 access word
+ ```
+ 
+-* `[OBJ-1]` The header is 24 bytes on 64-bit targets and is part of the runtime ABI (`[VER-4]`).
+-  Foreign code never reads it; it calls `ember_rt`.
++* `[OBJ-1]` *(changed in 0.9.9)* The header is 24 bytes on 64-bit targets and is part of the runtime ABI
++  (`[VER-4]`). Foreign code never reads it; it calls `ember_rt`. The per-field access words of
++  `[EXC-19]` belong to the class's layout, not the header.
+ * `[OBJ-2]` A handle points at offset 0. An interface-typed handle is the same single pointer: the
+   interface table is reached through the header's type information, so `Option[Handle]` is one pointer
+   wide.
+@@ -2144,13 +2215,16 @@
+ * `[RC-2d]` A handle stored into a field from a temporary (a move, not a retain).
+ * `[RC-2e]` Handles yielded by a `for` over a borrowed collection, unless the body stores, returns,
+   consumes or `owned fn`-captures them.
+-* `[RC-3]` Further elisions are allowed only when semantics are preserved (`[PHIL-5]`). An object may
++* `[RC-3]` *(changed in 0.9.9)* Further elisions are allowed only when semantics are preserved (`[PHIL-5]`). An object may
+   be deinitialised **earlier** than the last syntactic use of a handle whose value is provably unneeded
+   and through which no loan is live (`[RC-5]`). A program that needs an object to live to a point binds
+   it with `with h:` or calls `mem.keep_alive(h)`; `L3019` suggests this where a handle to a class with
+-  an observable `drop` is bound and never read again.
+-* `[RC-4]` A non-`Sync` class's counts use plain loads and stores; a `Sync` class's use a relaxed
+-  increment and an acquire-release decrement (`[RT-8]`).
++  an observable `drop` is bound and never read again. `unsafe` code that keeps a raw pointer into an
++  object MUST keep a handle to it alive the same way, because the object may be deinitialised after
++  its last Safe use.
++* `[RC-4]` *(changed in 0.9.9)* A non-`Sync` class's counts, and a `Shared`'s, use plain loads and
++  stores; a `Sync` class's, and a `SyncShared`'s, use a relaxed increment and an acquire-release
++  decrement (`[RT-8]`).
+ * `[RC-5]` A borrow whose place goes through a class handle or `Shared` (`ref h.f`, a `Span` of an
+   object's `Array` field, a `RefCell` guard obtained from one, a view built from these) is also a
+   shared loan of the handle: the object stays alive until the borrow's last use, and a handle whose
+@@ -2172,19 +2246,45 @@
+ | Access | Kind | Duration |
+ |---|---|---|
+ | calling a method on a field (`h.items.push(x)`, `h.name.len()`) | write if the method takes `mut self`, else read | the call |
++| calling an owned callable value stored in a field (`b.on_click(e)`, `[CLO-11]`) | write | the call |
+ | passing a field to a parameter (`f(h.items)`) | write for `mut`, read for borrowed, `E3012` for `owned` | the call |
+-| `ref h.f` / `ref mut h.f`, or a view of a field | read / write | the reference's liveness |
++| `ref h.f` / `ref mut h.f`, or a view of a field | read / write | until the loan dies (`[EXC-18]`) |
+ | iterating a field (`for x in h.items`) | read (write for `iter_mut`) | the loop |
+ | **assigning a field of a non-`Copy` type** (`h.items = []`, `h.name = other`) | write | the store and the drop of the old value |
+-| calling a `mut self` class method (`[CLS-7]`) | write, whole object | the call |
+-
+-* `[EXC-1]` *(changed in 0.9.9)* Beginning a **write** access to an object while any access to it is
+-  active panics: `exclusivity violation: write access to Node.children while a read access is
+-  active`, in every profile. There is no setting that removes this check (`[PHIL-13]`).
+-* `[EXC-2]` Beginning a **read** access while a write access is active panics likewise.
++| calling a `mut self` class method (`[CLS-7]`) | write, every field | the call |
++
++Each access is to one field of the class's own (`h.inner.items` is an access to `inner`), and only
++accesses to the same field conflict (`[EXC-19]`).
++
++* `[EXC-1]` *(changed in 0.9.9)* Beginning a **write** access to a field while any access to the same
++  field is active panics: `exclusivity violation: write access to Node.children while a read access
++  to Node.children is active`, in every profile. There is no setting that removes this check
++  (`[PHIL-13]`).
++* `[EXC-2]` *(changed in 0.9.9)* Beginning a **read** access to a field while a write access to it is
++  active panics likewise.
++* `[EXC-19]` *(new in 0.9.9)* **Access state is per field.** Each non-`Copy` field of a class that is
++  not `@sync` has its own access word (bit 31 writer, bits 0..30 reader count), stored in front of the
++  field. A long-term access to a field checks and updates that word only, so reading one field while
++  writing another never conflicts: `for c in self.children: self.log.push(c.name)` is accepted. A
++  whole-object write (a `mut self` method, `[EXC-15]`) checks every field word of the object's
++  **dynamic** class at entry — for an `open` class, through the list of access-word offsets in its type
++  information, so a derived override reached from a base method is covered too — marks each as
++  written, and clears them at return; a `mut self` call on `self` inside it is a reborrow (`[EXC-5]`)
++  and marks nothing again. The cost is one word per non-`Copy` field, one check per such field on
++  entry to a `mut self` method, and nothing per access. `Copy` fields have no word
++  (`[EXC-17]`), and the fields of a `@sync` class need none (`[THR-1]`).
+ * `[EXC-16]` *(new in 0.9.9)* Assigning a value to a class field whose type is not `Copy` is a write access (table
+   above): it conflicts with, for example, a `for` loop over the same field, which would otherwise read
+   a buffer freed by the assignment.
++* `[EXC-17]` *(new in 0.9.9)* Instantaneous writes are not checked against long-term accesses, so a
++  `ref` or view of a `Copy` field (including a fixed-array field) observes writes made through other
++  handles while it is live, as a C pointer would. It never dangles: a `Copy` field's storage lasts as
++  long as the object, which the loan keeps alive (`[RC-5]`). For the same reason such a view gets no
++  alias fact the other handles could break (`[SIMD-3]`).
++* `[EXC-18]` *(new in 0.9.9)* The dynamic access that a borrow through a class handle begins — a
++  `ref h.f`, a view of a field, a guard obtained from one — ends where the borrow's loan dies
++  (`[BCK-2]`), in whichever function that is. A view of a field returned from a method carries its
++  access to the caller and ends at the caller's last use of the view, on every path.
+ * `[EXC-3]` The compiler MAY remove a check only when it proves no conflicting access can occur: every
+   access to the object in the interval goes through one handle local that is not reassigned, their
+   intervals are ordered, and either the interval contains no call, no virtual or interface dispatch and
+@@ -2196,12 +2296,13 @@
+ * `[EXC-4]` A `let` field is subject to the same rules: `let` fixes the binding, not the value
+   (`[CLS-9a]`).
+ * `[EXC-5]` Accesses nested inside the same `mut self` method are reborrows and are not checked again.
+-* `[EXC-6]` A panic from `[EXC-1]`/`[EXC-2]` names both the offending access and the active one it
+-  conflicts with (file, line, column, field). The `debug` runtime keeps a per-thread stack of active
+-  accesses for this; other profiles always name the offending access and name the active one where they
+-  can without any per-access cost (the header layout of `[OBJ-1]` does not grow).
+-* `[EXC-7]` The opt-in lint `L3013` reports a long-term access held across a virtual or `dyn` call
+-  within one `open` class hierarchy.
++* `[EXC-6]` *(changed in 0.9.9)* A panic from `[EXC-1]`/`[EXC-2]` names both the offending access and
++  the active one it conflicts with (file, line, column, field). The `debug` runtime keeps a per-thread
++  stack of active accesses for this; other profiles always name the offending access and its field,
++  and name the active one where they can without any per-access cost.
++* `[EXC-7]` *(changed in 0.9.9)* The opt-in lint `L3013` reports a long-term access held across a
++  virtual or `dyn` call within one `open` class hierarchy, or across a call into C++ that may call back
++  into Ember (`[FFI-39d]`).
+ * `[EXC-8]` When a loop makes repeated long-term accesses to one object whose identity, access kind and
+   conflict set are loop-invariant, the compiler performs one check in the loop preheader and holds the
+   access for the whole loop.
+@@ -2213,8 +2314,9 @@
+ * `[EXC-11]` A hoisted access is invisible to programs: it cannot be named, stored or observed.
+ * `[EXC-12]` `ember inspect --safety` reports each check as `STATIC`, `DYNAMIC_PER_ACCESS` or
+   `DYNAMIC_HOISTED_LOOP`, naming the loop and the proof for a hoisted one.
+-* `[EXC-15]` *(new in 0.9.9)* A `mut self` class method holds a write access to the whole object from entry to return;
+-  accesses to `self`'s fields inside it are covered by it and not checked individually.
++* `[EXC-15]` *(new in 0.9.9)* A `mut self` class method holds a write access to every field of the
++  object (`[EXC-19]`) from entry to return; accesses to `self`'s fields inside it are covered by it and
++  not checked individually.
+ * `[EXC-14]` *(changed in 0.9.9)* The 0.9.8 `exclusivity = "unchecked"` setting is removed. Code that
+   cannot afford a check per access uses value types, `mut self` methods (`[EXC-15]`), or a query
+   yielding `ref mut` (Part XII).
+@@ -2236,15 +2338,18 @@
+ * `[WK-1]` A cycle of strong handles among class instances and `Shared` payloads is never collected;
+   it leaks. This is a documented property. `Weak` breaks cycles; the compiler warns about the cycles it
+   can see (`[WK-6]`); the debug runtime reports the ones it finds (`[WK-15]`).
+-* `[WK-11]` `Weak(h)` creates a weak handle to a class object or `Shared` payload without retaining it
+-  strongly; `Weak[O].empty()` (or `Weak.empty()` where the type is known) creates one that points
+-  nowhere. `Weak[O]` is `Copy`: copying increments the weak count, dropping decrements it.
++* `[WK-11]` *(changed in 0.9.9)* `Weak(h)` creates a weak handle to a class object or a `Shared` or
++  `SyncShared` payload without retaining it strongly; `Weak[O].empty()` (or `Weak.empty()` where the
++  type is known) creates one that points nowhere. `Weak[O]` is `Copy`: copying increments the weak
++  count, dropping decrements it.
+ * `[WK-2]` An object is deinitialised when its strong count reaches zero, whatever weak handles remain;
+   those weak handles then fail to upgrade.
+ * `[WK-3]` `upgrade` returns `None` while the object's deinitialising flag is set, so a `drop` body
+   cannot resurrect its object through a weak handle.
+-* `[WK-12]` `w.upgrade() -> Option[O]` returns a retained strong handle while the object is alive and
+-  not deinitialising, and `None` otherwise.
++* `[WK-12]` *(changed in 0.9.9)* `w.upgrade() -> Option[O]` returns a retained strong handle while the
++  object is alive and not deinitialising, and `None` otherwise. On a `@sync` object (or a
++  `SyncShared`) it is a compare-exchange loop that fails once the strong count has reached zero, so an
++  object another thread is releasing is never resurrected.
+ * `[WK-13]` A `Weak[Shared[T]]` refers to the same block as its `Shared[T]`.
+ * `[WK-14]` Ember's `Weak` and `Shared` never convert to or from C++'s `std::weak_ptr`/`std::shared_ptr`
+   (`[SEL-2]`).
+@@ -2293,7 +2398,8 @@
+ | `Array`, `Map`, `Set`, `String` | unique, moved | borrow-checked | end of scope | collections |
+ | `Box[T]` | unique, heap | borrow-checked | on drop | one owner, but it must be on the heap: recursion, a large value, `dyn` |
+ | `class` | shared, counted | dynamic exclusivity | at count 0 | the thing has identity and many places refer to it |
+-| `Shared[T]` | shared, counted | borrow-checked + dynamic exclusivity | at count 0 | shared ownership of a plain value without declaring a class |
++| `Shared[T]` | shared, counted | borrow-checked + dynamic exclusivity | at count 0 | shared ownership of a plain value without declaring a class, on one thread |
++| `SyncShared[T]` | shared, atomically counted | read-only; mutation through `T`'s locks or atomics | at count 0 | the same across threads (`[HEAP-10]`) |
+ | `Weak[O]` | none | — | never | back-pointers; observing without keeping alive |
+ | `Arena`, `FixedArena` | region | borrow-checked | all at once | many values with one lifetime: a frame, a parse |
+ | `Pool[T]` + `Handle[T]` | the pool | handles are plain `Copy` values | the pool decides | resources the program recycles: entities, GPU objects |
+@@ -2317,11 +2423,19 @@
+   `align_of[T]()`, whatever that alignment is.
+ * `Box[T]`: one owner; `Box(v)`, auto-deref, `b.get()`; `Box[dyn I]` holds any implementer. Move-only.
+ * `[HEAP-3]` `Shared(value) -> Shared[T]` allocates one counted block holding `value`.
+-* `[HEAP-4]` `s.get() -> ref T` borrows the payload; the loan keeps the block alive (`[RC-5]`).
+-* `[HEAP-5]` `s.get_mut() -> ref mut T` borrows it mutably with the same dynamic exclusivity as a class
+-  object's write access (`[EXC-1]`); it does not require the `Shared` to be unique.
++* `[HEAP-4]` *(changed in 0.9.9)* `s.get() -> ref T` borrows the payload: it begins a checked read
++  access (`[EXC-2]`) that ends where the loan dies (`[EXC-18]`), and the loan keeps the block alive
++  (`[RC-5]`).
++* `[HEAP-5]` *(changed in 0.9.9)* `s.get_mut() -> ref mut T` begins a checked write access
++  (`[EXC-1]`) for the loan's life; it does not require the `Shared` to be unique, and conflicts with
++  any live `get` or `get_mut` through any copy.
+ * `[HEAP-6]` `Shared[T]` is `Copy`: copying retains, dropping releases.
+-* `[HEAP-7]` `Weak[O]` exists for `O` a class handle or a `Shared[T]` (`[WK-11]`).
++* `[HEAP-7]` *(changed in 0.9.9)* `Weak[O]` exists for `O` a class handle, a `Shared[T]` or a
++  `SyncShared[T]` (`[WK-11]`).
++* `[HEAP-10]` *(new in 0.9.9)* `Shared[T]` is never `Send` or `Sync`: its counts and access state are
++  plain memory. Shared ownership across threads uses `std.sync.SyncShared[T]` (`T: Sync`), whose counts
++  are atomic and which offers `get() -> ref T` only; mutation goes through `T`'s own synchronisation,
++  as for a `@sync` class (`[THR-1]`).
+ 
+ ## IX.2 Arenas
+ 
+@@ -2478,7 +2592,7 @@
+   generation, in every profile, and a stale handle yields `None` (or panics in `pool[h]`).
+   `unsafe: pool.get_unchecked(h)` skips the comparison.
+ * `[HND-2]` *(changed in 0.9.9)* `Handle[T]` is a `u64`: 32 bits of index and 32 of generation.
+-  `Pool[T, Bits]` may narrow it (`Pool[T, Split20]` gives RageV's 20-bit index and 12-bit generation in a
++  `Pool[T, Bits]` may narrow it (`Pool[T, Split20]` gives a 20-bit index and a 12-bit generation in a
+   `u32`).
+ * `[HND-3]` *(new in 0.9.9)* A slot whose generation is exhausted is retired and never reused, so an old handle can never
+   become valid again. When every slot is retired or live, `insert` panics and `try_insert` returns
+@@ -2659,9 +2773,11 @@
+ * `[EFF-15]` *(changed in 0.9.9)* Effects and contract verdicts are computed once, after the
+   profile-independent proofs, and are identical in every profile (`[PHIL-13]`). The proofs that count
+   are exactly those this document specifies — `[EXC-3]`, `[EXC-8]`, `[RC-2]`, `[OPT-2]`, `[RNG-4]`,
+-  `[SIMD-7]` and `[DSJ-1]` — so every implementation reaches the same verdict; an implementation may
+-  remove further checks from the code it emits, but that never changes a verdict. Adding a proof to the
+-  list is a language revision (`[VER-9]`) and makes more programs satisfy a contract, never fewer.
++  `[SIMD-7]` and `[DSJ-1]` — and a verdict is computed **as if every one of them were applied wherever
++  its conditions hold**, whether or not the emitted code keeps the check a proof would remove. So every
++  implementation reaches the same verdict; an implementation may remove further checks from the code it
++  emits, but that never changes a verdict. Adding a proof to the list is a language revision
++  (`[VER-9]`) and makes more programs satisfy a contract, never fewer.
+ * `[EFF-16]` *(changed in 0.9.9)* `@nopanic(explicit)` forbids only the panics the programmer writes and
+   allocation failure. Arithmetic, bounds, aliasing and stale checks are `RuntimeCheck` kinds and are
+   allowed under it; the diagnostics and error page for `@nopanic(explicit)` MUST say so. A function that
+@@ -2729,6 +2845,7 @@
+ | Retain / release pair | guaranteed elided | the cases of `[RC-2]` |
+ | Retain / release, surviving | guaranteed present | reported per site; atomic iff the class is `Sync` |
+ | Dynamic exclusivity check | conditionally elided | removed per `[EXC-3]`; hoisted per `[EXC-8]`; covered by `mut self` (`[EXC-15]`) |
++| Per-field access word | guaranteed present | one `u32` per non-`Copy` field of a non-`@sync` class, and one check per such field on entry to a `mut self` method (`[EXC-19]`) |
+ | Stale-handle check | guaranteed present, **every profile** | the guarantee is the check; `get_unchecked` in `unsafe` |
+ | `RefCell` borrow | guaranteed present | one counter update |
+ | `Cell` access | not observable | a load or a store |
+@@ -2744,7 +2861,11 @@
+ | f-string | guaranteed present | allocates; `format_to` into a buffer does not |
+ | `?` converting an error into `AnyError` | guaranteed present, failure path only | one allocation (`[ERR-11]`); a concrete error type moves without allocating |
+ | Contract and range-type annotations | not observable | compile time only |
++| Floating-point contraction off | guaranteed present | `a * b + c` is two roundings and two instructions, where C compilers often fuse them; `fma(a, b, c)`, `x.mul_add(b, c)` or `@fp(contract)` give one (`[TYP-9]`) |
++| 64-bit `int` | guaranteed present | `int` is `i64`, so an `Array[int]` moves twice the bytes of C's 32-bit `int`; dense numeric data uses `i32`/`f32` elements (`L4003`) |
++| Sorting floats | not observable | `sort` on floats compares by IEEE totalOrder (`[TYP-37]`), a few integer instructions per compare |
+ | Arena allocation | guaranteed present | a pointer bump |
++| Stack probe | guaranteed present | one touch per page of a frame larger than a page (`[RT-12]`); none for smaller frames |
+ | FFI call | guaranteed present | one direct call for an ABI-direct C function |
+ 
+ * `[OPT-2]` For a counted loop over `a..b` that indexes views at `i + c` for constants `c`, with the
+@@ -2797,12 +2918,13 @@
+ * `[THR-8]` *(new in 0.9.9)* A type is **`Send`** when a value of it may be moved to another thread.
+   Structs, enums, tuples, fixed arrays and collections are `Send` when every component is. Raw
+   pointers are not `Send`. `ref T` and `Span[T]` are `Send` when `T` is `Sync`; `ref mut T` and
+-  `MutSpan[T]` when `T` is `Send`. A class handle is `Send` only if the class is `@sync`
+-  (`[THR-2]`). `Shared[T]` and `Weak[Shared[T]]` are `Send` when `T` is `Sync`.
++  `MutSpan[T]` when `T` is `Send`. A class handle, and `Weak` of one, is `Send` only if the class is
++  `@sync` (`[THR-2]`). `Shared[T]` is never `Send` (`[HEAP-10]`); `SyncShared[T]` and its `Weak` are.
+ * `[THR-9]` *(new in 0.9.9)* A type is **`Sync`** when several threads may read one value of it at
+   the same time. Structural types are `Sync` when every component is. `Cell`, `RefCell`, `UnsafeCell`,
+-  raw pointers, handles of classes that are not `@sync`, and `Shared[T]` of a non-`Sync` `T` are not
+-  `Sync`. `Atomic[T]`, `Once`, and `Mutex[T]`/`RwLock[T]` for a `Send` `T` are `Sync`.
++  raw pointers, `Shared[T]`, and handles (and `Weak`s) of classes that are not `@sync` are not `Sync`.
++  `Atomic[T]`, `Once`, `SyncShared[T]`, `Mutex[T]`/`RwLock[T]` for a `Send` `T`, and handles of `@sync`
++  classes are `Sync`.
+ * `[THR-1]` *(changed in 0.9.9)* **A class is `Sync` only when it is declared `@sync class`.** Every
+   other class is neither `Sync` nor `Send`, whatever its fields, and uses plain (non-atomic) counts.
+   In a `@sync` class:
+@@ -2815,8 +2937,8 @@
+ 
+   Mutation of a `@sync` object's state therefore happens only through its fields' own
+   synchronisation — `Atomic`, `Mutex`, `RwLock`, `Once`, channel ends, or handles to other `@sync`
+-  objects. Every access to a `@sync` object is a read, so it needs no exclusivity check and its header
+-  access word is unused (`[OBJ-1]`). The error's help names the field to wrap:
++  objects. Every access to a `@sync` object is a read, so it needs no exclusivity check and its fields
++  have no access words (`[EXC-19]`). The error's help names the field to wrap:
+   `wrap it in Atomic[int]` for an integer, `Mutex[…]` otherwise.
+ * `[THR-2]` *(changed in 0.9.9)* Handles of a `@sync` class are `Send` and `Sync`. A handle of any other
+   class cannot reach another thread by any Safe route — moving, capturing or borrowing into a task
+@@ -2829,8 +2951,8 @@
+   two operations. A diagnostic MUST NOT describe `@sync` or `Sync` as "thread-safe".
+ * `[THR-13]` *(new in 0.9.9)* **The data-race guarantee.** In Safe Ember a memory location is reachable
+   from two threads only through (a) a `@sync` object, whose fields are immutable after construction
+-  (`[THR-1]`); (b) a `static`, which is immutable and `Sync` (`[STA-1]`); (c) a `Shared[T]` of a
+-  `Sync` `T`; (d) a borrow handed to a scoped task, which the borrow rules make either shared and of a
++  (`[THR-1]`); (b) a `static`, which is immutable and `Sync` (`[STA-1]`); (c) a `SyncShared[T]`,
++  which gives only shared access; (d) a borrow handed to a scoped task, which the borrow rules make either shared and of a
+   `Sync` type, or exclusive (`[THR-11]`); (e) a value moved to the other thread, which the sender no
+   longer has. In each case concurrent mutation goes through `Atomic`, `Mutex`, `RwLock` or a channel.
+ 
+@@ -2854,10 +2976,14 @@
+     println(total)
+ ```
+ 
+-* `[THR-10]` *(new in 0.9.9)* `thread.spawn(f: owned fn() -> R) -> JoinHandle[R]` runs `f` on a new
+-  thread. The closure's captured state and `R` MUST be `Send` (`E7004`, naming the capture).
+-  `h.join() -> R` waits and returns the result. Dropping a `JoinHandle` detaches the thread. When
+-  `main` returns, the process exits; detached threads stop without running destructors.
++* `[THR-10]` *(new in 0.9.9)* `thread.spawn(owned f: fn() -> R) -> JoinHandle[R]` runs `f` on a new
++  thread. The closure's captured state and `R` MUST be `Send` (`E7004`, naming the capture) and MUST
++  carry only the static region: a thread may outlive every local of its creator, so a captured view of
++  a local is `E3063`, whose help is `thread.scope()` (`[THR-5]`). `h.join() -> R` waits and returns the
++  result. Dropping a `JoinHandle` detaches the thread.
++* `[THR-16]` *(new in 0.9.9)* When `main` returns, or `process.exit` is called, the process ends: other
++  threads stop without running destructors, no static is freed and no drop runs. The `debug` leak
++  report (`[WK-15]`) runs only if no other thread is still running, and otherwise says how many were.
+ * `[THR-3]` *(changed in 0.9.9)* `Mutex[T]` is a value type. `m.lock()` blocks and returns a
+   `MutexGuard[T]`, a view borrowing `m` that reads through to `ref mut T` (`[TYP-14]`); the mutex is
+   released when the guard is dropped, which `with g = m.lock():` places at the end of the block.
+@@ -2880,9 +3006,9 @@
+ * `[THR-4]` In the `debug` profile the runtime records the order in which each thread takes locks and
+   prints `warning: lock order inversion` with both acquisition sites when two threads take two locks
+   in opposite orders. It never changes a program's behaviour.
+-* `[THR-6]` A type whose `drop` a safety guarantee depends on is `@must_drop`. A `@must_drop` value
+-  MUST NOT be passed to `mem.forget`, stored in a class field, `Shared`, `Box`, a collection or an
+-  `owned fn` capture, or returned from the function that created it (`E3015`). The standard library
++* `[THR-6]` *(changed in 0.9.9)* A type whose `drop` a safety guarantee depends on is `@must_drop`. A
++  `@must_drop` value MUST NOT be passed to `mem.forget`, stored in a class field, `Shared`,
++  `SyncShared`, `Box`, a collection or an `owned fn` capture, held across a `yield` (`[CORO-13]`), or returned from the function that created it (`E3015`). The standard library
+   applies it to `Scope` and `JobScope` only.
+ 
+ ## XI.3 Scoped tasks
+@@ -2939,8 +3065,11 @@
+ * `[PAR-2b]` The analysis runs after the body's calls are inlined. A call it cannot see into that
+   receives a captured `MutSpan` or column defeats the proof for everything reachable through that
+   argument (`E7010`).
+-* `[PAR-3]` `@parallel(reduce=[total: +, best: max])` declares variables combined after the loop with
+-  an associative operator; inside the body each chunk has its own copy.
++* `[PAR-3]` *(changed in 0.9.9)* `@parallel(reduce=[total: +, best: max])` declares variables combined
++  after the loop; inside the body each chunk has its own copy. Each chunk reduces its iterations left
++  to right, and the chunk results are then combined in chunk order, so the result is the same on
++  every machine (`[PAR-5]`); for floats it can differ from the serial left-to-right sum, which is
++  why a float reduction must be declared.
+ * `[PAR-4]` *(changed in 0.9.9)* A `@parallel` loop has the effects `Sync` and `Block` (it waits for
+   its chunks) and not `Alloc`: its chunk descriptors live in the calling frame and the job queues have
+   a fixed capacity; when they are full the calling thread runs the chunk itself.
+@@ -2966,9 +3095,10 @@
+ 
+ * `[JOB-1]` A job's captured state is stored inline in its queue slot when it fits in 64 bytes and in
+   one heap allocation otherwise (`Alloc`, reported by `ember inspect --alloc`).
+-* `[JOB-2]` `jobs.scope()` follows `[THR-5]` and `[THR-11]`: jobs submitted to a `JobScope` may borrow
+-  the caller's data, and the block's exit joins them. `jobs.submit(f: owned fn())` outside a scope
+-  takes an owned, `Send` closure and returns a `JobHandle`; `jobs.wait(h)` waits for it.
++* `[JOB-2]` *(changed in 0.9.9)* `jobs.scope()` follows `[THR-5]` and `[THR-11]`: jobs submitted to a `JobScope` may borrow
++  the caller's data, and the block's exit joins them. `jobs.submit(owned f: fn())` outside a scope
++  takes an owned, `Send` closure carrying only the static region (as `[THR-10]`) and returns a
++  `JobHandle`; `jobs.wait(h)` waits for it.
+ * `[JOB-3]` *(changed in 0.9.9)* `s.submit_after(deps, f)` starts `f` only after the jobs in `deps` have
+   finished. It orders execution; it does not relax the borrow rules, which treat every job of a scope
+   as running at once. (The 0.9.8 declared read/write access sets, verified only in debug builds, are
+@@ -3026,7 +3156,9 @@
+   and `SoAMut[T]` where it is mutable. A proxy's field `ps[i].f` is a place in column `f` at index `i`;
+   reading or writing it touches that column only, and no `T` is assembled. `ps.get(i) -> Option[T]`
+   and `ps[i].load() -> T` gather a value (for `T: Clone`); `ps[i] = v` scatters one. `for p in ps:`
+-  yields `SoARef[T]`, `for p in ps.iter_mut():` yields `SoAMut[T]`.
++  yields `SoARef[T]`, `for p in ps.iter_mut():` yields `SoAMut[T]`. A `SoAMut[T]` borrows all of `ps`
++  mutably for the proxy's life and a `SoARef[T]` borrows it shared, so a column borrowed separately
++  conflicts with a live proxy.
+ * `[SOA-3]` `SoA[T]` provides `len`, `is_empty`, `push`, `pop`, `swap_remove`, `retain`, `clear`,
+   `reserve`, `with_capacity`, and `sort_by_key` over any column; every operation keeps the columns
+   aligned element for element.
+@@ -3059,16 +3191,25 @@
+ * `[SIMD-4]` Horizontal operations (`reduce_add`, `reduce_min`, `reduce_max`), shuffles with a
+   constant lane list, gathers, scatters, `fma`, and approximations named `_approx` (`rsqrt_approx`,
+   `rcp_approx`) are provided.
++* `[SIMD-9]` *(new in 0.9.9)* SIMD memory operations are bounds-checked like indexing. `V.load(s)` and
++  `v.store(s)` require `s.len() >= V.LANES`; `V.gather(s, idx)` and `v.scatter(s, idx)` check every
++  lane's index against `s.len()`; each failure is a `Bounds` panic naming the lane. The unchecked forms
++  (`load_unchecked`, `store_unchecked`, `gather_unchecked`, `scatter_unchecked`) are `unsafe fn`. A
++  `load` or `store` at a loop's induction variable is covered by the entry test of `[OPT-2]`.
+ * `[SIMD-2]` `@simd` on a `for` loop is a request and a report: the compiler tries to vectorise the
+   loop and `--emit-optimization-report` says whether it did and why not. It never changes meaning.
+   `@simd(assert)` makes failure `E4020`.
+-* `[SIMD-3]` Alias facts given to the backend (`restrict`) MUST be derived, never assumed. Two views
++* `[SIMD-3]` *(changed in 0.9.9)* Alias facts given to the backend (`restrict`) MUST be derived, never assumed. Two views
+   are marked disjoint only when (a) the borrow checker related them to one owner and proved their
+   ranges disjoint; (b) they come from owners proved distinct in the same function; (c) they are
+   results of `split_at`, `chunks_mut` or distinct `SoA` columns; or (d) they carry a fact established
+   by `assert_disjoint` (`[DSJ-1]`) or asserted by `unsafe assume_disjoint`. A view built by `unsafe`
+-  code or received through FFI may alias until (d) is applied. Two views being live at once is not a
+-  proof, and neither are parameter modes.
++  code or received through FFI may alias until (d) is applied. A view reached through a class handle
++  or a `Shared` gets an alias fact from (a)–(c) only when the loop contains no call that is not
++  inlined, no call through a callable value, no virtual or interface dispatch and no access through
++  another handle (the conditions of `[EXC-3]`), because an unchecked write through another handle may
++  change what it views (`[EXC-17]`). Two views being live at once is not a proof, and neither are
++  parameter modes.
+ * `[SIMD-5]` *(changed in 0.9.9)* **Vectorisable form**, which `@simd(assert)` checks, is computed by
+   Ember and never delegated to the C compiler. A loop is in vectorisable form when: its trip count is
+   known before entry; every memory access is to a local or to a view at a unit-stride affine index of
+@@ -3076,13 +3217,13 @@
+   written view is disjoint from every other accessed view by `[SIMD-3]`; every call in the body is
+   inlined (`[CG-C-3]`); the body has none of `Alloc`, `Sync`, `Block`, `Io`, `FFI`,
+   `Panic(Explicit)`; every `RuntimeCheck(Bounds)` has been removed by `[OPT-2]`; every
+-  `RuntimeCheck(Arithmetic)` is removed or grouped by `[SIMD-7]`; the loop has one exit; and every
+-  floating-point reduction is declared by `@parallel(reduce=…)` or the function is `@fastmath`.
++  `RuntimeCheck(Arithmetic)` is removed, or is one `[SIMD-7]` permits grouping (grouping is then
++  required); the loop has one exit; and every floating-point reduction is declared by `@parallel(reduce=…)` or the function is `@fastmath`.
+   `E4020` names the first clause that fails, and for a remaining check its reason (`[EFF-11]`).
+ * `[SIMD-7]` *(new in 0.9.9)* **Grouped overflow checks.** In a loop whose body has none of `Sync`,
+   `Io`, `FFI`, `Unsafe` and `Block`, the compiler MAY check integer overflow once per group of
+-  iterations (a vector's width times the unroll factor) instead of once per operation: it computes the
+-  group with wrapping arithmetic, accumulates the lanes' overflow bits, and panics at the end of the
++  iterations (a vector's width times the unroll factor) instead of once per operation, and in a loop in
++  vectorisable form (`[SIMD-5]`) it MUST: it computes the group with wrapping arithmetic, accumulates the lanes' overflow bits, and panics at the end of the
+   group, reporting the source location of the first overflowing iteration. This is not observable:
+   the body's writes go only to memory this thread owns, and the process aborts before anything reads
+   them. Bounds checks are never grouped. An integer **reduction** (`total += xs[i]`) is vectorised
+@@ -3134,13 +3275,16 @@
+   storages. `Mut[T]`, `Not[T]` and `Option[T]` in a query are **ordinary types**: `Mut` and `Not` are
+   marker structs with a phantom parameter (`[TYP-35]`), and the library maps each parameter to its
+   item type (`ref T`, `ref mut T`, `Option[ref T]`, nothing) through an interface with an associated
+-  type. A query iterates the smallest required storage and probes the others; `iter_mut` yields
+-  `ref mut` for `Mut` parameters and requires `mut q`. There is no access-mode generic kind in the
++  type. A query iterates the smallest required storage and probes the others; `iter` borrows `q`
++  shared and yields read-only items; `iter_mut` yields `ref mut` for `Mut` parameters and requires
++  `mut q`. There is no access-mode generic kind in the
+   language.
+-* `[ECS-4]` A query's read and write sets are compile-time constants computed from its type.
+-  `world.run(system, args…)` borrows exactly those storages. `world.run_parallel([s1, s2, …])` runs
+-  systems at once when their sets do not conflict; a conflict between two systems known at compile
+-  time is `E7020`, naming both systems and the component.
++* `[ECS-4]` *(changed in 0.9.9)* A query's read and write sets are compile-time constants computed from
++  its type. `world.run(system, args…)` borrows exactly those storages. `world.run_parallel([s1, s2, …])`
++  runs systems at once when their sets do not conflict; a conflict between two systems known at
++  compile time is `E7020`, naming both systems and the component. Systems passed as values, whose sets
++  are not known at compile time, are checked against each other before any of them starts, and a
++  conflict panics, naming both systems and the component.
+ * `[ECS-5]` Adding, removing and destroying during iteration go through a `Commands` buffer
+   (`q.commands().destroy(e)`) that is applied after the system returns.
+ * `[ECS-6]` Iteration order is insertion order with swap-remove holes: deterministic for a given
+@@ -3239,7 +3383,8 @@
+   key, integer overflow, `unwrap` on `None`); an operation whose failure depends on the world or on
+   input returns `Result` or `Option` (`xs.get(i)`, `m.get(k)`, `parse`, every I/O call). Each
+   panicking accessor has a non-panicking twin, and the panic message names it
+-  (`index 7 out of range for length 3; use .get(i) for an Option`).
++  (`index 7 out of range for length 3; use .get(i) for an Option`). The one exception is console input,
++  which panics at end of input (`[STD-10]`), as Python's `input` raises.
+ * `[ERR-6]` A foreign function's status code becomes a `Result` at the binding (Part XVI): an
+   `@ffi(status=VkResult, ok=VK_SUCCESS)` overlay turns a `VkResult` return into
+   `Result[void, VkError]`.
+@@ -3290,7 +3435,8 @@
+   panic message and the compile-time call chain.
+ * `[CT-2]` *(changed in 0.9.9)* An operation that cannot run at compile time — an `extern` call, a
+   thread, a clock, `unsafe` pointer access outside the evaluator's heap, I/O — is `E6010`, naming the
+-  call chain. Two inputs are provided: `comptime.read_file(path)` (relative to the package root) and
++  call chain. Two inputs are provided: `comptime.read_file(path)` (relative to the package root, and only inside the
++  package directory, `E6010` otherwise, so a dependency's build cannot read the builder's files) and
+   `comptime.env(name)`. Both are recorded as build inputs.
+ * `[CT-3]` Each evaluation is limited to 10⁸ steps and 256 MB of evaluator heap by default
+   (`[comptime]` in the manifest); exceeding either is `E6001`.
+@@ -3378,11 +3524,25 @@
+ * `[STD-1]` Every function in `std.core`, `std.mem`, `std.math`, `std.simd` and `std.arena` is
+   `@noalloc` unless its documentation says it allocates.
+ * `[STD-13]` *(new in 0.9.9)* **One naming convention.** Names are `snake_case` words joined by
+-  underscores (`starts_with`, `to_upper`, `push`, `is_empty`). Where Python's name for an operation
++  underscores (`starts_with`, `to_upper`, `push`, `is_empty`). Where Python's name for a **method**
+   differs (`append`, `strip`, `startswith`, `upper`, `splitlines`), there is no second name: the call
+   is `E2072`, `no method 'append' on Array[int]`, whose help names the Ember method
+-  (the full table is Appendix E). A Python name that Ember keeps (`partition`, `items`, `count`)
+-  keeps Python's meaning (`[PHIL-14]`).
++  (the full table is Appendix E). A Python name that Ember keeps (`partition`, `items`, `count`, and
++  the built-in functions of `[STD-26]`) keeps Python's meaning (`[PHIL-14]`).
++* `[STD-26]` *(new in 0.9.9)* **Python's built-in functions.** The prelude has these functions, with
++  Python's meaning; each borrows its argument as a `for` loop would (`[CTL-1]`):
++  * `len(x) -> int` is `x.len()` for a collection, view or range. `len` of a `str` or `String` is
++    `E2073`: Python counts characters and Ember's `s.len()` counts bytes, so the help offers both
++    `s.char_count()` and `s.len()`.
++  * `range(stop)`, `range(start, stop)`, `range(start, stop, step)` count as Python's do, including a
++    negative `step`; `step == 0` panics. `range(n)` is `0..n`, and every form compiles to a counted
++    loop (`[CTL-3b]`).
++  * `enumerate(it, start=0)`, `zip(a, b)` (stops at the shorter) and `reversed(x)` (for what can run
++    backwards) return lazy iterators, as Python 3's do.
++  * `sum(it, start=0)`, `any(it)` and `all(it)` consume an iterable (of numbers, of `bool`s);
++    `any(x > 0 for x in xs)` uses a generator expression (`[GRM-38]`).
++  * `sorted(it, key=None, reverse=false) -> Array[T]` returns a new sorted array (stable).
++  `min` and `max` stay two-argument functions; `xs.iter().min()` gives an `Option` for a collection.
+ * `[STD-14]` *(new in 0.9.9)* Failure follows `[ERR-13]`: a caller's bug panics and has a
+   non-panicking twin; a failure of the world returns `Result` or `Option`. Every allocating function
+   is documented as allocating and carries `Alloc`.
+@@ -3413,10 +3573,11 @@
+ ## XV.2 Console output, input and formatting
+ 
+ * `[STD-9]` *(new in 0.9.9)* `print(a, b, …, sep=" ", end="")` and `println(a, b, …, sep=" ",
+-  end="\n")` write their arguments' `Display` text to standard output separated by `sep`;
++  end="\n")` write their arguments' text to standard output separated by `sep`;
+   `eprint`/`eprintln` write to standard error. They are compiler-known and are the only calls with a
+-  variable number of positional arguments (`[TYP-26]`). An argument that is not `Display` is `E2040`,
+-  whose help offers `f"{x!r}"` when the type is `Debug`. `println()` prints an empty line.
++  variable number of positional arguments (`[TYP-26]`). An argument's text is its `Display` text when
++  its type has `Display`, and its `Debug` text otherwise, which is Python's `str` → `repr` fallback; a
++  type with neither (a class without them) is `E2040`, whose help is to implement `Display`. `println()` prints an empty line.
+ * `[STD-2]` Printing allocates only to build an f-string argument; `println("literal")`,
+   `println(some_str)` and `println(n)` for a number are `@noalloc`.
+ * `[STD-10]` *(new in 0.9.9)* `input(prompt="") -> String` prints the prompt, flushes, reads one line
+@@ -3470,7 +3631,7 @@
+ * `[STD-15]` *(new in 0.9.9)* **`Array[T]`** is a growable contiguous list (Python's `list`).
+   `len`, `is_empty`, `capacity`, `reserve`, `push`, `pop -> Option[T]`, `insert(i, v)`, `remove(i) -> T`,
+   `swap_remove(i) -> T`, `extend(iterable)`, `truncate`, `clear`, `retain(pred)`, `drain(range)`,
+-  `dedup`, `reverse`, `sort` (stable; `T: Ord`), `sort_by_key(f)`, `sort_by(cmp)`, `sorted() ->
++  `dedup`, `reverse`, `sort` (stable; `T: Ord`; an inconsistent order permutes but never corrupts, `[HASH-3]`), `sort_by_key(f)`, `sort_by(cmp)`, `sorted() ->
+   Array[T]`, `binary_search(x) -> Result[int, int]`, `index_of(x) -> Option[int]`, `first`, `last`,
+   `get(i) -> Option[ref T]`, `get_mut`, `iter`, `iter_mut`, `split_at`, `chunks(n)`, `chunks_mut(n)`,
+   `windows(n)`, `join(sep)` (for elements that are `Display`), and `x in xs` (`[STD-8]`). `xs[i]`
+@@ -3485,8 +3646,8 @@
+   missing (`key not found: <Debug of k>; use .get(k) for an Option`); `m[k] = v` inserts or replaces
+   (`[STD-17]`); `m[k] += 1` requires the key to exist. `get(k) -> Option[ref V]`, `get_mut`,
+   `get_or(k, default) -> V` (for `V: Copy`), `insert(k, v) -> Option[V]`, `remove(k) -> Option[V]`,
+-  `entry(k).or_insert(v) -> ref mut V`, `k in m` (by key), `keys`, `values`, `values_mut`, `items`
+-  (`(ref K, ref V)` pairs, as `for k, v in m:` iterates), `len`, `is_empty`, `clear`, `retain`.
++  `entry(k).or_insert(v) -> ref mut V`, `k in m` and `for k in m:` (by key, as Python's `dict`), `keys`,
++  `values`, `values_mut`, `items` (`(ref K, ref V)` pairs: `for k, v in m.items():`), `len`, `is_empty`, `clear`, `retain`.
+   `Set`: `add`, `remove`, `x in s`, `union`, `intersection`, `difference`, `is_subset`, and the
+   operators `|`, `&`, `-`.
+ * `[STD-12]` *(new in 0.9.9)* **Borrowed keys.** Lookup methods, `m[k]` and `k in m` accept any key
+@@ -3520,7 +3681,10 @@
+   `reduce`, `any`, `all`, `find`, `position`, `last`, `nth`, `min_by`, `max_by`, `for_each`,
+   `collect[C]()`, `to_array()`,
+   and `join(sep)` for `Display` items. Adapters are lazy and allocate nothing; a chain of adapters in a
+-  `for` loop compiles to one loop with no iterator object in memory (`[CTL-3]`).
++  `for` loop compiles to one loop with no iterator object in memory (`[CTL-3]`). The adapters and
++  consumers can also be called directly on an `Iterable` value, borrowing it as `iter()` would:
++  `xs.enumerate()` is `xs.iter().enumerate()`, and a method of the collection's own of the same name
++  (`Array.join`) takes precedence.
+ * `[STD-5]` *(changed in 0.9.9)* `sum` and `product` combine elements left to right in the element
+   type; an empty sum is zero. Integer sums panic on overflow (`[TYP-8]`). Float sums are never
+   reassociated outside `@fastmath` (`[TYP-9]`), so they are deterministic; `sum_f64()` accumulates
+@@ -3534,7 +3698,9 @@
+   constants `MIN` and `MAX`. Float methods: `abs`, `sqrt`, `floor`, `ceil`, `trunc`, `fract`,
+   `round` (**half to even**, as Python's `round` and IEEE's default), `round_half_away` (C's `round`),
+   `is_nan`, `is_finite`, `is_infinite`, `copysign`, `mul_add`, and the constants `INF`, `NAN`, `EPSILON`,
+-  `MIN`, `MAX`.
++  `MIN`, `MAX`. A float's `Display` is the shortest text that reads back as the same value, with `.0`
++  for an integral value, as Python's `repr`: `0.1 + 0.2` prints `0.30000000000000004`, `1.0` prints
++  `1.0`, and `1e300` prints `1e+300`; a format spec overrides it.
+ * `[STD-3]` `math.fma(a, b, c)` (and `mul_add`) is a fused multiply-add with a single rounding, on every
+   target; it is how fused arithmetic is written without `@fp(contract)`. `std.math` uses it for matrix
+   products and transforms.
+@@ -3580,9 +3746,9 @@
+ 
+ unsafe extern "C":
+     @ffi(effects=[])
+-    fn abs(x: c_int) -> c_int
++    safe fn abs(x: c_int) -> c_int
+     @ffi(effects=[])
+-    fn cos(x: c_double) -> c_double
++    safe fn cos(x: c_double) -> c_double
+ 
+ fn main():
+     println(abs(-5), cos(0.0))
+@@ -3590,14 +3756,19 @@
+ 
+ ## XVI.1 Principles
+ 
+-* `[FFI-1]` Every foreign declaration has a **contract**: for each pointer-typed parameter and result,
+-  its ownership, mutability, nullability, count and lifetime (§XVI.4), and for the function its
+-  effects and thread rule. Facts derivable from the C declaration are derived (`[FFI-2a]`); the rest
+-  are `unknown` until a contract supplies them.
+-* `[FFI-2]` A call to a foreign function whose contract contains an `unknown` fact requires `unsafe`.
+-  Supplying the facts, in an `@ffi(…)` attribute or an overlay (§XVI.4), makes the call safe.
+-  The diagnostic, `E5002`, names each missing fact and the overlay line that supplies it
+-  (`[DIA-18]`).
++* `[FFI-1]` *(changed in 0.9.9)* Every foreign declaration has a **contract**: for each pointer-typed
++  parameter and result, its ownership, mutability, nullability, count and lifetime (§XVI.4), and for
++  the function its effects, its thread rule and whether it is **safe to call** at all. Facts derivable
++  from the C declaration are derived (`[FFI-2a]`); the rest are `unknown` until a contract supplies
++  them.
++* `[FFI-2]` *(changed in 0.9.9)* A call to a foreign function whose contract contains an `unknown` fact
++  requires `unsafe`. Supplying the facts, in an `@ffi(…)` attribute or an overlay (§XVI.4), makes the
++  call safe. The safe-to-call fact is never derived, because a scalar can be an address
++  (`void free_addr(uintptr_t)`): it is asserted by `safe fn` in an extern block (`[FFI-10]`), or by an
++  overlay entry for the function, which asserts that a call within its contract cannot break memory
++  safety; such an overlay is an `unsafe overlay` (`[GRM-35]`). A header function with no overlay entry
++  therefore stays unsafe to call. The diagnostic,
++  `E5002`, names each missing fact and the overlay line that supplies it (`[DIA-18]`).
+ * `[FFI-2a]` Derived facts need no `unsafe`: `const T*` is a read-only borrow, `T*` a mutable one; the
+   layouts of structs and unions, enum underlying types, packing and alignment, and the calling
+   convention. In **result** position a pointer's lifetime is never derived.
+@@ -3613,10 +3784,12 @@
+ 
+ * `[FFI-10]` *(changed in 0.9.9)* An `unsafe extern "C":` block declares foreign functions, statics
+   and opaque types; `unsafe` records that the programmer asserts the signatures. The declared names
+-  are items of the enclosing module. A function in the block is **safe to call** when every parameter
+-  and result is a scalar, a `@layout(c)` value type, or a pointer whose contract is complete (given
+-  with `@ffi(…)` on the declaration); otherwise each call is in `unsafe`. Its effects are those its
+-  `@ffi(effects=[…])` states plus `FFI`, and every effect when none are stated (`[EFF-3]`).
++  are items of the enclosing module. A function in the block is **safe to call** only when it is
++  declared `safe fn` (a contextual keyword, `[LEX-15]`) and every parameter and result is a scalar, a
++  `@layout(c)` value type, or a pointer whose contract is complete (given with `@ffi(…)` on the
++  declaration); `safe` on any other function is `E5002`, naming the fact that is missing. Every other
++  call is in `unsafe`. `safe fn` is an asserted fact, listed by `ember tcb` (`[TCB-1]`). Its effects are
++  those its `@ffi(effects=[…])` states plus `FFI`, and every effect when none are stated (`[EFF-3]`).
+ * `[FFI-9]` `extern "C"` is the platform C ABI (SysV AMD64, Windows x64, AAPCS64). `extern "system"`
+   is `stdcall` on 32-bit Windows and C elsewhere; `extern "vectorcall"` and `extern "fastcall"` exist
+   on x86. Struct arguments and results follow the ABI exactly. An ABI-direct call is one `call`
+@@ -3655,7 +3828,7 @@
+ * `[FFI-38]` The importer rejects rather than guesses: a fact it cannot establish leaves the
+   declaration uncontracted (its calls need `unsafe`) and is reported; convenient-but-unsound is never
+   an import mode.
+-* `[FFI-8]` **Type mapping.**
++* `[FFI-8]` *(changed in 0.9.9)* **Type mapping.**
+ 
+   | C | Ember |
+   |---|---|
+@@ -3664,7 +3837,7 @@
+   | `size_t`, `ptrdiff_t`, `intptr_t`, `uintptr_t` | `usize`, `isize`, `isize`, `usize` |
+   | `float`, `double`, `long double` | `f32`, `f64`, `c_longdouble` (opaque bytes; no arithmetic) |
+   | `__int128`, `unsigned __int128`, `_Float16` | `i128`, `u128`, `f16` |
+-  | `wchar_t`, `char16_t`, `char32_t` | `c_wchar` (`u16` on Windows, `i32` elsewhere — not portable), `u16`, `char` |
++  | `wchar_t`, `char16_t`, `char32_t` | `c_wchar` (`u16` on Windows, `i32` elsewhere — not portable), `u16`, `u32` (C may hand back a surrogate or a value above U+10FFFF; `char.from_u32(v) -> Option[char]` converts) |
+   | `volatile T*` | `Volatile[*T]` with `read_volatile`/`write_volatile` |
+   | `__attribute__((packed))`, `#pragma pack`, `alignas` | `@packed`, `@align(N)` |
+   | `T*`, `const T*` | `*mut T`, `*T`; with a contract, `ref`, `MutSpan`/`Span`, `Option[…]`, `ForeignBox[T]`, `cstr` |
+@@ -3713,7 +3886,7 @@
+ editing it.
+ 
+ ```ember,overlay
+-overlay c "vulkan/vulkan.h":
++unsafe overlay c "vulkan/vulkan.h":
+     @ffi(handle)
+     type VkBuffer
+     @ffi(handle)
+@@ -3735,7 +3908,7 @@
+ * `[GRM-35]` *(new in 0.9.9)* **Overlay grammar.** An overlay is a file whose items are:
+ 
+   ```text
+-  overlay_decl  := "overlay" "c" STRING ":" NEWLINE INDENT {overlay_item} DEDENT
++  overlay_decl  := ["unsafe"] "overlay" ("c" | "cpp") STRING ":" NEWLINE INDENT {overlay_item} DEDENT
+   overlay_item  := {attribute} (overlay_fn | "type" IDENT NEWLINE | "enum" IDENT NEWLINE
+                    | "rename" IDENT "as" IDENT NEWLINE | "hide" IDENT NEWLINE | extend_decl)
+   overlay_fn    := "fn" IDENT "(" [overlay_param {"," overlay_param} [","]] ")"
+@@ -3745,7 +3918,10 @@
+   ```
+ 
+   Contract words take the place of types and are separated by spaces. `overlay`, `rename` and `hide`
+-  are contextual keywords (`[LEX-15]`).
++  are contextual keywords (`[LEX-15]`). An overlay whose items state any fact — a contract word, an
++  `@ffi(…)` attribute, or a function entry, which asserts the function safe to call (`[FFI-2]`) — is an
++  assertion about foreign code and MUST be declared `unsafe overlay` (`E5067`), the third boundary of
++  `[TIER-1]`; an overlay of only `rename` and `hide` items needs no `unsafe`.
+ * `[FFI-11]` *(changed in 0.9.9)* **Contract vocabulary.** A pointer contract has five axes;
+   mutability comes from `const` and is never written.
+ 
+@@ -3801,16 +3977,20 @@
+ 
+ ## XVI.6 Callbacks and foreign retention
+ 
+-* `[FFI-21]` A C function-pointer parameter accepts a capture-free Ember function (as an `extern "C"
+-  fn`) or an `extern "C" fn` value. A capturing closure is `E5040` unless the parameter's contract
+-  names a `user_data` parameter, in which case the importer generates the trampoline: the closure is
+-  boxed and passed as `user_data`. With `callback(borrowed)` the box is freed after the call; with
+-  `callback(retained)` the call returns a `Retained` token whose drop unregisters through the declared
+-  `destroys(f)` (`E5041` if none is declared); with `callback(once)` the trampoline frees it after the
+-  first call.
+-* `[FFI-22]` Every exported function and trampoline first attaches the calling thread to the runtime
+-  (`ember_rt_thread_attach()`, a thread-local check after the first time). A closure or handle that
+-  reaches a foreign thread MUST be `Send` (`[THR-8]`).
++* `[FFI-21]` *(changed in 0.9.9)* A C function-pointer parameter accepts a capture-free Ember function
++  (as an `extern "C" fn`) or an `extern "C" fn` value. A capturing closure is `E5040` unless the
++  parameter's contract names a `user_data` parameter, in which case the importer generates the
++  trampoline: the closure is boxed and passed as `user_data`. With `callback(borrowed)` the box is freed
++  after the call and the closure may capture anything a call argument may. With `callback(retained)`
++  or `callback(once)` the closure outlives the call, so it MUST be an `owned fn` whose captures carry
++  only the static region (`E3063`); `retained` returns a `Retained` token whose drop unregisters
++  through the declared `destroys(f)` (`E5041` if none is declared), and with `once` the trampoline
++  frees the box after the first call.
++* `[FFI-22]` *(changed in 0.9.9)* Every exported function and trampoline first attaches the calling
++  thread to the runtime (`ember_rt_thread_attach()`, a thread-local check after the first time). A
++  callback's captures, and a handle passed to foreign code as `retained`, MUST be `Send` (`[THR-8]`, `E7004`)
++  unless the contract says `threads(main)` or `threads(creator)`: the compiler cannot see which thread C
++  will call from, so the contract is the only evidence, and it is an asserted fact (`[TCB-1]`).
+ * `[FFI-23]` `Retained.pin(v)` hands an Ember-owned object to C for keeping: for a class handle it
+   retains the object and sets the header's pinned flag; for a `Box` it takes ownership. `tok.ptr()`
+   is the raw pointer and dropping the token releases it. It is the only way to let foreign code keep
+@@ -3913,8 +4093,9 @@
+ ```
+ 
+ * `[CLI-1]` Every command accepts `--json` and exits non-zero on error.
+-* `[CLI-4]` `ember run file.em` and `ember build file.em` accept a single file with no manifest, as a
+-  package named after the file with default settings. A first program needs no manifest.
++* `[CLI-4]` *(changed in 0.9.9)* `ember run file.em` and `ember build file.em` accept a single file
++  with no manifest, as a package named after the file with default settings. A first program needs no
++  manifest and no `main`: `println("hello")` on its own is a complete program (`[FN-8]`).
+ * `[CLI-2]` `ember build --emit c --out-dir <dir>` writes the C sources without invoking a C compiler,
+   for build systems that compile them themselves. `--emit tokens|ast|hir|mir|obj` write the other
+   stages, for tools and for reporting compiler defects.
+@@ -3929,7 +4110,8 @@
+   §XVII.1's listing, is a defect.
+ * `[CLI-20]` *(new in 0.9.9)* `ember fmt --migrate` rewrites source written for 0.9.8 into 0.9.9 where
+   the change is mechanical — `::` to `.`, integer `/` to `//`, `@view` and `with_views` removal,
+-  `Box[dyn fn]` to an owned callable type — and lists what it could not rewrite.
++  `Box[dyn fn]` to an owned callable type, `for k, v in m:` over a `Map` to `for k, v in m.items():`
++  (`[CTL-1]`) — and lists what it could not rewrite.
+ * `[CLI-21]` *(new in 0.9.9)* `ember run --interp` runs a program on the compile-time evaluator instead
+   of compiling it: no C compiler is needed; console and file I/O work; foreign calls and threads are
+   unavailable (`E6010`); results equal a compiled run's.
+@@ -4090,7 +4272,9 @@
+ * `[PRF-1]` *(changed in 0.9.9)* **A profile never changes what a program means.** Every profile
+   accepts the same programs, performs the same safety checks (bounds, overflow, exclusivity, stale
+   handles, `RefCell`), panics in the same places with the same messages, and computes the same results.
+-  There are no exceptions. Only the following differ between profiles.
++  The one check that differs is `debug_assert`, checked only where `[PRF-3]` says: it may not have
++  side effects (`W2016`), so a program whose assertions hold computes the same results in every
++  profile. Only the following differ between profiles.
+ * `[PRF-3]` *(new in 0.9.9)* **What a profile may set.**
+ 
+   | Setting (key) | `debug` | `release` | `shipping` |
+@@ -4143,7 +4327,9 @@
+   reborrow reuse, `chunks(0)` panics, `split_at`); `Shared`/`Weak` (upgrade after release, upgrade
+   during `drop`, atomic upgrade for `@sync`); cycles (direct, three-node, through generic containers,
+   weak and foreign edges, a runtime cycle static analysis missed).
+-* `[TST-6]` Appendix A's code is generated from a fixture that is compiled in CI.
++* `[TST-6]` *(changed in 0.9.9)* Appendix A's code is generated from a fixture that is compiled in CI.
++  The fixture declares the items the printed fragment names, so the printed block stays a fragment
++  (`ember,fragment`) while the code in it is compiled.
+ * `[TST-7]` *(changed in 0.9.9)* Every ` ```ember ` block in this document is extracted and must pass
+   `ember check` (`--syntax-only` for blocks that name items they do not declare, marked
+   ` ```ember,fragment `). A block may opt out as ` ```ember,ignore ` only with a stated reason: a
+@@ -4244,8 +4430,9 @@
+   |---|---|
+   | `True`, `False`, `None` as a value where no `Option` is expected | `true`, `false`; `None` needs an `Option` type |
+   | `def f():` | `fn f():` |
+-  | `len(x)`, `str(x)`, `int(s)`, `float(s)`, `int(x)` | `x.len()`, `x.to_string()` or `f"{x}"`, `s.parse[int]()`, `s.parse[float]()`, `x as int` |
+-  | `range(n)`, `range(a, b)`, `range(a, b, s)` | `0..n`, `a..b`, `(a..b).step_by(s)` |
++  | `str(x)`, `int(s)`, `float(s)`, `int(x)` | `x.to_string()` or `f"{x}"`, `s.parse[int]()`, `s.parse[float]()`, `x as int` |
++  | `len(s)` for a string (`E2073`) | `s.char_count()` (Python's count) or `s.len()` (bytes) |
++  | `min(xs)`, `max(xs)` of one collection | `xs.iter().min()`, `xs.iter().max()` (an `Option`) |
+   | `xs.append(x)`, `s.strip()`, `s.startswith(p)`, `s.upper()`, … | the `[STD-13]` table (Appendix E) |
+   | `xs[a:b]` | `xs[a..b]` |
+   | `if xs:` | `if not xs.is_empty():` (`[CTL-0]`) |
+@@ -4257,6 +4444,10 @@
+   | `self` missing from a method's parameters | add `self` |
+   | `a / b` on integers | `a // b`, or `a as float / b` (`[TYP-28]`) |
+   | `if x = 5:` | `if x == 5:` |
++  | `case p:` inside `match` | `p:` (or `p =>`), without `case` |
++  | `global x`, `nonlocal x` | a `static` or a class field for shared state; a closure captures `x` without a declaration (`[CLO-2]`) |
++  | `*args`, `**kwargs` in a signature | an `Array` or `Span` parameter, or keyword arguments with defaults; Ember has no variadic functions (§I.6) |
++  | `"%d" % n`, `"{}".format(n)` | `f"{n}"` (`[LEX-19]`) |
+ 
+ * `[DIA-22]` *(new in 0.9.9)* A diagnostic caused by a callee's contract or signature is reported at the
+   call site in the programmer's code, with the callee's declaration as a secondary span.
+@@ -4272,7 +4463,7 @@
+ 
+ | Shape | Situation | Codes | Primary help |
+ |---|---|---|---|
+-| O1 | use after move | `E3040` | `x.clone()` if `Clone`; else reorder so the last use precedes the move |
++| O1 | use after move | `E3040` | `x.clone()` if `Clone`; else reorder so the last use precedes the move; for a collection, a note that assignment moves a list where Python's aliases it (Appendix E) |
+ | O2 | move out of a container or field | `E3010`–`E3013` | `mem.take`, `mem.replace`, `swap`; `pop`, `swap_remove`, `remove`, `drain` |
+ | O3 | move inside a loop | `E3041` | declare inside the loop, clone per iteration, or `mem.take` |
+ | O4 | whole use after a partial move | `E3042` | reassign the field, or destructure up front |
+@@ -4308,7 +4499,7 @@
+ | N1 | unknown name | up to three candidates (`[DIA-24]`) |
+ | N2 | name exported elsewhere | the import line, as a fix-it |
+ | N3 | unknown method | nearest member; the interface that would supply it; a Python name per `[DIA-21]` |
+-| N4 | scalar mismatch | the exact lossless `as`, and which side set the expected type |
++| N4 | scalar mismatch | the exact lossless `as`, and which side set the expected type; for an `int` and a `float` operand (`i * 0.5`), `i as float * 0.5` as a machine-applicable fix-it |
+ | N5 | literal does not fit (`E2010`) | the suffix or annotation that fits |
+ | N6 | wrong number of arguments | the signature with names and modes |
+ | N7 | mutating an immutable place | the declaration to change, with its location |
+@@ -4317,6 +4508,7 @@
+ | N10 | not usable as `dyn` (`E2050`) | the method and the clause it violates |
+ | N11 | ambiguous method (`E2070`) | `I.m(recv, …)` for each candidate |
+ | N12 | indentation (`E0002`–`E0004`) | the expected column and the line that set it |
++| N13 | a field assigned (`self.x = …`) but not declared (`E2072`) | `field 'x' is not declared in class C`, with a machine-applicable fix-it adding `x: <inferred type>` to the class body |
+ 
+ ### XVII.6.3 Code ranges
+ 
+@@ -4351,7 +4543,8 @@
+ * `[LNT-6]` *(new in 0.9.9)* `ember lint` also reports, at `warn` unless `[lints]` says otherwise:
+   `L2001` unnecessary clone; `L2002` large `Copy` value passed by value (`large_copy = { threshold =
+   256 }`); `L3002` borrow held longer than necessary; `L4001` allocation in a hot loop; `L4002`
+-  dynamic dispatch on a final type; `L5001` `unsafe extern` declaration with no contract; `L5002`
++  dynamic dispatch on a final type; `L4003` an `Array[int]` or `Array[float]` of more than 64 KiB
++  indexed in a hot loop whose values provably fit 32 bits; `L5001` `unsafe extern` declaration with no contract; `L5002`
+   copying conversion at the FFI boundary; `L7001` lock held across a call that may block; and `L3001`
+   potential reference cycle (`potential_cycle`, `[WK-6]`).
+ * `[DOC-1]` Error pages ship with their errors.
+@@ -4450,11 +4643,13 @@
+ | `E2062` | ambiguous type | `[TYP-23]` |
+ | `E2070` | ambiguous interface method | `[TYP-24]` |
+ | `E2071` | `SoA[T]` of a type that is not a struct | `[SOA-1]` |
+-| `E2072` | no method or field of that name (with the Ember name for a Python one) | `[STD-13]` |
++| `E2072` | no method or field of that name (with the Ember name for a Python one; shape N13 for an undeclared field) | `[STD-13]` |
++| `E2073` | `len` of a string (Python counts characters, `s.len()` bytes) | `[STD-26]` |
+ | `E2080` | `@derive(Copy)` on a type with a field that is not Copy | `[STR-3]` |
+ | `E2090` | non-exhaustive match | `[ENM-2]` |
+ | `E2100` | field read before it is initialised | `[CLS-2]` |
+ | `E2101` | derived class with a field that has no default needs an `init` | `[CLS-10]` |
++| `E2102` | derived `init` uses `self` or an inherited field before `super.init`, or leaves an own field unassigned | `[CLS-11]` |
+ | `E2110` | override of a method that is not virtual | `[CLS-4]` |
+ | `E2120` | inherent extension of a type from another package | `[IFC-2]` |
+ | `E2130` | a `const` of a type that owns heap memory; use a `static` | `[TYP-1]` |
+@@ -4484,6 +4679,7 @@
+ | `E2228` | callable parameter-mode mismatch (shape B15) | `[CLO-3]` |
+ | `E2229` | class generator method takes `mut self` or holds an access across `yield` | `[CORO-12]` |
+ | `E2230` | a name assigned in every branch at different types | `[CTL-10]` |
++| `E2231` | `yield` while a `@must_drop` value is live | `[CORO-13]` |
+ | `E2240` | `/` on two integers | `[TYP-28]` |
+ | `E2250` | format spec does not apply to the value's type | `[LEX-19]` |
+ | `E2260` | `some` type outside a return position | `[TYP-32]` |
+@@ -4532,7 +4728,7 @@
+ | `E4070` | `@deterministic` function reaches a nondeterministic operation | `[DET-1]` |
+ | `E4072` | `@fastmath` or `@fp(contract)` inside `@deterministic` | `[DET-5]` |
+ | `E5001` | imported type layout does not match | `[FFI-5]` |
+-| `E5002` | foreign call requires `unsafe`: its contract is incomplete | `[FFI-2]` |
++| `E5002` | foreign call requires `unsafe`: its contract is incomplete, or `safe fn` on a function whose contract is | `[FFI-2]`, `[FFI-10]` |
+ | `E5010` | overlay does not match the C declaration | `[FFI-12]` |
+ | `E5011` | one C identity imported with two different layouts | `[FFI-30]` |
+ | `E5012` | pointer contract has no count | `[FFI-11]` |
+@@ -4565,6 +4761,7 @@
+ | `E5064` | interior NUL in a value converted to `cstr` | `[FFI-15]` |
+ | `E5065` | `Shared`/`Weak` and `CppShared`/`CppWeak` do not interconvert | `[WK-14]` |
+ | `E5066` | an overlay marks a C++ function both `noexcept` and throwing | `[FFI-43]` |
++| `E5067` | an overlay that states facts is not declared `unsafe overlay` | `[GRM-35]`, `[TIER-1]` |
+ | `E5090` | inline assembly is not supported by the C backend | `[UNS-6]` |
+ | `E6001` | comptime evaluation exceeded its limits | `[CT-3]` |
+ | `E6004` | panic during compile-time evaluation | `[CT-7]` |
+@@ -4573,7 +4770,7 @@
+ | `E7001` | `@sync` class with a field that is not `Sync`, or a non-`@sync` base or derived class | `[THR-1]` |
+ | `E7002` | `static` of a type that is not `Sync` | `[STA-1]` |
+ | `E7003` | write to a field of a `@sync` class after `init`, or a `mut self` method on one | `[THR-1]` |
+-| `E7004` | value crossing a thread boundary is not `Send` | `[THR-10]`, `[THR-11]` |
++| `E7004` | value crossing a thread boundary is not `Send` | `[THR-10]`, `[THR-11]`, `[FFI-22]` |
+ | `E7005` | value shared with a task is not `Sync` | `[THR-11]` |
+ | `E7006` | memory order an atomic operation does not support | `[THR-14]` |
+ | `E7010` | parallel loop writes to a shared place | `[PAR-2]` |
+@@ -4616,11 +4813,13 @@
+ | `L3019` | handle to an object with an observable `drop` is bound and never read | `[RC-3]` |
+ | `L4001` | allocation in a hot loop | `[LNT-6]` |
+ | `L4002` | dynamic dispatch on a final type | `[LNT-6]` |
++| `L4003` | large `Array[int]`/`Array[float]` in a hot loop whose values fit 32 bits | `[LNT-6]` |
+ | `L5001` | `unsafe extern` declaration with no contract | `[LNT-6]` |
+ | `L5002` | conversion at the FFI boundary copies | `[LNT-6]` |
+ | `L7001` | lock held across a call that may block | `[LNT-6]` |
+ | `W1002` | binding shadows an enum variant of the same name | `[GRM-12]` |
+-| `W2015` | float literal loses precision in its type | `[LEX-17]` |
++| `W1003` | a package module shadows the standard module of the same name | `[MOD-3]` |
++| `W2015` | float literal has more digits than its type keeps | `[LEX-17a]` |
+ | `W2016` | `debug_assert` argument has side effects | `[PAN-1]` |
+ | `W2091` | unreachable match arm | `[CTL-5]` |
+ | `W2111` | `virtual` has no effect in a final class | `[CLS-4]` |
+@@ -4690,9 +4889,9 @@
+ * `[CG-C-3a]` `@inline` is binding: the function is emitted with `__forceinline` or
+   `__attribute__((always_inline))`. `@noinline`, `@cold` and `@hot` are passed to the C compiler as
+   hints.
+-* `[CG-C-4]` **Aliasing facts.** For each loop, the base pointer of every view whose base and length
++* `[CG-C-4]` *(changed in 0.9.9)* **Aliasing facts.** For each loop, the base pointer of every view whose base and length
+   are invariant in the loop is hoisted into a local declared `T *restrict` exactly when `[SIMD-3]`
+-  proves it disjoint from every other view the loop writes or reads; its length is hoisted into a local
++  (including its condition for views reached through a class handle) proves it disjoint from every other view the loop writes or reads; its length is hoisted into a local
+   as well, and a view reassigned inside the loop is not hoisted.
+ * `[CG-C-5]` Every panic function is `_Noreturn` and cold, and each check branches forward to its panic
+   call, so the check costs one compare and one predicted branch on the fast path.
+@@ -4811,11 +5010,17 @@
+   acquisition an acquire.
+ * `[RT-10]` *(new in 0.9.9)* **Counting is inline.** The fast path of retain (one increment and an
+   overflow test) and release (one decrement and a test for zero) is defined in `ember_rt.h` and
+-  inlined into the caller; only deinitialisation is out of line. A `@sync` retain is one atomic
+-  `fetch_add`, never a compare-exchange loop. The deinitialising and resurrection checks of `[OBJ-5]`
++  inlined into the caller; only deinitialisation is out of line. Copying an existing strong handle
++  of a `@sync` object is one atomic `fetch_add`, never a compare-exchange loop; `Weak.upgrade` is the
++  one retain that may start from zero, and it is a compare-exchange (`[WK-12]`). The deinitialising and resurrection checks of `[OBJ-5]`
+   run on the release-to-zero path only.
+ * `[RT-11]` *(new in 0.9.9)* Allocation statistics are kept per thread, or only in `debug`; no
+   allocation updates a shared non-atomic counter.
++* `[RT-12]` *(new in 0.9.9)* **Stack overflow faults.** The backend compiles with stack probes
++  (`-fstack-clash-protection` where the C compiler has it; MSVC probes by default), so a frame larger
++  than a page touches each page in order; the runtime gives every thread it creates a guard page;
++  and overflow aborts with `stack overflow in <function>` in every profile. A stack write can never
++  land beyond the guard page.
+ 
+ ## XVIII.6 Correctness of the implementation
+ 
+@@ -4906,8 +5111,11 @@
+ 
+ fn demo(xs: Array[int], m: Map[String, int], opt: Option[Point]):
+     squares = [x * x for x in xs if x > 0]      # list comprehension
++    total = sum(x * x for x in xs)              # generator expression, no allocation
+     index = {name: i for i, name in NAMES.iter().enumerate()}    # map comprehension
+     seen = {1, 2, 3}                            # set literal
++    for name, count in m.items():               # a Map iterates keys; items() gives pairs
++        println(f"{name}: {count}")
+     q = 7 // 2                                  # floor division; `7 / 2` is an error
+     if 0 <= q < 10 and q in seen:               # chained comparison, membership
+         println(f"{q=} {q:>8}")                 # f-string: `=` form and format spec
+@@ -5254,8 +5462,12 @@
+ * `[FFI-17d]` `@ffi(trampoline, owner="ember")`, the default, makes the Ember count own the object;
+   `owner="foreign"` makes a foreign `delete` destroy it. A trampoline base without a virtual destructor
+   is `E5059`.
+-* `[FFI-39d]` Re-entrant calls from C++ into the same Ember object are expected and never panic on
+-  exclusivity: the trampoline takes no long-term access.
++* `[FFI-39d]` *(changed in 0.9.9)* Re-entrant calls from C++ into the same Ember object are expected.
++  The trampoline itself takes no long-term access, but accesses the Ember caller holds across the call
++  into C++ stay active and are checked: an override that begins a conflicting access panics
++  (`[EXC-1]`), so it can never free what the caller still views. `L3013` warns where a long-term access
++  is held across a C++ call that may call back (`[EXC-7]`); the supported idiom is to make such calls
++  outside long-term accesses.
+ * `[FFI-40]` `const` methods import as `self`, non-`const` methods as `mut self`; `&&`-qualified members
+   are skipped (`W5033`). A `T&` parameter imports as `mut T`, `const T&` as a borrowed `T`, and `T&&` as
+   `owned T` where the type is movable; a `T&` result is a `ref` borrowing the receiver (`[LT-1]`).
+@@ -5401,8 +5613,9 @@
+ | `[1, 2]`, `{"k": v}`, `{1, 2}` | same | `Array`, `Map` (insertion-ordered like `dict`), `Set` |
+ | `[x * x for x in xs if x > 0]` | same | also map and set comprehensions |
+ | `for x in xs:` … `else:` | same | |
+-| `for i, x in enumerate(xs):` | `for i, x in xs.iter().enumerate():` | |
+-| `for k, v in d.items():` | `for k, v in m:` (or `m.items()`) | |
++| `for i, x in enumerate(xs):` | same | also `xs.enumerate()` |
++| `len(xs)`, `range(n)`, `sum`, `sorted`, `zip`, `reversed`, `any`, `all` | same | Python's meaning (`[STD-26]`); `len` of a string is rejected, because Ember's counts bytes |
++| `for k in d:`, `for k, v in d.items():` | same | a `Map` iterates its keys; `m.values()` its values |
+ | `x in xs`, `x not in xs` | same | cost reported by `ember inspect --cost` |
+ | `a < b < c` | same | `b` evaluated once |
+ | `x is None` | same | on `Option` |
+@@ -5419,7 +5632,7 @@
+ | `try` / `except` / `raise` | `Result`, `?`, `match`, `return Err(e)` | Part XIII |
+ | classes, inheritance, `super()` | `class`, `open class`, `super.init(…)` | handles are reference-counted; `Weak` for back-pointers |
+ | `@dataclass` | `struct` | equality, debug printing and cloning are automatic |
+-| `list.sort()`, `sorted(xs)` | `xs.sort()`, `xs.sorted()` | stable |
++| `list.sort()`, `sorted(xs)` | same, or `xs.sorted()` | stable |
+ | `dict.get(k, d)` | `m.get_or(k, d)` | `m.get(k)` returns an `Option` |
+ | `d[k] = v`, `d[k]` | same | a missing key panics like `KeyError` |
+ 
+@@ -5427,11 +5640,11 @@
+ 
+ | Python | Ember |
+ |---|---|
+-| `len(x)` | `x.len()` (bytes for strings; `s.char_count()` for characters) |
++| `len(s)` for a string | `s.char_count()` (characters, Python's count) or `s.len()` (bytes) |
+ | `str(x)`, `repr(x)` | `x.to_string()` or `f"{x}"`; `f"{x!r}"` |
+ | `int(s)`, `float(s)` | `s.parse[int]()`, `s.parse[float]()` (a `Result`) |
+ | `int(x)` for a float | `x as int` (saturates; NaN is 0) |
+-| `range(n)`, `range(a, b, s)` | `0..n`, `(a..b).step_by(s)` |
++| `range(a, b)` in a loop | `a..b` is the usual spelling; `range` also works |
+ | `xs.append(x)`, `xs.extend(ys)` | `xs.push(x)`, `xs.extend(ys)` |
+ | `xs.pop()` | `xs.pop()` returns an `Option` |
+ | `xs.index(x)` | `xs.index_of(x)` (an `Option`) |
+@@ -5462,6 +5675,71 @@
+   wanted.
+ * **Threads run in parallel.** There is no global lock; the compiler rejects data races instead
+   (Part XI).
++
++## E.4 One program, side by side
++
++A dice game in Python:
++
++```python
++import random
++
++class Player:
++    def __init__(self, name):
++        self.name = name
++        self.hp = 10
++        self.inventory = []
++
++def roll(rng):
++    return rng.randint(1, 6)
++
++rng = random.Random(42)
++player = Player("Ada")
++counts = {}
++for turn in range(5):
++    r = roll(rng)
++    counts[r] = counts.get(r, 0) + 1
++    if r == 6:
++        player.inventory.append("gem")
++    else:
++        player.hp -= r // 2
++print(f"{player.name}: hp={player.hp}, items={len(player.inventory)}")
++for face in sorted(counts):
++    print(face, counts[face])
++```
++
++The same game in Ember:
++
++```ember
++import random
++
++class Player:
++    name: String
++    hp: int = 10
++    inventory: Array[String] = []
++
++fn roll(mut rng: random.Rng) -> int:
++    return rng.int_in(1..7)
++
++rng = random.Rng.seeded(42)
++player = Player("Ada")
++counts: Map[int, int] = {}
++for turn in range(5):
++    r = roll(rng)
++    counts[r] = counts.get_or(r, 0) + 1
++    if r == 6:
++        player.inventory.push("gem")
++    else:
++        player.hp -= r // 2
++println(f"{player.name}: hp={player.hp}, items={len(player.inventory)}")
++for face in sorted(counts):
++    println(face, counts[face])
++```
++
++What changed: fields are declared, with types, in the class body; `roll` says it changes `rng`
++(`mut`); `append` is `push` and `dict.get(k, d)` is `get_or`; the generator is seeded explicitly and
++draws from a half-open range; `print` with a newline is `println`. Everything else — the script at
++the top level, `range`, `len`, `sorted`, iterating a map's keys, f-strings, `//` — reads as in Python.
++The two programs print different numbers only because their generators differ.
+ ---
+ 
+ # Appendix F — Glossary
+@@ -5643,7 +5921,7 @@
+ | F-120 — `unsafe(reason = "…")` (`[UNS-9]`) is not in the grammar | SPEC | No `unsafe(reason=…)`; the category goes in the `# SAFETY(…):` note. | `[LEX-23]`, `[UNS-8]` |
+ | F-121 — sections filed under the wrong Part | SPEC | Each rule sits in its Part. | `[STD-4]` |
+ | F-122 — the `[MOD-5]` prelude list omits names Part XV puts in the prelude | SPEC | The prelude table includes them. | `[MOD-5]` |
+-| F-123 — Ember cannot call C at all today, and the C-import directive is silently ignored | SPEC | Manual declarations are module items; scalar-only functions are safe to call. | `[FFI-10]` |
++| F-123 — Ember cannot call C at all today, and the C-import directive is silently ignored | SPEC | Manual declarations are module items; a function declared `safe fn` with a complete contract is safe to call (an asserted fact). | `[FFI-10]` |
+ | F-124 — two more unapplied editorial instructions inside normative rules | SPEC | Rewritten without editorial instructions; grades move to Annex C. | `[TCB-1]` |
+ | F-125 — `std::string` → `CppString` "with `.as_str()`" | SPEC | `CppString.to_str()` everywhere. | `[FFI-17a]` |
+ | F-126 — the overlay language has no grammar | SPEC | The overlay language has a grammar. | `[GRM-35]` |
+@@ -5851,6 +6129,137 @@
+ | VER | VER-7 | folded into `[VER-2]` |
+ | VERIFY | VERIFY-1, VERIFY-2, VERIFY-3 | compiler internals |
+ | WK | WK-10 | folded into `[WK-4]`, `[WK-6]` and `[WK-15]` |
++
++## H.4 Changes from 0.9.9_Hardened_1 to 0.9.9_Hardened_2
++
++Hardened_2 applies the change list drawn from three passes over Hardened_1 (memory safety; consistency
++and speed; ergonomics). Before 1.0 a hardening may change the language when this log lists each such
++change (`[VER-9]`). These change which programs are accepted, or what they do:
++
++| Change | Effect on existing programs | Rules |
++|---|---|---|
++| a thread or unscoped job carries only the static region | a spawn capturing a view of a local is rejected; use `thread.scope()` | `[THR-10]`, `[JOB-2]` |
++| `Shared[T]` is one-thread; `SyncShared[T]` crosses threads; `get`/`get_mut` are checked accesses | sending a `Shared` is rejected; overlapping `get_mut` panics | `[HEAP-4]`, `[HEAP-5]`, `[HEAP-10]`, `[THR-8]`, `[THR-9]` |
++| two-phase construction | a derived `init` that calls `super.init` before assigning its own fields is rejected (`E2102`) | `[CLS-2]`, `[CLS-4]`, `[CLS-10]`, `[CLS-11]` |
++| retained and once C callbacks own static captures; callback captures are `Send` unless the contract names a thread | such callbacks capturing borrows or non-`Send` handles are rejected | `[FFI-21]`, `[FFI-22]` |
++| foreign functions are safe to call only when asserted: `safe fn`, or an overlay entry | calls to unlisted header functions and to extern-block functions not marked `safe` need `unsafe` | `[FFI-1]`, `[FFI-2]`, `[FFI-10]` |
++| `yield` while a `@must_drop` value is live | rejected (`E2231`) | `[CORO-13]` |
++| `char32_t` is `u32` | foreign signatures using it change type | `[FFI-8]` |
++| SIMD memory operations are bounds-checked | out-of-range `load`/`store`/`gather`/`scatter` panic | `[SIMD-9]` |
++| calling a callable field is a write access; owned callable values are called from a mutable place | a callback that replaces itself while running panics | §VIII.3, `[CLO-2]` |
++| accesses held across a call into C++ stay checked | a conflicting re-entrant override panics | `[FFI-39d]`, `[EXC-7]` |
++| `run_parallel` checks systems given as values | a conflict panics before any system starts | `[ECS-4]` |
++| phantom parameters count for `Send`/`Sync`; `comptime.read_file` stays inside the package | fewer types are `Send`; reads outside the package are `E6010` | `[TYP-35]`, `[CT-2]` |
++| exclusivity is tracked per field | reading one field while writing another no longer panics | `[EXC-19]`, `[EXC-1]`, `[EXC-2]`, `[EXC-15]` |
++| a `Map` iterates its keys | `for k, v in m:` becomes `for k, v in m.items():` (`ember fmt --migrate`) | `[CTL-1]`, `[STD-16]` |
++| the entry file may hold top-level statements | scripts need no `main` | `[GRM-2]`, `[FN-8]` |
++| `len`, `range`, `sum`, `sorted`, `enumerate`, `zip`, `reversed`, `any`, `all` in the prelude | accepted with Python's meaning; `len` of a string is `E2073` | `[STD-26]`, `[MOD-5]` |
++| generator expressions | accepted | `[GRM-38]` |
++| printing falls back from `Display` to `Debug` | more values print; none prints differently | `[STD-9]`, `[LEX-19]` |
++| `T` converts to `Option[T]`; `None` then `T` infers `Option[T]` | accepted | `[TYP-5]`, `[TYP-23]` |
++| a `Result[void, E]` function returns `Ok(())` at its end | accepted | `[FN-10]` |
++| a lambda passed to a consumed callable parameter captures by move | accepted without `owned fn` | `[CLO-15]` |
++| standard modules importable without `std.` | accepted; a package module of the same name wins (`W1003`) | `[MOD-3]` |
++| iterator adapters on any `Iterable` | accepted | `[STD-19]` |
++| float `Display` is the shortest round-trip text | printed floats may change | `[STD-20]` |
++| `W2015` only for more digits than the type keeps | fewer warnings | `[LEX-17a]` |
++| contract verdicts assume every listed proof applied; grouping required in vectorisable loops | verdicts agree between implementations | `[EFF-15]`, `[SIMD-7]`, `[SIMD-5]` |
++
++Generated: every rule whose text differs between the two hardenings.
++
++| Rule | H1 → H2 |
++|---|---|
++| `[BRW-3]` | changed |
++| `[CG-C-4]` | changed |
++| `[CLI-4]` | changed |
++| `[CLI-20]` | changed |
++| `[CLO-2]` | changed |
++| `[CLO-4]` | changed |
++| `[CLO-7]` | changed |
++| `[CLO-15]` | added |
++| `[CLS-2]` | changed |
++| `[CLS-4]` | changed |
++| `[CLS-7]` | changed |
++| `[CLS-10]` | changed |
++| `[CLS-11]` | added |
++| `[CORO-12]` | changed |
++| `[CORO-13]` | added |
++| `[CT-2]` | changed |
++| `[CTL-1]` | changed |
++| `[CTL-3b]` | changed |
++| `[ECS-3]` | changed |
++| `[ECS-4]` | changed |
++| `[EFF-15]` | changed |
++| `[ERR-13]` | changed |
++| `[EXC-1]` | changed |
++| `[EXC-2]` | changed |
++| `[EXC-6]` | changed |
++| `[EXC-7]` | changed |
++| `[EXC-15]` | changed |
++| `[EXC-17]` | added |
++| `[EXC-18]` | added |
++| `[EXC-19]` | added |
++| `[FFI-1]` | changed |
++| `[FFI-2]` | changed |
++| `[FFI-8]` | changed |
++| `[FFI-10]` | changed |
++| `[FFI-21]` | changed |
++| `[FFI-22]` | changed |
++| `[FFI-39d]` | changed |
++| `[FN-8]` | changed |
++| `[FN-10]` | added |
++| `[GRM-2]` | changed |
++| `[GRM-38]` | added |
++| `[HASH-2]` | changed |
++| `[HASH-3]` | changed |
++| `[HEAP-4]` | changed |
++| `[HEAP-5]` | changed |
++| `[HEAP-7]` | changed |
++| `[HEAP-10]` | added |
++| `[HND-2]` | changed |
++| `[JOB-2]` | changed |
++| `[LEX-15]` | changed |
++| `[LEX-17a]` | changed |
++| `[LEX-19]` | changed |
++| `[LNT-6]` | changed |
++| `[MOD-3]` | changed |
++| `[OBJ-1]` | changed |
++| `[OWN-6]` | changed |
++| `[PAR-3]` | changed |
++| `[PHIL-13]` | changed |
++| `[PRF-1]` | changed |
++| `[RC-3]` | changed |
++| `[RC-4]` | changed |
++| `[RNG-4]` | changed |
++| `[RT-10]` | changed |
++| `[RT-12]` | added |
++| `[SIMD-3]` | changed |
++| `[SIMD-5]` | changed |
++| `[SIMD-7]` | changed |
++| `[SIMD-9]` | added |
++| `[SOA-6]` | changed |
++| `[STD-9]` | changed |
++| `[STD-13]` | changed |
++| `[STD-15]` | changed |
++| `[STD-16]` | changed |
++| `[STD-19]` | changed |
++| `[STD-20]` | changed |
++| `[STD-26]` | added |
++| `[THR-6]` | changed |
++| `[THR-8]` | changed |
++| `[THR-9]` | changed |
++| `[THR-10]` | changed |
++| `[THR-13]` | changed |
++| `[THR-16]` | added |
++| `[TIER-1]` | changed |
++| `[TST-6]` | changed |
++| `[TYP-5]` | changed |
++| `[TYP-23]` | changed |
++| `[TYP-35]` | changed |
++| `[TYP-38]` | changed |
++| `[VER-9]` | changed |
++| `[WK-11]` | changed |
++| `[WK-12]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -6056,13 +6465,14 @@
+ | `[CLO-12]` | VI | A local function (`[GRM-28]`) is a named closure: it captures like a … |
+ | `[CLO-13]` | VI | A read-only capture of a `Copy` variable whose storage would end … |
+ | `[CLO-14]` | VI | A callable type may also be written as an explicit generic bound, `fn … |
++| `[CLO-15]` | VI | A lambda written directly as the argument of a consumed callable … |
+ 
+ ## CLS
+ 
+ | Rule | Part | Begins |
+ |---|---|---|
+ | `[CLS-1]` | V | A class instance lives on the heap with the header of `[OBJ-1]`. … |
+-| `[CLS-2]` | V | `fn init(self, …)` is the constructor. Every field without a default … |
++| `[CLS-2]` | V | `fn init(self, …)` is the constructor. Before any `init` body runs, … |
+ | `[CLS-3]` | V | A class with no `init` and no base class gets a memberwise … |
+ | `[CLS-4]` | V | A class is final unless declared `open` or `abstract`. Methods are … |
+ | `[CLS-5]` | V | Interface calls on a class are dispatched statically unless the … |
+@@ -6073,6 +6483,7 @@
+ | `[CLS-9]` | V | A `let` field is assignable only in `init`. |
+ | `[CLS-9a]` | V | A `let` field of a non-`Copy` type may still be mutated *through* … |
+ | `[CLS-10]` | V | A derived class with no `init` gets its base's constructor: … |
++| `[CLS-11]` | V | Construction is two-phase. In a derived `init`, the code before … |
+ 
+ ## CONF
+ 
+@@ -6100,6 +6511,7 @@
+ | `[CORO-10]` | VI | A `gen fn` may not be `extern`, `@export`ed or passed to C (`E2222`). |
+ | `[CORO-11]` | VI | `std.coroutine` builds gameplay sequencing on generators with no … |
+ | `[CORO-12]` | VI | A `gen fn` method of a class takes `self` (the frame retains the … |
++| `[CORO-13]` | VI | A `yield` while a `@must_drop` value (`[THR-6]`) is live is `E2231`: … |
+ 
+ ## COST
+ 
+@@ -6131,7 +6543,7 @@
+ | `[CTL-1]` | VI | `for pattern in e:` iterates: * a place `e` whose type is `Iterable`: … |
+ | `[CTL-2]` | VI | The iterated place is borrowed for the whole loop; mutating it inside … |
+ | `[CTL-3]` | VI | `a..b` (`Range`), `a..=b` (`RangeInclusive`) and `a..` (`RangeFrom`) … |
+-| `[CTL-3b]` | VI | Iteration over `Span`, `MutSpan`, `Array`, `[T; N]`, `SoA` columns, … |
++| `[CTL-3b]` | VI | Iteration over ranges, `Span`, `MutSpan`, `Array`, `[T; N]`, `SoA` … |
+ | `[CTL-4]` | VI | The `else` of `while` or `for` runs when the loop ends without … |
+ | `[CTL-5]` | VI | A `match` tests arms top to bottom; the first that matches runs; a … |
+ | `[CTL-6]` | VI | `with a = e1, b = e2:` binds `a` and `b` for the block and drops them … |
+@@ -6313,8 +6725,8 @@
+ 
+ | Rule | Part | Begins |
+ |---|---|---|
+-| `[EXC-1]` | VIII | Beginning a write access to an object while any access to it is … |
+-| `[EXC-2]` | VIII | Beginning a read access while a write access is active panics … |
++| `[EXC-1]` | VIII | Beginning a write access to a field while any access to the same … |
++| `[EXC-2]` | VIII | Beginning a read access to a field while a write access to it is … |
+ | `[EXC-3]` | VIII | The compiler MAY remove a check only when it proves no conflicting … |
+ | `[EXC-3a]` | VIII | Every removed check is recorded, with the condition that justified … |
+ | `[EXC-4]` | VIII | A `let` field is subject to the same rules: `let` fixes the binding, … |
+@@ -6328,8 +6740,11 @@
+ | `[EXC-12]` | VIII | `ember inspect --safety` reports each check as `STATIC`, … |
+ | `[EXC-13]` | XVII | The performance suite contains class-handle loops with one stable … |
+ | `[EXC-14]` | VIII | The 0.9.8 `exclusivity = "unchecked"` setting is removed. Code that … |
+-| `[EXC-15]` | VIII | A `mut self` class method holds a write access to the whole object … |
++| `[EXC-15]` | VIII | A `mut self` class method holds a write access to every field of the … |
+ | `[EXC-16]` | VIII | Assigning a value to a class field whose type is not `Copy` is a … |
++| `[EXC-17]` | VIII | Instantaneous writes are not checked against long-term accesses, so a … |
++| `[EXC-18]` | VIII | The dynamic access that a borrow through a class handle begins — a … |
++| `[EXC-19]` | VIII | Access state is per field. Each non-`Copy` field of a class that is … |
+ 
+ ## EXP
+ 
+@@ -6421,7 +6836,7 @@
+ | `[FFI-39a]` | Annex C | The trampoline calls the overrides through their permanent thunks, so … |
+ | `[FFI-39b]` | Annex C | `super.init(…)` selects the C++ base constructor by arity and … |
+ | `[FFI-39c]` | Annex C | Passing `self` to a C++ API upcasts it and creates a `Retained` token … |
+-| `[FFI-39d]` | Annex C | Re-entrant calls from C++ into the same Ember object are expected and … |
++| `[FFI-39d]` | Annex C | Re-entrant calls from C++ into the same Ember object are expected. … |
+ | `[FFI-39e]` | Annex C | A C++ exception never crosses into Ember code, and an Ember panic … |
+ | `[FFI-40]` | Annex C | `const` methods import as `self`, non-`const` methods as `mut self`; … |
+ | `[FFI-40a]` | Annex C | `const` is not an aliasing guarantee in C++: a `const` method that … |
+@@ -6457,6 +6872,7 @@
+ | `[FN-7]` | V | Recursion is permitted; tail calls are not guaranteed to be … |
+ | `[FN-8]` | V | `main` is `fn main()`, `fn main() -> Result[void, E]` for any `E: … |
+ | `[FN-9]` | V | A mode on a class-handle parameter governs the handle, not the … |
++| `[FN-10]` | V | A function whose return type is `Result[void, E]` returns `Ok(())` … |
+ 
+ ## GPU
+ 
+@@ -6479,7 +6895,7 @@
+ | Rule | Part | Begins |
+ |---|---|---|
+ | `[GRM-1]` | III | A class has at most one base class, written in parentheses: `class … |
+-| `[GRM-2]` | III | A file contains only imports and items. A statement at file scope is … |
++| `[GRM-2]` | III | A file contains imports and items and, in the entry file only (the … |
+ | `[GRM-3]` | III | `Array[T]`, `Map[K, V]`, `Option[T]`, `Result[T, E]`, `Span[T]`, … |
+ | `[GRM-4]` | III | `x = e` where no `x` is in scope declares `x` with the type of `e`; … |
+ | `[GRM-5]` | III | `a, b = e` destructures a tuple, a struct or a fixed array. The right … |
+@@ -6516,6 +6932,7 @@
+ | `[GRM-35]` | XVI | Overlay grammar. An overlay is a file whose items are: |
+ | `[GRM-36]` | III | `ref e` and `ref mut e` borrow the place `e` (`[BRW-1]`). The operand … |
+ | `[GRM-37]` | III | A directive is a line beginning `#!` before the imports. `#! language … |
++| `[GRM-38]` | III | A parenthesised comprehension `(e for x in it if c)` is a generator … |
+ 
+ ## HASH
+ 
+@@ -6533,12 +6950,13 @@
+ | `[HEAP-1]` | IX | Every heap type allocates through … |
+ | `[HEAP-2]` | IX | Growable buffers double, from a minimum of four elements; … |
+ | `[HEAP-3]` | IX | `Shared(value) -> Shared[T]` allocates one counted block holding … |
+-| `[HEAP-4]` | IX | `s.get() -> ref T` borrows the payload; the loan keeps the block … |
+-| `[HEAP-5]` | IX | `s.get_mut() -> ref mut T` borrows it mutably with the same dynamic … |
++| `[HEAP-4]` | IX | `s.get() -> ref T` borrows the payload: it begins a checked read … |
++| `[HEAP-5]` | IX | `s.get_mut() -> ref mut T` begins a checked write access (`[EXC-1]`) … |
+ | `[HEAP-6]` | IX | `Shared[T]` is `Copy`: copying retains, dropping releases. |
+-| `[HEAP-7]` | IX | `Weak[O]` exists for `O` a class handle or a `Shared[T]` (`[WK-11]`). |
++| `[HEAP-7]` | IX | `Weak[O]` exists for `O` a class handle, a `Shared[T]` or a … |
+ | `[HEAP-8]` | IX | Capacity arithmetic is checked: a requested capacity whose byte size … |
+ | `[HEAP-9]` | IX | Heap storage for elements of type `T` is aligned to at least … |
++| `[HEAP-10]` | IX | `Shared[T]` is never `Send` or `Sync`: its counts and access state … |
+ 
+ ## HND
+ 
+@@ -6671,7 +7089,7 @@
+ | `[LEX-15]` | II | The table above is the complete reserved set. Contextual keywords are … |
+ | `[LEX-16]` | II | An integer literal without a suffix is an untyped integer: it takes … |
+ | `[LEX-17]` | II | A float literal without a suffix is an untyped float: it takes the … |
+-| `[LEX-17a]` | II | A float literal that receives `f32` or `f16` and whose decimal value … |
++| `[LEX-17a]` | II | A float literal that receives `f32` or `f16` and has more significant … |
+ | `[LEX-18]` | II | `1.` followed by an identifier character is a method call on `1`; … |
+ | `[LEX-19]` | II | An f-string `{…}` contains a full expression. `{{` and `}}` are … |
+ | `[LEX-20]` | II | A string literal has type `str` with the static region. At a site … |
+@@ -6797,7 +7215,7 @@
+ | `[OWN-3]` | VII | A move transfers ownership and leaves the source uninitialised. Using … |
+ | `[OWN-4]` | VII | A loop body that moves a value declared outside the loop is `E3041`, … |
+ | `[OWN-5]` | VII | Assigning to a place that holds a live value evaluates the new value, … |
+-| `[OWN-6]` | VII | `mem.take(mut place) -> T` (leaves `Default`), `mem.replace(mut … |
++| `[OWN-6]` | VII | `mem.take(mut place: T) -> T` (leaves `Default`), `mem.replace(mut … |
+ | `[OWN-7]` | VII | A `Copy` value is duplicated bitwise on use and the source stays … |
+ | `[OWN-8]` | VII | `Clone.clone(self) -> Self` is the explicit deep copy. Cloning a … |
+ 
+@@ -6862,7 +7280,7 @@
+ | `[RC-2d]` | VIII | A handle stored into a field from a temporary (a move, not a retain). |
+ | `[RC-2e]` | VIII | Handles yielded by a `for` over a borrowed collection, unless the … |
+ | `[RC-3]` | VIII | Further elisions are allowed only when semantics are preserved … |
+-| `[RC-4]` | VIII | A non-`Sync` class's counts use plain loads and stores; a `Sync` … |
++| `[RC-4]` | VIII | A non-`Sync` class's counts, and a `Shared`'s, use plain loads and … |
+ | `[RC-5]` | VIII | A borrow whose place goes through a class handle or `Shared` (`ref … |
+ | `[RC-6]` | VIII | `ember inspect` lists every retain and release that survives inside a … |
+ 
+@@ -6909,6 +7327,7 @@
+ | `[RT-8]` | XVIII | Counts of `@sync` objects use a relaxed increment for retain and an … |
+ | `[RT-10]` | XVIII | Counting is inline. The fast path of retain (one increment and an … |
+ | `[RT-11]` | XVIII | Allocation statistics are kept per thread, or only in `debug`; no … |
++| `[RT-12]` | XVIII | Stack overflow faults. The backend compiles with stack probes … |
+ 
+ ## SEL
+ 
+@@ -6936,6 +7355,7 @@
+ | `[SIMD-6]` | XII | The C compiler's own vectorisation report is corroborating evidence … |
+ | `[SIMD-7]` | XII | Grouped overflow checks. In a loop whose body has none of `Sync`, … |
+ | `[SIMD-8]` | XII | Vector operators are lane-wise and follow the scalar rules: integer … |
++| `[SIMD-9]` | XII | SIMD memory operations are bounds-checked like indexing. `V.load(s)` … |
+ 
+ ## SOA
+ 
+@@ -6998,6 +7418,7 @@
+ | `[STD-23]` | XV | `time.Instant.now()` is monotonic and `Nondet`; `Duration` is an … |
+ | `[STD-24]` | XV | `process.exit(code) -> Never` flushes the standard streams and exits … |
+ | `[STD-25]` | XV | `random.Rng.seeded(seed)` is a deterministic generator (the same seed … |
++| `[STD-26]` | XV | Python's built-in functions. The prelude has these functions, with … |
+ 
+ ## STR
+ 
+@@ -7035,12 +7456,13 @@
+ | `[THR-7]` | XI | `@sync` means exactly two things: the class's handles may cross … |
+ | `[THR-8]` | XI | A type is `Send` when a value of it may be moved to another thread. … |
+ | `[THR-9]` | XI | A type is `Sync` when several threads may read one value of it at the … |
+-| `[THR-10]` | XI | `thread.spawn(f: owned fn() -> R) -> JoinHandle[R]` runs `f` on a new … |
++| `[THR-10]` | XI | `thread.spawn(owned f: fn() -> R) -> JoinHandle[R]` runs `f` on a new … |
+ | `[THR-11]` | XI | `scope.spawn(f: fn() -> R) -> ScopedJoinHandle[R]` accepts a closure … |
+ | `[THR-12]` | XI | Tasks that must run in sequence and share data use two scopes in … |
+ | `[THR-13]` | XI | The data-race guarantee. In Safe Ember a memory location is reachable … |
+ | `[THR-14]` | XI | `Atomic[T]` exists for the integer types, `bool` and raw pointers. … |
+ | `[THR-15]` | XI | `channel[T](capacity=n) -> (Sender[T], Receiver[T])` is a bounded … |
++| `[THR-16]` | XI | When `main` returns, or `process.exit` is called, the process ends: … |
+ 
+ ## TIER
+ 
+@@ -7069,7 +7491,7 @@
+ | `[TST-4a]` | XVII | Each rule's directory has an accept case and, for each diagnostic … |
+ | `[TST-4b]` | XVII | Which rules need a reject case is decided mechanically: a rule that … |
+ | `[TST-5]` | XVII | A scripted debugger session (breakpoint by Ember line, stepping, … |
+-| `[TST-6]` | XVII | Appendix A's code is generated from a fixture that is compiled in CI. |
++| `[TST-6]` | XVII | Appendix A's code is generated from a fixture that is compiled in CI. … |
+ | `[TST-7]` | XVII | Every ` ```ember ` block in this document is extracted and must pass … |
+ | `[TST-8]` | XVII | `tests/firstweek/` holds at least 24 first-draft programs a newcomer … |
+ | `[TST-9]` | XVII | Each is marked `accepted` or `rejected(<shape>)`; a rejection whose … |
+@@ -7184,7 +7606,7 @@
+ | `[WK-7]` | VIII | Cycle analysis is conservative: a possible cycle suffices for … |
+ | `[WK-8]` | VIII | The run-time report (`[WK-15]`) lists each leaked strongly connected … |
+ | `[WK-9]` | VIII | `ember explain --cycle <path> <Class[.field]>` explains one … |
+-| `[WK-11]` | VIII | `Weak(h)` creates a weak handle to a class object or `Shared` payload … |
++| `[WK-11]` | VIII | `Weak(h)` creates a weak handle to a class object or a `Shared` or … |
+ | `[WK-12]` | VIII | `w.upgrade() -> Option[O]` returns a retained strong handle while the … |
+ | `[WK-13]` | VIII | A `Weak[Shared[T]]` refers to the same block as its `Shared[T]`. |
+ | `[WK-14]` | VIII | Ember's `Weak` and `Shared` never convert to or from C++'s … |

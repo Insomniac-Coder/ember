@@ -1,0 +1,186 @@
+--- Ember_v0.9.9_Hardened_39.md
++++ Ember_v0.9.9_Hardened_40.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_39
+-**Supersedes:** 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_40
++**Supersedes:** 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -473,7 +473,8 @@
+ 
+ ```text
+ file          := {directive} {NEWLINE} {import_decl} {item}
+-directive     := "#!" ("language" STRING | "threads" IDENT) NEWLINE
++directive     := "#!" ("language" STRING | "threads" IDENT | "module" module_attr) NEWLINE
++module_attr   := attr_name ["(" [attr_arg {"," attr_arg} [","]] ")"]
+ import_decl   := "import" module_path ["as" IDENT] NEWLINE
+                | "from" module_path "import" import_list NEWLINE
+                | ["pub"] "import" ("c" | "cpp") STRING [ffi_opts] ["as" IDENT] NEWLINE
+@@ -494,7 +495,13 @@
+   `#! threads main|any|creator` sets the default thread contract of the file's exports (`[FFI-33]`);
+   `creator` on a static free-function export uses that rule's successful module-initialization
+   anchor, not a per-callable instance.
+-  Any other directive is `E0104`. `import cpp` is Annex C.
++  `#! module name(args)` applies one attribute to this source module, using the same name and
++  argument grammar as `@name(args)` without the `@` (ODR-084). Only attributes whose documented
++  targets include modules are permitted (`[ATT-1]`); for example, `#! module overflow(saturate)`.
++  Different module attributes may appear on separate directive lines; repeating the same attribute
++  name is `E0104`. A directive after an import or item, an unknown directive, or a module attribute
++  with an invalid target or arguments is `E0104`. A valid but unimplemented module attribute is
++  `E0900` (`[ATT-6]`), never silently ignored. `import cpp` is Annex C.
+ 
+ ## III.2 Items
+ 
+@@ -881,7 +888,16 @@
+   (T, bool)`; the attribute `@overflow(wrap)` or `@overflow(saturate)` on a function or module, which
+   changes the operators inside it for every profile; and range facts (`[RNG-4]`), which remove a check
+   the compiler proves cannot fire. Wrapping arithmetic is two's-complement and is never undefined
+-  behaviour in the generated code (`[CG-C-1]`).
++  behaviour in the generated code (`[CG-C-1]`). The policy is lexical (ODR-084): a module's
++  `#! module overflow(panic|wrap|saturate)` supplies its default, otherwise `panic`; a function's
++  explicit attribute overrides the enclosing policy. A lambda or local function inherits the
++  policy where it is declared unless it has a permitted explicit override. Generic instantiation,
++  importing, inlining and calling never replace a declaration's policy with the caller's.
++  Parameter defaults use the declaring function's effective policy (`[FN-5]`); supplied argument
++  expressions use their own lexical policy. Saturation clamps the exact mathematical result to
++  the nearest representable bound. These policies do not change zero-divisor or negative-exponent
++  checks, casts, or shift-amount checks (`[TYP-10]`). They change the written operators, not the
++  contracts of called functions or integer methods (`[STD-20]`).
+ * `[TYP-28]` *(new in 0.9.9)* **Division.** `/` is **true division** and applies to floats. `/` with two integer
+   operands is `E2240`, whose fix-its are `//` (floor division) and converting an operand to `float`.
+   For integers:
+@@ -891,8 +907,9 @@
+     `x % -1 == 0`.
+   * `a.div_trunc(b)` and `a.rem_trunc(b)` give C's truncating quotient and remainder, for code that
+     wants C's exact meaning.
+-  * a zero divisor panics (`division by zero`); `MIN // -1` and `MIN.div_trunc(-1)` overflow and panic
+-    per `[TYP-8]`.
++  * a zero divisor panics (`division by zero`); `MIN // -1` overflows per `[TYP-8]` (panic by
++    default, `MIN` under wrapping, `MAX` under saturation). `MIN.div_trunc(-1)` always panics
++    under that method's fixed contract (`[STD-20]`); `MIN.rem_trunc(-1)` is zero.
+ * `[TYP-29]` *(new in 0.9.9)* For floats, `//` and `%` are Python's (ODR-021). `a % b` is the
+   exact value of `a - b * floor(a / b)`, rounded once to the float type: it has the sign of `b`, and
+   is computed exactly (as `fmod` is) rather than by evaluating the formula in rounded steps. `a // b`
+@@ -1426,7 +1443,11 @@
+ * `[FN-4]` A method's receiver follows the same modes: `self`, `mut self`, `owned self`. A function in
+   a type body with no receiver is an associated function, called `Type.name(…)`.
+ * `[FN-5]` Default argument expressions are evaluated at each call, after the other arguments are
+-  bound, and may refer to earlier parameters.
++  bound, and may refer to earlier parameters. Names and type expressions resolve in the function's
++  declaration scope, with generic parameters substituted at instantiation. Defaults use that
++  function's effective overflow policy; a caller's scope or policy does not replace these
++  declaration bindings (ODR-084). Supplied arguments retain their own lexical overflow policy
++  (`[TYP-8]`).
+ * `[FN-6]` *(changed in 0.9.9)* **Callable types.** A function is a value. A callable type is written
+   `fn(A, mut B, owned C) -> R`, with the same parameter modes as a declaration; `once fn(…) -> R` is a
+   callable that may be called at most once (`[CLO-6]`). Callable types are compared by their parameter
+@@ -1658,6 +1679,9 @@
+   `@attribute` struct (`[RFL-3]`) is `E0104`. An attribute on a declaration it does not apply to is
+   `E0104` naming the positions it does apply to.
+ * `[ATT-4]` One attribute per line.
++  A module attribute uses a `#! module` directive (`[GRM-37]`). Its effect and any item-level
++  override follow the attribute's own rule: overflow uses `[TYP-8]`, deterministic applies to
++  every function without opt-out (`[DET-8]`), and reload attributes retain `[HR-25]`'s item priority.
+ * `[ATT-6]` *(new in 0.9.9)* Every attribute in the table has exactly the effect its rule gives. An implementation that
+   has not built an attribute's effect rejects the attribute with `E0900` (`[PHIL-12]`); it never
+   accepts and ignores it.
+@@ -3711,7 +3735,9 @@
+   source names `std.math.det`'s, with the same result it gives at run time; the platform library's
+   `sin` is `Nondet` and does not run at compile time, and the evaluator never puts `det.sin` in its
+   place (ODR-056). The evaluator computes integer and floating-point results exactly as the target does, including overflow panics
+-  and the target's pointer size, endianness and layout. A result is cached with its inputs (source,
++  and the target's pointer size, endianness and layout. The lexical overflow policy is the same
++  at compile time and run time (`[TYP-8]`, ODR-084), including module constants and arithmetic
++  inside a function; calling another function preserves that function's policy. A result is cached with its inputs (source,
+   `read_file` contents, `env` values).
+ * `[CT-5]` *(changed in 0.9.9)* **Where results live.** A compile-time result is placed in the image as
+   constant data. A value that owns heap memory (`Array`, `String`, `Map`, `Box`, …) is handled so that
+@@ -4012,10 +4038,11 @@
+ ## XV.6 Numbers and math
+ 
+ * `[STD-20]` *(new in 0.9.9)* Integer methods, built into every integer type: `abs` (a signed
+-  `MIN` panics), `pow(e)` (`x ** e`), `signum` (`-1`, `0` or `1`), `div_trunc` and `rem_trunc`
+-  (C's truncating `/` and `%`, panicking where `//` and `%` do); for each arithmetic operator
++  `MIN` panics), `pow(e)` (`x ** e` under the default panic policy), `signum` (`-1`, `0` or `1`), `div_trunc` and `rem_trunc`
++  (C's truncating quotient and remainder: both panic on a zero divisor, and `div_trunc` also
++  panics on signed `MIN / -1`, while `MIN.rem_trunc(-1)` is zero); for each arithmetic operator
+   `OP` — `add`, `sub`, `mul`, `floordiv` (`//`), `rem` (`%`), `pow` (`**`) and `neg` (unary `-`) —
+-  `checked_OP -> Option[T]` (`None` wherever the operator would panic: a result out of range, a zero
++  `checked_OP -> Option[T]` (`None` for a mathematical result out of range, a zero
+   divisor, a negative exponent), `wrapping_OP -> T` (the result modulo 2^N), `saturating_OP -> T`
+   (the nearest of `MIN` and `MAX`) and `overflowing_OP -> (T, bool)` (the wrapping result and
+   whether it wrapped), the last three still panicking on a zero divisor or a negative exponent; for
+@@ -4025,7 +4052,11 @@
+   type's width; `is_power_of_two`; `next_power_of_two` (the least power of two at or above the
+   value, overflowing past `MAX`); and the constants `T.MIN` and `T.MAX` (`int.MAX` through the
+   alias). An operator method's other operand has the receiver's type; a shift amount and an
+-  exponent may be any integer type (`[TYP-10]`, `[TYP-30]`). Float methods: `abs`, `sqrt`, `floor`,
++  exponent may be any integer type (`[TYP-10]`, `[TYP-30]`). All these integer methods have fixed
++  contracts independent of the caller's lexical overflow policy (ODR-084): in particular, `abs`
++  of signed `MIN`, an overflowing `pow` or `next_power_of_two`, and `MIN.div_trunc(-1)` panic;
++  named `checked_`, `wrapping_`, `saturating_` and `overflowing_` families retain their stated
++  behavior. Float methods: `abs`, `sqrt`, `floor`,
+   `ceil`, `trunc`, `fract`, `round` (**half to even**, as Python's `round` and IEEE's default),
+   `round_half_away` (C's `round`), `is_nan`, `is_finite`, `is_infinite`, `copysign`, `mul_add`, and
+   the constants `INF`, `NAN`, `EPSILON` (the gap between `1.0` and the next value), `MAX` (the
+@@ -6747,7 +6778,7 @@
+ their null-pointer niche; Hardened_37 adds ODR-081, the fallible owned C-string conversion and
+ explicit borrowed view; Hardened_38 adds ODR-082, the C qualifier asserted by an immutable
+ foreign static; Hardened_39 adds ODR-083, the initialization anchor for static export creator
+-contracts.
++contracts; Hardened_40 adds ODR-084, module-attribute syntax and lexical integer overflow policy.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6814,6 +6845,7 @@
+ | ODR-081 | `str.to_cstring()` returns `Result[CString, NulError]`, checking for interior NUL before allocation; `.as_cstr()` is an explicit borrow of its owner (Hardened_37) | `[TXT-5]`, `[FFI-15]` |
+ | ODR-082 | `@ffi(immutable)` asserts a `const` C object for a hand-declared foreign static, with a matching C declaration and safe `Sync` read (Hardened_38) | `[FFI-8]` |
+ | ODR-083 | the `creator` thread contract of a static free-function export is anchored to successful module initialization; idempotent init does not transfer it and reinitialization after shutdown establishes a new creator (Hardened_39) | `[FFI-33]`, `[FFI-33c]`, `[GRM-37]` |
++| ODR-084 | `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts (Hardened_40) | `[GRM-37]`, `[ATT-4]`, `[TYP-8]`, `[TYP-28]`, `[FN-5]`, `[CT-4]`, `[STD-20]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6822,6 +6854,7 @@
+ | `[ALC-1]` | changed |
+ | `[ARN-3]` | changed |
+ | `[ARN-11]` | changed |
++| `[ATT-4]` | changed |
+ | `[BLD-2]` | changed |
+ | `[BLD-8]` | changed |
+ | `[BRW-5]` | changed |
+@@ -6854,6 +6887,7 @@
+ | `[FN-1]` | changed |
+ | `[FN-1a]` | changed |
+ | `[FN-3]` | changed |
++| `[FN-5]` | changed |
+ | `[FN-6]` | changed |
+ | `[FN-9]` | changed |
+ | `[FN-10]` | changed |
+@@ -6904,12 +6938,14 @@
+ | `[THR-9]` | changed |
+ | `[TXT-5]` | changed |
+ | `[TXT-10]` | changed |
++| `[TYP-8]` | changed |
+ | `[TYP-13]` | changed |
+ | `[TYP-15]` | changed |
+ | `[TYP-21]` | changed |
+ | `[TYP-23]` | changed |
+ | `[TYP-26]` | changed |
+ | `[TYP-27]` | changed |
++| `[TYP-28]` | changed |
+ | `[TYP-29]` | changed |
+ | `[TYP-34]` | changed |
+ | `[TYP-37]` | changed |
+@@ -6966,7 +7002,7 @@
+ | `[ATT-1]` | V | An attribute that is neither in the table below nor a visible … |
+ | `[ATT-2]` | V | A statement may carry only `@parallel`, `@unroll`, `@simd` and … |
+ | `[ATT-3]` | III | A statement attribute attaches to the next compound statement, never … |
+-| `[ATT-4]` | V | One attribute per line. |
++| `[ATT-4]` | V | One attribute per line. A module attribute uses a `#! module` … |
+ | `[ATT-6]` | V | Every attribute in the table has exactly the effect its rule gives. … |
+ 
+ ## BCK

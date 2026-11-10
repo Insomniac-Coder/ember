@@ -1,0 +1,211 @@
+--- Ember_v0.9.9_Hardened_41.md
++++ Ember_v0.9.9_Hardened_42.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_41
+-**Supersedes:** 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_42
++**Supersedes:** 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -122,7 +122,7 @@
+ deterministic destruction. There is no null, no exceptions, and no undefined behaviour outside
+ `unsafe`. Performance-critical code uses value types, views, structure-of-arrays containers, arenas
+ and enforceable contracts (`@noalloc`, `@nosync`). C headers are imported directly. The reference
+-compiler emits C11.
++compiler emits C11; LLVM is its planned second backend (`[CG-LL-1]`).
+ 
+ ## I.2 The three tiers
+ 
+@@ -3466,7 +3466,8 @@
+ * `[SIMD-1]` `std.simd` provides vector types `f32x4`, `f32x8`, `f32x16`, `f64x2`, `f64x4`, `f64x8`,
+   the signed and unsigned integer vectors of 8 to 64-bit lanes, and mask types. They are `Copy` value
+   types aligned to their size. On the C backend they lower to the target's intrinsics through
+-  `ember_simd.h`, with a scalar fallback on targets without them. `f32x8.LANES` is the lane count;
++  `ember_simd.h`, with a scalar fallback on targets without them; on the LLVM backend, to LLVM's
++  vector types (`[CG-LL-2]`). `f32x8.LANES` is the lane count;
+   `simd.native_lanes[T]()` is the target's preferred count, a compile-time constant.
+ * `[SIMD-8]` *(new in 0.9.9)* Vector operators are lane-wise and follow the scalar rules: integer
+   lanes panic on overflow (`[TYP-8]`) unless the function is `@overflow(wrap)` or the code calls
+@@ -3482,7 +3483,7 @@
+ * `[SIMD-2]` `@simd` on a `for` loop is a request and a report: the compiler tries to vectorise the
+   loop and `--emit-optimization-report` says whether it did and why not. It never changes meaning.
+   `@simd(assert)` makes failure `E4020`.
+-* `[SIMD-3]` *(changed in 0.9.9)* Alias facts given to the backend (`restrict`) MUST be derived, never assumed. Two views
++* `[SIMD-3]` *(changed in 0.9.9)* Alias facts given to the backend (`restrict` on the C backend, `noalias` on the LLVM backend) MUST be derived, never assumed. Two views
+   are marked disjoint only when (a) the borrow checker related them to one owner and proved their
+   ranges disjoint; (b) they come from owners proved distinct in the same function; (c) they are
+   results of `split_at`, `chunks_mut` or distinct `SoA` columns; or (d) they carry a fact established
+@@ -3501,8 +3502,8 @@
+   to a function `[CG-C-3]` places in the inline header, read through as `[PAR-2b]` says, whatever
+   the C compiler then does (ODR-062); the body has none of `Alloc`, `Sync`, `Block`, `Io`, `FFI`,
+   `Panic(Explicit)`; every `RuntimeCheck(Bounds)` has been removed by `[OPT-2]`; every
+-  `RuntimeCheck(Arithmetic)` is removed, or is one `[SIMD-7]` permits grouping (grouping is then
+-  required); the loop has one exit; and every floating-point reduction is declared by `@parallel(reduce=…)` or the function is `@fastmath`.
++  `RuntimeCheck(Arithmetic)` is removed, is one `[SIMD-7]` permits grouping (grouping is then
++  required), or belongs to a running total `[SIMD-7]` proves safe block by block; the loop has one exit; and every floating-point reduction is declared by `@parallel(reduce=…)` or the function is `@fastmath`.
+   `E4020` names the first clause that fails, and for a remaining check its reason (`[EFF-11]`).
+ * `[SIMD-7]` *(new in 0.9.9)* **Grouped overflow checks.** In a loop whose body has none of `Sync`,
+   `Io`, `FFI`, `Unsafe` and `Block`, the compiler MAY check integer overflow once per group of
+@@ -3510,10 +3511,18 @@
+   vectorisable form (`[SIMD-5]`) it MUST: it computes the group with wrapping arithmetic, accumulates the lanes' overflow bits, and panics at the end of the
+   group, reporting the source location of the first overflowing iteration. This is not observable:
+   the body's writes go only to memory this thread owns, and the process aborts before anything reads
+-  them. Bounds checks are never grouped. An integer **reduction** (`total += xs[i]`) is vectorised
+-  under checked arithmetic only when no partial sum can overflow in any grouping; the compiler proves
+-  that from the element and accumulator widths, versioning the loop on the trip count as `[OPT-2]`
+-  does (a sum of 32-bit elements into an `int` is safe for fewer than 2³¹ elements).
++  them. Bounds checks are never grouped. An integer **running total**, a local the loop changes only
++  by `total = total ± x` (`total += xs[i]`), is not grouped: each partial sum waits for the one
++  before, so grouping its checks would only add work (ODR-086). It is vectorised under checked
++  arithmetic only when no partial sum can overflow in any grouping, which the compiler proves in one
++  of two ways. From the element and accumulator widths, versioning the loop on the trip count as
++  `[OPT-2]` does: a sum of 32-bit elements into an `int` is safe for fewer than 2³¹ elements. Or, for
++  a signed total of *w* ≥ 16 bits, at run time over each block of 64 iterations: the total lies in
++  [−2^(w−2), 2^(w−2)) at the block's start and every value the block adds or subtracts lies in
++  [−2^(w−9), 2^(w−9)), so no partial sum can leave the type in any order, and the block runs without
++  per-operation checks. A block that fails the test runs checked, and so does the rest of the loop. A
++  running total proved safe neither way keeps a check on every operation, and its loop is not in
++  vectorisable form.
+ * `[SIMD-6]` The C compiler's own vectorisation report is corroborating evidence only.
+   `--emit-optimization-report` prints it labelled as the host compiler's opinion, after Ember's
+   vectorisable-form verdict; its absence or disagreement is never an error.
+@@ -4558,7 +4567,7 @@
+ ```text
+ ember new <name> [--lib | --bin | --cdylib]    create a package
+ ember run [file.em] [args…] [--hot | --interp] build and run; a single file needs no manifest
+-ember build [--profile <name>] [--target <triple>] [--backend c]
++ember build [--profile <name>] [--target <triple>] [--backend c|llvm]
+             [--emit tokens|ast|hir|mir|c|obj|header] [--out-dir <dir>]
+             [--emit-optimization-report] [--report=engine|instantiations] [--timings[=json]]
+             [--build-id] [--reload [--explain]] [-D warnings]
+@@ -4661,7 +4670,7 @@
+ [build]
+ entry = "src/main.em"
+ target = "native"
+-backend = "c"
++backend = "c"                     # c | llvm (`[CG-LL-1]`)
+ c_compiler = "auto"               # auto | bundled | msvc | clang | gcc
+ runtime = "static"                # static | shared (shared is required by hot reload)
+ max_instantiations = 200
+@@ -4729,8 +4738,8 @@
+ * `[BLD-5]` Output goes to `target/<profile>/{bin,lib,c,obj,bind,inspect}`.
+ * `[BLD-7]` Front-end stages run in parallel across modules by default (`-j`, default the number of
+   physical cores).
+-* `[BLD-6]` `lto = "off" | "thin" | "on"`. A value the C toolchain does not support is replaced by the
+-  nearest one it does, and the build record says so. No correctness property depends on LTO.
++* `[BLD-6]` `lto = "off" | "thin" | "on"`. A value the backend's toolchain does not support is replaced
++  by the nearest one it does, and the build record says so. No correctness property depends on LTO.
+ * `[BLD-9]` `--timings` writes a per-stage, per-module timing report (`--timings=json` for tools).
+ * `[BLD-10]` *(changed in 0.9.9)* The compile-time budgets below are release gates.
+ * `[BUD-1]` They are measured on a recorded reference machine (an 8-core laptop CPU of 2020 or later,
+@@ -5535,6 +5544,28 @@
+   compile-time evaluator where applicable, requiring identical output; fuzzes the lexer, parser, type
+   checker and borrow checker; and compiles the layout tests of `[FFI-5a]` with every supported C
+   compiler.
++
++## XVIII.7 The LLVM backend
++
++Restored from 0.9.8 by ODR-087.
++
++* `[CG-LL-1]` *(new in 0.9.9)* **Two backends over one intermediate representation.** The reference
++  implementation has two backends over the same MIR: C11 (§XVIII.1), for bootstrap and portability,
++  and LLVM, for optimisation control. The C backend comes first. The LLVM backend is begun once the C
++  backend passes the full conformance suite, and becomes the default once it also passes the
++  performance suite; until it exists, `--backend llvm` and `backend = "llvm"` are refused as not yet
++  implemented. The C backend stays supported afterwards: it is how Ember reaches every platform that
++  has a C compiler.
++* `[CG-LL-2]` *(new in 0.9.9)* The LLVM backend maps MIR to LLVM IR with the C backend's type mapping
++  and meets every requirement of this Part that is not about C specifically: no undefined behaviour
++  in its output, checked arithmetic through LLVM's overflow intrinsics, and the floating-point rules
++  of `[TYP-9]` and `[DET-5]`. It implements the platform C ABI's classification of arguments and
++  results itself (`[FFI-9]`), and lowers `std.simd`'s vector types to LLVM's (`[SIMD-1]`).
++* `[CG-LL-3]` *(new in 0.9.9)* It passes the borrow checker's facts to LLVM as `noalias`, `readonly`,
++  `dereferenceable(N)` and `nonnull` attributes, under the rule that governs the C backend's
++  `restrict` (`[SIMD-3]`: derived, never assumed); emits DWARF or CodeView debug information with
++  Ember's type names; and supports profile-guided optimisation through LLVM's instrumentation and
++  ThinLTO (`[BLD-6]`).
+ ---
+ 
+ # Annex A — Syntax Quick Reference
+@@ -6793,7 +6824,8 @@
+ explicit borrowed view; Hardened_38 adds ODR-082, the C qualifier asserted by an immutable
+ foreign static; Hardened_39 adds ODR-083, the initialization anchor for static export creator
+ contracts; Hardened_40 adds ODR-084, module-attribute syntax and lexical integer overflow policy;
+-Hardened_41 adds ODR-085, what the dynamic exclusivity checks cost and the packed access words.
++Hardened_41 adds ODR-085, what the dynamic exclusivity checks cost and the packed access words;
++Hardened_42 adds ODR-086 and ODR-087, running totals checked block by block and the LLVM backend.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6862,6 +6894,8 @@
+ | ODR-083 | the `creator` thread contract of a static free-function export is anchored to successful module initialization; idempotent init does not transfer it and reinitialization after shutdown establishes a new creator (Hardened_39) | `[FFI-33]`, `[FFI-33c]`, `[GRM-37]` |
+ | ODR-084 | `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts (Hardened_40) | `[GRM-37]`, `[ATT-4]`, `[TYP-8]`, `[TYP-28]`, `[FN-5]`, `[CT-4]`, `[STD-20]` |
+ | ODR-085 | an access that is not held is checked but not counted; a `mut self` call to a quiet function is only checked; a check that nothing held anywhere could fail may be removed; each class's access words stand side by side before its fields, a zero word after an odd count (Hardened_41) | `[EXC-3]`, `[EXC-19]`, `[OBJ-1]`, `[COST-3]` |
++| ODR-086 | a running total is not grouped; it is vectorised under checked arithmetic when its widths prove it safe or, for a signed total of at least 16 bits, when a run-time test over each block of 64 iterations does; a block that fails the test runs checked, and so does the rest of the loop (Hardened_42) | `[SIMD-5]`, `[SIMD-7]` |
++| ODR-087 | LLVM is restored as the reference implementation's second backend over the same MIR, begun once the C backend passes the conformance suite and the default once it also passes the performance suite; `--backend c|llvm` (Hardened_42) | `[CG-LL-1]`, `[CG-LL-2]`, `[CG-LL-3]`, `[SIMD-1]`, `[SIMD-3]`, `[BLD-6]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6872,11 +6906,15 @@
+ | `[ARN-11]` | changed |
+ | `[ATT-4]` | changed |
+ | `[BLD-2]` | changed |
++| `[BLD-6]` | changed |
+ | `[BLD-8]` | changed |
+ | `[BRW-5]` | changed |
+ | `[BRW-8]` | changed |
+ | `[CELL-2]` | changed |
+ | `[CG-C-11]` | changed |
++| `[CG-LL-1]` | added |
++| `[CG-LL-2]` | added |
++| `[CG-LL-3]` | added |
+ | `[CLO-7]` | changed |
+ | `[CLS-4]` | changed |
+ | `[CLS-7]` | changed |
+@@ -6933,7 +6971,10 @@
+ | `[RC-3]` | changed |
+ | `[RC-5]` | changed |
+ | `[RT-10]` | changed |
++| `[SIMD-1]` | changed |
++| `[SIMD-3]` | changed |
+ | `[SIMD-5]` | changed |
++| `[SIMD-7]` | changed |
+ | `[SPN-5]` | changed |
+ | `[STD-4]` | changed |
+ | `[STD-5]` | changed |
+@@ -7055,7 +7096,7 @@
+ | `[BLD-2]` | XVII | A module's front-end result is keyed by its source, the compiler and … |
+ | `[BLD-4]` | XVII | The C compiler and linker run through a generated Ninja file, so C … |
+ | `[BLD-5]` | XVII | Output goes to `target/<profile>/{bin,lib,c,obj,bind,inspect}`. |
+-| `[BLD-6]` | XVII | `lto = "off" \| "thin" \| "on"`. A value the C toolchain does not … |
++| `[BLD-6]` | XVII | `lto = "off" \| "thin" \| "on"`. A value the backend's toolchain does … |
+ | `[BLD-7]` | XVII | Front-end stages run in parallel across modules by default (`-j`, … |
+ | `[BLD-8]` | XVII | Within a module, editing one function body re-checks that function, … |
+ | `[BLD-9]` | XVII | `--timings` writes a per-stage, per-module timing report … |
+@@ -7136,6 +7177,14 @@
+ | `[CG-C-9]` | XVIII | The build emits debugger visualisers (`.natvis`, GDB and LLDB … |
+ | `[CG-C-10]` | XVIII | Stack traces print Ember function paths and `file:line:col`; `ember … |
+ | `[CG-C-11]` | XVIII | Floating-point flags. Every translation unit begins with `#pragma … |
++
++## CG-LL
++
++| Rule | Part | Begins |
++|---|---|---|
++| `[CG-LL-1]` | XVIII | Two backends over one intermediate representation. The reference … |
++| `[CG-LL-2]` | XVIII | The LLVM backend maps MIR to LLVM IR with the C backend's type … |
++| `[CG-LL-3]` | XVIII | It passes the borrow checker's facts to LLVM as `noalias`, … |
+ 
+ ## CLI
+ 
+@@ -8060,7 +8109,7 @@
+ |---|---|---|
+ | `[SIMD-1]` | XII | `std.simd` provides vector types `f32x4`, `f32x8`, `f32x16`, `f64x2`, … |
+ | `[SIMD-2]` | XII | `@simd` on a `for` loop is a request and a report: the compiler tries … |
+-| `[SIMD-3]` | XII | Alias facts given to the backend (`restrict`) MUST be derived, never … |
++| `[SIMD-3]` | XII | Alias facts given to the backend (`restrict` on the C backend, … |
+ | `[SIMD-4]` | XII | Horizontal operations (`reduce_add`, `reduce_min`, `reduce_max`), … |
+ | `[SIMD-5]` | XII | Vectorisable form, which `@simd(assert)` checks, is computed by Ember … |
+ | `[SIMD-6]` | XII | The C compiler's own vectorisation report is corroborating evidence … |

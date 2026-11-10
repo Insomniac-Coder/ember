@@ -1,0 +1,149 @@
+--- Ember_v0.9.7_Hardened_3.md
++++ Ember_v0.9.7_Hardened_4.md
+@@ -1,20 +1,20 @@
+ # Ember Programming Language — Design & Implementation Specification
+ 
+-**Version:** 0.9.7_Hardened_3
+-**Immediate predecessor:** 0.9.7_Hardened_2 (immutable; preserved as the diff base)
+-**Status:** Frozen development target. Implementation and conformance evidence is **not** claimed; normative repository adoption still requires the recorded adoption gates.
++**Version:** 0.9.7_Hardened_4
++**Immediate predecessor:** 0.9.7_Hardened_3 (immutable; preserved as the diff base)
++**Status:** Frozen development target. Full implementation and conformance are **not** claimed; ODR-020's bounded diagnostic slice has implementation and regression evidence, not full DIA-12 or target conformance. Normative repository adoption still requires the recorded adoption gates.
+ 
+     Specification    frozen for this target — 873 rules, every one carrying a change-log
+-                     row. ODR-016 is closed here, and the two gaps Hardened_2 reported
+-                     beside it were never gaps and are withdrawn (H3.1). 13 rule ids are
++                     row. ODR-020 is closed here; ODR-016 remains closed from H3, and the
++                     two withdrawn H3 gap reports remain withdrawn. 13 rule ids are
+                      cited and defined by no rule: the inherited ERR-042 set, unchanged
+                      since 0.8.4 and not this revision's to write.
+                      Both figures are measurements, not constants — 0.8.4_Hardened_1
+                      records 826 against 833 for the same document — and XXIII.4 requires
+                      an extractor to tell a definition from a citation without saying how
+     Implementation   NOT CLAIMED
+-    Conformance      NOT CLAIMED — 144 rules from the 0.9 series sit in the [TST-4c]
+-                     baseline; 4 of them leave it with this revision
++    Conformance      NOT CLAIMED — 140 0.9-series rules remain in the [TST-4c] baseline
++                     after the four H3 removals; H4 does not alter the baseline
+ 
+ These three move independently. A complete specification is not a built compiler, and a
+ built compiler is not a passing conformance suite; this revision advances only the first.
+@@ -23,6 +23,16 @@
+ > `docs/spec-source/ember-spec.md` (`0.8.5_Hardened_1`) remains the repository's sole normative
+ > source until this target passes the adoption gates and is explicitly installed. The immutable
+ > received files are preserved under `docs/spec-source/as-received/`.
++
++**What Hardened_4 changed.** It closes ODR-020 by defining qualified-path N1 diagnostics:
++resolve the namespace prefix first, search only legally visible members using the unresolved
++final identifier, display the source-qualified suggestion, and edit only that final token.
++This is diagnostic/tooling hardening: no source-language program changes validity, and no
++module/import, visibility, overload, type, ownership, lifetime, ABI or runtime semantics change.
++The ruling is archived at `docs/spec-source/as-received/ODR-020_qualified_path_N1.md`.
++This H4 is authored from immutable `0.9.7_Hardened_3`; it does not modify H3 or the separate
++0.9.8 target. H4 adds no diagnostic code; this source revision's existing unknown-name code is
++`E1010`.
+ 
+ **What Hardened_3 changed.** It closes ODR-016 by giving the three rules that stated a
+ rejection without naming one a diagnostic code, and it withdraws two gap reports Hardened_2
+@@ -47,7 +57,7 @@
+ the language number instead. Implementation completion by itself moves neither. So 0.8.4 was cut as
+ `0.8.4_Hardened_1` rather than `0.8.3_Hardened_2` when S1 landed; 0.9.5 moved for inferred
+ multi-region views; 0.9.7 moved for the `@latebound` callable boundary; and **this file is
+-`0.9.7_Hardened_3` because it changes no rule's meaning.**
++`0.9.7_Hardened_4` because it changes no rule's meaning.**
+ 
+ **Compatibility.** Additive. `0.9.7` ⊃ `0.9.6` ⊃ `0.9.5` ⊃ `0.9` ⊃ `0.8.5` ⊃ `0.8.4` ⊃ `0.8.3`.
+ No program valid under an earlier contract becomes invalid, and a source file may declare
+@@ -148,6 +158,47 @@
+ | 15 | Thread-safety of `shared` decided per-object at runtime ("upgrade the control block"). | Reference counts are **atomic iff the class is `Sync`**; a non-`Sync` class is thread-confined and uses plain counters. Decided per type at compile time. | No runtime upgrade machinery; the count is atomic exactly when handles can cross threads. |
+ | 16 | GPU kernels as an eventual core language feature. | Shaders remain a separate language (as RageV already does with `.rvshader` → SPIR-V). Ember owns the **host-side** model: generational handles, command-scoped GPU ownership, deferred destruction, frame-in-flight tracking, and a typed shader interface generated from SPIR-V reflection. Kernel DSL is v3 and out of scope for this document beyond reservations. | Matches RageV's architecture exactly; keeps the core compiler small. |
+ | 17 | Specification written as prose. | Normative rules carry IDs; every ID maps to conformance tests; every compiler pass has an input/output contract. | So that an agent can implement and verify without reinterpreting. |
++
++## Change log — 0.9.7_Hardened_4
++
++**Hardened_4 closes ODR-020.** It defines how the existing N1 diagnostic applies when
++a namespace prefix resolves and the final member does not. This changes diagnostic
++selection, presentation, span and fix-it only. No Ember source program changes validity;
++no module/import, visibility, overload, type, ownership, lifetime, ABI or runtime behavior
++changes.
++
++Every normative edit below is **DIAGNOSTIC / TOOLING HARDENING**. It does not add a
++diagnostic code or a second suggestion/ranking system.
++
++| # | Change | Class | Where |
++|---|---|---|---|
++| H4.1 | **Qualified paths are a specialization of N1.** Resolve the namespace prefix first; enumerate only member names legally visible through that namespace under `[MOD-2]` and the existing resolver; compare spelling against the unresolved final identifier only; keep the existing N1 rank and top-three limit; display the original source-qualified prefix and candidate; highlight and replace only the final identifier. A failed prefix gets the ordinary prefix-resolution diagnostic and never triggers a final-member search. | DIAGNOSTIC / TOOLING HARDENING | XX.6.2, N1 |
++| H4.2 | **Conformance and regression evidence.** Add qualified-alias and nested-path suggestions, token-local source spans and edits, alias preservation, public and same-package candidates, private and cross-package `pub(package)` exclusion, ranked top-three candidates, deterministic output, failed-prefix handling, no-candidate handling, and the unchanged direct-`from` import behavior. | DIAGNOSTIC / TOOLING HARDENING | `tests/conformance/DIA-12/`, `compiler/ember_driver/tests/ui.rs` |
++| H4.3 | **No language or diagnostic identity change.** The existing `E1010` unknown-name family remains in use in this revision; no `E1060` or other code is introduced. This change adds no accepted program, import behavior, visibility rule, ranking key, runtime operation, or ABI surface. | DIAGNOSTIC / TOOLING HARDENING | XX.6.2 |
++
++**ODR-019 dependency.** This H4 is authored from `0.9.7_Hardened_3`, which does not
++incorporate ODR-019's cross-file tie policy. H4 therefore does not redefine or duplicate
++cross-file ranking. A source revision that already carries ODR-019 MUST continue applying
++its same-file/cross-file ordering to the qualified candidate set.
++
++The complete owner ruling is preserved byte-for-byte at
++`docs/spec-source/as-received/ODR-020_qualified_path_N1.md`. H4 is a frozen development
++target, not a change to the repository's adopted `0.8.5_Hardened_1` source.
++
++**Implementation checklist.**
++
++- [x] Keep invalid qualified names rejected and leave successful path resolution unchanged.
++- [x] Resolve namespace prefixes before final-member candidate discovery.
++- [x] Use the existing namespace/member and visibility facts; exclude inaccessible names.
++- [x] Compare only the unresolved final segment and preserve the source alias/prefix in help.
++- [x] Attach the diagnostic primary span and machine-applicable edit to the final token only.
++- [x] Reuse N1 ranking, threshold, deterministic ordering and top-three cap; add no ranking key.
++- [x] Keep `from` imports, module/import semantics, language validity, ABI and runtime unchanged.
++- [x] Cover the specified behavior with DIA-12 conformance and UI regressions.
++
++**This change log is exhaustive for the H4 normative delta.**
++
++---
+ 
+ ## Change log — 0.9.7_Hardened_3
+ 
+@@ -5508,7 +5559,7 @@
+ 
+ | Shape | Trigger | Required primary suggestion |
+ |---|---|---|
+-| **N1** unknown name | a path resolves to nothing | the in-scope binding, field, method or item within Damerau–Levenshtein distance ≤ 2 (or ≤ ⅓ of the name's length), named exactly; at most 3, ranked by distance then declaration proximity |
++| **N1** unknown name | a path resolves to nothing, including a qualified path with a resolved namespace prefix and unresolved final member | the in-scope binding, field, method or item within Damerau–Levenshtein distance ≤ 2 (or ≤ ⅓ of the name's length), named exactly; at most 3, ranked by the existing N1 ordering |
+ | **N2** name exists elsewhere | nothing in scope matches, but items of that name are exported by modules in the dependency graph | the import line to add, verbatim, as a machine-applicable fix-it (`from std.math import Transform`); with several candidates, up to 5 with module paths |
+ | **N3** unknown method | the receiver's type has no such member | the nearest member by N1's rule; if the name exists after one auto-deref or on `Self`'s base (`[TYP-24]`), name that; if it exists on an interface the type does not implement, name the interface and the `extend` block that would supply it |
+ | **N4** scalar type mismatch | `[TYP-4]` rejects an operator, or a coercion site is not a `[TYP-5]` widening | the exact `as` cast on the operand that loses nothing (`xs.len() as f32`); the note MUST state which side supplied the expected type |
+@@ -5520,6 +5571,35 @@
+ | **N10** `dyn` incompatibility (`E2050`) | `[TYP-22]` | the offending method and which clause it violates (no receiver / generic / returns `Self` by value), never a bare "interface is not object safe" |
+ | **N11** ambiguous method (`E2070`) | two candidates | the `I.m(recv, …)` disambiguation for each candidate interface |
+ | **N12** indentation (`E0002`–`E0004`) | | the exact column expected and the line whose indentation established it |
++
++For N1 on a qualified path of the form `<prefix>::<name>`, the compiler MUST
++resolve `<prefix>` first using the existing module/namespace resolver. If that
++prefix does not resolve, the ordinary path-resolution diagnostic MUST identify
++the unresolved prefix component; the compiler MUST NOT search for suggestions
++for `<name>`. Only after the prefix resolves may the compiler enumerate the
++items eligible for lookup through that namespace under `[MOD-2]` and the
++existing import/visibility rules. Private or otherwise inaccessible items MUST
++NOT enter this candidate set; `pub(package)` items are eligible only where the
++existing package-visibility rule permits access. Candidate discovery MUST reuse
++the resolver's namespace/member facts, not a diagnostic-only symbol table or a
++scan of unrelated modules.
++
++The spelling-distance comparison MUST use only the unresolved final identifier
++`<name>` and the candidate's final identifier. It MUST use the existing N1
++distance threshold, ranking and maximum suggestion count; qualified names add
++no ranking key or separate algorithm. For each candidate, help MUST render the
++original source-spelled prefix followed by `::` and the candidate's final name.
++This preserves aliases exactly: `io::pritn` suggests `io::print`, not a
++canonical declaration path. For nested paths, preserve every source prefix
++component in the same way.
++
++The primary unresolved-name span and the machine-applicable replacement MUST
++cover only the unresolved final identifier token. For `io::pritn`, the help
++renders `io::print`, while the edit replaces only `pritn` with `print`; it MUST
++NOT rewrite `io::pritn` as one whole-path edit. The diagnostic remains in the
++existing unknown-name family and MUST NOT introduce a diagnostic code or alter
++which programs are accepted. A direct `from a.b import x` binding continues to
++use ordinary, unqualified N1.
+ 
+ ## XX.6a Trusted base and audit reporting
+ 

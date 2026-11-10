@@ -1,0 +1,68 @@
+--- Ember_v0.9.9_Hardened_10.md
++++ Ember_v0.9.9_Hardened_11.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_10
+-**Supersedes:** 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_11
++**Supersedes:** 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -353,21 +353,22 @@
+ * `[LEX-14]` A raw identifier `r#name` uses a keyword as a name (for imported C fields such as
+   `type`).
+ 
+-**Keywords** (reserved everywhere; 49):
++**Keywords** (reserved everywhere; 48):
+ 
+ ```text
+ and        as         break      class      comptime   const      continue
+-defer      dyn        elif       else       enum       extend     extern
+-false      fn         for        if         implements import     in
+-interface  is         let        match      mut        not        open
+-or         override   owned      pass       pub        ref        return
+-self       Self       static     struct     super      true       type
+-unsafe     virtual    void       where      while      with       yield
++defer      dyn        elif       else       enum       extern     false
++fn         for        if         implements import     in         interface
++is         let        match      mut        not        open       or
++override   owned      pass       pub        ref        return     self
++Self       static     struct     super      true       type       unsafe
++virtual    void       where      while      with       yield
+ ```
+ 
+ * `[LEX-15]` *(changed in 0.9.9)* The table above is the complete reserved set. **Contextual
+   keywords** are keywords only in the stated position and identifiers everywhere else: `abstract`
+-  before `class`; `from` at the start of an import; `gen` and `once` immediately before `fn`; `safe` before `fn` in an extern block; `some`
++  before `class`; `from` at the start of an import; `extend` at the start of an item when the type
++  it extends follows, directly or after generic parameters (`[GRM-34]`); `gen` and `once` immediately before `fn`; `safe` before `fn` in an extern block; `some`
+   at the start of a type; `c` and `cpp` between `import` or `overlay` and a string; `language` and
+   `threads` after `#!`; `overlay` at the start of an item, and `rename` and `hide` inside an overlay
+   (`[GRM-35]`). **Reserved for a future version** (lexed as keywords; using one as a name is `E0005`,
+@@ -6340,7 +6341,7 @@
+ ruled under the owner's delegation and recorded here. Hardened_3 carries ODR-021 and ODR-022;
+ Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026;
+ Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
+-Hardened_10 adds ODR-029.
++Hardened_10 adds ODR-029; Hardened_11 adds ODR-030.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6353,6 +6354,7 @@
+ | ODR-027 | a range is a value: the prelude's range types are structs with public bounds, `Copy` when the bound is, and a `for` over one counts over a copy of its bounds, leaving it unchanged; `a..` overflows at its type's maximum (Hardened_8) | `[CTL-3]`, `[STD-8]`, `[STD-26]` |
+ | ODR-028 | a method named like an inherited one replaces it: without `override` over a virtual method it is `E2111`, over a non-virtual one `E2110`; an `override` is itself virtual (Hardened_9) | `[CLS-4]` |
+ | ODR-029 | `parse[T]()` reads the whole text strictly (no white space; an optional sign and digits for integers, Rust's float grammar with `inf`/`nan`, `true`/`false`, one character), and `ParseError` is `Empty`, `Invalid` or `Overflow` (Hardened_10) | `[TXT-10]` |
++| ODR-030 | `extend` is a contextual keyword, a keyword only at the start of an item before the type it extends, so `Array` can have its `extend` method (Hardened_11) | `[LEX-15]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6368,6 +6370,7 @@
+ | `[FN-3]` | changed |
+ | `[FN-6]` | changed |
+ | `[FN-10]` | changed |
++| `[LEX-15]` | changed |
+ | `[LT-1]` | changed |
+ | `[LT-1a]` | changed |
+ | `[LT-1b]` | changed |

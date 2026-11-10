@@ -1,0 +1,230 @@
+--- Ember_v0.6_spec.md
++++ Ember_v0.6_owner_revision.md
+@@ -58,9 +58,11 @@
+ ## Change log — 0.6
+ 
+ 0.6 adds a verification layer and strengthens the foreign boundary. It removes no
+-guarantee, reopens no confirmed ADR, and changes no existing rule's meaning except
+-where a row below says so. Every feature is opt-in: a v0.5 program compiles
+-unchanged and acquires none of it by accident.
++guarantee and reopens no confirmed ADR. Some changes are deliberate **safety-tightening
++changes** and can reject source that a v0.5 implementation previously accepted; those
++changes are listed below and MUST provide a diagnostic and migration path. Apart from
++those explicitly listed changes, v0.5 source and semantics remain compatible. New v0.6
++features are opt-in and do not appear by accident.
+ 
+ | # | What | Where |
+ |---|---|---|
+@@ -748,11 +750,15 @@
+   compared the value, and arithmetic on operands with known ranges — and uses it
+   to discharge `[RNG-3]`'s check and `[TYP-8]`'s overflow check. A range fact is
+   never derived from inside a `@fastmath` function.
+-* `[RNG-5]` Arithmetic on a range type yields its **representation**, not the
+-  range type: `r * 2.0` is `f32`. Producing a range type again is a construction
+-  and goes through `[RNG-3]`. The alternative — a range-arithmetic result type
+-  per operator — has no honest answer for `Roughness * Roughness` and is
+-  rejected.
++* `[RNG-5]` Arithmetic involving a range type normally yields its **representation**,
++  not the range type: `r * 2.0` is `f32`. A range value MAY participate directly in
++  arithmetic with an ordinary value of its representation type. Arithmetic between
++  two **distinct nominal range types** is rejected (`E2214`) unless at least one
++  operand is explicitly converted to its representation type. Thus `Roughness +
++  Roughness` is permitted, `Roughness * 2.0` is permitted, but `Roughness +
++  Metallic` is rejected. Producing a range type again is a construction and goes
++  through `[RNG-3]`. This preserves the range types' nominal purpose without
++  inventing a range-propagating result type for every operator.
+ * `[RNG-6]` Range reasoning over floats obeys `[TYP-9]`'s strict IEEE semantics.
+   NaN is in no range. A range with endpoints `-0.0` and `+0.0` contains both
+   zeros. `[TYP-9a]`'s prohibition on contraction is what keeps a range fact from
+@@ -1591,16 +1597,18 @@
+ 
+ ## X.1 Effects
+ 
+-The compiler infers, for every function, an **effect set** ⊆ `{Alloc, Sync, Panic, Unsafe, FFI, Block, RuntimeCheck(k)}`:
++The compiler infers, for every function, an **effect set** ⊆ `{Alloc, Sync, Lock, Io, Panic, Unsafe, FFI, Block, RuntimeCheck(k)}`. Effects are orthogonal: one operation MAY introduce several effects at once.
+ 
+ | Effect | Introduced by |
+ |---|---|
+ | `Alloc` | any call to `ember_alloc`/`realloc`, class instantiation, `Box`, `Shared`, container growth, `String` formatting, f-strings, `Arena` growth, boxed closures |
+-| `Sync` | atomic RMW ops with ordering stronger than relaxed, `Mutex`/`RwLock` lock, channel send/receive, thread spawn/join, `Sync`-class retain/release (atomic) |
++| `Sync` | atomic RMW ops with ordering stronger than relaxed, lock acquisition, channel send/receive, thread spawn/join, `Sync`-class retain/release (atomic) |
++| `Lock` | acquisition of a `Mutex`/`RwLock` or equivalent synchronisation primitive; `try_lock` and non-blocking lock acquisition carry `Lock` even when they do not carry `Block` |
++| `Io` | file, socket, console and other external-I/O operations, whether or not they block |
+ | `Panic` | `panic`, `assert`, bounds checks, overflow checks (debug), `unwrap`, exclusivity checks, division |
+ | `Unsafe` | body contains an `unsafe` block or the function is `unsafe fn` |
+ | `FFI` | calls to `extern` functions |
+-| `Block` | `Mutex.lock`, `join`, `sleep`, channel blocking receive, `File.read` — any call the runtime marks blocking |
++| `Block` | `Mutex.lock`, `RwLock` operations that may wait, `join`, `sleep`, channel blocking receive, `File.read`, and any call the runtime marks as potentially waiting |
+ | `RuntimeCheck(k)` | a safety check the compiler emitted rather than proved away, for kind `k ∈ {Aliasing, Bounds, Stale, Overflow}` — see §X.1.1 |
+ 
+ * `[EFF-1]` Effects are computed per function from its body and the (already computed) effects of its callees, over the call graph, with recursion handled by fixpoint (recursive SCCs are assumed to have the union of their members' direct effects).
+@@ -1633,13 +1641,16 @@
+ 
+   `[EFF-11a]` Reporting `not_proven_by_analysis` where `not_provable_in_principle` is correct is a diagnostic bug: it tells the programmer to restructure code that cannot be improved. The conformance suite fixes the expected reason for each check site in `tests/safety/reasons/`.
+ 
+-* `[EFF-18]` The effect set gains **`Io`** (file, socket, console) and
+-  **`Lock`** (acquiring a synchronisation primitive that may wait), separate
+-  from `Block` and `Sync`, so that "this function touches the disk" and "this
+-  function may wait" are different questions — which is what a frame budget
+-  needs. `@noio` and `@nolock` are the corresponding contracts and behave under
+-  `[EFF-6]`, `[EFF-8]` and `[EFF-2]` exactly as `@noalloc` does. The full set is
+-  `{Alloc, Sync, Lock, Io, Panic, Unsafe, FFI, Block, RuntimeCheck(k)}`.
++* `[EFF-18]` **Effects are orthogonal.** `Io` (file, socket, console) and `Lock`
++  (lock acquisition) are distinct from `Block` (may wait) and `Sync` (synchronisation
++  semantics). One operation MAY carry several of them. In particular, a blocking
++  `Mutex.lock` carries `Sync + Lock + Block`; a non-blocking `try_lock` carries
++  `Sync + Lock`; a blocking file read carries `Io + Block`; and a non-blocking I/O
++  operation carries `Io` without `Block`. `@noio`, `@nolock`, `@noblock` and
++  `@nosync` therefore remain independent contracts. The full set is
++  `{Alloc, Sync, Lock, Io, Panic, Unsafe, FFI, Block, RuntimeCheck(k)}`. `[EFF-18]`
++  does not remove an effect previously attached to any operation; it refines the
++  effect model so a single operation may report all applicable effects.
+ * `[EFF-19]` `@realtime` on a function expands to a configured contract set,
+   by default `@noalloc @nolock @noblock @nopanic(explicit)`. It is a **marker
+   for that set and not a timing guarantee**: the compiler MUST NOT state or
+@@ -1730,16 +1741,36 @@
+   caching rule applies. An `override` of a `virtual` method MUST NOT strengthen
+   `@requires` nor weaken `@ensures` — the inheritance direction `[EFF-8]` uses
+   for effects (`E4052`).
+-* `[CTR-8]` `--contracts=off|debug|all` selects where checks are emitted,
+-  defaulting to `debug` under `debug` and `release`, and `off` under `shipping`.
+-  This is a **checking policy, not a semantic profile**: a contract that fails
+-  describes a program with a bug in every setting, so `[PRF-1]` is not weakened.
+-  A contract discharged under `[PRV-1]` emits no check in any setting.
++* `[CTR-8]` `--contracts=off|debug|all` selects where **runtime contract checks**
++  are emitted. The default is `debug` for debug builds, `debug` for release builds,
++  and `off` for shipping builds. This flag is an **independent instrumentation policy**,
++  not a profile and not part of `[PRF-1]`'s semantic exceptions. A contract remains
++  part of the program's declared interface and is still available to static analysis
++  and `[PRV-*]` verification even when its runtime check is omitted. `--contracts=off`
++  therefore means "do not dynamically instrument the contract", never "the contract
++  does not exist". A contract failure is a bug in every setting. A contract discharged
++  by `[PRV-1]` MAY omit its runtime check in every setting. `--contracts=debug` emits
++  checks only for debug-oriented execution; `--contracts=all` emits checks in all build
++  profiles. Runtime contract instrumentation MUST NOT alter accepted source, the
++  meaning of non-failing execution, or the result of ordinary expressions.
++
++* `[CTR-9]` **Dynamic contract dispatch.** For an interface, virtual, `dyn`, or
++  function-value call, the caller checks the contract attached to the statically
++  visible callable type. An overriding implementation MUST accept every state
++  accepted by the visible precondition and MUST satisfy the visible postcondition;
++  it MUST NOT strengthen `@requires` or weaken `@ensures`. An implementation MAY
++  establish stronger postconditions internally, but those are not additional
++  obligations on callers. This rule applies uniformly to direct interface dispatch,
++  virtual dispatch, `dyn` calls and function values. The selected implementation is
++  resolved before its body is analyzed, while the caller's safety obligation comes
++  from the visible callable contract.
+ 
+ Diagnostics: `E4050` a contract expression with a forbidden effect; `E4051` a
+ contract that cannot be evaluated at its check point; `E4052` an `override`
+ strengthening a precondition or weakening a postcondition; `E4053` `@decreases`
+-on something that is neither a loop nor a recursive function.
++on something that is neither a loop nor a recursive function; `E4054` a dynamically
++dispatched callable whose implementation contract is incompatible with the visible
++contract.
+ 
+ ## X.2b Verification
+ 
+@@ -1783,11 +1814,15 @@
+   where the solver supplies one, and which of four things is responsible: the
+   code, an insufficient contract on a callee, an explicit assumption, or the
+   solver giving up.
+-* `[PRV-8]` `--verify=off|check|prove`. **Verification is not a profile axis.**
+-  It is orthogonal to `debug`/`release`/`shipping` and `[PRF-1]` is untouched:
+-  verification never changes which branch is taken nor what any expression
+-  evaluates to, only whether a check the program would have executed is still
+-  present.
++* `[PRV-8]` `--verify=off|check|prove`. **Verification is not a profile axis and is
++  independent of `--contracts`.** `off` performs no proof search. `check` runs the
++  verifier and reports `proved`, `disproved` and `unknown` outcomes but does not gate
++  compilation on those outcomes and MUST NOT turn unproved obligations into runtime
++  checks. `prove` runs the verifier and requires every obligation attached to
++  `@verified` to be `proved`; `disproved` and `unknown` fail the build. Verification
++  never changes which branch is taken or what an expression evaluates to. Runtime
++  contract instrumentation is controlled only by `[CTR-8]`; formal verification is
++  evidence generation, not runtime instrumentation.
+ * `[PRV-9]` A build with `--verify=prove` writes `target/<profile>/verify.json`:
+   compiler version, standard-library version, target triple, solver name and
+   version, the content hash of every module, one entry per obligation with its
+@@ -2132,6 +2167,16 @@
+   require const generics, which v1 does not have; a v1 implementation MAY
+   provide them for a fixed set of capacities and MUST NOT pretend the general
+   form exists.
++
++* `[STD-7a]` General const-generic support for integer capacity parameters is a
++  prerequisite for the unbounded `FixedArray[T, N]`, `FixedString[N]` and
++  `RingBuffer[T, N]` forms. The implementation plan therefore contains an explicit
++  **const-generic milestone before the fixed-capacity container milestone**. A
++  bootstrap implementation MAY expose a finite set of capacities temporarily, but
++  it MUST diagnose a non-supported capacity as a capability limitation rather than
++  as a malformed type, and it MUST NOT claim `[STD-7]` complete until arbitrary
++  compile-time `N` is accepted. `[CG-1]` through `[CG-4]` govern parsing, constant
++  evaluation, monomorphisation and identity of const-generic arguments.
+ 
+ # Part XVI — Foreign Function Interface
+ 
+@@ -2346,12 +2391,14 @@
+   endorsement. This **narrows** `[FFI-11]`'s `borrowed`: that contract is now the
+   promotion a human writes, not the default the importer applies (`E5051`).
+ * `[FFI-36]` **Ownership transfer is written at the call site.** A foreign call
+-  yielding an object Ember must destroy returns `Foreign[T]` — an unsafe handle —
+-  and becomes an owned Ember value only through `adopt(handle)`. The overlay
+-  declares whether adoption is permitted and what destroys the object; it does
+-  not perform the transfer invisibly. In review, the moment Ember became
+-  responsible for freeing something is a line that can be pointed at. Adopting a
+-  handle the overlay does not permit adopting, or adopting twice, is `E5052`.
++  yielding an object Ember must destroy returns the existing raw/opaque foreign
++  pointer representation (`*T`, `*mut T` or an `extern type` handle), not a second
++  owned-wrapper type. That handle becomes an owned Ember value only through
++  `adopt(handle)`, which produces `ForeignBox[T]`. The overlay declares whether
++  adoption is permitted and which destructor releases the native object; it does not
++  perform the transfer invisibly. Adopting a handle the overlay does not permit, or
++  adopting the same native object twice, is `E5052`. `ForeignBox[T]` is the sole
++  standard owned representation for a foreign object. There is no `Foreign[T]` type.
+ * `[FFI-37]` **Declared effects are checked, not believed.** A run under
+   `[CLI-14]` links a shim recording allocation, blocking, locking and I/O across
+   every foreign call and reports each declared effect fact as confirmed or
+@@ -3022,7 +3069,7 @@
+ * `[CLI-7]` `ember bind --check <overlay>` verifies `[FFI-12]` without building, and prints the counts of declarations that are safe, still `unsafe`, and skipped — so the state of an adoption is a number a team can watch.
+ * `[TST-8]` **First-draft corpus.** `tests/firstweek/` holds at least 24 programs of 30–200 lines, each the *first draft* of a task a newcomer plausibly attempts in week one — a text adventure with rooms holding items, a particle fountain, a CSV summariser, a scene graph with parent pointers, an observer/event bus, an inventory with equipment slots, a tile-map path finder, a config loader, a ring buffer of chat messages, a small hand-rolled ECS. Each is contributed by someone who has read only Part I and Appendix A, MUST be committed unmodified, and records its author's experience level.
+ * `[TST-9]` Each program carries `#$ firstdraft: accepted` or `#$ firstdraft: rejected(<shape>)` naming a §XIX.6.1 or §XIX.6.2 shape. **A rejection whose shape is in no catalogue is a release blocker** — it is `[DIA-7]`'s unclassified case in the only corpus not written by people who already know the answer. The companion obligation — that the mandated `help`, applied literally, produces a program that compiles — is `[PHIL-8a]` (RFC-011) and applies to the whole catalogue, not only to this corpus; the corrected program is committed beside the draft as `<name>.fixed.em`.
+-* `[TST-11]` **v0.5 regression obligations.** The conformance suite MUST contain, in addition to the per-rule directories `[TST-4]` requires: for `[EXC-4]`, instantaneous scalar reads, `Copy` field reads, container iteration through `let` fields, `ref`/`ref mut` projections, mutating methods through `let` containers, and aliasing mutation during iteration; for `[LT-7]`, callback-local borrows, escape rejection, internal-only region inference, and nested callback-region separation; for `[TYP-15]`/`[TYP-15a]`, rejection of arbitrary owning view containers, acceptance of `BorrowList[T]`/`ViewList[T]` only under a single inferred region, rejection where two independent regions would be required, and escape rejection through class fields, `static`s, `Box` and `Shared`; for `[FFI-30c]`, overlay composition order, explicit `override`, incompatible-definition diagnostics, foreign type identity stability, and build invalidation on overlay change; for `[EFF-17]`, rejection of every `Panic(Explicit)` source and acceptance of division by `NonZero[T]`; and for `[PRF-1]`, that one source receives the same contract verdict under `debug`, `release` and `shipping`, and that `--report=engine` does not alter that verdict.
++* `[TST-11]` **v0.5 regression obligations.** The conformance suite MUST contain, in addition to the per-rule directories `[TST-4]` requires: for `[EXC-4]`, instantaneous scalar reads, `Copy` field reads, container iteration through `let` fields, `ref`/`ref mut` projections, mutating methods through `let` containers, and aliasing mutation during iteration; for `[LT-7]`, callback-local borrows, escape rejection, internal-only region inference, and nested callback-region separation; for `[TYP-15]`/`[TYP-15a]`, rejection of arbitrary owning view containers, acceptance of `BorrowList[T]`/`ViewList[T]` only under a single inferred region, rejection where two independent regions would be required, and escape rejection through class fields, `static`s, `Box` and `Shared`; for `[FFI-30c]`, overlay composition order, explicit `override`, incompatible-definition diagnostics, foreign type identity stability, and build invalidation on overlay change; for `[EFF-17]`, rejection of every `Panic(Explicit)` source and acceptance of division by `NonZero[T]`; and for `[PRF-1]`, that one source receives the same contract verdict under `debug`, `release` and `shipping`, and that `--report=engine` does not alter that verdict. The v0.6 suite MUST additionally cover `[EFF-18]`'s orthogonal effect combinations, `[CTR-8]`'s independent runtime instrumentation policy, `[PRV-8]`'s `off/check/prove` semantics, `[FFI-36]`'s single `ForeignBox[T]` ownership path, `[RNG-5]`'s distinct-range arithmetic rejection, `[BLD-11]`'s name-resolution error namespace, `[CTR-9]`'s dynamic-dispatch contract rule, `[STD-7a]`'s arbitrary const-generic capacities, and `[TCB-5..6]` evidence invalidation after a foreign identity or contract hash changes.
+ * `[TST-10]` The harness computes the **first-draft acceptance rate** (accepted ÷ total) into `target/firstweek.json` and the release notes publish it. It is a **tracked number, not a gate** — the gate is `[TST-9]`'s blocker — and a release that lowers it MUST say why.
+ * `[TST-5]` `tests/debug/` runs, on every supported host in CI, a scripted debugger session (`cdb` on Windows, `lldb`/`gdb` elsewhere) against a `debug` build: set a breakpoint by Ember `file:line` and verify it binds; step three Ember statements and verify the reported line advances by one construct each; print four locals by their Ember names and match the rendered text against a snapshot. A host on which `[TST-5]` cannot run is reported as **debug-unverified** and requires a recorded waiver; it does not thereby cease to be a supported host, since debugger automation is a property of the CI image.
+ 
+@@ -3197,6 +3244,17 @@
+   solver, assumption. **The compiler is in the list.** Its own defects are part
+   of what any claim rests on, and the report says so rather than implying the
+   toolchain stands outside the question.
++* `[TCB-5]` An `instrumented` fact is valid only for the exact foreign identity and
++  contract it was measured against. Its evidence record MUST include: foreign library
++  identity/version, header or interface content hash, effective ABI/toolchain hash,
++  overlay/contract hash, instrumentation shim hash, test binary hash, test
++  configuration and observation time. The record is stored under
++  `target/<profile>/ffi-evidence/` and is referenced by content hash.
++* `[TCB-6]` Instrumented evidence becomes `stale` when any identity or input recorded
++  by `[TCB-5]` changes. A stale record MUST NOT satisfy an `instrumented` claim,
++  a verified build requirement, or `[FFI-37]`; the report MUST mark it `stale` and
++  tell the user to rerun `[CLI-14]`. Evidence expiry is therefore content-based,
++  not solely time-based.
+ * `[CLI-11]` `ember tcb [--json] [--module <m>]` prints the report. `ember audit`
+   prints a one-page summary: the core safety analyses, the effect totals, the
+   foreign boundary, and the verification counts.
+@@ -3208,11 +3266,11 @@
+   against a frame entry point it is the measure of how much of a migration
+   remains, and it falls as subsystems are replaced.
+ * `[CLI-14]` `ember test --instrument-ffi` performs `[FFI-37]`'s run.
+-* `[BLD-11]` A package declares which `[STD-6]` layers it links. Omitting
+-  `alloc` removes the allocating types from the build, so a reference to one is
+-  a name-resolution error (`E9030`) rather than a lint. This is stronger than a
+-  coding rule that says do not allocate, and it is checkable by a person reading
+-  the manifest.
++* `[BLD-11]` A package declares which `[STD-6]` layers it links. Omitting `alloc`
++  removes allocating types from the build. Referring to one is a name-resolution
++  diagnostic in the name-resolution namespace (`E1020`), not a build-system error
++  code and not a lint. The build system remains responsible for determining the
++  available symbol set; the resolver owns the user-facing missing-symbol diagnostic.
+ * `[BLD-12]` A package that omits a layer MUST NOT depend on a package requiring
+   it; the build reports the dependency path that reintroduces it.
+ * `[TST-12]` The conformance suite MUST contain a program per grade asserting

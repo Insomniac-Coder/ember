@@ -1,0 +1,78 @@
+--- Ember_v0.9.9_Hardened_38.md
++++ Ember_v0.9.9_Hardened_39.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_38
+-**Supersedes:** 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_39
++**Supersedes:** 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -491,7 +491,9 @@
+   with the help `move it into a function`.
+ * `[GRM-37]` *(new in 0.9.9)* A **directive** is a line beginning `#!` before the imports.
+   `#! language "<version>"` is accepted only for the current version (`[VER-8]`, `E0006`);
+-  `#! threads main|any|creator` sets the default thread contract of the file's exports (`[FFI-33]`).
++  `#! threads main|any|creator` sets the default thread contract of the file's exports (`[FFI-33]`);
++  `creator` on a static free-function export uses that rule's successful module-initialization
++  anchor, not a per-callable instance.
+   Any other directive is `E0104`. `import cpp` is Annex C.
+ 
+ ## III.2 Items
+@@ -4460,6 +4462,20 @@
+ * `[FFI-33]` `@export(threads=any | main | creator)` states which threads may call an export; the
+   default is the file's `#! threads` directive (`[GRM-37]`), else `any`. Under `any`, everything the export reaches is checked as if it ran on any thread: every
+   static it reaches is `Sync` and no non-`@sync` class handle is reachable from a static (`E7010`).
++  For a static free-function export, `creator` is the thread whose successful initialization
++  established that module's export contract; initialization establishes the contract, not the
++  linked function address or a per-callable instance. For a static library or executable using a
++  private runtime, this is the thread of the first successful `ember_rt_init`. For a `cdylib`, it
++  is the thread of that module's successful `ember_module_init`, even when the runtime is shared;
++  the identity is per module, not global to the shared runtime. The wrapper attaches the calling
++  thread before checking the contract. A call before initialization or after shutdown panics.
++  Repeated initialization while the module remains initialized does not transfer the contract;
++  initialization after shutdown establishes a new creator. In every profile, `creator` checks
++  that the caller is this thread and permits thread-confined state, as `main` does under
++  `[FFI-33c]`. The generated export-header comment preserves the resolved `creator` policy,
++  including when inherited from the file directive. This rule concerns static free-function
++  exports only; `[FFI-33b]`'s `ForeignBox`, `Retained`, and value-bearing
++  callback creation contracts remain distinct.
+ * `[FFI-33c]` *(new in 0.9.9)* Under `threads = main`, the exported wrapper checks, in every profile, that
+   the calling thread is the one that initialised the module, and panics otherwise; in exchange the body
+   may use thread-confined state. An `@export_table` may set `threads` per field.
+@@ -6730,7 +6746,8 @@
+ between absent and present-empty views; Hardened_36 adds ODR-080, nullable borrowed C strings and
+ their null-pointer niche; Hardened_37 adds ODR-081, the fallible owned C-string conversion and
+ explicit borrowed view; Hardened_38 adds ODR-082, the C qualifier asserted by an immutable
+-foreign static.
++foreign static; Hardened_39 adds ODR-083, the initialization anchor for static export creator
++contracts.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6796,6 +6813,7 @@
+ | ODR-080 | `Option[cstr]` has a null-pointer niche; nullable borrowed NUL-terminated C inputs and results use it without changing their lifetime contract (Hardened_36) | `[TYP-13]`, `[FFI-11]`, `[FFI-15]` |
+ | ODR-081 | `str.to_cstring()` returns `Result[CString, NulError]`, checking for interior NUL before allocation; `.as_cstr()` is an explicit borrow of its owner (Hardened_37) | `[TXT-5]`, `[FFI-15]` |
+ | ODR-082 | `@ffi(immutable)` asserts a `const` C object for a hand-declared foreign static, with a matching C declaration and safe `Sync` read (Hardened_38) | `[FFI-8]` |
++| ODR-083 | the `creator` thread contract of a static free-function export is anchored to successful module initialization; idempotent init does not transfer it and reinitialization after shutdown establishes a new creator (Hardened_39) | `[FFI-33]`, `[FFI-33c]`, `[GRM-37]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6831,6 +6849,7 @@
+ | `[FFI-10]` | changed |
+ | `[FFI-11]` | changed |
+ | `[FFI-15]` | changed |
++| `[FFI-33]` | changed |
+ | `[FMT-1]` | changed |
+ | `[FN-1]` | changed |
+ | `[FN-1a]` | changed |
+@@ -6839,6 +6858,7 @@
+ | `[FN-9]` | changed |
+ | `[FN-10]` | changed |
+ | `[GRM-34]` | changed |
++| `[GRM-37]` | changed |
+ | `[GRM-39]` | added |
+ | `[HASH-1]` | changed |
+ | `[HASH-2]` | changed |

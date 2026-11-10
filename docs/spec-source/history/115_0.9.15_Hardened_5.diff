@@ -1,0 +1,312 @@
+--- Ember_v0.9.15_Hardened_4.md
++++ Ember_v0.9.15_Hardened_5.md
+@@ -1,6 +1,6 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.15_Hardened_4
++**Version:** 0.9.15_Hardened_5
+ **Supersedes:** 0.9.15_Hardened_3 (development target), 0.9.15_Hardened_2, 0.9.15_Hardened_1 and every
+ earlier file: 0.9.10_Hardened_1 to
+ 0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3 and 0.8.5_Hardened_1
+@@ -869,7 +869,7 @@
+ ```text
+ expression    := jump_expr | lambda | ternary
+ jump_expr     := "return" [expr_list] | "break" [IDENT] | "continue" [IDENT] | "yield" [expression]
+-lambda        := ["once"] "fn" "(" [lambda_param {"," lambda_param} [","]] ")" [capture_list]
++lambda        := ["@safety" "(" STRING ")"] ["once"] "fn" "(" [lambda_param {"," lambda_param} [","]] ")" [capture_list]
+                  ["->" type] ("=>" expression | ":" block)
+ lambda_param  := [param_word] IDENT [":" type]
+ capture_list  := capture {"," capture}
+@@ -4642,12 +4642,19 @@
+   otherwise.
+ * `[UNS-7]` *(changed in 0.9.15)* Every `unsafe fn` carries `@safety("…")` stating what its callers must
+   make true: a function declared inside unsafe code, which is an `unsafe fn` (`[UNS-12]`, verdict
+-  119), and one declared in an `unsafe extern` block (`[FFI-10]`, verdict 120) included. Without it,
++  119), one declared in an `unsafe extern` block (`[FFI-10]`, verdict 120), and a function `import c` or
++  `import cpp` writes (`[FFI-6]`, `[FFI-17]`) that its overlay entry leaves unsafe to call (verdict 125),
++  which carries it in that entry, above `unsafe fn name(…)` (`[GRM-35]`), included. Without it,
+   `L3015` ("`read_u32_le` is an `unsafe fn` that reads through the raw pointer `p`, and nothing says
+   what its callers must make true for that; say it above the function: `@safety("...")`, with what
+-  `p` must point to"; a declaration with no body is named without a step). A lambda written inside
+-  unsafe code has no line for `@safety` and gets no `L3015`: whoever calls it vouches in the note of
+-  the block the call is in. `@safety` is the declaration's only note: a `# SAFETY:` note on an
++  `p` must point to"; a declaration with no body is named without a step). For an imported function,
++  `L3015` is given once for each function, at its first call in unsafe code: "`lib_step` is a C
++  function the program calls in unsafe code, and nothing says what its callers must make true; say it
++  in the overlay entry for `lib_step`: `@safety("...")` above `unsafe fn lib_step(…)`". A lambda
++  written inside unsafe code, an `unsafe fn(…)` value, carries `@safety` too, written just before it
++  (`set = @safety("`p` points to a writable `int`") fn(v: int) => p.write(v)`, verdict 126), and
++  without it is `L3015`; the text stays with the lambda, which `ember tcb` lists, while a value's type
++  `unsafe fn(…)` carries none, as for a named function. `@safety` is the declaration's only note: a `# SAFETY:` note on an
+   `unsafe fn`, alone on the line before it or at the end of its line (`[LEX-23]`), is `W3013`
+   ("`read_u32_le` says what its callers must make true with `@safety`; a `# SAFETY:` note says why an
+   `unsafe:` block is sound: remove this line"; "… remove this note" for one at the end of the
+@@ -4889,7 +4896,9 @@
+   parameter with every argument given to it, and a place a value is copied into with the functions of
+   the place it came from. A value the compiler cannot follow, read through a raw pointer or given by C,
+   has those of every function stored into its type. A place no function ever reaches is called by no
+-  code that runs, and contributes nothing. For an interface, `dyn`
++  code that runs, and contributes nothing. Dropping a function value has the effects of dropping each
++  function that reaches its place: none for a named function, its captured values' drops for a
++  lambda. For an interface, `dyn`
+   or `virtual` method, it is every implementation and override the program has. A foreign function
+   pointer (`extern "C" fn`) contributes the effects its type declares, and all effects if none are
+   declared. A contract is written on a function type above a `type` line that names one (verdict 106):
+@@ -6841,13 +6850,15 @@
+   from the C declaration are derived (`[FFI-2a]`); the rest are `unknown` until a contract supplies
+   them. `threads(creator)` and `handle` are words of a type's or a result's contract, not a function's:
+   on a function each is a contract error (`E5002`).
+-* `[FFI-2]` *(changed in 0.9.9)* A call to a foreign function whose contract contains an `unknown` fact
++* `[FFI-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* A call to a foreign function whose contract contains an `unknown` fact
+   requires `unsafe`. Supplying the facts, in an `@ffi(…)` attribute or an overlay (§XVI.4), makes the
+   call safe. The safe-to-call fact is never derived, because a scalar can be an address
+   (`void free_addr(uintptr_t)`): it is asserted by `safe fn` in an extern block (`[FFI-10]`), or by an
+   overlay entry for the function, which asserts that a call within its contract cannot break memory
+-  safety; such an overlay is an `unsafe overlay` (`[GRM-35]`). A header function with no overlay entry
+-  therefore stays unsafe to call. The diagnostic,
++  safety; such an overlay is an `unsafe overlay` (`[GRM-35]`). An entry written `unsafe fn` asserts
++  nothing of the kind: the function stays unsafe to call, and the entry's `@safety` says what its
++  callers must make true (`[UNS-7]`, verdict 130). A header function with no overlay entry therefore
++  stays unsafe to call. The diagnostic,
+   `E5002`, names each missing fact and the overlay line that supplies it (`[DIA-18]`).
+ * `[FFI-2a]` *(changed in 0.9.15)* Derived facts need no `unsafe`: `const T*` is a read-only view, `T*`
+   one through which C may write; the layouts of structs and unions, enum underlying types, packing and
+@@ -7053,8 +7064,8 @@
+   overlay_item  := {attribute} (overlay_fn | "type" IDENT NEWLINE | "enum" IDENT NEWLINE
+                    | "rename" IDENT "as" IDENT NEWLINE | "hide" IDENT NEWLINE | extend_decl
+                    | overlay_class)
+-  overlay_class := "class" IDENT ":" NEWLINE INDENT {{attribute} fn_header NEWLINE} DEDENT
+-  overlay_fn    := "fn" IDENT "(" [overlay_param {"," overlay_param} [","]] ")"
++  overlay_class := "class" IDENT ":" NEWLINE INDENT {{attribute} overlay_fn} DEDENT
++  overlay_fn    := ["unsafe"] "fn" IDENT "(" [overlay_param {"," overlay_param} [","]] ")"
+                    ["->" contract {contract}] NEWLINE
+   overlay_param := IDENT [":" contract {contract}]
+   contract      := IDENT ["(" [attr_arg {"," attr_arg} [","]] ")"]
+@@ -7063,15 +7074,17 @@
+   In an entry marked `@ffi(macro_fn)` (`[FFI-6b]`) a parameter's and the result's words are one Ember
+   type each (`IDENT ":" type`, `"->" type`), since a macro has no C declaration to read (ODR-147). An
+   item may begin with `override`, replacing an earlier overlay's entry for that name (`[FFI-30c]`,
+-  ODR-149). An `overlay_class` section restates methods of a C++ class, each as an Ember method line
+-  with no body, whose `@ffi(const)`, when written, asserts that the method only reads its object
+-  (`[FFI-40a]`, ODR-160). Ember records the header each overlay was written for in `ember.overlays`,
++  ODR-149). An `overlay_class` section holds the entries of a C++ class's members (verdict 131): its
++  methods, which list no receiver, its constructors (`new`) and its static functions, each written as
++  any other entry; `@ffi(const)` above a method's entry asserts that the method only reads its object
++  (`[FFI-40a]`, ODR-160). An entry outside a class section is a function outside any class
++  (`[FFI-12]`). Ember records the header each overlay was written for in `ember.overlays`,
+   never in the overlay (`[FFI-55]`).
+ 
+   Contract words take the place of types and are separated by spaces. `overlay`, `rename` and `hide`
+   are contextual keywords (`[LEX-15]`). An overlay whose items state any fact — a contract word, an
+-  `@ffi(…)` attribute, a function entry, which asserts the function safe to call (`[FFI-2]`), or a
+-  method line — is an
++  `@ffi(…)` attribute, or a function entry, which asserts the function safe to call or, written
++  `unsafe fn`, states what its callers must make true (`[FFI-2]`) — is an
+   assertion about foreign code and MUST be declared `unsafe overlay` (`E5067`), a boundary of
+   `[TIER-1]`; an overlay of only `rename` and `hide` items needs no `unsafe`.
+ * `[FFI-11]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **Contract vocabulary.** A pointer contract has five axes;
+@@ -7095,10 +7108,11 @@
+   Other contract words: `out` (an out-parameter, returned instead); `status` (with `@ffi(status=E,
+   ok=X, error=N)` on the enum, `[FFI-16]`); `handle`; `callback(borrowed | retained | once, user_data=p)`
+   (`[FFI-21]`); `threads(any | main | creator)`; `destroys(f)` (`f`'s parameters may be the registering
+-  call's own and its result, `id = listen(…)` then `unlisten(id)`: the token keeps them); `unsafe`
+-  (leave the call unsafe); and, on a function, `no_callbacks` (it never calls back into Ember,
++  call's own and its result, `id = listen(…)` then `unlisten(id)`: the token keeps them); `unsafe` in `@ffi(…)` on a hand
++  declaration (leave the call unsafe); and, on a function, `no_callbacks` (it never calls back into Ember,
+   `[FFI-52]`), and on a function-pointer typedef, `safe` (`[FFI-56]`).
+-  `@ffi(effects=[…])` states effects.
++  `@ffi(effects=[…])` states effects. An overlay entry leaves its calls unsafe by being written
++  `unsafe fn` (`[GRM-35]`, verdict 130); in an overlay, `unsafe` is no contract word.
+ * `[FFI-11a]` A pointer contract with no count word is `E5012`, which lists the five count words and
+   names any sibling parameter that looks like a length (an unsigned integer, or a name ending `Count`,
+   `Len`, `Size` or `N`).
+@@ -7111,8 +7125,10 @@
+   that mark a fact as still unknown: the declaration stays uncontracted and its calls stay `unsafe`.
+   A header can be adopted on the first day with everything behind `unsafe:`, and made safe one
+   function at a time.
+-* `[FFI-12]` An overlay entry whose name, parameter count or parameter names do not match the header is
+-  `E5010`, so overlays cannot drift.
++* `[FFI-12]` *(changed in 0.9.15)* An overlay entry whose name, parameter count or parameter names do not
++  match the header is `E5010`, so overlays cannot drift. So is an entry outside a class section that
++  names only members of classes (verdict 131): "`new` is a member of `Handle` and of `MutHandle`:
++  write it under `class Handle:` or `class MutHandle:`".
+ * `[FFI-55]` *(new in 0.9.15)* **Every overlay is checked against the header it was written for, by a
+   record Ember keeps** (verdict 121). A package with an overlay of a C or C++ header has a file
+   `ember.overlays` beside its `ember.toml`, written by Ember and never by hand. For each overlay it
+@@ -7121,7 +7137,7 @@
+ 
+   ```text
+   # ember.overlays: the headers this package's overlays were checked against.
+-  # Written by ember; `ember bind --merge` rewrites it.
++  # Written by ember; `ember bind <header> --check <overlay> --merge` rewrites a line.
+ 
+   [[overlay]]
+   file = "overlays/sdl.em"
+@@ -7130,16 +7146,18 @@
+   ```
+ 
+   Ember writes the record the first time the package's own build applies the overlay, and only
+-  `ember bind --merge` rewrites it (`[CLI-5]`); a declaration the overlay describes that the record
++  `ember bind <header> --check <overlay> --merge`, run once a person has checked the overlay against
++  the header, rewrites a line of it (`[CLI-7]`); a declaration the overlay describes that the record
+   lacks, an entry just written, is added by the package's own build. Every build that applies an
+   overlay, its own package's and any other's, compares each declaration the overlay describes with
+   the header it imports. One that differs is `E5010`, naming the overlay, the declaration as the
+   header imported declares it, and the way out ("`SDL_FreeSurface` changed since `overlays/sdl.em` was
+   checked: the `SDL.h` imported here declares `void SDL_FreeSurface(SDL_Surface*, int)`; check the
+-  overlay against this header, then run `ember bind --merge`"); in another package's build, an overlay
++  overlay against this header, then run `ember bind SDL.h --check overlays/sdl.em --merge`"); in another package's build, an overlay
+   or a declaration its package's record lacks is `E5010` too. A change to a declaration the overlay
+-  does not describe changes nothing. A program with no `ember.toml` is no package and nobody's
+-  dependency, so Ember keeps its overlays' record in its own cache instead, checked the same way.
++  does not describe changes nothing. Every program has an `ember.toml` (`[MAN-9]`), so the record is
++  always beside one. An overlay in no package's folder is the importing program's own: its record is
++  that package's, naming the overlay by its path from the package (`../vendor/sdl.em`).
+   Nothing of this is written in the overlay or in the program.
+ * `[FFI-13]` An overlay may contain `extend` blocks with ordinary Ember wrapper methods; this is how an
+   idiomatic API is layered over a raw one.
+@@ -7607,11 +7625,15 @@
+   fact as a `TODO(…)` word (`[FFI-11c]`), every skipped declaration as a comment with its reason. It
+   compiles unchanged and never overwrites a file; with `--merge` it adds only the declarations missing
+   from an existing overlay, keeping hand-written contracts and comments, and records the header as it
+-  now is in the package's `ember.overlays` (`[FFI-55]`), the only way that record changes once written.
++  now is in that overlay's line of the package's `ember.overlays` (`[FFI-55]`). A declaration it leaves
++  unsafe to call is written `unsafe fn` (verdict 130).
+ * `[CLI-6]` `ember bind --report` lists every skipped declaration and every declaration still
+   `unsafe` with its unknown facts, and exits non-zero on a skip (`--baseline` limits that to new ones).
+-* `[CLI-7]` `ember bind --check <overlay>` checks `[FFI-12]` and prints how many declarations are
+-  safe, still `unsafe`, and skipped.
++* `[CLI-7]` *(changed in 0.9.15)* `ember bind <header> --check <overlay>` checks `[FFI-12]` and prints
++  how many declarations are safe, still `unsafe`, and skipped. With `--merge`, once the overlay passes,
++  it writes the header's declarations as they are now into the overlay's line of `ember.overlays`
++  (`[FFI-55]`): with `--init --merge` (`[CLI-5]`), the only ways a line of the record changes once
++  written.
+ * `[CLI-10]` `ember build --report=engine` is a report, not a profile: it changes nothing about the
+   program, and summarises allocations, surviving count operations and runtime checks with their
+   reasons, vectorised loops and why others were not, FFI wrapper costs, inlining decisions, and classes
+@@ -7671,6 +7693,11 @@
+ * `[MAN-2]` *(changed in 0.9.15)* `ember.lock` records the resolved dependencies with content hashes;
+   `--locked` fails if it would change. Beside it, `ember.overlays` records the headers the package's
+   overlays were checked against (`[FFI-55]`); Ember writes both, and neither is edited by hand.
++* `[MAN-9]` *(new in 0.9.15)* **Every program is a package** (verdict 127). A command that compiles a
++  file (`ember build`, `check`, `run`, `test`, `lint`) with no `ember.toml` in its folder or any folder
++  above it first writes a default one in the file's folder, `[package]` with the folder's name as `name`
++  and `version = "0.1.0"`, and says so on standard error; `ember bind` does so in a header's folder no
++  package holds. The program is then that package, and `ember.overlays` sits beside it (`[FFI-55]`).
+ * `[MAN-3]` *(changed in 0.9.9)* Every key in `[lints]` names a lint the compiler defines (`E9010`
+   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
+   parameters.
+@@ -8386,7 +8413,7 @@
+ | `E4072` | `@fastmath` or `@fp(allow_fma)` inside `@deterministic` | `[DET-5]` |
+ | `E5001` | imported type layout does not match | `[FFI-5]` |
+ | `E5002` | a foreign declaration whose contract cannot stand: `safe fn` on a function whose contract is incomplete, or two destructors for one foreign type (a call of a function without a verified contract outside `unsafe` is `E3100`) | `[FFI-2]`, `[FFI-10]`, `[FFI-36a]` |
+-| `E5010` | overlay does not match the C declaration; a declaration an overlay describes differs from the one `ember.overlays` records, or the package has no record of the overlay | `[FFI-12]`, `[FFI-55]` |
++| `E5010` | overlay does not match the C declaration; a declaration an overlay describes differs from the one `ember.overlays` records, or the package has no record of the overlay; an entry outside a class section that names only members of classes | `[FFI-12]`, `[FFI-55]` |
+ | `E5011` | one C identity imported with two different layouts | `[FFI-30]` |
+ | `E5012` | pointer contract has no count | `[FFI-11]` |
+ | `E5013` | a further argument of a variadic C function that C would promote to another type | `[FFI-8]` |
+@@ -8470,7 +8497,7 @@
+ | `L2005` | `@noreload` function calls a reloadable one in a loop | `[LNT-5]` |
+ | `L3002` | a view kept in use longer than necessary | `[LNT-6]` |
+ | `L3010` | `unsafe` block larger than necessary, or inside unsafe code already | `[UNS-3]` |
+-| `L3015` | an `unsafe fn` with no `@safety` | `[UNS-7]` |
++| `L3015` | an `unsafe fn` with no `@safety`: one declared, a lambda written in unsafe code, or a function `import c` or `import cpp` writes that its overlay entry leaves unsafe to call | `[UNS-7]` |
+ | `L3016` | `@safety` text still reads `TODO` | `[UNS-7]` |
+ | `L3017` | a loop of owners found leaked at exit (made through `unsafe` or foreign code) | `[WK-4]` |
+ | `L3020` | a `safe:` block outside unsafe code, which changes nothing | `[UNS-12]` |
+@@ -9490,11 +9517,12 @@
+   address, binds no non-`const` reference or pointer to one, calls no non-`const` method of one, hands
+   neither the object nor a field to a function by non-`const` reference or pointer, and calls no method
+   of the object that may change it, nor anything it cannot follow — and as changing it otherwise, or
+-  when the header does not have the body (ODR-160). An overlay's `class C:` section restates a method
+-  as an Ember method line (`fn lookups() -> c_int`); `@ffi(const)` above the line asserts that the
+-  method only reads its object, an asserted fact, which `ember tcb` lists, and a line without it
+-  imports the method as changing its object. A line whose name, parameters or result differ from the
+-  import's method is `E5010`.
++  when the header does not have the body (ODR-160). An overlay's `class C:` section holds the entry of
++  each member it states (`[GRM-35]`, verdict 131): `@ffi(const)` above a method's entry
++  (`fn lookups()`) asserts that the method only reads its object, an asserted fact, which `ember tcb`
++  lists; an entry without it leaves the importer's reading of the body, as an Ember method's is worked
++  out from its body (`[FN-4]`). An entry whose name or parameters differ from the import's member is
++  `E5010` (`[FFI-12]`).
+ * `[FFI-41]` *(changed in 0.9.15)* Static member functions import as functions of the type with no
+   object, as a `static fn` is (`[FN-4]`). A static data member, and a
+   variable of a namespace, imports as a foreign static (`[FFI-10]`), read and written as a global
+@@ -12321,6 +12349,42 @@
+ | `[UNS-7]` | changed |
+ | `[UNS-11]` | changed |
+ | `[UNS-12]` | changed |
++
++## H.45 Changes in 0.9.15_Hardened_5 (from 0.9.15_Hardened_4)
++
++**0.9.15_Hardened_5** writes in the owner's verdicts 125 to 131 from the ODR review of 2026-10-29, evening
++(`tasks/96/redesign/JOB.md`); the lead's other rulings of Hardened_4 were approved as written
++(`tasks/96/redesign/compiler-0.9.15/decisions.md`, "Owner verdicts on §9's rulings"):
++
++* Verdict 125: a function `import c` or `import cpp` writes that its overlay entry leaves unsafe to
++  call carries `@safety` in that entry; a call of one without it is `L3015`, once for each function, at
++  its first call in unsafe code (`[UNS-7]`).
++* Verdict 126: a lambda written in unsafe code carries `@safety`, written just before it, and one
++  without it is `L3015` (`[UNS-7]`, the grammar's `lambda`).
++* Verdict 127: every program is a package; a build of a file with no `ember.toml` writes a default one
++  (`[MAN-9]`, new); the overlay record is always beside it (`[FFI-55]`).
++* Verdicts 128 and 129: a callable parameter holds what its callers pass, and a function put into a
++  list is followed into the list's place, as `[EFF-2]` says; dropping a function value has the effects
++  of dropping the functions that reach its place (`[EFF-2]`).
++* Verdict 130: an overlay entry for a function unsafe to call is written `unsafe fn`, with its
++  `@safety`; the `unsafe` contract word is gone (`[GRM-35]`, `[FFI-2]`, `[FFI-11]`, `[CLI-5]`).
++* Verdict 131: a C++ class member's entry is written under its class; an entry outside a class section
++  that names only members is `E5010` (`[GRM-35]`, `[FFI-12]`, `[FFI-40a]`).
++* `ember bind <header> --check <overlay> --merge` re-records an overlay once it is checked, and
++  `E5010`'s message names that command (`[CLI-7]`, `[FFI-55]`).
++
++Generated: every rule whose text differs from 0.9.15_Hardened_4.
++
++| Rule | 0.9.15_Hardened_4 → 0.9.15_Hardened_5 |
++|---|---|
++| `[CLI-5]` | changed |
++| `[CLI-7]` | changed |
++| `[EFF-2]` | changed |
++| `[FFI-2]` | changed |
++| `[FFI-12]` | changed |
++| `[FFI-40a]` | changed |
++| `[MAN-9]` | added |
++| `[UNS-7]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -12514,7 +12578,7 @@
+ | `[CLI-4]` | XVII | `ember run file.em` and `ember build file.em` accept a single file … |
+ | `[CLI-5]` | XVII | *(changed in 0.9.10)* `ember bind --init <header>` writes a starter … |
+ | `[CLI-6]` | XVII | `ember bind --report` lists every skipped declaration and every … |
+-| `[CLI-7]` | XVII | `ember bind --check <overlay>` checks `[FFI-12]` and prints how many … |
++| `[CLI-7]` | XVII | *(changed in 0.9.15)* `ember bind <header> --check <overlay>` checks … |
+ | `[CLI-9]` | XVII | `ember check --syntax-only` lexes and parses only, reporting `E00xx` … |
+ | `[CLI-10]` | XVII | `ember build --report=engine` is a report, not a profile: it changes … |
+ | `[CLI-11]` | XVII | `ember audit` prints a one-page summary of a package's safety … |
+@@ -12845,7 +12909,7 @@
+ | Rule | Part | Begins |
+ |---|---|---|
+ | `[FFI-1]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* Every foreign declaration … |
+-| `[FFI-2]` | XVI | A call to a foreign function whose contract contains an `unknown` … |
++| `[FFI-2]` | XVI | *(changed in 0.9.15)* A call to a foreign function whose contract … |
+ | `[FFI-2a]` | XVI | *(changed in 0.9.15)* Derived facts need no `unsafe`: `const T*` is a … |
+ | `[FFI-3]` | Annex C | Ember never links against C++ mangled symbols. The importer generates … |
+ | `[FFI-4]` | XVI | No Ember panic crosses into foreign code (`[FFI-25]`). |
+@@ -12863,7 +12927,7 @@
+ | `[FFI-11b]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* The two-call enumeration … |
+ | `[FFI-11c]` | XVI | `TODO(count)`, `TODO(nullable)`, `TODO(ownership)` and … |
+ | `[FFI-11f]` | Annex C | A result lifetime derived from `[[clang::lifetimebound]]` imports as … |
+-| `[FFI-12]` | XVI | An overlay entry whose name, parameter count or parameter names do … |
++| `[FFI-12]` | XVI | *(changed in 0.9.15)* An overlay entry whose name, parameter count or … |
+ | `[FFI-13]` | XVI | An overlay may contain `extend` blocks with ordinary Ember wrapper … |
+ | `[FFI-14]` | XVI | The importer's result is a `.embind` file (versioned CBOR: header … |
+ | `[FFI-15]` | XVI | *(changed in 0.9.15)* `CStrView` is a read-only view of a … |
+@@ -13259,6 +13323,7 @@
+ | `[MAN-3]` | XVII | Every key in `[lints]` names a lint the compiler defines (`E9010` … |
+ | `[MAN-7]` | XVII | *(changed in 0.9.10)* `[build] reload` is `"opt-in"`, `"all"`, … |
+ | `[MAN-8]` | XVII | *(changed in 0.9.10)* The sections are: `[package]` (`name`, … |
++| `[MAN-9]` | XVII | *(new in 0.9.15)* Every program is a package (verdict 127). A command … |
+ 
+ ## MNG
+ 

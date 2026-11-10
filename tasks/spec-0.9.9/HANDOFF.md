@@ -2,6 +2,12 @@
 
 **Read this first after any context reset.** It is updated after every Part is written.
 
+**2026-11-10: no frozen `parts-*` folders any more.** Every old cut is in `docs/spec-source/history/` (the
+first copy, then one diff per cut); `python tools/spec_history.py at <version>_Hardened_N <dir>` writes one
+out with its parts folder. A cut records itself with `python tools/spec_history.py add <its full file> parts`
+and keeps no copy (`docs/HANDOFF.md`, "A new hardening", step 5). The mentions below of `parts-hN/` folders
+and old full files are history.
+
 ## The task (owner, 2026-09-23)
 
 > Use the 212 findings and your understanding of the language to write the **v9.9 Hardened 1**

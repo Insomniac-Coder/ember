@@ -1,0 +1,67 @@
+--- Ember_v0.9.9_Hardened_27.md
++++ Ember_v0.9.9_Hardened_28.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_27
+-**Supersedes:** 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_28
++**Supersedes:** 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -754,6 +754,12 @@
+   iterates and allocates nothing. As the only argument of a call it needs no extra parentheses:
+   `sum(x * x for x in xs)`, `any(p.hp <= 0 for p in players)`. `(e)` without `for` is a parenthesised
+   expression, and `(e,)` a tuple.
++* `[GRM-39]` *(new in 0.9.9)* **Nesting depth.** Every compiler accepts expressions, statements,
++  patterns and types nested 256 levels deep, counting each operand, argument, element, bracket, block
++  and type argument as a level; an operator or method-call chain is as deep as it is long
++  (`1 + 1 + … + 1` is left-nested). A compiler may accept more and states how much (this one, 1,024).
++  A program nested more deeply than the compiler accepts is `E0112`, reported once where the limit is
++  passed; the compiler never ends without a diagnostic (ODR-070).
+ * `[GRM-30]` *(new in 0.9.9)* `as?` and `as!` are single tokens (`[LEX-21]`): `h as? D` is a checked downcast
+   (`[TYP-6]`).
+ * `[GRM-32]` *(new in 0.9.9)* `comptime(e)` evaluates the expression `e` at compile time (`[CT-6]`).
+@@ -4993,6 +4999,7 @@
+ | `E0109` | `owned` is not permitted in expression position | `[GRM-15]` |
+ | `E0110` | function declared without a body outside an interface, extern block or abstract class | `[GRM-33]` |
+ | `E0111` | `ref` of an expression that is not a place | `[GRM-36]` |
++| `E0112` | nested more deeply than the compiler accepts | `[GRM-39]` |
+ | `E0900` | construct not implemented by this compiler | `[PHIL-12]`, `[CLI-19]` |
+ | `E0901` | construct this specification leaves unspecified | `[PHIL-12]` |
+ | `E1010` | cannot find name in this scope | `[MOD-3]` |
+@@ -6658,7 +6665,8 @@
+ Hardened_21 adds ODR-046; Hardened_22 adds ODR-047; Hardened_23 adds ODR-048; Hardened_24 adds
+ ODR-049 to ODR-064, the owner's simplification pass (`docs/proposals/Ember_Simplification_Pass_Revised.md`);
+ Hardened_25 adds ODR-065, the review of SP-010's access question; Hardened_26 adds ODR-066 to
+-ODR-068, the owner's Part II adoptions SP-007, SP-016 and SP-031; Hardened_27 adds ODR-069, SP-013.
++ODR-068, the owner's Part II adoptions SP-007, SP-016 and SP-031; Hardened_27 adds ODR-069, SP-013;
++Hardened_28 adds ODR-070, the nesting limit (D-331).
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6711,6 +6719,7 @@
+ | ODR-067 | `AsKey[K]` only matches; `ToKey[K]: AsKey[K]` makes the key, and `m[q] = v` needs it; every `K: Eq + Hash` is `AsKey[K]`, and `ToKey[K]` when also `Clone` — SP-016 (Hardened_26) | `[STD-12]`, `[STD-17]` |
+ | ODR-068 | `get_pair_mut(i, j)` on an `Array` or `MutSpan` gives two mutable references, or `None` for an index out of range or equal indices, after checking — SP-031 (Hardened_26) | `[BRW-5]`, `[STD-15]`, `[SPN-5]` |
+ | ODR-069 | one storage rule for every owning container: a `Map`, `Set` or `Array` may hold `static` views, checked at each store wherever it happens (through a `mut` parameter or reference, or in a callee, whose callers answer for its parameters); an instance ties a result to a parameter its type names — SP-013 (Hardened_27) | `[TYP-15]`, `[STD-11]`, `[TYP-38]`, `[LT-1]` |
++| ODR-070 | every compiler accepts nesting 256 levels deep and states its own limit (this one 1,024); passing it is `E0112`, never a crash (Hardened_28) | `[GRM-39]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6750,6 +6759,7 @@
+ | `[FN-9]` | changed |
+ | `[FN-10]` | changed |
+ | `[GRM-34]` | changed |
++| `[GRM-39]` | added |
+ | `[HASH-1]` | changed |
+ | `[HASH-2]` | changed |
+ | `[HASH-3]` | changed |
+@@ -7477,6 +7487,7 @@
+ | `[GRM-36]` | III | `ref e` and `ref mut e` borrow the place `e` (`[BRW-1]`). The operand … |
+ | `[GRM-37]` | III | A directive is a line beginning `#!` before the imports. `#! language … |
+ | `[GRM-38]` | III | A parenthesised comprehension `(e for x in it if c)` is a generator … |
++| `[GRM-39]` | III | Nesting depth. Every compiler accepts expressions, statements, … |
+ 
+ ## HASH
+ 

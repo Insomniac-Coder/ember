@@ -1,0 +1,351 @@
+--- Ember_v0.9.7_Hardened_4.md
++++ Ember_v0.9.8_Hardened_1.md
+@@ -1,38 +1,35 @@
+ # Ember Programming Language — Design & Implementation Specification
+ 
+-**Version:** 0.9.7_Hardened_4
++**Version:** 0.9.8_Hardened_1
+ **Immediate predecessor:** 0.9.7_Hardened_3 (immutable; preserved as the diff base)
+-**Status:** Frozen development target. Full implementation and conformance are **not** claimed; ODR-020's bounded diagnostic slice has implementation and regression evidence, not full DIA-12 or target conformance. Normative repository adoption still requires the recorded adoption gates.
+-
+-    Specification    frozen for this target — 873 rules, every one carrying a change-log
+-                     row. ODR-020 is closed here; ODR-016 remains closed from H3, and the
+-                     two withdrawn H3 gap reports remain withdrawn. 13 rule ids are
+-                     cited and defined by no rule: the inherited ERR-042 set, unchanged
+-                     since 0.8.4 and not this revision's to write.
++**Status:** Frozen development target. Implementation and conformance evidence is **not** claimed; normative repository adoption still requires the recorded adoption gates.
++
++    Specification    frozen for this target. ODR-017 is closed here by the
++                     owner-selected `Shared[T]` and generalized weak-owner API.
++                     The prior H3 diagnostic-identity work remains unchanged.
+                      Both figures are measurements, not constants — 0.8.4_Hardened_1
+                      records 826 against 833 for the same document — and XXIII.4 requires
+                      an extractor to tell a definition from a citation without saying how
+     Implementation   NOT CLAIMED
+-    Conformance      NOT CLAIMED — 140 0.9-series rules remain in the [TST-4c] baseline
+-                     after the four H3 removals; H4 does not alter the baseline
++    Conformance      NOT CLAIMED — 144 rules from the 0.9 series sit in the [TST-4c]
++                     baseline; 4 of them leave it with this revision
+ 
+ These three move independently. A complete specification is not a built compiler, and a
+ built compiler is not a passing conformance suite; this revision advances only the first.
+ 
+-> **Authority boundary.** This revision records the owner-selected 0.9.7 development target.
++> **Authority boundary.** This revision records the owner-selected 0.9.8 development target.
+ > `docs/spec-source/ember-spec.md` (`0.8.5_Hardened_1`) remains the repository's sole normative
+ > source until this target passes the adoption gates and is explicitly installed. The immutable
+ > received files are preserved under `docs/spec-source/as-received/`.
+ 
+-**What Hardened_4 changed.** It closes ODR-020 by defining qualified-path N1 diagnostics:
+-resolve the namespace prefix first, search only legally visible members using the unresolved
+-final identifier, display the source-qualified suggestion, and edit only that final token.
+-This is diagnostic/tooling hardening: no source-language program changes validity, and no
+-module/import, visibility, overload, type, ownership, lifetime, ABI or runtime semantics change.
+-The ruling is archived at `docs/spec-source/as-received/ODR-020_qualified_path_N1.md`.
+-This H4 is authored from immutable `0.9.7_Hardened_3`; it does not modify H3 or the separate
+-0.9.8 target. H4 adds no diagnostic code; this source revision's existing unknown-name code is
+-`E1010`.
++**What 0.9.8_Hardened_1 changed.** It closes ODR-017 with one strong-owner
++surface for `Shared[T]` and one generalized weak-owner family: `Shared(value)`,
++`get() -> ref T`, `get_mut(mut self) -> ref mut T`, and `Weak[O]` where `O` is
++either a class handle or `Shared[T]`. `Weak[C]` is preserved unchanged, while
++the companion of `Shared[T]` is `Weak[Shared[T]]`; no second weak-pointer
++meaning or aliasing model is introduced. This is an owner-approved semantic
++change and therefore begins language revision 0.9.8. The received ruling is
++preserved byte-for-byte under `docs/spec-source/as-received/`.
+ 
+ **What Hardened_3 changed.** It closes ODR-016 by giving the three rules that stated a
+ rejection without naming one a diagnostic code, and it withdraws two gap reports Hardened_2
+@@ -56,15 +53,16 @@
+ to 1 with each language version. A hardening may never carry a semantic change: that is what forces
+ the language number instead. Implementation completion by itself moves neither. So 0.8.4 was cut as
+ `0.8.4_Hardened_1` rather than `0.8.3_Hardened_2` when S1 landed; 0.9.5 moved for inferred
+-multi-region views; 0.9.7 moved for the `@latebound` callable boundary; and **this file is
+-`0.9.7_Hardened_4` because it changes no rule's meaning.**
+-
+-**Compatibility.** Additive. `0.9.7` ⊃ `0.9.6` ⊃ `0.9.5` ⊃ `0.9` ⊃ `0.8.5` ⊃ `0.8.4` ⊃ `0.8.3`.
++multi-region views; 0.9.7 moved for the `@latebound` callable boundary; and
++**this file is `0.9.8_Hardened_1` because ODR-017 supplies previously undefined
++public ownership and borrowing semantics.**
++
++**Compatibility.** Additive. `0.9.8` ⊃ `0.9.7` ⊃ `0.9.6` ⊃ `0.9.5` ⊃ `0.9` ⊃ `0.8.5` ⊃ `0.8.4` ⊃ `0.8.3`.
+ No program valid under an earlier contract becomes invalid, and a source file may declare
+-`#! language "0.8.3"`, `"0.8.4"`, `"0.8.5"`, `"0.9"`, `"0.9.5"`, `"0.9.6"` or `"0.9.7"`. An older
++`#! language "0.8.3"`, `"0.8.4"`, `"0.8.5"`, `"0.9"`, `"0.9.5"`, `"0.9.6"`, `"0.9.7"` or `"0.9.8"`. An older
+ selector never silently acquires later semantics (`[MOD-6]`, `[MOD-6a]`).
+ 
+-**Lineage.** `0.8.5 → 0.9 → 0.9.5 → 0.9.6 → 0.9.7`, each authored from the one before it. 0.8.5 was
++**Lineage.** `0.8.5 → 0.9 → 0.9.5 → 0.9.6 → 0.9.7 → 0.9.8`, each authored from the one before it. 0.8.5 was
+ authored from 0.8.4, which was authored from 0.8.3; the ancestry behind 0.8.3 runs 0.8.2c → 0.8.2b →
+ 0.8.1 → 0.8 → 0.7.2 → 0.7.1 → 0.6.3, taking the *design* — not the text — of the 0.7 draft for hot
+ reload, the compile-time budget and the C++ boundary. The 0.7 draft was itself authored from 0.3 and
+@@ -77,6 +75,23 @@
+ **Principle:** safe by default, provable by request, native when necessary.
+ 
+ ---
++
++## 0.9.8_Hardened_1 authority and evidence status
++
++This file is the frozen development target selected by the owner ruling that
++closes ODR-017.  It is authoritative for the `Shared[T]`/`Weak[O]` work only
++after its recorded source hash is accepted through
++`docs/spec-source/development-target.json`; the adopted source remains
++`ember-spec.md` at `0.8.5_Hardened_1` until the repository's adoption gates
++are met.  The ruling is preserved byte-for-byte in
++`as-received/ODR-017_Shared_Weak_API_completion.md` and ADR-037 records its
++application here.
++
++The rules added for this language revision are specified, not yet evidence of
++an implementation: adoption requires the `[TST-26]` matrix, implementation
++tests for its accepted and rejected programs, and the ordinary compiler and
++documentation gates.  No claim in this status section weakens or replaces the
++inherited rules in the consolidated body.
+ 
+ ## Where things are
+ 
+@@ -92,7 +107,7 @@
+ | **Part XXIII** | owner decisions, glossary, rule-ID registry, rule categories |
+ | **Appendix A** | syntax quick reference |
+ | **Part XXIV** | **0.9-series normative addenda** — multi-region views, the implementation contract, the ABI/runtime/reload/determinism addenda, the 1.0 readiness gate |
+-| **Appendix B** | the 0.9.7_Hardened_1 consistency checklist |
++| **Appendix B** | the preserved 0.9.7_Hardened_1 consistency checklist |
+ | **Appendix H** | 0.9-series provenance: completion records, audit records, evidence statements, the hardening cycle log |
+ 
+ Part XXIV follows Appendix A rather than preceding it because the `CONSOLIDATED_NORMATIVE_BODY`
+@@ -159,44 +174,21 @@
+ | 16 | GPU kernels as an eventual core language feature. | Shaders remain a separate language (as RageV already does with `.rvshader` → SPIR-V). Ember owns the **host-side** model: generational handles, command-scoped GPU ownership, deferred destruction, frame-in-flight tracking, and a typed shader interface generated from SPIR-V reflection. Kernel DSL is v3 and out of scope for this document beyond reservations. | Matches RageV's architecture exactly; keeps the core compiler small. |
+ | 17 | Specification written as prose. | Normative rules carry IDs; every ID maps to conformance tests; every compiler pass has an input/output contract. | So that an agent can implement and verify without reinterpreting. |
+ 
+-## Change log — 0.9.7_Hardened_4
+-
+-**Hardened_4 closes ODR-020.** It defines how the existing N1 diagnostic applies when
+-a namespace prefix resolves and the final member does not. This changes diagnostic
+-selection, presentation, span and fix-it only. No Ember source program changes validity;
+-no module/import, visibility, overload, type, ownership, lifetime, ABI or runtime behavior
+-changes.
+-
+-Every normative edit below is **DIAGNOSTIC / TOOLING HARDENING**. It does not add a
+-diagnostic code or a second suggestion/ranking system.
++## Change log — 0.9.8_Hardened_1
++
++**0.9.8_Hardened_1 closes ODR-017.** It selects one public `Shared[T]`
++strong-owner API and generalizes `Weak` over the existing counted owners. This
++changes the set of well-defined source programs, so it is an owner-approved
++language revision rather than a hardening of 0.9.7.
+ 
+ | # | Change | Class | Where |
+ |---|---|---|---|
+-| H4.1 | **Qualified paths are a specialization of N1.** Resolve the namespace prefix first; enumerate only member names legally visible through that namespace under `[MOD-2]` and the existing resolver; compare spelling against the unresolved final identifier only; keep the existing N1 rank and top-three limit; display the original source-qualified prefix and candidate; highlight and replace only the final identifier. A failed prefix gets the ordinary prefix-resolution diagnostic and never triggers a final-member search. | DIAGNOSTIC / TOOLING HARDENING | XX.6.2, N1 |
+-| H4.2 | **Conformance and regression evidence.** Add qualified-alias and nested-path suggestions, token-local source spans and edits, alias preservation, public and same-package candidates, private and cross-package `pub(package)` exclusion, ranked top-three candidates, deterministic output, failed-prefix handling, no-candidate handling, and the unchanged direct-`from` import behavior. | DIAGNOSTIC / TOOLING HARDENING | `tests/conformance/DIA-12/`, `compiler/ember_driver/tests/ui.rs` |
+-| H4.3 | **No language or diagnostic identity change.** The existing `E1010` unknown-name family remains in use in this revision; no `E1060` or other code is introduced. This change adds no accepted program, import behavior, visibility rule, ranking key, runtime operation, or ABI surface. | DIAGNOSTIC / TOOLING HARDENING | XX.6.2 |
+-
+-**ODR-019 dependency.** This H4 is authored from `0.9.7_Hardened_3`, which does not
+-incorporate ODR-019's cross-file tie policy. H4 therefore does not redefine or duplicate
+-cross-file ranking. A source revision that already carries ODR-019 MUST continue applying
+-its same-file/cross-file ordering to the qualified candidate set.
+-
+-The complete owner ruling is preserved byte-for-byte at
+-`docs/spec-source/as-received/ODR-020_qualified_path_N1.md`. H4 is a frozen development
+-target, not a change to the repository's adopted `0.8.5_Hardened_1` source.
+-
+-**Implementation checklist.**
+-
+-- [x] Keep invalid qualified names rejected and leave successful path resolution unchanged.
+-- [x] Resolve namespace prefixes before final-member candidate discovery.
+-- [x] Use the existing namespace/member and visibility facts; exclude inaccessible names.
+-- [x] Compare only the unresolved final segment and preserve the source alias/prefix in help.
+-- [x] Attach the diagnostic primary span and machine-applicable edit to the final token only.
+-- [x] Reuse N1 ranking, threshold, deterministic ordering and top-three cap; add no ranking key.
+-- [x] Keep `from` imports, module/import semantics, language validity, ABI and runtime unchanged.
+-- [x] Cover the specified behavior with DIA-12 conformance and UI regressions.
+-
+-**This change log is exhaustive for the H4 normative delta.**
++| H1.1 | `Shared(value)` constructs one counted allocation. `get()` returns `ref T`; `get_mut(mut self)` returns `ref mut T` and participates in the existing dynamic-exclusivity machinery without requiring unique ownership. | OWNER-APPROVED SEMANTIC CHANGE | IX.1, `[HEAP-3]`–`[HEAP-6]` |
++| H1.2 | `Weak[O]` denotes the weak form of a counted owner. The supported owner forms are a class handle `C` and `Shared[T]`; the latter's companion is `Weak[Shared[T]]`. Construction, empty, copy/drop, upgrade, no-resurrection, and non-interoperation rules reuse the existing weak-count model. | OWNER-APPROVED SEMANTIC CHANGE | VIII.5, `[HEAP-7]`, `[WK-11]`–`[WK-14]` |
++| H1.3 | The storage table distinguishes static borrowing from dynamic exclusivity for `Shared[T]`, the version selector admits `0.9.8`, and `[TST-26]` records the conformance matrix. | OWNER-APPROVED SEMANTIC CHANGE | V, IX, XX |
++
++**This change log is exhaustive for the 0.9.8 delta.** Every later implementation
++or conformance record is evidence, not a further source-semantic change.
+ 
+ ---
+ 
+@@ -1367,7 +1359,7 @@
+ array_type      := "[" type ";" expression "]"                          (* fixed-size inline array, e.g. [f32; 16] *)
+ ```
+ 
+-`[GRM-3]` `Span[T]`, `MutSpan[T]`, `Array[T]`, `Option[T]`, `Result[T, E]`, `Box[T]`, `Shared[T]`, `Weak[T]` are ordinary library types spelled with `path_type`; the grammar does not special-case them.
++`[GRM-3]` `Span[T]`, `MutSpan[T]`, `Array[T]`, `Option[T]`, `Result[T, E]`, `Box[T]`, `Shared[T]`, and `Weak[O]` are ordinary library types spelled with `path_type`; the grammar does not special-case them. `[HEAP-7]` constrains the owner forms permitted for `O`.
+ 
+ ## III.4 Statements
+ 
+@@ -1894,8 +1886,8 @@
+ * `[MOD-3]` `import a.b.c` binds `c` as a namespace; `from a.b import x, y as z` binds items; `import a.b.c as d` renames. `from a.b import *` is permitted only for `prelude` modules declared `@prelude` (`E1040` otherwise).
+ * `[MOD-4]` Import cycles within a package are allowed (name resolution is package-wide); cycles between packages are `E1041`.
+ * `[MOD-5]` `std.prelude` is imported implicitly into every module: `Option, Some, None, Result, Ok, Err, Array, String, str, Span, MutSpan, Box, Shared, Weak, print, println, assert, assert_eq, panic, Copy, Clone, Drop, Eq, Ord, Hash, Debug, Display, Default, Iterator, Iterable, Send, Sync`.
+-* `[MOD-6]` A module MAY declare a supported language version with `#! language "X.Y"` on its first line; the package's `ember.toml` `language` key is the default. Mismatch with the compiler's supported set is `E0006`. The compiler's supported set MUST include every language version whose source it still accepts. For this revision the supported set MUST include `"0.9.7"`, `"0.9.6"`, `"0.9.5"`, `"0.9"`, `"0.8.5"`, `"0.8.4"`, and `"0.8.3"`. Selecting an older version selects that version's accepted-program and semantic rules; it does not silently opt the module into later language semantics. *(updated 2026-09-14; ODR-015)*
+-* `[MOD-6a]` **Patch-level language revisions.** A language version MAY be written as `X.Y` or `X.Y.Z`. `0.9` remains the pre-0.9.5 0.9 language contract; `0.9.5` selects inferred multi-region-view semantics; `0.9.6` preserves the complete 0.9.5 source-language accepted/rejected program sets and observable semantics while selecting that revision's reference-implementation and conformance contract; and `0.9.7` adds the explicit `@latebound` callable-type boundary of `[FN-6b]`/`[LT-7]`. The compiler MUST NOT silently enable `0.9.5`, `0.9.6`, or `0.9.7` semantics for a module that explicitly selects `0.9`. The supported set is exactly the set stated by `[MOD-6]`; the package manifest and module directive MUST resolve to the same exact language contract after normalization.
++* `[MOD-6]` A module MAY declare a supported language version with `#! language "X.Y"` on its first line; the package's `ember.toml` `language` key is the default. Mismatch with the compiler's supported set is `E0006`. The compiler's supported set MUST include every language version whose source it still accepts. For this revision the supported set MUST include `"0.9.8"`, `"0.9.7"`, `"0.9.6"`, `"0.9.5"`, `"0.9"`, `"0.8.5"`, `"0.8.4"`, and `"0.8.3"`. Selecting an older version selects that version's accepted-program and semantic rules; it does not silently opt the module into later language semantics. *(updated 2026-09-20; ODR-017)*
++* `[MOD-6a]` **Patch-level language revisions.** A language version MAY be written as `X.Y` or `X.Y.Z`. `0.9` remains the pre-0.9.5 0.9 language contract; `0.9.5` selects inferred multi-region-view semantics; `0.9.6` preserves the complete 0.9.5 source-language accepted/rejected program sets and observable semantics while selecting that revision's reference-implementation and conformance contract; `0.9.7` adds the explicit `@latebound` callable-type boundary of `[FN-6b]`/`[LT-7]`; and `0.9.8` adds the owner-selected `Shared[T]` and generalized `Weak[O]` surface of `[HEAP-3]`–`[HEAP-7]` and `[WK-11]`–`[WK-14]`. The compiler MUST NOT silently enable `0.9.5`, `0.9.6`, `0.9.7`, or `0.9.8` semantics for a module that explicitly selects an earlier version. The supported set is exactly the set stated by `[MOD-6]`; the package manifest and module directive MUST resolve to the same exact language contract after normalization.
+ * `[MOD-7]` **Read-only visibility for fields.** A field declared `pub(read)` (or `pub(package, read)`) may be **read** wherever a `pub` (respectively `pub(package)`) field could be read, but may be **written only from the declaring module**. Outside the declaring module, the following are errors `E1050 field is read-only outside its module`: assignment (`h.value = x`, augmented assignment), taking `ref mut h.value`, passing `h.value` to a `mut` parameter or `mut self` method, and destructuring it with a mutable binding. Reading, copying, taking `ref h.value`, and passing it to a borrowed parameter are allowed. `read` applies to fields of structs and classes only; on any other item it is `E1051`. Because construction is a write, a `pub(read)` field does not count as `pub` for the purpose of the synthesised memberwise constructor (`[STR-1]`).
+ 
+   Summary of field visibility:
+@@ -2448,7 +2440,7 @@
+ 
+ ## VIII.1 Object representation
+ 
+-Every class instance is a heap block:
++Every counted allocation — a class instance or `Shared[T]` payload — is a heap block:
+ 
+ ```
+ offset  size   field
+@@ -2457,22 +2449,22 @@
+ 8       4      access_state   u32   (dynamic exclusivity: bit31 = writer, bits0..30 = reader count; !Sync classes only)
+ 12      4      flags          u32   (bit0 = is_deinitialising, bit1 = pinned/foreign-retained, rest reserved)
+ 16      8      type_info      *const TypeInfo   (vtable, size, align, drop fn, class name, base chain, interface tables)
+-24      …      base-class fields, then own fields, each at its natural alignment
++24      …      base-class fields then own fields, or the single `Shared[T]` payload, each at its natural alignment
+ ```
+ 
+ * `[OBJ-1]` The header is 24 bytes on 64-bit targets and is ABI-stable within a compiler minor version. Foreign code never inspects it; it goes through `ember_rt` functions.
+ * `[OBJ-2]` A handle is a pointer to offset 0. A `dyn I` handle to a class is *not* a fat pointer: the vtable is reached through `type_info` (this keeps `Option[Handle]` one pointer wide and makes class handles ABI-compatible with `void*`).
+-* `[OBJ-3]` `weak_count` starts at 1 for the "strong side"; when `strong_count` hits 0 the object is deinitialised (`drop` chain + field drops) and `weak_count` is decremented; the block is freed when `weak_count` hits 0. (Rust `Rc` scheme; avoids a separate control block.)
++* `[OBJ-3]` `weak_count` starts at 1 for the "strong side"; when `strong_count` hits 0 the allocation is deinitialised (a class runs its `drop` chain and field drops; `Shared[T]` runs `T`'s ordinary destruction) and `weak_count` is decremented; the block is freed when `weak_count` hits 0. (Rust `Rc` scheme; avoids a separate control block.)
+ * `[OBJ-4]` Allocation uses the runtime's global allocator (`ember_alloc(size, align)`), default `mimalloc`; the class attribute `@allocator(Name)` selects an alternative for all instances of that class (v2).
+ * `[OBJ-5]` `ember_rt_deinit(obj)` MUST set `flags.is_deinitialising` before invoking the drop chain and MUST, after the drop chain returns and **again after every field's drop glue has run**, re-read `strong_count`. If it is not zero the object has been resurrected: the runtime MUST panic `E-panic: object resurrected during drop: <Class>` in every profile. No profile setting may remove this check (`[PRF-1]`). The second read is required because a field's drop glue runs after the user `drop` returns and can itself reach the object; it cannot succeed by any other route, because at `strong_count == 0` no strong handle exists and `[WK-3]` blocks `Weak.upgrade`.
+ 
+ ## VIII.2 Reference-count operations and their elision
+ 
+-* `[RC-1]` Copying a handle emits `retain`; dropping a handle emits `release`; `release` reaching zero calls `ember_rt_deinit(obj)`.
++* `[RC-1]` Copying a counted owner emits `retain`; dropping one emits `release`; `release` reaching zero calls `ember_rt_deinit(obj)`.
+ * `[RC-2]` **Guaranteed elisions** (conformance-tested): (a) passing a handle to a `borrowed` parameter emits no RC ops; (b) a handle read from a place and used only within a single expression emits no RC ops when the place is not written during the expression; (c) `retain` immediately followed by `release` on the same handle with no intervening call or store is removed; (d) a handle stored into a field from a temporary is moved, not retained+released. Its lettered clauses are individually citable as `[RC-2a]`..`[RC-2d]` in the order written.
+ * `[RC-3]` Additional elisions (`retain` sinking, `release` hoisting across calls proven not to release the object) are permitted only when semantics-preserving; `[PHIL-5]` applies. Elisions never change *when* `drop` runs relative to observable side effects except that an object may be deinitialised **earlier** than the last syntactic use of a handle whose value is provably not needed and no loan derived from that object is in scope (`[RC-5]`) — the compiler treats a handle exactly like any other `Copy` value with a `drop`. A borrow *into* the object is a use of the handle (`[RC-5]`); `mem.keep_alive(h)` is therefore needed only to extend liveness past the last borrow, never to protect a live borrow. Programs MUST NOT depend on an object staying alive past the last use of its handles (identical to Swift; a `with h:` or `mem.keep_alive(h)` pins it explicitly).
+ * `[RC-4]` Non-`Sync` classes use plain loads/stores for counts; `Sync` classes use relaxed-increment / acquire-release-decrement atomics.
+-* `[RC-5]` A loan whose place chain contains a `Deref` of a class handle constitutes a **shared loan of the handle operand itself**. `ref h.f`, `ref mut h.f`, a `Span`/`MutSpan` derived from `h.f`, a `Ref[T]`/`RefMut[T]` guard obtained from a `RefCell` field of `h`, and any view struct built from these, all keep `h` borrowed for `[BRW-1]` purposes until the last use of any value derived from them. The compiler MUST NOT kill that loan earlier, MUST NOT sink the handle's `release` above it, and MUST report `E3060` (shape B7) if the handle's storage ends first. XIX §4.7 **step 2** generates the extra loan when lowering a projection through a handle.
++* `[RC-5]` A loan whose place chain contains a `Deref` of a class handle or `Shared[T]` owner constitutes a **shared loan of that owner operand itself**. `ref h.f`, `ref mut h.f`, `s.get()`, `s.get_mut()`, a `Span`/`MutSpan` derived from a counted allocation, a `Ref[T]`/`RefMut[T]` guard obtained from one, and any view struct built from these, all keep their owner borrowed for `[BRW-1]` purposes until the last use of any value derived from them. The compiler MUST NOT kill that loan earlier, MUST NOT sink the owner's `release` above it, and MUST report `E3060` (shape B7) if the owner's storage ends first. XIX §4.7 **step 2** generates the extra loan when lowering a projection through a counted owner.
+ * `[RC-2e]` **Loop-borrowed handles.** Iterating a place whose element type is a class handle, `Shared[T]`, or a value type containing either — `for h in xs`, `for h in xs.iter()`, `for a, b in q` — emits **no** retain and no release on the yielded handles, provided the container is borrowed for the whole loop per `[CTL-2]` and the loop body does not store the handle into memory, return it, pass it to an `owned` parameter, or capture it in an `owned fn`. The yielded value is a borrowed handle whose region is the loop's borrow of the container, exactly as if it had been passed to a borrowed parameter under `[RC-2a]`. Where the body does one of the excluded things, the retain is emitted at that use, not at the top of the iteration. Like `[RC-2a]`..`[RC-2d]`, this elision is guaranteed and conformance-tested by counting `ember_retain` in the emitted C.
+ * `[RC-6]` **RC operations are optimisation barriers, and this MUST be visible.** `ember_retain` and `ember_release` write through the object pointer; a host C compiler cannot prove the header word distinct from the object's fields, so a surviving RC operation inside a loop invalidates loop-invariant loads of that object's fields and prevents vectorisation. `ember inspect` MUST list, per function, every retain and release that survives inside a loop body, with the source span, the loop, and the reason the elision analysis did not remove it, drawn from `[EFF-11]`'s vocabulary. The `Elided: RC` line of `ember inspect --safety` gains a corresponding `Surviving: RC` section.
+ 
+@@ -2503,10 +2495,14 @@
+ 
+ ## VIII.5 Weak handles and cycles
+ 
+-* `Weak[C]` does not keep the object alive. `w.upgrade() -> Option[C]`; `Weak(h)` creates one; `Weak[C].empty()`.
+-* `[WK-1]` Reference cycles between class instances leak (they are never collected). This is a documented property, not a bug. Mitigations the language provides: `Weak` for back-pointers; the debug runtime's **cycle report** (`ember run --leak-check`), which on process exit walks all live objects (the runtime keeps an intrusive list of live objects in debug builds) and prints any strongly connected components with the field names forming the cycle; and the lint `L3001 potential cycle: field <f> of class <A> holds <B> and <B>.<g> holds <A>` for statically visible cycles.
+-* `[WK-2]` `drop` runs when the strong count hits zero even if weak handles remain; those weak handles then fail to upgrade.
+-* `[WK-3]` `Weak.upgrade` MUST return `None` when `flags.is_deinitialising` is set on the target, and `retain` on such an object MUST NOT be treated by any optimisation as producing a usable handle. This is the mechanism behind `[WK-2]`.
++* `Weak[O]` does not keep a counted owner alive. `Weak(h)` creates one; `Weak[O].empty()` creates an empty one; and `w.upgrade()` returns `Option[O]`.
++* `[WK-1]` Strong reference cycles among class instances and `Shared` allocations leak (they are never collected). This is a documented property, not a bug. Mitigations the language provides: `Weak` for back-pointers; the debug runtime's **cycle report** (`ember run --leak-check`), which on process exit walks all live counted allocations (the runtime keeps an intrusive list in debug builds) and prints any strongly connected components with the field names forming the cycle; and the lint `L3001 potential cycle: field <f> of class <A> holds <B> and <B>.<g> holds <A>` for statically visible cycles.
++* `[WK-2]` Ordinary destruction runs when the strong count hits zero even if weak handles remain; those weak handles then fail to upgrade.
++* `[WK-3]` `Weak.upgrade` MUST return `None` when `flags.is_deinitialising` is set on the target, and `retain` on such an allocation MUST NOT be treated by any optimisation as producing a usable owner. This is the mechanism behind `[WK-2]`.
++* `[WK-11]` **Weak creation, copying, and dropping.** `Weak(owner)` creates a non-owning weak handle without consuming or retaining the strong owner. `Weak[O].empty()` creates an empty weak handle. `Weak[O]` is `Copy`: copying increments the weak count and dropping decrements it.
++* `[WK-12]` **Weak upgrade.** `Weak[O].upgrade() -> Option[O]` returns a retained strong owner only while its target is strongly alive and not deinitialising; otherwise it returns `None`. Where the represented owner count is atomic, upgrade uses that same atomic lifetime protocol.
++* `[WK-13]` **Shared weak identity.** A `Weak[Shared[T]]` refers to the same allocation and control block as its source `Shared[T]`; it never creates an independent control block.
++* `[WK-14]` **No ownership conversion.** `Weak[C]` and `Weak[Shared[T]]` are distinct owner forms and do not interconvert. Neither Ember weak-owner form, nor `Shared[T]`, converts to `CppWeak[T]` or `CppShared[T]`.
+ 
+ ## VIII.6 Stack promotion (optimisation)
+ 
+@@ -2550,8 +2546,8 @@
+ | `struct` / `enum` | unique, moved | borrow-checked | end of scope, reverse order | `Send`/`Sync` by field | **the default.** Data with no identity: maths, components, messages (VII) |
+ | `Box[T]` | unique, heap | borrow-checked | deterministic, on drop | by `T` | one owner, but the value must be on the heap — recursion, a large payload, an unsized tail (IX.1) |
+ | `class` | shared, counted | dynamic exclusivity | deterministic, at count 0 | atomic count iff `Sync` | the thing has **identity** and several places refer to it: a scene node, an observer, an editor panel (VIII) |
+-| `Shared[T]` | shared, counted | borrow-checked | deterministic, at count 0 | atomic count iff `Sync` | shared ownership of a **value** type, where `class`'s identity and header are not wanted. Advanced; prefer `class` (IX.1) |
+-| `Weak[C]` | none | — | never | follows `C` | breaking a cycle, or observing something you do not keep alive (VIII.5, `[WK-1]`) |
++| `Shared[T]` | shared, counted | borrow-checked + dynamic exclusivity for long-term mutable access | deterministic, at count 0 | atomic count iff `T: Sync` | shared ownership of a value payload where class identity is not wanted. Advanced; prefer `class` (IX.1) |
++| `Weak[O]` | none | — | never | follows `O` | breaking a cycle, or observing a counted owner without keeping it alive (VIII.5, `[WK-1]`, `[HEAP-7]`) |
+ | `Arena` | region | borrow-checked | all at once, at reset | thread-confined | many values with one lifetime: a frame, a level load, a parse (IX.2) |
+ | `Handle[Tag]` | none — an index | `Copy` | the pool decides | plain value | a resource the engine owns and may recycle: GPU objects, ECS entities. Generation-checked, so a stale handle is caught (IX.6) |
+ | `Cell[T]` | the owner's | interior, whole-value | with the owner | `!Sync` | a counter or memo inside a `struct` you only have a `ref` to (IX.7) |
+@@ -2567,7 +2563,8 @@
+   declaration actually used.
+ * `[SEL-2]` **Two mechanisms are never interchangeable across the foreign
+   boundary.** `Shared[T]` and `CppShared[T]` both denote shared ownership and use
+-  *different reference counts*; `Weak[C]` and `CppWeak[T]` likewise. Converting one
++  *different reference counts*; `Weak[C]` and `Weak[Shared[T]]` likewise never
++  interconvert with `CppWeak[T]`. Converting one
+   to the other by transmute or by an overlay declaration is `E5065`, and the
+   diagnostic names the double free it prevents.
+ 
+@@ -2576,13 +2573,20 @@
+ | Type | Semantics | Copy? | Thread |
+ |---|---|---|---|
+ | `Box[T]` | uniquely owned heap `T`; `Box(v)`, `b.get()`, deref via auto-deref; `Box[dyn I]` for existentials | move-only | `Send` iff `T: Send` |
+-| `Shared[T]` | reference-counted heap `T` (a struct behaving like a class instance) with `Weak[T]`; same header as classes; `s.get()`; mutation through `Shared` follows the exclusivity rules of Part VIII §3 | Copy (retain) | count atomic iff `T: Sync` |
++| `Shared[T]` | reference-counted heap `T`, with the same header as classes; `Shared(value)`, `s.get() -> ref T`, `s.get_mut() -> ref mut T`, and companion `Weak[Shared[T]]`; long-term mutable access follows Part VIII §3 | Copy (retain) | count atomic iff `T: Sync` |
+ | `Array[T]` | growable buffer `{ptr, len, cap}`; SSO not applied; `Array.with_capacity(n)`; `reserve`, `push`, `pop`, `insert`, `remove`, `swap_remove`, `retain`, `drain`, `clear`, `truncate`, `extend`, `as_span`, `as_mut_span`, `sort`, `sort_by`, `binary_search` | move-only; `Clone` if `T: Clone` | `Send`/`Sync` iff `T` |
+ | `String` | UTF-8 `{ptr, len, cap}` with **inline storage for ≤ 23 bytes** (SSO) | move-only | `Send + Sync` |
+ | `Map[K, V]` | open-addressing hash map (SwissTable-style), `K: Hash + Eq` | move-only | iff `K, V` |
+ | `Set[T]`, `Deque[T]`, `BitSet`, `SmallArray[T, N]` (inline up to N), `Pool[T]` (slot map with generational keys) | as named | | |
+ 
+ `[HEAP-1]` All of these allocate through `ember_alloc`/`ember_realloc`/`ember_free` and report allocation to the `Alloc` effect (Part X). `[HEAP-2]` Growth factor is 2× with a minimum of 4 elements; `shrink_to_fit` is explicit.
++
++* `[HEAP-3]` **Shared construction.** `Shared(value: T) -> Shared[T]` allocates one counted heap object containing `T`, moves or copies `value` according to its ordinary argument mode, and returns the first strong owner.
++* `[HEAP-4]` **Shared access.** `Shared[T].get() -> ref T` returns a shared borrow of the contained value. It neither retains nor transfers the `Shared` owner; the resulting loan keeps the allocation live for its region under `[RC-5]`.
++* `[HEAP-5]` **Shared mutable access.** `Shared[T].get_mut(mut self) -> ref mut T` returns a mutable borrow of the contained value. `mut self` does not require or imply unique strong ownership. The access uses the same static borrowing and dynamic-exclusivity semantics as a long-term mutable class access; no `Shared`-specific aliasing mechanism exists.
++* `[HEAP-6]` **Shared retention.** `Shared[T]` is `Copy`: copying retains the strong count and dropping releases it. The final release deinitializes the allocation and runs `T`'s ordinary destruction before the control block can be freed under `[OBJ-3]`.
++* `[HEAP-7]` **Weak owner forms.** `Weak[O]` is legal exactly when `O` is a counted owner supported by the language: a class handle `C` or `Shared[T]`. `Weak[C]` preserves its existing class semantics; the companion of `Shared[T]` is `Weak[Shared[T]]`, not an overloaded `Weak[T]` spelling.
++* `[TST-26]` **Shared and weak-owner conformance.** Conformance MUST cover `Shared` construction, copy/final release, `get` and `get_mut` borrow lifetime and conflicts, NLL reuse, weak construction/empty/copy/drop, live and expired upgrade, deinitialising upgrade failure, class `Weak[C]` regression, cycle-breaking behavior, foreign-owner rejection, and the atomic upgrade path when `T: Sync`.
+ 
+ ## IX.2 Arenas
+ 
+@@ -5559,7 +5563,7 @@
+ 
+ | Shape | Trigger | Required primary suggestion |
+ |---|---|---|
+-| **N1** unknown name | a path resolves to nothing, including a qualified path with a resolved namespace prefix and unresolved final member | the in-scope binding, field, method or item within Damerau–Levenshtein distance ≤ 2 (or ≤ ⅓ of the name's length), named exactly; at most 3, ranked by the existing N1 ordering |
++| **N1** unknown name | a path resolves to nothing | the in-scope binding, field, method or item within Damerau–Levenshtein distance ≤ 2 (or ≤ ⅓ of the name's length), named exactly; at most 3, ranked by distance then declaration proximity |
+ | **N2** name exists elsewhere | nothing in scope matches, but items of that name are exported by modules in the dependency graph | the import line to add, verbatim, as a machine-applicable fix-it (`from std.math import Transform`); with several candidates, up to 5 with module paths |
+ | **N3** unknown method | the receiver's type has no such member | the nearest member by N1's rule; if the name exists after one auto-deref or on `Self`'s base (`[TYP-24]`), name that; if it exists on an interface the type does not implement, name the interface and the `extend` block that would supply it |
+ | **N4** scalar type mismatch | `[TYP-4]` rejects an operator, or a coercion site is not a `[TYP-5]` widening | the exact `as` cast on the operand that loses nothing (`xs.len() as f32`); the note MUST state which side supplied the expected type |
+@@ -5571,35 +5575,6 @@
+ | **N10** `dyn` incompatibility (`E2050`) | `[TYP-22]` | the offending method and which clause it violates (no receiver / generic / returns `Self` by value), never a bare "interface is not object safe" |
+ | **N11** ambiguous method (`E2070`) | two candidates | the `I.m(recv, …)` disambiguation for each candidate interface |
+ | **N12** indentation (`E0002`–`E0004`) | | the exact column expected and the line whose indentation established it |
+-
+-For N1 on a qualified path of the form `<prefix>::<name>`, the compiler MUST
+-resolve `<prefix>` first using the existing module/namespace resolver. If that
+-prefix does not resolve, the ordinary path-resolution diagnostic MUST identify
+-the unresolved prefix component; the compiler MUST NOT search for suggestions
+-for `<name>`. Only after the prefix resolves may the compiler enumerate the
+-items eligible for lookup through that namespace under `[MOD-2]` and the
+-existing import/visibility rules. Private or otherwise inaccessible items MUST
+-NOT enter this candidate set; `pub(package)` items are eligible only where the
+-existing package-visibility rule permits access. Candidate discovery MUST reuse
+-the resolver's namespace/member facts, not a diagnostic-only symbol table or a
+-scan of unrelated modules.
+-
+-The spelling-distance comparison MUST use only the unresolved final identifier
+-`<name>` and the candidate's final identifier. It MUST use the existing N1
+-distance threshold, ranking and maximum suggestion count; qualified names add
+-no ranking key or separate algorithm. For each candidate, help MUST render the
+-original source-spelled prefix followed by `::` and the candidate's final name.
+-This preserves aliases exactly: `io::pritn` suggests `io::print`, not a
+-canonical declaration path. For nested paths, preserve every source prefix
+-component in the same way.
+-
+-The primary unresolved-name span and the machine-applicable replacement MUST
+-cover only the unresolved final identifier token. For `io::pritn`, the help
+-renders `io::print`, while the edit replaces only `pritn` with `print`; it MUST
+-NOT rewrite `io::pritn` as one whole-path edit. The diagnostic remains in the
+-existing unknown-name family and MUST NOT introduce a diagnostic code or alter
+-which programs are accepted. A direct `from a.b import x` binding continues to
+-use ordinary, unqualified N1.
+ 
+ ## XX.6a Trusted base and audit reporting
+ 
+@@ -5951,7 +5926,7 @@
+ 
+ * Classes: header, `init` with definite-init, inheritance, `virtual`/`override`, `abstract`, `let` fields, `is`, `as?`/`as!`, `dyn` for classes and structs (vtables, itables).
+ * Retain/release insertion; `[RC-2]` guaranteed elisions as MIR passes with tests that count `ember_retain` in emitted C.
+-* Exclusivity: static analysis (§4.8) + runtime checks; `Shared[T]`, `Weak[T]`.
++* Exclusivity: static analysis (§4.8) + runtime checks; `Shared[T]`, `Weak[O]` for the supported counted-owner forms.
+ * `debug_objects` live list, `ember run --leak-check` cycle report, `L3001`.
+ * Stack promotion (`[OPT-1]`) — optional, behind `-Zstack-promote`.
+ 
+@@ -8872,6 +8847,7 @@
+ | 0.9.6_Hardened_5 | Owner-approved architecture/process hardening | materialized the post-H4 simplicity RFC through derived-only compiler aggregates, conservative unknown handling, reuse/inference gates, semantic diagnostics, complexity accounting, generated view-contract documentation, and separate authority/evidence ledgers without changing source semantics |
+ | 0.9.6_Hardened_6 | Owner-approved standard-library API and safety-boundary completion | closed ODR-014 with named Span iterator/chunk view types, exact shared/mutable reborrow contracts, all-profile zero-chunk panic, safe raw-pointer extraction, and existing-unsafe pointer use; normalized shared raw-pointer spelling to Ember's canonical `*T` |
+ | 0.9.7_Hardened_1 | **Owner-approved language revision** | closed ODR-015 with the explicit `@latebound` callable-type boundary: fresh invocation-local callback regions, binder-free results, compiler-only callable identity/EMIF facts, and ordinary library APIs rather than name-specific compiler behavior |
++| 0.9.8_Hardened_1 | **Owner-approved language revision** | closed ODR-017 with `Shared(value)`, `Shared.get()`, `Shared.get_mut()`, and the generalized counted-owner form `Weak[O]`, preserving `Weak[C]` and adding `Weak[Shared[T]]` |
+ 
+ ---
+ 

@@ -6,8 +6,9 @@
 """
 import re, glob, os, sys, collections
 HERE = os.path.dirname(os.path.abspath(__file__))
-OLD = os.path.join(HERE, '..', '..', '..', 'docs', 'spec-source', 'Ember_v0.9.8_Hardened_3.md')
-old = open(OLD, encoding='utf-8').read()
+sys.path.insert(0, HERE)
+import spec_history  # 0.9.8_Hardened_3 is rebuilt from docs/spec-source/history
+old = spec_history.text('0.9.8_Hardened_3')
 oldids = set(re.findall(r'\[([A-Z][A-Z0-9]*(?:-[A-Z]+)?-[0-9]+[a-z0-9]*)\]', old))
 DEF = re.compile(r'^\* `\[([A-Z][A-Z0-9-]*-[0-9]+[a-z0-9]*)\]`( \*\(new in 0\.9\.(?:9|10|15|20)\)\*)?', re.M)
 seen = collections.defaultdict(list)

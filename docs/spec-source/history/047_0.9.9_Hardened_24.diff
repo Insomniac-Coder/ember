@@ -1,0 +1,742 @@
+--- Ember_v0.9.9_Hardened_23.md
++++ Ember_v0.9.9_Hardened_24.md
+@@ -1,11 +1,11 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_23
+-**Supersedes:** 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_24
++**Supersedes:** 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+-are tracked separately (§XVII.9) and are not claimed by this text.
++are tracked separately (§XVII.5, §XVII.8) and are not claimed by this text.
+ **Authority:** Authored at the owner's direction of 2026-09-23 with delegated authority to decide open
+ language questions against the project goal. Every decision that changes 0.9.8's meaning is listed in
+ Appendix H, and every finding of the 2026-09-23 research pass (`tasks/audit/FINDINGS.md`, F-001–F-214)
+@@ -149,7 +149,8 @@
+   that produces a heap collection; a string literal in a position that produces a `String`
+   (`[TXT-9]`); an f-string; a callable value whose captures exceed its inline capacity (`[CLO-10]`);
+   and container growth. Each carries the `Alloc` effect and is listed by `ember inspect --alloc`.
+-* `[PHIL-3]` No implicit copy of a non-`Copy` value occurs. Copies of `Copy` values are bitwise.
++* `[PHIL-3]` No implicit copy of a non-`Copy` value occurs. A copy of a `Copy` value is its bits, and
++  retains each counted handle in it (`[OWN-7]`); no copy runs any other code.
+ * `[PHIL-4]` No implicit synchronisation occurs except through types documented to synchronise
+   (`Mutex`, `RwLock`, `Atomic`, channels, `Sync` class handles).
+ * `[PHIL-5]` Every safety check the compiler removes, it removes because it proved the check
+@@ -175,7 +176,12 @@
+   ignoring it is a defect of the worst class, because the programmer believes the effect holds.
+ * `[PHIL-13]` *(new in 0.9.9)* **One meaning per program.** No build profile, compiler flag, manifest key or
+   optimisation level changes what a Safe program computes, which branch it takes, whether it panics,
+-  or whether it is accepted. Profiles change only speed, debug information, and the amount of detail
++  or whether it is accepted, and none turns off a check Safe Ember's guarantees need. What a build
++  accepts depends on its semantic inputs alone — the language version, the target and its layout, the
++  resolved dependencies and the library layers selected; a build may also stop for its policy
++  (warnings made errors, `[MAN-3]`) or an exhausted budget (`[CT-3]`), each reported as that and never
++  as a language error. `@realtime` means the declaring package's set (`[EFF-19]`), in every caller
++  (ODR-061). Profiles change only speed, debug information, and the amount of detail
+   in diagnostics and panic messages (`[PRF-1]`). `debug_assert` is the one check a profile turns off; it
+   may not have side effects, so it cannot change what a program whose assertions hold computes.
+ * `[PHIL-14]` *(new in 0.9.9)* **Python spelling, Python meaning.** Where Ember accepts a spelling that Python also
+@@ -293,8 +299,8 @@
+ * `[LEX-1]` Source files are UTF-8. A byte-order mark is accepted and ignored; the formatter removes
+   it. An invalid UTF-8 sequence is `E0001`.
+ * `[LEX-2]` *(changed in 0.9.9)* Line endings are LF or CRLF, both normalised to LF before
+-  tokenisation. The formatter always writes LF unless the manifest sets `[format] line_endings =
+-  "crlf"`; output never depends on the host platform.
++  tokenisation. The formatter always writes LF (`[FMT-1]`); output never depends on the host platform
++  (ODR-060).
+ * `[LEX-3]` The source extension is `.em`.
+ 
+ ## II.2 Indentation and line structure
+@@ -692,6 +698,7 @@
+ arg           := expression | IDENT "=" expression
+ atom          := literal | IDENT | "self" | "Self" | "(" expression ")" | tuple_lit | list_lit
+                | map_lit | set_lit | comprehension | match_expr | "comptime" "(" expression ")"
++               | "@assume_noalloc" "(" expression ")"
+ tuple_lit     := "(" ")" | "(" expression "," [expression {"," expression} [","]] ")"
+ list_lit      := "[" [expression {"," expression} [","]] "]" | "[" expression ";" expression "]"
+ map_lit       := "{" "}" | "{" expression ":" expression {"," expression ":" expression} [","] "}"
+@@ -792,7 +799,7 @@
+ | **Value** | `struct`, `enum`, tuple, `[T; N]`, closure | inline | copy if `Copy`, else move | end of scope, reverse order |
+ | **Collection** | `Array`, `String`, `Map`, `Set`, … (library) | inline header + heap buffer | move | end of scope; frees its buffer |
+ | **Handle** | `class` | pointer to a counted heap object | copy (retain) | when the strong count reaches 0 |
+-| **View** | `ref T`, `Span[T]`, `MutSpan[T]`, `str`, any struct holding one | inline pointer(s) + compile-time region | copy (`MutSpan`, `ref mut`: move) | never (no destructor) |
++| **View** | `ref T`, `Span[T]`, `MutSpan[T]`, `str`, any struct holding one | inline pointer(s) + compile-time region | copy (`MutSpan`, `ref mut`: move) | a plain view trivially; a guard ends its access (`[DRP-6]`) |
+ | **Raw** | `*T`, `*mut T`, `extern fn` | inline pointer | copy | never |
+ | **Existential** | `dyn I`, `Box[dyn I]`, a class handle typed by an interface | pointer + table | per underlying | per underlying |
+ | **Unit / Never** | `void`, `Never` | zero-size | trivial | trivial |
+@@ -1006,7 +1013,7 @@
+ * `[TYP-34]` *(new in 0.9.9)* *(replaces the 0.9.8 `@view` requirement)* A struct, enum or tuple that contains a
+   reference, a `Span`, a `MutSpan`, a `str` or another view is a **view type**. The compiler infers
+   this; `@view` on the declaration is optional documentation, and `@view` on a type that is not a view
+-  is `E2030`.
++  is `E2030`. A view type may also need drop, as a guard does (`[DRP-6]`).
+ * `[TYP-15]` *(changed in 0.9.9)* **Where views may be stored.** A view value may be stored only in a
+   place whose lifetime is bounded by every region the view carries. Locals, parameters, return values,
+   and fields of other view types are bounded. Class fields, statics, `Box` and `Shared` contents,
+@@ -1072,7 +1079,7 @@
+ | Marker | Holds when |
+ |---|---|
+ | `Copy` | declared with `@derive(Copy)` on a struct or enum whose fields are all `Copy` and which has no `drop`; always for scalars, `ref T`, `Span`, `str`, raw pointers, `extern fn`, handles, tuples and fixed arrays of `Copy` elements |
+-| `Send` | every field is `Send`; raw pointers and `ref` are not; a class handle is `Send` iff the class is `Sync` |
++| `Send` | every field is `Send`; raw pointers are not; `ref T` and `Span[T]` are when `T` is `Sync`, `ref mut T` and `MutSpan[T]` when `T` is `Send` (`[THR-8]`); a class handle is `Send` iff the class is `Sync` |
+ | `Sync` | every field is `Sync`; `ref mut`, `Cell`, `RefCell` and `UnsafeCell` are not; see `[THR-1]` for classes |
+ | `Sized` | everything except `dyn I` and unsized foreign types |
+ 
+@@ -1094,7 +1101,7 @@
+     fn eq(self, other: Self) -> bool                 # ==, !=
+ 
+ interface Ord: Eq:
+-    fn cmp(self, other: Self) -> Ordering            # <, <=, >, >= in generic code; sort, min, max
++    fn cmp(self, other: Self) -> Ordering            # sort, min, max; a float's `<` stays IEEE
+ 
+ enum Ordering:
+     Less
+@@ -1183,9 +1190,13 @@
+   chosen quote, `\n`, `\r` and `\t` are escaped, and any other control character is `\xNN`.
+ * `[TYP-37]` *(new in 0.9.9)* Floats implement `Eq` with IEEE `==` (so `NaN != NaN`) and `Ord` with the IEEE-754
+   totalOrder predicate (`-NaN < -inf < … < -0.0 < +0.0 < … < +inf < +NaN`). The comparison
+-  *operators* on float values keep IEEE meaning (`[TYP-9]`); generic code bounded by `Ord`, `sort()`,
+-  `min()` and `max()` use `cmp`, so sorting floats is total and needs no extra step. Floats do not
+-  implement `Hash`; a float map key is written with `f.to_bits()`.
++  *operators* on float values keep IEEE meaning (`[TYP-9]`) in concrete and generic code alike: `a < b`
++  with `T: Ord` and `T = f64` is IEEE `<`, false when either side is NaN. `cmp`, `sort()`, `sorted()`,
++  `binary_search`, `min()` and `max()` use `cmp`, so sorting floats is total and needs no extra step.
++  A float's `==` and `cmp(…) == Equal` can differ (`-0.0 == 0.0`, which `cmp` orders; a NaN is not `==`
++  itself), so an algorithm keeps to one relation: the ordered ones to `cmp` throughout, the
++  equality-based ones (`contains`, `index_of`, `dedup`) to `==` (ODR-055). Floats do not implement
++  `Hash`; a float map key is written with `f.to_bits()`.
+ * `[TYP-21]` *(changed in 0.9.9)* Operators desugar to these interfaces for non-scalar operands; `a + b` calls
+   `Add.add(a, b)` with both operands borrowed. `a += b` calls `AddAssign.add_assign` if implemented,
+   else `a = a + b`. Scalar operators are built in. The interfaces' methods are `add`, `sub`, `mul`,
+@@ -1272,8 +1283,8 @@
+   default may be omitted.
+ * `[TYP-26]` *(changed in 0.9.9)* There is no overloading: two functions of one name in one scope are
+   `E1030`, except operator-interface implementations and `extend` blocks for different types. The
+-  compiler-known output functions `print`, `println`, `eprint` and `eprintln` (`[STD-9]`) are the only calls with a
+-  variable number of arguments.
++  compiler-known output functions `print`, `println`, `eprint`, `eprintln` (`[STD-9]`) and `format_to`
++  (`[STD-18]`) are the only calls with a variable number of arguments (ODR-060).
+ ---
+ 
+ # Part V — Declarations
+@@ -1350,8 +1361,10 @@
+   suitable place. The editor shows the mode as an inlay hint.
+ * `[FN-9]` *(new in 0.9.9)* A mode on a **class-handle** parameter governs the handle, not the object. A borrowed handle
+   parameter may still be used to read and write the object's fields and call its methods, subject to
+-  Part VIII's exclusivity rules; `owned` transfers the reference without a retain; `mut` lets the
+-  callee re-point the caller's handle variable.
++  Part VIII's exclusivity rules; `owned` gives the callee a handle it owns — the caller's own, moved,
++  when the call is its last use, else a copy, retained (`[OWN-7]`), so the callee's release never
++  frees an object the caller still holds; a retain and release that cancel may be removed (`[RC-2]`)
++  (ODR-051); `mut` lets the callee re-point the caller's handle variable.
+ * `[FN-3]` *(changed in 0.9.9)* A function returns by move. Returning a reference or view requires its region to derive
+   from a parameter the result may borrow from (`[LT-1]`, `[LT-1a]`), or to be `static` (`[LT-3]`).
+ * `[FN-4]` A method's receiver follows the same modes: `self`, `mut self`, `owned self`. A function in
+@@ -1406,8 +1419,9 @@
+   field is `pub`. A declared `fn init(self, …)` replaces it (`[STR-6]`).
+ * `[STR-2]` *(changed in 0.9.9)* A field default is any expression; it is evaluated at each
+   construction that omits the field, in field order, and may allocate (`items: Array[int] = []`).
+-* `[STR-3]` A struct with a `drop` method, or with a field that needs drop, is move-only. `Copy` is
+-  never implicit: `@derive(Copy)` requests it, and is `E2080` if a field is not `Copy`.
++* `[STR-3]` A struct with a `drop` method, or with a field that is not `Copy`, is move-only. `Copy` is
++  never implicit: `@derive(Copy)` requests it, and is `E2080` if a field is not `Copy`. A field may
++  need drop and still be `Copy` — a class handle, released when the copy is dropped (`[OWN-7]`).
+ * `[STR-4]` A struct may have no fields (`struct Marker: pass`).
+ * `[STR-5]` *(changed in 0.9.9)* **Implicit derives.** A struct or enum implements `Eq`, `Debug` and
+   `Clone` field-wise, automatically, when every field implements the interface; `@no_derive(Eq)`
+@@ -1542,7 +1556,12 @@
+   Output = i32`). `Name = T` inside an interface's brackets is written only in a bound (`T: Add[Output
+   = T]`), and is `E2020` in an `implements` list. A bound that leaves an associated type unsaid
+   (`T: Add`) makes `a + b` a `T.Output`, which only a signature naming it (`-> T.Output`) can hold
+-  (`E2040` otherwise) (ODR-040).
++  (`E2040` otherwise) (ODR-040). An interface may give an associated type a **default** (`type Out =
++  Self`): an implementation that does not state it takes the default, read with `Self` as the
++  implementing type, and the default must meet the associated type's bounds (`E2040`). A default is
++  not an equality: a bound `T: I` leaves `T.Out` abstract whatever the default says, and a default
++  method body sees `Out` as itself, never as its default, since an implementation may override it
++  (ODR-049). A default that leads back to itself, directly or through other defaults, is `E2043`.
+ 
+ ## V.7 Constants and statics
+ 
+@@ -1614,6 +1633,12 @@
+ | `@always_specialize`, `@never_specialize` | generic fn or type | `[MONO-7]` |
+ | `@reloadable`, `@noreload`, `@renamed_from("n")`, `@reinit_on_reload`, `@allow_reload_terminate` | see Annex B | Annex B |
+ | `@prelude` | module (standard library only) | `[MOD-5]` |
++| `@attribute` | struct | `[RFL-3]` |
++| `@error("…")`, `@from` | variant of an enum deriving `Error` | `[ERR-3]` |
++| `@default` | variant of an enum deriving `Default` | `[DRV-1]` |
++| `@ser(skip\|rename="…"\|default\|since=N)` | field of a type deriving `Serialize` | `[SER-1]` |
++| `@grade(…)` | overlay item | `[TCB-1]` |
++| `@assume_noalloc(call)` | a call inside `unsafe` (an expression) | `[EFF-7]` |
+ 
+ *Reserved* (recognised and rejected with `E0104` naming the version): `@nopanic` (without
+ `(explicit)`), `@no_runtime_checks`, `@allocator(Name)`, `@gpu`.
+@@ -1663,7 +1688,7 @@
+ | `a // b`, `a % b` | floor division and modulo | Python meaning |
+ | `a ** b` | power | `[TYP-30]` |
+ | `a == b`, `a != b` | `Eq` | built in for scalars |
+-| `a < b` etc. | comparison | scalars built in; generic code through `Ord.cmp`; chains (`[GRM-25]`) |
++| `a < b` etc. | comparison | scalars built in, in generic code too (a float's is IEEE, `[TYP-37]`); other types through `Ord.cmp`; chains (`[GRM-25]`) |
+ | `x in c`, `x not in c` | `c.contains(x)` | `Contains` (`[STD-8]`) |
+ | `a is b`, `a is not b` | handle identity | class handles and references (`[EXP-9]`) |
+ | `x is None`, `x is not None` | option test | `Option` (`[EXP-9]`) |
+@@ -1967,8 +1992,10 @@
+ 
+ ## VII.2 Copy and Clone
+ 
+-* `[OWN-7]` A `Copy` value is duplicated bitwise on use and the source stays valid. A `Copy` type has no
+-  `drop`. A class handle is `Copy`, but copying it retains and dropping it releases (`[RC-1]`).
++* `[OWN-7]` A `Copy` value may be duplicated on use and the source stays valid. The duplicate is the
++  value's bits, and each counted handle in it — a class handle, `Shared`, `Weak`, and any of these
++  inside a struct, enum, tuple or fixed array — is retained, as dropping the copy releases it
++  (`[RC-1]`); no other copy runs code, and a type with a `drop` of its own is never `Copy` (ODR-051).
+ * `[OWN-8]` `Clone.clone(self) -> Self` is the explicit deep copy. Cloning a class handle copies the
+   handle; copying the object is a method the class writes.
+ 
+@@ -2184,7 +2211,9 @@
+ * `[DRP-5]` A `drop` body may not move fields out of `self` (`[EXP-6]`); it uses `mem.take` on
+   `Option` or `Default` fields.
+ * `[DRP-6]` Dropping a `Box[T]` drops the `T` and frees; dropping a class handle or `Shared` releases;
+-  dropping a view does nothing.
++  dropping a plain view (`ref`, `Span`, `str`) does nothing; dropping a guard (`Ref`, `RefMut`,
++  `MutexGuard`, an `RwLock`'s) ends its access or unlocks, and dropping a view type drops whatever in
++  it needs drop. Carrying a region and needing drop are independent properties (`[TYP-1]`) (ODR-053).
+ * `[DRP-7]` *(new in 0.9.9)* A value whose `drop` may read through a reference it holds must be dropped while that
+   reference's region is valid. A generic type parameter is assumed to be read by `drop` unless the type
+   has no `drop` of its own. Violations are `E3060` (shape B7).
+@@ -2322,13 +2351,14 @@
+ * `[RC-2d]` A handle stored into a field from a temporary (a move, not a retain).
+ * `[RC-2e]` Handles yielded by a `for` over a borrowed collection, unless the body stores, returns,
+   consumes or `owned fn`-captures them.
+-* `[RC-3]` *(changed in 0.9.9)* Further elisions are allowed only when semantics are preserved (`[PHIL-5]`). An object may
+-  be deinitialised **earlier** than the last syntactic use of a handle whose value is provably unneeded
+-  and through which no loan is live (`[RC-5]`). A program that needs an object to live to a point binds
+-  it with `with h:` or calls `mem.keep_alive(h)`; `L3019` suggests this where a handle to a class with
+-  an observable `drop` is bound and never read again. `unsafe` code that keeps a raw pointer into an
+-  object MUST keep a handle to it alive the same way, because the object may be deinitialised after
+-  its last Safe use.
++* `[RC-3]` *(changed in 0.9.9)* Further elisions are allowed only when semantics are preserved (`[PHIL-5]`). An object is
++  deinitialised when its last strong owner ends as the source says — a handle's scope ending, its
++  reassignment, `mem.drop` — and never earlier: an elision removes a retain and a release only when it
++  moves no `drop`, no `Weak.upgrade` outcome and no foreign release across that point. A surviving
++  handle in a field, collection or capture keeps the object alive. The last use of a borrow ends the
++  loan, not the owner (`[BRW-2]`) (ODR-063). `unsafe` code that keeps a raw pointer into an object
++  keeps a handle to it alive for as long as it uses the pointer; `with h:` and `mem.keep_alive(h)`
++  state that where no Safe use does.
+ * `[RC-4]` *(changed in 0.9.9)* A non-`Sync` class's counts, and a `Shared`'s, use plain loads and
+   stores; a `Sync` class's, and a `SyncShared`'s, use a relaxed increment and an acquire-release
+   decrement (`[RT-8]`).
+@@ -2540,19 +2570,20 @@
+ * `[HEAP-7]` *(changed in 0.9.9)* `Weak[O]` exists for `O` a class handle, a `Shared[T]` or a
+   `SyncShared[T]` (`[WK-11]`).
+ * `[HEAP-10]` *(new in 0.9.9)* `Shared[T]` is never `Send` or `Sync`: its counts and access state are
+-  plain memory. Shared ownership across threads uses `std.sync.SyncShared[T]` (`T: Sync`), whose counts
++  plain memory. Shared ownership across threads uses `std.sync.SyncShared[T]` (`T: Send + Sync`, `[THR-9]`), whose counts
+   are atomic and which offers `get() -> ref T` only; mutation goes through `T`'s own synchronisation,
+   as for a `@sync` class (`[THR-1]`).
+ 
+ ## IX.2 Arenas
+ 
+ ```ember
++@derive(Zeroable)
+ struct Cmd:
+     id: int
+     cost: f32
+ 
+ fn build(frame: Arena, n: int) -> MutSpan[Cmd]:
+-    cmds = frame.alloc_array[Cmd](n)        # borrows `frame`: no annotation needed ([LT-44])
++    cmds = frame.alloc_zeroed[Cmd](n)       # borrows `frame`: no annotation needed ([LT-44])
+     for i in 0..n:
+         cmds[i].id = i
+     return cmds
+@@ -2570,8 +2601,12 @@
+ * `[ARN-2]` Values in an arena are never dropped individually. Allocating a type that needs drop is
+   `E3090`, unless through `alloc_nodrop`, which acknowledges that its `drop` will never run.
+ * `[ARN-3]` `alloc(v) -> ref mut T` moves `v` in. `alloc_array[T](n) -> MutSpan[T]` requires `T` not to
+-  need drop and initialises every element: zeroed if `T: Zeroable`, else with `T.default()`, else
+-  `E2040`. `alloc_uninit[T](n) -> MutSpan[MaybeUninit[T]]` initialises nothing.
++  need drop and `T: Default`, and initialises each element with `T.default()` in index order (`E2040`
++  without `Default`). `alloc_zeroed[T](n) -> MutSpan[T]` requires `T` not to need drop and
++  `T: Zeroable`, and fills with zero bytes. Neither stands in for the other: a `Zeroable` type's
++  `alloc_array` still calls its `default`, and an implementation fills with zeros instead only where
++  that is the same (a scalar's standard `Default`) (ODR-064). `alloc_uninit[T](n) ->
++  MutSpan[MaybeUninit[T]]` initialises nothing.
+ * `[ARN-4]` *(changed in 0.9.9)* A growing `Arena` carries `Alloc` on its growth path. `FixedArena`
+   (made by `Arena.fixed(buffer: MutSpan[u8])` or `FixedArena.with_capacity(n)` at start-up) never
+   grows, carries no `Alloc` on allocation, and panics on exhaustion (`try_alloc` returns `Option`).
+@@ -2603,9 +2638,13 @@
+   -> MutSpan[T]`. There is no other conversion.
+ * `[ARN-10]` A panic inside `T.default()` during `alloc_array` aborts (`[PAN-1]`); no partially
+   initialised span becomes reachable.
+-* `[ARN-11]` `Zeroable` is an `unsafe` marker: all-zero bytes are a valid `T`. The compiler derives it
+-  only when it can prove it field by field; a `ref`, a range excluding zero, or an enum whose zero
+-  discriminant is invalid is never `Zeroable`.
++* `[ARN-11]` `Zeroable` is an `unsafe` marker: all-zero bytes are a valid `T`. The scalars, raw
++  pointers, a range including zero, and tuples and fixed arrays of `Zeroable` elements are; a struct
++  is when it declares `@derive(Zeroable)`, which the compiler proves field by field (`E2080`), since
++  only its author can vouch for its invariants (a `NonZero`'s field is an integer). A `ref`, a range
++  excluding zero, or an enum whose zero discriminant is invalid is never `Zeroable`. `T: Zeroable` is
++  a bound a generic function may state (`alloc_zeroed`, `mem.zeroed`). Being `Zeroable` never changes
++  what `alloc_array` does (`[ARN-3]`).
+ 
+ ## IX.3 Allocators
+ 
+@@ -2728,7 +2767,8 @@
+   `update(f)` for `T: Copy` or `T: Default`. `set` and `replace` store the new value before dropping the
+   old one, since the old value's `drop` may read the cell.
+ * `[CELL-2]` `Cell` never hands out a reference to its contents, so it needs no run-time check; `get` is
+-  a load and `set` a store.
++  a load and `set` a store, with the retain and release of any counted handle in the value
++  (`[OWN-7]`).
+ * `[CELL-3]` `Cell[T]` is not `Sync`; it is `Send` if `T` is.
+ * `[CELL-4]` `Cell[T]` is `Copy` when `T` is.
+ * `[CELL-5]` `RefCell[T]` keeps a one-word borrow counter beside `T`. `borrow() -> Ref[T]` succeeds
+@@ -2803,7 +2843,12 @@
+ | `Nondet` | a result that may differ between runs or machines (`[DET-2]`) |
+ 
+ * `[EFF-1]` Effects are computed from each function's body and its callees', over the call graph, with
+-  recursive groups taking the union of their members.
++  recursive groups taking the union of their members. An operation's effects are its own and those of
++  everything it runs where it runs: the methods and closures it calls (a `Display` a formatter
++  invokes, a closure an adapter applies), the copies, retains, releases and drops it performs, and the
++  argument and default expressions it evaluates. Calling a generator runs none of its body; each
++  `next` carries the effects of the body up to the next `yield`, and dropping a suspended one those
++  of the drops it performs (ODR-057).
+ * `[EFF-2]` *(changed in 0.9.9)* A call through a callable **parameter** (a generic bound, `[CLO-3]`)
+   contributes the effects of the function actually passed, per instantiation. A call through an owned
+   callable value, a `dyn` interface or a function pointer contributes the effects declared on its type
+@@ -2870,8 +2915,10 @@
+ * `[EFF-21]` `@nolock` forbids `Lock`, including `try_lock`, which never blocks but still takes a lock.
+ * `[EFF-6a]` A `@static_safe` function may not take a parameter whose type forces a dynamic check at
+   the call site (a `RefCell` by value, a `Ref`/`RefMut` guard).
+-* `[EFF-7]` `unsafe: @assume_noalloc(expr)` overrides the analysis for one call the compiler cannot see
+-  into.
++* `[EFF-7]` `@assume_noalloc(call)`, an expression admitted only inside `unsafe` (`E0104` elsewhere),
++  has the call's type and value and overrides the analysis for that one call, which the compiler
++  cannot see into: the call is taken to carry no `Alloc`, and the programmer is answerable for it, as
++  for any `unsafe` obligation (`[UNS-7]`) (ODR-060).
+ * `[EFF-8]` An `override` inherits its base method's contracts.
+ * `[EFF-13]` A long-term access through a class handle loaded from memory is dynamically checked
+   (`[EXC-3]`), so most class-heavy code cannot be `@static_safe`; the diagnostic says why and names the
+@@ -2888,9 +2935,11 @@
+   (`[VER-9]`) and makes more programs satisfy a contract, never fewer.
+ * `[EFF-16]` *(changed in 0.9.9)* `@nopanic(explicit)` forbids only the panics the programmer writes and
+   allocation failure. Arithmetic, bounds, aliasing and stale checks are `RuntimeCheck` kinds and are
+-  allowed under it; the diagnostics and error page for `@nopanic(explicit)` MUST say so. A function that
+-  can abort in no way at all is `@nopanic(explicit)` **and** free of `RuntimeCheck` — two facts
+-  `ember inspect --safety` reports together. (`NonZero[T]` divisors and range facts remove division
++  allowed under it; the diagnostics and error page for `@nopanic(explicit)` MUST say so. A function
++  that is `@nopanic(explicit)` **and** free of `RuntimeCheck` — two facts `ember inspect --safety`
++  reports together — has no panic the effect model knows of; it can still stop on what the model does
++  not cover (`[PHIL-11]`: exhaustion outside `Alloc`, a hardware fault, foreign code breaking its
++  contract) (ODR-057). (`NonZero[T]` divisors and range facts remove division
+   checks entirely, `[STD-4]`.)
+ * `[EFF-19]` `@realtime` names the contract set declared by the manifest of the package that declares
+   the function (`[realtime] contracts = […]`), by default `@noalloc @nolock @noblock
+@@ -3030,16 +3079,19 @@
+   Structs, enums, tuples, fixed arrays and collections are `Send` when every component is. Raw
+   pointers are not `Send`. `ref T` and `Span[T]` are `Send` when `T` is `Sync`; `ref mut T` and
+   `MutSpan[T]` when `T` is `Send`. A class handle, and `Weak` of one, is `Send` only if the class is
+-  `@sync` (`[THR-2]`). `Shared[T]` is never `Send` (`[HEAP-10]`); `SyncShared[T]` and its `Weak` are.
++  `@sync` (`[THR-2]`). `Shared[T]` is never `Send` (`[HEAP-10]`); `SyncShared[T]` and its `Weak` are
++  when `T` is `Send` and `Sync`: the last release may drop the `T` on any thread (ODR-052).
+ * `[THR-9]` *(new in 0.9.9)* A type is **`Sync`** when several threads may read one value of it at
+   the same time. Structural types are `Sync` when every component is. `Cell`, `RefCell`, `UnsafeCell`,
+   raw pointers, `Shared[T]`, and handles (and `Weak`s) of classes that are not `@sync` are not `Sync`.
+-  `Atomic[T]`, `Once`, `SyncShared[T]`, `Mutex[T]`/`RwLock[T]` for a `Send` `T`, and handles of `@sync`
+-  classes are `Sync`.
++  `Atomic[T]`, `Once`, `Mutex[T]` for a `Send` `T` (one thread at a time holds its `ref mut T`),
++  `RwLock[T]` and `SyncShared[T]` for a `T` that is `Send` and `Sync` (several threads hold a `ref T`
++  at once: `RwLock[Cell[int]]` is not `Sync`), and handles of `@sync` classes are `Sync` (ODR-052).
+ * `[THR-1]` *(changed in 0.9.9)* **A class is `Sync` only when it is declared `@sync class`.** Every
+   other class is neither `Sync` nor `Send`, whatever its fields, and uses plain (non-atomic) counts.
+   In a `@sync` class:
+-  * every field's type is `Sync` (`E7001`, naming the field and the component that is not);
++  * every field's type is `Sync` and `Send`, since the last release may drop it on any thread
++    (`E7001`, naming the field and the component that is not) (ODR-052);
+   * **every field is immutable after `init`.** Assigning a field, or beginning any write access to one
+     (a `mut self` method on it, `ref mut`, `iter_mut`, passing it to a `mut` parameter), outside `init`
+     is `E7003`; inside `init`, a field assignment after `self` has been used as a whole is `E7003`;
+@@ -3120,7 +3172,10 @@
+ * `[THR-6]` *(changed in 0.9.9)* A type whose `drop` a safety guarantee depends on is `@must_drop`. A
+   `@must_drop` value MUST NOT be passed to `mem.forget`, stored in a class field, `Shared`,
+   `SyncShared`, `Box`, a collection or an `owned fn` capture, held across a `yield` (`[CORO-13]`), or returned from the function that created it (`E3015`). The standard library
+-  applies it to `Scope` and `JobScope` only.
++  applies it to `Scope` and `JobScope` only. It is structural: a struct, enum, tuple or generic type
++  that owns a `@must_drop` value is `@must_drop` too, whatever its own `drop` does, so wrapping one
++  hides nothing; a reference to one is not, its region bounding it instead (`[TYP-15]`). A `Scope` or
++  `JobScope` cannot be moved into a wrapper at all (`[THR-5]`) (ODR-054).
+ 
+ ## XI.3 Scoped tasks
+ 
+@@ -3173,9 +3228,10 @@
+   `E7010`, with the alternatives `Atomic`, `chunks_mut` and `@parallel(reduce=…)`.
+ * `[PAR-2a]` A violation of clause (b) is `E7011`, `parallel loop has a loop-carried dependency on
+   <place>`, naming both offsets and offering: two `@parallel` loops, a reduction, or a serial loop.
+-* `[PAR-2b]` The analysis runs after the body's calls are inlined. A call it cannot see into that
+-  receives a captured `MutSpan` or column defeats the proof for everything reachable through that
+-  argument (`E7010`).
++* `[PAR-2b]` The analysis reads through the body's calls as if inlined: each call to a function
++  `[CG-C-3]` places in the inline header, recursively until a call is recursive — never according to
++  what the C compiler chose to inline. A call it cannot see into that receives a captured `MutSpan`
++  or column defeats the proof for everything reachable through that argument (`E7010`) (ODR-062).
+ * `[PAR-3]` *(changed in 0.9.9)* `@parallel(reduce=[total: +, best: max])` declares variables combined
+   after the loop; inside the body each chunk has its own copy. Each chunk reduces its iterations left
+   to right, and the chunk results are then combined in chunk order, so the result is the same on
+@@ -3326,7 +3382,8 @@
+   known before entry; every memory access is to a local or to a view at a unit-stride affine index of
+   the induction variable; every written place is accessed at one constant offset (`[PAR-2]`(b)); every
+   written view is disjoint from every other accessed view by `[SIMD-3]`; every call in the body is
+-  inlined (`[CG-C-3]`); the body has none of `Alloc`, `Sync`, `Block`, `Io`, `FFI`,
++  to a function `[CG-C-3]` places in the inline header, read through as `[PAR-2b]` says, whatever
++  the C compiler then does (ODR-062); the body has none of `Alloc`, `Sync`, `Block`, `Io`, `FFI`,
+   `Panic(Explicit)`; every `RuntimeCheck(Bounds)` has been removed by `[OPT-2]`; every
+   `RuntimeCheck(Arithmetic)` is removed, or is one `[SIMD-7]` permits grouping (grouping is then
+   required); the loop has one exit; and every floating-point reduction is declared by `@parallel(reduce=…)` or the function is `@fastmath`.
+@@ -3444,7 +3501,11 @@
+ ## XIII.1 `Result`, `Option` and `?`
+ 
+ * `[ERR-1]` *(changed in 0.9.9)* `Option[T]` is absence: `Some(v)` or `None`. `Result[T, E = AnyError]`
+-  is success or failure: `Ok(v)` or `Err(e)`, where `E: Error`. Both are ordinary enums in the prelude.
++  is success or failure: `Ok(v)` or `Err(e)`. Both are ordinary enums in the prelude, and neither
++  parameter is bounded: `Result[int, int]` is a `Result`. An operation that needs more of `E` says so
++  (ODR-050): `?` into another error type needs `From[E]` (`[ERR-2]`), printing one needs `Display`,
++  walking its causes needs `Error` (or is `AnyError`'s own, `[ERR-8]`), and converting one into
++  `AnyError` needs `E: Error`.
+ * `[ERR-9]` *(new in 0.9.9)* The error parameter defaults to `AnyError` (§XIII.2), so
+   `fn load(path: str) -> Result[Texture]` is a function that can fail with any error. A library that
+   wants callers to `match` on its failures names a concrete error type.
+@@ -3490,15 +3551,17 @@
+   E]` and `is[E]() -> bool`. **`AnyError` does not implement `Error`** — otherwise `[ERR-7]` and
+   `[ERR-8]` would both supply `From[AnyError]` for `AnyError`. An `AnyError` passed through `?` into
+   another `AnyError` is moved (`[ERR-7]`).
+-* `[ERR-10]` *(new in 0.9.9)* `r.context(msg)` on a `Result[T, E]` returns a `Result[T, AnyError]`
++* `[ERR-10]` *(new in 0.9.9)* `r.context(msg)` on a `Result[T, E]` whose `E` converts into `AnyError`
++  (`AnyError: From[E]`, `[ERR-8]`) returns a `Result[T, AnyError]`
+   whose error, if any, displays as `msg: <original>`; `r.with_context(fn() => …)` builds the message
+   only on failure. Context messages stack.
+ * `[ERR-11]` *(new in 0.9.9)* **The cost of `AnyError`.** Converting an error into `AnyError`
+   allocates, once, on the failure path; that path carries `Alloc` (`[EFF-1]`). A concrete error type
+   moves through `?` without allocating, which is why `@noalloc` code names its error types.
+ * `[ERR-12]` *(new in 0.9.9)* An `Err` returned from `main` (`[FN-8]`) prints `error: <Display>` to
+-  standard error, then one `caused by: <Display>` line for each `source` in the chain, and exits with
+-  status 1.
++  standard error, then one `caused by: <Display>` line for each cause in its chain — an `AnyError`'s
++  own chain (`[ERR-8]`), or each `source` of an `E: Error` — and exits with status 1. An `E` that is
++  `Display` but not `Error` has no chain and prints its message alone (ODR-050).
+ 
+ ## XIII.3 Panics or errors
+ 
+@@ -3524,7 +3587,8 @@
+ and no `comptime fn` marker: a function can run at compile time when what it does can.
+ 
+ ```ember
+-from std.math import sin, TAU
++from std.math import TAU
++import math.det
+ 
+ @layout(c)
+ struct Vertex:
+@@ -3535,7 +3599,7 @@
+ fn sine_table() -> [float; 256]:
+     t = [0.0; 256]
+     for i in 0..256:
+-        t[i] = sin(TAU * i as float / 256.0)
++        t[i] = det.sin(TAU * i as float / 256.0)
+     return t
+ 
+ const SINE: [float; 256] = comptime(sine_table())
+@@ -3565,8 +3629,10 @@
+ * `[CT-3]` Each evaluation is limited to 10⁸ steps and 256 MB of evaluator heap by default
+   (`[comptime]` in the manifest); exceeding either is `E6001`.
+ * `[CT-4]` *(changed in 0.9.9)* Compile-time evaluation is deterministic by construction: the evaluator
+-  has no source of `Nondet` (`[DET-2]`), uses `std.math.det` for transcendental functions, and
+-  computes integer and floating-point results exactly as the target does, including overflow panics
++  has no source of `Nondet` (`[DET-2]`). A transcendental function runs at compile time when the
++  source names `std.math.det`'s, with the same result it gives at run time; the platform library's
++  `sin` is `Nondet` and does not run at compile time, and the evaluator never puts `det.sin` in its
++  place (ODR-056). The evaluator computes integer and floating-point results exactly as the target does, including overflow panics
+   and the target's pointer size, endianness and layout. A result is cached with its inputs (source,
+   `read_file` contents, `env` values).
+ * `[CT-5]` *(changed in 0.9.9)* **Where results live.** A compile-time result is placed in the image as
+@@ -3608,7 +3674,7 @@
+   | `Eq` | field-wise equality in declaration order; enums compare variant first (implicit per `[STR-5]`) |
+   | `Debug` | `Point(x=1.0, y=2.0)` for a struct, `Shape.Circle(r=1.0)` for a variant, `Mode.Fast` for a unit variant; strings quoted (implicit per `[STR-5]`) |
+   | `Display` | on a unit-only enum, the variant name; on a struct or payload enum, the `Debug` text |
+-  | `Ord` | lexicographic over fields in declaration order; enums by variant order, then fields |
++  | `Ord` | lexicographic over fields in declaration order, each by `cmp`, the next only when it gives `Equal`; enums by variant order, then fields |
+   | `Hash` | feeds each field in declaration order; enums feed the variant index first |
+   | `Default` | each field's declared default, else its type's `Default`; for an enum, the variant marked `@default` |
+   | `Error` | `[ERR-3]` |
+@@ -3710,7 +3776,8 @@
+   the message names the `Result` forms in `std.io` (`stdin().read_line()`).
+ * `[STD-18]` *(new in 0.9.9)* `format(value, spec="") -> String` formats one value with a format spec
+   (`[LEX-19]`), like Python's `format`. `format_to(buf: MutSpan[u8], …) -> Result[str, FmtError]` formats
+-  into a caller's buffer and never allocates. An f-string lowers to a `StringBuilder` sized from its
++  into a caller's buffer; its own machinery never allocates, so the call allocates only if a value's
++  `Display` does (`[EFF-1]`). An f-string lowers to a `StringBuilder` sized from its
+   literal parts.
+ 
+ ## XV.3 Text
+@@ -3844,7 +3911,8 @@
+   and the consumers `count`, `sum`, `product`, `min`, `max`, `min_by_key`, `max_by_key`, `fold`,
+   `reduce`, `any`, `all`, `find`, `position`, `last`, `nth`, `min_by`, `max_by`, `for_each`,
+   `collect[C]()`, `to_array()`,
+-  and `join(sep)` for `Display` items. Adapters are lazy and allocate nothing; a chain of adapters in a
++  and `join(sep)` for `Display` items. Adapters are lazy and allocate nothing themselves; what the
++  closures they apply do is the loop's effect (`[EFF-1]`). A chain of adapters in a
+   `for` loop compiles to one loop with no iterator object in memory (`[CTL-3]`). The adapters and
+   consumers can also be called directly on an `Iterable` value, borrowing it as `iter()` would:
+   `xs.enumerate()` is `xs.iter().enumerate()`, and a method of the collection's own of the same name
+@@ -4463,9 +4531,12 @@
+   monomorphisation and code generation.
+ * `[BLD-2]` A module's front-end result is keyed by its source, the compiler and language versions,
+   the package configuration and the **interface hashes** of what it imports (signatures, layouts,
+-  effect sets, inline bodies), so editing a private body recompiles that module and re-checks the
+-  contracts of callers only if the body's effect set changed (`[EFF-4]`).
+-* `[BLD-8]` Within a module, editing one function body re-checks that function alone.
++  effect sets, inline bodies), so editing a private body recompiles that module and re-checks its
++  callers only if a fact they use changed: its effect set (`[EFF-4]`), an inline body, or a borrow
++  summary a caller relies on (a view result's sources, `[LT-22]`, `[LT-35]`; a method's field set,
++  `[BRW-10]`) (ODR-058).
++* `[BLD-8]` Within a module, editing one function body re-checks that function, and those of the
++  module that use a fact of it that changed (`[BLD-2]`).
+ * `[BLD-4]` The C compiler and linker run through a generated Ninja file, so C compilation is
+   incremental too.
+ * `[BLD-5]` Output goes to `target/<profile>/{bin,lib,c,obj,bind,inspect}`.
+@@ -4768,7 +4839,9 @@
+ ## XVII.7 Formatter, linter and documentation
+ 
+ * `[FMT-1]` *(changed in 0.9.9)* `ember fmt` writes LF line endings, four-space indentation and at most 100
+-  columns, whatever the platform.
++  columns, whatever the platform. It changes layout only: never a bound, a mode, a capture, a clone
++  or anything else that changes what a program means; rewriting source is `ember fmt --migrate`'s,
++  which lists what it changed (`[CLI-20]`) (ODR-059).
+ * `[FMT-2]` The formatter uses the `=>` form of a lambda whose body is one expression.
+ * `[FMT-3]` The formatter never emits `;` outside `[T; N]` and `[v; N]`.
+ * `[LNT-1]` `L1001 unused binding`: a local never read on any path (names starting `_` are exempt).
+@@ -4876,6 +4949,7 @@
+ | `E2040` | unsatisfied interface bound | `[TYP-17]` |
+ | `E2041` | overlapping `extend` implementations | `[TYP-19]` |
+ | `E2042` | `Float` is implemented only by `f32` and `f64` | `[STD-27]` |
++| `E2043` | an associated type's default leads back to itself | `[IFC-4]` |
+ | `E2050` | interface is not `dyn`-compatible | `[TYP-22]` |
+ | `E2060` | cannot infer type | `[TYP-23]` |
+ | `E2061` | lambda parameter types cannot be inferred here | `[TYP-23]` |
+@@ -5051,7 +5125,6 @@
+ | `L3015` | undocumented unsafe obligation | `[UNS-7]` |
+ | `L3016` | `@safety` text still reads `TODO` | `[UNS-7]` |
+ | `L3017` | reference cycle detected | `[WK-4]` |
+-| `L3019` | handle to an object with an observable `drop` is bound and never read | `[RC-3]` |
+ | `L4001` | allocation in a hot loop | `[LNT-6]` |
+ | `L4002` | dynamic dispatch on a final type | `[LNT-6]` |
+ | `L4003` | large `Array[int]`/`Array[float]` in a hot loop whose values fit 32 bits | `[LNT-6]` |
+@@ -5091,6 +5164,7 @@
+ | `E9012` | reserved |
+ | `E9032` | reserved |
+ | `L3018` | the reason category is part of the `# SAFETY(…):` note and optional (`[UNS-8]`) |
++| `L3019` | an object is never deinitialised before its last owner ends (`[RC-3]`, ODR-063) |
+ | `W0001` | a dangling doc comment is discarded in silence (`[LEX-11]`) |
+ ---
+ 
+@@ -5254,7 +5328,8 @@
+   overflow test) and release (one decrement and a test for zero) is defined in `ember_rt.h` and
+   inlined into the caller; only deinitialisation is out of line. Copying an existing strong handle
+   of a `@sync` object is one atomic `fetch_add`, never a compare-exchange loop; `Weak.upgrade` is the
+-  one retain that may start from zero, and it is a compare-exchange (`[WK-12]`). The deinitialising and resurrection checks of `[OBJ-5]`
++  one retain that may find the strong count at zero, and it is a compare-exchange that then fails,
++  never raising a count from zero (`[WK-12]`) (ODR-060). The deinitialising and resurrection checks of `[OBJ-5]`
+   run on the release-to-zero path only.
+ * `[RT-11]` *(new in 0.9.9)* Allocation statistics are kept per thread, or only in `debug`; no
+   allocation updates a shared non-atomic counter.
+@@ -6124,7 +6199,7 @@
+ | F-080 — `String(literal)` does not exist | SPEC | `String.from(s)`, `s.to_string()` and literal coercion are specified. | `[TXT-9]`, `[TXT-11]` |
+ | F-081 — writing a field through a borrowed class-handle parameter is rejected (update to F-073) | SPEC | Borrowed class-handle parameters may be written through. | `[CLS-7]`, `[FN-9]` |
+ | F-082 — reference cycles leak silently in release, and Python users build cycles | SPEC | Debug runs report leaked cycles at exit by default. | `[WK-15]` |
+-| F-083 — objects may die before their last syntactic use | SPEC | Early deinitialisation is specified with `with h:` and lint `L3019`. | `[RC-3]` |
++| F-083 — objects may die before their last syntactic use | SPEC | An object dies when its last owner ends as the source says, never earlier (ODR-063); `L3019` is retired. | `[RC-3]` |
+ | F-084 — the VIII.7 idiom uses three things the compiler lacks or rejects | SPEC | Callable fields, pattern conditions and owned callable values make the idiom writable. | `[CLO-3]`, `[CLO-11]` |
+ | F-085 — the development target's examples are not checked by any gate, and half of them do not parse | GATE | Every `ember` block of the current document is extracted and checked. | `[TST-7]` |
+ | F-086 — `[ARN-4]` makes `@noalloc`-cleanliness a property of a value, which the effect system cannot see | SPEC | `FixedArena` is the `@noalloc` arena type; `Arena.fixed` returns it. | `[ARN-4]` |
+@@ -6513,7 +6588,8 @@
+ Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036;
+ Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039; Hardened_17 adds ODR-040;
+ Hardened_18 adds ODR-041; Hardened_19 adds ODR-042; Hardened_20 adds ODR-043 to ODR-045;
+-Hardened_21 adds ODR-046; Hardened_22 adds ODR-047; Hardened_23 adds ODR-048.
++Hardened_21 adds ODR-046; Hardened_22 adds ODR-047; Hardened_23 adds ODR-048; Hardened_24 adds
++ODR-049 to ODR-064, the owner's simplification pass (`docs/proposals/Ember_Simplification_Pass_Revised.md`).
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6545,38 +6621,78 @@
+ | ODR-046 | `std.math.det`'s functions take `f32` or `f64` and answer in it, an `f32` result being the `f64` one rounded once; each within one unit in the last place (`atan2` 1.3); no integers (Hardened_21) | `[DET-4]` |
+ | ODR-047 | `NonZero[T]` is `std.core`'s, read with `get()`, its field and constructor private; `T` is an integer type, through a private `Integer`; `x // d` and `x % d` take a `NonZero` of `x`'s type and answer in it (Hardened_22) | `[STD-4]`, `[TYP-13]` |
+ | ODR-048 | an instance of a generic passes a parameter its result may point into as the declaration does (`Holder[str]`'s receiver by address, as `Holder[T]`'s); a parameter an instance's type makes a view is a source of that instance (Hardened_23) | `[BRW-8]`, `[LT-1]` |
++| ODR-049 | an associated type's default fills in an implementation that does not state it, meeting its bounds; it is not an equality a bound or a default method body may assume; a cycle of defaults is `E2043` — SP-003 (Hardened_24) | `[IFC-4]` |
++| ODR-050 | `Result[T, E]` bounds neither parameter; each operation says what it needs of `E`; `main`'s error prints its chain when it has one — SP-009 (Hardened_24) | `[ERR-1]`, `[ERR-10]`, `[ERR-12]` |
++| ODR-051 | a `Copy` value's copy is its bits, retaining each counted handle in it; a struct holding handles may be `Copy`; an `owned` handle argument is the caller's moved, or a retained copy — SP-010 (Hardened_24) | `[PHIL-3]`, `[OWN-7]`, `[STR-3]`, `[FN-9]` |
++| ODR-052 | `RwLock[T]` and `SyncShared[T]` are `Sync` for a `Send + Sync` `T`, `Mutex[T]` for a `Send` one; a `@sync` class's fields are `Send` and `Sync`; the marker table agrees with `[THR-8]` — SP-011 (Hardened_24) | `[THR-8]`, `[THR-9]`, `[THR-1]`, `[HEAP-10]` |
++| ODR-053 | a view is what carries a region; a guard is a view that needs drop, and dropping it ends its access — SP-012 (Hardened_24) | `[DRP-6]`, `[TYP-34]` |
++| ODR-054 | `@must_drop` is structural: a type owning such a value is one too — SP-015 (Hardened_24) | `[THR-6]` |
++| ODR-055 | a float's comparison operators are IEEE in generic code too; `cmp`, sorting, `min` and `max` are total; an algorithm keeps to one relation — SP-018 (Hardened_24) | `[TYP-37]`, `[DRV-1]` |
++| ODR-056 | compile time runs `std.math.det`'s functions when the source names them, and never puts one in place of the platform's — SP-019 (Hardened_24) | `[CT-4]` |
++| ODR-057 | an operation's effects include what it runs: callbacks, copies, releases, drops, argument evaluation; a generator's by phase; `@nopanic(explicit)` without checks says no modelled panic — SP-020 (Hardened_24) | `[EFF-1]`, `[EFF-16]`, `[STD-18]`, `[STD-19]`, `[CELL-2]` |
++| ODR-058 | a body edit re-checks the callers that use a fact of it that changed: effects, inline bodies, borrow summaries — SP-023 (Hardened_24) | `[BLD-2]`, `[BLD-8]` |
++| ODR-059 | `ember fmt` changes layout only; rewriting source is `--migrate`'s — SP-024 (Hardened_24) | `[FMT-1]` |
++| ODR-060 | the formatter writes LF with no manifest switch; `Weak.upgrade` never raises a count from zero; the attribute table lists every attribute; `@assume_noalloc` is an expression inside `unsafe`; `format_to` is variadic — SP-026 (Hardened_24) | `[LEX-2]`, `[RT-10]`, `[EFF-7]`, `[TYP-26]`, `[ATT-1]` |
++| ODR-061 | a build's acceptance depends on its semantic inputs; build policy and budgets stop a build as themselves, never as a language error — SP-027 (Hardened_24) | `[PHIL-13]` |
++| ODR-062 | the parallel and vectorisation analyses read through calls by the inline header's specified expansion, never by the C compiler's inlining — SP-028 (Hardened_24) | `[PAR-2b]`, `[SIMD-5]` |
++| ODR-063 | an object is deinitialised when its last owner ends as the source says, never earlier; `L3019` is retired — SP-014 (Hardened_24) | `[RC-3]` |
++| ODR-064 | `alloc_array` initialises with `Default`, `alloc_zeroed` fills with zeros for a `Zeroable` `T`; a struct is `Zeroable` by `@derive(Zeroable)` — SP-017 (Hardened_24) | `[ARN-3]`, `[ARN-11]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+ | Rule | H2 → now |
+ |---|---|
+ | `[ALC-1]` | changed |
++| `[ARN-3]` | changed |
++| `[ARN-11]` | changed |
++| `[BLD-2]` | changed |
++| `[BLD-8]` | changed |
+ | `[BRW-8]` | changed |
++| `[CELL-2]` | changed |
+ | `[CG-C-11]` | changed |
+ | `[CLO-7]` | changed |
+ | `[CLS-4]` | changed |
+ | `[CORO-6]` | changed |
++| `[CT-4]` | changed |
+ | `[CTL-1]` | changed |
+ | `[CTL-3]` | changed |
+ | `[DET-2]` | changed |
+ | `[DET-4]` | changed |
++| `[DRP-6]` | changed |
++| `[EFF-1]` | changed |
++| `[EFF-7]` | changed |
++| `[EFF-16]` | changed |
++| `[ERR-1]` | changed |
+ | `[ERR-4]` | changed |
++| `[ERR-10]` | changed |
++| `[ERR-12]` | changed |
++| `[FMT-1]` | changed |
+ | `[FN-1]` | changed |
+ | `[FN-3]` | changed |
+ | `[FN-6]` | changed |
++| `[FN-9]` | changed |
+ | `[FN-10]` | changed |
+ | `[GRM-34]` | changed |
+ | `[HASH-1]` | changed |
+ | `[HASH-2]` | changed |
+ | `[HASH-3]` | changed |
++| `[HEAP-10]` | changed |
+ | `[IFC-3]` | changed |
+ | `[IFC-4]` | changed |
++| `[LEX-2]` | changed |
+ | `[LEX-15]` | changed |
+ | `[LT-1]` | changed |
+ | `[LT-1a]` | changed |
+ | `[LT-1b]` | changed |
+ | `[LT-7]` | changed |
+ | `[LT-44]` | changed |
++| `[OWN-7]` | changed |
++| `[PAR-2b]` | changed |
++| `[PHIL-3]` | changed |
++| `[PHIL-13]` | changed |
++| `[RC-3]` | changed |
++| `[RT-10]` | changed |
++| `[SIMD-5]` | changed |
+ | `[STD-4]` | changed |
+ | `[STD-5]` | changed |
+ | `[STD-11]` | changed |
+@@ -6584,16 +6700,26 @@
+ | `[STD-15]` | changed |
+ | `[STD-16]` | changed |
+ | `[STD-17]` | changed |
++| `[STD-18]` | changed |
++| `[STD-19]` | changed |
+ | `[STD-20]` | changed |
+ | `[STD-21]` | changed |
+ | `[STD-27]` | added |
+ | `[STD-28]` | added |
++| `[STR-3]` | changed |
+ | `[STR-5]` | changed |
++| `[THR-1]` | changed |
++| `[THR-6]` | changed |
++| `[THR-8]` | changed |
++| `[THR-9]` | changed |
+ | `[TXT-10]` | changed |
+ | `[TYP-13]` | changed |
+ | `[TYP-21]` | changed |
+ | `[TYP-23]` | changed |
++| `[TYP-26]` | changed |
+ | `[TYP-29]` | changed |
++| `[TYP-34]` | changed |
++| `[TYP-37]` | changed |
+ | `[TYP-38]` | changed |
+ | `[TYP-39]` | changed |
+ ---
+@@ -6683,7 +6809,7 @@
+ | `[BLD-5]` | XVII | Output goes to `target/<profile>/{bin,lib,c,obj,bind,inspect}`. |
+ | `[BLD-6]` | XVII | `lto = "off" \| "thin" \| "on"`. A value the C toolchain does not … |
+ | `[BLD-7]` | XVII | Front-end stages run in parallel across modules by default (`-j`, … |
+-| `[BLD-8]` | XVII | Within a module, editing one function body re-checks that function … |
++| `[BLD-8]` | XVII | Within a module, editing one function body re-checks that function, … |
+ | `[BLD-9]` | XVII | `--timings` writes a per-stage, per-module timing report … |
+ | `[BLD-10]` | XVII | The compile-time budgets below are release gates. |
+ | `[BLD-11]` | XVII | A package that omits a `[STD-6]` layer cannot use it or depend on a … |
+@@ -7013,7 +7139,7 @@
+ | `[EFF-5]` | X | Each contract in the table forbids its effect in the function's … |
+ | `[EFF-6]` | X | A contract is checked over the whole reachable call graph — callees, … |
+ | `[EFF-6a]` | X | A `@static_safe` function may not take a parameter whose type forces … |
+-| `[EFF-7]` | X | `unsafe: @assume_noalloc(expr)` overrides the analysis for one call … |
++| `[EFF-7]` | X | `@assume_noalloc(call)`, an expression admitted only inside `unsafe` … |
+ | `[EFF-8]` | X | An `override` inherits its base method's contracts. |
+ | `[EFF-9]` | X | `RuntimeCheck(k)` enters a function's effect set when a check of kind … |
+ | `[EFF-10]` | X | The effect set records only which kinds occur. Per-site detail — … |
+@@ -7052,7 +7178,7 @@
+ | `[ERR-7]` | XIII | Identity conversion. The prelude provides `From[T]` for every `T` … |
+ | `[ERR-8]` | XIII | `AnyError` is the prelude's "any error" type: an owned, boxed `dyn … |
+ | `[ERR-9]` | XIII | The error parameter defaults to `AnyError` (§XIII.2), so `fn … |
+-| `[ERR-10]` | XIII | `r.context(msg)` on a `Result[T, E]` returns a `Result[T, AnyError]` … |
++| `[ERR-10]` | XIII | `r.context(msg)` on a `Result[T, E]` whose `E` converts into … |
+ | `[ERR-11]` | XIII | The cost of `AnyError`. Converting an error into `AnyError` … |
+ | `[ERR-12]` | XIII | An `Err` returned from `main` (`[FN-8]`) prints `error: <Display>` to … |
+ | `[ERR-13]` | XIII | The standard library follows one convention, and user code SHOULD: an … |
+@@ -7552,7 +7678,7 @@
+ | `[OWN-4]` | VII | A loop body that moves a value declared outside the loop is `E3041`, … |
+ | `[OWN-5]` | VII | Assigning to a place that holds a live value evaluates the new value, … |
+ | `[OWN-6]` | VII | `mem.take(mut place: T) -> T` (leaves `Default`), `mem.replace(mut … |
+-| `[OWN-7]` | VII | A `Copy` value is duplicated bitwise on use and the source stays … |
++| `[OWN-7]` | VII | A `Copy` value may be duplicated on use and the source stays valid. … |
+ | `[OWN-8]` | VII | `Clone.clone(self) -> Self` is the explicit deep copy. Cloning a … |
+ 
+ ## PAN
+@@ -7570,7 +7696,7 @@
+ | `[PAR-1]` | XI | A `@parallel` loop's body runs as a closure over index chunks on the … |
+ | `[PAR-2]` | XI | Iterations MUST be independent. The body MUST NOT contain `break`, … |
+ | `[PAR-2a]` | XI | A violation of clause (b) is `E7011`, `parallel loop has a … |
+-| `[PAR-2b]` | XI | The analysis runs after the body's calls are inlined. A call it … |
++| `[PAR-2b]` | XI | The analysis reads through the body's calls as if inlined: each call … |
+ | `[PAR-3]` | XI | `@parallel(reduce=[total: +, best: max])` declares variables combined … |
+ | `[PAR-4]` | XI | A `@parallel` loop has the effects `Sync` and `Block` (it waits for … |
+ | `[PAR-5]` | XI | Parallel results do not depend on the machine. Chunk boundaries are a … |
+@@ -7581,7 +7707,7 @@
+ |---|---|---|
+ | `[PHIL-1]` | I | Two syntactically identical declarations in the same context have … |
+ | `[PHIL-2]` | I | No heap allocation happens that the source does not show. The … |
+-| `[PHIL-3]` | I | No implicit copy of a non-`Copy` value occurs. Copies of `Copy` … |
++| `[PHIL-3]` | I | No implicit copy of a non-`Copy` value occurs. A copy of a `Copy` … |
+ | `[PHIL-4]` | I | No implicit synchronisation occurs except through types documented to … |
+ | `[PHIL-5]` | I | Every safety check the compiler removes, it removes because it proved … |
+ | `[PHIL-6]` | I | Every expensive or dangerous conversion at an FFI boundary is … |
+@@ -7764,7 +7890,7 @@
+ |---|---|---|
+ | `[STR-1]` | V | Every struct has a memberwise constructor `Name(field0, field1, …)` … |
+ | `[STR-2]` | V | A field default is any expression; it is evaluated at each … |
+-| `[STR-3]` | V | A struct with a `drop` method, or with a field that needs drop, is … |
++| `[STR-3]` | V | A struct with a `drop` method, or with a field that is not `Copy`, is … |
+ | `[STR-4]` | V | A struct may have no fields (`struct Marker: pass`). |
+ | `[STR-5]` | V | Implicit derives. A struct or enum implements `Eq`, `Debug` and … |
+ | `[STR-6]` | V | `fn init(self, …)` on a struct is its constructor: every field … |

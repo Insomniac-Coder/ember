@@ -1,0 +1,77 @@
+--- Ember_v0.9.10_Hardened_8.md
++++ Ember_v0.9.10_Hardened_9.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.10_Hardened_8
+-**Supersedes:** 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.10_Hardened_9
++**Supersedes:** 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -1685,7 +1685,7 @@
+ * `[CLS-7a]` Inside `drop`, `self` MUST NOT be stored anywhere that outlives the call (`E3016`).
+ * `[CLS-8]` *(changed in 0.9.9)* A class is `Sync` only as `[THR-1]` allows; every field of a `Sync`
+   class is immutable after `init`.
+-* `[CLS-9]` A `let` field is assignable only in `init`.
++* `[CLS-9]` *(changed in 0.9.10)* A `let` field is assignable only in `init` (`E2104`).
+ * `[CLS-9a]` A `let` field of a non-`Copy` type may still be mutated *through* (`self.items.push(v)`);
+   `let` fixes the binding, not the value.
+ 
+@@ -5381,6 +5381,7 @@
+ | `E2101` | derived class with a field that has no default needs an `init` | `[CLS-10]` |
+ | `E2102` | derived `init` uses `self` or an inherited field before `super.init`, or leaves an own field unassigned | `[CLS-11]` |
+ | `E2103` | assignment to `self` in a class method | `[CLS-7]` |
++| `E2104` | assignment to a `let` field outside its `init` | `[CLS-9]` |
+ | `E2110` | override of a method that is not virtual | `[CLS-4]` |
+ | `E2111` | a method that replaces an inherited virtual one without `override` | `[CLS-4]` |
+ | `E2120` | inherent extension of a type from another package | `[IFC-2]` |
+@@ -7063,7 +7064,8 @@
+ 0.9.10_Hardened_5 adds ODR-101, a `main` of another form (§H.10);
+ 0.9.10_Hardened_6 adds ODR-102, owned callable values (§H.11);
+ 0.9.10_Hardened_7 adds ODR-103, a lambda outliving its captures is `E3026` (§H.12);
+-0.9.10_Hardened_8 adds ODR-104, a constructor's `return` and its receiver (§H.13).
++0.9.10_Hardened_8 adds ODR-104, a constructor's `return` and its receiver (§H.13);
++0.9.10_Hardened_9 adds ODR-105, `E2104` for a `let` field assigned outside `init` (§H.14).
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -7151,6 +7153,7 @@
+ | ODR-102 | ruled under the delegation (2026-10-11, autopilot): a function or capture-free lambda used as a value is a plain `Copy` value that becomes an owned callable value where one is wanted; an owned callable value moves and drops its state, is lent mutably to a borrowed parameter (`E3023` from a place that is not mutable, `E3022` twice at once), is neither `Send` nor `Sync`, equals another calling the same function with the same state, and given to C panics when it holds state; a lambda copies what it only reads (`[CLO-13]`) where it becomes an owned callable value, "assigned after" being later in the body or anywhere in a loop around it | `[CLO-3]`, `[CLO-10]`, `[CLO-13]`, `[CLO-2]`, `[THR-8]`, `[THR-9]` |
+ | ODR-103 | ruled under the delegation (2026-10-12, autopilot): a lambda that borrows, stored or sent where no view may go, is shape B9's `E3026` (a closure outlives what it captures), help `owned fn` or `thread.scope()`; `E3063` stays for other views | `[CLO-3]`, `[CLO-4]`, `[THR-10]` |
+ | ODR-104 | ruled under the delegation (2026-10-12, autopilot): a `return` from a class `init`, like the end of its body, hands the object to its caller, so every field without a default is assigned on that path (`E2100`); `mut self` in a class `init` is accepted and means the same as `self` | `[CLS-2]`, `[STR-6]` |
++| ODR-105 | ruled under the delegation (2026-10-12, autopilot): a `let` field assigned outside its `init` is `E2104`, a code of its own beside `E2103` | `[CLS-9]` |
+ 
+ Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
+ 0.9.9.
+@@ -7472,6 +7475,20 @@
+ | Rule | 0.9.10_Hardened_7 → 0.9.10_Hardened_8 |
+ |---|---|
+ | `[CLS-2]` | changed |
++
++## H.14 Changes in 0.9.10_Hardened_9 (from 0.9.10_Hardened_8)
++
++**0.9.10_Hardened_9** records ODR-105, ruled under the owner's delegation on 2026-10-12
++(`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-166). It gives a diagnostic a code only:
++
++* A `let` field assigned outside its `init` is `E2104` (`[CLS-9]`); the code table gave the rule
++  none.
++
++Generated: every rule whose text differs from 0.9.10_Hardened_8.
++
++| Rule | 0.9.10_Hardened_8 → 0.9.10_Hardened_9 |
++|---|---|
++| `[CLS-9]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -7700,7 +7717,7 @@
+ | `[CLS-7]` | V | Inside a class method, `self` is a handle. Any method may read and … |
+ | `[CLS-7a]` | V | Inside `drop`, `self` MUST NOT be stored anywhere that outlives the … |
+ | `[CLS-8]` | V | A class is `Sync` only as `[THR-1]` allows; every field of a `Sync` … |
+-| `[CLS-9]` | V | A `let` field is assignable only in `init`. |
++| `[CLS-9]` | V | *(changed in 0.9.10)* A `let` field is assignable only in `init` … |
+ | `[CLS-9a]` | V | A `let` field of a non-`Copy` type may still be mutated *through* … |
+ | `[CLS-10]` | V | A derived class with no `init` gets its base's constructor: … |
+ | `[CLS-11]` | V | Construction is two-phase. In a derived `init`, the code before … |

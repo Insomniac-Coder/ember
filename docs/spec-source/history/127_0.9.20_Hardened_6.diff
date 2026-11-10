@@ -1,0 +1,547 @@
+--- Ember_v0.9.20_Hardened_5.md
++++ Ember_v0.9.20_Hardened_6.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.20_Hardened_5
+-**Supersedes:** 0.9.20_Hardened_4 (development target until this one), 0.9.20_Hardened_3 to
++**Version:** 0.9.20_Hardened_6
++**Supersedes:** 0.9.20_Hardened_5 (development target until this one), 0.9.20_Hardened_4 to
+ 0.9.20_Hardened_1, 0.9.15_Hardened_11 to 0.9.15_Hardened_1 and every earlier file:
+ 0.9.10_Hardened_1 to 0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3
+ and 0.8.5_Hardened_1 (adopted). This document is the single specification of Ember; the earlier
+@@ -41,9 +41,13 @@
+ added; **0.9.20_Hardened_3** the third pass, of 2026-11-08 (§H.54), which joins the gap review of
+ 0.9.15_Hardened_11 and the owner's verdicts 164 to 166; **0.9.20_Hardened_4** the fourth, of
+ 2026-11-08 (§H.55), in which the lead ruled the open owner-decision records on the owner's
+-instruction; and **0.9.20_Hardened_5**, of 2026-11-10 (§H.56): the owner's review of those rulings
++instruction; **0.9.20_Hardened_5**, of 2026-11-10 (§H.56): the owner's review of those rulings
+ (three stand on the lead's judgement as he asked, and the default manifest of verdicts 127 and 135
+-is written again), and the repairs from a reading of the whole of Hardened_4. Each of them changes
++is written again), and the repairs from a reading of the whole of Hardened_4; and
++**0.9.20_Hardened_6**, of 2026-11-10 (§H.57): three holes a second review found outside the core
++language (the list hot reload keeps of objects, code a C header runs with no call from Ember, the
++files a dependency's C reads), a C++ call chosen as C++ ranks it, and the shared function type of
++verdict 38 restored. Each of them changes
+ the set of accepted programs, so the language version moves (`[VER-9]`). What a program means is written in
+ words on the thing it describes: one owner unless a line says `shares`; `owns` for a hand-over and a
+ value held alone, at the call too; `copy of` for a copy; `ref mut` on a name, and at the call, for a
+@@ -54,7 +58,7 @@
+ `@borrows`, the mode `owned`, `self`, `mem.forget`, effect clauses on a first line and every check of
+ exclusive access made while the program runs. It changes the set of accepted programs, so the
+ language version moves (`[VER-9]`); Appendix H §H.41 to §H.51 list every change of 0.9.15, and §H.52
+-to §H.56 those of 0.9.20. The revisions before it were
++to §H.57 those of 0.9.20. The revisions before it were
+ authored at the owner's direction of 2026-09-23 with delegated authority to decide open language
+ questions against the project goal; Appendix H lists each one's changes (§H.1 to §H.40), and every
+ finding of the 2026-09-23 research pass (`tasks/audit/FINDINGS.md`, F-001–F-214) is resolved in
+@@ -116,7 +120,7 @@
+ | Appendix E | Coming from Python (non-normative) |
+ | Appendix F | Glossary |
+ | Appendix G | Resolution of findings F-001–F-214 |
+-| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.51) and in 0.9.20 (§H.52 to §H.56) |
++| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.51) and in 0.9.20 (§H.52 to §H.57) |
+ | Appendix I | Rule index |
+ 
+ **Normative words.** MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119. Text marked
+@@ -1800,7 +1804,7 @@
+   fields' types say (the `points` list of that `Mesh` from the built-in manager). A value whose
+   manager may have several instances keeps its instance's address, one word, so that its growth and
+   its end go back to the instance it came from.
+-* `[TYP-46a]` *(new in 0.9.20)* *(changed in 0.9.20)* **A value made in an instance follows its
++* `[TYP-46a]` *(new in 0.9.20)* **A value made in an instance follows its
+   manager between threads.** For `Send` and `ThreadShared`, a value whose growth or end calls its
+   instance's methods (one that keeps the instance word, and one in a `FoundByAddress` manager, whose
+   end finds the instance from its address, `[ALC-1]`) holds a `ref A` to that instance: it is
+@@ -6028,7 +6032,7 @@
+   outside a scope or a callback foreign code keeps only from a `static` instance (`[LT-4]`, `E3063`
+   otherwise), which never changes (`[STA-1]`), so no change of this rule's kind is ever made to it
+   and nothing is checked after the hand-over.
+-* `[ALC-5a]` *(new in 0.9.20)* *(changed in 0.9.20)* **A link holds the block.** A `weakref` link to
++* `[ALC-5a]` *(new in 0.9.20)* **A link holds the block.** A `weakref` link to
+   a value made in a memory manager's instance counts, for `[LT-4]` and `[ALC-5]`, as a value that
+   holds one, since the target's block stays until the link ends (`[WK-11]`, `[OBJ-3]`): the link
+   carries the instance's region from the line that makes it (`w = weakref n`) through every place it
+@@ -6426,14 +6430,14 @@
+ * `[EFF-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A call through a
+   function value contributes the effects of every function the program can put there. For a type
+   parameter bounded by a function type (`[F: needs fn(Item)]` above `fn for_each(owns f: F) owns
+-  this:`) that is the function given, per instance. A parameter of a function type is the function
+-  given, per instance, as a type parameter bounded by a function type is (`[COST-3]`): the package
+-  that gives the function compiles that instance and sees the function. For a field, a list element
+-  or a local of a function type, it is every lambda and named function the program puts in that
+-  place, a library's included (verdict 122): each field of each struct and class apart from every
+-  other, a list's elements with the place that holds the list, a parameter with every argument given
+-  to it, and a place a value is copied into with the functions of the place it came from. A value
+-  the compiler cannot follow, read through a raw pointer or given by C, has those of every function
++  this:`) that is the function given, per instance: the package that gives the function compiles
++  that instance and sees the function (`[COST-3]`). For a field, a list element, a parameter or a
++  local of a function type, the shared type, which is compiled once and keeps functions of different
++  kinds together (verdict 38), it is every lambda and named function the program puts in that place,
++  a library's included (verdict 122): each field of each struct and class apart from every other, a
++  list's elements with the place that holds the list, a parameter with every argument given to it,
++  and a place a value is copied into with the functions of the place it came from. A value the
++  compiler cannot follow, read through a raw pointer or given by C, has those of every function
+   stored into its type. A place no function ever reaches is called by no code that runs, and
+   contributes nothing. Dropping a function value has the effects of dropping each function that
+   reaches its place: none for a named function, its captured values' drops for a lambda. For an
+@@ -6444,31 +6448,34 @@
+   place of that type is checked against it, with the contract's code, and a call through such a
+   place has no effect the contract excludes. An interface method may declare contracts; its
+   implementations MUST satisfy them (`E4010`).
+-* `[EFF-2a]` *(new in 0.9.20)* **A place another package can fill.** A function-typed parameter is
+-  compiled once per function given, by the package that gives it, as a generic is (`[EFF-4]`,
+-  `[COST-3]`), so every function reaching it is seen where its line compiles. Every other place a
+-  function value is called through, and every `virtual` or interface method, is compiled by the
+-  package that declares it, which sees only its own stores and overrides (`[EFF-2]`, `[BLD-16]`).
+-  Where another package can fill such a place (a `pub` field, a `pub` static, an element of a list
+-  or map one of them holds, a place a `pub` function stores a function-typed parameter into, and
+-  every place a value from one of these is copied into), override such a method (a `virtual` method
+-  of a `pub` class) or implement it (a method of a `pub` interface called through `dyn`), a call
+-  through it counts, beside the functions this package puts there, a function another package may
+-  put there: one that may call every `pub` function of this package, change and end every place a
+-  `pub` name of this package reaches (a `pub static mut`; the fields of an object a `pub` function
+-  is given, returns or holds), take every lock a `pub` function takes, and have every effect the
+-  place's or method's declared contracts do not exclude (verdict 106); what it keeps of what the
+-  call gives it, an owner it stores or a `weakref T` link it makes, is judged where the function is
+-  seen (`[WK-7]`, `[OWN-13]`). A place or method no other package can reach keeps `[EFF-2]`'s rule,
+-  and so does a `virtual` method of a class that cannot be subclassed outside its package. The
+-  message names the route: `E3020` "`h()` (line 11) may add to `HANDLERS` (through `add`, which a
+-  function another package stores into a `Handler` may call) while this loop walks `HANDLERS` (line
+-  10); walk a list of your own: write `todo = mem.take(ref mut HANDLERS)` above line 10, `for h in
+-  todo:` in place of line 10, and `HANDLERS.extend(owns todo)` below the loop"; `E4001` "`run_all`
+-  is `@noalloc`, and `h()` (line 11) may run a function another package stores into a `Handler`; say
+-  what a `Handler` may do: write `@noalloc` above `type Handler = fn()`". A dependant's stores and
+-  overrides are counted by the dependant at its own lines (`[EFF-4]`, `[CLO-17]`, `[MOD-9a]`), and
+-  `[DET-3]` counts the same way.
++* `[EFF-2a]` *(new in 0.9.20)* **A place another package can fill.** A function given through a type
++  parameter (`[F: needs fn(Item)]`) is compiled once per function given, by the package that gives
++  it, as any generic instance is (`[EFF-4]`, `[COST-3]`), so every function reaching it is seen
++  where its line compiles. Every place of a function type a function value is called through, a
++  parameter of a function type included (the shared type: one body and one indirect call, verdict
++  38), and every `virtual` or interface method, is compiled by the package that declares it, which
++  sees only its own stores, calls and overrides (`[EFF-2]`, `[BLD-16]`). Where another package can
++  fill such a place (a function-typed parameter of a `pub` function, a `pub` field, a `pub` static,
++  an element of a list or map one of them holds, a place a `pub` function stores a function-typed
++  parameter into, and every place a value from one of these is copied into), override such a method
++  (a `virtual` method of a `pub` class) or implement it (a method of a `pub` interface called
++  through `dyn`), a call through it counts, beside the functions this package puts there, a function
++  another package may put there: one that may call every `pub` function of this package, change and
++  end every place a `pub` name of this package reaches (a `pub static mut`; the fields of an object
++  a `pub` function is given, returns or holds), take every lock a `pub` function takes, and have
++  every effect the place's or method's declared contracts do not exclude (verdict 106); what it
++  keeps of what the call gives it, an owner it stores or a `weakref T` link it makes, is judged
++  where the function is seen (`[WK-7]`, `[OWN-13]`). A place or method no other package can reach
++  keeps `[EFF-2]`'s rule, and so does a `virtual` method of a class that cannot be subclassed
++  outside its package. The message names the route: `E3020` "`h()` (line 11) may add to `HANDLERS`
++  (through `add`, which a function another package stores into a `Handler` may call) while this loop
++  walks `HANDLERS` (line 10); walk a list of your own: write `todo = mem.take(ref mut HANDLERS)`
++  above line 10, `for h in todo:` in place of line 10, and `HANDLERS.extend(owns todo)` below the
++  loop"; `E4001` "`run_all` is `@noalloc`, and `h()` (line 11) may run a function another package
++  stores into a `Handler`; say what a `Handler` may do: write `@noalloc` above `type Handler =
++  fn()`". A dependant's stores and overrides, and the functions it passes to a `pub` function's
++  function-typed parameter, are counted by the dependant at its own lines (`[EFF-4]`, `[CLO-17]`,
++  `[MOD-9a]`, `[BLD-14]` item 16), and `[DET-3]` counts the same way.
+ * `[EFF-3]` *(changed in 0.9.15)* An `extern` function carries the effects its contract declares
+   (`@ffi(effects=[…])`), `FFI` at least. What a call of one may change through the callbacks C keeps
+   is `[EFF-26]`'s.
+@@ -6830,7 +6837,7 @@
+ | An override call or `delete` of a trampoline-class object under `threads=creator` (`[FFI-17d]`) | guaranteed present | one compare of the calling thread with the id the trampoline subobject holds, one word per object |
+ | An `owns T` of a `threads(creator)` type (`[FFI-33b]`) | guaranteed present | one word more, the making thread's id, and one compare at its end |
+ | Entering Ember code from C in a reloadable build (`[HR-42]`) | guaranteed present | one increment, one fence and one load; a thread waits only for the length of a commit it meets |
+-| Registering an object in a reloadable build (`[HR-12]`) | guaranteed present | two stores when it is made and two when it ends; a lock or an atomic exchange for a `thread_shared` object; a `thread_shared` header of 48 bytes |
++| Registering an object in a reloadable build (`[HR-12]`) | guaranteed present | four stores when it is made and two when it ends, plain for an object whose own type is not `Send`; with one lock or one atomic exchange for an object of a `Send` type and for a `thread_shared` object, either of which another thread may end; a `thread_shared` header of 48 bytes |
+ | A value handed over on some paths only (`[OWN-3]`) | guaranteed present | one hidden drop flag in the frame: a store at the hand-over and one test where the owner would end; none where every path hands it over or none does |
+ | First access of a `static` built on first access (`[STA-3]`) | guaranteed present | one test of its once-flag per access, and the initialiser once, during which a first access on another thread waits; none for a static placed in the image |
+ | An export's or a trampoline's entry (`[FFI-22]`, `[FFI-33]`) | guaranteed present | the thread-local attach test, under `threads=creator` or `main` one compare of the calling thread, and one test of the thread's queue at the return (`[RC-4]` point 3) |
+@@ -9120,24 +9127,48 @@
+   structs, unions, enums, typedefs, globals and constant macros as a module (`c`, or `name`).
+   Options: `include_paths`, `defines`, `link`, `overlay`, `implementation` (`[FFI-29b]`). An unknown
+   option is `E0104`.
+-* `[FFI-51]` *(new in 0.9.15)* *(changed in 0.9.20)* **C compiled into the program is vouched for.** An import that
+-  compiles into the program foreign code that runs with no call from Ember — a C source file
+-  (`import c "./bridge.c"`, `[BLD-FFI-1]`), a header with `implementation = [...]` (`[FFI-29b]`), or
+-  a C or C++ header that declares, in it or in a header it includes, a function with a constructor
+-  attribute or a variable at namespace scope, `inline` or a static member, whose initialiser is not
+-  a constant expression (the shim, `[FFI-29]`, or the thunk unit, `[FFI-3]`, `[FFI-17]`, compiles
+-  it, and it runs before `main`), as the importer reads the header, one it cannot decide counting as
+-  running (`[FFI-38]`) — runs code that nothing checks, so it is written `unsafe import c` or
+-  `unsafe import cpp`, with a `# SAFETY:` note above it saying why that code is sound (`W3012` when
+-  missing). Without `unsafe` it is `E3100`: "`import c "./bridge.c"` compiles `bridge.c` into the
+-  program, where its code runs unchecked, before `main` too; say that you vouch for it: write
+-  `unsafe import c "./bridge.c" as b` with a `# SAFETY:` note above it"; for a header the message
+-  names what runs: "`import cpp "json.hpp"` compiles the initialiser of `g_default` (json.hpp, line
+-  12) into the program, where it runs unchecked before `main`; write `unsafe import cpp "json.hpp"
+-  with (project="engine") as js` with a `# SAFETY:` note above it". An import of a header that
+-  declares nothing that runs uncalled needs no word: its functions run only when they are called,
+-  and those calls are fenced by `[FFI-2]`. A library linked by name or path (`link = [...]`, `[link]
+-  libs`) is listed by `ember tcb` as an external library (`[TCB-4]`).
++* `[FFI-51]` *(new in 0.9.15)* *(changed in 0.9.20)* **C compiled into the program is vouched for.**
++  An import that compiles into the program foreign code that runs with no call from Ember — a C
++  source file (`import c "./bridge.c"`, `[BLD-FFI-1]`), a header with `implementation = [...]`
++  (`[FFI-29b]`), or a C or C++ header that does more than declare, in it or in a header it includes
++  (the shim, `[FFI-29]`, or the thunk unit, `[FFI-3]`, `[FFI-17]`, compiles what it holds) — runs
++  code that nothing checks, so it is written `unsafe import c` or `unsafe import cpp`, with a `#
++  SAFETY:` note above it saying why that code is sound (`W3012` when missing). Without `unsafe` it
++  is `E3100`: "`import c "./bridge.c"` compiles `bridge.c` into the program, where its code runs
++  unchecked, before `main` too; say that you vouch for it: write `unsafe import c "./bridge.c" as b`
++  with a `# SAFETY:` note above it"; for a header the message names what runs: "`import cpp
++  "json.hpp"` compiles the initialiser of `g_default` (json.hpp, line 12) into the program, where it
++  runs unchecked before `main`; write `unsafe import cpp "json.hpp" with (project="engine") as js`
++  with a `# SAFETY:` note above it"; "`import c "lib.h"` compiles `lib_run_setup` (lib.h, line 7)
++  into the start-up section `.CRT$XCU`, so `lib_setup` runs unchecked before `main`; write `unsafe
++  import c "lib.h" as lib` with a `# SAFETY:` note above it". **A header that only declares needs no
++  word.** It holds nothing but types, macros, declarations of functions and variables, definitions
++  of `inline` and `static` functions with no assembly in their bodies, and variables that are
++  `static`, `inline` or `constexpr` with a constant initialiser, no destructor to run and no section
++  named for them: its functions run only when they are called, and those calls are fenced by
++  `[FFI-2]`. Anything else a header holds counts as running, as the importer reads the header, one
++  it cannot decide counting as running (`[FFI-38]`): a function the loader or the C runtime calls (a
++  constructor or a destructor attribute, an `ifunc` resolver); a variable at namespace scope,
++  `inline` or a static member, whose initialiser is not a constant expression or whose type has a
++  destructor to run; a function or a variable the header defines with external linkage and not
++  `inline`, which the linker may give to code that never meant it; anything the header places in a
++  section it names (`__attribute__((section(…)))`, `__declspec(allocate(…))`, `#pragma section`,
++  `data_seg`, `code_seg`, `init_seg`), which is how a start-up table is filled with no initialiser
++  to see; assembly, at file scope or in the body of a function the shim compiles; and an order to
++  the linker (`#pragma comment(linker, …)`) other than the two that follow. A header may ask for a
++  library by name (`#pragma comment(lib, "uuid.lib")`): that is an entry of `[link] libs` written in
++  the header, listed by `ember tcb` as an external library with the header and line that names it
++  (`[TCB-4]`) and, in a dependency, admitted as `[MAN-10]` admits its `[link] libs`; and it may
++  state a check that can only stop the link (`#pragma detect_mismatch`), which changes nothing that
++  runs. The headers of the toolchain itself are the toolchain: the C or C++ compiler's own, its
++  standard libraries' and the platform kit's, in the directories of those installations as the build
++  finds them (`[TOOL-2]`), never a directory a manifest, a flag or an import's `include_paths` adds,
++  and never a file for calling itself a system header. What one of them links, tells the linker or
++  runs before `main` is the start-up of the C runtime the program is linked with in any case, and
++  `ember tcb` lists that compiler and kit by version (`[TCB-4]`). So `import c "windows.h"` and an
++  `import cpp` of a header that includes `<string>` need no word, and a header of the program's own
++  or of a dependency that fills a start-up section does. A library linked by name or path (`link =
++  [...]`, `[link] libs`) is listed by `ember tcb` as an external library (`[TCB-4]`).
+ 
+   ```ember,fragment
+   # SAFETY: bridge.c is ours: it defines `add` and runs nothing before `main`
+@@ -9976,7 +10007,7 @@
+   rewrites source written for an earlier version into the current one where the change is
+   mechanical, and lists, with the file and line, what it could not rewrite. From 0.9.15: the `#!
+   language` directive to the current version; the changes of 0.9.20 refuse programs that were unsafe
+-  and rewrite nothing (§H.52 to §H.56). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
++  and rewrite nothing (§H.52 to §H.57). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
+   removal, `for k, v in m:` over a `Map` to `for k, v in m.items():` (`[CTL-1]`). From 0.9.10:
+   `Box[T]` and `ForeignBox[T]` to `owns T`, `Box[T, A]` to `owns T using A`, `Array[T, A]` to
+   `Array[T] using A`, `Weak[T]` to `weakref T`, the mode `owned` to `owns`, `mut x: T` on a
+@@ -10130,16 +10161,28 @@
+   dependency's own root (`[CT-2]`), `-std=<c-standard>`, `-O<n>`, and `-W<name>` other than `-Wl,…`,
+   `-Wa,…` and `-Wp,…`, which pass arguments to the linker, assembler and preprocessor; its `[link]
+   libs` entries are taken for names with no path separator (`"m"`) and for paths under its own root,
+-  resolved the same way; and its `[cpp.<project>]` section (whose configuration runs the project's
+-  own build code, Annex C), any other `[c] flags` entry, any other `[link]` path, and its `[build]`,
+-  `[profiles]`, `[jobs]` and `[comptime]` sections are honoured only when the root package's
+-  manifest names the dependency in `[build] native = ["parser"]`, and are `E9001` otherwise, naming
+-  the dependency, the key and the line to add ("`parser`'s manifest sets `[c] flags =
+-  [\"-fplugin=./vendor/helper.so\"]`, which would run its code inside this build's C compiler; a
+-  dependency's flags are limited to defines, include paths under its root, a C standard, an
+-  optimisation level and warnings; to take the rest as written, add `native = [\"parser\"]` under
+-  `[build]` in `ember.toml`"). `ember tcb` lists every dependency so named as an external library
+-  (`[TCB-4]`).
++  resolved the same way (a library one of its headers names counting as an entry, `[FFI-51]`); and
++  its `[cpp.<project>]` section (whose configuration runs the project's own build code, Annex C),
++  any other `[c] flags` entry, any other `[link]` path, and its `[build]`, `[profiles]`, `[jobs]`
++  and `[comptime]` sections are honoured only when the root package's manifest names the dependency
++  in `[build] native = ["parser"]`, and are `E9001` otherwise, naming the dependency, the key and
++  the line to add ("`parser`'s manifest sets `[c] flags = [\"-fplugin=./vendor/helper.so\"]`, which
++  would run its code inside this build's C compiler; a dependency's flags are limited to defines,
++  include paths under its root, a C standard, an optimisation level and warnings; to take the rest
++  as written, add `native = [\"parser\"]` under `[build]` in `ember.toml`"). What a dependency's C
++  is compiled from is limited the same way, since a header names any file of the machine itself,
++  whatever its `-I` paths (`#include "/home/ci/.ssh/config"`, C23's `#embed`): the compile of a
++  dependency's shim, thunk unit or C source reads only files under the dependency's own root and the
++  toolchain's own headers (`[FFI-51]`), which the build checks against the files the C compiler
++  reports it read, included and embedded alike (a build that cannot learn what a compiler embedded
++  refuses `#embed` there), and that C holds no assembly, at file scope or in a function's body,
++  since an assembler directive reads a file no report names (`.incbin`). A file from anywhere else,
++  or assembly, is `E9001` unless the root names the dependency in `native` ("`parser`'s `lexer.h`
++  (line 3) reads `/home/ci/.aws/credentials` into the program with `#embed`; a dependency's C reads
++  only its own folder and the toolchain's headers; to allow it, add `native = [\"parser\"]` under
++  `[build]` in `ember.toml`"). Each flag reaches the C compiler as one argument of its own, never
++  through a shell, so a define's value cannot add a second flag. `ember tcb` lists every dependency
++  so named as an external library (`[TCB-4]`).
+ * `[MAN-3]` *(changed in 0.9.9)* Every key in `[lints]` names a lint the compiler defines (`E9010`
+   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
+   parameters.
+@@ -10257,7 +10300,7 @@
+       is made unsafe by a package it never saw, and nothing runs for it while the program runs; the
+       record lives in the interface file beside item 7, and in a reloadable image's manifest
+       (`[HR-8]`), which `[HR-44]` compares.
+-* `[BLD-16]` *(new in 0.9.20)* *(changed in 0.9.20)* **No fact of the whole program decides a package's code or layout.**
++* `[BLD-16]` *(new in 0.9.20)* **No fact of the whole program decides a package's code or layout.**
+   The layout of a package's types and the instructions it emits for a line are decided by the
+   package's own source, by the interface files of the packages it imports (`[MOD-9]`, `[EFF-4]`,
+   `[BLD-14]`) and by the generic instances it makes (`[MONO-1]`); never by a package that depends on
+@@ -10279,8 +10322,8 @@
+   A library update that changes such a fact can make a line of a program that uses it stop
+   compiling; the message names the chain of calls (`[DIA-27]`). The layout of each type is recorded
+   with it: whether its values carry the weak count and whether they may own values that do
+-  (`[OBJ-1]`), decided by the package that declares the type and the same in every program
+-  (`[BLD-16]`). A parent link proves itself only when no other package can change it or the places
++  (`[OBJ-1]`), decided by the package that declares the type and the same in every program. A
++  parent link proves itself only when no other package can change it or the places
+   that own its holders. What a generic function changes through its type parameters' methods is
+   worked out for each instance, whose body the instantiating package compiles.
+ * `[BLD-4]` *(changed in 0.9.10)* The C compiler and linker run through a generated Ninja file, so C
+@@ -10934,7 +10977,7 @@
+ | `E3090` | arena allocation of a type that needs `drop` | `[ARN-3]`, `[ARN-2]` |
+ | `E3095` | two single-object references given to `assert_disjoint` | `[DSJ-4]` |
+ | `E3096` | the parent arena, or a view into it made before the scope, used while a scope of it is live | `[ARN-6]`, `[ARN-1]` |
+-| `E3100` | an unsafe operation outside unsafe code (in a `safe:` block included), `into_raw()` included, a raw pointer returned from a function foreign code may call or stored where foreign code reads it, and a raw-pointer or C function-pointer field of an imported aggregate written; `Send` declared by hand without `unsafe extend`, other than in the header of an `open` or `abstract` class, where it is a checked promise; a call of `transmute`, `copy` or `copy_nonoverlapping` outside unsafe code; a call of a C++ method whose reference result has no lifetime word outside unsafe code; a call of a `std::function` value whose type's entry does not say `safe` outside unsafe code; a read of a foreign `const` object whose type has a `mutable` member or is not `ThreadShared` outside unsafe code; an `import c` or `import cpp` of a header that declares code running before `main`, without `unsafe`; `ThreadShared` declared for an `extern type` without `unsafe` | `[UNS-1]`, `[UNS-12]`, `[ALC-2]`, `[ARN-8]`, `[FFI-51]`, `[FFI-26]`, `[FFI-54]`, `[FFI-56]`, `[UNS-5]`, `[FFI-40]`, `[FFI-8]`, `[FFI-17a]`, `[FFI-41]`, `[TYP-43]`, `[THR-8]`, `[FFI-39]`, `[FFI-31b]` |
++| `E3100` | an unsafe operation outside unsafe code (in a `safe:` block included), `into_raw()` included, a raw pointer returned from a function foreign code may call or stored where foreign code reads it, and a raw-pointer or C function-pointer field of an imported aggregate written; `Send` declared by hand without `unsafe extend`, other than in the header of an `open` or `abstract` class, where it is a checked promise; a call of `transmute`, `copy` or `copy_nonoverlapping` outside unsafe code; a call of a C++ method whose reference result has no lifetime word outside unsafe code; a call of a `std::function` value whose type's entry does not say `safe` outside unsafe code; a read of a foreign `const` object whose type has a `mutable` member or is not `ThreadShared` outside unsafe code; an `import c` or `import cpp` of a header that does more than declare (code the loader or the C runtime runs, a definition the linker sees, a named section, assembly, an order to the linker), without `unsafe`; `ThreadShared` declared for an `extern type` without `unsafe` | `[UNS-1]`, `[UNS-12]`, `[ALC-2]`, `[ARN-8]`, `[FFI-51]`, `[FFI-26]`, `[FFI-54]`, `[FFI-56]`, `[UNS-5]`, `[FFI-40]`, `[FFI-8]`, `[FFI-17a]`, `[FFI-41]`, `[TYP-43]`, `[THR-8]`, `[FFI-39]`, `[FFI-31b]` |
+ | `E3105` | `UnsafeCell` in `@no_alias_checks` code | `[UNS-10]` |
+ | `E4001` | `@noalloc` function reaches an allocation; a call through a place another package can fill whose declared contracts do not exclude `Alloc`; a function value whose state its body writes, made under `@noalloc`; a call through a `dyn` or `virtual` method of a `pub` interface or class that does not declare the contract | `[EFF-5]`, `[EFF-2a]`, `[CLO-10]`, `[EFF-6]` |
+ | `E4002` | `@nosync` function reaches a synchronising operation | `[EFF-5]` |
+@@ -11004,7 +11047,7 @@
+ | `E7017` | `thread_shared` on a name whose value was not created `thread_shared`; `weakref thread_shared x` where `x` was not; an object with one owner (`Node()`) of a class whose methods say its objects are `thread_shared`; `shares` or `shares mut` on a `thread_shared` owner | `[THR-1]`, `[OWN-13]`, `[RC-1]` |
+ | `E7018` | a wait for a lock this thread holds, while this thread holds that lock (its `with` block, a guard in a local until its last use, or a guard made as a temporary for its life, `[EXP-4]`): a call through a function value, or a `dyn` or virtual method, that may run a function taking that lock (inside a walk under that lock too), or a join of a thread (a scope's end included) whose function changes what the lock guards; a first access of a `static` whose initialiser takes the lock; a second `read()` of an `RwLock` this thread holds `read()`; a stored function, override or implementation that takes a lock held at a recorded library line | `[THR-19]`, `[MOD-9a]`, `[EXP-4]` |
+ | `E8001` | GPU layout does not match the CPU layout | `[GPU-10]` |
+-| `E9001` | invalid manifest, including an unknown key; a dependency's manifest section or flag honoured only when the root names it in `[build] native` | `[MAN-1]`, `[PRF-3]`, `[MAN-10]` |
++| `E9001` | invalid manifest, including an unknown key; a dependency's manifest section or flag honoured only when the root names it in `[build] native`, and a dependency's C that reads a file outside its own root and the toolchain's headers, or holds assembly, without it | `[MAN-1]`, `[PRF-3]`, `[MAN-10]` |
+ | `E9002` | no C compiler found, or it failed; the help names the host's remedy | `[BLD-FFI-1]` |
+ | `E9003` | invalid command line | `[CLI-1]` |
+ | `E9010` | `[lints]` names a lint the compiler does not define | `[MAN-3]` |
+@@ -11839,18 +11882,27 @@
+   registered in a live-instance list, which adds 16 bytes to the object header of `[OBJ-1]` (24
+   bytes instead of 8, and 28 instead of 12 for an object `weakref` links may reach); non-reloadable
+   builds keep `[OBJ-1]`'s layout. A `thread_shared` value's 32-byte header (`[OBJ-1]`) is 48 bytes
+-  in a reloadable build. Registering costs two stores when an object is made and two when it ends,
+-  and for an object that is not `thread_shared` touches nothing another thread touches (`[RT-11]`);
+-  a `thread_shared` object's registration is ordered by the runtime, one lock or one atomic
+-  exchange, on whichever thread makes or ends it. Plan and prepare walk the list only while every
+-  other registered thread is at depth zero (`[HR-3]`). A value made shared in a block of its own
+-  (`[RC-1]`) is registered as a class instance is, with its type's schema, and migrated once,
+-  whatever the number of owners and links that reach it.
++  in a reloadable build. Registering links the object into a list through those 16 bytes: four
++  stores when it is made (two of them into its own header) and two when it ends. An object whose own
++  type is not `Send` never leaves the thread that made it (`[THR-8]`), so it is linked into that
++  thread's list with plain stores, which touch nothing another thread touches (`[RT-11]`); the
++  runtime keeps a thread's list when the thread ends, for what unsafe code gave to C from it
++  (`[FFI-54]`). An object whose own type is `Send` may be ended by another thread than the one that
++  made it (a task's result, a value sent down a channel or handed to a spawned thread), and that
++  thread would unlink it from a list its maker is changing, so its registration, like a
++  `thread_shared` object's, is ordered by the runtime, one lock or one atomic exchange, on whichever
++  thread makes or ends it. Which of the two an object takes is read from its own type, where it is
++  made and where it ends, never from the place that holds it (`[BLD-16]`). Plan and prepare walk the
++  list only while every other registered thread is at depth zero (`[HR-3]`). A value made shared in
++  a block of its own (`[RC-1]`) is registered as a class instance is, with its type's schema, and
++  migrated once, whatever the number of owners and links that reach it.
+ * `[HR-12a]` The header size is a whole-process property: every package in a process agrees on
+   whether reload is enabled, enforced at link time (`E9035`). A reload image's new kinds take type
+   indices above the process's when the image is loaded (`[TYP-44a]`).
+-* `[HR-13]` Value-typed data (structs in arrays, `SoA` columns, ECS storage, arena contents) is
+-  migrated through its container, which registers itself with its element type's schema.
++* `[HR-13]` *(changed in 0.9.20)* Value-typed data (structs in arrays, `SoA` columns, ECS storage,
++  arena contents) is migrated through its container, which registers itself with its element type's
++  schema, as an object registers: with plain stores in its thread's list where the container's own
++  type is not `Send`, ordered by the runtime where it is (`[HR-12]`).
+ * `[HR-13a]` Standard-library containers of a type from a reloadable package register themselves;
+   the instantiating package emits the registration, so `std` needs no reload support.
+ * `[HR-13b]` *(changed in 0.9.20)* Value data reachable only through raw pointers or foreign memory
+@@ -12200,32 +12252,37 @@
+   `f64` for one with a point, and any other type it may take (`[LEX-16]`, `[LEX-17]`) it reaches as
+   by a coercion. Of the members a call fits, one beats another when, argument by argument, it takes
+   each at least as directly — the argument's own type before a coercion and, for an argument of a
+-  known type, among coercions the nearer type (the narrowest number type it widens to, the nearest
+-  base class) before a farther; an untyped literal reaches every type not its own alike — and takes
+-  one more directly; the call stands for the member that beats every other it fits, so where C++
+-  chooses one Ember chooses the same, and never one C++ would not consider. A member declared `=
+-  delete` takes part and, chosen, is refused. A name used without a call stands for the member whose
+-  first line is exactly the callable type expected there (`[CLO-3]`), and with none expected is
+-  `E5035`. What the code around the use allows — unsafe code (`[FFI-2]`, `E3100`), a read-only name
+-  (`E3023`), its effects, the loop and view rules — is checked after, on the member chosen, so one
+-  line stands for one member wherever it is written. A use that fits no member, or two with neither
+-  beating the other, is `E5035`, naming each member as the header declares it and why it does or
+-  does not fit, and the way out, the argument written with its type or the overlay line:
+-  "`w.value(7)` (line 8) fits `void value(long long)` and `void value(double)` of `ui::Widget`
+-  alike: `7` is C++'s `int`, which neither takes as it is, and reaches each; write `w.value(7 as
+-  i64)` or `w.value(7.0)`". Two members alike in every parameter as the import spells them (two
+-  instances of one template differing only in the result), or alike on this target (`put(int)` and
+-  `put(long)` for an `i32` argument where `long` is 32 bits; a literal still takes `int`), fit such
+-  a call together; the overlay tells them apart by the tables' spelling or by the result, which no
+-  target changes (`rename put(v: c_long) as put_long`, `hide put(v: c_long)`, `rename get() -> f64
+-  as get_f64`, `[GRM-35]`), and the message of `E5035` gives that line. An `override fn` matches one
+-  virtual member by its first line exactly (`[FFI-39]`), never through this ranking; a class derived
+-  from a C++ class whose header declares one virtual name several times writes one `override fn` per
+-  member it replaces, each matched so, and two overrides fitting one member are `E1030`. `ember bind
+-  --report` lists each such name with its members as the header writes them; `ember bind --emit-cpp`
+-  writes one thunk per member, named by the member's mangled name (`[MNG-1]`); `ember bind --init`
+-  writes one entry per member (`[CLI-5]`). Nothing runs for this while the program runs: a use is
+-  one direct call of its member's thunk, as any imported C++ function's (§X.4, "FFI call").
++  known type, among coercions as C++ ranks them, a promotion C++ makes (an integer type narrower
++  than `c_int` taken as `c_int`, `f32` taken as `f64`) before any other number type, every other
++  number type alike whatever its size, and the nearer base class before a farther; an untyped
++  literal reaches every type not its own alike — and takes one more directly; the call stands for
++  the member that beats every other it fits, so where C++ chooses one Ember chooses the same, where
++  C++ calls two alike so does Ember, and Ember never chooses one C++ would not consider: for `n:
++  i8`, `w.set(n)` with `set(short)` and `set(int)` stands for `set(int)`, as in C++, and with
++  `set(short)` and `set(long long)` it fits both alike (`E5035`: "write `w.set(n as i16)` or
++  `w.set(n as i64)`"). A member declared `= delete` takes part and, chosen, is refused. A name used
++  without a call stands for the member whose first line is exactly the callable type expected there
++  (`[CLO-3]`), and with none expected is `E5035`. What the code around the use allows — unsafe code
++  (`[FFI-2]`, `E3100`), a read-only name (`E3023`), its effects, the loop and view rules — is
++  checked after, on the member chosen, so one line stands for one member wherever it is written. A
++  use that fits no member, or two with neither beating the other, is `E5035`, naming each member as
++  the header declares it and why it does or does not fit, and the way out, the argument written with
++  its type or the overlay line: "`w.value(7)` (line 8) fits `void value(long long)` and `void
++  value(double)` of `ui::Widget` alike: `7` is C++'s `int`, which neither takes as it is, and
++  reaches each; write `w.value(7 as i64)` or `w.value(7.0)`". Two members alike in every parameter
++  as the import spells them (two instances of one template differing only in the result), or alike
++  on this target (`put(int)` and `put(long)` for an `i32` argument where `long` is 32 bits; a
++  literal still takes `int`), fit such a call together; the overlay tells them apart by the tables'
++  spelling or by the result, which no target changes (`rename put(v: c_long) as put_long`, `hide
++  put(v: c_long)`, `rename get() -> f64 as get_f64`, `[GRM-35]`), and the message of `E5035` gives
++  that line. An `override fn` matches one virtual member by its first line exactly (`[FFI-39]`),
++  never through this ranking; a class derived from a C++ class whose header declares one virtual
++  name several times writes one `override fn` per member it replaces, each matched so, and two
++  overrides fitting one member are `E1030`. `ember bind --report` lists each such name with its
++  members as the header writes them; `ember bind --emit-cpp` writes one thunk per member, named by
++  the member's mangled name (`[MNG-1]`); `ember bind --init` writes one entry per member
++  (`[CLI-5]`). Nothing runs for this while the program runs: a use is one direct call of its
++  member's thunk, as any imported C++ function's (§X.4, "FFI call").
+ * `[FFI-11f]` A result lifetime derived from `[[clang::lifetimebound]]` imports as an asserted fact:
+   the attribute is not enforced by C++, so it never counts as checked.
+ * `[FFI-48]` *(changed in 0.9.10)* *(changed in 0.9.20)* **Unsupported constructs** (`E5034`, naming
+@@ -12459,12 +12516,15 @@
+ * `[TCB-3]` Every assumption a guarantee relies on appears in the report with its source and grade.
+ * `[TCB-4]` *(changed in 0.9.15)* *(changed in 0.9.20)* Entries are categorised — language,
+   compiler, runtime, standard library, unsafe, C FFI, C++ bridge, external library, driver, hardware
+-  — and the compiler is in the list, with its version and known-defect list. The unsafe section
+-  lists each `unsafe:` block, `unsafe fn`, `unsafe import c` and `unsafe import cpp` (`[FFI-51]`)
+-  and `@unsafe(export(…))` or `@unsafe(export_table(…))` (`[FFI-26]`) with its note; the C FFI
+-  section lists each `safe fn`, `@ffi(no_callbacks)` (`[FFI-52]`), `@ffi(safe)` (`[FFI-56]`) and
+-  thread contract, and the C++ bridge section each `@ffi(const)` (`[FFI-40a]`) and
+-  `@ffi(std_function, safe)` (`[FFI-17a]`).
++  — and the compiler is in the list, with its version and known-defect list, and with it the C or
++  C++ compiler the build uses for shims, thunk units and C sources, its standard libraries and the
++  platform kit, by version, whose own headers are part of it (`[FFI-51]`); an external library a
++  header names is listed with the header and line that names it. The unsafe section lists each
++  `unsafe:` block, `unsafe fn`, `unsafe import c` and `unsafe import cpp` (`[FFI-51]`) and
++  `@unsafe(export(…))` or `@unsafe(export_table(…))` (`[FFI-26]`) with its note; the C FFI section
++  lists each `safe fn`, `@ffi(no_callbacks)` (`[FFI-52]`), `@ffi(safe)` (`[FFI-56]`) and thread
++  contract, and the C++ bridge section each `@ffi(const)` (`[FFI-40a]`) and `@ffi(std_function,
++  safe)` (`[FFI-17a]`).
+ * `[TCB-5]` An instrumented fact is valid only for the foreign library, header, overlay, toolchain
+   and test binary it was measured against; its evidence record stores their identities and hashes.
+ * `[TCB-6]` A change to any identity input makes the record stale; a change to an environment input
+@@ -16499,6 +16559,69 @@
+ | `[TYP-36]` | changed |
+ | `[WK-7]` | changed |
+ 
++
++## H.57 Changes in 0.9.20_Hardened_6 (from 0.9.20_Hardened_5)
++
++**0.9.20_Hardened_6**, of 2026-11-10, follows a second review of Hardened_5
++(`tasks/96/redesign/spec-gaps-0.9.15/deep/review-0.9.20-H5.md`, §8: three holes and four notes, none
++in the rules of ownership, threads or types). The lead checked each against the text and by runs
++before writing a line (`docs/AUDIT-0.9.20.md` §11), and the owner said: "Fix them and cut a new
++hardened version". The rulings are N147 to N152 (`decisions.md` §17). Each change closes a way for
++code to run, or a file to be read, that nothing vouched for, restores an owner's verdict, or makes
++the text say one thing where it said two; no feature is taken away. The accepted set changes, so
++the language version stays 0.9.20 and the hardening number moves (`[VER-9]`).
++
++* **The list hot reload keeps of objects** (N147): an object whose own type is `Send` may be ended
++  by another thread than the one that made it, which would unlink it from a list its maker is
++  changing, so it is registered as a `thread_shared` object is, ordered by the runtime; only an
++  object whose type is not `Send` keeps the plain stores in its own thread's list. A registered
++  container follows the same rule. Adding an object to the list is four stores, not two
++  (`[HR-12]`, `[HR-13]`, the row of `[COST-3]`). Reloadable builds only.
++* **A header that does more than declare** (N148): the import of a C or C++ header needs no
++  `unsafe` only where the header holds declarations and nothing the linker or the loader acts on;
++  the rule listed two ways for a header to run code before `main` and there are more (a pointer
++  placed in a start-up section, a destructor attribute, an order to the linker, assembly, a
++  definition the linker may give to other code). A library a header asks for by name is an entry
++  of `[link] libs`, listed by `ember tcb`; the toolchain's own headers are the toolchain. Measured
++  before it was written: of the repository's 49 C headers none needs the word for it, nor do
++  `vulkan.h`, `windows.h` or the C++ standard headers (`[FFI-51]`, `[TCB-4]`).
++* **What a dependency's C reads** (N149): the compile of a dependency's C reads only files under
++  its own root and the toolchain's headers, checked against what the C compiler reports it read
++  (`#embed` of a file of the build machine was accepted), and holds no assembly, whose `.incbin`
++  reads a file no report names; `native` in the root's manifest lifts both. Each flag reaches the C
++  compiler as one argument (`[MAN-10]`).
++* **The shared function type** (N150, verdict 38): a parameter of a function type is the shared
++  type again, one body and one indirect call, as the cost table has said throughout; only a
++  function given through a type parameter is compiled once for each function given. Hardened_2 had
++  made the two alike in two rules and left the table as it was. A function another package passes
++  to a `pub` function's function-typed parameter is checked at that package's own line, as the
++  interface file's records already provide (`[EFF-2]`, `[EFF-2a]`).
++* **A C++ call as C++ ranks it** (N151): among the members a call fits, a promotion C++ makes
++  comes before any other number type and every other number type counts alike; "the narrowest
++  type" chose `set(short)` for an `i8` where C++ chooses `set(int)` (`[FFI-57]`).
++* **Form** (N152): three rules new in 0.9.20 also said "changed in 0.9.20" (`[BLD-16]`,
++  `[TYP-46a]`, `[ALC-5a]`), and one cited itself (`[BLD-16]`).
++
++Registry rows: E3100, E9001. No new rule, no new code, none retired. Owner verdicts: 38 restored
++to its letter.
++
++Generated: every rule whose text differs from 0.9.20_Hardened_5.
++
++| Rule | 0.9.20_Hardened_5 → 0.9.20_Hardened_6 |
++|---|---|
++| `[ALC-5a]` | changed |
++| `[BLD-16]` | changed |
++| `[CLI-20]` | changed |
++| `[EFF-2]` | changed |
++| `[EFF-2a]` | changed |
++| `[FFI-51]` | changed |
++| `[FFI-57]` | changed |
++| `[HR-12]` | changed |
++| `[HR-13]` | changed |
++| `[MAN-10]` | changed |
++| `[TCB-4]` | changed |
++| `[TYP-46a]` | changed |
++
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -16524,7 +16647,7 @@
+ | `[ALC-3]` | IX | A binary package may replace the global allocator with `[build] … |
+ | `[ALC-4]` | IX | Allocation failure in a standard container panics (`out of memory`). … |
+ | `[ALC-5]` | IX | *(new in 0.9.15)* *(changed in 0.9.20)* An instance stays as its … |
+-| `[ALC-5a]` | IX | *(new in 0.9.20)* *(changed in 0.9.20)* A link holds the block. A … |
++| `[ALC-5a]` | IX | *(new in 0.9.20)* A link holds the block. A `weakref` link to a value … |
+ | `[ALC-6]` | IX | *(new in 0.9.20)* A making line has its instance's effects, and fails … |
+ 
+ ## ARN
+@@ -16597,7 +16720,7 @@
+ | `[BLD-13]` | XVII | Builds are reproducible: the same inputs give a byte-identical … |
+ | `[BLD-14]` | XVII | *(new in 0.9.15)* *(changed in 0.9.20)* Facts worked out at a … |
+ | `[BLD-15]` | XVII | *(new in 0.9.15)* A link that hangs is an error (verdict 124). Each … |
+-| `[BLD-16]` | XVII | *(new in 0.9.20)* *(changed in 0.9.20)* No fact of the whole program … |
++| `[BLD-16]` | XVII | *(new in 0.9.20)* No fact of the whole program decides a package's … |
+ 
+ ## BLD-FFI
+ 
+@@ -16948,7 +17071,7 @@
+ |---|---|---|
+ | `[EFF-1]` | X | *(changed in 0.9.15)* *(changed in 0.9.20)* Effects, and the … |
+ | `[EFF-2]` | X | *(changed in 0.9.15)* *(changed in 0.9.20)* A call through a function … |
+-| `[EFF-2a]` | X | *(new in 0.9.20)* A place another package can fill. A function-typed … |
++| `[EFF-2a]` | X | *(new in 0.9.20)* A place another package can fill. A function given … |
+ | `[EFF-3]` | X | *(changed in 0.9.15)* An `extern` function carries the effects its … |
+ | `[EFF-4]` | X | *(changed in 0.9.15)* *(changed in 0.9.20)* Effects and summaries are … |
+ | `[EFF-5]` | X | Each contract in the table forbids its effect in the function's … |
+@@ -17276,7 +17399,7 @@
+ | `[HR-11a]` | Annex B | Enum values are migrated by variant name, never by discriminant. |
+ | `[HR-12]` | Annex B | *(changed in 0.9.15)* *(changed in 0.9.20)* In a reloadable build, … |
+ | `[HR-12a]` | Annex B | The header size is a whole-process property: every package in a … |
+-| `[HR-13]` | Annex B | Value-typed data (structs in arrays, `SoA` columns, ECS storage, … |
++| `[HR-13]` | Annex B | *(changed in 0.9.20)* Value-typed data (structs in arrays, `SoA` … |
+ | `[HR-13a]` | Annex B | Standard-library containers of a type from a reloadable package … |
+ | `[HR-13b]` | Annex B | *(changed in 0.9.20)* Value data reachable only through raw pointers … |
+ | `[HR-14]` | Annex B | *(changed in 0.9.10)* *(changed in 0.9.15)* Migration is by name, and … |
+@@ -17896,7 +18019,7 @@
+ | `[TYP-45]` | IV | *(new in 0.9.15)* *(changed in 0.9.20)* Who owns a value, in its … |
+ | `[TYP-45a]` | IV | *(new in 0.9.20)* One word on a type. A word of `[TYP-45]` stands … |
+ | `[TYP-46]` | IV | *(new in 0.9.15)* *(changed in 0.9.20)* Which memory manager. `using … |
+-| `[TYP-46a]` | IV | *(new in 0.9.20)* *(changed in 0.9.20)* A value made in an instance … |
++| `[TYP-46a]` | IV | *(new in 0.9.20)* A value made in an instance follows its manager … |
+ | `[TYP-47]` | IV | *(new in 0.9.15)* *(changed in 0.9.20)* Any number of types, and of … |
+ 
+ ## UNS

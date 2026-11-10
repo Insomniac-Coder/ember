@@ -1,0 +1,95 @@
+--- Ember_v0.9.9_Hardened_2.md
++++ Ember_v0.9.9_Hardened_3.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_2
+-**Supersedes:** 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_3
++**Supersedes:** 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -11,6 +11,8 @@
+ Appendix H, and every finding of the 2026-09-23 research pass (`tasks/audit/FINDINGS.md`, F-001–F-214)
+ is resolved in Appendix G. Hardened_2 applies the memory-safety, consistency-and-speed and
+ ergonomics passes over Hardened_1 (`tasks/spec-0.9.9/passes/`); Appendix H §H.4 lists every change.
++Hardened_3 and later record the ODRs raised while implementing 0.9.9 (from ODR-021, ruled under the
++owner's delegation); Appendix H §H.5 lists them.
+ 
+ ---
+ 
+@@ -62,7 +64,7 @@
+ | Appendix E | Coming from Python (non-normative) |
+ | Appendix F | Glossary |
+ | Appendix G | Resolution of findings F-001–F-214 |
+-| Appendix H | Changes from 0.9.8_Hardened_3, and from 0.9.9_Hardened_1 (§H.4) |
++| Appendix H | Changes from 0.9.8_Hardened_3, from 0.9.9_Hardened_1 (§H.4) and from 0.9.9_Hardened_2 (§H.5) |
+ | Appendix I | Rule index |
+ 
+ **Normative words.** MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119. Text marked
+@@ -869,8 +871,12 @@
+     wants C's exact meaning.
+   * a zero divisor panics (`division by zero`); `MIN // -1` and `MIN.div_trunc(-1)` overflow and panic
+     per `[TYP-8]`.
+-* `[TYP-29]` *(new in 0.9.9)* For floats, `a // b` is `floor(a / b)` and `a % b` is `a - b * floor(a / b)` (the sign of
+-  `b`, Python); both follow IEEE for infinities and NaN.
++* `[TYP-29]` *(new in 0.9.9)* For floats, `//` and `%` are Python's (ODR-021). `a % b` is the
++  exact value of `a - b * floor(a / b)`, rounded once to the float type: it has the sign of `b`, and
++  is computed exactly (as `fmod` is) rather than by evaluating the formula in rounded steps. `a // b`
++  is the floor quotient consistent with it, so `a == (a // b) * b + a % b` to within one rounding:
++  `1.0 // 0.1 == 9.0` and `1.0 % 0.1 == 0.09999999999999995`, because `0.1` is slightly more than a
++  tenth. Zero divisors, infinities and NaN follow IEEE.
+ * `[TYP-10]` *(changed in 0.9.9)* **Shifts.** `a << n` and `a >> n` accept any integer type for `n`.
+   If `n` is negative or not less than the bit width of `a`'s type the shift panics, in every profile.
+   Bits shifted out are discarded and are not an overflow. `>>` on a signed type is arithmetic
+@@ -1212,9 +1218,13 @@
+   declared by `x = e` takes `e`'s type; a type left open by `e` (`[]`, `Map()`, `None`) is fixed by
+   later uses in the same function, and one still open at the end is `E2060`, highlighting the first
+   use. In particular `x = None` followed by `x = v` with `v: T` gives `x` the type `Option[T]`, and the
+-  later assignment converts by `[TYP-5]` rule 11. Expected types flow into literals, lambdas, `None`,
+-  `Ok(…)`, `Err(…)` and generic calls. A lambda with unannotated parameters and no expected callable
+-  type is `E2061`. Untyped literals are resolved last.
++  later assignment converts by `[TYP-5]` rule 11. An untyped literal is never left open: its context
++  is the type expected at the literal itself, and an unannotated declaration supplies none, so
++  `total = 0` declares an `int` whatever the later uses (ODR-022); a later use that needs another
++  type is `E2020`, whose help names the declaration and the annotation (`total: i32 = 0`). Expected
++  types flow into literals, lambdas, `None`, `Ok(…)`, `Err(…)` and generic calls. A lambda with
++  unannotated parameters and no expected callable type is `E2061`. Within one expression, untyped
++  literals are resolved last (`1 + x` takes `x`'s type).
+ 
+ ## IV.11 Method resolution and calls
+ 
+@@ -6260,6 +6270,23 @@
+ | `[VER-9]` | changed |
+ | `[WK-11]` | changed |
+ | `[WK-12]` | changed |
++
++## H.5 Changes from 0.9.9_Hardened_2
++
++Each ambiguity found while implementing 0.9.9 is an owner decision request (`docs/OWNER-QUEUE.md`),
++ruled under the owner's delegation and recorded here.
++
++| ODR | Ruling | Rules |
++|---|---|---|
++| ODR-021 | float `//` and `%` are Python's: the exact floor modulo rounded once, and the floor quotient consistent with it | `[TYP-29]` |
++| ODR-022 | an untyped literal is never left open: `total = 0` declares an `int` whatever the later uses | `[TYP-23]` |
++
++Generated: every rule whose text differs from Hardened_2.
++
++| Rule | H2 → now |
++|---|---|
++| `[TYP-23]` | changed |
++| `[TYP-29]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -7554,7 +7581,7 @@
+ | `[TYP-26]` | IV | There is no overloading: two functions of one name in one scope are … |
+ | `[TYP-27]` | IV | `()` is the value of type `void`; `Ok(())` is the success value of … |
+ | `[TYP-28]` | IV | Division. `/` is true division and applies to floats. `/` with two … |
+-| `[TYP-29]` | IV | For floats, `a // b` is `floor(a / b)` and `a % b` is `a - b * … |
++| `[TYP-29]` | IV | For floats, `//` and `%` are Python's (ODR-021). `a % b` is the exact … |
+ | `[TYP-30]` | IV | Powers. `a  b` with integer `a` and non-negative integer `b` is … |
+ | `[TYP-31]` | IV | Sizes and indices are `int`. Every standard container's `len()` … |
+ | `[TYP-32]` | IV | `some I` in a return type means "one concrete type, chosen by the … |

@@ -3,7 +3,8 @@
 import re, glob, os, collections
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OLD = os.path.join(HERE, '..', '..', '..', 'docs', 'spec-source', 'Ember_v0.9.8_Hardened_3.md')
+import spec_history  # old cuts are rebuilt from docs/spec-source/history
+OLD = '0.9.8_Hardened_3'
 
 REASON = {
     'ABI': 'condensed into `[ABI-1]`',
@@ -179,15 +180,17 @@ Generated: every rule whose text differs between the two hardenings.
 |---|---|
 """
 
-H1_PARTS = os.path.join(HERE, '..', 'parts-h1')
+H1_PARTS = '0.9.9_Hardened_1'
 
 
 def _bullets(folder):
     out = {}
-    for p in sorted(glob.glob(os.path.join(folder, 'p*.md'))):
+    files = (spec_history.parts(folder) if not os.path.isdir(folder) else
+             [(p, open(p, encoding='utf-8').read()) for p in sorted(glob.glob(os.path.join(folder, 'p*.md')))])
+    for p, text in files:
         if p.endswith(('p17a-codes.md', 'p25-appx-g.md', 'p26-appx-h.md', 'p27-appx-i.md')):
             continue
-        lines = open(p, encoding='utf-8').read().split('\n')
+        lines = text.split('\n')
         for i, line in enumerate(lines):
             m = re.match(r'^\* `\[([A-Z][A-Z0-9-]*-[0-9]+[a-z0-9]*)\]`', line)
             if m:
@@ -201,7 +204,7 @@ def _bullets(folder):
     return out
 
 
-H2_PARTS = os.path.join(HERE, '..', 'parts-h2')
+H2_PARTS = '0.9.9_Hardened_2'
 
 # One row per ODR a hardening after Hardened_2 records: (ODR, ruling, rules).
 ODRS = [
@@ -797,62 +800,62 @@ def h2_to_now():
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
 CURRENT = ('0.9.20', 10)
-H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
-V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
-V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
-V010_H3_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h3')
-V010_H4_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h4')
-V010_H5_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h5')
-V010_H6_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h6')
-V010_H7_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h7')
-V010_H8_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h8')
-V010_H9_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h9')
-V010_H10_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h10')
-V010_H11_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h11')
-V010_H12_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h12')
-V010_H13_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h13')
-V010_H14_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h14')
-V010_H15_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h15')
-V010_H16_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h16')
-V010_H17_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h17')
-V010_H18_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h18')
-V010_H19_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h19')
-V010_H20_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h20')
-V010_H21_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h21')
-V010_H22_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h22')
-V010_H23_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h23')
-V010_H24_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h24')
-V010_H25_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h25')
-V010_H26_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h26')
-V010_H27_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h27')
-V010_H28_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h28')
-V010_H29_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h29')
-V010_H30_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h30')
-V010_H31_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h31')
-V010_H32_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h32')
-V010_H33_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h33')
-V010_H34_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h34')
-V010_H35_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h35')
-V0915_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h1')
-V0915_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h2')
-V0915_H3_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h3')
-V0915_H4_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h4')
-V0915_H5_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h5')
-V0915_H6_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h6')
-V0915_H7_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h7')
-V0915_H8_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h8')
-V0915_H9_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h9')
-V0915_H10_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h10')
-V0915_H11_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h11')
-V0920_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h1')
-V0920_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h2')
-V0920_H3_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h3')
-V0920_H4_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h4')
-V0920_H5_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h5')
-V0920_H6_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h6')
-V0920_H7_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h7')
-V0920_H8_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h8')
-V0920_H9_PARTS = os.path.join(HERE, '..', 'parts-0.9.20-h9')
+H52_PARTS = '0.9.9_Hardened_52'
+V010_H1_PARTS = '0.9.10_Hardened_1'
+V010_H2_PARTS = '0.9.10_Hardened_2'
+V010_H3_PARTS = '0.9.10_Hardened_3'
+V010_H4_PARTS = '0.9.10_Hardened_4'
+V010_H5_PARTS = '0.9.10_Hardened_5'
+V010_H6_PARTS = '0.9.10_Hardened_6'
+V010_H7_PARTS = '0.9.10_Hardened_7'
+V010_H8_PARTS = '0.9.10_Hardened_8'
+V010_H9_PARTS = '0.9.10_Hardened_9'
+V010_H10_PARTS = '0.9.10_Hardened_10'
+V010_H11_PARTS = '0.9.10_Hardened_11'
+V010_H12_PARTS = '0.9.10_Hardened_12'
+V010_H13_PARTS = '0.9.10_Hardened_13'
+V010_H14_PARTS = '0.9.10_Hardened_14'
+V010_H15_PARTS = '0.9.10_Hardened_15'
+V010_H16_PARTS = '0.9.10_Hardened_16'
+V010_H17_PARTS = '0.9.10_Hardened_17'
+V010_H18_PARTS = '0.9.10_Hardened_18'
+V010_H19_PARTS = '0.9.10_Hardened_19'
+V010_H20_PARTS = '0.9.10_Hardened_20'
+V010_H21_PARTS = '0.9.10_Hardened_21'
+V010_H22_PARTS = '0.9.10_Hardened_22'
+V010_H23_PARTS = '0.9.10_Hardened_23'
+V010_H24_PARTS = '0.9.10_Hardened_24'
+V010_H25_PARTS = '0.9.10_Hardened_25'
+V010_H26_PARTS = '0.9.10_Hardened_26'
+V010_H27_PARTS = '0.9.10_Hardened_27'
+V010_H28_PARTS = '0.9.10_Hardened_28'
+V010_H29_PARTS = '0.9.10_Hardened_29'
+V010_H30_PARTS = '0.9.10_Hardened_30'
+V010_H31_PARTS = '0.9.10_Hardened_31'
+V010_H32_PARTS = '0.9.10_Hardened_32'
+V010_H33_PARTS = '0.9.10_Hardened_33'
+V010_H34_PARTS = '0.9.10_Hardened_34'
+V010_H35_PARTS = '0.9.10_Hardened_35'
+V0915_H1_PARTS = '0.9.15_Hardened_1'
+V0915_H2_PARTS = '0.9.15_Hardened_2'
+V0915_H3_PARTS = '0.9.15_Hardened_3'
+V0915_H4_PARTS = '0.9.15_Hardened_4'
+V0915_H5_PARTS = '0.9.15_Hardened_5'
+V0915_H6_PARTS = '0.9.15_Hardened_6'
+V0915_H7_PARTS = '0.9.15_Hardened_7'
+V0915_H8_PARTS = '0.9.15_Hardened_8'
+V0915_H9_PARTS = '0.9.15_Hardened_9'
+V0915_H10_PARTS = '0.9.15_Hardened_10'
+V0915_H11_PARTS = '0.9.15_Hardened_11'
+V0920_H1_PARTS = '0.9.20_Hardened_1'
+V0920_H2_PARTS = '0.9.20_Hardened_2'
+V0920_H3_PARTS = '0.9.20_Hardened_3'
+V0920_H4_PARTS = '0.9.20_Hardened_4'
+V0920_H5_PARTS = '0.9.20_Hardened_5'
+V0920_H6_PARTS = '0.9.20_Hardened_6'
+V0920_H7_PARTS = '0.9.20_Hardened_7'
+V0920_H8_PARTS = '0.9.20_Hardened_8'
+V0920_H9_PARTS = '0.9.20_Hardened_9'
 V0920_H10_PARTS = os.path.join(HERE, '..', 'parts')
 
 H6_HEAD = """
@@ -2410,7 +2413,7 @@ def write_header():
 
 
 def main():
-    old = open(OLD, encoding='utf-8').read()
+    old = spec_history.text(OLD)
     oldids = set(re.findall(r'`\[([A-Z][A-Z0-9]*(?:-[A-Z]+)?-[0-9]+[a-z0-9]*)\]`', old))
     new = set()
     for p in sorted(glob.glob(os.path.join(HERE, '..', 'parts', 'p*.md'))):

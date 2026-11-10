@@ -1,0 +1,78 @@
+--- Ember_v0.9.10_Hardened_31.md
++++ Ember_v0.9.10_Hardened_32.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.10_Hardened_31
+-**Supersedes:** 0.9.10_Hardened_30, 0.9.10_Hardened_29, 0.9.10_Hardened_28, 0.9.10_Hardened_27, 0.9.10_Hardened_26, 0.9.10_Hardened_25, 0.9.10_Hardened_24, 0.9.10_Hardened_23, 0.9.10_Hardened_22, 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.10_Hardened_32
++**Supersedes:** 0.9.10_Hardened_31, 0.9.10_Hardened_30, 0.9.10_Hardened_29, 0.9.10_Hardened_28, 0.9.10_Hardened_27, 0.9.10_Hardened_26, 0.9.10_Hardened_25, 0.9.10_Hardened_24, 0.9.10_Hardened_23, 0.9.10_Hardened_22, 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -4936,7 +4936,8 @@
+ ember why --alloc|--block|--io|--lock|--sync|--unsafe|--ffi <item>   the call chain to that effect
+ ember calls --foreign <item>                   every foreign function the item can reach
+ ember bind <header> [--init [--merge] | --report [--baseline <file> | --write-baseline]
+-                     | --check <overlay> | --explain <fn> | --emit-embind]
++                     | --check <overlay> | --explain <fn> | --emit-embind | --outcomes
++                     | --emit-cpp [--out <file>]] [--flag <flag>] [--instantiate <template-id>]
+ ember shader-bind <reflection.json>            Annex D
+ ember tcb [--module <m>]                       the trusted-base report (Annex C)
+ ember toolchain list|install|default           manage installed C toolchains
+@@ -6336,7 +6337,9 @@
+ * `[FFI-32]` A C++ class that is standard-layout and trivially copyable, all of whose members map, is
+   imported as a `@layout(c) struct` with `@derive(Copy)` and the same field offsets; an opaque class
+   cannot be constructed from Ember except through its imported constructors (`E5032`), and a parameter
+-  that maps to nothing is `E5031`.
++  that maps to nothing is `E5031`. A function returning an opaque class by value gives a
++  `ForeignBox[T]`, as a constructor does: the result is moved to an object of its own, freed by the
++  class's destructor; an abstract class, or one without a public destructor, is refused (ODR-166).
+ * `[FFI-11f]` A result lifetime derived from `[[clang::lifetimebound]]` imports as an asserted fact:
+   the attribute is not enforced by C++, so it never counts as checked.
+ * `[FFI-48]` **Unsupported constructs** (`E5034`, naming the row):
+@@ -6421,8 +6424,9 @@
+   through a thunk that gives its address, since its symbol is mangled or, for an `inline` one, emitted
+   only where C++ uses it (`[FFI-3]`, ODR-161). One holding a pointer imports like any other: it is read
+   and written in `unsafe`, so `[STA-1]` does not ask it to be `Sync` (ODR-163). Nested types sit under
+-  their outer type's name; namespaces become module paths; entities in anonymous namespaces are skipped
+-  (`W5034`).
++  their outer type's name; namespaces become module paths, an inline one adding nothing to a name, as in
++  C++ (`nlohmann::json_abi_v3_11_3::json` is `cpp.nlohmann.json`, ODR-165); entities in anonymous
++  namespaces are skipped (`W5034`).
+ * `[FFI-42]` Overloaded operators map to Ember operator interfaces where one exists (`operator[]` to
+   `Index`/`IndexMut`, `operator*`/`->` on a smart-pointer-like type to read-through); C++ iterators with
+   `begin`/`end` become `Iterable`.
+@@ -7404,6 +7408,9 @@
+ | ODR-162 | the owner's answer: an `@export` function may hand C++ an object of a `@sync` class, presented by the `--cpp` header as a class of the same name; to be built | `[BLD-FFI-5a]`, `[FFI-31b]` |
+ | ODR-163 | the owner's ruling: a foreign static read only in `unsafe` need not be `Sync`; a C or C++ variable holding a pointer imports as any other, used in `unsafe` | `[STA-1]`, `[FFI-41]`, `[FFI-10]` |
+ | ODR-164 | the owner's ruling, reversing ODR-021: float `//` is `floor(a / b)` and `%` is `a - b * floor(a / b)`, each step rounded | `[TYP-29]` |
++| ODR-165 | delegated: an inline namespace adds nothing to a C++ name in an import | `[FFI-41]`, `[FFI-17b]` |
++| ODR-166 | delegated: a C++ function returning an opaque class by value gives a `ForeignBox[T]` | `[FFI-32]`, Annex C's import table |
++| ODR-167 | delegated: `[CXX-1]`'s corpus is nlohmann/json until the owner approves more downloads | `[CXX-1]` |
+ 
+ Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
+ 0.9.9.
+@@ -8136,6 +8143,22 @@
+ | `[FFI-42a]` | changed |
+ | `[STA-1]` | changed |
+ | `[TYP-29]` | changed |
++
++## H.37 Changes in 0.9.10_Hardened_32 (from 0.9.10_Hardened_31)
++
++**0.9.10_Hardened_32** builds `[CXX-1]`'s corpus (nlohmann/json 3.11.3, `tests/cxx-corpus`) and records three rulings made under the restored delegation, for the owner's review (`docs/DECISIONS.md` ADR-254):
++
++* For `[FFI-41]`: an inline namespace adds nothing to a name, as in C++ (`nlohmann::json_abi_v3_11_3::json` is `cpp.nlohmann.json`), and `instantiate=[…]` names its members so (ODR-165, delegated).
++* For `[FFI-32]` and Annex C's import table: a function returning by value a class Ember holds behind a pointer gives a `ForeignBox[T]` owning a copy moved to the heap, freed by the class's destructor, as a constructor's does; an abstract class, or one without a public destructor, stays refused (ODR-166, delegated).
++* For `[CXX-1]`: the corpus holds nlohmann/json 3.11.3; more real headers are added as the owner approves their downloads (ODR-167, delegated).
++* For `[CLI-6]`'s synopsis: `ember bind` also takes `--outcomes` (each declaration's outcome, `[CXX-1]`), `--emit-cpp [--out <file>]` (`[FFI-50]`), `--flag <flag>` and `--instantiate <template-id>`.
++
++Generated: every rule whose text differs from 0.9.10_Hardened_31.
++
++| Rule | 0.9.10_Hardened_31 → 0.9.10_Hardened_32 |
++|---|---|
++| `[FFI-32]` | changed |
++| `[FFI-41]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index

@@ -1,0 +1,290 @@
+--- Ember_v0.9.10_Hardened_9.md
++++ Ember_v0.9.10_Hardened_10.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.10_Hardened_9
+-**Supersedes:** 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.10_Hardened_10
++**Supersedes:** 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -384,16 +384,18 @@
+ virtual    void       where      while      with       yield
+ ```
+ 
+-* `[LEX-15]` *(changed in 0.9.9)* The table above is the complete reserved set. **Contextual
++* `[LEX-15]` *(changed in 0.9.9)* *(changed in 0.9.10)* The table above is the complete reserved set. **Contextual
+   keywords** are keywords only in the stated position and identifiers everywhere else: `abstract`
+   before `class`; `from` at the start of an import; `extend` at the start of an item when the type
+   it extends follows, directly or after generic parameters (`[GRM-34]`); `gen` and `once` immediately before `fn`; `safe` before `fn` in an extern block; `some`
+   at the start of a type; `c` and `cpp` between `import` or `overlay` and a string; `language` and
+   `threads` after `#!`; `overlay` at the start of an item, and `rename` and `hide` inside an overlay
+   (`[GRM-35]`); `union` at the start of an item followed by a name, where it is reserved for a future
+-  version (`E0005`), so `Set` can have its `union` method (`[STD-16]`). The reserved word `not` is
+-  also a method name immediately after `fn` and after `.`, so `Not` can have its method `not`
+-  (`a.not()` is `~a`, ODR-040). **Reserved for a future version** (lexed as keywords; using one as a
++  version (`E0005`), so `Set` can have its `union` method (`[STD-16]`). The reserved words `not` and
++  `is` are also method names immediately after `fn` in a type's body, an `extend` block or an
++  interface, and after `.` and `?.`, so `Not` can have its method `not` (`a.not()` is `~a`, ODR-040)
++  and `AnyError` its method `is[E]()` (`[ERR-8]`, ODR-106); a function standing alone, an item or a
++  local function, may take neither (`E0005`; `r#is` is its raw spelling). **Reserved for a future version** (lexed as keywords; using one as a
+   name is `E0005`, whose message names the reservation): `async`, `await`, `macro`.
+ * `[LEX-22]` *(changed in 0.9.9)* Ember has no lifetime syntax and never will. A `'` begins a
+   character literal and nothing else; an unterminated one is `E0008`.
+@@ -563,7 +565,7 @@
+ interface_member := {attribute} (fn_decl | assoc_type | const_decl)
+ assoc_type    := "type" IDENT [":" bound_list] ["=" type] NEWLINE
+ 
+-extend_decl   := "extend" [generic_params] type [implements] [where_clause] ":" type_body
++extend_decl   := ["unsafe"] "extend" [generic_params] type [implements] [where_clause] ":" type_body
+ const_decl    := "const" IDENT [":" type] "=" expression NEWLINE
+ static_decl   := "static" ["mut"] IDENT ":" type "=" expression NEWLINE
+ type_alias    := "type" IDENT [generic_params] "=" type ["in" expression] NEWLINE
+@@ -577,12 +579,17 @@
+ * `[GRM-1]` A class has at most one base class, written in parentheses: `class Door(Script):`.
+ * `[GRM-33]` *(new in 0.9.9)* A bodiless `fn_decl` is legal only in an `interface`, an `extern_block`, or as a
+   `virtual` method of an `abstract class`. Elsewhere it is `E0110` with the help `add ':' and a body`.
+-* `[GRM-34]` *(new in 0.9.9)* `extend [T: B] Array[T] implements I:` declares a generic extension; the generic
++* `[GRM-34]` *(new in 0.9.9)* *(changed in 0.9.10)* `extend [T: B] Array[T] implements I:` declares a generic extension; the generic
+   parameters after `extend` scope over the whole block. A parameter the target does not name and an
+   implemented interface does makes a **blanket implementation**: `extend[K: Eq + Hash, V, Q:
+   AsKey[K]] Map[K, V] implements Index[Q]` makes every `Map[K, V]` implement `Index[Q]` for each `Q`
+   its bounds admit, each method of the block is generic over `Q`, and each use is checked as a
+-  written implementation is (ODR-042).
++  written implementation is (ODR-042). The target may be a parameter standing alone (`extend[T, U]
++  T implements Wrap[U]`, every type's); a parameter of the block that neither the target nor an
++  implemented interface names is `E2020`. A call of a blanket method whose arguments and wanted
++  result leave such a parameter open takes it from the one instance of the interface the
++  receiver's type implements through the block (an instance of a generic function has it from its
++  bound); with two it stays open (`E2060`, ODR-112).
+ * `[GRM-8d]` A `type_alias` with an `in` clause declares a range type (`[RNG-1]`). The clause is
+   legal only on an item-level alias with no generic parameters (`E2213` otherwise).
+ 
+@@ -1224,7 +1231,7 @@
+   arguments that fit two equally are `E2070`, disambiguated as `I[A].m(recv, …)`. An operator chooses
+   among instances as its method's call does (`[TYP-21]`, ODR-096).
+ 
+-**Marker interfaces**, derived automatically (implementable by hand only with `unsafe extend`):
++**Marker interfaces**, derived automatically (`Send` and `Sync` written by hand only with `unsafe extend`, `[TYP-43]`):
+ 
+ | Marker | Holds when |
+ |---|---|
+@@ -1232,6 +1239,16 @@
+ | `Send` | every field is `Send`; raw pointers are not; `ref T` and `Span[T]` are when `T` is `Sync`, `ref mut T` and `MutSpan[T]` when `T` is `Send` (`[THR-8]`); a class handle is `Send` iff the class is `Sync` |
+ | `Sync` | every field is `Sync`; `ref mut`, `Cell`, `RefCell` and `UnsafeCell` are not; see `[THR-1]` for classes |
+ | `Sized` | everything except `dyn I` and unsized foreign types |
++
++* `[TYP-43]` *(new in 0.9.10)* The marker interfaces are interfaces of `std.core`, exported by the
++  prelude, so a bound names them as it names any (`T: Send + Sync`, `where Self: Sized`), and the
++  table answers them. A program writes `Send` or `Sync` by hand, for a struct or enum of its own
++  package, only as `unsafe extend T implements Send:` with no members, taking the responsibility the
++  compiler cannot check (written without `unsafe` it is `E3100`); a generic one (`unsafe extend[T:
++  Send] W[T] implements Send:`) holds for each instance whose arguments meet the markers its
++  parameters are bounded by. A class is `Send` or `Sync` only as `@sync` (`[THR-1]`: its counts must
++  be atomic), `Copy` comes from `@derive(Copy)`, and `Sized` is never written: each of these is
++  `E2040`, as is an `unsafe extend` of any interface but a marker (ODR-111).
+ 
+ **Standard interfaces.** These are the definitions; `std.core` declares them and the prelude exports
+ them (`[MOD-5]`).
+@@ -1332,7 +1349,7 @@
+ | range types | as the representation | as the representation | as the representation | as the representation | as the representation | — | as the representation | as the representation |
+ | structs, enums | derived per `[STR-5]` | `@derive(Copy)` | derived per `[STR-5]` | `@derive(Ord)` | `@derive(Hash)` | `@derive(Default)` | explicit | derived per `[STR-5]` |
+ 
+-* `[TYP-39]` *(new in 0.9.9)* Collections, tuples and `Option`/`Result` implement `Display` the way Python's `str()`
++* `[TYP-39]` *(new in 0.9.9)* *(changed in 0.9.10)* Collections, tuples and `Option`/`Result` implement `Display` the way Python's `str()`
+   shows them: `[1, 2, 3]`, `{'a': 1}`, `{1, 2}`, `(1, 'x')`, `Some(3)`, `None`, with each element
+   formatted by its `Debug` implementation (strings quoted). So `println(xs)` prints a list as Python
+   would. A `Map` prints its entries in insertion order and an empty one prints `{}`; an empty `Set`
+@@ -1340,7 +1357,10 @@
+   Python's `repr`: single quotes, or double quotes when the text holds a `'` and no `"`; `\`, the
+   chosen quote, `\n`, `\r` and `\t` are escaped, and any other control character is `\xNN`. A
+   `Box[T]` and a `Cell[T]` show as the `T` they hold, in `Display` and `Debug` alike (`Box(5)` prints
+-  `5`; ODR-094).
++  `5`; ODR-094). A `Cell` shows a copy of its value, as `get` reads it: a value's own `Display` or
++  `Debug` is the program's code and may `set` the cell, and a `Cell` lends its value to nothing
++  (`[CELL-2]`), so one that is not `Copy` and writes its own is not shown from a `Cell` (`E2040`,
++  whose help names `RefCell`; ODR-109).
+ * `[TYP-37]` *(new in 0.9.9)* Floats implement `Eq` with IEEE `==` (so `NaN != NaN`) and `Ord` with the IEEE-754
+   totalOrder predicate (`-NaN < -inf < … < -0.0 < +0.0 < … < +inf < +NaN`). The comparison
+   *operators* on float values keep IEEE meaning (`[TYP-9]`) in concrete and generic code alike: `a < b`
+@@ -1863,7 +1883,7 @@
+ | `x is None`, `x is not None` | option test | `Option` (`[EXP-9]`) |
+ | `a[i]` | `Index` / `IndexMut` / `IndexSet` | read; written in place; `a[i] = v` per `[STD-17]` |
+ | `a[i..j]`, `a[..j]`, `a[i..]` | slice | `Span`/`MutSpan`/`str`, bounds-checked |
+-| `a?.f`, `a?.m()` | optional chaining | on `Option`: `None` propagates |
++| `a?.f`, `a?.m()` | optional chaining | on `Option`: `None` propagates (`[EXP-10]`) |
+ | `e?` | early return | on `Option` or `Result` (`[ERR-2]`) |
+ | `x as T`, `h as? D`, `h as! D` | conversion | `[TYP-6]` |
+ | `f"…{e}…"` | formatting | allocates a `String`; `E4001` in `@noalloc` (use `format_to`) |
+@@ -1872,6 +1892,14 @@
+ * `[EXP-9]` *(new in 0.9.9)* *(changed in 0.9.9)* `a is b` compares two class handles (or two references) for identity.
+   `x is None` and `x is not None` test an `Option` for absence and presence, and are the only uses of
+   `is` on a non-handle type. Any other operand of `is` is `E2150`, whose help names `==`.
++* `[EXP-10]` *(new in 0.9.10)* **Optional chaining.** `a?.f` and `a?.m[T](…)` take an `Option`
++  (or a reference to one; anything else is `E2020`): `None` when `a` is `None`, and otherwise the
++  field or the method's result of the value inside, wrapped in `Some`, unless it is an `Option`
++  itself, which is then the result (a chain is one `Option`, never an `Option` of an `Option`), or
++  nothing, which is then what the chain is. `a` is read as `[GRM-13]` reads a place it does not
++  consume: a `Copy` value inside is copied and any other lent, so a field that is not `Copy` comes as
++  a reference (`p?.name` is an `Option[ref String]`) and `a` keeps its value; from a temporary it
++  moves (ODR-107).
+ * `[TYP-38]` *(new in 0.9.9)* **Collection literals.**
+   * A list literal `[a, b, c]` has the type its context expects: `Array[T]` (allocates), `[T; N]` (no
+     allocation) or `Span[T]` (a view of a temporary fixed array). With no context it is `Array[T]`.
+@@ -2772,8 +2800,13 @@
+ | `Cell[T]`, `RefCell[T]` | the owner's | interior | with the owner | mutating a value you hold only a shared borrow of |
+ | `Mutex[T]`, `RwLock[T]`, `Atomic[T]` | the owner's | synchronised | with the owner | mutation shared across threads |
+ 
+-* `[SEL-1]` The order above is the order to try. `ember inspect --alloc` reports the mechanism each
+-  declaration uses.
++* `[SEL-1]` *(changed in 0.9.10)* The order above is the order to try. `ember inspect --alloc`
++  reports the mechanism each declaration uses: every local, parameter and field the program writes,
++  by the row its declared type picks, and every struct, enum and class it declares, by its kind. A
++  type the table has no row for is reported as what it is: a number, `bool`, `char`, `void` or a
++  range type as a `value`; a reference, a span, `str` or a guard as a `view` of another's storage; a
++  callable value as a `callable`; a raw pointer as a `raw pointer`. Tuples and fixed arrays are the
++  first row's (ODR-108).
+ * `[SEL-2]` `Shared`/`Weak` and C++'s `std::shared_ptr`/`std::weak_ptr` (`CppShared`, `CppWeak`)
+   never convert into each other: they use different counts, and conflating them frees twice (`E5065`).
+ 
+@@ -4928,12 +4961,14 @@
+ * `[MAN-3]` *(changed in 0.9.9)* Every key in `[lints]` names a lint the compiler defines (`E9010`
+   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
+   parameters.
+-* `[MAN-8]` *(new in 0.9.9)* The sections are: `[package]` (`name`, `version`, `language`, `kind`,
++* `[MAN-8]` *(new in 0.9.9)* *(changed in 0.9.10)* The sections are: `[package]` (`name`, `version`, `language`, `kind`,
+   `layers`, `edition_lints`); `[dependencies]` (a version requirement, `{ path }`, or `{ git, rev }`);
+   `[build]` (`entry`, `target`, `backend`, `c_compiler`, `runtime`, `max_instantiations` `[MONO-3]`,
+-  `reload` `[MAN-7]`); `[profiles.<name>]` (`[PRF-3]`); `[c]` (`[BLD-FFI-1]`); `[link]`; `[jobs]`
+-  (`[JOB-1]`); `[realtime]` (`[EFF-19]`); `[comptime]` (`max_steps`, `max_heap_mb`, `[CT-3]`);
+-  `[lints]` (`[MAN-3]`); and `[cpp.<project>]` and `[ffi]` (Annex C). **No manifest key turns off a
++  `reload` `[MAN-7]`); `[profiles.<name>]` (`[PRF-3]`); `[c]` (`compiler`, `flags`, `[BLD-FFI-1]`);
++  `[link]` (`libs`); `[jobs]` (`workers`, `[JOB-1]`); `[realtime]` (`contracts`, `[EFF-19]`);
++  `[comptime]` (`max_steps`, `max_heap_mb`, `[CT-3]`); `[lints]` (`[MAN-3]`); and `[cpp.<project>]`
++  and `[ffi]` (`evidence`, Annex C). A key a section does not take, or a section not listed, is
++  `E9001`, naming what is accepted (ODR-110). **No manifest key turns off a
+   safety check or changes what a program means** (`[PRF-1]`).
+ * `[MAN-7]` `[build] reload` is `"opt-in"`, `"all"`, `"bodies"` or `"none"`; it is forbidden in
+   `shipping` (Annex B).
+@@ -7065,7 +7100,9 @@
+ 0.9.10_Hardened_6 adds ODR-102, owned callable values (§H.11);
+ 0.9.10_Hardened_7 adds ODR-103, a lambda outliving its captures is `E3026` (§H.12);
+ 0.9.10_Hardened_8 adds ODR-104, a constructor's `return` and its receiver (§H.13);
+-0.9.10_Hardened_9 adds ODR-105, `E2104` for a `let` field assigned outside `init` (§H.14).
++0.9.10_Hardened_9 adds ODR-105, `E2104` for a `let` field assigned outside `init` (§H.14);
++0.9.10_Hardened_10 adds ODR-106 to ODR-112, the owner's `is` and `?.` and the agents' open
++questions (§H.15).
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -7154,6 +7191,13 @@
+ | ODR-103 | ruled under the delegation (2026-10-12, autopilot): a lambda that borrows, stored or sent where no view may go, is shape B9's `E3026` (a closure outlives what it captures), help `owned fn` or `thread.scope()`; `E3063` stays for other views | `[CLO-3]`, `[CLO-4]`, `[THR-10]` |
+ | ODR-104 | ruled under the delegation (2026-10-12, autopilot): a `return` from a class `init`, like the end of its body, hands the object to its caller, so every field without a default is assigned on that path (`E2100`); `mut self` in a class `init` is accepted and means the same as `self` | `[CLS-2]`, `[STR-6]` |
+ | ODR-105 | ruled under the delegation (2026-10-12, autopilot): a `let` field assigned outside its `init` is `E2104`, a code of its own beside `E2103` | `[CLS-9]` |
++| ODR-106 | ruled under the delegation (2026-10-16, the owner: "allow ?.is()", "make it an error"): `is` is a method name after `fn` in a type's body, `.` and `?.`, as `not` is (ODR-040), so `AnyError` has `is[E]()`; a function standing alone may take neither `not` nor `is` (`E0005`) | `[LEX-15]`, `[ERR-8]` |
++| ODR-107 | ruled under the delegation (2026-10-16): optional chaining `a?.f`, `a?.m[T](…)` on an `Option`: `None` when `a` is, else the member wrapped in `Some` unless it is an `Option` (then it is the result) or nothing; `a` read as an unconsumed place, a non-`Copy` field lent | `[EXP-10]` |
++| ODR-108 | ruled under the delegation (2026-10-16, the owner: "fix all the stuff yourself"): `[SEL-1]` reports every local, parameter and field by the row its type picks and every type by its kind; a type with no row is a `value`, a `view`, a `callable` or a `raw pointer` | `[SEL-1]` |
++| ODR-109 | ruled under the delegation (2026-10-16): a `Cell` shows a copy of its value, as `get` reads it; a non-`Copy` value that writes its own `Display` or `Debug` is not shown from a `Cell` (`E2040`), since a `Cell` lends its value to nothing | `[TYP-39]`, `[CELL-2]` |
++| ODR-110 | ruled under the delegation (2026-10-16): `[MAN-8]` names the keys of `[c]` (`compiler`, `flags`), `[link]` (`libs`), `[jobs]` (`workers`), `[realtime]` (`contracts`) and `[ffi]` (`evidence`); any other key or section is `E9001` | `[MAN-8]` |
++| ODR-111 | ruled under the delegation (2026-10-16): the marker interfaces are `std.core`'s, usable as bounds; `unsafe extend T implements Send|Sync:` writes one by hand for a struct or enum of the package (generic ones per their parameters' marker bounds), `E3100` without `unsafe`; a class only as `@sync`, `Copy` only by `@derive(Copy)`, `Sized` never (`E2040`) | `[TYP-43]`, Part IV §8, grammar `extend_decl` |
++| ODR-112 | ruled under the delegation (2026-10-16): an extension may target a parameter standing alone with blanket parameters besides (`extend[T, U] T implements Wrap[U]`); a call leaving a blanket parameter open takes it from the one instance of the interface the receiver's type implements through the block | `[GRM-34]` |
+ 
+ Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
+ 0.9.9.
+@@ -7489,6 +7533,37 @@
+ | Rule | 0.9.10_Hardened_8 → 0.9.10_Hardened_9 |
+ |---|---|
+ | `[CLS-9]` | changed |
++
++## H.15 Changes in 0.9.10_Hardened_10 (from 0.9.10_Hardened_9)
++
++**0.9.10_Hardened_10** records ODR-106 to ODR-112, ruled under the owner's delegation on 2026-10-16
++(`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-191):
++
++* `is` is a method name after `fn` in a type's body, `.` and `?.`, as `not` is; a function standing
++  alone may take neither (`[LEX-15]`, ODR-106).
++* Optional chaining is `[EXP-10]`: `None` propagates, an `Option` member is the result, a field that
++  is not `Copy` is lent (ODR-107).
++* What a declaration is, and what a type with no row of IX.0's table is reported as, in
++  `[SEL-1]` (ODR-108).
++* A `Cell` shows a copy of its value; a non-`Copy` value with its own `Display` or `Debug` is not
++  shown from one (`[TYP-39]`, ODR-109).
++* The keys of `[c]`, `[link]`, `[jobs]`, `[realtime]` and `[ffi]`, in `[MAN-8]` (ODR-110).
++* The marker interfaces are `std.core`'s and usable as bounds; `Send` and `Sync` are written by
++  hand with `unsafe extend` (`[TYP-43]`, the grammar's `extend_decl`, ODR-111).
++* An extension over a parameter standing alone may have blanket parameters, taken at a call from
++  the receiver's one instance of the interface (`[GRM-34]`, ODR-112).
++
++Generated: every rule whose text differs from 0.9.10_Hardened_9.
++
++| Rule | 0.9.10_Hardened_9 → 0.9.10_Hardened_10 |
++|---|---|
++| `[EXP-10]` | added |
++| `[GRM-34]` | changed |
++| `[LEX-15]` | changed |
++| `[MAN-8]` | changed |
++| `[SEL-1]` | changed |
++| `[TYP-39]` | changed |
++| `[TYP-43]` | added |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -7994,6 +8069,7 @@
+ | `[EXP-5]` | VI | Mutation, a mutable borrow and a move require a place; `f(x).y = 1` … |
+ | `[EXP-6]` | VI | A place of a non-`Copy` type used as a value (assigned, passed to … |
+ | `[EXP-9]` | VI | `a is b` compares two class handles (or two references) for identity. … |
++| `[EXP-10]` | VI | *(new in 0.9.10)* Optional chaining. `a?.f` and `a?.m[T](…)` take an … |
+ 
+ ## FFI
+ 
+@@ -8166,7 +8242,7 @@
+ | `[GRM-31]` | III | A `some` type (`[TYP-32]`) is legal only as a function's return type, … |
+ | `[GRM-32]` | III | `comptime(e)` evaluates the expression `e` at compile time (`[CT-6]`). |
+ | `[GRM-33]` | III | A bodiless `fn_decl` is legal only in an `interface`, an … |
+-| `[GRM-34]` | III | `extend [T: B] Array[T] implements I:` declares a generic extension; … |
++| `[GRM-34]` | III | *(changed in 0.9.10)* `extend [T: B] Array[T] implements I:` declares … |
+ | `[GRM-35]` | XVI | Overlay grammar. An overlay is a file whose items are: |
+ | `[GRM-36]` | III | `ref e` and `ref mut e` borrow the place `e` (`[BRW-1]`). The operand … |
+ | `[GRM-37]` | III | A directive is a line beginning `#!` before the imports. `#! language … |
+@@ -8325,7 +8401,7 @@
+ | `[LEX-12]` | II | Identifiers are NFC-normalised; two identifiers are the same iff … |
+ | `[LEX-13]` | II | A lone `_` is the discard pattern and never names a variable. |
+ | `[LEX-14]` | II | A raw identifier `r#name` uses a keyword as a name (for imported C … |
+-| `[LEX-15]` | II | The table above is the complete reserved set. Contextual keywords are … |
++| `[LEX-15]` | II | *(changed in 0.9.10)* The table above is the complete reserved set. … |
+ | `[LEX-16]` | II | An integer literal without a suffix is an untyped integer: it takes … |
+ | `[LEX-17]` | II | A float literal without a suffix is an untyped float: it takes the … |
+ | `[LEX-17a]` | II | A float literal that receives `f32` or `f16` and has more significant … |
+@@ -8391,7 +8467,7 @@
+ | `[MAN-2]` | XVII | `ember.lock` records the resolved dependencies with content hashes; … |
+ | `[MAN-3]` | XVII | Every key in `[lints]` names a lint the compiler defines (`E9010` … |
+ | `[MAN-7]` | XVII | `[build] reload` is `"opt-in"`, `"all"`, `"bodies"` or `"none"`; it … |
+-| `[MAN-8]` | XVII | The sections are: `[package]` (`name`, `version`, `language`, `kind`, … |
++| `[MAN-8]` | XVII | *(changed in 0.9.10)* The sections are: `[package]` (`name`, … |
+ 
+ ## MNG
+ 
+@@ -8572,7 +8648,7 @@
+ 
+ | Rule | Part | Begins |
+ |---|---|---|
+-| `[SEL-1]` | IX | The order above is the order to try. `ember inspect --alloc` reports … |
++| `[SEL-1]` | IX | *(changed in 0.9.10)* The order above is the order to try. `ember … |
+ | `[SEL-2]` | IX | `Shared`/`Weak` and C++'s `std::shared_ptr`/`std::weak_ptr` … |
+ 
+ ## SER
+@@ -8804,10 +8880,11 @@
+ | `[TYP-36]` | IV | Which types implement which interfaces. The table is normative; a `—` … |
+ | `[TYP-37]` | IV | Floats implement `Eq` with IEEE `==` (so `NaN != NaN`) and `Ord` with … |
+ | `[TYP-38]` | VI | Collection literals. * A list literal `[a, b, c]` has the type its … |
+-| `[TYP-39]` | IV | Collections, tuples and `Option`/`Result` implement `Display` the way … |
++| `[TYP-39]` | IV | *(changed in 0.9.10)* Collections, tuples and `Option`/`Result` … |
+ | `[TYP-40]` | IV | Interfaces are nominal. A type implements an interface only through … |
+ | `[TYP-41]` | IV | Const arguments. A `const` generic argument, like an array length, is … |
+ | `[TYP-42]` | IV | *(new in 0.9.10)* The 256-bit counts. `u256` and `i256` are what the … |
++| `[TYP-43]` | IV | *(new in 0.9.10)* The marker interfaces are interfaces of `std.core`, … |
+ 
+ ## UNS
+ 

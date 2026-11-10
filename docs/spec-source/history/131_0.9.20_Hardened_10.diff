@@ -1,0 +1,221 @@
+--- Ember_v0.9.20_Hardened_9.md
++++ Ember_v0.9.20_Hardened_10.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.20_Hardened_9
+-**Supersedes:** 0.9.20_Hardened_8 (development target until this one), 0.9.20_Hardened_7 to
++**Version:** 0.9.20_Hardened_10
++**Supersedes:** 0.9.20_Hardened_9 (development target until this one), 0.9.20_Hardened_8 to
+ 0.9.20_Hardened_1, 0.9.15_Hardened_11 to 0.9.15_Hardened_1 and every earlier file:
+ 0.9.10_Hardened_1 to 0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3
+ and 0.8.5_Hardened_1 (adopted). This document is the single specification of Ember; the earlier
+@@ -50,9 +50,10 @@
+ verdict 38 restored; **0.9.20_Hardened_7**, of 2026-11-10 (§H.58): the owner's verdict 171,
+ that no header is exempt from `unsafe import`, the toolchain's own included;
+ **0.9.20_Hardened_8**, of 2026-11-10 (§H.59): his verdict 172, that a linked library is named
+-under `unsafe_libs` in the manifest and its import is written `unsafe import`; and
++under `unsafe_libs` in the manifest and its import is written `unsafe import`;
+ **0.9.20_Hardened_9**, of 2026-11-10 (§H.60): his verdict 173, that a library a header asks for
+-is named there too. Each of them changes
++is named there too; and **0.9.20_Hardened_10**, of 2026-11-10 (§H.61): his verdict 174, that a
++library only one system has is named for that system (`[link.windows]`). Each of them changes
+ the set of accepted programs, so the language version moves (`[VER-9]`). What a program means is written in
+ words on the thing it describes: one owner unless a line says `shares`; `owns` for a hand-over and a
+ value held alone, at the call too; `copy of` for a copy; `ref mut` on a name, and at the call, for a
+@@ -63,7 +64,7 @@
+ `@borrows`, the mode `owned`, `self`, `mem.forget`, effect clauses on a first line and every check of
+ exclusive access made while the program runs. It changes the set of accepted programs, so the
+ language version moves (`[VER-9]`); Appendix H §H.41 to §H.51 list every change of 0.9.15, and §H.52
+-to §H.60 those of 0.9.20. The revisions before it were
++to §H.61 those of 0.9.20. The revisions before it were
+ authored at the owner's direction of 2026-09-23 with delegated authority to decide open language
+ questions against the project goal; Appendix H lists each one's changes (§H.1 to §H.40), and every
+ finding of the 2026-09-23 research pass (`tasks/audit/FINDINGS.md`, F-001–F-214) is resolved in
+@@ -125,7 +126,7 @@
+ | Appendix E | Coming from Python (non-normative) |
+ | Appendix F | Glossary |
+ | Appendix G | Resolution of findings F-001–F-214 |
+-| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.51) and in 0.9.20 (§H.52 to §H.60) |
++| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.51) and in 0.9.20 (§H.52 to §H.61) |
+ | Appendix I | Rule index |
+ 
+ **Normative words.** MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119. Text marked
+@@ -9178,21 +9179,23 @@
+   Windows C runtime `<stdio.h>` defines `sprintf` and its family in every file that includes it, so
+   an import that reaches it is written `unsafe import c` there, and one that reaches only
+   `<stdlib.h>`, `<string.h>` or `<math.h>` is not. A library a header asks for is named in the
+-  manifest too, under `[link] unsafe_libs`, as every linked library is (verdict 173); where the
+-  manifest does not name it the import is `E9001` ("`windows.h` has the linker add `uuid.lib`, and
+-  `ember.toml` does not name it; add `unsafe_libs = [\"uuid\"]` under `[link]`"). `ember tcb` lists
+-  it as an external library with the header and line that asks for it (`[TCB-4]`). **A linked
+-  library is named in the manifest and vouched for in the code** (verdict 172). The manifest names
+-  it under `[link] unsafe_libs` (`[BLD-FFI-3]`), and the import of a header that declares a function
+-  or a variable the library defines is written `unsafe import`, with its note: `unsafe_libs =
+-  ["vulkan-1"]` in `ember.toml`, and `# SAFETY: vulkan-1 is the official Vulkan library` above
+-  `unsafe import c "vulkan/vulkan.h" as vk`. The library's code is in the program, with whatever it
+-  runs when it loads, and nothing checks it. The build reads from each named library the names it
+-  defines, so it knows which imports those are, and nothing more is written to tie the two; an
+-  import of such a header without the word is `E3100` ("`vkCreateInstance` of `import c
+-  "vulkan/vulkan.h"` (line 3) comes from `vulkan-1` (`ember.toml`, line 7), whose code nothing
+-  checks; write `unsafe import c "vulkan/vulkan.h" as vk` with a `# SAFETY:` note above it"). Each
+-  library is listed by `ember tcb` as an external library (`[TCB-4]`).
++  manifest too, under `[link] unsafe_libs` or the list of the system the build is for
++  (`[link.windows]`, `[BLD-FFI-3]`), as every linked library is (verdict 173); where the manifest
++  does not name it the import is `E9001` ("`windows.h` has the linker add `uuid.lib`, and
++  `ember.toml` does not name it; add `unsafe_libs = [\"uuid\"]` under `[link.windows]`, or under
++  `[link]` if every system needs it"). `ember tcb` lists it as an external library with the header
++  and line that asks for it (`[TCB-4]`). **A linked library is named in the manifest and vouched for
++  in the code** (verdict 172). The manifest names it under `[link] unsafe_libs` (`[BLD-FFI-3]`), and
++  the import of a header that declares a function or a variable the library defines is written
++  `unsafe import`, with its note: `unsafe_libs = ["vulkan-1"]` in `ember.toml`, and `# SAFETY:
++  vulkan-1 is the official Vulkan library` above `unsafe import c "vulkan/vulkan.h" as vk`. The
++  library's code is in the program, with whatever it runs when it loads, and nothing checks it. The
++  build reads from each named library the names it defines, so it knows which imports those are, and
++  nothing more is written to tie the two; an import of such a header without the word is `E3100`
++  ("`vkCreateInstance` of `import c "vulkan/vulkan.h"` (line 3) comes from `vulkan-1` (`ember.toml`,
++  line 7), whose code nothing checks; write `unsafe import c "vulkan/vulkan.h" as vk` with a `#
++  SAFETY:` note above it"). Each library is listed by `ember tcb` as an external library
++  (`[TCB-4]`).
+ 
+   ```ember,fragment
+   # SAFETY: bridge.c is ours: it defines `add` and runs nothing before `main`
+@@ -9970,9 +9973,15 @@
+   `[MAN-8]`) and nowhere else, so that the manifest says the program uses libraries nothing checks,
+   as the import of each says in the code (`unsafe import`, `[FFI-51]`; verdict 172), a library a
+   header itself asks for included (`#pragma comment(lib, "uuid.lib")`; verdict 173); link order
+-  follows declaration order. The key `libs` is not Ember (`E9001`: "`libs = [\"vulkan-1\"]` links
+-  code that nothing checks; write `unsafe_libs = [\"vulkan-1\"]`"). Each is listed by `ember tcb` as
+-  an external library (`[TCB-4]`).
++  follows declaration order. A library only one system has is named for that system (verdict 174):
++  `[link.windows]`, `[link.linux]` and `[link.macos]` each take `unsafe_libs`, linked after
++  `[link]`'s own when the build is for that system (the system of `--target` or `[build] target`,
++  the host's when neither is written) and not looked for when it is for another, so `unsafe_libs =
++  ["libcpmt", "uuid"]` under `[link.windows]` leaves a Linux build as it was; a library named in
++  both lists is linked once, and the import of its header is written `unsafe import` on every
++  system, one line of source serving them all. The key `libs` is not Ember (`E9001`: "`libs =
++  [\"vulkan-1\"]` links code that nothing checks; write `unsafe_libs = [\"vulkan-1\"]`"). Each is
++  listed by `ember tcb` as an external library (`[TCB-4]`).
+ 
+ ---
+ 
+@@ -10036,7 +10045,7 @@
+   rewrites source written for an earlier version into the current one where the change is
+   mechanical, and lists, with the file and line, what it could not rewrite. From 0.9.15: the `#!
+   language` directive to the current version; the changes of 0.9.20 refuse programs that were unsafe
+-  and rewrite nothing (§H.52 to §H.60). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
++  and rewrite nothing (§H.52 to §H.61). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
+   removal, `for k, v in m:` over a `Map` to `for k, v in m.items():` (`[CTL-1]`). From 0.9.10:
+   `Box[T]` and `ForeignBox[T]` to `owns T`, `Box[T, A]` to `owns T using A`, `Array[T, A]` to
+   `Array[T] using A`, `Weak[T]` to `weakref T`, the mode `owned` to `owns`, `mut x: T` on a
+@@ -10189,32 +10198,33 @@
+   `-U<name>`, `-I<path>` for a path that, with every symbolic link followed, lies under the
+   dependency's own root (`[CT-2]`), `-std=<c-standard>`, `-O<n>`, and `-W<name>` other than `-Wl,…`,
+   `-Wa,…` and `-Wp,…`, which pass arguments to the linker, assembler and preprocessor; its `[link]
+-  unsafe_libs` entries are taken for names with no path separator (`"m"`) and for paths under its
+-  own root, resolved the same way (a library one of its headers asks for is named there too,
+-  `[FFI-51]`); and its `[cpp.<project>]` section (whose configuration runs the project's own build
+-  code, Annex C), any other `[c] flags` entry, any other `[link]` path, and its `[build]`,
+-  `[profiles]`, `[jobs]` and `[comptime]` sections are honoured only when the root package's
+-  manifest names the dependency in `[build] native = ["parser"]`, and are `E9001` otherwise, naming
+-  the dependency, the key and the line to add ("`parser`'s manifest sets `[c] flags =
+-  [\"-fplugin=./vendor/helper.so\"]`, which would run its code inside this build's C compiler; a
+-  dependency's flags are limited to defines, include paths under its root, a C standard, an
+-  optimisation level and warnings; to take the rest as written, add `native = [\"parser\"]` under
+-  `[build]` in `ember.toml`"). What a dependency's C is compiled from is limited the same way, since
+-  a header names any file of the machine itself, whatever its `-I` paths (`#include
+-  "/home/ci/.ssh/config"`, C23's `#embed`): the compile of a dependency's shim, thunk unit or C
+-  source reads only files under the dependency's own root and the headers of the toolchain itself
+-  (the C or C++ compiler's own, its standard libraries' and the platform kit's, in the directories
+-  of those installations as the build finds them, `[TOOL-2]`, never a directory a manifest, a flag
+-  or an import's `include_paths` adds; reading one is not vouching for it, `[FFI-51]`), which the
+-  build checks against the files the C compiler reports it read, included and embedded alike (a
+-  build that cannot learn what a compiler embedded refuses `#embed` there), and that C holds no
+-  assembly, at file scope or in a function's body, since an assembler directive reads a file no
+-  report names (`.incbin`). A file from anywhere else, or assembly, is `E9001` unless the root names
+-  the dependency in `native` ("`parser`'s `lexer.h` (line 3) reads `/home/ci/.aws/credentials` into
+-  the program with `#embed`; a dependency's C reads only its own folder and the toolchain's headers;
+-  to allow it, add `native = [\"parser\"]` under `[build]` in `ember.toml`"). Each flag reaches the
+-  C compiler as one argument of its own, never through a shell, so a define's value cannot add a
+-  second flag. `ember tcb` lists every dependency so named as an external library (`[TCB-4]`).
++  unsafe_libs` entries, and those of its `[link.windows]`, `[link.linux]` and `[link.macos]`
++  sections, are taken for names with no path separator (`"m"`) and for paths under its own root,
++  resolved the same way (a library one of its headers asks for is named there too, `[FFI-51]`); and
++  its `[cpp.<project>]` section (whose configuration runs the project's own build code, Annex C),
++  any other `[c] flags` entry, any other `[link]` path, and its `[build]`, `[profiles]`, `[jobs]`
++  and `[comptime]` sections are honoured only when the root package's manifest names the dependency
++  in `[build] native = ["parser"]`, and are `E9001` otherwise, naming the dependency, the key and
++  the line to add ("`parser`'s manifest sets `[c] flags = [\"-fplugin=./vendor/helper.so\"]`, which
++  would run its code inside this build's C compiler; a dependency's flags are limited to defines,
++  include paths under its root, a C standard, an optimisation level and warnings; to take the rest
++  as written, add `native = [\"parser\"]` under `[build]` in `ember.toml`"). What a dependency's C
++  is compiled from is limited the same way, since a header names any file of the machine itself,
++  whatever its `-I` paths (`#include "/home/ci/.ssh/config"`, C23's `#embed`): the compile of a
++  dependency's shim, thunk unit or C source reads only files under the dependency's own root and the
++  headers of the toolchain itself (the C or C++ compiler's own, its standard libraries' and the
++  platform kit's, in the directories of those installations as the build finds them, `[TOOL-2]`,
++  never a directory a manifest, a flag or an import's `include_paths` adds; reading one is not
++  vouching for it, `[FFI-51]`), which the build checks against the files the C compiler reports it
++  read, included and embedded alike (a build that cannot learn what a compiler embedded refuses
++  `#embed` there), and that C holds no assembly, at file scope or in a function's body, since an
++  assembler directive reads a file no report names (`.incbin`). A file from anywhere else, or
++  assembly, is `E9001` unless the root names the dependency in `native` ("`parser`'s `lexer.h` (line
++  3) reads `/home/ci/.aws/credentials` into the program with `#embed`; a dependency's C reads only
++  its own folder and the toolchain's headers; to allow it, add `native = [\"parser\"]` under
++  `[build]` in `ember.toml`"). Each flag reaches the C compiler as one argument of its own, never
++  through a shell, so a define's value cannot add a second flag. `ember tcb` lists every dependency
++  so named as an external library (`[TCB-4]`).
+ * `[MAN-3]` *(changed in 0.9.9)* Every key in `[lints]` names a lint the compiler defines (`E9010`
+   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
+   parameters.
+@@ -10223,11 +10233,12 @@
+   (`{ path }`, `{ git, rev }`, or `{ git, version }`, `[VER-5]`); `[build]` (`entry`, `target`,
+   `backend`, `c_compiler`, `runtime`, `max_instantiations` `[MONO-3]`, `reload` `[MAN-7]`, `native`
+   `[MAN-10]`); `[profiles.<name>]` (`[PRF-3]`); `[c]` (`compiler`, `flags`, `[BLD-FFI-1]`); `[link]`
+-  (`unsafe_libs`, `timeout` `[BLD-15]`); `[jobs]` (`workers`, `[JOB-1]`); `[realtime]` (`contracts`,
+-  `[EFF-19]`); `[comptime]` (`max_steps`, `max_heap_mb`, `[CT-3]`; `env`, `[CT-2]`); `[lints]`
+-  (`[MAN-3]`); and `[cpp.<project>]` and `[ffi]` (`evidence`, Annex C). A key a section does not
+-  take, or a section not listed, is `E9001`, naming what is accepted (ODR-110). **No manifest key
+-  turns off a safety check or changes what a program means** (`[PRF-1]`).
++  (`unsafe_libs`, `timeout` `[BLD-15]`), and `[link.windows]`, `[link.linux]` and `[link.macos]`
++  (`unsafe_libs`, for a build for that system, `[BLD-FFI-3]`); `[jobs]` (`workers`, `[JOB-1]`);
++  `[realtime]` (`contracts`, `[EFF-19]`); `[comptime]` (`max_steps`, `max_heap_mb`, `[CT-3]`; `env`,
++  `[CT-2]`); `[lints]` (`[MAN-3]`); and `[cpp.<project>]` and `[ffi]` (`evidence`, Annex C). A key a
++  section does not take, or a section not listed, is `E9001`, naming what is accepted (ODR-110).
++  **No manifest key turns off a safety check or changes what a program means** (`[PRF-1]`).
+ * `[MAN-7]` *(changed in 0.9.10)* `[build] reload` is `"opt-in"`, `"all"`, `"bodies"` or `"none"`; a
+   `release` build ignores it and prints the note `hot reload is off in release builds` (Annex B).
+ * `[VER-5]` *(changed in 0.9.10)* Package versions are semantic. A dependency `{ git = "<url>",
+@@ -16745,6 +16756,32 @@
+ | `[FFI-51]` | changed |
+ | `[MAN-10]` | changed |
+ 
++
++## H.61 Changes in 0.9.20_Hardened_10 (from 0.9.20_Hardened_9)
++
++**0.9.20_Hardened_10**, of 2026-11-10, is one verdict of the owner's (174). The manifest named a
++library for every system at once, so a program that names `libcpmt` for MSVC (verdict 173) named it
++for Linux too, where no such library exists; the same was already true of any program that links
++different libraries on different systems. Shown sections for one system each, the owner: "Yes, add
++them". A feature is added; nothing is taken away.
++
++* **A library only one system has is named for that system**: `[link.windows]`, `[link.linux]` and
++  `[link.macos]` each take `unsafe_libs`, linked after `[link]`'s own when the build is for that
++  system and not looked for when it is for another. The key, the word and the import in the code
++  are as they were (`[BLD-FFI-3]`, `[MAN-8]`, `[MAN-10]`, `[FFI-51]`).
++
++No registry row, no new rule, no new code, none retired. Owner verdicts: 174 applied.
++
++Generated: every rule whose text differs from 0.9.20_Hardened_9.
++
++| Rule | 0.9.20_Hardened_9 → 0.9.20_Hardened_10 |
++|---|---|
++| `[BLD-FFI-3]` | changed |
++| `[CLI-20]` | changed |
++| `[FFI-51]` | changed |
++| `[MAN-8]` | changed |
++| `[MAN-10]` | changed |
++
+ ---
+ 
+ # Appendix I — Rule Index

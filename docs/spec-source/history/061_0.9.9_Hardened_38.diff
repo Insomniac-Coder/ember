@@ -1,0 +1,39 @@
+--- Ember_v0.9.9_Hardened_37.md
++++ Ember_v0.9.9_Hardened_38.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_37
+-**Supersedes:** 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_38
++**Supersedes:** 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -4267,7 +4267,7 @@
+   | incomplete `struct` | `extern type S`, used only behind pointers |
+   | `enum` | `@repr(<underlying>) enum`, `@non_exhaustive` (any value may arrive) |
+   | `typedef` | a type alias, or a new type with `@ffi(newtype)` |
+-  | `static const` global, `extern` global | `extern static`; reading it needs `unsafe` unless `@ffi(immutable)` |
++  | `static const` global, `extern` global | `extern static`; reading it needs `unsafe` unless `@ffi(immutable)` asserts a `const` C object and an unchanged value (ODR-082). The generated C declaration is `extern const T` with that assertion, or `extern T` without it; a safe read also requires `T: Sync`. `@ffi(immutable)` on `static mut` is `E5002`. |
+   | `#define S "text"` | `const S: cstr = c"text"` |
+   | function pointer | `extern "C" fn(…) -> R`, `Option[…]` when nullable; another calling convention is `extern "<conv>" fn` (`[FFI-9]`), and an unsupported one is skipped with `W5002` |
+   | bit-field | `get_<f>`/`set_<f>` methods; not addressable |
+@@ -6729,7 +6729,8 @@
+ mutable view and C pointer; Hardened_35 adds ODR-079, the nullable counted input's distinction
+ between absent and present-empty views; Hardened_36 adds ODR-080, nullable borrowed C strings and
+ their null-pointer niche; Hardened_37 adds ODR-081, the fallible owned C-string conversion and
+-explicit borrowed view.
++explicit borrowed view; Hardened_38 adds ODR-082, the C qualifier asserted by an immutable
++foreign static.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6794,6 +6795,7 @@
+ | ODR-079 | a nullable hand-declared borrowed `count(n)` input sends `None` as null pointer and zero, but preserves `Some(empty)` with a non-null aligned static sentinel and zero (Hardened_35) | `[FFI-10]`, `[FFI-11]` |
+ | ODR-080 | `Option[cstr]` has a null-pointer niche; nullable borrowed NUL-terminated C inputs and results use it without changing their lifetime contract (Hardened_36) | `[TYP-13]`, `[FFI-11]`, `[FFI-15]` |
+ | ODR-081 | `str.to_cstring()` returns `Result[CString, NulError]`, checking for interior NUL before allocation; `.as_cstr()` is an explicit borrow of its owner (Hardened_37) | `[TXT-5]`, `[FFI-15]` |
++| ODR-082 | `@ffi(immutable)` asserts a `const` C object for a hand-declared foreign static, with a matching C declaration and safe `Sync` read (Hardened_38) | `[FFI-8]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 

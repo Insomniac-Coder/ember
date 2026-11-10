@@ -1,0 +1,54 @@
+--- Ember_v0.9.9_Hardened_30.md
++++ Ember_v0.9.9_Hardened_31.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_30
+-**Supersedes:** 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_31
++**Supersedes:** 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -4177,6 +4177,14 @@
+   mapping and lowers it to the C ABI carrier. A raw `*T` can be declared for an unsafe call, but
+   complete facts do not make a raw-pointer parameter or result safe to expose; `safe fn` with one is
+   `E5002`. Missing facts or a type/contract mismatch is `E5002`, naming the slot.
++  On a hand-declared `safe fn` with `count(n)`, `n` is written as an integer scalar parameter at
++  its C ABI position (ODR-074). The contract marks it as an ABI witness: it is absent from the
++  callable Ember signature, and the compiler supplies the corresponding `Span[T]` or `MutSpan[T]`
++  length at the call. The written integer type fixes the C width and signedness. A length that does
++  not fit that type, or unequal lengths from two pointer clauses sharing `n`, panics before the
++  foreign call. A missing or non-integer witness or an incompatible pointer surface is `E5002`.
++  An unsafe raw-pointer declaration keeps its written C ABI parameters; only a mapped `safe fn`
++  erases the witness.
+ * `[FFI-9]` `extern "C"` is the platform C ABI (SysV AMD64, Windows x64, AAPCS64). `extern "system"`
+   is `stdcall` on 32-bit Windows and C elsewhere; `extern "vectorcall"` and `extern "fastcall"` exist
+   on x86. Struct arguments and results follow the ABI exactly. An ABI-direct call is one `call`
+@@ -4317,7 +4325,7 @@
+   | Axis | Words | Ember type produced |
+   |---|---|---|
+   | ownership | `borrowed` (valid for the call), `owned` (callee takes it), `returns_owned(destructor=f)`, `retained` (callee keeps it, `[FFI-23]`) | `ref`/`Span`; a moved `ForeignBox[T]`; a `ForeignBox[T]` whose drop calls `f`; `Retained[T]` |
+-  | count | `one`, `count(n)` (as many elements as parameter `n`, which then leaves the signature), `nul_terminated`, `fixed(N)`, `inout_count(p)` (`[FFI-11b]`) | `ref T`, `Span[T]`/`MutSpan[T]`, `cstr`, `ref [T; N]` |
++  | count | `one`, `count(n)` (as many elements as parameter `n`, which then leaves the callable signature; a hand declaration writes its ABI witness under `[FFI-10]`, ODR-074), `nul_terminated`, `fixed(N)`, `inout_count(p)` (`[FFI-11b]`) | `ref T`, `Span[T]`/`MutSpan[T]`, `cstr`, `ref [T; N]` |
+   | nullability | `nullable` | `Option[…]` |
+   | lifetime (results) | `from(self)`, `from(p)`, `from(static)` | the region of the receiver, of `p`, or static (`[LT-1a]`) |
+   | aliasing | `exclusive`, `aliased` | `ref mut` allowed only with `exclusive`; a result is `aliased` unless stated |
+@@ -6679,7 +6687,8 @@
+ ODR-068, the owner's Part II adoptions SP-007, SP-016 and SP-031; Hardened_27 adds ODR-069, SP-013;
+ Hardened_28 adds ODR-070, the nesting limit (D-331); Hardened_29 adds ODR-071 and ODR-072, found
+ closing the last open defects (D-355, D-202); Hardened_30 adds ODR-073, the hand-declared C pointer
+-contract syntax and safe surface.
++contract syntax and safe surface; Hardened_31 adds ODR-074, the ABI witness for a hand-declared
++counted pointer.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6736,6 +6745,7 @@
+ | ODR-071 | the type `()` is `void`; a tuple type has two or more elements (Hardened_29) | `[TYP-27]` |
+ | ODR-072 | in a class method `self` is the object the method was called on for the whole call; assigning to it is `E2103`, and re-pointing a caller's handle is a `mut` parameter's (Hardened_29) | `[CLS-7]`, `[FN-9]`, `[EXC-15]` |
+ | ODR-073 | hand-declared pointer facts use `@ffi(param(name, words…), result(words…))`; a `safe fn` exposes the mapped safe Ember type, never a raw pointer (Hardened_30) | `[FFI-10]`, `[FFI-11]` |
++| ODR-074 | `count(n)` on a hand-declared safe C function writes `n` at its C ABI position as an integer witness, hides it from the callable signature, and supplies it from a checked span length (Hardened_31) | `[FFI-10]`, `[FFI-11]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 

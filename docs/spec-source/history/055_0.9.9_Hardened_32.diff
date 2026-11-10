@@ -1,0 +1,49 @@
+--- Ember_v0.9.9_Hardened_31.md
++++ Ember_v0.9.9_Hardened_32.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_31
+-**Supersedes:** 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_32
++**Supersedes:** 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -1044,8 +1044,15 @@
+ ## IV.5 Raw types
+ 
+ `*T` and `*mut T` are nullable, possibly unaligned, untracked pointers. Creating one from a reference
+-is safe; dereferencing, offsetting, reading and writing need `unsafe`. `null[T]()` is the null
+-pointer. `extern "C" fn(i32) -> i32` is a C function pointer: `Copy`, no captures.
++is safe (ODR-075): `ref_to_ptr(r: ref T) -> *T` and `ref_to_ptr(r: ref mut T) -> *mut T` retain the
++predecessor's spelling. An explicit `r as *T` is also safe when the pointee type is unchanged and the
++cast does not strengthen mutability: `ref T` to `*T`, or `ref mut T` to `*T` or `*mut T`.
++The raw pointer does not retain a compiler-tracked loan. Dereferencing, offsetting, reading and
++writing through it need `unsafe`. Raw-pointer-to-raw-pointer and pointer/integer casts still
++require `unsafe` (`[TYP-7]`). `null[P]()` (ODR-076) is safe and returns the null pointer of the exact
++raw-pointer type `P`: write `null[*i32]()` or `null[*mut i32]()`. `P` must be a raw-pointer type;
++neither its mutability nor its pointee is inferred from context. `extern "C" fn(i32) -> i32` is a C
++function pointer: `Copy`, no captures.
+ 
+ ## IV.6 Class handles
+ 
+@@ -6688,7 +6695,8 @@
+ Hardened_28 adds ODR-070, the nesting limit (D-331); Hardened_29 adds ODR-071 and ODR-072, found
+ closing the last open defects (D-355, D-202); Hardened_30 adds ODR-073, the hand-declared C pointer
+ contract syntax and safe surface; Hardened_31 adds ODR-074, the ABI witness for a hand-declared
+-counted pointer.
++counted pointer; Hardened_32 adds ODR-075 and ODR-076, the safe reference-to-pointer spellings and
++the exact pointer type of `null[P]()`.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6746,6 +6754,8 @@
+ | ODR-072 | in a class method `self` is the object the method was called on for the whole call; assigning to it is `E2103`, and re-pointing a caller's handle is a `mut` parameter's (Hardened_29) | `[CLS-7]`, `[FN-9]`, `[EXC-15]` |
+ | ODR-073 | hand-declared pointer facts use `@ffi(param(name, words…), result(words…))`; a `safe fn` exposes the mapped safe Ember type, never a raw pointer (Hardened_30) | `[FFI-10]`, `[FFI-11]` |
+ | ODR-074 | `count(n)` on a hand-declared safe C function writes `n` at its C ABI position as an integer witness, hides it from the callable signature, and supplies it from a checked span length (Hardened_31) | `[FFI-10]`, `[FFI-11]` |
++| ODR-075 | `ref_to_ptr(r)` remains a safe reference-to-raw-pointer conversion, and `r as *T` is safe when it preserves the pointee type and does not strengthen mutability (Hardened_32) | §IV.5, `[TYP-7]` |
++| ODR-076 | `null[P]()` takes a complete raw-pointer type and returns that exact pointer type, including its mutability (Hardened_32) | §IV.5 |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 

@@ -1,0 +1,147 @@
+--- Ember_v0.9.10_Hardened_10.md
++++ Ember_v0.9.10_Hardened_11.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.10_Hardened_10
+-**Supersedes:** 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.10_Hardened_11
++**Supersedes:** 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -604,7 +604,7 @@
+ generic_args  := "[" generic_arg {"," generic_arg} [","] "]"
+ generic_arg   := type | expression | IDENT "=" type          -- const argument; associated-type binding
+ tuple_type    := "(" ")" | "(" type "," [type {"," type} [","]] ")"
+-fn_type       := ["once"] ["extern" STRING] "fn" "(" [fn_type_param {"," fn_type_param} [","]] ")"
++fn_type       := ["once"] ["unsafe"] ["extern" STRING] "fn" "(" [fn_type_param {"," fn_type_param} [","]] ")"
+                  ["->" type]
+ fn_type_param := ["mut" | "owned"] type
+ ```
+@@ -1553,9 +1553,13 @@
+   (`[TYP-8]`).
+ * `[FN-6]` *(changed in 0.9.9)* **Callable types.** A function is a value. A callable type is written
+   `fn(A, mut B, owned C) -> R`, with the same parameter modes as a declaration; `once fn(…) -> R` is a
+-  callable that may be called at most once (`[CLO-6]`). Callable types are compared by their parameter
+-  types, modes and result. A function coerces to any callable type it satisfies; a capture-free one
+-  also coerces to `extern "C" fn(…)` when every type is FFI-safe. The source parameters (`[LT-1]`) of a
++  callable that may be called at most once (`[CLO-6]`), and `unsafe fn(…) -> R` one whose call is an
++  `unsafe` operation (`[UNS-1]`, ODR-115); the two combine with `extern "C"` as the grammar orders them,
++  `once unsafe extern "C" fn(…)`. Callable types are compared by their parameter types, modes and
++  result, and by `unsafe`. A function coerces to any callable type it satisfies, and to its `unsafe`
++  form; an `unsafe fn` coerces only to an `unsafe` callable type (`E2020` otherwise). As a parameter's
++  bound (`[CLO-3]`), `unsafe fn(…)` is met by any function or lambda that meets `fn(…)` and by an
++  `unsafe fn`. A capture-free function also coerces to `extern "C" fn(…)` when every type is FFI-safe. The source parameters (`[LT-1]`) of a
+   callable type get fresh regions at each call, and the result's regions follow `[LT-1]` applied to
+   the callable type's own parameters (`[LT-7]`). What a callable type means in each position is
+   `[CLO-3]`.
+@@ -2200,9 +2204,11 @@
+   order), when its owner is overwritten, or at the end of the statement that created it as a
+   temporary. Dropping runs the value's `drop` method, if any, then drops its fields in reverse
+   declaration order.
+-* `[OWN-3]` A move transfers ownership and leaves the source uninitialised. Using a moved-from place is
+-  `E3040`, labelled at the move and at the use, with the help `.clone()` when the type is `Clone`. A
+-  value moved on only some paths is tracked with a hidden drop flag; conditional moves are legal.
++* `[OWN-3]` A move transfers ownership and leaves the source uninitialised. Using a moved-from place,
++  whether it is read, moved again or borrowed (a method call, `print`), is `E3040`, labelled at the
++  move and at the use, with the help `.clone()` when the type is `Clone` (ODR-114). A value moved on
++  only some paths is tracked with a hidden drop flag; conditional moves are legal, and a use a move
++  may have reached is `E3040` too.
+ * `[OWN-4]` A loop body that moves a value declared outside the loop is `E3041`, unless every path
+   assigns it again before the next iteration.
+ * `[OWN-5]` Assigning to a place that holds a live value evaluates the new value, then drops the old
+@@ -2269,7 +2275,8 @@
+   distinct addresses, and nothing about addresses follows from the indices (ODR-068).
+ * `[BRW-6]` **Reborrows.** From `r: ref mut T`, `ref r.f` freezes `r` while it lives and `ref mut r.f`
+   suspends `r`. Passing a `ref mut` local to a `mut` parameter reborrows it; it does not move it.
+-* `[BRW-7]` Borrowing a moved or uninitialised place is `E3050`.
++* `[BRW-7]` Borrowing a place that is uninitialised on some path, one never assigned there, is `E3050`;
++  borrowing one a move may have reached is `[OWN-3]`'s `E3040` (ODR-114).
+ * `[BRW-8]` *(changed in 0.9.9)* A borrowed parameter is passed by address: the callee reads the
+   caller's place (`[FN-1]`, ODR-024). Two kinds are passed as a copy instead:
+   * a reference or view (a `ref`, `Span`, `MutSpan`, `str` or `@view` struct), which is passed as
+@@ -2937,9 +2944,10 @@
+ ```
+ 
+ * `[UNS-1]` An `unsafe` context is required to: dereference, read or write through `*T`/`*mut T`;
+-  offset a pointer; cast between pointers or pointers and integers; call an `unsafe fn`; call an
+-  `extern` function without a verified contract (Part XVI); access a `static mut`; `transmute`; call
+-  `get_unchecked` or `assume_init`; implement an `unsafe` interface.
++  offset a pointer; cast between pointers or pointers and integers; call an `unsafe fn`, or through a
++  value of an `unsafe` callable type (`[FN-6]`); call an `extern` function without a verified contract
++  (Part XVI); access a `static mut`; `transmute`; call `get_unchecked` or `assume_init`; implement an
++  `unsafe` interface.
+ * `[UNS-2]` `unsafe` permits exactly those operations. It does not turn off borrow checking, bounds
+   checks on safe types, overflow checks or type checking.
+ * `[UNS-3]` `L3010` reports an `unsafe` block containing statements that need no `unsafe`.
+@@ -4048,7 +4056,10 @@
+   `eprint`/`eprintln` write to standard error. They are compiler-known and are the only calls with a
+   variable number of positional arguments (`[TYP-26]`). An argument's text is its `Display` text when
+   its type has `Display`, and its `Debug` text otherwise, which is Python's `str` → `repr` fallback; a
+-  type with neither (a class without them) is `E2040`, whose help is to implement `Display`. `println()` prints an empty line.
++  type with neither (a `RefCell`, whose value is reached only through a checked borrow) is `E2040`,
++  whose help is to implement `Display`. A class handle always has `Debug`, its class and address
++  (`[TYP-36]`), so a class without a written `Display` prints by it (ODR-113). `println()` prints an
++  empty line.
+ * `[STD-2]` Printing allocates only to build an f-string argument; `println("literal")`,
+   `println(some_str)` and `println(n)` for a number are `@noalloc`.
+ * `[STD-10]` *(new in 0.9.9)* `input(prompt="") -> String` prints the prompt, flushes, reads one line
+@@ -7102,7 +7113,8 @@
+ 0.9.10_Hardened_8 adds ODR-104, a constructor's `return` and its receiver (§H.13);
+ 0.9.10_Hardened_9 adds ODR-105, `E2104` for a `let` field assigned outside `init` (§H.14);
+ 0.9.10_Hardened_10 adds ODR-106 to ODR-112, the owner's `is` and `?.` and the agents' open
+-questions (§H.15).
++questions (§H.15); 0.9.10_Hardened_11 adds ODR-113 to ODR-115, the owner's rulings on what printing,
++a use after a move and an `unsafe fn` value are (§H.16).
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -7198,6 +7210,9 @@
+ | ODR-110 | ruled under the delegation (2026-10-16): `[MAN-8]` names the keys of `[c]` (`compiler`, `flags`), `[link]` (`libs`), `[jobs]` (`workers`), `[realtime]` (`contracts`) and `[ffi]` (`evidence`); any other key or section is `E9001` | `[MAN-8]` |
+ | ODR-111 | ruled under the delegation (2026-10-16): the marker interfaces are `std.core`'s, usable as bounds; `unsafe extend T implements Send|Sync:` writes one by hand for a struct or enum of the package (generic ones per their parameters' marker bounds), `E3100` without `unsafe`; a class only as `@sync`, `Copy` only by `@derive(Copy)`, `Sized` never (`E2040`) | `[TYP-43]`, Part IV §8, grammar `extend_decl` |
+ | ODR-112 | ruled under the delegation (2026-10-16): an extension may target a parameter standing alone with blanket parameters besides (`extend[T, U] T implements Wrap[U]`); a call leaving a blanket parameter open takes it from the one instance of the interface the receiver's type implements through the block | `[GRM-34]` |
++| ODR-113 | ruled by the owner (2026-10-16): `[STD-9]`'s example of a type with neither `Display` nor `Debug` is a `RefCell`, not a class: a class handle always has `Debug`, its class and address (`[TYP-36]`) | `[STD-9]` |
++| ODR-114 | ruled by the owner (2026-10-16): a moved-from place, read, moved again or borrowed, is `E3040` with `[OWN-3]`'s help; `E3050` is a place uninitialised on some path, one never assigned there | `[OWN-3]`, `[BRW-7]` |
++| ODR-115 | ruled by the owner (2026-10-16): `unsafe fn(…) -> R` is a callable type whose call is an `unsafe` operation; an `unsafe fn` coerces only to one, any function to one; as a bound it is met by any function | `[FN-6]`, `[UNS-1]`, grammar `fn_type` |
+ 
+ Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
+ 0.9.9.
+@@ -7564,6 +7579,28 @@
+ | `[SEL-1]` | changed |
+ | `[TYP-39]` | changed |
+ | `[TYP-43]` | added |
++
++## H.16 Changes in 0.9.10_Hardened_11 (from 0.9.10_Hardened_10)
++
++**0.9.10_Hardened_11** records ODR-113 to ODR-115, ruled by the owner on 2026-10-16
++(`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-198):
++
++* The example of a type with neither printer is a `RefCell`: a class handle always has `Debug`
++  (`[STD-9]`, `[TYP-36]`, ODR-113).
++* A moved-from place, read, moved again or borrowed, is `E3040`; `E3050` is a place never assigned on
++  some path (`[OWN-3]`, `[BRW-7]`, ODR-114).
++* `unsafe fn(…) -> R` is a callable type whose call needs `unsafe`; an `unsafe fn` coerces only to one
++  (`[FN-6]`, `[UNS-1]`, the grammar's `fn_type`, ODR-115).
++
++Generated: every rule whose text differs from 0.9.10_Hardened_10.
++
++| Rule | 0.9.10_Hardened_10 → 0.9.10_Hardened_11 |
++|---|---|
++| `[BRW-7]` | changed |
++| `[FN-6]` | changed |
++| `[OWN-3]` | changed |
++| `[STD-9]` | changed |
++| `[UNS-1]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -7680,7 +7717,7 @@
+ | `[BRW-4]` | VII | Disjoint fields. `ref mut a.x` and `ref mut a.y` may be live together … |
+ | `[BRW-5]` | VII | Indices are not disjoint. `ref mut a[i]` and `ref mut a[j]` conflict … |
+ | `[BRW-6]` | VII | Reborrows. From `r: ref mut T`, `ref r.f` freezes `r` while it lives … |
+-| `[BRW-7]` | VII | Borrowing a moved or uninitialised place is `E3050`. |
++| `[BRW-7]` | VII | Borrowing a place that is uninitialised on some path, one never … |
+ | `[BRW-8]` | VII | A borrowed parameter is passed by address: the callee reads the … |
+ | `[BRW-9]` | VII | A reference in Safe code is never null, dangling or unaligned. |
+ | `[BRW-10]` | VII | Methods borrow the fields they use. A call to a method of a struct or … |

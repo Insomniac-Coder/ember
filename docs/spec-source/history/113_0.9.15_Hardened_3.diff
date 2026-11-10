@@ -1,0 +1,1259 @@
+--- Ember_v0.9.15_Hardened_2.md
++++ Ember_v0.9.15_Hardened_3.md
+@@ -1,6 +1,6 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.15_Hardened_2
++**Version:** 0.9.15_Hardened_3
+ **Supersedes:** 0.9.15_Hardened_1 (development target) and every earlier file: 0.9.10_Hardened_1 to
+ 0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3 and 0.8.5_Hardened_1
+ (adopted). This document is the single specification of Ember; the earlier files are history.
+@@ -342,7 +342,8 @@
+ Ember deliberately has none of these: a tracing garbage collector or a cycle collector (a loop of
+ owners is proved opened again or rejected, and a link back is a `weakref`, `[WK-6]`); exceptions or
+ unwinding (failures are values or panics, Part XIII); implicit numeric narrowing; function overloading
+-and variadic functions, apart from the output functions (`[TYP-26]`); macros (`macro` is reserved);
++and C's untyped variadic functions outside `unsafe` (Ember's own take any number of typed values,
++`[TYP-47]`); macros (`macro` is reserved);
+ named lifetimes, ever (`[LEX-22]`); an aliasing or exclusivity check while the program runs
+ (`[BRW-1]`); specialisation or higher-kinded types; dynamic or structural typing (`[TYP-40]`); a safety
+ check that depends on the profile (`[PRF-1]`); a correctness property that depends on whole-program
+@@ -443,7 +444,8 @@
+   at the start of a type; `c` and `cpp` between `import` or `overlay` and a string; `language` and
+   `threads` after `#!`; `overlay` at the start of an item, and `rename` and `hide` inside an overlay
+   (`[GRM-35]`); `union` at the start of an item followed by a name, where it is reserved for a future
+-  version (`E0005`), so `Set` can have its `union` method (`[STD-16]`); `copy` directly before `of`,
++  version (`E0005`), so `Set` can have its `union` method (`[STD-16]`); `needs` directly after the `:` of a type parameter, an interface's header, an associated type or a
++  `where` clause (`[TYP-17]`); `copy` directly before `of`,
+   and `of` directly after `copy` (`copy of x`, so `mem.copy` and a count's `of` stay names,
+   `[GRM-43]`); `exists` between the value and `as` in an `if`, `elif` or `while` header (`[GRM-44]`);
+   `cast` at the start of an operand directly before a name or
+@@ -525,13 +527,14 @@
+ Logical:      and  or  not
+ Assignment:   =  +=  -=  *=  /=  //=  %=  **=  &=  |=  ^=  <<=  >>=
+ Range:        ..  ..=
++Pack:         ...
+ Access:       .  ?.  [ ]  ( )
+ Conversion:   as
+ Other:        ,  :  ;  ->  =>  @  ?  { }
+ ```
+ 
+ * `[LEX-21]` *(changed in 0.9.9)* *(changed in 0.9.15)* Tokenisation is maximal munch: `//=` before `//` before `/`,
+-  `**=` before `**`, `..=` before `..`, `?.` is one token. `as?` and `as!` are single tokens when `as`
++  `**=` before `**`, `...` and `..=` before `..`, `?.` is one token. `as?` and `as!` are single tokens when `as`
+   is followed immediately (no space) by `?` or `!`, lexed only so that either is refused with
+   `E1010`, whose message gives the kind test or the cast to write (`[GRM-30]`); `!` has no other use.
+   There is no `::` token; a `::` in source is `E0100` with the help `use '.' for paths` (`[GRM-24]`).
+@@ -611,12 +614,13 @@
+ fn_takes      := "owns" "this"                         -- a method that takes its object over
+                | capture_list                          -- a local function ([GRM-42])
+ generic_params:= "[" generic_param {"," generic_param} [","] "]"
+-generic_param := IDENT [":" bound_list] ["=" type]
++generic_param := IDENT ["..."] [":" "needs" needs] ["=" type]   -- `...`: a pack ([TYP-47])
+                | "const" IDENT ":" type ["=" expression]
+-bound_list    := type {"+" type}
+-where_clause  := "where" type ":" bound_list {"," type ":" bound_list}
++needs         := type | "(" type {"," type} [","] ")"     -- one bare, several in round brackets ([TYP-17])
++bound_list    := type {"+" type}                        -- after `dyn` and `some` only
++where_clause  := "where" type ":" "needs" needs {"," type ":" "needs" needs}
+ param_list    := param {"," param} [","]
+-param         := [param_word] IDENT ":" type ["=" expression]
++param         := [param_word] IDENT ":" type ["..."] ["=" expression]   -- `Ts...`: the pack's values
+ param_word    := "ref" ["mut"] | "const" "ref" "mut" | "owns"
+ 
+ struct_decl   := "struct" IDENT [implements] [where_clause] ":" type_body
+@@ -635,10 +639,10 @@
+ variant       := IDENT ["(" variant_field {"," variant_field} [","] ")"] ["=" expression] NEWLINE
+ variant_field := {attribute} [IDENT ":"] type
+ 
+-interface_decl:= ["unsafe"] "interface" IDENT [generic_params] [":" bound_list] [where_clause] ":"
++interface_decl:= ["unsafe"] "interface" IDENT [generic_params] [":" "needs" needs] [where_clause] ":"
+                  NEWLINE INDENT {interface_member} DEDENT
+ interface_member := {attribute} ([type_params] fn_decl | assoc_type | const_decl)
+-assoc_type    := "type" IDENT [":" bound_list] ["=" type] NEWLINE
++assoc_type    := "type" IDENT [":" "needs" needs] ["=" type] NEWLINE
+ 
+ extend_decl   := ["unsafe"] "extend" [generic_params] type [implements] [where_clause] ":" type_body
+ const_decl    := "const" IDENT [":" type] "=" expression NEWLINE
+@@ -654,10 +658,10 @@
+ * `[GRM-1]` A class has at most one base class, written in parentheses: `class Door(Script):`.
+ * `[GRM-33]` *(new in 0.9.9)* A bodiless `fn_decl` is legal only in an `interface`, an `extern_block`, or as a
+   `virtual` method of an `abstract class`. Elsewhere it is `E0110` with the help `add ':' and a body`.
+-* `[GRM-34]` *(new in 0.9.9)* *(changed in 0.9.10)* `extend [T: B] Array[T] implements I:` declares a generic extension; the generic
++* `[GRM-34]` *(new in 0.9.9)* *(changed in 0.9.10)* `extend [T: needs B] Array[T] implements I:` declares a generic extension; the generic
+   parameters after `extend` scope over the whole block. A parameter the target does not name and an
+-  implemented interface does makes a **blanket implementation**: `extend[K: Eq + Hash, V, Q:
+-  AsKey[K]] Map[K, V] implements Index[Q]` makes every `Map[K, V]` implement `Index[Q]` for each `Q`
++  implemented interface does makes a **blanket implementation**: `extend[K: needs (Eq, Hash), V,
++  Q: needs AsKey[K]] Map[K, V] implements Index[Q]` makes every `Map[K, V]` implement `Index[Q]` for each `Q`
+   its bounds admit, each method of the block is generic over `Q`, and each use is checked as a
+   written implementation is (ODR-042). The target may be a parameter standing alone (`extend[T, U]
+   T implements Wrap[U]`, every type's); a parameter of the block that neither the target nor an
+@@ -669,11 +673,11 @@
+   legal only on an item-level alias with no generic parameters (`E2213` otherwise).
+ * `[GRM-40]` *(new in 0.9.15)* **Type parameters go on a line of their own**, directly above the
+   function, method, struct or class they belong to, at its indentation and below its attributes:
+-  `[T: Add[Output = T] + Default]` above `fn sum(xs: Span[T]) -> T:`, `[F: fn(Item)]` above
++  `[T: needs (Add[Output = T], Default)]` above `fn sum(xs: Span[T]) -> T:`, `[F: needs fn(Item)]` above
+   `fn for_each(owns f: F) owns this:`, `[T]` above `struct Pool:`. The type or function is used as
+   before (`Pool[int]`, `sum(xs)`, `f[int](x)`), and a lambda has none. An enum, an interface, a
+   `type` alias and an `extend` block keep their brackets after the name or after `extend`
+-  (`interface Add[Rhs = Self]:`, `type Pair[T] = (T, T)`, `extend[T: B] Array[T]`). Brackets after the
++  (`interface Add[Rhs = Self]:`, `type Pair[T] = (T, T)`, `extend[T: needs B] Array[T]`). Brackets after the
+   name of a function, method, struct or class are `E0100`, whose message gives the two lines to
+   write (`[T]` above `fn first(xs: Array[T]) -> T:`); a bracket line not directly above one of them is
+   `E0100`. A line that begins with `[` is a type-parameter line when the line after it begins a
+@@ -713,6 +717,7 @@
+ path_segment  := IDENT [generic_args]
+ generic_args  := "[" generic_arg {"," generic_arg} [","] "]"
+ generic_arg   := type | expression | IDENT "=" type          -- const argument; associated-type binding
++               | IDENT "..."                               -- a pack spelled out ([TYP-47])
+ tuple_type    := "(" ")" | "(" type "," [type {"," type} [","]] ")"
+ fn_type       := ["once"] ["unsafe"] ["extern" STRING] "fn" "(" [fn_type_param {"," fn_type_param} [","]] ")"
+                  ["->" type]
+@@ -731,7 +736,7 @@
+ * `[GRM-31]` *(new in 0.9.9)* *(changed in 0.9.10)* A `some` type (`[TYP-32]`) is legal only as a function's or a
+   method's return type, or nested inside one; elsewhere it is `E2260`. A method an interface declares
+   is not one: each implementation would choose its own type, so an associated type states it
+-  (`type Iter: Iterator[Item = T]`) (ODR-144).
++  (`type Iter: needs Iterator[Item = T]`) (ODR-144).
+ 
+ ## III.4 Statements
+ 
+@@ -888,7 +893,7 @@
+ postfix       := "(" [arg {"," arg} [","]] ")" | "(" expression comp_clauses ")"
+                | "[" expr_list "]" | "." IDENT | "." INT
+                | "?." IDENT | "?"
+-arg           := expression | IDENT "=" expression
++arg           := expression | IDENT "=" expression | IDENT "..."   -- a pack's values passed on
+ atom          := literal | IDENT | "this" | "Self" | "(" expression ")" | tuple_lit | list_lit
+                | map_lit | set_lit | comprehension | match_expr | "comptime" "(" expression ")"
+                | "@assume_noalloc" "(" expression ")"
+@@ -1282,7 +1287,7 @@
+   implementations, placed in the type's declaring module, of `Eq` and `Ord` and of each operator
+   interface the representation implements over itself: `Add`, `Sub`, `Mul`, `Div`, `FloorDiv`, `Rem`,
+   `Pow`, `Neg`, `Not`, `BitAnd`, `BitOr`, `BitXor`, `Shl` and `Shr`, each with the representation as
+-  its `Output` (ODR-095: `l | m` and `l ** 2` are the representation's, and `T: BitOr[T]` accepts a
++  its `Output` (ODR-095: `l | m` and `l ** 2` are the representation's, and `T: needs BitOr[T]` accepts a
+   range type as the operator does). Exact-type implementations are chosen before coercion
+   (`[RNG-5a2]`).
+   No compound-assignment operator is generated: `r += 0.1` is `E2214` with the fix-it
+@@ -1504,18 +1509,28 @@
+ 
+ * `[TYP-16]` Generic functions and types are monomorphised: each distinct instantiation is a distinct
+   function or type in the output. `ember build --report=instantiations` counts them (`[MONO-2]`).
+-* `[TYP-17]` *(changed in 0.9.10)* *(changed in 0.9.15)* Type parameters are bounded by interfaces: `[T: Add[Output = T] + Default]`
+-  above `fn sum(xs: Span[T]) -> T` (`[GRM-40]`). Inside a generic body only the operations the bounds
+-  provide are available, plus copy for `T: Copy`, hand-over, drop and `size_of`. A `pub` function
++* `[TYP-17]` *(changed in 0.9.10)* *(changed in 0.9.15)* Type parameters are bounded by interfaces: `[T: needs (Add[Output = T], Default)]`
++  above `fn sum(xs: Span[T]) -> T` (`[GRM-40]`). What a type parameter needs is written after `needs`:
++  one bare (`[T: needs Copy]`), several in round brackets, separated by commas
++  (`[T: needs (Add[T, Output = T], Copy)]`), since a comma also separates the type parameters
++  (`[K: needs (Eq, Hash), V]`); the same in an `extend` block's brackets
++  (`extend[T: needs Display] Array[T] implements Display:`), an interface's parents
++  (`interface Error: needs (Debug, Display):`), an associated type (`type Iter: needs Iterator[Item =
++  Item]`) and a `where` clause. A bound without `needs`, or needs joined with `+`, is `E0100`, whose
++  message gives the line with `needs` (`[T: Add + Copy]` gives `[T: needs (Add, Copy)]`). Inside a generic body only the operations the bounds
++  provide are available, plus copy for `T: needs Copy`, hand-over, drop and `size_of`. A `pub` function
+   writes its bounds: a missing one is `E2040`, one message on the first line of the body that needs a
+   bound the function does not write, giving every bound the body needs ("`total` is `pub`, so its
+-  bound is written: write `[T: Add[T, Output = T]]` in place of `[T]` above `pub fn total(a: T, b: T)
+-  -> T:`"). A function that is not `pub` may leave them out: its bounds are worked out from its body,
++  bound is written: write `[T: needs Add[T, Output = T]]` in place of `[T]` above `pub fn total(a: T, b: T)
++  -> T:`"). A function that is not `pub` writes all of them or none: with none, its bounds are worked out from its body,
+   each method called on a parameter giving the interface in scope that declares it (two that declare
+   it are `E2070`, `[TYP-24]`), and a method no interface in scope declares is `E2072` ("`T` has no
+   `weight`: no interface in scope declares `fn weight`; declare one, `interface Weighed:` with `fn
+   weight() -> int`, and write `struct Crate implements Weighed:` for the type the function is given;
+-  the bound follows").
++  the bound follows"); a list that leaves out one the body needs is `E2040`, whose message gives the
++  whole line ("`direct_add` writes what `T` needs, so it writes all of it: `a + b` (line 2) needs `Add`,
++  which `Lookalike` does not give; write `[T: needs (Lookalike, Add[T, Output = T])]` in place of
++  `[T: needs Lookalike]`").
+   The body is checked once with its parameters standing for any type, except where the type of
+   `enumerate`'s numbers depends on a parameter (`[STD-19]`): that type, and every line using those
+   numbers, is checked for each use, with the parameters filled in.
+@@ -1526,15 +1541,32 @@
+ * `[TYP-18]` Generic arguments are inferred from the arguments of a call. Explicit arguments may be
+   written: `f[int](x)`, `Array[f32]()`. A constructor's explicit type arguments always fix the
+   instantiation, whatever else the context says.
+-* `[TYP-19]` *(changed in 0.9.15)* There is no specialisation, no higher-kinded type and no variadic generic. Two
++* `[TYP-19]` *(changed in 0.9.15)* There is no specialisation and no higher-kinded type; a generic may take any number of types
++  (`[TYP-47]`, verdict 115). Two
+   implementations whose applicable types overlap are `E2041`. Whether two overlap is decided where
+   they are declared, whether or not any instance meets both: they overlap when one type could be
+   both, each implementation's type parameters standing for any type (`extend[T] Pair[T, int]` and
+   `extend[U] Pair[StrView, U]` overlap at `Pair[StrView, int]`), and when their interface's arguments could
+   be the same too. A bound separates two only where the type it bounds is written out in full and
+-  does not meet it (`extend[T: Copy] Pair[T, int]` and `extend Pair[String, int]` do not overlap); a
++  does not meet it (`extend[T: needs Copy] Pair[T, int]` and `extend Pair[String, int]` do not overlap); a
+   bound on a type left open never does, as a type meeting both bounds can be declared later, in
+   another package (ODR-092).
++* `[TYP-47]` *(new in 0.9.15)* **Any number of types, and of values** (verdicts 115 and 116, C++'s
++  spelling). `...` after a type parameter's name makes it a **pack**: any number of types, none
++  included (`[Cs...]` above `fn view() -> View[Cs...]:`). A pack's needs apply to each of its types
++  (`[Ts...: needs Display]`). A function's last parameter may take the pack's values, any number of
++  them, each of its own type: `[Ts...: needs Display]` above `fn log(values: Ts...):`, called
++  `log("hp", hp, pos)`. `Cs...` among type arguments spells the pack's types out (`View[Cs...]`),
++  `values...` among a call's arguments passes the values on (`log(values...)`), and `values.len()` is
++  their number, known when compiling. `for v in values:` is written out by the compiler once per value,
++  each `v` of its own type, and nothing runs for the loop itself. Each use is made for its exact types,
++  as any generic is (`[MONO-1]`): nothing is looked up while the program runs, and each value is
++  checked as an ordinary parameter's is, its word included (`owns values: Ts...` takes each one over).
++  A pack is the last of its type parameters, and its values' parameter is the function's last
++  positional one: a parameter after it has a default and is passed by name only, as after Python's
++  `*args` (`fn println(values: Ts..., sep: StrView = " ", end: StrView = "
++")`, called
++  `println(a, b, sep=", ")`); anywhere else either is `E0100`. C's untyped `...` stays as `[FFI-8]` says, in `unsafe` only.
+ * `[TYP-35]` *(new in 0.9.9)* *(changed in 0.9.15)* A type parameter need not appear in any field (a **phantom** parameter): `[Tag]`
+   above `struct Handle:` with the one field `index: u32` is legal. A phantom parameter affects type
+   identity and counts for `Send` and `ThreadShared` as a field of that type would, so a marker type
+@@ -1606,7 +1638,7 @@
+ | `Sized` | everything except `dyn I` and unsized foreign types |
+ 
+ * `[TYP-43]` *(new in 0.9.10)* *(changed in 0.9.15)* The marker interfaces are interfaces of `std.core`, exported by the
+-  prelude, so a bound names them as it names any (`T: Send + ThreadShared`, `where Self: Sized`), and
++  prelude, so a bound names them as it names any (`T: needs (Send, ThreadShared)`, `where Self: needs Sized`), and
+   the table answers them. `Send` and `ThreadShared` are inferred from what a type holds, which its
+   words say. The types the compiler declares itself (a `Cell`, the counted block of a `shares` value)
+   are recognised by the module that declares them, never by their names, so a program's own struct
+@@ -1615,12 +1647,12 @@
+   implements Send:` with no members and a `# SAFETY:` note, taking the responsibility the compiler
+   cannot check (written without `unsafe` it is `E3100`: "say that you vouch for it: write `unsafe
+   extend Counter implements Send:` with a `# SAFETY:` note above it"); a generic one (`unsafe
+-  extend[T: Send] W[T] implements Send:`) holds for each instance whose arguments meet the markers its
++  extend[T: needs Send] W[T] implements Send:`) holds for each instance whose arguments meet the markers its
+   parameters are bounded by. `ThreadShared` is written only in bounds, `Copy` comes from
+   `@derive(Copy)`, and `Sized` is never written: each of these written by hand is `E2040`, as is an
+   `unsafe extend` of any interface but `Send` or an `unsafe interface` (ODR-111). `Sync` is the name
+-  of an effect (Part X), not of a property: `T: Sync` in a bound is `E1010`, whose message gives
+-  `T: ThreadShared`.
++  of an effect (Part X), not of a property: `T: needs Sync` in a bound is `E1010`, whose message gives
++  `T: needs ThreadShared`.
+   An `unsafe interface` (`Allocator`, `[ALC-2]`) is implemented only by an `unsafe extend`, with its
+   members as for any interface; without `unsafe` it is `E3100`.
+ 
+@@ -1641,7 +1673,7 @@
+ interface Eq:
+     fn eq(other: Self) -> bool                          # ==, !=
+ 
+-interface Ord: Eq:
++interface Ord: needs Eq:
+     fn cmp(other: Self) -> Ordering                     # sort, min, max; a float's `<` stays IEEE
+ 
+ enum Ordering:
+@@ -1650,7 +1682,7 @@
+     Greater
+ 
+ interface Hash:
+-    [H: Hasher]
++    [H: needs Hasher]
+     fn hash(ref mut h: H)
+ 
+ interface Display:
+@@ -1658,6 +1690,9 @@
+ 
+ interface Debug:
+     fn fmt_debug(ref mut f: Formatter) -> Result[void, FmtError]    # f"{x!r}", f"{x:?}"
++
++interface Printable:                                                # print, println, format_to (verdict 117)
++    fn fmt_print(ref mut f: Formatter) -> Result[void, FmtError]    # Display's text, else Debug's
+ 
+ interface Iterator:
+     type Item
+@@ -1665,12 +1700,12 @@
+ 
+ interface Iterable:
+     type Item
+-    type Iter: Iterator[Item = Item]
++    type Iter: needs Iterator[Item = Item]
+     fn iter() -> Iter                                               # for x in c
+ 
+ interface IntoIterator:
+     type Item
+-    type Iter: Iterator[Item = Item]
++    type Iter: needs Iterator[Item = Item]
+     fn into_iter() owns this -> Iter                                # for x in owns c
+ 
+ interface Contains[T]:
+@@ -1691,13 +1726,13 @@
+     type Output
+     fn index(i: Idx) -> ref Output                                  # a[i] read
+ 
+-interface IndexMut[Idx]: Index[Idx]:
++interface IndexMut[Idx]: needs Index[Idx]:
+     fn index_mut(i: Idx) -> ref mut Output                          # a[i] write
+ 
+ interface IndexSet[Idx, V]:
+     fn index_set(i: Idx, owns v: V)                                 # a[i] = v (Map inserts)
+ 
+-interface Error: Debug + Display:
++interface Error: needs (Debug, Display):
+     fn source() -> Option[ref dyn Error]                            # default: None
+ 
+ interface From[T]:
+@@ -1713,7 +1748,7 @@
+   implements `Eq`, `Ord`, `Hash`, `Display` and `Debug` as `T` does (so `sorted(m.keys())` works).
+   An `owns T` is `Clone` when `T` is, and `owns dyn I` when `I` requires `Clone` (§IX.1, `[TYP-22]`).
+   Two `owns` values compare with `==` when what they hold does; `owns dyn I` compares
+-  when `I` requires `Eq` (`interface Shape: Eq:`, a method-table entry as for `Clone`): values of two
++  when `I` requires `Eq` (`interface Shape: needs Eq:`, a method-table entry as for `Clone`): values of two
+   different kinds are never equal, and two of one kind compare their contents. `copy of x` makes a
+   value with `Clone` (`[OWN-8]`), and every `Copy` type is `Clone`; before what it cannot copy as
+   itself (a `weakref` link, a value of a view type, a type with no `Clone`) it is `E2116`. Before an `owns`, `shares` or
+@@ -1735,7 +1770,7 @@
+ | `String` | ✓ | — | ✓ | by bytes | ✓ | empty | ✓ | ✓ |
+ | tuples, `[T; N]` | if all | if all | if all | lexicographic, if all | if all | if all | if all `Debug` | if all |
+ | `Option[T]`, `Result[T, E]` | if `T`(,`E`) | if `T`(,`E`) | if `T`(,`E`) | `None < Some` | if `T`(,`E`) | `None` / — | if `Debug` | if `T`(,`E`) |
+-| `Array[T]` | if `T` | — | if `T` | lexicographic | if `T` | empty | if `T: Debug` | if `T` |
++| `Array[T]` | if `T` | — | if `T` | lexicographic | if `T` | empty | if `T: needs Debug` | if `T` |
+ | `Map[K, V]`, `Set[T]` | if all | — | as sets of entries | — | — | empty | if all `Debug` | if all |
+ | class objects | `@derive(Clone)` or written: a new object | — | identity (`is`) | — | identity | — | — | ✓ (class and address) |
+ | range types | as the representation | as the representation | as the representation | as the representation | as the representation | — | as the representation | as the representation |
+@@ -1756,7 +1791,7 @@
+ * `[TYP-37]` *(new in 0.9.9)* Floats implement `Eq` with IEEE `==` (so `NaN != NaN`) and `Ord` with the IEEE-754
+   totalOrder predicate (`-NaN < -inf < … < -0.0 < +0.0 < … < +inf < +NaN`). The comparison
+   *operators* on float values keep IEEE meaning (`[TYP-9]`) in concrete and generic code alike: `a < b`
+-  with `T: Ord` and `T = f64` is IEEE `<`, false when either side is NaN. `cmp`, `sort()`, `sorted()`,
++  with `T: needs Ord` and `T = f64` is IEEE `<`, false when either side is NaN. `cmp`, `sort()`, `sorted()`,
+   `binary_search`, `min()` and `max()` use `cmp`, so sorting floats is total and needs no extra step.
+   A float's `==` and `cmp(…) == Equal` can differ (`-0.0 == 0.0`, which `cmp` orders; a NaN is not `==`
+   itself), so an algorithm keeps to one relation: the ordered ones to `cmp` throughout, the
+@@ -1775,7 +1810,7 @@
+   Such a method is the operator: `3.add(4)` is `3 + 4`. `bool`, `char` and `String` implement none
+   of them (`String`'s `+` takes its left operand over, `[TXT-11]`). Likewise a type is indexed only
+   through `Index`, `IndexMut` and `IndexSet` (ODR-042).
+-* `[HASH-1]` *(changed in 0.9.15)* `Hash.hash` is generic over `H: Hasher` and monomorphised; hashing a value MUST feed a
++* `[HASH-1]` *(changed in 0.9.15)* `Hash.hash` is generic over `H: needs Hasher` and monomorphised; hashing a value MUST feed a
+   deterministic representation of it into the hasher, and values equal under `Eq` MUST hash equally.
+   `Hasher` (in `std.collections`, not the prelude) is a hashing state that is not `Copy`, with `write_bytes`,
+   `write_u8`, `write_u16`, `write_u32`, `write_u64`, `write_i8`, `write_i16`, `write_i32`,
+@@ -1797,7 +1832,7 @@
+   `eq` does is worked out from its body like any function's (Part X), so one that may change or end
+   the map it is called from, reached by another name (a link, a module variable), makes the map
+   operation that calls it refused when compiling (`E3031`); nothing is checked while the program runs.
+-* `[HASH-4]` `Map[K, V]` requires `K: Eq + Hash`. A map may call `hash` any number of times per
++* `[HASH-4]` `Map[K, V]` requires `K: needs (Eq, Hash)`. A map may call `hash` any number of times per
+   operation. Safe map APIs never expose `ref mut K`.
+ 
+ ## IV.9 Existential and opaque types
+@@ -1807,14 +1842,14 @@
+   (`[TYP-45]`). It is a data pointer and a table pointer (a class object reaches its table through the
+   object header, `[OBJ-2]`).
+ * `[TYP-22]` *(changed in 0.9.10)* *(changed in 0.9.15)* An interface is usable as `dyn` only if every method has an object
+-  (none is a `static fn`), does not return `Self` by value (methods marked `where Self: Sized`
++  (none is a `static fn`), does not return `Self` by value (methods marked `where Self: needs Sized`
+   excepted), and is not generic, except over a type parameter used only as the type of a parameter
+-  that views its value (a plain or `ref mut` parameter), which gets one `dyn` entry (`[V: Visitor]`
++  that views its value (a plain or `ref mut` parameter), which gets one `dyn` entry (`[V: needs Visitor]`
+   above `fn visit(ref mut v: V)`). Violations are `E2050`, naming the method and giving the line to
+   write ("`Inspect` cannot be used as `dyn Inspect`: `make` returns its `V`, and a `dyn` value has one
+-  entry per method; take the visitor in instead of returning it, `[V: Visitor]` above `fn make(ref mut
++  entry per method; take the visitor in instead of returning it, `[V: needs Visitor]` above `fn make(ref mut
+   v: V)`"). An interface that requires `Clone`
+-  (`interface Shape: Clone:`) is usable as `dyn` all the same: every type implementing it must be
++  (`interface Shape: needs Clone:`) is usable as `dyn` all the same: every type implementing it must be
+   `Clone`, as for any required interface, and its method table holds an entry that copies the value
+   into a new block, so `owns dyn Shape` is `Clone` (§IX.1).
+ * `[TYP-44]` *(new in 0.9.15)* **Kind tests and casts.** A value of an interface type (`dyn I`,
+@@ -1889,9 +1924,10 @@
+ * `[TYP-25]` Arguments may be positional or named; positional arguments come first; a parameter with a
+   default may be omitted.
+ * `[TYP-26]` *(changed in 0.9.9)* There is no overloading: two functions of one name in one scope are
+-  `E1030`, except operator-interface implementations and `extend` blocks for different types. The
+-  compiler-known output functions `print`, `println`, `eprint`, `eprintln` (`[STD-9]`) and `format_to`
+-  (`[STD-18]`) are the only calls with a variable number of arguments (ODR-060).
++  `E1030`, except operator-interface implementations and `extend` blocks for different types. A
++  function whose last positional parameter takes a pack's values (`[TYP-47]`) takes any number of
++  arguments; the output functions `print`, `println`, `eprint`, `eprintln` (`[STD-9]`) and `format_to`
++  (`[STD-18]`) are such functions of the library, not known to the compiler by name (verdict 117).
+ ---
+ 
+ # Part V — Declarations
+@@ -2071,7 +2107,7 @@
+   arguments (`[LT-7]`). What a callable type means in each position is `[CLO-3]`.
+ * `[FN-7]` Recursion is permitted; tail calls are not guaranteed to be eliminated.
+ * `[FN-8]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* `main` is `fn main()`, `fn main() -> Result[void, E]` for any
+-  `E: Display`, or either form with a first parameter `args: Array[String]`. `args` holds the command
++  `E: needs Display`, or either form with a first parameter `args: Array[String]`. `args` holds the command
+   line, decoded as UTF-8 with invalid bytes replaced by U+FFFD; `std.process.args_os()` returns the raw
+   bytes. An `Err` returned from `main` is printed with `Display` to standard error and the process
+   exits with status 1. The entry module's `main` in any other form (another parameter or more than one,
+@@ -2292,11 +2328,11 @@
+   legal in any module of `T`'s package.
+ * `[IFC-2]` Adding inherent methods to a type from another package is `E2120`; use an interface or a
+   wrapper type.
+-* `[IFC-3]` *(changed in 0.9.9)* `interface Ord: Eq` requires implementers of `Ord` to implement `Eq`. So a bound brings
+-  its parents: `T: IndexMut[int]` provides `Index[int]`'s methods too, and a binding it writes
++* `[IFC-3]` *(changed in 0.9.9)* `interface Ord: needs Eq` requires implementers of `Ord` to implement `Eq`. So a bound brings
++  its parents: `T: needs IndexMut[int]` provides `Index[int]`'s methods too, and a binding it writes
+   (`Output = f32`) names the parent's associated type (ODR-042).
+ * `[IFC-4]` *(changed in 0.9.9)* Interfaces may declare associated types and constants, not statics.
+-  An associated type may carry bounds (`type Real: Float`), and a type implementing the interface
++  An associated type may carry bounds (`type Real: needs Float`), and a type implementing the interface
+   states it (`type Real = f64`) with a value that meets them (`E2040` if it is missing or does not).
+   `T.Name` names the associated type `Name` of a type parameter `T` whose bound declares it: inside
+   the generic body it has what its declared bounds provide, and each call takes it from what the
+@@ -2304,11 +2340,11 @@
+   associated type once, for each of them that declares it (`extend i32 implements Add, Sub: type
+   Output = i32`). `Name = T` inside an interface's brackets is written only in a bound (`T: Add[Output
+   = T]`), and is `E2020` in an `implements` list. A bound that leaves an associated type unsaid
+-  (`T: Add`) makes `a + b` a `T.Output`, which only a signature naming it (`-> T.Output`) can hold
++  (`T: needs Add`) makes `a + b` a `T.Output`, which only a signature naming it (`-> T.Output`) can hold
+   (`E2040` otherwise) (ODR-040). An interface may give an associated type a **default** (`type Out =
+   Self`): an implementation that does not state it takes the default, read with `Self` as the
+   implementing type, and the default must meet the associated type's bounds (`E2040`). A default is
+-  not an equality: a bound `T: I` leaves `T.Out` abstract whatever the default says, and a default
++  not an equality: a bound `T: needs I` leaves `T.Out` abstract whatever the default says, and a default
+   method body sees `Out` as itself, never as its default, since an implementation may override it
+   (ODR-049). A default that leads back to itself, directly or through other defaults, is `E2043`.
+ * `[IFC-5]` *(new in 0.9.15)* **Interface values say who owns them.** `owns dyn I` is a value of some
+@@ -2321,20 +2357,24 @@
+   parameter is only the type of a `ref` or `ref mut` parameter gets one entry for `dyn` use; an
+   interface whose generic method returns or stores its type parameter is not usable as `dyn` (`E2050`,
+   `[TYP-22]`: "`Inspect` cannot be used as `dyn Inspect`: `make` returns its `V`, and a `dyn` value has
+-  one entry per method; take the visitor in instead of returning it, `[V: Visitor]` above
++  one entry per method; take the visitor in instead of returning it, `[V: needs Visitor]` above
+   `fn make(ref mut v: V)`, or keep each list's own type with a type parameter instead of
+-  `dyn Inspect`: `[I: Inspect]` above `fn walk(xs: Array[I]) -> int:`"). A value of an interface type
++  `dyn Inspect`: `[I: needs Inspect]` above `fn walk(xs: Array[I]) -> int:`"). A value of an interface type
+   is tested for its kind with `is` and cast with `cast x as T` (`[DSP-4]`, `[DSP-6]`). What a `dyn`
+   value's methods change is worked out from every value the program makes into that type (`[EFF-2]`).
+-* `[IFC-6]` *(new in 0.9.15)* **Bounds of a generic function.** A function that is not `pub` may leave
+-  its type parameters' bounds unwritten: they are worked out from its body, and a method that no
++* `[IFC-6]` *(new in 0.9.15)* **Bounds of a generic function.** A function that is not `pub` writes all
++  of its type parameters' bounds or none. With none, they are worked out from its body, and a method that no
+   interface in scope declares is `E2072` ("`T` has no `weight`: no interface in scope declares
+   `fn weight`; declare one, `interface Weighed:` with `fn weight() -> int`, and write
+   `struct Crate implements Weighed:` for the type `heaviest` is given; the bound follows"). A `pub`
+   function writes them (`[MOD-9]`): a missing one is `E2040`, one message, on the first line of the
+   body that needs a bound the function does not write, giving every bound the body needs ("`total` is
+-  `pub`, so its bound is written: write `[T: Add[T, Output = T]]` in place of `[T]` above
+-  `pub fn total(a: T, b: T) -> T:`").
++  `pub`, so its bound is written: write `[T: needs Add[T, Output = T]]` in place of `[T]` above
++  `pub fn total(a: T, b: T) -> T:`"). A function that is not `pub` and writes some of them writes every one
++  its body needs: a list that leaves one out is `E2040`, whose message gives the whole line
++  (`[T: needs Lookalike]` above `fn direct_add(a: T, b: T) -> T:` with `return a + b`, where `Lookalike`
++  declares an ordinary `fn add` and is not `Add`, gets `[T: needs (Lookalike, Add[T, Output = T])]`);
++  nothing is added to a written list (verdict 113).
+ 
+ ## V.7 Constants and statics
+ 
+@@ -2708,12 +2748,12 @@
+   stored function value to one reads its C entry without handing it over; a value holding state has
+   none, and the conversion panics (ODR-102).
+ * `[CLO-14]` *(new in 0.9.9)* *(changed in 0.9.15)* A callable type may be written as a type parameter's
+-  bound, on the line above the function: `[F: fn(int) -> int]` above `fn apply(f: F, x: int) -> int:`.
++  bound, on the line above the function: `[F: needs fn(int) -> int]` above `fn apply(f: F, x: int) -> int:`.
+   `F` names the exact function given, so each function or lambda given gets its own instance of
+   `apply`, and the call through `f` is direct and may be inlined, as C++'s `template <typename F>` and
+   Rust's `F: FnMut`; a parameter so bounded is called like a function, and the call counts as making
+   what the given function changes, worked out from it (`[EFF-2]`). A library function that calls a
+-  function right away takes it this way (`[F: fn(Item)]` above `fn for_each(owns f: F) owns this:`;
++  function right away takes it this way (`[F: needs fn(Item)]` above `fn for_each(owns f: F) owns this:`;
+   `retain`, `inspect`, `sort_by`, `[STD-19]`). `Callable[…]` is not source syntax.
+ * `[CLO-10]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* A function value is two words,
+   `{code, state}`. Its state is what it needs besides its code: what it captured with a word, in one
+@@ -3874,7 +3914,8 @@
+   `weakref` link may reach is at once.
+ * `[OBJ-4]` *(changed in 0.9.10)* *(changed in 0.9.15)* Objects are allocated through the runtime
+   allocator (`[RT-1]`), or from the memory manager the class names with `using` (`[ALC-1]`), except as
+-  `[OPT-1]` permits.
++  `[OPT-1]` permits. An object made in a manager keeps its instance's address only as `[ALC-1]` says:
++  none in a manager that frees nothing one by one, or in one that implements `FoundByAddress`.
+ * `[OBJ-5]` *(changed in 0.9.15)* **An ended object is never brought back.** Inside a `drop`, and in
+   everything it calls (by their summaries, `[EFF-1]`), no owner is made of the object being ended: an
+   owner made from `this` (`shares this`, `shares mut this`, `thread_shared this`) is `E3016`, as storing
+@@ -3987,7 +4028,8 @@
+      of a local that owns one, and no call that may do so, worked out from its code (`[EFF-1]`):
+      `remove_all(ref mut players)`, given the list that owns the players; a call through a function
+      value that may run `fn() owns players: players.clear()`; the end of an object whose `drop` may end
+-     one (`[DRP-8]`). After such a line or call the view is not used (`E3060`: "`remove_all(ref mut
++     one (`[DRP-8]`); a hand-over of one, or of an object that owns one, to another thread, which may
++     move it (`[THR-2]`). After such a line or call the view is not used (`E3060`: "`remove_all(ref mut
+      players)` (line 12) may destroy the player `p` reads (`if cam.target exists as p:`, line 10), and
+      `p` is used on line 13; use `p` before line 12, or open the link again after it: write
+      `if cam.target exists as q:` above line 13, indent line 13 under it and use `q` there"; "`reset()`
+@@ -4132,7 +4174,8 @@
+ * `[WK-12]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Opening a link.** A `weakref` link is read by
+   opening it with `exists as` (`[GRM-44]`): `if cam.target exists as p:` tests the target's header
+   (does the object still live?) and runs its block, with `p` a view of the object, when it does;
+-  `else:` runs when the link holds nothing or its target is ended. Each opening is one test of the
++  `else:` runs when the link holds nothing or its target is ended (a target handed to another thread
++  is ended here, `[THR-2]`). Each opening is one test of the
+   header, except a parent-link read proved by `[WK-17]`. For a `thread_shared` target the opening adds
+   one owner only to a value that is not ended, so an object another thread is ending is never brought
+   back, and the view holds that count for its life (`[RC-5]` point 2): on the making thread, until the
+@@ -4231,6 +4274,7 @@
+   link back `weakref`: `next: Option[weakref Node]`") (a deliberate error example, so the block is not compiled):
+ 
+ ```ember,ignore
++## deliberate error example: a loop of owners nothing opens again (`E3032`)
+ class Node:
+     name: String
+     next: Option[shares mut Node] = None
+@@ -4340,7 +4384,7 @@
+   `E2114`, since a class object always has a block of its own. It is not `Copy`, and it is `Clone` when
+   `T` is: `copy of` it makes a new block holding a copy of the value, so a struct or enum with an `owns`
+   field derives `Clone` (`[STR-5]`). `owns dyn I` is `Clone` when `I` requires it
+-  (`interface I: Clone:`), copying through the entry `I`'s method table holds for it (`[TYP-22]`). A
++  (`interface I: needs Clone:`), copying through the entry `I`'s method table holds for it (`[TYP-22]`). A
+   foreign type held `owns` is ended through its contract's destructor (Part XVI).
+ * `[HEAP-3]` *(changed in 0.9.15)* A value with several owners (`shares`, `shares mut`,
+   `thread_shared`) lives in one heap block that holds its owner count, and, where `weakref` links may
+@@ -4398,9 +4442,9 @@
+   runs its `drop` and gives its block back to the arena, which frees nothing one by one. There is no
+   `alloc_nodrop`.
+ * `[ARN-3]` *(changed in 0.9.15)* `alloc(owns v: T) -> ref mut T` hands `v` over into the arena. `alloc_array[T](n) -> MutSpan[T]` requires `T` not to
+-  need drop and `T: Default`, and initialises each element with `T.default()` in index order (`E2040`
++  need drop and `T: needs Default`, and initialises each element with `T.default()` in index order (`E2040`
+   without `Default`). `alloc_zeroed[T](n) -> MutSpan[T]` requires `T` not to need drop and
+-  `T: Zeroable`, and fills with zero bytes. Neither stands in for the other: a `Zeroable` type's
++  `T: needs Zeroable`, and fills with zero bytes. Neither stands in for the other: a `Zeroable` type's
+   `alloc_array` still calls its `default`, and an implementation fills with zeros instead only where
+   that is the same (a scalar's standard `Default`) (ODR-064). `alloc_uninit[T](n) ->
+   MutSpan[MaybeUninit[T]]` initialises nothing.
+@@ -4418,7 +4462,7 @@
+   `get_mut`, `push(v) -> Result[void, CapacityError]`, `insert(i, v) -> Result[void, CapacityError]`,
+   `remove(i) -> Option[T]`, `clear`, `iter` and `iter_mut` (in index order); indices follow the `Array`
+   rules.
+-* `[ARN-5d]` `ArenaMap[K, V]` (with `K: Eq + Hash`) provides `len`, `capacity`, `is_empty`, `get`,
++* `[ARN-5d]` `ArenaMap[K, V]` (with `K: needs (Eq, Hash)`) provides `len`, `capacity`, `is_empty`, `get`,
+   `get_mut`, `insert(k, v) -> Result[Option[V], CapacityError]` (replacing returns the old value),
+   `remove`, `contains_key`, `clear` and `iter`, which follows insertion order like `Map` (`[STD-11]`).
+ * `[ARN-5g]` No operation of either container touches the arena after construction: nothing grows,
+@@ -4448,7 +4492,7 @@
+   pointers, a range including zero, and tuples and fixed arrays of `Zeroable` elements are; a struct
+   is when it declares `@derive(Zeroable)`, which the compiler proves field by field (`E2080`), since
+   only its author can vouch for its invariants (a `NonZero`'s field is an integer). A `ref`, a range
+-  excluding zero, or an enum whose zero discriminant is invalid is never `Zeroable`. `T: Zeroable` is
++  excluding zero, or an enum whose zero discriminant is invalid is never `Zeroable`. `T: needs Zeroable` is
+   a bound a generic function may state (`alloc_zeroed`, `mem.zeroed`). Being `Zeroable` never changes
+   what `alloc_array` does (`[ARN-3]`).
+ 
+@@ -4489,7 +4533,14 @@
+   `using` names where that value's own memory comes from; what the value holds comes from where its own
+   fields' types say (the `points` list of that `Mesh` from the built-in manager). A value whose manager
+   may have several instances keeps its instance's address, one word, so that its growth and its end go
+-  back to the instance it came from (`[LT-4]`). An allocator type parameter is not Ember: `Box[T, A]` and
++  back to the instance it came from (`[LT-4]`), except in two kinds of manager, whose values keep no
++  word (verdict 107): (1) a manager that frees nothing one by one, whose `deallocate` does nothing (an
++  empty body, checked when compiling): nothing it hands out is given back value by value, and all of it
++  is freed together when the instance is cleared or ends; a value that grows (an `Array`, `Map`, `Set`
++  or `String`) made in it keeps the word, since its growth goes back to the instance; (2) a manager that
++  implements `FoundByAddress` (`[ALC-2]`), whose values' instance is found from their address, as C's
++  `free(p)` finds its heap. Neither changes what is checked: that no value outlives its instance or is
++  used after a reset is checked when compiling and never reads the word (`[LT-4]`). An allocator type parameter is not Ember: `Box[T, A]` and
+   `Array[T, A]` are `E1010`, whose help gives `owns T using A` and `Array[T] using A`.
+ * `[ALC-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* `std.mem` declares `pub unsafe interface Allocator` with
+   `fn allocate(layout: Layout) -> *mut u8` (null on failure),
+@@ -4507,7 +4558,13 @@
+   `System()`). An allocator that delegates to `Global` from inside the global allocator recurses.
+   Implementing `Allocator` is `unsafe` (`unsafe extend A implements Allocator:`, `[TYP-43]`): the
+   implementer promises valid, aligned, unaliased memory, which stays valid until it is given back or the
+-  instance ends.
++  instance ends. `std.mem` also declares `pub unsafe interface FoundByAddress`, with no methods, and
++  `const PIECE: usize = 65536` (verdict 107). Implementing it (`unsafe extend PoolArena implements
++  FoundByAddress:`) promises that every block the manager hands out lies in a piece of memory that
++  starts at a multiple of `PIECE` bytes and holds the instance's address in its first word, within 64
++  bytes the manager never hands out, a value bigger than a piece taking a piece of its own; a value's
++  instance is then read from the start of its piece, one mask and one load, and the value keeps no word
++  (`[ALC-1]`). A manager whose `deallocate` does nothing needs no such promise (`[ALC-1]`).
+ * `[ALC-3]` *(changed in 0.9.9)* A binary package may replace the global allocator with
+   `[build] global_allocator = "module.NAME"` naming a `static` whose type implements `Allocator`; an
+   embedding host may pass allocation functions to `ember_rt_init` (`[FFI-27]`).
+@@ -4563,10 +4620,11 @@
+   makes or ends an owner or a link without its count (`[OBJ-1]`); every `StrView` is UTF-8; every value
+   is valid for its type (`bool`, `char`, range types, enums); `Send` and `ThreadShared` are respected. A
+   raw pointer made from a view is not used after the view's last use, nor after what it points into is
+-  reshaped or ended.
++  reshaped or ended, nor after a hand-over of its object to another thread, which may move it
++  (`[THR-2]`).
+ * `[UNS-5]` `std.mem` provides `Volatile[*T]` (volatile reads and writes), `transmute[A, B]`,
+   `copy_nonoverlapping`, `zeroed[T]()` (requires
+-  `T: Zeroable`) and `MaybeUninit`.
++  `T: needs Zeroable`) and `MaybeUninit`.
+ * `[UNS-6]` Inline assembly is `unsafe asm("…", …)` on toolchains that support it and `E5090`
+   otherwise.
+ * `[UNS-7]` *(changed in 0.9.15)* Every `unsafe fn` carries `@safety("…")` stating what its callers must
+@@ -4678,8 +4736,8 @@
+ ```
+ 
+ * `[CELL-1]` *(changed in 0.9.15)* `Cell[T]` holds a `T` that is replaced whole: `Cell(v)`, `set(v)`,
+-  `replace(v) -> T`, `take() -> T` (for `T: Default`), `into_inner()`, `get() -> T` for `T: Copy`, and
+-  `update(f)` for `T: Copy` or `T: Default`. Setting it is a change of the place that holds it, made
++  `replace(v) -> T`, `take() -> T` (for `T: needs Default`), `into_inner()`, `get() -> T` for `T: needs Copy`, and
++  `update(f)` for `T: needs Copy` or `T: needs Default`. Setting it is a change of the place that holds it, made
+   through a name that may change that place: a `ref mut` name, `this` in a method called through such a
+   name, or an owner of a `shares mut` value (through a plain name, `E3023`, `[BRW-15]`). `set` and
+   `replace` store the new value before dropping the old one, since the old value's `drop` may read the
+@@ -4795,7 +4853,7 @@
+   to the next `yield`, and dropping a suspended one those of the drops it performs (ODR-057).
+ * `[EFF-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* A call through a function value contributes the
+   effects of every function the program can put there. For a type parameter bounded by a function type
+-  (`[F: fn(Item)]` above `fn for_each(owns f: F) owns this:`) that is the function given, per instance.
++  (`[F: needs fn(Item)]` above `fn for_each(owns f: F) owns this:`) that is the function given, per instance.
+   For a parameter, field, list element or local of a function type, it is every lambda and named
+   function stored into that type anywhere in the program, a library's included. For an interface, `dyn`
+   or `virtual` method, it is every implementation and override the program has. A foreign function
+@@ -5074,7 +5132,7 @@
+ | Virtual method call | conditionally elided | a load of the slot and one indirect call (`[DSP-2]`); direct when one implementation is reachable (`[DSP-5]`) |
+ | Generic call, monomorphised | not observable | a direct, inlinable call |
+ | Generic call, shared (`[MONO-6]`) | guaranteed present | one indirect call per bound method; only above a declared instantiation budget |
+-| A function given through a type parameter (`[F: fn(Item)]`) | not observable | a direct, inlinable call; one instance per function given |
++| A function given through a type parameter (`[F: needs fn(Item)]`) | not observable | a direct, inlinable call; one instance per function given |
+ | A call through a function value (a parameter, field, list element or local of a function type) | guaranteed present | one indirect call; a call through a list element or a field first copies the value's two words, its code and its state, out of it |
+ | A function value's state | guaranteed present | a variable kept with a capture word (`owns`, `copy of`, `shares`, `thread_shared`, `weakref`) lives in the function value's own state (`[CLO-10]`), and costs nothing beyond it; a captured real variable stays at its own address and costs nothing; a function that ends its own state while it runs and then uses it holds one count on that state across the call |
+ | `some I` return | not observable | the concrete type is known |
+@@ -5089,7 +5147,7 @@
+ | 64-bit `int` | guaranteed present | `int` is `i64`, so an `Array[int]` moves twice the bytes of C's 32-bit `int`; dense numeric data uses `i32`/`f32` elements (`L4003`) |
+ | Sorting floats | not observable | `sort` on floats compares by IEEE totalOrder (`[TYP-37]`), a few integer instructions per compare |
+ | Arena allocation | guaranteed present | a pointer bump |
+-| A value made `using` a memory manager | guaranteed present | each allocation and free of the value is the manager's own work (an arena: a pointer bump, nothing freed one by one); a value whose manager may have several instances keeps one word, its instance's address, so that its growth and its end go back to that instance; none for `Global` or `System` |
++| A value made `using` a memory manager | guaranteed present | each allocation and free of the value is the manager's own work (an arena: a pointer bump, nothing freed one by one); a value whose manager may have several instances keeps one word, its instance's address, so that its growth and its end go back to that instance; none for `Global` or `System`, none for a value that does not grow in a manager that frees nothing one by one, and none in a manager that implements `FoundByAddress` (a mask and a load find its instance; verdict 107, measured in `tasks/96/redesign/measure-0.9.15/RESULTS.md` section 7: a million small values 191 ms and 28.2 MB with no word, 241 ms and 44.7 MB with it, C 191 ms and 28.2 MB) |
+ | Allocation | guaranteed present | a call that allocates (a collection growing, a `String` built), reported per site; `@noalloc` refuses it (`[EFF-1]`) |
+ | `contains` | guaranteed present | the `contains` an `x in c` selects: linear for an array or view, constant for a set or map (`[STD-8a]`) |
+ | A lock | guaranteed present | where the program takes one (`with x.lock:`, `m.lock()`): the lock C takes; nothing per use of a `guarded by` field (`[THR-18]`) |
+@@ -5183,7 +5241,7 @@
+   fixed arrays, collections and class objects are `Send` when every component is; an `owns T` when `T`
+   is; `ref T` and `Span[T]` when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is
+   `Send`; a `thread_shared T`, and a `weakref` link to one, when `T` is `Send` and `ThreadShared`;
+-  `dyn I` when `I` requires it (`interface I: Send:`). Of the function types, `thread_shared fn()` is
++  `dyn I` when `I` requires it (`interface I: needs Send:`). Of the function types, `thread_shared fn()` is
+   `Send` (`[THR-1]`). A `Send` view still goes only where it cannot outlive what it views: to a scoped
+   task or a job of a scope, never to an unscoped thread (`[THR-2]`). `Send` is inferred from the
+   words and written only in bounds; the author of a type that holds a raw
+@@ -5193,9 +5251,9 @@
+   above it"). A thread-bound value sent to another thread is `E7008`.
+ * `[THR-9]` *(new in 0.9.9)* *(changed in 0.9.15)* A type is **`ThreadShared`** when several threads may
+   hold and read one value of it at once. It is inferred like `Send` and written only in bounds
+-  (`[T: ThreadShared]` above `fn keep(xs: Array[T]) -> int:`) and in messages; `Sync` in a bound is
++  (`[T: needs ThreadShared]` above `fn keep(xs: Array[T]) -> int:`) and in messages; `Sync` in a bound is
+   `E1010` ("`Sync` is the effect `@nosync` forbids, not a property of a type; for 'threads may share
+-  it' write `[T: ThreadShared]` above `fn keep(x: T)`"). Structural types are `ThreadShared` when every
++  it' write `[T: needs ThreadShared]` above `fn keep(x: T)`"). Structural types are `ThreadShared` when every
+   component is. `ref mut T`, `Cell`, `UnsafeCell`, raw pointers, `shares T`, `shares mut T`, and a
+   `weakref` link to a value that is not `thread_shared` are not. `Atomic[T]`, `Once`, `Lock`,
+   `Mutex[T]` for a `Send` `T` (one thread at a time holds its `ref mut T`), `RwLock[T]` and
+@@ -5244,12 +5302,23 @@
+   than its target's owner, it is allowed only for a `thread_shared` target, whose counts are kept for
+   several threads and whose opened view holds a count (`[RC-4]`, `[RC-5]` point 2; `E7015`: "`players[0]` counts its links without atomics, and
+   the task on line 9 makes one too; make the links after the scope, or make the player
+-  `thread_shared`"). An object handed whole to another thread while a `weakref` link on this thread
+-  points at it is `E7015`, since this thread could open the link while the other thread ends the object
+-  ("`names` goes to another thread, and `w` (line 15), a `weakref` link on this thread, still points at
+-  it, so this thread could read it while the other thread ends it; give the thread a copy of its own:
+-  write `h = thread.spawn(fn() copy of names: names.items.len())` in place of line 16"). So an object
+-  that stays on one thread needs no atomic count.
++  `thread_shared`"). **An object handed whole to another thread leaves its `weakref` links behind**
++  (verdict 114; Rust's `Rc::try_unwrap`). At the hand-over the program reads the object's weak count,
++  one compare. With no link, the object goes as it is. With a link, its contents move to a new block
++  for the other thread, and the old block is marked ended (its `drop` does not run; the new block's
++  runs once, on the other thread) and stays on this thread until its last link ends, so every link here
++  finds it ended (`[WK-12]`): after `w = weakref names` and
++  `h = thread.spawn(fn() owns names: names.items.len())`, `if w exists as p:` is skipped and
++  `h.join()` gives 0. The same is done for every object the handed object owns whose class a `weakref`
++  is made to anywhere in the program (the compiler knows those classes; one compare each), so after
++  `cam.target = weakref level.enemies[0]`, handing `level` over leaves `cam.target` finding enemy 0
++  ended. An object whose address C keeps (`[FFI-35a]`) never moves: a link to it at the hand-over
++  stops the program ("`names` goes to another thread while `w`, a `weakref` link on this thread, points
++  at it, and C keeps its address (`register(names)`, line 4), so it cannot move; end the link first:
++  `w = None`"). A view opened from a link is not used after a hand-over that may move its object
++  (`[RC-5]` point 1). The other thread never touches this thread's counts: the old block stays here
++  with the links, and the new one starts with none. So an object that stays on one thread needs no
++  atomic count.
+ * `[THR-7]` *(changed in 0.9.15)* `thread_shared` means exactly: the value may have owners on several
+   threads, its counts are kept for several threads (`[RC-4]`), and no owner changes it directly (`[THR-1]`). It does not make a method
+   atomic: two operations on `Atomic` fields, or a read and a store of one
+@@ -5713,7 +5782,7 @@
+   it (`E3060` at a later use). A proxy's field `ps[i].f` is a place in column `f` at index `i`; reading
+   or writing it touches that column only, and no `T` is assembled. `ps.get(i) -> Option[SoARef[T]]`
+   names element `i` as `ps[i]` does, with no copy, as `Array.get` does. `copy of ps[i]` gathers a `T`
+-  of your own (for `T: Clone`) by the proxy's `load()`, the method `copy of` runs here as it runs
++  of your own (for `T: needs Clone`) by the proxy's `load()`, the method `copy of` runs here as it runs
+   `clone` elsewhere; `load()` written at a use is `E1010` ("write `copy of ps[0]`"). `ps[i] = v`
+   scatters a value. `for p in ps:` yields `SoARef[T]`, `for ref mut p in ps:` yields `SoAMut[T]`. While
+   an `SoAMut[T]` is still used it is the only name of its element: a column named separately that
+@@ -5837,7 +5906,7 @@
+ 
+ @noalloc
+ fn integrate(ref mut reg: Registry, dt: f32):
+-    for e, ref mut pos, ref mut vel in reg.view_mut[(Position, Velocity)]():
++    for e, ref mut pos, ref mut vel in reg.view_mut[Position, Velocity]():
+         pos.value += vel.value * dt
+ 
+ fn main():
+@@ -5868,22 +5937,22 @@
+   generation); `valid(e)`, `current(e)`; `clear()` and `clear_of[T]()`; `emplace(e, owns value: T) -> ref
+   mut T`, `emplace_or_replace(e, owns value: T) -> ref mut T`, `replace(e, owns value: T) -> ref mut T`
+   (a stop when `e` has no `T`), `patch[T](e, f: fn(ref mut T)) -> ref mut T`, `insert(entities:
+-  Span[Entity], value: T)` for a `T: Clone`; `remove[T](e) -> int` (0 when absent) and `erase[T](e)` (a
++  Span[Entity], value: T)` for a `T: needs Clone`; `remove[T](e) -> int` (0 when absent) and `erase[T](e)` (a
+   stop when absent); `get[T](e) -> ref T` and `get_mut[T](e) -> ref mut T`, `try_get[T](e) -> Option[ref
+   T]` and `try_get_mut[T](e) -> Option[ref mut T]`, `get_or_emplace(e, owns value: T) -> ref mut T`;
+-  `all_of[(A, B)](e)` and `any_of[(A, B)](e)`; `orphan(e)`; `storage[T]() -> ref mut Storage[T]`, which a
+-  `for e, ref mut value in reg.storage[T]()` walks. Several types are one tuple type (`[(A, B)]`), since
+-  Ember has neither variadic generics nor overloading (`[TYP-19]`). A view a method gives points into the
++  `all_of[A, B](e)` and `any_of[A, B](e)`; `orphan(e)`; `storage[T]() -> ref mut Storage[T]`, which a
++  `for e, ref mut value in reg.storage[T]()` walks. Several types are listed in the brackets, any number of
++  them (`[A, B]`, one alone `[A]`; variadic generics, `[TYP-47]`, verdict 115). A view a method gives points into the
+   registry (`[LT-1]`), so the registry is not changed through another name while it is used (§VII).
+-* `[ECS-4]` *(changed in 0.9.15)* **Views.** `reg.view[(A, B)]()` walks the entities that have every
+-  listed component and gives each item read-only (`for e, a, b in reg.view[(A, B)]():`);
+-  `reg.view_mut[(A, B)]()` gives every item `ref mut` (`for e, ref mut a, ref mut b in
+-  reg.view_mut[(A, B)]():`), which changes the values in place. The items of one entity are values of
+-  different types, so they never name one place. `.exclude[(C,)]()` leaves out the entities that have a
++* `[ECS-4]` *(changed in 0.9.15)* **Views.** `reg.view[A, B]()` walks the entities that have every
++  listed component and gives each item read-only (`for e, a, b in reg.view[A, B]():`);
++  `reg.view_mut[A, B]()` gives every item `ref mut` (`for e, ref mut a, ref mut b in
++  reg.view_mut[A, B]():`), which changes the values in place. The items of one entity are values of
++  different types, so they never name one place. `.exclude[C]()` leaves out the entities that have a
+   `C`. A view has `each(f)`, `get[T](e)`, `contains(e)`, `size_hint()`, `front()` and `back()`. A view
+-  walks its smallest pool and probes the others. The library implements its view interface for tuples
+-  of 1 to 8 types with a blanket implementation over the element types (`[GRM-34]`), so any type is a
+-  component.
++  walks its smallest pool and probes the others. A view takes any number of component types, with no
++  limit (`reg.view[Position]()`, `reg.view[Position, Velocity, Health, Armor]()`; variadic generics,
++  `[TYP-47]`), and any type is a component.
+ * `[ECS-5]` *(changed in 0.9.15)* **Changing the registry while a view walks it.** A view walks the
+   registry's pools, so while a `for` loop walks a view, adding, removing, creating or destroying through
+   the registry is refused when compiling, as for any collection a loop walks (`[BRW-18]`, `E3020`: "`reg.destroy(e)`
+@@ -5900,7 +5969,7 @@
+   `f: fn(ref mut Registry, Entity)`, which the registry calls after the change is made, when no view of
+   a pool is in use, so a listener that changes the registry is safe (the call check, `[BRW-21]`, holds
+   for the library's own code). `sort[T](less)` and `sort_as[To, From]()` reorder a pool. `ctx()` keeps
+-  one value per type (`emplace`, `get`, `get_mut`, `find`, `contains`, `erase`). `group[(A, B)]()` packs
++  one value per type (`emplace`, `get`, `get_mut`, `find`, `contains`, `erase`). `group[A, B]()` packs
+   the owned pools in one order. `Snapshot`, `SnapshotLoader` and `ContinuousLoader` save and load a
+   registry through an archive given as a type parameter; `RuntimeView` walks pools chosen while the
+   program runs; `Handle` pairs a registry and an entity.
+@@ -5955,7 +6024,7 @@
+   parameter is bounded: `Result[int, int]` is a `Result`. An operation that needs more of `E` says so
+   (ODR-050): `?` into another error type needs `From[E]` (`[ERR-2]`), printing one needs `Display`,
+   walking its causes needs `Error` (or is `AnyError`'s own, `[ERR-8]`), and converting one into
+-  `AnyError` needs `E: Error`.
++  `AnyError` takes any `E: needs Error`.
+ * `[ERR-9]` *(new in 0.9.9)* *(changed in 0.9.15)* The error parameter defaults to `AnyError` (§XIII.2), so
+   `fn load(path: StrView) -> Result[Texture]` is a function that can fail with any error. A library that
+   wants callers to `match` on its failures names a concrete error type.
+@@ -5976,18 +6045,18 @@
+   The methods that take a function are eager: each takes its object over (`owns this`), takes the
+   function as a type parameter (`[CLO-14]`) and calls it at most once, before it returns, handing
+   the payload over to it, except `filter`, whose function reads it (ODR-025):
+-  * `Option[T]`: `[U, F: once fn(owns T) -> U]` above `fn map(owns f: F) owns this -> Option[U]`;
+-    `[U, F: once fn(owns T) -> Option[U]]` above `fn and_then(owns f: F) owns this -> Option[U]`;
+-    `[F: once fn(T) -> bool]` above `fn filter(owns f: F) owns this -> Option[T]`;
+-    `[F: once fn() -> Option[T]]` above `fn or_else(owns f: F) owns this -> Option[T]`;
+-    `[F: once fn() -> T]` above `fn unwrap_or_else(owns f: F) owns this -> T`; and
+-    `[E, F: once fn() -> E]` above `fn ok_or_else(owns f: F) owns this -> Result[T, E]`;
+-  * `Result[T, E]`: `[U, F: once fn(owns T) -> U]` above `fn map(owns f: F) owns this -> Result[U, E]`;
+-    `[F, G: once fn(owns E) -> F]` above `fn map_err(owns f: G) owns this -> Result[T, F]`;
+-    `[U, F: once fn(owns T) -> Result[U, E]]` above
++  * `Option[T]`: `[U, F: needs once fn(owns T) -> U]` above `fn map(owns f: F) owns this -> Option[U]`;
++    `[U, F: needs once fn(owns T) -> Option[U]]` above `fn and_then(owns f: F) owns this -> Option[U]`;
++    `[F: needs once fn(T) -> bool]` above `fn filter(owns f: F) owns this -> Option[T]`;
++    `[F: needs once fn() -> Option[T]]` above `fn or_else(owns f: F) owns this -> Option[T]`;
++    `[F: needs once fn() -> T]` above `fn unwrap_or_else(owns f: F) owns this -> T`; and
++    `[E, F: needs once fn() -> E]` above `fn ok_or_else(owns f: F) owns this -> Result[T, E]`;
++  * `Result[T, E]`: `[U, F: needs once fn(owns T) -> U]` above `fn map(owns f: F) owns this -> Result[U, E]`;
++    `[F, G: needs once fn(owns E) -> F]` above `fn map_err(owns f: G) owns this -> Result[T, F]`;
++    `[U, F: needs once fn(owns T) -> Result[U, E]]` above
+     `fn and_then(owns f: F) owns this -> Result[U, E]`;
+-    `[F, G: once fn(owns E) -> Result[T, F]]` above `fn or_else(owns f: G) owns this -> Result[T, F]`;
+-    and `[F: once fn(owns E) -> T]` above `fn unwrap_or_else(owns f: F) owns this -> T`.
++    `[F, G: needs once fn(owns E) -> Result[T, F]]` above `fn or_else(owns f: G) owns this -> Result[T, F]`;
++    and `[F: needs once fn(owns E) -> T]` above `fn unwrap_or_else(owns f: F) owns this -> T`.
+ * `[ERR-5]` `Result` is `@must_use`: discarding one is `W2190` (an error under `-D warnings`). A value
+   is used when it is bound, returned, passed, matched, or has `?` or a method applied.
+ * `[ERR-7]` **Identity conversion.** The prelude provides `From[T]` for every `T` (`from(v) = v`), so
+@@ -6003,7 +6072,7 @@
+   from `source`.
+ * `[ERR-8]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **`AnyError`** is the
+   prelude's "any error" type: a `dyn Error` held alone (`owns dyn Error`) plus an optional chain of
+-  context messages. It implements `From[E]` for every `E: Error`, so `?` converts any error into it,
++  context messages. It implements `From[E]` for every `E: needs Error`, so `?` converts any error into it,
+   and `Display`, `Debug`, `source`, `[E]` above `fn downcast_ref() -> Option[ref E]`, and `[E]` above
+   `fn is() -> bool`. **`AnyError` does not implement `Error`** — otherwise `[ERR-7]` and
+   `[ERR-8]` would both supply `From[AnyError]` for `AnyError`. An `AnyError` passed through `?` into
+@@ -6019,7 +6088,7 @@
+   moves through `?` without allocating, which is why `@noalloc` code names its error types.
+ * `[ERR-12]` *(new in 0.9.9)* An `Err` returned from `main` (`[FN-8]`) prints `error: <Display>` to
+   standard error, then one `caused by: <Display>` line for each cause in its chain — an `AnyError`'s
+-  own chain (`[ERR-8]`), or each `source` of an `E: Error` — and exits with status 1. An `E` that is
++  own chain (`[ERR-8]`), or each `source` of an `E: needs Error` — and exits with status 1. An `E` that is
+   `Display` but not `Error` has no chain and prints its message alone (ODR-050).
+ 
+ ## XIII.3 Panics or errors
+@@ -6140,7 +6209,7 @@
+ being `Int(i64)`, `Float(f64)`, `Str(String)`, `Bool(bool)` or `Char(char)`: a user attribute's
+ argument is named by the field it sets, a built-in attribute's positional argument by its position,
+ and a name written as an argument (`@derive(Eq)`) is its text. An `@attribute` struct's fields are
+-of those types (`E0104` otherwise). `@reflect` implements `std.ser.Reflect`, which `type_info[T: Reflect]()`
++of those types (`E0104` otherwise). `@reflect` implements `std.ser.Reflect`, which `type_info[T: needs Reflect]()`
+ asks for (`E2040` without it), and a class derived from a `@reflect` class is `@reflect` too;
+ `reflect[T]()` outside what compile time evaluates is `E6010`.
+ 
+@@ -6182,8 +6251,8 @@
+ ## XIV.4 Serialisation (`std.ser`)
+ 
+ * `[SER-1]` *(new in 0.9.9)* *(changed in 0.9.15)* `@derive(Serialize, Deserialize)` implements the method
+-  `[W: ser.Writer]` above `fn serialize(ref mut w: W) -> Result[void, SerError]` and the function
+-  `[R: ser.Reader]` above `static fn deserialize(ref mut r: R) -> Result[Self, SerError]`, over a
++  `[W: needs ser.Writer]` above `fn serialize(ref mut w: W) -> Result[void, SerError]` and the function
++  `[R: needs ser.Reader]` above `static fn deserialize(ref mut r: R) -> Result[Self, SerError]`, over a
+   field-tagged, versioned format; both are monomorphised per format, and each call says `ref mut`
+   before the writer or reader (`p.serialize(ref mut w)`, `Point.deserialize(ref mut r)`).
+   `std.ser.binary` and `std.ser.json` provide a writer and reader each. Field attributes: `@ser(skip)`, `@ser(rename="…")`,
+@@ -6224,7 +6293,7 @@
+   * `range(stop)`, `range(start, stop)`, `range(start, stop, step)` count as Python's do, including a
+     negative `step`; `step == 0` panics. `range(n)` is `0..n`, and every form compiles to a counted
+     loop (`[CTL-3b]`).
+-  * `enumerate(it, start=0)`, `zip(a, b)` (stops at the shorter) and `reversed(x)` (for what can run
++  * `enumerate(it, start=0)`, `zip(a, b, …)` (any number of iterables, `[TYP-47]`; stops at the shortest) and `reversed(x)` (for what can run
+     backwards) return lazy iterators, as Python 3's do.
+   * `sum(it, start=0)`, `any(it)` and `all(it)` consume an iterable (of numbers, of `bool`s);
+     `any(x > 0 for x in xs)` uses a generator expression (`[GRM-38]`).
+@@ -6273,10 +6342,15 @@
+ 
+ * `[STD-9]` *(new in 0.9.9)* *(changed in 0.9.15)* `print(a, b, …, sep=" ", end="")` and `println(a, b, …, sep=" ",
+   end="\n")` write their arguments' text to standard output separated by `sep`;
+-  `eprint`/`eprintln` write to standard error. They are compiler-known and are the only calls with a
+-  variable number of positional arguments (`[TYP-26]`). An argument's text is its `Display` text when
+-  its type has `Display`, and its `Debug` text otherwise, which is Python's `str` → `repr` fallback; a
+-  type with neither is `E2040`, whose help is to implement `Display`. A class object always has
++  `eprint`/`eprintln` write to standard error. They are ordinary functions of the library, with a pack
++  (`[TYP-47]`, verdict 117): `[Ts...: needs Printable]` above
++  `pub fn println(values: Ts..., sep: StrView = " ", end: StrView = "
++"):`. The compiler implements
++  `Printable` (§IV.8, in the prelude) for every type that has `Display` or `Debug`, which no program
++  can write by hand: an argument's text is its `Display` text when its type has `Display`, and its
++  `Debug` text otherwise, which is Python's `str` → `repr` fallback; a type with neither is `E2040`,
++  whose help is to implement `Display`. A program's own function takes any number of printable values
++  the same way (`[Ts...: needs Printable]` above `fn log(values: Ts...):`). A class object always has
+   `Debug`, its class and address
+   (`[TYP-36]`), so a class without a written `Display` prints by it (ODR-113). `println()` prints an
+   empty line.
+@@ -6289,8 +6363,8 @@
+ * `[STD-18]` *(new in 0.9.9)* *(changed in 0.9.15)* `format(value, spec="") -> String` formats one value with a format spec
+   (`[LEX-19]`), like Python's `format`; the spec is a string literal, checked against the value's type
+   where it is written, as an f-string's is (`E2250`, ODR-168).
+-  `format_to(ref mut buf: MutSpan[u8], …) -> Result[StrView, FmtError] from buf` formats into a
+-  caller's buffer, called `format_to(ref mut buf, …)`, and gives a view of the text it wrote there; its
++  `format_to(ref mut buf: MutSpan[u8], values: Ts...) -> Result[StrView, FmtError] from buf`, under
++  `[Ts...: needs Printable]`, formats into a caller's buffer, called `format_to(ref mut buf, …)`, and gives a view of the text it wrote there; its
+   own machinery never allocates, so the call allocates only if a value's
+   `Display` does (`[EFF-1]`). An f-string lowers to a `StringBuilder` sized from its
+   literal parts.
+@@ -6372,7 +6446,7 @@
+ * `[STD-15]` *(new in 0.9.9)* *(changed in 0.9.15)* **`Array[T]`** is a growable contiguous list (Python's `list`).
+   `len`, `is_empty`, `capacity`, `reserve`, `push`, `pop -> Option[T]`, `insert(i, v)`, `remove(i) -> T`,
+   `swap_remove(i) -> T`, `extend(iterable)`, `truncate`, `clear`, `retain(keep)`,
+-  `drain(r) -> Array[T]`, `dedup`, `reverse`, `sort` (stable; `T: Ord`; an inconsistent order
++  `drain(r) -> Array[T]`, `dedup`, `reverse`, `sort` (stable; `T: needs Ord`; an inconsistent order
+   permutes but never corrupts, `[HASH-3]`), `sort_by_key(f)`, `sort_by(cmp)`, `sorted() -> Array[T]`,
+   `binary_search(x) -> Result[int, int]`, `index_of(x) -> Option[int]`, `first`, `last`,
+   `get(i) -> Option[ref T]`, `get_mut`, `get_pair_mut(i, j) -> Option[(ref mut T, ref mut T)]`
+@@ -6380,8 +6454,8 @@
+   (for elements that are `Display`), and `x in xs` (`[STD-8]`). `xs[i]` takes any integer and panics
+   when `i < 0` or `i >= len` (`[TYP-31]`); `xs.get(i)` names an element as `xs[i]` does, as a
+   position. The methods given a function call it right away and take it as a type parameter:
+-  `[F: fn(T) -> bool]` above `fn retain(owns keep: F):`, `[K: Ord, F: fn(T) -> K]` above
+-  `fn sort_by_key(owns f: F):`, and `[F: fn(T, T) -> Ordering]` above `fn sort_by(owns cmp: F):`; the
++  `[F: needs fn(T) -> bool]` above `fn retain(owns keep: F):`, `[K: needs Ord, F: needs fn(T) -> K]` above
++  `fn sort_by_key(owns f: F):`, and `[F: needs fn(T, T) -> Ordering]` above `fn sort_by(owns cmp: F):`; the
+   call counts as making what the function given changes (`[STD-19]`), so `LOG.retain(keep)` with a
+   `keep` that pushes to `LOG` is `E3022`. Each changes the list it is called on, and every method that
+   adds, removes, reorders or replaces elements is a reshape: it ends every view into the list, and may
+@@ -6395,7 +6469,7 @@
+   insertion order**, like Python's `dict`. Re-assigning an existing key keeps its position; removing
+   a key keeps the order of the others. Lookup, insertion and removal take expected constant time,
+   amortised: a map may grow, or close up removed entries, inside an insertion or a removal;
+-  iteration is linear in the number of entries. `H: Hasher + Default`, and a map makes a fresh `H`
++  iteration is linear in the number of entries. `H: needs (Hasher, Default)`, and a map makes a fresh `H`
+   for each hash. Its memory comes from the built-in memory manager, or from one of kind `A` written
+   `Map[K, V] using A`, whose instance the line that makes the map names (`[ALC-1]`).
+   `Set[T, H = DefaultHasher]` (and `Set[T] using A`) is the same with no values. Keys, values and
+@@ -6407,12 +6481,12 @@
+ * `[STD-16]` *(new in 0.9.9)* *(changed in 0.9.15)* **`Map` operations.** `m[k]` reads the value and panics when the key is
+   missing (`key not found: <Debug of k>; use .get(k) for an Option`); `m[k] = v` inserts or replaces
+   (`[STD-17]`); `m[k] += 1` requires the key to exist and panics with the same message. The
+-  lookups take any `q: Q` with `Q: AsKey[K]` (`[STD-12]`): `get(q) -> Option[ref V]`,
+-  `get_mut(q) -> Option[ref mut V]`, `get_or(q, default) -> V` (for `V: Copy`),
++  lookups take any `q: Q` with `Q: needs AsKey[K]` (`[STD-12]`): `get(q) -> Option[ref V]`,
++  `get_mut(q) -> Option[ref mut V]`, `get_or(q, default) -> V` (for `V: needs Copy`),
+   `contains_key(q) -> bool`, `remove(q) -> Option[V]`, `m[q]` and `q in m`. `insert(k, v) ->
+   Option[V]` and `entry(k)` take the key itself; `entry(k)` is a `MapEntry` with `or_insert(v)`,
+-  `or_insert_with(f)` (`[F: fn() -> V]` above `fn or_insert_with(owns f: F) owns this -> ref mut V:`)
+-  and `or_default()` (for `V: Default`), each returning `ref mut V`, a place
++  `or_insert_with(f)` (`[F: needs fn() -> V]` above `fn or_insert_with(owns f: F) owns this -> ref mut V:`)
++  and `or_default()` (for `V: needs Default`), each returning `ref mut V`, a place
+   (`counts.entry(k).or_default() += 1`).
+   `keys()`, `values()`, `values_mut()` and `items()` are the view iterators
+   `MapKeys`, `MapValues`, `MapValuesMut` and `MapItems`, yielding `ref K`, `ref V`, `ref mut V` and
+@@ -6422,7 +6496,7 @@
+   own name or through a call (`counts[k] *= 2` and `counts.insert(...)` inside it are `E3020`); the
+   loop's own name changes the value it is on (`for k, ref mut v in counts: v *= 2`).
+   Also `Map[K, V]()`, `with_capacity(n)`, `len`, `is_empty`, `capacity`,
+-  `reserve(n)`, `try_reserve(n)`, `clear`, `retain(keep)` (`[F: fn(K, V) -> bool]` above
++  `reserve(n)`, `try_reserve(n)`, `clear`, `retain(keep)` (`[F: needs fn(K, V) -> bool]` above
+   `fn retain(owns keep: F):`), `pop_item() -> Option[(K, V)]` (the newest entry, as `dict.popitem`),
+   `update(other)` (inserts `other`'s entries in its order) and `into_items() -> Array[(K, V)]` (takes
+   the map over, `owns this`, and gives its entries in order).
+@@ -6432,20 +6506,20 @@
+   `Set`: `Set[T]()`, `with_capacity(n)`, `len`, `is_empty`, `capacity`, `reserve(n)`,
+   `try_reserve(n)`, `clear`; `add(x) -> bool` (whether `x` was new; an element already there keeps
+   its position); taking `q: AsKey[T]`, `remove(q) -> bool`, `contains(q) -> bool` and `q in s`;
+-  `retain(keep)` (`[F: fn(T) -> bool]` above `fn retain(owns keep: F):`), `pop() -> Option[T]` (the
++  `retain(keep)` (`[F: needs fn(T) -> bool]` above `fn retain(owns keep: F):`), `pop() -> Option[T]` (the
+   newest), `iter()` (a `SetIter` yielding `ref T`); `union`, `intersection`, `difference` and
+   `symmetric_difference` of another `Set`, which they read, return a new `Set` of copies (for
+-  `T: Clone`), this set's elements first in its order and then the
++  `T: needs Clone`), this set's elements first in its order and then the
+   other's; `is_subset`, `is_superset`, `is_disjoint`; and the operators `|`, `&`, `-` and `^`.
+   `s1 == s2` compares as sets.
+ * `[STD-12]` *(new in 0.9.9)* *(changed in 0.9.15)* **Keys looked up by a view.** Lookup methods, `m[k]` and `k in m` accept
+-  any key type `Q` with `Q: AsKey[K]`: `K` itself, and `StrView` for `K = String`.
+-  `interface AsKey[K]: Hash` (in `std.collections`, not the prelude) has the method
+-  `fn is_key(key: K) -> bool`; `interface ToKey[K]: AsKey[K]` adds `fn to_key() -> K`, which makes the
++  any key type `Q` with `Q: needs AsKey[K]`: `K` itself, and `StrView` for `K = String`.
++  `interface AsKey[K]: needs Hash` (in `std.collections`, not the prelude) has the method
++  `fn is_key(key: K) -> bool`; `interface ToKey[K]: needs AsKey[K]` adds `fn to_key() -> K`, which makes the
+   key (ODR-067). A lookup hashes `q` and compares it with `is_key`, so it never converts or copies a
+-  key. `m[q] = v` needs `Q: ToKey[K]` and calls `to_key()` only when the key is new, never to replace
++  key. `m[q] = v` takes a `Q: needs ToKey[K]` and calls `to_key()` only when the key is new, never to replace
+   the value of an existing one, so a new key written through a `StrView` is stored as the map's own
+-  `String`. Every `K: Eq + Hash` is `AsKey[K]` (`is_key` is `==`), and `ToKey[K]` when it is also
++  `String`. Every `K: needs (Eq, Hash)` is `AsKey[K]` (`is_key` is `==`), and `ToKey[K]` when it is also
+   `Clone` (`to_key` gives `copy of` the key): a key type that cannot be copied is looked up and removed
+   by value and inserted with `insert`, which takes the key over. std implements `AsKey[String]` and
+   `ToKey[String]` for `StrView`. An
+@@ -6456,14 +6530,14 @@
+   value). `Map` implements `IndexSet`; `Array` does not need to. A compound assignment `a[i] op= v`
+   always goes through `IndexMut`. `Array` and `MutSpan` implement `Index[int]` and `IndexMut[int]`,
+   and `Span` `Index[int]`, through their built-in indexing; `Map[K, V]` implements `Index[Q]` and
+-  `IndexMut[Q]` for every `Q: AsKey[K]`, and `IndexSet[Q, V]` for every `Q: ToKey[K]` (blanket
++  `IndexMut[Q]` for every `Q: needs AsKey[K]`, and `IndexSet[Q, V]` for every `Q: needs ToKey[K]` (blanket
+   implementations, `[GRM-34]`, ODR-042, ODR-067).
+ * `[STD-7]` Fixed-capacity containers with no heap allocation: `FixedArray[T, N]`, `FixedString[N]`
+   and `RingBuffer[T, N]`; `push` returns `Result[void, CapacityError]` and `push_or_drop` discards when
+   full. Also `Deque[T]`, `SmallArray[T, N]` (inline up to `N`, then heap), `BitSet`.
+ * `[STD-8]` *(changed in 0.9.15)* **`Contains`.** `x in c` requires `c: Contains[typeof(x)]` (`E2226` otherwise, whose help
+   is `c.iter().any(fn(e) => e == x)`). `std` implements it for `Set` and `Map` (by key); for `Array`,
+-  `Span`, `MutSpan` and `[T; N]` with `T: Eq`, as a linear scan; for `StrView`/`String`, as a substring or
++  `Span`, `MutSpan` and `[T; N]` with `T: needs Eq`, as a linear scan; for `StrView`/`String`, as a substring or
+   character test; for ranges, as two comparisons. The compiler never synthesises an implementation.
+ * `[STD-8a]` `ember inspect --cost` reports which `contains` a use selects and its complexity, so
+   `x in array` is visibly linear and `x in set` visibly constant.
+@@ -6481,7 +6555,7 @@
+   `reduce`, `any`, `all`, `find`, `position`, `last`, `nth`, `min_by`, `max_by`, `for_each`,
+   `collect[C]()`, `to_array()`,
+   and `join(sep)` for `Display` items. `copy_each()` gives, for each item, what `copy of` the item
+-  would make (for `Item: Clone`): `names = sorted(m.keys().copy_each())` is a list of strings of its
++  would make (for `Item: needs Clone`): `names = sorted(m.keys().copy_each())` is a list of strings of its
+   own, kept past changes to `m`; `.copied()` and `.cloned()` are not Ember (`E1010`, "write
+   `.copy_each()`"). Adapters are lazy and allocate nothing themselves; what the functions they apply
+   do counts where they run (`[EFF-1]`). A chain of adapters in a
+@@ -6492,9 +6566,9 @@
+   does a consumer; `zip` and `chain` take their other iterator over too, so a named iterator given to
+   `zip` is handed over (`copy of it` keeps the caller's). **A function is taken as a type
+   parameter**, by the adapters that apply one and the consumers alike (`any`, `all`, `find`,
+-  `position`, `fold`, `reduce`, `for_each`, the `…_by` and `…_by_key` forms): `[F: fn(Item)]` above
+-  `fn for_each(owns f: F) owns this:`, `[F: fn(Item) -> bool]` above `fn any(owns f: F) owns this ->
+-  bool:`, `[F: fn(Item)]` above `fn inspect(owns f: F) owns this -> Inspect[Self, F]:`. `F` names the
++  `position`, `fold`, `reduce`, `for_each`, the `…_by` and `…_by_key` forms): `[F: needs fn(Item)]` above
++  `fn for_each(owns f: F) owns this:`, `[F: needs fn(Item) -> bool]` above `fn any(owns f: F) owns this ->
++  bool:`, `[F: needs fn(Item)]` above `fn inspect(owns f: F) owns this -> Inspect[Self, F]:`. `F` names the
+   exact function given, so the adapter or consumer is compiled once for each function given to it and
+   the call through `f` is direct and may be inlined; the shared type, `owns f: fn(Item)`, is legal too,
+   and is what keeps functions of different kinds in one list (`handlers: Array[fn()]`). The function
+@@ -6567,14 +6641,14 @@
+   `enumerate` numbers its last item `start + len - 1` first, and the items `skip_back` leaves out
+   need no numbers. `collect[C]()` builds any `C` that implements `FromIterator[Item]` (ODR-094), an interface of
+   `std.core` that is not a prelude name: `interface FromIterator[T]:` declares
+-  `[I: Iterator[Item = T]]` above `static fn from_iter(owns it: I) -> Self`. `Array[T]`, `Set[T]`, `Map[K, V]` (from `(K, V)` pairs, a later pair's
++  `[I: needs Iterator[Item = T]]` above `static fn from_iter(owns it: I) -> Self`. `Array[T]`, `Set[T]`, `Map[K, V]` (from `(K, V)` pairs, a later pair's
+   value replacing an earlier one's for the same key) and `String` (from `char`s and from `String`s)
+   implement it, and so may a program's own types. `C` is written (`it.collect[Array[int]]()`) or is
+   the type the call is expected to give (`a: Array[int] = it.collect()`). `flatten` is for items that
+   are themselves iterable (`IntoIterator`). `peekable()` gives the same items with
+   `fn peek() -> Option[ref Item]` and `fn peek_mut() -> Option[ref mut Item]`, which take the next item early
+   and keep it where it is until `next` gives it; `next_if(pred)` gives the next item when `pred` holds
+-  for it and leaves it otherwise, and `next_if_eq(v)` when it equals `v` (`Item: Eq`).
++  for it and leaves it otherwise, and `next_if_eq(v)` when it equals `v` (`Item: needs Eq`).
+ * `[STD-5]` *(changed in 0.9.9)* `sum` and `product` combine elements left to right in the element
+   type; an empty sum is zero. Integer sums panic on overflow (`[TYP-8]`). Float sums are never
+   reassociated outside `@fastmath` (`[TYP-9]`), so they are deterministic; `sum_f64()` accumulates
+@@ -6623,7 +6697,7 @@
+   and answer a `T`; an overflow still panics (`[TYP-8]`) (ODR-047).
+ * `[STD-21]` *(new in 0.9.9)* *(changed in 0.9.15)* `std.math` provides `PI`, `TAU`, `E`; `sin`, `cos`, `tan`, `asin`, `acos`,
+   `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `exp`, `exp2`, `ln`, `log2`, `log10`, `pow`, `sqrt`, `rsqrt`, `cbrt`,
+-  `hypot`, `lerp`, `smoothstep`, each taking any number type (`[T: Number]` above
++  `hypot`, `lerp`, `smoothstep`, each taking any number type (`[T: needs Number]` above
+   `fn f(x: T) -> T.Real`, `[STD-27]`): an integer's answer is an `f64` (`math.sqrt(9)` is `3.0`), an `f16`'s and an `f32`'s
+   an `f32`, and an `f64`'s an `f64`; and the vector, matrix, rotation and shape types of `[STD-28]`,
+   with `dot`, `cross`, `length`, `normalize` (panics on a zero vector; `normalize_or_zero` does not)
+@@ -6631,12 +6705,12 @@
+   untyped constants (V.7): `x: f32 = math.PI` is `PI` rounded to `f32`, and with nothing to fix its
+   type a use is `f64`.
+ * `[STD-27]` *(new in 0.9.9)* `std.math.Number` is every number type. `std.math` adds each with an
+-  `extend … implements Number` block stating its `type Real: Float`, the decimal type its answers
++  `extend … implements Number` block stating its `type Real: needs Float`, the decimal type its answers
+   come back as (`f64` for every integer type, `f32` for `f16`, which it holds exactly (ODR-041), and
+-  itself for `f32` and `f64`), and `to_real`, which turns it into one. `[STD-21]`'s functions take `T: Number` and answer in `T.Real` (`[IFC-4]`); a program
++  itself for `f32` and `f64`), and `to_real`, which turns it into one. `[STD-21]`'s functions take `T: needs Number` and answer in `T.Real` (`[IFC-4]`); a program
+   may add its own number types the same way (ODR-038). `std.math.Float` is the decimal types:
+   `std.math` makes `f32` and `f64` implement it (`extend f32 implements Float`), and implementing it
+-  for any other type is `E2042`. A bound `T: Float` provides, inside a generic body, `Copy`, `Eq`, `Ord` (`[TYP-37]`) and `Default`;
++  for any other type is `E2042`. A bound `T: needs Float` provides, inside a generic body, `Copy`, `Eq`, `Ord` (`[TYP-37]`) and `Default`;
+   the arithmetic operators `+`, `-`, `*`, `/`, `//`, `%`, `**` and unary `-` on two `T`s, with a `T`
+   result; an untyped numeric literal adopting `T` wherever a `T` is expected, as it would adopt `f32`
+   or `f64`; and as methods the float methods of `[STD-20]` and `[STD-21]`'s `sin` through `hypot`
+@@ -6872,7 +6946,7 @@
+   | incomplete `struct` | `extern type S`, used only behind pointers |
+   | `enum` | `@repr(<underlying>) enum`, `@non_exhaustive` (any value may arrive) |
+   | `typedef` | a type alias; with `@ffi(newtype)` a nominal type with the typedef's representation, passed to C as the typedef is, converted with `as` only |
+-  | `static const` global, `extern` global | `extern static`; reading it needs `unsafe` unless `@ffi(immutable)` asserts a `const` C object and an unchanged value (ODR-082). The generated C declaration is `extern const T` with that assertion, or `extern T` without it; a safe read also requires `T: ThreadShared`. `@ffi(immutable)` on `static mut` is `E5002`. A global read only in `unsafe` need not be `ThreadShared` (`[STA-1]`), so one holding a pointer imports as any other (ODR-163). |
++  | `static const` global, `extern` global | `extern static`; reading it needs `unsafe` unless `@ffi(immutable)` asserts a `const` C object and an unchanged value (ODR-082). The generated C declaration is `extern const T` with that assertion, or `extern T` without it; a safe read also requires `T: needs ThreadShared`. `@ffi(immutable)` on `static mut` is `E5002`. A global read only in `unsafe` need not be `ThreadShared` (`[STA-1]`), so one holding a pointer imports as any other (ODR-163). |
+   | `#define S "text"` | `const S: CStrView = c"text"` |
+   | function pointer | `unsafe extern "C" fn(…) -> R` (`[FFI-56]`), `Option[…]` when nullable; another calling convention is `unsafe extern "<conv>" fn` (`[FFI-9]`), and an unsupported one is skipped with `W5002` |
+   | bit-field | `get_<f>`/`set_<f>` methods; not addressable |
+@@ -7017,9 +7091,11 @@
+ * `[FFI-14]` The importer's result is a `.embind` file (versioned CBOR: header hash, Clang
+   configuration, declarations with layouts, overlay hash, contracts), a content-addressed build input.
+   `ember bind --explain header.h fn` prints a function's derived contract and why.
+-* `[FFI-35a]` A parameter with no `retained` word is recorded as "does not retain" in the foreign-trust
++* `[FFI-35a]` *(changed in 0.9.15)* A parameter with no `retained` word is recorded as "does not retain" in the foreign-trust
+   report (`ember bind --report`), which lists every such assumption per module, and every
+-  result-position pointer with no lifetime word.
++  result-position pointer with no lifetime word. A class object given to a `retained` parameter is
++  marked in its header as kept by C and never moves: handed to another thread while a `weakref` link on
++  this thread points at it, it stops the program (`[THR-2]`, verdict 114).
+ 
+ ## XVI.5 Strings, status codes and handles
+ 
+@@ -7437,8 +7513,8 @@
+   `@borrows(p)` to `from p`, `@static_safe` to `@no_alias_checks`, `@fp(contract)` to
+   `@fp(allow_fma)`, `assert_disjoint` to `check_disjoint` and `assert_disjoint_or_panic` to
+   `assert_disjoint`, a function's type parameters in brackets after its name to a line of their own
+-  above it (`fn f[T: Add](x: T)` to `[T: Add]` above `fn f(x: T)`, `[GRM-40]`), an `x: ref T`
+-  parameter to `x: T`, a `T: Sync` bound to `T: ThreadShared`, and `for x in xs.iter_mut():` to
++  above it (`fn f[T: Add](x: T)` to `[T: needs Add]` above `fn f(x: T)`, `[GRM-40]`), an `x: ref T`
++  parameter to `x: T`, a `T: Sync` bound to `T: needs ThreadShared`, and `for x in xs.iter_mut():` to
+   `for ref mut x in xs:`. It does not rewrite what needs a choice the source does not say: `Shared[T]`
+   (`shares T` or `shares mut T`), `RefCell`, `SyncShared` and `@sync` classes (`thread_shared` with
+   `guarded by` fields or `Atomic`), `owned fn` (the capture words), and `mem.forget`.
+@@ -7910,10 +7986,10 @@
+   | P16 | `if x = 5:` | `E2036` | `if x == 5:` |
+   | P17 | `case p:` inside `match` | `E0100` | `p:` (or `p =>`), without `case` |
+   | P18 | `global x`, `nonlocal x` | `E0100` | remove the line: a function changes a module variable (`static mut`) by its name, and a lambda uses the real `x` unless its capture list names it (`[CLO-2]`) |
+-  | P19 | `*args`, `**kwargs` in a signature | `E0100` | an `Array` or `Span` parameter, or keyword arguments with defaults; Ember has no variadic functions (§I.6) |
++  | P19 | `*args`, `**kwargs` in a signature | `E0100` | `[Ts...]` above the function and `args: Ts...` (`[TYP-47]`), an `Array` or `Span` parameter, or keyword arguments with defaults |
+   | P20 | `"%d" % n`, `"{}".format(n)` | `E2020`, `E2072` | `f"{n}"` (`[LEX-19]`) |
+   | P21 | `Err("…")` in a function whose error type is `AnyError` | `E2020` | `Err(AnyError.msg("…"))` (`[ERR-8]`) |
+-  | P22 | an interface name as a type (`shapes: Array[Shape]`) | `E2173`; `E2020` at a use | `dyn Shape` as a parameter's type, `owns dyn Shape` (or `shares dyn Shape`) in a field or a list, or `[T: Shape]` above the function (`[OBJ-2]`) |
++  | P22 | an interface name as a type (`shapes: Array[Shape]`) | `E2173`; `E2020` at a use | `dyn Shape` as a parameter's type, `owns dyn Shape` (or `shares dyn Shape`) in a field or a list, or `[T: needs Shape]` above the function (`[OBJ-2]`) |
+   | P23 | `s * n`, `[x] * n` | `E2020` | `s.repeat(n)`, `[x for _ in 0..n]` (`[PHIL-14]`) |
+   | P24 | `'abc'`, `''` | `E0008` | `"abc"`, `""` |
+   | P25 | `len(it)`, `it[i]` on an iterator (`s.split(",")`) | `E2072`, `E2020` | `.collect[Array[…]]()` where the iterator is made |
+@@ -8099,7 +8175,7 @@
+ | `E0006` | a `#!` language directive names a version other than the current one | `[VER-8]` |
+ | `E0008` | unterminated character literal | `[LEX-22]` |
+ | `E0009` | malformed literal | `[LEX-26]` |
+-| `E0100` | unexpected token, among them Python's `global`, a statement at module level outside the entry file (whose message gives the declaration to write: `static mut FRAME: int = 0`), and a clause after a function's brackets that Ember does not have (`changes FRAME`, `reads renderer`, `with` before the captures), whose message gives the first line to write | `[GRM-2]` |
++| `E0100` | unexpected token, among them Python's `global`, a statement at module level outside the entry file (whose message gives the declaration to write: `static mut FRAME: int = 0`), a bound written without `needs` or joined with `+` (whose message gives the line with `needs`), and a clause after a function's brackets that Ember does not have (`changes FRAME`, `reads renderer`, `with` before the captures), whose message gives the first line to write | `[GRM-2]`, `[TYP-17]` |
+ | `E0101` | unclosed delimiter or literal | `[LEX-6]` |
+ | `E0102` | membership test chained (`a in b in c`) | `[GRM-23]` |
+ | `E0103` | match arms mix statement and expression form | `[GRM-10]` |
+@@ -8141,7 +8217,7 @@
+ | `E2035` | condition must be `bool` | `[CTL-0]` |
+ | `E2036` | this pattern always matches: an `if` or `while` opening whose left side always holds a value, or a kind test that always passes | `[GRM-19]` |
+ | `E2037` | a kind test that can never pass: the type tested for does not implement the interface, or derive from the base class, of the value tested | `[TYP-44]`, `[DSP-4]` |
+-| `E2040` | unsatisfied interface bound; for a `pub` generic whose bounds are not written, one message on the first line of its body that needs a missing bound, giving every bound the body needs | `[IFC-6]`, `[TYP-17]`, `[BLD-14]` |
++| `E2040` | unsatisfied interface bound; for a `pub` generic whose bounds are not written, or a generic that writes some of its bounds and not all the body needs, one message on the first line of its body that needs a missing bound, giving the whole line of what it needs | `[IFC-6]`, `[TYP-17]`, `[BLD-14]` |
+ | `E2041` | overlapping `extend` implementations | `[TYP-19]` |
+ | `E2042` | `Float` is implemented only by `f32` and `f64` | `[STD-27]` |
+ | `E2043` | an associated type's default leads back to itself | `[IFC-4]` |
+@@ -8299,7 +8375,7 @@
+ | `E7012` | a `static mut` not `guarded by` a lock reached from another thread | `[THR-20]`, `[STA-1]` |
+ | `E7013` | a `guarded by` field used without holding its lock | `[THR-18]` |
+ | `E7014` | a `thread_shared` value changed directly | `[THR-1]` |
+-| `E7015` | a one-thread owner (`shares`, `shares mut`, a `weakref` link of one) or a lent value reaches another thread: held by a function any thread may run (`thread_shared fn()`, `thread.spawn`'s included), in a plain `fn()` field of a class whose object is made `thread_shared` (at that line), or a class object handed to another thread while a `weakref` link on this thread points at it | `[THR-1]`, `[THR-2]`, `[THR-10]`, `[CLO-16]`, `[FFI-22]` |
++| `E7015` | a one-thread owner (`shares`, `shares mut`, a `weakref` link of one) or a lent value reaches another thread: held by a function any thread may run (`thread_shared fn()`, `thread.spawn`'s included), in a plain `fn()` field of a class whose object is made `thread_shared` (at that line) | `[THR-1]`, `[THR-2]`, `[THR-10]`, `[CLO-16]`, `[FFI-22]` |
+ | `E7016` | a `@parallel` loop over something it cannot split into chunks: neither a range nor a list walked by element | `[PAR-1]` |
+ | `E7017` | `thread_shared` on a name whose value was not created `thread_shared` | `[THR-1]` |
+ | `E7018` | a wait for a lock this thread holds, inside that lock's `with` block: a call through a function value, or a `dyn` or virtual method, that may run a function taking that lock (inside a walk under that lock too), or a join of a thread (a scope's end included) whose function changes what the lock guards | `[THR-19]` |
+@@ -12044,6 +12120,99 @@
+ | `[WK-5]` | changed |
+ | `[WK-7]` | changed |
+ | `[WK-12]` | changed |
++
++## H.43 Changes in 0.9.15_Hardened_3 (from 0.9.15_Hardened_2)
++
++**0.9.15_Hardened_3** writes in the owner's verdicts 107 to 117 (`tasks/96/redesign/JOB.md`) and the
++lead's details for them (`tasks/96/redesign/compiler-0.9.15/decisions.md`, section 7):
++
++* Verdict 107: a value made in a memory manager keeps no word naming its instance when the manager frees
++  nothing one by one (and the value does not grow), or implements `FoundByAddress`, whose pieces start at
++  a multiple of 65,536 bytes with the instance's address in their first word (`[ALC-1]`, `[ALC-2]`,
++  `[OBJ-4]`, `[COST-3]`).
++* Verdicts 108 and 113: a `pub` generic writes everything its type parameters need; one that is not
++  `pub` writes all of it or none, and part of a list is `E2040` with the whole line in the message
++  (`[TYP-17]`, `[IFC-6]`).
++* Verdicts 109 to 112: what a type parameter needs is written after `needs`, one bare and several in
++  round brackets (`[T: needs (Add[T, Output = T], Copy)]`), in type-parameter lines, `extend`
++  brackets, an interface's parents, associated types and `where` clauses; `+` between needs is gone
++  (`E0100`), kept only after `dyn` and `some` (`[TYP-17]`, `[LEX-15]`, Part III).
++* Verdict 114: an object handed whole to another thread while a `weakref` link on this thread points
++  at it goes, and the links here find it ended: its contents move when a link exists (Rust's
++  `Rc::try_unwrap`), objects it owns of `weakref`-target classes too, a view opened from a link is not
++  used after it, and an object C keeps never moves (a link to it stops the program) (`[THR-2]`,
++  `[RC-5]`, `[WK-12]`, `[FFI-35a]`, `[UNS-4]`; `E7015` no longer covers it).
++* Verdicts 115 and 116: typed variadic generics and functions in C++'s spelling, `[Ts...: needs
++  Display]` above `fn log(values: Ts...):` (`[TYP-47]`, new); a view lists any number of components,
++  `reg.view[Position, Velocity]()` (`[ECS-3]`, `[ECS-4]`); `zip` takes any number (`[STD-26]`).
++* Verdict 117: `print`, `println`, `eprint`, `eprintln` and `format_to` are library functions with a
++  pack, `[Ts...: needs Printable]`; the compiler implements `Printable` for every type with `Display` or
++  `Debug` (`[STD-9]`, `[STD-18]`, `[TYP-26]`, §IV.8).
++
++Generated: every rule whose text differs from 0.9.15_Hardened_2.
++
++| Rule | 0.9.15_Hardened_2 → 0.9.15_Hardened_3 |
++|---|---|
++| `[ALC-1]` | changed |
++| `[ALC-2]` | changed |
++| `[ARN-3]` | changed |
++| `[ARN-5d]` | changed |
++| `[ARN-11]` | changed |
++| `[CELL-1]` | changed |
++| `[CLI-20]` | changed |
++| `[CLO-14]` | changed |
++| `[ECS-3]` | changed |
++| `[ECS-4]` | changed |
++| `[ECS-8]` | changed |
++| `[EFF-2]` | changed |
++| `[ERR-1]` | changed |
++| `[ERR-4]` | changed |
++| `[ERR-8]` | changed |
++| `[ERR-12]` | changed |
++| `[FFI-35a]` | changed |
++| `[FN-8]` | changed |
++| `[GRM-31]` | changed |
++| `[GRM-34]` | changed |
++| `[GRM-40]` | changed |
++| `[HASH-1]` | changed |
++| `[HASH-4]` | changed |
++| `[IFC-3]` | changed |
++| `[IFC-4]` | changed |
++| `[IFC-5]` | changed |
++| `[IFC-6]` | changed |
++| `[LEX-15]` | changed |
++| `[LEX-21]` | changed |
++| `[OBJ-4]` | changed |
++| `[RC-5]` | changed |
++| `[RNG-5a1]` | changed |
++| `[SER-1]` | changed |
++| `[SOA-6]` | changed |
++| `[STD-8]` | changed |
++| `[STD-9]` | changed |
++| `[STD-11]` | changed |
++| `[STD-12]` | changed |
++| `[STD-15]` | changed |
++| `[STD-16]` | changed |
++| `[STD-17]` | changed |
++| `[STD-18]` | changed |
++| `[STD-19]` | changed |
++| `[STD-21]` | changed |
++| `[STD-26]` | changed |
++| `[STD-27]` | changed |
++| `[THR-2]` | changed |
++| `[THR-8]` | changed |
++| `[THR-9]` | changed |
++| `[TYP-17]` | changed |
++| `[TYP-19]` | changed |
++| `[TYP-22]` | changed |
++| `[TYP-26]` | changed |
++| `[TYP-36]` | changed |
++| `[TYP-37]` | changed |
++| `[TYP-43]` | changed |
++| `[TYP-47]` | added |
++| `[UNS-4]` | changed |
++| `[UNS-5]` | changed |
++| `[WK-12]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -12080,7 +12249,7 @@
+ | `[ARN-4]` | IX | *(changed in 0.9.15)* A growing `Arena` carries `Alloc` on its growth … |
+ | `[ARN-5]` | IX | `ArenaArray[T]` and `ArenaMap[K, V]` are fixed-capacity containers … |
+ | `[ARN-5c]` | IX | `ArenaArray[T]` provides `len`, `capacity`, `is_empty`, `get(i) -> … |
+-| `[ARN-5d]` | IX | `ArenaMap[K, V]` (with `K: Eq + Hash`) provides `len`, `capacity`, … |
++| `[ARN-5d]` | IX | `ArenaMap[K, V]` (with `K: needs (Eq, Hash)`) provides `len`, … |
+ | `[ARN-5g]` | IX | No operation of either container touches the arena after … |
+ | `[ARN-6]` | IX | *(changed in 0.9.15)* `arena.scope() -> ScopedArena` is called … |
+ | `[ARN-7]` | IX | *(changed in 0.9.15)* No operation lowers an arena's allocation … |
+@@ -12473,7 +12642,7 @@
+ | `[ECS-1]` | XII | *(changed in 0.9.15)* `Entity` is a 32-bit generational handle: a … |
+ | `[ECS-2]` | XII | *(changed in 0.9.15)* Each component type is stored in a pool of its … |
+ | `[ECS-3]` | XII | *(changed in 0.9.15)* The registry. `Registry` (EnTT's … |
+-| `[ECS-4]` | XII | *(changed in 0.9.15)* Views. `reg.view[(A, B)]()` walks the entities … |
++| `[ECS-4]` | XII | *(changed in 0.9.15)* Views. `reg.view[A, B]()` walks the entities … |
+ | `[ECS-5]` | XII | *(changed in 0.9.15)* Changing the registry while a view walks it. A … |
+ | `[ECS-6]` | XII | Iteration order is insertion order with swap-remove holes: … |
+ | `[ECS-7]` | XII | *(changed in 0.9.15)* Any type is a component, with no registration … |
+@@ -12627,7 +12796,7 @@
+ | `[FFI-33a]` | XVI | *(changed in 0.9.15)* Attaching a thread (`[FFI-22]`) gives it no … |
+ | `[FFI-33b]` | XVI | *(changed in 0.9.15)* `returns_owned` results and callbacks may carry … |
+ | `[FFI-33c]` | XVI | *(changed in 0.9.15)* Under `threads = main`, the exported wrapper … |
+-| `[FFI-35a]` | XVI | A parameter with no `retained` word is recorded as "does not retain" … |
++| `[FFI-35a]` | XVI | *(changed in 0.9.15)* A parameter with no `retained` word is recorded … |
+ | `[FFI-36]` | Annex C | *(changed in 0.9.15)* A C++ function returning a raw pointer with no … |
+ | `[FFI-36a]` | XVI | *(changed in 0.9.15)* `std.ffi.adopt[T](h) -> owns T` is an `unsafe … |
+ | `[FFI-36b]` | XVI | Adopting a type whose overlay says `adopt = false` is `E5052`. … |
+@@ -12740,7 +12909,7 @@
+ | `[GRM-31]` | III | *(changed in 0.9.10)* A `some` type (`[TYP-32]`) is legal only as a … |
+ | `[GRM-32]` | III | `comptime(e)` evaluates the expression `e` at compile time (`[CT-6]`). |
+ | `[GRM-33]` | III | A bodiless `fn_decl` is legal only in an `interface`, an … |
+-| `[GRM-34]` | III | *(changed in 0.9.10)* `extend [T: B] Array[T] implements I:` declares … |
++| `[GRM-34]` | III | *(changed in 0.9.10)* `extend [T: needs B] Array[T] implements I:` … |
+ | `[GRM-35]` | XVI | *(changed in 0.9.15)* Overlay grammar. An overlay is a file whose … |
+ | `[GRM-36]` | III | *(changed in 0.9.15)* `ref e`, `ref mut e` and `const ref mut e` name … |
+ | `[GRM-37]` | III | *(changed in 0.9.15)* A directive is a line beginning `#!` before the … |
+@@ -12758,10 +12927,10 @@
+ 
+ | Rule | Part | Begins |
+ |---|---|---|
+-| `[HASH-1]` | IV | *(changed in 0.9.15)* `Hash.hash` is generic over `H: Hasher` and … |
++| `[HASH-1]` | IV | *(changed in 0.9.15)* `Hash.hash` is generic over `H: needs Hasher` … |
+ | `[HASH-2]` | IV | `std.collections.DefaultHasher` is a fixed-seed hasher: the same keys … |
+ | `[HASH-3]` | IV | *(changed in 0.9.15)* `Map` and `Set` MUST NOT weaken equality to … |
+-| `[HASH-4]` | IV | `Map[K, V]` requires `K: Eq + Hash`. A map may call `hash` any number … |
++| `[HASH-4]` | IV | `Map[K, V]` requires `K: needs (Eq, Hash)`. A map may call `hash` any … |
+ 
+ ## HEAP
+ 
+@@ -12865,7 +13034,7 @@
+ |---|---|---|
+ | `[IFC-1]` | V | `extend T:` without `implements` adds inherent methods to `T`; it is … |
+ | `[IFC-2]` | V | Adding inherent methods to a type from another package is `E2120`; … |
+-| `[IFC-3]` | V | `interface Ord: Eq` requires implementers of `Ord` to implement `Eq`. … |
++| `[IFC-3]` | V | `interface Ord: needs Eq` requires implementers of `Ord` to implement … |
+ | `[IFC-4]` | V | Interfaces may declare associated types and constants, not statics. … |
+ | `[IFC-5]` | V | *(new in 0.9.15)* Interface values say who owns them. `owns dyn I` is … |
+ | `[IFC-6]` | V | *(new in 0.9.15)* Bounds of a generic function. A function that is … |
+@@ -13392,7 +13561,7 @@
+ | `[TYP-16]` | IV | Generic functions and types are monomorphised: each distinct … |
+ | `[TYP-17]` | IV | *(changed in 0.9.10)* *(changed in 0.9.15)* Type parameters are … |
+ | `[TYP-18]` | IV | Generic arguments are inferred from the arguments of a call. Explicit … |
+-| `[TYP-19]` | IV | *(changed in 0.9.15)* There is no specialisation, no higher-kinded … |
++| `[TYP-19]` | IV | *(changed in 0.9.15)* There is no specialisation and no higher-kinded … |
+ | `[TYP-20]` | IV | Coherence is per package. An implementation of interface `I` for type … |
+ | `[TYP-21]` | IV | *(changed in 0.9.15)* Operators desugar to these interfaces for … |
+ | `[TYP-22]` | IV | *(changed in 0.9.10)* *(changed in 0.9.15)* An interface is usable as … |
+@@ -13419,6 +13588,7 @@
+ | `[TYP-44]` | IV | *(new in 0.9.15)* Kind tests and casts. A value of an interface type … |
+ | `[TYP-45]` | IV | *(new in 0.9.15)* Who owns a value, in its type. A type says how its … |
+ | `[TYP-46]` | IV | *(new in 0.9.15)* Which memory manager. `using A` after a type whose … |
++| `[TYP-47]` | IV | *(new in 0.9.15)* Any number of types, and of values (verdicts 115 … |
+ 
+ ## UNS
+ 

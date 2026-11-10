@@ -1,0 +1,104 @@
+--- Ember_v0.9.9_Hardened_18.md
++++ Ember_v0.9.9_Hardened_19.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_18
+-**Supersedes:** 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_19
++**Supersedes:** 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -550,7 +550,11 @@
+ * `[GRM-33]` *(new in 0.9.9)* A bodiless `fn_decl` is legal only in an `interface`, an `extern_block`, or as a
+   `virtual` method of an `abstract class`. Elsewhere it is `E0110` with the help `add ':' and a body`.
+ * `[GRM-34]` *(new in 0.9.9)* `extend [T: B] Array[T] implements I:` declares a generic extension; the generic
+-  parameters after `extend` scope over the whole block.
++  parameters after `extend` scope over the whole block. A parameter the target does not name and an
++  implemented interface does makes a **blanket implementation**: `extend[K: Eq + Hash, V, Q:
++  AsKey[K]] Map[K, V] implements Index[Q]` makes every `Map[K, V]` implement `Index[Q]` for each `Q`
++  its bounds admit, each method of the block is generic over `Q`, and each use is checked as a
++  written implementation is (ODR-042).
+ * `[GRM-8d]` A `type_alias` with an `in` clause declares a range type (`[RNG-1]`). The clause is
+   legal only on an item-level alias with no generic parameters (`E2213` otherwise).
+ 
+@@ -1193,7 +1197,8 @@
+   `BitOr`, `BitXor`, `Shl`, `Shr` and their `…Assign` forms, and every float type `Add`, `Sub`,
+   `Mul`, `Div`, `FloorDiv`, `Rem`, `Pow`, `Neg` and theirs, so `[TYP-17]`'s `sum` takes numbers.
+   Such a method is the operator: `3.add(4)` is `3 + 4`. `bool`, `char` and `String` implement none
+-  of them (`String`'s `+` consumes its left operand, `[TXT-11]`).
++  of them (`String`'s `+` consumes its left operand, `[TXT-11]`). Likewise a type is indexed only
++  through `Index`, `IndexMut` and `IndexSet` (ODR-042).
+ * `[HASH-1]` `Hash.hash` is generic over `H: Hasher` and monomorphised; hashing a value MUST feed a
+   deterministic representation of it into the hasher, and values equal under `Eq` MUST hash equally.
+   `Hasher` (in `std.collections`, not the prelude) is a move-only hashing state with `write_bytes`,
+@@ -1524,7 +1529,9 @@
+   legal in any module of `T`'s package.
+ * `[IFC-2]` Adding inherent methods to a type from another package is `E2120`; use an interface or a
+   wrapper type.
+-* `[IFC-3]` `interface Ord: Eq` requires implementers of `Ord` to implement `Eq`.
++* `[IFC-3]` *(changed in 0.9.9)* `interface Ord: Eq` requires implementers of `Ord` to implement `Eq`. So a bound brings
++  its parents: `T: IndexMut[int]` provides `Index[int]`'s methods too, and a binding it writes
++  (`Output = f32`) names the parent's associated type (ODR-042).
+ * `[IFC-4]` *(changed in 0.9.9)* Interfaces may declare associated types and constants, not statics.
+   An associated type may carry bounds (`type Real: Float`), and a type implementing the interface
+   states it (`type Real = f64`) with a value that meets them (`E2040` if it is missing or does not).
+@@ -3798,7 +3805,10 @@
+ * `[STD-17]` *(new in 0.9.9)* **Index assignment.** `a[i] = v` calls `IndexSet.index_set(i, v)` when
+   the type implements `IndexSet[Idx, V]`, and otherwise assigns through `IndexMut` (dropping the old
+   value). `Map` implements `IndexSet`; `Array` does not need to. A compound assignment `a[i] op= v`
+-  always goes through `IndexMut`.
++  always goes through `IndexMut`. `Array` and `MutSpan` implement `Index[int]` and `IndexMut[int]`,
++  and `Span` `Index[int]`, through their built-in indexing; `Map[K, V]` implements `Index[Q]`,
++  `IndexMut[Q]` and `IndexSet[Q, V]` for every `Q: AsKey[K]` (a blanket implementation,
++  `[GRM-34]`, ODR-042).
+ * `[STD-7]` Fixed-capacity containers with no heap allocation: `FixedArray[T, N]`, `FixedString[N]`
+   and `RingBuffer[T, N]`; `push` returns `Result[void, CapacityError]` and `push_or_drop` discards when
+   full. Also `Deque[T]`, `SmallArray[T, N]` (inline up to `N`, then heap), `BitSet`.
+@@ -6448,7 +6458,7 @@
+ Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
+ Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036;
+ Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039; Hardened_17 adds ODR-040;
+-Hardened_18 adds ODR-041.
++Hardened_18 adds ODR-041; Hardened_19 adds ODR-042.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6473,6 +6483,7 @@
+ | ODR-039 | `[STD-20]`'s integer methods: `checked_`, `wrapping_`, `saturating_` and `overflowing_` forms of `add`, `sub`, `mul`, `floordiv`, `rem`, `pow` and `neg` (the shifts too, but not saturating), built into the integer types; bit counts are `int`s; a float's `MIN` is `-MAX` (Hardened_16) | `[STD-20]` |
+ | ODR-040 | the operator interfaces' methods are `add`, …, `floordiv`, `bitand`, …, `neg` and `not` (a method name after `fn` and `.`), each `…Assign` form's with `_assign`; every number type implements the interface of each operator it has, in `std.core`; a type has an operator only through its interface; one `type Output` serves every interface of an `extend` block; a binding is written only in a bound (Hardened_17) | `[TYP-21]`, `[IFC-4]`, `[LEX-15]` |
+ | ODR-041 | `f16` is a `Number` whose `Real` is `f32`; every float type, `f16` included, has `INF`, `NAN`, `EPSILON`, `MAX` and `MIN` (Hardened_18) | `[STD-20]`, `[STD-21]`, `[STD-27]` |
++| ODR-042 | an `extend` parameter that only the implemented interfaces name makes a blanket implementation; a bound brings its parents; indexing is only through `Index`, `IndexMut` and `IndexSet`, which `Array` and the views implement through their built-in indexing and `Map` for every `Q: AsKey[K]` (Hardened_19) | `[GRM-34]`, `[IFC-3]`, `[TYP-21]`, `[STD-17]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6491,9 +6502,11 @@
+ | `[FN-3]` | changed |
+ | `[FN-6]` | changed |
+ | `[FN-10]` | changed |
++| `[GRM-34]` | changed |
+ | `[HASH-1]` | changed |
+ | `[HASH-2]` | changed |
+ | `[HASH-3]` | changed |
++| `[IFC-3]` | changed |
+ | `[IFC-4]` | changed |
+ | `[LEX-15]` | changed |
+ | `[LT-1]` | changed |
+@@ -6505,6 +6518,7 @@
+ | `[STD-12]` | changed |
+ | `[STD-15]` | changed |
+ | `[STD-16]` | changed |
++| `[STD-17]` | changed |
+ | `[STD-20]` | changed |
+ | `[STD-21]` | changed |
+ | `[STD-27]` | added |
+@@ -7297,7 +7311,7 @@
+ |---|---|---|
+ | `[IFC-1]` | V | `extend T:` without `implements` adds inherent methods to `T`; it is … |
+ | `[IFC-2]` | V | Adding inherent methods to a type from another package is `E2120`; … |
+-| `[IFC-3]` | V | `interface Ord: Eq` requires implementers of `Ord` to implement `Eq`. |
++| `[IFC-3]` | V | `interface Ord: Eq` requires implementers of `Ord` to implement `Eq`. … |
+ | `[IFC-4]` | V | Interfaces may declare associated types and constants, not statics. … |
+ 
+ ## IMP

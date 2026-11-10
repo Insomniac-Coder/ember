@@ -1,0 +1,807 @@
+--- Ember_v0.9.15_Hardened_1.md
++++ Ember_v0.9.15_Hardened_2.md
+@@ -1,15 +1,16 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.15_Hardened_1
+-**Supersedes:** 0.9.10_Hardened_35 (development target) and every earlier file: 0.9.10_Hardened_1 to
+-0.9.10_Hardened_34, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3 and 0.8.5_Hardened_1
++**Version:** 0.9.15_Hardened_2
++**Supersedes:** 0.9.15_Hardened_1 (development target) and every earlier file: 0.9.10_Hardened_1 to
++0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3 and 0.8.5_Hardened_1
+ (adopted). This document is the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+ are tracked separately (§XVII.5, §XVII.8) and are not claimed by this text.
+-**Authority:** **0.9.15_Hardened_1** is the owner's rework of the memory model
+-(`tasks/96/redesign/JOB.md`, the owner's verdicts of 2026-10-24 to 2026-10-27, with the design in
+-`tasks/96/redesign/run4/v5/` and its list of unsafe features). What a program means is written in
++**Authority:** **0.9.15** is the owner's rework of the memory model (`tasks/96/redesign/JOB.md`, the
++owner's verdicts of 2026-10-24 to 2026-10-27, with the design in `tasks/96/redesign/run4/v5/` and its
++list of unsafe features); **0.9.15_Hardened_2** adds the owner's verdicts 101 to 106 and the lead's
++rulings for building it (`tasks/96/redesign/compiler-0.9.15/decisions.md`). What a program means is written in
+ words on the thing it describes: one owner unless a line says `shares`; `owns` for a hand-over and a
+ value held alone; `copy of` for a copy; `ref mut` on a name, and at the call, for a change of someone
+ else's value; `weakref` for a link that does not keep its target alive; `this` for a method's object.
+@@ -18,7 +19,7 @@
+ cost (§X.4). It replaces `Box`, `Shared`, `Weak`, `RefCell`, `SyncShared`, `ForeignBox`, `@sync`,
+ `@borrows`, the mode `owned`, `self`, `mem.forget`, effect clauses on a first line and every check of
+ exclusive access made while the program runs. It changes the set of accepted programs, so the
+-language version moves (`[VER-9]`); Appendix H §H.41 lists every change. The revisions before it were
++language version moves (`[VER-9]`); Appendix H §H.41 and §H.42 list every change. The revisions before it were
+ authored at the owner's direction of 2026-09-23 with delegated authority to decide open language
+ questions against the project goal; Appendix H lists each one's changes (§H.1 to §H.40), and every
+ finding of the 2026-09-23 research pass (`tasks/audit/FINDINGS.md`, F-001–F-214) is resolved in
+@@ -455,7 +456,7 @@
+   name is `E0005`, whose message names the reservation): `async`, `await`, `macro`. **Reserved and
+   not words of Ember** (lexed as keywords so that no program uses them as names; any use is `E1010`,
+   whose message gives the word to write): `owned` (write `owns`: `owns x: T`, `owns this`, `mesh: owns
+-  Mesh`, `fn() owns x:`) and `self` (inside a method its object is `this`, `[GRM-41]`).
++  Mesh`, `fn() owns x:`, and in a C contract `@ffi(param(widget, owns, one))`, verdict 102) and `self` (inside a method its object is `this`, `[GRM-41]`).
+ * `[LEX-22]` *(changed in 0.9.9)* Ember has no lifetime syntax and never will. A `'` begins a
+   character literal and nothing else; an unterminated one is `E0008`.
+ 
+@@ -1454,7 +1455,7 @@
+     mesh; say so where it is made: `mesh=owns Mesh(points=[0.0, 1.0]) using current`") (`[GRM-15]`);
+   * `shares T` and `shares mut T`: one of several owners of a value on one thread, counted; a
+     `shares` owner reads it and a `shares mut` owner may also change it (Part VIII);
+-  * `thread_shared T`: one of several owners on any threads, counted atomically, and never changed
++  * `thread_shared T`: one of several owners on any threads, counted for several threads (`[RC-4]`), and never changed
+     directly by any owner (Part XI);
+   * `weakref T`: a link that does not keep its target alive and may hold none (`parent: weakref Node
+     = None`); it is opened before its target is used (`[GRM-44]`). Used as its target without opening
+@@ -1589,7 +1590,10 @@
+   interface (`Add[i64]` and `Add[i32]`) are told apart by a call's arguments: an instance whose
+   parameter types are the arguments' own types, an untyped literal counting as its default type
+   (`int`, `f64`), is chosen before one the arguments reach only through a coercion (`[RNG-5a2]`);
+-  arguments that fit two equally are `E2070`, disambiguated as `I[A].m(recv, …)`. An operator chooses
++  arguments that fit two equally are `E2070`, disambiguated as `I[A].m(recv, …)`. Inside a generic
++  body the same holds for bounds: a method that two of a type parameter's bounds both declare is
++  `E2070`, whose message names both bounds and the call to write (`Shape.area(x)` or
++  `Drawable.area(x)`). An operator chooses
+   among instances as its method's call does (`[TYP-21]`, ODR-096).
+ 
+ **Marker interfaces**, derived automatically (`Send` written by hand only with `unsafe extend`, `[TYP-43]`):
+@@ -2345,7 +2349,9 @@
+   `E6004` (`[CT-7]`) (ODR-045).
+ * `[STA-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* `static NAME: T = e` is one value per program
+   with a stable address, and it never changes; shared state that changes goes through an `Atomic`,
+-  `Mutex`, `RwLock` or `Once` in it. `T` MUST be `ThreadShared` (`E7002`). `static mut NAME: T = e` is a
++  `Mutex`, `RwLock` or `Once` in it. An assignment to it (`HOOK = v` in a function) is `E3023`, whose
++  help names `static mut HOOK` or another name for a local; it never makes a local that hides the
++  `static`. `T` MUST be `ThreadShared` (`E7002`). `static mut NAME: T = e` is a
+   module variable that may change, written with no `unsafe`: a function changes it by its name, with no
+   word (Python's `global` is `E0100`: "`global` is Python's; in Ember a function changes a module
+   variable by its name, with no word: remove line 9"), and what a function changes is worked out from
+@@ -2387,7 +2393,7 @@
+   write (`@sync`: "`@sync` is gone: a class needs no mark to be shared between threads; remove `@sync`",
+   and the value says `thread_shared`, each field that changes `guarded by` or `Atomic`;
+   `@static_safe`: `@no_alias_checks`; `@fp(contract)`: `@fp(allow_fma)`; `@borrows(p)`: `from p` after
+-  the result type, `[LT-1a]`; `@no_runtime_checks`: no switch turns a safety check off, `[UNS-11]`). An
++  the result type, `[LT-1a]`; `@component`: any type is a component, with no mark (Part XII); `@no_runtime_checks`: no switch turns a safety check off, `[UNS-11]`). An
+   attribute on a declaration it does not apply to is `E0104` naming the positions it does apply to.
+ * `[ATT-4]` One attribute per line.
+   A module attribute uses a `#! module` directive (`[GRM-37]`). Its effect and any item-level
+@@ -2405,7 +2411,7 @@
+ | `@layout(c)`, `@packed`, `@align(N)` | struct, enum | `[LAY-2]` |
+ | `@repr(T)` | enum | `[LAY-2]` |
+ | `@gpu_layout(std140\|std430\|scalar)` | struct | Annex D |
+-| `@noalloc`, `@nosync`, `@noblock`, `@noio`, `@nolock`, `@nopanic(explicit)`, `@no_alias_checks`, `@deterministic`, `@realtime` | fn, interface method; `@deterministic` also module and fn type | Part X |
++| `@noalloc`, `@nosync`, `@noblock`, `@noio`, `@nolock`, `@nopanic(explicit)`, `@no_alias_checks`, `@deterministic`, `@realtime` | fn, interface method, and a `type` line naming a function type (`@noalloc` above `type Handler = fn()`, `[EFF-2]`); `@deterministic` also module | Part X |
+ | `@overflow(panic\|wrap\|saturate)` | fn, module | `[TYP-8]` |
+ | `@fastmath`, `@fp(allow_fma)` | fn | `[TYP-9]` |
+ | `@inline`, `@noinline`, `@cold`, `@hot` | fn | `[CG-C-3a]` |
+@@ -2422,7 +2428,7 @@
+ | `@must_drop` | struct, class | `[THR-6]` |
+ | `@allow(code, …)` | any item or statement | suppresses the named `W`/`L` diagnostics |
+ | `@non_exhaustive` | enum | `[FFI-8]` |
+-| `@component(layout=soa\|aos)`, `@soa(flatten)` | struct; field | Part XII |
++| `@soa(flatten)` | field | Part XII |
+ | `@always_specialize`, `@never_specialize` | generic fn or type | `[MONO-7]` |
+ | `@reloadable`, `@noreload`, `@renamed_from("n")`, `@reinit_on_reload`, `@allow_reload_terminate` | see Annex B | Annex B |
+ | `@prelude` | module (standard library only) | `[MOD-5]` |
+@@ -2660,10 +2666,14 @@
+     println(add5(1))
+ ```
+ 
+-* `[CLO-1]` *(changed in 0.9.15)* A lambda or local function has a unique type of its own, which
+-  implements its callable type. Given to a type parameter (`[CLO-14]`) it keeps that type, and a call
+-  through it is direct; wherever a callable type is written (`[CLO-3]`) it becomes a **function value**
+-  of that type (`[CLO-10]`).
++* `[CLO-1]` *(changed in 0.9.15)* A named function, a lambda and a local function each have a type of
++  their own (ODR-278), which implements its callable type; one that keeps no state is a value of size
++  zero. Given to a type parameter (`[CLO-14]`) it keeps that type, and a call through it is direct;
++  wherever a callable type is written (`[CLO-3]`) it becomes a **function value** of that type
++  (`[CLO-10]`). Where two different functions meet in one place (`if c: f = a else: f = b`, a second
++  assignment, a conditional's two branches, a collection's elements), the place has the callable type
++  both convert to. A local holding a function that keeps no state is not captured: a lambda that uses
++  it keeps nothing for it (`[CLO-2]`), since giving it the same function again changes nothing.
+ * `[CLO-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* **What a function captures is written after its
+   brackets.** A name a lambda or a local function uses from the function that made it is the **real
+   variable**, that very variable and not a copy, unless a capture word after its brackets names it:
+@@ -3051,7 +3061,8 @@
+ * `[OWN-13]` *(new in 0.9.15)* **Words before a value.** Before a value, a word acts on the object the
+   value names (for a link or an owner, on its target): `copy of x` (`[OWN-8]`); `owns x`
+   (`[OWN-9]`); `shares x`, one more owner, on this thread, that reads it, and `shares mut x`, one more
+-  owner that may also change it (`[RC-1]`); `thread_shared x`, one more owner on any thread, written only
++  owner that may also change it, each written only before a new value, a local or an owner (`[RC-1]`,
++  `E2122`); `thread_shared x`, one more owner on any thread, written only
+   before a new value (`names = thread_shared Names()`) or a value already `thread_shared` (`E7017`
+   otherwise: "`names` is `share_and_keep`'s own object, which it may change; to share it between
+   threads, create it shared: `names = thread_shared Names()`"); `weakref x`, a link that does not keep it
+@@ -3473,9 +3484,11 @@
+   any other is `E3062` ("`next_word` returns a view of `this.buf`, but its first line says `from src`;
+   return a view of `src`, or write `-> StrView from buf`"). A named parameter is a source parameter
+   (`[LT-1]`) or a `ref mut` parameter; naming a plain `Copy` parameter, or an `owns` parameter that is
+-  not a view, is `E2031`. A bare field name names a field of `this` whose type is a view, whatever the
+-  method does with its object (`owns this`, or passed as a copy, `[BRW-8]`): the result points into
+-  what the field points into, and the call's view of the object ends with the call. A result read
++  not a view, is `E2031`. A bare field name names any field of `this`, whatever the method does with its
++  object (`owns this`, or passed as a copy, `[BRW-8]`): for a field whose type is a view, the result
++  points into what the field points into, and the call's view of the object ends with the call; for any
++  other field (`from log` with `log: Array[int]`), the result points into that field and what it owns,
++  and the object is viewed for as long as the result lives. A result read
+   through a `ref mut` field points into `this` as well, so it cannot name the field alone (`E3062`):
+   an iterator gives no two changeable items. The field may instead be one whose type is a type
+   parameter, with a result whose type names one (`Option[I.Item]`); each instance is checked, as a
+@@ -3811,21 +3824,41 @@
+ 
+ ```text
+ offset  size  field
+-0       4     count   u32   its owners; atomic for a `thread_shared` value
++0       4     count   u32   its owners
+ 4       4     type    u32   its type index: its type information, and the interface tables reached
+                             through it
+-8       4     weak    u32   its `weakref` links, plus one for all its owners; atomic for a `thread_shared`
+-                            value; present only in a value a `weakref` link may reach
++8       4     weak    u32   its `weakref` links, plus one for all its owners; present only in a value
++                            a `weakref` link may reach
+ 8 or 12 …     base-class fields, then own fields (or the shared value), naturally aligned
++```
++
++A `thread_shared` value's header (`[RC-4]`):
++
++```text
++offset  size  field
++0       4     home    u32   the owners its making thread holds; read and written only by that thread,
++                            with plain instructions
++4       4     type    u32   its type index
++8       4     weak    u32   its `weakref` links, plus one for all its owners; atomic
++12      4                   unused
++16      8     away    i64   atomic: the owners the other threads hold, times 8, and three marks: handed
++                            over (the making thread counts here too), queued (it waits in the making
++                            thread's queue), ended
++24      8     next    ptr   its place in the making thread's queue
++32      …     the shared value, naturally aligned
+ ```
+ 
+ * `[OBJ-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* The header is 8 bytes: a 32-bit count and a
+   32-bit type index. A value a `weakref` link may reach has a third 32-bit number there, its weak
+   count, making 12 bytes: every object of a class family (the classes that share one root base class)
+   of which some `weakref` link in the program may name an object, and every shared value of a type some
+-  `weakref` link may name. The header is part of the runtime ABI (`[VER-4]`). Foreign code never reads
+-  it; it calls `ember_rt`. An object carries nothing else for the memory model: no access words and no
+-  flags.
++  `weakref` link may name. A `thread_shared` value's header is 32 bytes (verdict 101): its making
++  thread's count of its owners, the type index, the weak count, the other threads' count with its
++  marks, and its place in the making thread's queue (`[RC-4]`). Which thread made a value is read from
++  the header of the memory chunk its block came from, written once when the chunk is made, never from
++  the value. The header is part of the runtime ABI (`[VER-4]`). Foreign code never reads it; it calls
++  `ember_rt`. An object carries nothing else for the memory model: no access words, and no flags but a
++  `thread_shared` value's three marks.
+ * `[OBJ-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* An owner, a link or a view of a class object
+   is one pointer, to offset 0. An object's interface tables are reached through its type index, so a
+   `dyn I` value of a class object, and an `Option` of one, is one pointer wide. A bare interface name in
+@@ -3857,8 +3890,16 @@
+   `thread_shared x` one more on any thread (`[OWN-13]`). A value made shared lives in a block of its own
+   with the header of `[OBJ-1]` (a class object already does), and its owners are counted: making an
+   owner adds one to the count, ending one subtracts one, and the subtraction that reaches zero ends the
+-  value. A value with one owner is not counted: its owner ends it. **A count is checked before it rolls
+-  over:** before each +1 of an owner count it is compared with its maximum, and at the maximum the
++  value. A value with one owner is not counted: its owner ends it. **Only a whole value is shared**
++  (verdict 103): `shares x`, `shares mut x` and `thread_shared x` are written before a new value, a
++  local of this function (which becomes one of the owners) or a name that is already such an owner. A
++  place that has one owner and is not a local of this function, a list element (`shares mut players[1]`
++  of an `Array[Player]`), a field (`shares this.items`) or a plain parameter (`fn keep(p: Player):
++  LIST.push(shares p)`), is `E2122`: "`players[1]` has one owner, the list `players`, and no second
++  owner can be made of one element; to let other names own the players, make the list share them from
++  the start: write `players = [shares mut Player(), shares mut Player()]` in place of line 15". So a
++  value in a one-owner place is ended by that place at once, with no count to test. **A count is checked
++  before it rolls over:** before each +1 of an owner count it is compared with its maximum, and at the maximum the
+   program stops, in every profile: "too many owners of a `Player` (4,294,967,295)" (`[RT-7]`), as
+   Rust's `Rc` and `Arc` stop (a `thread_shared` count stops at the lower limit of `[RC-4]`). That is one
+   compare per added owner and no extra memory.
+@@ -3900,13 +3941,40 @@
+   `with h:` and `mem.keep_alive(h)` state that where no Safe use does.
+ * `[RC-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* The counts of a value that is not
+   `thread_shared` are changed with plain adds and subtracts, and never cross threads (`E7015`).
+-  **Both counts of a `thread_shared` value, its owners' and its `weakref` links', are atomic:** a
+-  relaxed increment and an acquire-release decrement (`[RT-8]`). A `thread_shared` count is raised with
+-  one atomic add, and its limit is checked on the value the add returns: when the count before the add
+-  was 2,147,483,647 or more, the program stops ("too many owners of a `Player` (2,147,483,647)"; "too
+-  many `weakref` links to a `Player` (2,147,483,647)"). That limit is half the count's range, so threads
+-  racing past it each stop before the count can roll over, whatever their number; a count that is not
+-  `thread_shared` keeps the exact compare of `[RC-1]` and `[WK-11]`.
++  **A `thread_shared` value's owners are counted in two numbers** (verdict 101; biased counting, Choi,
++  Shull and Torrellas, 2018):
++  1. **Home and away.** The thread that made the value counts the owners it holds in the value's home
++     count, with plain adds and subtracts; every other thread counts its owners in the away count, with
++     atomic ones (`[RT-8]`). The value lives while the two add up to more than zero. Only the making
++     thread reads both.
++  2. **The hand-over to the making thread.** When another thread ends an owner the making thread
++     counted, the away count goes below zero: that thread puts the value in the making thread's queue,
++     marking it queued in the same atomic step as its subtract, and only the making thread then ends
++     it. The making thread empties its queue at each of its check points: it adds each value's home
++     count into its away count, and ends the value when the sum is zero. A queued value is ended by
++     nothing else.
++  3. **Check points.** The compiler places them: at every loop's back edge, before every call that may
++     block the thread (waiting for a lock, `join`, a channel's receive, a sleep) and when the thread
++     ends. A value whose making thread has ended is ended at once by the thread that ends its last
++     owner.
++  4. **Handed over at once.** A thread that stores an owner of a `thread_shared` value where other
++     threads can reach it (into a lock-guarded `thread_shared` container, through a channel, into the
++     capture of a thread it spawns or of a callback C keeps; every such place is known when compiling)
++     first adds its own count of the value into the away count and marks the value handed over; from
++     then on every thread, the making thread included, counts in the away count, and a later end on
++     another thread never goes through the queue.
++  5. **So a value's end is delayed only** when its last owner ends on a thread that did not make it
++     and the value was not handed over at a place of point 4 (it travelled inside another object): it
++     is ended at its making thread's next check point. Until then it is intact, and a `weakref` link
++     opened on another thread may still find it (`[WK-3]`).
++
++  The weak count of a `thread_shared` value is atomic. The away count, and the weak count, are raised
++  with one atomic add and their limit is checked on the value the add returns: when the count before
++  the add was 2,147,483,647 or more, the program stops ("too many owners of a `Player`
++  (2,147,483,647)"; "too many `weakref` links to a `Player` (2,147,483,647)"). That limit is half the
++  count's range, so threads racing past it each stop before the count can roll over, whatever their
++  number. The home count, and a count that is not `thread_shared`, keep the exact compare of `[RC-1]`
++  and `[WK-11]`.
+ * `[RC-5]` *(changed in 0.9.15)* **A view of an object reached through a link.** A view of an object
+   reached through a `shares`, `shares mut`, `thread_shared` or `weakref` link (a name opened from a link,
+   `if cam.target exists as p:`; a view made through a `shares mut` field, `t = ref mut ws[i].target`; a
+@@ -3930,9 +3998,11 @@
+      stored there on line 9 and the node it owns (`owns n`), and `p` reads that node
+      (`if w exists as p:`, line 10) and is used on line 12; use `p` before line 11"). A one-owner object
+      lent read-only cannot be ended while it is lent.
+-  2. A view of a `thread_shared` object reached through a `weakref` link holds one atomic count for its
+-     life, as Rust's `Weak::upgrade` does (`[WK-12]`): another thread may end the last owner at any
+-     moment, which no line of this thread can be checked against.
++  2. A view of a `thread_shared` object reached through a `weakref` link holds one count for its life,
++     as Rust's `Weak::upgrade` does (`[WK-12]`): another thread may end the last owner at any moment,
++     which no line of this thread can be checked against. On the thread that made the object, until it
++     is handed over (`[RC-4]` point 4), that count is a plain add to its home count; on another thread,
++     one atomic add to its away count.
+   Across a call that may change an object of the view's type (worked out from the functions it may run,
+   `[EFF-1]`), a read-only view of such an object does not live at all (`[BRW-1]`, `E3021`): a walk
+   across such a call keeps a `weakref` link and tests it at every step (`[WK-18]`). Where a call fits
+@@ -4063,10 +4133,12 @@
+   opening it with `exists as` (`[GRM-44]`): `if cam.target exists as p:` tests the target's header
+   (does the object still live?) and runs its block, with `p` a view of the object, when it does;
+   `else:` runs when the link holds nothing or its target is ended. Each opening is one test of the
+-  header, except a parent-link read proved by `[WK-17]`. For a `thread_shared` target the opening is a
+-  compare-exchange loop that adds one to the count only while the count is above zero, so an object
+-  another thread is ending is never brought back, and the view holds that count for its life
+-  (`[RC-5]` point 2).
++  header, except a parent-link read proved by `[WK-17]`. For a `thread_shared` target the opening adds
++  one owner only to a value that is not ended, so an object another thread is ending is never brought
++  back, and the view holds that count for its life (`[RC-5]` point 2): on the making thread, until the
++  value is handed over (`[RC-4]` point 4), it tests that the home and away counts add up to more than
++  zero and adds one to the home count; on any other thread it is one atomic add to the away count,
++  undone when the value is marked ended.
+ * `[WK-2]` *(changed in 0.9.15)* An object is ended when its count of owners reaches zero, whatever
+   `weakref` links remain; those links then find nothing when opened.
+ * `[WK-3]` *(changed in 0.9.15)* **An object is ended the moment its last owner lets it go, before its
+@@ -4075,7 +4147,9 @@
+   parent is being ended), finds it ended, so the `if ... exists as p:` block is skipped and the
+   half-ended object is never read, nor counted again. Ending the link itself (`this.parent = None`)
+   stays allowed: it only subtracts the link's weak count in the target's header, which that count keeps
+-  in memory.
++  in memory. A `thread_shared` value whose last owner ends on a thread that did not make it, and that
++  was not handed over, is ended at its making thread's next check point (`[RC-4]` point 5), and its
++  `drop` runs there.
+ * `[WK-13]` *(changed in 0.9.15)* A `weakref` link to a value held `shares` names the same block as its
+   owners.
+ * `[WK-14]` *(changed in 0.9.15)* Ember's `weakref` and `shares` never convert to or from C++'s
+@@ -4132,8 +4206,10 @@
+   no header test where `[WK-17]`'s condition 1 holds (its condition 2 holds there). **Where proof removes
+   part of it**: when the node's class has no `drop` method of its own and its objects are ones no other
+   thread can end (not `thread_shared`, and not reachable from a `thread_shared` value), the walk is
+-  placed in a **deferred-drop region**: an object whose last owner ends during the walk is set aside
+-  whole, it and everything it owns marked ended at once, and their memory is freed when the walk ends
++  placed in a **deferred-drop region**: an object whose last owner ends during the walk is ended at
++  once, as anywhere: the `drop`s of what it owns run then, in their usual order, so the program prints
++  what it would with no region, and it and everything it owns are marked ended; only their blocks'
++  memory waits, and is freed when the walk ends
+   (one add and one subtract of a per-thread counter per region, nothing per step). A link that lives
+   only inside the region and is given only objects that live at that moment (`up = weakref p` from the
+   view `p`) then holds no weak count, so each step pays only the header test; the first link of each
+@@ -4143,7 +4219,8 @@
+ * `[WK-5]` *(changed in 0.9.15)* **The graph of owners.** The compiler builds a graph of owner edges
+   among types, after generic substitution, over the whole program: a field holding a `shares`,
+   `shares mut` or `thread_shared` value, or a collection of them; a function value's state, from every
+-  function the program can put there (`[EFF-1]`); a channel end that its own queue can hold. `weakref`
++  function the program can put there (`[EFF-1]`); a channel end that its own queue can hold; a
++  `Retained[ForeignCallback]` token, to the callback's state, which it keeps for C (`[FFI-23]`). `weakref`
+   links, `sharedref mut` links, views and raw pointers are not owner edges. A `let` field, set when its
+   object is made, can name only objects that exist already, so it never closes a loop.
+ * `[WK-6]` *(changed in 0.9.15)* **A loop of owners is refused unless it is proved opened.** A line that
+@@ -4172,7 +4249,17 @@
+   `clear()` it always calls before its last owner ends). Refused: an opening that depends on what is only
+   known while running, and a loop handed out of reach (returned, stored where the compiler cannot follow
+   it). The same holds for loops through function values' state, `thread_shared` owners and channel
+-  ends. A `weakref` link back always works.
++  ends. A `weakref` link back always works. **When a line may close a loop.** A store of an owner
++  (`shares`, `shares mut`, `thread_shared`, a value that holds one, or a function value whose state owns
++  one) into a place of an object may close a loop when the stored value's type can reach the holder's
++  type through owner edges (`[WK-5]`); such a line is `E3032` unless the loop it closes is proved opened
++  (above) or one of these proves it closes none, and every implementation applies exactly these
++  (XVIII.4): (1) the stored value was made in this function, on the line or earlier, and since then no
++  owner has been stored into it or into anything it owns but values that themselves meet (1)
++  (`root.children.push(shares mut child)` with `child = shares mut Node(...)` made above it: a tree
++  built from the top down closes nothing); (2) the holder was made in this function and no owner of it
++  has been stored anywhere yet (only this function's locals hold it), so nothing the stored value
++  reaches can own it.
+ * `[WK-15]` *(new in 0.9.9)* *(changed in 0.9.15)* `ember run` and `ember test` in the `debug` profile
+   report the objects still alive when the program exits, by default; `--no-leak-check` turns the report
+   off. In Safe Ember nothing leaks through a loop of owners (`[WK-6]`) and nothing ends without its
+@@ -4216,7 +4303,7 @@
+ | `owns T` | one owner, in a heap block of its own | checked when compiling | when its owner ends | one owner, but it must be in a block of its own: recursion, a large value, `owns dyn I` |
+ | `class` | one owner unless a line says `shares`; a heap block of its own | checked when compiling | when its last owner ends | the thing has identity (`is`), subclasses, or `weakref` links to it |
+ | `shares T`, `shares mut T` | several owners on one thread, counted | checked when compiling | when its last owner ends | several places own one value; `shares mut` for owners that change it |
+-| `thread_shared T` | several owners on any threads, atomically counted | changed only through `Atomic`, a lock, a channel or a `guarded by` field | when its last owner ends | the same across threads (`[HEAP-10]`) |
++| `thread_shared T` | several owners on any threads, counted for several threads (`[RC-4]`) | changed only through `Atomic`, a lock, a channel or a `guarded by` field | when its last owner ends | the same across threads (`[HEAP-10]`) |
+ | `weakref T` | none | — | never | back links; observing without keeping alive |
+ | `sharedref mut T` | none: a view several holders share | checked when compiling | never | several holders change one object they do not own, on one thread (`[LT-46]`) |
+ | `Arena`, `FixedArena` | region | checked when compiling | all at once | many values with one lifetime: a frame, a parse |
+@@ -4270,8 +4357,9 @@
+   element stored inline) is `E2119` (`[WK-16]`).
+ * `[HEAP-10]` *(new in 0.9.9)* *(changed in 0.9.15)* A `shares` owner, and a `weakref` link to a value
+   held `shares`, never reach another thread: their counts are plain memory (`E7015`). Shared ownership
+-  across threads is `thread_shared T`, whose counts, the weak count included, change with atomic
+-  instructions; no owner changes a `thread_shared` value directly, only through an `Atomic`, a `Mutex`,
++  across threads is `thread_shared T`, whose counts are kept for several threads (its making thread's
++  owners with plain instructions, the other threads' owners and the weak count with atomic ones,
++  `[RC-4]`); no owner changes a `thread_shared` value directly, only through an `Atomic`, a `Mutex`,
+   an `RwLock`, a channel or a `guarded by` field under its lock (`E7014`, Part XI).
+ 
+ ## IX.2 Arenas
+@@ -4389,7 +4477,9 @@
+   after the value: `boss = Enemy(hp=500, mesh=owns Mesh(points=[0.0, 1.0]) using current)` takes the
+   mesh's block from the arena `current` by calling `current.allocate(…)`; a class object is made
+   `Enemy(hp=5) using current`, a list `[0.0, 1.0] using current`, and `Array.new_in(current)` makes an
+-  empty one. A manager with one instance (`Global`, `System`) needs none on the making line. Checked
++  empty one. A manager type with no fields has one instance (`Global`, `System`, and any such type a
++  program declares): it needs none on the making line, and its values keep no instance word; every
++  other manager type may have several instances. Checked
+   when compiling: the instance is of the kind the place names, and a value given to a `using A` place
+   was made in an instance of `A` (`E2020`: "`mesh` takes its memory from a `LevelArena`
+   (`mesh: owns Mesh using LevelArena`), and this `Mesh` comes from the built-in manager; say which
+@@ -4710,8 +4800,10 @@
+   function stored into that type anywhere in the program, a library's included. For an interface, `dyn`
+   or `virtual` method, it is every implementation and override the program has. A foreign function
+   pointer (`extern "C" fn`) contributes the effects its type declares, and all effects if none are
+-  declared. A contract written on a function type is checked against every function stored into it,
+-  with the contract's code. An interface method may declare contracts; its implementations MUST satisfy
++  declared. A contract is written on a function type above a `type` line that names one (verdict 106):
++  `@noalloc` above `type Handler = fn()`; every function stored into a place of that type is checked
++  against it, with the contract's code, and a call through such a place has no effect the contract
++  excludes. An interface method may declare contracts; its implementations MUST satisfy
+   them (`E4010`).
+ * `[EFF-3]` *(changed in 0.9.15)* An `extern` function carries the effects its contract declares
+   (`@ffi(effects=[…])`), `FFI` at least. What a call of one may change through the callbacks C keeps is
+@@ -4967,10 +5059,11 @@
+ | A second pass of a loop, then `retain` | conditionally fused | a loop that queues removals and the `retain` that follows it are fused into one pass where nothing between them reads the list; otherwise two passes (1.71x of one-pass C as written, 1.00x fused) |
+ | Floor `//` and `%` on signed integers | guaranteed present, small | one compare-and-adjust over C's truncation; free for a positive constant divisor; `div_trunc`/`rem_trunc` give C's |
+ | Division-by-zero and shift-range checks | conditionally elided | removed for constants, `NonZero` divisors and range facts |
+-| Owner count +1 / -1 | guaranteed present | only where a line makes or ends a `shares`, `shares mut` or `thread_shared` owner (`[THR-1]`), and nowhere else; a plain add for `shares`, an atomic one for `thread_shared`; each +1 is checked against the count's limit, one compare and a branch never taken (`[COST-6]`) |
++| Owner count +1 / -1 | guaranteed present | only where a line makes or ends a `shares`, `shares mut` or `thread_shared` owner (`[THR-1]`), and nowhere else; a plain add for `shares`, and for `thread_shared` on the thread that made the value until it is handed over (`[RC-4]`); an atomic one on other threads; each +1 is checked against the count's limit, one compare and a branch never taken (`[COST-6]`) |
++| A `thread_shared` value's two counts | guaranteed present | a 32-byte header, 16 bytes more than one atomic count's (`[OBJ-1]`); a test of the thread's queue at each check point (`[RC-4]`), and the queue's work for a value whose last owner ends on another thread without a hand-over. Measured against one atomic count (`tasks/96/redesign/measure-0.9.15/brc/REPORT.md`, 15 runs per cell): a thread's own values 25% faster on 1 to 8 threads, the camera program 89 ms against 544 ms; reading another thread's values 3% slower on 1 thread and 17% to 28% faster on 2 to 8; one thread handing copies to all 0.93x to 1.05x; a random mix 9% to 13% slower; a pipeline (made on one thread, ended on the next) 27% slower on 1 thread and the same on 2 to 8 |
+ | `weakref` link made, given another target, or ended | guaranteed present | one add or one subtract of the target's weak count, the add checked against its limit; atomic for a `thread_shared` target; a parent link pays it too, one add when `child.parent = weakref this` runs and one subtract when the link changes or the child ends |
+ | Opening a `weakref` link (`if w exists as p:`) | conditionally elided | one test of the target's header (during the target's `drop` the object is already ended, and the same test finds it gone); a parent-link read the compiler proves (Part VIII) is a load and a test for no link |
+-| A view of a `thread_shared` object opened from a `weakref` link | guaranteed present | one atomic count held for the view's life, since another thread may end the last owner at any moment |
++| A view of a `thread_shared` object opened from a `weakref` link | guaranteed present | one count held for the view's life, since another thread may end the last owner at any moment: a plain add on the thread that made the object until it is handed over, an atomic one elsewhere (`[RC-5]` point 2) |
+ | A walk up a tree across a call that may change nodes | guaranteed present | per step, one test of the node's header and one move of the link's weak count (a subtract and an add); where the node's class has no `drop` of its own and no other thread can end its nodes, the walk runs in a deferred-drop region and the count moves go, leaving the header test; a walk whose visit function changes no node keeps its views and pays nothing per step |
+ | A view of an object reached through a link; a `sharedref mut` link | not observable | checked when compiling: no count and no deferred-drop region around the view |
+ | Stale-handle check | guaranteed present, **every profile** | the guarantee is the check; `get_unchecked` in `unsafe` |
+@@ -5113,9 +5206,9 @@
+   written before a new value (`st = thread_shared Stats()`) or on a value already `thread_shared`
+   (`fn() thread_shared st:`), and on a value made otherwise it is `E7017` ("`names` is
+   `share_and_keep`'s own object, which it may change; to share it between threads, create it shared:
+-  `names = thread_shared Names()`"). A `thread_shared` value lives until its last owner ends. Both its
+-  counts, of owners and of `weakref` links, are atomic, and each is compared with its limit before it
+-  grows (Part VIII). Three rules keep it safe:
++  `names = thread_shared Names()`"). A `thread_shared` value lives until its last owner ends. Its
++  owners are counted in two numbers, its making thread's and the other threads' (atomic), and its weak
++  count is atomic (`[RC-4]`); each is compared with its limit before it grows (Part VIII). Three rules keep it safe:
+   * **no owner changes a `thread_shared` value directly** (`E7014`: "`names` is shared between threads
+     (line 5), so no owner changes it directly, and line 6 pushes to its list; fill the list where the
+     object is made: write `names = thread_shared Names(items=[copy of s])` instead of lines 5 and 6");
+@@ -5148,8 +5241,8 @@
+   (`E7015`, whose message gives the words to write: the value made `thread_shared` from the start, or a
+   copy). **Making, ending or opening a `weakref` link touches its target's header** (its weak count, and
+   the test that it still lives): in a scoped task, a job, or any function that may run on another thread
+-  than its target's owner, it is allowed only for a `thread_shared` target, whose counts are atomic and
+-  whose opened view holds an atomic count (`E7015`: "`players[0]` counts its links without atomics, and
++  than its target's owner, it is allowed only for a `thread_shared` target, whose counts are kept for
++  several threads and whose opened view holds a count (`[RC-4]`, `[RC-5]` point 2; `E7015`: "`players[0]` counts its links without atomics, and
+   the task on line 9 makes one too; make the links after the scope, or make the player
+   `thread_shared`"). An object handed whole to another thread while a `weakref` link on this thread
+   points at it is `E7015`, since this thread could open the link while the other thread ends the object
+@@ -5158,7 +5251,7 @@
+   write `h = thread.spawn(fn() copy of names: names.items.len())` in place of line 16"). So an object
+   that stays on one thread needs no atomic count.
+ * `[THR-7]` *(changed in 0.9.15)* `thread_shared` means exactly: the value may have owners on several
+-  threads, its counts are atomic, and no owner changes it directly (`[THR-1]`). It does not make a method
++  threads, its counts are kept for several threads (`[RC-4]`), and no owner changes it directly (`[THR-1]`). It does not make a method
+   atomic: two operations on `Atomic` fields, or a read and a store of one
+   (`if n > this.longest.load(): this.longest.store(n)`), are two steps another thread may come between;
+   a read and a change that must stay together are made under one lock (`[THR-18]`). A diagnostic MUST
+@@ -5174,7 +5267,7 @@
+     lock, which the thread that touches it holds (`[THR-3]`, `[THR-18]`);
+   * a value handed over to the other thread, which the giver no longer has, and from which no one-thread
+     value is reachable (`[THR-2]`, `[THR-8]`);
+-  * a `thread_shared` value: no owner changes it directly, and its counts are atomic (`[THR-1]`);
++  * a `thread_shared` value: no owner changes it directly, and its counts are kept for several threads (`[THR-1]`, `[RC-4]`);
+   * a module variable: a `static` never changes (`[STA-1]`), and a `static mut` is reached only by the
+     main thread and its scoped tasks, or is `guarded by` a lock (`[THR-20]`);
+   * a `sharedref mut` target: a scoped task changes it directly only where neither another task nor the
+@@ -5419,7 +5512,10 @@
+   `fn spawn(owns f: fn() -> R) -> ScopedJoinHandle[R]:`. A task needs no capture words but for the
+   loop's own variable and a local of one round (`[THR-17]`): it uses the caller's real variables, which
+   outlive it. What each task changes and reads is worked out from its body and every function it may run
+-  (`[EFF-24]`), and is checked against the other tasks and the parent until the join: two of them
++  (`[EFF-24]`), and is checked against the other tasks and the parent until the task's join: `h.join()`
++  on its handle, or the end of the `with scope:` block for a task not joined before it (verdict 104).
++  After `h.join()` the parent may change or read what that task used, in the same block
++  (`counts[0] += 1` after `h.join()`), checked only against the tasks not yet joined: two of them
+   changing one place, or one reading a place another changes, is `E7007`, other than by a reduction
+   (`[THR-21]`), under a lock, or through an `Atomic`. A task that reads a place before changing it needs
+   the lock, which keeps the read and the change together ("two tasks change `stats.total` (line 19), and
+@@ -5439,10 +5535,14 @@
+   links to one object included, is a reduction: each task adds into a private accumulator, and the
+   accumulators are combined into the place at the join, in spawn order. Nothing reads the place before
+   the join (`E7007`: "tasks add their parts to `total`, which is known only once the `with` block (lines
+-  11 to 14) ends; read it after the block: remove line 14 and write `println(total)` above line 15"). A
+-  whole-number total is always the one adding one by one gives (`a.target.hp -= 1` and
+-  `b.target.hp -= 2` from two tasks, `a` and `b` linking one player whose `hp` is 10, leave 7 every
+-  time); a decimal total may differ from it in the last digit (`for part in [[0.1], [0.2, 0.3]]:` with
++  11 to 14) ends; read it after the block: remove line 14 and write `println(total)` above line 15").
++  Each task's accumulator has the place's type, and its operations are checked as the place's are, and
++  so are the combining operations at the join (verdict 105): a whole-number total is the one adding one
++  by one gives whenever no task's own total overflows (`a.target.hp -= 1` and `b.target.hp -= 2` from
++  two tasks, `a` and `b` linking one player whose `hp` is 10, leave 7 every time), and a task whose own
++  total overflows stops the program there (`[TYP-8]`), even where adding one by one would not
++  (`[[-100], [100, 100]]` summed into an `i8` by two tasks stops in the second, at 100 + 100, where
++  adding one by one gives 100); a decimal total may differ from it in the last digit (`for part in [[0.1], [0.2, 0.3]]:` with
+   `scope.spawn(fn() copy of part: for x in part: total += x)` gives `0.6`, where adding one by one gives
+   `0.6000000000000001`), and is the same on every run, so it is not `Nondet` (`[DET-2]`). A plain
+   assignment from a task (`a.target.hp = 5`) and a task that reads the current value
+@@ -5502,7 +5602,10 @@
+   after the loop; inside the body each chunk has its own copy. Each chunk reduces its iterations left
+   to right, and the chunk results are then combined in chunk order, so the result is the same on
+   every machine (`[PAR-5]`); for floats it can differ from the serial left-to-right sum, which is
+-  why a float reduction must be declared.
++  why a float reduction must be declared. A whole-number reduction's chunk results have the variable's
++  type and stop the program on overflow, as `[THR-21]`'s task totals do (verdict 105): the result is the
++  serial one whenever no chunk's own total overflows, and since chunk boundaries depend only on the trip
++  count and `chunk`, whether it stops does not depend on the machine.
+ * `[PAR-4]` *(changed in 0.9.9)* A `@parallel` loop has the effects `Sync` and `Block` (it waits for
+   its chunks) and not `Alloc`: its chunk descriptors live in the calling frame and the job queues have
+   a fixed capacity; when they are full the calling thread runs the chunk itself.
+@@ -5754,10 +5857,12 @@
+   (`basic_sparse_set` with `basic_storage`); removal is swap-and-pop. A pool is one contiguous array, not
+   paged: no Ember name can keep a view into a pool across a change that may move it (§VII), so a stable
+   address is never needed, and one array walks at least as fast. A component type's identity is the
+-  64-bit FNV-1a hash of its fully qualified name (`ecs.type_hash[T]()`), stable across builds and
+-  modules. The registry keeps its pools as `pools: Map[u64, owns dyn AnyPool]`: each pool has one owner,
++  64-bit FNV-1a hash of its fully qualified name, which `std.core.type_name[T]()` gives (a function the
++  compiler knows, as Rust's `std::any::type_name`): `ecs.type_hash[T]()`, stable across builds and
++  modules. The registry keeps its pools as `pools: Map[u64, owns dyn AnyStorage]`: each pool has one owner,
+   with no count, and `reg.storage[T]()` reaches its own pool as a place,
+-  `pool = ref mut cast this.pools[ecs.type_hash[T]()] as Pool[T]` (`[TYP-44]`, `[DSP-4]`).
++  `pool = ref mut cast this.pools[ecs.type_hash[T]()] as Storage[T]` (`[TYP-44]`, `[DSP-4]`); the pool
++  type is `Storage[T]`, EnTT's `storage<T>` (`std.collections.Pool[T]` is the handle pool, `[HND-1]`).
+ * `[ECS-3]` *(changed in 0.9.15)* **The registry.** `Registry` (EnTT's `entt::registry`) is a class:
+   `create() -> Entity` and `create_at(hint: Entity) -> Entity`; `destroy(e) -> u32` (the entity's next
+   generation); `valid(e)`, `current(e)`; `clear()` and `clear_of[T]()`; `emplace(e, owns value: T) -> ref
+@@ -6139,7 +6244,7 @@
+ | Module | Contents |
+ |---|---|
+ | prelude | the names of `[MOD-5]` |
+-| `std.core` | scalars, `Option`, `Result`, `AnyError`, `Ordering`, ranges, `NonZero`, the standard interfaces (§IV.8), iterator adapters |
++| `std.core` | scalars, `Option`, `Result`, `AnyError`, `Ordering`, ranges, `NonZero`, the standard interfaces (§IV.8), iterator adapters, `type_name[T]()` (a type's fully qualified name, which the compiler knows) |
+ | `std.mem` | `size_of`, `align_of`, `offset_of`, `swap`, `replace`, `take`, `drop`, `keep_alive`, `MaybeUninit`, `transmute`, `zeroed`, `copy`, `copy_nonoverlapping`, `Volatile` (`[STD-29]`), `Layout`, `Allocator`, `Global`, `ptr`, `check_disjoint`, `assert_disjoint`, `assume_disjoint` (Part IX) |
+ | `std.cell` | `Cell`, `UnsafeCell` |
+ | `std.collections` | `Array`, `Map`, `Set`, `Deque`, `SmallArray`, `BitSet`, `FixedArray`, `FixedString`, `RingBuffer`, `Pool`, `Handle`, `SoA`, `ArenaArray`, `ArenaMap`, `ArenaSoA`, `DefaultHasher`, `RandomState`, `Hasher`, `CapacityError`; the iterator types `SpanIter`, `MutSpanIter`, `SpanChunks`, `MutSpanChunks`, `ArenaArrayIter`, `ArenaArrayIterMut`, `ArenaMapIter` (public, not in the prelude) |
+@@ -6867,7 +6972,7 @@
+ 
+   | Axis | Words | Ember type produced |
+   |---|---|---|
+-  | ownership | `borrowed` (valid for the call), `owned` (callee takes it), `returns_owned(destructor=f)`, `retained` (callee keeps the pointer after the call) | a parameter that views the caller's value for the call (`x: T`, `Span[T]`; `ref mut x: T`, `MutSpan[T]` with `exclusive`); an `owns x: owns T` parameter, whose argument is handed over and which Ember then never frees; an `owns T` result, whose end calls `f`; for a callback, `callback(retained)` (`[FFI-21]`), and on any other pointer no safe type, since C keeps Ember memory only when it is handed over (`owned`) or given with `into_raw()` (`[FFI-23]`, `[FFI-54]`): the call stays `unsafe`, with a raw pointer |
++  | ownership | `borrowed` (valid for the call), `owns` (callee takes it; verdict 102), `returns_owned(destructor=f)`, `retained` (callee keeps the pointer after the call) | a parameter that views the caller's value for the call (`x: T`, `Span[T]`; `ref mut x: T`, `MutSpan[T]` with `exclusive`); an `owns x: owns T` parameter, whose argument is handed over and which Ember then never frees; an `owns T` result, whose end calls `f`; for a callback, `callback(retained)` (`[FFI-21]`), and on any other pointer no safe type, since C keeps Ember memory only when it is handed over (`owns`) or given with `into_raw()` (`[FFI-23]`, `[FFI-54]`): the call stays `unsafe`, with a raw pointer |
+   | count | `one`, `count(n)` (as many elements as parameter `n`, which then leaves the callable signature; a hand declaration writes its ABI witness under `[FFI-10]`, ODR-074; a result needs an input span sharing `n`, ODR-077; nullable input carriers follow ODR-079), `nul_terminated`, `fixed(N)`, `inout_count(p)` (`[FFI-11b]`) | one `T` (a parameter `x: T`, a result `ref T`), `Span[T]`/`MutSpan[T]`, `CStrView`, `[T; N]` (a parameter `x: [T; N]`, a result `ref [T; N]`) |
+   | nullability | `nullable` | `Option[…]` |
+   | lifetime (results) | `from(this)`, `from(p)`, `from(static)` | a view into the receiver, into `p`, or into what lives for the whole program (`[LT-1a]`, `[LT-3]`) |
+@@ -6939,7 +7044,10 @@
+   ownership of a foreign object, reading its destructor from the contract of `T`'s declaration,
+   `@ffi(destroys(f))` on `type T`; the `owns T` value's end calls `f` once. Where the contract already
+   records the transfer (`returns_owned(destructor=f)`), the import returns an `owns T` directly and
+-  no `adopt` is written.
++  no `adopt` is written. A foreign type has one destructor: every `returns_owned(destructor=f)` giving
++  an `owns T` and `T`'s `@ffi(destroys(f))` name the same `f`, and two different ones are `E5002`
++  ("`Widget` is ended by `widget_free` (line 3), and line 12 says `widget_destroy`; a foreign type has
++  one destructor"), so an `owns T` foreign value stays one word.
+ * `[FFI-36b]` Adopting a type whose overlay says `adopt = false` is `E5052`. Adopting one live object
+   twice is caught at run time in every profile (a panic naming both sites) and, when both calls are on
+   one local in one function, at compile time (`E5068`).
+@@ -7064,7 +7172,8 @@
+   for a callback: the user data it is given is a tagged number, the callback's slot in a table that
+   never moves in the low 48 bits and the slot's generation in the top 16, which are never all zero, so
+   the number is no user-space address and a C library that wrongly writes through it faults before
+-  writing anything. Each call through the trampoline checks, in every profile, that the slot is inside
++  writing anything. On a 32-bit target the slot is the low 16 bits and the generation the top 16, and
++  the number may be a user-space address. Each call through the trampoline checks, in every profile, that the slot is inside
+   the table, then the generation and the function's type in one compare, then, for a
+   `threads(creator)` or `threads(main)` callback, the calling thread; a `callback(once)` slot carries a
+   used-up mark. A failed check stops the program before the callback's state is read, with these
+@@ -7090,13 +7199,13 @@
+   Ember's side while C holds its tagged number, and its end unregisters the callback through
+   `destroys(f)` and then ends the block (`[FFI-53]` for a callback that ends its own token). `Retained`
+   gives no object away and keeps none for C: an Ember value C keeps is handed to a parameter whose
+-  contract says `owned` (the name ends and Ember frees nothing, `[FFI-11]`) or, for a C function whose
++  contract says `owns` (the name ends and Ember frees nothing, `[FFI-11]`) or, for a C function whose
+   declaration cannot say so, given with `into_raw()` inside `unsafe:` (`[FFI-54]`); C gives a foreign
+   object back through `adopt` inside `unsafe:` (`[FFI-36a]`). An `ObjectPtr[C]` is the address of a
+   class object, which `into_raw()` gives, with no count of its own (to C, one pointer): `Copy`, equal
+   when it is the address of the same object.
+ * `[FFI-54]` *(new in 0.9.15)* **Giving an object to C.** A C function declared as keeping an object
+-  (`@ffi(param(widget, owned, one))` with `owns widget: owns Widget`) is given one by an ordinary
++  (`@ffi(param(widget, owns, one))` with `owns widget: owns Widget`) is given one by an ordinary
+   hand-over, `widget_take(first)`: the name ends and Ember frees nothing, with no word. For a C function
+   whose declaration cannot say so (a plain pointer, `fn set_user_data(p: *mut Widget)`, or a function
+   with `...`), `w.into_raw()` gives the address of a value Ember holds alone in its own block, an
+@@ -7114,7 +7223,7 @@
+       fn widget_free(widget: *mut Widget)
+       @ffi(result(returns_owned(destructor=widget_free), one))
+       safe fn widget_new(id: i32) -> owns Widget
+-      @ffi(param(widget, owned, one))
++      @ffi(param(widget, owns, one))
+       safe fn widget_take(owns widget: owns Widget)
+       fn set_user_data(p: *mut Widget)
+ 
+@@ -7234,7 +7343,8 @@
+ * `[FFI-28]` *(changed in 0.9.10)* A package built as `kind = "staticlib"` produces a library and
+   header to link into a C or C++ program; `kind = "cdylib"` a shared library exporting only its
+   `@export` symbols, its `@export_table`s, `ember_module_init`, `ember_module_shutdown`, and the
+-  marker `ember_module_protocol_vN`, `N` the module protocol's version (`[ABI-1]`).
++  marker `ember_module_protocol_vN`, `N` the module protocol's version (`[ABI-1]`), and the functions
++  its header declares for the `thread_shared` class handles its exports give (`[BLD-FFI-5a]`).
+ * `[FFI-31]` *(changed in 0.9.10)* A `cdylib` links its own copy of the runtime. Before calling into it
+   the host looks up the marker of the module protocol version it was built for and refuses a module
+   without it; it calls `ember_module_init` before using the module and `ember_module_shutdown` before
+@@ -7326,7 +7436,10 @@
+   `if w exists as p:`, `cast x if D` and `as?` to `if x is D as d:`, `as!` to `cast x as D`,
+   `@borrows(p)` to `from p`, `@static_safe` to `@no_alias_checks`, `@fp(contract)` to
+   `@fp(allow_fma)`, `assert_disjoint` to `check_disjoint` and `assert_disjoint_or_panic` to
+-  `assert_disjoint`. It does not rewrite what needs a choice the source does not say: `Shared[T]`
++  `assert_disjoint`, a function's type parameters in brackets after its name to a line of their own
++  above it (`fn f[T: Add](x: T)` to `[T: Add]` above `fn f(x: T)`, `[GRM-40]`), an `x: ref T`
++  parameter to `x: T`, a `T: Sync` bound to `T: ThreadShared`, and `for x in xs.iter_mut():` to
++  `for ref mut x in xs:`. It does not rewrite what needs a choice the source does not say: `Shared[T]`
+   (`shares T` or `shares mut T`), `RefCell`, `SyncShared` and `@sync` classes (`thread_shared` with
+   `guarded by` fields or `Atomic`), `owned fn` (the capture words), and `mem.forget`.
+ * `[CLI-21]` *(new in 0.9.9)* `ember run --interp` runs a program on the compile-time evaluator instead
+@@ -7990,7 +8103,7 @@
+ | `E0101` | unclosed delimiter or literal | `[LEX-6]` |
+ | `E0102` | membership test chained (`a in b in c`) | `[GRM-23]` |
+ | `E0103` | match arms mix statement and expression form | `[GRM-10]` |
+-| `E0104` | attribute or construct not admitted here, among them an attribute that is gone, with the one to write (`@sync`, `@static_safe`, `@no_runtime_checks`, `@fp(contract)`, `@borrows`) | `[ATT-1]`, `[PHIL-12]` |
++| `E0104` | attribute or construct not admitted here, among them an attribute that is gone, with the one to write (`@sync`, `@static_safe`, `@no_runtime_checks`, `@fp(contract)`, `@borrows`, `@component`) | `[ATT-1]`, `[PHIL-12]` |
+ | `E0105` | `;` is not a statement separator | `[GRM-18]` |
+ | `E0106` | a multi-statement closure cannot be written inside brackets | `[GRM-17]` |
+ | `E0107` | a jump expression may not be an operand | `[GRM-16]` |
+@@ -8060,6 +8173,7 @@
+ | `E2119` | a `weakref` of a part (a field, an element stored inline), whose target does not live on its own | `[WK-16]` |
+ | `E2120` | inherent extension of a type from another package | `[IFC-2]` |
+ | `E2121` | an implementation outside the packages that may write it | `[TYP-20]` |
++| `E2122` | `shares`, `shares mut` or `thread_shared` made of a place that has one owner and is not a local of this function (a list element, a field, a plain parameter) | `[RC-1]`, `[OWN-13]` |
+ | `E2123` | a value made for a place that owns it alone (an `owns` field, an `Option[owns T]`, a list of `owns` values), at first or later, without `owns` on the line that makes it | `[OWN-10]`, `[GRM-15]`, `[TYP-46]` |
+ | `E2130` | a `const` of a type that owns heap memory; use a `static` | `[TYP-1]` |
+ | `E2131` | array length must be a constant | `[CT-1]` |
+@@ -8102,7 +8216,7 @@
+ | `E3020` | a collection (a list, a map, a set or a string) changed while it is walked, whatever the change (an element written, a value under a key replaced, anything added or removed), by a `for` loop or by a generator that walks it and will still be used; through its own name, or through a call that may change it (a call through a function value or a library call by the functions it may run, a `spawn` by what its thread changes, a scoped task started in the walk, a foreign call by what the callbacks C keeps change, the end of an object by what its `drop` changes); a removal inside a counting loop | `[BRW-18]`, `[CTL-2]` |
+ | `E3021` | a read and a change of one place overlap: a change of what a read-only name reads while it is still used; a `ref mut` name's place read through another name while it is still used; an argument that may reach into a changeable argument of the same call | `[BRW-1]`, `[BRW-11]` |
+ | `E3022` | one place changed through two names: two changeable arguments of one call naming one place, other than one whole variable proved when compiling (a function value that changes it counts as one); a function value stored in a place that a variable it changes owns; a `ref mut` name's place changed through another name while it is still used, a reshape of a `ref mut` address included | `[BRW-1]`, `[BRW-11]` |
+-| `E3023` | a change the name does not allow: a change through a name that only reads (a plain parameter; a loop, pattern, opened or part name; a plain name holding a `MutSpan`; a value made when compiling); `=` on a name that keeps its place for its scope (a parameter; a loop, pattern or opened name, one opened `exists as copy of` excepted; a `const ref mut` name given another ref); a read-only `ref` given to a `ref mut` name; a method that may change its object, or a stored function that may change its own state, called through a read-only name; an owner that may change made from one that only reads (a plain parameter of a `shares mut` type included) | `[BRW-14]`, `[BRW-15]` |
++| `E3023` | a change the name does not allow: a change through a name that only reads (a plain parameter; a loop, pattern, opened or part name; a plain name holding a `MutSpan`; a value made when compiling); `=` on a name that keeps its place for its scope (a parameter; a loop, pattern or opened name, one opened `exists as copy of` excepted; a `const ref mut` name given another ref); a read-only `ref` given to a `ref mut` name; a method that may change its object, or a stored function that may change its own state, called through a read-only name; an owner that may change made from one that only reads (a plain parameter of a `shares mut` type included); `=` on a `static` (`HOOK = v`) | `[BRW-14]`, `[BRW-15]`, `[STA-1]` |
+ | `E3024` | a struct field would point into another field of the same struct (shape B5) | `[TYP-15]` |
+ | `E3026` | a function value that may outlive a place it uses and does not own: a returned function that changes its maker's local without `owns`; a task or thread given a loop's name with no word, or with `ref` where it may outlive the element | `[CLO-4]` |
+ | `E3027` | `ref mut` before something this function may not change: an argument, a loop or pattern name over something it only reads, or a place reached through a read-only name | `[FN-2a]` |
+@@ -8132,7 +8246,7 @@
+ | `E4070` | `@deterministic` function reaches a nondeterministic operation | `[DET-1]` |
+ | `E4072` | `@fastmath` or `@fp(allow_fma)` inside `@deterministic` | `[DET-5]` |
+ | `E5001` | imported type layout does not match | `[FFI-5]` |
+-| `E5002` | foreign call requires `unsafe`: its contract is incomplete, or `safe fn` on a function whose contract is | `[FFI-2]`, `[FFI-10]` |
++| `E5002` | a foreign declaration whose contract cannot stand: `safe fn` on a function whose contract is incomplete, or two destructors for one foreign type (a call of a function without a verified contract outside `unsafe` is `E3100`) | `[FFI-2]`, `[FFI-10]`, `[FFI-36a]` |
+ | `E5010` | overlay does not match the C declaration; an overlay applied to a header other than the one it was written for (its hash differs) | `[FFI-12]`, `[FFI-55]` |
+ | `E5011` | one C identity imported with two different layouts | `[FFI-30]` |
+ | `E5012` | pointer contract has no count | `[FFI-11]` |
+@@ -8501,7 +8615,7 @@
+   a call that may change an object of its type a read-only view of one does not live (`E3021`), so a
+   walk across such a call keeps a `weakref` link and tests it at every step. Nothing is kept alive
+   while the program runs for such a view, except a view of a `thread_shared` object opened from a
+-  `weakref` link, which holds one atomic count for its life (`[RT-10]`).
++  `weakref` link, which holds one count for its life (`[RC-5]` point 2, `[RT-10]`).
+ * `[BCK-8]` *(new in 0.9.15)* **Summaries.** For each function the compiler works out a summary from
+   its body: what it may change, read and end, each with the chain of calls that does it, which
+   messages name; which elements of a list it touches (a list parameter it only adds to, `push` or
+@@ -8541,17 +8655,20 @@
+   `weakref` links may reach, are 32-bit numbers in its header. Before each +1 of a one-thread count it
+   is compared with its maximum, and at the maximum the program stops: "too many owners of a `Player`
+   (4,294,967,295)", and for the weak count "too many `weakref` links to a `Player` (4,294,967,295)";
+-  one compare per added owner or link, no extra memory. A `thread_shared` value's count is raised by
+-  one atomic add (`[RT-10]`), and the program stops when the value before the add is at or above
++  one compare per added owner or link, no extra memory. A `thread_shared` value's home count
++  (`[RC-4]`) is checked as a one-thread count is; its away count and its weak count are raised by one
++  atomic add (`[RT-10]`), and the program stops when the value before the add is at or above
+   2,147,483,647, half the range, so that no number of threads adding at once can carry it past its
+   maximum: "too many owners of a `Log` (2,147,483,647)", and the same for its weak count. The two test
+   programs of these stops are compiled with an 8-bit count in each object (the test header
+   `#$ count_bits: 8`), stored and compared as the real one is, so 255 owners or links of a one-thread
+   value reach the limit and the next stops the program ("too many owners of a `Player` (255)"; 127
+   for a `thread_shared` value); every other program keeps the 32-bit count.
+-* `[RT-8]` *(changed in 0.9.15)* Both counts of a `thread_shared` value, its owner count and its weak
+-  count, are atomic: an owner or a link made is a relaxed increment, one ended an acquire-release
+-  decrement. A `shares` value's counts are plain adds, since no `shares` value reaches another thread.
++* `[RT-8]` *(changed in 0.9.15)* A `thread_shared` value's away count and its weak count (`[RC-4]`)
++  are atomic: an owner or a link made is a relaxed increment, one ended an acquire-release decrement;
++  putting a value in its making thread's queue is a release, and emptying the queue an acquire. Its home
++  count is plain: only its making thread reads or writes it. A `shares` value's counts are plain adds,
++  since no `shares` value reaches another thread.
+   Publishing a new `thread_shared` value to another thread is a release, and taking it there an
+   acquire.
+ * `[RT-10]` *(new in 0.9.9)* *(changed in 0.9.15)* **Counting is inline.** A count changes only where a
+@@ -8559,11 +8676,17 @@
+   view of a `thread_shared` object is opened from a `weakref` link; an object with one owner is never
+   counted. The fast path of a +1 (the add and its limit test, `[RT-7]`) and of a -1 (the subtract and
+   a test for zero) is defined in `ember_rt.h` and inlined into the caller; only ending the object is
+-  out of line. Making an owner of a `thread_shared` value, or a `weakref` link to one, is one atomic
+-  `fetch_add` followed by the limit test on the value it returns, never a compare-exchange loop.
+-  Opening a `weakref` link to a `thread_shared` object is the one +1 that may find the owner count at
+-  zero: it is a compare-exchange that then fails and finds the object ended, never raising a count
+-  from zero (ODR-060). Opening a link to a one-thread object only tests its header. The subtract that
++  out of line. On a `thread_shared` value's making thread, until the value is handed over (`[RC-4]`
++  point 4), making or ending an owner is a plain add or subtract of its home count, inlined as a
++  one-thread count's is. On another thread, and after the hand-over, making an owner, or a `weakref`
++  link to the value, is one atomic `fetch_add` followed by the limit test on the value it returns, and
++  ending one is one atomic subtract, never a compare-exchange loop; a subtract that takes the away
++  count below zero puts the value in its making thread's queue in the same atomic step (out of line, as
++  are the hand-over and the queue's emptying at a check point). Opening a `weakref` link to a
++  `thread_shared` object is the one +1 that may find the object ended: on its making thread it tests
++  that the two counts add up to more than zero before adding to the home count; on another thread its
++  atomic add finds the ended mark and is undone; neither ever raises an ended object's count
++  (ODR-060). Opening a link to a one-thread object only tests its header. The subtract that
+   reaches zero marks the object ended before its `drop` runs, so a `weakref` link opened during the
+   `drop` finds it ended.
+ * `[RT-11]` *(new in 0.9.9)* Allocation statistics are kept per thread, or only in `debug`; no
+@@ -9085,7 +9208,7 @@
+ * `[BLD-FFI-5a]` *(changed in 0.9.15)* With the C++ header, an exported function may take or return a
+   `thread_shared` value of a class, the one owning Ember value that crosses (`[FFI-31b]`): the header
+   presents it as a copyable handle class of the same name with the class's `pub` methods, each copy
+-  one more owner on the value's atomic count (`[RT-8]`) and each end one fewer, its limit checked as an
++  one more owner on the value's away count (`[RC-4]`, `[RT-8]`) and each end one fewer, its limit checked as an
+   Ember owner's is (`[RT-7]`). No other Ember value has a C++ handle, so C++ code never counts a
+   one-thread value, from one thread or from two.
+ 
+@@ -9187,7 +9310,7 @@
+   argument types and runs it at `super.init(…)` (`[CLS-11]`); a base with no default constructor and
+   no declared `init` is `E5058`.
+ * `[FFI-39c]` *(changed in 0.9.10)* *(changed in 0.9.15)* A C++ parameter that keeps the pointer it is
+-  given (contracted `owned` in the overlay) takes the object over: its class is declared
++  given (contracted `owns` in the overlay) takes the object over: its class is declared
+   `@ffi(trampoline, owner="foreign")` (`[FFI-17d]`), the argument is handed over
+   (`panel.add_child(b)`: `b` ends, upcast to the C++ base), and C++'s `delete` ends the object later.
+   For a C++ function whose declaration cannot say so (a raw pointer it keeps), `b.into_raw()` inside
+@@ -9608,7 +9731,7 @@
+ | **`static fn`** | a function in a type body that has no object (`this`), called on the type: `Counter.starting_at(5)` |
+ | **summary** | what the compiler works out from a function's code, with no word written: what it may change, read and end, through which chain of calls, which locks it may take, and which view parameters it uses after a line that may end what they view; kept in a package's interface file |
+ | **`this`** | inside a method, the object the method was called on; a method does not list it among its parameters |
+-| **`thread_shared`** | a value with several owners on any threads, counted atomically, changed only through `Atomic`, a lock, a channel or `guarded by` fields; `thread_shared fn()` is a function type whose functions any thread may run |
++| **`thread_shared`** | a value with several owners on any threads, counted in two numbers (its making thread's owners, and the other threads' with atomic instructions, `[RC-4]`), changed only through `Atomic`, a lock, a channel or `guarded by` fields; `thread_shared fn()` is a function type whose functions any thread may run |
+ | **trampoline subclass** | the generated C++ subclass through which an Ember class extends a C++ base (`[FFI-39]`) |
+ | **unseen code** | code whose body the compiler cannot read, which is only a foreign (C) function: a call of one counts as possibly running every callback C keeps, unless its declaration says `@ffi(no_callbacks)` |
+ | **view** | a name or value that points into a place someone else owns and may not outlive it: `ref T`, `ref mut T`, `sharedref mut T`, `Span[T]`, `MutSpan[T]`, `StrView`, a plain parameter, loop or pattern name, a name opened with `exists as` or named by a kind test, a name for a part (`[TYP-34]`) |
+@@ -11852,6 +11975,75 @@
+ | `[WK-16]` | added |
+ | `[WK-17]` | added |
+ | `[WK-18]` | added |
++
++## H.42 Changes in 0.9.15_Hardened_2 (from 0.9.15_Hardened_1)
++
++**0.9.15_Hardened_2** writes in the owner's verdicts 101 to 106 and the lead's rulings for the compiler
++work (`tasks/96/redesign/JOB.md`; `tasks/96/redesign/compiler-0.9.15/decisions.md`, sections 4 to 6):
++
++* Verdict 101: a `thread_shared` value's owners are counted in two numbers, its making thread's own
++  (plain) and the other threads' (atomic), with a hand-over to the making thread through its queue and
++  the compiler's check points, and an immediate hand-over where an owner is stored where other threads
++  can reach it (biased counting; `[OBJ-1]`'s 32-byte header, `[RC-4]`, `[RC-5]`, `[WK-3]`, `[WK-12]`,
++  `[RT-7]`, `[RT-8]`, `[RT-10]`, `[COST-3]`'s measured row).
++* Verdict 102: a C contract writes `owns` for "C takes this object"; `owned` is refused everywhere.
++* Verdict 103: `shares`, `shares mut` and `thread_shared` are not made of a place that has one owner and
++  is not a local (`E2122`, new).
++* Verdict 104: a scoped task's claims end at its join, `h.join()` or the end of the `with scope:` block.
++* Verdict 105 (for now): a task's or a chunk's own whole-number total stops the program on overflow.
++* Verdict 106: a contract on a function type is written above its `type` line.
++* The lead's rulings: `from` names any field of `this`; when a store may close a loop of owners and the
++  two proofs that it does not (`E3032`); a deferred-drop region runs the drops at once; a `Retained`
++  token is an owner edge; a manager type with no fields has one instance; `=` on a `static` is `E3023`;
++  `E3100` for an unverified foreign call outside `unsafe`, `E5002` for a contract's own errors and two
++  destructors of one foreign type; two bounds that both declare a method are `E2070`; every function
++  has a type of its own (ODR-278); a cdylib exports its class handles' functions; the trampoline's
++  number on 32-bit targets; `std.core.type_name[T]()` and the ECS's `Storage[T]`; `@component` gone;
++  what `ember fmt --migrate` also rewrites.
++
++Generated: every rule whose text differs from 0.9.15_Hardened_1.
++
++| Rule | 0.9.15_Hardened_1 → 0.9.15_Hardened_2 |
++|---|---|
++| `[ALC-1]` | changed |
++| `[ATT-1]` | changed |
++| `[BCK-7]` | changed |
++| `[BLD-FFI-5a]` | changed |
++| `[CLI-20]` | changed |
++| `[CLO-1]` | changed |
++| `[ECS-2]` | changed |
++| `[EFF-2]` | changed |
++| `[FFI-23]` | changed |
++| `[FFI-28]` | changed |
++| `[FFI-36a]` | changed |
++| `[FFI-39c]` | changed |
++| `[FFI-53]` | changed |
++| `[FFI-54]` | changed |
++| `[HEAP-10]` | changed |
++| `[LEX-15]` | changed |
++| `[LT-1a]` | changed |
++| `[OBJ-1]` | changed |
++| `[OWN-13]` | changed |
++| `[PAR-3]` | changed |
++| `[RC-1]` | changed |
++| `[RC-4]` | changed |
++| `[RC-5]` | changed |
++| `[RT-7]` | changed |
++| `[RT-8]` | changed |
++| `[RT-10]` | changed |
++| `[STA-1]` | changed |
++| `[THR-1]` | changed |
++| `[THR-2]` | changed |
++| `[THR-7]` | changed |
++| `[THR-11]` | changed |
++| `[THR-13]` | changed |
++| `[THR-21]` | changed |
++| `[TYP-24]` | changed |
++| `[TYP-45]` | changed |
++| `[WK-3]` | changed |
++| `[WK-5]` | changed |
++| `[WK-7]` | changed |
++| `[WK-12]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -12060,7 +12252,7 @@
+ 
+ | Rule | Part | Begins |
+ |---|---|---|
+-| `[CLO-1]` | VI | *(changed in 0.9.15)* A lambda or local function has a unique type of … |
++| `[CLO-1]` | VI | *(changed in 0.9.15)* A named function, a lambda and a local function … |
+ | `[CLO-2]` | VI | *(changed in 0.9.15)* What a function captures is written after its … |
+ | `[CLO-3]` | VI | *(changed in 0.9.10)* *(changed in 0.9.15)* A callable type is one … |
+ | `[CLO-4]` | VI | *(changed in 0.9.10)* *(changed in 0.9.15)* A function value does not … |
+@@ -12971,7 +13163,7 @@
+ | `[RT-5]` | XVIII | Every runtime symbol, macro and header name derives from one … |
+ | `[RT-6]` | XVIII | The runtime ABI version is `EMBER_RUNTIME_ABI`. |
+ | `[RT-7]` | XVIII | *(changed in 0.9.15)* A count is checked before it rolls over. The … |
+-| `[RT-8]` | XVIII | *(changed in 0.9.15)* Both counts of a `thread_shared` value, its … |
++| `[RT-8]` | XVIII | *(changed in 0.9.15)* A `thread_shared` value's away count and its … |
+ | `[RT-10]` | XVIII | *(changed in 0.9.15)* Counting is inline. A count changes only where … |
+ | `[RT-11]` | XVIII | Allocation statistics are kept per thread, or only in `debug`; no … |
+ | `[RT-12]` | XVIII | *(changed in 0.9.15)* Stack overflow faults. The backend compiles … |

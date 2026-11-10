@@ -1,0 +1,133 @@
+--- Ember_v0.9.20_Hardened_8.md
++++ Ember_v0.9.20_Hardened_9.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.20_Hardened_8
+-**Supersedes:** 0.9.20_Hardened_7 (development target until this one), 0.9.20_Hardened_6 to
++**Version:** 0.9.20_Hardened_9
++**Supersedes:** 0.9.20_Hardened_8 (development target until this one), 0.9.20_Hardened_7 to
+ 0.9.20_Hardened_1, 0.9.15_Hardened_11 to 0.9.15_Hardened_1 and every earlier file:
+ 0.9.10_Hardened_1 to 0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3
+ and 0.8.5_Hardened_1 (adopted). This document is the single specification of Ember; the earlier
+@@ -48,9 +48,11 @@
+ language (the list hot reload keeps of objects, code a C header runs with no call from Ember, the
+ files a dependency's C reads), a C++ call chosen as C++ ranks it, and the shared function type of
+ verdict 38 restored; **0.9.20_Hardened_7**, of 2026-11-10 (§H.58): the owner's verdict 171,
+-that no header is exempt from `unsafe import`, the toolchain's own included; and
++that no header is exempt from `unsafe import`, the toolchain's own included;
+ **0.9.20_Hardened_8**, of 2026-11-10 (§H.59): his verdict 172, that a linked library is named
+-under `unsafe_libs` in the manifest and its import is written `unsafe import`. Each of them changes
++under `unsafe_libs` in the manifest and its import is written `unsafe import`; and
++**0.9.20_Hardened_9**, of 2026-11-10 (§H.60): his verdict 173, that a library a header asks for
++is named there too. Each of them changes
+ the set of accepted programs, so the language version moves (`[VER-9]`). What a program means is written in
+ words on the thing it describes: one owner unless a line says `shares`; `owns` for a hand-over and a
+ value held alone, at the call too; `copy of` for a copy; `ref mut` on a name, and at the call, for a
+@@ -61,7 +63,7 @@
+ `@borrows`, the mode `owned`, `self`, `mem.forget`, effect clauses on a first line and every check of
+ exclusive access made while the program runs. It changes the set of accepted programs, so the
+ language version moves (`[VER-9]`); Appendix H §H.41 to §H.51 list every change of 0.9.15, and §H.52
+-to §H.59 those of 0.9.20. The revisions before it were
++to §H.60 those of 0.9.20. The revisions before it were
+ authored at the owner's direction of 2026-09-23 with delegated authority to decide open language
+ questions against the project goal; Appendix H lists each one's changes (§H.1 to §H.40), and every
+ finding of the 2026-09-23 research pass (`tasks/audit/FINDINGS.md`, F-001–F-214) is resolved in
+@@ -123,7 +125,7 @@
+ | Appendix E | Coming from Python (non-normative) |
+ | Appendix F | Glossary |
+ | Appendix G | Resolution of findings F-001–F-214 |
+-| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.51) and in 0.9.20 (§H.52 to §H.59) |
++| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.51) and in 0.9.20 (§H.52 to §H.60) |
+ | Appendix I | Rule index |
+ 
+ **Normative words.** MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119. Text marked
+@@ -9175,11 +9177,14 @@
+   is what the compiled header leaves in the program, on the target it is compiled for: with the
+   Windows C runtime `<stdio.h>` defines `sprintf` and its family in every file that includes it, so
+   an import that reaches it is written `unsafe import c` there, and one that reaches only
+-  `<stdlib.h>`, `<string.h>` or `<math.h>` is not. A library a header names is listed by `ember tcb`
+-  as an external library with the header and line that names it (`[TCB-4]`). **A linked library is
+-  named in the manifest and vouched for in the code** (verdict 172). The manifest names it under
+-  `[link] unsafe_libs` (`[BLD-FFI-3]`), and the import of a header that declares a function or a
+-  variable the library defines is written `unsafe import`, with its note: `unsafe_libs =
++  `<stdlib.h>`, `<string.h>` or `<math.h>` is not. A library a header asks for is named in the
++  manifest too, under `[link] unsafe_libs`, as every linked library is (verdict 173); where the
++  manifest does not name it the import is `E9001` ("`windows.h` has the linker add `uuid.lib`, and
++  `ember.toml` does not name it; add `unsafe_libs = [\"uuid\"]` under `[link]`"). `ember tcb` lists
++  it as an external library with the header and line that asks for it (`[TCB-4]`). **A linked
++  library is named in the manifest and vouched for in the code** (verdict 172). The manifest names
++  it under `[link] unsafe_libs` (`[BLD-FFI-3]`), and the import of a header that declares a function
++  or a variable the library defines is written `unsafe import`, with its note: `unsafe_libs =
+   ["vulkan-1"]` in `ember.toml`, and `# SAFETY: vulkan-1 is the official Vulkan library` above
+   `unsafe import c "vulkan/vulkan.h" as vk`. The library's code is in the program, with whatever it
+   runs when it loads, and nothing checks it. The build reads from each named library the names it
+@@ -9963,7 +9968,8 @@
+ * `[BLD-FFI-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* Existing libraries are linked by name or
+   path, each named in the manifest under `[link] unsafe_libs` (`unsafe_libs = ["vulkan-1"]`,
+   `[MAN-8]`) and nowhere else, so that the manifest says the program uses libraries nothing checks,
+-  as the import of each says in the code (`unsafe import`, `[FFI-51]`; verdict 172); link order
++  as the import of each says in the code (`unsafe import`, `[FFI-51]`; verdict 172), a library a
++  header itself asks for included (`#pragma comment(lib, "uuid.lib")`; verdict 173); link order
+   follows declaration order. The key `libs` is not Ember (`E9001`: "`libs = [\"vulkan-1\"]` links
+   code that nothing checks; write `unsafe_libs = [\"vulkan-1\"]`"). Each is listed by `ember tcb` as
+   an external library (`[TCB-4]`).
+@@ -10030,7 +10036,7 @@
+   rewrites source written for an earlier version into the current one where the change is
+   mechanical, and lists, with the file and line, what it could not rewrite. From 0.9.15: the `#!
+   language` directive to the current version; the changes of 0.9.20 refuse programs that were unsafe
+-  and rewrite nothing (§H.52 to §H.59). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
++  and rewrite nothing (§H.52 to §H.60). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
+   removal, `for k, v in m:` over a `Map` to `for k, v in m.items():` (`[CTL-1]`). From 0.9.10:
+   `Box[T]` and `ForeignBox[T]` to `owns T`, `Box[T, A]` to `owns T using A`, `Array[T, A]` to
+   `Array[T] using A`, `Weak[T]` to `weakref T`, the mode `owned` to `owns`, `mut x: T` on a
+@@ -10184,7 +10190,7 @@
+   dependency's own root (`[CT-2]`), `-std=<c-standard>`, `-O<n>`, and `-W<name>` other than `-Wl,…`,
+   `-Wa,…` and `-Wp,…`, which pass arguments to the linker, assembler and preprocessor; its `[link]
+   unsafe_libs` entries are taken for names with no path separator (`"m"`) and for paths under its
+-  own root, resolved the same way (a library one of its headers names counting as an entry,
++  own root, resolved the same way (a library one of its headers asks for is named there too,
+   `[FFI-51]`); and its `[cpp.<project>]` section (whose configuration runs the project's own build
+   code, Annex C), any other `[c] flags` entry, any other `[link]` path, and its `[build]`,
+   `[profiles]`, `[jobs]` and `[comptime]` sections are honoured only when the root package's
+@@ -11073,7 +11079,7 @@
+ | `E7017` | `thread_shared` on a name whose value was not created `thread_shared`; `weakref thread_shared x` where `x` was not; an object with one owner (`Node()`) of a class whose methods say its objects are `thread_shared`; `shares` or `shares mut` on a `thread_shared` owner | `[THR-1]`, `[OWN-13]`, `[RC-1]` |
+ | `E7018` | a wait for a lock this thread holds, while this thread holds that lock (its `with` block, a guard in a local until its last use, or a guard made as a temporary for its life, `[EXP-4]`): a call through a function value, or a `dyn` or virtual method, that may run a function taking that lock (inside a walk under that lock too), or a join of a thread (a scope's end included) whose function changes what the lock guards; a first access of a `static` whose initialiser takes the lock; a second `read()` of an `RwLock` this thread holds `read()`; a stored function, override or implementation that takes a lock held at a recorded library line | `[THR-19]`, `[MOD-9a]`, `[EXP-4]` |
+ | `E8001` | GPU layout does not match the CPU layout | `[GPU-10]` |
+-| `E9001` | invalid manifest, including an unknown key; a dependency's manifest section or flag honoured only when the root names it in `[build] native`, and a dependency's C that reads a file outside its own root and the toolchain's headers, or holds assembly, without it | `[MAN-1]`, `[PRF-3]`, `[MAN-10]` |
++| `E9001` | invalid manifest, including an unknown key; a dependency's manifest section or flag honoured only when the root names it in `[build] native`, and a dependency's C that reads a file outside its own root and the toolchain's headers, or holds assembly, without it; a library a header asks for that `[link] unsafe_libs` does not name | `[MAN-1]`, `[PRF-3]`, `[MAN-10]`, `[BLD-FFI-3]`, `[FFI-51]` |
+ | `E9002` | no C compiler found, or it failed; the help names the host's remedy | `[BLD-FFI-1]` |
+ | `E9003` | invalid command line | `[CLI-1]` |
+ | `E9010` | `[lints]` names a lint the compiler does not define | `[MAN-3]` |
+@@ -16714,6 +16720,31 @@
+ | `[MAN-8]` | changed |
+ | `[MAN-10]` | changed |
+ 
++
++## H.60 Changes in 0.9.20_Hardened_9 (from 0.9.20_Hardened_8)
++
++**0.9.20_Hardened_9**, of 2026-11-10, is one verdict of the owner's (173). Some headers ask the
++linker for a library themselves (`windows.h` for `uuid.lib`). Since Hardened_7 that makes the
++import `unsafe import`, but the manifest said nothing of the library, where verdict 172 has the
++manifest name every library a program links. Asked whether such a library must be listed too, the
++owner: "Yes, list it too".
++
++* **A library a header asks for is named in the manifest**, under `[link] unsafe_libs`, as every
++  linked library is; where it is not, the import is refused with the line to add. So with MSVC a
++  program that imports a C++ header reaching the standard library names `libcpmt`, and one that
++  imports `windows.h` names `uuid` (`[FFI-51]`, `[BLD-FFI-3]`, `[MAN-10]`).
++
++Registry row: E9001. No new rule, no new code, none retired. Owner verdicts: 173 applied.
++
++Generated: every rule whose text differs from 0.9.20_Hardened_8.
++
++| Rule | 0.9.20_Hardened_8 → 0.9.20_Hardened_9 |
++|---|---|
++| `[BLD-FFI-3]` | changed |
++| `[CLI-20]` | changed |
++| `[FFI-51]` | changed |
++| `[MAN-10]` | changed |
++
+ ---
+ 
+ # Appendix I — Rule Index

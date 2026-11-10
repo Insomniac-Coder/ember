@@ -1,0 +1,80 @@
+--- Ember_v0.9.9_Hardened_15.md
++++ Ember_v0.9.9_Hardened_16.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_15
+-**Supersedes:** 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_16
++**Supersedes:** 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -3818,13 +3818,26 @@
+ 
+ ## XV.6 Numbers and math
+ 
+-* `[STD-20]` *(new in 0.9.9)* Integer methods: `abs`, `pow`, `signum`, `div_trunc`, `rem_trunc`,
+-  `checked_*`, `wrapping_*`, `saturating_*`, `overflowing_*` for each arithmetic operator,
+-  `count_ones`, `leading_zeros`, `trailing_zeros`, `is_power_of_two`, `next_power_of_two`, and the
+-  constants `MIN` and `MAX`. Float methods: `abs`, `sqrt`, `floor`, `ceil`, `trunc`, `fract`,
+-  `round` (**half to even**, as Python's `round` and IEEE's default), `round_half_away` (C's `round`),
+-  `is_nan`, `is_finite`, `is_infinite`, `copysign`, `mul_add`, and the constants `INF`, `NAN`, `EPSILON`,
+-  `MIN`, `MAX`. A float's `Display` is the shortest text that reads back as the same value, with `.0`
++* `[STD-20]` *(new in 0.9.9)* Integer methods, built into every integer type: `abs` (a signed
++  `MIN` panics), `pow(e)` (`x ** e`), `signum` (`-1`, `0` or `1`), `div_trunc` and `rem_trunc`
++  (C's truncating `/` and `%`, panicking where `//` and `%` do); for each arithmetic operator
++  `OP` — `add`, `sub`, `mul`, `floordiv` (`//`), `rem` (`%`), `pow` (`**`) and `neg` (unary `-`) —
++  `checked_OP -> Option[T]` (`None` wherever the operator would panic: a result out of range, a zero
++  divisor, a negative exponent), `wrapping_OP -> T` (the result modulo 2^N), `saturating_OP -> T`
++  (the nearest of `MIN` and `MAX`) and `overflowing_OP -> (T, bool)` (the wrapping result and
++  whether it wrapped), the last three still panicking on a zero divisor or a negative exponent; for
++  the shifts, `checked_shl`/`shr` (`None` for an amount outside `0 ≤ n < width`),
++  `wrapping_shl`/`shr` (the amount modulo the width) and `overflowing_shl`/`shr` (whether it was
++  outside); `count_ones`, `leading_zeros` and `trailing_zeros`, each an `int` counted over the
++  type's width; `is_power_of_two`; `next_power_of_two` (the least power of two at or above the
++  value, overflowing past `MAX`); and the constants `T.MIN` and `T.MAX` (`int.MAX` through the
++  alias). An operator method's other operand has the receiver's type; a shift amount and an
++  exponent may be any integer type (`[TYP-10]`, `[TYP-30]`). Float methods: `abs`, `sqrt`, `floor`,
++  `ceil`, `trunc`, `fract`, `round` (**half to even**, as Python's `round` and IEEE's default),
++  `round_half_away` (C's `round`), `is_nan`, `is_finite`, `is_infinite`, `copysign`, `mul_add`, and
++  the constants `INF`, `NAN`, `EPSILON` (the gap between `1.0` and the next value), `MAX` (the
++  greatest finite value) and `MIN` (the least finite value, `-MAX`, as an integer's `MIN` is its
++  least) (ODR-039). A float's `Display` is the shortest text that reads back as the same value, with `.0`
+   for an integral value, as Python's `repr`: `0.1 + 0.2` prints `0.30000000000000004`, `1.0` prints
+   `1.0`, and `1e300` prints `1e+300`; a format spec overrides it.
+ * `[STD-3]` `math.fma(a, b, c)` (and `mul_add`) is a fused multiply-add with a single rounding, on every
+@@ -6418,7 +6431,7 @@
+ Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026;
+ Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
+ Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036;
+-Hardened_14 adds ODR-037; Hardened_15 adds ODR-038.
++Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6440,6 +6453,7 @@
+ | ODR-036 | a `Map`'s keys and values and a `Set`'s elements are not views (`E3063`); text in a `{…}` literal with no context is `String` (Hardened_13) | `[STD-11]`, `[TYP-38]` |
+ | ODR-037 | `std.math.Float`, implemented by `f32` and `f64` only (`E2042`), is the bound of the generic float functions and provides their operators, typed literals and methods; `PI`, `TAU` and `E` are untyped constants (Hardened_14) | `[STD-21]`, `[STD-27]`, V.7 |
+ | ODR-038 | ruled by the owner: `std.math`'s functions take any number type through `std.math.Number`, answering in `T.Real` (`f64` for an integer, `f32` for an `f32`); `T.Name` names a type parameter's associated type (Hardened_15) | `[IFC-4]`, `[STD-21]`, `[STD-27]` |
++| ODR-039 | `[STD-20]`'s integer methods: `checked_`, `wrapping_`, `saturating_` and `overflowing_` forms of `add`, `sub`, `mul`, `floordiv`, `rem`, `pow` and `neg` (the shifts too, but not saturating), built into the integer types; bit counts are `int`s; a float's `MIN` is `-MAX` (Hardened_16) | `[STD-20]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6472,6 +6486,7 @@
+ | `[STD-12]` | changed |
+ | `[STD-15]` | changed |
+ | `[STD-16]` | changed |
++| `[STD-20]` | changed |
+ | `[STD-21]` | changed |
+ | `[STD-27]` | added |
+ | `[STR-5]` | changed |
+@@ -7632,7 +7647,7 @@
+ | `[STD-17]` | XV | Index assignment. `a[i] = v` calls `IndexSet.index_set(i, v)` when … |
+ | `[STD-18]` | XV | `format(value, spec="") -> String` formats one value with a format … |
+ | `[STD-19]` | XV | Every `Iterator` has the adapters `map`, `filter`, `filter_map`, … |
+-| `[STD-20]` | XV | Integer methods: `abs`, `pow`, `signum`, `div_trunc`, `rem_trunc`, … |
++| `[STD-20]` | XV | Integer methods, built into every integer type: `abs` (a signed `MIN` … |
+ | `[STD-21]` | XV | `std.math` provides `PI`, `TAU`, `E`; `sin`, `cos`, `tan`, `asin`, … |
+ | `[STD-22]` | XV | Every operation that touches the outside world returns `Result[T, … |
+ | `[STD-23]` | XV | `time.Instant.now()` is monotonic and `Nondet`; `Duration` is an … |

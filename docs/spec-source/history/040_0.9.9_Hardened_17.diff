@@ -1,0 +1,86 @@
+--- Ember_v0.9.9_Hardened_16.md
++++ Ember_v0.9.9_Hardened_17.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_16
+-**Supersedes:** 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_17
++**Supersedes:** 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -372,9 +372,10 @@
+   at the start of a type; `c` and `cpp` between `import` or `overlay` and a string; `language` and
+   `threads` after `#!`; `overlay` at the start of an item, and `rename` and `hide` inside an overlay
+   (`[GRM-35]`); `union` at the start of an item followed by a name, where it is reserved for a future
+-  version (`E0005`), so `Set` can have its `union` method (`[STD-16]`). **Reserved for a future
+-  version** (lexed as keywords; using one as a name is `E0005`, whose message names the
+-  reservation): `async`, `await`, `macro`.
++  version (`E0005`), so `Set` can have its `union` method (`[STD-16]`). The reserved word `not` is
++  also a method name immediately after `fn` and after `.`, so `Not` can have its method `not`
++  (`a.not()` is `~a`, ODR-040). **Reserved for a future version** (lexed as keywords; using one as a
++  name is `E0005`, whose message names the reservation): `async`, `await`, `macro`.
+ * `[LEX-22]` *(changed in 0.9.9)* Ember has no lifetime syntax and never will. A `'` begins a
+   character literal and nothing else; an unterminated one is `E0008`.
+ 
+@@ -1181,9 +1182,18 @@
+   *operators* on float values keep IEEE meaning (`[TYP-9]`); generic code bounded by `Ord`, `sort()`,
+   `min()` and `max()` use `cmp`, so sorting floats is total and needs no extra step. Floats do not
+   implement `Hash`; a float map key is written with `f.to_bits()`.
+-* `[TYP-21]` Operators desugar to these interfaces for non-scalar operands; `a + b` calls
++* `[TYP-21]` *(changed in 0.9.9)* Operators desugar to these interfaces for non-scalar operands; `a + b` calls
+   `Add.add(a, b)` with both operands borrowed. `a += b` calls `AddAssign.add_assign` if implemented,
+-  else `a = a + b`. Scalar operators are built in.
++  else `a = a + b`. Scalar operators are built in. The interfaces' methods are `add`, `sub`, `mul`,
++  `div`, `floordiv`, `rem`, `pow`, `bitand`, `bitor`, `bitxor`, `shl`, `shr`, `neg` and `not`, and
++  each `…Assign` form's is its operator's followed by `_assign` (ODR-040). A type has an operator
++  only by implementing its interface (`[TYP-40]`); a method that merely shares the name is not one.
++  Each number type implements the interface of each operator it has, with `Rhs = Self` and `Output =
++  Self`: every integer type `Add`, `Sub`, `Mul`, `FloorDiv`, `Rem`, `Pow`, `Neg`, `Not`, `BitAnd`,
++  `BitOr`, `BitXor`, `Shl`, `Shr` and their `…Assign` forms, and every float type `Add`, `Sub`,
++  `Mul`, `Div`, `FloorDiv`, `Rem`, `Pow`, `Neg` and theirs, so `[TYP-17]`'s `sum` takes numbers.
++  Such a method is the operator: `3.add(4)` is `3 + 4`. `bool`, `char` and `String` implement none
++  of them (`String`'s `+` consumes its left operand, `[TXT-11]`).
+ * `[HASH-1]` `Hash.hash` is generic over `H: Hasher` and monomorphised; hashing a value MUST feed a
+   deterministic representation of it into the hasher, and values equal under `Eq` MUST hash equally.
+   `Hasher` (in `std.collections`, not the prelude) is a move-only hashing state with `write_bytes`,
+@@ -1520,7 +1530,12 @@
+   states it (`type Real = f64`) with a value that meets them (`E2040` if it is missing or does not).
+   `T.Name` names the associated type `Name` of a type parameter `T` whose bound declares it: inside
+   the generic body it has what its declared bounds provide, and each call takes it from what the
+-  argument's type states (ODR-038).
++  argument's type states (ODR-038). An `extend` block that implements several interfaces states an
++  associated type once, for each of them that declares it (`extend i32 implements Add, Sub: type
++  Output = i32`). `Name = T` inside an interface's brackets is written only in a bound (`T: Add[Output
++  = T]`), and is `E2020` in an `implements` list. A bound that leaves an associated type unsaid
++  (`T: Add`) makes `a + b` a `T.Output`, which only a signature naming it (`-> T.Output`) can hold
++  (`E2040` otherwise) (ODR-040).
+ 
+ ## V.7 Constants and statics
+ 
+@@ -6431,7 +6446,7 @@
+ Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026;
+ Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
+ Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036;
+-Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039.
++Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039; Hardened_17 adds ODR-040.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6454,6 +6469,7 @@
+ | ODR-037 | `std.math.Float`, implemented by `f32` and `f64` only (`E2042`), is the bound of the generic float functions and provides their operators, typed literals and methods; `PI`, `TAU` and `E` are untyped constants (Hardened_14) | `[STD-21]`, `[STD-27]`, V.7 |
+ | ODR-038 | ruled by the owner: `std.math`'s functions take any number type through `std.math.Number`, answering in `T.Real` (`f64` for an integer, `f32` for an `f32`); `T.Name` names a type parameter's associated type (Hardened_15) | `[IFC-4]`, `[STD-21]`, `[STD-27]` |
+ | ODR-039 | `[STD-20]`'s integer methods: `checked_`, `wrapping_`, `saturating_` and `overflowing_` forms of `add`, `sub`, `mul`, `floordiv`, `rem`, `pow` and `neg` (the shifts too, but not saturating), built into the integer types; bit counts are `int`s; a float's `MIN` is `-MAX` (Hardened_16) | `[STD-20]` |
++| ODR-040 | the operator interfaces' methods are `add`, …, `floordiv`, `bitand`, …, `neg` and `not` (a method name after `fn` and `.`), each `…Assign` form's with `_assign`; every number type implements the interface of each operator it has, in `std.core`; a type has an operator only through its interface; one `type Output` serves every interface of an `extend` block; a binding is written only in a bound (Hardened_17) | `[TYP-21]`, `[IFC-4]`, `[LEX-15]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6491,6 +6507,7 @@
+ | `[STD-27]` | added |
+ | `[STR-5]` | changed |
+ | `[TXT-10]` | changed |
++| `[TYP-21]` | changed |
+ | `[TYP-23]` | changed |
+ | `[TYP-29]` | changed |
+ | `[TYP-38]` | changed |

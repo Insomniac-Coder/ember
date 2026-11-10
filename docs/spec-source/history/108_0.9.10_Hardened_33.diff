@@ -1,0 +1,49 @@
+--- Ember_v0.9.10_Hardened_32.md
++++ Ember_v0.9.10_Hardened_33.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.10_Hardened_32
+-**Supersedes:** 0.9.10_Hardened_31, 0.9.10_Hardened_30, 0.9.10_Hardened_29, 0.9.10_Hardened_28, 0.9.10_Hardened_27, 0.9.10_Hardened_26, 0.9.10_Hardened_25, 0.9.10_Hardened_24, 0.9.10_Hardened_23, 0.9.10_Hardened_22, 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.10_Hardened_33
++**Supersedes:** 0.9.10_Hardened_32, 0.9.10_Hardened_31, 0.9.10_Hardened_30, 0.9.10_Hardened_29, 0.9.10_Hardened_28, 0.9.10_Hardened_27, 0.9.10_Hardened_26, 0.9.10_Hardened_25, 0.9.10_Hardened_24, 0.9.10_Hardened_23, 0.9.10_Hardened_22, 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -4122,7 +4122,8 @@
+   fatal, as Python does when the exception is not caught: end of input or a closed stream panics, and
+   the message names the `Result` forms in `std.io` (`stdin().read_line()`).
+ * `[STD-18]` *(new in 0.9.9)* `format(value, spec="") -> String` formats one value with a format spec
+-  (`[LEX-19]`), like Python's `format`. `format_to(buf: MutSpan[u8], …) -> Result[str, FmtError]` formats
++  (`[LEX-19]`), like Python's `format`; the spec is a string literal, checked against the value's type
++  where it is written, as an f-string's is (`E2250`, ODR-168). `format_to(buf: MutSpan[u8], …) -> Result[str, FmtError]` formats
+   into a caller's buffer; its own machinery never allocates, so the call allocates only if a value's
+   `Display` does (`[EFF-1]`). An f-string lowers to a `StringBuilder` sized from its
+   literal parts.
+@@ -7411,6 +7412,7 @@
+ | ODR-165 | delegated: an inline namespace adds nothing to a C++ name in an import | `[FFI-41]`, `[FFI-17b]` |
+ | ODR-166 | delegated: a C++ function returning an opaque class by value gives a `ForeignBox[T]` | `[FFI-32]`, Annex C's import table |
+ | ODR-167 | delegated: `[CXX-1]`'s corpus is nlohmann/json until the owner approves more downloads | `[CXX-1]` |
++| ODR-168 | delegated: `format`'s spec is a string literal, checked where it is written | `[STD-18]`, `[LEX-19]` |
+ 
+ Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
+ 0.9.9.
+@@ -8159,6 +8161,18 @@
+ |---|---|
+ | `[FFI-32]` | changed |
+ | `[FFI-41]` | changed |
++
++## H.38 Changes in 0.9.10_Hardened_33 (from 0.9.10_Hardened_32)
++
++**0.9.10_Hardened_33** records rulings made under the restored delegation, for the owner's review:
++
++* For `[STD-18]`: `format`'s spec is a string literal, checked against the value's type where it is written (`E2250`), as an f-string's is (ODR-168, delegated).
++
++Generated: every rule whose text differs from 0.9.10_Hardened_32.
++
++| Rule | 0.9.10_Hardened_32 → 0.9.10_Hardened_33 |
++|---|---|
++| `[STD-18]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index

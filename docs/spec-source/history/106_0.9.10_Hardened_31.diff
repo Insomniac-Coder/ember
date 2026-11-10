@@ -1,0 +1,171 @@
+--- Ember_v0.9.10_Hardened_30.md
++++ Ember_v0.9.10_Hardened_31.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.10_Hardened_30
+-**Supersedes:** 0.9.10_Hardened_29, 0.9.10_Hardened_28, 0.9.10_Hardened_27, 0.9.10_Hardened_26, 0.9.10_Hardened_25, 0.9.10_Hardened_24, 0.9.10_Hardened_23, 0.9.10_Hardened_22, 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.10_Hardened_31
++**Supersedes:** 0.9.10_Hardened_30, 0.9.10_Hardened_29, 0.9.10_Hardened_28, 0.9.10_Hardened_27, 0.9.10_Hardened_26, 0.9.10_Hardened_25, 0.9.10_Hardened_24, 0.9.10_Hardened_23, 0.9.10_Hardened_22, 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -962,12 +962,10 @@
+   * a zero divisor panics (`division by zero`); `MIN // -1` overflows per `[TYP-8]` (panic by
+     default, `MIN` under wrapping, `MAX` under saturation). `MIN.div_trunc(-1)` always panics
+     under that method's fixed contract (`[STD-20]`); `MIN.rem_trunc(-1)` is zero.
+-* `[TYP-29]` *(new in 0.9.9)* For floats, `//` and `%` are Python's (ODR-021). `a % b` is the
+-  exact value of `a - b * floor(a / b)`, rounded once to the float type: it has the sign of `b`, and
+-  is computed exactly (as `fmod` is) rather than by evaluating the formula in rounded steps. `a // b`
+-  is the floor quotient consistent with it, so `a == (a // b) * b + a % b` to within one rounding:
+-  `1.0 // 0.1 == 9.0` and `1.0 % 0.1 == 0.09999999999999995`, because `0.1` is slightly more than a
+-  tenth. Zero divisors, infinities and NaN follow IEEE.
++* `[TYP-29]` *(new in 0.9.9)* For floats, `a // b` is `floor(a / b)` and `a % b` is
++  `a - b * floor(a / b)`, each operation rounded to the float type as it is evaluated (ODR-164,
++  reversing ODR-021): `1.0 // 0.1 == 10.0` and `1.0 % 0.1 == 0.0`, since `1.0 / 0.1` rounds to
++  `10.0`. Zero divisors, infinities and NaN follow IEEE.
+ * `[TYP-10]` *(changed in 0.9.9)* **Shifts.** `a << n` and `a >> n` accept any integer type for `n`.
+   If `n` is negative or not less than the bit width of `a`'s type the shift panics, in every profile.
+   Bits shifted out are discarded and are not an overflow. `>>` on a signed type is arithmetic
+@@ -1771,7 +1769,9 @@
+ * `[STA-1]` *(changed in 0.9.9)* `static NAME: T = e` is one value per program with a stable address.
+   A `static` is immutable; mutation goes through a `Sync` interior type (`Atomic`, `Mutex`, `RwLock`,
+   `Once`). `T` MUST be `Sync` (`E7002`). `static mut` exists only for foreign interfaces and every
+-  access to it requires `unsafe`.
++  access to it requires `unsafe`. A foreign static read only in `unsafe` need not be `Sync`: the
++  programmer answers for sharing it between threads; one read without `unsafe` under
++  `@ffi(immutable)` (`[FFI-10]`) must be (ODR-163).
+ * `[STA-3]` *(new in 0.9.9)* A static whose initialiser can be evaluated at compile time is placed in the image with no
+   initialisation code. Any other initialiser runs **once**, on first access, exactly once even under
+   concurrent first access; the first access blocks until it completes. A panic during initialisation
+@@ -4635,7 +4635,7 @@
+   | incomplete `struct` | `extern type S`, used only behind pointers |
+   | `enum` | `@repr(<underlying>) enum`, `@non_exhaustive` (any value may arrive) |
+   | `typedef` | a type alias, or a new type with `@ffi(newtype)` |
+-  | `static const` global, `extern` global | `extern static`; reading it needs `unsafe` unless `@ffi(immutable)` asserts a `const` C object and an unchanged value (ODR-082). The generated C declaration is `extern const T` with that assertion, or `extern T` without it; a safe read also requires `T: Sync`. `@ffi(immutable)` on `static mut` is `E5002`. |
++  | `static const` global, `extern` global | `extern static`; reading it needs `unsafe` unless `@ffi(immutable)` asserts a `const` C object and an unchanged value (ODR-082). The generated C declaration is `extern const T` with that assertion, or `extern T` without it; a safe read also requires `T: Sync`. `@ffi(immutable)` on `static mut` is `E5002`. A global read only in `unsafe` need not be `Sync` (`[STA-1]`), so one holding a pointer imports as any other (ODR-163). |
+   | `#define S "text"` | `const S: cstr = c"text"` |
+   | function pointer | `extern "C" fn(…) -> R`, `Option[…]` when nullable; another calling convention is `extern "<conv>" fn` (`[FFI-9]`), and an unsupported one is skipped with `W5002` |
+   | bit-field | `get_<f>`/`set_<f>` methods; not addressable |
+@@ -4702,7 +4702,9 @@
+   ```text
+   overlay_decl  := ["unsafe"] "overlay" ("c" | "cpp") STRING ":" NEWLINE INDENT {overlay_item} DEDENT
+   overlay_item  := {attribute} (overlay_fn | "type" IDENT NEWLINE | "enum" IDENT NEWLINE
+-                   | "rename" IDENT "as" IDENT NEWLINE | "hide" IDENT NEWLINE | extend_decl)
++                   | "rename" IDENT "as" IDENT NEWLINE | "hide" IDENT NEWLINE | extend_decl
++                   | overlay_class)
++  overlay_class := "class" IDENT ":" NEWLINE INDENT {fn_header NEWLINE} DEDENT
+   overlay_fn    := "fn" IDENT "(" [overlay_param {"," overlay_param} [","]] ")"
+                    ["->" contract {contract}] NEWLINE
+   overlay_param := IDENT [":" contract {contract}]
+@@ -4712,11 +4714,13 @@
+   In an entry marked `@ffi(macro_fn)` (`[FFI-6b]`) a parameter's and the result's words are one Ember
+   type each (`IDENT ":" type`, `"->" type`), since a macro has no C declaration to read (ODR-147). An
+   item may begin with `override`, replacing an earlier overlay's entry for that name (`[FFI-30c]`,
+-  ODR-149).
++  ODR-149). An `overlay_class` section restates methods of a C++ class, each as an Ember method line
++  with no body, whose receiver is asserted (`[FFI-40a]`, ODR-160).
+ 
+   Contract words take the place of types and are separated by spaces. `overlay`, `rename` and `hide`
+   are contextual keywords (`[LEX-15]`). An overlay whose items state any fact — a contract word, an
+-  `@ffi(…)` attribute, or a function entry, which asserts the function safe to call (`[FFI-2]`) — is an
++  `@ffi(…)` attribute, a function entry, which asserts the function safe to call (`[FFI-2]`), or a
++  method line — is an
+   assertion about foreign code and MUST be declared `unsafe overlay` (`E5067`), the third boundary of
+   `[TIER-1]`; an overlay of only `rename` and `hide` items needs no `unsafe`.
+ * `[FFI-11]` *(changed in 0.9.9)* **Contract vocabulary.** A pointer contract has five axes;
+@@ -6401,19 +6405,30 @@
+ * `[FFI-40]` `const` methods import as `self`, non-`const` methods as `mut self`; `&&`-qualified members
+   are skipped (`W5033`). A `T&` parameter imports as `mut T`, `const T&` as a borrowed `T`, and `T&&` as
+   `owned T` where the type is movable; a `T&` result is a `ref` borrowing the receiver (`[LT-1]`).
+-* `[FFI-40a]` `const` is not an aliasing guarantee in C++: a `const` method that mutates `mutable` state
+-  or invalidates iterators must be declared `@ffi(invalidates)`, which gives it `mut self`, and the
+-  importer assumes `@ffi(invalidates)` for every `const` method of a type with a `mutable` member unless
+-  the overlay says otherwise (an asserted fact).
+-* `[FFI-41]` Static member functions import as associated functions and static data members as
+-  `extern static`; nested types sit under their outer type's name; namespaces become module paths;
+-  entities in anonymous namespaces are skipped (`W5034`).
++* `[FFI-40a]` `const` is not an aliasing guarantee in C++: a `const` method of a class with a `mutable`
++  member, its own or a base's, may change its object. The importer reads the method's body, which the
++  header has: it takes `self` only when the body changes no field — it assigns none (`=`, a compound
++  assignment, `++`, `--`), takes no field's address, binds no non-`const` reference or pointer to one,
++  calls no non-`const` method of one, hands neither the object nor a field to a function by non-`const`
++  reference or pointer, and calls no method of the object that may change it, nor anything it cannot
++  follow — and `mut self` otherwise, or when the header does not have the body (ODR-160). An overlay's
++  `class C:` section restates a method as an Ember method line (`fn lookups(self) -> c_int`), whose
++  receiver wins: an asserted fact, which `ember tcb` lists. A line whose name, parameters or result
++  differ from the import's method is `E5010`.
++* `[FFI-41]` Static member functions import as associated functions. A static data member, and a
++  variable of a namespace, imports as a foreign static (`[FFI-10]`), read and written as a global
++  (`cpp.engine.Grid.made += 1`), in `unsafe` unless it is `const` and holds no pointer, each use going
++  through a thunk that gives its address, since its symbol is mangled or, for an `inline` one, emitted
++  only where C++ uses it (`[FFI-3]`, ODR-161). One holding a pointer imports like any other: it is read
++  and written in `unsafe`, so `[STA-1]` does not ask it to be `Sync` (ODR-163). Nested types sit under
++  their outer type's name; namespaces become module paths; entities in anonymous namespaces are skipped
++  (`W5034`).
+ * `[FFI-42]` Overloaded operators map to Ember operator interfaces where one exists (`operator[]` to
+   `Index`/`IndexMut`, `operator*`/`->` on a smart-pointer-like type to read-through); C++ iterators with
+   `begin`/`end` become `Iterable`.
+ * `[FFI-42a]` Iterating an imported C++ container borrows it mutably for the loop, so any method that
+-  could invalidate its iterators — every `mut self` method, including `@ffi(invalidates)` ones — is
+-  rejected inside the loop by the ordinary borrow rules.
++  could invalidate its iterators — every `mut self` method, including the `const` ones `[FFI-40a]` gives
++  `mut self` — is rejected inside the loop by the ordinary borrow rules.
+ 
+ ## C.4 Trust and evidence
+ 
+@@ -7387,6 +7402,8 @@
+ | ODR-160 | the owner's answer: a `const` method of a class with a `mutable` member is `self` when its visible body writes no field, else `mut self`; an overlay `class C:` method line wins; to be built | `[FFI-40a]` |
+ | ODR-161 | the owner's answer: a C++ static data member reads and writes as a global, through the address thunk; to be built | `[FFI-41]` |
+ | ODR-162 | the owner's answer: an `@export` function may hand C++ an object of a `@sync` class, presented by the `--cpp` header as a class of the same name; to be built | `[BLD-FFI-5a]`, `[FFI-31b]` |
++| ODR-163 | the owner's ruling: a foreign static read only in `unsafe` need not be `Sync`; a C or C++ variable holding a pointer imports as any other, used in `unsafe` | `[STA-1]`, `[FFI-41]`, `[FFI-10]` |
++| ODR-164 | the owner's ruling, reversing ODR-021: float `//` is `floor(a / b)` and `%` is `a - b * floor(a / b)`, each step rounded | `[TYP-29]` |
+ 
+ Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
+ 0.9.9.
+@@ -8100,6 +8117,25 @@
+ | Rule | 0.9.10_Hardened_29 → 0.9.10_Hardened_30 |
+ |---|---|
+ 
++
++## H.36 Changes in 0.9.10_Hardened_31 (from 0.9.10_Hardened_30)
++
++**0.9.10_Hardened_31** builds the owner's answers ODR-160 (`[FFI-40a]`) and ODR-161 (`[FFI-41]`), whose rule texts now say what is built, and records two rulings the owner made on 2026-10-21: ODR-163, on variables holding a pointer, and ODR-164, which reverses ODR-021 (`docs/DECISIONS.md` ADR-253):
++
++* For `[FFI-40a]`: the importer reads each `const` method's body when the class has a `mutable` member, its own or a base's; a method line of an overlay's `class C:` section (`[GRM-35]`'s `overlay_class`) restates the method, and its receiver wins; a line that differs from the import's method is `E5010` (ODR-160, the owner).
++* For `[FFI-41]`: a static data member, and a variable of a namespace, is a foreign static read and written as a global, through the thunk giving its address (ODR-161, the owner); every variable of a C++ header goes through its thunk, an `inline` one too.
++* For `[STA-1]`, `[FFI-41]` and Part XVI's table: a foreign static read only in `unsafe` need not be `Sync`, so a C or C++ variable holding a pointer imports as any other; one read without `unsafe` under `@ffi(immutable)` must be `Sync` (ODR-163, the owner).
++* For `[TYP-29]`: float `//` is `floor(a / b)` and `%` is `a - b * floor(a / b)`, each step rounded, so `1.0 // 0.1 == 10.0` and `1.0 % 0.1 == 0.0` (ODR-164, the owner, reversing ODR-021).
++
++Generated: every rule whose text differs from 0.9.10_Hardened_30.
++
++| Rule | 0.9.10_Hardened_30 → 0.9.10_Hardened_31 |
++|---|---|
++| `[FFI-40a]` | changed |
++| `[FFI-41]` | changed |
++| `[FFI-42a]` | changed |
++| `[STA-1]` | changed |
++| `[TYP-29]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -8689,8 +8725,8 @@
+ | `[FFI-39d]` | Annex C | Re-entrant calls from C++ into the same Ember object are expected. … |
+ | `[FFI-39e]` | Annex C | A C++ exception never crosses into Ember code, and an Ember panic … |
+ | `[FFI-40]` | Annex C | `const` methods import as `self`, non-`const` methods as `mut self`; … |
+-| `[FFI-40a]` | Annex C | `const` is not an aliasing guarantee in C++: a `const` method that … |
+-| `[FFI-41]` | Annex C | Static member functions import as associated functions and static … |
++| `[FFI-40a]` | Annex C | `const` is not an aliasing guarantee in C++: a `const` method of a … |
++| `[FFI-41]` | Annex C | Static member functions import as associated functions. A static data … |
+ | `[FFI-42]` | Annex C | Overloaded operators map to Ember operator interfaces where one … |
+ | `[FFI-42a]` | Annex C | Iterating an imported C++ container borrows it mutably for the loop, … |
+ | `[FFI-43]` | Annex C | An overlay that marks a function both `noexcept` and throwing, or two … |
+@@ -9408,7 +9444,7 @@
+ | `[TYP-26]` | IV | There is no overloading: two functions of one name in one scope are … |
+ | `[TYP-27]` | IV | `()` is the value of type `void`; `Ok(())` is the success value of … |
+ | `[TYP-28]` | IV | Division. `/` is true division and applies to floats. `/` with two … |
+-| `[TYP-29]` | IV | For floats, `//` and `%` are Python's (ODR-021). `a % b` is the exact … |
++| `[TYP-29]` | IV | For floats, `a // b` is `floor(a / b)` and `a % b` is `a - b * … |
+ | `[TYP-30]` | IV | Powers. `a  b` with integer `a` and non-negative integer `b` is … |
+ | `[TYP-31]` | IV | *(changed in 0.9.10)* Sizes and indices are `int`. Every standard … |
+ | `[TYP-32]` | IV | `some I` in a return type means "one concrete type, chosen by the … |

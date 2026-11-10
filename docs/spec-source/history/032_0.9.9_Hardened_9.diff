@@ -1,0 +1,59 @@
+--- Ember_v0.9.9_Hardened_8.md
++++ Ember_v0.9.9_Hardened_9.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_8
+-**Supersedes:** 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_9
++**Supersedes:** 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -1456,8 +1456,11 @@
+   that has no default MUST declare an `init` (`E2101`).
+ * `[CLS-4]` *(changed in 0.9.9)* A class is final unless declared `open` or `abstract`. Methods are
+   non-virtual unless `virtual`; replacing one requires `override`; overriding a non-virtual method is
+-  `E2110`. A derived `init` MUST call `super.init(…)` exactly once (`[CLS-11]`). Fields cannot be
+-  overridden. Base fields are laid out first; there is at most one base.
++  `E2110`. A method with a receiver named like an inherited one replaces it (ODR-028): over a virtual
++  method without `override` it is `E2111`, and over a non-virtual one it is `E2110`, `override` or
++  not; `init`, `drop` and associated functions are each class's own. An `override` is itself virtual,
++  so a further subclass may override it again. A derived `init` MUST call `super.init(…)` exactly once
++  (`[CLS-11]`). Fields cannot be overridden. Base fields are laid out first; there is at most one base.
+ * `[CLS-11]` *(new in 0.9.9)* Construction is two-phase. In a derived `init`, the code before
+   `super.init(…)` MUST assign every field the class itself declares without a default, and MUST NOT
+   read an inherited field or use `self` as a whole; the code after it may do anything (`E2102`,
+@@ -4712,6 +4715,7 @@
+ | `E2101` | derived class with a field that has no default needs an `init` | `[CLS-10]` |
+ | `E2102` | derived `init` uses `self` or an inherited field before `super.init`, or leaves an own field unassigned | `[CLS-11]` |
+ | `E2110` | override of a method that is not virtual | `[CLS-4]` |
++| `E2111` | a method that replaces an inherited virtual one without `override` | `[CLS-4]` |
+ | `E2120` | inherent extension of a type from another package | `[IFC-2]` |
+ | `E2130` | a `const` of a type that owns heap memory; use a `static` | `[TYP-1]` |
+ | `E2131` | array length must be a constant | `[CT-1]` |
+@@ -6329,7 +6333,7 @@
+ Each ambiguity found while implementing 0.9.9 is an owner decision request (`docs/OWNER-QUEUE.md`),
+ ruled under the owner's delegation and recorded here. Hardened_3 carries ODR-021 and ODR-022;
+ Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026;
+-Hardened_8 adds ODR-027.
++Hardened_8 adds ODR-027; Hardened_9 adds ODR-028.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6340,6 +6344,7 @@
+ | ODR-025 | `[ERR-4]`'s methods that take a function are eager, move the payload in (`filter` borrows it) and take `once fn`; an unannotated lambda parameter takes `owned` from the expected callable type, never `mut` (Hardened_6) | `[ERR-4]`, `[CLO-7]`, `[TYP-23]` |
+ | ODR-026 | a type that declares `drop` is not implicitly `Clone`; `@derive(Clone)` or a written `clone` gives it one (Hardened_7) | `[STR-5]` |
+ | ODR-027 | a range is a value: the prelude's range types are structs with public bounds, `Copy` when the bound is, and a `for` over one counts over a copy of its bounds, leaving it unchanged; `a..` overflows at its type's maximum (Hardened_8) | `[CTL-3]`, `[STD-8]`, `[STD-26]` |
++| ODR-028 | a method named like an inherited one replaces it: without `override` over a virtual method it is `E2111`, over a non-virtual one `E2110`; an `override` is itself virtual (Hardened_9) | `[CLS-4]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6347,6 +6352,7 @@
+ |---|---|
+ | `[BRW-8]` | changed |
+ | `[CLO-7]` | changed |
++| `[CLS-4]` | changed |
+ | `[CORO-6]` | changed |
+ | `[CTL-3]` | changed |
+ | `[ERR-4]` | changed |

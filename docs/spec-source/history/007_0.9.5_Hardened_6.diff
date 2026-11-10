@@ -1,0 +1,226 @@
+--- Ember_v0.9.5_Hardened_5.md
++++ Ember_v0.9.5_Hardened_6.md
+@@ -1,8 +1,8 @@
+ # Ember Programming Language — Design & Implementation Specification
+ 
+-**Version:** 0.9.5_Hardened_5
++**Version:** 0.9.5_Hardened_6
+ **Status:** Frozen development target; implementation/conformance evidence is not claimed and normative repository adoption still requires the recorded adoption gates
+-**Immediate predecessor:** 0.9.5_Hardened_4
++**Immediate predecessor:** 0.9.5_Hardened_5
+ **Versioning model:** A hardening increments `Hardened_N` when it only adds implementation detail,
+ invariants, tooling requirements, or editorial clarification without changing accepted language
+ semantics. A language revision is required when the accepted-program set or another normative
+@@ -10,21 +10,23 @@
+ The 0.9.5 language revision
+ introduced inferred multi-region view structs; this revision is a subsequent hardening that
+ consolidates the inherited 0.8.5 contract, makes supersession explicit, repairs mechanical
+-extraction defects, recovers the owner-supplied Hardened 14 callback-composition rules, and records
+-evidence status honestly. No implementation or conformance result is asserted merely because the
+-specification requires one.
++extraction defects, recovers the owner-supplied Hardened 14 callback-composition rules, resolves
++their mutable API boundary by owner decision, and records evidence status honestly. No
++implementation or conformance result is asserted merely because the specification requires one.
+ 
+ > **Authority boundary:** This frozen hardening records the owner-selected 0.9.5 development target, but
+ > `docs/spec-source/ember-spec.md` remains the repository's sole normative source until this
+ > target passes the adoption gates and is explicitly installed. The immutable received file
+ > is preserved under `docs/spec-source/as-received/`.
+ 
+-> **SOURCE RECOVERY COMPLETED — `[LT-8]`–`[LT-13]`:** on 2026-09-12 the owner supplied the
+-> missing Hardened 14 definitions reproduced in §H14.3. The transport-only Markdown escaping and
+-> broken code fences were normalized; the rule substance was not inferred. H4 remains frozen as the
+-> audit record of the gap, and this H5 successor is the recovered development target. The supplied
+-> shared-`Span` signatures do not by themselves define a `MutSpan` overload surface; that distinct
+-> accepted-program question is recorded rather than guessed in `docs/OWNER-QUEUE.md` ODR-005.
++> **SOURCE RECOVERY AND API BOUNDARY COMPLETED — `[LT-8]`–`[LT-13]`:** on 2026-09-12 the
++> owner first supplied the missing Hardened 14 definitions, frozen in H5, and then ruled that the
++> helpers also have explicit all-mutable `_mut` variants. H4 remains the frozen source-gap record and
++> H5 remains the frozen recovered-but-ambiguous predecessor. This H6 successor uses Ember's canonical
++> type name `MutSpan[T]` for the mutable signatures; the ruling's `SpanMut[T]` spelling was normalized
++> to the type already defined throughout the language. ODR-004 and ODR-005 are closed. The separate
++> question of how mutable callback parameter modes are represented by Ember's currently mode-free
++> `fn(...)` type grammar is recorded as ODR-006 rather than answered by inference.
+ 
+ # 0.9_Hardened_12 Owner-Decision Resolution Cycle (historical record)
+ 
+@@ -319,8 +321,8 @@
+ language/library contracts in this revision.
+ 
+ * `[LT-8]` **Canonical `with_views` helpers.** `std.borrow` MUST provide canonical,
+-  allocation-free helpers for two, three and four borrowed views. The normative signatures are
+-  structurally:
++  allocation-free helpers for two, three and four borrowed views, with both shared and mutable
++  variants. The normative signatures are structurally:
+ 
+   ```text
+   with_views2[A, B, R](a: Span[A], b: Span[B],
+@@ -329,11 +331,19 @@
+                           f: fn(Span[A], Span[B], Span[C]) -> R) -> R
+   with_views4[A, B, C, D, R](a: Span[A], b: Span[B], c: Span[C], d: Span[D],
+                              f: fn(Span[A], Span[B], Span[C], Span[D]) -> R) -> R
++
++  with_views2_mut[A, B, R](a: MutSpan[A], b: MutSpan[B],
++                           f: fn(MutSpan[A], MutSpan[B]) -> R) -> R
++  with_views3_mut[A, B, C, R](a: MutSpan[A], b: MutSpan[B], c: MutSpan[C],
++                              f: fn(MutSpan[A], MutSpan[B], MutSpan[C]) -> R) -> R
++  with_views4_mut[A, B, C, D, R](a: MutSpan[A], b: MutSpan[B],
++                                 c: MutSpan[C], d: MutSpan[D],
++                                 f: fn(MutSpan[A], MutSpan[B], MutSpan[C], MutSpan[D]) -> R) -> R
+   ```
+ 
+-  The exact public spelling MAY use the module's overload convention, but the arity and type
+-  relationships MUST remain these. Their callback boundary uses `[LT-7]` late-bound regions, so
+-  each supplied view receives its own invocation-local region. The callback MUST complete before
++  The exact public spelling MAY use the module's overload convention, but the arity, mutability, and
++  type relationships MUST remain these. Their callback boundary uses `[LT-7]` late-bound regions,
++  so each supplied view receives its own invocation-local region. The callback MUST complete before
+   those regions end, and the helpers MUST return only values that do not contain those borrowed
+   regions. The helpers are ordinary library APIs; they are not compiler-special ownership types.
+ 
+@@ -348,9 +358,10 @@
+   is permitted.
+ 
+ * `[LT-11]` **Mutability follows ordinary borrowing.** `with_views` does not grant overlapping
+-  mutable access. Two mutable inputs whose sources may alias are rejected by the ordinary borrow
+-  checker; structurally disjoint inputs remain expressible through `split_at_mut`, `columns_mut`,
+-  `SoA`, or an established disjointness fact.
++  mutable access; the `_mut` variants accept `MutSpan[T]` and therefore remain subject to the
++  ordinary exclusive-borrow rules. Mutable inputs whose sources may alias are rejected by the
++  ordinary borrow checker; structurally disjoint inputs are expressible through `split_at_mut`,
++  `columns_mut`, `SoA`, or an established disjointness fact.
+ 
+ * `[LT-12]` **No hidden allocation.** The canonical helpers MUST be `@noalloc` and MUST NOT allocate
+   a wrapper object, closure environment, heap box, or temporary container solely to represent the
+@@ -368,10 +379,10 @@
+ `[LT-10]`, `[TYP-15]`, `[TYP-15a]`, ordinary borrow checking, or the rule that `with_views` is an
+ ordinary allocation-free library API rather than a compiler intrinsic.
+ 
+-> **API-surface boundary:** the recovered structural signatures spell shared `Span` inputs, while
+-> `[LT-11]` also states the safety rule for mutable inputs. This recovery does not invent unprovided
+-> `MutSpan` overload signatures or combinations. Their exact public surface, if intended, remains
+-> ODR-005; the ordinary borrow rule itself is not in doubt.
++> **API-surface resolution:** the owner resolved ODR-005 on 2026-09-12 by selecting distinct
++> all-mutable `_mut` helpers rather than making the shared names magically generic over `Span` and
++> `MutSpan`. Mixed shared/mutable overloads are not specified. Both families use the same ordinary
++> region and borrow machinery; the mutable family creates no new aliasing rule.
+ 
+ ## H14.4 Regression and implementation obligations
+ 
+@@ -1537,6 +1548,7 @@
+ | 0.9.5_Hardened_3 | Hardening | honest evidence status, inherited-contract consolidation, and explicit E3065 artifact requirements |
+ | 0.9.5_Hardened_4 | Hardening | repaired source authority, missing-rule accounting, rule-ID collisions, single-source extraction, examples, and inherited editorial corruption |
+ | 0.9.5_Hardened_5 | Hardening/source recovery | restored owner-supplied `[LT-8]`–`[LT-13]` callback-composition rules, preserved their 0.9.5 supersession boundary, and exposed the unprovided mutable-overload surface as ODR-005 |
++| 0.9.5_Hardened_6 | Owner-approved hardening clarification | resolved ODR-005 with explicit all-mutable `with_views2_mut/3_mut/4_mut` helpers using canonical `MutSpan[T]`; mixed-mutable overloads remain outside the contract |
+ 
+ ---
+ 
+@@ -1609,9 +1621,24 @@
+ supersession reconciliation, and explicit mutable-helper API boundary. This is a hardening/source
+ recovery amendment, not a language-semantic change.
+ 
+-### 0.9.5_Hardened_5 language-conformance condition
+-
+-`0.9.5_Hardened_5` MUST NOT be declared conformant unless `[LT-8]`–`[LT-13]`,
++## 0.9.5_Hardened_6 Audit Record
++
++| ID | Classification | Resolution |
++|---|---|---|
++| AUD-095-29 | Owner-approved API clarification | Closed ODR-005 by adding explicit all-mutable two-, three-, and four-view helper signatures to `[LT-8]`. |
++| AUD-095-30 | Terminology consistency | Used the existing canonical `MutSpan[T]` type name; the owner ruling's `SpanMut[T]` spelling was normalized rather than introducing a duplicate type. |
++| AUD-095-31 | Borrow safety | Tightened `[LT-11]` to bind the `_mut` family to ordinary exclusive-borrow rules; no helper creates a new aliasing mechanism. |
++| AUD-095-32 | API boundary | Kept shared and all-mutable families explicit and did not invent mixed `Span`/`MutSpan` overloads. |
++| AUD-095-33 | Implementation-readiness boundary | Recorded ODR-006 because `[FN-1]` defaults unmarked parameters to shared borrowing and `fn_type` currently carries types but no parameter modes; H6 does not guess the mutable callback-mode representation. |
++
++**Amendment:** `HC-095-05` — owner-approved resolution of the mutable `with_views` API boundary.
++Because H5 was already frozen, ADR-023 requires this clarification to be issued as H6. The adopted
++0.8.5 program set is unchanged; H6 closes the overload-family ambiguity in the not-yet-adopted
++0.9.5 target while ODR-006 retains the separate callback-mode question.
++
++### 0.9.5_Hardened_6 language-conformance condition
++
++`0.9.5_Hardened_6` MUST NOT be declared conformant unless `[LT-8]`–`[LT-13]`,
+ `[LT-14]`–`[LT-43]` including `[LT-31a]`, `[MIR-REG-1]`,
+ `[TYP-15]`, `[TYP-15a]`, `[VERIFY-3]`, `[TST-17]`–`[TST-19]`, and `[BUD-8]` all have
+ passing conformance evidence; the MIR verifier proves region-slot preservation and checks callable
+@@ -1630,22 +1657,23 @@
+ 
+ ### Acceptance condition
+ 
+-`0.9.5_Hardened_5` MUST NOT be declared clean unless:
++`0.9.5_Hardened_6` MUST NOT be declared clean unless:
+ 1. the document has one current version identity;
+ 2. the consolidated Parts I–XXIII body and the current addenda form one normative source;
+-3. the active revision lineage ends at `0.9.5_Hardened_5`;
+-4. the current consistency checklist targets `0.9.5_Hardened_5`;
++3. the active revision lineage ends at `0.9.5_Hardened_6`;
++4. the current consistency checklist targets `0.9.5_Hardened_6`;
+ 5. `std.cell` is the sole defining owner of interior-mutability types;
+ 6. post-publication hot-reload failure has no unspecified recovery semantics;
+ 7. closed owner decisions are not presented as open implementation choices;
+ 8. multi-region view provenance is verified by the MIR verifier and all negative escape tests pass;
+ 9. no runtime region bookkeeping appears in C/LLVM output for conforming multi-region views.
+ 10. the source-recovery record for `[LT-8]`–`[LT-13]` is traceable to the owner-supplied text and H4 remains unchanged;
+-11. ODR-005 is resolved before conformance claims require a mutable `with_views` overload surface.
++11. ODR-005 is closed by the explicit all-mutable `_mut` signatures, and no mixed-mutability overload is inferred.
++12. ODR-006 is resolved before the mutable helper family is claimed conformant.
+ 
+ ---
+ 
+-## 0.9.5_Hardened_5 Evidence Status — No Implementation Claim
++## 0.9.5_Hardened_6 Evidence Status — No Implementation Claim
+ 
+ The current document is a specification artifact, not a report of repository state.
+ 
+@@ -1761,7 +1789,7 @@
+ 
+ ---
+ 
+-## 0.9.5_Hardened_5 consolidation record
++## 0.9.5_Hardened_6 consolidation record
+ 
+ The body below originated in `0.8.5_Hardened_1`, incorporates the accepted 0.9/0.9.5 changes in
+ place, and is normative within this target together with the current addenda above. Frozen predecessor files are
+@@ -1774,8 +1802,8 @@
+ If a rule ID, diagnostic, grammar production, attribute, ABI field, or standard-library API is
+ referenced but has no recoverable definition in the complete lineage, it is a `SPEC_GAP` and
+ blocks conformance. It MUST NOT be fabricated from another language's behavior. The former
+-LT-8-through-LT-13 source gap is closed by the owner-supplied definitions in §H14.3; ODR-005
+-separately records the mutable-overload surface that those definitions do not spell.
++LT-8-through-LT-13 source gap is closed by the owner-supplied definitions in §H14.3, and ODR-005
++is closed by the owner-approved explicit all-mutable `_mut` helper family in H6.
+ 
+ ## Non-normative heading index
+ 
+@@ -7463,12 +7491,12 @@
+ Everything between the consolidated-body markers is current normative text. Material after this
+ marker is specification tooling guidance for the current revision, not inherited 0.8.5 text.
+ 
+-# Appendix B — 0.9.5_Hardened_5 Consistency Checklist
++# Appendix B — 0.9.5_Hardened_6 Consistency Checklist
+ 
+ The following checks are mandatory CI checks for the consolidated specification itself:
+ 
+-1. Exactly one current version declaration exists and names `0.9.5_Hardened_5`.
+-2. The immediate predecessor is `0.9.5_Hardened_4`.
++1. Exactly one current version declaration exists and names `0.9.5_Hardened_6`.
++2. The immediate predecessor is `0.9.5_Hardened_5`.
+ 3. `[MOD-6]` and `[MOD-6a]` name the supported `0.9.5`, `0.9`, and 0.8.x source-language contracts explicitly, and `0.9` does not silently enable `0.9.5`.
+ 4. `EMBER_RUNTIME_ABI` is canonical; `EMBER_RT_ABI` can occur only in compatibility-alias documentation.
+ 5. Every `dyn Writer`/`dyn Reader` serialization signature uses a legal indirection.
+@@ -7478,7 +7506,7 @@
+ 9. The consolidated normative body has exactly one begin marker and one end marker.
+ 10. The current addenda and consolidated body form one normative source; frozen predecessors remain separate historical artifacts.
+ 11. Every rule ID has exactly one definition without a duplicated registry or position-based supersession algorithm.
+-12. `[LT-8]`–`[LT-13]` are present as recovered canonical library rules, their source and 0.9.5 supersession boundary are explicit, and they have regression coverage obligations.
++12. `[LT-8]`–`[LT-13]` are present as recovered canonical library rules, `[LT-8]` explicitly provides shared and all-mutable helper families using `Span` and `MutSpan`, their source and 0.9.5 supersession boundary are explicit, and they have regression coverage obligations.
+ 13. `[LT-14]`–`[LT-43]` have both accept and reject conformance coverage where applicable.
+ 14. `[MIR-REG-1]` is in the active rule index.
+ 15. `[CLI-15]` retains the 0.6.3 CLI-surface completeness rule and `[CLI-17]` owns cycle inspection; `[RT-1]`–`[RT-4]` and `[DIA-18]` likewise retain their inherited meanings.
+@@ -7489,5 +7517,6 @@
+ 20. Rule IDs are unique and historical IDs are never silently reused for a new meaning.
+ 21. Every canonical artifact named by `[IMP-3]` has exactly one authoritative owner.
+ 22. A specification CI failure never changes language semantics automatically; it blocks release/conformance until reconciled.
++23. ODR-006 is resolved before the `_mut` helper family is treated as implementation-ready or conformant.
+ 
+ A failure of any checklist item is a specification CI failure, not a compiler implementation choice.

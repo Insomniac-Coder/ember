@@ -1,0 +1,72 @@
+--- Ember_v0.8.4_Hardened_1.md
++++ Ember_v0.8.4_Hardened_2.md
+@@ -1,6 +1,6 @@
+ # Ember Programming Language — Design & Implementation Specification
+ 
+-**Version:** 0.8.4_Hardened_1 (supersedes 0.8.3; see the change log at the end of Part 0)
++**Version:** 0.8.4_Hardened_2 (supersedes 0.8.3; see the change log at the end of Part 0)
+ **Versioning:** two numbers move independently. The **language version** moves when the set of accepted programs changes — 0.8.4 exists because of one such change, S1, the owner's resolution of ERR-044, which admits a static-region view into storage that has no bounding region. The **hardening number** moves when the document gains implementation detail and no rule changes meaning; it resets to 1 with each language version. A hardening may never carry a semantic change: that is what forces the language number instead, and is why this file is 0.8.4_Hardened_1 rather than 0.8.3_Hardened_2.
+ **Compatibility:** 0.8.4 is additive over 0.8.3. No program valid under 0.8.3 becomes invalid, and a source file may still declare `#! language "0.8.3"`.
+ **Hardening:** A hardening adds implementation detail that the revision left out and changes no rule's meaning. It never moves the language version — a change that does is not a hardening, which is why S1 made this 0.8.4 rather than 0.8.3_Hardened_2. Source files may still declare `#! language "0.8.3"` for source compatibility; `#! language "0.8.4"` selects the 0.8.4 revision, and both are accepted (`[MOD-6]`). What Hardened_1 contains is the last change-log section; every edit is marked in place and recorded with its justification in `docs/spec-amendments.md`. The owner's file is preserved untouched at `docs/spec-source/as-received/`.
+@@ -59,6 +59,35 @@
+ | 16 | GPU kernels as an eventual core language feature. | Shaders remain a separate language (as RageV already does with `.rvshader` → SPIR-V). Ember owns the **host-side** model: generational handles, command-scoped GPU ownership, deferred destruction, frame-in-flight tracking, and a typed shader interface generated from SPIR-V reflection. Kernel DSL is v3 and out of scope for this document beyond reservations. | Matches RageV's architecture exactly; keeps the core compiler small. |
+ | 17 | Specification written as prose. | Normative rules carry IDs; every ID maps to conformance tests; every compiler pass has an input/output contract. | So that an agent can implement and verify without reinterpreting. |
+ 
++## Change log — 0.8.4_Hardened_2
++
++**Hardened_2 is one editorial repair on Hardened_1. No rule changes meaning and
++the accepted program set is identical.**
++
++**E5 — `[EFF-18]`'s effect set gains `Nondet`.** Part X §1 defines the set with
++ten members and carries a table row for the effect; `[DET-1]` contracts over it
++and `[DET-2]` enumerates its sources exhaustively. `[EFF-18]` was written for
++0.6, which added `Io` and `Lock`; `Nondet` arrived in 0.6.3 with `[DET-*]`,
++which added it to X.1 without revisiting `[EFF-18]`'s parenthetical list. That
++list is not exclusive by its own sentence — it "does not remove an effect
++previously attached to any operation; it refines the effect model" — so adding
++the missing member brings a stale enumeration in line with the section that
++defines the set. It admits no new program and forbids no old one. ERR-028
++recorded the decision; `docs/spec-amendments.md` E5 carries the reasoning.
++
++**Why a hardening and not a revision.** The owner ruled explicitly: E5 is an
++editorial repair, so the hardening number moves and the language version does
++not. Between Hardened_1 and this cut the file carried the provisional header
++`0.8.4_Hardened_1 + E5, pending a version decision` — the `207c69f` shape,
++stating what the file was rather than claiming to be a cut it no longer
++matched. That wording is now gone: the file is Hardened_2 and says so.
++
++**Nothing else moved.** ERR-042 was inventoried in the same pass and produced
++no edit to this document — see `docs/spec-errata.md`, where the entry is
++withdrawn.
++
++---
++
+ ## Change log — 0.8.4_Hardened_1
+ 
+ **0.8.4 is one semantic change; Hardened_1 is everything else.**
+@@ -161,10 +190,9 @@
+ be called on its own result either. A reading that resolves it was drafted, and putting
+ it into the rule would have been this hardening answering *what Ember means* rather than
+ how to implement what it already means. The rule stands as written; the question is
+-ERR-041 and belongs to the owner. `[EFF-18]` states the effect set
+-without `Nondet`, and §X.1 — the section that defines the set — includes it, with a
+-table row defining the effect. Two normative statements disagree and neither is
+-marked non-normative, so it is an owner decision rather than a hardening.
++ERR-041 and belongs to the owner. `[EFF-18]` stated the effect set
++without `Nondet` at Hardened_1 time, while §X.1 — the section that defines the set — already included it, with a
++table row defining the effect. That disagreement was recorded as an owner decision (ERR-028: X.1 governs) rather than a hardening, and the enumeration has since been brought in line with X.1; see `docs/spec-amendments.md`.
+ `[FFI-17]`'s numbered list contradicts XVI.7a's tables on `std::function` and
+ `std::optional<T>`; the list is already `NON-NORMATIVE` under `[CAT-1]` and the
+ document asks a future revision to delete the drifted claims — a deletion from owner
+@@ -2100,9 +2128,9 @@
+   `Sync + Lock`; a blocking file read carries `Io + Block`; and a non-blocking I/O
+   operation carries `Io` without `Block`. `@noio`, `@nolock`, `@noblock` and
+   `@nosync` therefore remain independent contracts. The full set is
+-  `{Alloc, Sync, Lock, Io, Panic, Unsafe, FFI, Block, RuntimeCheck(k)}`. `[EFF-18]`
++  `{Alloc, Sync, Lock, Io, Panic, Unsafe, FFI, Block, Nondet, RuntimeCheck(k)}`. `[EFF-18]`
+   does not remove an effect previously attached to any operation; it refines the
+-  effect model so a single operation may report all applicable effects. `RuntimeCheck(k)`'s kinds are `{Bounds, Overflow, Aliasing, Stale}` — the four `[EFF-16]` assigns and `[EFF-22]` permits. `Contract` went with the contract prover (OQ-28..OQ-32, owner decision 0.6.2). *(0.6.2 leftover removed 2026-09-09; see `docs/spec-amendments.md`)*
++  effect model so a single operation may report all applicable effects. `RuntimeCheck(k)`'s kinds are `{Bounds, Overflow, Aliasing, Stale}` — the four `[EFF-16]` assigns and `[EFF-22]` permits. `Contract` went with the contract prover (OQ-28..OQ-32, owner decision 0.6.2). *(0.6.2 leftover removed 2026-09-09; see `docs/spec-amendments.md`)* *(ERR-028 applied 2026-09-09; see `docs/spec-amendments.md`)*
+ * `[EFF-19]` `@realtime` on a function expands to a configured contract set,
+   by default `@noalloc @nolock @noblock @nopanic(explicit)`. It is a **marker
+   for that set and not a timing guarantee**: the compiler MUST NOT state or

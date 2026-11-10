@@ -1,0 +1,126 @@
+--- Ember_v0.9.9_Hardened_40.md
++++ Ember_v0.9.9_Hardened_41.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_40
+-**Supersedes:** 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_41
++**Supersedes:** 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -220,7 +220,7 @@
+ |---|---|---|---|
+ | No use-after-free, no dangling reference | always, for references and views | never | borrow checker; zero cost |
+ | Value aliasing (`ref mut` xor `ref`) | always, for value types | never | borrow checker; zero cost |
+-| Object aliasing (long-term access through a class handle) | the accesses go through one handle local and are statically ordered (`[EXC-3]`) | otherwise | the field's access word (`[EXC-19]`); a load, a compare and a store |
++| Object aliasing (long-term access through a class handle) | the accesses go through one handle local and are statically ordered, or nothing held anywhere could conflict (`[EXC-3]`) | otherwise | the field's access word (`[EXC-19]`): a load and a compare, and a store when the access is held |
+ | Interior mutability of a value | never (the programmer chose it) | always | `Cell` (no check needed) / `RefCell` borrow counter |
+ | Index in bounds | the index comes from the container's own range, or a range fact (`[RNG-4]`) | otherwise | compare and branch |
+ | Integer arithmetic does not overflow | a range fact proves it | otherwise | overflow flag test (`[TYP-8]`) |
+@@ -2414,8 +2414,9 @@
+                              unused by class objects, whose fields carry their own (`[EXC-19]`)
+ 12      4     flags    u32   bit 0 deinitialising, bit 1 pinned by foreign code
+ 16      8     type     *const TypeInfo
+-24      …     base-class fields, then own fields (or the Shared payload), naturally aligned;
+-              each non-`Copy` field of a class that is not `@sync` is preceded by its u32 access word
++24      …     base-class fields, then own fields (or the Shared payload), naturally aligned; in a
++              class that is not `@sync`, each class's own fields are preceded by the u32 access words
++              of its non-`Copy` fields, side by side, with a zero word after an odd count
+ ```
+ 
+ * `[OBJ-1]` *(changed in 0.9.9)* The header is 24 bytes on 64-bit targets and is part of the runtime ABI
+@@ -2501,16 +2502,25 @@
+ * `[EXC-2]` *(changed in 0.9.9)* Beginning a **read** access to a field while a write access to it is
+   active panics likewise.
+ * `[EXC-19]` *(new in 0.9.9)* **Access state is per field.** Each non-`Copy` field of a class that is
+-  not `@sync` has its own access word (bit 31 writer, bits 0..30 reader count), stored in front of the
+-  field. A long-term access to a field checks and updates that word only, so reading one field while
++  not `@sync` has its own access word (bit 31 writer, bits 0..30 reader count). The words of a class's
++  own fields stand side by side before those fields, with a zero word after an odd count (VIII.1), so
++  a word costs no alignment padding and a base class's layout stays a prefix of every derived class's.
++  A long-term access to a field checks and updates that word only, so reading one field while
+   writing another never conflicts: `for c in self.children: self.log.push(c.name)` is accepted. A
+   whole-object write (a `mut self` method, `[EXC-15]`) checks every field word of the object's
+   **dynamic** class at entry — for an `open` class, through the list of access-word offsets in its type
+   information, so a derived override reached from a base method is covered too — marks each as
+   written, and clears them at return; a `mut self` call on `self` inside it is a reborrow (`[EXC-5]`)
+-  and marks nothing again. The cost is one word per non-`Copy` field, one check per such field on
+-  entry to a `mut self` method, and nothing per access. `Copy` fields have no word
+-  (`[EXC-17]`), and the fields of a `@sync` class need none (`[THR-1]`).
++  and marks nothing again. An access is **held** when code other than the access itself runs between
++  its beginning and its end. An access that is not held — no code of the program runs while it is
++  active and no other access begins inside it, as for `len(h.items)` or `h.items.push(x)` — is checked
++  but not counted, since nothing could observe the count. So is the whole-object write of a `mut self`
++  call to a **quiet** function: one that begins no access, drops nothing whose drop runs code of the
++  program, and calls only built-ins that call no code back and other quiet functions. The cost is one
++  word per non-`Copy` field, plus a zero word for a class whose own count is odd; at most one check
++  per such field on entry to a `mut self` method; and, per access, a load and a compare, with a store
++  only for a held access. `Copy` fields have no word (`[EXC-17]`), and the fields of a `@sync` class
++  need none (`[THR-1]`).
+ * `[EXC-16]` *(new in 0.9.9)* Assigning a value to a class field whose type is not `Copy` is a write access (table
+   above): it conflicts with, for example, a `for` loop over the same field, which would otherwise read
+   a buffer freed by the assignment.
+@@ -2524,12 +2534,16 @@
+   `ref h.f`, a view of a field, a guard obtained from one — ends where the borrow's loan dies
+   (`[BCK-2]`), in whichever function that is. A view of a field returned from a method carries its
+   access to the caller and ends at the caller's last use of the view, on every path.
+-* `[EXC-3]` The compiler MAY remove a check only when it proves no conflicting access can occur: every
+-  access to the object in the interval goes through one handle local that is not reassigned, their
+-  intervals are ordered, and either the interval contains no call, no virtual or interface dispatch and
+-  no call through a callable value, or escape analysis proves that local is the only handle to the
+-  object. Conflicting accesses through one local that the compiler can see are rejected at compile
+-  time instead (`E3080`, shape X1).
++* `[EXC-3]` *(changed in 0.9.9)* The compiler MAY remove a check only when it proves no conflicting
++  access can occur, in one of two ways. Either every access to the object in the interval goes through
++  one handle local that is not reassigned, their intervals are ordered, and either the interval
++  contains no call, no virtual or interface dispatch and no call through a callable value, or escape
++  analysis proves that local is the only handle to the object. Or no access that could make the check
++  fail is held (`[EXC-19]`) anywhere in the program: for a read, no held write to the same field or to
++  a whole object of its class family (the classes that share one root base class); for a write, no
++  held access to either. The second way needs the whole program in view, so a program that calls
++  through `dyn` or an interface keeps these checks. Conflicting accesses through one local that the
++  compiler can see are rejected at compile time instead (`E3080`, shape X1).
+ * `[EXC-3a]` Every removed check is recorded, with the condition that justified it, and reported by
+   `ember inspect --safety --elided-only`.
+ * `[EXC-4]` A `let` field is subject to the same rules: `let` fixes the binding, not the value
+@@ -3106,8 +3120,8 @@
+ | Division-by-zero and shift-range checks | conditionally elided | removed for constants, `NonZero` divisors and range facts |
+ | Retain / release pair | guaranteed elided | the cases of `[RC-2]` |
+ | Retain / release, surviving | guaranteed present | reported per site; atomic iff the class is `Sync` |
+-| Dynamic exclusivity check | conditionally elided | removed per `[EXC-3]`; hoisted per `[EXC-8]`; covered by `mut self` (`[EXC-15]`) |
+-| Per-field access word | guaranteed present | one `u32` per non-`Copy` field of a non-`@sync` class, and one check per such field on entry to a `mut self` method (`[EXC-19]`) |
++| Dynamic exclusivity check | conditionally elided | removed per `[EXC-3]`, including when nothing held anywhere could fail it; hoisted per `[EXC-8]`; covered by `mut self` (`[EXC-15]`); a load and a compare when the access is not held (`[EXC-19]`) |
++| Per-field access word | guaranteed present | one `u32` per non-`Copy` field of a non-`@sync` class, packed per class with a zero word after an odd count, and at most one check per such field on entry to a `mut self` method (`[EXC-19]`) |
+ | Stale-handle check | guaranteed present, **every profile** | the guarantee is the check; `get_unchecked` in `unsafe` |
+ | `RefCell` borrow | guaranteed present | one counter update |
+ | `Cell` access | not observable | a load or a store |
+@@ -6778,7 +6792,8 @@
+ their null-pointer niche; Hardened_37 adds ODR-081, the fallible owned C-string conversion and
+ explicit borrowed view; Hardened_38 adds ODR-082, the C qualifier asserted by an immutable
+ foreign static; Hardened_39 adds ODR-083, the initialization anchor for static export creator
+-contracts; Hardened_40 adds ODR-084, module-attribute syntax and lexical integer overflow policy.
++contracts; Hardened_40 adds ODR-084, module-attribute syntax and lexical integer overflow policy;
++Hardened_41 adds ODR-085, what the dynamic exclusivity checks cost and the packed access words.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6846,6 +6861,7 @@
+ | ODR-082 | `@ffi(immutable)` asserts a `const` C object for a hand-declared foreign static, with a matching C declaration and safe `Sync` read (Hardened_38) | `[FFI-8]` |
+ | ODR-083 | the `creator` thread contract of a static free-function export is anchored to successful module initialization; idempotent init does not transfer it and reinitialization after shutdown establishes a new creator (Hardened_39) | `[FFI-33]`, `[FFI-33c]`, `[GRM-37]` |
+ | ODR-084 | `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts (Hardened_40) | `[GRM-37]`, `[ATT-4]`, `[TYP-8]`, `[TYP-28]`, `[FN-5]`, `[CT-4]`, `[STD-20]` |
++| ODR-085 | an access that is not held is checked but not counted; a `mut self` call to a quiet function is only checked; a check that nothing held anywhere could fail may be removed; each class's access words stand side by side before its fields, a zero word after an odd count (Hardened_41) | `[EXC-3]`, `[EXC-19]`, `[OBJ-1]`, `[COST-3]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6878,7 +6894,9 @@
+ | `[ERR-4]` | changed |
+ | `[ERR-10]` | changed |
+ | `[ERR-12]` | changed |
++| `[EXC-3]` | changed |
+ | `[EXC-17]` | changed |
++| `[EXC-19]` | changed |
+ | `[FFI-10]` | changed |
+ | `[FFI-11]` | changed |
+ | `[FFI-15]` | changed |

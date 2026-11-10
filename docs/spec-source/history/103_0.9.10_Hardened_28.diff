@@ -1,0 +1,76 @@
+--- Ember_v0.9.10_Hardened_27.md
++++ Ember_v0.9.10_Hardened_28.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.10_Hardened_27
+-**Supersedes:** 0.9.10_Hardened_26, 0.9.10_Hardened_25, 0.9.10_Hardened_24, 0.9.10_Hardened_23, 0.9.10_Hardened_22, 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.10_Hardened_28
++**Supersedes:** 0.9.10_Hardened_27, 0.9.10_Hardened_26, 0.9.10_Hardened_25, 0.9.10_Hardened_24, 0.9.10_Hardened_23, 0.9.10_Hardened_22, 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -2998,7 +2998,9 @@
+ 
+   `@packed` and `@align(N)` are not written on one type, and a `@packed` type holds no field whose
+   type states an alignment with `@align`: no padding and a size that is a multiple of `N` cannot
+-  both hold, so either is `E0104` (ODR-138).
++  both hold, so either is `E0104` (ODR-138). A SIMD vector states its alignment too (it is aligned
++  to its size, `[SIMD-1]`), so a `@packed` type holding one is `E0104` as well (ODR-157). `@align(N)`
++  on an enum without payloads raises its alignment and rounds its size up like any other type's.
+ * `size_of[T]()`, `align_of[T]()` and `offset_of[T](field)` are compile-time functions.
+ 
+ ## IX.6 Handles and pools
+@@ -6354,9 +6356,11 @@
+ * `[FFI-39b]` `super.init(…)` selects the C++ base constructor by arity and argument types and runs it
+   before any Ember field is initialised; a base with no default constructor and no declared `init` is
+   `E5058`.
+-* `[FFI-39c]` Passing `self` to a C++ API upcasts it and creates a `Retained` token (`[FFI-23]`) that
+-  keeps the object alive while C++ holds the pointer; an upcast where the token cannot be kept is
+-  `E5060`.
++* `[FFI-39c]` *(changed in 0.9.10)* A C++ parameter that keeps the pointer it is given takes a
++  `Retained` token (`[FFI-23]`) the program holds: `tok = Retained.pin(self)` upcasts `self` to the
++  C++ base, the call is given `tok`, and the object lives while the program keeps the token. Passing
++  `self` itself there is `E5060`; a parameter borrowed for the call alone takes `self` with no token
++  (ODR-156).
+ * `[FFI-17c]` Destruction of an Ember class derived from a C++ class is derived-first, as `[CLS-6]`
+   says for every class: the Ember `drop`, then the Ember fields, and only then the C++ base destructor.
+ * `[FFI-17d]` `@ffi(trampoline, owner="ember")`, the default, makes the Ember count own the object;
+@@ -7350,6 +7354,8 @@
+ | ODR-153 | ruled with the owner's approval: each benchmark builds each side at several code layouts, the same for both sides, each moving the code to other addresses and changing nothing else, keeps each side's fastest by a short interleaved run, then times the two as before | `[BEN-1]` |
+ | ODR-154 | ruled with the owner's approval: the performance gate's verdict of record is the one measured on the recorded reference machine before a change is published; CI on shared machines reports the results without failing (`--report`) | `[TST-28]` |
+ | ODR-155 | ruled under the delegation: Annex A's map comprehension names its type (`index: Map[str, int] = …`), and its `unsafe:` block carries a safety note; the annex is generated from `docs/spec-source/appendix-a.em`, which compiles | `[TST-6]`, `[TYP-38]`, `[UNS-8]` |
++| ODR-156 | the owner's answer: a C++ parameter that keeps the pointer takes a `Retained` token the program holds (`tok = Retained.pin(self)`, then `tok`); `self` there is `E5060`; a parameter borrowed for the call takes `self` | `[FFI-39c]`, `[FFI-23]` |
++| ODR-157 | ruled under the delegation: a `@packed` type holding a SIMD vector is `E0104`, as one holding an `@align` type is (ODR-138); a vector's alignment is its size (`[SIMD-1]`) | `[LAY-2]`, `[SIMD-1]` |
+ 
+ Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
+ 0.9.9.
+@@ -8020,6 +8026,19 @@
+ | Rule | 0.9.10_Hardened_26 → 0.9.10_Hardened_27 |
+ |---|---|
+ 
++
++## H.33 Changes in 0.9.10_Hardened_28 (from 0.9.10_Hardened_27)
++
++**0.9.10_Hardened_28** records ODR-156, the owner's answer to helper N4's question on `[FFI-39c]`, and ODR-157, ruled under the delegation when `[LAY-2]`'s last two layouts were built (`docs/DECISIONS.md` ADR-249):
++
++* A C++ parameter that keeps the pointer it is given takes a `Retained` token the program holds: `tok = Retained.pin(self)` upcasts `self` to the C++ base and the call is given `tok`; passing `self` itself there is `E5060`, and a parameter borrowed for the call alone takes `self` with no token (ODR-156, the owner's option (a)).
++* A SIMD vector is aligned to its size (`[SIMD-1]`), an alignment stated as `@align` states one, so a `@packed` type holding one is `E0104`, as ODR-138 rules for `@align` types: no padding and that alignment cannot both hold, and MSVC keeps the alignment under `#pragma pack` (ODR-157).
++
++Generated: every rule whose text differs from 0.9.10_Hardened_27.
++
++| Rule | 0.9.10_Hardened_27 → 0.9.10_Hardened_28 |
++|---|---|
++| `[FFI-39c]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -8605,7 +8624,7 @@
+ | `[FFI-39]` | Annex C | An Ember class may derive from a C++ class the overlay declares with … |
+ | `[FFI-39a]` | Annex C | The trampoline calls the overrides through their permanent thunks, so … |
+ | `[FFI-39b]` | Annex C | `super.init(…)` selects the C++ base constructor by arity and … |
+-| `[FFI-39c]` | Annex C | Passing `self` to a C++ API upcasts it and creates a `Retained` token … |
++| `[FFI-39c]` | Annex C | *(changed in 0.9.10)* A C++ parameter that keeps the pointer it is … |
+ | `[FFI-39d]` | Annex C | Re-entrant calls from C++ into the same Ember object are expected. … |
+ | `[FFI-39e]` | Annex C | A C++ exception never crosses into Ember code, and an Ember panic … |
+ | `[FFI-40]` | Annex C | `const` methods import as `self`, non-`const` methods as `mut self`; … |

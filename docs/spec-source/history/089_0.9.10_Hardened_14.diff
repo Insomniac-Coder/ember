@@ -1,0 +1,194 @@
+--- Ember_v0.9.10_Hardened_13.md
++++ Ember_v0.9.10_Hardened_14.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.10_Hardened_13
+-**Supersedes:** 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.10_Hardened_14
++**Supersedes:** 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -4769,9 +4769,13 @@
+     return 0
+ ```
+ 
+-* `[FFI-26]` `@export("symbol")` gives a function a stable C symbol with the C ABI.
+-  `@export_table("Name", protocol=N)` on a struct of `extern "C" fn` fields exports a table of function
+-  pointers under that name and protocol version, for hosts that load a module through one entry point. `ember build
++* `[FFI-26]` *(changed in 0.9.10)* `@export("symbol")` gives a function a stable C symbol with the C ABI.
++  `@export_table("Name", protocol=N)` on a struct of `extern "C" fn` fields exports a constant of that
++  struct, a table of function pointers, under the C symbol `Name_vN` (`[ABI-1]`), for hosts that load a
++  module through one entry point. A field written with a default, `on_create: extern "C" fn(u64) -> i32
++  = door_created`, holds the function its default names; a field without one holds the module's
++  function of the field's own name. Either way the function's type is the field's (`E2020`), and a
++  field naming no function is `E1010`. `ember build
+   --emit-header` writes `<package>.h` with a prototype for each export, a typedef for each
+   `@layout(c)` type they use, and each export's thread contract as a comment.
+ * `[FFI-25]` *(changed in 0.9.9)* A panic in an exported function, or anywhere below it, aborts the
+@@ -4803,16 +4807,20 @@
+   callback creation contracts remain distinct.
+ * `[FFI-33c]` *(new in 0.9.9)* Under `threads = main`, the exported wrapper checks, in every profile, that
+   the calling thread is the one that initialised the module, and panics otherwise; in exchange the body
+-  may use thread-confined state. An `@export_table` may set `threads` per field.
++  may use thread-confined state. *(changed in 0.9.10)* A field of an `@export_table` takes the thread
++  contract of the function it holds (`[FFI-33]`); the field itself carries none.
+ * `[FFI-27]` The runtime `ember_rt` is a C11 static library with no global constructors. A C host calls
+   `ember_rt_init(&cfg)` once (optionally routing allocation and logging to its own functions),
+   `ember_rt_thread_attach()` on each thread that calls Ember, and `ember_rt_shutdown()` at the end,
+   which runs at-exit hooks and, in `debug`, prints the leak report (`[WK-15]`).
+-* `[FFI-28]` A package built as `kind = "staticlib"` produces a library and header to link into a C or
+-  C++ program; `kind = "cdylib"` a shared library exporting only its `@export` symbols plus
+-  `ember_module_init` and `ember_module_shutdown`.
+-* `[FFI-31]` A `cdylib` links its own copy of the runtime. The host calls `ember_module_init` before
+-  using it and `ember_module_shutdown` before unloading it; shutdown runs at-exit hooks, detaches
++* `[FFI-28]` *(changed in 0.9.10)* A package built as `kind = "staticlib"` produces a library and
++  header to link into a C or C++ program; `kind = "cdylib"` a shared library exporting only its
++  `@export` symbols, its `@export_table`s, `ember_module_init`, `ember_module_shutdown`, and the
++  marker `ember_module_protocol_vN`, `N` the module protocol's version (`[ABI-1]`).
++* `[FFI-31]` *(changed in 0.9.10)* A `cdylib` links its own copy of the runtime. Before calling into it
++  the host looks up the marker of the module protocol version it was built for and refuses a module
++  without it; it calls `ember_module_init` before using the module and `ember_module_shutdown` before
++  unloading it; shutdown runs at-exit hooks, detaches
+   every thread the module attached, releases its thread-local state and reports leaks in `debug`.
+ * `[FFI-31a]` Its thread detachment never relies on a TLS destructor in the module's code.
+ 
+@@ -4980,7 +4988,7 @@
+   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
+   parameters.
+ * `[MAN-8]` *(new in 0.9.9)* *(changed in 0.9.10)* The sections are: `[package]` (`name`, `version`, `language`, `kind`,
+-  `layers`, `edition_lints`); `[dependencies]` (a version requirement, `{ path }`, or `{ git, rev }`);
++  `layers`, `edition_lints`); `[dependencies]` (`{ path }`, `{ git, rev }`, or `{ git, version }`, `[VER-5]`);
+   `[build]` (`entry`, `target`, `backend`, `c_compiler`, `runtime`, `max_instantiations` `[MONO-3]`,
+   `reload` `[MAN-7]`); `[profiles.<name>]` (`[PRF-3]`); `[c]` (`compiler`, `flags`, `[BLD-FFI-1]`);
+   `[link]` (`libs`); `[jobs]` (`workers`, `[JOB-1]`); `[realtime]` (`contracts`, `[EFF-19]`);
+@@ -4990,9 +4998,13 @@
+   safety check or changes what a program means** (`[PRF-1]`).
+ * `[MAN-7]` *(changed in 0.9.10)* `[build] reload` is `"opt-in"`, `"all"`, `"bodies"` or `"none"`; a
+   `release` build ignores it and prints the note `hot reload is off in release builds` (Annex B).
+-* `[VER-5]` Package versions are semantic; a requirement `"1.2"` means `>= 1.2.0, < 2.0.0`; resolution
+-  picks the highest version satisfying every requirement, and `ember update [package]` recomputes it.
+-  Two majors of one package may coexist, distinguished in symbol names.
++* `[VER-5]` *(changed in 0.9.10)* Package versions are semantic. A dependency
++  `{ git = "<url>", version = "1.2" }` names the versions its repository has tagged
++  `vMAJOR.MINOR.PATCH`; the requirement `"1.2"` means `>= 1.2.0, < 2.0.0`, and resolution picks the
++  highest tagged version satisfying every requirement, recorded with its commit in `ember.lock`;
++  `ember update [package]` recomputes it. A requirement with no source (`geometry = "1.2"`) is for a
++  package registry, which this version does not have (`E0900`). Two majors of one package may coexist,
++  distinguished in symbol names.
+ 
+ ## XVII.3 Builds
+ 
+@@ -5356,9 +5368,13 @@
+ * `[CONF-3]` **Ember Systems**: adds Parts VIII, IX, XI, XII and XIV.
+ * `[CONF-4]` **Ember Native**: adds Part XVI. Annex C (C++) is a separate, optional claim.
+ * `[CONF-5]` **Ember Dynamic**: adds Annex B (hot reload).
+-* `[ABI-1]` The runtime ABI, the hot-reload protocol, the module protocol and the export-table protocol
+-  are versioned independently of the language; each version is a linked symbol whose name encodes the
+-  number, so a mismatch fails at link time, and `ember_module_init` checks the runtime ABI first.
++* `[ABI-1]` *(changed in 0.9.10)* The runtime ABI, the hot-reload protocol, the module protocol and the
++  export-table protocol are versioned independently of the language; each version is a symbol whose
++  name encodes the number (`ember_rt_init_vN`, `ember_reload_protocol_vN`, a module's marker
++  `ember_module_protocol_vN` `[FFI-28]`, a table's `Name_vN` `[FFI-26]`), so a mismatch fails at link
++  time or, for a module loaded at run time, when the host looks the name up; `ember_module_init`
++  checks the runtime ABI first. A setting appended to the end of `ember_rt_config` is no new module
++  protocol: the settings' `size` lets each side read only what both know.
+ * `[ABI-2]` A protocol that cannot be checked at link time (hot-reload images, loaded at run time) is
+   checked on load and refused with `E9037`.
+ * `[ABI-3]` `ember_module_init` checks the runtime ABI version before anything else and returns a
+@@ -7130,7 +7146,8 @@
+ questions (§H.15); 0.9.10_Hardened_11 adds ODR-113 to ODR-115, the owner's rulings on what printing,
+ a use after a move and an `unsafe fn` value are (§H.16); 0.9.10_Hardened_12 adds ODR-116, a
+ `MutSpan` where a `Span` is expected (§H.17); 0.9.10_Hardened_13 adds ODR-117 to ODR-126, the
+-owner's answers to the 85% push's questions and the profiles' new names (§H.18).
++owner's answers to the 85% push's questions and the profiles' new names (§H.18); 0.9.10_Hardened_14
++adds ODR-127 to ODR-131, the owner's answers to helper C's questions (§H.19).
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -7240,6 +7257,11 @@
+ | ODR-124 | ruled by the owner (2026-10-19): a status enum is marked `@ffi(status=E, ok=X, error=N)`, naming its error type; `[ERR-6]` and `[FFI-16]` disagreed on the spelling and the name | `[ERR-6]`, `[FFI-16]`, `[FFI-11]` |
+ | ODR-125 | ruled by the owner (2026-10-19): an `inout_count` function with a result of its own returns a tuple, that result first, then each pointer output in the C declaration's order | `[FFI-11b]` |
+ | ODR-126 | ruled by the owner (2026-10-19): when an instance moves, handles inside tuples, `Box` contents and closure captures are rewritten too | `[HR-15]` |
++| ODR-127 | ruled by the owner (2026-10-19): a dependency `{ git, version }` resolves against the versions its repository has tagged `vMAJOR.MINOR.PATCH`; a requirement with no source is for a registry this version does not have (`E0900`) | `[VER-5]`, `[MAN-8]` |
++| ODR-128 | ruled by the owner (2026-10-19): a field of an `@export_table` holds the function its default names (`= door_created`), else the module's function of its own name | `[FFI-26]` |
++| ODR-129 | ruled by the owner (2026-10-19): an `@export_table`'s symbol carries its protocol version, `Name_vN`, with no separate marker | `[FFI-26]`, `[ABI-1]` |
++| ODR-130 | ruled by the owner (2026-10-19): a field of an `@export_table` takes the thread contract of the function it holds | `[FFI-33c]` |
++| ODR-131 | ruled by the owner (2026-10-19): a `cdylib` exports the marker `ember_module_protocol_vN`, which its host looks up before calling into it; `[FFI-28]` and `[ABI-1]` disagreed | `[FFI-28]`, `[FFI-31]`, `[ABI-1]` |
+ 
+ Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
+ 0.9.9.
+@@ -7692,6 +7714,33 @@
+ | `[PAN-1]` | changed |
+ | `[PRF-2]` | changed |
+ | `[RT-4]` | changed |
++
++## H.19 Changes in 0.9.10_Hardened_14 (from 0.9.10_Hardened_13)
++
++**0.9.10_Hardened_14** records ODR-127 to ODR-131, ruled by the owner on 2026-10-19 on helper C's
++questions (`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-207, `tasks/85/owner-answers.md`):
++
++* A dependency `{ git, version }` resolves against its repository's version tags; a requirement with
++  no source waits for a registry (`[VER-5]`, `[MAN-8]`, ODR-127).
++* A field of an `@export_table` holds the function its default names, else the function of its own
++  name (`[FFI-26]`, ODR-128).
++* An `@export_table` is exported as `Name_vN`, its protocol version in its own name (`[FFI-26]`,
++  `[ABI-1]`, ODR-129).
++* A table's field takes its function's thread contract (`[FFI-33c]`, ODR-130).
++* A `cdylib` exports the marker `ember_module_protocol_vN`, which its host looks up before calling into
++  it (`[FFI-28]`, `[FFI-31]`, `[ABI-1]`, ODR-131).
++
++Generated: every rule whose text differs from 0.9.10_Hardened_13.
++
++| Rule | 0.9.10_Hardened_13 → 0.9.10_Hardened_14 |
++|---|---|
++| `[ABI-1]` | changed |
++| `[FFI-26]` | changed |
++| `[FFI-28]` | changed |
++| `[FFI-31]` | changed |
++| `[FFI-33c]` | changed |
++| `[MAN-8]` | changed |
++| `[VER-5]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -7702,7 +7751,7 @@
+ 
+ | Rule | Part | Begins |
+ |---|---|---|
+-| `[ABI-1]` | XVII | The runtime ABI, the hot-reload protocol, the module protocol and the … |
++| `[ABI-1]` | XVII | *(changed in 0.9.10)* The runtime ABI, the hot-reload protocol, the … |
+ | `[ABI-2]` | XVII | A protocol that cannot be checked at link time (hot-reload images, … |
+ | `[ABI-3]` | XVII | `ember_module_init` checks the runtime ABI version before anything … |
+ | `[ABI-4]` | XVII | A release notes every protocol whose version changed, and why. |
+@@ -8244,9 +8293,9 @@
+ | `[FFI-24c]` | Annex C | `ember inspect` reports each C++ call's mode (`noexcept (derived)`, … |
+ | `[FFI-24d]` | Annex C | A header that adds or removes `noexcept` changes the Ember signature; … |
+ | `[FFI-25]` | XVI | A panic in an exported function, or anywhere below it, aborts the … |
+-| `[FFI-26]` | XVI | `@export("symbol")` gives a function a stable C symbol with the C … |
++| `[FFI-26]` | XVI | *(changed in 0.9.10)* `@export("symbol")` gives a function a stable C … |
+ | `[FFI-27]` | XVI | The runtime `ember_rt` is a C11 static library with no global … |
+-| `[FFI-28]` | XVI | A package built as `kind = "staticlib"` produces a library and header … |
++| `[FFI-28]` | XVI | *(changed in 0.9.10)* A package built as `kind = "staticlib"` … |
+ | `[FFI-29]` | XVI | For every `import c` the importer emits a shim C file, compiled with … |
+ | `[FFI-29a]` | XVI | A binding never names a symbol with internal linkage. |
+ | `[FFI-29b]` | XVI | `implementation = ["MINIAUDIO_IMPLEMENTATION"]` compiles a … |
+@@ -8255,7 +8304,7 @@
+ | `[FFI-30a]` | XVI | An overlay changes the signatures, safety and names of *functions* … |
+ | `[FFI-30b]` | XVI | `pub import c "…" as vk` re-exports the module under the ordinary … |
+ | `[FFI-30c]` | XVI | A package may distribute an overlay for a foreign module, and several … |
+-| `[FFI-31]` | XVI | A `cdylib` links its own copy of the runtime. The host calls … |
++| `[FFI-31]` | XVI | *(changed in 0.9.10)* A `cdylib` links its own copy of the runtime. … |
+ | `[FFI-31a]` | XVI | Its thread detachment never relies on a TLS destructor in the … |
+ | `[FFI-31b]` | XVI | No owning Ember value crosses a module boundary: class handles, … |
+ | `[FFI-31c]` | XVI | With `[build] runtime = "shared"`, several Ember modules in one … |
+@@ -9037,7 +9086,7 @@
+ | `[VER-2]` | 0 | From 1.0: source compatibility within a major language version; a … |
+ | `[VER-3]` | 0 | From 1.0: deprecation through `@deprecated(since, note)`, removal no … |
+ | `[VER-4]` | 0 | The runtime ABI (object header, `ember_type_info`, every entry point … |
+-| `[VER-5]` | XVII | Package versions are semantic; a requirement `"1.2"` means `>= 1.2.0, … |
++| `[VER-5]` | XVII | *(changed in 0.9.10)* Package versions are semantic. A dependency `{ … |
+ | `[VER-8]` | 0 | Before 1.0 there is exactly one language: the current one. A source … |
+ | `[VER-9]` | 0 | A language revision that changes the set of accepted programs or … |
+ 

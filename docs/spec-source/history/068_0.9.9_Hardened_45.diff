@@ -1,0 +1,76 @@
+--- Ember_v0.9.9_Hardened_44.md
++++ Ember_v0.9.9_Hardened_45.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_44
+-**Supersedes:** 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_45
++**Supersedes:** 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -933,9 +933,15 @@
+ 
+ * `[TYP-9]` Floating point is strict IEEE 754: no reassociation, no contraction of `a * b + c` into a
+   fused operation, no assumption that values are finite, unless a function is `@fastmath` (relaxes all
+-  of these within it) or `@fp(contract)` (permits contraction only). `NaN == NaN` is false. The
+-  operators `<`, `<=`, `>`, `>=`, `==`, `!=` on floats are IEEE comparisons; `Ord.cmp` on floats is the
+-  IEEE totalOrder (`[TYP-37]`).
++  of these within it) or `@fp(contract)` (permits contraction only). The mode is lexical, as
++  `[TYP-8]`'s overflow policy is (ODR-084, ODR-090): a lambda takes the mode of the function it is
++  written in; a parameter default keeps its declaring function's mode, and a field default is strict,
++  wherever either is evaluated; instantiation, inlining and calls keep each function's own.
++  Neither mode relaxes what the language defines exactly: a range value is in its range (`[RNG-9]`),
++  `x as T` is `[TYP-6]`'s, `is_nan`, `is_finite` and `is_infinite` are exact, and a NaN or infinite
++  value never makes a program's behaviour undefined (`[PHIL-10]`).
++  `NaN == NaN` is false. The operators `<`, `<=`, `>`, `>=`, `==`, `!=` on floats are IEEE
++  comparisons; `Ord.cmp` on floats is the IEEE totalOrder (`[TYP-37]`).
+ * `[TYP-9a]` Contraction is off by default and the implementation MUST turn it off in the host C
+   compiler (`[CG-C-11]`); a toolchain on which it cannot be turned off is rejected with `E9011`.
+ * `[TYP-9b]` `@fp(contract)` permits, and requires the backend to enable, fused multiply-add within
+@@ -976,7 +982,9 @@
+   `[RNG-3]`'s check, `[TYP-8]`'s overflow check and bounds checks (`[OPT-2]`). The variable of a range
+   loop `for i in a..b` carries the fact `a <= i < b` in the body (`a <= i <= b` for `a..=b`), and its
+   increment has no overflow check. A fact is derived from an operation's mathematical result only when
+-  that result provably fits; never inside `@fastmath`.
++  that result provably fits. Inside `@fastmath` no fact about a float is derived, as the function may
++  be compiled as if no value were NaN; its integer facts are derived as anywhere else, since no float
++  mode changes integer arithmetic (ODR-090).
+ * `[RNG-4a]` For floats, a range fact comes only from the true arm of a comparison and records whether
+   NaN is excluded; a fact that does not exclude NaN never removes a construction check.
+ * `[RNG-5]` Arithmetic on a range value yields its representation: `r * 2.0` is `f32`. Arithmetic
+@@ -6836,7 +6844,8 @@
+ Hardened_41 adds ODR-085, what the dynamic exclusivity checks cost and the packed access words;
+ Hardened_42 adds ODR-086 and ODR-087, running totals checked block by block and the LLVM backend;
+ Hardened_43 adds ODR-088, integer division no vector instruction set does keeps a loop out of
+-vectorisable form; Hardened_44 adds ODR-089, the iterator adapters' counts and ownership.
++vectorisable form; Hardened_44 adds ODR-089, the iterator adapters' counts and ownership;
++Hardened_45 adds ODR-090, where a float mode holds.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6909,6 +6918,7 @@
+ | ODR-087 | LLVM is restored as the reference implementation's second backend over the same MIR, begun once the C backend passes the conformance suite and the default once it also passes the performance suite; `--backend c|llvm` (Hardened_42) | `[CG-LL-1]`, `[CG-LL-2]`, `[CG-LL-3]`, `[SIMD-1]`, `[SIMD-3]`, `[BLD-6]` |
+ | ODR-088 | a loop that divides integers by a divisor that is not a constant, or integers of 64 bits or more by a constant that is not a power of two, is not in vectorisable form: no vector instruction set does either, so its overflow checks stay one per operation (Hardened_43) | `[SIMD-5]`, `[SIMD-7]` |
+ | ODR-089 | an adapter or consumer takes the iterator it wraps; `take`, `skip`, `nth` and `step_by` count in `int`, and a negative count or index, or a step of zero or less, panics when the adapter is made or the consumer called; `enumerate(start=0)` as `[STD-26]` (Hardened_44) | `[STD-19]`, `[STD-14]`, `[STD-26]` |
++| ODR-090 | a float mode is lexical, as the overflow policy is: a lambda takes its function's; a parameter default keeps its declaration's and a field default is strict wherever evaluated; inside `@fastmath` no range fact about a float is derived, and integer facts are unaffected; neither mode relaxes range values, `as`, the float classifications, or makes a NaN undefined behaviour (Hardened_45) | `[TYP-9]`, `[TYP-9b]`, `[RNG-4]`, `[CG-C-11]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6983,6 +6993,7 @@
+ | `[PHIL-13]` | changed |
+ | `[RC-3]` | changed |
+ | `[RC-5]` | changed |
++| `[RNG-4]` | changed |
+ | `[RT-10]` | changed |
+ | `[SIMD-1]` | changed |
+ | `[SIMD-3]` | changed |
+@@ -7011,6 +7022,7 @@
+ | `[TXT-5]` | changed |
+ | `[TXT-10]` | changed |
+ | `[TYP-8]` | changed |
++| `[TYP-9]` | changed |
+ | `[TYP-13]` | changed |
+ | `[TYP-15]` | changed |
+ | `[TYP-21]` | changed |

@@ -1,0 +1,202 @@
+--- Ember_v0.9.9_Hardened_25.md
++++ Ember_v0.9.9_Hardened_26.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_25
+-**Supersedes:** 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_26
++**Supersedes:** 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -1059,6 +1059,32 @@
+   field; it does not make the type a view.
+ * Const generics: `fn zeros[const N: int]() -> [f32; N]`. Associated types: `interface Iterator: type
+   Item`. Default type parameters: `interface Add[Rhs = Self]`.
++* `[TYP-41]` *(new in 0.9.9)* **Const arguments.** A `const` generic argument, like an array length,
++  is any expression compile time evaluates (`[CT-1]`) over constants and the enclosing declaration's
++  own `const` parameters: `[f32; rows * cols]` and `zeros[side * side]()` are as legal as a literal,
++  and a function may compute one. Whether two const arguments are equal, and so whether two types
++  that differ only in them are one type, is decided by these rules and no others (ODR-066):
++  1. An argument whose `const` parameters are all known (every argument of an instance, after
++     substitution) is its value, evaluated as `[CT-1]` evaluates; two are equal when their values
++     are. An evaluation that overflows or panics is `E6004`, and one past `[CT-3]`'s limits `E6001`,
++     where the argument is written; neither is ever reported as a type mismatch.
++  2. In generic code, an integer argument that names the declaration's `const` parameters is compared
++     by its **normal form**: a sum of terms, each an integer coefficient times a product of
++     parameters and opaque terms, with like terms collected and zero terms dropped, computed in
++     mathematical integers. `+`, `-`, multiplication and parentheses are what the normal form sees
++     through; any other operation (`/`, `%`, a shift, a comparison, a call) is an **opaque term**,
++     equal to another only when it is the same operation, or a call of the same function, on
++     arguments whose normal forms are equal. Two arguments are equal when their normal forms are the
++     same: `N + 1` and `1 + N` are, and `2 * N` and `N + N`; `N / 2 * 2` and `N` are not. An argument
++     of another type is equal to another only when both are the same parameter.
++  3. Arguments rules 1 and 2 do not show equal make different types (`E2020`). When either names a
++     parameter, the diagnostic says the two could not be shown equal, rather than that they differ;
++     it prints both normal forms and suggests computing the value once, in one shared expression or a
++     `const` parameter taken for it.
++
++  The rules depend only on the source, never on what an optimiser can prove. Each instance
++  evaluates its arguments again (rule 1), so an equality rule 2 accepts holds at every instance whose
++  arguments evaluate; an instance whose arguments overflow is `E6004` there.
+ 
+ ## IV.8 Interfaces
+ 
+@@ -1351,7 +1377,7 @@
+     (`[FN-1a]`). The callee may change it; it cannot move it out except by `mem.replace`/`mem.take`.
+   * `owned c: C` — **consumed**. The argument is moved in (copied if `Copy`; a handle is copied without
+     a retain). The callee owns it.
+-* `[FN-1a]` A `mut` parameter whose type is itself a view (`MutSpan[T]`) accepts a view-producing
++* `[FN-1a]` A `mut` parameter whose type is itself a view (`MutSpan[T]`), the receiver included, accepts a view-producing
+   expression such as `buf.as_mut_span()` or an `Array` place (coerced, `[SPN-1]`); the mutable-place
+   requirement applies to the place the view is taken of.
+ * `[FN-2]` An omitted mode is borrowed. There is no by-copy mode; a callee that needs its own copy
+@@ -2038,9 +2064,14 @@
+   their transitive callees of the same kind), as computed by the compiler; so `w.bump()` may be called
+   while a loop iterates `w.names` if `bump` touches only `w.count`. A method visible outside its package
+   borrows all of `self`, so that changing its body cannot break a caller in another package.
+-* `[BRW-5]` **Indices are not disjoint.** `ref mut a[i]` and `ref mut a[j]` conflict unless both indices
+-  are constants and differ. `split_at`, `chunks_mut`, `iter_mut`, `swap(i, j)` and `SoA` columns are the
+-  ways to hold two mutable views of one container (shape B1).
++* `[BRW-5]` *(changed in 0.9.9)* **Indices are not disjoint.** `ref mut a[i]` and `ref mut a[j]`
++  conflict unless both indices are constants and differ. `get_pair_mut(i, j)`, `split_at`,
++  `chunks_mut`, `iter_mut`, `swap(i, j)` and `SoA` columns are the ways to hold two mutable views of
++  one container (shape B1). `get_pair_mut(i, j) -> Option[(ref mut T, ref mut T)]`, on an `Array` or
++  a `MutSpan`, borrows the container once, checks that both indices are in range and differ, and
++  only then makes the two references; otherwise it is `None` and the container is unchanged. The
++  pair borrows the receiver (`[LT-1]` rule 1). Distinct elements of a zero-sized type need not have
++  distinct addresses, and nothing about addresses follows from the indices (ODR-068).
+ * `[BRW-6]` **Reborrows.** From `r: ref mut T`, `ref r.f` freezes `r` while it lives and `ref mut r.f`
+   suspends `r`. Passing a `ref mut` local to a `mut` parameter reborrows it; it does not move it.
+ * `[BRW-7]` Borrowing a moved or uninitialised place is `E3050`.
+@@ -2252,7 +2283,8 @@
+   profile.
+ * `[SPN-5]` *(changed in 0.9.9)* `split_at(i)` on a `Span` returns two `Span`s; on a `MutSpan` it
+   consumes (reborrows) the view and returns two disjoint `MutSpan`s. `i > len` panics. (There is no
+-  separate `split_at_mut`.)
++  separate `split_at_mut`: an `Array` is split mutably as `a.as_mut_span().split_at(i)`.) A
++  `MutSpan` also has `get_pair_mut(i, j)` (`[BRW-5]`).
+ * `[SPN-8]` `as_ptr()` and `as_mut_ptr()` return raw pointers; extracting one is safe, using one needs
+   `unsafe`, and extraction extends no region.
+ 
+@@ -3843,7 +3875,8 @@
+   `drain(r) -> Array[T]`, `dedup`, `reverse`, `sort` (stable; `T: Ord`; an inconsistent order
+   permutes but never corrupts, `[HASH-3]`), `sort_by_key[K: Ord](f: fn(T) -> K)`,
+   `sort_by(cmp: fn(T, T) -> Ordering)`, `sorted() -> Array[T]`, `binary_search(x) -> Result[int, int]`,
+-  `index_of(x) -> Option[int]`, `first`, `last`, `get(i) -> Option[ref T]`, `get_mut`, `iter`,
++  `index_of(x) -> Option[int]`, `first`, `last`, `get(i) -> Option[ref T]`, `get_mut`,
++  `get_pair_mut(i, j) -> Option[(ref mut T, ref mut T)]` (`[BRW-5]`), `iter`,
+   `iter_mut`, `split_at`, `chunks(n)`, `chunks_mut(n)`, `windows(n)`, `join(sep)` (for elements that
+   are `Display`), and `x in xs` (`[STD-8]`). `xs[i]` takes any integer and panics when `i < 0` or
+   `i >= len` (`[TYP-31]`). `sort_by` and `sort_by_key` are stable, and `sort_by_key` calls `f` once
+@@ -3888,19 +3921,22 @@
+   `s1 == s2` compares as sets.
+ * `[STD-12]` *(new in 0.9.9)* **Borrowed keys.** Lookup methods, `m[k]` and `k in m` accept any key
+   type `Q` with `Q: AsKey[K]`: `K` itself, and `str` for `K = String`. `interface AsKey[K]: Hash` (in
+-  `std.collections`, not the prelude) has `is_key(self, key: K) -> bool` and `to_key(self) -> K`. A
+-  lookup hashes `q` and compares it with `is_key`, so it never converts; `m[k] = v` converts with
+-  `to_key()` only when the key is new. Every `K: Eq + Hash` is `AsKey[K]` (`is_key` is `==`;
+-  `to_key` clones, so `m[k] = v` with a `K` needs `K: Clone`, where `insert` moves the key); std
+-  implements `AsKey[String]` for `str`. An implementation MUST hash and compare as `to_key()` would;
+-  one that does not gives `[HASH-3]`'s wrong answers, never undefined behaviour.
++  `std.collections`, not the prelude) has `is_key(self, key: K) -> bool`; `interface ToKey[K]:
++  AsKey[K]` adds `to_key(self) -> K`, which makes the key (ODR-067). A lookup hashes `q` and compares
++  it with `is_key`, so it never converts or copies a key. `m[q] = v` needs `Q: ToKey[K]` and calls
++  `to_key()` only when the key is new, never to replace the value of an existing one. Every
++  `K: Eq + Hash` is `AsKey[K]` (`is_key` is `==`), and `ToKey[K]` when it is also `Clone` (`to_key`
++  clones): a key type that cannot be cloned is looked up and removed by value and inserted with
++  `insert`, which moves the key in. std implements `AsKey[String]` and `ToKey[String]` for `str`. An
++  implementation MUST hash and compare as the key it matches would, and `to_key()` MUST make that
++  key; one that does not gives `[HASH-3]`'s wrong answers, never undefined behaviour.
+ * `[STD-17]` *(new in 0.9.9)* **Index assignment.** `a[i] = v` calls `IndexSet.index_set(i, v)` when
+   the type implements `IndexSet[Idx, V]`, and otherwise assigns through `IndexMut` (dropping the old
+   value). `Map` implements `IndexSet`; `Array` does not need to. A compound assignment `a[i] op= v`
+   always goes through `IndexMut`. `Array` and `MutSpan` implement `Index[int]` and `IndexMut[int]`,
+-  and `Span` `Index[int]`, through their built-in indexing; `Map[K, V]` implements `Index[Q]`,
+-  `IndexMut[Q]` and `IndexSet[Q, V]` for every `Q: AsKey[K]` (a blanket implementation,
+-  `[GRM-34]`, ODR-042).
++  and `Span` `Index[int]`, through their built-in indexing; `Map[K, V]` implements `Index[Q]` and
++  `IndexMut[Q]` for every `Q: AsKey[K]`, and `IndexSet[Q, V]` for every `Q: ToKey[K]` (blanket
++  implementations, `[GRM-34]`, ODR-042, ODR-067).
+ * `[STD-7]` Fixed-capacity containers with no heap allocation: `FixedArray[T, N]`, `FixedString[N]`
+   and `RingBuffer[T, N]`; `push` returns `Result[void, CapacityError]` and `push_or_drop` discards when
+   full. Also `Deque[T]`, `SmallArray[T, N]` (inline up to `N`, then heap), `BitSet`.
+@@ -4793,7 +4829,7 @@
+ | O7 | explicit `x.drop()` | `E3070` | `mem.drop(x)` |
+ | O8 | scope guard moved or leaked | `E3014`, `E3015` | bind it with `with` (`[THR-5]`) |
+ | O9 | `self` escapes its `drop` | `E3016` | `mem.take` the data out |
+-| B1 | two mutable borrows of one place, e.g. two indices | `E3022` | `split_at`, `chunks_mut`, `iter_mut`, `swap(i, j)`; `SoA` columns |
++| B1 | two mutable borrows of one place, e.g. two indices | `E3022` | `get_pair_mut(i, j)`, `split_at`, `chunks_mut`, `iter_mut`, `swap(i, j)`; `SoA` columns |
+ | B2 | mutation while iterating | `E3020` | `retain`, `drain`, collect first, or an index loop |
+ | B3 | shared and mutable overlap | `E3021` | end the shared borrow first, or copy the value out |
+ | B4 | two writers of one value | `E3023` | a single owner passing `mut`; `Cell` for a counter |
+@@ -6602,7 +6638,8 @@
+ Hardened_18 adds ODR-041; Hardened_19 adds ODR-042; Hardened_20 adds ODR-043 to ODR-045;
+ Hardened_21 adds ODR-046; Hardened_22 adds ODR-047; Hardened_23 adds ODR-048; Hardened_24 adds
+ ODR-049 to ODR-064, the owner's simplification pass (`docs/proposals/Ember_Simplification_Pass_Revised.md`);
+-Hardened_25 adds ODR-065, the review of SP-010's access question.
++Hardened_25 adds ODR-065, the review of SP-010's access question; Hardened_26 adds ODR-066 to
++ODR-068, the owner's Part II adoptions SP-007, SP-016 and SP-031.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6651,6 +6688,9 @@
+ | ODR-063 | an object is deinitialised when its last owner ends as the source says, never earlier; `L3019` is retired — SP-014 (Hardened_24) | `[RC-3]` |
+ | ODR-064 | `alloc_array` initialises with `Default`, `alloc_zeroed` fills with zeros for a `Zeroable` `T`; a struct is `Zeroable` by `@derive(Zeroable)` — SP-017 (Hardened_24) | `[ARN-3]`, `[ARN-11]` |
+ | ODR-065 | a borrow through a handle stored in an object, or a call made on one, goes through a retained copy that lasts to the end of the statement; kept longer it is `E3060`; `mem.drop` moves a handle — review of SP-010 (Hardened_25) | `[RC-5]`, `[EXC-17]`, `[FN-9]`, `[OWN-6]` |
++| ODR-066 | a const argument is any compile-time expression; two are equal by value when known, else by a stated integer normal form (`+`, `-`, `*`; other operations opaque), and not shown equal is a mismatch that says so — SP-007 (Hardened_26) | `[TYP-41]` |
++| ODR-067 | `AsKey[K]` only matches; `ToKey[K]: AsKey[K]` makes the key, and `m[q] = v` needs it; every `K: Eq + Hash` is `AsKey[K]`, and `ToKey[K]` when also `Clone` — SP-016 (Hardened_26) | `[STD-12]`, `[STD-17]` |
++| ODR-068 | `get_pair_mut(i, j)` on an `Array` or `MutSpan` gives two mutable references, or `None` for an index out of range or equal indices, after checking — SP-031 (Hardened_26) | `[BRW-5]`, `[STD-15]`, `[SPN-5]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6661,6 +6701,7 @@
+ | `[ARN-11]` | changed |
+ | `[BLD-2]` | changed |
+ | `[BLD-8]` | changed |
++| `[BRW-5]` | changed |
+ | `[BRW-8]` | changed |
+ | `[CELL-2]` | changed |
+ | `[CG-C-11]` | changed |
+@@ -6683,6 +6724,7 @@
+ | `[EXC-17]` | changed |
+ | `[FMT-1]` | changed |
+ | `[FN-1]` | changed |
++| `[FN-1a]` | changed |
+ | `[FN-3]` | changed |
+ | `[FN-6]` | changed |
+ | `[FN-9]` | changed |
+@@ -6710,6 +6752,7 @@
+ | `[RC-5]` | changed |
+ | `[RT-10]` | changed |
+ | `[SIMD-5]` | changed |
++| `[SPN-5]` | changed |
+ | `[STD-4]` | changed |
+ | `[STD-5]` | changed |
+ | `[STD-11]` | changed |
+@@ -6739,6 +6782,7 @@
+ | `[TYP-37]` | changed |
+ | `[TYP-38]` | changed |
+ | `[TYP-39]` | changed |
++| `[TYP-41]` | added |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -7341,7 +7385,7 @@
+ | Rule | Part | Begins |
+ |---|---|---|
+ | `[FN-1]` | V | Parameter modes. * `a: A` — borrowed (the default). The callee reads … |
+-| `[FN-1a]` | V | A `mut` parameter whose type is itself a view (`MutSpan[T]`) accepts … |
++| `[FN-1a]` | V | A `mut` parameter whose type is itself a view (`MutSpan[T]`), the … |
+ | `[FN-2]` | V | An omitted mode is borrowed. There is no by-copy mode; a callee that … |
+ | `[FN-2a]` | V | A call site never writes a mode. `f(x)` is written whatever mode `f` … |
+ | `[FN-3]` | V | A function returns by move. Returning a reference or view requires … |
+@@ -8046,6 +8090,7 @@
+ | `[TYP-38]` | VI | Collection literals. * A list literal `[a, b, c]` has the type its … |
+ | `[TYP-39]` | IV | Collections, tuples and `Option`/`Result` implement `Display` the way … |
+ | `[TYP-40]` | IV | Interfaces are nominal. A type implements an interface only through … |
++| `[TYP-41]` | IV | Const arguments. A `const` generic argument, like an array length, is … |
+ 
+ ## UNS
+ 

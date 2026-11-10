@@ -1,0 +1,322 @@
+--- Ember_v0.9.6_Hardened_5.md
++++ Ember_v0.9.6_Hardened_6.md
+@@ -1,8 +1,8 @@
+ # Ember Programming Language — Design & Implementation Specification
+ 
+-**Version:** 0.9.6_Hardened_5
++**Version:** 0.9.6_Hardened_6
+ **Status:** Frozen development target; implementation/conformance evidence is not claimed and normative repository adoption still requires the recorded adoption gates
+-**Immediate predecessor:** 0.9.6_Hardened_4
++**Immediate predecessor:** 0.9.6_Hardened_5
+ **Versioning model:** A hardening increments `Hardened_N` when it only adds implementation detail,
+ invariants, tooling requirements, or editorial clarification without changing accepted language
+ semantics. A language revision is required when the accepted-program set or another normative
+@@ -13,12 +13,12 @@
+ analysis/verification boundaries, and one capability model. It also incorporates the owner-approved
+ clarification of `[ARN-10]` under v1's abort-only panic policy. The new `0.9.6` version selector is
+ additive; it does not silently change a module that selected an older contract. No implementation or
+-conformance result is asserted merely because the specification requires one. This H5 successor
+-incorporates the owner-approved ODR-011 completion of the previously named but under-specified
+-Arena-backed collection surface and the owner-approved ODR-012 completion of the `Hash`/`Hasher`
+-boundary on which the Map contracts already depended, and materializes the owner-approved post-H4
+-simplicity consolidation as binding reference-compiler, tooling, documentation, and development
+-requirements without changing source-language semantics.
++conformance result is asserted merely because the specification requires one. The H5 predecessor
++incorporated the owner-approved ODR-011 completion of the previously named but under-specified
++Arena-backed collection surface, the owner-approved ODR-012 completion of the `Hash`/`Hasher`
++boundary on which the Map contracts already depended, and the owner-approved post-H4 simplicity
++consolidation. This H6 successor completes the already advertised `Span[T]`/`MutSpan[T]` iterator,
++chunk, and raw-pointer surface through the owner-approved ODR-014 contract.
+ 
+ > **Authority boundary:** This frozen revision records the owner-selected 0.9.6 development target, but
+ > `docs/spec-source/ember-spec.md` remains the repository's sole normative source until this
+@@ -85,6 +85,44 @@
+ > separation of specification, implementation, owner-decision, and conformance evidence. It preserves
+ > every H4 semantic distinction and introduces no new public abstraction, runtime metadata, accepted
+ > program, or rejected program.
++
++> **SPAN API CONTRACT COMPLETED:** after H5's implementation audit found that the inherited Span
++> surface named `iter`, `iter_mut`, `chunks`, `chunks_mut`, and `as_ptr` without complete public
++> types, receiver modes, zero-size behavior, or raw-pointer boundaries, the owner resolved ODR-014.
++> H5 remains immutable. This H6 adds `[SPN-4]`–`[SPN-10]` and `[TST-25]`, uses named `@view`
++> iterators under `std.collections`, preserves ordinary shared/mutable reborrowing and NLL, defines
++> all-profile panic for zero-sized chunks, and makes raw-pointer extraction safe while leaving raw
++> pointer use under the existing unsafe contract. The owner's `*const T` notation is normalized to
++> Ember's existing canonical shared raw-pointer spelling `*T`; the selected semantics are unchanged.
++
++# 0.9.6_Hardened_6 Span API Completion Record
++
++**Version treatment:** owner-approved standard-library API and safety-boundary completion of a
++surface already advertised by the inherited Span contract. **Amendment class:** OWNER-APPROVED
++SEMANTIC COMPLETION. H5 remains the immutable predecessor. This cut changes only the previously
++unresolved identity and behavior of the named iterator, chunk, and raw-pointer operations; it does
++not introduce another ownership, lifetime, iterator, opaque-return, raw-pointer, or unsafe model.
++
++**Source authority.** The owner-supplied ODR-014 ruling is preserved byte-for-byte at
++`docs/spec-source/as-received/ODR-014_Span_MutSpan_API_completion.md` (SHA-256
++`0B2BC1BCB6450F266EC9EC264035C2F6C4A469574591CD8C9BDC8B9421A7058F`). Its `*const T` spelling is
++transport notation from a C/Rust-style type vocabulary; current Ember has always spelled a shared
++raw pointer `*T` and a mutable raw pointer `*mut T`. H6 applies that existing spelling without
++altering the owner's selected const/mutable authority boundary.
++
++**Resolved contract.** `std.collections` publicly exports the non-prelude named `@view` types
++`SpanIter`, `MutSpanIter`, `SpanChunks`, and `MutSpanChunks`. Shared iteration yields `ref T`;
++mutable iteration yields `ref mut T`; shared chunks yield `Span[T]`; mutable chunks yield disjoint
++`MutSpan[T]`. Mutable iterator/chunk construction reborrows rather than consumes its `MutSpan`, and
++ordinary NLL governs later reuse. A zero chunk size panics through the existing failure path in every
++profile. `as_ptr` and `as_mut_ptr` are safe extraction operations returning `*T` and `*mut T`;
++dereference, access, arithmetic, reference construction, and validity obligations remain governed by
++the existing unsafe rules. No raw pointer extends or retains source storage lifetime.
++
++**Evidence boundary.** H6 specifies the target and `[TST-25]` matrix; it does not claim that the
++compiler, runtime, standard library, or conformance suite already implements that matrix. The
++adopted repository specification remains `docs/spec-source/ember-spec.md`
++(`0.8.5_Hardened_1`) until the explicit adoption gates and owner action install a successor.
+ 
+ # 0.9.6_Hardened_5 Simplicity-Consolidation Adoption Record
+ 
+@@ -1955,6 +1993,7 @@
+ | 0.9.6_Hardened_3 | Owner-approved standard-library API completion | closed ODR-012 by defining the `Hash`/`Hasher` protocol, `DefaultHasher`, Eq/hash coherence, Map key bounds, and the read-only safe key-access boundary without freezing a mixing algorithm |
+ | 0.9.6_Hardened_4 | Owner-approved callable/interface completion | closed ODR-013 by making `Hash.hash` statically generic over `H: Hasher`, confirming `DefaultHasher implements Hasher`, and excluding implicit dynamic/interface coercion |
+ | 0.9.6_Hardened_5 | Owner-approved architecture/process hardening | materialized the post-H4 simplicity RFC through derived-only compiler aggregates, conservative unknown handling, reuse/inference gates, semantic diagnostics, complexity accounting, generated view-contract documentation, and separate authority/evidence ledgers without changing source semantics |
++| 0.9.6_Hardened_6 | Owner-approved standard-library API and safety-boundary completion | closed ODR-014 with named Span iterator/chunk view types, exact shared/mutable reborrow contracts, all-profile zero-chunk panic, safe raw-pointer extraction, and existing-unsafe pointer use; normalized shared raw-pointer spelling to Ember's canonical `*T` |
+ 
+ ---
+ 
+@@ -2157,6 +2196,43 @@
+    `VERIFIED`, and `CONFORMANT`.
+ 5. Missing implementation artifacts are reported as gaps; the specification does not simulate their
+    existence.
++
++## 0.9.6_Hardened_6 Audit Record
++
++| ID | Classification | Resolution |
++|---|---|---|
++| AUD-096-29 | Owner-approved API completion | Closed ODR-014 with exact named Span iterator/chunk types and signatures rather than an implementation-invented or opaque return mechanism. |
++| AUD-096-30 | Borrow and provenance preservation | Required shared and mutable reborrows, source-bounded iterator lifetimes, ordinary NLL reuse, and non-overlapping mutable chunk storage identities under the existing region and `[BRW-5]` models. |
++| AUD-096-31 | Unsafe-boundary consistency | Made raw-pointer extraction safe while keeping dereference, access, arithmetic, reference construction, and validity under the existing unsafe contract; normalized the owner's shared-pointer notation to canonical Ember `*T`. |
++| AUD-096-32 | Failure determinism | Required zero-sized shared and mutable chunks to panic through the existing failure mechanism in every supported profile and prohibited empty, fallible, zero-width, or non-progressing interpretations. |
++| AUD-096-33 | Public identity and evidence | Assigned four public, non-prelude `@view` iterator types to `std.collections`, added `[TST-25]`, and made no implementation or conformance claim from specification prose. |
++
++**Amendment:** `HC-096-06` records the owner-approved ODR-014 completion, and
++ADR-035 preserves its API, borrowing, failure, public-identity, and unsafe-boundary decisions. H1
++through H5 remain unchanged; H5 is H6's immediate predecessor.
++
++### 0.9.6_Hardened_6 language-conformance condition
++
++`0.9.6_Hardened_6` MUST NOT be declared conformant until every H5 condition remains satisfied and
++repository evidence additionally proves the complete `[TST-25]` matrix: shared and mutable iterator
++items, source-bounded reborrows and NLL reuse, rejection of conflicts, partial final chunks,
++non-overlapping mutable chunk identities, all-profile zero-size panic, safe pointer extraction,
++unsafe-only pointer use, no lifetime extension, generic substitution, and region-metadata erasure.
++
++### 0.9.6_Hardened_6 acceptance condition
++
++H6 MUST NOT replace `docs/spec-source/ember-spec.md` unless it has one version identity and H5 as its
++immutable predecessor, every H5 adoption condition remains green, the H5-to-H6 classified diff is
++traceable only to the preserved ODR-014 owner ruling and ADR-035, the public API and unsafe boundary
++are implemented without a second iterator/lifetime/ownership model, and generated-code plus
++adversarial conformance evidence satisfies `[TST-25]`.
++
++## 0.9.6_Hardened_6 Evidence Status — No Implementation Claim
++
++This H6 file is a frozen development target. The adopted repository specification remains
++`docs/spec-source/ember-spec.md` (`0.8.5_Hardened_1`). The Span iterator/chunk/raw-pointer completion
++is `SPECIFIED` until the implementation and conformance ledgers cite executable evidence. Passing
++the six gates against the adopted source does not install H6 or prove its new requirements.
+ 
+ ## 0.9.6_Hardened_5 Audit Record
+ 
+@@ -2368,13 +2444,14 @@
+ 
+ ---
+ 
+-## 0.9.6_Hardened_5 consolidation record
++## 0.9.6_Hardened_6 consolidation record
+ 
+ The body below originated in `0.8.5_Hardened_1`, incorporates the accepted 0.9/0.9.5 changes in
+ place, carries the owner-selected 0.9.6 reference-compiler consolidation, and
+ completes ODR-011's Arena-backed collection contract, ODR-012's hashing
+-protocol/API contract, ODR-013's static Hasher call boundary, and the owner-approved post-H4
+-simplicity architecture/process contract. It is normative within
++protocol/API contract, ODR-013's static Hasher call boundary, the owner-approved post-H4
++simplicity architecture/process contract, and ODR-014's Span iterator, chunk, and raw-pointer
++boundary. It is normative within
+ this target together with the current addenda above. Frozen predecessor files are
+ the historical diff bases. Existing rule IDs retain their meanings; newly added rules use unused
+ IDs. In particular, the 0.8.5 `CLI-15`, `RT-1`–`RT-4`, and `DIA-18` definitions remain intact;
+@@ -2418,12 +2495,12 @@
+ 
+ **Consolidated normative body:** the still-valid 0.8.5 language contract is incorporated below,
+ with owner-approved 0.9/0.9.5 replacements applied in place. This is current normative text inside
+-the H5 target, not a verbatim historical snapshot. The front-matter authority boundary controls
++the H6 target, not a verbatim historical snapshot. The front-matter authority boundary controls
+ repository adoption, and the exact frozen 0.8.5 source remains a separate repository file.
+ 
+ **Historical lineage:** 0.8.5 is additive over 0.8.4, which is additive over 0.8.3. S1 made
+ 0.8.4; owner-approved S2, S3, and S4 made 0.8.5. This is ancestry, not the immediate predecessor
+-of the current H5 document, which is identified in the front matter.
++of the current H6 document, which is identified in the front matter.
+ 
+ **Compatibility:** 0.9.5 retains the supported 0.9 and 0.8.x source contracts except where a
+ language revision explicitly selected new semantics. Version selection is governed by `[MOD-6]`
+@@ -3679,7 +3756,7 @@
+ ## IV.4 Reference and view types
+ 
+ * `ref T` / `ref mut T`: a first-class reference. Non-null, aligned, points to a live `T` for the duration of its region. `Copy` for `ref T`; `ref mut T` is **move-only** (reborrowable). Auto-dereferenced: `r.field`, `r.method()`, and use of **any expression of type `ref T`/`ref mut T`** where a `T` is wanted all read through — a named reference, a call that returns one, a field read, an operand of an operator, an argument. Reading through is a property of the *type in a value context*, not of the form the reference was written in. `[TYP-14]` A `ref mut` local written with `=` writes through to the referent (C++ reference semantics). Rebinding is not possible; shadow instead.
+-* `Span[T]` (read) and `MutSpan[T]` (read/write): pointer + length. `Copy` and move-only respectively. Bounds-checked indexing; `.len()`, `.iter()`, `.iter_mut()`, `.split_at(i)`, `.chunks(n)`, `.as_ptr()` (unsafe result).
++* `Span[T]` (read) and `MutSpan[T]` (read/write): pointer + length. `Copy` and move-only respectively. Bounds-checked indexing; `.len()`, `.iter()`, `.iter_mut()`, `.split_at(i)`, `.chunks(n)`, `.chunks_mut(n)`, `.as_ptr()`, and `.as_mut_ptr()` as applicable and specified by `[SPN-1]`–`[SPN-10]`. Raw-pointer extraction is safe; use of the returned pointer remains governed by `[UNS-1]`.
+ * `str`: `Span[u8]` known to be valid UTF-8.
+ * `@view struct`: any struct containing a `ref`, `Span`, `MutSpan`, `str` or another view type is automatically a view type. The attribute is required on the declaration as documentation; omitting it is `E2030` with a fix-it. A `@view struct` has an implicit **region vector** (Part VII §5); a plain `ref`/`Span`/`str` still carries one region, while a composite `@view struct` may carry multiple inferred slots.
+ 
+@@ -4255,7 +4332,9 @@
+ 
+ * `[LT-4a]` **Arena-backed wrapper provenance.** An `Arena` parameter MAY be named in `@borrows` when a function returns a view whose storage is owned by that arena. The named parameter contributes the arena's borrow region to the returned value. For example:
+ 
+-  ```ember
++  Standard-library signature sketch:
++
++  ```ember,ignore
+   @borrows(arena)
+   fn make_value(arena: Arena) -> ref mut i32:
+       return arena.alloc(0)
+@@ -4298,6 +4377,90 @@
+ * `[SPN-1]` `Array[T]` coerces to `Span[T]` at borrow sites and to `MutSpan[T]` at `mut` sites; `[T; N]` likewise; `String` to `str`. **This coercion takes a borrow of the source; it is not a conversion.** Coercing to `Span[T]` creates a live shared borrow of the source place and coercing to `MutSpan[T]` a mutable one, and the resulting view's region is that borrow's, under the ordinary rules of `[BRW-1]` and `[BRW-2]` — so the source may not be mutated, moved or dropped while the view is live, and the borrow ends at the view's last use and not at the end of scope. The same holds however the view is spelled: the implicit coercion, `as_span()`/`as_mut_span()`, and a view returned from a call under `[LT-1]`'s elision are one construction, and all three take the borrow. An implementation MUST make this borrow explicit in its IR rather than implied by the coercion, because an implied borrow is invisible to the borrow checker: `v: Span[i32] = a` followed by `a.push(...)` is then accepted, the push reallocates, and safe code reads freed memory. *(clarified 2026-09-09; see `docs/spec-amendments.md`)*
+ * `[SPN-2]` Indexing a `Span` is bounds-checked; `get(i) -> Option[ref T]` is the checked-without-panic form; `unsafe: s.get_unchecked(i)`.
+ * `[SPN-3]` `Span[T]` is `Copy`; `MutSpan[T]` is move-only and reborrowable (`s.reborrow()` or implicit at `mut` sites).
++* `[SPN-4]` **Canonical iterator types.** `std.collections` publicly exports
++  `SpanIter[T]`, `MutSpanIter[T]`, `SpanChunks[T]`, and `MutSpanChunks[T]`.
++  None is a prelude name. They are named `@view` iterator types implementing
++  the existing associated-type interface as follows:
++
++  ```ember
++  SpanIter[T]       implements Iterator[Item = ref T]
++  MutSpanIter[T]    implements Iterator[Item = ref mut T]
++  SpanChunks[T]     implements Iterator[Item = Span[T]]
++  MutSpanChunks[T]  implements Iterator[Item = MutSpan[T]]
++  ```
++
++  These are ordinary library types, not compiler intrinsics or new ownership
++  categories. Their concrete names make the associated `Item` contracts
++  expressible without introducing opaque iterator returns.
++* `[SPN-5]` **Iterator construction.** The canonical APIs are given by this
++  standard-library signature sketch:
++
++  ```ember,ignore
++  Span.iter(self) -> SpanIter[T]
++  MutSpan.iter(self) -> SpanIter[T]
++  MutSpan.iter_mut(mut self) -> MutSpanIter[T]
++  ```
++
++  `MutSpan.iter()` creates a shared reborrow and prevents conflicting mutation
++  for the resulting iterator's lifetime. `MutSpan.iter_mut()` creates a
++  mutable reborrow and does not consume the underlying `MutSpan`; after that
++  iterator's borrow ends, ordinary NLL/reborrow rules permit the original
++  `MutSpan` to be used again. No iterator may outlive its source view.
++* `[SPN-6]` **Chunk APIs.** The canonical APIs are given by this
++  standard-library signature sketch:
++
++  ```ember,ignore
++  Span.chunks(self, n: usize) -> SpanChunks[T]
++  MutSpan.chunks(self, n: usize) -> SpanChunks[T]
++  MutSpan.chunks_mut(mut self, n: usize) -> MutSpanChunks[T]
++  ```
++
++  For `n > 0`, iteration partitions the source into consecutive,
++  non-overlapping chunks `[0 .. n]`, `[n .. 2n]`, and so on through the
++  source length. The final chunk MAY contain fewer than `n` elements.
++  `chunks_mut` produces disjoint `MutSpan[T]` values whose storage identities
++  cover only their respective ranges; no two yielded mutable chunks may
++  overlap. It is a sanctioned construction under `[BRW-5]`, not a new
++  aliasing mechanism.
++* `[SPN-7]` **Zero chunk size.** `chunks(0)` and `chunks_mut(0)` are invalid and
++  MUST panic through the existing bounds/argument failure mechanism in every
++  supported profile. They MUST NOT return an empty iterator or `Result`, yield
++  zero-width chunks, or loop indefinitely. A future change to this failure
++  policy requires an explicit language revision.
++* `[SPN-8]` **Raw-pointer extraction.** The canonical APIs are given by this
++  standard-library signature sketch:
++
++  ```ember,ignore
++  Span.as_ptr(self) -> *T
++  MutSpan.as_ptr(self) -> *T
++  MutSpan.as_mut_ptr(mut self) -> *mut T
++  ```
++
++  Extraction itself is safe because it neither dereferences nor accesses the
++  pointed-to memory. Dereference, reads, writes, reference construction, and
++  pointer arithmetic not otherwise proven safe require the existing `unsafe`
++  rules. `MutSpan.as_mut_ptr` takes a mutable reborrow and does not consume the
++  underlying view. A returned pointer carries no safe Ember borrow guarantee.
++* `[SPN-9]` **Pointer lifetime and provenance.** `as_ptr` and `as_mut_ptr` do
++  not extend, retain, or pin the source view or its storage. Code leaving the
++  safe borrow model through a raw pointer is responsible for validity under
++  the existing unsafe contract.
++* `[SPN-10]` **Public module boundary.** The four iterator/chunk types are
++  public exports of `std.collections`, but none is exported by the prelude.
++  No opaque iterator-return mechanism is introduced by this completion.
++* `[TST-25]` **Span API conformance.** Conformance MUST cover: (1)
++  `Span.iter()` yielding `ref T`; (2) `MutSpan.iter()` yielding shared `ref T`;
++  (3) `MutSpan.iter_mut()` yielding `ref mut T`; (4) reuse of the original
++  `MutSpan` after the mutable iterator borrow ends; (5) rejection of conflicting
++  access while an iterator/reborrow remains live; (6) normal and final-partial
++  `chunks(n)`; (7) non-overlapping mutable results from `chunks_mut(n)`; (8)
++  mutable-chunk alias rejection and interaction with `split_at_mut`; (9)
++  all-profile panic through the existing failure path for `chunks(0)` and
++  `chunks_mut(0)`; (10) safe extraction through `as_ptr` and `as_mut_ptr`; (11)
++  unsafe-only dereference/use of raw pointers; (12) no source-lifetime extension
++  from pointer extraction; (13) generic `T` substitution through every iterator
++  and chunk type; and (14) ABI/layout erasure of region metadata. This matrix
++  introduces no new borrowing or lifetime mechanism.
+ 
+ ## VII.8 Interaction summary (what beginners see)
+ 
+@@ -5301,7 +5464,7 @@
+ | `std.cell` | **Defining owner** of `Cell`, `RefCell`, `Ref`, `RefMut` (Part IX §7) |
+ | `std.borrow` | canonical `with_views` helpers for 2, 3 and 4 independently borrowed views; allocation-free late-bound callback composition (`[LT-8]`..`[LT-12]`); multi-region view utilities MAY be layered here but require no compiler intrinsic |
+ | `std.mem` (cont.) | `assert_disjoint`, `assert_disjoint_or_panic`, `unsafe assume_disjoint` (Part IX §8) |
+-| `std.collections` | `Array`, `SmallArray`, `Deque`, `Map`, `Set`, `BitSet`, `Pool`, `Handle`, `SoA` (derive support), `Hash`, `Hasher`, `DefaultHasher`, `ArenaArray`, `ArenaMap`, `CapacityError`, `ArenaArrayIter`, `ArenaArrayIterMut`, `ArenaMapIter`; `Hash` retains its `[MOD-5]` prelude export, while `Hasher`, `DefaultHasher`, and the Arena-backed names are public but not prelude exports |
++| `std.collections` | `Array`, `SmallArray`, `Deque`, `Map`, `Set`, `BitSet`, `Pool`, `Handle`, `SoA` (derive support), `Hash`, `Hasher`, `DefaultHasher`, `ArenaArray`, `ArenaMap`, `CapacityError`, `ArenaArrayIter`, `ArenaArrayIterMut`, `ArenaMapIter`, `SpanIter`, `MutSpanIter`, `SpanChunks`, `MutSpanChunks`; `Hash` retains its `[MOD-5]` prelude export, while `Hasher`, `DefaultHasher`, the Arena-backed names, and the Span iterator/chunk names are public but not prelude exports |
+ | `std.string` | `String`, `str` methods (`len`, `chars`, `bytes`, `split`, `trim`, `starts_with`, `find`, `parse[T]`, `to_upper`…), `StringBuilder`, `CString`, `cstr` |
+ | `std.fmt` | `Formatter`, `Display`, `Debug`, `format(…) -> String`, `format_to(mut buf: MutSpan[u8], …) -> Result[str, FmtError]` (`@noalloc`), f-string lowering targets |
+ | `std.math` | `Vec2/3/4`, `IVec*`, `UVec*`, `Mat2/3/4`, `Quat`, `Transform`, `AABB`, `Sphere`, `Plane`, `Ray`, `Frustum`, scalar funcs (`sin cos tan atan2 sqrt rsqrt pow exp log floor ceil round abs min max clamp lerp smoothstep`), constants; all `@derive(Copy)`, `@layout(c)`, and **layout-compatible with GLM's float types** (`Vec3` = 3×f32, 4-byte aligned; `Mat4` column-major) so they cross to RageV unchanged |
+@@ -8370,13 +8533,13 @@
+ Everything between the consolidated-body markers is current normative text. Material after this
+ marker is specification tooling guidance for the current revision, not inherited 0.8.5 text.
+ 
+-# Appendix B — 0.9.6_Hardened_5 Consistency Checklist
++# Appendix B — 0.9.6_Hardened_6 Consistency Checklist
+ 
+ The following checks are mandatory CI checks for the consolidated specification itself:
+ 
+-1. Exactly one current version declaration exists and names `0.9.6_Hardened_5`.
+-2. The immediate predecessor is frozen `0.9.6_Hardened_4`, which remains byte-for-byte unchanged.
+-3. `[MOD-6]` and `[MOD-6a]` name the supported `0.9.6`, `0.9.5`, `0.9`, and 0.8.x source-language contracts explicitly; `0.9` does not silently enable later semantics, and H5 changes H4 only through the owner-approved post-H4 simplicity architecture/process contract.
++1. Exactly one current version declaration exists and names `0.9.6_Hardened_6`.
++2. The immediate predecessor is frozen `0.9.6_Hardened_5`, which remains byte-for-byte unchanged.
++3. `[MOD-6]` and `[MOD-6a]` name the supported `0.9.6`, `0.9.5`, `0.9`, and 0.8.x source-language contracts explicitly; `0.9` does not silently enable later semantics, H5 changes H4 only through the owner-approved post-H4 simplicity architecture/process contract, and H6 changes H5 only through the owner-approved ODR-014 completion.
+ 4. `EMBER_RUNTIME_ABI` is canonical; `EMBER_RT_ABI` can occur only in compatibility-alias documentation.
+ 5. Every `dyn Writer`/`dyn Reader` serialization signature uses a legal indirection.
+ 6. Manifest examples use current versions unless explicitly marked historical.
+@@ -8446,8 +8609,20 @@
+     View API documentation is generated from authoritative signatures/contracts where practical and
+     never becomes a hand-maintained semantic duplicate.
+ 49. Specification, implementation, owner-decision, and conformance ledgers remain separate, and no
+-    implementation status is inferred merely from H5's requirements.
++    implementation status is inferred merely from H6's requirements.
+ 50. The H4-to-H5 classified diff contains no source-language semantic, accepted-program,
+     rejected-program, observable-behavior, ABI, safety, effect, reload, or diagnostic-identity change.
++51. `[SPN-4]`–`[SPN-10]` define exactly four named public, non-prelude `@view` iterator/chunk types
++    under `std.collections`, use the existing associated-type `Iterator` interface, and introduce no
++    opaque-return or second ownership/lifetime mechanism.
++52. Shared and mutable iteration/chunking preserve ordinary reborrow, NLL, provenance, storage-
++    identity, and `[BRW-5]` disjointness semantics; zero-sized chunks panic through the existing
++    failure mechanism in every profile.
++53. `Span.as_ptr` and `MutSpan.as_ptr` return canonical Ember `*T`,
++    `MutSpan.as_mut_ptr` returns `*mut T`, extraction is safe, and pointer use and lifetime validity
++    remain governed by the existing unsafe rules without retaining or extending source storage.
++54. The preserved ODR-014 ruling, ADR-035, HC-096-06, `[SPN-4]`–`[SPN-10]`, and `[TST-25]` form one
++    traceable contract, while implementation and conformance remain unclaimed until executable
++    evidence exists.
+ 
+ A failure of any checklist item is a specification CI failure, not a compiler implementation choice.

@@ -1,0 +1,53 @@
+--- Ember_v0.9.9_Hardened_34.md
++++ Ember_v0.9.9_Hardened_35.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_34
+-**Supersedes:** 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_35
++**Supersedes:** 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -4192,6 +4192,13 @@
+   foreign call. A missing or non-integer witness or an incompatible pointer surface is `E5002`.
+   An unsafe raw-pointer declaration keeps its written C ABI parameters; only a mapped `safe fn`
+   erases the witness.
++  For an input `param(p, borrowed, count(n), nullable)`, the safe type is `Option[Span[T]]`, or
++  `Option[MutSpan[T]]` with `exclusive` (ODR-079). `None` sends C a null pointer and integer zero.
++  `Some` sends its checked length, and a non-null pointer even when empty: if the view's data
++  pointer is null, the wrapper supplies a statically stored, properly aligned `T` sentinel.
++  The C function must not access an element when the count is zero. Several input clauses sharing
++  `n` compare effective lengths, with `None` contributing zero. A counted result sharing `n`
++  receives that effective length. This does not define `inout_count`.
+   A borrowed pointer **result** contracted `count(n)` is safe only if at least one borrowed input
+   `Span` or `MutSpan` also has `count(n)` (ODR-077). That input supplies the hidden C witness and
+   the returned view length; several such inputs must have equal lengths before C. A result is
+@@ -4342,7 +4349,7 @@
+   | Axis | Words | Ember type produced |
+   |---|---|---|
+   | ownership | `borrowed` (valid for the call), `owned` (callee takes it), `returns_owned(destructor=f)`, `retained` (callee keeps it, `[FFI-23]`) | `ref`/`Span`; a moved `ForeignBox[T]`; a `ForeignBox[T]` whose drop calls `f`; `Retained[T]` |
+-  | count | `one`, `count(n)` (as many elements as parameter `n`, which then leaves the callable signature; a hand declaration writes its ABI witness under `[FFI-10]`, ODR-074; a result needs an input span sharing `n`, ODR-077), `nul_terminated`, `fixed(N)`, `inout_count(p)` (`[FFI-11b]`) | `ref T`, `Span[T]`/`MutSpan[T]`, `cstr`, `ref [T; N]` |
++  | count | `one`, `count(n)` (as many elements as parameter `n`, which then leaves the callable signature; a hand declaration writes its ABI witness under `[FFI-10]`, ODR-074; a result needs an input span sharing `n`, ODR-077; nullable input carriers follow ODR-079), `nul_terminated`, `fixed(N)`, `inout_count(p)` (`[FFI-11b]`) | `ref T`, `Span[T]`/`MutSpan[T]`, `cstr`, `ref [T; N]` |
+   | nullability | `nullable` | `Option[…]` |
+   | lifetime (results) | `from(self)`, `from(p)`, `from(static)` | the region of the receiver, of `p`, or static (`[LT-1a]`) |
+   | aliasing | `exclusive`, `aliased` | `ref mut` and `MutSpan[T]` results allowed only with `exclusive`; a result is `aliased` unless stated |
+@@ -6708,7 +6715,8 @@
+ counted pointer; Hardened_32 adds ODR-075 and ODR-076, the safe reference-to-pointer spellings and
+ the exact pointer type of `null[P]()`; Hardened_33 adds ODR-077, the input length source for a
+ borrowed counted C pointer result; Hardened_34 adds ODR-078, the exclusive counted result's
+-mutable view and C pointer.
++mutable view and C pointer; Hardened_35 adds ODR-079, the nullable counted input's distinction
++between absent and present-empty views.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6770,6 +6778,7 @@
+ | ODR-076 | `null[P]()` takes a complete raw-pointer type and returns that exact pointer type, including its mutability (Hardened_32) | §IV.5 |
+ | ODR-077 | a safe hand-declared borrowed `count(n)` result requires an input span sharing `n`; its length supplies the hidden C count and result length (Hardened_33) | `[FFI-10]`, `[FFI-11]` |
+ | ODR-078 | an `exclusive` borrowed `count(n)` result is `MutSpan[T]` (nullable as `Option[MutSpan[T]]`) through mutable C `T*`, using ODR-077's input witness length (Hardened_34) | `[FFI-10]`, `[FFI-11]` |
++| ODR-079 | a nullable hand-declared borrowed `count(n)` input sends `None` as null pointer and zero, but preserves `Some(empty)` with a non-null aligned static sentinel and zero (Hardened_35) | `[FFI-10]`, `[FFI-11]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 

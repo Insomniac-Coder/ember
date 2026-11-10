@@ -1,0 +1,249 @@
+--- Ember_v0.9.9_Hardened_4.md
++++ Ember_v0.9.9_Hardened_5.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_4
+-**Supersedes:** 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_5
++**Supersedes:** 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -1300,9 +1300,11 @@
+     return scratch.len()
+ ```
+ 
+-* `[FN-1]` **Parameter modes.**
+-  * `a: A` — **borrowed** (the default). The callee reads `a` and cannot move it or assign through it.
+-    A `Copy` value no larger than two pointers is passed in registers; the meaning is the same.
++* `[FN-1]` *(changed in 0.9.9)* **Parameter modes.**
++  * `a: A` — **borrowed** (the default). The callee reads the caller's `a`, not a copy of it, and
++    cannot move it or assign through it; a write through a `Cell` or `RefCell` inside it changes the
++    caller's value. Some parameters are passed as a copy instead, such as a small `Copy` value in
++    registers (`[BRW-8]`); the meaning is the same.
+   * `mut b: B` — **in-out**. The argument must be a mutable place, or a mutable view derived from one
+     (`[FN-1a]`). The callee may change it; it cannot move it out except by `mem.replace`/`mem.take`.
+   * `owned c: C` — **consumed**. The argument is moved in (copied if `Copy`; a handle is copied without
+@@ -1319,8 +1321,8 @@
+   parameter may still be used to read and write the object's fields and call its methods, subject to
+   Part VIII's exclusivity rules; `owned` transfers the reference without a retain; `mut` lets the
+   callee re-point the caller's handle variable.
+-* `[FN-3]` A function returns by move. Returning a reference or view requires its region to derive
+-  from a parameter (`[LT-1]`).
++* `[FN-3]` *(changed in 0.9.9)* A function returns by move. Returning a reference or view requires its region to derive
++  from a parameter the result may borrow from (`[LT-1]`, `[LT-1a]`), or to be `static` (`[LT-3]`).
+ * `[FN-4]` A method's receiver follows the same modes: `self`, `mut self`, `owned self`. A function in
+   a type body with no receiver is an associated function, called `Type.name(…)`.
+ * `[FN-5]` Default argument expressions are evaluated at each call, after the other arguments are
+@@ -1329,7 +1331,7 @@
+   `fn(A, mut B, owned C) -> R`, with the same parameter modes as a declaration; `once fn(…) -> R` is a
+   callable that may be called at most once (`[CLO-6]`). Callable types are compared by their parameter
+   types, modes and result. A function coerces to any callable type it satisfies; a capture-free one
+-  also coerces to `extern "C" fn(…)` when every type is FFI-safe. Borrowed and view parameters of a
++  also coerces to `extern "C" fn(…)` when every type is FFI-safe. The source parameters (`[LT-1]`) of a
+   callable type get fresh regions at each call, and the result's regions follow `[LT-1]` applied to
+   the callable type's own parameters (`[LT-7]`). What a callable type means in each position is
+   `[CLO-3]`.
+@@ -1824,7 +1826,8 @@
+ * `[CORO-6]` *(changed in 0.9.9)* A reference or view **to a local of the generator's own frame** may
+   not be live across a `yield`: moving the suspended frame would leave it dangling (`E2221`, whose help
+   names iterating `owned` the collection, or iterating by index). References and views that came in
+-  **as parameters**, or were derived from them, may be held across `yield`; the frame is then a view
++  **as parameters** or were derived from them, and views derived from a source parameter (`[LT-1]`),
++  may be held across `yield`; the frame is then a view
+   type bound by their regions, exactly as a returned view would be (`[LT-1]`). `evens` above is such a
+   generator.
+ * `[CORO-7]` Dropping a suspended generator drops exactly the locals live at its suspension point, in
+@@ -1947,8 +1950,16 @@
+ * `[BRW-6]` **Reborrows.** From `r: ref mut T`, `ref r.f` freezes `r` while it lives and `ref mut r.f`
+   suspends `r`. Passing a `ref mut` local to a `mut` parameter reborrows it; it does not move it.
+ * `[BRW-7]` Borrowing a moved or uninitialised place is `E3050`.
+-* `[BRW-8]` A borrowed `Copy` parameter no larger than two pointers is passed by value; this is an ABI
+-  decision and cannot be observed.
++* `[BRW-8]` *(changed in 0.9.9)* A borrowed parameter is passed by address: the callee reads the
++  caller's place (`[FN-1]`, ODR-024). Two kinds are passed as a copy instead:
++  * a reference or view (a `ref`, `Span`, `MutSpan`, `str` or `@view` struct), which is passed as
++    itself and keeps the regions it carries;
++  * a `Copy` value that holds no `Cell` or `UnsafeCell`, which goes in registers when it is no larger
++    than two pointers, except the receiver of a method whose result is a reference or view
++    (`[LT-1]` rule 1).
++  A reference into the own storage of a parameter passed as a copy ends with the call (`E3060`). The
++  choice depends only on the declared signature, never on the body; it is an ABI decision and cannot
++  be observed.
+ * `[BRW-9]` A reference in Safe code is never null, dangling or unaligned.
+ 
+ ## VII.4 Regions and their inference
+@@ -1958,17 +1969,32 @@
+ 
+ * `[LT-5]` Regions of locals are inferred by non-lexical liveness (§XVIII.4). Diagnostics describe
+   them in source terms: "the borrow of `x` on line 12 is still needed on line 19".
+-* `[LT-1]` **Signature elision.** For a function whose result is a reference or view:
+-  1. if it has a borrowed receiver (`self` or `mut self`), the result borrows from the receiver;
+-  2. else, if exactly one parameter is a reference or view, the result borrows from it;
+-  3. else, the result borrows from **all** reference and view parameters together (the caller keeps
+-     all of them borrowed while the result lives).
+-  Rule 3 always type-checks; it may borrow more than the function needs.
+-* `[LT-1a]` `@borrows(p, …)`, on its own line before the function, replaces the rule the compiler would
++* `[LT-1]` *(changed in 0.9.9)* **Signature elision.** A **source parameter** (ODR-024) is:
++  * a parameter whose type is a reference or view, in any mode; or
++  * a borrowed or `mut` parameter whose type is not `Copy` even when each of its type parameters is
++    taken to be `Copy`: an `Array[T]`, `String`, `Map`, `Box`, `RefCell` or arena, a struct or enum
++    without `@derive(Copy)`, or a tuple or fixed array holding one of these.
++  A source parameter of the second kind is the caller's place (`[FN-1]`, `[BRW-8]`): a result that
++  borrows it may point anywhere in it, into its own storage or into storage it owns, and the call's
++  loan is on the argument (`[BCK-1]`), shared for a borrowed parameter and exclusive for `mut`. A
++  `Copy` parameter that is not a reference or view is not a source parameter (so neither is a plain
++  `x: T`, nor a callable parameter, `[CLO-3]`), and nor is an `owned` parameter that is not a
++  reference or view. Which parameters are sources depends only on the declared signature.
++  For a function whose result is a reference or view:
++  1. if it has a borrowed receiver (`self` or `mut self`), of any type, the result borrows from the
++     receiver;
++  2. else, if exactly one parameter is a source parameter, the result borrows from it;
++  3. else, the result borrows from **all** source parameters together (the caller keeps all of them
++     borrowed while the result lives).
++  Rule 3 always type-checks; it may borrow more than the function needs. A returned reference or view
++  that borrows any other parameter is rejected: `E3060` when that parameter is `owned` or is passed
++  as a copy (`[BRW-8]`), and `E3062` otherwise.
++* `[LT-1a]` *(changed in 0.9.9)* `@borrows(p, …)`, on its own line before the function, replaces the rule the compiler would
+   apply: the result borrows from exactly the named parameters (`self` names the receiver). Returning
+-  a value that borrows from anything else is `E3062`. Each named parameter is a view, or an `Arena`
+-  whose storage the result lives in; naming any other parameter is `E2031`. It is needed only where rule 1 or 3 borrows more
+-  than the caller can afford:
++  a value that borrows from anything else is `E3062`. Each named parameter is a source parameter (`[LT-1]`)
++  or a `mut` parameter; naming a borrowed `Copy` parameter, or an `owned` parameter that is not a
++  reference or view, is `E2031`. It is needed only where rule 1 or 3 borrows more than the caller can
++  afford, or to let the result borrow a `mut` parameter of a `Copy` type:
+ 
+ ```ember
+ @borrows(haystack)
+@@ -1977,19 +2003,20 @@
+     return Some(haystack[i..i + needle.len()])
+ ```
+ 
+-* `[LT-1b]` The opt-in lint `L3014` reports rule 3 applying to more than one parameter and names
+-  `@borrows` as the way to narrow it.
++* `[LT-1b]` *(changed in 0.9.9)* The opt-in lint `L3014` reports rule 3 applying to more than one source parameter and
++  names `@borrows` as the way to narrow it.
+ * `[LT-3]` String literals, `bytes` literals, `static` items and views of them have the `static`
+   region, which outlives everything.
+ * `[LT-4]` *(changed in 0.9.9)* Arena allocations borrow the arena (`[ARN-1]`).
+-* `[LT-44]` *(new in 0.9.9)* For elision, an `Arena`, `FixedArena` or `ScopedArena` parameter counts as a view-producing parameter: a function
+-  whose only such parameter is one arena returns views that borrow it, with no annotation.
+-  `@borrows(arena)` is needed only when the function has other view parameters too.
++* `[LT-44]` *(new in 0.9.9)* A borrowed or `mut` `Arena`, `FixedArena` or `ScopedArena` parameter is
++  a source parameter because it is not `Copy` (`[LT-1]`): a function whose only source parameter is
++  one arena returns views that borrow it, with no annotation. `@borrows(arena)` is needed only when
++  the function has other source parameters too.
+ * `[LT-6]` *(changed in 0.9.9)* Named lifetimes are not part of Ember and will not be added. Where a
+   relationship between regions cannot be inferred, the diagnostic names the restructuring that
+   expresses it: an owned result, an index instead of a reference, a view struct, or `@borrows`.
+ * `[LT-7]` *(changed in 0.9.9)* **Callable types.** Each call through a value or parameter of callable
+-  type `fn(P1, …, Pn) -> R` gets fresh regions for its reference and view parameters. `R` may borrow
++  type `fn(P1, …, Pn) -> R` gets fresh regions for its source parameters (`[LT-1]`). `R` may borrow
+   from them only as `[LT-1]` would allow for a function declared with that signature, and then only for
+   the duration the caller keeps the arguments. So a callee may lend a callback views of its own
+   locals, and a callback may return a view of an argument to its caller:
+@@ -2258,7 +2285,7 @@
+ |---|---|---|
+ | calling a method on a field (`h.items.push(x)`, `h.name.len()`) | write if the method takes `mut self`, else read | the call |
+ | calling an owned callable value stored in a field (`b.on_click(e)`, `[CLO-11]`) | write | the call |
+-| passing a field to a parameter (`f(h.items)`) | write for `mut`, read for borrowed, `E3012` for `owned` | the call |
++| passing a field to a parameter (`f(h.items)`) | write for `mut`, read for borrowed, `E3012` for `owned` | the call; when the result borrows that parameter (`[LT-1]`), until the result's loan dies (`[EXC-18]`) |
+ | `ref h.f` / `ref mut h.f`, or a view of a field | read / write | until the loan dies (`[EXC-18]`) |
+ | iterating a field (`for x in h.items`) | read (write for `iter_mut`) | the loop |
+ | **assigning a field of a non-`Copy` type** (`h.items = []`, `h.name = other`) | write | the store and the drop of the old value |
+@@ -4489,7 +4516,7 @@
+ | B4 | two writers of one value | `E3023` | a single owner passing `mut`; `Cell` for a counter |
+ | B5 | self-referential struct | `E3024` | store an index or `Handle`; split the struct |
+ | B6 | returned view not derived from a parameter | `E3062` | return an owned value, or `@borrows(p)` |
+-| B7 | borrow outlives its source | `E3060` | move the source outward, return an owned value, or bind with `with` |
++| B7 | borrow outlives its source | `E3060` | move the source outward, return an owned value, or bind with `with`; for a parameter, borrow it instead of taking it `owned`, or take it as `Span[T]`, `str` or `ref T` |
+ | B8 | a method takes all of `self` | `E3025` | `[BRW-10]` covers private methods; else take the fields as parameters |
+ | B9 | closure outlives its captures | `E3026` | `owned fn`, or a scope (`[THR-5]`) |
+ | B10 | `mut` argument that is not a mutable place | `E3027` | bind to a local first |
+@@ -4643,7 +4670,7 @@
+ | `E2011` | negative literal index | `[TYP-31]`, `[LEX-24]` |
+ | `E2020` | mismatched types | `[TYP-4]` |
+ | `E2030` | `@view` on a type that is not a view | `[TYP-34]` |
+-| `E2031` | `@borrows` names a parameter that is not view-typed | `[LT-1a]` |
++| `E2031` | `@borrows` names a parameter the result cannot borrow from (a borrowed `Copy` parameter, or an `owned` one that is not a reference or view) | `[LT-1a]` |
+ | `E2035` | condition must be `bool` | `[CTL-0]` |
+ | `E2036` | this pattern always matches | `[GRM-19]` |
+ | `E2040` | unsatisfied interface bound | `[TYP-17]` |
+@@ -4716,7 +4743,7 @@
+ | `E3041` | value moved in a previous loop iteration | `[OWN-4]` |
+ | `E3042` | partial move then use of the whole value | `[EXP-6]` |
+ | `E3050` | use of an uninitialised or moved place | `[BRW-7]` |
+-| `E3060` | borrowed value does not live long enough | `[LT-3]` |
++| `E3060` | borrowed value does not live long enough | `[LT-3]`, `[BRW-8]` |
+ | `E3061` | arena allocation cannot outlive its arena | `[LT-4]` |
+ | `E3062` | returned view does not derive from a parameter (shape B6) | `[LT-1]` |
+ | `E3063` | stored view may not outlive its source | `[TYP-15]` |
+@@ -5794,6 +5821,7 @@
+ | **shape** | a category of error with a required help text (§XVII.6) |
+ | **shareable generic** | one whose type parameter is used only to call its bounds' methods, so one shared body can serve every instance (`[MONO-5]`) |
+ | **SoA** | structure of arrays: one array per field (`SoA[T]`, §XII.1) |
++| **source parameter** | a parameter a returned reference or view may borrow from without `@borrows`: a reference or view, or a borrowed or `mut` parameter whose type is not `Copy` (`[LT-1]`) |
+ | **static** | a program-wide value with a fixed address; immutable, with interior synchronisation for mutation |
+ | **`@sync` class** | a class whose handles may cross threads; its fields are immutable after construction (`[THR-1]`) |
+ | **trampoline subclass** | the generated C++ subclass through which an Ember class extends a C++ base (`[FFI-39]`) |
+@@ -6277,19 +6305,30 @@
+ 
+ Each ambiguity found while implementing 0.9.9 is an owner decision request (`docs/OWNER-QUEUE.md`),
+ ruled under the owner's delegation and recorded here. Hardened_3 carries ODR-021 and ODR-022;
+-Hardened_4 adds ODR-023.
++Hardened_4 adds ODR-023; Hardened_5 adds ODR-024.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+ | ODR-021 | float `//` and `%` are Python's: the exact floor modulo rounded once, and the floor quotient consistent with it | `[TYP-29]` |
+ | ODR-022 | an untyped literal is never left open: `total = 0` declares an `int` whatever the later uses | `[TYP-23]` |
+ | ODR-023 | a function returning a value that can reach the end of its body is `E2182` (Hardened_4) | `[FN-10]`, §XVII.9 |
++| ODR-024 | a borrowed or `mut` parameter whose type is not `Copy` is a source parameter a returned view may borrow, and a borrowed parameter is passed by address except a view or a `Copy` value holding no `Cell` (Hardened_5) | `[LT-1]`, `[LT-1a]`, `[LT-1b]`, `[LT-7]`, `[LT-44]`, `[FN-1]`, `[FN-3]`, `[FN-6]`, `[BRW-8]`, `[CORO-6]`, §VIII.3, §XVII.6 B7, §XVII.9, Appendix F |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+ | Rule | H2 → now |
+ |---|---|
++| `[BRW-8]` | changed |
++| `[CORO-6]` | changed |
++| `[FN-1]` | changed |
++| `[FN-3]` | changed |
++| `[FN-6]` | changed |
+ | `[FN-10]` | changed |
++| `[LT-1]` | changed |
++| `[LT-1a]` | changed |
++| `[LT-1b]` | changed |
++| `[LT-7]` | changed |
++| `[LT-44]` | changed |
+ | `[TYP-23]` | changed |
+ | `[TYP-29]` | changed |
+ ---
+@@ -6409,7 +6448,7 @@
+ | `[BRW-5]` | VII | Indices are not disjoint. `ref mut a[i]` and `ref mut a[j]` conflict … |
+ | `[BRW-6]` | VII | Reborrows. From `r: ref mut T`, `ref r.f` freezes `r` while it lives … |
+ | `[BRW-7]` | VII | Borrowing a moved or uninitialised place is `E3050`. |
+-| `[BRW-8]` | VII | A borrowed `Copy` parameter no larger than two pointers is passed by … |
++| `[BRW-8]` | VII | A borrowed parameter is passed by address: the callee reads the … |
+ | `[BRW-9]` | VII | A reference in Safe code is never null, dangling or unaligned. |
+ | `[BRW-10]` | VII | Methods borrow the fields they use. A call to a method of a struct or … |
+ | `[BRW-11]` | VII | All borrows a call makes are live together. The borrows formed for … |
+@@ -7146,7 +7185,7 @@
+ 
+ | Rule | Part | Begins |
+ |---|---|---|
+-| `[LT-1]` | VII | Signature elision. For a function whose result is a reference or … |
++| `[LT-1]` | VII | Signature elision. A source parameter (ODR-024) is: * a parameter … |
+ | `[LT-1a]` | VII | `@borrows(p, …)`, on its own line before the function, replaces the … |
+ | `[LT-1b]` | VII | The opt-in lint `L3014` reports rule 3 applying to more than one … |
+ | `[LT-3]` | VII | String literals, `bytes` literals, `static` items and views of them … |
+@@ -7174,7 +7213,7 @@
+ | `[LT-39]` | VII | An operation that selects a field by a run-time value (reflection, a … |
+ | `[LT-42]` | VII | A non-`owned` closure capturing a view records the regions of the … |
+ | `[LT-43]` | VII | Region tracking never lets a view survive a `yield` that `[CORO-6]` … |
+-| `[LT-44]` | VII | For elision, an `Arena`, `FixedArena` or `ScopedArena` parameter … |
++| `[LT-44]` | VII | A borrowed or `mut` `Arena`, `FixedArena` or `ScopedArena` parameter … |
+ 
+ ## MAN
+ 

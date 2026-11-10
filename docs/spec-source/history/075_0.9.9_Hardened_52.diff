@@ -1,0 +1,60 @@
+--- Ember_v0.9.9_Hardened_51.md
++++ Ember_v0.9.9_Hardened_52.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_51
+-**Supersedes:** 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_52
++**Supersedes:** 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -3993,6 +3993,21 @@
+   `String()`, `with_capacity(n)`, `push(c: char)`, `push_str(s)`, `insert`, `remove`, `truncate`,
+   `clear`, `capacity`, `reserve`, and `as_str`. `a + b` for `a: String, b: str` consumes `a` and
+   returns it extended; `s += t` appends. `str + str` is `E2040` whose help is an f-string.
++  ODR-098 defines the mutation and capacity methods: `String.with_capacity(n) -> String` makes an
++  empty string with room for at least `n` bytes; zero allocates nothing. `capacity() -> int` reads
++  the allocated byte capacity. `reserve(additional)` makes room for at least `len() + additional`
++  bytes, without changing the text, and does nothing when that capacity already exists.
++  `insert(i, c: char)` inserts one character at byte offset `i`, which must be in `0..=len()` and
++  on a character boundary. `remove(i) -> char` removes and returns the character starting at byte
++  offset `i`, which must be in `0..len()` and on a character boundary. Both close up or move the
++  suffix as necessary; neither scans the prefix for a character position. `truncate(n)` retains
++  the first `n` bytes when `n < len()` (then `n` must be a character boundary), and otherwise does
++  nothing. `clear()` removes all text. `remove`, `truncate` and `clear` keep the capacity.
++  These mutations borrow `mut self` and return `void` unless a result is named above. Counts and
++  offsets accept any integer type; a negative literal is `E2011`, and a negative run-time value or
++  one not representable as a native length panics before conversion. An invalid offset or character
++  boundary panics in every profile. Growth uses the checked allocation rules of `[HEAP-8]`.
++  The argument values are evaluated before the mutable borrow, as for `Array` mutation methods.
+ 
+ ## XV.4 Collections
+ 
+@@ -6902,7 +6917,8 @@
+ ODR-093, what a range type implements; Hardened_49 adds ODR-096, how a call chooses between two
+ instances of one generic interface; Hardened_50 adds ODR-095, which operators a range value has,
+ and ODR-097, where an implementation may be written; Hardened_51 adds ODR-094, the owner's
+-ruling on `collect`'s target, `peekable`'s methods, and how `Box` and `Cell` show.
++ruling on `collect`'s target, `peekable`'s methods, and how `Box` and `Cell` show; Hardened_52 adds
++ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutation methods.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6983,6 +6999,7 @@
+ | ODR-095 | a range type has every operator its representation implements over itself, `**` and the bitwise operators included, each generated as `[RNG-5a1]`'s are with the representation as its `Output` (Hardened_50) | `[RNG-5]`, `[RNG-5a1]` |
+ | ODR-097 | an implementation may also be written in the package that declares one of its interface's arguments, where, reading its type and then those arguments, the first type the package declares comes before any of the implementation's type parameters standing alone; anywhere else it is `E2121` (Hardened_50) | `[TYP-20]` |
+ | ODR-094 | the owner's: `collect[C]()` builds any `C` implementing `std.core.FromIterator[Item]` (`Array`, `Set`, `Map` from pairs, `String` from `char`s and `String`s, and a program's types), `C` written or the type the call is expected to give; `peekable` gives `peek`, `peek_mut`, `next_if` and `next_if_eq`; `Option`'s `as_ref` and `as_mut` reference the payload where it is; `Box[T]` and `Cell[T]` show as the `T` they hold (Hardened_51) | `[STD-19]`, `[ERR-4]`, `[TYP-39]` |
++| ODR-098 | String capacity is measured in bytes; reserve asks for additional bytes; insert takes a byte offset and a char, remove returns that char, truncate keeps a byte prefix, and shrinking retains capacity, with UTF-8 boundary and integer-size checks in every profile (Hardened_52) | `[TXT-11]`, `[TXT-4]`, `[TYP-31]`, `[HEAP-8]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -7088,6 +7105,7 @@
+ | `[THR-9]` | changed |
+ | `[TXT-5]` | changed |
+ | `[TXT-10]` | changed |
++| `[TXT-11]` | changed |
+ | `[TYP-8]` | changed |
+ | `[TYP-9]` | changed |
+ | `[TYP-13]` | changed |

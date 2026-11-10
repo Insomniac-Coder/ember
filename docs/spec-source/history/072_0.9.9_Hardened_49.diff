@@ -1,0 +1,80 @@
+--- Ember_v0.9.9_Hardened_48.md
++++ Ember_v0.9.9_Hardened_49.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_48
+-**Supersedes:** 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_49
++**Supersedes:** 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -995,8 +995,8 @@
+   the type's declaring module; exact-type implementations are chosen before coercion (`[RNG-5a2]`).
+   No compound-assignment operator is generated: `r += 0.1` is `E2214` with the fix-it
+   `r = T.clamped(r + 0.1)`.
+-* `[RNG-5a2]` Overload resolution picks an implementation matching the operand types exactly before
+-  considering any coercion.
++* `[RNG-5a2]` Overload resolution (`[TYP-24]`) picks an implementation matching the operand types
++  exactly before considering any coercion, for range types as for every type (ODR-096).
+ * `[RNG-6]` NaN is in no range. A range from `-0.0` to `+0.0` contains both zeros.
+ * `[RNG-7]` A range type whose range does not cover its whole representation supplies a niche:
+   `Option[Percent]` is one byte. One whose range covers every value supplies none.
+@@ -1161,7 +1161,12 @@
+   both. (Separate compilation relies on this: an implementation cannot appear from a third package.)
+ * `[TYP-24]` *(changed in 0.9.9)* An interface method is found through any implementation visible in
+   the program; the interface need not be imported. When two interfaces supply a method of one name for
+-  one type, the call is `E2070` and is disambiguated as `I.m(recv, …)`.
++  one type, the call is `E2070` and is disambiguated as `I.m(recv, …)`. Two instances of one generic
++  interface (`Add[i64]` and `Add[i32]`) are told apart by a call's arguments: an instance whose
++  parameter types are the arguments' own types, an untyped literal counting as its default type
++  (`int`, `f64`), is chosen before one the arguments reach only through a coercion (`[RNG-5a2]`);
++  arguments that fit two equally are `E2070`, disambiguated as `I[A].m(recv, …)`. An operator chooses
++  among instances as its method's call does (`[TYP-21]`, ODR-096).
+ 
+ **Marker interfaces**, derived automatically (implementable by hand only with `unsafe extend`):
+ 
+@@ -6869,7 +6874,8 @@
+ vectorisable form; Hardened_44 adds ODR-089, the iterator adapters' counts and ownership;
+ Hardened_45 adds ODR-090, where a float mode holds; Hardened_46 adds ODR-091, which iterators
+ run backwards; Hardened_47 adds ODR-092, when two implementations overlap; Hardened_48 adds
+-ODR-093, what a range type implements.
++ODR-093, what a range type implements; Hardened_49 adds ODR-096, how a call chooses between two
++instances of one generic interface.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6946,6 +6952,7 @@
+ | ODR-091 | an iterator runs backwards when it implements `DoubleEndedIterator` (`next_back`), whose method `rev` is; `ExactSizeIterator` gives `len`; the ranges with an end and the views' element iterators are both, and each adapter over them where it can tell its last item (Hardened_46) | `[STD-19]`, `[CTL-3b]`, `[MOD-5]` |
+ | ODR-092 | two implementations overlap where one type could be both, each one's type parameters standing for any type, found where they are declared; a bound separates two only where the type it bounds is written out in full and does not meet it (Hardened_47) | `[TYP-19]`, `[TYP-20]` |
+ | ODR-093 | a range type is `Clone`, `Hash`, `Display` and `Debug` when its representation is, its `Eq` and `Ord` are its representation's, and a range value shows as its representation's value; it is never `Default` (Hardened_48) | `[RNG-8]`, `[RNG-5a1]`, `[TYP-39]` |
++| ODR-096 | of two instances of one generic interface a call's or an operator's arguments fit, one whose parameter types are the arguments' own (an untyped literal as its default type) is chosen before one reached through a coercion, for every type; two that fit equally are `E2070`, and an operator chooses as its method does (Hardened_49) | `[TYP-24]`, `[RNG-5a2]`, `[TYP-21]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -7021,6 +7028,7 @@
+ | `[RC-3]` | changed |
+ | `[RC-5]` | changed |
+ | `[RNG-4]` | changed |
++| `[RNG-5a2]` | changed |
+ | `[RNG-8]` | changed |
+ | `[RT-10]` | changed |
+ | `[SIMD-1]` | changed |
+@@ -7056,6 +7064,7 @@
+ | `[TYP-19]` | changed |
+ | `[TYP-21]` | changed |
+ | `[TYP-23]` | changed |
++| `[TYP-24]` | changed |
+ | `[TYP-26]` | changed |
+ | `[TYP-27]` | changed |
+ | `[TYP-28]` | changed |
+@@ -8118,7 +8127,7 @@
+ | `[RNG-4a]` | IV | For floats, a range fact comes only from the true arm of a comparison … |
+ | `[RNG-5]` | IV | Arithmetic on a range value yields its representation: `r * 2.0` is … |
+ | `[RNG-5a1]` | IV | The operators on range types come from compiler-generated … |
+-| `[RNG-5a2]` | IV | Overload resolution picks an implementation matching the operand … |
++| `[RNG-5a2]` | IV | Overload resolution (`[TYP-24]`) picks an implementation matching the … |
+ | `[RNG-6]` | IV | NaN is in no range. A range from `-0.0` to `+0.0` contains both zeros. |
+ | `[RNG-7]` | IV | A range type whose range does not cover its whole representation … |
+ | `[RNG-8]` | IV | A range type is `Copy` when its representation is, has its … |

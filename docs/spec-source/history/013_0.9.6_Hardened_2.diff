@@ -1,0 +1,345 @@
+--- Ember_v0.9.6_Hardened_1.md
++++ Ember_v0.9.6_Hardened_2.md
+@@ -1,8 +1,8 @@
+ # Ember Programming Language — Design & Implementation Specification
+ 
+-**Version:** 0.9.6_Hardened_1
++**Version:** 0.9.6_Hardened_2
+ **Status:** Frozen development target; implementation/conformance evidence is not claimed and normative repository adoption still requires the recorded adoption gates
+-**Immediate predecessor:** 0.9.5_Hardened_10
++**Immediate predecessor:** 0.9.6_Hardened_1
+ **Versioning model:** A hardening increments `Hardened_N` when it only adds implementation detail,
+ invariants, tooling requirements, or editorial clarification without changing accepted language
+ semantics. A language revision is required when the accepted-program set or another normative
+@@ -13,7 +13,9 @@
+ analysis/verification boundaries, and one capability model. It also incorporates the owner-approved
+ clarification of `[ARN-10]` under v1's abort-only panic policy. The new `0.9.6` version selector is
+ additive; it does not silently change a module that selected an older contract. No implementation or
+-conformance result is asserted merely because the specification requires one.
++conformance result is asserted merely because the specification requires one. This H2 successor
++incorporates the owner-approved ODR-011 completion of the previously named but under-specified
++Arena-backed collection surface.
+ 
+ > **Authority boundary:** This frozen revision records the owner-selected 0.9.6 development target, but
+ > `docs/spec-source/ember-spec.md` remains the repository's sole normative source until this
+@@ -48,6 +50,32 @@
+ > the final `[ARN-10]` clarification. H10 remains immutable. This H1 revises existing implementation
+ > contracts in place instead of introducing a parallel rule family, and it does not claim that the
+ > corresponding compiler refactor or conformance evidence already exists.
++
++> **ARENA-BACKED CONTAINER CONTRACT COMPLETED:** after H1 exposed that `[ARN-5]` named
++> `ArenaArray` and `ArenaMap` without an executable API, the owner resolved ODR-011. H2 keeps H1
++> frozen and defines fixed-capacity, single-allocation Arena-backed view containers, recoverable
++> `CapacityError.Full` exhaustion, drop-free element constraints, ordinary borrowing, named
++> Arena-backed iterator view types, deterministic iteration requirements, and the complete
++> `[TST-24]` matrix. No collection type is added to the prelude.
++
++# 0.9.6_Hardened_2 Arena-Backed Container Completion Record
++
++**Version treatment:** owner-approved hardening completion of an existing named standard-library
++surface. **Amendment class:** OWNER-APPROVED SEMANTIC COMPLETION. H1 remains the immutable
++predecessor. This cut does not change any existing ownership, borrowing, Arena allocation,
++initialization, failure, effect, FFI, ABI, reload, or determinism rule outside the completed
++`[ARN-5]` family.
++
++**Resolved contract.** `std.collections` publicly owns `ArenaArray`, `ArenaMap`,
++`CapacityError`, `ArenaArrayIter`, `ArenaArrayIterMut`, and `ArenaMapIter`; none is a prelude
++name. Both containers are empty after `with_capacity`, allocate backing storage once from the
++supplying Arena, never grow or reallocate, and retain that Arena's region. Capacity exhaustion is
++`Err(CapacityError.Full)`, not panic. The named iterator views implement the existing
++associated-type `Iterator[Item = ...]` interface; no opaque-return or second iterator mechanism is
++introduced.
++
++**Evidence boundary.** This specification completion does not claim that the compiler, runtime, or
++standard library implements `ARN-COLL-1`. Executable status remains external repository evidence.
+ 
+ # 0.9.6_Hardened_1 Simplicity-Consolidation Record
+ 
+@@ -1790,6 +1818,7 @@
+ | 0.9.5_Hardened_9 | Owner-approved hardening clarification | permitted the narrow `@borrows(arena)` return-provenance contract for Arena-backed views; added `[LT-4a]`, `[LT-4b]`, and `[TST-22]` |
+ | 0.9.5_Hardened_10 | Owner-approved hardening clarification | defined Arena bulk initialization, `Zeroable`, `MaybeUninit`, canonical initialization APIs, rollback, and Phase 2 availability; added `[ARN-8]`–`[ARN-13]` and `[TST-23]` |
+ | 0.9.6_Hardened_1 | **Owner-selected architecture-line revision** | consolidated reference-compiler semantic facts and MIR boundaries without weakening H10 behavior; clarified `[ARN-10]` for v1 abort-only panic; accepted `0.9.6` as an additive version selector |
++| 0.9.6_Hardened_2 | Owner-approved semantic completion | closed ODR-011 with fixed-capacity Arena-backed collections, `CapacityError.Full`, named iterator view types, exact provenance/drop/failure behavior, and `[TST-24]` |
+ 
+ ---
+ 
+@@ -1993,11 +2022,15 @@
+ 5. Missing implementation artifacts are reported as gaps; the specification does not simulate their
+    existence.
+ 
+-## 0.9.6_Hardened_1 Audit Record
++## 0.9.6_Hardened_2 Audit Record
+ 
+ | ID | Classification | Resolution |
+ |---|---|---|
+-| AUD-096-01 | Source authority | Preserved the owner-supplied Revision 5 RFC byte-for-byte; H10 is the immutable construction source, while `ember-spec.md` remains the adopted 0.8.5 contract until H1 passes explicit adoption gates. |
++| AUD-096-10 | Owner-approved API completion | Closed ODR-011 with fixed-capacity `ArenaArray`/`ArenaMap` semantics, exact construction/provenance, minimum operations, failure, invalidation, destruction, and ordering requirements. |
++| AUD-096-11 | Type-system consistency | Replaced the proposed generic-looking `Iterator[ref T]` spelling with named `@view` iterator types implementing the existing associated-type `Iterator[Item = ...]` contract; no opaque-return or second iterator mechanism was introduced. |
++| AUD-096-12 | Public identity | Assigned all six Arena-backed collection names to `std.collections`, kept them out of the prelude, made construction observably empty, and defined the sole capacity-exhaustion value as `CapacityError.Full`. |
++| AUD-096-13 | Evidence integrity | Added `[TST-24]` but made no implementation/conformance claim merely from the completed specification. |
++| AUD-096-01 | Source authority | Preserved the owner-supplied Revision 5 RFC and ODR-011 ruling byte-for-byte; H1 is the immutable immediate predecessor, while `ember-spec.md` remains the adopted 0.8.5 contract until H2 passes explicit adoption gates. |
+ | AUD-096-02 | Owner-approved architecture | Consolidated compiler facts around `TypeIdentity`, `BorrowCapability`, `OwnershipGraph`, `AccessContract`, `InitializationState`, `LayoutDescriptor`, and `EffectSet`; no public type or parallel ownership/lifetime system was introduced. |
+ | AUD-096-03 | Capability safety | Separated provenance root, optional source place, storage identity, projection, region, access permission, reference kind, ownership, acquisition/checking, safety authority, synchronization, validity, and escape constraints. Region equality is not storage overlap or `noalias`. |
+ | AUD-096-04 | Compiler boundaries | Made type/interface solving construct completed typed HIR from the resolved AST, then lowered initial MIR before initialization/ownership/borrow/region analyses and retained MIR verification after safety-critical transformations. |
+@@ -2007,13 +2040,14 @@
+ | AUD-096-08 | Rule-ID discipline | Amended existing implementation rules rather than copying the RFC's architecture labels into the normative rule index. No suffixed Arena rule or parallel `SIMP-*` rule family was introduced. The raw extractor's inherited `IDE-2`/`IDE-5`/`IDE-10` reservations and historical `HOT-10` citation are not normative rule references under the existing ERR-042 inventory; the classified dangling-normative-reference count is zero. |
+ | AUD-096-09 | Evidence integrity | Classified this as a specification target only. No compiler, runtime, conformance, or performance status was inferred from the document. |
+ 
+-**Amendment:** `HC-096-01` — owner-approved simplicity consolidation and `[ARN-10]`
+-clarification. ADR-030 records the decision. This is the first 0.9.6 cut, so the hardening counter
+-resets to 1. H10 remains unchanged and becomes the historical immediate predecessor.
+-
+-### 0.9.6_Hardened_1 language-conformance condition
+-
+-`0.9.6_Hardened_1` MUST NOT be declared conformant until all H10 conditions remain satisfied and
++**Amendments:** `HC-096-01` records the owner-approved simplicity consolidation and
++`[ARN-10]` clarification in H1; `HC-096-02` records the owner-approved ODR-011
++Arena-backed collection completion in H2. ADR-030 and ADR-031 preserve the two decisions.
++H1 remains unchanged and is H2's immediate predecessor.
++
++### 0.9.6_Hardened_2 language-conformance condition
++
++`0.9.6_Hardened_2` MUST NOT be declared conformant until all H1 conditions remain satisfied and
+ repository evidence additionally proves that:
+ 
+ 1. equivalent borrow relationships represented by `Span`, `MutSpan`, `ref`, `ref mut`, `@view`
+@@ -2033,25 +2067,29 @@
+ 7. `[ARN-10]` tests show successful `Default` construction, v1 process termination through `[PAN-1]`
+    on panic, no continuation after panic, no compiler-invented unwind path, and no observation of
+    post-panic Arena state;
+-8. existing H10 safety regressions remain present and green; implementation-path consolidation is not
+-   used to delete an adversarial test.
+-
+-### 0.9.6_Hardened_1 acceptance condition
+-
+-H1 MUST NOT replace `docs/spec-source/ember-spec.md` unless it has one version identity and predecessor,
++8. existing H10/H1 safety regressions remain present and green; implementation-path consolidation is
++   not used to delete an adversarial test;
++9. `[TST-24]` proves empty fixed-capacity construction, exact Arena provenance, no post-construction
++   allocation/cursor movement, `CapacityError.Full`, complete Array/Map operations, drop-free bounds,
++   ordinary borrow conflicts, named iterator contracts, deterministic iteration requirements, and
++   generic substitution.
++
++### 0.9.6_Hardened_2 acceptance condition
++
++H2 MUST NOT replace `docs/spec-source/ember-spec.md` unless it has one version identity and predecessor,
+ the complete alternate-spec rule/index/grammar/diagnostic audit has no unintended regression, the
+ implementation and conformance matrices separate `SPECIFIED` from evidence-backed states, all required
+ compiler/runtime/test work passes, generated-code inspection proves runtime erasure and ordering where
+-source observation is insufficient, and every difference from H10 is classified and traceable to the
+-owner-approved RFC or final `[ARN-10]` ruling.
+-
+-## 0.9.6_Hardened_1 Evidence Status — No Implementation Claim
+-
+-This H1 file is a frozen development target. The adopted repository specification remains
+-`docs/spec-source/ember-spec.md` (`0.8.5_Hardened_1`). H1's architecture, 0.9.5 multi-region semantics,
+-remaining H10 Arena initialization surface, and later phases are `SPECIFIED` unless the repository's
++source observation is insufficient, and every difference from H1 is classified and traceable to the
++owner-approved ODR-011 ruling.
++
++## 0.9.6_Hardened_2 Evidence Status — No Implementation Claim
++
++This H2 file is a frozen development target. The adopted repository specification remains
++`docs/spec-source/ember-spec.md` (`0.8.5_Hardened_1`). H2's architecture, 0.9.5 multi-region semantics,
++Arena-backed collections, and later phases are `SPECIFIED` unless the repository's
+ implementation matrix and executable evidence say otherwise. Passing the six gates against the adopted
+-source does not constitute H1 adoption or H1 conformance.
++source does not constitute H2 adoption or H2 conformance.
+ 
+ # 1.0 Readiness Gate
+ 
+@@ -2154,10 +2192,11 @@
+ 
+ ---
+ 
+-## 0.9.6_Hardened_1 consolidation record
++## 0.9.6_Hardened_2 consolidation record
+ 
+ The body below originated in `0.8.5_Hardened_1`, incorporates the accepted 0.9/0.9.5 changes in
+-place, and carries the owner-selected 0.9.6 reference-compiler consolidation. It is normative within
++place, carries the owner-selected 0.9.6 reference-compiler consolidation, and
++completes ODR-011's Arena-backed collection contract. It is normative within
+ this target together with the current addenda above. Frozen predecessor files are
+ the historical diff bases. Existing rule IDs retain their meanings; newly added rules use unused
+ IDs. In particular, the 0.8.5 `CLI-15`, `RT-1`–`RT-4`, and `DIA-18` definitions remain intact;
+@@ -4215,7 +4254,140 @@
+ * `[ARN-2]` Values allocated in an arena are **not dropped individually**. Consequently, ordinary Arena bulk allocation MUST NOT accept an element type for which `needs_drop(T)` is true, regardless of whether `T` implements `Default`, `Zeroable`, or both. This guarantees that ordinary Arena reclamation never needs per-element destructor execution.
+ * `[ARN-3]` Allocating a type that `needs_drop` in an arena is `E3090` unless the call is `alloc_nodrop` (explicit acknowledgement that `drop` will never run) — this keeps arenas free of destructor bookkeeping and prevents silent resource leaks of handles/GPU objects. `alloc_array[T](count)` always requires `!needs_drop(T)` and resolves initialization deterministically: if `T: Zeroable`, it allocates zeroed storage and treats every element as initialized `T`; otherwise, if `T: Default`, it calls `T.default()` once for each element; otherwise it reports the existing unsatisfied-bound diagnostic `E2040`. If both capabilities exist, `Zeroable` takes precedence. That precedence is observable API semantics and MUST NOT be changed by optimization.
+ * `[ARN-4]` `Arena` allocation is bump allocation with alignment padding; it is `@noalloc`-clean **only** if the arena is `@noalloc`-declared (`Arena.fixed(buffer: MutSpan[u8])`, which never grows and panics on exhaustion) — a growing arena carries the `Alloc` effect on the growth path. The type `FixedArena` is provided for hot paths.
+-* `[ARN-5]` `ArenaArray[T]`, `ArenaMap[K,V]` are container variants whose backing storage is an arena view; they are view types (`@view`) and follow `[TYP-15]`.
++* `[ARN-5]` **Fixed-capacity Arena-backed containers.** `ArenaArray[T]` and
++  `ArenaMap[K, V]` are fixed-capacity, Arena-backed view containers. Their
++  backing storage is allocated once from the supplying `Arena` at
++  construction. They do not own that storage, MUST NOT outlive its Arena
++  region, are `@view` types, and follow `[TYP-15]`. Neither type grows,
++  reallocates, moves its backing buffer, or obtains more Arena storage after
++  construction. This intentionally prevents growth from invalidating element
++  views.
++* `[ARN-5a]` **Public types, construction, and provenance.** `std.collections`
++  publicly exports `ArenaArray`, `ArenaMap`, `CapacityError`,
++  `ArenaArrayIter`, `ArenaArrayIterMut`, and `ArenaMapIter`. None is
++  exported by the prelude. `CapacityError` is the unit-only public enum:
++
++  ```ember
++  pub enum CapacityError:
++      Full
++  ```
++
++  The canonical constructors are:
++
++  ```ember
++  @borrows(arena)
++  fn ArenaArray.with_capacity[T](
++      arena: Arena,
++      capacity: usize
++  ) -> ArenaArray[T]
++
++  @borrows(arena)
++  fn ArenaMap.with_capacity[K: Eq + Hash, V](
++      arena: Arena,
++      capacity: usize
++  ) -> ArenaMap[K, V]
++  ```
++
++  Both constructors return an empty container with `len() == 0` and the
++  requested maximum capacity, including when capacity is zero. The `arena`
++  parameter is shared/borrowed as in `[ARN-1]`; construction needs no
++  `mut arena`. The result carries the Arena's region through
++  `@borrows(arena)`. Container methods use `self` or `mut self` according
++  to ordinary observation/mutation and never mutate the Arena cursor.
++* `[ARN-5b]` **Capacity, failure, and stability.** The construction capacity
++  is the maximum number of stored entries. An operation that would add an
++  entry beyond capacity MUST return `Err(CapacityError.Full)` through its
++  specified `Result`; ordinary capacity exhaustion MUST NOT panic, allocate,
++  reallocate, modify the Arena cursor, invalidate an existing element view, or
++  partially modify the container. A replacement of an existing Map key does
++  not consume another capacity slot. Because the backing buffer never moves,
++  an element view remains storage-valid until that element is removed or the
++  supplying Arena region ends, subject to the ordinary borrow/liveness rules.
++* `[ARN-5c]` **`ArenaArray[T]` minimum API.** The canonical minimum API is:
++
++  ```ember
++  len(self) -> usize
++  capacity(self) -> usize
++  is_empty(self) -> bool
++  get(self, index: usize) -> Option[ref T]
++  get_mut(mut self, index: usize) -> Option[ref mut T]
++  push(mut self, owned value: T) -> Result[void, CapacityError]
++  insert(mut self, index: usize, owned value: T) -> Result[void, CapacityError]
++  remove(mut self, index: usize) -> Option[T]
++  clear(mut self) -> void
++  iter(self) -> ArenaArrayIter[T]
++  iter_mut(mut self) -> ArenaArrayIterMut[T]
++  ```
++
++  `ArenaArrayIter[T]` is an Arena-backed `@view` iterator implementing the
++  existing associated-type contract `Iterator[Item = ref T]`.
++  `ArenaArrayIterMut[T]` is an Arena-backed `@view` iterator implementing
++  `Iterator[Item = ref mut T]`. Iteration is in increasing index order and is
++  deterministic. Indexing and insertion indices follow ordinary
++  `Array`/`Span` bounds rules. `remove` moves out the removed value.
++* `[ARN-5d]` **`ArenaMap[K, V]` minimum API.** `ArenaMap[K, V]` requires
++  `K: Eq + Hash`, using the same equality/hash contract as ordinary
++  `Map[K, V]`. Its canonical minimum API is:
++
++  ```ember
++  len(self) -> usize
++  capacity(self) -> usize
++  is_empty(self) -> bool
++  get(self, key: K) -> Option[ref V]
++  get_mut(mut self, key: K) -> Option[ref mut V]
++  insert(mut self, owned key: K, owned value: V)
++      -> Result[Option[V], CapacityError]
++  remove(mut self, key: K) -> Option[V]
++  contains_key(self, key: K) -> bool
++  iter(self) -> ArenaMapIter[K, V]
++  clear(mut self) -> void
++  ```
++
++  `ArenaMapIter[K, V]` is an Arena-backed `@view` iterator implementing
++  `Iterator[Item = (ref K, ref V)]`. Inserting a key already present replaces
++  its value and returns `Ok(Some(old_value))`. Inserting a new key returns
++  `Ok(None)`; at full capacity it returns `Err(CapacityError.Full)` without
++  modifying the map. Map iteration order is unspecified but deterministic for
++  an unchanged map state and implementation configuration. Programs MUST NOT
++  depend on a particular bucket order. A stable-insertion-order map would be a
++  separate API revision.
++* `[ARN-5e]` **Drop-free element boundary.** `ArenaArray[T]` requires
++  `!needs_drop(T)`. `ArenaMap[K, V]` requires `!needs_drop(K)` and
++  `!needs_drop(V)`. Arena rewind/drop runs no element destructors. `remove`
++  and duplicate-key replacement may move an initialized value out before
++  reclamation, but do not make the Arena responsible for its destructor. A
++  future arena-backed container admitting `needs_drop` contents requires a
++  separately specified ownership/destruction model.
++* `[ARN-5f]` **Borrowing and mutation.** Reads and element views create
++  ordinary shared borrows; mutable element views and all mutating operations
++  use ordinary mutable borrows. The `mut self` methods borrow the whole
++  container under the existing `[BRW-*]` rules, so a live element borrow
++  conflicts with an overlapping mutating call. Removal cannot occur while its
++  element is borrowed; `clear` cannot occur while any element is borrowed;
++  and Arena reset/drop cannot occur while a container, iterator, or element
++  view derived from it remains live. The compiler MUST NOT introduce a
++  container-specific invalidation mechanism.
++* `[ARN-5g]` **No hidden Arena mutation.** `push`, Array `insert`/`remove`,
++  Map insertion/replacement/removal, and `clear` modify only the
++  already-allocated container storage. They MUST NOT call `Arena.alloc*`,
++  change the Arena allocation cursor, create a second hidden Arena region, or
++  allocate a replacement buffer. The constructor is the only operation that
++  obtains backing storage from the Arena.
++* `[TST-24]` **Arena-backed container conformance.** Conformance MUST cover:
++  (1) both empty `with_capacity` constructors and Arena return provenance;
++  (2) fixed-capacity insertion and `CapacityError.Full` at exhaustion;
++  (3) generated/runtime evidence that construction allocates once and later
++  mutation neither grows nor changes the Arena cursor; (4) the complete
++  `ArenaArray` API, bounds behavior, index-order iteration, and mutable
++  iteration; (5) the complete `ArenaMap` API, Eq/Hash bounds, duplicate
++  replacement, removal, lookup, clear, and unchanged-state deterministic
++  iteration; (6) rejection of `needs_drop` element/key/value types;
++  (7) rejection of conflicting removal, clear, and other `mut self` calls
++  while element/iterator borrows are live; (8) rejection after the supplying
++  Arena region ends and rejection of Arena reset/drop while derived views live;
++  (9) named iterator types using the existing associated-type
++  `Iterator[Item = ...]` contract; and (10) generic element/key/value
++  substitution and Arena provenance through generic wrappers.
+ * `[ARN-6]` `ScopedArena`: `Arena.scope(mut self) -> ScopedArena` takes a **mutable** borrow of the parent arena, held for the `ScopedArena`'s whole region. `with scope = frame.scope():` creates a nested mark; the block's allocations are released at block end (LIFO), giving job-local memory (Part XI §6). While a scope is live the parent MUST NOT be allocated from, reset, or dropped — `E3096 arena is scoped here`, with `help: allocate from `scope` instead, or take this allocation before opening the scope`. Nested scopes are obtained from the `ScopedArena` (`ScopedArena.scope(mut self)`), which nests marks to any depth.
+ * `[ARN-7]` LIFO rewind is a **safety property, not a convenience**. An implementation MUST NOT provide any operation that lowers an arena's bump pointer, invalidates a mark, or reuses arena bytes while a view whose region derives from that arena is live. Every such operation MUST take `mut self` on the arena whose bytes it reclaims, which is what makes `[BRW-1]` the enforcing rule. `[ARN-1]`'s argument extends to `scope`, `reset` and drop alike.
+ * `[ARN-8]` **`MaybeUninit[T]`.** `MaybeUninit[T]` has exactly the size and alignment of `T` and carries storage for a `T` without asserting that the bytes constitute a valid initialized `T`. Dropping it MUST NOT run `T`'s destructor. It is `Copy` iff `T: Copy`; otherwise it is move-only. Safe code MAY write a valid `T` into the storage but MUST NOT read it as `T` before initialization has been established. The canonical operations are:
+@@ -4898,7 +5070,7 @@
+ | `std.cell` | **Defining owner** of `Cell`, `RefCell`, `Ref`, `RefMut` (Part IX §7) |
+ | `std.borrow` | canonical `with_views` helpers for 2, 3 and 4 independently borrowed views; allocation-free late-bound callback composition (`[LT-8]`..`[LT-12]`); multi-region view utilities MAY be layered here but require no compiler intrinsic |
+ | `std.mem` (cont.) | `assert_disjoint`, `assert_disjoint_or_panic`, `unsafe assume_disjoint` (Part IX §8) |
+-| `std.collections` | `Array`, `SmallArray`, `Deque`, `Map`, `Set`, `BitSet`, `Pool`, `Handle`, `SoA` (derive support), `ArenaArray` |
++| `std.collections` | `Array`, `SmallArray`, `Deque`, `Map`, `Set`, `BitSet`, `Pool`, `Handle`, `SoA` (derive support), `ArenaArray`, `ArenaMap`, `CapacityError`, `ArenaArrayIter`, `ArenaArrayIterMut`, `ArenaMapIter`; the Arena-backed names are public but not prelude exports |
+ | `std.string` | `String`, `str` methods (`len`, `chars`, `bytes`, `split`, `trim`, `starts_with`, `find`, `parse[T]`, `to_upper`…), `StringBuilder`, `CString`, `cstr` |
+ | `std.fmt` | `Formatter`, `Display`, `Debug`, `format(…) -> String`, `format_to(mut buf: MutSpan[u8], …) -> Result[str, FmtError]` (`@noalloc`), f-string lowering targets |
+ | `std.math` | `Vec2/3/4`, `IVec*`, `UVec*`, `Mat2/3/4`, `Quat`, `Transform`, `AABB`, `Sphere`, `Plane`, `Ray`, `Frustum`, scalar funcs (`sin cos tan atan2 sqrt rsqrt pow exp log floor ceil round abs min max clamp lerp smoothstep`), constants; all `@derive(Copy)`, `@layout(c)`, and **layout-compatible with GLM's float types** (`Vec3` = 3×f32, 4-byte aligned; `Mat4` column-major) so they cross to RageV unchanged |
+@@ -7961,13 +8133,13 @@
+ Everything between the consolidated-body markers is current normative text. Material after this
+ marker is specification tooling guidance for the current revision, not inherited 0.8.5 text.
+ 
+-# Appendix B — 0.9.6_Hardened_1 Consistency Checklist
++# Appendix B — 0.9.6_Hardened_2 Consistency Checklist
+ 
+ The following checks are mandatory CI checks for the consolidated specification itself:
+ 
+-1. Exactly one current version declaration exists and names `0.9.6_Hardened_1`.
+-2. The immediate predecessor is frozen `0.9.5_Hardened_10`, which remains byte-for-byte unchanged.
+-3. `[MOD-6]` and `[MOD-6a]` name the supported `0.9.6`, `0.9.5`, `0.9`, and 0.8.x source-language contracts explicitly; `0.9` does not silently enable later semantics, and 0.9.6 preserves the ordinary-source accepted/rejected sets and observable semantics of 0.9.5.
++1. Exactly one current version declaration exists and names `0.9.6_Hardened_2`.
++2. The immediate predecessor is frozen `0.9.6_Hardened_1`, which remains byte-for-byte unchanged.
++3. `[MOD-6]` and `[MOD-6a]` name the supported `0.9.6`, `0.9.5`, `0.9`, and 0.8.x source-language contracts explicitly; `0.9` does not silently enable later semantics, and H2 changes H1 only through the owner-approved ODR-011 completion.
+ 4. `EMBER_RUNTIME_ABI` is canonical; `EMBER_RT_ABI` can occur only in compatibility-alias documentation.
+ 5. Every `dyn Writer`/`dyn Reader` serialization signature uses a legal indirection.
+ 6. Manifest examples use current versions unless explicitly marked historical.
+@@ -8003,5 +8175,11 @@
+ 36. H10's cycle diagnostics, class-only dynamic exclusivity, interior-mutability distinctions, ECS library boundary, FFI exception/retention contracts, coroutine restrictions, and runtime-erasure guarantees are not weakened by shared compiler machinery.
+ 37. The received Revision 5 RFC hash, owner-approved `[ARN-10]` wording, ADR-030, HC-096-01, migration intake, and H1 audit record form one traceable decision chain.
+ 38. No RFC architecture label has become a parallel normative rule family; the alternate rule-index audit has no duplicate definition and zero genuine dangling normative references. Its raw inherited `IDE-2`/`IDE-5`/`IDE-10` reservations and historical `HOT-10` citation remain classified by ERR-042 rather than misrepresented as rules. Every unimplemented requirement remains identified as `SPECIFIED` rather than evidence-backed.
++39. The preserved ODR-011 ruling, ADR-031, HC-096-02, `[ARN-5]`–`[ARN-5g]`,
++    `[TST-24]`, and the `std.collections` table form one traceable contract:
++    fixed capacity, one Arena allocation, empty construction, `CapacityError.Full`,
++    no prelude exports, named iterator views using `Iterator[Item = ...]`,
++    `!needs_drop` contents, ordinary borrowing, no hidden cursor mutation, and
++    the specified deterministic-iteration boundaries.
+ 
+ A failure of any checklist item is a specification CI failure, not a compiler implementation choice.

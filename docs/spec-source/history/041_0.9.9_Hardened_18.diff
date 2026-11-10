@@ -1,0 +1,62 @@
+--- Ember_v0.9.9_Hardened_17.md
++++ Ember_v0.9.9_Hardened_18.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_17
+-**Supersedes:** 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_18
++**Supersedes:** 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -3852,7 +3852,8 @@
+   `round_half_away` (C's `round`), `is_nan`, `is_finite`, `is_infinite`, `copysign`, `mul_add`, and
+   the constants `INF`, `NAN`, `EPSILON` (the gap between `1.0` and the next value), `MAX` (the
+   greatest finite value) and `MIN` (the least finite value, `-MAX`, as an integer's `MIN` is its
+-  least) (ODR-039). A float's `Display` is the shortest text that reads back as the same value, with `.0`
++  least) (ODR-039). Every float type has the constants, `f16` included (`f16.MAX` is 65504 and
++  `f16.EPSILON` 2^-10), though only `f32` and `f64` have the methods (ODR-041). A float's `Display` is the shortest text that reads back as the same value, with `.0`
+   for an integral value, as Python's `repr`: `0.1 + 0.2` prints `0.30000000000000004`, `1.0` prints
+   `1.0`, and `1e300` prints `1e+300`; a format spec overrides it.
+ * `[STD-3]` `math.fma(a, b, c)` (and `mul_add`) is a fused multiply-add with a single rounding, on every
+@@ -3864,8 +3865,8 @@
+ * `[STD-21]` *(new in 0.9.9)* `std.math` provides `PI`, `TAU`, `E`; `sin`, `cos`, `tan`, `asin`, `acos`,
+   `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `exp`, `exp2`, `ln`, `log2`, `log10`, `pow`, `sqrt`, `rsqrt`, `cbrt`,
+   `hypot`, `lerp`, `smoothstep`, each taking any number type (`fn f[T: Number](x: T) -> T.Real`,
+-  `[STD-27]`): an integer's answer is an `f64` (`math.sqrt(9)` is `3.0`), an `f32`'s an `f32` and an
+-  `f64`'s an `f64`; and the vector types `Vec2`, `Vec3`,
++  `[STD-27]`): an integer's answer is an `f64` (`math.sqrt(9)` is `3.0`), an `f16`'s and an `f32`'s
++  an `f32`, and an `f64`'s an `f64`; and the vector types `Vec2`, `Vec3`,
+   `Vec4` (of `f32`, `@layout(c)`), `IVec2/3/4`, `Mat3`, `Mat4` (column-major), `Quat`, `Transform`,
+   `Aabb`, `Ray`, `Plane`, `Frustum`, with `dot`, `cross`, `length`, `normalize` (panics on a zero
+   vector; `normalize_or_zero` does not) and the arithmetic operators. `PI`, `TAU` and `E` are
+@@ -3873,8 +3874,8 @@
+   type a use is `f64`.
+ * `[STD-27]` *(new in 0.9.9)* `std.math.Number` is every number type. `std.math` adds each with an
+   `extend … implements Number` block stating its `type Real: Float`, the decimal type its answers
+-  come back as (`f64` for every integer type, itself for `f32` and `f64`), and `to_real`, which turns
+-  it into one. `[STD-21]`'s functions take `T: Number` and answer in `T.Real` (`[IFC-4]`); a program
++  come back as (`f64` for every integer type, `f32` for `f16`, which it holds exactly (ODR-041), and
++  itself for `f32` and `f64`), and `to_real`, which turns it into one. `[STD-21]`'s functions take `T: Number` and answer in `T.Real` (`[IFC-4]`); a program
+   may add its own number types the same way (ODR-038). `std.math.Float` is the decimal types:
+   `std.math` makes `f32` and `f64` implement it (`extend f32 implements Float`), and implementing it
+   for any other type is `E2042`. A bound `T: Float` provides, inside a generic body, `Copy`, `Eq`, `Ord` (`[TYP-37]`) and `Default`;
+@@ -6446,7 +6447,8 @@
+ Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026;
+ Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
+ Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036;
+-Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039; Hardened_17 adds ODR-040.
++Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039; Hardened_17 adds ODR-040;
++Hardened_18 adds ODR-041.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6470,6 +6472,7 @@
+ | ODR-038 | ruled by the owner: `std.math`'s functions take any number type through `std.math.Number`, answering in `T.Real` (`f64` for an integer, `f32` for an `f32`); `T.Name` names a type parameter's associated type (Hardened_15) | `[IFC-4]`, `[STD-21]`, `[STD-27]` |
+ | ODR-039 | `[STD-20]`'s integer methods: `checked_`, `wrapping_`, `saturating_` and `overflowing_` forms of `add`, `sub`, `mul`, `floordiv`, `rem`, `pow` and `neg` (the shifts too, but not saturating), built into the integer types; bit counts are `int`s; a float's `MIN` is `-MAX` (Hardened_16) | `[STD-20]` |
+ | ODR-040 | the operator interfaces' methods are `add`, …, `floordiv`, `bitand`, …, `neg` and `not` (a method name after `fn` and `.`), each `…Assign` form's with `_assign`; every number type implements the interface of each operator it has, in `std.core`; a type has an operator only through its interface; one `type Output` serves every interface of an `extend` block; a binding is written only in a bound (Hardened_17) | `[TYP-21]`, `[IFC-4]`, `[LEX-15]` |
++| ODR-041 | `f16` is a `Number` whose `Real` is `f32`; every float type, `f16` included, has `INF`, `NAN`, `EPSILON`, `MAX` and `MIN` (Hardened_18) | `[STD-20]`, `[STD-21]`, `[STD-27]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 

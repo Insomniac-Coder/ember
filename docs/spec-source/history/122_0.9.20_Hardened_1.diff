@@ -1,0 +1,1230 @@
+--- Ember_v0.9.15_Hardened_11.md
++++ Ember_v0.9.20_Hardened_1.md
+@@ -1,11 +1,10 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.15_Hardened_11
+-**Supersedes:** 0.9.15_Hardened_9 (development target until this one), 0.9.15_Hardened_8,
+-0.9.15_Hardened_7, 0.9.15_Hardened_6, 0.9.15_Hardened_5, 0.9.15_Hardened_4, 0.9.15_Hardened_3,
+-0.9.15_Hardened_2, 0.9.15_Hardened_1 and every earlier file: 0.9.10_Hardened_1 to
+-0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3 and 0.8.5_Hardened_1
+-(adopted). This document is the single specification of Ember; the earlier files are history.
++**Version:** 0.9.20_Hardened_1
++**Supersedes:** 0.9.15_Hardened_10 (development target until this one), 0.9.15_Hardened_9 to
++0.9.15_Hardened_1 and every earlier file: 0.9.10_Hardened_1 to 0.9.10_Hardened_35, 0.9.9_Hardened_1
++to 0.9.9_Hardened_52, 0.9.8_Hardened_3 and 0.8.5_Hardened_1 (adopted). This document is the single
++specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+ are tracked separately (§XVII.5, §XVII.8) and are not claimed by this text.
+@@ -25,7 +24,15 @@
+ owner's verdict 137 (what a call's result views is read from the called function's code);
+ **0.9.15_Hardened_9** the owner's verdicts 138 to 144; **0.9.15_Hardened_10** the owner's verdicts 145
+ to 160 (`owns` at the call for every `owns` parameter, a `dyn` call checked for each kind that may reach
+-it and `runtime` where only the running program knows it). What a program means is written in
++it and `runtime` where only the running program knows it); **0.9.20_Hardened_1** the hardening audit
++of 2026-11-03 (§H.51), ruled under the owner's delegation (`docs/AUTOPILOT.md` §3): it closes the holes
++the audit found in the memory-safety rules (a `sharedref mut` link never leaves its thread; a function
++value is never stored where its own run could end its state; a `runtime` check reads the kind's own
++fact, so it holds across packages; a hand-over is a reshape; a view opened from a link counts the
++whole class family; sharing a local moves nothing; an arena never moves what it gave out), says what
++the text left unsaid (a `defer` block's uses, a position's index, `comptime.env` from a dependency,
++the type of a `comptime` value) and makes its words consistent, taking no feature away; it changes
++the set of accepted programs, so the language version moves (`[VER-9]`). What a program means is written in
+ words on the thing it describes: one owner unless a line says `shares`; `owns` for a hand-over and a
+ value held alone, at the call too; `copy of` for a copy; `ref mut` on a name, and at the call, for a
+ change of someone else's value; `weakref` for a link that does not keep its target alive; `this` for a method's object.
+@@ -34,7 +41,8 @@
+ cost (§X.4). It replaces `Box`, `Shared`, `Weak`, `RefCell`, `SyncShared`, `ForeignBox`, `@sync`,
+ `@borrows`, the mode `owned`, `self`, `mem.forget`, effect clauses on a first line and every check of
+ exclusive access made while the program runs. It changes the set of accepted programs, so the
+-language version moves (`[VER-9]`); Appendix H §H.41 to §H.44 list every change. The revisions before it were
++language version moves (`[VER-9]`); Appendix H §H.41 to §H.50 list every change of 0.9.15, and §H.51
++those of 0.9.20. The revisions before it were
+ authored at the owner's direction of 2026-09-23 with delegated authority to decide open language
+ questions against the project goal; Appendix H lists each one's changes (§H.1 to §H.40), and every
+ finding of the 2026-09-23 research pass (`tasks/audit/FINDINGS.md`, F-001–F-214) is resolved in
+@@ -96,7 +104,7 @@
+ | Appendix E | Coming from Python (non-normative) |
+ | Appendix F | Glossary |
+ | Appendix G | Resolution of findings F-001–F-214 |
+-| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40) and in 0.9.15 (§H.41) |
++| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.50) and in 0.9.20 (§H.51) |
+ | Appendix I | Rule index |
+ 
+ **Normative words.** MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119. Text marked
+@@ -405,7 +413,7 @@
+ ## doc comment: attaches to the next declaration; Markdown body
+ # SAFETY: justification for the `unsafe` block that follows ([LEX-23])
+ #$ test-harness annotation; an ordinary comment to the compiler
+-#! language "0.9.9"  (only before the imports: a directive, [GRM-37])
++#! language "0.9.20"  (only before the imports: a directive, [GRM-37])
+ ```
+ 
+ * `[LEX-10]` *(changed in 0.9.9)* There are no block comments. A line beginning `#!` before the first import or item is a
+@@ -465,7 +473,7 @@
+   `where` clause (`[TYP-17]`); `copy` directly before `of`,
+   and `of` directly after `copy` (`copy of x`, so `mem.copy` and a count's `of` stay names,
+   `[GRM-43]`); `exists` between the value and `as` in an `if`, `elif` or `while` header (`[GRM-44]`);
+-  `runtime` after the `:` of a parameter or a variable and directly before a type (`[LT-48]`);
++  `runtime` after a parameter's `:` and directly before `dyn` (`[LT-48]`);
+   `cast` at the start of an operand directly before a name or
+   `this` (`cast s as Circle`, `[GRM-30]`), so `cast(p)` stays a call; `guarded` and `by` after the type
+   of a field or a `static` (`[GRM-46]`). The reserved words `not` and
+@@ -638,7 +646,7 @@
+ bound_list    := type {"+" type}                        -- after `dyn` and `some` only
+ where_clause  := "where" type ":" "needs" needs {"," type ":" "needs" needs}
+ param_list    := param {"," param} [","]
+-param         := [param_word] IDENT ":" ["runtime"] type ["..."] ["=" expression]   -- `Ts...`: the pack's values; `runtime` before a `dyn` or class type only ([LT-48])
++param         := [param_word] IDENT ":" ["runtime"] type ["..."] ["=" expression]   -- `Ts...`: the pack's values; `runtime` before a `dyn` type only ([LT-48])
+ param_word    := "ref" ["mut"] | "const" "ref" "mut" | "owns"
+ 
+ struct_decl   := "struct" IDENT [implements] [where_clause] ":" type_body
+@@ -767,7 +775,7 @@
+ block         := NEWLINE INDENT {statement} DEDENT | simple_stmt NEWLINE
+ statement     := {attribute} (simple_stmt NEWLINE | compound_stmt)
+ simple_stmt   := var_decl | assignment | expr_list | "pass"
+-var_decl      := IDENT ":" ["runtime"] type ["=" expr_list]   -- `runtime` before a `dyn` or class type only ([LT-48])
++var_decl      := IDENT ":" type ["=" expr_list]
+ assignment    := target_list "=" expr_list
+                | target augassign expression
+ target_list   := target {"," target} [","]
+@@ -965,10 +973,7 @@
+   a value `=` hands over, `return a`), and before `fn` anywhere but an argument for an `owns` parameter,
+   it is `E0109`, whose message says to remove it (for `owns fn`, to name what the function takes on each
+   captured name: `fn() owns report:`). Before an argument for a parameter that only reads
+-  (`show(owns xs)`) it is `E3028`, "`show` only reads its argument; remove `owns`: `show(xs)`". `owns`
+-  binds as `-` does (`unary := value_word unary`), so an argument of more than one name, number or call
+-  is written in brackets, `tx.send(owns (i * i))`: `tx.send(owns i * i)` is `(owns i) * i`, a value made
+-  after `i` is handed over, and is `E3028`, whose help writes the brackets (`tx.send(owns (i * i))`).
++  (`show(owns xs)`) it is `E3028`, "`show` only reads its argument; remove `owns`: `show(xs)`".
+ * `[GRM-17]` *(changed in 0.9.10)* A lambda with a `:` body inside brackets holds exactly one simple
+   statement (`[LEX-6a]`). More is `E0106`, whose help is to declare a local function on the preceding
+   line (`[GRM-28]`). Outside brackets, a `:` body on the lambda's own line is one simple statement,
+@@ -1358,9 +1363,9 @@
+ * `[TYP-12]` A unit-only enum is an integer (`@repr(u8)` and friends choose it; the default is the
+   smallest signed type that fits). An enum crossing a foreign boundary MUST carry `@repr`. A payload
+   enum is a tag plus a union of variants.
+-* `[TYP-13]` *(changed in 0.9.9)* *(changed in 0.9.15)* `Option[T]` has the size of `T` when `T` has a niche: a class
+-  object, an `owns T`, a `ref`, a `Span`, a `StrView`, a `CStrView` (ODR-080), a non-nullable `extern fn`, `bool`, `char`, a range type per
+-  `[RNG-7]`, an enum with unused discriminants, or `NonZero[T]` (`[STD-4]`). For class objects, `owns T`, `ref` and `extern fn` this is
++* `[TYP-13]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `Option[T]` has the size of `T` when `T` has a niche: a class
++  object, an `owns T`, a `shares`, `shares mut` or `thread_shared` value, a `sharedref mut` link, a `ref`, a `ref mut`, a `Span`, a `MutSpan`, a `StrView`, a `CStrView` (ODR-080), a non-nullable `extern fn`, `bool`, `char`, a range type per
++  `[RNG-7]`, an enum with unused discriminants, or `NonZero[T]` (`[STD-4]`). For class objects, `owns T`, the shared owners and links, `ref`, `ref mut` and `extern fn` this is
+   guaranteed, so `Option[C]` of a class `C`, and `Option[owns T]`, is a nullable pointer across an FFI
+   boundary. `CStrView` is non-null; `Option[CStrView]` has the size and alignment of a C character
+   pointer, with null representing `None`.
+@@ -1422,14 +1427,15 @@
+     one, or text written in the program, and after the call the caller's place may point into what it
+     pointed into before or into any of the call's other arguments (`[LT-21]`); a view of the callee's
+     own locals or of a temporary put there is `E3063`.
+-* `[TYP-15a]` The arena-backed containers (`ArenaArray`, `ArenaMap`, §IX.2) and the view containers
+-  `BorrowList[T]` may hold views bounded by the container's own region.
++* `[TYP-15a]` *(changed in 0.9.20)* The arena-backed containers (`ArenaArray`, `ArenaMap`, §IX.2) may hold views
++  bounded by the container's own region (`[ARN-5]`); there is no other view container.
+ 
+ ## IV.5 Raw types
+ 
+ `*T` and `*mut T` are nullable, possibly unaligned, untracked pointers. Creating one from a reference
+-is safe (ODR-075): `ref_to_ptr(r: T) -> *T` and `ref_to_ptr(ref mut r: T) -> *mut T`, called
+-`ref_to_ptr(x)` and `ref_to_ptr(ref mut x)`, keep the predecessor's name. An explicit `r as *T`
++is safe (ODR-075): `ref_to_ptr(ref x) -> *T` and `ref_to_ptr(ref mut x) -> *mut T` are one function
++the compiler knows, not two of one name (`[TYP-26]`): its argument is a view written with its word (a
++plain parameter, `ref x`, or `ref mut x`), and the result's type follows that word. An explicit `r as *T`
+ is also safe when the pointee type is unchanged and the
+ cast does not strengthen mutability: `ref T` to `*T`, or `ref mut T` to `*T` or `*mut T`.
+ The raw pointer keeps no compiler-tracked view. Dereferencing, offsetting, reading and
+@@ -1595,8 +1601,7 @@
+   checked as an ordinary parameter's is, its word included (`owns values: Ts...` takes each one over).
+   A pack is the last of its type parameters, and its values' parameter is the function's last
+   positional one: a parameter after it has a default and is passed by name only, as after Python's
+-  `*args` (`fn println(values: Ts..., sep: StrView = " ", end: StrView = "
+-")`, called
++  `*args` (`fn println(values: Ts..., sep: StrView = " ", end: StrView = "\n")`, called
+   `println(a, b, sep=", ")`); anywhere else either is `E0100`. C's untyped `...` stays as `[FFI-8]` says, in `unsafe` only.
+ * `[TYP-35]` *(new in 0.9.9)* *(changed in 0.9.15)* A type parameter need not appear in any field (a **phantom** parameter): `[Tag]`
+   above `struct Handle:` with the one field `index: u32` is legal. A phantom parameter affects type
+@@ -1664,8 +1669,8 @@
+ | Marker | Holds when |
+ |---|---|
+ | `Copy` | declared with `@derive(Copy)` on a struct or enum whose fields are all `Copy` and which has no `drop`, which gives it `Clone` too; always for scalars, `ref T`, `Span`, `StrView`, raw pointers, `extern fn`, tuples and fixed arrays of `Copy` elements; never for a class object, an `owns`, `shares`, `shares mut` or `thread_shared` value, a `weakref` or `sharedref mut` link, `ref mut T` or `MutSpan[T]` |
+-| `Send` | inferred: every component is `Send`, so nothing reachable from the value is a one-thread owner (`shares`, `shares mut`), a `weakref` link to one, or bound to its thread (a lock's guard, a `Scope`, a raw pointer); `ref T` and `Span[T]` are when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is `Send`; a class object is when its fields are; a `thread_shared T` value is when `T` is `ThreadShared` and `Send` (`[THR-8]`) |
+-| `ThreadShared` | inferred: several threads may hold and read one value of the type at once; every component is `ThreadShared`; `ref mut`, `Cell`, `UnsafeCell`, raw pointers, a `shares` or `shares mut` value and a `weakref` link to one are not (`[THR-9]`) |
++| `Send` | inferred: every component is `Send`, so nothing reachable from the value is a one-thread owner (`shares`, `shares mut`), a `weakref` link to one, a `sharedref mut` link (a view several holders on one thread may change), or bound to its thread (a lock's guard, a `Scope`, a raw pointer); `ref T` and `Span[T]` are when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is `Send`; a class object is when its fields are; a `thread_shared T` value is when `T` is `ThreadShared` and `Send` (`[THR-8]`) |
++| `ThreadShared` | inferred: several threads may hold and read one value of the type at once; every component is `ThreadShared`; `ref mut`, `sharedref mut`, `Cell`, `UnsafeCell`, raw pointers, a `shares` or `shares mut` value and a `weakref` link to one are not (`[THR-9]`) |
+ | `Sized` | everything except `dyn I` and unsized foreign types |
+ 
+ * `[TYP-43]` *(new in 0.9.10)* *(changed in 0.9.15)* The marker interfaces are interfaces of `std.core`, exported by the
+@@ -2105,9 +2110,9 @@
+   may change the object, and `p = Player()` gives the caller's place another object (the old one
+   ends); `owns p: Player` hands the object over, so the caller's name ends. A method that may change its
+   object is not called through a `p` that only reads it (`E3023`, `[EXC-15]`).
+-* `[FN-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* A function hands its result over to its caller. A
+-  result that is a view points into the arguments it may come from, a method's into `this` and a
+-  function's into its view arguments; `-> T from name` after the result type narrows it to one
++* `[FN-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A function hands its result over to its caller. A
++  result that is a view points into what the function's code shows it points into: its view
++  arguments and, for a method, `this` (`[LT-1]`); `-> T from name` after the result type narrows it to one
+   parameter or one field of `this` written bare (`-> StrView from src`) (`[LT-1]`, `[LT-1a]`); a view
+   of text written in the program has the `static` region (`[LT-3]`). A view of the function's own locals
+   or of a temporary is never returned (`E3063`).
+@@ -2271,14 +2276,16 @@
+   object to the place it is stored in, its one owner: a class object has one owner unless a line says
+   `shares` (`[OWN-1]`, `[RC-1]`), and `=` from a whole name hands it over (`[OWN-3]`). `owns` on a class
+   type is `E2114` ("a `Player` object always lives in its own block; remove `owns`: `p: Player`").
+-* `[CLS-2]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* `fn init(…)` is the
++* `[CLS-2]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* `fn init(…)` is the
+   constructor; it sets the fields of the object it builds through `this`, with no word. Before any
+   `init` body runs, every field default of the class and of its bases is evaluated and stored. Every
+   field without a default MUST then be set on every path before `this` is used as a whole (`E2100`):
+   `this` is used as a whole when it is passed, stored, returned or captured, when a link or an owner of
+   it is made (`weakref this`, `shares this`), and by a call of a method whose body lets `this` out in
+-  any of those ways, which the compiler works out from that body (`[EFF-24]`). Before then `init` may
+-  call a method of its object once every field that method's body reads is set: after
++  any of those ways, which the compiler works out from that body, and for a `virtual` method from
++  every override's body the program has (`[DSP-5]`, `[EFF-24]`), since a base `init` cannot know which
++  kind it builds. Before then `init` may call a method of its object once every field that method's
++  body (every override's, for a `virtual` method) reads is set: after
+   `this.renderer = r`, `this.assets = this.load_assets()` is allowed when `load_assets` reads only
+   `this.renderer`, and is `E2100` when it reads a field not yet set ("`init` calls `load_assets()` (line
+   6), which reads `this.assets` (its line 14), and `assets` is set only on line 7; give it a value
+@@ -2334,13 +2341,15 @@
+   `let`: it is set in `init` and never changed after; to add to it, write the field without `let`:
+   `items: Array[int]`"). Other owners of a `shares` object change it as `shares` allows (`[RC-7]`);
+   `let` speaks only of the field it is written on.
+-* `[CLS-12]` *(new in 0.9.15)* **`@cached`.** `@cached` above a method with no parameters keeps the
+-  method's result after the first call, and gives it again until a change, through any name, of a
++* `[CLS-12]` *(new in 0.9.15)* *(changed in 0.9.20)* **`@cached`.** `@cached` above a class method with no parameters keeps the
++  method's result after the first call, in the object (a struct or enum has no hidden state, `[PHIL-9]`,
++  `[TYP-11]`), and gives it again until a change, through any name, of a
+   field the method's body reads clears it (`[EFF-27]`). A `Copy` result is returned by value, any other
+   as a `ref T` view into the kept value, which clearing it ends (a later use is `E3060`). On an object
+   several threads reach, the kept result is filled once under a once-flag. It costs one flag test per
+   call and one store per change of a field the body reads. `@cached` is `E2117`, each message giving
+-  the `@cached` line to remove: on a method with parameters ("`@cached` keeps one result, and `radius`
++  the `@cached` line to remove: on a method of a struct or an enum ("a `Vec2` has no hidden state to keep a
++  result in; keep it in a field of a class, or remove `@cached` (line 2)"); on a method with parameters ("`@cached` keeps one result, and `radius`
+   takes `scale`; remove `@cached` (line 2), or keep the results in a field: `radii: Map[f64, f64]`");
+   on one whose body changes anything ("a cached method keeps one result, so it only reads, and `radius`
+   changes `this.verts` (its line 4); remove `@cached` (line 2)"); and on one whose body reads a
+@@ -2348,6 +2357,9 @@
+   threads change under a lock, whose changes need not pass through its object ("`radius` reads `verts`,
+   which other threads change under `lock`; a kept result could be stale; remove `@cached` (line 18)").
+   For a method that reads a value its other owners may change: E2117 ("`radius` reads `mesh`, which its other owners may change without `Mesh` seeing it, so a kept result could be stale; remove `@cached` (line 13)").
++  A change made by foreign code, or through a raw pointer, passes through no name the compiler sees:
++  unsafe code that changes a field a `@cached` method reads answers for it, as for every obligation of
++  `unsafe` (`[UNS-4]`).
+ 
+ ## V.6 Interfaces and `extend`
+ 
+@@ -2503,7 +2515,7 @@
+ | `@ffi(…)` | extern item, overlay item | Part XVI |
+ | `@test`, `@bench`, `@should_panic` | fn | `[TST-3]` |
+ | `@view` | struct, enum | `[TYP-34]` (optional; checked: `E2030` on a type that holds no view) |
+-| `@cached` | method with no parameters | `[CLS-12]` |
++| `@cached` | class method with no parameters | `[CLS-12]` |
+ | `@reflect` | type | `[RFL-2]` |
+ | `@safety("…")` | unsafe fn | `[UNS-7]` |
+ | `@must_drop` | struct, class | `[THR-6]` |
+@@ -2695,9 +2707,12 @@
+   binding; the arms MUST be exhaustive (`E2090`); an unreachable arm is `W2091`.
+ * `[CTL-6]` `with a = e1, b = e2:` binds `a` and `b` for the block and drops them in reverse order when
+   it ends. `with e:` keeps the temporary alive for the block (a guard).
+-* `[CTL-7]` *(changed in 0.9.15)* `defer:` registers a block to run when the enclosing block exits, last registered first.
++* `[CTL-7]` *(changed in 0.9.15)* *(changed in 0.9.20)* `defer:` registers a block to run when the enclosing block exits, last registered first.
+   It may refer to locals declared before it, which it uses as they are when it runs; they are not
+-  dropped before it. It cannot `return`, `break` or `continue` (`E2160`).
++  dropped before it. Its uses of them are uses at every exit of the block (`[BRW-2]`): a local a
++  `defer` block uses is not handed over below the `defer` line (`E3040`, labelled at the hand-over), and a
++  view it uses is not ended before the block exits (`E3060`). It cannot `return`, `break` or `continue`
++  (`E2160`).
+ * `[CTL-8]` On every exit from a block, its `defer` blocks run first and then its locals are dropped in
+   reverse declaration order.
+ * `[CTL-9]` `pass` does nothing; an empty block is written `pass`.
+@@ -2870,7 +2885,7 @@
+   write `handlers: Array[thread_shared fn()] = []` in `Bus`"). A function that captures nothing, or only
+   `thread_shared` values and copies of values that may go to another thread, meets
+   `thread_shared fn()`.
+-* `[CLO-17]` *(new in 0.9.15)* **What a function value does is worked out from the program.** A
++* `[CLO-17]` *(new in 0.9.15)* *(changed in 0.9.20)* **What a function value does is worked out from the program.** A
+   callable type says nothing about what its functions change. A call through a function value makes the
+   changes, reads and ends of every function the program can put there (`[EFF-2]`), and so does a call
+   that hands it to something that runs it on its own (`[EFF-26]`); storing a function value in a field,
+@@ -2878,12 +2893,16 @@
+   program's handler that pushes to `LOG` makes `b.click()` a change of `LOG` in that program, inside a
+   loop over `LOG` `E3020` (`[BRW-18]`). For the overlap of a call's arguments a function value counts as
+   changing every place its functions change and every real variable they capture (`[BRW-11]`), and a
+-  function value is not stored in a place that a real variable it changes owns, all the way down
+-  (`b.on_click(owns fn(): b.handlers.clear())`, `t.on_visit = fn(n: Node): t.root.children.clear()`, `E3022`:
++  function value is not stored in a place that a real variable it changes owns, all the way down, nor
++  in a place that its body may reshape or end through a name it captured with a word (a `shares mut`,
++  `thread_shared` or `sharedref mut` owner or link, a `weakref` link it opens `ref mut`), read through
++  the chain of its calls (`[EFF-24]`), since the run would end or move the function's own state
++  (`b.on_click(owns fn(): b.handlers.clear())`, `t.on_visit = fn(n: Node): t.root.children.clear()`,
++  `bus.handlers.push(owns fn() weakref bus: if bus exists as ref mut b: b.handlers.clear())`, `E3022`:
+   "this function clears `b.handlers`, and `on_click` would keep it in `b.handlers`, so it would change
+   the button that holds it while the button runs it; clear the handlers after the click instead:
+   `b.click()`, then `b.handlers.clear()`"), since it would change its own holder while it runs.
+-* `[CLO-18]` *(new in 0.9.15)* **A function value that changes its own state.** A call through a stored
++* `[CLO-18]` *(new in 0.9.15)* *(changed in 0.9.20)* **A function value that changes its own state.** A call through a stored
+   function value whose functions may change their own state is a change of the place that holds it: the
+   holder is reached through a name that may change it (`for ref mut h in this.handlers: h()`), and a
+   plain `h` there is `E3023` ("`h` only reads the handler in `this.handlers`, and calling it may change
+@@ -2891,9 +2910,12 @@
+   `for ref mut h in this.handlers:` in place of line 9"). Such a value given to a parameter that only
+   reads is `E3023` too ("`cb` changes its own copy of `score` each time it runs, and `run` takes it
+   read-only; write `fn run(ref mut f: fn()):` and call `run(ref mut cb)`"). The holder does not become
+-  an argument of the call: `[BRW-11]` sees only the call's arguments. A body that may end its own state
+-  (a handler that removes itself) and uses that state afterwards holds one count on it across that
+-  call.
++  an argument of the call: `[BRW-11]` sees only the call's arguments. A body that may end or move its
++  own state (a handler that removes itself from the list that holds it, or clears that list) is
++  refused where the function value is stored (`E3022`, `[CLO-17]`): a state block is not counted
++  (`[CLO-10]`), so nothing could keep it alive across the call. A handler that must go hands its
++  removal to its holder: a result the holder reads after the call, or a list of removals the holder
++  applies after the loop.
+ * `[CLO-19]` *(new in 0.9.15)* **A lambda's parameters say what they receive.** A lambda parameter's
+   word is what is written on it, and matches the callable type it is given to: where the type hands the
+   value over (`fn(owns String)`), the lambda writes `fn(owns s) => println(s.len())`, and a plain
+@@ -3052,8 +3074,9 @@
+ - **position**: a view of a list element that finds the element again at each use (`[BRW-16]`).
+ - **reshape**: a change that can free or move memory: replacing a value that owns memory; `push`,
+   `pop`, `insert`, `remove`, `clear`, `sort`, `retain`, `extend` on a list, map, set or string;
+-  changing an enum's variant; ending an object's last owner. Writing a number or a `bool` is not a
+-  reshape. A reshape moves or frees only what it may move or free: adding to a list (`push`, `extend`)
++  handing a value over (its old place is left empty, and a value handed to another thread may move,
++  `[THR-2]`); changing an enum's variant; ending an object's last owner. Writing a number or a `bool`
++  is not a reshape. A reshape moves or frees only what it may move or free: adding to a list (`push`, `extend`)
+   may move its buffer and every value stored inline in it, but not a class object, which lives in its
+   own block and is not moved when the list grows.
+ - **ended**: an object is ended the moment its last owner lets it go, before its `drop` runs
+@@ -3076,7 +3099,7 @@
+   reverse declaration order. A value always ends with its clean-up: nothing ends an owner without
+   running it, and there is no `mem.forget` (`[OWN-6]`); a value given to C is handed over to it
+   (`[OWN-12]`).
+-* `[OWN-3]` *(changed in 0.9.15)* **`=` with a whole name hands it over.** `b = a`, where `a` is a whole
++* `[OWN-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* **`=` with a whole name hands it over.** `b = a`, where `a` is a whole
+   name that owns a value whose type is not `Copy`, hands `a` over: `a` ends. Using it afterwards,
+   whether it is read, handed over again or viewed (a method call, `print`), is `E3040`, labelled at the
+   hand-over and at the use, and the message names both ways out: "`items` was handed over to
+@@ -3084,8 +3107,11 @@
+   your own) or `snapshot = shares items` (two owners of one list)". Where `a` is itself a view (a plain
+   parameter, a loop, pattern or opened name, a local holding a view), `b = a` makes `b` a read-only view
+   of what `a` views, and `ref` may say so (`cur = ref p`); a view hands nothing over. For a `Copy` type
+-  `=` copies. A value handed over on only some paths is tracked with a hidden drop flag; a hand-over
+-  on some paths is legal, and a use a hand-over may have reached is `E3040` too.
++  `=` copies. A hand-over is a reshape of the giver's place (§VII.1, `[BRW-17]`): a view into `a` that
++  is still used after `b = a` is `E3060` at that use, and `a` is not handed over while a `ref mut`
++  name of it is still used (`E3022`). A value handed over on only some paths is tracked with a hidden
++  drop flag; a hand-over on some paths is legal, and a use a hand-over may have reached is `E3040`
++  too.
+ * `[OWN-4]` *(changed in 0.9.15)* A loop body that hands over a value declared outside the loop is
+   `E3040`, unless every path gives it a value again before the next round.
+ * `[OWN-5]` Assigning to a place that holds a live value evaluates the new value, then drops the old
+@@ -3176,9 +3202,11 @@
+   (ODR-051). A `Copy` struct copied with `=` from a name that is still used afterwards is not then
+   changed through the new name (`E3023`): the line says `copy of` (a copy of your own) or `ref mut`
+   (the original), so that no copy is changed by mistake.
+-* `[OWN-8]` *(changed in 0.9.15)* **`copy of x`** makes a copy of the thing itself, by its type's
++* `[OWN-8]` *(changed in 0.9.15)* *(changed in 0.9.20)* **`copy of x`** makes a copy of the thing itself, by its type's
+   `Clone` (`fn clone() -> Self`, the explicit deep copy): of a class object, a new object
+-  (`p2 = copy of player`); for a `shares` or `sharedref mut` link, a copy of its target. Every `Copy` type
++  (`p2 = copy of player`); for a `shares`, `shares mut`, `thread_shared` or `sharedref mut` link, a
++  copy of its target, a `T` with one owner (`p2 = copy of p` for `p: shares mut Player` is a `Player`
++  that `p2` alone owns; `p3 = shares p2` starts a second group of owners). Every `Copy` type
+   has `Clone` (`@derive(Copy)` gives it), so `b = copy of a` works for a `Point` marked only `Copy`. A
+   value that holds links is copied field by field, as a C++ struct holding a `shared_ptr` and a
+   `weak_ptr` is: what it owns alone is copied itself, and each link is copied as a link to the same
+@@ -3430,10 +3458,11 @@
+ 
+ ## VII.5 Views and changes
+ 
+-* `[BRW-16]` *(new in 0.9.15)* **Positions.** A name for a list element made by indexing
++* `[BRW-16]` *(new in 0.9.15)* *(changed in 0.9.20)* **Positions.** A name for a list element made by indexing
+   (`boss = enemies[0]`, `boss = ref mut enemies[0]`, `p = ps.get(0).unwrap()`), of a list reached
+-  through locals that own it, parameters, `this` and one-owner fields, is a position: the element is
+-  found again at each use. The list may grow while the name is used (its buffer is read again after the
++  through locals that own it, parameters, `this` and one-owner fields, is a position: the index is
++  read once, where the name is made, and kept with it (a later change of `i` moves no position made
++  from `enemies[i]`), and the element is found again at each use through the list's current buffer. The list may grow while the name is used (its buffer is read again after the
+   add); anything that may remove, insert, reorder, clear or replace the list ends the name, and a later
+   use is `E3060` ("`enemies.remove(0)` (line 8) may put another enemy in the place `boss` names (line
+   6), and `boss` is used on line 9; use `boss` before line 8, or name the enemy again after it:
+@@ -3687,7 +3716,7 @@
+   `from static` field given a view of anything else is `E3063` ("`kind` holds only text written in the
+   program, and `name` comes from the caller; write `this.kind = String(name)` with `kind: String`").
+   For a view into a field stored inside the value: E2118 ("`buf` is stored inside the value, so moving the value moves it; keep the text in a `String`, which has a block of its own: write the field as `let buf: String`").
+-* `[LT-46]` *(new in 0.9.15)* **The three kinds of kept view**, by their word:
++* `[LT-46]` *(new in 0.9.15)* *(changed in 0.9.20)* **The three kinds of kept view**, by their word:
+   * `ref T` reads; any number of names may view one place.
+   * `ref mut T` may change, and it is alone: while its holder is still used, the place is not read or
+     changed through any other name (`[BRW-1]`); a second holder is `E3022` ("`p` is lent to
+@@ -3697,8 +3726,9 @@
+   * `sharedref mut T` may change, and several holders, and the owner, may name one object. On one thread
+     any of them may change it at any time; every view into it ends at a reshape made through any of
+     them, and a list in it may not change while a loop walks it, whichever holder reaches it
+-    (`[BRW-17]`, `[BRW-18]`); on two threads it is changed only under a lock, through `Atomic`, or by a
+-    reduction from scoped tasks (§XI.3, `[THR-13]`). It is written the same way before a value
++    (`[BRW-17]`, `[BRW-18]`); it never reaches another thread (it is neither `Send` nor `ThreadShared`,
++    `[THR-8]`), and the scoped tasks of its thread change its target only under a lock, through
++    `Atomic`, or by a reduction (§XI.3, `[THR-13]`). It is written the same way before a value
+     (`Watcher(target=sharedref mut players[r])`), it costs nothing while the program runs, and its
+     holders get no noalias (`[BRW-22]`). `sharedref` is always followed by `mut` (`E0114`: "a link that
+     only reads may be held by any number of names: write `target: ref Player`; `sharedref` is for a link
+@@ -3713,24 +3743,21 @@
+   `E3060`.
+   Its message: E3060 ("`bag.items.push(owns k)` (line 15) may move the list that `h.view` points into (`pick` may have put a view of `bag` there on line 13), and `h.view` is used on line 16; use `h.view` before line 15").
+ 
+-* `[LT-48]` *(new in 0.9.15)* **`runtime`: a value's kind checked while the program runs.**
+-  `runtime` before the `dyn` or class type of a parameter or a variable lets the function do what one of
+-  the kinds that may reach that value would make unsafe (`[LT-1]`), where which kind it is is known only
+-  while the program runs: the function checks the kind at the line that would be unsafe, and stops the
+-  program there if it is that kind. With `[LT-1]`'s `Picker`, `fn show(p: runtime dyn Picker):` and `p: dyn Picker = Mine(items=[9])
++* `[LT-48]` *(new in 0.9.15)* *(changed in 0.9.20)* **`runtime`: a `dyn` parameter's kind checked while the program runs.**
++  `runtime` before a parameter's `dyn` type lets the function do what one of the kinds that may reach it
++  would make unsafe (`[LT-1]`), where which kind it is is known only while the program runs: at the line
++  that would be unsafe the function reads, from the table of the value's kind, which of the called
++  method's parameters its result may point into, and stops the program there when the result may point
++  into what the line changes. That fact is the one `[LT-22]` records for each implementation (one bit
++  per source parameter and one for `this`), kept in the method's entry of the kind's table, so a kind
++  declared in another package, which the function's own package never saw, is checked as any other;
++  a compare of kind identities instead would let such a kind through. With `[LT-1]`'s `Picker`, `fn show(p: runtime dyn Picker):` and `p: dyn Picker = Mine(items=[9])
+   if input() == "m" else Yours(items=[9])`, `show(p)` prints `[9]` for a `Mine`, and for a `Yours` stops
+   at `xs.push(owns 3)`: "panic at main.em:17:5: `xs` changes while `r` looks at it: `p` is a `Yours`,
+   whose `pick` gives back the list it was handed". Where the kind is known when compiling, the word
+   changes nothing: given `show(Yours(items=[9]))`, `show` is refused at `xs.push(owns 3)` when compiling,
+-  as without it (`E3021`). A class value is checked the same way: with `open class A` whose `virtual fn
+-  first(other: Array[int]) -> Span[int]` gives back `this.items` and `class B(A)` whose override gives
+-  back `other`, `fn pick(a: runtime A):` doing `r = a.first(xs)`, `xs.push(owns 2)` and `println(r)`
+-  stops at the `push` when `a` is a `B`, and prints `[7]` when it is an `A`. On a variable the word goes
+-  right after its `:` and guards the lines of its function after it: in `main`, `p: runtime dyn Picker =
+-  Mine(items=[9]) if input() == "m" else Yours(items=[9])`, then `r = p.pick(xs)`, `xs.push(owns 3)` and
+-  `println(r)`, does what `show(p)` does, with no function written only to carry the word. `runtime` is
+-  a word only right after the `:` of a parameter or a variable, before its type (`[LEX-15]`); it costs
+-  one type-id compare at each line it guards (§X.4).
++  as without it (`E3021`). `runtime` is a word only after a parameter's `:` before `dyn` (`[LEX-15]`); it
++  costs one load and one bit test at each line it guards (§X.4).
+ 
+ ### Views with several regions
+ 
+@@ -4017,14 +4044,17 @@
+ 
+ ## VIII.2 Owners and counts
+ 
+-* `[RC-1]` *(changed in 0.9.15)* **Several owners.** `shares x` makes one more owner of what `x`
++* `[RC-1]` *(changed in 0.9.15)* *(changed in 0.9.20)* **Several owners.** `shares x` makes one more owner of what `x`
+   names, on this thread, that reads it; `shares mut x` one more that may also change it; and
+   `thread_shared x` one more on any thread (`[OWN-13]`). A value made shared lives in a block of its own
+   with the header of `[OBJ-1]` (a class object already does), and its owners are counted: making an
+   owner adds one to the count, ending one subtracts one, and the subtraction that reaches zero ends the
+   value. A value with one owner is not counted: its owner ends it. **Only a whole value is shared**
+   (verdict 103): `shares x`, `shares mut x` and `thread_shared x` are written before a new value, a
+-  local of this function (which becomes one of the owners) or a name that is already such an owner. A
++  local of this function that owns its value (which becomes one of the owners: a value that is not a
++  class object is then made in a block of its own from the line that made it, as if that line had
++  said `shares`, so nothing moves and no view of it ends at the `shares` line, and the local's type is
++  the shared type throughout the function) or a name that is already such an owner. A
+   place that has one owner and is not a local of this function, a list element (`shares mut players[1]`
+   of an `Array[Player]`), a field (`shares this.items`) or a plain parameter (`fn keep(p: Player):
+   LIST.push(shares p)`), is `E2122`: "`players[1]` has one owner, the list `players`, and no second
+@@ -4071,7 +4101,7 @@
+   value alive. The last use of a view ends the view, not the owner (`[BRW-2]`) (ODR-063). `unsafe` code
+   that keeps a raw pointer into an object keeps an owner of it alive for as long as it uses the pointer;
+   `with h:` and `mem.keep_alive(h)` state that where no Safe use does.
+-* `[RC-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* The counts of a value that is not
++* `[RC-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* The counts of a value that is not
+   `thread_shared` are changed with plain adds and subtracts, and never cross threads (`E7015`).
+   **A `thread_shared` value's owners are counted in two numbers** (verdict 101; biased counting, Choi,
+   Shull and Torrellas, 2018):
+@@ -4088,7 +4118,8 @@
+   3. **Check points.** The compiler places them: at every loop's back edge, before every call that may
+      block the thread (waiting for a lock, `join`, a channel's receive, a sleep) and when the thread
+      ends. A value whose making thread has ended is ended at once by the thread that ends its last
+-     owner.
++     owner: a thread's end empties and closes its queue in one atomic step, and a subtract that
++     finds the queue closed ends the value itself, so no value waits for a thread that is gone.
+   4. **Handed over at once.** A thread that stores an owner of a `thread_shared` value where other
+      threads can reach it (into a lock-guarded `thread_shared` container, through a channel, into the
+      capture of a thread it spawns or of a callback C keeps; every such place is known when compiling)
+@@ -4107,14 +4138,16 @@
+   count's range, so threads racing past it each stop before the count can roll over, whatever their
+   number. The home count, and a count that is not `thread_shared`, keep the exact compare of `[RC-1]`
+   and `[WK-11]`.
+-* `[RC-5]` *(changed in 0.9.15)* **A view of an object reached through a link.** A view of an object
++* `[RC-5]` *(changed in 0.9.15)* *(changed in 0.9.20)* **A view of an object reached through a link.** A view of an object
+   reached through a `shares`, `shares mut`, `thread_shared` or `weakref` link (a name opened from a link,
+   `if cam.target exists as p:`; a view made through a `shares mut` field, `t = ref mut ws[i].target`; a
+   parameter `x: shares T`, whose life is the call) must not outlive the object. It is checked when
+   compiling, and nothing runs for it while the program runs, except for one kind of object (point 2):
+-  1. **No line or call in the view's life may end an object of that type**: no write to a place that
+-     owns one (`T`, `owns T`, `shares T`, `shares mut T`, `thread_shared T`, and a place of a function
+-     type or of `owns dyn I` whose value's state owns one: `h.keep = fn(): pass` ends the function
++  1. **No line or call in the view's life may end an object of that type's class family** (`[EXC-3]`:
++     an `Array[Entity]` cleared ends a `Player` derived from `Entity`), held directly or through
++     anything that owns it, all the way down (a list of teams cleared ends their players): no write to a
++     place that owns one (`T`, `owns T`, `shares T`, `shares mut T`, `thread_shared T`, and a place of a
++     function type or of `owns dyn I` whose value's state owns one: `h.keep = fn(): pass` ends the function
+      stored there before and the node its `owns n` held), no removal from a list that owns them, no end
+      of a local that owns one, and no call that may do so, worked out from its code (`[EFF-1]`):
+      `remove_all(ref mut players)`, given the list that owns the players; a call through a function
+@@ -4539,7 +4572,9 @@
+   `alloc_array` still calls its `default`, and an implementation fills with zeros instead only where
+   that is the same (a scalar's standard `Default`) (ODR-064). `alloc_uninit[T](n) ->
+   MutSpan[MaybeUninit[T]]` initialises nothing.
+-* `[ARN-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* A growing `Arena` carries `Alloc` on its growth path. `FixedArena`
++* `[ARN-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A growing `Arena` carries `Alloc` on its growth path, and grows
++  by taking a new chunk: nothing it has given out moves, so every outstanding view stays where it
++  is. `FixedArena`
+   (made by `Arena.fixed(ref mut buffer)` from a `MutSpan[u8]`, which it then holds as a kept `ref mut`
+   view, `[LT-45]`, or by `FixedArena.with_capacity(n)` at start-up) never grows, carries no `Alloc` on
+   allocation, and panics on exhaustion (`try_alloc` returns `Option`). `FixedArena` is the arena for
+@@ -4563,8 +4598,8 @@
+   allocates from `s` and releases everything at the block's end, last in first out. Using the parent
+   while a scope is live is `E3096`, whose help is to allocate from the scope. Scopes nest: `s.scope()`
+   opens one inside another.
+-* `[ARN-7]` *(changed in 0.9.15)* No operation lowers an arena's allocation pointer or reuses its bytes
+-  while a view into it is used: every such operation ends every view into the arena (`[ARN-1]`), and
++* `[ARN-7]` *(changed in 0.9.15)* *(changed in 0.9.20)* No operation lowers an arena's allocation pointer, reuses its bytes or
++  moves what it has given out while a view into it is used: every such operation ends every view into the arena (`[ARN-1]`), and
+   while a value made `using` the arena lives, the arena is changed only through its `Allocator` methods
+   (`[ALC-5]`).
+ * `[ARN-8]` *(changed in 0.9.15)* `MaybeUninit[T]` has the size and alignment of `T` and does not claim
+@@ -4603,7 +4638,7 @@
+     println(boss.mesh.points.len())
+ ```
+ 
+-* `[ALC-1]` *(changed in 0.9.15)* **The place names the kind, the making line names the instance.**
++* `[ALC-1]` *(changed in 0.9.15)* *(changed in 0.9.20)* **The place names the kind, the making line names the instance.**
+   `using A` after a type whose value has heap memory of its own (an `owns`, `shares`, `shares mut` or
+   `thread_shared` value, a class object, an `Array`, `Map` or `Set`) names the kind of memory manager
+   that memory comes from, a type implementing `Allocator`: `mesh: owns Mesh using LevelArena`,
+@@ -4631,7 +4666,12 @@
+   or `String`) made in it keeps the word, since its growth goes back to the instance; (2) a manager that
+   implements `FoundByAddress` (`[ALC-2]`), whose values' instance is found from their address, as C's
+   `free(p)` finds its heap. Neither changes what is checked: that no value outlives its instance or is
+-  used after a reset is checked when compiling and never reads the word (`[LT-4]`). An allocator type parameter is not Ember: `Box[T, A]` and
++  used after a reset is checked when compiling and never reads the word (`[LT-4]`). An instance held
++  inline in a struct beside values made
++  in it would be a view into another field of the same value (`[LT-25]`, `E3024`) and would move with
++  the struct: such an instance is held in a block of its own (`arena: owns LevelArena`), or the values
++  are made `using` an instance the struct does not hold; a manager with one instance needs none of
++  this. An allocator type parameter is not Ember: `Box[T, A]` and
+   `Array[T, A]` are `E1010`, whose help gives `owns T using A` and `Array[T] using A`.
+ * `[ALC-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* `std.mem` declares `pub unsafe interface Allocator` with
+   `fn allocate(layout: Layout) -> *mut u8` (null on failure),
+@@ -5103,7 +5143,7 @@
+   calls of its type parameters' methods make the changes those methods make for the types it is given,
+   worked out for each instance.
+   Its message: E3020 ("`scores.for_each(...)` (line 4) pushes to `LOG` (through the function it is given) while this loop walks `LOG` (line 3); call it after the loop: move line 4 below the loop").
+-* `[EFF-27]` *(new in 0.9.15)* **What a `@cached` result depends on.** A `@cached` method's result
++* `[EFF-27]` *(new in 0.9.15)* *(changed in 0.9.20)* **What a `@cached` result depends on.** A `@cached` method's result
+   depends on the fields its body reads, worked out from its body (`[EFF-24]`), and the kept result is
+   cleared by every change, through any name, to one of them: the compiler places the clear at each line
+   that may make such a change. A change that does not pass through the method's object cannot be cleared
+@@ -5112,7 +5152,9 @@
+   which is `@cached` and would not see a change made through this link; link the shelf instead,
+   `sharedref mut s`, or remove `@cached`"); a link to the whole holder is allowed, since every change
+   through it passes through the holder. A reload that changes a `@cached` method's body clears every
+-  kept result of its type (Annex B).
++  kept result of its type (Annex B). A change made by foreign code, or through a raw pointer, passes
++  through no name the compiler sees: unsafe code that changes a field a `@cached` method reads answers
++  for it (`[UNS-4]`, `[CLS-12]`).
+ 
+ ## X.2 Contracts
+ 
+@@ -5238,7 +5280,7 @@
+   **guaranteed present**; **conditionally elided** (the compiler MAY remove it with a proof and reports
+   whether it did); **implementation-defined** (not constrained, such as code size; two conforming
+   implementations may differ); **not observable** (erased).
+-* `[COST-3]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **The costs.** Everything
++* `[COST-3]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* **The costs.** Everything
+   the memory model checks is checked when compiling; what runs is only what this table lists.
+ 
+ | Cost | Class | Condition, and what the programmer can do |
+@@ -5260,13 +5302,13 @@
+ | `assert_disjoint` | guaranteed present | two compares where the program writes it (two spans of one list given to one call, one of them changeable); the call is then compiled with noalias; none when the compiler knows the spans apart |
+ | `Cell` access | not observable | a load or a store |
+ | Interface call through `dyn` | guaranteed present | one indirect call |
+-| A `runtime` parameter's or variable's check | guaranteed present | one type-id compare at each line the check guards, only where a kind that may reach the value makes the line unsafe (`[LT-48]`); none where the kinds are known when compiling |
++| A `runtime dyn` parameter's check | guaranteed present | one load and one bit test, of the fact in the kind's method table, at each line the check guards, only where a kind that may reach the parameter makes the line unsafe (`[LT-48]`); none where the kinds are known when compiling |
+ | Virtual method call | conditionally elided | a load of the slot and one indirect call (`[DSP-2]`); direct when one implementation is reachable (`[DSP-5]`) |
+ | Generic call, monomorphised | not observable | a direct, inlinable call |
+ | Generic call, shared (`[MONO-6]`) | guaranteed present | one indirect call per bound method; only above a declared instantiation budget |
+ | A function given through a type parameter (`[F: needs fn(Item)]`) | not observable | a direct, inlinable call; one instance per function given |
+ | A call through a function value (a parameter, field, list element or local of a function type) | guaranteed present | one indirect call; a call through a list element or a field first copies the value's two words, its code and its state, out of it |
+-| A function value's state | guaranteed present | a variable kept with a capture word (`owns`, `copy of`, `shares`, `thread_shared`, `weakref`) lives in the function value's own state (`[CLO-10]`), and costs nothing beyond it; a captured real variable stays at its own address and costs nothing; a function that ends its own state while it runs and then uses it holds one count on that state across the call |
++| A function value's state | guaranteed present | a variable kept with a capture word (`owns`, `copy of`, `shares`, `thread_shared`, `weakref`) lives in the function value's own state (`[CLO-10]`), and costs nothing beyond it; a captured real variable stays at its own address and costs nothing; a function value is never stored where its own run could end or move its state (`[CLO-17]`), so nothing is held across a call |
+ | `some I` return | not observable | the concrete type is known |
+ | Generator resume | guaranteed present | one jump on the state; the frame never allocates; a `for` over a list inside the generator reads its position again after each resume |
+ | Collection literal producing a heap collection | guaranteed present | one allocation (`Alloc`); a fixed-array context allocates nothing |
+@@ -5365,10 +5407,11 @@
+ 
+ ## XI.1 What may reach another thread
+ 
+-* `[THR-8]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* A type is **`Send`** when a value
++* `[THR-8]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* A type is **`Send`** when a value
+   of it may be handed over to another thread: nothing reachable from it (its fields, its elements, what
+   its `owns` parts hold, a function value's state) is a one-thread owner (`shares T`, `shares mut T`), a
+-  `weakref` link to a value that is not `thread_shared`, or bound to the thread that made it (a lock's
++  `weakref` link to a value that is not `thread_shared`, a `sharedref mut` link (a view several holders
++  on one thread may change, `[LT-46]`), or bound to the thread that made it (a lock's
+   guard, a `Scope` or `JobScope`, a raw pointer, a `threads(creator)` handle). Structs, enums, tuples,
+   fixed arrays, collections and class objects are `Send` when every component is; an `owns T` when `T`
+   is; `ref T` and `Span[T]` when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is
+@@ -5381,13 +5424,13 @@
+   `unsafe`: "`Counter` holds a raw pointer, so the compiler cannot tell that another thread may have
+   it; say that you vouch for it: write `unsafe extend Counter implements Send:` with a `# SAFETY:` note
+   above it"). A thread-bound value sent to another thread is `E7008`.
+-* `[THR-9]` *(new in 0.9.9)* *(changed in 0.9.15)* A type is **`ThreadShared`** when several threads may
++* `[THR-9]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A type is **`ThreadShared`** when several threads may
+   hold and read one value of it at once. It is inferred like `Send` and written only in bounds
+   (`[T: needs ThreadShared]` above `fn keep(xs: Array[T]) -> int:`) and in messages; `Sync` in a bound is
+   `E1010` ("`Sync` is the effect `@nosync` forbids, not a property of a type; for 'threads may share
+   it' write `[T: needs ThreadShared]` above `fn keep(x: T)`"). Structural types are `ThreadShared` when every
+-  component is. `ref mut T`, `Cell`, `UnsafeCell`, raw pointers, `shares T`, `shares mut T`, and a
+-  `weakref` link to a value that is not `thread_shared` are not. `Atomic[T]`, `Once`, `Lock`,
++  component is. `ref mut T`, `sharedref mut T`, `Cell`, `UnsafeCell`, raw pointers, `shares T`,
++  `shares mut T`, and a `weakref` link to a value that is not `thread_shared` are not. `Atomic[T]`, `Once`, `Lock`,
+   `Mutex[T]` for a `Send` `T` (one thread at a time holds its `ref mut T`), `RwLock[T]` and
+   `thread_shared T` for a `T` that is `Send` and `ThreadShared` (several threads hold a `ref T` at
+   once: `RwLock[Cell[int]]` is not `ThreadShared`), and a channel's `Sender` are.
+@@ -5421,7 +5464,7 @@
+   `owns log: thread_shared Log` takes one owner. A class needs no mark to be shared between threads:
+   `@sync` is not Ember (`E0104`: "`@sync` is gone: a class needs no mark to be shared between threads,
+   and `Stats`'s fields are `Atomic`, which threads may change as they are; remove `@sync` (line 1)").
+-* `[THR-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* **A one-thread value never reaches another
++* `[THR-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **A one-thread value never reaches another
+   thread.** A `shares` or `shares mut` owner counts its owners with plain adds, and every object that is
+   not `thread_shared` counts its `weakref` links with plain adds. So no such owner, and no `weakref`
+   link to such a value, reaches another thread by any route: captured or held by a function any thread
+@@ -5447,8 +5490,9 @@
+   ended. An object whose address C keeps (`[FFI-35a]`) never moves: a link to it at the hand-over
+   stops the program ("`names` goes to another thread while `w`, a `weakref` link on this thread, points
+   at it, and C keeps its address (`register(names)`, line 4), so it cannot move; end the link first:
+-  `w = None`"). A view opened from a link is not used after a hand-over that may move its object
+-  (`[RC-5]` point 1). The other thread never touches this thread's counts: the old block stays here
++  `w = None`"). A hand-over to another thread is a reshape of what is handed over (§VII.1): no view into it, a
++  `sharedref mut` link into a list of struct values included, is used after it (`E3060`), and a view
++  opened from a link is not used after a hand-over that may move its object (`[RC-5]` point 1). The other thread never touches this thread's counts: the old block stays here
+   with the links, and the new one starts with none. So an object that stays on one thread needs no
+   atomic count.
+ * `[THR-7]` *(changed in 0.9.15)* `thread_shared` means exactly: the value may have owners on several
+@@ -5589,10 +5633,11 @@
+           println(log.lines.len())
+   ```
+ 
+-* `[THR-19]` *(new in 0.9.15)* **A wait for a lock this thread holds is refused when compiling.** Inside a
++* `[THR-19]` *(new in 0.9.15)* *(changed in 0.9.20)* **A wait for a lock this thread holds is refused when compiling.** Inside a
+   lock's `with` block, these are `E7018`, with no loop needed and nothing checked while the program runs:
+   a call through a function value, or through a `dyn` or `virtual` method, that may run a function taking
+-  a lock of the kind this thread holds (a `Log`'s lock, while it holds `log`'s: the compiler cannot tell
++  a lock of the kind this thread holds, a `Mutex`, a `Lock` or an `RwLock` (its `write()` while this
++  thread holds its `read()`, or the reverse, included) (a `Log`'s lock, while it holds `log`'s: the compiler cannot tell
+   which object's lock a stored function takes, so one that takes another `Log`'s lock is refused too, and
+   the way out moves one line); a join of a
+   thread, or the end of a `with scope` block, whose task changes what the held lock guards; and a direct
+@@ -5607,7 +5652,7 @@
+   9) under `log`'s lock, and `note()` (line 11) may run the function stored on line 4, which takes a
+   `Log`'s lock, so it would wait for the lock this thread holds; call `note()` after the `with log.lock:`
+   block: move line 11 below the block").
+-* `[THR-20]` *(new in 0.9.15)* **Module variables and threads.** A `static mut` (`[STA-1]`) is reached only
++* `[THR-20]` *(new in 0.9.15)* *(changed in 0.9.20)* **Module variables and threads.** A `static mut` (`[STA-1]`) is reached only
+   by the main thread and the tasks of scopes it opens, unless it is `guarded by` a `static` `Lock` and
+   used inside `with` that lock: a function that may run on another thread (reachable from
+   `thread.spawn`, from a job submitted outside a scope, from a callback C may run on a thread other than
+@@ -5617,8 +5662,11 @@
+   thread runs beside it; guard both with one lock: write `from std.sync import Lock` at the top,
+   `static TICK_LOCK: Lock = Lock()`, then `static mut FRAME: int guarded by TICK_LOCK = 0` instead of
+   line 1 and `static mut LOG: Array[String] guarded by TICK_LOCK = []` instead of line 2, and put
+-  `tick`'s body inside `with TICK_LOCK:`"). A `static` of a type that changes only through itself
+-  (`Lock`, `Atomic`, `Mutex`, `RwLock`, a channel end) is usable from any thread. **A `drop` runs where
++  `tick`'s body inside `with TICK_LOCK:`"). A `static mut` the tasks of a scope reach is a place
++  `[THR-11]` checks as any other: two tasks changing it, or one reading what another changes, is
++  `E7007`, other than by a reduction, under a lock or through an `Atomic`. A `static` of a type that
++  changes only through itself (`Lock`, `Atomic`, `Mutex`, `RwLock`, a channel end) is usable from any
++  thread. **A `drop` runs where
+   the last owner ends.** The last owner of a `thread_shared` value may end on any thread that holds a
+   count of it: an owner, or a view opened from a `weakref` link, which holds one for its life. So a
+   function that may run on another thread and holds such a count counts as possibly running that
+@@ -5994,8 +6042,10 @@
+   `RuntimeCheck(Arithmetic)` is removed, is one `[SIMD-7]` permits grouping (grouping is then
+   required), or belongs to a running total `[SIMD-7]` proves safe block by block; the loop has one exit; and every floating-point reduction is declared by `@parallel(reduce=…)` or the function is `@fastmath`.
+   `E4020` names the first clause that fails, and for a remaining check its reason (`[EFF-11]`).
+-* `[SIMD-7]` *(new in 0.9.9)* **Grouped overflow checks.** In a loop whose body has none of `Sync`,
+-  `Io`, `FFI`, `Unsafe` and `Block`, the compiler MAY check integer overflow once per group of
++* `[SIMD-7]` *(new in 0.9.9)* *(changed in 0.9.20)* **Grouped overflow checks.** In a loop whose body has none of `Sync`,
++  `Io`, `FFI`, `Unsafe` and `Block`, and no operation on an `Atomic` (a relaxed store is not `Sync`,
++  and another thread could read what it stored before the process aborts), the compiler MAY check
++  integer overflow once per group of
+   iterations (a vector's width times the unroll factor) instead of once per operation, and in a loop in
+   vectorisable form (`[SIMD-5]`) it MUST: it computes the group with wrapping arithmetic, accumulates the lanes' overflow bits, and panics at the end of the
+   group, reporting the source location of the first overflowing iteration. This is not observable:
+@@ -6096,11 +6146,13 @@
+   sequence of operations.
+ * `[ECS-7]` *(changed in 0.9.15)* Any type is a component, with no registration and no derive. A tool
+   that needs a list of component types reads the program's own types (Part XIV).
+-* `[ECS-8]` *(new in 0.9.15)* **Signals, sorting, context, groups, snapshots.** `on_construct[T]()`,
++* `[ECS-8]` *(new in 0.9.15)* *(changed in 0.9.20)* **Signals, sorting, context, groups, snapshots.** `on_construct[T]()`,
+   `on_update[T]()` and `on_destroy[T]()` give a signal; `.connect(f)` and `.disconnect(f)` take a
+-  `f: fn(ref mut Registry, Entity)`, which the registry calls after the change is made, when no view of
+-  a pool is in use, so a listener that changes the registry is safe (the call check, `[BRW-21]`, holds
+-  for the library's own code). `sort[T](less)` and `sort_as[To, From]()` reorder a pool. `ctx()` keeps
++  `f: fn(ref mut Registry, Entity)`, which the registry calls after the change is made and before the method's result view is made,
++  when no view of a pool is in use, so a listener that changes the registry is safe (the call check,
++  `[BRW-21]`, holds for the library's own code): `emplace`'s `ref mut T` is found again once its
++  listeners have run, and a listener keeps the `ref mut Registry` it is given no longer than its call,
++  as any view. `sort[T](less)` and `sort_as[To, From]()` reorder a pool. `ctx()` keeps
+   one value per type (`emplace`, `get`, `get_mut`, `find`, `contains`, `erase`). `group[A, B]()` packs
+   the owned pools in one order. `Snapshot`, `SnapshotLoader` and `ContinuousLoader` save and load a
+   registry through an archive given as a type parameter; `RuntimeView` walks pools chosen while the
+@@ -6281,13 +6333,17 @@
+ * `[CT-7]` *(new in 0.9.9)* A `comptime:` block at item level, or as a statement, runs once during
+   compilation for its checks. A failed `assert` or any other panic there is `E6004`, which shows the
+   panic message and the compile-time call chain.
+-* `[CT-2]` *(changed in 0.9.9)* *(changed in 0.9.10)* An operation that cannot run at compile time — an `extern` call, a
++* `[CT-2]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.20)* An operation that cannot run at compile time — an `extern` call, a
+   thread, a clock, `unsafe` pointer access outside the evaluator's heap, I/O — is `E6010`, naming the
+   call chain. A raw pointer made from an integer (`0 as *mut T`, `-1 as *mut T`) is a compile-time
+   value: it is an address, read by nothing, and a `const` of pointer type may hold one; a pointer into
+-  the evaluator's heap may not leave it (`E6010`) (ODR-145). Two inputs are provided: `comptime.read_file(path)` (relative to the package root, and only inside the
+-  package directory, `E6010` otherwise, so a dependency's build cannot read the builder's files) and
+-  `comptime.env(name)`. Both are recorded as build inputs.
++  the evaluator's heap may not leave it (`E6010`) (ODR-145). Two inputs are provided: `comptime.read_file(path)` (relative to the package root, the folder of the
++  package's `ember.toml`; the path is resolved with every symbolic link followed and must then lie
++  under that root, `E6010` otherwise, so a dependency's build cannot read the builder's files) and
++  `comptime.env(name)`, which the root package may call for any variable and a dependency only for a
++  variable the root package's manifest lists for it (`[comptime] env = ["CC", "TARGET_OS"]`, by
++  default none; `E6010` otherwise), so a dependency cannot read the builder's environment into the
++  program it builds. Both are recorded as build inputs.
+ * `[CT-3]` Each evaluation is limited to 10⁸ steps and 256 MB of evaluator heap by default
+   (`[comptime]` in the manifest); exceeding either is `E6001`.
+ * `[CT-4]` *(changed in 0.9.9)* *(changed in 0.9.10)* Compile-time evaluation is deterministic by construction: the evaluator
+@@ -6301,7 +6357,7 @@
+   at compile time and run time (`[TYP-8]`, ODR-084), including module constants and arithmetic
+   inside a function; calling another function preserves that function's policy. A result is cached with its inputs (source,
+   `read_file` contents, `env` values).
+-* `[CT-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Where results live.** A compile-time result is placed in the image as
++* `[CT-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **Where results live.** A compile-time result is placed in the image as
+   constant data. A value that owns heap memory (`Array`, `String`, `Map`, an `owns T`, …) is handled so
+   that no run-time code ever grows, changes or frees constant data:
+   * in a `static` (not `static mut`) whose type gives no name a way to change the value (no `Mutex`,
+@@ -6314,7 +6370,9 @@
+   * a `comptime(e)` whose type owns heap memory is materialised once, as constant data, and the
+     expression is a read-only view of it, with no copy: `t = comptime(table())` then `t[i]` reads the
+     table made when compiling, and a change through `t` is `E3023`. `copy of comptime(e)` makes a value
+-    of your own, which may grow (`Alloc`).
++    of your own, which may grow (`Alloc`). Its type is the read-only view of the value: `Span[T]` for
++    an `Array[T]`, `StrView` for a `String`, `ref T` for any other value that owns heap memory, with
++    the `static` region (`[LT-3]`); `copy of comptime(e)` has the value's own type.
+ 
+   A `const` cannot own heap memory (§V.7).
+ 
+@@ -6476,8 +6534,7 @@
+   end="\n")` write their arguments' text to standard output separated by `sep`;
+   `eprint`/`eprintln` write to standard error. They are ordinary functions of the library, with a pack
+   (`[TYP-47]`, verdict 117): `[Ts...: needs Printable]` above
+-  `pub fn println(values: Ts..., sep: StrView = " ", end: StrView = "
+-"):`. The compiler implements
++  `pub fn println(values: Ts..., sep: StrView = " ", end: StrView = "\n"):`. The compiler implements
+   `Printable` (§IV.8, in the prelude) for every type that has `Display` or `Debug`, which no program
+   can write by hand: an argument's text is its `Display` text when its type has `Display`, and its
+   `Debug` text otherwise, which is Python's `str` → `repr` fallback; a type with neither is `E2040`,
+@@ -6964,7 +7021,7 @@
+ 
+ ## XVI.2 Declaring C functions by hand
+ 
+-* `[FFI-10]` *(changed in 0.9.9)* *(changed in 0.9.15)* An `unsafe extern "C":` block declares foreign functions, statics
++* `[FFI-10]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* An `unsafe extern "C":` block declares foreign functions, statics
+   and opaque types; `unsafe` records that the programmer asserts the signatures. The declared names
+   are items of the enclosing module. Each function in the block says whether it is safe to call
+   (verdict 136): `safe fn` (a contextual keyword, `[LEX-15]`), safe to call only when every parameter and
+@@ -7005,7 +7062,9 @@
+   `exclusive`, `Option[MutSpan[T]]` on a `ref mut` parameter, whose argument the call marks `ref mut`
+   (`[FN-2a]`) (ODR-079). `None` sends C a null pointer and integer zero.
+   `Some` sends its checked length, and a non-null pointer even when empty: if the view's data
+-  pointer is null, the wrapper supplies a statically stored, properly aligned `T` sentinel.
++  pointer is null, the wrapper supplies a properly aligned sentinel, one `T` in read-only memory for a
++  `Span[T]` and one in the call's own frame for a `MutSpan[T]`, so a C function that touches an
++  element against a count of zero faults or writes a slot of this call and nothing shared.
+   The C function must not access an element when the count is zero. Several input clauses sharing
+   `n` compare effective lengths, with `None` contributing zero. A counted result sharing `n`
+   receives that effective length. This does not define `inout_count`.
+@@ -7679,9 +7738,10 @@
+   contract of each.
+ * `[CLI-15]` `ember --help` lists every command and flag of this section; one missing from it, or from
+   §XVII.1's listing, is a defect.
+-* `[CLI-20]` *(new in 0.9.9)* *(changed in 0.9.15)* `ember fmt --migrate` rewrites source written for
++* `[CLI-20]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `ember fmt --migrate` rewrites source written for
+   an earlier version into the current one where the change is mechanical, and lists, with the file
+-  and line, what it could not rewrite. From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
++  and line, what it could not rewrite. From 0.9.15: the `#! language` directive to the current
++  version; the changes of 0.9.20 refuse programs that were unsafe and rewrite nothing (§H.51). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
+   removal, `for k, v in m:` over a `Map` to `for k, v in m.items():` (`[CTL-1]`). From 0.9.10:
+   `Box[T]` and `ForeignBox[T]` to `owns T`, `Box[T, A]` to `owns T using A`, `Array[T, A]` to
+   `Array[T] using A`, `Weak[T]` to `weakref T`, the mode `owned` to `owns`, `mut x: T` on a
+@@ -7757,7 +7817,7 @@
+ [package]
+ name = "particles"
+ version = "0.1.0"
+-language = "0.9.15"
++language = "0.9.20"
+ kind = "bin"                      # bin | lib | staticlib | cdylib
+ layers = ["core", "alloc", "sync", "io"]
+ edition_lints = "strict"          # warnings listed in [lints] as "error" fail the build
+@@ -7765,7 +7825,7 @@
+ [dependencies]
+ geometry = { path = "../geometry" }
+ parser = { git = "https://example.org/parser.git", rev = "4f2a9c1" }
+-std = "0.9.15"                    # implicit; may be pinned
++std = "0.9.20"                    # implicit; may be pinned
+ 
+ [build]
+ entry = "src/main.em"
+@@ -7785,6 +7845,7 @@
+ [comptime]
+ max_steps = 100000000
+ max_heap_mb = 256
++env = []                          # variables a dependency may read with comptime.env ([CT-2])
+ 
+ [jobs]
+ workers = "auto"
+@@ -7814,12 +7875,12 @@
+ * `[MAN-3]` *(changed in 0.9.9)* Every key in `[lints]` names a lint the compiler defines (`E9010`
+   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
+   parameters.
+-* `[MAN-8]` *(new in 0.9.9)* *(changed in 0.9.10)* The sections are: `[package]` (`name`, `version`, `language`, `kind`,
++* `[MAN-8]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.20)* The sections are: `[package]` (`name`, `version`, `language`, `kind`,
+   `layers`, `edition_lints`); `[dependencies]` (`{ path }`, `{ git, rev }`, or `{ git, version }`, `[VER-5]`);
+   `[build]` (`entry`, `target`, `backend`, `c_compiler`, `runtime`, `max_instantiations` `[MONO-3]`,
+   `reload` `[MAN-7]`); `[profiles.<name>]` (`[PRF-3]`); `[c]` (`compiler`, `flags`, `[BLD-FFI-1]`);
+   `[link]` (`libs`, `timeout` `[BLD-15]`); `[jobs]` (`workers`, `[JOB-1]`); `[realtime]` (`contracts`, `[EFF-19]`);
+-  `[comptime]` (`max_steps`, `max_heap_mb`, `[CT-3]`); `[lints]` (`[MAN-3]`); and `[cpp.<project>]`
++  `[comptime]` (`max_steps`, `max_heap_mb`, `[CT-3]`; `env`, `[CT-2]`); `[lints]` (`[MAN-3]`); and `[cpp.<project>]`
+   and `[ffi]` (`evidence`, Annex C). A key a section does not take, or a section not listed, is
+   `E9001`, naming what is accepted (ODR-110). **No manifest key turns off a
+   safety check or changes what a program means** (`[PRF-1]`).
+@@ -8224,7 +8285,7 @@
+ | O7 | explicit `x.drop()` | `E3070` | `mem.drop(owns x)` |
+ | O8 | scope guard handed over or leaked | `E3014`, `E3015` | bind it with `with` (`[THR-5]`) |
+ | O9 | `this` escapes its `drop`, or an owner of it is made there | `E3016` | `mem.take` the data out |
+-| B1 | one place changed through two names: two changeable arguments of one place, a `ref mut` name's place changed through another name while it is used, a function value stored where a variable it changes owns it | `E3022` | `if i != j:` above the call; `split_at`, `chunks_mut`, `for ref mut x in xs:`, `swap(i, j)`; `SoA` columns; for a `ref mut` name, the change made through it or after its last use |
++| B1 | one place changed through two names: two changeable arguments of one place, a `ref mut` name's place changed through another name while it is used, a function value stored where a variable it changes, or a place its run may reshape or end, owns it | `E3022` | `if i != j:` above the call; `split_at`, `chunks_mut`, `for ref mut x in xs:`, `swap(i, j)`; `SoA` columns; for a `ref mut` name, the change made through it or after its last use |
+ | B2 | a collection changed while a loop or a generator walks it | `E3020` | the loop's own handle (`for ref mut x in xs:`, `for k, ref mut v in m:`); a list of your own, added after the loop; `retain` after the loop; the call that changes it moved below the loop |
+ | B3 | a read and a change of one place overlap: a change of what a read-only name reads while it is still used; a `ref mut` name's place read through another name; an argument that may reach into a changeable argument of the same call | `E3021` | the change moved after the read-only name's last use, or the name made `ref mut` (`boss = ref mut enemies[0]`) and the change made through it; a copy of your own for the other argument (`old = copy of tracks[src_name]`) |
+ | B4 | a change the name does not allow: through a plain parameter, a loop, pattern or opened name, or a plain name holding a `MutSpan`; `=` on a name that keeps its place; an owner that may change made from one that only reads | `E3023` | `ref mut` on the name and at the call (`fn tick(ref mut s: Clock):`, `tick(ref mut clock)`), on the pattern (`State.Walking(ref mut path):`) or on the loop (`for ref mut p in players:`); for a parameter given a new value, a local of your own first (`count = n`) |
+@@ -8493,7 +8554,7 @@
+ | `E3015` | value whose drop is required may not be leaked | `[THR-6]` |
+ | `E3016` | `this` escapes its own `drop`, or an owner of it is made there | `[OBJ-5]`, `[CLS-7a]` |
+ | `E3020` | a collection (a list, a map, a set or a string) changed while it is walked, whatever the change (an element written, a value under a key replaced, anything added or removed), by a `for` loop or by a generator that walks it and will still be used; through its own name, or through a call that may change it (a call through a function value or a library call by the functions it may run, a `spawn` by what its thread changes, a scoped task started in the walk, a foreign call by what the callbacks C keeps change, the end of an object by what its `drop` changes); a removal inside a counting loop | `[BRW-18]`, `[CTL-2]` |
+-| `E3021` | a read and a change of one place overlap: a change of what a read-only name reads while it is still used, a view a `dyn` or `virtual` call may give included where the kind is known only while running (help: `runtime` on the parameter or the variable); a `ref mut` name's place read through another name while it is still used; an argument that may reach into a changeable argument of the same call | `[BRW-1]`, `[BRW-11]`, `[LT-1]`, `[LT-48]` |
++| `E3021` | a read and a change of one place overlap: a change of what a read-only name reads while it is still used, a view a `dyn` call may give included where the kind is known only while running (help: `runtime` on the parameter); a `ref mut` name's place read through another name while it is still used; an argument that may reach into a changeable argument of the same call | `[BRW-1]`, `[BRW-11]`, `[LT-1]`, `[LT-48]` |
+ | `E3022` | one place changed through two names: two changeable arguments of one call naming one place, other than one whole variable proved when compiling (a function value that changes it counts as one); a function value stored in a place that a variable it changes owns; a `ref mut` name's place changed through another name while it is still used, a reshape of a `ref mut` address included | `[BRW-1]`, `[BRW-11]` |
+ | `E3023` | a change the name does not allow: a change through a name that only reads (a plain parameter; a loop, pattern, opened or part name; a plain name holding a `MutSpan`; a value made when compiling); `=` on a name that keeps its place for its scope (a parameter; a loop, pattern or opened name, one opened `exists as copy of` excepted; a `const ref mut` name given another ref); a read-only `ref` given to a `ref mut` name; a method that may change its object, or a stored function that may change its own state, called through a read-only name; an owner that may change made from one that only reads (a plain parameter of a `shares mut` type included); `=` on a `static` (`HOOK = v`) | `[BRW-14]`, `[BRW-15]`, `[STA-1]` |
+ | `E3024` | a struct field would point into another field of the same struct (shape B5) | `[TYP-15]` |
+@@ -10000,13 +10061,13 @@
+ | **reason code** | why a run-time check exists (`[EFF-11]`) |
+ | **reduction** | a combining change (`total += e`, `max`, `push`) made by scoped tasks to one place: each task keeps a private accumulator, combined at the join in spawn order |
+ | **reload manifest, reload transaction, safe point** | the image section listing what can be reloaded (`[HR-8]`); the plan and prepare phases that may fail without effect (`[HR-2]`); the poll at which no thread runs Ember code (`[HR-3]`) |
+-| **reshape** | a change that can free or move memory: replacing a value that owns memory, adding to or removing from a collection, changing an enum's variant, ending an object's last owner; writing a number is not one |
++| **reshape** | a change that can free or move memory: replacing a value that owns memory, adding to or removing from a collection, handing a value over, changing an enum's variant, ending an object's last owner; writing a number is not one |
+ | **Safe Ember** | code outside unsafe code (`unsafe:` blocks and `unsafe fn` bodies), and the code of their `safe:` blocks (`[UNS-12]`); the memory-safety guarantee covers it (`[PHIL-10]`) |
+ | **`Send`, `ThreadShared`** | may be handed to another thread; several threads may hold and read one value at once; both inferred from the words a value is written with (§XI.1) |
+ | **shape** | a category of error with a required help text (§XVII.6) |
+ | **shareable generic** | one whose type parameter is used only to call its bounds' methods, so one shared body can serve every instance (`[MONO-5]`) |
+ | **`shares`, `shares mut`** | one more owner of a value on this thread, counted: a `shares` owner reads it, a `shares mut` owner may also change it |
+-| **`sharedref mut`** | a link that may change its target and that several holders, and the owner, may share; on two threads it is changed only under a lock, through `Atomic`, or by a reduction |
++| **`sharedref mut`** | a link that may change its target and that several holders, and the owner, may share; it never reaches another thread, and the scoped tasks of its thread change its target only under a lock, through `Atomic`, or by a reduction |
+ | **SoA** | structure of arrays: one array per field (`SoA[T]`, §XII.1) |
+ | **source parameter** | a parameter a returned view may point into without `from`: every view argument, or the one named by `from` (`[LT-1]`) |
+ | **static** | a program-wide value with a fixed address that never changes; `static mut` is a module variable that may, reached only by the main thread and its scoped tasks unless `guarded by` a `static` lock |
+@@ -12712,27 +12773,128 @@
+ | `[THR-21]` | changed |
+ | `[WK-17]` | changed |
+ 
+-## H.51 Changes in 0.9.15_Hardened_11 (from 0.9.15_Hardened_10)
+-
+-**0.9.15_Hardened_11** writes in the owner's verdicts 161 to 163 from the review of 2026-11-02, morning
+-(`tasks/96/redesign/JOB.md`; each shown with its options and the lead's recommendation):
+-
+-* Verdict 161: `owns` binds as `-` does, so an argument of more than one name, number or call is
+-  written in brackets, `tx.send(owns (i * i))`; `tx.send(owns i * i)` is `(owns i) * i` and `E3028`,
+-  whose help writes the brackets (`[GRM-15]`). The grammar already said so; the rule now says it.
+-* Verdict 162: `runtime` goes before a class type too, `fn pick(a: runtime A):`, and a `virtual`
+-  call's kind is checked while the program runs as a `runtime dyn` value's is (`[LT-48]`).
+-* Verdict 163: `runtime` goes right after a variable's `:` too, `p: runtime dyn Picker = ...`, and
+-  guards the lines of its function after it, with no function written only to carry the word
+-  (`[LT-48]`, `[LEX-15]`, the grammar's `var_decl`; the cost row in §X.4 and `E3021`'s help).
++
++## H.51 Changes in 0.9.20_Hardened_1 (from 0.9.15_Hardened_10)
++
++**0.9.20_Hardened_1** is the hardening audit of 2026-11-03, a reading of the whole of 0.9.15_Hardened_10
++for holes in its memory-safety rules, facts it left unsaid and words that disagreed with each other, made
++under the owner's delegation (`docs/AUTOPILOT.md` §3; the reasoning in `docs/HANDOFF.md`). Every change
++below is a rule that refuses a program that was unsafe, a fact a compiler would otherwise have to guess, or
++a correction of the text; no feature is taken away and nothing is checked while the program runs that was
++not before. The accepted set changes, so the language version moves (`[VER-9]`); `ember fmt --migrate`
++writes the `#! language` directive and rewrites nothing else (`[CLI-20]`).
++
++Holes in the memory-safety rules:
++
++* A `sharedref mut` link is neither `Send` nor `ThreadShared`: a view several holders on one thread may
++  change can reach no other thread (`[THR-8]`, `[THR-9]`, the marker table of §IV.8, `[LT-46]`, the
++  glossary). The text had said it only of unscoped threads, in `[THR-13]`.
++* A function value is not stored in a place that its body may reshape or end through a name it captured
++  with a word (a `shares mut`, `thread_shared` or `sharedref mut` owner or link, a `weakref` link it opens
++  `ref mut`), read through the chain of its calls, since the run would end or move the function's own
++  state block, which no count keeps alive (`E3022`, `[CLO-17]`, `[CLO-18]`, shape B1, the `[COST-3]` row).
++  `[CLO-18]` had said such a body "holds one count on its state", which a state block has no count for.
++* A `runtime` check reads, from the kind's own method table, which parameters the method's result may
++  point into (the fact `[LT-22]` records for each implementation, one bit per source parameter and one for
++  `this`), so a kind declared in a package the function's own package never saw is checked as any other;
++  a compare of kind identities would have let it through (`[LT-48]`, the `[COST-3]` row: one load and one
++  bit test).
++* A hand-over is a reshape of the giver's place: a view into a value still used after it is handed over,
++  to another name or to another thread, is `E3060`, and a value is not handed over while a `ref mut` name
++  of it is used (§VII.1's terms, `[OWN-3]`, `[THR-2]`, the glossary). `[BCK-4]` had said it; the language
++  Parts had not.
++* A view opened from a link lives only while no line or call may end an object of its class family, held
++  directly or through anything that owns it (`[RC-5]` point 1): a subclass object in a list of its base,
++  or a player in a team that is cleared, counts.
++* Sharing a local that is not a class object moves nothing: the value is made in a block of its own from
++  the line that made it, as if that line had said `shares`, so no view of it ends at the `shares` line
++  and the local's type is the shared type throughout (`[RC-1]`). Only a local that owns its value may be
++  shared.
++* A growing `Arena` grows by taking a new chunk and never moves what it has given out (`[ARN-4]`,
++  `[ARN-7]`).
++* A `virtual` method called from `init` is judged by every override's body the program has (`[CLS-2]`).
++* A `defer` block's uses of the locals it names are uses at every exit of the block: one handed over
++  below the `defer` line is `E3040`, and a view it uses ended before the exit is `E3060` (`[CTL-7]`).
++* A thread's end empties and closes its queue in one atomic step, so a `thread_shared` value whose last
++  owner ends on another thread at that moment is ended by that thread, not left waiting (`[RC-4]`).
++* A `static mut` the tasks of a scope reach is a place `[THR-11]` checks as any other (`[THR-20]`).
++* A grouped overflow check needs a loop body with no operation on an `Atomic` (`[SIMD-7]`).
++* The registry's signal listeners run before a method's result view is made (`[ECS-8]`).
++* The sentinel sent to C for an empty span is read-only memory for a `Span[T]` and a slot of the call's
++  own frame for a `MutSpan[T]`, never a shared static (`[FFI-10]`).
++* `comptime.read_file` follows every symbolic link before it checks that the path lies under the package
++  root, and `comptime.env` in a dependency reads only the variables the root package's manifest lists for
++  it (`[comptime] env`, `[CT-2]`, `[MAN-8]`), so a dependency's compile-time code cannot read the builder's
++  files or environment into the program it builds.
++
++Facts the text left unsaid:
++
++* A position keeps the index it was made with; a later change of that index moves no position
++  (`[BRW-16]`).
++* `copy of` before a `shares`, `shares mut`, `thread_shared` or `sharedref mut` link makes a `T` with one
++  owner (`[OWN-8]`).
++* `@cached` is for a class method, since a struct or enum has no hidden state to keep a result in
++  (`E2117`, `[CLS-12]`, the attribute table); a change made by foreign code or through a raw pointer is
++  unsafe code's obligation (`[CLS-12]`, `[EFF-27]`).
++* A memory manager's instance held inline in a struct beside values made in it is `[LT-25]`'s shape:
++  the instance is held in a block of its own, or the values are made in an instance the struct does not
++  hold (`[ALC-1]`).
++* A `comptime(e)` that owns heap memory has the type of a read-only view of the value, with the `static`
++  region (`[CT-5]`).
++* The rule `[THR-19]` names an `RwLock` among the locks a thread may not wait for while it holds them.
++* Every pointer-shaped word has a niche: a `shares`, `shares mut` or `thread_shared` value, a
++  `sharedref mut` link, a `ref mut` and a `MutSpan` join `[TYP-13]`'s list.
++
++Words made consistent:
++
++* The rule `[FN-3]` says, as `[LT-1]` does since verdicts 137 and 138, that a result points into what the
++  function's code shows, a method's into `this` and its view arguments alike.
++* `ref_to_ptr` is one function the compiler knows, whose result follows the word its argument is written
++  with, not two functions of one name, which `[TYP-26]` forbids (§IV.5).
++* `BorrowList[T]`, which no Part declared, is no longer named (`[TYP-15a]`).
++* The example of `println`'s first line is written with `"\n"` in `[TYP-47]` and `[STD-9]`, where the
++  text had a line break inside the string.
++* The directive example of §II.3 and the manifest example of §XVII.2 name the current version.
+ 
+ Generated: every rule whose text differs from 0.9.15_Hardened_10.
+ 
+-| Rule | 0.9.15_Hardened_10 → 0.9.15_Hardened_11 |
++| Rule | 0.9.15_Hardened_10 → 0.9.20_Hardened_1 |
+ |---|---|
+-| `[GRM-15]` | changed |
+-| `[LEX-15]` | changed |
++| `[ALC-1]` | changed |
++| `[ARN-4]` | changed |
++| `[ARN-7]` | changed |
++| `[BRW-16]` | changed |
++| `[CLI-20]` | changed |
++| `[CLO-17]` | changed |
++| `[CLO-18]` | changed |
++| `[CLS-2]` | changed |
++| `[CLS-12]` | changed |
++| `[COST-3]` | changed |
++| `[CT-2]` | changed |
++| `[CT-5]` | changed |
++| `[CTL-7]` | changed |
++| `[ECS-8]` | changed |
++| `[EFF-27]` | changed |
++| `[FFI-10]` | changed |
++| `[FN-3]` | changed |
++| `[LT-46]` | changed |
+ | `[LT-48]` | changed |
++| `[MAN-8]` | changed |
++| `[OWN-3]` | changed |
++| `[OWN-8]` | changed |
++| `[RC-1]` | changed |
++| `[RC-4]` | changed |
++| `[RC-5]` | changed |
++| `[SIMD-7]` | changed |
++| `[STD-9]` | changed |
++| `[THR-2]` | changed |
++| `[THR-8]` | changed |
++| `[THR-9]` | changed |
++| `[THR-19]` | changed |
++| `[THR-20]` | changed |
++| `[TYP-13]` | changed |
++| `[TYP-15a]` | changed |
++| `[TYP-47]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -12753,7 +12915,7 @@
+ 
+ | Rule | Part | Begins |
+ |---|---|---|
+-| `[ALC-1]` | IX | *(changed in 0.9.15)* The place names the kind, the making line names … |
++| `[ALC-1]` | IX | *(changed in 0.9.15)* *(changed in 0.9.20)* The place names the kind, … |
+ | `[ALC-2]` | IX | *(changed in 0.9.10)* *(changed in 0.9.15)* `std.mem` declares `pub … |
+ | `[ALC-3]` | IX | A binary package may replace the global allocator with `[build] … |
+ | `[ALC-4]` | IX | Allocation failure in a standard container panics (`out of memory`). … |
+@@ -12766,13 +12928,13 @@
+ | `[ARN-1]` | IX | *(changed in 0.9.15)* `Arena` is a struct, and not `Copy`. Its … |
+ | `[ARN-2]` | IX | *(changed in 0.9.15)* Values placed with `alloc*` are never dropped … |
+ | `[ARN-3]` | IX | *(changed in 0.9.15)* `alloc(owns v: T) -> ref mut T` hands `v` over … |
+-| `[ARN-4]` | IX | *(changed in 0.9.15)* A growing `Arena` carries `Alloc` on its growth … |
++| `[ARN-4]` | IX | *(changed in 0.9.15)* *(changed in 0.9.20)* A growing `Arena` carries … |
+ | `[ARN-5]` | IX | `ArenaArray[T]` and `ArenaMap[K, V]` are fixed-capacity containers … |
+ | `[ARN-5c]` | IX | `ArenaArray[T]` provides `len`, `capacity`, `is_empty`, `get(i) -> … |
+ | `[ARN-5d]` | IX | `ArenaMap[K, V]` (with `K: needs (Eq, Hash)`) provides `len`, … |
+ | `[ARN-5g]` | IX | No operation of either container touches the arena after … |
+ | `[ARN-6]` | IX | *(changed in 0.9.15)* `arena.scope() -> ScopedArena` is called … |
+-| `[ARN-7]` | IX | *(changed in 0.9.15)* No operation lowers an arena's allocation … |
++| `[ARN-7]` | IX | *(changed in 0.9.15)* *(changed in 0.9.20)* No operation lowers an … |
+ | `[ARN-8]` | IX | *(changed in 0.9.15)* `MaybeUninit[T]` has the size and alignment of … |
+ | `[ARN-10]` | IX | A panic inside `T.default()` during `alloc_array` aborts (`[PAN-1]`); … |
+ | `[ARN-11]` | IX | `Zeroable` is an `unsafe` marker: all-zero bytes are a valid `T`. The … |
+@@ -12862,7 +13024,7 @@
+ | `[BRW-13]` | VII | *(new in 0.9.15)* `=` on a name that has a value puts the new value … |
+ | `[BRW-14]` | VII | *(new in 0.9.15)* Names that keep their place. A parameter, a loop … |
+ | `[BRW-15]` | VII | *(new in 0.9.15)* A plain name never changes anything. A plain … |
+-| `[BRW-16]` | VII | *(new in 0.9.15)* Positions. A name for a list element made by … |
++| `[BRW-16]` | VII | *(new in 0.9.15)* *(changed in 0.9.20)* Positions. A name for a list … |
+ | `[BRW-17]` | VII | *(new in 0.9.15)* Addresses. Every other view (a kept view; a view … |
+ | `[BRW-18]` | VII | *(new in 0.9.15)* Loops, generators included. While a `for` loop … |
+ | `[BRW-19]` | VII | *(new in 0.9.15)* Temporaries. A temporary lives until the last use … |
+@@ -12935,7 +13097,7 @@
+ | `[CLI-15]` | XVII | `ember --help` lists every command and flag of this section; one … |
+ | `[CLI-18]` | VIII | *(changed in 0.9.15)* For both commands `<path>` is a package … |
+ | `[CLI-19]` | XVII | The implementation matrix. `ember --version --matrix` prints, for … |
+-| `[CLI-20]` | XVII | *(changed in 0.9.15)* `ember fmt --migrate` rewrites source written … |
++| `[CLI-20]` | XVII | *(changed in 0.9.15)* *(changed in 0.9.20)* `ember fmt --migrate` … |
+ | `[CLI-21]` | XVII | `ember run --interp` runs a program on the compile-time evaluator … |
+ 
+ ## CLO
+@@ -12955,8 +13117,8 @@
+ | `[CLO-12]` | VI | *(changed in 0.9.15)* A local function (`[GRM-28]`) is a named … |
+ | `[CLO-14]` | VI | *(changed in 0.9.15)* A callable type may be written as a type … |
+ | `[CLO-16]` | VI | *(new in 0.9.15)* `thread_shared fn()`: a function any thread may … |
+-| `[CLO-17]` | VI | *(new in 0.9.15)* What a function value does is worked out from the … |
+-| `[CLO-18]` | VI | *(new in 0.9.15)* A function value that changes its own state. A call … |
++| `[CLO-17]` | VI | *(new in 0.9.15)* *(changed in 0.9.20)* What a function value does is … |
++| `[CLO-18]` | VI | *(new in 0.9.15)* *(changed in 0.9.20)* A function value that changes … |
+ | `[CLO-19]` | VI | *(new in 0.9.15)* A lambda's parameters say what they receive. A … |
+ 
+ ## CLS
+@@ -12964,7 +13126,7 @@
+ | Rule | Part | Begins |
+ |---|---|---|
+ | `[CLS-1]` | V | *(changed in 0.9.10)* *(changed in 0.9.15)* A class object lives in … |
+-| `[CLS-2]` | V | *(changed in 0.9.10)* *(changed in 0.9.15)* `fn init(…)` is the … |
++| `[CLS-2]` | V | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* `fn … |
+ | `[CLS-3]` | V | A class with no `init` and no base class gets a memberwise … |
+ | `[CLS-4]` | V | *(changed in 0.9.15)* A class is final unless declared `open` or … |
+ | `[CLS-5]` | V | *(changed in 0.9.15)* Interface calls on a class object are … |
+@@ -12975,7 +13137,7 @@
+ | `[CLS-9a]` | V | *(changed in 0.9.15)* After `init`, nothing is changed through a … |
+ | `[CLS-10]` | V | A derived class with no `init` gets its base's constructor: … |
+ | `[CLS-11]` | V | *(changed in 0.9.15)* Construction is two-phase. In a derived `init`, … |
+-| `[CLS-12]` | V | *(new in 0.9.15)* `@cached`. `@cached` above a method with no … |
++| `[CLS-12]` | V | *(new in 0.9.15)* *(changed in 0.9.20)* `@cached`. `@cached` above a … |
+ 
+ ## CONF
+ 
+@@ -13012,7 +13174,7 @@
+ |---|---|---|
+ | `[COST-1]` | X | Zero cost, defined. An abstraction is zero-cost *for a use* whose … |
+ | `[COST-2]` | X | Every implicit cost is one of: guaranteed elided (emitting it is a … |
+-| `[COST-3]` | X | *(changed in 0.9.10)* *(changed in 0.9.15)* The costs. Everything the … |
++| `[COST-3]` | X | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* The … |
+ | `[COST-4]` | X | `ember inspect --cost <item>` prints every row that applies to an … |
+ | `[COST-5]` | X | A rule that introduces an implicit cost MUST add a row to this table; … |
+ | `[COST-6]` | X | *(new in 0.9.15)* What stops the program, and what it says. Of the … |
+@@ -13022,10 +13184,10 @@
+ | Rule | Part | Begins |
+ |---|---|---|
+ | `[CT-1]` | XIV | These are evaluated during compilation: `comptime(e)`; `comptime:` … |
+-| `[CT-2]` | XIV | *(changed in 0.9.10)* An operation that cannot run at compile time — … |
++| `[CT-2]` | XIV | *(changed in 0.9.10)* *(changed in 0.9.20)* An operation that cannot … |
+ | `[CT-3]` | XIV | Each evaluation is limited to 10⁸ steps and 256 MB of evaluator heap … |
+ | `[CT-4]` | XIV | *(changed in 0.9.10)* Compile-time evaluation is deterministic by … |
+-| `[CT-5]` | XIV | *(changed in 0.9.15)* Where results live. A compile-time result is … |
++| `[CT-5]` | XIV | *(changed in 0.9.15)* *(changed in 0.9.20)* Where results live. A … |
+ | `[CT-6]` | XIV | `comptime(e)` is an expression whose value is `e` evaluated at … |
+ | `[CT-7]` | XIV | A `comptime:` block at item level, or as a statement, runs once … |
+ 
+@@ -13041,7 +13203,7 @@
+ | `[CTL-4]` | VI | The `else` of `while` or `for` runs when the loop ends without … |
+ | `[CTL-5]` | VI | A `match` tests arms top to bottom; the first that matches runs; a … |
+ | `[CTL-6]` | VI | `with a = e1, b = e2:` binds `a` and `b` for the block and drops them … |
+-| `[CTL-7]` | VI | *(changed in 0.9.15)* `defer:` registers a block to run when the … |
++| `[CTL-7]` | VI | *(changed in 0.9.15)* *(changed in 0.9.20)* `defer:` registers a … |
+ | `[CTL-8]` | VI | On every exit from a block, its `defer` blocks run first and then its … |
+ | `[CTL-9]` | VI | `pass` does nothing; an empty block is written `pass`. |
+ | `[CTL-10]` | VI | Names assigned in every branch. In an `if`/`elif`/`else` that has an … |
+@@ -13167,7 +13329,7 @@
+ | `[ECS-5]` | XII | *(changed in 0.9.15)* Changing the registry while a view walks it. A … |
+ | `[ECS-6]` | XII | Iteration order is insertion order with swap-remove holes: … |
+ | `[ECS-7]` | XII | *(changed in 0.9.15)* Any type is a component, with no registration … |
+-| `[ECS-8]` | XII | *(new in 0.9.15)* Signals, sorting, context, groups, snapshots. … |
++| `[ECS-8]` | XII | *(new in 0.9.15)* *(changed in 0.9.20)* Signals, sorting, context, … |
+ | `[ECS-9]` | XII | *(new in 0.9.15)* No scheduler. The library runs no systems: a … |
+ 
+ ## EFF
+@@ -13198,7 +13360,7 @@
+ | `[EFF-24]` | X | *(new in 0.9.15)* What a function does is worked out from its code. … |
+ | `[EFF-25]` | X | *(new in 0.9.15)* The summary decides every rule that needs it, and … |
+ | `[EFF-26]` | X | *(new in 0.9.15)* A call that runs a function makes its changes; … |
+-| `[EFF-27]` | X | *(new in 0.9.15)* What a `@cached` result depends on. A `@cached` … |
++| `[EFF-27]` | X | *(new in 0.9.15)* *(changed in 0.9.20)* What a `@cached` result … |
+ 
+ ## ENM
+ 
+@@ -13269,7 +13431,7 @@
+ | `[FFI-7]` | XVI | A header is re-parsed only when its content, its overlay, or a … |
+ | `[FFI-8]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* Type mapping. |
+ | `[FFI-9]` | XVI | `extern "C"` is the platform C ABI (SysV AMD64, Windows x64, … |
+-| `[FFI-10]` | XVI | *(changed in 0.9.15)* An `unsafe extern "C":` block declares foreign … |
++| `[FFI-10]` | XVI | *(changed in 0.9.15)* *(changed in 0.9.20)* An `unsafe extern "C":` … |
+ | `[FFI-11]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* Contract vocabulary. A … |
+ | `[FFI-11a]` | XVI | A pointer contract with no count word is `E5012`, which lists the … |
+ | `[FFI-11b]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* The two-call enumeration … |
+@@ -13366,7 +13528,7 @@
+ | `[FN-1a]` | V | *(changed in 0.9.15)* A `MutSpan[T]` parameter that writes the … |
+ | `[FN-2]` | V | *(changed in 0.9.15)* A parameter with no word reads. There is no … |
+ | `[FN-2a]` | V | *(changed in 0.9.15)* A call says `ref mut` before an argument the … |
+-| `[FN-3]` | V | *(changed in 0.9.15)* A function hands its result over to its caller. … |
++| `[FN-3]` | V | *(changed in 0.9.15)* *(changed in 0.9.20)* A function hands its … |
+ | `[FN-4]` | V | *(changed in 0.9.15)* Methods and `this`. Inside a method its object … |
+ | `[FN-5]` | V | Default argument expressions are evaluated at each call, after the … |
+ | `[FN-6]` | V | *(changed in 0.9.15)* Callable types. A function is a value. A … |
+@@ -13659,9 +13821,9 @@
+ | `[LT-43]` | VII | Region tracking never lets a view survive a `yield` that `[CORO-6]` … |
+ | `[LT-44]` | VII | *(changed in 0.9.15)* A plain or `ref mut` `Arena`, `FixedArena` or … |
+ | `[LT-45]` | VII | *(new in 0.9.15)* Kept views. A struct that holds a view (`ref T`, … |
+-| `[LT-46]` | VII | *(new in 0.9.15)* The three kinds of kept view, by their word: * `ref … |
++| `[LT-46]` | VII | *(new in 0.9.15)* *(changed in 0.9.20)* The three kinds of kept view, … |
+ | `[LT-47]` | VII | *(new in 0.9.15)* A view put in through `ref mut`. After a call, a … |
+-| `[LT-48]` | VII | *(new in 0.9.15)* `runtime`: a value's kind checked while the program … |
++| `[LT-48]` | VII | *(new in 0.9.15)* *(changed in 0.9.20)* `runtime`: a `dyn` … |
+ 
+ ## MAN
+ 
+@@ -13671,7 +13833,7 @@
+ | `[MAN-2]` | XVII | *(changed in 0.9.15)* `ember.lock` records the resolved dependencies … |
+ | `[MAN-3]` | XVII | Every key in `[lints]` names a lint the compiler defines (`E9010` … |
+ | `[MAN-7]` | XVII | *(changed in 0.9.10)* `[build] reload` is `"opt-in"`, `"all"`, … |
+-| `[MAN-8]` | XVII | *(changed in 0.9.10)* The sections are: `[package]` (`name`, … |
++| `[MAN-8]` | XVII | *(changed in 0.9.10)* *(changed in 0.9.20)* The sections are: … |
+ | `[MAN-9]` | XVII | *(new in 0.9.15)* Every program is a package (verdict 127). A command … |
+ 
+ ## MNG
+@@ -13735,12 +13897,12 @@
+ |---|---|---|
+ | `[OWN-1]` | VII | *(changed in 0.9.15)* Every value has exactly one owner: a local, a … |
+ | `[OWN-2]` | VII | *(changed in 0.9.15)* A value is dropped (ended) when its owner goes … |
+-| `[OWN-3]` | VII | *(changed in 0.9.15)* `=` with a whole name hands it over. `b = a`, … |
++| `[OWN-3]` | VII | *(changed in 0.9.15)* *(changed in 0.9.20)* `=` with a whole name … |
+ | `[OWN-4]` | VII | *(changed in 0.9.15)* A loop body that hands over a value declared … |
+ | `[OWN-5]` | VII | Assigning to a place that holds a live value evaluates the new value, … |
+ | `[OWN-6]` | VII | *(changed in 0.9.15)* `mem.take(ref mut place: T) -> T` (leaves … |
+ | `[OWN-7]` | VII | *(changed in 0.9.15)* A value of a `Copy` type is duplicated bit for … |
+-| `[OWN-8]` | VII | *(changed in 0.9.15)* `copy of x` makes a copy of the thing itself, … |
++| `[OWN-8]` | VII | *(changed in 0.9.15)* *(changed in 0.9.20)* `copy of x` makes a copy … |
+ | `[OWN-9]` | VII | *(new in 0.9.15)* `owns` hands over, for every type, numbers … |
+ | `[OWN-10]` | VII | *(new in 0.9.15)* `owns` on the line that makes a value for a place … |
+ | `[OWN-11]` | VII | *(new in 0.9.15)* A part handed over on its own. A part of a struct … |
+@@ -13802,7 +13964,7 @@
+ 
+ | Rule | Part | Begins |
+ |---|---|---|
+-| `[RC-1]` | VIII | *(changed in 0.9.15)* Several owners. `shares x` makes one more owner … |
++| `[RC-1]` | VIII | *(changed in 0.9.15)* *(changed in 0.9.20)* Several owners. `shares … |
+ | `[RC-2]` | VIII | *(changed in 0.9.15)* No count where no owner is made. No count … |
+ | `[RC-2a]` | VIII | *(changed in 0.9.15)* Passing a shared value to a parameter that is … |
+ | `[RC-2b]` | VIII | *(changed in 0.9.15)* A view of a shared value or an object: a name … |
+@@ -13810,8 +13972,8 @@
+ | `[RC-2d]` | VIII | *(changed in 0.9.15)* An owner handed over (`b = a`, an `owns` … |
+ | `[RC-2e]` | VIII | *(changed in 0.9.15)* The loop names of a `for` over a list of … |
+ | `[RC-3]` | VIII | *(changed in 0.9.15)* Further removals of count operations are … |
+-| `[RC-4]` | VIII | *(changed in 0.9.15)* The counts of a value that is not … |
+-| `[RC-5]` | VIII | *(changed in 0.9.15)* A view of an object reached through a link. A … |
++| `[RC-4]` | VIII | *(changed in 0.9.15)* *(changed in 0.9.20)* The counts of a value … |
++| `[RC-5]` | VIII | *(changed in 0.9.15)* *(changed in 0.9.20)* A view of an object … |
+ | `[RC-6]` | VIII | *(changed in 0.9.15)* `ember inspect` lists every count operation … |
+ | `[RC-7]` | VIII | *(new in 0.9.15)* Changing a shared value. A value made shared is … |
+ 
+@@ -13884,7 +14046,7 @@
+ | `[SIMD-4]` | XII | Horizontal operations (`reduce_add`, `reduce_min`, `reduce_max`), … |
+ | `[SIMD-5]` | XII | Vectorisable form, which `@simd(assert)` checks, is computed by Ember … |
+ | `[SIMD-6]` | XII | The C compiler's own vectorisation report is corroborating evidence … |
+-| `[SIMD-7]` | XII | Grouped overflow checks. In a loop whose body has none of `Sync`, … |
++| `[SIMD-7]` | XII | *(changed in 0.9.20)* Grouped overflow checks. In a loop whose body … |
+ | `[SIMD-8]` | XII | Vector operators are lane-wise and follow the scalar rules: integer … |
+ | `[SIMD-9]` | XII | *(changed in 0.9.15)* SIMD memory operations are bounds-checked like … |
+ 
+@@ -13982,14 +14144,14 @@
+ | Rule | Part | Begins |
+ |---|---|---|
+ | `[THR-1]` | XI | *(changed in 0.9.15)* A value several threads own is made … |
+-| `[THR-2]` | XI | *(changed in 0.9.15)* A one-thread value never reaches another … |
++| `[THR-2]` | XI | *(changed in 0.9.15)* *(changed in 0.9.20)* A one-thread value never … |
+ | `[THR-3]` | XI | *(changed in 0.9.15)* `Mutex[T]` is a value type. `m.lock()` blocks … |
+ | `[THR-4]` | XI | In the `debug` profile the runtime records the order in which each … |
+ | `[THR-5]` | XI | *(changed in 0.9.15)* `thread.scope()` returns a `Scope`, which MUST … |
+ | `[THR-6]` | XI | *(changed in 0.9.15)* A type whose `drop` a safety guarantee depends … |
+ | `[THR-7]` | XI | *(changed in 0.9.15)* `thread_shared` means exactly: the value may … |
+-| `[THR-8]` | XI | *(changed in 0.9.10)* *(changed in 0.9.15)* A type is `Send` when a … |
+-| `[THR-9]` | XI | *(changed in 0.9.15)* A type is `ThreadShared` when several threads … |
++| `[THR-8]` | XI | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* A … |
++| `[THR-9]` | XI | *(changed in 0.9.15)* *(changed in 0.9.20)* A type is `ThreadShared` … |
+ | `[THR-10]` | XI | *(changed in 0.9.10)* *(changed in 0.9.15)* `thread.spawn` runs a … |
+ | `[THR-11]` | XI | *(changed in 0.9.15)* `scope.spawn` takes a plain function, `[R]` … |
+ | `[THR-12]` | XI | *(changed in 0.9.15)* Tasks that must run in sequence and share data … |
+@@ -13999,8 +14161,8 @@
+ | `[THR-16]` | XI | When `main` returns, or `process.exit` is called, the process ends: … |
+ | `[THR-17]` | XI | *(new in 0.9.15)* What an unscoped thread holds, and the loop's own … |
+ | `[THR-18]` | XI | *(new in 0.9.15)* `Lock` and `guarded by`. A `Lock` is a lock with no … |
+-| `[THR-19]` | XI | *(new in 0.9.15)* A wait for a lock this thread holds is refused when … |
+-| `[THR-20]` | XI | *(new in 0.9.15)* Module variables and threads. A `static mut` … |
++| `[THR-19]` | XI | *(new in 0.9.15)* *(changed in 0.9.20)* A wait for a lock this thread … |
++| `[THR-20]` | XI | *(new in 0.9.15)* *(changed in 0.9.20)* Module variables and threads. … |
+ | `[THR-21]` | XI | *(new in 0.9.15)* Reductions. A task's `total += e` (and `-=`, `*=`, … |
+ 
+ ## TIER
+@@ -14077,10 +14239,10 @@
+ | `[TYP-10]` | IV | Shifts. `a << n` and `a >> n` accept any integer type for `n`. If `n` … |
+ | `[TYP-11]` | IV | A struct's default layout is C's: declaration order, natural … |
+ | `[TYP-12]` | IV | A unit-only enum is an integer (`@repr(u8)` and friends choose it; … |
+-| `[TYP-13]` | IV | *(changed in 0.9.15)* `Option[T]` has the size of `T` when `T` has a … |
++| `[TYP-13]` | IV | *(changed in 0.9.15)* *(changed in 0.9.20)* `Option[T]` has the size … |
+ | `[TYP-14]` | IV | *(changed in 0.9.15)* A reference, and an `owns T`, is read through … |
+ | `[TYP-15]` | IV | *(changed in 0.9.15)* Where views may be stored. A view may be stored … |
+-| `[TYP-15a]` | IV | The arena-backed containers (`ArenaArray`, `ArenaMap`, §IX.2) and the … |
++| `[TYP-15a]` | IV | *(changed in 0.9.20)* The arena-backed containers (`ArenaArray`, … |
+ | `[TYP-16]` | IV | Generic functions and types are monomorphised: each distinct … |
+ | `[TYP-17]` | IV | *(changed in 0.9.10)* *(changed in 0.9.15)* Type parameters are … |
+ | `[TYP-18]` | IV | Generic arguments are inferred from the arguments of a call. Explicit … |

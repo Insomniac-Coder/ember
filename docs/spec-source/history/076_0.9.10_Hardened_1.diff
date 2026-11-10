@@ -1,0 +1,300 @@
+--- Ember_v0.9.9_Hardened_52.md
++++ Ember_v0.9.10_Hardened_1.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_52
+-**Supersedes:** 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.10_Hardened_1
++**Supersedes:** 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -12,7 +12,12 @@
+ is resolved in Appendix G. Hardened_2 applies the memory-safety, consistency-and-speed and
+ ergonomics passes over Hardened_1 (`tasks/spec-0.9.9/passes/`); Appendix H §H.4 lists every change.
+ Hardened_3 and later record the ODRs raised while implementing 0.9.9 (from ODR-021, ruled under the
+-owner's delegation); Appendix H §H.5 lists them.
++owner's delegation); Appendix H §H.5 lists them. **0.9.10_Hardened_1** is the owner's design G8-4
++(`docs/proposals/G8-4-counts-and-positions.md`, decided 2026-10-05): every iterator counts and
++numbers its items in a type that holds every count and number it can have, stepping up only as far
++as the values need; it replaces ODR-089's `int` counts and ODR-091's backwards-`enumerate` panic and
++adds the count types `u256` and `i256`. It changes the set of accepted programs, so the language
++version moves (`[VER-9]`); Appendix H §H.6 lists every change.
+ 
+ ---
+ 
+@@ -826,6 +831,7 @@
+ |---|---|---|
+ | `i8 i16 i32 i64 i128` | 1 2 4 8 16 | two's complement |
+ | `u8 u16 u32 u64 u128` | 1 2 4 8 16 | |
++| `u256 i256` | 32 | the 256-bit counts: a count, not a general integer (`[TYP-42]`) |
+ | `isize usize` | pointer | for FFI and raw memory; not the size type (`[TYP-31]`) |
+ | `int` | 8 | prelude alias of `i64`; the default integer and the size and index type |
+ | `f16 f32 f64` | 2 4 8 | IEEE 754 binary16/32/64 |
+@@ -838,6 +844,19 @@
+ * `[TYP-2]` Producing a `bool` other than 0 or 1 is undefined behaviour and possible only in `unsafe`.
+ * `[TYP-3]` Producing a `char` outside the Unicode scalar values is undefined behaviour and possible
+   only in `unsafe`.
++* `[TYP-42]` *(new in 0.9.10)* **The 256-bit counts.** `u256` and `i256` are what the iterators over
++  ranges of 128-bit numbers count and number in (`[STD-19]`): a `..=` range of 128-bit numbers holds
++  up to 2^128 values, one more than a `u128` holds, so its `len()` is a `u256`, and `enumerate`
++  numbers such a range in `i256`, since its start may be negative. Each adds and subtracts (an
++  overflow is `[TYP-8]`'s), compares, prints and formats, hashes, and converts with `as` to and from
++  the other integer types: a narrowing cast takes the low bits and a cast between the two keeps them,
++  as every integer cast does; the narrower unsigned integers widen to `u256` and every integer to
++  `i256` (`[TYP-5]`). Each implements the operator interfaces of what it does: `Add`, `Sub`, `Neg`,
++  `AddAssign` and `SubAssign` (ODR-040). Nothing else: `*`, `/`, `//`, `%`, `**`, the bitwise
++  operators and shifts, the integer methods, `MIN` and `MAX`, a conversion to or from a float,
++  `parse`, and a range of one are `E2020` (a range of 256-bit numbers would need a 512-bit count).
++  As an index or a size (`[TYP-31]`), one that `usize` does not hold is out of bounds. A literal of one is within
++  `i128`'s range for an `i256` and `u128`'s for a `u256`. They are 32 bytes, aligned as `i128` is.
+ * `[TYP-27]` *(new in 0.9.9)* `()` is the value of type `void`; `Ok(())` is the success value of `Result[void, E]`. A
+   function with no `->` returns `void`. Written as a type, `()` is `void`: a tuple type has two or more
+   elements (ODR-071).
+@@ -924,9 +943,10 @@
+ * `[TYP-30]` *(new in 0.9.9)* **Powers.** `a ** b` with integer `a` and non-negative integer `b` is exact, and
+   overflows per `[TYP-8]`; a negative exponent is `E2151` when it is a constant and a panic when it is
+   not. A float base with a float or integer exponent is `pow`. Other combinations are `E2020`.
+-* `[TYP-31]` *(new in 0.9.9)* **Sizes and indices are `int`.** Every standard container's `len()` returns `int`.
++* `[TYP-31]` *(new in 0.9.9)* *(changed in 0.9.10)* **Sizes and indices are `int`.** Every standard container's `len()` returns `int`.
+   Indexing accepts an index of any integer type; an index that is negative or not less than the length
+-  panics (`index out of bounds`). There is no Python-style negative indexing: a negative literal index
++  panics (`index out of bounds`), whatever its width: one wider than `usize` is compared whole, never
++  cut to its low bits (D-527). There is no Python-style negative indexing: a negative literal index
+   is `E2011` (`[LEX-24]`). `usize` and `isize` remain for foreign interfaces and raw memory.
+ 
+ ### Floating point
+@@ -1867,19 +1887,24 @@
+   xs.iter_mut():` yields `ref mut T`.
+ * `[CTL-2]` The iterated place is borrowed for the whole loop; mutating it inside the loop is `E3020`,
+   whose help names `retain`, `drain`, collecting first, or an index loop.
+-* `[CTL-3]` `a..b` (`Range`), `a..=b` (`RangeInclusive`) and `a..` (`RangeFrom`) over integers are
++* `[CTL-3]` *(changed in 0.9.10)* `a..b` (`Range`), `a..=b` (`RangeInclusive`) and `a..` (`RangeFrom`) over integers are
+   iterable and compile to a counted loop with no iterator object. `a..=MAX` terminates after `MAX`;
+-  `a..` has no end, and counting up to its type's maximum is an overflow (`[TYP-8]`). A range is a
++  `a..` has no end: it gives its type's maximum, and the value after it is an overflow (`[TYP-8]`),
++  found when the loop or the iterator asks for it. A range is a
+   value (ODR-027): `Range[T]`, `RangeInclusive[T]`, `RangeFrom[T]` and `RangeTo[T]` (`..b`) are
+   prelude structs with public bounds, `start` and `end` (a `RangeFrom` has only `start`, a `RangeTo`
+   only `end`), and are `Copy` when `T` is. A `for` over a range value counts over a copy of its
+   bounds, so the range is unchanged and can be iterated again, as Python's `range` can.
+-* `[CTL-3b]` *(changed in 0.9.9)* Iteration over ranges, `Span`, `MutSpan`, `Array`, `[T; N]`, `SoA`
++* `[CTL-3b]` *(changed in 0.9.10)* Iteration over ranges, `Span`, `MutSpan`, `Array`, `[T; N]`, `SoA`
+   columns, and `enumerate`, `zip`, `take`, `skip`, `step_by`, `copied` and `rev` composed over them,
+   MUST compile to an induction-variable loop over base pointers and lengths, with no iterator object in
+   memory and no call per element, independent of the host C compiler's optimiser. `step_by(k)` becomes
+-  the increment `k` (a `k` that is not a positive constant is checked once before the loop).
+-  `tests/conformance/CTL-3b/` asserts it on the emitted C.
++  the increment `k` (a `k` that is not a positive constant is checked once before the loop). An
++  `enumerate` numbers in its position type (`[STD-19]`): over a range of 64-bit numbers whose
++  numbers are not visible, an `i128`, which no number of such a range passes. The loop has a copy
++  that computes such numbers as `int`s, taken after one test before it when every number fits one,
++  and computes them in their own type otherwise (G8-4 decision C); the numbers are the same either
++  way. `tests/conformance/CTL-3b/` asserts it on the emitted C.
+ * `[CTL-4]` The `else` of `while` or `for` runs when the loop ends without `break`.
+ * `[CTL-5]` A `match` tests arms top to bottom; the first that matches runs; a guard is evaluated after
+   binding; the arms MUST be exhaustive (`E2090`); an unreachable arm is `W2091`.
+@@ -3889,9 +3914,11 @@
+   is `E2072`, `no method 'append' on Array[int]`, whose help names the Ember method
+   (the full table is Appendix E). A Python name that Ember keeps (`partition`, `items`, `count`, and
+   the built-in functions of `[STD-26]`) keeps Python's meaning (`[PHIL-14]`).
+-* `[STD-26]` *(new in 0.9.9)* **Python's built-in functions.** The prelude has these functions, with
++* `[STD-26]` *(new in 0.9.9)* *(changed in 0.9.10)* **Python's built-in functions.** The prelude has these functions, with
+   Python's meaning; each borrows its argument as a `for` loop would (`[CTL-1]`):
+-  * `len(x) -> int` is `x.len()` for a collection, view or range. `len` of a `str` or `String` is
++  * `len(x)` is `x.len()`: an `int` for a collection or view, and for a range its count
++    (`[STD-19]`), in the smallest type that holds it where its numbers are written in place
++    (`len(0..n)` with `n: int` is an `int`). `len` of a `str` or `String` is
+     `E2073`: Python counts characters and Ember's `s.len()` counts bytes, so the help offers both
+     `s.char_count()` and `s.len()`.
+   * `range(stop)`, `range(start, stop)`, `range(start, stop, step)` count as Python's do, including a
+@@ -4097,7 +4124,7 @@
+ 
+ ## XV.5 Iterators
+ 
+-* `[STD-19]` *(new in 0.9.9)* Every `Iterator` has the adapters `map`, `filter`, `filter_map`,
++* `[STD-19]` *(new in 0.9.9)* *(changed in 0.9.10)* Every `Iterator` has the adapters `map`, `filter`, `filter_map`,
+   `enumerate`, `zip`, `chain`, `take`, `skip`, `take_while`, `skip_while`, `step_by`, `flat_map`,
+   `flatten`, `peekable`, `copied`, `cloned`, `inspect`, and `rev` where the iterator can run backwards;
+   and the consumers `count`, `sum`, `product`, `min`, `max`, `min_by_key`, `max_by_key`, `fold`,
+@@ -4109,22 +4136,50 @@
+   consumers can also be called directly on an `Iterable` value, borrowing it as `iter()` would:
+   `xs.enumerate()` is `xs.iter().enumerate()`, and a method of the collection's own of the same name
+   (`Array.join`) takes precedence. An adapter takes the iterator it wraps (`owned self`), and so
+-  does a consumer. Counts are `int`s, as `len` is (ODR-089): `take(n)` gives at most `n` items and
++  does a consumer. What a caller passes is an `int` (ODR-089): `take(n)` gives at most `n` items and
+   `skip(n)` leaves out the first `n`, `nth(n)` is the item at index `n` (`None` past the end),
+   `step_by(k)` gives the first item and then every `k`-th, and `enumerate(start=0)` numbers from
+   `start` as `[STD-26]`'s `enumerate` does. A negative count or index, or a `k` of zero or less,
+   is the caller's bug and panics when the adapter is made or the consumer called (`[STD-14]`),
+-  never partway through. An iterator can run backwards when it implements `DoubleEndedIterator`,
+-  whose `next_back(mut self) -> Option[Item]` gives the last item not yet given from either end
+-  (with `next`, the two ends meet and no item comes twice) and whose method `rev` is, so `rev` is
+-  exactly where an iterator can run backwards; `ExactSizeIterator`'s `len(self) -> int` is how many
+-  items are left (ODR-091). Both are in `std.core` and are not prelude names (`[MOD-5]`). The
+-  iterators of the ranges with an end and the element iterators of the views run backwards and know
+-  their length; `copied`, `cloned` and `chain` run backwards when what they wrap does, and `take`,
+-  `skip`, `step_by`, `enumerate` and `zip` when it also knows its length, giving the items `next`
+-  would, last first; each knows its length when what it wraps does. Run backwards, `enumerate`
+-  numbers its last item `start + len - 1` first, so a number past `int`'s top panics at the first
+-  item. `collect[C]()` builds any `C` that implements `FromIterator[Item]` (ODR-094), an interface of
++  never partway through. **Counts and numbers** (the owner's design G8-4, 0.9.10): what Ember
++  hands back is in the smallest type that holds every value the iterator can give. `Iterator` has
++  the associated types `Count`, what `len()`, `count()` and `position()` give, and `Position`, what
++  `enumerate` numbers its items with; each is `int` unless the iterator says otherwise, and each
++  implements `std.core.ItemCount` (`int`, `u64`, `u128`, `u256`, `i128` and `i256` do), which
++  gives the count operations (`of`, `plus`, `less`, `exceeds`, `to_int`, and `as_count[C]()` from
++  one count type to another that holds it). Stored items (arrays, views, text, maps, sets) and
++  ranges of 8-, 16- or 32-bit numbers count and number in `int`; a `..` range of 64-bit numbers
++  counts in `u64` and a `..=` one in `u128`, a `..` range of 128-bit numbers in `u128` and a `..=`
++  one in `u256` (`[TYP-42]`); ranges of 64-bit numbers number in `i128` and of 128-bit numbers in
++  `i256`, from a start that may be negative. An adapter that never gives more items than it takes
++  counts and numbers as what it wraps. `chain` counts its two sides together, stepping up only as
++  far as needed: two `int` counts stay an `int` (stored items and small ranges cannot come near its
++  top), otherwise the count is one level above the wider side's (`u64`, then `u128`, then `u256`),
++  and it numbers in the type that holds both sides' numbers; `flatten` and `flat_map` count in the
++  level that holds the outer count times the inner one (an `int` by an `int` stays an `int`).
++  `u256` is the limit: a count past it panics. In generic code these are the counts of the types
++  involved, filled in for each use. **The visible-numbers rule:** where a range's numbers are
++  written at the place it is numbered or measured (`(0..n).iter().enumerate()`,
++  `(0..10).iter().len()`, `len(0..n)`), `enumerate` numbers, and `len` and `count` measure, in the
++  smallest of `int`, `u64`, `i128`, `u128` and `i256` that holds every value the loop can give,
++  read from the bounds written as numbers, the bounds' types, what `take`, `skip`, `step_by`, `zip` and `chain` allow, and
++  `enumerate`'s start; never in a wider type than the iterator's own. An iterator kept in a
++  variable shows no numbers. An iterator can run backwards when it implements
++  `DoubleEndedIterator`, whose `next_back(mut self) -> Option[Item]` gives the last item not yet
++  given from either end (with `next`, the two ends meet and no item comes twice) and whose method
++  `rev` is, so `rev` is exactly where an iterator can run backwards; `ExactSizeIterator`'s
++  `len(self) -> Count` is how many items are left (ODR-091). `skip_front(n)` and `skip_back(n)`
++  leave out up to `n` items (a `Count`) from either end and give how many of the `n` they could
++  not, and `nth_back(n)` leaves out `n` from the back and gives the one before them; a range does
++  each at once, and `rev`, `copied`, `take`, `skip`, `zip`, `chain`, and `enumerate` from the back
++  pass them down, so none of them passes a gigantic run of items one at a time. `ItemCount`,
++  `DoubleEndedIterator` and `ExactSizeIterator` are in `std.core` and are not prelude names
++  (`[MOD-5]`). The iterators of the ranges with an end and the element iterators of the views run
++  backwards and know their length; `copied`, `cloned` and `chain` run backwards when what they wrap
++  does, and `take`, `skip`, `step_by`, `enumerate` and `zip` when it also knows its length, giving
++  the items `next` would, last first; each knows its length when what it wraps does. Run backwards,
++  `enumerate` numbers its last item `start + len - 1` first; a number past its type's top panics,
++  as `int.MAX + 1` does. `collect[C]()` builds any `C` that implements `FromIterator[Item]` (ODR-094), an interface of
+   `std.core` that is not a prelude name: `interface FromIterator[T]: fn from_iter[I: Iterator[Item =
+   T]](owned it: I) -> Self`. `Array[T]`, `Set[T]`, `Map[K, V]` (from `(K, V)` pairs, a later pair's
+   value replacing an earlier one's for the same key) and `String` (from `char`s and from `String`s)
+@@ -6928,7 +6983,7 @@
+ | ODR-024 | a borrowed or `mut` parameter whose type is not `Copy` is a source parameter a returned view may borrow, and a borrowed parameter is passed by address except a view or a `Copy` value holding no `Cell` (Hardened_5) | `[LT-1]`, `[LT-1a]`, `[LT-1b]`, `[LT-7]`, `[LT-44]`, `[FN-1]`, `[FN-3]`, `[FN-6]`, `[BRW-8]`, `[CORO-6]`, §VIII.3, §XVII.6 B7, §XVII.9, Appendix F |
+ | ODR-025 | `[ERR-4]`'s methods that take a function are eager, move the payload in (`filter` borrows it) and take `once fn`; an unannotated lambda parameter takes `owned` from the expected callable type, never `mut` (Hardened_6) | `[ERR-4]`, `[CLO-7]`, `[TYP-23]` |
+ | ODR-026 | a type that declares `drop` is not implicitly `Clone`; `@derive(Clone)` or a written `clone` gives it one (Hardened_7) | `[STR-5]` |
+-| ODR-027 | a range is a value: the prelude's range types are structs with public bounds, `Copy` when the bound is, and a `for` over one counts over a copy of its bounds, leaving it unchanged; `a..` overflows at its type's maximum (Hardened_8) | `[CTL-3]`, `[STD-8]`, `[STD-26]` |
++| ODR-027 | a range is a value: the prelude's range types are structs with public bounds, `Copy` when the bound is, and a `for` over one counts over a copy of its bounds, leaving it unchanged; `a..` overflows past its type's maximum (Hardened_8; since 0.9.10 it gives the maximum first, D-526) | `[CTL-3]`, `[STD-8]`, `[STD-26]` |
+ | ODR-028 | a method named like an inherited one replaces it: without `override` over a virtual method it is `E2111`, over a non-virtual one `E2110`; an `override` is itself virtual (Hardened_9) | `[CLS-4]` |
+ | ODR-029 | `parse[T]()` reads the whole text strictly (no white space; an optional sign and digits for integers, Rust's float grammar with `inf`/`nan`, `true`/`false`, one character), and `ParseError` is `Empty`, `Invalid` or `Overflow` (Hardened_10) | `[TXT-10]` |
+ | ODR-030 | `extend` is a contextual keyword, a keyword only at the start of an item before the type it extends, so `Array` can have its `extend` method (Hardened_11) | `[LEX-15]` |
+@@ -7001,9 +7056,10 @@
+ | ODR-094 | the owner's: `collect[C]()` builds any `C` implementing `std.core.FromIterator[Item]` (`Array`, `Set`, `Map` from pairs, `String` from `char`s and `String`s, and a program's types), `C` written or the type the call is expected to give; `peekable` gives `peek`, `peek_mut`, `next_if` and `next_if_eq`; `Option`'s `as_ref` and `as_mut` reference the payload where it is; `Box[T]` and `Cell[T]` show as the `T` they hold (Hardened_51) | `[STD-19]`, `[ERR-4]`, `[TYP-39]` |
+ | ODR-098 | String capacity is measured in bytes; reserve asks for additional bytes; insert takes a byte offset and a char, remove returns that char, truncate keeps a byte prefix, and shrinking retains capacity, with UTF-8 boundary and integer-size checks in every profile (Hardened_52) | `[TXT-11]`, `[TXT-4]`, `[TYP-31]`, `[HEAP-8]` |
+ 
+-Generated: every rule whose text differs from Hardened_2.
+-
+-| Rule | H2 → now |
++Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
++0.9.9.
++
++| Rule | H2 → Hardened_52 |
+ |---|---|
+ | `[ALC-1]` | changed |
+ | `[ARN-3]` | changed |
+@@ -7124,6 +7180,48 @@
+ | `[TYP-38]` | changed |
+ | `[TYP-39]` | changed |
+ | `[TYP-41]` | added |
++
++## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
++
++**0.9.10_Hardened_1** is the owner's design G8-4 (`docs/proposals/G8-4-counts-and-positions.md`,
++decided 2026-10-05, built with `docs/MIGRATION-0.9.10.md`). It changes what programs are accepted,
++so it is a new language version (`[VER-9]`):
++
++* Every iterator counts and numbers its items in a type that holds every count and number it can
++  have: `Iterator.Count` and `Iterator.Position`, `int` unless the iterator says otherwise; ranges
++  of 64-bit numbers count in `u64` (`..`) and `u128` (`..=`) and number in `i128`; ranges of
++  128-bit numbers count in `u128` (`..`) and `u256` (`..=`) and number in `i256` (`[STD-19]`).
++  This replaces ODR-089's "counts are `int`s" for what Ember hands back (what a caller passes stays
++  an `int`) and ODR-091's backwards-`enumerate` panic.
++* `chain`, `flatten` and `flat_map` step up only as far as their counts need (`u256` the limit).
++* The visible-numbers rule: where a range's numbers are written in place, `enumerate`, `len` and
++  `count` give the smallest type that holds the values (`[STD-19]`, `[STD-26]`).
++* `skip_front`, `skip_back` and `nth_back` leave out items at once through the adapters, so none
++  passes a gigantic run of items one at a time (`[STD-19]`).
++* `u256` and `i256`, the 256-bit counts (`[TYP-42]`).
++* `a..` gives its type's maximum and panics only when the value after it is asked for, in a `for`
++  and through its iterator, which leaves values out at once (`[CTL-3]`, D-526; ODR-027 said the
++  loop overflowed on reaching the maximum).
++* `for i in a..=T.MAX` ends after `T.MAX`, as `[CTL-3]` said (D-525: it ran forever).
++* An index or a size wider than `usize` that `usize` does not hold is out of bounds (`[TYP-31]`,
++  D-527: its low bits were used).
++* `i256` and `u256` implement `Add`, `Sub`, `Neg`, `AddAssign` and `SubAssign` (ODR-040); `parse`
++  does not read them (`[TYP-42]`).
++* A loop numbering in a type wider than 64 bits has a copy computing the numbers as `int`s, taken
++  when every number fits one (`[CTL-3b]`, the owner's decision C).
++* A program that put such a count or number into an `int` converts it (`as int`, or `to_int()` in
++  generic code); `docs/MIGRATION-0.9.10.md` lists the cases.
++
++Generated: every rule whose text differs from Hardened_52.
++
++| Rule | Hardened_52 → 0.9.10_Hardened_1 |
++|---|---|
++| `[CTL-3]` | changed |
++| `[CTL-3b]` | changed |
++| `[STD-19]` | changed |
++| `[STD-26]` | changed |
++| `[TYP-31]` | changed |
++| `[TYP-42]` | added |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -7414,8 +7512,8 @@
+ | `[CTL-0]` | VI | The condition of `if`, `elif`, `while` and a match guard MUST be a … |
+ | `[CTL-1]` | VI | `for pattern in e:` iterates: * a place `e` whose type is `Iterable`: … |
+ | `[CTL-2]` | VI | The iterated place is borrowed for the whole loop; mutating it inside … |
+-| `[CTL-3]` | VI | `a..b` (`Range`), `a..=b` (`RangeInclusive`) and `a..` (`RangeFrom`) … |
+-| `[CTL-3b]` | VI | Iteration over ranges, `Span`, `MutSpan`, `Array`, `[T; N]`, `SoA` … |
++| `[CTL-3]` | VI | *(changed in 0.9.10)* `a..b` (`Range`), `a..=b` (`RangeInclusive`) … |
++| `[CTL-3b]` | VI | *(changed in 0.9.10)* Iteration over ranges, `Span`, `MutSpan`, … |
+ | `[CTL-4]` | VI | The `else` of `while` or `for` runs when the loop ends without … |
+ | `[CTL-5]` | VI | A `match` tests arms top to bottom; the first that matches runs; a … |
+ | `[CTL-6]` | VI | `with a = e1, b = e2:` binds `a` and `b` for the block and drops them … |
+@@ -8284,14 +8382,14 @@
+ | `[STD-16]` | XV | `Map` operations. `m[k]` reads the value and panics when the key is … |
+ | `[STD-17]` | XV | Index assignment. `a[i] = v` calls `IndexSet.index_set(i, v)` when … |
+ | `[STD-18]` | XV | `format(value, spec="") -> String` formats one value with a format … |
+-| `[STD-19]` | XV | Every `Iterator` has the adapters `map`, `filter`, `filter_map`, … |
++| `[STD-19]` | XV | *(changed in 0.9.10)* Every `Iterator` has the adapters `map`, … |
+ | `[STD-20]` | XV | Integer methods, built into every integer type: `abs` (a signed `MIN` … |
+ | `[STD-21]` | XV | `std.math` provides `PI`, `TAU`, `E`; `sin`, `cos`, `tan`, `asin`, … |
+ | `[STD-22]` | XV | Every operation that touches the outside world returns `Result[T, … |
+ | `[STD-23]` | XV | `time.Instant.now()` is monotonic and `Nondet`; `Duration` is an … |
+ | `[STD-24]` | XV | `process.exit(code) -> Never` flushes the standard streams and exits … |
+ | `[STD-25]` | XV | `random.Rng.seeded(seed)` is a deterministic generator (the same seed … |
+-| `[STD-26]` | XV | Python's built-in functions. The prelude has these functions, with … |
++| `[STD-26]` | XV | *(changed in 0.9.10)* Python's built-in functions. The prelude has … |
+ | `[STD-27]` | XV | `std.math.Number` is every number type. `std.math` adds each with an … |
+ | `[STD-28]` | XV | Vectors, matrices, rotations and shapes (ODR-043). `std.math` has … |
+ 
+@@ -8431,7 +8529,7 @@
+ | `[TYP-28]` | IV | Division. `/` is true division and applies to floats. `/` with two … |
+ | `[TYP-29]` | IV | For floats, `//` and `%` are Python's (ODR-021). `a % b` is the exact … |
+ | `[TYP-30]` | IV | Powers. `a  b` with integer `a` and non-negative integer `b` is … |
+-| `[TYP-31]` | IV | Sizes and indices are `int`. Every standard container's `len()` … |
++| `[TYP-31]` | IV | *(changed in 0.9.10)* Sizes and indices are `int`. Every standard … |
+ | `[TYP-32]` | IV | `some I` in a return type means "one concrete type, chosen by the … |
+ | `[TYP-34]` | IV | *(replaces the 0.9.8 `@view` requirement)* A struct, enum or tuple … |
+ | `[TYP-35]` | IV | A type parameter need not appear in any field (a phantom parameter): … |
+@@ -8441,6 +8539,7 @@
+ | `[TYP-39]` | IV | Collections, tuples and `Option`/`Result` implement `Display` the way … |
+ | `[TYP-40]` | IV | Interfaces are nominal. A type implements an interface only through … |
+ | `[TYP-41]` | IV | Const arguments. A `const` generic argument, like an array length, is … |
++| `[TYP-42]` | IV | *(new in 0.9.10)* The 256-bit counts. `u256` and `i256` are what the … |
+ 
+ ## UNS
+ 

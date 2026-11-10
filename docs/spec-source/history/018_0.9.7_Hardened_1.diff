@@ -1,0 +1,252 @@
+--- Ember_v0.9.6_Hardened_6.md
++++ Ember_v0.9.7_Hardened_1.md
+@@ -1,29 +1,32 @@
+ # Ember Programming Language — Design & Implementation Specification
+ 
+-**Version:** 0.9.6_Hardened_6
++**Version:** 0.9.7_Hardened_1
+ **Status:** Frozen development target; implementation/conformance evidence is not claimed and normative repository adoption still requires the recorded adoption gates
+-**Immediate predecessor:** 0.9.6_Hardened_5
++**Immediate predecessor:** 0.9.6_Hardened_6
+ **Versioning model:** A hardening increments `Hardened_N` when it only adds implementation detail,
+ invariants, tooling requirements, or editorial clarification without changing accepted language
+ semantics. A language revision is required when the accepted-program set or another normative
+ language semantic changes; implementation completion by itself does not move the language version.
+-The 0.9.5 language revision introduced inferred multi-region view structs. This owner-selected
+-0.9.6 architecture-line revision preserves the 0.9.5 accepted/rejected program sets and observable
+-semantics while consolidating the reference compiler around shared semantic facts, explicit MIR
+-analysis/verification boundaries, and one capability model. It also incorporates the owner-approved
+-clarification of `[ARN-10]` under v1's abort-only panic policy. The new `0.9.6` version selector is
+-additive; it does not silently change a module that selected an older contract. No implementation or
+-conformance result is asserted merely because the specification requires one. The H5 predecessor
+-incorporated the owner-approved ODR-011 completion of the previously named but under-specified
+-Arena-backed collection surface, the owner-approved ODR-012 completion of the `Hash`/`Hasher`
+-boundary on which the Map contracts already depended, and the owner-approved post-H4 simplicity
+-consolidation. This H6 successor completes the already advertised `Span[T]`/`MutSpan[T]` iterator,
+-chunk, and raw-pointer surface through the owner-approved ODR-014 contract.
+-
+-> **Authority boundary:** This frozen revision records the owner-selected 0.9.6 development target, but
++The owner-approved `@latebound` callable-type boundary changes which callback-return and escape
++programs are accepted, so this is the additive **0.9.7 language revision** and the hardening counter
++resets to 1. `0.9.6_Hardened_6` remains its immutable immediate predecessor. `@latebound` adds one
++reusable callable-boundary contract while keeping region variables compiler-internal: it creates no
++named-lifetime language, runtime metadata, ABI field, reload-schema field, compiler intrinsic, or
++alternative ownership system. No implementation or conformance result is asserted merely because
++this frozen target specifies one.
++
++> **Authority boundary:** This frozen revision records the owner-selected 0.9.7 development target, but
+ > `docs/spec-source/ember-spec.md` remains the repository's sole normative source until this
+ > target passes the adoption gates and is explicitly installed. The immutable received file
+ > is preserved under `docs/spec-source/as-received/`.
++
++> **LATE-BOUND CALLBACK BOUNDARY COMPLETED:** on 2026-09-14 the owner resolved ODR-015 by selecting
++> `@latebound` as a callable-type modifier. H6 remains immutable. A `@latebound fn(...) -> R` boundary
++> supplies fresh invocation-local regions for its borrowed/view parameters without exposing region names
++> in source. The modifier is part of compile-time callable identity, generic substitution, interface
++> compatibility, call checking, and incremental invalidation, but is absent from runtime values, ABI
++> bytes, reload schemas, and source-visible lifetime identities. `std.borrow.with_views*` remains an
++> ordinary library API; no compiler recognition of those names is permitted.
+ 
+ > **SOURCE RECOVERY AND CALLABLE-MODE BOUNDARY COMPLETED:** on 2026-09-12 the owner supplied the missing
+ > Hardened 14 definitions (H5), selected explicit all-mutable `_mut` variants (H6), and then extended
+@@ -581,35 +584,36 @@
+ 
+   ```text
+   with_views2[A, B, R](a: Span[A], b: Span[B],
+-                       f: fn(Span[A], Span[B]) -> R) -> R
++                       f: @latebound fn(Span[A], Span[B]) -> R) -> R
+   with_views3[A, B, C, R](a: Span[A], b: Span[B], c: Span[C],
+-                          f: fn(Span[A], Span[B], Span[C]) -> R) -> R
++                          f: @latebound fn(Span[A], Span[B], Span[C]) -> R) -> R
+   with_views4[A, B, C, D, R](a: Span[A], b: Span[B], c: Span[C], d: Span[D],
+-                             f: fn(Span[A], Span[B], Span[C], Span[D]) -> R) -> R
++                             f: @latebound fn(Span[A], Span[B], Span[C], Span[D]) -> R) -> R
+ 
+   with_views2_mut[A, B, R](mut a: MutSpan[A], mut b: MutSpan[B],
+-                           f: fn(mut MutSpan[A], mut MutSpan[B]) -> R) -> R
++                           f: @latebound fn(mut MutSpan[A], mut MutSpan[B]) -> R) -> R
+   with_views3_mut[A, B, C, R](mut a: MutSpan[A], mut b: MutSpan[B],
+                               mut c: MutSpan[C],
+-                              f: fn(mut MutSpan[A], mut MutSpan[B],
++                              f: @latebound fn(mut MutSpan[A], mut MutSpan[B],
+                                     mut MutSpan[C]) -> R) -> R
+   with_views4_mut[A, B, C, D, R](mut a: MutSpan[A], mut b: MutSpan[B],
+                                  mut c: MutSpan[C], mut d: MutSpan[D],
+-                                 f: fn(mut MutSpan[A], mut MutSpan[B],
++                                 f: @latebound fn(mut MutSpan[A], mut MutSpan[B],
+                                        mut MutSpan[C], mut MutSpan[D]) -> R) -> R
+   ```
+ 
+   The exact public spelling MAY use the module's overload convention, but the arity, mutability, and
+-  type relationships MUST remain these. Their callback boundary uses `[LT-7]` late-bound regions,
++  type relationships MUST remain these. Their callback boundary is explicitly `@latebound` under
++  `[FN-6b]` and uses `[LT-7]` late-bound regions,
+   so each supplied view receives its own invocation-local region. The callback MUST complete before
+   those regions end, and the helpers MUST return only values that do not contain those borrowed
+   regions. The helpers are ordinary library APIs; they are not compiler-special ownership types.
+ 
+-* `[LT-8a]` **Callbacks retain callable modes.** The callback parameter of each `with_views` helper
+-  MUST use `[FN-6a]`'s canonical callable representation. Shared helpers require corresponding
++* `[LT-8a]` **Callbacks retain callable modes and boundary kind.** The callback parameter of each
++  `with_views` helper MUST use `[FN-6a]`/`[FN-6b]`'s canonical callable representation. Shared helpers require corresponding
+   shared (`borrowed`) callback parameters; `_mut` helpers require corresponding `mut` callback
+   parameters. The compiler MUST reject an incompatible callable and MUST NOT erase callback modes
+-  merely because the callable passes through `Callable[Args, R]`.
++  or the `@latebound` fact merely because the callable passes through `Callable[Args, R]`.
+ 
+ * `[LT-9]` **Independent regions are preserved.** A `with_views` invocation MUST NOT force all
+   input views into the same region merely because they are passed to one callback. Each callback
+@@ -642,7 +646,8 @@
+   2. mutable `with_views2/3/4_mut` callbacks using `mut` parameters;
+   3. rejection of aliased mutable inputs;
+   4. rejection of callbacks whose parameter modes do not permit the required mutation;
+-  5. preservation of ordinary `mut`/`owned` parameter semantics inside callable types.
++  5. preservation of ordinary `mut`/`owned` parameter semantics inside callable types;
++  6. rejection of a `with_views*_mut` result that would contain an invocation-local view region.
+ 
+   This resolution supersedes any wording that treats `_mut` as implicitly encoding parameter
+   ownership or as requiring a special ownership rule for `MutSpan[T]`. `_mut` identifies the API
+@@ -657,7 +662,9 @@
+   4. preservation of `mut` callback parameters through `Callable[Args, R]`;
+   5. rejection when `Callable[Args, R]` would erase or mismatch a required parameter mode;
+   6. generic forwarding of a mode-bearing callable without loss of its borrow or mutability
+-     semantics.
++     semantics; and
++  7. late-bound callback-region freshness, nested-boundary separation, and rejection of callback
++     results or publication paths that retain an invocation-local view region.
+ 
+   This closes the two formerly deferred boundaries: helper input modes follow ordinary Ember
+   parameter rules, and `Callable[Args, R]` preserves modes as part of the canonical callable type
+@@ -1994,6 +2001,7 @@
+ | 0.9.6_Hardened_4 | Owner-approved callable/interface completion | closed ODR-013 by making `Hash.hash` statically generic over `H: Hasher`, confirming `DefaultHasher implements Hasher`, and excluding implicit dynamic/interface coercion |
+ | 0.9.6_Hardened_5 | Owner-approved architecture/process hardening | materialized the post-H4 simplicity RFC through derived-only compiler aggregates, conservative unknown handling, reuse/inference gates, semantic diagnostics, complexity accounting, generated view-contract documentation, and separate authority/evidence ledgers without changing source semantics |
+ | 0.9.6_Hardened_6 | Owner-approved standard-library API and safety-boundary completion | closed ODR-014 with named Span iterator/chunk view types, exact shared/mutable reborrow contracts, all-profile zero-chunk panic, safe raw-pointer extraction, and existing-unsafe pointer use; normalized shared raw-pointer spelling to Ember's canonical `*T` |
++| 0.9.7_Hardened_1 | **Owner-approved language revision** | closed ODR-015 with the explicit `@latebound` callable-type boundary: fresh invocation-local callback regions, binder-free results, compiler-only callable identity/EMIF facts, and ordinary library APIs rather than name-specific compiler behavior |
+ 
+ ---
+ 
+@@ -2196,6 +2204,33 @@
+    `VERIFIED`, and `CONFORMANT`.
+ 5. Missing implementation artifacts are reported as gaps; the specification does not simulate their
+    existence.
++
++## 0.9.7_Hardened_1 Audit Record
++
++**Version treatment:** owner-approved language revision. The new source-level `@latebound`
++callable-type modifier changes the accepted/rejected program set at callback boundaries, so H6 is
++immutable and this successor resets the hardening number rather than claiming an implementation-only
++clarification. The modifier adds no named lifetime syntax and no runtime or ABI representation.
++
++| ID | Classification | Resolution |
++|---|---|---|
++| AUD-097-01 | Owner-approved language/API boundary | Closed ODR-015 with `@latebound` on callable types, never on named function declarations and never by compiler recognition of a library name. |
++| AUD-097-02 | Lifetime and escape preservation | Bound fresh invocation-local regions to the callback boundary and required its result to be free of those regions; ordinary region/escape diagnostics remain authoritative. |
++| AUD-097-03 | Compiler-only contract identity | Required the boundary fact through canonical callable identity, generic substitution, expected-callable checking, EMIF/interface compatibility, and incremental invalidation, while excluding runtime metadata, ABI bytes, reload schemas, and source-visible region identities. |
++| AUD-097-04 | Conformance boundary | Required adversarial escape, storage, owned-capture, FFI-publication, freshness, and nested-boundary cases without introducing a bespoke `with_views` diagnostic or compiler intrinsic. |
++
++**Amendment:** `HC-097-01` records the owner-approved ODR-015 language revision. H6 remains
++byte-for-byte unchanged as H1's immediate predecessor. `0.9.7_Hardened_1` MUST NOT replace
++`docs/spec-source/ember-spec.md` until every H6 condition remains green and executable evidence
++proves the complete `[LT-7]`, `[LT-8]`–`[LT-10]`, `[FN-6b]`, and updated `[TST-20]`/`[TST-21]`
++matrix.
++
++## 0.9.7_Hardened_1 Evidence Status — No Implementation Claim
++
++This H1 file is a frozen development target. The adopted repository specification remains
++`docs/spec-source/ember-spec.md` (`0.8.5_Hardened_1`). `@latebound` is **SPECIFIED**, not
++implemented or conformant, until parser, canonical type/EMIF facts, higher-ranked invocation-region
++checking, diagnostics, generated-code inspection, and adversarial conformance evidence are recorded.
+ 
+ ## 0.9.6_Hardened_6 Audit Record
+ 
+@@ -2500,7 +2535,7 @@
+ 
+ **Historical lineage:** 0.8.5 is additive over 0.8.4, which is additive over 0.8.3. S1 made
+ 0.8.4; owner-approved S2, S3, and S4 made 0.8.5. This is ancestry, not the immediate predecessor
+-of the current H6 document, which is identified in the front matter.
++of the current H1 document, which is identified in the front matter.
+ 
+ **Compatibility:** 0.9.5 retains the supported 0.9 and 0.8.x source contracts except where a
+ language revision explicitly selected new semantics. Version selection is governed by `[MOD-6]`
+@@ -3432,7 +3467,7 @@
+ ref_type        := "ref" ["mut"] type
+ ptr_type        := "*" ["mut"] type                                     (* raw pointer *)
+ tuple_type      := "(" ")" | "(" type "," [type {"," type}] ")"
+-fn_type         := ["extern" string_lit] "fn" "(" [fn_type_param {"," fn_type_param}] ")" ["->" type]
++fn_type         := ["@latebound"] ["extern" string_lit] "fn" "(" [fn_type_param {"," fn_type_param}] ")" ["->" type]
+ fn_type_param   := [("mut" | "owned")] type
+ dyn_type        := "dyn" bound_list
+ array_type      := "[" type ";" expression "]"                          (* fixed-size inline array, e.g. [f32; 16] *)
+@@ -3964,8 +3999,8 @@
+ * `[MOD-3]` `import a.b.c` binds `c` as a namespace; `from a.b import x, y as z` binds items; `import a.b.c as d` renames. `from a.b import *` is permitted only for `prelude` modules declared `@prelude` (`E1040` otherwise).
+ * `[MOD-4]` Import cycles within a package are allowed (name resolution is package-wide); cycles between packages are `E1041`.
+ * `[MOD-5]` `std.prelude` is imported implicitly into every module: `Option, Some, None, Result, Ok, Err, Array, String, str, Span, MutSpan, Box, Shared, Weak, print, println, assert, assert_eq, panic, Copy, Clone, Drop, Eq, Ord, Hash, Debug, Display, Default, Iterator, Iterable, Send, Sync`.
+-* `[MOD-6]` A module MAY declare a supported language version with `#! language "X.Y"` on its first line; the package's `ember.toml` `language` key is the default. Mismatch with the compiler's supported set is `E0006`. The compiler's supported set MUST include every language version whose source it still accepts. For this revision the supported set MUST include `"0.9.6"`, `"0.9.5"`, `"0.9"`, `"0.8.5"`, `"0.8.4"`, and `"0.8.3"`. Selecting an older version selects that version's accepted-program and semantic rules; it does not silently opt the module into later language semantics. *(hardened 2026-09-13; HC-096-01)*
+-* `[MOD-6a]` **Patch-level language revisions.** A language version MAY be written as `X.Y` or `X.Y.Z`. `0.9` remains the pre-0.9.5 0.9 language contract; `0.9.5` selects inferred multi-region-view semantics; and `0.9.6` preserves the complete 0.9.5 source-language accepted/rejected program sets and observable semantics while selecting this revision's reference-implementation and conformance contract. The compiler MUST NOT silently enable `0.9.5` or `0.9.6` semantics for a module that explicitly selects `0.9`. The supported set is exactly the set stated by `[MOD-6]`; this rule explains why `"0.9"`, `"0.9.5"`, and `"0.9.6"` remain distinct selectable contracts even where the latter two accept and interpret ordinary source identically. The package manifest and module directive MUST resolve to the same exact language contract after normalization.
++* `[MOD-6]` A module MAY declare a supported language version with `#! language "X.Y"` on its first line; the package's `ember.toml` `language` key is the default. Mismatch with the compiler's supported set is `E0006`. The compiler's supported set MUST include every language version whose source it still accepts. For this revision the supported set MUST include `"0.9.7"`, `"0.9.6"`, `"0.9.5"`, `"0.9"`, `"0.8.5"`, `"0.8.4"`, and `"0.8.3"`. Selecting an older version selects that version's accepted-program and semantic rules; it does not silently opt the module into later language semantics. *(updated 2026-09-14; ODR-015)*
++* `[MOD-6a]` **Patch-level language revisions.** A language version MAY be written as `X.Y` or `X.Y.Z`. `0.9` remains the pre-0.9.5 0.9 language contract; `0.9.5` selects inferred multi-region-view semantics; `0.9.6` preserves the complete 0.9.5 source-language accepted/rejected program sets and observable semantics while selecting that revision's reference-implementation and conformance contract; and `0.9.7` adds the explicit `@latebound` callable-type boundary of `[FN-6b]`/`[LT-7]`. The compiler MUST NOT silently enable `0.9.5`, `0.9.6`, or `0.9.7` semantics for a module that explicitly selects `0.9`. The supported set is exactly the set stated by `[MOD-6]`; the package manifest and module directive MUST resolve to the same exact language contract after normalization.
+ * `[MOD-7]` **Read-only visibility for fields.** A field declared `pub(read)` (or `pub(package, read)`) may be **read** wherever a `pub` (respectively `pub(package)`) field could be read, but may be **written only from the declaring module**. Outside the declaring module, the following are errors `E1050 field is read-only outside its module`: assignment (`h.value = x`, augmented assignment), taking `ref mut h.value`, passing `h.value` to a `mut` parameter or `mut self` method, and destructuring it with a mutable binding. Reading, copying, taking `ref h.value`, and passing it to a borrowed parameter are allowed. `read` applies to fields of structs and classes only; on any other item it is `E1051`. Because construction is a write, a `pub(read)` field does not count as `pub` for the purpose of the synthesised memberwise constructor (`[STR-1]`).
+ 
+   Summary of field visibility:
+@@ -4025,6 +4060,15 @@
+   `Callable[Args, R]` source notation cannot directly spell the modes, the compiler carries the
+   callable's full mode-bearing signature in its internal canonical callable type. This is not a
+   second ownership system.
++* `[FN-6b]` **Late-bound callable types.** `@latebound` is permitted only immediately before a
++  callable type, as in `@latebound fn(Span[T]) -> R`; it is not an item attribute and does not alter
++  the declaration or ordinary uses of the function value supplied to that boundary. It marks a
++  callable boundary at which the callee selects fresh, invocation-local regions for every borrowed
++  or view parameter under `[LT-7]`. The modifier is part of canonical callable type identity and
++  MUST survive generic bounds, substitution, expected-callable checking, interface compatibility,
++  and incremental invalidation. It MUST NOT create named source regions, runtime metadata, ABI
++  bytes, reload-schema data, or a separate dispatch or ownership model. An ordinary `fn(...) -> R`
++  remains an ordinary callback boundary.
+ * `[FN-7]` Recursion is permitted; the compiler does not guarantee tail-call elimination in v1.
+ * `[FN-8]` `main` is `fn main()`, `fn main() -> Result[void, E]` (`E: Error`), or `fn main(args: Span[str])` variants. A non-`Ok` result prints the error with `Display` to stderr and exits with code 1.
+ * `[FN-2a]` The compiler forms the borrow the callee's declared mode requires. If the argument is not a suitable place for that mode, it reports shape **B10** naming the place required. **A call site never writes the mode** (owner decision `OQ-13`): `f(x)` is written whether `f` declares `x`, `mut x` or `owned x`, preserving Part 0 row 3's guarantee that call sites never carry a sigil. The mode is read from the callee's signature, and `ember inspect` and the editor's inlay hints (`[IDE-7]`) surface it at the argument.
+@@ -4348,7 +4392,18 @@
+ 
+ * `[LT-4b]` **The Arena exception is narrow.** `@borrows` MAY name a non-view `Arena` parameter only for a returned view proven to derive from storage owned by that arena. It MUST NOT manufacture a general region relationship for an arbitrary non-view parameter, an owned return, or a view derived from some other source. Every other non-view parameter remains forbidden in `@borrows` with `E2031`.
+ * `[LT-1b]` **Intersection is reported at the definition.** When rule 3 assigns a view-typed return the intersection of two or more view-typed parameters' regions and the function carries no `@borrows`, the compiler emits the **opt-in lint** `L3014 return region is the intersection of N parameters` at the function's declaration, listing every parameter the caller will be unable to use while the result is live, and naming `@borrows` as the fix. Writing `@borrows` — including `@borrows` naming every view-typed parameter, which expresses the intersection deliberately — silences it. `[LT-1]`'s permissiveness is unchanged. `[LT-2a]` `L3014` applies only to legacy single-region return inference; it MUST NOT be emitted merely because a `@view struct` contains fields from multiple regions. Multi-region field provenance is the normative default under `[LT-14]`–`[LT-24]`.
+-* `[LT-7]` **Late-bound callback regions.** A callback-taking API MAY expose a callback boundary whose borrow region is chosen by the callee for each invocation. The callback's borrowed arguments are valid only for that invocation unless the API separately returns or transfers an owned value. The compiler models this boundary with one level of higher-ranked quantification: the callback is valid for any region selected by the callee at the call boundary. Region variables remain compiler-internal and MUST NOT appear in Ember source, public generic arguments, or ABI-visible type names. Implementations MUST reject any callback-local view that escapes the callback's selected region. `[THR-5]`'s and `[JOB-2]`'s scope regions are instances of this rule rather than bespoke exceptions, and `[GPU-9]`'s `pass.native(fn(cmd) => …)` is expressible under it.
++* `[LT-7]` **Late-bound callback regions.** A callback-taking API exposes a late-bound callback
++  boundary only by writing `@latebound` on that callable type under `[FN-6b]`. For every invocation,
++  the callee chooses a fresh compiler-internal region for each borrowed or view parameter of that
++  callback. The callback is valid for any such chosen region; its borrowed arguments are valid only
++  for that invocation unless the API separately transfers an owned value. `@latebound` does not name
++  or expose those regions: region variables remain absent from Ember source, public generic arguments,
++  ABI-visible names, runtime metadata, and reload schemas. The result of a `@latebound` invocation
++  MUST be proven not to contain one of its invocation-local regions. Implementations MUST reject a
++  callback-local view that escapes by return, storage, an `owned fn` capture, FFI publication, or any
++  other publication path through the existing region/escape machinery. `[THR-5]`'s and `[JOB-2]`'s
++  scope regions are instances of this rule rather than bespoke exceptions, and `[GPU-9]`'s
++  `pass.native(fn(cmd) => …)` is expressible under it.
+ 
+ `[LT-6]` Explicit named lifetimes (`fn f['a, 'b](…)`) are **reserved for v2**; the grammar reserves the `'ident` token form (`E0007` in v1 with the message "named lifetimes are not supported in this version; restructure using @borrows or a view struct"). The message MUST name `@borrows` only when a parameter exists whose region is the intended one; where the intended region is the callee's own body, the message MUST say that the construction is not expressible in v1 and name the view-struct restructuring instead.
+ 
+@@ -8533,13 +8588,13 @@
+ Everything between the consolidated-body markers is current normative text. Material after this
+ marker is specification tooling guidance for the current revision, not inherited 0.8.5 text.
+ 
+-# Appendix B — 0.9.6_Hardened_6 Consistency Checklist
++# Appendix B — 0.9.7_Hardened_1 Consistency Checklist
+ 
+ The following checks are mandatory CI checks for the consolidated specification itself:
+ 
+-1. Exactly one current version declaration exists and names `0.9.6_Hardened_6`.
+-2. The immediate predecessor is frozen `0.9.6_Hardened_5`, which remains byte-for-byte unchanged.
+-3. `[MOD-6]` and `[MOD-6a]` name the supported `0.9.6`, `0.9.5`, `0.9`, and 0.8.x source-language contracts explicitly; `0.9` does not silently enable later semantics, H5 changes H4 only through the owner-approved post-H4 simplicity architecture/process contract, and H6 changes H5 only through the owner-approved ODR-014 completion.
++1. Exactly one current version declaration exists and names `0.9.7_Hardened_1`.
++2. The immediate predecessor is frozen `0.9.6_Hardened_6`, which remains byte-for-byte unchanged.
++3. `[MOD-6]` and `[MOD-6a]` name the supported `0.9.7`, `0.9.6`, `0.9.5`, `0.9`, and 0.8.x source-language contracts explicitly; `0.9` does not silently enable later semantics, H6 changes H5 only through the owner-approved ODR-014 completion, and H1 changes H6 only through the owner-approved `@latebound` callable-boundary revision.
+ 4. `EMBER_RUNTIME_ABI` is canonical; `EMBER_RT_ABI` can occur only in compatibility-alias documentation.
+ 5. Every `dyn Writer`/`dyn Reader` serialization signature uses a legal indirection.
+ 6. Manifest examples use current versions unless explicitly marked historical.
+@@ -8571,6 +8626,7 @@
+ 32. A raw pointer is represented by `reference_kind = raw_pointer`; mutable raw access uses mutable permission and does not introduce a `raw` permission value.
+ 33. Exact and trusted declared callable summaries come only from visible/verified MIR or an audited unsafe/FFI contract; unknown access is conservative across every contractually valid static, separate-compilation, dynamic, and hot-reload target.
+ 34. Field-access and field-to-region summaries invalidate affected callers, interface hashes, generic artifacts, and caches together; stale metadata is a hard compiler failure and none of it enters runtime ABI or reload schemas.
++35. `[FN-6b]`, `[LT-7]`, `[LT-8]`, `[LT-8a]`, `[LT-10]`, `[TST-20]`, and `[TST-21]` agree that `@latebound` is a callable-type boundary, generates fresh invocation-local regions, preserves the existing callable modes, forbids result/publication escape through ordinary region checking, and is neither named lifetime syntax nor a `std.borrow` compiler special case.
+ 35. Ordinary assignment, `Cell.set`, and `MaybeUninit.write`/`write_at` retain their three distinct replacement/destruction orderings in the normative rules, MIR lowering, verifier obligations, and generated-code tests.
+ 36. H10's cycle diagnostics, class-only dynamic exclusivity, interior-mutability distinctions, ECS library boundary, FFI exception/retention contracts, coroutine restrictions, and runtime-erasure guarantees are not weakened by shared compiler machinery.
+ 37. The received Revision 5 RFC hash, owner-approved `[ARN-10]` wording, ADR-030, HC-096-01, migration intake, and H1 audit record form one traceable decision chain.

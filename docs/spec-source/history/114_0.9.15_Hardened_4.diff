@@ -1,0 +1,448 @@
+--- Ember_v0.9.15_Hardened_3.md
++++ Ember_v0.9.15_Hardened_4.md
+@@ -1,7 +1,8 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.15_Hardened_3
+-**Supersedes:** 0.9.15_Hardened_1 (development target) and every earlier file: 0.9.10_Hardened_1 to
++**Version:** 0.9.15_Hardened_4
++**Supersedes:** 0.9.15_Hardened_3 (development target), 0.9.15_Hardened_2, 0.9.15_Hardened_1 and every
++earlier file: 0.9.10_Hardened_1 to
+ 0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3 and 0.8.5_Hardened_1
+ (adopted). This document is the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+@@ -10,7 +11,10 @@
+ **Authority:** **0.9.15** is the owner's rework of the memory model (`tasks/96/redesign/JOB.md`, the
+ owner's verdicts of 2026-10-24 to 2026-10-27, with the design in `tasks/96/redesign/run4/v5/` and its
+ list of unsafe features); **0.9.15_Hardened_2** adds the owner's verdicts 101 to 106 and the lead's
+-rulings for building it (`tasks/96/redesign/compiler-0.9.15/decisions.md`). What a program means is written in
++rulings for building it (`tasks/96/redesign/compiler-0.9.15/decisions.md`); **0.9.15_Hardened_3** the
++owner's verdicts 107 to 117; **0.9.15_Hardened_4** the owner's verdicts 118 to 124, from the review of
++the rulings made building it (an `unsafe fn` unsafe as a whole, with `safe:` blocks; the record
++`ember.overlays`; a stored function's effects by the place it is called from). What a program means is written in
+ words on the thing it describes: one owner unless a line says `shares`; `owns` for a hand-over and a
+ value held alone; `copy of` for a copy; `ref mut` on a name, and at the call, for a change of someone
+ else's value; `weakref` for a link that does not keep its target alive; `this` for a method's object.
+@@ -19,7 +23,7 @@
+ cost (§X.4). It replaces `Box`, `Shared`, `Weak`, `RefCell`, `SyncShared`, `ForeignBox`, `@sync`,
+ `@borrows`, the mode `owned`, `self`, `mem.forget`, effect clauses on a first line and every check of
+ exclusive access made while the program runs. It changes the set of accepted programs, so the
+-language version moves (`[VER-9]`); Appendix H §H.41 and §H.42 list every change. The revisions before it were
++language version moves (`[VER-9]`); Appendix H §H.41 to §H.44 list every change. The revisions before it were
+ authored at the owner's direction of 2026-09-23 with delegated authority to decide open language
+ questions against the project goal; Appendix H lists each one's changes (§H.1 to §H.40), and every
+ finding of the 2026-09-23 research pass (`tasks/audit/FINDINGS.md`, F-001–F-214) is resolved in
+@@ -160,8 +164,8 @@
+ * `[TIER-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* Anything that can break a safety promise is
+   possible only inside an `unsafe` boundary. Safe code MUST NOT invoke an operation with an unverifiable
+   precondition unless an `unsafe` boundary in the same package discharges it. The boundaries are each
+-  written with the word `unsafe`: an `unsafe:` block lexically enclosing the operation (inside an
+-  `unsafe fn` body too, where every unsafe operation sits in its own `unsafe:` block, `E3100`); an
++  written with the word `unsafe`: an `unsafe:` block lexically enclosing the operation, or the
++  `unsafe fn` whose body encloses it, outside the body's `safe:` blocks (`[UNS-12]`); an
+   `unsafe extern` declaration (`[FFI-10]`); an `unsafe overlay` (`[GRM-35]`, `[FFI-2]`); an
+   `unsafe import c` of C source compiled into the program (`[FFI-51]`); an export that names its own
+   symbol, `@unsafe(export("name"))` (`[FFI-26]`); and an `unsafe extend` (a `Send` declared by hand, an
+@@ -440,7 +444,7 @@
+   keywords** are keywords only in the stated position and identifiers everywhere else: `abstract`
+   and `open` before `class` (so `File` can have its `open`, `[STD-22]`, ODR-134); `from` at the start
+   of an import, after a function's result type and after a field's type (`[GRM-46]`); `extend` at the start of an item when the type
+-  it extends follows, directly or after generic parameters (`[GRM-34]`); `gen` and `once` immediately before `fn`; `safe` before `fn` in an extern block; `some`
++  it extends follows, directly or after generic parameters (`[GRM-34]`); `gen` and `once` immediately before `fn`; `safe` before `fn` in an extern block and at the start of a statement before `:` (`[UNS-12]`); `some`
+   at the start of a type; `c` and `cpp` between `import` or `overlay` and a string; `language` and
+   `threads` after `#!`; `overlay` at the start of an item, and `rename` and `hide` inside an overlay
+   (`[GRM-35]`); `union` at the start of an item followed by a name, where it is reserved for a future
+@@ -754,7 +758,7 @@
+                | "<<=" | ">>="
+ 
+ compound_stmt := if_stmt | while_stmt | for_stmt | match_stmt | with_stmt | defer_stmt
+-               | unsafe_stmt | comptime_stmt | labeled_stmt | [type_params] fn_decl
++               | unsafe_stmt | safe_stmt | comptime_stmt | labeled_stmt | [type_params] fn_decl
+ if_stmt       := "if" condition ":" block {"elif" condition ":" block} ["else" ":" block]
+ condition     := expression | pattern "=" expression
+                | expression "exists" "as" opened_name              -- [GRM-44]
+@@ -771,6 +775,7 @@
+ with_item     := [IDENT "="] expression
+ defer_stmt    := "defer" ":" block
+ unsafe_stmt   := "unsafe" ":" block
++safe_stmt     := "safe" ":" block                                -- [UNS-12]
+ comptime_stmt := "comptime" ":" block
+ ```
+ 
+@@ -4584,9 +4589,7 @@
+ ```ember
+ @safety("`p` points to four readable bytes")
+ unsafe fn read_u32_le(p: *u8) -> u32:
+-    # SAFETY: the caller makes `p` point to four readable bytes, as this function's @safety says
+-    unsafe:
+-        return (p.read() as u32) | ((p.add(1).read() as u32) << 8) | ((p.add(2).read() as u32) << 16) | ((p.add(3).read() as u32) << 24)
++    return (p.read() as u32) | ((p.add(1).read() as u32) << 8) | ((p.add(2).read() as u32) << 16) | ((p.add(3).read() as u32) << 24)
+ 
+ fn parse(data: Span[u8]) -> Option[u32]:
+     if data.len() < 4:
+@@ -4603,14 +4606,24 @@
+   access a foreign `static mut` (`[STA-1]`); `transmute`; call `get_unchecked`, `assume_init` or
+   `assume_disjoint`; give an object to C with `into_raw()` (`[OWN-12]`); make or write a `MaybeUninit`
+   of a type that needs drop (`[ARN-8]`); implement an `unsafe` interface, or declare `Send` by hand
+-  (`unsafe extend T implements Send:`, `[TYP-43]`). Each of these outside an `unsafe` block is `E3100`,
++  (`unsafe extend T implements Send:`, `[TYP-43]`). Each of these outside unsafe code (an `unsafe:`
++  block, or an `unsafe fn` body outside its `safe:` blocks, `[UNS-12]`) is `E3100`,
+   whose message says what the code must vouch for and gives the block to write ("`read_u32_le(buf.as_ptr())`
+   (line 9) calls an `unsafe fn`, whose callers must make true what its `@safety` says; put line 9 in an
+   `unsafe:` block with a `# SAFETY:` note saying why that holds here: above line 9 write `# SAFETY:` and
+-  the reason, then `unsafe:`, and indent line 9 under it").
++  the reason, then `unsafe:`, and indent line 9 under it"). The block to write goes around the whole
++  statement the operation is in: the compound statement for one in its header (`elif p.read() > 0:`
++  is its `if`'s, "put lines 9 to 12 in an `unsafe:` block"), every line of a statement written over
++  several, and "put the statement on line 7 on a line of its own, in an `unsafe:` block" for one on
++  the line of a header; outside a function's body (a constant's value), where no block can be
++  written, the message gives none. The unsafe operations of one statement are one `E3100`, naming
++  them together ("the reads through `p` on line 9"); a pointer's offset is named with the read or
++  write it leads to.
+ * `[UNS-2]` *(changed in 0.9.15)* `unsafe` permits exactly those operations. It does not turn off the checks of Parts VII
+   and VIII, bounds checks on safe types, overflow checks or type checking.
+-* `[UNS-3]` `L3010` reports an `unsafe` block containing statements that need no `unsafe`.
++* `[UNS-3]` *(changed in 0.9.15)* `L3010` reports an `unsafe` block containing statements that need no
++  `unsafe`, and one written directly inside unsafe code (an `unsafe fn` body, another `unsafe:`
++  block), which adds nothing (`[UNS-12]`).
+ * `[UNS-4]` *(changed in 0.9.15)* Unsafe code MUST uphold what safe code assumes: every view is
+   non-null, aligned, points to a live initialised value of its type, and is used as its word allows (a
+   `ref mut` name is the only name of its place while it is used, a `ref mut` parameter's place is
+@@ -4628,12 +4641,20 @@
+ * `[UNS-6]` Inline assembly is `unsafe asm("…", …)` on toolchains that support it and `E5090`
+   otherwise.
+ * `[UNS-7]` *(changed in 0.9.15)* Every `unsafe fn` carries `@safety("…")` stating what its callers must
+-  make true; without it, `L3015` ("`read_u32_le` is an `unsafe fn` that reads through the raw pointer
+-  `p`, and nothing says what its callers must make true for that; say it above the function:
+-  `@safety("...")`, with what `p` must point to"). It is the declaration's only note: a `# SAFETY:` note
+-  on an `unsafe fn` line is `W3013` ("`read_u32_le` says what its callers must make true with
+-  `@safety`; a `# SAFETY:` note says why one block is sound and goes above each `unsafe:` block inside
+-  it: remove this line"). The standard library carries `@safety` on every unsafe function it exports.
++  make true: a function declared inside unsafe code, which is an `unsafe fn` (`[UNS-12]`, verdict
++  119), and one declared in an `unsafe extern` block (`[FFI-10]`, verdict 120) included. Without it,
++  `L3015` ("`read_u32_le` is an `unsafe fn` that reads through the raw pointer `p`, and nothing says
++  what its callers must make true for that; say it above the function: `@safety("...")`, with what
++  `p` must point to"; a declaration with no body is named without a step). A lambda written inside
++  unsafe code has no line for `@safety` and gets no `L3015`: whoever calls it vouches in the note of
++  the block the call is in. `@safety` is the declaration's only note: a `# SAFETY:` note on an
++  `unsafe fn`, alone on the line before it or at the end of its line (`[LEX-23]`), is `W3013`
++  ("`read_u32_le` says what its callers must make true with `@safety`; a `# SAFETY:` note says why an
++  `unsafe:` block is sound: remove this line"; "… remove this note" for one at the end of the
++  function's own line; and on a function with no `@safety`, "`read_u32_le` should say what its
++  callers must make true with `@safety("...")` above it, not with a `# SAFETY:` note: say this in
++  `@safety` and remove this line"). The standard library carries `@safety` on every unsafe function it
++  exports.
+ * `[UNS-8]` *(changed in 0.9.9)* *(changed in 0.9.15)* Every `unsafe:` block, and every `unsafe`
+   implementation (`unsafe extend`, `unsafe extern`, `unsafe overlay`), carries a safety note
+   (`[LEX-23]`) saying why the code is sound: `# SAFETY: …` or `# SAFETY(category): …` on the line
+@@ -4656,13 +4677,21 @@
+   word with one meaning by position: before a declaration (`unsafe fn`, `unsafe interface`, an
+   `unsafe fn(…)` type) it says that whoever uses it must vouch, with `@safety` saying what they must make
+   true (`[UNS-7]`); before a block or an implementation (`unsafe:`, `unsafe extend`, `unsafe extern`,
+-  `unsafe overlay`) it says that this code vouches, with `# SAFETY:` saying why (`[UNS-8]`).
+-* `[UNS-12]` *(new in 0.9.15)* An `unsafe fn` body is not itself an `unsafe` context: each unsafe
+-  operation in it sits in an `unsafe:` block of its own, with its note, and one outside such a block is
+-  `E3100` ("`read_u32_le` is an `unsafe fn`, which says its callers must vouch; the reads through `p` on
+-  line 4 are this function's own unsafe steps, and nothing says why they are sound; put line 4 in an
+-  `unsafe:` block with a `# SAFETY:` note saying why the read is safe: above line 4 write `# SAFETY:` and
+-  the reason, then `unsafe:`, and indent line 4 under it").
++  `unsafe overlay`) it says that this code vouches, with `# SAFETY:` saying why (`[UNS-8]`); `safe:`
++  inside unsafe code says the opposite, that its code is checked as safe code (`[UNS-12]`).
++* `[UNS-12]` *(new in 0.9.15)* **An `unsafe fn` is unsafe as a whole** (verdict 118: "the function
++  literally says that it is unsafe"). Its body is unsafe code, as the inside of an `unsafe:` block is.
++  Everything written in unsafe code is unsafe (verdict 119): a function declared there is an
++  `unsafe fn`, whose body is unsafe, whose calls need unsafe code, and which carries `@safety`
++  (`[UNS-7]`); a lambda written there is a value of an `unsafe` callable type, `unsafe fn(…)`
++  (`[FN-6]`), which only unsafe code calls (`fn make() -> unsafe fn(*mut u8):` may return one made in
++  an `unsafe:` block; `-> fn(*mut u8)` may not). Code inside unsafe code that is to be checked as safe
++  code is written in a `safe:` block, which needs no note: in it each operation of `[UNS-1]` is `E3100`
++  again ("`p.write(1)` (line 7) is in a `safe:` block, which is checked as safe code; move it out of
++  the `safe:` block, or put it in an `unsafe:` block with a `# SAFETY:` note"), a function or lambda
++  written in it is safe, and an `unsafe:` block in it is unsafe again. A `safe:` block outside unsafe
++  code changes nothing and is `L3020` ("this `safe:` block is not inside unsafe code, so it changes
++  nothing: remove `safe:`"); an `unsafe:` block directly inside unsafe code is `L3010` (`[UNS-3]`).
+ 
+ ## IX.5 Layout
+ 
+@@ -4854,8 +4883,13 @@
+ * `[EFF-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* A call through a function value contributes the
+   effects of every function the program can put there. For a type parameter bounded by a function type
+   (`[F: needs fn(Item)]` above `fn for_each(owns f: F) owns this:`) that is the function given, per instance.
+-  For a parameter, field, list element or local of a function type, it is every lambda and named
+-  function stored into that type anywhere in the program, a library's included. For an interface, `dyn`
++  For a field, a list element, a parameter or a local of a function type, it is every lambda and named
++  function the program puts in that place, a library's included (verdict 122): each field of each
++  struct and class apart from every other, a list's elements with the place that holds the list, a
++  parameter with every argument given to it, and a place a value is copied into with the functions of
++  the place it came from. A value the compiler cannot follow, read through a raw pointer or given by C,
++  has those of every function stored into its type. A place no function ever reaches is called by no
++  code that runs, and contributes nothing. For an interface, `dyn`
+   or `virtual` method, it is every implementation and override the program has. A foreign function
+   pointer (`extern "C" fn`) contributes the effects its type declares, and all effects if none are
+   declared. A contract is written on a function type above a `type` line that names one (verdict 106):
+@@ -6953,7 +6987,7 @@
+   | anonymous member | a generated type `<Parent>_anon<N>` with transparent field access |
+   | flexible array member | an unsized struct, `@layout(c, flexible)` (never by value, `E5017`), with `unsafe fn tail(n: usize) -> Span[T]` |
+   | `_Atomic T` | `Atomic[T]` when layouts match, else `E5016` |
+-  | `va_list`, variadic `...` | `VaList`, forwardable only and never constructed (`E5018`); variadic calls only in `unsafe`, each further argument of a written type (a literal's suffix or `as`); one C's default argument promotions would change (`bool`, an integer narrower than `int`, `f32`) is `E5013`, which names only C's promotion, since what the C function reads is in C: "C passes `narrow` as an `int` through `...`; if `sum_wide` reads another type, convert it first: `v.sum_wide(1, narrow as i64)`" |
++  | `va_list`, variadic `...` | `VaList`, forwardable only and never constructed (`E5018`); variadic calls only in `unsafe`, each further argument of a written type (a literal's suffix or `as`); one C's default argument promotions would change (`bool`, an integer narrower than `int`, `f32`) is `E5013`, which names only C's promotion, since what the C function reads is in C (verdict 123): "C passes `narrow` as a 4-byte `int` through `...`; write the size `sum_wide` expects: `narrow as c_int` for 4 bytes, or `narrow as i64` for 8"; for an `f32`, "C passes `single` as an 8-byte `double` through `...`; write `single as f64`" |
+   | an identifier that is an Ember keyword | a raw identifier `r#type` (`[LEX-14]`) |
+ 
+ * `[FFI-29]` For every `import c` the importer emits a **shim** C file, compiled with that import's
+@@ -7014,7 +7048,7 @@
+ * `[GRM-35]` *(new in 0.9.9)* *(changed in 0.9.15)* **Overlay grammar.** An overlay is a file whose items are:
+ 
+   ```text
+-  overlay_decl  := ["unsafe"] "overlay" ("c" | "cpp") STRING ["with" "(" "header_hash" "=" STRING ")"]
++  overlay_decl  := ["unsafe"] "overlay" ("c" | "cpp") STRING
+                    ":" NEWLINE INDENT {overlay_item} DEDENT
+   overlay_item  := {attribute} (overlay_fn | "type" IDENT NEWLINE | "enum" IDENT NEWLINE
+                    | "rename" IDENT "as" IDENT NEWLINE | "hide" IDENT NEWLINE | extend_decl
+@@ -7031,7 +7065,8 @@
+   item may begin with `override`, replacing an earlier overlay's entry for that name (`[FFI-30c]`,
+   ODR-149). An `overlay_class` section restates methods of a C++ class, each as an Ember method line
+   with no body, whose `@ffi(const)`, when written, asserts that the method only reads its object
+-  (`[FFI-40a]`, ODR-160). `header_hash` records the header the overlay was written for (`[FFI-55]`).
++  (`[FFI-40a]`, ODR-160). Ember records the header each overlay was written for in `ember.overlays`,
++  never in the overlay (`[FFI-55]`).
+ 
+   Contract words take the place of types and are separated by spaces. `overlay`, `rename` and `hide`
+   are contextual keywords (`[LEX-15]`). An overlay whose items state any fact — a contract word, an
+@@ -7078,14 +7113,34 @@
+   function at a time.
+ * `[FFI-12]` An overlay entry whose name, parameter count or parameter names do not match the header is
+   `E5010`, so overlays cannot drift.
+-* `[FFI-55]` *(new in 0.9.15)* **An overlay names the header it was written for.** An overlay that
+-  another package applies (`[FFI-30c]`) records the hash of the header it was written for, the one its
+-  own package's `.embind` holds for that header (`[FFI-14]`), on its first line:
+-  `unsafe overlay c "lib.h" with (header_hash = "blake3:9f2c…"):`. Applying another package's overlay
+-  to a header whose hash differs, or applying one that records none, is `E5010`, naming the overlay,
+-  the header and both hashes, with the two ways out: import the header the overlay was written for, or
+-  write the package's own overlay for the header it imports. An overlay applied to a header of its
+-  own package needs no hash: its package vouches for it (`[TIER-1]`).
++* `[FFI-55]` *(new in 0.9.15)* **Every overlay is checked against the header it was written for, by a
++  record Ember keeps** (verdict 121). A package with an overlay of a C or C++ header has a file
++  `ember.overlays` beside its `ember.toml`, written by Ember and never by hand. For each overlay it
++  holds the overlay's file, its header and one `blake3:` fingerprint of each declaration the overlay
++  describes, as the importer binds it (`[FFI-14]`):
++
++  ```text
++  # ember.overlays: the headers this package's overlays were checked against.
++  # Written by ember; `ember bind --merge` rewrites it.
++
++  [[overlay]]
++  file = "overlays/sdl.em"
++  header = "SDL.h"
++  SDL_FreeSurface = "blake3:…"
++  ```
++
++  Ember writes the record the first time the package's own build applies the overlay, and only
++  `ember bind --merge` rewrites it (`[CLI-5]`); a declaration the overlay describes that the record
++  lacks, an entry just written, is added by the package's own build. Every build that applies an
++  overlay, its own package's and any other's, compares each declaration the overlay describes with
++  the header it imports. One that differs is `E5010`, naming the overlay, the declaration as the
++  header imported declares it, and the way out ("`SDL_FreeSurface` changed since `overlays/sdl.em` was
++  checked: the `SDL.h` imported here declares `void SDL_FreeSurface(SDL_Surface*, int)`; check the
++  overlay against this header, then run `ember bind --merge`"); in another package's build, an overlay
++  or a declaration its package's record lacks is `E5010` too. A change to a declaration the overlay
++  does not describe changes nothing. A program with no `ember.toml` is no package and nobody's
++  dependency, so Ember keeps its overlays' record in its own cache instead, checked the same way.
++  Nothing of this is written in the overlay or in the program.
+ * `[FFI-13]` An overlay may contain `extend` blocks with ordinary Ember wrapper methods; this is how an
+   idiomatic API is layered over a raw one.
+ * `[FFI-14]` The importer's result is a `.embind` file (versioned CBOR: header hash, Clang
+@@ -7551,7 +7606,8 @@
+   (ODR-148): every derived contract, every unknown
+   fact as a `TODO(…)` word (`[FFI-11c]`), every skipped declaration as a comment with its reason. It
+   compiles unchanged and never overwrites a file; with `--merge` it adds only the declarations missing
+-  from an existing overlay, keeping hand-written contracts and comments.
++  from an existing overlay, keeping hand-written contracts and comments, and records the header as it
++  now is in the package's `ember.overlays` (`[FFI-55]`), the only way that record changes once written.
+ * `[CLI-6]` `ember bind --report` lists every skipped declaration and every declaration still
+   `unsafe` with its unknown facts, and exits non-zero on a skip (`--baseline` limits that to new ones).
+ * `[CLI-7]` `ember bind --check <overlay>` checks `[FFI-12]` and prints how many declarations are
+@@ -7612,8 +7668,9 @@
+ 
+ * `[MAN-1]` *(changed in 0.9.9)* An invalid manifest, including one with an unknown key, is `E9001`,
+   naming the key and the keys that section accepts.
+-* `[MAN-2]` `ember.lock` records the resolved dependencies with content hashes; `--locked` fails if it
+-  would change.
++* `[MAN-2]` *(changed in 0.9.15)* `ember.lock` records the resolved dependencies with content hashes;
++  `--locked` fails if it would change. Beside it, `ember.overlays` records the headers the package's
++  overlays were checked against (`[FFI-55]`); Ember writes both, and neither is edited by hand.
+ * `[MAN-3]` *(changed in 0.9.9)* Every key in `[lints]` names a lint the compiler defines (`E9010`
+   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
+   parameters.
+@@ -7621,7 +7678,7 @@
+   `layers`, `edition_lints`); `[dependencies]` (`{ path }`, `{ git, rev }`, or `{ git, version }`, `[VER-5]`);
+   `[build]` (`entry`, `target`, `backend`, `c_compiler`, `runtime`, `max_instantiations` `[MONO-3]`,
+   `reload` `[MAN-7]`); `[profiles.<name>]` (`[PRF-3]`); `[c]` (`compiler`, `flags`, `[BLD-FFI-1]`);
+-  `[link]` (`libs`); `[jobs]` (`workers`, `[JOB-1]`); `[realtime]` (`contracts`, `[EFF-19]`);
++  `[link]` (`libs`, `timeout` `[BLD-15]`); `[jobs]` (`workers`, `[JOB-1]`); `[realtime]` (`contracts`, `[EFF-19]`);
+   `[comptime]` (`max_steps`, `max_heap_mb`, `[CT-3]`); `[lints]` (`[MAN-3]`); and `[cpp.<project>]`
+   and `[ffi]` (`evidence`, Annex C). A key a section does not take, or a section not listed, is
+   `E9001`, naming what is accepted (ODR-110). **No manifest key turns off a
+@@ -7669,7 +7726,8 @@
+      that reordering two lines inside a library function (a use of `s` moved below `LOG.clear()`) is
+      a change to its interface;
+   6. the locks a function may take; and
+-  7. the function values the package stores into each function type and the callbacks it hands to C,
++  7. the function values the package stores into each place a function value is called through (each
++     field of each type apart, `[EFF-2]`) and the callbacks it hands to C,
+      which a program using the package counts wherever such a value is called and at every foreign
+      call not marked `@ffi(no_callbacks)`.
+ 
+@@ -7682,6 +7740,11 @@
+   compilation is incremental too. Ember's download carries Ninja beside Clang and LLD (`[TOOL-2]`); a
+   build from a source checkout finds `ninja` on `PATH`, and without it is an error naming the command
+   that installs it.
++* `[BLD-15]` *(new in 0.9.15)* **A link that hangs is an error** (verdict 124). Each link the build runs
++  has a time limit, 30 minutes unless `[link] timeout` sets another number of seconds. A link still
++  running at its limit is ended, and the build fails with `E9042`, naming the linker, its command and
++  how long it ran, and keeping the link's command file for whoever looks into it. A link that was
++  ended leaves no program behind and none in the program cache, and nothing is tried again by itself.
+ * `[BLD-5]` Output goes to `target/<profile>/{bin,lib,c,obj,bind,inspect}`.
+ * `[BLD-7]` Front-end stages run in parallel across modules by default (`-j`, default the number of
+   physical cores).
+@@ -8308,7 +8371,7 @@
+ | `E3090` | arena allocation of a type that needs `drop` | `[ARN-3]` |
+ | `E3095` | two single-object references given to `assert_disjoint` | `[DSJ-4]` |
+ | `E3096` | arena is scoped here | `[ARN-6]` |
+-| `E3100` | an unsafe operation outside an `unsafe:` block, an `unsafe fn` body and `into_raw()` included; `Send` declared by hand without `unsafe extend` | `[UNS-1]`, `[UNS-12]`, `[ALC-2]`, `[ARN-8]`, `[FFI-51]`, `[FFI-26]`, `[FFI-54]`, `[FFI-56]` |
++| `E3100` | an unsafe operation outside unsafe code (in a `safe:` block included), `into_raw()` included; `Send` declared by hand without `unsafe extend` | `[UNS-1]`, `[UNS-12]`, `[ALC-2]`, `[ARN-8]`, `[FFI-51]`, `[FFI-26]`, `[FFI-54]`, `[FFI-56]` |
+ | `E3105` | `UnsafeCell` in `@no_alias_checks` code | `[UNS-10]` |
+ | `E4001` | `@noalloc` function reaches an allocation | `[EFF-5]` |
+ | `E4002` | `@nosync` function reaches a synchronising operation | `[EFF-5]` |
+@@ -8323,7 +8386,7 @@
+ | `E4072` | `@fastmath` or `@fp(allow_fma)` inside `@deterministic` | `[DET-5]` |
+ | `E5001` | imported type layout does not match | `[FFI-5]` |
+ | `E5002` | a foreign declaration whose contract cannot stand: `safe fn` on a function whose contract is incomplete, or two destructors for one foreign type (a call of a function without a verified contract outside `unsafe` is `E3100`) | `[FFI-2]`, `[FFI-10]`, `[FFI-36a]` |
+-| `E5010` | overlay does not match the C declaration; an overlay applied to a header other than the one it was written for (its hash differs) | `[FFI-12]`, `[FFI-55]` |
++| `E5010` | overlay does not match the C declaration; a declaration an overlay describes differs from the one `ember.overlays` records, or the package has no record of the overlay | `[FFI-12]`, `[FFI-55]` |
+ | `E5011` | one C identity imported with two different layouts | `[FFI-30]` |
+ | `E5012` | pointer contract has no count | `[FFI-11]` |
+ | `E5013` | a further argument of a variadic C function that C would promote to another type | `[FFI-8]` |
+@@ -8397,6 +8460,7 @@
+ | `E9037` | reload ABI mismatch on image load | `[ABI-1]` |
+ | `E9040` | two generic instances hash to one symbol | `[MNG-1]` |
+ | `E9041` | the toolchain cannot honour `@fastmath` or `@fp(…)` for a function | `[TYP-9c]` |
++| `E9042` | a link ran past its time limit | `[BLD-15]` |
+ | `L1001` | unused binding | `[LNT-1]` |
+ | `L1002` | assignment declares a new binding | `[LNT-2]` |
+ | `L2001` | unnecessary `copy of` | `[LNT-6]` |
+@@ -8405,10 +8469,11 @@
+ | `L2004` | `gen fn` with no `yield` | `[LNT-4]` |
+ | `L2005` | `@noreload` function calls a reloadable one in a loop | `[LNT-5]` |
+ | `L3002` | a view kept in use longer than necessary | `[LNT-6]` |
+-| `L3010` | `unsafe` block larger than necessary | `[UNS-3]` |
++| `L3010` | `unsafe` block larger than necessary, or inside unsafe code already | `[UNS-3]` |
+ | `L3015` | an `unsafe fn` with no `@safety` | `[UNS-7]` |
+ | `L3016` | `@safety` text still reads `TODO` | `[UNS-7]` |
+ | `L3017` | a loop of owners found leaked at exit (made through `unsafe` or foreign code) | `[WK-4]` |
++| `L3020` | a `safe:` block outside unsafe code, which changes nothing | `[UNS-12]` |
+ | `L4001` | allocation in a hot loop | `[LNT-6]` |
+ | `L4002` | dynamic dispatch on a final type | `[LNT-6]` |
+ | `L4003` | large `Array[int]`/`Array[float]` in a hot loop whose values fit 32 bits | `[LNT-6]` |
+@@ -9795,7 +9860,7 @@
+ | **reduction** | a combining change (`total += e`, `max`, `push`) made by scoped tasks to one place: each task keeps a private accumulator, combined at the join in spawn order |
+ | **reload manifest, reload transaction, safe point** | the image section listing what can be reloaded (`[HR-8]`); the plan and prepare phases that may fail without effect (`[HR-2]`); the poll at which no thread runs Ember code (`[HR-3]`) |
+ | **reshape** | a change that can free or move memory: replacing a value that owns memory, adding to or removing from a collection, changing an enum's variant, ending an object's last owner; writing a number is not one |
+-| **Safe Ember** | code outside `unsafe:` blocks, an `unsafe fn` body's included (each of its unsafe operations sits in an `unsafe:` block of its own); the memory-safety guarantee covers it (`[PHIL-10]`) |
++| **Safe Ember** | code outside unsafe code (`unsafe:` blocks and `unsafe fn` bodies), and the code of their `safe:` blocks (`[UNS-12]`); the memory-safety guarantee covers it (`[PHIL-10]`) |
+ | **`Send`, `ThreadShared`** | may be handed to another thread; several threads may hold and read one value at once; both inferred from the words a value is written with (§XI.1) |
+ | **shape** | a category of error with a required help text (§XVII.6) |
+ | **shareable generic** | one whose type parameter is used only to call its bounds' methods, so one shared body can serve every instance (`[MONO-5]`) |
+@@ -12213,6 +12278,49 @@
+ | `[UNS-4]` | changed |
+ | `[UNS-5]` | changed |
+ | `[WK-12]` | changed |
++
++## H.44 Changes in 0.9.15_Hardened_4 (from 0.9.15_Hardened_3)
++
++**0.9.15_Hardened_4** writes in the owner's verdicts 118 to 124 from the ODR review of 2026-10-29
++(`tasks/96/redesign/JOB.md`) and the lead's details for them (`tasks/96/redesign/compiler-0.9.15/decisions.md`,
++section 9):
++
++* Verdict 118: an `unsafe fn` is unsafe as a whole, its body unsafe code; code in it to be checked as
++  safe code is written in a `safe:` block (`[UNS-12]`, rewritten; `[UNS-1]`, `[TIER-1]`, Part III, the
++  glossary). `L3020` (new): a `safe:` block outside unsafe code; `L3010` also covers an `unsafe:` block
++  inside unsafe code (`[UNS-3]`).
++* Verdict 119: everything written in unsafe code is unsafe: a function declared there is an
++  `unsafe fn` and carries `@safety`, a lambda there is an `unsafe fn(…)` value (`[UNS-12]`, `[UNS-7]`).
++* Verdict 120: a C function declared in an `unsafe extern` block carries `@safety` (`[UNS-7]`).
++* Verdict 121: the header an overlay was written for is recorded by Ember in `ember.overlays`, a
++  fingerprint per declaration the overlay describes, and every overlay is checked against it; the
++  overlay line's `header_hash` is gone (`[FFI-55]`, `[GRM-35]`, `[CLI-5]`, `[MAN-2]`, `E5010`).
++* Verdict 122: a call through a stored function has the effects of the functions that reach that
++  place, field by field; a place none reaches contributes nothing (`[EFF-2]`, `[BLD-14]`).
++* Verdict 123: `E5013` names C's promotion and both sizes instead of `as i64` (`[FFI-8]`).
++* Verdict 124: a link past its time limit is ended and is `E9042` (`[BLD-15]`, new; `[MAN-8]`'s
++  `[link] timeout`).
++* The lead's details: the statement rules of `E3100` (one per statement, the block around the whole
++  statement) in `[UNS-1]`; a lambda in unsafe code needs no `@safety`; `W3013`'s three wordings.
++
++Generated: every rule whose text differs from 0.9.15_Hardened_3.
++
++| Rule | 0.9.15_Hardened_3 → 0.9.15_Hardened_4 |
++|---|---|
++| `[BLD-14]` | changed |
++| `[BLD-15]` | added |
++| `[CLI-5]` | changed |
++| `[EFF-2]` | changed |
++| `[FFI-55]` | changed |
++| `[LEX-15]` | changed |
++| `[MAN-2]` | changed |
++| `[MAN-8]` | changed |
++| `[TIER-1]` | changed |
++| `[UNS-1]` | changed |
++| `[UNS-3]` | changed |
++| `[UNS-7]` | changed |
++| `[UNS-11]` | changed |
++| `[UNS-12]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -12308,6 +12416,7 @@
+ | `[BLD-11]` | XVII | A package that omits a `[STD-6]` layer cannot use it or depend on a … |
+ | `[BLD-13]` | XVII | Builds are reproducible: the same inputs give a byte-identical … |
+ | `[BLD-14]` | XVII | *(new in 0.9.15)* Facts worked out at a package's edge. A fact the … |
++| `[BLD-15]` | XVII | *(new in 0.9.15)* A link that hangs is an error (verdict 124). Each … |
+ 
+ ## BLD-FFI
+ 
+@@ -12826,7 +12935,7 @@
+ | `[FFI-52]` | XVI | *(new in 0.9.15)* What a foreign call may run. The compiler cannot … |
+ | `[FFI-53]` | XVI | *(new in 0.9.15)* The checked trampoline. C never holds the address … |
+ | `[FFI-54]` | XVI | *(new in 0.9.15)* Giving an object to C. A C function declared as … |
+-| `[FFI-55]` | XVI | *(new in 0.9.15)* An overlay names the header it was written for. An … |
++| `[FFI-55]` | XVI | *(new in 0.9.15)* Every overlay is checked against the header it was … |
+ | `[FFI-56]` | XVI | *(new in 0.9.15)* A C function pointer is unsafe to call. A function … |
+ 
+ ## FMT
+@@ -13146,7 +13255,7 @@
+ | Rule | Part | Begins |
+ |---|---|---|
+ | `[MAN-1]` | XVII | An invalid manifest, including one with an unknown key, is `E9001`, … |
+-| `[MAN-2]` | XVII | `ember.lock` records the resolved dependencies with content hashes; … |
++| `[MAN-2]` | XVII | *(changed in 0.9.15)* `ember.lock` records the resolved dependencies … |
+ | `[MAN-3]` | XVII | Every key in `[lints]` names a lint the compiler defines (`E9010` … |
+ | `[MAN-7]` | XVII | *(changed in 0.9.10)* `[build] reload` is `"opt-in"`, `"all"`, … |
+ | `[MAN-8]` | XVII | *(changed in 0.9.10)* The sections are: `[package]` (`name`, … |
+@@ -13596,7 +13705,7 @@
+ |---|---|---|
+ | `[UNS-1]` | IX | *(changed in 0.9.15)* An `unsafe` context is required to: … |
+ | `[UNS-2]` | IX | *(changed in 0.9.15)* `unsafe` permits exactly those operations. It … |
+-| `[UNS-3]` | IX | `L3010` reports an `unsafe` block containing statements that need no … |
++| `[UNS-3]` | IX | *(changed in 0.9.15)* `L3010` reports an `unsafe` block containing … |
+ | `[UNS-4]` | IX | *(changed in 0.9.15)* Unsafe code MUST uphold what safe code assumes: … |
+ | `[UNS-5]` | IX | `std.mem` provides `Volatile[*T]` (volatile reads and writes), … |
+ | `[UNS-6]` | IX | Inline assembly is `unsafe asm("…", …)` on toolchains that support it … |
+@@ -13605,7 +13714,7 @@
+ | `[UNS-10]` | IX | *(changed in 0.9.15)* `UnsafeCell[T]` (in `std.mem`) is the primitive … |
+ | `[UNS-10a]` | IX | *(changed in 0.9.15)* `UnsafeCell` suspends no rule globally: the … |
+ | `[UNS-11]` | IX | *(new in 0.9.15)* Only inside `unsafe`. Anything that can break a … |
+-| `[UNS-12]` | IX | *(new in 0.9.15)* An `unsafe fn` body is not itself an `unsafe` … |
++| `[UNS-12]` | IX | *(new in 0.9.15)* An `unsafe fn` is unsafe as a whole (verdict 118: … |
+ 
+ ## VER
+ 

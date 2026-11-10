@@ -1,0 +1,53 @@
+--- Ember_v0.9.9_Hardened_46.md
++++ Ember_v0.9.9_Hardened_47.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_46
+-**Supersedes:** 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_47
++**Supersedes:** 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -1104,7 +1104,14 @@
+   written: `f[int](x)`, `Array[f32]()`. A constructor's explicit type arguments always fix the
+   instantiation, whatever else the context says.
+ * `[TYP-19]` There is no specialisation, no higher-kinded type and no variadic generic. Two
+-  implementations whose applicable types overlap are `E2041`.
++  implementations whose applicable types overlap are `E2041`. Whether two overlap is decided where
++  they are declared, whether or not any instance meets both: they overlap when one type could be
++  both, each implementation's type parameters standing for any type (`extend[T] Pair[T, int]` and
++  `extend[U] Pair[str, U]` overlap at `Pair[str, int]`), and when their interface's arguments could
++  be the same too. A bound separates two only where the type it bounds is written out in full and
++  does not meet it (`extend[T: Copy] Pair[T, int]` and `extend Pair[String, int]` do not overlap); a
++  bound on a type left open never does, as a type meeting both bounds can be declared later, in
++  another package (ODR-092).
+ * `[TYP-35]` *(new in 0.9.9)* A type parameter need not appear in any field (a **phantom** parameter): `struct
+   Handle[Tag]: index: u32` is legal. A phantom parameter affects type identity and counts for `Send` and
+   `Sync` as a field of that type would, so a marker type can make a type thread-confined without a
+@@ -6856,7 +6863,7 @@
+ Hardened_43 adds ODR-088, integer division no vector instruction set does keeps a loop out of
+ vectorisable form; Hardened_44 adds ODR-089, the iterator adapters' counts and ownership;
+ Hardened_45 adds ODR-090, where a float mode holds; Hardened_46 adds ODR-091, which iterators
+-run backwards.
++run backwards; Hardened_47 adds ODR-092, when two implementations overlap.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6931,6 +6938,7 @@
+ | ODR-089 | an adapter or consumer takes the iterator it wraps; `take`, `skip`, `nth` and `step_by` count in `int`, and a negative count or index, or a step of zero or less, panics when the adapter is made or the consumer called; `enumerate(start=0)` as `[STD-26]` (Hardened_44) | `[STD-19]`, `[STD-14]`, `[STD-26]` |
+ | ODR-090 | a float mode is lexical, as the overflow policy is: a lambda takes its function's; a parameter default keeps its declaration's and a field default is strict wherever evaluated; inside `@fastmath` no range fact about a float is derived, and integer facts are unaffected; neither mode relaxes range values, `as`, the float classifications, or makes a NaN undefined behaviour (Hardened_45) | `[TYP-9]`, `[TYP-9b]`, `[RNG-4]`, `[CG-C-11]` |
+ | ODR-091 | an iterator runs backwards when it implements `DoubleEndedIterator` (`next_back`), whose method `rev` is; `ExactSizeIterator` gives `len`; the ranges with an end and the views' element iterators are both, and each adapter over them where it can tell its last item (Hardened_46) | `[STD-19]`, `[CTL-3b]`, `[MOD-5]` |
++| ODR-092 | two implementations overlap where one type could be both, each one's type parameters standing for any type, found where they are declared; a bound separates two only where the type it bounds is written out in full and does not meet it (Hardened_47) | `[TYP-19]`, `[TYP-20]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -7037,6 +7045,7 @@
+ | `[TYP-9]` | changed |
+ | `[TYP-13]` | changed |
+ | `[TYP-15]` | changed |
++| `[TYP-19]` | changed |
+ | `[TYP-21]` | changed |
+ | `[TYP-23]` | changed |
+ | `[TYP-26]` | changed |

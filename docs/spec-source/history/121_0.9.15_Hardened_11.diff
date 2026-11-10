@@ -1,0 +1,137 @@
+--- Ember_v0.9.15_Hardened_10.md
++++ Ember_v0.9.15_Hardened_11.md
+@@ -1,6 +1,6 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.15_Hardened_10
++**Version:** 0.9.15_Hardened_11
+ **Supersedes:** 0.9.15_Hardened_9 (development target until this one), 0.9.15_Hardened_8,
+ 0.9.15_Hardened_7, 0.9.15_Hardened_6, 0.9.15_Hardened_5, 0.9.15_Hardened_4, 0.9.15_Hardened_3,
+ 0.9.15_Hardened_2, 0.9.15_Hardened_1 and every earlier file: 0.9.10_Hardened_1 to
+@@ -465,7 +465,7 @@
+   `where` clause (`[TYP-17]`); `copy` directly before `of`,
+   and `of` directly after `copy` (`copy of x`, so `mem.copy` and a count's `of` stay names,
+   `[GRM-43]`); `exists` between the value and `as` in an `if`, `elif` or `while` header (`[GRM-44]`);
+-  `runtime` after a parameter's `:` and directly before `dyn` (`[LT-48]`);
++  `runtime` after the `:` of a parameter or a variable and directly before a type (`[LT-48]`);
+   `cast` at the start of an operand directly before a name or
+   `this` (`cast s as Circle`, `[GRM-30]`), so `cast(p)` stays a call; `guarded` and `by` after the type
+   of a field or a `static` (`[GRM-46]`). The reserved words `not` and
+@@ -638,7 +638,7 @@
+ bound_list    := type {"+" type}                        -- after `dyn` and `some` only
+ where_clause  := "where" type ":" "needs" needs {"," type ":" "needs" needs}
+ param_list    := param {"," param} [","]
+-param         := [param_word] IDENT ":" ["runtime"] type ["..."] ["=" expression]   -- `Ts...`: the pack's values; `runtime` before a `dyn` type only ([LT-48])
++param         := [param_word] IDENT ":" ["runtime"] type ["..."] ["=" expression]   -- `Ts...`: the pack's values; `runtime` before a `dyn` or class type only ([LT-48])
+ param_word    := "ref" ["mut"] | "const" "ref" "mut" | "owns"
+ 
+ struct_decl   := "struct" IDENT [implements] [where_clause] ":" type_body
+@@ -767,7 +767,7 @@
+ block         := NEWLINE INDENT {statement} DEDENT | simple_stmt NEWLINE
+ statement     := {attribute} (simple_stmt NEWLINE | compound_stmt)
+ simple_stmt   := var_decl | assignment | expr_list | "pass"
+-var_decl      := IDENT ":" type ["=" expr_list]
++var_decl      := IDENT ":" ["runtime"] type ["=" expr_list]   -- `runtime` before a `dyn` or class type only ([LT-48])
+ assignment    := target_list "=" expr_list
+                | target augassign expression
+ target_list   := target {"," target} [","]
+@@ -965,7 +965,10 @@
+   a value `=` hands over, `return a`), and before `fn` anywhere but an argument for an `owns` parameter,
+   it is `E0109`, whose message says to remove it (for `owns fn`, to name what the function takes on each
+   captured name: `fn() owns report:`). Before an argument for a parameter that only reads
+-  (`show(owns xs)`) it is `E3028`, "`show` only reads its argument; remove `owns`: `show(xs)`".
++  (`show(owns xs)`) it is `E3028`, "`show` only reads its argument; remove `owns`: `show(xs)`". `owns`
++  binds as `-` does (`unary := value_word unary`), so an argument of more than one name, number or call
++  is written in brackets, `tx.send(owns (i * i))`: `tx.send(owns i * i)` is `(owns i) * i`, a value made
++  after `i` is handed over, and is `E3028`, whose help writes the brackets (`tx.send(owns (i * i))`).
+ * `[GRM-17]` *(changed in 0.9.10)* A lambda with a `:` body inside brackets holds exactly one simple
+   statement (`[LEX-6a]`). More is `E0106`, whose help is to declare a local function on the preceding
+   line (`[GRM-28]`). Outside brackets, a `:` body on the lambda's own line is one simple statement,
+@@ -3710,17 +3713,24 @@
+   `E3060`.
+   Its message: E3060 ("`bag.items.push(owns k)` (line 15) may move the list that `h.view` points into (`pick` may have put a view of `bag` there on line 13), and `h.view` is used on line 16; use `h.view` before line 15").
+ 
+-* `[LT-48]` *(new in 0.9.15)* **`runtime`: a `dyn` parameter's kind checked while the program runs.**
+-  `runtime` before a parameter's `dyn` type lets the function do what one of the kinds that may reach it
+-  would make unsafe (`[LT-1]`), where which kind it is is known only while the program runs: the
+-  function checks the kind at the line that would be unsafe, and stops the program there if it is that
+-  kind. With `[LT-1]`'s `Picker`, `fn show(p: runtime dyn Picker):` and `p: dyn Picker = Mine(items=[9])
++* `[LT-48]` *(new in 0.9.15)* **`runtime`: a value's kind checked while the program runs.**
++  `runtime` before the `dyn` or class type of a parameter or a variable lets the function do what one of
++  the kinds that may reach that value would make unsafe (`[LT-1]`), where which kind it is is known only
++  while the program runs: the function checks the kind at the line that would be unsafe, and stops the
++  program there if it is that kind. With `[LT-1]`'s `Picker`, `fn show(p: runtime dyn Picker):` and `p: dyn Picker = Mine(items=[9])
+   if input() == "m" else Yours(items=[9])`, `show(p)` prints `[9]` for a `Mine`, and for a `Yours` stops
+   at `xs.push(owns 3)`: "panic at main.em:17:5: `xs` changes while `r` looks at it: `p` is a `Yours`,
+   whose `pick` gives back the list it was handed". Where the kind is known when compiling, the word
+   changes nothing: given `show(Yours(items=[9]))`, `show` is refused at `xs.push(owns 3)` when compiling,
+-  as without it (`E3021`). `runtime` is a word only after a parameter's `:` before `dyn` (`[LEX-15]`); it
+-  costs one type-id compare at each line it guards (§X.4).
++  as without it (`E3021`). A class value is checked the same way: with `open class A` whose `virtual fn
++  first(other: Array[int]) -> Span[int]` gives back `this.items` and `class B(A)` whose override gives
++  back `other`, `fn pick(a: runtime A):` doing `r = a.first(xs)`, `xs.push(owns 2)` and `println(r)`
++  stops at the `push` when `a` is a `B`, and prints `[7]` when it is an `A`. On a variable the word goes
++  right after its `:` and guards the lines of its function after it: in `main`, `p: runtime dyn Picker =
++  Mine(items=[9]) if input() == "m" else Yours(items=[9])`, then `r = p.pick(xs)`, `xs.push(owns 3)` and
++  `println(r)`, does what `show(p)` does, with no function written only to carry the word. `runtime` is
++  a word only right after the `:` of a parameter or a variable, before its type (`[LEX-15]`); it costs
++  one type-id compare at each line it guards (§X.4).
+ 
+ ### Views with several regions
+ 
+@@ -5250,7 +5260,7 @@
+ | `assert_disjoint` | guaranteed present | two compares where the program writes it (two spans of one list given to one call, one of them changeable); the call is then compiled with noalias; none when the compiler knows the spans apart |
+ | `Cell` access | not observable | a load or a store |
+ | Interface call through `dyn` | guaranteed present | one indirect call |
+-| A `runtime dyn` parameter's check | guaranteed present | one type-id compare at each line the check guards, only where a kind that may reach the parameter makes the line unsafe (`[LT-48]`); none where the kinds are known when compiling |
++| A `runtime` parameter's or variable's check | guaranteed present | one type-id compare at each line the check guards, only where a kind that may reach the value makes the line unsafe (`[LT-48]`); none where the kinds are known when compiling |
+ | Virtual method call | conditionally elided | a load of the slot and one indirect call (`[DSP-2]`); direct when one implementation is reachable (`[DSP-5]`) |
+ | Generic call, monomorphised | not observable | a direct, inlinable call |
+ | Generic call, shared (`[MONO-6]`) | guaranteed present | one indirect call per bound method; only above a declared instantiation budget |
+@@ -8483,7 +8493,7 @@
+ | `E3015` | value whose drop is required may not be leaked | `[THR-6]` |
+ | `E3016` | `this` escapes its own `drop`, or an owner of it is made there | `[OBJ-5]`, `[CLS-7a]` |
+ | `E3020` | a collection (a list, a map, a set or a string) changed while it is walked, whatever the change (an element written, a value under a key replaced, anything added or removed), by a `for` loop or by a generator that walks it and will still be used; through its own name, or through a call that may change it (a call through a function value or a library call by the functions it may run, a `spawn` by what its thread changes, a scoped task started in the walk, a foreign call by what the callbacks C keeps change, the end of an object by what its `drop` changes); a removal inside a counting loop | `[BRW-18]`, `[CTL-2]` |
+-| `E3021` | a read and a change of one place overlap: a change of what a read-only name reads while it is still used, a view a `dyn` call may give included where the kind is known only while running (help: `runtime` on the parameter); a `ref mut` name's place read through another name while it is still used; an argument that may reach into a changeable argument of the same call | `[BRW-1]`, `[BRW-11]`, `[LT-1]`, `[LT-48]` |
++| `E3021` | a read and a change of one place overlap: a change of what a read-only name reads while it is still used, a view a `dyn` or `virtual` call may give included where the kind is known only while running (help: `runtime` on the parameter or the variable); a `ref mut` name's place read through another name while it is still used; an argument that may reach into a changeable argument of the same call | `[BRW-1]`, `[BRW-11]`, `[LT-1]`, `[LT-48]` |
+ | `E3022` | one place changed through two names: two changeable arguments of one call naming one place, other than one whole variable proved when compiling (a function value that changes it counts as one); a function value stored in a place that a variable it changes owns; a `ref mut` name's place changed through another name while it is still used, a reshape of a `ref mut` address included | `[BRW-1]`, `[BRW-11]` |
+ | `E3023` | a change the name does not allow: a change through a name that only reads (a plain parameter; a loop, pattern, opened or part name; a plain name holding a `MutSpan`; a value made when compiling); `=` on a name that keeps its place for its scope (a parameter; a loop, pattern or opened name, one opened `exists as copy of` excepted; a `const ref mut` name given another ref); a read-only `ref` given to a `ref mut` name; a method that may change its object, or a stored function that may change its own state, called through a read-only name; an owner that may change made from one that only reads (a plain parameter of a `shares mut` type included); `=` on a `static` (`HOOK = v`) | `[BRW-14]`, `[BRW-15]`, `[STA-1]` |
+ | `E3024` | a struct field would point into another field of the same struct (shape B5) | `[TYP-15]` |
+@@ -12701,6 +12711,28 @@
+ | `[THR-20]` | changed |
+ | `[THR-21]` | changed |
+ | `[WK-17]` | changed |
++
++## H.51 Changes in 0.9.15_Hardened_11 (from 0.9.15_Hardened_10)
++
++**0.9.15_Hardened_11** writes in the owner's verdicts 161 to 163 from the review of 2026-11-02, morning
++(`tasks/96/redesign/JOB.md`; each shown with its options and the lead's recommendation):
++
++* Verdict 161: `owns` binds as `-` does, so an argument of more than one name, number or call is
++  written in brackets, `tx.send(owns (i * i))`; `tx.send(owns i * i)` is `(owns i) * i` and `E3028`,
++  whose help writes the brackets (`[GRM-15]`). The grammar already said so; the rule now says it.
++* Verdict 162: `runtime` goes before a class type too, `fn pick(a: runtime A):`, and a `virtual`
++  call's kind is checked while the program runs as a `runtime dyn` value's is (`[LT-48]`).
++* Verdict 163: `runtime` goes right after a variable's `:` too, `p: runtime dyn Picker = ...`, and
++  guards the lines of its function after it, with no function written only to carry the word
++  (`[LT-48]`, `[LEX-15]`, the grammar's `var_decl`; the cost row in §X.4 and `E3021`'s help).
++
++Generated: every rule whose text differs from 0.9.15_Hardened_10.
++
++| Rule | 0.9.15_Hardened_10 → 0.9.15_Hardened_11 |
++|---|---|
++| `[GRM-15]` | changed |
++| `[LEX-15]` | changed |
++| `[LT-48]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -13629,7 +13661,7 @@
+ | `[LT-45]` | VII | *(new in 0.9.15)* Kept views. A struct that holds a view (`ref T`, … |
+ | `[LT-46]` | VII | *(new in 0.9.15)* The three kinds of kept view, by their word: * `ref … |
+ | `[LT-47]` | VII | *(new in 0.9.15)* A view put in through `ref mut`. After a call, a … |
+-| `[LT-48]` | VII | *(new in 0.9.15)* `runtime`: a `dyn` parameter's kind checked while … |
++| `[LT-48]` | VII | *(new in 0.9.15)* `runtime`: a value's kind checked while the program … |
+ 
+ ## MAN
+ 

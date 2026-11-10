@@ -1,0 +1,78 @@
+--- Ember_v0.9.10_Hardened_14.md
++++ Ember_v0.9.10_Hardened_15.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.10_Hardened_14
+-**Supersedes:** 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.10_Hardened_15
++**Supersedes:** 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -4750,10 +4750,13 @@
+   callback's captures, and a handle passed to foreign code as `retained`, MUST be `Send` (`[THR-8]`, `E7004`)
+   unless the contract says `threads(main)` or `threads(creator)`: the compiler cannot see which thread C
+   will call from, so the contract is the only evidence, and it is an asserted fact (`[TCB-1]`).
+-* `[FFI-23]` `Retained.pin(v)` hands an Ember-owned object to C for keeping: for a class handle it
+-  retains the object and sets the header's pinned flag; for a `Box` it takes ownership. `tok.ptr()`
+-  is the raw pointer and dropping the token releases it. It is the only way to let foreign code keep
+-  Ember memory.
++* `[FFI-23]` *(changed in 0.9.10)* `Retained.pin(v)` hands an Ember-owned object to C for keeping: for
++  a class handle it retains the object and sets the header's pinned flag; for a `Box` it takes
++  ownership. `tok.ptr()` is the object's address, typed by what the token holds: a
++  `std.ffi.ObjectPtr[C]` for a class `C`, a `*mut U` for a `Box[U]`, a `*mut u8` for a `Box[dyn I]`.
++  An `ObjectPtr[C]` is the address of a class object with no count of its own (to C, one pointer):
++  `Copy`, equal when it is the address of the same object. Dropping the token releases the object.
++  It is the only way to let foreign code keep Ember memory.
+ * `[FFI-33b]` `returns_owned`, `Retained` and callbacks may carry `threads(creator)`: a `ForeignBox`
+   records its creating thread and, in `debug`, panics when dropped on another — the rule that makes
+   GPU, GL-context and COM handles safe to hold in ordinary values.
+@@ -7147,7 +7150,8 @@
+ a use after a move and an `unsafe fn` value are (§H.16); 0.9.10_Hardened_12 adds ODR-116, a
+ `MutSpan` where a `Span` is expected (§H.17); 0.9.10_Hardened_13 adds ODR-117 to ODR-126, the
+ owner's answers to the 85% push's questions and the profiles' new names (§H.18); 0.9.10_Hardened_14
+-adds ODR-127 to ODR-131, the owner's answers to helper C's questions (§H.19).
++adds ODR-127 to ODR-131, the owner's answers to helper C's questions (§H.19); 0.9.10_Hardened_15 adds
++ODR-132, the type of `Retained.ptr()` (§H.20).
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -7261,6 +7265,7 @@
+ | ODR-128 | ruled by the owner (2026-10-19): a field of an `@export_table` holds the function its default names (`= door_created`), else the module's function of its own name | `[FFI-26]` |
+ | ODR-129 | ruled by the owner (2026-10-19): an `@export_table`'s symbol carries its protocol version, `Name_vN`, with no separate marker | `[FFI-26]`, `[ABI-1]` |
+ | ODR-130 | ruled by the owner (2026-10-19): a field of an `@export_table` takes the thread contract of the function it holds | `[FFI-33c]` |
++| ODR-132 | ruled under the delegation (2026-10-19, autopilot), the owner having chosen a typed pointer: `tok.ptr()` is a `std.ffi.ObjectPtr[C]` for a class `C`, a `*mut U` for a `Box[U]`, a `*mut u8` for a `Box[dyn I]`; an `ObjectPtr` is a class object's address with no count of its own, one pointer to C | `[FFI-23]` |
+ | ODR-131 | ruled by the owner (2026-10-19): a `cdylib` exports the marker `ember_module_protocol_vN`, which its host looks up before calling into it; `[FFI-28]` and `[ABI-1]` disagreed | `[FFI-28]`, `[FFI-31]`, `[ABI-1]` |
+ 
+ Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
+@@ -7741,6 +7746,20 @@
+ | `[FFI-33c]` | changed |
+ | `[MAN-8]` | changed |
+ | `[VER-5]` | changed |
++
++## H.20 Changes in 0.9.10_Hardened_15 (from 0.9.10_Hardened_14)
++
++**0.9.10_Hardened_15** records ODR-132, ruled under the delegation on 2026-10-19 after the owner chose a
++typed pointer (`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-208):
++
++* `tok.ptr()` is typed by what the token holds: a `std.ffi.ObjectPtr[C]` for a class `C`, a `*mut U` for
++  a `Box[U]`, a `*mut u8` for a `Box[dyn I]` (`[FFI-23]`, ODR-132).
++
++Generated: every rule whose text differs from 0.9.10_Hardened_14.
++
++| Rule | 0.9.10_Hardened_14 → 0.9.10_Hardened_15 |
++|---|---|
++| `[FFI-23]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -8287,7 +8306,7 @@
+ | `[FFI-21]` | XVI | A C function-pointer parameter accepts a capture-free Ember function … |
+ | `[FFI-21a]` | XVI | *(new in 0.9.10)* A parameter C passes as a copy. C passes a … |
+ | `[FFI-22]` | XVI | Every exported function and trampoline first attaches the calling … |
+-| `[FFI-23]` | XVI | `Retained.pin(v)` hands an Ember-owned object to C for keeping: for a … |
++| `[FFI-23]` | XVI | *(changed in 0.9.10)* `Retained.pin(v)` hands an Ember-owned object … |
+ | `[FFI-24]` | Annex C | Every imported C++ function has an exception policy, with a default. … |
+ | `[FFI-24b]` | Annex C | An overlay may assert `@ffi(noexcept)` for a function the header … |
+ | `[FFI-24c]` | Annex C | `ember inspect` reports each C++ call's mode (`noexcept (derived)`, … |

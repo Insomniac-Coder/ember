@@ -1,0 +1,53 @@
+--- Ember_v0.9.9_Hardened_9.md
++++ Ember_v0.9.9_Hardened_10.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_9
+-**Supersedes:** 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_10
++**Supersedes:** 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -3684,7 +3684,13 @@
+   -> String`, `to_upper`, `to_lower`, `repeat(n)`, `parse[T]() -> Result[T, ParseError]`,
+   `to_string`, `get(range)`, `is_char_boundary(i)`, and `x in s` (`[STD-8b]`). Methods returning
+   several strings return iterators of `str` borrowing `s`. Case mapping and `char_count` are
+-  Unicode-aware; nothing depends on the locale.
++  Unicode-aware; nothing depends on the locale. `parse[T]()` (ODR-029) reads the whole text as an
++  integer type, a float type, `bool` or `char`, skipping no white space (`s.trim().parse[int]()`): an
++  integer is an optional sign (`-` only for a signed type) and ASCII decimal digits, and must fit `T`;
++  a float is an optional sign and `inf`, `infinity` or `nan` in any case, or decimal digits with an
++  optional `.`, fraction and exponent (`e` or `E`, an optional sign, digits), rounded to the nearest
++  `T`; a `bool` is `true` or `false`; a `char` is exactly one character. `ParseError`, in `std.string`,
++  is a unit-only enum, `Empty`, `Invalid` or `Overflow`, naming the first problem from the left.
+ * `[TXT-11]` *(new in 0.9.9)* **`String` operations.** Everything `str` has (by read-through), plus
+   `String()`, `with_capacity(n)`, `push(c: char)`, `push_str(s)`, `insert`, `remove`, `truncate`,
+   `clear`, `capacity`, `reserve`, and `as_str`. `a + b` for `a: String, b: str` consumes `a` and
+@@ -6333,7 +6339,8 @@
+ Each ambiguity found while implementing 0.9.9 is an owner decision request (`docs/OWNER-QUEUE.md`),
+ ruled under the owner's delegation and recorded here. Hardened_3 carries ODR-021 and ODR-022;
+ Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026;
+-Hardened_8 adds ODR-027; Hardened_9 adds ODR-028.
++Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
++Hardened_10 adds ODR-029.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6345,6 +6352,7 @@
+ | ODR-026 | a type that declares `drop` is not implicitly `Clone`; `@derive(Clone)` or a written `clone` gives it one (Hardened_7) | `[STR-5]` |
+ | ODR-027 | a range is a value: the prelude's range types are structs with public bounds, `Copy` when the bound is, and a `for` over one counts over a copy of its bounds, leaving it unchanged; `a..` overflows at its type's maximum (Hardened_8) | `[CTL-3]`, `[STD-8]`, `[STD-26]` |
+ | ODR-028 | a method named like an inherited one replaces it: without `override` over a virtual method it is `E2111`, over a non-virtual one `E2110`; an `override` is itself virtual (Hardened_9) | `[CLS-4]` |
++| ODR-029 | `parse[T]()` reads the whole text strictly (no white space; an optional sign and digits for integers, Rust's float grammar with `inf`/`nan`, `true`/`false`, one character), and `ParseError` is `Empty`, `Invalid` or `Overflow` (Hardened_10) | `[TXT-10]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6366,6 +6374,7 @@
+ | `[LT-7]` | changed |
+ | `[LT-44]` | changed |
+ | `[STR-5]` | changed |
++| `[TXT-10]` | changed |
+ | `[TYP-23]` | changed |
+ | `[TYP-29]` | changed |
+ ---

@@ -1,0 +1,163 @@
+--- Ember_v0.9.9_Hardened_19.md
++++ Ember_v0.9.9_Hardened_20.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_19
+-**Supersedes:** 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_20
++**Supersedes:** 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -1550,7 +1550,11 @@
+   time (Part XIV). Written without `: T` and with an untyped numeric literal as `e`, it is untyped
+   (ODR-037): each use is that literal and takes its type as the literal would there (`[TYP-23]`),
+   `int` or `float` where nothing fixes it. `T` MUST be `Copy`, `str`, a `bytes` literal type, or a fixed array of those
+-  (`E2130` otherwise, whose help suggests a `static`).
++  (`E2130` otherwise, whose help suggests a `static`). A `const` in the body of a `struct`, `enum`,
++  `class` or `extend` block belongs to the type: it is named `T.NAME`, or `Self.NAME` inside the
++  type, and is private to its module unless `pub` (`[MOD-2]`). Constants may name one another in
++  any order; one whose value depends on itself is `E6001`, and a panic while one is evaluated is
++  `E6004` (`[CT-7]`) (ODR-045).
+ * `[STA-1]` *(changed in 0.9.9)* `static NAME: T = e` is one value per program with a stable address.
+   A `static` is immutable; mutation goes through a `Sync` interior type (`Atomic`, `Mutex`, `RwLock`,
+   `Once`). `T` MUST be `Sync` (`E7002`). `static mut` exists only for foreign interfaces and every
+@@ -3839,7 +3843,9 @@
+ * `[STD-5]` *(changed in 0.9.9)* `sum` and `product` combine elements left to right in the element
+   type; an empty sum is zero. Integer sums panic on overflow (`[TYP-8]`). Float sums are never
+   reassociated outside `@fastmath` (`[TYP-9]`), so they are deterministic; `sum_f64()` accumulates
+-  `f32` elements in `f64`, and `math.KahanSum` gives compensated summation.
++  `f32` elements in `f64`, and `math.KahanSum` gives compensated summation: an `f64` accumulator with
++  Neumaier's correction, `KahanSum.new()`, `add(x)` and `value()`, and `KahanSum.of(xs)` for a
++  `Span[f64]` (ODR-043).
+ 
+ ## XV.6 Numbers and math
+ 
+@@ -3876,10 +3882,9 @@
+   `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `exp`, `exp2`, `ln`, `log2`, `log10`, `pow`, `sqrt`, `rsqrt`, `cbrt`,
+   `hypot`, `lerp`, `smoothstep`, each taking any number type (`fn f[T: Number](x: T) -> T.Real`,
+   `[STD-27]`): an integer's answer is an `f64` (`math.sqrt(9)` is `3.0`), an `f16`'s and an `f32`'s
+-  an `f32`, and an `f64`'s an `f64`; and the vector types `Vec2`, `Vec3`,
+-  `Vec4` (of `f32`, `@layout(c)`), `IVec2/3/4`, `Mat3`, `Mat4` (column-major), `Quat`, `Transform`,
+-  `Aabb`, `Ray`, `Plane`, `Frustum`, with `dot`, `cross`, `length`, `normalize` (panics on a zero
+-  vector; `normalize_or_zero` does not) and the arithmetic operators. `PI`, `TAU` and `E` are
++  an `f32`, and an `f64`'s an `f64`; and the vector, matrix, rotation and shape types of `[STD-28]`,
++  with `dot`, `cross`, `length`, `normalize` (panics on a zero vector; `normalize_or_zero` does not)
++  and the arithmetic operators. `PI`, `TAU` and `E` are
+   untyped constants (V.7): `x: f32 = math.PI` is `PI` rounded to `f32`, and with nothing to fix its
+   type a use is `f64`.
+ * `[STD-27]` *(new in 0.9.9)* `std.math.Number` is every number type. `std.math` adds each with an
+@@ -3898,6 +3903,42 @@
+   library's function of its name for `f64` and its `f` form for `f32` (`ln` is C's `log`, `round` its
+   `nearbyint`, `round_half_away` its `round`, `mul_add` its `fma`); the transcendental ones are
+   `[DET-2]`'s platform functions.
++* `[STD-28]` *(new in 0.9.9)* **Vectors, matrices, rotations and shapes** (ODR-043). `std.math` has
++  `Vec2`, `Vec3`, `Vec4` (`f32` components `x`, `y`, `z`, `w`), `IVec2/3/4` (`i32`), `UVec2/3/4`
++  (`u32`), `Mat2`, `Mat3`, `Mat4` (`f32`, column-major: the columns are `x_axis`, `y_axis`,
++  `z_axis`, `w_axis`, and a transform's translation is `w_axis`), `Quat` (`x`, `y`, `z`, `w`, `w`
++  the scalar part), `Transform` (`translation`, `rotation`, `scale`), `Aabb` (`min`, `max`),
++  `Sphere` (`center`, `radius`), `Ray` (`origin`, `direction`), `Plane` (`normal`, `d`: the points
++  `p` with `normal.dot(p) + d == 0`) and `Frustum` (six planes facing in: `left`, `right`, `bottom`,
++  `top`, `near`, `far`). Each is `@layout(c)` and `Copy`, with a public memberwise constructor.
++  * Vectors have the constants `ZERO`, `ONE` and the unit axes (`X`, `Y`, `Z`, `W`); `splat`;
++    component-wise `+`, `-`, `*`, `/` (`//` and `%` for the integer ones), the same with a scalar
++    on either side (`2.0 * v`, `[TYP-21]`), and unary `-` (not `UVec`); `min`, `max` and `abs` (not
++    `UVec`), component-wise; `dot`; for the float vectors `length`, `length_squared`, `distance`,
++    `distance_squared`, `normalize`, `normalize_or_zero`, `lerp` and `mul_add` (component-wise,
++    each rounded once, `[STD-3]`); `Vec3.cross`; and `extend` and `truncate` between sizes.
++  * Matrices have `IDENTITY`, `ZERO`, `from_cols` and `from_diagonal`; `m * n` (which applies `n`
++    first), `m * v`, `m * s` and `s * m` for an `f32` `s`, `+`, `-` and unary `-`; `transpose`,
++    `determinant`, `col(i)`, `row(i)`, `inverse` (a matrix with none panics) and `try_inverse` (an
++    `Option`). `m * v` is `m.x_axis * v.x + m.y_axis * v.y + …`, each term after the first added
++    by a fused multiply-add (`[STD-3]`). `Mat2` and `Mat3` have `from_angle` (a rotation in the
++    plane); `Mat3` and `Mat4` `from_quat` and `from_scale`; `Mat4` `from_translation`,
++    `from_rotation_x`/`y`/`z`, `from_scale_rotation_translation`, `look_at_rh`, `perspective_rh`
++    and `orthographic_rh` (right-handed, depth in `[0, 1]`), `transform_point3` (`w` = 1, divided
++    by the result's `w`) and `transform_vector3` (`w` = 0).
++  * Rotations are right-handed. `Quat` has `IDENTITY`, `from_axis_angle` and
++    `from_rotation_x`/`y`/`z`; `q * p` (the rotation `p`, then `q`) and `q * v` (the vector
++    rotated); `length`, `normalize`, `conjugate`, `inverse`, `dot` and `slerp`. `Transform` has
++    `IDENTITY`, `from_translation`, `from_rotation` and `from_scale`; `transform_point` (scale, then
++    rotate, then move), `transform_vector` (without the move), `t * u` (`u`, then `t`) and
++    `to_mat4`.
++  * `Aabb` has `from_center_half_extents`, `center`, `half_extents`, `contains`, `intersects`,
++    `union` and `expand`; `Sphere` `contains`, `intersects` and `intersects_aabb`; `Ray` `at(t)` and
++    `intersect_plane`, `intersect_sphere` and `intersect_aabb`, each the least `t ≥ 0` at which the
++    ray is on the plane or in the ball or box (0 when it starts there), as an `Option[f32]`; `Plane`
++    `from_point_normal`, `from_points`, `signed_distance` and `normalize`; `Frustum`
++    `from_view_projection(m)`, for `m` a `perspective_rh` or `orthographic_rh` projection times a
++    view, with `contains_point`, `intersects_sphere` and `intersects_aabb`.
+ 
+ ## XV.7 I/O, files, time and processes
+ 
+@@ -4951,7 +4992,7 @@
+ | `E5066` | an overlay marks a C++ function both `noexcept` and throwing | `[FFI-43]` |
+ | `E5067` | an overlay that states facts is not declared `unsafe overlay` | `[GRM-35]`, `[TIER-1]` |
+ | `E5090` | inline assembly is not supported by the C backend | `[UNS-6]` |
+-| `E6001` | comptime evaluation exceeded its limits | `[CT-3]` |
++| `E6001` | comptime evaluation exceeded its limits, or a constant's value depends on itself | `[CT-3]` |
+ | `E6004` | panic during compile-time evaluation | `[CT-7]` |
+ | `E6005` | `comptime(e)` refers to a run-time local | `[CT-6]` |
+ | `E6010` | operation not available at compile time | `[CT-2]` |
+@@ -5061,7 +5102,8 @@
+   an internal compiler error on any input. The emitted C is deterministic: the same input gives the
+   same text.
+ * `[CG-C-11]` *(new in 0.9.9)* **Floating-point flags.** Every translation unit begins with
+-  `#pragma STDC FP_CONTRACT OFF` and is compiled with `-ffp-contract=off -fno-fast-math` (Clang, GCC)
++  `#pragma STDC FP_CONTRACT OFF` where the compiler implements it (Clang; GCC does not, and warns
++  about it, so it has the flag alone, ODR-044) and is compiled with `-ffp-contract=off -fno-fast-math` (Clang, GCC)
+   or `/fp:precise` with `#pragma fp_contract(off)` (MSVC), with SSE2 rather than x87 on 32-bit x86,
+   and without flush-to-zero. A `@fastmath` or `@fp(contract)` function is emitted in a separate
+   translation unit compiled with the relaxed flags, and is not placed in the inline header of
+@@ -6458,7 +6500,7 @@
+ Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
+ Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031; Hardened_13 adds ODR-032 to ODR-036;
+ Hardened_14 adds ODR-037; Hardened_15 adds ODR-038; Hardened_16 adds ODR-039; Hardened_17 adds ODR-040;
+-Hardened_18 adds ODR-041; Hardened_19 adds ODR-042.
++Hardened_18 adds ODR-041; Hardened_19 adds ODR-042; Hardened_20 adds ODR-043 to ODR-045.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6484,6 +6526,9 @@
+ | ODR-040 | the operator interfaces' methods are `add`, …, `floordiv`, `bitand`, …, `neg` and `not` (a method name after `fn` and `.`), each `…Assign` form's with `_assign`; every number type implements the interface of each operator it has, in `std.core`; a type has an operator only through its interface; one `type Output` serves every interface of an `extend` block; a binding is written only in a bound (Hardened_17) | `[TYP-21]`, `[IFC-4]`, `[LEX-15]` |
+ | ODR-041 | `f16` is a `Number` whose `Real` is `f32`; every float type, `f16` included, has `INF`, `NAN`, `EPSILON`, `MAX` and `MIN` (Hardened_18) | `[STD-20]`, `[STD-21]`, `[STD-27]` |
+ | ODR-042 | an `extend` parameter that only the implemented interfaces name makes a blanket implementation; a bound brings its parents; indexing is only through `Index`, `IndexMut` and `IndexSet`, which `Array` and the views implement through their built-in indexing and `Map` for every `Q: AsKey[K]` (Hardened_19) | `[GRM-34]`, `[IFC-3]`, `[TYP-21]`, `[STD-17]` |
++| ODR-043 | `std.math` has the module table's vectors, matrices, `Quat`, `Transform` and shapes, with public components, the operators and the methods graphics libraries agree on: matrices column-major, projections right-handed with depth in `[0, 1]`, a ray's intersections the least `t ≥ 0`; `KahanSum` is an `f64` accumulator with Neumaier's correction (Hardened_20) | `[STD-21]`, `[STD-28]`, `[STD-5]`, `[STD-3]` |
++| ODR-044 | the `FP_CONTRACT` pragma is emitted where the compiler implements it: clang's spelling, MSVC's own; gcc, which warns about it, has `-ffp-contract=off` alone (Hardened_20) | `[CG-C-11]`, `[CG-C-1]` |
++| ODR-045 | a type's `const` is named `T.NAME` (`Self.NAME` inside it) and is private unless `pub`; constants name one another in any order, a cycle is `E6001` and a panic while evaluating one `E6004` (Hardened_20) | `[CT-1]`, `[CT-7]`, `[MOD-2]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6491,6 +6536,7 @@
+ |---|---|
+ | `[ALC-1]` | changed |
+ | `[BRW-8]` | changed |
++| `[CG-C-11]` | changed |
+ | `[CLO-7]` | changed |
+ | `[CLS-4]` | changed |
+ | `[CORO-6]` | changed |
+@@ -6514,6 +6560,7 @@
+ | `[LT-1b]` | changed |
+ | `[LT-7]` | changed |
+ | `[LT-44]` | changed |
++| `[STD-5]` | changed |
+ | `[STD-11]` | changed |
+ | `[STD-12]` | changed |
+ | `[STD-15]` | changed |
+@@ -6522,6 +6569,7 @@
+ | `[STD-20]` | changed |
+ | `[STD-21]` | changed |
+ | `[STD-27]` | added |
++| `[STD-28]` | added |
+ | `[STR-5]` | changed |
+ | `[TXT-10]` | changed |
+ | `[TYP-21]` | changed |
+@@ -7689,6 +7737,7 @@
+ | `[STD-25]` | XV | `random.Rng.seeded(seed)` is a deterministic generator (the same seed … |
+ | `[STD-26]` | XV | Python's built-in functions. The prelude has these functions, with … |
+ | `[STD-27]` | XV | `std.math.Number` is every number type. `std.math` adds each with an … |
++| `[STD-28]` | XV | Vectors, matrices, rotations and shapes (ODR-043). `std.math` has … |
+ 
+ ## STR
+ 

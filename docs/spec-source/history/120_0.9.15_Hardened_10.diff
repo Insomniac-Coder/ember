@@ -1,0 +1,1227 @@
+--- Ember_v0.9.15_Hardened_9.md
++++ Ember_v0.9.15_Hardened_10.md
+@@ -1,8 +1,9 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.15_Hardened_9
+-**Supersedes:** 0.9.15_Hardened_6 (development target), 0.9.15_Hardened_5, 0.9.15_Hardened_4,
+-0.9.15_Hardened_3, 0.9.15_Hardened_2, 0.9.15_Hardened_1 and every earlier file: 0.9.10_Hardened_1 to
++**Version:** 0.9.15_Hardened_10
++**Supersedes:** 0.9.15_Hardened_9 (development target until this one), 0.9.15_Hardened_8,
++0.9.15_Hardened_7, 0.9.15_Hardened_6, 0.9.15_Hardened_5, 0.9.15_Hardened_4, 0.9.15_Hardened_3,
++0.9.15_Hardened_2, 0.9.15_Hardened_1 and every earlier file: 0.9.10_Hardened_1 to
+ 0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3 and 0.8.5_Hardened_1
+ (adopted). This document is the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+@@ -20,10 +21,14 @@
+ `@ffi(const)` makes its method one that changes its object; a hand-written C declaration unsafe to call
+ is `unsafe fn`; one `L3015` naming every call; the default manifest's note), and states that the LLVM
+ backend is the default (`[CG-LL-1]`); **0.9.15_Hardened_7** the owner's verdict 136 (a hand-written C
+-declaration says `safe fn` or `unsafe fn`, and a plain `fn` there is refused). What a program means is written in
++declaration says `safe fn` or `unsafe fn`, and a plain `fn` there is refused); **0.9.15_Hardened_8** the
++owner's verdict 137 (what a call's result views is read from the called function's code);
++**0.9.15_Hardened_9** the owner's verdicts 138 to 144; **0.9.15_Hardened_10** the owner's verdicts 145
++to 160 (`owns` at the call for every `owns` parameter, a `dyn` call checked for each kind that may reach
++it and `runtime` where only the running program knows it). What a program means is written in
+ words on the thing it describes: one owner unless a line says `shares`; `owns` for a hand-over and a
+-value held alone; `copy of` for a copy; `ref mut` on a name, and at the call, for a change of someone
+-else's value; `weakref` for a link that does not keep its target alive; `this` for a method's object.
++value held alone, at the call too; `copy of` for a copy; `ref mut` on a name, and at the call, for a
++change of someone else's value; `weakref` for a link that does not keep its target alive; `this` for a method's object.
+ What a function changes, reads and ends is worked out from its code, never written on its first line.
+ Every memory rule is checked when compiling; what still runs while a program runs is listed with its
+ cost (§X.4). It replaces `Box`, `Shared`, `Weak`, `RefCell`, `SyncShared`, `ForeignBox`, `@sync`,
+@@ -318,7 +323,7 @@
+ 
+     fn spawn(count: int):
+         for _ in 0..count:
+-            this.particles.push(Particle(
++            this.particles.push(owns Particle(
+                 position=Vec3.ZERO,
+                 velocity=Vec3(0, 9.8, 0),
+                 lifetime=2.0))
+@@ -336,7 +341,7 @@
+     fountain.spawn(10_000)
+     for _ in 0..600:
+         integrate(ref mut fountain.particles, 1.0 / 60.0)
+-        fountain.particles.retain(fn(p) => p.lifetime > 0.0)
++        fountain.particles.retain(owns fn(p) => p.lifetime > 0.0)
+     println(f"{fountain.name}: {fountain.particles.len()} alive")
+ ```
+ 
+@@ -430,7 +435,9 @@
+   byte-equal.
+ * `[LEX-13]` A lone `_` is the discard pattern and never names a variable.
+ * `[LEX-14]` *(changed in 0.9.15)* A raw identifier `r#name` uses a keyword as a name (for imported C fields such as
+-  `type`).
++  `type`). A keyword written where a name is expected, any keyword of the table below, is `E0005`:
++  `type = 3` is "`type` is a keyword", with the help "write `r#type` to use the word as a name"
++  (`yield = 1`, a field `class: int` and a parameter `in: int` alike).
+ 
+ **Keywords** (reserved everywhere; 52):
+ 
+@@ -458,6 +465,7 @@
+   `where` clause (`[TYP-17]`); `copy` directly before `of`,
+   and `of` directly after `copy` (`copy of x`, so `mem.copy` and a count's `of` stay names,
+   `[GRM-43]`); `exists` between the value and `as` in an `if`, `elif` or `while` header (`[GRM-44]`);
++  `runtime` after a parameter's `:` and directly before `dyn` (`[LT-48]`);
+   `cast` at the start of an operand directly before a name or
+   `this` (`cast s as Circle`, `[GRM-30]`), so `cast(p)` stays a call; `guarded` and `by` after the type
+   of a field or a `static` (`[GRM-46]`). The reserved words `not` and
+@@ -630,7 +638,7 @@
+ bound_list    := type {"+" type}                        -- after `dyn` and `some` only
+ where_clause  := "where" type ":" "needs" needs {"," type ":" "needs" needs}
+ param_list    := param {"," param} [","]
+-param         := [param_word] IDENT ":" type ["..."] ["=" expression]   -- `Ts...`: the pack's values
++param         := [param_word] IDENT ":" ["runtime"] type ["..."] ["=" expression]   -- `Ts...`: the pack's values; `runtime` before a `dyn` type only ([LT-48])
+ param_word    := "ref" ["mut"] | "const" "ref" "mut" | "owns"
+ 
+ struct_decl   := "struct" IDENT [implements] [where_clause] ":" type_body
+@@ -690,7 +698,12 @@
+   (`interface Add[Rhs = Self]:`, `type Pair[T] = (T, T)`, `extend[T: needs B] Array[T]`). Brackets after the
+   name of a function, method, struct or class are `E0100`, whose message gives the two lines to
+   write (`[T]` above `fn first(xs: Array[T]) -> T:`); a bracket line not directly above one of them is
+-  `E0100`. A line that begins with `[` is a type-parameter line when the line after it begins a
++  `E0100`: a blank line or a comment line between `[T]` and its `fn` is `E0100` too, and so is every
++  line that begins with `[` anywhere else, one that begins with a list included (`[10, 20].len()` on a
++  line of its own; `n = [10, 20].len()` is the way), with one message: "a `[...]` line gives type
++  parameters, and goes on the line right above the function, struct or class they belong to" (for an
++  enum, an interface, a `type` alias or an `extend` block, the help gives the brackets after the name:
++  `enum E[T]:`). A line that begins with `[` is a type-parameter line when the line after it begins a
+   function, struct or class declaration (with `pub`, `open`, `abstract`, `static`, `virtual`,
+   `override`, `gen`, `unsafe` or `extern` before it, or none); this is the one place where the parser
+   looks past a line's end, at the next line's first tokens.
+@@ -944,11 +957,15 @@
+   `left=Some(owns Tree(value=2))`, `e.mesh = owns Mesh(points=[1.0, 2.0])`; `[TYP-45]`, `E2123`);
+   before the iterable of a `for` or of a comprehension's `for` clause (`[GRM-27]`) and before the
+   scrutinee of a `match`, where the default is a view, so that the loop or the branches take the value
+-  over (`for x in owns xs:`, `match owns e:`); and in `b = owns n` for a number, which `=` would copy,
+-  so that `n` ends there. Before a name whose place already hands the value over with no word
+-  (`e.mesh = m`, `b = a` for a value that is not a number, an argument, `return a`), and before
+-  `fn`, it is `E0109`, whose message says to remove it (for `owns fn`, to name what the function
+-  takes on each captured name: `fn() owns report:`).
++  over (`for x in owns xs:`, `match owns e:`); before an argument for an `owns` parameter, whatever is
++  given (`take(owns xs)`, `take(owns copy of xs)`, `take(owns [1, 2])`,
++  `xs.iter().for_each(owns fn(x: int): println(x))`; `[FN-2a]`, `E3028` without it); and in
++  `b = owns n` for a value `=` would copy (a number, a `bool`, a `StrView`, `[OWN-9]`), so that `n` ends
++  there. Before a name whose place already hands the value over with no word (`e.mesh = m`, `b = a` for
++  a value `=` hands over, `return a`), and before `fn` anywhere but an argument for an `owns` parameter,
++  it is `E0109`, whose message says to remove it (for `owns fn`, to name what the function takes on each
++  captured name: `fn() owns report:`). Before an argument for a parameter that only reads
++  (`show(owns xs)`) it is `E3028`, "`show` only reads its argument; remove `owns`: `show(xs)`".
+ * `[GRM-17]` *(changed in 0.9.10)* A lambda with a `:` body inside brackets holds exactly one simple
+   statement (`[LEX-6a]`). More is `E0106`, whose help is to declare a local function on the preceding
+   line (`[GRM-28]`). Outside brackets, a `:` body on the lambda's own line is one simple statement,
+@@ -996,7 +1013,7 @@
+ * `[GRM-26]` *(new in 0.9.9)* A `{…}` atom is a map literal if its first element is followed by `:`, and a set literal
+   otherwise. `{}` is an empty map; an empty set is written `Set[T]()`.
+ * `[GRM-27]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* A comprehension is shorthand for an iterator pipeline and has exactly its meaning and
+-  cost: `[f(x) for x in xs if p(x)]` is `xs.iter().filter(fn(x) => p(x)).map(fn(x) => f(x)).collect()`
++  cost: `[f(x) for x in xs if p(x)]` is `xs.iter().filter(owns fn(x) => p(x)).map(owns fn(x) => f(x)).collect()`
+   into an `Array`; `{…}` forms collect into a `Set` or a `Map`. Clauses nest left to right as in
+   Python. The loop variables are scoped to the comprehension. A clause over `owns xs` takes the
+   collection over, as `for` does (`[CTL-1]`): the items the comprehension keeps are handed over into
+@@ -1369,7 +1386,7 @@
+   them (`E3023`). Their API is in §VII.7.
+ * `StrView` is a `Span[u8]` known to be valid UTF-8, a view of text someone else owns; `String(w)`
+   makes a `String` of one's own from it. `CStrView` is a view of NUL-terminated C text.
+-  A type that contains itself, or a view of its own type, with no block of its own between, is E2200 ("`Tree` contains itself through `left`, so a `Tree` would have no end; hold the child in its own block: `left: Option[owns Tree]`"; "`Node.parent` would be a view of the `Node` that holds this one, which no struct can keep; for a link back to the parent make `Node` a class with `children: Array[Node]` and `parent: weakref Node = None`, set with `child.parent = weakref this` before `this.children.push(child)`").
++  A type that contains itself, or a view of its own type, with no block of its own between, is E2200 ("`Tree` contains itself through `left`, so a `Tree` would have no end; hold the child in its own block: `left: Option[owns Tree]`"; "`Node.parent` would be a view of the `Node` that holds this one, which no struct can keep; for a link back to the parent make `Node` a class with `children: Array[Node]` and `parent: weakref Node = None`, set with `child.parent = weakref this` before `this.children.push(owns child)`").
+ * `[TYP-34]` *(new in 0.9.9)* *(replaces the 0.9.8 `@view` requirement)* *(changed in 0.9.15)* A struct, enum or tuple that contains a
+   view (`ref T`, `ref mut T`, `sharedref mut T`, a `Span`, a `MutSpan`, a `StrView`) or another view
+   type is a **view type**, and lives no longer than what its view fields point into. A field written
+@@ -1823,7 +1840,7 @@
+   through `Index`, `IndexMut` and `IndexSet` (ODR-042).
+ * `[HASH-1]` *(changed in 0.9.15)* `Hash.hash` is generic over `H: needs Hasher` and monomorphised; hashing a value MUST feed a
+   deterministic representation of it into the hasher, and values equal under `Eq` MUST hash equally.
+-  `Hasher` (in `std.collections`, not the prelude) is a hashing state that is not `Copy`, with `write_bytes`,
++  `Hasher` (in `std.collections`, not the prelude) is a hashing state, with `write_bytes`,
+   `write_u8`, `write_u16`, `write_u32`, `write_u64`, `write_i8`, `write_i16`, `write_i32`,
+   `write_i64`, `write_usize`, `write_isize` and `finish() owns this -> u64`. A user type may
+   implement it and serve as a map's hasher.
+@@ -1892,7 +1909,7 @@
+ 
+ ```ember
+ fn evens(xs: Span[int]) -> some Iterator[Item = int]:
+-    return xs.iter().copy_each().filter(fn(x) => x % 2 == 0)
++    return xs.iter().copy_each().filter(owns fn(x) => x % 2 == 0)
+ ```
+ 
+ ## IV.10 Type inference
+@@ -2051,21 +2068,28 @@
+   (`integrate(ref mut p.as_mut_span(), v.as_span(), 0.5)`); a callee that points such a span elsewhere
+   changes only that span, which ends with the line (`[SPN-3]`).
+ * `[FN-2]` *(changed in 0.9.15)* A parameter with no word reads. There is no by-copy mode: a callee
+-  that needs a value of its own takes it `owns`, and the caller passes `copy of x` to keep its own, or
+-  `x` to hand it over.
+-* `[FN-2a]` *(changed in 0.9.15)* **A call says `ref mut` before an argument the callee may change**,
+-  with the same words as the parameter, `const` included: `bump(ref mut a)` for
+-  `fn bump(ref mut c: Counter):`, `blend(const ref mut d, s)` for
+-  `fn blend(const ref mut dst: MutSpan[float], src: Span[float]):`, `mem.take(ref mut this.items)`. A
+-  missing `ref mut` or `const`, or one written where the parameter does not say it, is `E3028`
+-  ("`bump` may change `a` (its first line says `ref mut c: Counter`); say so at the call:
+-  `bump(ref mut a)`"; "`show` only reads its argument; remove `ref mut`: `show(a)`"), and `ref mut`
++  that needs a value of its own takes it `owns`, and the caller passes `owns copy of x` to keep its own,
++  or `owns x` to hand it over (`[FN-2a]`).
++* `[FN-2a]` *(changed in 0.9.15)* **A call says `ref mut` before an argument the callee may change,
++  and `owns` before one it takes over**, with the same words as the parameter, `const` included:
++  `bump(ref mut a)` for `fn bump(ref mut c: Counter):`, `blend(const ref mut d, s)` for
++  `fn blend(const ref mut dst: MutSpan[float], src: Span[float]):`, `mem.take(ref mut this.items)`;
++  `take(owns xs)` for `fn take(owns xs: Array[int]):`, whatever is given: `take(owns copy of xs)` gives a
++  copy and keeps `xs`, `take(owns [1, 2])` a list made in the call, `names.push(owns p.name)` a part
++  (`[OWN-11]`), and a function written in the call is given the same way,
++  `xs.iter().for_each(owns fn(x: int): println(x))` (`[STD-19]`). A missing word, or one written where
++  the parameter does not say it, is `E3028` ("`bump` may change `a` (its first line says
++  `ref mut c: Counter`); say so at the call: `bump(ref mut a)`"; "`show` only reads its argument;
++  remove `ref mut`: `show(a)`"; "`take` takes `xs` over (its first line says `owns xs: Array[int]`); say
++  so at the call: `take(owns xs)`", with the help "to keep `xs`, give it a copy:
++  `take(owns copy of xs)`"; "`show` only reads its argument; remove `owns`: `show(xs)`"), and `ref mut`
+   before something this function may not change (a plain parameter, a temporary, a place reached
+   through a read-only name) is `E3027` ("`p` only reads the caller's player, so it cannot be given to
+   `heal` as `ref mut`; take it as `ref mut p: Player` on `revive`'s first line, or walk the list with
+-  `for ref mut p in players:`"). An argument for an `owns` parameter is handed over with no word, for
+-  every type (`f(n)` ends `n` when `f` takes `owns x: int`), as `=` hands a value over. An argument for
+-  a `Mutex`, `RwLock` or `Atomic` parameter, or a channel end, takes no word, since its own "only me" is
++  `for ref mut p in players:`"). `return a` and a constructor's argument take no word: they hand a
++  value over as `=` does (`[OWN-9]`). A function from a variable given to a standard-library function
++  that takes one is lent and takes no word: after `xs.iter().for_each(h)`, `h` is the caller's still
++  (`[STD-19]`). An argument for a `Mutex`, `RwLock` or `Atomic` parameter, or a channel end, takes no word, since its own "only me" is
+   the lock's block (`E3028`: "`top` takes the lock of `scores` itself; a `Mutex` takes no word at the
+   call: `top(scores)`"). The object a method is called on is not marked (`a.reset()`): what the method
+   does to it is worked out from its body (`[EXC-15]`). The arguments of one call do not overlap a
+@@ -2091,9 +2115,12 @@
+   `this` a whole new value (`this = Point(x=0.0, y=0.0)`); a class's may not (`[CLS-7]`). A function in
+   a type body is a method unless it is written `static fn`: it then has no object and is called on the
+   type (`static fn starting_at(k: int) -> Counter:`, called `Counter.starting_at(5)`). `static fn`
+-  outside a type body is `E2115`; `this` in a `static fn` or a free function is `E1010` ("`starting_at`
+-  is a `static fn`: it is called on the type, `Counter.starting_at(5)`, and has no object, so no
+-  `this`; build the counter from `k`: `return Counter(n=k)`"); `self` is `E1010`, whose help gives
++  outside a type body is `E2115`; `this` in a `static fn` or a free function is `E1010` ("`this` can
++  only be used in a method, and `starting_at` is a `static fn`, not a method", with the help "build the
++  counter from `k`: `return Counter(n=k)`"; "`this` can only be used in a method, and `double` is not a
++  method", with the help "to make `double` a method, move it into the struct or class it belongs to").
++  The help that builds the value is given where the function returns its own type and sets each field
++  it names through `this` from its parameters; `self` is `E1010`, whose help gives
+   `this` (`[GRM-41]`). A function's first line says its parameters, `owns this`, its result and
+   `from`, in that order (`[GRM-41]`), and nothing about what the function changes or reads, which the
+   compiler works out from its code (`[EFF-24]`).
+@@ -2523,7 +2550,7 @@
+ A **place** denotes memory: a local, a field of a place, an element of a place, an enum variant's
+ payload, the place a `ref` or `ref mut` view names, the value an `owns` field holds, a field of a class
+ object, a `static`. A call whose result type is `ref T` or `ref mut T` is a place too
+-(`first(ref mut xs) += 1`, `counts.entry(k).or_default() += 1`, `[LT-1]`). Everything else is a value.
++(`first(ref mut xs) += 1`, `counts.entry(owns k).or_default() += 1`, `[LT-1]`). Everything else is a value.
+ 
+ * `[EXP-5]` *(changed in 0.9.15)* A change, a `ref mut` name and a hand-over require a place;
+   `f(x).y = 1` is `E2140` unless `f` returns `ref mut`. A method that may change its object, called on a
+@@ -2733,8 +2760,8 @@
+   type, numbers included (after `fn() owns count`, the function that made the lambda no longer uses
+   `count`, `E3040`, and the lambda uses it under the same name); `shares`, `shares mut` and
+   `thread_shared` one more owner; `weakref` a link; `ref` a read-only view of what the name views at
+-  that moment, for a loop's name the element of that round. So `b.on_click(fn(): score += 1)` changes
+-  the real `score`, and `b.on_click(fn() copy of score: println(score))` keeps a copy of its own. What a
++  that moment, for a loop's name the element of that round. So `b.on_click(owns fn(): score += 1)` changes
++  the real `score`, and `b.on_click(owns fn() copy of score: println(score))` keeps a copy of its own. What a
+   function captured with a word, and what that owns alone, is its own state (`[CLO-10]`); a real
+   variable stays at its own address, and the function only borrows it (`[CLO-4]`). A place that holds
+   the function value counts as reaching every real variable it uses, and a call that may run it as a
+@@ -2792,7 +2819,7 @@
+   `return fn() owns n: n += 1` in place of this line"); with `owns`, `n` is the function's own state,
+   and the returned type is a plain `fn()`: `fn make_counter() -> fn():`. A name captured with `ref`
+   follows the same rule (`[LT-42]`); a task's use of a loop's own name is Part XI's.
+-  Its message for a handler kept after its maker returns: E3026 ("the click handler changes `total`, which belongs to `register`'s caller, and `b` keeps the handler after `register` returns; keep the total in an object the handler can own a share of: declare `class Counter:` with the field `n: int = 0`; in `main`, instead of `total = 0`, `register(ref mut b, ref mut total)` and `println(total)`, write `count = Counter()`, `register(ref mut b, shares mut count)` and `println(count.n)`; and instead of `register`'s two lines write `fn register(ref mut b: Button, owns count: shares mut Counter):` and `b.on_click(fn() owns count: count.n += 1)`").
++  Its message for a handler kept after its maker returns: E3026 ("the click handler changes `total`, which belongs to `register`'s caller, and `b` keeps the handler after `register` returns; keep the total in an object the handler can own a share of: declare `class Counter:` with the field `n: int = 0`; in `main`, instead of `total = 0`, `register(ref mut b, ref mut total)` and `println(total)`, write `count = Counter()`, `register(ref mut b, shares mut count)` and `println(count.n)`; and instead of `register`'s two lines write `fn register(ref mut b: Button, owns count: shares mut Counter):` and `b.on_click(owns fn() owns count: count.n += 1)`").
+ * `[CLO-5]` *(changed in 0.9.15)* A function value that captures an object with `shares` or
+   `thread_shared` holds one more owner of it. A loop of owners through function values' state is
+   refused as every loop of owners is (`[WK-1]`); the link back is captured `weakref`
+@@ -2815,7 +2842,7 @@
+   `owns` function value, and `scope.spawn` a plain `owns f: fn() -> R`, whose tasks may use the
+   caller's own variables since they end with the `with scope` block (`[THR-11]`). Nothing is captured by
+   a rule of the call: the function given says after its brackets what it holds
+-  (`thread.spawn(fn() owns tx: produce(tx))`), a name with no word is the real variable, and a function
++  (`thread.spawn(owns fn() owns tx: produce(tx))`), a name with no word is the real variable, and a function
+   that may outlive a real variable it uses is `E3026` (`E7004` for an unscoped thread or a kept C
+   callback, whose message names the words, Part XI).
+ * `[CLO-11]` *(new in 0.9.9)* A call `recv.name(args)` where `recv`'s type has no method `name` but has a field `name`
+@@ -2823,7 +2850,7 @@
+ * `[CLO-12]` *(new in 0.9.9)* *(changed in 0.9.15)* A local function (`[GRM-28]`) is a named lambda: it takes the same
+   capture words after its brackets (`fn push_a() thread_shared log:`), follows `[CLO-1]` to `[CLO-6]`,
+   and may be passed by its name, so a long lambda may be written inside the call
+-  (`a = thread.spawn(fn() thread_shared log: log.push("a"))`) or as a local function
++  (`a = thread.spawn(owns fn() thread_shared log: log.push("a"))`) or as a local function
+   (`fn push_a() thread_shared log:` with the body `log.push("a")`, then `a = thread.spawn(push_a)`).
+ * `[CLO-16]` *(new in 0.9.15)* **`thread_shared fn()`: a function any thread may run.** A callable
+   type says whether any thread may run its functions. A list, field or parameter whose functions may
+@@ -2849,7 +2876,7 @@
+   loop over `LOG` `E3020` (`[BRW-18]`). For the overlap of a call's arguments a function value counts as
+   changing every place its functions change and every real variable they capture (`[BRW-11]`), and a
+   function value is not stored in a place that a real variable it changes owns, all the way down
+-  (`b.on_click(fn(): b.handlers.clear())`, `t.on_visit = fn(n: Node): t.root.children.clear()`, `E3022`:
++  (`b.on_click(owns fn(): b.handlers.clear())`, `t.on_visit = fn(n: Node): t.root.children.clear()`, `E3022`:
+   "this function clears `b.handlers`, and `on_click` would keep it in `b.handlers`, so it would change
+   the button that holds it while the button runs it; clear the handlers after the click instead:
+   `b.click()`, then `b.handlers.clear()`"), since it would change its own holder while it runs.
+@@ -2870,7 +2897,7 @@
+   `fn(s)` there is `E2020` ("`each_name` hands each name over (`fn(owns String)`), so this function
+   receives it as its own: write `fn(owns s) => println(s.len())`"); where the type gives it read-only,
+   `fn(owns s)` is `E2020` ("`each_name` gives each name read-only, so this function cannot take it
+-  over; to keep your own, write `fn(s): names.push(copy of s)`"); `fn(ref mut ui)` changes the caller's
++  over; to keep your own, write `fn(s): names.push(owns copy of s)`"); `fn(ref mut ui)` changes the caller's
+   value. A plain one reads. Written without types, the parameters follow the comma rule
+   (`fn(ref mut ui, ref dx)`; `E0116`, `[OWN-13]`).
+ 
+@@ -2943,8 +2970,8 @@
+   a call gave (`[LT-1]`): a method's points into its object, and `from` narrows it
+   (`gen fn replay() -> Generator[int] from log:`). While it will still be used, the collection it walks
+   does not change, however the generator walks it, by position included (`E3020`, `[BRW-18]`:
+-  "`d.log.push("open")` (line 3) changes `d.log`, which `g` walks (`g = d.replay()`, line 1), and `g`
+-  is used again on line 4; push after `g`'s last use: move `d.log.push("open")` below line 4"); any
++  "`d.log.push(owns "open")` (line 3) changes `d.log`, which `g` walks (`g = d.replay()`, line 1), and `g`
++  is used again on line 4; push after `g`'s last use: move `d.log.push(owns "open")` below line 4"); any
+   other change of what its view points into is `E3021` (`d.angle = 90.0` while `g` will still be used),
+   unless `from` narrows the view to the field it walks.
+ * `[CORO-13]` *(new in 0.9.9)* *(changed in 0.9.15)* A `yield` while a `@must_drop` value (`[THR-6]`) is live is `E2231`: a
+@@ -3069,15 +3096,20 @@
+   argument the callee may change (`[FN-2a]`): `mem.take(ref mut this.items)`. There is no
+   `mem.forget`: it is `E1010`, "`mem.forget` is gone: a value always ends with its clean-up; to give
+   the widget to a C function that keeps it, hand it to a parameter its declaration says it takes
+-  (`widget_take(first)`), or, inside `unsafe:`, give it `first.into_raw()`".
++  (`widget_take(owns first)`), or, inside `unsafe:`, give it `first.into_raw()`".
+ * `[OWN-9]` *(new in 0.9.15)* **`owns` hands over, for every type, numbers included.** An argument for
+-  an `owns` parameter is handed over with no word: `f(n)` ends `n` when `f` takes `owns x: int`, and
+-  `f(copy of n)` keeps the caller's own. `return a` hands `a` over too. A number given with `=` is
+-  copied, so `b = owns n` is how `=` hands a number over: `n` ends there, and a later use is `E3040`.
+-  `owns` is not written before a name whose place already hands the value over, nor before `fn`
++  an `owns` parameter says `owns` at the call (`[FN-2a]`): `f(owns n)` ends `n` when `f` takes
++  `owns x: int`, and `f(owns copy of n)` keeps the caller's own. `return a` hands `a` over with no word,
++  and so does a constructor's argument, as `=` does: `w = Words(names=xs)` hands `xs` over, `Point(x=a)`
++  copies `a`. A value `=` copies (a number, a `bool`, a `char`, a `StrView`, a `ref T`, a `Span[T]`, a
++  struct made only of these) is copied with `=` too, so `b = owns n` is how `=` hands one over: `n` ends
++  there, and a later use is `E3040` (`f = owns flag` ends `flag`). `owns` is not written before a name
++  whose place already hands the value over, after `return`, nor before `fn` written on its own
+   (`E0109`: "`e.mesh = m` already hands `m` over; remove `owns`"; "`b = a` already hands `a` over; remove
+-  `owns`"; "`owns fn` does not say what the function takes or copies; name it on each captured name:
+-  `fn() owns report:`").
++  `owns`"; "`return` always hands the value over; remove `owns`: `return xs`"; "`owns fn` does not say
++  what the function takes or copies; name it on each captured name: `fn() owns report:`"); before a
++  function written as an argument for an `owns` parameter it is the call's word
++  (`xs.iter().for_each(owns fn(x: int): println(x))`).
+ * `[OWN-10]` *(new in 0.9.15)* **`owns` on the line that makes a value for a place that owns it
+   alone.** An `owns` field, an `Option[owns T]` and a list of `owns` values each hold their value in a
+   block of its own, and the line that makes a value for such a place says `owns`, at first and later:
+@@ -3093,15 +3125,15 @@
+   `E2114` ("a `Player` object always lives in its own block; remove `owns`: `p: Player`").
+ * `[OWN-11]` *(new in 0.9.15)* **A part handed over on its own.** A part of a struct value stored
+   somewhere else (`push`, `return`, a field, an `owns` argument) is handed over on its own: for a struct
+-  value `p`, `names.push(p.name)` moves `p`'s name into the list, and `p.hp` stays usable; `p.name`,
++  value `p`, `names.push(owns p.name)` moves `p`'s name into the list, and `p.hp` stays usable; `p.name`,
+   and `p` used whole, are `E3040` until `p.name` is given a new value (`p.name = String("")`): "`p.name`
+   was handed over to `names` on line 4; give it a new value first, or keep a copy:
+-  `names.push(copy of p.name)`". A field of a class object is not handed out this way, since other names
++  `names.push(owns copy of p.name)`". A field of a class object is not handed out this way, since other names
+   may reach the object and would see the hole (`E3013`: "`q` is a `Player` object, which other names
+   may reach, so `q.name` cannot be taken out and leave a hole; take it and leave a value in its place:
+-  `names.push(mem.take(ref mut q.name))`"). A hand-over out of a name or place that does not own the
+-  value is `E3013` too: "`v.push(template)` would hand over the caller's player, but `template` only
+-  reads it; to put a player of your own in the list write `v.push(copy of template)`".
++  `names.push(owns mem.take(ref mut q.name))`"). A hand-over out of a name or place that does not own the
++  value is `E3013` too: "`v.push(owns template)` would hand over the caller's player, but `template` only
++  reads it; to put a player of your own in the list write `v.push(owns copy of template)`".
+ * `[OWN-12]` *(new in 0.9.15)* **Giving an object to C.** A C function whose declaration says it keeps
+   the object it is given (`[FFI-11]`) takes it by an ordinary hand-over, `widget_take(first)`: the name
+   ends and Ember frees nothing. For a C function whose declaration cannot say so (a plain pointer
+@@ -3222,7 +3254,7 @@
+   through a name that only reads it, is `E3023` too (`[EXC-15]`). The types made to be shared between
+   threads are used through any name, a plain one included, by their own operations: a `Mutex`,
+   `RwLock`, `Atomic` or channel end, and the `guarded by` fields of an object under their lock
+-  (`with g = m.lock():`; `with log.lock: log.lines.push(...)`; `total.fetch_add(n)`; `tx.send(v)`;
++  (`with g = m.lock():`; `with log.lock: log.lines.push(...)`; `total.fetch_add(n)`; `tx.send(owns v)`;
+   `rx.recv()`). Each orders its own change (the lock's block, an atomic instruction), and handed to a
+   call it takes no word (`[FN-2a]`, Part XI).
+ * `[BRW-1]` *(changed in 0.9.15)* **One name changes, or any number read.** At every point of the
+@@ -3256,10 +3288,10 @@
+     owner is an owner, not a view: it sees the changes the value's other owners make (`[RC-1]`).
+ * `[BRW-2]` *(changed in 0.9.15)* **Liveness.** A view is in use from where it is made to the last use
+   of anything made from it: the view itself, a view made from it, a value returned from a call it was
+-  given to. Scope does not matter: `n = v.len(); v.push(n)` is legal.
++  given to. Scope does not matter: `n = v.len(); v.push(owns n)` is legal.
+ * `[BRW-3]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Reading before the call.** For a method call
+   whose object is a place, or an argument given to a `ref mut` parameter, the place may be read while
+-  the call's arguments are evaluated, and values computed from it may be passed (`v.push(v.len())`); a
++  the call's arguments are evaluated, and values computed from it may be passed (`v.push(owns v.len())`); a
+   view of the place still in use at the call, because it is itself an argument or is held by one,
+   overlaps the changeable argument and is `E3021` (`[BRW-11]`). For
+   `fn f(ref mut v: Array[String], s: StrView)` the call `f(ref mut v, v[0])` is therefore refused; for
+@@ -3282,8 +3314,8 @@
+   `blend(ref mut tracks[dst_name].as_mut_span(), old.as_span())`"). A function value given to a call
+   that changes the call's object is refused likewise ("`LOG.retain(keep)` changes `LOG` while it walks
+   it, and `keep` adds to `LOG` too (its line 3); drop the lines first and push the notes after:
+-  `before = LOG.len()`, `LOG.retain(fn(s) => s != "")`, `dropped = before - LOG.len()`, then
+-  `for k in 0..dropped: LOG.push(String("dropped an empty line"))`"). Two exceptions:
++  `before = LOG.len()`, `LOG.retain(owns fn(s) => s != "")`, `dropped = before - LOG.len()`, then
++  `for k in 0..dropped: LOG.push(owns String("dropped an empty line"))`"). Two exceptions:
+   1. **The same whole variable under two names.** Where the compiler proves when compiling that two
+      `ref mut` arguments, or a `ref mut` argument and a variable the callee uses by its own name (a
+      module variable), are one whole variable, the call is allowed and compiled against a copy of the
+@@ -3351,8 +3383,8 @@
+ * `[BRW-10]` *(new in 0.9.9)* *(changed in 0.9.15)* **What a method does to its object is worked out
+   from its body,** for every method, private or `pub` (`[EXC-15]`): a call `w.bump()` changes only the
+   fields `bump`'s body changes, and those its callees' bodies change, so it may be called while a loop
+-  walks `w.names` if `bump` touches only `w.count`. `fn note(msg: String):` whose body is
+-  `this.log.push(msg)` changes `this.log`, so `this.note(...)` inside a loop over `this.log` is refused
++  walks `w.names` if `bump` touches only `w.count`. `fn note(owns msg: String):` whose body is
++  `this.log.push(owns msg)` changes `this.log`, so `this.note(...)` inside a loop over `this.log` is refused
+   (`E3020`) and inside a loop over `this.players` is allowed. Across a package's edge the fact is
+   recorded in the package's interface file (`[EFF-4]`), so a change to a `pub` method's body that
+   changes what it touches is reported as a change of its interface.
+@@ -3423,10 +3455,10 @@
+   (`[BRW-21]`). Adding to a list moves only what it stores inline: a view of a class object (a link, a
+   kept view, or an address reached through a link), which lives in its own block, is not ended by a
+   `push` or an `extend` of the list that owns it (with `players: Array[Player]` and
+-  `w = Watcher(target=sharedref mut players[0])`, `w.target.hp -= 1` after `players.push(Player())` is
++  `w = Watcher(target=sharedref mut players[0])`, `w.target.hp -= 1` after `players.push(owns Player())` is
+   allowed); one to a value stored inline in the list (a struct element) is. Removing, clearing or
+   replacing still ends every view of what it may end.
+-  For keys viewed across a change of their map: E3060 ("`m.insert(String("z"), 1)` (line 8) changes `m`, whose keys `ks` (line 7) still views on line 9; use `ks` before line 8, or keep your own strings: write `ks = sorted(m.keys().copy_each())` in place of line 7").
++  For keys viewed across a change of their map: E3060 ("`m.insert(owns String("z"), owns 1)` (line 8) changes `m`, whose keys `ks` (line 7) still views on line 9; use `ks` before line 8, or keep your own strings: write `ks = sorted(m.keys().copy_each())` in place of line 7").
+ * `[BRW-18]` *(new in 0.9.15)* **Loops, generators included.** While a `for` loop walks a collection (a
+   list, a map, a set or a string), or a generator that walks it (a `gen fn` paused in the middle of it,
+   `[LT-1]`) will still be used, nothing changes the collection, whatever the change: nothing is added or
+@@ -3438,15 +3470,15 @@
+   end of an object whose `drop` changes it, `[DRP-8]`). It is `E3020`, at the change:
+   "`enemies.push(...)` adds to `enemies`, which this loop walks (line 3); collect the new enemies in a
+   list of your own: write `spawned: Array[Enemy] = []` before the loop,
+-  `spawned.push(Enemy(hp=5, splits=false))` in place of this line, and `enemies.extend(spawned)` after
++  `spawned.push(owns Enemy(hp=5, splits=false))` in place of this line, and `enemies.extend(spawned)` after
+   the loop"; "`counts.insert(...)` (line 4) adds to `counts`, whose keys this loop walks (line 3);
+   collect the new keys in a list of your own: write `upper: Array[String] = []` before the loop,
+-  `upper.push(k.to_upper())` in place of this line, and `for u in owns upper: counts.insert(u, 0)` after
++  `upper.push(owns k.to_upper())` in place of this line, and `for u in owns upper: counts.insert(owns u, owns 0)` after
+   the loop"; "`b.click()` (line 17) adds to `LOG` (through `click`, which runs the handler stored on
+   line 9, `log_click`, which pushes to `LOG`) while this loop walks `LOG` (line 16); click after the
+-  loop: move line 17, `b.click()`, below the loop"; "`d.log.push("open")` (line 3) changes `d.log`,
++  loop: move line 17, `b.click()`, below the loop"; "`d.log.push(owns "open")` (line 3) changes `d.log`,
+   which `g` walks (`g = d.replay()`, line 1), and `g` is used again on line 4; push after `g`'s last use:
+-  move `d.log.push("open")` below line 4". **The loop's own handle may change the item it is on**:
++  move `d.log.push(owns "open")` below line 4". **The loop's own handle may change the item it is on**:
+   `for ref mut x in xs: x = 5` gives `[5, 5, 5]`; `for k, ref mut v in counts: v *= 2`;
+   `for k, ref mut v in names: v = String("bob")`; and the message gives that line: "`xs[0] = 5` (line
+   3) writes an element of `xs`, which this loop walks (line 2); to change the element the loop is on,
+@@ -3458,7 +3490,7 @@
+   may write its elements and add to it, but not remove from it (`E3020`: "`enemies.remove(i)` (line 4)
+   shortens `enemies`, which `for i in 0..enemies.len():` (line 2) counts over with an end fixed when it
+   started; remove after the loop: instead of `if enemies[i].hp <= 0:` (line 3) and line 4, write
+-  `enemies.retain(fn(e) => e.hp > 0)` after the loop (and remove the `for` line if nothing is left in
++  `enemies.retain(owns fn(e) => e.hp > 0)` after the loop (and remove the `for` line if nothing is left in
+   it)"). A `while` loop that tests its position against the list's current length at every step may
+   add and remove: it is not a walk, and each index is checked. A call through a function value that may
+   take a lock this thread holds, inside a walk under that lock, is `E7018`, not `E3020` (§XI.2):
+@@ -3509,7 +3541,7 @@
+   `Tree[StrView].leaf(v: T)` may return a view of what `v` views, and its callers, which call that
+   instance, know it (ODR-048). Where rule 1 below ties the result to `this`, such a parameter is a
+   source alongside it when its declared type names a type parameter the declared result names too: the
+-  result's type says it can hold one, so `Map[StrView, V].entry(k) -> MapEntry[K, V, H]` returns an
++  result's type says it can hold one, so `Map[StrView, V].entry(owns k) -> MapEntry[K, V, H]` returns an
+   entry holding `k`, while `get(q) -> Option[ref V]` points only into the map (ODR-069).
+   For a function whose result is a view:
+   1. if it is a method, the result points into `this`;
+@@ -3519,7 +3551,17 @@
+   function's code shows the result points into: its summary (`[LT-22]`), read for every result type, so
+   `fn pick(a: Span[int], b: Span[int]) -> Span[int]:` whose body is `return a` keeps only `a` viewed.
+   The three rules decide a call where there is no code to read: a call through a function value
+-  (`[LT-7]`), a `dyn` or `virtual` method, a function with no Ember body. Pointing into an argument means
++  (`[LT-7]`), a function with no Ember body. A `dyn` or `virtual` method's call is decided by the code of
++  each kind that may reach it, the types the program gives to the function, followed through its names
++  and calls: with `interface Picker: fn pick(other: Array[int]) -> Span[int]`, `Mine.pick` returning
++  `this.items` and `Yours.pick` returning `other`, `fn show(p: dyn Picker):` doing `r = p.pick(xs)`,
++  `xs.push(owns 3)`, `println(r)` compiles for `show(Mine(items=[9]))`, which prints `[9]`, and is
++  refused at `xs.push(owns 3)` for `show(Yours(items=[9]))` (`E3021`). Where which kind reaches it is
++  known only while the program runs (`p: dyn Picker = Mine(items=[9]) if input() == "m" else
++  Yours(items=[9])`, then `show(p)`), what one of them makes unsafe is `E3021` ("`xs` changes while `r`
++  may still look at it: `p` may be a `Yours`, and which kind it is is only known while running", with
++  the help "to check it while running, write `runtime` on the parameter:
++  `fn show(p: runtime dyn Picker):`"), unless the parameter says `runtime` (`[LT-48]`). Pointing into an argument means
+   pointing into it and into everything it owns (**into**, §VII.1), so a reshape of anything it owns ends
+   the view and any other change of it while the view is used is refused (`[BRW-1]`). A returned view
+   may point into `this` and into any source parameter, a method's as well as a function's, with nothing
+@@ -3527,7 +3569,7 @@
+   keep `other` viewed. A returned view that points into any other parameter is refused: `E3063` when
+   that parameter is `owns` or is passed as a copy (`[BRW-8]`), whose storage ends with the call, and
+   `E3062` otherwise. A call whose result type
+-  is `ref mut T` or `ref T` is a place (`first(ref mut xs) += 1`; `counts.entry(k).or_default() += 1`),
++  is `ref mut T` or `ref T` is a place (`first(ref mut xs) += 1`; `counts.entry(owns k).or_default() += 1`),
+   and a name bound to it follows `[BRW-12]` (`r = ref mut first_even(ref mut xs)`). A generator method's
+   result is such a view, and it walks what it views: after `g = d.replay()`, the list it walks
+   (`d.log`) does not change while `g` will still be used (`[BRW-18]`, `E3020`), however `replay` walks
+@@ -3543,7 +3585,10 @@
+   names and of another parameter too (`-> Pair from a` over `return make(a, b)`, `make` a function
+   value), naming the other would be as wrong, and the help says to remove `from`: `E3062` ("the returned
+   view points into `b`, but its first line says `from a`"; help: "remove `from a`: the result may point
+-  into `a` and `b`, and with no `from` it points into each of them"). A named parameter is a source parameter
++  into `a` and `b`, and with no `from` it points into each of them"). Where the body gives a view of the
++  object itself, which no `from` names (`return ref this.at` under `-> ref int from owner`, `at` a
++  number), the help gives both ways out: "return a view of `owner`, or remove `from owner`", since with
++  no `from` a method's result points into `this` (rule 1). A named parameter is a source parameter
+   (`[LT-1]`) or a `ref mut` parameter; naming a plain `Copy` parameter, or an `owns` parameter that is
+   not a view, is `E2031`. A bare field name names any field of `this`, whatever the method does with its
+   object (`owns this`, or passed as a copy, `[BRW-8]`): for a field whose type is a view, the result
+@@ -3558,8 +3603,9 @@
+   is no `this`, or a field of neither kind, is `E2031`; a name that is both a parameter and a field of
+   `this` is `E2118` ("`src` is both a parameter of `next_word` and a field of `Parser`, so `from src`
+   could mean either; rename the parameter: for a view of the field write
+-  `fn next_word(line: StrView) -> StrView from src:`, for a view of the parameter
+-  `fn next_word(line: StrView) -> StrView from line:`"). The standard library's iterators that read
++  `fn next_word(src_param: StrView) -> StrView from src:`, for a view of the parameter
++  `fn next_word(src_param: StrView) -> StrView from src_param:`"; the new name is the parameter's with
++  `_param` after it). The standard library's iterators that read
+   through a read-only field say so on `next`, and its iterator adapters on the iterator they wrap, so
+   `for k in m:` and `m.keys()` give views that point into the map (`[CTL-1]`), which a program may keep
+   across rounds and after the loop. `from` is needed only where rule 1 or 3 points into more than the
+@@ -3662,7 +3708,19 @@
+   `mine` ends with `pick_longer`; put a view of what the caller gave there (`best = other`), or return a
+   list of your own: `-> Array[int]`"). A use of such a view after one of the call's arguments changed is
+   `E3060`.
+-  Its message: E3060 ("`bag.items.push(k)` (line 15) may move the list that `h.view` points into (`pick` may have put a view of `bag` there on line 13), and `h.view` is used on line 16; use `h.view` before line 15").
++  Its message: E3060 ("`bag.items.push(owns k)` (line 15) may move the list that `h.view` points into (`pick` may have put a view of `bag` there on line 13), and `h.view` is used on line 16; use `h.view` before line 15").
++
++* `[LT-48]` *(new in 0.9.15)* **`runtime`: a `dyn` parameter's kind checked while the program runs.**
++  `runtime` before a parameter's `dyn` type lets the function do what one of the kinds that may reach it
++  would make unsafe (`[LT-1]`), where which kind it is is known only while the program runs: the
++  function checks the kind at the line that would be unsafe, and stops the program there if it is that
++  kind. With `[LT-1]`'s `Picker`, `fn show(p: runtime dyn Picker):` and `p: dyn Picker = Mine(items=[9])
++  if input() == "m" else Yours(items=[9])`, `show(p)` prints `[9]` for a `Mine`, and for a `Yours` stops
++  at `xs.push(owns 3)`: "panic at main.em:17:5: `xs` changes while `r` looks at it: `p` is a `Yours`,
++  whose `pick` gives back the list it was handed". Where the kind is known when compiling, the word
++  changes nothing: given `show(Yours(items=[9]))`, `show` is refused at `xs.push(owns 3)` when compiling,
++  as without it (`E3021`). `runtime` is a word only after a parameter's `:` before `dyn` (`[LEX-15]`); it
++  costs one type-id compare at each line it guards (§X.4).
+ 
+ ### Views with several regions
+ 
+@@ -3785,7 +3843,7 @@
+ 
+ * `[DRP-1]` *(changed in 0.9.15)* `fn drop():` runs exactly once per value, at the end of its life.
+   It changes its own object as a given, since it ends it, and its first line says nothing about that.
+-  Calling it explicitly is `E3070`; `mem.drop(x)` ends a value early.
++  Calling it explicitly is `E3070`; `mem.drop(owns x)` ends a value early.
+ * `[DRP-2]` Locals drop at the end of their block in reverse declaration order; fields after their
+   owner's `drop`, in reverse declaration order; collection elements in index order; the active variant
+   of an enum; tuple elements in reverse order.
+@@ -3840,13 +3898,13 @@
+     ps: Array[Player] = [Player("a"), Player("b")]
+     println(total_health(ps))
+     heal_all(ref mut ps)
+-    n = take(ps)
++    n = take(owns ps)
+     println(n)
+ ```
+ 
+ Each name says what it is: `players` in `total_health` reads the caller's list, `ref mut players` in
+ `heal_all` may change it, and `owns players` in `take` takes it over. The call `heal_all(ref mut ps)`
+-says that `ps` may be changed; `take(ps)` hands `ps` over, and using `ps` after it is `E3040`,
++says that `ps` may be changed; `take(owns ps)` hands `ps` over, and using `ps` after it is `E3040`,
+ labelled at the hand-over. Nothing in this program names a lifetime, and nothing in it is checked while
+ it runs.
+ ---
+@@ -3868,11 +3926,11 @@
+ 
+     fn add(owns child: Node):
+         child.parent = weakref this
+-        this.children.push(child)
++        this.children.push(owns child)
+ 
+ fn main():
+     root = Node("root")
+-    root.add(Node("leaf"))
++    root.add(owns Node("leaf"))
+     for c in root.children:
+         if c.parent exists as p:
+             println(f"{c.name} -> {p.name}")
+@@ -3943,7 +4001,7 @@
+   everything it calls (by their summaries, `[EFF-1]`), no owner is made of the object being ended: an
+   owner made from `this` (`shares this`, `shares mut this`, `thread_shared this`) is `E3016`, as storing
+   `this` anywhere that outlives the call is (`[CLS-7a]`): "`drop` ends this `Player`; an owner made from
+-  it would point at a freed object; keep a copy of what you need: `NAMES.push(copy of this.name)`".
++  it would point at a freed object; keep a copy of what you need: `NAMES.push(owns copy of this.name)`".
+   `weakref this` stays allowed: the weak count keeps the block, and opening the link finds the object
+   ended (`[WK-3]`). Nothing is checked for it while the program runs.
+ 
+@@ -4105,7 +4163,7 @@
+   20 under it").
+ * `[EXC-19]` *(new in 0.9.9)* *(changed in 0.9.15)* **Fields are separate places.** A view of one field
+   of an object and a change of another field never conflict: `for c in this.children:
+-  this.log.push(c.name)` is accepted. What a method's call touches is the fields its body touches
++  this.log.push(owns copy of c.name)` is accepted. What a method's call touches is the fields its body touches
+   (`[BRW-10]`).
+ * `[EXC-16]` *(new in 0.9.9)* *(changed in 0.9.15)* Giving a field that owns memory a new value
+   (`h.items = []`, `h.name = other`) is a reshape: inside a `for` loop over the same field it is
+@@ -4222,12 +4280,12 @@
+   `std::weak_ptr`/`std::shared_ptr` (`[SEL-2]`).
+ * `[WK-17]` *(new in 0.9.15)* **Parent links.** A parent link is an ordinary `weakref` field that names
+   the object owning its holder (`parent: weakref Node`), which the program gives its target like any
+-  field: `child.parent = weakref this`, then `this.children.push(child)`. A read of one is compiled with
++  field: `child.parent = weakref this`, then `this.children.push(owns child)`. A read of one is compiled with
+   no header test (a plain load and a test for no link) where the compiler proves its target lives; it
+   proves it when both of these hold:
+   1. **The link follows ownership.** In the package, every line that gives the field a target,
+      `x.parent = weakref o`, is followed in the same function, before `x.parent` is read, by a line that
+-     puts `x` into a place `o` owns alone (`o.children.push(x)`, `o.left = x`); every line that takes
++     puts `x` into a place `o` owns alone (`o.children.push(owns x)`, `o.left = x`); every line that takes
+      such an object out of its place without ending it is followed, before that object's link is read
+      (there, or in a function it is given to, by that function's summary), by a line that gives the link
+      a target the same way or clears it (`c.parent = None`); no list or field holding such objects is
+@@ -4599,7 +4657,7 @@
+   an `Arena`'s `alloc*` (`[ARN-1]`), none of which touches a block already given out. Reading it stays
+   allowed (`current.made`); any other change, through any name, is
+   `E3021` ("`frame.reset()` (line 26) changes the arena `names` was made in (line 25), and `names` still
+-  lives; end it first: write `mem.drop(names)` above line 26"). So no safe method of a memory manager
++  lives; end it first: write `mem.drop(owns names)` above line 26"). So no safe method of a memory manager
+   rewinds it, frees it or gives its bytes out again under a value made in it.
+ 
+ ## IX.4 Raw pointers and `unsafe`
+@@ -4750,7 +4808,7 @@
+ 
+ fn main():
+     pool = Pool[Texture]()
+-    h = pool.insert(Texture(width=64, height=64))
++    h = pool.insert(owns Texture(width=64, height=64))
+     println(pool.get(h).is_some())
+     pool.remove(h)
+     println(pool.get(h).is_some())        # stale handle: None
+@@ -4780,14 +4838,14 @@
+ struct Scene:
+     entities: Array[int] = []
+ 
+-    fn add(e: int):
+-        this.entities.push(e)
++    fn add(owns e: int):
++        this.entities.push(owns e)
+ 
+ fn main():
+     s = Sprite(frame=Cell(0))
+     advance(ref mut s)
+     scene = Scene()
+-    scene.add(7)
++    scene.add(owns 7)
+     println(s.frame.get(), scene.entities.len())
+ ```
+ 
+@@ -4809,7 +4867,7 @@
+   `Mutex`, an `RwLock` or `guarded by` fields (Part XI); a field a method changes is changed through
+   `this` (`[EXC-15]`). `RefCell`, `Ref`, `RefMut`, `borrow` and `borrow_mut` are not Ember (`E1010`:
+   "`RefCell` is not part of Ember; write the field plainly, `entities: Array[int]`, and change it in a
+-  method: `fn add(e: int):` with the body `this.entities.push(e)`; for a scene several objects own and
++  method: `fn add(owns e: int):` with the body `this.entities.push(owns e)`; for a scene several objects own and
+   change, make it once, `s = Scene(entities=[])`, write the field that keeps it in each owner as
+   `scene: shares mut Scene`, and give each owner its share where it is made, for example
+   `Panel(scene=shares mut s)`").
+@@ -5000,13 +5058,13 @@
+   static mut LOG: Array[String] = []
+ 
+   fn note(owns msg: String):
+-      LOG.push(msg)
++      LOG.push(owns msg)
+ 
+   fn tick():
+-      note(String("tick"))
++      note(owns String("tick"))
+ 
+   fn main():
+-      LOG.push(String("start"))
++      LOG.push(owns String("start"))
+       for line in LOG:
+           println(line)
+           tick()
+@@ -5022,7 +5080,7 @@
+   variable they capture (`[BRW-11]`). A call that runs a function by itself counts as making everything
+   that function changes, now or later: `thread.spawn`, `scope.spawn`, `jobs.submit` and a job scope's
+   `submit` (Part XI); a library function that calls the function it is given
+-  (`scores.for_each(fn(s): LOG.push(copy of s.name))` changes `LOG`); whatever drives an iterator
++  (`scores.for_each(owns fn(s): LOG.push(owns copy of s.name))` changes `LOG`); whatever drives an iterator
+   adapter that keeps one (`for x in it:`, `it.sum()`); and a foreign function's parameter whose contract
+   says `callback(retained)` or `callback(once)`, through which C keeps the function and runs it during
+   later foreign calls (a `callback(borrowed)` parameter runs it during the call, as `for_each` does).
+@@ -5192,6 +5250,7 @@
+ | `assert_disjoint` | guaranteed present | two compares where the program writes it (two spans of one list given to one call, one of them changeable); the call is then compiled with noalias; none when the compiler knows the spans apart |
+ | `Cell` access | not observable | a load or a store |
+ | Interface call through `dyn` | guaranteed present | one indirect call |
++| A `runtime dyn` parameter's check | guaranteed present | one type-id compare at each line the check guards, only where a kind that may reach the parameter makes the line unsafe (`[LT-48]`); none where the kinds are known when compiling |
+ | Virtual method call | conditionally elided | a load of the slot and one indirect call (`[DSP-2]`); direct when one implementation is reachable (`[DSP-5]`) |
+ | Generic call, monomorphised | not observable | a direct, inlinable call |
+ | Generic call, shared (`[MONO-6]`) | guaranteed present | one indirect call per bound method; only above a declared instantiation budget |
+@@ -5279,14 +5338,14 @@
+         stats.words.fetch_add(1)
+         if w.starts_with("#"):
+             with stats.lock:
+-                stats.tags.push(String(w))
++                stats.tags.push(owns String(w))
+ 
+ fn main():
+     stats = Stats()
+     texts = [String("#ember is fast"), String("no tags here"), String("#python #c")]
+     with scope = thread.scope():
+         for t in texts:
+-            scope.spawn(fn() ref t: scan(stats, t))
++            scope.spawn(owns fn() ref t: scan(stats, t))
+     println(stats.words.load(), "words")
+ ```
+ 
+@@ -5371,7 +5430,7 @@
+   for the other thread, and the old block is marked ended (its `drop` does not run; the new block's
+   runs once, on the other thread) and stays on this thread until its last link ends, so every link here
+   finds it ended (`[WK-12]`): after `w = weakref names` and
+-  `h = thread.spawn(fn() owns names: names.items.len())`, `if w exists as p:` is skipped and
++  `h = thread.spawn(owns fn() owns names: names.items.len())`, `if w exists as p:` is skipped and
+   `h.join()` gives 0. The same is done for every object the handed object owns whose class a `weakref`
+   is made to anywhere in the program (the compiler knows those classes; one compare each), so after
+   `cam.target = weakref level.enemies[0]`, handing `level` over leaves `cam.target` finding enemy 0
+@@ -5414,11 +5473,11 @@
+ 
+ fn produce(tx: Sender[int]):
+     for i in 0..10:
+-        tx.send(i * i).expect("receiver is gone")
++        tx.send(owns (i * i)).expect("receiver is gone")
+ 
+ fn main():
+     tx, rx = channel[int](capacity=64)
+-    producer = thread.spawn(fn() owns tx: produce(tx))
++    producer = thread.spawn(owns fn() owns tx: produce(tx))
+     total = 0
+     for v in rx:
+         total += v
+@@ -5449,15 +5508,15 @@
+   module variable (`RESULTS`) needs no word. **The loop's own variable**, which the loop gives another
+   element every round, and a local of one round, which ends with it, are given to a task or a thread
+   with a word. `copy of t` gives it its own copy (for a `String`, one allocation and copy per task):
+-  `thread.spawn(fn() copy of r: worker(r))`. For a scoped task, `ref t` lets it look at the element `t`
++  `thread.spawn(owns fn() copy of r: worker(r))`. For a scoped task, `ref t` lets it look at the element `t`
+   is on in that round, with no copy, since the walked collection cannot change until every task has
+-  ended at the end of the `with scope` block (`scope.spawn(fn() ref t: total +=
++  ended at the end of the `with scope` block (`scope.spawn(owns fn() ref t: total +=
+   t.split_whitespace().count())`). `ref t` where the function may still run after the element changes
+   or ends is `E3026`: a `thread.spawn` thread may outlive the loop ("the thread may still run after the
+-  loop has moved on and `texts` is gone; give it its own copy: `thread.spawn(fn() copy of t: ...)`").
++  loop has moved on and `texts` is gone; give it its own copy: `thread.spawn(owns fn() copy of t: ...)`").
+   The loop's name used with no word is `E3026` for a scoped task, whose message gives both words ("the
+   task may still run in a later round, when `t` names another text; give it its own copy,
+-  `scope.spawn(fn() copy of t: ...)`, or let it look at this round's text, `scope.spawn(fn() ref t:
++  `scope.spawn(owns fn() copy of t: ...)`, or let it look at this round's text, `scope.spawn(owns fn() ref t:
+   ...)`"), and `E7004` for a `thread.spawn` thread, whose message gives `copy of t`.
+ * `[THR-16]` *(new in 0.9.9)* When `main` returns, or `process.exit` is called, the process ends: other
+   threads stop without running destructors, no static is freed and no drop runs. The `debug` leak
+@@ -5468,7 +5527,7 @@
+   `m.try_lock() -> Option[MutexGuard[T]]` never blocks. A guard belongs to the thread that took the
+   lock: sending it to another thread is `E7008` ("`g` is the guard of `m`'s lock, which belongs to the
+   thread that took it; take the lock inside the task: write `fn add_one(m: Mutex[Array[int]]):` with the
+-  body `with g = m.lock():` and, inside it, `g.push(1)`, above line 11, and `scope.spawn(fn():
++  body `with g = m.lock():` and, inside it, `g.push(owns 1)`, above line 11, and `scope.spawn(owns fn():
+   add_one(m))` in place of line 16"). A view made through a guard (`g[0]`, `ref g[0]`, a slice of `g`)
+   does not leave the `with` block (`E3063`: "this points into the locked list, which can change once the
+   lock ends; return a copy, or do the work inside the `with` block"), and the same holds for `RwLock`'s
+@@ -5489,7 +5548,7 @@
+   * A `guarded by` field is a `Mutex` written as ordinary fields, and follows a `Mutex`'s rules: it is
+     changed under its lock through any name that reaches its object, a plain one included, with no word
+     at the call (`fn add_line(log: Log):` whose body is `with log.lock:` and, inside it,
+-    `log.lines.push(String("hi"))`). An object whose every field that may change is `guarded by` its
++    `log.lines.push(owns String("hi"))`). An object whose every field that may change is `guarded by` its
+     lock, or is an `Atomic`, `Mutex` or `RwLock`, may reach one call through any number of names, a plain
+     argument and a function value that holds it included (`dump(log, fn() thread_shared log:
+     log.push("seen"))`): the lock keeps the ways in apart (`[BRW-11]`).
+@@ -5511,7 +5570,7 @@
+ 
+       fn push(s: StrView):
+           with this.lock:
+-              this.lines.push(String(s))
++              this.lines.push(owns String(s))
+ 
+   fn main():
+       log = Log()
+@@ -5566,14 +5625,14 @@
+   fn worker(x: int):
+       r = x * x
+       with RESULTS_LOCK:
+-          RESULTS.push(r)
++          RESULTS.push(owns r)
+ 
+   fn main():
+       worker(1)
+       handles: Array[thread.JoinHandle[void]] = []
+       with RESULTS_LOCK:
+           for r in RESULTS:
+-              handles.push(thread.spawn(fn() copy of r: worker(r)))
++              handles.push(owns thread.spawn(owns fn() copy of r: worker(r)))
+       for h in owns handles:
+           h.join()
+       with RESULTS_LOCK:
+@@ -5590,12 +5649,12 @@
+ * `[THR-15]` *(new in 0.9.9)* *(changed in 0.9.15)* `channel[T](capacity=n) -> (Sender[T], Receiver[T])` is
+   a bounded many-producer, one-consumer queue; `channel_unbounded[T]()` has no bound and allocates as it
+   grows. `Sender` is `Send`, `ThreadShared` and `Clone` (`copy of tx` is another sender of the same
+-  channel); `Receiver` is `Send`. `tx.send(v) -> Result[void, SendError[T]]` blocks while the queue is
++  channel); `Receiver` is `Send`. `tx.send(owns v) -> Result[void, SendError[T]]` blocks while the queue is
+   full and returns the value when the receiver is gone; `rx.recv() -> Option[T]` blocks and returns
+   `None` once every sender has ended and the queue is empty; `try_send`/`try_recv` never block. A
+   `Receiver` is iterable; the loop ends at `None`. **When the `Receiver` ends, so do the values still
+   queued**: it takes them out under the channel's lock and ends them after letting the lock go, so a
+-  `Sender` queued in its own channel (`tx.send(copy of tx)`) does not keep the channel alive.
++  `Sender` queued in its own channel (`tx.send(owns copy of tx)`) does not keep the channel alive.
+ * `[THR-4]` In the `debug` profile the runtime records the order in which each thread takes locks and
+   prints `warning: lock order inversion` with both acquisition sites when two threads take two locks
+   in opposite orders. It never changes a program's behaviour.
+@@ -5619,15 +5678,15 @@
+ fn sum_halves(xs: Span[int]) -> int:
+     left, right = xs.split_at(xs.len() // 2)
+     with scope = thread.scope():
+-        a = scope.spawn(fn() => left.iter().sum())
+-        b = scope.spawn(fn() => right.iter().sum())
++        a = scope.spawn(owns fn() => left.iter().sum())
++        b = scope.spawn(owns fn() => right.iter().sum())
+         return a.join() + b.join()
+ 
+ fn count_words(texts: Array[String]) -> int:
+     total = 0
+     with scope = thread.scope():
+         for t in texts:
+-            scope.spawn(fn() ref t: total += t.split_whitespace().count())
++            scope.spawn(owns fn() ref t: total += t.split_whitespace().count())
+     return total
+ ```
+ 
+@@ -5657,13 +5716,13 @@
+   int):` whose body is `with this.lock:`, inside it `if this.total < limit:` and inside that
+   `this.total += n`, and call `stats.add_below(10, x)` in place of lines 18 and 19"). A task started
+   inside a walk of what it changes is `E3020` ("`scope.spawn(...)` (line 6) starts a task that pushes to
+-  `names` (`fn(): names.push(String("x"))`), which this loop walks (line 5); start it after the loop:
++  `names` (`fn(): names.push(owns String("x"))`), which this loop walks (line 5); start it after the loop:
+   move line 6 below the loop"), not `E7007`, whose fix would leave the walk refused. A task makes, ends
+   or opens a `weakref` link only to a `thread_shared` target, and makes no `shares` owner (`[THR-2]`).
+   `R` MUST be `Send`. `h.join() -> R` waits early.
+ * `[THR-21]` *(new in 0.9.15)* **Reductions.** A task's `total += e` (and `-=`, `*=`, `|=`, `&=`, `^=`,
+   `max`, `min`, `push`, `extend`, `add`, `m[k] op= e`) on a local, or on a field of an object the tasks
+-  reach (`scope.spawn(fn() copy of x: stats.total += x)`), a field reached through two `sharedref mut`
++  reach (`scope.spawn(owns fn() copy of x: stats.total += x)`), a field reached through two `sharedref mut`
+   links to one object included, is a reduction: each task adds into a private accumulator, and the
+   accumulators are combined into the place at the join, in spawn order. Nothing reads the place before
+   the join (`E7007`: "tasks add their parts to `total`, which is known only once the `with` block (lines
+@@ -5675,7 +5734,7 @@
+   total overflows stops the program there (`[TYP-8]`), even where adding one by one would not
+   (`[[-100], [100, 100]]` summed into an `i8` by two tasks stops in the second, at 100 + 100, where
+   adding one by one gives 100); a decimal total may differ from it in the last digit (`for part in [[0.1], [0.2, 0.3]]:` with
+-  `scope.spawn(fn() copy of part: for x in part: total += x)` gives `0.6`, where adding one by one gives
++  `scope.spawn(owns fn() copy of part: for x in part: total += x)` gives `0.6`, where adding one by one gives
+   `0.6000000000000001`), and is the same on every run, so it is not `Nondet` (`[DET-2]`). A plain
+   assignment from a task (`a.target.hp = 5`) and a task that reads the current value
+   (`if stats.total < 10: stats.total += x`) need a lock (`E7007`). A `thread.spawn` thread has no
+@@ -5722,7 +5781,7 @@
+   element; run the loop on one thread: remove `@parallel` (line 7)"; "`players` holds `shares mut
+   Player` objects, and one object may be in the list twice, so two chunks could change it at once; give
+   each player one owner: write `players: Array[Player] = []` in place of line 3, and
+-  `players.push(Player(hp=10))` in place of `players.push(shares mut p)` on line 5"); where an `Atomic`,
++  `players.push(owns Player(hp=10))` in place of `players.push(shares mut p)` on line 5"); where an `Atomic`,
+   `chunks_mut` or `@parallel(reduce=…)` makes the loop compile, the message gives that line.
+ * `[PAR-2a]` A violation of clause (b) is `E7011`, `parallel loop has a loop-carried dependency on
+   <place>`, naming both offsets and offering: two `@parallel` loops, a reduction, or a serial loop.
+@@ -5766,8 +5825,8 @@
+ 
+ fn step(ref mut pos: MutSpan[Vec3], vel: Span[Vec3], ref mut life: MutSpan[f32], dt: f32):
+     with s = jobs.scope():
+-        s.submit(fn(): integrate(ref mut pos, vel, dt))
+-        s.submit(fn(): age(ref mut life, dt))
++        s.submit(owns fn(): integrate(ref mut pos, vel, dt))
++        s.submit(owns fn(): age(ref mut life, dt))
+ ```
+ 
+ * `[JOB-1]` A job's captured state is stored inline in its queue slot when it fits in 64 bytes and in
+@@ -5817,7 +5876,7 @@
+ 
+ fn main():
+     ps = SoA[Particle].with_capacity(100_000)
+-    ps.push(Particle(pos=Vec3.ZERO, vel=Vec3(1.0, 0.0, 0.0), life=2.0))
++    ps.push(owns Particle(pos=Vec3.ZERO, vel=Vec3(1.0, 0.0, 0.0), life=2.0))
+     integrate(ref mut ps.pos, ps.vel, 0.016)  # two columns at once: never one place
+     ps[0].life -= 0.016                     # writes one element of the `life` column
+     p = ps.get(0)                           # Option[SoARef[Particle]]: names particle 0, no copy
+@@ -6020,7 +6079,7 @@
+   registry's pools, so while a `for` loop walks a view, adding, removing, creating or destroying through
+   the registry is refused when compiling, as for any collection a loop walks (`[BRW-18]`, `E3020`: "`reg.destroy(e)`
+   (line 6) changes `reg`, whose pools this loop walks (line 4); collect the entities in a list of your
+-  own: write `dead: Array[Entity] = []` before the loop, `dead.push(e)` in place of this line, and `for d
++  own: write `dead: Array[Entity] = []` before the loop, `dead.push(owns e)` in place of this line, and `for d
+   in dead: reg.destroy(d)` after the loop"). The values themselves change through the view's `ref mut`
+   items. EnTT allows some such changes through paged pools; Ember collects first and changes after.
+ * `[ECS-6]` Iteration order is insertion order with swap-remove holes: deterministic for a given
+@@ -6144,7 +6203,7 @@
+   Err(AnyError.msg(f"no such file: {p}"))`.
+ * `[ERR-10]` *(new in 0.9.9)* `r.context(msg)` on a `Result[T, E]` whose `E` converts into `AnyError`
+   (`AnyError: From[E]`, `[ERR-8]`) returns a `Result[T, AnyError]`
+-  whose error, if any, displays as `msg: <original>`; `r.with_context(fn() => …)` builds the message
++  whose error, if any, displays as `msg: <original>`; `r.with_context(owns fn() => …)` builds the message
+   only on failure. Context messages stack.
+ * `[ERR-11]` *(new in 0.9.9)* **The cost of `AnyError`.** Converting an error into `AnyError`
+   allocates, once, on the failure path; that path carries `Alloc` (`[EFF-1]`). A concrete error type
+@@ -6550,7 +6609,7 @@
+   Option[V]` and `entry(k)` take the key itself; `entry(k)` is a `MapEntry` with `or_insert(v)`,
+   `or_insert_with(f)` (`[F: needs fn() -> V]` above `fn or_insert_with(owns f: F) owns this -> ref mut V:`)
+   and `or_default()` (for `V: needs Default`), each returning `ref mut V`, a place
+-  (`counts.entry(k).or_default() += 1`).
++  (`counts.entry(owns k).or_default() += 1`).
+   `keys()`, `values()`, `values_mut()` and `items()` are the view iterators
+   `MapKeys`, `MapValues`, `MapValuesMut` and `MapItems`, yielding `ref K`, `ref V`, `ref mut V` and
+   `(ref K, ref V)` in insertion order (`for k, v in m.items():`); `for k in m:` is by key, as
+@@ -6599,7 +6658,7 @@
+   and `RingBuffer[T, N]`; `push` returns `Result[void, CapacityError]` and `push_or_drop` discards when
+   full. Also `Deque[T]`, `SmallArray[T, N]` (inline up to `N`, then heap), `BitSet`.
+ * `[STD-8]` *(changed in 0.9.15)* **`Contains`.** `x in c` requires `c: Contains[typeof(x)]` (`E2226` otherwise, whose help
+-  is `c.iter().any(fn(e) => e == x)`). `std` implements it for `Set` and `Map` (by key); for `Array`,
++  is `c.iter().any(owns fn(e) => e == x)`). `std` implements it for `Set` and `Map` (by key); for `Array`,
+   `Span`, `MutSpan` and `[T; N]` with `T: needs Eq`, as a linear scan; for `StrView`/`String`, as a substring or
+   character test; for ranges, as two comparisons. The compiler never synthesises an implementation.
+ * `[STD-8a]` `ember inspect --cost` reports which `contains` a use selects and its complexity, so
+@@ -6626,20 +6685,22 @@
+   consumers can also be called directly on an `Iterable` value, reading it as `iter()` would:
+   `xs.enumerate()` is `xs.iter().enumerate()`, and a method of the collection's own of the same name
+   (`Array.join`) takes precedence. An adapter takes the iterator it wraps over (`owns this`), and so
+-  does a consumer; `zip` and `chain` take their other iterator over too, so a named iterator given to
+-  `zip` is handed over (`copy of it` keeps the caller's). **A function is taken as a type
++  does a consumer; `zip` and `chain` take their other iterator over too, so a named iterator is given
++  to `zip` with `owns` (`a.zip(owns it)`; `a.zip(owns copy of it)` keeps the caller's). **A function is taken as a type
+   parameter**, by the adapters that apply one and the consumers alike (`any`, `all`, `find`,
+   `position`, `fold`, `reduce`, `for_each`, the `…_by` and `…_by_key` forms): `[F: needs fn(Item)]` above
+   `fn for_each(owns f: F) owns this:`, `[F: needs fn(Item) -> bool]` above `fn any(owns f: F) owns this ->
+   bool:`, `[F: needs fn(Item)]` above `fn inspect(owns f: F) owns this -> Inspect[Self, F]:`. `F` names the
+   exact function given, so the adapter or consumer is compiled once for each function given to it and
+   the call through `f` is direct and may be inlined; the shared type, `owns f: fn(Item)`, is legal too,
+-  and is what keeps functions of different kinds in one list (`handlers: Array[fn()]`). The function
+-  is handed over as every argument for an `owns` parameter is, so an adapter made from a lambda can be
+-  kept or returned
+-  (`return xs.iter().map(fn(x) => x * 2)`), what the lambda holds with it. A function given may change
++  and is what keeps functions of different kinds in one list (`handlers: Array[fn()]`). A function
++  written in the call is given to it, with `owns` as every argument for an `owns` parameter is
++  (`[FN-2a]`), so an adapter made from a lambda can be kept or returned
++  (`return xs.iter().map(owns fn(x) => x * 2)`), what the lambda holds with it. A function from a
++  variable is lent to the call and takes no word: after `xs.iter().for_each(h)`, `h` is the caller's
++  still and `h(5)` runs it (ODR-240). A function given may change
+   things: a consumer's call counts as making what the function changes, now
+-  (`scores.for_each(fn(s): LOG.push(copy of s.name))` changes `LOG`, so inside a loop over `LOG` it is
++  (`scores.for_each(owns fn(s): LOG.push(owns copy of s.name))` changes `LOG`, so inside a loop over `LOG` it is
+   `E3020`), and an adapter keeps the function and runs it at each step, so whatever drives the adapter
+   (`for x in it:`, `it.sum()`) makes its changes; driving an `owns dyn Iterator[Item = T]` makes the
+   changes of every adapter the program can put there. What a caller
+@@ -7390,7 +7451,7 @@
+   when it is the address of the same object.
+ * `[FFI-54]` *(new in 0.9.15)* **Giving an object to C.** A C function declared as keeping an object
+   (`@ffi(param(widget, owns, one))` with `owns widget: owns Widget`) is given one by an ordinary
+-  hand-over, `widget_take(first)`: the name ends and Ember frees nothing, with no word. For a C function
++  hand-over, `widget_take(owns first)`: the name ends and Ember frees nothing. For a C function
+   whose declaration cannot say so (a plain pointer, `unsafe fn set_user_data(p: *mut Widget)`, or a function
+   with `...`), `w.into_raw()` gives the address of a value Ember holds alone in its own block, an
+   `owns T` (as a `*mut T`, or a `*mut u8` for an `owns dyn I`) or a class object with one owner (as an
+@@ -7420,9 +7481,9 @@
+ 
+   fn main():
+       first = widget_new(1)
+-      widget_take(first)
++      widget_take(owns first)
+       second = widget_new(2)
+-      p = address_for_c(second)
++      p = address_for_c(owns second)
+       # SAFETY: C keeps the widget as its user data and frees it with `widget_free`
+       unsafe:
+           set_user_data(p)
+@@ -7915,7 +7976,7 @@
+ fn main():
+     a = [1, 2, 3]
+     b = a
+-    a.push(4)          #$ error[E3040]: `a` was handed over to `b` on line 4 and is used on line 5; to keep both, write `b = copy of a` (a copy of your own) or `b = shares a` (two owners of one list)
++    a.push(owns 4)     #$ error[E3040]: `a` was handed over to `b` on line 4 and is used on line 5; to keep both, write `b = copy of a` (a copy of your own) or `b = shares a` (two owners of one list)
+     println(b)
+ ```
+ 
+@@ -8147,10 +8208,10 @@
+ 
+ | Shape | Situation | Codes | Primary help |
+ |---|---|---|---|
+-| O1 | a name used after it was handed over; a part handed over on its own, or its owner used whole, before the part has a new value | `E3040` | `copy of x` (a copy of your own) or `shares x` (two owners), or the use moved above the line that hands it over; for a part, a new value first or `names.push(copy of p.name)`; for a list, a note that `=` hands a list over where Python's aliases it (Appendix E) |
++| O1 | a name used after it was handed over; a part handed over on its own, or its owner used whole, before the part has a new value | `E3040` | `copy of x` (a copy of your own) or `shares x` (two owners), or the use moved above the line that hands it over; for a part, a new value first or `names.push(owns copy of p.name)`; for a list, a note that `=` hands a list over where Python's aliases it (Appendix E) |
+ | O2 | a hand-over out of a place that does not own the value: a field of a type with `drop`, an array or span element, a class object's field, a read-only name, a function value's own capture where it may run twice | `E3010`, `E3011`, `E3013` | a view (`ref`, `ref mut`) first (`[DIA-9]`); then `mem.take(ref mut place)`, `mem.replace`, `mem.swap`; `pop`, `swap_remove`, `remove`, `drain`; then `copy of`; for a function value, a parameter that holds it, `owns f: once fn()` |
+ | O6 | a view of an uninitialised place | `E3050` | name the path on which it is uninitialised |
+-| O7 | explicit `x.drop()` | `E3070` | `mem.drop(x)` |
++| O7 | explicit `x.drop()` | `E3070` | `mem.drop(owns x)` |
+ | O8 | scope guard handed over or leaked | `E3014`, `E3015` | bind it with `with` (`[THR-5]`) |
+ | O9 | `this` escapes its `drop`, or an owner of it is made there | `E3016` | `mem.take` the data out |
+ | B1 | one place changed through two names: two changeable arguments of one place, a `ref mut` name's place changed through another name while it is used, a function value stored where a variable it changes owns it | `E3022` | `if i != j:` above the call; `split_at`, `chunks_mut`, `for ref mut x in xs:`, `swap(i, j)`; `SoA` columns; for a `ref mut` name, the change made through it or after its last use |
+@@ -8160,8 +8221,8 @@
+ | B5 | self-referential struct | `E3024` | store an index or `Handle`; split the struct; or a class whose view field says `from` a `let` field |
+ | B6 | a result that points into something its `from` does not name | `E3062` | a view of what `from` names, or `from` naming what the result points into |
+ | B7 | a view used after what it points into was ended, handed over, replaced or reshaped | `E3060` | the use moved above that line, or the place named again after it (`boss = ref mut enemies[0]`; `if cam.target exists as q:`); a value of your own (`String(...)`, `.copy_each()`) |
+-| B9 | a function value that may outlive a place it uses and does not own | `E3026` | a capture word (`return fn() owns n: n += 1`, `scope.spawn(fn() copy of t: ...)`), a `shares mut` owner the function keeps, or a scope (`[THR-5]`) |
+-| B10 | a call's word that does not match its parameter; `ref mut` before what this function may not change | `E3027`, `E3028` | the parameter's own words at the call (`bump(ref mut a)`, `blend(const ref mut d, s)`, `show(a)`), or `ref mut` on the caller's own parameter |
++| B9 | a function value that may outlive a place it uses and does not own | `E3026` | a capture word (`return fn() owns n: n += 1`, `scope.spawn(owns fn() copy of t: ...)`), a `shares mut` owner the function keeps, or a scope (`[THR-5]`) |
++| B10 | a call's word that does not match its parameter; `ref mut` before what this function may not change | `E3027`, `E3028` | the parameter's own words at the call (`bump(ref mut a)`, `blend(const ref mut d, s)`, `take(owns xs)`, `show(a)`), or `ref mut` on the caller's own parameter |
+ | B11 | two single-object references given to `assert_disjoint` | `E3095` | for two elements of one list, their positions proved apart when compiling: `if i != j:` above the call (`[DSJ-4]`) |
+ | B12 | a view, or a value holding views, kept or returned where it would outlive what it points into; a value made in a memory manager's instance outliving the instance | `E3063` | a value of your own (`return String(word)`, `return copy of g[0]`), an index, or a `shares` owner; the value made in an instance the caller keeps |
+ | B16 | a call that hands the callee a part of what its body may end or move before its last use of that parameter (a method's object included) | `E3031` | `copy of` the argument (`note(copy of LOG[0])`), or, in the callee, the use moved above the line that ends what it views |
+@@ -8192,7 +8253,7 @@
+ | N12 | indentation (`E0002`–`E0004`) | the expected column and the line that set it |
+ | N13 | a field assigned (`this.x = …`) but not declared (`E2072`) | `field 'x' is not declared in class C`, with a machine-applicable fix-it adding `x: <inferred type>` to the class body |
+ | N14 | an item has the path of a module or the name of a built-in type (`E1032`) | rename the item, or the module's file |
+-| N15 | a word a place requires is missing, or a word that cannot apply: a value made for an `owns` place without `owns`, `owns` before an existing name or `fn`, `owns` on a class type, `using` on a type with no heap memory of its own, `copy of` what cannot be copied as itself, a `weakref` of a part (`E2123`, `E0109`, `E2114`, `E2116`, `E2119`) | the line with the word written or removed (`mesh=owns Mesh(points=[0.0, 1.0])`, `e.mesh = m`, `a = weakref this.keep`) |
++| N15 | a word a place requires is missing, or a word that cannot apply: a value made for an `owns` place without `owns`, `owns` before a name whose place already hands it over, after `return` or before `fn`, `owns` on a class type, `using` on a type with no heap memory of its own, `copy of` what cannot be copied as itself, a `weakref` of a part (`E2123`, `E0109`, `E2114`, `E2116`, `E2119`) | the line with the word written or removed (`mesh=owns Mesh(points=[0.0, 1.0])`, `e.mesh = m`, `a = weakref this.keep`) |
+ | N16 | a word or form that is not Ember: `self`, `Box`, `Shared`, `Weak`, `RefCell`, the mode `owned`, `upgrade`, `mem.forget`, `@sync`, `@borrows`, a clause after a function's brackets (`E1010`, `E0104`, `E0100`) | the line with the current word (`[CLI-20]` lists the mechanical rewrites) |
+ | N17 | opening an `Option` or a link, and kind tests: `Some(...)` in an `if` or `while` header, an opening or a kind test that always or never passes, a name already in use (`E0115`, `E2036`, `E2037`, `E2106`) | `if e exists as x:`, `if s is Circle as c:`, a new name, or the test removed |
+ | N18 | a first line, a declaration or a list of names out of form: `mut` alone on a name, `ref` in a parameter's type, parts out of order, a name with no word after a name with a word, `ref mut` in a capture list, `sharedref` without `mut`, `owns this` on `init`, `static fn` outside a type, `virtual` in a class that cannot be subclassed, a view field without a usable `from`, `@cached` where its result cannot be kept (`E0113`, `E0117`, `E0118`, `E0116`, `E0120`, `E0114`, `E2108`, `E2115`, `E2112`, `E2118`, `E2117`) | the line as it is written (`ref mut n: int`, `fn finish() owns this -> u64:`, `fn() copy of name, copy of score:`) |
+@@ -8303,11 +8364,11 @@
+ | `E0002` | tab used for indentation | `[LEX-4]` |
+ | `E0003` | inconsistent dedent | `[LEX-5]` |
+ | `E0004` | expected an indented block | `[LEX-9]` |
+-| `E0005` | reserved keyword used as an identifier | `[LEX-14]` |
++| `E0005` | a keyword used as a name, any keyword (`type = 3`: "`type` is a keyword", help "write `r#type` to use the word as a name"), or a word reserved for a future version | `[LEX-14]`, `[LEX-15]` |
+ | `E0006` | a `#!` language directive names a version other than the current one | `[VER-8]` |
+ | `E0008` | unterminated character literal | `[LEX-22]` |
+ | `E0009` | malformed literal | `[LEX-26]` |
+-| `E0100` | unexpected token, among them Python's `global`, a statement at module level outside the entry file (whose message gives the declaration to write: `static mut FRAME: int = 0`), a bound written without `needs` or joined with `+` (whose message gives the line with `needs`), and a clause after a function's brackets that Ember does not have (`changes FRAME`, `reads renderer`, `with` before the captures), whose message gives the first line to write | `[GRM-2]`, `[TYP-17]` |
++| `E0100` | unexpected token, among them Python's `global`, a statement at module level outside the entry file (whose message gives the declaration to write: `static mut FRAME: int = 0`), a bound written without `needs` or joined with `+` (whose message gives the line with `needs`), and a clause after a function's brackets that Ember does not have (`changes FRAME`, `reads renderer`, `with` before the captures), whose message gives the first line to write, and a line that begins with `[` and is not directly above a function, struct or class | `[GRM-2]`, `[TYP-17]`, `[GRM-40]` |
+ | `E0101` | unclosed delimiter or literal | `[LEX-6]` |
+ | `E0102` | membership test chained (`a in b in c`) | `[GRM-23]` |
+ | `E0103` | match arms mix statement and expression form | `[GRM-10]` |
+@@ -8316,7 +8377,7 @@
+ | `E0106` | a multi-statement closure cannot be written inside brackets | `[GRM-17]` |
+ | `E0107` | a jump expression may not be an operand | `[GRM-16]` |
+ | `E0108` | attribute is not permitted on this statement | `[GRM-20]` |
+-| `E0109` | `owns` before a name whose place already hands the value over with no word (`e.mesh = m`; `b = a` for a value that is not a number; an argument; `return a`), or before `fn` | `[OWN-9]`, `[GRM-15]` |
++| `E0109` | `owns` before a name whose place already hands the value over with no word (`e.mesh = m`; `b = a` for a value `=` hands over), after `return`, or before `fn` anywhere but an argument for an `owns` parameter | `[OWN-9]`, `[GRM-15]` |
+ | `E0110` | function declared without a body outside an interface, extern block or abstract class | `[GRM-33]` |
+ | `E0111` | `ref` of an expression that is not a place | `[GRM-36]` |
+ | `E0112` | nested more deeply than the compiler accepts | `[GRM-39]` |
+@@ -8422,13 +8483,13 @@
+ | `E3015` | value whose drop is required may not be leaked | `[THR-6]` |
+ | `E3016` | `this` escapes its own `drop`, or an owner of it is made there | `[OBJ-5]`, `[CLS-7a]` |
+ | `E3020` | a collection (a list, a map, a set or a string) changed while it is walked, whatever the change (an element written, a value under a key replaced, anything added or removed), by a `for` loop or by a generator that walks it and will still be used; through its own name, or through a call that may change it (a call through a function value or a library call by the functions it may run, a `spawn` by what its thread changes, a scoped task started in the walk, a foreign call by what the callbacks C keeps change, the end of an object by what its `drop` changes); a removal inside a counting loop | `[BRW-18]`, `[CTL-2]` |
+-| `E3021` | a read and a change of one place overlap: a change of what a read-only name reads while it is still used; a `ref mut` name's place read through another name while it is still used; an argument that may reach into a changeable argument of the same call | `[BRW-1]`, `[BRW-11]` |
++| `E3021` | a read and a change of one place overlap: a change of what a read-only name reads while it is still used, a view a `dyn` call may give included where the kind is known only while running (help: `runtime` on the parameter); a `ref mut` name's place read through another name while it is still used; an argument that may reach into a changeable argument of the same call | `[BRW-1]`, `[BRW-11]`, `[LT-1]`, `[LT-48]` |
+ | `E3022` | one place changed through two names: two changeable arguments of one call naming one place, other than one whole variable proved when compiling (a function value that changes it counts as one); a function value stored in a place that a variable it changes owns; a `ref mut` name's place changed through another name while it is still used, a reshape of a `ref mut` address included | `[BRW-1]`, `[BRW-11]` |
+ | `E3023` | a change the name does not allow: a change through a name that only reads (a plain parameter; a loop, pattern, opened or part name; a plain name holding a `MutSpan`; a value made when compiling); `=` on a name that keeps its place for its scope (a parameter; a loop, pattern or opened name, one opened `exists as copy of` excepted; a `const ref mut` name given another ref); a read-only `ref` given to a `ref mut` name; a method that may change its object, or a stored function that may change its own state, called through a read-only name; an owner that may change made from one that only reads (a plain parameter of a `shares mut` type included); `=` on a `static` (`HOOK = v`) | `[BRW-14]`, `[BRW-15]`, `[STA-1]` |
+ | `E3024` | a struct field would point into another field of the same struct (shape B5) | `[TYP-15]` |
+ | `E3026` | a function value that may outlive a place it uses and does not own: a returned function that changes its maker's local without `owns`; a task or thread given a loop's name with no word, or with `ref` where it may outlive the element | `[CLO-4]` |
+ | `E3027` | `ref mut` before something this function may not change: an argument, a loop or pattern name over something it only reads, or a place reached through a read-only name | `[FN-2a]` |
+-| `E3028` | a call's word does not match its parameter: no `ref mut` (or no `const` for a `const ref mut` parameter) before an argument for a `ref mut` parameter, a `MutSpan` one included, or `ref mut` before one for a parameter that is not `ref mut` (shape B10) | `[FN-2a]` |
++| `E3028` | a call's word does not match its parameter: no `ref mut` (or no `const` for a `const ref mut` parameter) before an argument for a `ref mut` parameter, a `MutSpan` one included, or `ref mut` before one for a parameter that is not `ref mut`; no `owns` before an argument for an `owns` parameter, or `owns` before one for a parameter that is not `owns` (shape B10) | `[FN-2a]` |
+ | `E3031` | a call whose argument the callee's body reaches by another name in a way its parameter cannot allow: a part of what the callee may end or move before its last use of that parameter (a plain, `Span` or `ref mut` parameter, or a method's object); for a `ref mut` parameter, a part of what the callee reads or changes by another name while the parameter is used; at the line that stores a function into a function value, when that function does so with what the value's calls give it (shape B16) | `[BRW-21]`, `[FFI-52]` |
+ | `E3032` | a loop of owners (`shares`, `shares mut` or `thread_shared` owners, a function value's state, channel ends) that the compiler cannot prove is opened again before its objects lose their last owner from outside (shape B17) | `[WK-6]` |
+ | `E3040` | a name used after it was handed over or ended (a number handed over with `owns` included); a part handed over on its own, or its owner used whole, before the part is given a new value | `[OWN-3]` |
+@@ -8796,7 +8857,7 @@
+ * `[BCK-5]` *(new in 0.9.9)* *(changed in 0.9.15)* **A changeable argument takes effect when the call
+   starts.** A `ref mut` argument, and the object of a method that may change it, is *reserved* while
+   the call's other arguments are evaluated and *activated* when the call starts; during reservation it
+-  conflicts only with a change of its place (`[BRW-3]`), so `v.push(v.len())` is accepted. When the
++  conflicts only with a change of its place (`[BRW-3]`), so `v.push(owns v.len())` is accepted. When the
+   call starts, its arguments are checked against each other: two of them, at least one changeable (a
+   function value counting as changing every place its functions change), name one place or reach into
+   each other only where the compiler proves them one whole variable (`[MONO-10]`) (`E3022` where both
+@@ -8804,7 +8865,7 @@
+ * `[BCK-6]` *(new in 0.9.9)* *(changed in 0.9.15)* **Required acceptances.** Because liveness is
+   location-sensitive, these are accepted: a view whose last use precedes a later change (`[BRW-2]`);
+   a list added to while a position of it is still used (`boss = ref mut enemies[0]`,
+-  `enemies.push(Enemy(hp=5))`, then `boss.hp = 1`); a view returned on one branch while the other
++  `enemies.push(owns Enemy(hp=5))`, then `boss.hp = 1`); a view returned on one branch while the other
+   branch changes the place it views, as in
+ 
+   ```ember
+@@ -8995,7 +9056,7 @@
+     mesh: Option[owns Mesh] = None              # held alone, in a block of its own
+     fn add(owns child: Node):                   # `owns`: handed over
+         child.parent = weakref this
+-        this.children.push(child)
++        this.children.push(owns child)
+ 
+ struct Watcher:                                 # holds a view: lives no longer than its target
+     target: sharedref mut Node                  # may change it; other holders may too
+@@ -9005,7 +9066,7 @@
+     lines: Array[String] guarded by lock = []   # read and changed only under `lock`
+     fn push(s: StrView):
+         with this.lock:
+-            this.lines.push(String(s))
++            this.lines.push(owns String(s))
+ 
+ enum Shape:                                     # tagged union
+     Circle(r: float)
+@@ -9048,7 +9109,7 @@
+         yield i
+ 
+ fn evens(xs: Span[int]) -> some Iterator[Item = int]:    # opaque return type
+-    return xs.iter().copy_each().filter(fn(x) => x % 2 == 0)
++    return xs.iter().copy_each().filter(owns fn(x) => x % 2 == 0)
+ 
+ fn inspect(sc: Script):                         # a value of a base class
+     if sc is Door as d:                         # kind test: names it `d` when it is a `Door`
+@@ -9085,14 +9146,14 @@
+     tick = fn(): FRAME += 1                     # no word: changes the real `FRAME`
+     tick()
+     with scope = thread.scope():                # scoped threads; joins at block end
+-        scope.spawn(fn() => println(xs.len()))
+-    h = thread.spawn(fn() copy of q: println(q))    # an unscoped thread names what it keeps
++        scope.spawn(owns fn() => println(xs.len()))
++    h = thread.spawn(owns fn() copy of q: println(q))    # an unscoped thread names what it keeps
+     h.join()
+     log = thread_shared Log()                   # one of several owners, on any thread
+-    t = thread.spawn(fn() thread_shared log: log.push("hi"))
++    t = thread.spawn(owns fn() thread_shared log: log.push("hi"))
+     t.join()
+     root = Node(name=String("root"))
+-    root.add(Node(name=String("leaf"), mesh=Some(owns Mesh(points=[0.0, 1.0]))))
++    root.add(owns Node(name=String("leaf"), mesh=Some(owns Mesh(points=[0.0, 1.0]))))
+     for ref mut child in root.children:         # may change each child
+         child.name = String("child")
+     w = weakref root                            # does not keep `root` alive
+@@ -9652,7 +9713,7 @@
+   (`panic: stale TextureHandle (generation 7, current 9)`); there is no setting that removes the
+   check.
+ * `[GPU-2]` *(changed in 0.9.15)* `device.begin_frame() -> Option[Frame]`; `None` is normal (a minimised window). A `Frame` has
+-  one owner and is not `Copy`, and `end_frame(owns frame: Frame)` takes it over (`device.end_frame(frame)`
++  one owner and is not `Copy`, and `end_frame(owns frame: Frame)` takes it over (`device.end_frame(owns frame)`
+   ends the name `frame`), so ending a frame that never began, or ending one twice, is refused when
+   compiling.
+ * `[GPU-3]` *(changed in 0.9.15)* `frame.arena()` is the frame's transient memory manager, an instance that lives as long as
+@@ -9769,7 +9830,7 @@
+ | `int(s)`, `float(s)` | `s.parse[int]()`, `s.parse[float]()` (a `Result`) |
+ | `int(x)` for a float | `x as int` (saturates; NaN is 0) |
+ | `range(a, b)` in a loop | `a..b` is the usual spelling; `range` also works |
+-| `xs.append(x)`, `xs.extend(ys)` | `xs.push(x)`, `xs.extend(ys)` |
++| `xs.append(x)`, `xs.extend(ys)` | `xs.push(owns x)`, `xs.extend(ys)` |
+ | `xs.pop()` | `xs.pop()` returns an `Option` |
+ | `xs.index(x)` | `xs.index_of(x)` (an `Option`) |
+ | `xs.sort(key=f)` | `xs.sort_by_key(f)` |
+@@ -9801,7 +9862,7 @@
+ * **Objects are freed when their last owner ends**, at a predictable point, not by a collector. A
+   loop of `shares` owners that nothing opens again would never be freed, so it is refused when
+   compiling, with the link to make `weakref`.
+-* **A list does not change while a loop walks it.** `for x in xs: xs.push(x)` is refused; the loop's
++* **A list does not change while a loop walks it.** `for x in xs: xs.push(owns x)` is refused; the loop's
+   own handle may change the item it is on (`for ref mut x in xs: x = 0`), and anything else is added or
+   removed after the loop.
+ * **What each name may do is written on it.** A plain name reads; `ref mut` may change someone else's
+@@ -9864,7 +9925,7 @@
+     r = roll(ref mut rng)
+     counts[r] = counts.get_or(r, 0) + 1
+     if r == 6:
+-        player.inventory.push("gem")
++        player.inventory.push(owns "gem")
+     else:
+         player.hp -= r // 2
+ println(f"{player.name}: hp={player.hp}, items={len(player.inventory)}")
+@@ -9925,7 +9986,7 @@
+ | **profile** | `debug`, `development` or `release`: optimisation and diagnostic settings that never change meaning (`[PRF-1]`) |
+ | **proven fact** | a fact a verifying operation establishes for two names (`assert_disjoint` after its call, `check_disjoint` inside its `Ok` branch), dropped when either name is given another value (`[DSJ-2]`) |
+ | **read-only view** | every view except `ref mut T`, `sharedref mut T` and a `MutSpan` held by a `ref mut` name; it promises that what it reads does not change while it is used |
+-| **real variable** | the very variable a lambda uses without a word, not a copy: `b.on_click(fn(): score += 1)` changes the caller's `score` |
++| **real variable** | the very variable a lambda uses without a word, not a copy: `b.on_click(owns fn(): score += 1)` changes the caller's `score` |
+ | **reason code** | why a run-time check exists (`[EFF-11]`) |
+ | **reduction** | a combining change (`total += e`, `max`, `push`) made by scoped tasks to one place: each task keeps a private accumulator, combined at the join in spawn order |
+ | **reload manifest, reload transaction, safe point** | the image section listing what can be reloaded (`[HR-8]`); the plan and prepare phases that may fail without effect (`[HR-2]`); the poll at which no thread runs Ember code (`[HR-3]`) |
+@@ -12548,6 +12609,98 @@
+ |---|---|
+ | `[LT-1]` | changed |
+ | `[LT-1a]` | changed |
++
++## H.50 Changes in 0.9.15_Hardened_10 (from 0.9.15_Hardened_9)
++
++**0.9.15_Hardened_10** writes in the owner's verdicts 145 to 160 from the review of 2026-11-01, evening
++(`tasks/96/redesign/JOB.md`, the answers with their quotes in
++`tasks/96/redesign/compiler-0.9.15/odr-answers-2026-11-01.md`), and takes out sentences the lead had
++written without a verdict:
++
++* Verdicts 147 to 149 and 158: an argument for an `owns` parameter says `owns` at the call, whatever is
++  given: `take(owns xs)`, `take(owns copy of xs)`, `take(owns [1, 2])`, `names.push(owns p.name)`, and a
++  function written in the call, `xs.iter().for_each(owns fn(x: int): println(x))`; without it the call
++  is `E3028` (`[FN-2a]`, `[OWN-9]`, `[GRM-15]`). Every example of the text says it. Out go "An argument
++  for an `owns` parameter is handed over with no word" (`[FN-2a]`, `[OWN-9]`) and "or `x` to hand it
++  over" (`[FN-2]`).
++* Verdict 145: `owns` hands over every value `=` copies, as it does a number (`f = owns flag`).
++* Verdict 146: `owns` before an argument for a parameter that only reads is `E3028` ("remove `owns`").
++* Verdict 148: `return xs` takes no word; `return owns xs` is `E0109`.
++* Verdict 150: a function from a variable given to a standard-library function is lent and takes no
++  word (`xs.iter().for_each(h)`, ODR-240); out goes `[STD-19]`'s "The function is handed over as every
++  argument for an `owns` parameter is".
++* Verdicts 159 and 160: a constructor's argument takes no word, as `=` (`Words(names=xs)`), and neither
++  does a value made in the call with `shares` or `weakref` (`setup(shares mut game)`).
++* Verdicts 151 and 152: a `dyn` or `virtual` call is decided by the code of each kind that may reach it
++  (`[LT-1]`); `runtime` on a parameter checks the kind while the program runs where it is known only
++  then (`[LT-48]`, new; a contextual word, `[LEX-15]`; its cost in §X.4).
++* Verdict 153: a hasher may be `Copy` (`[HASH-1]` loses "that is not `Copy`", the lead's words).
++* Verdicts 154 and 155: a `[T]` line sits on the line right above its function, struct or class, and
++  every other line that begins with `[` is `E0100` (`[GRM-40]`).
++* Verdict 156: every keyword used as a name is `E0005` (`[LEX-14]`).
++* Verdict 157: the messages for `this` where there is no object (`[FN-4]`), `E2118`'s renamed parameter
++  and `E3062`'s help for a view of the object itself (`[LT-1a]`).
++
++Generated: every rule whose text differs from 0.9.15_Hardened_9.
++
++| Rule | 0.9.15_Hardened_9 → 0.9.15_Hardened_10 |
++|---|---|
++| `[ALC-5]` | changed |
++| `[BCK-5]` | changed |
++| `[BCK-6]` | changed |
++| `[BRW-2]` | changed |
++| `[BRW-3]` | changed |
++| `[BRW-10]` | changed |
++| `[BRW-11]` | changed |
++| `[BRW-15]` | changed |
++| `[BRW-17]` | changed |
++| `[BRW-18]` | changed |
++| `[CELL-13]` | changed |
++| `[CLO-2]` | changed |
++| `[CLO-4]` | changed |
++| `[CLO-7]` | changed |
++| `[CLO-12]` | changed |
++| `[CLO-17]` | changed |
++| `[CLO-19]` | changed |
++| `[CORO-14]` | changed |
++| `[DRP-1]` | changed |
++| `[ECS-5]` | changed |
++| `[EFF-25]` | changed |
++| `[EFF-26]` | changed |
++| `[ERR-10]` | changed |
++| `[EXC-19]` | changed |
++| `[FFI-54]` | changed |
++| `[FN-2]` | changed |
++| `[FN-2a]` | changed |
++| `[FN-4]` | changed |
++| `[GPU-2]` | changed |
++| `[GRM-15]` | changed |
++| `[GRM-27]` | changed |
++| `[GRM-40]` | changed |
++| `[HASH-1]` | changed |
++| `[LEX-14]` | changed |
++| `[LEX-15]` | changed |
++| `[LT-1]` | changed |
++| `[LT-1a]` | changed |
++| `[LT-47]` | changed |
++| `[LT-48]` | added |
++| `[OBJ-5]` | changed |
++| `[OWN-6]` | changed |
++| `[OWN-9]` | changed |
++| `[OWN-11]` | changed |
++| `[PAR-2]` | changed |
++| `[STD-8]` | changed |
++| `[STD-16]` | changed |
++| `[STD-19]` | changed |
++| `[THR-2]` | changed |
++| `[THR-3]` | changed |
++| `[THR-11]` | changed |
++| `[THR-15]` | changed |
++| `[THR-17]` | changed |
++| `[THR-18]` | changed |
++| `[THR-20]` | changed |
++| `[THR-21]` | changed |
++| `[WK-17]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -13476,6 +13629,7 @@
+ | `[LT-45]` | VII | *(new in 0.9.15)* Kept views. A struct that holds a view (`ref T`, … |
+ | `[LT-46]` | VII | *(new in 0.9.15)* The three kinds of kept view, by their word: * `ref … |
+ | `[LT-47]` | VII | *(new in 0.9.15)* A view put in through `ref mut`. After a call, a … |
++| `[LT-48]` | VII | *(new in 0.9.15)* `runtime`: a `dyn` parameter's kind checked while … |
+ 
+ ## MAN
+ 

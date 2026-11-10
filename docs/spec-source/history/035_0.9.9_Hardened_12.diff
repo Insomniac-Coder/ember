@@ -1,0 +1,63 @@
+--- Ember_v0.9.9_Hardened_11.md
++++ Ember_v0.9.9_Hardened_12.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_11
+-**Supersedes:** 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_12
++**Supersedes:** 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -3701,12 +3701,19 @@
+ 
+ * `[STD-15]` *(new in 0.9.9)* **`Array[T]`** is a growable contiguous list (Python's `list`).
+   `len`, `is_empty`, `capacity`, `reserve`, `push`, `pop -> Option[T]`, `insert(i, v)`, `remove(i) -> T`,
+-  `swap_remove(i) -> T`, `extend(iterable)`, `truncate`, `clear`, `retain(pred)`, `drain(range)`,
+-  `dedup`, `reverse`, `sort` (stable; `T: Ord`; an inconsistent order permutes but never corrupts, `[HASH-3]`), `sort_by_key(f)`, `sort_by(cmp)`, `sorted() ->
+-  Array[T]`, `binary_search(x) -> Result[int, int]`, `index_of(x) -> Option[int]`, `first`, `last`,
+-  `get(i) -> Option[ref T]`, `get_mut`, `iter`, `iter_mut`, `split_at`, `chunks(n)`, `chunks_mut(n)`,
+-  `windows(n)`, `join(sep)` (for elements that are `Display`), and `x in xs` (`[STD-8]`). `xs[i]`
+-  takes any integer and panics when `i < 0` or `i >= len` (`[TYP-31]`).
++  `swap_remove(i) -> T`, `extend(iterable)`, `truncate`, `clear`, `retain(pred)`,
++  `drain(r) -> Array[T]`, `dedup`, `reverse`, `sort` (stable; `T: Ord`; an inconsistent order
++  permutes but never corrupts, `[HASH-3]`), `sort_by_key[K: Ord](f: fn(T) -> K)`,
++  `sort_by(cmp: fn(T, T) -> Ordering)`, `sorted() -> Array[T]`, `binary_search(x) -> Result[int, int]`,
++  `index_of(x) -> Option[int]`, `first`, `last`, `get(i) -> Option[ref T]`, `get_mut`, `iter`,
++  `iter_mut`, `split_at`, `chunks(n)`, `chunks_mut(n)`, `windows(n)`, `join(sep)` (for elements that
++  are `Display`), and `x in xs` (`[STD-8]`). `xs[i]` takes any integer and panics when `i < 0` or
++  `i >= len` (`[TYP-31]`). `sort_by` and `sort_by_key` are stable, and `sort_by_key` calls `f` once
++  for each element, in order. `windows(n)` yields every run of `n` neighbours, one step apart, as
++  shared views (there is no `windows_mut`); none when `n > len`, and `n == 0` panics as `chunks(0)`
++  does (`[SPN-4]`). `drain(r)` moves the elements in `r`, any range of integers (`a..b`, `a..=b`,
++  `a..`, `..b`), out into a new `Array` in order, and the rest close up; a range reaching outside
++  `0..=len`, or starting after it ends, panics.
+ * `[STD-11]` *(new in 0.9.9)* **`Map[K, V, H = DefaultHasher]`** is a hash map that **iterates in
+   insertion order**, like Python's `dict`. Re-assigning an existing key keeps its position; removing
+   a key keeps the order of the others. Lookup, insertion and removal take expected constant time;
+@@ -6341,7 +6348,7 @@
+ ruled under the owner's delegation and recorded here. Hardened_3 carries ODR-021 and ODR-022;
+ Hardened_4 adds ODR-023; Hardened_5 adds ODR-024; Hardened_6 adds ODR-025; Hardened_7 adds ODR-026;
+ Hardened_8 adds ODR-027; Hardened_9 adds ODR-028;
+-Hardened_10 adds ODR-029; Hardened_11 adds ODR-030.
++Hardened_10 adds ODR-029; Hardened_11 adds ODR-030; Hardened_12 adds ODR-031.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6355,6 +6362,7 @@
+ | ODR-028 | a method named like an inherited one replaces it: without `override` over a virtual method it is `E2111`, over a non-virtual one `E2110`; an `override` is itself virtual (Hardened_9) | `[CLS-4]` |
+ | ODR-029 | `parse[T]()` reads the whole text strictly (no white space; an optional sign and digits for integers, Rust's float grammar with `inf`/`nan`, `true`/`false`, one character), and `ParseError` is `Empty`, `Invalid` or `Overflow` (Hardened_10) | `[TXT-10]` |
+ | ODR-030 | `extend` is a contextual keyword, a keyword only at the start of an item before the type it extends, so `Array` can have its `extend` method (Hardened_11) | `[LEX-15]` |
++| ODR-031 | `Array`'s `sort_by(cmp: fn(T, T) -> Ordering)` and `sort_by_key[K: Ord](f: fn(T) -> K)` are stable, and `f` is called once per element; `windows(n)` yields shared, overlapping views one step apart, none when `n > len`, and panics on `0`; `drain(r) -> Array[T]` takes any integer range and panics outside `0..=len` (Hardened_12) | `[STD-15]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+@@ -6376,6 +6384,7 @@
+ | `[LT-1b]` | changed |
+ | `[LT-7]` | changed |
+ | `[LT-44]` | changed |
++| `[STD-15]` | changed |
+ | `[STR-5]` | changed |
+ | `[TXT-10]` | changed |
+ | `[TYP-23]` | changed |

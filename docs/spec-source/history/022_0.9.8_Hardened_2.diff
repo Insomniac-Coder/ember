@@ -1,0 +1,157 @@
+--- Ember_v0.9.8_Hardened_1.md
++++ Ember_v0.9.8_Hardened_2.md
+@@ -1,12 +1,12 @@
+ # Ember Programming Language — Design & Implementation Specification
+ 
+-**Version:** 0.9.8_Hardened_1
+-**Immediate predecessor:** 0.9.7_Hardened_3 (immutable; preserved as the diff base)
++**Version:** 0.9.8_Hardened_2
++**Immediate predecessor:** 0.9.8_Hardened_1 (immutable; preserved as the diff base)
+ **Status:** Frozen development target. Implementation and conformance evidence is **not** claimed; normative repository adoption still requires the recorded adoption gates.
+ 
+-    Specification    frozen for this target. ODR-017 is closed here by the
+-                     owner-selected `Shared[T]` and generalized weak-owner API.
+-                     The prior H3 diagnostic-identity work remains unchanged.
++    Specification    frozen for this target. ODR-018 is closed here by one
++                     explicit cycle-analysis root shared by `inspect` and
++                     `explain`. ODR-017's ownership API remains unchanged.
+                      Both figures are measurements, not constants — 0.8.4_Hardened_1
+                      records 826 against 833 for the same document — and XXIII.4 requires
+                      an extractor to tell a definition from a citation without saying how
+@@ -30,6 +30,14 @@
+ meaning or aliasing model is introduced. This is an owner-approved semantic
+ change and therefore begins language revision 0.9.8. The received ruling is
+ preserved byte-for-byte under `docs/spec-source/as-received/`.
++
++**What 0.9.8_Hardened_2 changed.** It closes ODR-018 as a tooling hardening:
++`ember inspect --cycle <path>` and `ember explain --cycle <path>
++<Class[.field]>` resolve the same explicit analysis root and its ordinary
++package/module/import closure. `[CLI-18]` forbids cwd scanning, stale-build
++fallback, prior-build inference, and arbitrary package selection. This changes
++neither Ember source-language acceptance nor ownership or lifetime semantics,
++and introduces no ABI, runtime, metadata, or ownership-graph mechanism.
+ 
+ **What Hardened_3 changed.** It closes ODR-016 by giving the three rules that stated a
+ rejection without naming one a diagnostic code, and it withdraws two gap reports Hardened_2
+@@ -54,8 +62,9 @@
+ the language number instead. Implementation completion by itself moves neither. So 0.8.4 was cut as
+ `0.8.4_Hardened_1` rather than `0.8.3_Hardened_2` when S1 landed; 0.9.5 moved for inferred
+ multi-region views; 0.9.7 moved for the `@latebound` callable boundary; and
+-**this file is `0.9.8_Hardened_1` because ODR-017 supplies previously undefined
+-public ownership and borrowing semantics.**
++**`0.9.8_Hardened_1` supplied the public ownership and borrowing semantics for
++this language version; this file is `0.9.8_Hardened_2` because ODR-018 only
++completes their explicit CLI/tooling boundary.**
+ 
+ **Compatibility.** Additive. `0.9.8` ⊃ `0.9.7` ⊃ `0.9.6` ⊃ `0.9.5` ⊃ `0.9` ⊃ `0.8.5` ⊃ `0.8.4` ⊃ `0.8.3`.
+ No program valid under an earlier contract becomes invalid, and a source file may declare
+@@ -76,15 +85,16 @@
+ 
+ ---
+ 
+-## 0.9.8_Hardened_1 authority and evidence status
++## 0.9.8_Hardened_2 authority and evidence status
+ 
+ This file is the frozen development target selected by the owner ruling that
+-closes ODR-017.  It is authoritative for the `Shared[T]`/`Weak[O]` work only
+-after its recorded source hash is accepted through
++closes ODR-018. It carries the inherited `Shared[T]`/`Weak[O]` work from
++0.9.8_Hardened_1 and the canonical cycle-analysis-root tooling contract after
++its recorded source hash is accepted through
+ `docs/spec-source/development-target.json`; the adopted source remains
+ `ember-spec.md` at `0.8.5_Hardened_1` until the repository's adoption gates
+ are met.  The ruling is preserved byte-for-byte in
+-`as-received/ODR-017_Shared_Weak_API_completion.md` and ADR-037 records its
++`as-received/ODR-018_Cycle_explanation_analysis_root.md`; ADR-038 records its
+ application here.
+ 
+ The rules added for this language revision are specified, not yet evidence of
+@@ -173,6 +183,24 @@
+ | 15 | Thread-safety of `shared` decided per-object at runtime ("upgrade the control block"). | Reference counts are **atomic iff the class is `Sync`**; a non-`Sync` class is thread-confined and uses plain counters. Decided per type at compile time. | No runtime upgrade machinery; the count is atomic exactly when handles can cross threads. |
+ | 16 | GPU kernels as an eventual core language feature. | Shaders remain a separate language (as RageV already does with `.rvshader` → SPIR-V). Ember owns the **host-side** model: generational handles, command-scoped GPU ownership, deferred destruction, frame-in-flight tracking, and a typed shader interface generated from SPIR-V reflection. Kernel DSL is v3 and out of scope for this document beyond reservations. | Matches RageV's architecture exactly; keeps the core compiler small. |
+ | 17 | Specification written as prose. | Normative rules carry IDs; every ID maps to conformance tests; every compiler pass has an input/output contract. | So that an agent can implement and verify without reinterpreting. |
++
++## Change log — 0.9.8_Hardened_2
++
++**0.9.8_Hardened_2 closes ODR-018.** It supplies one explicit analysis-root
++contract for the two existing cycle tools. It changes no Ember source-language
++accepted/rejected program set, ownership or lifetime mechanism, ABI, runtime
++object semantics, or static ownership-cycle analysis.
++
++| # | Change | Class | Where |
++|---|---|---|---|
++| H2.1 | `[CLI-18]` defines a package-directory or standalone-file analysis root, and forbids cwd scanning, stale-build fallback, prior-build inference, or arbitrary package selection. | TOOLING HARDENING | XX.1, `[CLI-18]` |
++| H2.2 | `[CLI-17]` and `[WK-9]` use the canonical root; `explain --cycle` gains its required `<path>` argument and the target-resolution/ambiguity contract. | TOOLING HARDENING | XX.1, XXIV H14 |
++| H2.3 | Help, conformance mapping, and decision records identify the one resolver and verify package, standalone, target, invalid-root, and non-fallback behavior. | IMPLEMENTATION EVIDENCE BOUNDARY | XX.1, XX.5 |
++
++**This change log is exhaustive for the 0.9.8_Hardened_2 delta.** The H1
++source-language revision remains the complete 0.9.8 language delta.
++
++---
+ 
+ ## Change log — 0.9.8_Hardened_1
+ 
+@@ -5251,7 +5279,8 @@
+ ember inspect --cost <path>        every [COST-3] row applying to this item, elided or emitted
+ ember inspect --deterministic <path>   whether it satisfies [DET-1], and the chain to each Nondet source
+ ember inspect --cycle <path>       ownership graph: strong/weak/unknown edges, shortest static cycle ([CLI-17])
+-ember explain --cycle <Class[.field]>   why that field is cycle-prone, and the Weak[T] edge to break ([WK-9])
++ember explain --cycle <path> <Class[.field]>
++                                  explain one class/field in that root's ownership graph ([WK-9], [CLI-18])
+ ember bind <header> [--emit-embind | --explain <symbol> | --report | --emit-cpp]
+ ember shader-bind <reflect.json>
+ ember doc
+@@ -6355,7 +6384,7 @@
+ | Conjunctive validity | `[LT-17]`: a multi-region view is usable only while **every** region slot a reachable field needs is still valid |
+ | Late-bound callable boundary | `@latebound fn(…) -> R` (`[FN-6b]`): each invocation binds fresh regions for the callback's borrowed parameters, and the result must be free of them |
+ | Callable mode vector | the borrowed / `mut` / `owned` parameter modes a callable type carries as compile-time identity, preserved through `Callable[Args, R]` (`[FN-6a]`) |
+-| Cycle inspection | `ember inspect --cycle` reports the whole ownership graph, `ember explain --cycle` answers for one field, and `[WK-4]`'s leak reporter is the run-time view of the same data |
++| Cycle inspection | `ember inspect --cycle <path>` reports the whole ownership graph; `ember explain --cycle <path> <Class[.field]>` explains one selected class or field in that same root; `[WK-4]`'s leak reporter is the run-time view of the same data |
+ 
+ ## XXIII.4 Rule index
+ 
+@@ -6822,11 +6851,13 @@
+   SCC was statically predicted, and a suggested weak edge when one exists. Runtime discovery remains
+   diagnostic only; no collector or automatic mutation of the object graph is permitted.
+ 
+-* `[WK-9]` **Cycle explanation command.** `ember explain --cycle <Class[.field]>` MUST print the
+-  statically visible ownership path(s) that make the field cycle-prone, including the exact field
+-  declarations responsible. When the cycle crosses a generic container, the instantiated ownership
+-  type MUST be shown. When no static cycle can be established, the command MUST say that the edge
+-  is dynamically cycle-capable rather than pretending it has proved a cycle.
++* `[WK-9]` **Cycle explanation command.** `ember explain --cycle <path> <Class[.field]>` MUST use
++  `[CLI-18]` to select its analysis root, then print the statically visible ownership path(s) that
++  make the selected class or field cycle-prone. A selected field MUST identify the exact field
++  declaration and the complete ownership path containing it. When the cycle crosses a generic
++  container, the instantiated ownership type MUST be shown. When no static cycle can be established,
++  the command MUST say that the edge is dynamically cycle-capable rather than pretending it has
++  proved a runtime cycle.
+ 
+ * `[WK-10]` **IDE/fix-it guidance.** Where a cycle-closing field has a valid `Weak[T]` replacement,
+   the diagnostic MUST provide a machine-applicable suggestion equivalent to replacing the field's
+@@ -7084,9 +7115,22 @@
+   call overhead. Cycle analysis MUST be bounded by package dependency summaries and MUST NOT require
+   whole-program knowledge for correctness. `with_views` MUST be eligible for complete inlining.
+ 
+-* `[CLI-17]` `ember inspect --cycle <path>` MUST report the same ownership graph used by `[WK-5]`,
+-  including strong/weak/unknown edge classification and the shortest cycle when one is statically
+-  visible.
++* `[CLI-17]` `ember inspect --cycle <path>` MUST resolve `<path>` as the canonical cycle-analysis
++  root defined by `[CLI-18]` and report the same ownership graph used by `[WK-5]`, including
++  strong/weak/unknown edge classification and the shortest cycle when one is statically visible.
++
++* `[CLI-18]` **Cycle explanation analysis root.** `ember inspect --cycle <path>` and `ember explain
++  --cycle <path> <Class[.field]>` MUST construct their analysis universe from exactly the same
++  `<path>` resolution: either a package directory containing `ember.toml`, using that package's
++  manifest and ordinary module/import closure, or one standalone `.em` file under `[CLI-4]`'s
++  single-file package synthesis. A module file inside a package is still interpreted only by the
++  standalone-file rule; it MUST NOT acquire a third, partial-package interpretation. The commands
++  MUST NOT scan cwd, consult a stale or unrelated build, infer a prior root, or select an arbitrary
++  package. `<Class[.field]>` resolves only in the resulting analysis universe. An invalid root MUST
++  fail before ownership analysis and MUST NOT fall back to another root. `::` qualifies a module/type
++  name and `.` selects its field; an unknown class, missing field, or ambiguous unqualified class
++  uses the ordinary name/member-resolution diagnostics, with ambiguity naming every qualified
++  candidate.
+ 
+ * `[CLI-16]` `ember inspect --safety` MUST report the new exclusivity classes from `[EXC-12]` and
+   identify whether a loop check was hoisted, retained per access, or removed by the existing static

@@ -1,0 +1,44 @@
+--- Ember_v0.9.9_Hardened_43.md
++++ Ember_v0.9.9_Hardened_44.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_43
+-**Supersedes:** 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_44
++**Supersedes:** 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -4053,7 +4053,13 @@
+   `for` loop compiles to one loop with no iterator object in memory (`[CTL-3]`). The adapters and
+   consumers can also be called directly on an `Iterable` value, borrowing it as `iter()` would:
+   `xs.enumerate()` is `xs.iter().enumerate()`, and a method of the collection's own of the same name
+-  (`Array.join`) takes precedence.
++  (`Array.join`) takes precedence. An adapter takes the iterator it wraps (`owned self`), and so
++  does a consumer. Counts are `int`s, as `len` is (ODR-089): `take(n)` gives at most `n` items and
++  `skip(n)` leaves out the first `n`, `nth(n)` is the item at index `n` (`None` past the end),
++  `step_by(k)` gives the first item and then every `k`-th, and `enumerate(start=0)` numbers from
++  `start` as `[STD-26]`'s `enumerate` does. A negative count or index, or a `k` of zero or less,
++  is the caller's bug and panics when the adapter is made or the consumer called (`[STD-14]`),
++  never partway through.
+ * `[STD-5]` *(changed in 0.9.9)* `sum` and `product` combine elements left to right in the element
+   type; an empty sum is zero. Integer sums panic on overflow (`[TYP-8]`). Float sums are never
+   reassociated outside `@fastmath` (`[TYP-9]`), so they are deterministic; `sum_f64()` accumulates
+@@ -6830,7 +6836,7 @@
+ Hardened_41 adds ODR-085, what the dynamic exclusivity checks cost and the packed access words;
+ Hardened_42 adds ODR-086 and ODR-087, running totals checked block by block and the LLVM backend;
+ Hardened_43 adds ODR-088, integer division no vector instruction set does keeps a loop out of
+-vectorisable form.
++vectorisable form; Hardened_44 adds ODR-089, the iterator adapters' counts and ownership.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+@@ -6902,6 +6908,7 @@
+ | ODR-086 | a running total is not grouped; it is vectorised under checked arithmetic when its widths prove it safe or, for a signed total of at least 16 bits, when a run-time test over each block of 64 iterations does; a block that fails the test runs checked, and so does the rest of the loop (Hardened_42) | `[SIMD-5]`, `[SIMD-7]` |
+ | ODR-087 | LLVM is restored as the reference implementation's second backend over the same MIR, begun once the C backend passes the conformance suite and the default once it also passes the performance suite; `--backend c|llvm` (Hardened_42) | `[CG-LL-1]`, `[CG-LL-2]`, `[CG-LL-3]`, `[SIMD-1]`, `[SIMD-3]`, `[BLD-6]` |
+ | ODR-088 | a loop that divides integers by a divisor that is not a constant, or integers of 64 bits or more by a constant that is not a power of two, is not in vectorisable form: no vector instruction set does either, so its overflow checks stay one per operation (Hardened_43) | `[SIMD-5]`, `[SIMD-7]` |
++| ODR-089 | an adapter or consumer takes the iterator it wraps; `take`, `skip`, `nth` and `step_by` count in `int`, and a negative count or index, or a step of zero or less, panics when the adapter is made or the consumer called; `enumerate(start=0)` as `[STD-26]` (Hardened_44) | `[STD-19]`, `[STD-14]`, `[STD-26]` |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 

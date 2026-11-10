@@ -1,0 +1,190 @@
+--- Ember_v0.9.5_Hardened_8.md
++++ Ember_v0.9.5_Hardened_9.md
+@@ -1,8 +1,8 @@
+ # Ember Programming Language — Design & Implementation Specification
+ 
+-**Version:** 0.9.5_Hardened_8
++**Version:** 0.9.5_Hardened_9
+ **Status:** Frozen development target; implementation/conformance evidence is not claimed and normative repository adoption still requires the recorded adoption gates
+-**Immediate predecessor:** 0.9.5_Hardened_7
++**Immediate predecessor:** 0.9.5_Hardened_8
+ **Versioning model:** A hardening increments `Hardened_N` when it only adds implementation detail,
+ invariants, tooling requirements, or editorial clarification without changing accepted language
+ semantics. A language revision is required when the accepted-program set or another normative
+@@ -11,8 +11,8 @@
+ introduced inferred multi-region view structs; this revision is a subsequent hardening that
+ consolidates the inherited 0.8.5 contract, makes supersession explicit, repairs mechanical
+ extraction defects, recovers the owner-supplied Hardened 14 callback-composition rules, resolves
+-their mutable API family, callable-type mode syntax, helper input modes, and `Callable` bridge by
+-owner decision, and records evidence status honestly. No implementation or conformance result is
++their mutable API family, callable-type mode syntax, helper input modes, `Callable` bridge, and the
++narrow Arena-backed return-provenance boundary by owner decision, and records evidence status honestly. No implementation or conformance result is
+ asserted merely because the specification requires one.
+ 
+ > **Authority boundary:** This frozen hardening records the owner-selected 0.9.5 development target, but
+@@ -24,11 +24,17 @@
+ > Hardened 14 definitions (H5), selected explicit all-mutable `_mut` variants (H6), and then extended
+ > callable types with borrowed/default, `mut`, and `owned` parameter modes (H7). The owner then ruled
+ > that mutable helper inputs are `mut` reborrows and that the existing `Callable[Args, R]` abstraction
+-> preserves the full mode signature as compiler-known type metadata (this H8). H4 through H7 remain
++> preserves the full mode signature as compiler-known type metadata (H8). H4 through H8 remain
+ > frozen predecessor records. This revision consistently uses Ember's canonical type name
+ > `MutSpan[T]`; the rulings' `SpanMut[T]` spelling was normalized to the type already defined
+-> throughout the language. ODR-004 through ODR-007 are closed. No helper consumes its input view,
++> throughout the language. ODR-004 through ODR-008 are closed. No helper consumes its input view,
+ > callable modes are compile-time-only, and neither ruling creates a separate ownership system.
++
++> **ARENA RETURN PROVENANCE COMPLETED:** on 2026-09-12 the owner resolved the boundary between
++> `[LT-1a]` and `[LT-4]`. A user-defined wrapper may name an `Arena` parameter in `@borrows` only
++> when its returned view derives from storage owned by that arena. H8 remains frozen; this H9 adds
++> `[LT-4a]`, `[LT-4b]`, and `[TST-22]`. The exception neither makes `Arena` a view type nor permits
++> arbitrary non-view parameters in `@borrows`.
+ 
+ # 0.9_Hardened_12 Owner-Decision Resolution Cycle (historical record)
+ 
+@@ -415,6 +421,18 @@
+   rather than erasing them. The supplied mnemonic `[TST-LT-MODE]` is normalized to this next unused
+   numeric test-rule ID so the normative rule index can enforce it.
+ 
++* `[TST-22]` Conformance MUST cover Arena-backed return provenance:
++
++  1. a direct arena allocation returned by a function carrying `@borrows(arena)`;
++  2. both `ref mut T` and mutable-span results backed by the named arena;
++  3. rejection of an arena-backed view returned without the required provenance relationship;
++  4. rejection when the returned view outlives the caller's arena;
++  5. rejection of `@borrows` naming an arbitrary non-view parameter; and
++  6. nested wrappers that each preserve `@borrows(arena)` provenance.
++
++  The owner supplied the mnemonic `[TST-LT-ARENA-RETURN]`; it is normalized to this next unused
++  numeric test-rule ID so the normative rule index can enforce it.
++
+ * `[LT-12]` **No hidden allocation.** The canonical helpers MUST be `@noalloc` and MUST NOT allocate
+   a wrapper object, closure environment, heap box, or temporary container solely to represent the
+   view bundle. A conforming implementation MAY inline the helper completely.
+@@ -1607,6 +1625,7 @@
+ | 0.9.5_Hardened_6 | Owner-approved hardening clarification | resolved ODR-005 with explicit all-mutable `with_views2_mut/3_mut/4_mut` helpers using canonical `MutSpan[T]`; mixed-mutable overloads remain outside the contract |
+ | 0.9.5_Hardened_7 | Owner-approved hardening clarification | added borrowed/default, `mut`, and `owned` callable-type parameter modes; applied explicit `mut` callback modes to the all-mutable helpers; added `[LT-11a]` and `[TST-20]` |
+ | 0.9.5_Hardened_8 | Owner-approved hardening clarification | made mutable helper inputs explicit `mut` reborrows; preserved callable mode vectors as compiler-known metadata through `Callable[Args, R]`; added `[FN-6a]`, `[LT-8a]`, and `[TST-21]` |
++| 0.9.5_Hardened_9 | Owner-approved hardening clarification | permitted the narrow `@borrows(arena)` return-provenance contract for Arena-backed views; added `[LT-4a]`, `[LT-4b]`, and `[TST-22]` |
+ 
+ ---
+ 
+@@ -1723,11 +1742,26 @@
+ 0.8.5 program set remains unchanged; H8 is still a not-yet-adopted development target and makes no
+ implementation or conformance claim.
+ 
+-### 0.9.5_Hardened_8 language-conformance condition
+-
+-`0.9.5_Hardened_8` MUST NOT be declared conformant unless `[LT-8]`–`[LT-13]`,
++## 0.9.5_Hardened_9 Audit Record
++
++| ID | Classification | Resolution |
++|---|---|---|
++| AUD-095-44 | Owner-approved region-provenance clarification | Permitted `@borrows(arena)` as a narrow exception for a returned view proven to derive from storage owned by the named `Arena`; `Arena` remains a non-view type. |
++| AUD-095-45 | Wrapper contract | Added `[LT-4a]` so direct and nested user-defined wrappers preserve the arena-to-result relationship in each public signature. |
++| AUD-095-46 | Safety boundary | Added `[LT-4b]`; arbitrary non-view parameters, unrelated results, lifetime extension, ownership transfer, and borrow-checker bypass remain forbidden. |
++| AUD-095-47 | Conformance integrity | Added `[TST-22]`; normalized the supplied non-indexable mnemonic `[TST-LT-ARENA-RETURN]` to the next unused numeric test-rule ID. |
++| AUD-095-48 | API consistency | Used the already-specified `alloc` and `alloc_array` surfaces in examples rather than introducing the ruling's otherwise-undefined `alloc_span`/`alloc_mut_span` spellings. |
++
++**Amendment:** `HC-095-08` — owner-approved Arena-backed return provenance.
++Because H8 was already frozen, ADR-023 requires this clarification to be issued as H9. The adopted
++0.8.5 source remains unchanged; H9 is the new frozen, not-yet-adopted development target and makes
++no blanket implementation or conformance claim.
++
++### 0.9.5_Hardened_9 language-conformance condition
++
++`0.9.5_Hardened_9` MUST NOT be declared conformant unless `[LT-8]`–`[LT-13]`,
+ `[LT-8a]`, `[LT-11a]`, `[FN-6a]`, `[TST-20]`, `[TST-21]`,
+-`[LT-14]`–`[LT-43]` including `[LT-31a]`, `[MIR-REG-1]`,
++`[LT-4a]`, `[LT-4b]`, `[TST-22]`, `[LT-14]`–`[LT-43]` including `[LT-31a]`, `[MIR-REG-1]`,
+ `[TYP-15]`, `[TYP-15a]`, `[VERIFY-3]`, `[TST-17]`–`[TST-19]`, and `[BUD-8]` all have
+ passing conformance evidence; the MIR verifier proves region-slot preservation and checks callable
+ access summaries against actual MIR field accesses; unknown calls conservatively require all
+@@ -1745,11 +1779,11 @@
+ 
+ ### Acceptance condition
+ 
+-`0.9.5_Hardened_8` MUST NOT be declared clean unless:
++`0.9.5_Hardened_9` MUST NOT be declared clean unless:
+ 1. the document has one current version identity;
+ 2. the consolidated Parts I–XXIII body and the current addenda form one normative source;
+-3. the active revision lineage ends at `0.9.5_Hardened_8`;
+-4. the current consistency checklist targets `0.9.5_Hardened_8`;
++3. the active revision lineage ends at `0.9.5_Hardened_9`;
++4. the current consistency checklist targets `0.9.5_Hardened_9`;
+ 5. `std.cell` is the sole defining owner of interior-mutability types;
+ 6. post-publication hot-reload failure has no unspecified recovery semantics;
+ 7. closed owner decisions are not presented as open implementation choices;
+@@ -1759,10 +1793,11 @@
+ 11. ODR-005 is closed by the explicit all-mutable `_mut` signatures, and no mixed-mutability overload is inferred.
+ 12. ODR-006 is closed by explicit borrowed/shared and `mut` helper input modes; no helper consumes an input view;
+ 13. ODR-007 is closed by compile-time preservation of the full mode vector through `Callable[Args, R]`, with no runtime mode bookkeeping.
++14. `[LT-4a]` and `[LT-4b]` permit only Arena-backed `@borrows(arena)` provenance and do not make `Arena` or arbitrary non-view parameters view-typed.
+ 
+ ---
+ 
+-## 0.9.5_Hardened_8 Evidence Status — No Implementation Claim
++## 0.9.5_Hardened_9 Evidence Status — No Implementation Claim
+ 
+ The current document is a specification artifact, not a report of repository state.
+ 
+@@ -1878,7 +1913,7 @@
+ 
+ ---
+ 
+-## 0.9.5_Hardened_8 consolidation record
++## 0.9.5_Hardened_9 consolidation record
+ 
+ The body below originated in `0.8.5_Hardened_1`, incorporates the accepted 0.9/0.9.5 changes in
+ place, and is normative within this target together with the current addenda above. Frozen predecessor files are
+@@ -3706,9 +3741,25 @@
+   `@borrows(param)` on a function overrides rule 3 to tie the return to one named parameter (e.g. `fn longest(a: str, b: str) -> str @borrows(a)`), which lets the caller keep using `b`.
+ * `[LT-2]` **View structs.** A `@view struct` has an inferred region vector. Each borrowed field retains its own inferred region slot; fields proven to share a region MAY share a slot. Constructing a view struct from several references therefore preserves field provenance rather than forcing an intersection. The programmer never writes the region vector. The legacy one-region case remains a valid special case of this rule.
+ * `[LT-3]` **Static region.** String literals, `static` items, and `Span`s over them have the `static` region, which outlives everything and satisfies `[TYP-15]`'s storage restrictions (a `str` literal *may* be stored in a class field because its type is `str` with static region — the compiler records region `static` in the field's type; a non-static `str` cannot be stored there: `E3063 stored view may not outlive its source`, shape B12 — `E3060` is B7, a borrowed value that does not live long enough, which is a different shape *(owner decision, ERR-044, 2026-09-09; see `docs/spec-amendments.md`)*).
+-* `[LT-4]` **Arena region.** `Arena` allocations return `ref mut T`/`MutSpan[T]` whose region is the arena's borrow; they cannot outlive the arena (`E3061`).
++* `[LT-4]` **Arena region.** `Arena` allocations return `ref mut T`/`MutSpan[T]` whose region is the arena's borrow; they cannot outlive the arena (`E3061`). When an allocation is returned through a user-defined wrapper, that wrapper MUST either carry `@borrows(arena)` naming the `Arena` parameter that supplies the storage, or return an owned value that does not depend on arena storage. The compiler MUST reject a wrapper whose returned arena-backed view cannot be proven to carry the supplying arena parameter's region.
+ * `[LT-5]` **Inference.** Regions are inferred by the NLL algorithm in Part XIX §5.7 for all locals; the programmer never writes them. Diagnostics report regions in terms of "the borrow of `x` on line N is still needed on line M".
+-* `[LT-1a]` **Explicit return region.** The attribute `@borrows(p₁, …, pₙ)`, written on its own line preceding the function declaration, overrides the region that rules 1–3 would assign to a view-typed return. It MUST name one or more parameters; the receiver is named as `self`. The return's region is the intersection of the named parameters' regions, and every unnamed view-typed parameter is NOT borrowed by the return, so the caller MAY continue to use it. `@borrows` overrides **all three** elision rules, **including rule 1**: a method whose result points into an argument rather than into its receiver MUST be written with `@borrows` naming that argument. Naming a parameter that is not view-typed, or writing `@borrows` on a function whose return is not view-typed, is `E2031`. If the returned value's region is not a subset of the intersection of the named parameters' regions, the body is rejected with `E3062` (shape B6).  `@borrows` is part of a function's public contract for compatibility purposes: widening it (naming fewer parameters) is a breaking change under `[VER-2]`, and an `override` of a `virtual` method MUST NOT name a superset of the base's parameters — the same inheritance rule as `[EFF-8]`.
++* `[LT-1a]` **Explicit return region.** The attribute `@borrows(p₁, …, pₙ)`, written on its own line preceding the function declaration, overrides the region that rules 1–3 would assign to a view-typed return. It MUST name one or more parameters; the receiver is named as `self`. The return's region is the intersection of the named parameters' regions, and every unnamed view-typed parameter is NOT borrowed by the return, so the caller MAY continue to use it. `@borrows` overrides **all three** elision rules, **including rule 1**: a method whose result points into an argument rather than into its receiver MUST be written with `@borrows` naming that argument. Naming a parameter that is not view-typed is `E2031`, except that `[LT-4a]` permits the narrow Arena-backed return-provenance case; writing `@borrows` on a function whose return is not view-typed remains `E2031`. If the returned value's region is not a subset of the intersection of the named parameters' regions, the body is rejected with `E3062` (shape B6).  `@borrows` is part of a function's public contract for compatibility purposes: widening it (naming fewer parameters) is a breaking change under `[VER-2]`, and an `override` of a `virtual` method MUST NOT name a superset of the base's parameters — the same inheritance rule as `[EFF-8]`.
++
++* `[LT-4a]` **Arena-backed wrapper provenance.** An `Arena` parameter MAY be named in `@borrows` when a function returns a view whose storage is owned by that arena. The named parameter contributes the arena's borrow region to the returned value. For example:
++
++  ```ember
++  @borrows(arena)
++  fn make_value(arena: Arena) -> ref mut i32:
++      return arena.alloc(0)
++
++  @borrows(arena)
++  fn make_buffer(arena: Arena, n: usize) -> MutSpan[u8]:
++      return arena.alloc_array[u8](n)
++  ```
++
++  The caller MUST keep the arena alive and accessible for the returned view's entire lifetime. The annotation records provenance only: it does not extend the arena's lifetime, transfer ownership, bypass ordinary borrowing, or make `Arena` itself a view type. Nested wrappers MUST repeat `@borrows(arena)` so the relationship remains part of each public signature.
++
++* `[LT-4b]` **The Arena exception is narrow.** `@borrows` MAY name a non-view `Arena` parameter only for a returned view proven to derive from storage owned by that arena. It MUST NOT manufacture a general region relationship for an arbitrary non-view parameter, an owned return, or a view derived from some other source. Every other non-view parameter remains forbidden in `@borrows` with `E2031`.
+ * `[LT-1b]` **Intersection is reported at the definition.** When rule 3 assigns a view-typed return the intersection of two or more view-typed parameters' regions and the function carries no `@borrows`, the compiler emits the **opt-in lint** `L3014 return region is the intersection of N parameters` at the function's declaration, listing every parameter the caller will be unable to use while the result is live, and naming `@borrows` as the fix. Writing `@borrows` — including `@borrows` naming every view-typed parameter, which expresses the intersection deliberately — silences it. `[LT-1]`'s permissiveness is unchanged. `[LT-2a]` `L3014` applies only to legacy single-region return inference; it MUST NOT be emitted merely because a `@view struct` contains fields from multiple regions. Multi-region field provenance is the normative default under `[LT-14]`–`[LT-24]`.
+ * `[LT-7]` **Late-bound callback regions.** A callback-taking API MAY expose a callback boundary whose borrow region is chosen by the callee for each invocation. The callback's borrowed arguments are valid only for that invocation unless the API separately returns or transfers an owned value. The compiler models this boundary with one level of higher-ranked quantification: the callback is valid for any region selected by the callee at the call boundary. Region variables remain compiler-internal and MUST NOT appear in Ember source, public generic arguments, or ABI-visible type names. Implementations MUST reject any callback-local view that escapes the callback's selected region. `[THR-5]`'s and `[JOB-2]`'s scope regions are instances of this rule rather than bespoke exceptions, and `[GPU-9]`'s `pass.native(fn(cmd) => …)` is expressible under it.
+ 
+@@ -7610,12 +7661,12 @@
+ Everything between the consolidated-body markers is current normative text. Material after this
+ marker is specification tooling guidance for the current revision, not inherited 0.8.5 text.
+ 
+-# Appendix B — 0.9.5_Hardened_8 Consistency Checklist
++# Appendix B — 0.9.5_Hardened_9 Consistency Checklist
+ 
+ The following checks are mandatory CI checks for the consolidated specification itself:
+ 
+-1. Exactly one current version declaration exists and names `0.9.5_Hardened_8`.
+-2. The immediate predecessor is `0.9.5_Hardened_7`.
++1. Exactly one current version declaration exists and names `0.9.5_Hardened_9`.
++2. The immediate predecessor is `0.9.5_Hardened_8`.
+ 3. `[MOD-6]` and `[MOD-6a]` name the supported `0.9.5`, `0.9`, and 0.8.x source-language contracts explicitly, and `0.9` does not silently enable `0.9.5`.
+ 4. `EMBER_RUNTIME_ABI` is canonical; `EMBER_RT_ABI` can occur only in compatibility-alias documentation.
+ 5. Every `dyn Writer`/`dyn Reader` serialization signature uses a legal indirection.
+@@ -7640,5 +7691,6 @@
+ 24. `[LT-8]` makes shared helper inputs borrowed and mutable helper inputs `mut`; neither family consumes an input view.
+ 25. `[FN-6a]`, `[CLO-3]`, `[CLO-6]`, `[LT-8a]`, and `[TST-21]` preserve the full callable mode vector as compile-time-only canonical metadata through `Callable[Args, R]`.
+ 26. ODR-006 and ODR-007 are closed with traceable owner authority and are not presented as implementation choices.
++27. `[LT-1a]`, `[LT-4]`, `[LT-4a]`, `[LT-4b]`, and `[TST-22]` agree that `Arena` is a narrow non-view provenance source for Arena-backed returns, while arbitrary non-view parameters remain forbidden.
+ 
+ A failure of any checklist item is a specification CI failure, not a compiler implementation choice.

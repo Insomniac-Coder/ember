@@ -1,0 +1,52 @@
+--- Ember_v0.9.9_Hardened_3.md
++++ Ember_v0.9.9_Hardened_4.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.9_Hardened_3
+-**Supersedes:** 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.9_Hardened_4
++**Supersedes:** 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -1347,7 +1347,8 @@
+   `yield` at file scope are `E0100`, as in Python; `process.exit(code)` ends a script early.
+ * `[FN-10]` *(new in 0.9.9)* A function whose return type is `Result[void, E]` returns `Ok(())` when
+   control reaches the end of its body, as a `void` function returns; an explicit `return Ok(())` is
+-  still allowed. No other return type has an implicit value.
++  still allowed. No other return type has an implicit value: a body that can reach its end is
++  `E2182`, reported at the function's name (ODR-023).
+ 
+ ## V.3 Structs
+ 
+@@ -4673,6 +4674,7 @@
+ | `E2173` | not a type or const-generic argument | `[GRM-8b]` |
+ | `E2180` | `?` outside a function returning `Option` or `Result` | `[ERR-2]` |
+ | `E2181` | `?` on an `Option` in a `Result` function, or the reverse | `[ERR-2]` |
++| `E2182` | a function that returns a value can reach the end of its body | `[FN-10]` |
+ | `E2200` | type has infinite size (a recursive value type without `Box`) | `[TYP-14]` |
+ | `E2210` | a value of one range type where another was expected | `[RNG-2]` |
+ | `E2211` | constant outside the target range type | `[RNG-3]` |
+@@ -6274,17 +6276,20 @@
+ ## H.5 Changes from 0.9.9_Hardened_2
+ 
+ Each ambiguity found while implementing 0.9.9 is an owner decision request (`docs/OWNER-QUEUE.md`),
+-ruled under the owner's delegation and recorded here.
++ruled under the owner's delegation and recorded here. Hardened_3 carries ODR-021 and ODR-022;
++Hardened_4 adds ODR-023.
+ 
+ | ODR | Ruling | Rules |
+ |---|---|---|
+ | ODR-021 | float `//` and `%` are Python's: the exact floor modulo rounded once, and the floor quotient consistent with it | `[TYP-29]` |
+ | ODR-022 | an untyped literal is never left open: `total = 0` declares an `int` whatever the later uses | `[TYP-23]` |
++| ODR-023 | a function returning a value that can reach the end of its body is `E2182` (Hardened_4) | `[FN-10]`, §XVII.9 |
+ 
+ Generated: every rule whose text differs from Hardened_2.
+ 
+ | Rule | H2 → now |
+ |---|---|
++| `[FN-10]` | changed |
+ | `[TYP-23]` | changed |
+ | `[TYP-29]` | changed |
+ ---

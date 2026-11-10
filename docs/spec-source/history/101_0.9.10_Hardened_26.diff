@@ -1,0 +1,87 @@
+--- Ember_v0.9.10_Hardened_25.md
++++ Ember_v0.9.10_Hardened_26.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.10_Hardened_25
+-**Supersedes:** 0.9.10_Hardened_24, 0.9.10_Hardened_23, 0.9.10_Hardened_22, 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.10_Hardened_26
++**Supersedes:** 0.9.10_Hardened_25, 0.9.10_Hardened_24, 0.9.10_Hardened_23, 0.9.10_Hardened_22, 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -5177,13 +5177,19 @@
+ * `[TST-27]` *(new in 0.9.9)* **The C gate.** Every accepted program in the test suite is compiled
+   through the C compiler with warnings as errors on each supported host compiler. A C compiler error
+   on an accepted program is a compiler defect and fails CI (`[CG-C-2]`).
+-* `[TST-28]` *(new in 0.9.9)* **The performance gate.** `tests/perf/` holds benchmark programs, each
+-  with an equivalent C program, a checker of identical output, and a threshold (for example, within
+-  10 % of C at `-O2`). A regression past a threshold fails CI. This is the instrument for "as fast as
+-  C"; no performance claim in this document is considered met until its benchmark exists.
+-  `ember bench --compare` runs the pairs.
+-* `[BEN-1]` Each benchmark runs at least 3 untimed and 30 timed repetitions on one pinned core and
+-  reports the median and the 95 % confidence interval of the median for each side and their ratio.
++* `[TST-28]` *(new in 0.9.9)* *(changed in 0.9.10)* **The performance gate.** `tests/perf/` holds
++  benchmark programs, each with an equivalent C program, a checker of identical output, and a
++  threshold (for example, within 10 % of C at `-O2`). A regression past a threshold fails the gate,
++  whose verdict of record is the one measured on the recorded reference machine before a change is
++  published; CI on shared machines, whose processor may change from run to run, reports the gate's
++  results without failing on them. This is the instrument for "as fast as C"; no performance claim
++  in this document is considered met until its benchmark exists. `ember bench --compare` runs the
++  pairs, and `--report` reports without failing.
++* `[BEN-1]` *(changed in 0.9.10)* Each benchmark builds each side at several code layouts, the same
++  for both sides, each moving the program's code to other addresses and changing nothing else, and
++  keeps each side's fastest layout, chosen by a short interleaved run; it then runs at least 3
++  untimed and 30 timed repetitions of the two on one pinned core and reports the median and the 95 %
++  confidence interval of the median for each side and their ratio.
+ * `[BEN-2]` A gate fails only when the lower bound of the ratio's interval exceeds the threshold; a
+   point estimate above it whose interval includes it is inconclusive and re-run.
+ * `[BEN-3]` Each run also measures the C program against a second copy of itself; if that ratio's
+@@ -7341,6 +7347,8 @@
+ | ODR-150 | ruled under the delegation: the examples are corrected to the rules (`mut` on written `MutSpan` parameters, `[FN-1]`; `ember,fragment` where a block names undeclared items; XVII.5's expected diagnostic); every block is checked as `[TST-7]` says | `[TST-7]`, `[FN-1]`, `[TST-1]` |
+ | ODR-151 | ruled under the delegation: a compiler declares its profile as `ember --version`'s `profile:` line; each profile holds the one before it; Ember Core's part of XV is XV.1 and XV.3–XV.6, and XV.2 and XV.7 (the io layer) join Ember Systems; Ember Dynamic adds Annex B to Ember Native | `[CONF-1]`, `[CONF-2]`, `[CONF-3]`, `[CONF-5]` |
+ | ODR-152 | ruled under the delegation: the cost table gains the rows `Virtual method call` (conditionally elided, `[DSP-2]`, `[DSP-5]`), `Downcast check` (`[DSP-4]`), `assert_disjoint` comparison (`[DSJ-5]`), `Allocation` (`[EFF-1]`) and `contains` (`[STD-8a]`), the five costs `ember inspect --cost` reported with no row; `rule_index.py` compares the rows the compiler reports with the table | `[COST-3]`, `[COST-5]` |
++| ODR-153 | ruled with the owner's approval: each benchmark builds each side at several code layouts, the same for both sides, each moving the code to other addresses and changing nothing else, keeps each side's fastest by a short interleaved run, then times the two as before | `[BEN-1]` |
++| ODR-154 | ruled with the owner's approval: the performance gate's verdict of record is the one measured on the recorded reference machine before a change is published; CI on shared machines reports the results without failing (`--report`) | `[TST-28]` |
+ 
+ Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
+ 0.9.9.
+@@ -7984,6 +7992,20 @@
+ | `[CONF-3]` | changed |
+ | `[CONF-5]` | changed |
+ | `[COST-3]` | changed |
++
++## H.31 Changes in 0.9.10_Hardened_26 (from 0.9.10_Hardened_25)
++
++**0.9.10_Hardened_26** records ODR-153 and ODR-154, ruled with the owner's approval (2026-10-20) when D-755 showed that a small loop's speed depends on where its code lies and on which processor runs it (`docs/DECISIONS.md` ADR-239):
++
++* The performance gate (`[BEN-1]`) builds each side at several code layouts, the same for both, and compares each side at its fastest. The C program of `w1_sum_loop` ran 31.9 ms at one layout and 55.3 ms at another on CI's runner, with no change to its code: a single build per side measured where the linker put the loop as much as the program.
++* The gate's verdict of record (`[TST-28]`) is the one measured on the recorded reference machine before a change is published. CI's shared runners were AMD EPYC processors of three generations, changing from run to run, and each failed a different benchmark; there CI reports the gate's results (`ember bench --compare --report`) without failing on them.
++
++Generated: every rule whose text differs from 0.9.10_Hardened_25.
++
++| Rule | 0.9.10_Hardened_25 → 0.9.10_Hardened_26 |
++|---|---|
++| `[BEN-1]` | changed |
++| `[TST-28]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -8053,7 +8075,7 @@
+ 
+ | Rule | Part | Begins |
+ |---|---|---|
+-| `[BEN-1]` | XVII | Each benchmark runs at least 3 untimed and 30 timed repetitions on … |
++| `[BEN-1]` | XVII | *(changed in 0.9.10)* Each benchmark builds each side at several code … |
+ | `[BEN-2]` | XVII | A gate fails only when the lower bound of the ratio's interval … |
+ | `[BEN-3]` | XVII | Each run also measures the C program against a second copy of itself; … |
+ | `[BEN-4]` | XVII | Each benchmark records retired instructions; a change beyond ± 0.5 % … |
+@@ -9236,7 +9258,7 @@
+ | `[TST-10]` | XVII | The acceptance rate is published with each release; a release that … |
+ | `[TST-11]` | XVII | Besides the per-rule cases, the suite covers these scenarios: … |
+ | `[TST-27]` | XVII | The C gate. Every accepted program in the test suite is compiled … |
+-| `[TST-28]` | XVII | The performance gate. `tests/perf/` holds benchmark programs, each … |
++| `[TST-28]` | XVII | *(changed in 0.9.10)* The performance gate. `tests/perf/` holds … |
+ | `[TST-29]` | XVII | Honest baselines. A gate with a baseline of known failures reports … |
+ | `[TST-30]` | XVII | The test runner reports every failure of a run, not only the first, … |
+ 

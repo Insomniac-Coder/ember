@@ -1,0 +1,559 @@
+--- Ember_v0.9.10_Hardened_34.md
++++ Ember_v0.9.10_Hardened_35.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.10_Hardened_34
+-**Supersedes:** 0.9.10_Hardened_33, 0.9.10_Hardened_32, 0.9.10_Hardened_31, 0.9.10_Hardened_30, 0.9.10_Hardened_29, 0.9.10_Hardened_28, 0.9.10_Hardened_27, 0.9.10_Hardened_26, 0.9.10_Hardened_25, 0.9.10_Hardened_24, 0.9.10_Hardened_23, 0.9.10_Hardened_22, 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
++**Version:** 0.9.10_Hardened_35
++**Supersedes:** 0.9.10_Hardened_34, 0.9.10_Hardened_33, 0.9.10_Hardened_32, 0.9.10_Hardened_31, 0.9.10_Hardened_30, 0.9.10_Hardened_29, 0.9.10_Hardened_28, 0.9.10_Hardened_27, 0.9.10_Hardened_26, 0.9.10_Hardened_25, 0.9.10_Hardened_24, 0.9.10_Hardened_23, 0.9.10_Hardened_22, 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
+ the single specification of Ember; the earlier files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+@@ -1352,6 +1352,9 @@
+   implementation does not exist and a bound requiring it is `E2040`. A shared reference `ref T`
+   implements `Eq`, `Ord`, `Hash`, `Display` and `Debug` as `T` does (so `sorted(m.keys())` works).
+   `Box[T]` is `Clone` when `T` is, and `Box[dyn I]` when `I` requires `Clone` (§IX.1, `[TYP-22]`).
++  Two boxes compare with `==` when what they hold does (`Box(3) == Box(3)`); `Box[dyn I]` compares
++  when `I` requires `Eq` (`interface Shape: Eq:`, a method-table entry as for `Clone`): values of two
++  different kinds are never equal, and two of one kind compare their contents.
+ 
+ | Type | Clone | Copy | Eq | Ord | Hash | Default | Display | Debug |
+ |---|---|---|---|---|---|---|---|---|
+@@ -2986,7 +2989,11 @@
+ * `[ALC-2]` *(changed in 0.9.10)* `std.mem` declares `pub unsafe interface Allocator` with
+   `allocate(self, layout: Layout) -> *mut u8` (null on failure), `deallocate(self, p: *mut u8,
+   layout: Layout)` and `reallocate(self, p: *mut u8, old: Layout, new_size: usize) -> *mut u8`;
+-  `Layout` is a struct of `size: usize` and `align: usize`, and `Global` is the runtime's allocator.
++  `Layout` is a struct of `size: usize` and `align: usize`. `Global` is the package's configured
++  allocator (the one `[ALC-3]` names, else the platform's), so `Array[T, Global]` never bypasses it;
++  `System` is the platform's, which a global allocator may wrap (a counting or tracing allocator
++  delegates to `System()`). An allocator that delegates to `Global` from inside the global allocator
++  recurses.
+   Implementing `Allocator` is `unsafe` (`unsafe extend A implements Allocator:`, `[TYP-43]`): the
+   implementer promises valid, aligned, unaliased memory.
+ * `[ALC-3]` *(changed in 0.9.9)* A binary package may replace the global allocator with
+@@ -3427,7 +3434,8 @@
+ ## XI.1 `Send` and `Sync`
+ 
+ * `[THR-8]` *(new in 0.9.9)* *(changed in 0.9.10)* A type is **`Send`** when a value of it may be moved to another thread.
+-  Structs, enums, tuples, fixed arrays and collections are `Send` when every component is. Raw
++  Structs, enums, tuples, fixed arrays and collections are `Send` when every component is. `dyn I`
++  is `Send` when `I` requires `Send` (`interface I: Send:`), and `Sync` when it requires `Sync`. Raw
+   pointers are not `Send`. `ref T` and `Span[T]` are `Send` when `T` is `Sync`; `ref mut T` and
+   `MutSpan[T]` when `T` is `Send`. A class handle, and `Weak` of one, is `Send` only if the class is
+   `@sync` (`[THR-2]`). `Shared[T]` is never `Send` (`[HEAP-10]`); `SyncShared[T]` and its `Weak` are
+@@ -3820,7 +3828,8 @@
+   its type. `world.run(system, arg)` borrows exactly those storages, and passes the system its query and
+   one argument: a tuple for several, `()` for none (ODR-141). `world.run_parallel([s1, s2, …])`
+   runs systems at once, on threads, when their sets do not conflict: each system, a function value
+-  (`[THR-8]`), and every component its query reads or writes must be `Send` (`E7004`, naming it). A
++  (`[THR-8]`), and every component its query reads or writes must be `Send`, and one two systems
++  read `Sync` (`E7004`, naming it). A
+   conflict between two systems known at compile time is `E7020`, naming both systems and the
+   component. Systems passed as values, whose sets
+   are not known at compile time, are checked against each other before any of them starts, and a
+@@ -4007,11 +4016,13 @@
+   `comptime.env(name)`. Both are recorded as build inputs.
+ * `[CT-3]` Each evaluation is limited to 10⁸ steps and 256 MB of evaluator heap by default
+   (`[comptime]` in the manifest); exceeding either is `E6001`.
+-* `[CT-4]` *(changed in 0.9.9)* Compile-time evaluation is deterministic by construction: the evaluator
++* `[CT-4]` *(changed in 0.9.9)* *(changed in 0.9.10)* Compile-time evaluation is deterministic by construction: the evaluator
+   has no source of `Nondet` (`[DET-2]`). A transcendental function runs at compile time when the
+   source names `std.math.det`'s, with the same result it gives at run time; the platform library's
+   `sin` is `Nondet` and does not run at compile time, and the evaluator never puts `det.sin` in its
+-  place (ODR-056). The evaluator computes integer and floating-point results exactly as the target does, including overflow panics
++  place (ODR-056). The evaluator is the compiler's own (`[CLI-21]`): a `const` value is never computed
++  by building and running a C program, and the test suite runs every program both compiled and on the
++  evaluator and fails on any difference. The evaluator computes integer and floating-point results exactly as the target does, including overflow panics
+   and the target's pointer size, endianness and layout. The lexical overflow policy is the same
+   at compile time and run time (`[TYP-8]`, ODR-084), including module constants and arithmetic
+   inside a function; calling another function preserves that function's policy. A result is cached with its inputs (source,
+@@ -4144,9 +4155,12 @@
+     iterator of references (`sorted(m.keys())`) the array holds clones of the items (`T: Clone`), as
+     `sorted(m)`'s does: an `Array` cannot hold views of a local (`[TYP-15]`).
+   `min` and `max` stay two-argument functions; `xs.iter().min()` gives an `Option` for a collection.
+-* `[STD-14]` *(new in 0.9.9)* Failure follows `[ERR-13]`: a caller's bug panics and has a
+-  non-panicking twin; a failure of the world returns `Result` or `Option`. Every allocating function
+-  is documented as allocating and carries `Alloc`.
++* `[STD-14]` *(new in 0.9.9)* *(changed in 0.9.10)* Failure follows `[ERR-13]`: a caller's bug
++  panics; a failure of the world returns `Result` or `Option`. The non-panicking twin `[ERR-13]` asks
++  for is an accessor's (`Mat4.col`/`col_checked`, `CppShared.get`); a constructor's or a mutation's
++  caller's bug (`stepped(0)`, `BitSet.insert` of a negative, `Entity.new` out of range, `World.add` to
++  a dead entity, `normalize` of zero, `split` on an empty separator) panics with none. Every
++  allocating function is documented as allocating and carries `Alloc`.
+ 
+ | Module | Contents |
+ |---|---|
+@@ -4360,11 +4374,14 @@
+   consumers can also be called directly on an `Iterable` value, borrowing it as `iter()` would:
+   `xs.enumerate()` is `xs.iter().enumerate()`, and a method of the collection's own of the same name
+   (`Array.join`) takes precedence. An adapter takes the iterator it wraps (`owned self`), and so
+-  does a consumer; an adapter also takes over what it keeps: `zip` and `chain` their other iterator,
+-  and the adapters that apply a callable that callable (`owned`), and a consumer that applies a
+-  callable (`any`, `all`, `find`, `position`, `fold`, `reduce`, `for_each`, the `…_by` and
+-  `…_by_key` forms) takes it over too. So a named iterator given to `zip` is moved (`.clone()` keeps
+-  the caller's), and a lambda written at the call keeps its captures (`[CLO-15]`). What a caller
++  does a consumer; `zip` and `chain` take their other iterator too, so a named iterator given to
++  `zip` is moved (`.clone()` keeps the caller's). A callable is **borrowed**, by the adapters that
++  apply one and the consumers alike (`any`, `all`, `find`, `position`, `fold`, `reduce`, `for_each`,
++  the `…_by` and `…_by_key` forms): a named callable the caller passes stays the caller's, who may
++  pass it again; one that changes what it captured is lent with leave to change it, and what it
++  captured stays lent while it is still used (`[BRW-2]`). A lambda written at the call is given to
++  it, since nothing else can name it, so an adapter's iterator made from one can be kept or returned
++  (`return xs.iter().map(fn(x) => x * 2)`), its captures with it (`[CLO-15]`). What a caller
+   passes is an `int` (ODR-089): `take(n)` gives at most `n` items and
+   `skip(n)` leaves out the first `n`, `nth(n)` is the item at index `n` (`None` past the end),
+   `step_by(k)` gives the first item and then every `k`-th, and `enumerate(start=0)` numbers from
+@@ -4584,11 +4601,12 @@
+ 
+ ## XVI.1 Principles
+ 
+-* `[FFI-1]` *(changed in 0.9.9)* Every foreign declaration has a **contract**: for each pointer-typed
++* `[FFI-1]` *(changed in 0.9.9)* *(changed in 0.9.10)* Every foreign declaration has a **contract**: for each pointer-typed
+   parameter and result, its ownership, mutability, nullability, count and lifetime (§XVI.4), and for
+   the function its effects, its thread rule and whether it is **safe to call** at all. Facts derivable
+   from the C declaration are derived (`[FFI-2a]`); the rest are `unknown` until a contract supplies
+-  them.
++  them. `threads(creator)` and `handle` are words of a type's or a result's contract, not a function's:
++  on a function each is a contract error (`E5002`).
+ * `[FFI-2]` *(changed in 0.9.9)* A call to a foreign function whose contract contains an `unknown` fact
+   requires `unsafe`. Supplying the facts, in an `@ffi(…)` attribute or an overlay (§XVI.4), makes the
+   call safe. The safe-to-call fact is never derived, because a scalar can be an address
+@@ -4692,7 +4710,7 @@
+ * `[FFI-38]` The importer rejects rather than guesses: a fact it cannot establish leaves the
+   declaration uncontracted (its calls need `unsafe`) and is reported; convenient-but-unsound is never
+   an import mode.
+-* `[FFI-8]` *(changed in 0.9.9)* **Type mapping.**
++* `[FFI-8]` *(changed in 0.9.9)* *(changed in 0.9.10)* **Type mapping.**
+ 
+   | C | Ember |
+   |---|---|
+@@ -4706,18 +4724,18 @@
+   | `__attribute__((packed))`, `#pragma pack`, `alignas` | `@packed`, `@align(N)` |
+   | `T*`, `const T*` | `*mut T`, `*T`; with a contract, `ref`, `MutSpan`/`Span`, `Option[…]`, `ForeignBox[T]`, `cstr` |
+   | `T[N]` field | `[T; N]` |
+-  | complete `struct`, `union` | `@layout(c) struct` (`Copy` when every field is plain data); a union's fields are read only in `unsafe` |
++  | complete `struct`, `union` | `@layout(c) struct` (`Copy` when every field is plain data); a union, `@layout(c, union) struct`, whose fields are read only in `unsafe` |
+   | incomplete `struct` | `extern type S`, used only behind pointers |
+   | `enum` | `@repr(<underlying>) enum`, `@non_exhaustive` (any value may arrive) |
+-  | `typedef` | a type alias, or a new type with `@ffi(newtype)` |
++  | `typedef` | a type alias; with `@ffi(newtype)` a nominal type with the typedef's representation, passed to C as the typedef is, converted with `as` only |
+   | `static const` global, `extern` global | `extern static`; reading it needs `unsafe` unless `@ffi(immutable)` asserts a `const` C object and an unchanged value (ODR-082). The generated C declaration is `extern const T` with that assertion, or `extern T` without it; a safe read also requires `T: Sync`. `@ffi(immutable)` on `static mut` is `E5002`. A global read only in `unsafe` need not be `Sync` (`[STA-1]`), so one holding a pointer imports as any other (ODR-163). |
+   | `#define S "text"` | `const S: cstr = c"text"` |
+   | function pointer | `extern "C" fn(…) -> R`, `Option[…]` when nullable; another calling convention is `extern "<conv>" fn` (`[FFI-9]`), and an unsupported one is skipped with `W5002` |
+   | bit-field | `get_<f>`/`set_<f>` methods; not addressable |
+   | anonymous member | a generated type `<Parent>_anon<N>` with transparent field access |
+-  | flexible array member | an unsized struct (never by value, `E5017`) with `unsafe fn tail(self, n) -> Span[T]` |
++  | flexible array member | an unsized struct, `@layout(c, flexible)` (never by value, `E5017`), with `unsafe fn tail(self, n) -> Span[T]` |
+   | `_Atomic T` | `Atomic[T]` when layouts match, else `E5016` |
+-  | `va_list`, variadic `...` | `VaList`, forwardable only and never constructed (`E5018`); variadic calls only in `unsafe` with explicit argument types |
++  | `va_list`, variadic `...` | `VaList`, forwardable only and never constructed (`E5018`); variadic calls only in `unsafe`, each further argument of a written type (a literal's suffix or `as`); one C's default argument promotions would change (`bool`, an integer narrower than `int`, `f32`) is `E5015`, naming the cast to write |
+   | an identifier that is an Ember keyword | a raw identifier `r#type` (`[LEX-14]`) |
+ 
+ * `[FFI-29]` For every `import c` the importer emits a **shim** C file, compiled with that import's
+@@ -4816,7 +4834,9 @@
+ 
+   Other contract words: `out` (an out-parameter, returned instead); `status` (with `@ffi(status=E,
+   ok=X, error=N)` on the enum, `[FFI-16]`); `handle`; `callback(borrowed | retained | once, user_data=p)`
+-  (`[FFI-21]`); `threads(any | main | creator)`; `destroys(f)`; `unsafe` (leave the call unsafe).
++  (`[FFI-21]`); `threads(any | main | creator)`; `destroys(f)` (`f`'s parameters may be the registering
++  call's own and its result, `id = listen(…)` then `unlisten(id)`: the token keeps them); `unsafe`
++  (leave the call unsafe).
+   `@ffi(effects=[…])` states effects.
+ * `[FFI-11a]` A pointer contract with no count word is `E5012`, which lists the five count words and
+   names any sibling parameter that looks like a length (an unsigned integer, or a name ending `Count`,
+@@ -4871,7 +4891,7 @@
+ 
+ ## XVI.6 Callbacks and foreign retention
+ 
+-* `[FFI-21]` *(changed in 0.9.9)* A C function-pointer parameter accepts a capture-free Ember function
++* `[FFI-21]` *(changed in 0.9.9)* *(changed in 0.9.10)* A C function-pointer parameter accepts a capture-free Ember function
+   (as an `extern "C" fn`) or an `extern "C" fn` value. A capturing closure is `E5040` unless the
+   parameter's contract names a `user_data` parameter, in which case the importer generates the
+   trampoline: the closure is boxed and passed as `user_data`. With `callback(borrowed)` the box is freed
+@@ -4879,7 +4899,11 @@
+   or `callback(once)` the closure outlives the call, so it MUST be an `owned fn` whose captures carry
+   only the static region (`E3063`); `retained` returns a `Retained` token whose drop unregisters
+   through the declared `destroys(f)` (`E5041` if none is declared), and with `once` the trampoline
+-  frees the box after the first call.
++  frees the box after the first call. A callback with several parameters of its user data's type names
++  the one that receives it: `user_data=p@N`, the callback's `N`th parameter (1-based, as in the C
++  signature); without `@N`, exactly one parameter has that type, or the contract is `E5002`, whose help
++  shows the `@N` form. A `nullable` callback with user data is an `Option` of a callable value: `None`
++  passes `NULL` and no user data.
+ * `[FFI-21a]` *(new in 0.9.10)* **A parameter C passes as a copy.** C passes a function's arguments by
+   value. When a function's value becomes an `extern "C" fn` (`[FN-6]`), a parameter it borrows
+   (`[FN-1]`) whose type is not a pointer is, for a call from C, a copy the call makes, which ends when
+@@ -5164,18 +5188,22 @@
+ 
+ ## XVII.3 Builds
+ 
+-* `[BLD-1]` The module (one file) is the unit of front-end caching; the package is the unit of
+-  monomorphisation and code generation.
+-* `[BLD-2]` A module's front-end result is keyed by its source, the compiler and language versions,
++* `[BLD-1]` *(changed in 0.9.10)* The module (one file) is the unit of front-end caching; the package
++  is the unit of monomorphisation and code generation. A `debug` build writes one C file per module and
++  recompiles only the modules that changed; a `release` build writes one C unit, so the C compiler
++  optimises across modules and the shipped program loses no speed.
++* `[BLD-2]` *(changed in 0.9.10)* A module's front-end result is keyed by its source, the compiler and language versions,
+   the package configuration and the **interface hashes** of what it imports (signatures, layouts,
+   effect sets, inline bodies), so editing a private body recompiles that module and re-checks its
+   callers only if a fact they use changed: its effect set (`[EFF-4]`), an inline body, or a borrow
+   summary a caller relies on (a view result's sources, `[LT-22]`, `[LT-35]`; a method's field set,
+-  `[BRW-10]`) (ODR-058).
++  `[BRW-10]`) (ODR-058). The cache serves `ember check` as `ember build` does.
+ * `[BLD-8]` Within a module, editing one function body re-checks that function, and those of the
+   module that use a fact of it that changed (`[BLD-2]`).
+-* `[BLD-4]` The C compiler and linker run through a generated Ninja file, so C compilation is
+-  incremental too.
++* `[BLD-4]` *(changed in 0.9.10)* The C compiler and linker run through a generated Ninja file, so C
++  compilation is incremental too. Ember's download carries Ninja beside Clang and LLD (`[TOOL-2]`); a
++  build from a source checkout finds `ninja` on `PATH`, and without it is an error naming the command
++  that installs it.
+ * `[BLD-5]` Output goes to `target/<profile>/{bin,lib,c,obj,bind,inspect}`.
+ * `[BLD-7]` Front-end stages run in parallel across modules by default (`-j`, default the number of
+   physical cores).
+@@ -5186,31 +5214,34 @@
+   (`why`). Objects another link reads (a static library) take no LTO with cl or Clang, and fat LTO
+   objects with gcc. No correctness property depends on LTO.
+ * `[BLD-9]` `--timings` writes a per-stage, per-module timing report (`--timings=json` for tools).
+-* `[BLD-10]` *(changed in 0.9.9)* The compile-time budgets below are release gates.
+-* `[BUD-1]` *(changed in 0.9.10)* They are measured on a recorded reference machine (an 8-core laptop
+-  CPU of 2020 or later, 16 GB, NVMe, warm caches) over `bench/bigpkg`, a generated 50k-line package of
+-  400 modules with 15 % generic code and one C header import of Vulkan's size: a generated header of
+-  20,000 lines in Vulkan's shape (enums, structs, function-pointer types, prototypes), not counted in
+-  the package's lines.
++* `[BLD-10]` *(changed in 0.9.10)* The compiler is made as fast as it can be, and memory safe. Its
++  speed is measured, not held to fixed times, since a time differs from one machine to another: the
++  figures below are a release gate by comparison, never by a limit in seconds.
++* `[BUD-1]` *(changed in 0.9.10)* They are measured over `bench/bigpkg`, a generated 50k-line package
++  of 400 modules with 15 % generic code and one C header import of Vulkan's size (a generated header
++  of 20,000 lines in Vulkan's shape: enums, structs, function-pointer types, prototypes, not counted in
++  the package's lines), on one recorded machine, whose CPU, memory and storage are published with the
++  figures.
+ * `[BUD-2]` *(changed in 0.9.10)* Each figure is the median of 15 runs after 3 warm-up runs. B6's cold
+   cache is a new, empty global build cache; B7 and B9 build with the program cache off:
+ 
+-  | # | Operation | Budget |
+-  |---|---|---|
+-  | B1 | `ember check` after a one-function-body edit | ≤ 250 ms |
+-  | B2 | `ember build --reload` after a one-function-body edit | ≤ 1 s |
+-  | B3 | `ember build` after a one-function-body edit, `debug` | ≤ 1.5 s |
+-  | B4 | `ember build` after a signature change in a leaf module | ≤ 2.5 s |
+-  | B5 | `ember build` after a change to a widely imported type | ≤ 8 s |
+-  | B6 | clean `debug` build, cold cache | ≤ 40 s |
+-  | B7 | clean `development` build | ≤ 90 s |
+-  | B8 | `.embind` regeneration for a Vulkan-sized header | ≤ 3 s |
+-  | B9 | compiler peak memory, clean build | ≤ 3 GB |
+-
+-* `[BUD-3]` A figure above its budget fails CI, and so does one more than 15 % above the recorded
+-  baseline even inside its budget.
+-* `[BUD-3a]` CI normalises its measurements by a fixed calibration workload, and a run whose
+-  calibration varies by more than 10 % is inconclusive, not failed.
++  | # | Operation |
++  |---|---|
++  | B1 | `ember check` after a one-function-body edit |
++  | B2 | `ember build --reload` after a one-function-body edit |
++  | B3 | `ember build` after a one-function-body edit, `debug` |
++  | B4 | `ember build` after a signature change in a leaf module |
++  | B5 | `ember build` after a change to a widely imported type |
++  | B6 | clean `debug` build, cold cache |
++  | B7 | clean `development` build |
++  | B8 | `.embind` regeneration for a Vulkan-sized header |
++  | B9 | compiler peak memory, clean build |
++
++* `[BUD-3]` *(changed in 0.9.10)* A change is measured before and after on the same machine; one that
++  makes a figure worse than before, beyond the figure's spread, fails CI. Every figure is published.
++* `[BUD-3a]` *(changed in 0.9.10)* The before and after are measured in one run, interleaved, and the
++  run is normalised by a fixed calibration workload; a run whose calibration varies by more than 10 %
++  is inconclusive, not failed.
+ * `[BUD-3b]` *(changed in 0.9.10)* A figure's spread is its interquartile range over its median. Both
+   gates of `[BUD-3]` apply only to a figure whose spread is below 15 %, and every figure is published
+   with its spread.
+@@ -5229,7 +5260,7 @@
+   The one check that differs is `debug_assert`, checked only where `[PRF-3]` says: it may not have
+   side effects (`W2016`), so a program whose assertions hold computes the same results in every
+   profile. Only the following differ between profiles.
+-* `[PRF-3]` *(new in 0.9.9)* **What a profile may set.**
++* `[PRF-3]` *(new in 0.9.9)* *(changed in 0.9.10)* **What a profile may set.**
+ 
+   | Setting (key) | `debug` | `development` | `release` |
+   |---|---|---|---|
+@@ -5242,6 +5273,14 @@
+   | lock-order report (`lock_order`, `[THR-4]`) | on | off | off |
+   | C sanitizers (`sanitizers = […]`) | allowed | allowed | not allowed |
+   | link-time optimisation (`lto`) | off | thin | on |
++  | Ember's own speed rewrites (`rewrites`) | off | on | on |
++
++  The speed rewrites are what the compiler does to a program's code for speed before the C compiler
++  sees it: inlining, copies of a loop, checks a proof removes, and the passes after them. Without
++  them a build's code is the program as written, which a debugger follows line by line, each local
++  by its name (`[TST-5]`); what the rewrites decide that a program is told (`@simd`'s verdicts,
++  `[SIMD-2]`) is the same in every profile (`[PRF-1]`). A package turns them on for `debug` with
++  `[profiles.debug] rewrites = true`.
+ 
+   A package may define more profiles, each `inherits` one of these and overrides keys of this table.
+   A key outside the table is `E9001`.
+@@ -5542,8 +5581,9 @@
+ * `[IDE-4]` Every editor request is answered from parsing, name resolution and type checking alone,
+   never from code generation or a C compiler; borrow- and effect-derived information is shown from the
+   last completed `ember check` and never blocks a response.
+-* `[IDE-6]` The compiler keeps all its state in a session object that can be dropped and rebuilt, so a
+-  long-running editor process does not grow without bound.
++* `[IDE-6]` *(changed in 0.9.10)* The compiler keeps all its state in a session object that can be
++  dropped and rebuilt, so a long-running editor process does not grow without bound; the identifier
++  interner is the session's too (an identifier's text borrows from it).
+ * `ember lsp`, a language server over stdio, is reserved for a named milestone before 1.0.
+ 
+ ## XVII.8 Conformance profiles and ABI versions
+@@ -6064,11 +6104,11 @@
+ 
+ Restored from 0.9.8 by ODR-087.
+ 
+-* `[CG-LL-1]` *(new in 0.9.9)* **Two backends over one intermediate representation.** The reference
++* `[CG-LL-1]` *(new in 0.9.9)* *(changed in 0.9.10)* **Two backends over one intermediate representation.** The reference
+   implementation has two backends over the same MIR: C11 (§XVIII.1), for bootstrap and portability,
+-  and LLVM, for optimisation control. The C backend comes first. The LLVM backend is begun once the C
+-  backend passes the full conformance suite, and becomes the default once it also passes the
+-  performance suite; until it exists, `--backend llvm` and `backend = "llvm"` are refused as not yet
++  and LLVM, for optimisation control. Both are part of 1.0. The C backend came first; the LLVM
++  backend is built beside it, and becomes the default once it passes the conformance and the
++  performance suites; until it exists, `--backend llvm` and `backend = "llvm"` are refused as not yet
+   implemented. The C backend stays supported afterwards: it is how Ember reaches every platform that
+   has a C compiler.
+ * `[CG-LL-2]` *(new in 0.9.9)* The LLVM backend maps MIR to LLVM IR with the C backend's type mapping
+@@ -6456,7 +6496,7 @@
+   | custom allocators | overlay or native island |
+   | ownership the header does not state | unsafe until `adopt` or a contract (`[FFI-36]`) |
+ 
+-* `[FFI-17a]` *(changed in 0.9.9)* *(changed in 0.9.10)*
++* `[FFI-17a]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.10)*
+ 
+   | C++ | Ember |
+   |---|---|
+@@ -6465,7 +6505,7 @@
+   | `std::string_view` | `Span[u8]`; `.to_str()` is the fallible conversion to `str` (`[TXT-2]`) |
+   | `std::string` | `CppString`; `.to_str() -> Result[str, Utf8Error]`; `String.from(c)` copies |
+   | `std::vector<T>` | `CppVector[T]` with `.span()`, `.span_mut()`, `.to_array()`, `push_back`, `len` |
+-  | `std::unique_ptr<T>` | `ForeignBox[T]`, dropped through the deleter |
++  | `std::unique_ptr<T>` | `ForeignBox[T]`, dropped through the deleter; one whose deleter holds state is refused (`E5034`): a `ForeignBox` holds one address |
+   | `std::optional<T>` | `Option[T]` for a `T` that maps by value |
+   | `std::shared_ptr<T>`, `std::weak_ptr<T>` | `CppShared[T]`, `CppWeak[T]` — never `Shared`/`Weak` (`[WK-14]`, `E5065`) |
+   | `std::variant<…>` | a generated enum, when every alternative maps and the overlay names each: `@ffi(variant=["A", "B"])` on a `type` entry naming the header's alias of the variant, the names in the alternatives' order |
+@@ -6569,9 +6609,10 @@
+   their outer type's name; namespaces become module paths, an inline one adding nothing to a name, as in
+   C++ (`nlohmann::json_abi_v3_11_3::json` is `cpp.nlohmann.json`, ODR-165); entities in anonymous
+   namespaces are skipped (`W5034`).
+-* `[FFI-42]` Overloaded operators map to Ember operator interfaces where one exists (`operator[]` to
+-  `Index`/`IndexMut`, `operator*`/`->` on a smart-pointer-like type to read-through); C++ iterators with
+-  `begin`/`end` become `Iterable`.
++* `[FFI-42]` *(changed in 0.9.10)* Overloaded operators map to Ember operator interfaces where one exists (`operator[]` to
++  `Index`/`IndexMut`, `operator*`/`->` on a smart-pointer-like type to read-through: such a class
++  imports `get()`, and `get_mut()` where the operator is not `const`, through which `->` is reached);
++  C++ iterators with `begin`/`end` become `Iterable`.
+ * `[FFI-42a]` Iterating an imported C++ container borrows it mutably for the loop, so any method that
+   could invalidate its iterators — every `mut self` method, including the `const` ones `[FFI-40a]` gives
+   `mut self` — is rejected inside the loop by the ordinary borrow rules.
+@@ -7627,6 +7668,27 @@
+ | ODR-235 | delegated: B4's help adds a new local for a rebound parameter | §XVII.6.1 |
+ | ODR-236 | the owner's answer: a comprehension may take its list over and move the items, or copy them with `.clone()`; to be built | `[GRM-27]`, `[GRM-15]` |
+ | ODR-237 | the owner's answer: `Box[T]` is `Clone` when `T` is; an interface may require `Clone`, and then `Box[dyn I]` is `Clone`; to be built | `[TYP-36]`, `[TYP-22]`, IX.1 |
++| ODR-239 | delegated, confirmed by the owner: `std.mem.System`, the platform's allocator, for a global allocator to wrap | `[ALC-2]` |
++| ODR-240 | the owner: std's callable-taking functions borrow a named callable; a lambda written at the call is given (replaces ODR-210) | `[STD-19]` |
++| ODR-241 | the owner: `Box == Box` as what they hold; `Box[dyn I]` when `I` requires `Eq`, two kinds never equal | `[TYP-36]` |
++| ODR-242 | the owner: no fixed times; the figures are a gate by before-and-after comparison on one machine | `[BLD-10]`, `[BUD-1]`, `[BUD-2]`, `[BUD-3]`, `[BUD-3a]` |
++| ODR-243 | delegated: a `const` value by the compiler's own evaluator, never a built C program | `[CT-4]` |
++| ODR-244 | the owner: `debug` one C file per module, recompiled as it changes; `release` one C unit | `[BLD-1]` |
++| ODR-245 | delegated: `user_data=p@N` names the callback parameter that receives the user data | `[FFI-21]` |
++| ODR-246 | delegated: `destroys(f)` may take the registering call's result, which the token keeps | `[FFI-11]` |
++| ODR-247 | delegated: `threads(creator)` and `handle` on a function are `E5002` | `[FFI-1]` |
++| ODR-248 | delegated: `@layout(c, union)` and `@layout(c, flexible)`, as built | `[FFI-8]` |
++| ODR-249 | delegated: `@ffi(newtype)` a nominal type with the typedef's representation, `as` only | `[FFI-8]` |
++| ODR-250 | delegated: a variadic call's further arguments typed; a promoted one `E5015`, as built | `[FFI-8]` |
++| ODR-251 | delegated: a `unique_ptr` whose deleter holds state is `E5034` | `[FFI-17a]` |
++| ODR-252 | delegated: `operator*`/`->` import `get()` and `get_mut()` | `[FFI-42]` |
++| ODR-253 | delegated: a `nullable` callback with user data is an `Option` of a callable value | `[FFI-21]` |
++| ODR-254 | delegated: the non-panicking twin is an accessor's; a constructor's or mutation's bug panics with none | `[STD-14]` |
++| ODR-255 | delegated: `dyn I` is `Send`/`Sync` when `I` requires it; shared reads in `run_parallel` need `Sync` | `[THR-8]`, `[ECS-4]` |
++| ODR-256 | delegated: the identifier interner is the session's | `[IDE-6]` |
++| ODR-257 | delegated: the module cache serves `ember check` as `ember build` | `[BLD-2]` |
++| ODR-258 | delegated: Ninja carried beside Clang and LLD; from a checkout on `PATH`, else an error naming the install | `[BLD-4]` |
++| ODR-259 | the owner: `debug` without Ember's speed rewrites unless `rewrites = true` | `[PRF-3]` |
+ 
+ Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
+ 0.9.9.
+@@ -8501,6 +8563,50 @@
+ | `[TYP-36]` | changed |
+ | `[TYP-43]` | changed |
+ | `[VER-3]` | changed |
++
++## H.40 Changes in 0.9.10_Hardened_35 (from 0.9.10_Hardened_34)
++
++**0.9.10_Hardened_35** records the owner's answers of 2026-10-22 and 2026-10-23 (ODR-240, ODR-241, ODR-242, ODR-244, ODR-259, and ODR-223 again: the LLVM backend is part of 1.0, begun now) and the rulings on helpers AA, AB and AC's smaller questions (ODR-239, ODR-243, ODR-245..ODR-258, for the owner's review; ODR-239 the owner confirmed) (`docs/DECISIONS.md` ADR-273); the owner also confirmed ODR-175, ODR-207, ODR-209, ODR-211, ODR-213 and ODR-215, and ODR-238 (`[CLO-15]`) stays open:
++
++* For `[ALC-2]`: `Global` is the package's configured allocator and `System` the platform's, which a global allocator may wrap (ODR-239).
++* For `[STD-19]`: a callable given to the standard library is borrowed; a lambda written at the call is given (ODR-240, the owner, replacing ODR-210).
++* For `[TYP-36]`: two boxes compare with `==` as what they hold does; `Box[dyn I]` when `I` requires `Eq`, two kinds never equal (ODR-241, the owner).
++* For `[BLD-10]`, `[BUD-1]`, `[BUD-2]`, `[BUD-3]`, `[BUD-3a]`: no fixed times; the figures are a gate by before-and-after comparison on one machine (ODR-242, the owner).
++* For `[CT-4]`: a `const` value is the compiler's own evaluator's, never a built C program's (ODR-243).
++* For `[BLD-1]`, `[BLD-2]`, `[BLD-4]`: `debug` writes one C file per module, `release` one unit (ODR-244, the owner); the cache serves `ember check` (ODR-257); Ninja is carried, or found on `PATH` (ODR-258).
++* For `[FFI-1]`, `[FFI-8]`, `[FFI-11]`, `[FFI-21]`, `[FFI-17a]`, `[FFI-42]`: helper AB's questions (ODR-245..ODR-253).
++* For `[STD-14]`: the non-panicking twin is an accessor's (ODR-254).
++* For `[THR-8]`, `[ECS-4]`: `dyn I` is `Send`/`Sync` when `I` requires it; a component two parallel systems read is `Sync` (ODR-255).
++* For `[IDE-6]`: the identifier interner is the session's (ODR-256).
++* For `[PRF-3]`: a `debug` build makes none of Ember's speed rewrites unless `[profiles.debug] rewrites = true` (ODR-259, the owner).
++* For `[CG-LL-1]`: the LLVM backend is part of 1.0, built beside the C backend now (ODR-223, the owner, again on 2026-10-23); the progress table counts it as phase 9, inside 1.0.
++
++Generated: every rule whose text differs from 0.9.10_Hardened_34.
++
++| Rule | 0.9.10_Hardened_34 → 0.9.10_Hardened_35 |
++|---|---|
++| `[ALC-2]` | changed |
++| `[BLD-1]` | changed |
++| `[BLD-2]` | changed |
++| `[BLD-4]` | changed |
++| `[BLD-10]` | changed |
++| `[BUD-1]` | changed |
++| `[BUD-3]` | changed |
++| `[BUD-3a]` | changed |
++| `[CG-LL-1]` | changed |
++| `[CT-4]` | changed |
++| `[ECS-4]` | changed |
++| `[FFI-1]` | changed |
++| `[FFI-8]` | changed |
++| `[FFI-17a]` | changed |
++| `[FFI-21]` | changed |
++| `[FFI-42]` | changed |
++| `[IDE-6]` | changed |
++| `[PRF-3]` | changed |
++| `[STD-14]` | changed |
++| `[STD-19]` | changed |
++| `[THR-8]` | changed |
++| `[TYP-36]` | changed |
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -8582,15 +8688,15 @@
+ 
+ | Rule | Part | Begins |
+ |---|---|---|
+-| `[BLD-1]` | XVII | The module (one file) is the unit of front-end caching; the package … |
+-| `[BLD-2]` | XVII | A module's front-end result is keyed by its source, the compiler and … |
+-| `[BLD-4]` | XVII | The C compiler and linker run through a generated Ninja file, so C … |
++| `[BLD-1]` | XVII | *(changed in 0.9.10)* The module (one file) is the unit of front-end … |
++| `[BLD-2]` | XVII | *(changed in 0.9.10)* A module's front-end result is keyed by its … |
++| `[BLD-4]` | XVII | *(changed in 0.9.10)* The C compiler and linker run through a … |
+ | `[BLD-5]` | XVII | Output goes to `target/<profile>/{bin,lib,c,obj,bind,inspect}`. |
+ | `[BLD-6]` | XVII | *(changed in 0.9.10)* `lto = "off" \| "thin" \| "on"`. A value the … |
+ | `[BLD-7]` | XVII | Front-end stages run in parallel across modules by default (`-j`, … |
+ | `[BLD-8]` | XVII | Within a module, editing one function body re-checks that function, … |
+ | `[BLD-9]` | XVII | `--timings` writes a per-stage, per-module timing report … |
+-| `[BLD-10]` | XVII | The compile-time budgets below are release gates. |
++| `[BLD-10]` | XVII | *(changed in 0.9.10)* The compiler is made as fast as it can be, and … |
+ | `[BLD-11]` | XVII | A package that omits a `[STD-6]` layer cannot use it or depend on a … |
+ | `[BLD-13]` | XVII | Builds are reproducible: the same inputs give a byte-identical … |
+ 
+@@ -8627,10 +8733,10 @@
+ 
+ | Rule | Part | Begins |
+ |---|---|---|
+-| `[BUD-1]` | XVII | *(changed in 0.9.10)* They are measured on a recorded reference … |
++| `[BUD-1]` | XVII | *(changed in 0.9.10)* They are measured over `bench/bigpkg`, a … |
+ | `[BUD-2]` | XVII | *(changed in 0.9.10)* Each figure is the median of 15 runs after 3 … |
+-| `[BUD-3]` | XVII | A figure above its budget fails CI, and so does one more than 15 % … |
+-| `[BUD-3a]` | XVII | CI normalises its measurements by a fixed calibration workload, and a … |
++| `[BUD-3]` | XVII | *(changed in 0.9.10)* A change is measured before and after on the … |
++| `[BUD-3a]` | XVII | *(changed in 0.9.10)* The before and after are measured in one run, … |
+ | `[BUD-3b]` | XVII | *(changed in 0.9.10)* A figure's spread is its interquartile range … |
+ | `[BUD-5]` | XVII | A proposed language or compiler feature states its measured effect on … |
+ 
+@@ -8672,7 +8778,7 @@
+ 
+ | Rule | Part | Begins |
+ |---|---|---|
+-| `[CG-LL-1]` | XVIII | Two backends over one intermediate representation. The reference … |
++| `[CG-LL-1]` | XVIII | *(changed in 0.9.10)* Two backends over one intermediate … |
+ | `[CG-LL-2]` | XVIII | The LLVM backend maps MIR to LLVM IR with the C backend's type … |
+ | `[CG-LL-3]` | XVIII | It passes the borrow checker's facts to LLVM as `noalias`, … |
+ 
+@@ -8779,7 +8885,7 @@
+ | `[CT-1]` | XIV | These are evaluated during compilation: `comptime(e)`; `comptime:` … |
+ | `[CT-2]` | XIV | *(changed in 0.9.10)* An operation that cannot run at compile time — … |
+ | `[CT-3]` | XIV | Each evaluation is limited to 10⁸ steps and 256 MB of evaluator heap … |
+-| `[CT-4]` | XIV | Compile-time evaluation is deterministic by construction: the … |
++| `[CT-4]` | XIV | *(changed in 0.9.10)* Compile-time evaluation is deterministic by … |
+ | `[CT-5]` | XIV | Where results live. A compile-time result is placed in the image as … |
+ | `[CT-6]` | XIV | `comptime(e)` is an expression whose value is `e` evaluated at … |
+ | `[CT-7]` | XIV | A `comptime:` block at item level, or as a statement, runs once … |
+@@ -9012,7 +9118,7 @@
+ 
+ | Rule | Part | Begins |
+ |---|---|---|
+-| `[FFI-1]` | XVI | Every foreign declaration has a contract: for each pointer-typed … |
++| `[FFI-1]` | XVI | *(changed in 0.9.10)* Every foreign declaration has a contract: for … |
+ | `[FFI-2]` | XVI | A call to a foreign function whose contract contains an `unknown` … |
+ | `[FFI-2a]` | XVI | Derived facts need no `unsafe`: `const T*` is a read-only borrow, … |
+ | `[FFI-3]` | Annex C | Ember never links against C++ mangled symbols. The importer generates … |
+@@ -9023,7 +9129,7 @@
+ | `[FFI-6a]` | XVI | *(changed in 0.9.10)* An object-like macro is imported when, after … |
+ | `[FFI-6b]` | XVI | *(changed in 0.9.10)* A function-like macro is exposed only when an … |
+ | `[FFI-7]` | XVI | A header is re-parsed only when its content, its overlay, or a … |
+-| `[FFI-8]` | XVI | Type mapping. |
++| `[FFI-8]` | XVI | *(changed in 0.9.10)* Type mapping. |
+ | `[FFI-9]` | XVI | `extern "C"` is the platform C ABI (SysV AMD64, Windows x64, … |
+ | `[FFI-10]` | XVI | An `unsafe extern "C":` block declares foreign functions, statics and … |
+ | `[FFI-11]` | XVI | *(changed in 0.9.10)* Contract vocabulary. A pointer contract has … |
+@@ -9037,14 +9143,14 @@
+ | `[FFI-15]` | XVI | `cstr` is a borrowed, NUL-terminated C string (`c"…"` literals are … |
+ | `[FFI-16]` | XVI | *(changed in 0.9.10)* An enum `E` marked `@ffi(status=E, ok=X, … |
+ | `[FFI-17]` | Annex C | `import cpp "Header.hpp" with (project="engine", overlay="…", … |
+-| `[FFI-17a]` | Annex C | *(changed in 0.9.10)* |
++| `[FFI-17a]` | Annex C | *(changed in 0.9.10)* *(changed in 0.9.10)* |
+ | `[FFI-17b]` | Annex C | Templates are available only as explicit instantiations listed in … |
+ | `[FFI-17c]` | Annex C | Destruction of an Ember class derived from a C++ class is … |
+ | `[FFI-17d]` | Annex C | `@ffi(trampoline, owner="ember")`, the default, makes the Ember count … |
+ | `[FFI-17e]` | Annex C | The bridge types `CppVector[T]`, `CppString` and `CppShared[T]` are … |
+ | `[FFI-17f]` | Annex C | `ember inspect` reports each bridge operation that is a thunk call … |
+ | `[FFI-20a]` | XVI | A declaration the importer cannot represent is recorded with the … |
+-| `[FFI-21]` | XVI | A C function-pointer parameter accepts a capture-free Ember function … |
++| `[FFI-21]` | XVI | *(changed in 0.9.10)* A C function-pointer parameter accepts a … |
+ | `[FFI-21a]` | XVI | *(new in 0.9.10)* A parameter C passes as a copy. C passes a … |
+ | `[FFI-22]` | XVI | Every exported function and trampoline first attaches the calling … |
+ | `[FFI-23]` | XVI | *(changed in 0.9.10)* `Retained.pin(v)` hands an Ember-owned object … |
+@@ -9092,7 +9198,7 @@
+ | `[FFI-40]` | Annex C | `const` methods import as `self`, non-`const` methods as `mut self`; … |
+ | `[FFI-40a]` | Annex C | `const` is not an aliasing guarantee in C++: a `const` method of a … |
+ | `[FFI-41]` | Annex C | Static member functions import as associated functions. A static data … |
+-| `[FFI-42]` | Annex C | Overloaded operators map to Ember operator interfaces where one … |
++| `[FFI-42]` | Annex C | *(changed in 0.9.10)* Overloaded operators map to Ember operator … |
+ | `[FFI-42a]` | Annex C | Iterating an imported C++ container borrows it mutably for the loop, … |
+ | `[FFI-43]` | Annex C | An overlay that marks a function both `noexcept` and throwing, or two … |
+ | `[FFI-44]` | Annex C | *Automatic* means no overlay is needed; *overlay* means a contract … |
+@@ -9287,7 +9393,7 @@
+ |---|---|---|
+ | `[IDE-3]` | XVII | Every compiler stage after parsing produces a complete result for a … |
+ | `[IDE-4]` | XVII | Every editor request is answered from parsing, name resolution and … |
+-| `[IDE-6]` | XVII | The compiler keeps all its state in a session object that can be … |
++| `[IDE-6]` | XVII | *(changed in 0.9.10)* The compiler keeps all its state in a session … |
+ 
+ ## IFC
+ 
+@@ -9521,7 +9627,7 @@
+ |---|---|---|
+ | `[PRF-1]` | XVII | A profile never changes what a program means. Every profile accepts … |
+ | `[PRF-2]` | XVII | *(changed in 0.9.10)* Hot reload is a build mode of `debug` and … |
+-| `[PRF-3]` | XVII | What a profile may set. |
++| `[PRF-3]` | XVII | *(changed in 0.9.10)* What a profile may set. |
+ 
+ ## RC
+ 
+@@ -9661,7 +9767,7 @@
+ | `[STD-11]` | XV | `Map[K, V, H = DefaultHasher, A = Global]` is a hash map that … |
+ | `[STD-12]` | XV | Borrowed keys. Lookup methods, `m[k]` and `k in m` accept any key … |
+ | `[STD-13]` | XV | One naming convention. Names are `snake_case` words joined by … |
+-| `[STD-14]` | XV | Failure follows `[ERR-13]`: a caller's bug panics and has a … |
++| `[STD-14]` | XV | *(changed in 0.9.10)* Failure follows `[ERR-13]`: a caller's bug … |
+ | `[STD-15]` | XV | `Array[T]` is a growable contiguous list (Python's `list`). `len`, … |
+ | `[STD-16]` | XV | `Map` operations. `m[k]` reads the value and panics when the key is … |
+ | `[STD-17]` | XV | Index assignment. `a[i] = v` calls `IndexSet.index_set(i, v)` when … |

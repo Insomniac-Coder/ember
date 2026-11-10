@@ -1,0 +1,243 @@
+--- Ember_v0.9.5_Hardened_6.md
++++ Ember_v0.9.5_Hardened_7.md
+@@ -1,8 +1,8 @@
+ # Ember Programming Language — Design & Implementation Specification
+ 
+-**Version:** 0.9.5_Hardened_6
++**Version:** 0.9.5_Hardened_7
+ **Status:** Frozen development target; implementation/conformance evidence is not claimed and normative repository adoption still requires the recorded adoption gates
+-**Immediate predecessor:** 0.9.5_Hardened_5
++**Immediate predecessor:** 0.9.5_Hardened_6
+ **Versioning model:** A hardening increments `Hardened_N` when it only adds implementation detail,
+ invariants, tooling requirements, or editorial clarification without changing accepted language
+ semantics. A language revision is required when the accepted-program set or another normative
+@@ -11,22 +11,23 @@
+ introduced inferred multi-region view structs; this revision is a subsequent hardening that
+ consolidates the inherited 0.8.5 contract, makes supersession explicit, repairs mechanical
+ extraction defects, recovers the owner-supplied Hardened 14 callback-composition rules, resolves
+-their mutable API boundary by owner decision, and records evidence status honestly. No
+-implementation or conformance result is asserted merely because the specification requires one.
++their mutable API family and callable-type mode syntax by owner decision, and records evidence
++status honestly. No implementation or conformance result is asserted merely because the
++specification requires one.
+ 
+ > **Authority boundary:** This frozen hardening records the owner-selected 0.9.5 development target, but
+ > `docs/spec-source/ember-spec.md` remains the repository's sole normative source until this
+ > target passes the adoption gates and is explicitly installed. The immutable received file
+ > is preserved under `docs/spec-source/as-received/`.
+ 
+-> **SOURCE RECOVERY AND API BOUNDARY COMPLETED — `[LT-8]`–`[LT-13]`:** on 2026-09-12 the
+-> owner first supplied the missing Hardened 14 definitions, frozen in H5, and then ruled that the
+-> helpers also have explicit all-mutable `_mut` variants. H4 remains the frozen source-gap record and
+-> H5 remains the frozen recovered-but-ambiguous predecessor. This H6 successor uses Ember's canonical
+-> type name `MutSpan[T]` for the mutable signatures; the ruling's `SpanMut[T]` spelling was normalized
+-> to the type already defined throughout the language. ODR-004 and ODR-005 are closed. The separate
+-> question of how mutable callback parameter modes are represented by Ember's currently mode-free
+-> `fn(...)` type grammar is recorded as ODR-006 rather than answered by inference.
++> **SOURCE RECOVERY AND CALLABLE-MODE BOUNDARY:** on 2026-09-12 the owner supplied the missing
++> Hardened 14 definitions (H5), selected explicit all-mutable `_mut` variants (H6), and then extended
++> callable types with borrowed/default, `mut`, and `owned` parameter modes (this H7). H4, H5, and H6
++> remain frozen predecessor records. This revision consistently uses Ember's canonical type name
++> `MutSpan[T]`; the rulings' `SpanMut[T]` spelling was normalized to the type already defined
++> throughout the language. ODR-004 and ODR-005 are closed. ODR-006 is narrowed to the helper
++> functions' own still-unmarked mutable input parameters, and ODR-007 records the unresolved bridge
++> from mode-bearing `fn(...)` types to the existing `Callable[Args, R]` abstraction.
+ 
+ # 0.9_Hardened_12 Owner-Decision Resolution Cycle (historical record)
+ 
+@@ -333,12 +334,14 @@
+                              f: fn(Span[A], Span[B], Span[C], Span[D]) -> R) -> R
+ 
+   with_views2_mut[A, B, R](a: MutSpan[A], b: MutSpan[B],
+-                           f: fn(MutSpan[A], MutSpan[B]) -> R) -> R
++                           f: fn(mut MutSpan[A], mut MutSpan[B]) -> R) -> R
+   with_views3_mut[A, B, C, R](a: MutSpan[A], b: MutSpan[B], c: MutSpan[C],
+-                              f: fn(MutSpan[A], MutSpan[B], MutSpan[C]) -> R) -> R
++                              f: fn(mut MutSpan[A], mut MutSpan[B],
++                                    mut MutSpan[C]) -> R) -> R
+   with_views4_mut[A, B, C, D, R](a: MutSpan[A], b: MutSpan[B],
+                                  c: MutSpan[C], d: MutSpan[D],
+-                                 f: fn(MutSpan[A], MutSpan[B], MutSpan[C], MutSpan[D]) -> R) -> R
++                                 f: fn(mut MutSpan[A], mut MutSpan[B],
++                                       mut MutSpan[C], mut MutSpan[D]) -> R) -> R
+   ```
+ 
+   The exact public spelling MAY use the module's overload convention, but the arity, mutability, and
+@@ -358,10 +361,28 @@
+   is permitted.
+ 
+ * `[LT-11]` **Mutability follows ordinary borrowing.** `with_views` does not grant overlapping
+-  mutable access; the `_mut` variants accept `MutSpan[T]` and therefore remain subject to the
+-  ordinary exclusive-borrow rules. Mutable inputs whose sources may alias are rejected by the
++  mutable access. The `_mut` variants accept `MutSpan[T]` and their callbacks explicitly declare
++  the corresponding parameters as `mut`; therefore they remain subject to the ordinary exclusive-
++  borrow and mutable-place rules. Mutable inputs whose sources may alias are rejected by the
+   ordinary borrow checker; structurally disjoint inputs are expressible through `split_at_mut`,
+   `columns_mut`, `SoA`, or an established disjointness fact.
++
++* `[LT-11a]` The compiler MUST reject a mutable `with_views*_mut` callback whose callable type omits
++  the required `mut` parameter mode when the callback body requires mutable access. The diagnostic
++  MUST identify the callback parameter-mode mismatch rather than treating `MutSpan[T]` as an
++  implicit ownership mode.
++
++* `[TST-20]` Conformance MUST cover:
++
++  1. shared `with_views2/3/4` callbacks;
++  2. mutable `with_views2/3/4_mut` callbacks using `mut` parameters;
++  3. rejection of aliased mutable inputs;
++  4. rejection of callbacks whose parameter modes do not permit the required mutation;
++  5. preservation of ordinary `mut`/`owned` parameter semantics inside callable types.
++
++  This resolution supersedes any wording that treats `_mut` as implicitly encoding parameter
++  ownership or as requiring a special ownership rule for `MutSpan[T]`. `_mut` identifies the API
++  family; `mut` in the callable type expresses the actual parameter mode.
+ 
+ * `[LT-12]` **No hidden allocation.** The canonical helpers MUST be `@noalloc` and MUST NOT allocate
+   a wrapper object, closure environment, heap box, or temporary container solely to represent the
+@@ -381,8 +402,9 @@
+ 
+ > **API-surface resolution:** the owner resolved ODR-005 on 2026-09-12 by selecting distinct
+ > all-mutable `_mut` helpers rather than making the shared names magically generic over `Span` and
+-> `MutSpan`. Mixed shared/mutable overloads are not specified. Both families use the same ordinary
+-> region and borrow machinery; the mutable family creates no new aliasing rule.
++> `MutSpan`, then resolved the callback side of ODR-006 by making `mut` explicit in each callable
++> type. Mixed shared/mutable overloads are not specified. Both families use the same ordinary region
++> and borrow machinery; the mutable family creates no new aliasing rule.
+ 
+ ## H14.4 Regression and implementation obligations
+ 
+@@ -1549,6 +1571,7 @@
+ | 0.9.5_Hardened_4 | Hardening | repaired source authority, missing-rule accounting, rule-ID collisions, single-source extraction, examples, and inherited editorial corruption |
+ | 0.9.5_Hardened_5 | Hardening/source recovery | restored owner-supplied `[LT-8]`–`[LT-13]` callback-composition rules, preserved their 0.9.5 supersession boundary, and exposed the unprovided mutable-overload surface as ODR-005 |
+ | 0.9.5_Hardened_6 | Owner-approved hardening clarification | resolved ODR-005 with explicit all-mutable `with_views2_mut/3_mut/4_mut` helpers using canonical `MutSpan[T]`; mixed-mutable overloads remain outside the contract |
++| 0.9.5_Hardened_7 | Owner-approved hardening clarification | added borrowed/default, `mut`, and `owned` callable-type parameter modes; applied explicit `mut` callback modes to the all-mutable helpers; added `[LT-11a]` and `[TST-20]` |
+ 
+ ---
+ 
+@@ -1636,9 +1659,24 @@
+ 0.8.5 program set is unchanged; H6 closes the overload-family ambiguity in the not-yet-adopted
+ 0.9.5 target while ODR-006 retains the separate callback-mode question.
+ 
+-### 0.9.5_Hardened_6 language-conformance condition
+-
+-`0.9.5_Hardened_6` MUST NOT be declared conformant unless `[LT-8]`–`[LT-13]`,
++## 0.9.5_Hardened_7 Audit Record
++
++| ID | Classification | Resolution |
++|---|---|---|
++| AUD-095-34 | Owner-approved grammar clarification | Extended `fn_type` with omitted/borrowed, `mut`, and `owned` parameter modes using ordinary `[FN-1]`/`[FN-2]` semantics. |
++| AUD-095-35 | Mutable callback contract | Applied explicit `mut` modes to every callback parameter in the all-mutable `_mut` helper family. |
++| AUD-095-36 | Conformance/diagnostic boundary | Added `[LT-11a]` and `[TST-20]` so mode mismatch, mutable aliasing, and ordinary callable-mode behavior are testable. The supplied mnemonic `[TST-LT-MUT]` was normalized to the next unused numeric test-rule ID because the normative rule-ID grammar requires a numeric suffix. |
++| AUD-095-37 | Terminology consistency | Continued to normalize the ruling's `SpanMut[T]` spelling to Ember's existing `MutSpan[T]` type. |
++| AUD-095-38 | Remaining owner boundaries | Narrowed ODR-006 to the helper functions' own unmarked inputs and opened ODR-007 for the mode-vector bridge to `Callable[Args, R]`; neither is inferred. |
++
++**Amendment:** `HC-095-06` — owner-approved callable parameter-mode grammar and mutable-callback
++contract. Because H6 was already frozen, ADR-023 requires this clarification to be issued as H7.
++The adopted 0.8.5 program set remains unchanged; H7 is still a not-yet-adopted development target.
++
++### 0.9.5_Hardened_7 language-conformance condition
++
++`0.9.5_Hardened_7` MUST NOT be declared conformant unless `[LT-8]`–`[LT-13]`,
++`[LT-11a]`, `[TST-20]`,
+ `[LT-14]`–`[LT-43]` including `[LT-31a]`, `[MIR-REG-1]`,
+ `[TYP-15]`, `[TYP-15a]`, `[VERIFY-3]`, `[TST-17]`–`[TST-19]`, and `[BUD-8]` all have
+ passing conformance evidence; the MIR verifier proves region-slot preservation and checks callable
+@@ -1657,11 +1695,11 @@
+ 
+ ### Acceptance condition
+ 
+-`0.9.5_Hardened_6` MUST NOT be declared clean unless:
++`0.9.5_Hardened_7` MUST NOT be declared clean unless:
+ 1. the document has one current version identity;
+ 2. the consolidated Parts I–XXIII body and the current addenda form one normative source;
+-3. the active revision lineage ends at `0.9.5_Hardened_6`;
+-4. the current consistency checklist targets `0.9.5_Hardened_6`;
++3. the active revision lineage ends at `0.9.5_Hardened_7`;
++4. the current consistency checklist targets `0.9.5_Hardened_7`;
+ 5. `std.cell` is the sole defining owner of interior-mutability types;
+ 6. post-publication hot-reload failure has no unspecified recovery semantics;
+ 7. closed owner decisions are not presented as open implementation choices;
+@@ -1669,11 +1707,12 @@
+ 9. no runtime region bookkeeping appears in C/LLVM output for conforming multi-region views.
+ 10. the source-recovery record for `[LT-8]`–`[LT-13]` is traceable to the owner-supplied text and H4 remains unchanged;
+ 11. ODR-005 is closed by the explicit all-mutable `_mut` signatures, and no mixed-mutability overload is inferred.
+-12. ODR-006 is resolved before the mutable helper family is claimed conformant.
++12. ODR-006 is resolved before the mutable helper functions' own input modes are claimed conformant;
++13. ODR-007 is resolved before mode-bearing callable types are mapped to `Callable` or claimed conformant.
+ 
+ ---
+ 
+-## 0.9.5_Hardened_6 Evidence Status — No Implementation Claim
++## 0.9.5_Hardened_7 Evidence Status — No Implementation Claim
+ 
+ The current document is a specification artifact, not a report of repository state.
+ 
+@@ -1789,7 +1828,7 @@
+ 
+ ---
+ 
+-## 0.9.5_Hardened_6 consolidation record
++## 0.9.5_Hardened_7 consolidation record
+ 
+ The body below originated in `0.8.5_Hardened_1`, incorporates the accepted 0.9/0.9.5 changes in
+ place, and is normative within this target together with the current addenda above. Frozen predecessor files are
+@@ -2772,7 +2811,8 @@
+ ref_type        := "ref" ["mut"] type
+ ptr_type        := "*" ["mut"] type                                     (* raw pointer *)
+ tuple_type      := "(" ")" | "(" type "," [type {"," type}] ")"
+-fn_type         := ["extern" string_lit] "fn" "(" [type {"," type}] ")" ["->" type]
++fn_type         := ["extern" string_lit] "fn" "(" [fn_type_param {"," fn_type_param}] ")" ["->" type]
++fn_type_param   := [("mut" | "owned")] type
+ dyn_type        := "dyn" bound_list
+ array_type      := "[" type ";" expression "]"                          (* fixed-size inline array, e.g. [f32; 16] *)
+ ```
+@@ -3285,7 +3325,22 @@
+ * `[FN-3]` Return values are moved out; returning a `ref`/view requires that the region be tied to a parameter by elision (Part VII §5).
+ * `[FN-4]` The receiver `self` follows the same modes: `self` (borrow), `mut self` (mutable borrow), `owned self` (consume). Absent `self` ⇒ associated function. `self: Type` explicit form is allowed for `self: ref Self`, `self: Box[Self]`, `self: Shared[Self]` (v2 for the latter two).
+ * `[FN-5]` Default arguments are evaluated in the callee's scope at each call, after positional/named binding. They may reference earlier parameters. They MUST be `@noalloc`-clean if the function is `@noalloc`.
+-* `[FN-6]` Functions are values of a unique zero-sized function type; they coerce to `fn(A) -> R` (the generic callable bound) and, if they capture nothing and have no generic parameters, to `extern "C" fn(A) -> R` when their types are FFI-safe.
++* `[FN-6]` Functions are values of a unique zero-sized function type; they coerce to callable types
++  whose parameter modes use the same syntax and semantics as ordinary function parameters:
++
++  ```text
++  fn(A) -> R
++  fn(mut A) -> R
++  fn(owned A) -> R
++  ```
++
++  An omitted callable-parameter mode is `borrowed`, matching `[FN-2]`. `mut A` denotes an
++  inout/mutable-borrow parameter and `owned A` denotes a consumed parameter. Callable-type parameter
++  modes MUST have the same ownership, borrowing, mutability, place, and move restrictions as the
++  corresponding ordinary function declaration modes. This extension does not introduce a separate
++  callable ownership model. A function with no captures and no generic parameters may also coerce
++  to `extern "C" fn(...) -> R`; that form remains valid only when every parameter and return type,
++  including the parameter modes, satisfies the existing FFI-safety rules.
+ * `[FN-7]` Recursion is permitted; the compiler does not guarantee tail-call elimination in v1.
+ * `[FN-8]` `main` is `fn main()`, `fn main() -> Result[void, E]` (`E: Error`), or `fn main(args: Span[str])` variants. A non-`Ok` result prints the error with `Display` to stderr and exits with code 1.
+ * `[FN-2a]` The compiler forms the borrow the callee's declared mode requires. If the argument is not a suitable place for that mode, it reports shape **B10** naming the place required. **A call site never writes the mode** (owner decision `OQ-13`): `f(x)` is written whether `f` declares `x`, `mut x` or `owned x`, preserving Part 0 row 3's guarantee that call sites never carry a sigil. The mode is read from the callee's signature, and `ember inspect` and the editor's inlay hints (`[IDE-7]`) surface it at the argument.
+@@ -7491,12 +7546,12 @@
+ Everything between the consolidated-body markers is current normative text. Material after this
+ marker is specification tooling guidance for the current revision, not inherited 0.8.5 text.
+ 
+-# Appendix B — 0.9.5_Hardened_6 Consistency Checklist
++# Appendix B — 0.9.5_Hardened_7 Consistency Checklist
+ 
+ The following checks are mandatory CI checks for the consolidated specification itself:
+ 
+-1. Exactly one current version declaration exists and names `0.9.5_Hardened_6`.
+-2. The immediate predecessor is `0.9.5_Hardened_5`.
++1. Exactly one current version declaration exists and names `0.9.5_Hardened_7`.
++2. The immediate predecessor is `0.9.5_Hardened_6`.
+ 3. `[MOD-6]` and `[MOD-6a]` name the supported `0.9.5`, `0.9`, and 0.8.x source-language contracts explicitly, and `0.9` does not silently enable `0.9.5`.
+ 4. `EMBER_RUNTIME_ABI` is canonical; `EMBER_RT_ABI` can occur only in compatibility-alias documentation.
+ 5. Every `dyn Writer`/`dyn Reader` serialization signature uses a legal indirection.
+@@ -7517,6 +7572,8 @@
+ 20. Rule IDs are unique and historical IDs are never silently reused for a new meaning.
+ 21. Every canonical artifact named by `[IMP-3]` has exactly one authoritative owner.
+ 22. A specification CI failure never changes language semantics automatically; it blocks release/conformance until reconciled.
+-23. ODR-006 is resolved before the `_mut` helper family is treated as implementation-ready or conformant.
++23. `[FN-6]`, `fn_type`, `[LT-8]`, `[LT-11]`, `[LT-11a]`, and `[TST-20]` agree that `_mut` identifies the helper family while explicit `mut` carries callback mutation authority.
++24. ODR-006 is resolved before the helper functions' own unmarked mutable inputs are treated as implementation-ready or conformant.
++25. ODR-007 is resolved before mode-bearing `fn(...)` types are lowered through `Callable[Args, R]` or claimed conformant.
+ 
+ A failure of any checklist item is a specification CI failure, not a compiler implementation choice.

@@ -1,0 +1,1444 @@
+--- Ember_v0.9.20_Hardened_4.md
++++ Ember_v0.9.20_Hardened_5.md
+@@ -1,10 +1,11 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.20_Hardened_4
+-**Supersedes:** 0.9.15_Hardened_10 (development target until this one), 0.9.15_Hardened_9 to
+-0.9.15_Hardened_1 and every earlier file: 0.9.10_Hardened_1 to 0.9.10_Hardened_35, 0.9.9_Hardened_1
+-to 0.9.9_Hardened_52, 0.9.8_Hardened_3 and 0.8.5_Hardened_1 (adopted). This document is the single
+-specification of Ember; the earlier files are history.
++**Version:** 0.9.20_Hardened_5
++**Supersedes:** 0.9.20_Hardened_4 (development target until this one), 0.9.20_Hardened_3 to
++0.9.20_Hardened_1, 0.9.15_Hardened_11 to 0.9.15_Hardened_1 and every earlier file:
++0.9.10_Hardened_1 to 0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3
++and 0.8.5_Hardened_1 (adopted). This document is the single specification of Ember; the earlier
++files are history.
+ **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
+ profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
+ are tracked separately (§XVII.5, §XVII.8) and are not claimed by this text.
+@@ -24,14 +25,25 @@
+ owner's verdict 137 (what a call's result views is read from the called function's code);
+ **0.9.15_Hardened_9** the owner's verdicts 138 to 144; **0.9.15_Hardened_10** the owner's verdicts 145
+ to 160 (`owns` at the call for every `owns` parameter, a `dyn` call checked for each kind that may reach
+-it and `runtime` where only the running program knows it); **0.9.20_Hardened_1** the hardening audit
+-of 2026-11-03 (§H.51), ruled under the owner's delegation (`docs/AUTOPILOT.md` §3): it closes the holes
++it and `runtime` where only the running program knows it); **0.9.15_Hardened_11** the owner's
++verdicts 161 to 163 (`owns` at a call binds as a prefix `-` does; `runtime` before a class type and
++on a typed local; §H.51); **0.9.20_Hardened_1** the hardening audit
++of 2026-11-03 (§H.52), ruled under the owner's delegation (`docs/AUTOPILOT.md` §3): it closes the holes
+ the audit found in the memory-safety rules (a `sharedref mut` link never leaves its thread; a function
+ value is never stored where its own run could end its state; a `runtime` check reads the kind's own
+ fact, so it holds across packages; a hand-over is a reshape; a view opened from a link counts the
+ whole class family; sharing a local moves nothing; an arena never moves what it gave out), says what
+ the text left unsaid (a `defer` block's uses, a position's index, `comptime.env` from a dependency,
+-the type of a `comptime` value) and makes its words consistent, taking no feature away; it changes
++the type of a `comptime` value) and makes its words consistent, taking no feature away;
++**0.9.20_Hardened_2** the second pass of 2026-11-03 (§H.53), under the same delegation: no fact of
++the whole program decides a package's code or layout, a link to a `thread_shared` value is a type of
++its own, and a library's call through what a dependant may fill is checked where the member is
++added; **0.9.20_Hardened_3** the third pass, of 2026-11-08 (§H.54), which joins the gap review of
++0.9.15_Hardened_11 and the owner's verdicts 164 to 166; **0.9.20_Hardened_4** the fourth, of
++2026-11-08 (§H.55), in which the lead ruled the open owner-decision records on the owner's
++instruction; and **0.9.20_Hardened_5**, of 2026-11-10 (§H.56): the owner's review of those rulings
++(three stand on the lead's judgement as he asked, and the default manifest of verdicts 127 and 135
++is written again), and the repairs from a reading of the whole of Hardened_4. Each of them changes
+ the set of accepted programs, so the language version moves (`[VER-9]`). What a program means is written in
+ words on the thing it describes: one owner unless a line says `shares`; `owns` for a hand-over and a
+ value held alone, at the call too; `copy of` for a copy; `ref mut` on a name, and at the call, for a
+@@ -41,8 +53,8 @@
+ cost (§X.4). It replaces `Box`, `Shared`, `Weak`, `RefCell`, `SyncShared`, `ForeignBox`, `@sync`,
+ `@borrows`, the mode `owned`, `self`, `mem.forget`, effect clauses on a first line and every check of
+ exclusive access made while the program runs. It changes the set of accepted programs, so the
+-language version moves (`[VER-9]`); Appendix H §H.41 to §H.50 list every change of 0.9.15, and §H.51
+-those of 0.9.20. The revisions before it were
++language version moves (`[VER-9]`); Appendix H §H.41 to §H.51 list every change of 0.9.15, and §H.52
++to §H.56 those of 0.9.20. The revisions before it were
+ authored at the owner's direction of 2026-09-23 with delegated authority to decide open language
+ questions against the project goal; Appendix H lists each one's changes (§H.1 to §H.40), and every
+ finding of the 2026-09-23 research pass (`tasks/audit/FINDINGS.md`, F-001–F-214) is resolved in
+@@ -104,7 +116,7 @@
+ | Appendix E | Coming from Python (non-normative) |
+ | Appendix F | Glossary |
+ | Appendix G | Resolution of findings F-001–F-214 |
+-| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.50) and in 0.9.20 (§H.51) |
++| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.51) and in 0.9.20 (§H.52 to §H.56) |
+ | Appendix I | Rule index |
+ 
+ **Normative words.** MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119. Text marked
+@@ -151,6 +163,7 @@
+   such change as a change to the language and `ember fmt --migrate` rewrites every program it can. The
+   change log of each revision (Appendix H for this one) lists every rule it adds, removes or changes;
+   a change without a row is a defect in the document.
++
+ ---
+ 
+ # Part I — Language Overview
+@@ -249,17 +262,17 @@
+   the construct and the rule; a construct this specification does not define is `E0901`. Accepting a
+   construct and ignoring it is a defect of the worst class, because the programmer believes the
+   effect holds.
+-* `[PHIL-13]` *(new in 0.9.9)* **One meaning per program.** No build profile, compiler flag,
+-  manifest key or optimisation level changes what a Safe program computes, which branch it takes,
+-  whether it panics, or whether it is accepted, and none turns off a check Safe Ember's guarantees
+-  need. What a build accepts depends on its semantic inputs alone — the language version, the target
+-  and its layout, the resolved dependencies and the library layers selected; a build may also stop
+-  for its policy (warnings made errors, `[MAN-3]`) or an exhausted budget (`[CT-3]`), each reported
+-  as that and never as a language error. `@realtime` means the declaring package's set (`[EFF-19]`),
+-  in every caller (ODR-061). Profiles change only speed, debug information, and the amount of detail
+-  in diagnostics and panic messages (`[PRF-1]`). `debug_assert` is the one check a profile turns
+-  off; it may not have side effects, so it cannot change what a program whose assertions hold
+-  computes.
++* `[PHIL-13]` *(new in 0.9.9)* *(changed in 0.9.20)* **One meaning per program.** No build profile,
++  compiler flag, manifest key or optimisation level changes what a Safe program computes, which
++  branch it takes, whether it panics, or whether it is accepted, and none turns off a check Safe
++  Ember's guarantees need. What a build accepts depends on its semantic inputs alone — the language
++  version, the target and its layout, the resolved dependencies and the library layers selected; a
++  build may also stop for its policy (warnings made errors, `[MAN-3]`) or an exhausted budget
++  (`[CT-3]`), each reported as that and never as a language error. `@realtime` means the declaring
++  package's set (`[EFF-19]`), in every caller (ODR-061). Profiles change only speed, debug
++  information, and the amount of detail in diagnostics and panic messages (`[PRF-1]`).
++  `debug_assert` is the one check a profile turns off; its argument changes nothing (`E3023`,
++  §VI.6), so it cannot change what a program whose assertions hold computes.
+ * `[PHIL-14]` *(new in 0.9.9)* *(changed in 0.9.10)* **Python spelling, Python meaning.** Where
+   Ember accepts a spelling that Python also has — `/`, `//`, `%`, `**`, `a < b < c`, `x in xs`, `x
+   is None`, `[1, 2]`, `{"k": v}`, f-strings, `for … else`, keyword arguments — it gives it Python's
+@@ -383,11 +396,13 @@
+ members, each use standing for one, `[FFI-57]`) and C's untyped variadic functions outside `unsafe`
+ (Ember's own take any number of typed values, `[TYP-47]`); macros (`macro` is reserved); named
+ lifetimes, ever (`[LEX-22]`); an aliasing or exclusivity check the program did not ask for
+-(`[BRW-1]`; the checks it may ask for are `runtime`, `[LT-48]`, and `assert_disjoint`, `[DSJ-5]`)
+-(`[BRW-1]`); specialisation or higher-kinded types; dynamic or structural typing (`[TYP-40]`); a
++(`[BRW-1]`; the checks it may ask for are `runtime`, `[LT-48]`, and `assert_disjoint`, `[DSJ-5]`);
++specialisation or higher-kinded types; dynamic or structural typing (`[TYP-40]`); a
+ safety check that depends on the profile (`[PRF-1]`); a correctness property that depends on
+ whole-program optimisation or LTO; a stable Ember-to-Ember ABI (the C ABI is the stable boundary,
+-Part XVI); shader compilation and `async` in this version (both reserved).---
++Part XVI); shader compilation and `async` in this version (both reserved).
++
++---
+ 
+ # Part II — Lexical Structure
+ 
+@@ -616,6 +631,7 @@
+ a side table used by the formatter and by `[LEX-23]`. The lexer never stops at the first error: an
+ invalid character produces one `Error` token per maximal run of invalid characters (`[DIA-20]`), and
+ parsing continues.
++
+ ---
+ 
+ # Part III — Grammar
+@@ -1053,24 +1069,30 @@
+   2])`, `xs.iter().for_each(owns fn(x: int): println(x))`; `[FN-2a]`, `E3028` without it), except a
+   value made in the call with a word that makes an owner or a link, which says what is given and
+   takes no `owns` before it (`setup(shares mut game)` for `fn setup(owns game: shares mut Game)`,
+-  `ROSTER.push(weakref this)`, `thread_shared x` and `sharedref mut x` alike), and a constructor's
+-  argument, which takes no word and works as `=` does (`Words(names=xs)`, `[FN-2a]`); and in `b =
+-  owns n` for a value `=` would copy (a number, a `bool`, a `StrView`, `[OWN-9]`), so that `n` ends
+-  there, and before a part on the right of `=` (`body = owns req.body`), which hands the part over
+-  into the new name as `names.push(owns req.body)` does (`[OWN-11]`, with its refusals: a field of a
+-  type with `drop` `E3010`, an element `E3011`, a field of a class object or a part reached through
+-  a name that does not own it `E3013`), where `=` alone makes a view (`[BRW-12]`). `owns` before a
+-  lambda covers the whole lambda, whose body extends as far right as possible (level 2) and, inside
+-  a call, ends at the closing bracket or the next comma at the same depth (`[LEX-6a]`); another word
+-  before a lambda (`copy of fn ...`) is refused as `[GRM-42]` says. Before a value made on the line
+-  that is given to a place that is not an `owns T` (`b = owns (n * 2)`, `b = owns f()`, `xs = owns
+-  [1, 2]`; the required case is `[TYP-45]`'s) it ends nothing and is `E0109`: "`=` already hands a
+-  value made on the line over; remove `owns`: `b = n * 2`". Before a name whose place already hands
+-  the value over with no word (`e.mesh = m`, `b = a` for a value `=` hands over, `return a`), and
+-  before `fn` anywhere but an argument for an `owns` parameter, it is `E0109`, whose message says to
+-  remove it (for `owns fn`, to name what the function takes on each captured name: `fn() owns
+-  report:`). Before an argument for a parameter that only reads (`show(owns xs)`) it is `E3028`,
+-  "`show` only reads its argument; remove `owns`: `show(xs)`".
++  `ROSTER.push(weakref this)`, `thread_shared x` and `sharedref mut x` alike), `owns` itself among
++  those words: where the parameter's own type is an `owns T`, the value made in the call is made for
++  a place that owns it alone, and one `owns` says both that it has a block of its own and that the
++  call takes it over (`r.pools.push(owns IntPool(items=[1, 2]))` for `pools: Array[owns dyn Pool]`;
++  `meshes.insert(owns String("boss"), owns Mesh(points=[0.0]))` for a `Map[String, owns Mesh]`), a
++  second `owns` before it being `E0109` ("one `owns` already says that the pool has a block of its
++  own and that `push` takes it over; remove one: `r.pools.push(owns IntPool(items=[1, 2]))`"), and a
++  constructor's argument, which takes no word and works as `=` does (`Words(names=xs)`, `[FN-2a]`);
++  and in `b = owns n` for a value `=` would copy (a number, a `bool`, a `StrView`, `[OWN-9]`), so
++  that `n` ends there, and before a part on the right of `=` (`body = owns req.body`), which hands
++  the part over into the new name as `names.push(owns req.body)` does (`[OWN-11]`, with its
++  refusals: a field of a type with `drop` `E3010`, an element `E3011`, a field of a class object or
++  a part reached through a name that does not own it `E3013`), where `=` alone makes a view
++  (`[BRW-12]`). `owns` before a lambda covers the whole lambda, whose body extends as far right as
++  possible (level 2) and, inside a call, ends at the closing bracket or the next comma at the same
++  depth (`[LEX-6a]`); another word before a lambda (`copy of fn ...`) is refused as `[GRM-42]` says.
++  Before a value made on the line that is given to a place that is not an `owns T` (`b = owns (n *
++  2)`, `b = owns f()`, `xs = owns [1, 2]`; the required case is `[TYP-45]`'s) it ends nothing and is
++  `E0109`: "`=` already hands a value made on the line over; remove `owns`: `b = n * 2`". Before a
++  name whose place already hands the value over with no word (`e.mesh = m`, `b = a` for a value `=`
++  hands over, `return a`), and before `fn` anywhere but an argument for an `owns` parameter, it is
++  `E0109`, whose message says to remove it (for `owns fn`, to name what the function takes on each
++  captured name: `fn() owns report:`). Before an argument for a parameter that only reads
++  (`show(owns xs)`) it is `E3028`, "`show` only reads its argument; remove `owns`: `show(xs)`".
+ * `[GRM-17]` *(changed in 0.9.10)* *(changed in 0.9.20)* A lambda with a `:` body inside brackets
+   holds exactly one simple statement (`[LEX-6a]`). More is `E0106`, whose help is to declare a local
+   function on the preceding line (`[GRM-28]`). A lambda's `:` body is one simple statement, inside
+@@ -1233,7 +1255,9 @@
+   field of `this`, that the result points into (`-> StrView from src`, `[GRM-41]`). `guarded by`
+   after the type of a field or a `static mut` names the `Lock` that must be held to read or change
+   it outside `init` (`lines: Array[String] guarded by lock = []`; Part XI). `from`, `guarded` and
+-  `by` are keywords only in these places (`[LEX-15]`).---
++  `by` are keywords only in these places (`[LEX-15]`).
++
++---
+ 
+ # Part IV — Type System
+ 
+@@ -1958,7 +1982,7 @@
+ 
+ | Marker | Holds when |
+ |---|---|
+-| `Copy` | declared with `@derive(Copy)` on a struct or enum whose fields are all `Copy` and which has no `drop`, which gives it `Clone` too; always for scalars, `ref T`, `Span`, `StrView`, raw pointers, `extern fn`, tuples and fixed arrays of `Copy` elements; never for a class object, an `owns`, `shares`, `shares mut` or `thread_shared` value, a `weakref` or `sharedref mut` link, `ref mut T` or `MutSpan[T]` |
++| `Copy` | declared with `@derive(Copy)` on a struct or enum whose fields are all `Copy` and which has no `drop`, which gives it `Clone` too; always for scalars, unit-only enums (`[ENM-3]`), `ref T`, `Span`, `StrView`, raw pointers, `extern fn`, tuples and fixed arrays of `Copy` elements; never for a class object, an `owns`, `shares`, `shares mut` or `thread_shared` value, a `weakref` or `sharedref mut` link, `ref mut T` or `MutSpan[T]` |
+ | `Send` | inferred: every component is `Send`, so nothing reachable from the value is a one-thread owner (`shares`, `shares mut`), a `weakref T` link, a `sharedref mut` link (a view several holders on one thread may change), or bound to its thread (a lock's guard, a `Scope`, a raw pointer, a `Retained[ForeignCallback]` token (`[FFI-23]`), an object of a trampoline class under `threads=creator` (`[FFI-17d]`); the link to its instance a value made in a manager's instance holds, unless `A` is a manager any thread may call, `[TYP-46a]`); `ref T` and `Span[T]` are when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is `Send`; a class object is when its fields are, where its class is neither `open` nor `abstract`; an object held by the type of an `open` or `abstract` class another package may derive from only when the class's header promises `Send` (`implements Send`, or an interface that needs it), which every class derived from it is checked against where it is declared, and one held by the type of such a class no other package can derive from when the fields of every class its package derives from it are (`[THR-8]`); `dyn I` when `I` requires it; a `thread_shared T` value, and a `weakref thread_shared T` link, are when `T` is `ThreadShared` and `Send` (`[THR-8]`) |
+ | `ThreadShared` | inferred: several threads may hold and read one value of the type at once; every component is `ThreadShared` (the link to its instance a value made in a manager's instance holds included: a `ref A` for a manager any thread may call, else a `sharedref mut` link, `[TYP-46a]`); a class object as for `Send`, by its class's header promise (`implements ThreadShared`, or an interface that needs it) where another package may derive from it, each derived class checked where it is declared (`[THR-9]`); `dyn I` when `I` requires it; `ref mut`, `MutSpan`, `sharedref mut`, `Cell`, `UnsafeCell`, raw pointers, a `Retained[ForeignCallback]` token, a `shares` or `shares mut` value and a `weakref T` link are not; an `extern type`, an opaque C++ class or a `@ffi(handle)` type is only where the program declares it (`[FFI-8]`); a `weakref thread_shared T` link is when `T` is `Send` and `ThreadShared`, and `thread_shared fn()` is, its state being `ThreadShared` (`[THR-9]`, `[THR-1]`) |
+ | `Sized` | everything except `dyn I` and unsized foreign types |
+@@ -2101,15 +2125,15 @@
+   only as `this`, and `hash`'s hasher is a parameter that views its value, so it gets one entry),
+   and never `Ord` (`cmp` takes `other: Self`): a bound needing `Ord` on it is `E2040`, whose help is
+   `sort_by` with the kinds tested first. `copy of x` makes a value with `Clone` (`[OWN-8]`), and
+-  every `Copy` type is `Clone`; before what it cannot copy as itself (a `weakref` link, a `ref mut
+-  T` view, a `MutSpan[T]`, a struct holding one, a type with no `Clone`) it is `E2116`; a read-only
+-  view is `Copy`, so `copy of` before one gives one more view of the same place (`[OWN-8]`). Before
+-  an `owns`, `shares` or `sharedref mut` value it copies what that value holds, never the link; a
+-  struct that holds links among its fields is copied field by field, as a C++ struct holding a
+-  `shared_ptr` and a `weak_ptr` is: what it owns alone is copied itself, a `shares` or
+-  `thread_shared` field becomes one more owner of the same value, a `weakref` field one more link to
+-  the same target and a `sharedref mut` field one more holder of the same link (`struct Team:` with
+-  `captain: shares Player` and `scout: weakref Player`: `t2 = copy of t` is a new `Team` whose
++  every `Copy` type is `Clone`; before what it cannot copy as itself (a `weakref` link; a `ref mut
++  T` view, a `MutSpan[T]` or a struct holding one of the two; a type with no `Clone`) it is `E2116`;
++  a read-only view is `Copy`, so `copy of` before one gives one more view of the same place
++  (`[OWN-8]`). Before an `owns`, `shares` or `sharedref mut` value it copies what that value holds,
++  never the link; a struct that holds links among its fields is copied field by field, as a C++
++  struct holding a `shared_ptr` and a `weak_ptr` is: what it owns alone is copied itself, a `shares`
++  or `thread_shared` field becomes one more owner of the same value, a `weakref` field one more link
++  to the same target and a `sharedref mut` field one more holder of the same link (`struct Team:`
++  with `captain: shares Player` and `scout: weakref Player`: `t2 = copy of t` is a new `Team` whose
+   captain and scout are the same player).
+ 
+ | Type | Clone | Copy | Eq | Ord | Hash | Default | Display | Debug |
+@@ -2175,7 +2199,7 @@
+ * `[HASH-2]` *(changed in 0.9.9)* `std.collections.DefaultHasher` is a fixed-seed hasher: the same
+   keys hash the same way in every run and on every machine. It is a fast non-cryptographic hash, no
+   slower on integer keys than one multiply and one rotate per word (FxHash's class).
+-  `std.collections. RandomState` is a per-process randomly seeded hasher for maps keyed by untrusted
++  `std.collections.RandomState` is a per-process randomly seeded hasher for maps keyed by untrusted
+   input; a `Map[K, V, RandomState]` still iterates in insertion order (`[STD-11]`), so the seed
+   never becomes visible. `DefaultHasher`'s values are the same for one Ember version on every target
+   (its state is 64 bits on a 32-bit target too), so a table built at compile time is valid at run
+@@ -2281,7 +2305,8 @@
+   knows the type and monomorphises through it, so there is no indirection. Every `return` in the
+   body must produce the same concrete type (`E2261` otherwise). A method returns one as a function
+   does; an interface's method does not (`[GRM-31]`). It is how a function returns an iterator
+-  pipeline whose type cannot be written: A `some` list (`some (Iterator[Item = int], Send)`,
++  pipeline whose type cannot be written (the example below). A `some` list (`some (Iterator[Item =
++  int], Send)`,
+   `bound_list` in §III.2, `[TYP-22]`) names one or more interfaces and any number of the marker
+   interfaces (`Send`, `ThreadShared`, `[TYP-43]`): the hidden type implements each interface and has
+   each marker, checked at every `return` of the function (`E2040` otherwise, naming the interface or
+@@ -2339,7 +2364,9 @@
+   declares beside an imported name is `E1030` as any other. A function whose last positional
+   parameter takes a pack's values (`[TYP-47]`) takes any number of arguments; the output functions
+   `print`, `println`, `eprint`, `eprintln` (`[STD-9]`) and `format_to` (`[STD-18]`) are such
+-  functions of the library, not known to the compiler by name (verdict 117).---
++  functions of the library, not known to the compiler by name (verdict 117).
++
++---
+ 
+ # Part V — Declarations
+ 
+@@ -2402,18 +2429,27 @@
+   place it calls through; the collections walked across it and the generators still used after it
+   (`[BRW-18]`); the read-only views, `ref mut` names and positions live across it, with what each
+   points into (`[BRW-1]`, `[BRW-17]`); the names opened from links live across it, with their class
+-  families (`[RC-5]`); the parameters and `this` used after it (`[BRW-21]`); and the locks held at
+-  it (`[THR-19]`). A package that adds an override, an implementation or a stored function value
+-  checks it, at its declaration or at the storing line, against every recorded line it may be called
+-  from, with the chain named: a body whose summary changes what such a line walks is `E3020`
++  families (`[RC-5]`); the parameters and `this` used after it (`[BRW-21]`); the locks held at it
++  (`[THR-19]`); and, for its object and each argument, which of the others owns it at that line by
++  the package's own stores, or will by a later line of the function (`[WK-7]`), and whether it is
++  reached through a `thread_shared` value, a `static` or another place every thread may reach
++  (`[OWN-13]`, `[THR-2]`). A package that adds an override, an implementation or a stored function
++  value checks it, at its declaration or at the storing line, against every recorded line it may be
++  called from, with the chain named: a body whose summary changes what such a line walks is `E3020`
+   ("`Door.on_update` clears `WORLD.scripts` (line 9), which `Script.run_all` walks while it calls
+   `on_update` (its line 4); clear after the walk: give `run_all`'s caller the list of doors to
+   remove"), one that changes what it holds or has lent is `E3022`, one that may end what a name
+-  opened from a link reads `E3060`, and one that takes a lock held there `E7018`, each at the line
+-  that adds the member ("`b.on(...)` (line 7) stores a function that pushes to `b2.log`, and
+-  `Bus.flush` (`bus`, line 10) walks `this.log` while it runs the handlers (its line 12); push to a
+-  list of your own in the handler and move it into the log after `flush`"). A member no recorded
+-  line refuses is accepted; nothing runs for it while the program runs.
++  opened from a link reads `E3060`, one that takes a lock held there `E7018`, one that stores an
++  owner of its object or of one of its parameters into another that the line's record says owns it
++  `E3032` ("`Keeper.attach` keeps an owner of the host it is given (line 4), and `Host.start`
++  (`lib`, line 12) gives each plugin in `host.plugins` the host that owns it, so the two would own
++  each other; keep a link instead: write `host: weakref Host = None` (line 2) and `this.host =
++  weakref host` in place of line 4"), and one that makes a `weakref T` link of a parameter the
++  record says a `thread_shared` value reaches `E7015`, each at the line that adds the member
++  ("`b.on(...)` (line 7) stores a function that pushes to `b2.log`, and `Bus.flush` (`bus`, line 10)
++  walks `this.log` while it runs the handlers (its line 12); push to a list of your own in the
++  handler and move it into the log after `flush`"). A member no recorded line refuses is accepted;
++  nothing runs for it while the program runs.
+ * `[MOD-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* **The prelude.** Every module implicitly
+   imports these names from `std`, and this list is the only definition of the prelude:
+ 
+@@ -2750,9 +2786,9 @@
+   no word. Before any `init` body runs, every field default of the class and of its bases is
+   evaluated and stored. Every field without a default MUST then be set on every path before `this`
+   is used as a whole (`E2100`): `this` is used as a whole when it is passed, stored, returned or
+-  captured, when a link or an owner of it is made (`weakref this`, `shares this`), and by a call of
+-  a method whose body lets `this` out in any of those ways, which the compiler works out from that
+-  body, and for a `virtual` method from every override's body the program has (`[DSP-5]`,
++  captured, when a link or an owner of it is made (`weakref this`, `thread_shared this`), and by a
++  call of a method whose body lets `this` out in any of those ways, which the compiler works out
++  from that body, and for a `virtual` method from every override's body the program has (`[DSP-5]`,
+   `[EFF-24]`), since a base `init` cannot know which kind it builds. In a class that is `pub` and
+   `open` or `abstract`, an override of a `virtual` method may be any dependant's, which this package
+   never sees (`[BLD-16]`): its `init` calls a `virtual` method only after every field is set, and a
+@@ -2832,9 +2868,9 @@
+   changes its object through `this` with no word: `mut this` is `E0113` and `mut self` `E1010`, each
+   with the help `fn reset():`.
+ * `[CLS-7a]` *(changed in 0.9.15)* Inside `drop`, `this` MUST NOT be stored anywhere that outlives
+-  the call, and no owner of it is made (`shares this`, `thread_shared this`): the object has already
+-  ended (`E3016`, `[OBJ-5]`). A `drop`'s first line is `fn drop():`; it changes its object as a
+-  given (`[DRP-1]`).
++  the call, and no owner of it is made (`thread_shared this`; `shares this` is refused in every
++  method, `[RC-1]`): the object has already ended (`E3016`, `[OBJ-5]`). A `drop`'s first line is `fn
++  drop():`; it changes its object as a given (`[DRP-1]`).
+ * `[CLS-9]` *(changed in 0.9.10)* *(changed in 0.9.15)* A `let` field is set only in `init`
+   (`E2104`).
+ * `[CLS-9a]` *(changed in 0.9.15)* *(changed in 0.9.20)* After `init`, nothing is changed through a
+@@ -3098,6 +3134,7 @@
+ 
+ *Reserved* (recognised and rejected with `E0104` naming the version): `@nopanic` (without
+ `(explicit)`), `@allocator(Name)`, `@gpu`.
++
+ ---
+ 
+ # Part VI — Expressions and Statements
+@@ -3686,15 +3723,23 @@
+   profile; `debug_assert(…)` is evaluated only in `debug`, so its argument is checked as a read in
+   every profile: a `ref mut` argument inside it is `E3027` and a hand-over inside it `E3013`
+   ("`debug_assert` only reads its argument, since a `release` build never runs it; remove `owns`:
+-  `debug_assert(check(s))`"), and a call in it of a function with effects other than `Panic` is
+-  `W2016`.
++  `debug_assert(check(s))`"), a call in it of a function that changes or ends anything that
++  outlives the argument, by its summary (`[EFF-24]`: a module variable, a value reached through a
++  link or a captured name, a value changed by its own operations as an `Atomic` or a `guarded by`
++  field is), is `E3023` ("`debug_assert` only reads, since a `release` build never runs it, and
++  `bump()` changes `COUNT` (its line 3); call it on a line of its own and assert what it gave:
++  write `ok = bump()` above this line and `debug_assert(ok)`"), and a call in it of a function
++  with an effect other than `Panic` that changes nothing (it prints, or takes a lock and lets it
++  go) is `W2016`.
+ * `panic(msg)`, `todo()`, `unreachable()` have type `Never`.
+ * `[PAN-1]` A panic prints `panic at <file>:<line>:<col>: <message>` (and a backtrace outside
+   `release`) to standard error and calls `abort()`. There is no unwinding in this version; `defer`
+   blocks and destructors do not run on panic.
+ * `[PAN-2]` Formatting a panic message allocates only for an f-string; `panic("literal")` and
+   `panic(some_str)` are `@noalloc`.
+-* `[PAN-3]` A panic inside a `drop` that runs while the process is already panicking aborts at once.---
++* `[PAN-3]` A panic inside a `drop` that runs while the process is already panicking aborts at once.
++
++---
+ 
+ # Part VII — Ownership and Views
+ 
+@@ -3718,7 +3763,8 @@
+   of` copies the thing itself, never the link it is written before (`[OWN-8]`).
+ - **`Copy` type**: a type whose `=` makes such a copy bit for bit: the numbers, `bool`, `char`, `ref
+   T`, `Span[T]`, `StrView`, raw pointers, `extern "C" fn` values, tuples and fixed arrays of `Copy`
+-  elements, and structs and enums marked `@derive(Copy)` (all of whose fields are `Copy`). Class
++  elements, structs and enums marked `@derive(Copy)` (all of whose fields are `Copy`), and
++  unit-only enums (`[ENM-3]`). Class
+   objects, `shares` values, `weakref` and `sharedref mut` links, `ref mut` views and `MutSpan`s are
+   not `Copy`.
+ - **place**: where a value lives: a local, a field, a list element, an enum variant's payload.
+@@ -3805,23 +3851,24 @@
+   of a, b]` keeps `a`; a `Copy` value is copied; a part, or a value reached through a name that does
+   not own it, is `E3013` as elsewhere, `[OWN-11]`). A value `=` copies (a number, a `bool`, a
+   `char`, a `StrView`, a `ref T`, a `Span[T]`, a raw pointer, a tuple or fixed array of these, a
+-  struct or enum marked `@derive(Copy)`) is copied with `=` too, so `b = owns n` is how `=` hands
+-  one over: `n` ends there, and a later use is `E3040` (`f = owns flag` ends `flag`). `owns` is not
+-  written before a name whose place already hands the value over, after `return`, nor before `fn`
+-  written on its own, nor before a value made on the line for a place that is not an `owns T`
+-  (`[GRM-15]`) (`E0109`: "`e.mesh = m` already hands `m` over; remove `owns`"; "`b = a` already
+-  hands `a` over; remove `owns`"; "`return` always hands the value over; remove `owns`: `return
+-  xs`"; "`owns fn` does not say what the function takes or copies; name it on each captured name:
+-  `fn() owns report:`"); before a function written as an argument for an `owns` parameter it is the
+-  call's word (`xs.iter().for_each(owns fn(x: int): println(x))`).
++  struct or enum marked `@derive(Copy)`, a unit-only enum) is copied with `=` too, so `b = owns n`
++  is how `=` hands one over: `n` ends there, and a later use is `E3040` (`f = owns flag` ends
++  `flag`). `owns` is not written before a name whose place already hands the value over, after
++  `return`, nor before `fn` written on its own, nor before a value made on the line for a place that
++  is not an `owns T` (`[GRM-15]`) (`E0109`: "`e.mesh = m` already hands `m` over; remove `owns`";
++  "`b = a` already hands `a` over; remove `owns`"; "`return` always hands the value over; remove
++  `owns`: `return xs`"; "`owns fn` does not say what the function takes or copies; name it on each
++  captured name: `fn() owns report:`"); before a function written as an argument for an `owns`
++  parameter it is the call's word (`xs.iter().for_each(owns fn(x: int): println(x))`).
+ * `[OWN-10]` *(new in 0.9.15)* **`owns` on the line that makes a value for a place that owns it
+   alone.** An `owns` field, an `Option[owns T]` and a list of `owns` values each hold their value in
+   a block of its own, and the line that makes a value for such a place says `owns`, at first and
+   later: `e = Entity(mesh=owns Mesh(points=[0.0]))`; `boss = Enemy(hp=500, mesh=owns
+   Mesh(points=[0.0, 1.0]) using current)` (`[ALC-1]`); `t = Tree(value=1, left=Some(owns
+   Tree(value=2)))` for `left: Option[owns Tree]`; `r.pools.push(owns IntPool(items=[1, 2]))` for
+-  `pools: Array[owns dyn Pool]`; `e.mesh = owns Mesh(points=[1.0, 2.0])`, which frees the old mesh.
+-  The line without it is `E2123` ("`mesh` owns its mesh; say so where it is made: `mesh=owns
++  `pools: Array[owns dyn Pool]`, where the one `owns` says both the block and the hand-over to
++  `push` (`[GRM-15]`); `e.mesh = owns Mesh(points=[1.0, 2.0])`, which frees the old mesh. The line
++  without it is `E2123` ("`mesh` owns its mesh; say so where it is made: `mesh=owns
+   Mesh(points=[0.0, 1.0]) using current`"; "`left` holds its tree in a block of its own; say so
+   where it is made: `left=Some(owns Tree(value=2))`"). `owns` is also written where the default is a
+   view, before a `for` loop's or a `match`'s source (`for x in owns xs:`, `match owns e:`), which
+@@ -3856,77 +3903,87 @@
+   (`[OWN-8]`); `owns x` (`[OWN-9]`); `shares x`, one more owner, on this thread, that reads it, and
+   `shares mut x`, one more owner that may also change it, each written only before a new value, a
+   local or an owner (`[RC-1]`, `E2122`); `thread_shared x`, one more owner on any thread, written
+-  only before a new value (`names = thread_shared Names()`) or a value already `thread_shared`
+-  (`E7017` otherwise: "`names` is `share_and_keep`'s own object, which it may change; to share it
+-  between threads, create it shared: `names = thread_shared Names()`"); `weakref x`, a link that
+-  does not keep it alive (`[WK-11]`), whose type is read from the words on the path to `x`: `weakref
+-  thread_shared T` when the value `x` names is a `thread_shared T` (an owner `log: thread_shared
+-  Log`, a parameter or a capture of that type, a field of that type crossed last on the path, a name
+-  opened from a `weakref thread_shared Log`), and `weakref T` otherwise (a class object with one
+-  owner, a `shares` or `shares mut` owner, a `weakref T` link, a name opened from one, a view of any
+-  of these), so that `w = weakref log` is a `weakref thread_shared Log` and `cam.target = weakref p`
+-  a `weakref Player`, with no second word. **A `weakref T` link is made only to a value that no
+-  `thread_shared` value reaches**, so that only this thread can end it and count its links: a value
+-  reached through a `thread_shared` value with no `thread_shared` word on the value itself takes no
+-  `weakref T` (`E7015`: "`tree.items[0]` is reached through `tree`, which threads share, so another
+-  thread may end the item, and `weakref tree.items[0]` would count its links on this thread alone;
+-  share the items between threads: write `items: Array[thread_shared Item]` in `Tree` (line 3),
+-  after which `weakref tree.items[0]` is a `weakref thread_shared Item`"). In the package the path
+-  says it (for a view, what it points into, `[LT-1]`); across a call it is the callee's summary
+-  (`[BLD-14]` item 9): a function that makes a `weakref T` link to what a parameter names, `this`
+-  included, directly or through a call, records it, and a call that gives that parameter a value
+-  reached through a `thread_shared` value is `E7015` at the call, naming the chain ("`f` makes a
+-  link to the item `n` names (`w = weakref n`, its line 2), counted on one thread, and
+-  `tree.items[0]` is reached through `tree`, which threads share; share the items between threads:
+-  write `items: Array[thread_shared Item]` in `Tree` (line 3) and `fn f(n: thread_shared Item):`").
+-  Inside a method `this` carries no word, so its link says it: `weakref this`, and a `weakref` of
+-  anything reached through `this` with no `thread_shared` word on the way (`weakref this.root`), is
+-  a `weakref` link to an object on one thread and says that every object of the class is on one
+-  thread; `weakref thread_shared this`, the one place `weakref thread_shared` is written before a
+-  value, is a `weakref thread_shared C` and says, as `thread_shared this` does, that every object of
+-  the class is `thread_shared`. **A class's kind is read from its own methods** and recorded in its
+-  interface (`[EFF-4]`, `[BLD-14]` item 8): one-thread when a method of it makes a one-thread owner
+-  or link of `this` (`weakref this`, `weakref this.f` with no `thread_shared` word on the way,
+-  `sharedref mut this`, and `shares this` or `shares mut this` where `[RC-1]` allows them);
+-  `thread_shared` when a method of it writes `thread_shared this` or `weakref thread_shared this`;
+-  neither otherwise, and such a class serves both kinds (`Log`, Annex A). A method pins the class
+-  that declares it and every class derived from it, whose objects run it; a class pinned both ways,
+-  by its own methods or with a base's, or pinned one-thread while it or a base promises `Send`
+-  (`[THR-8]`), is `E7015` at the one-thread line ("`Node.add_child` (line 9) links its nodes on one
+-  thread (`weakref this`), and `Node.share` (line 12) shares them between threads (`thread_shared
+-  this`); a class's objects are one or the other: for nodes shared between threads write
+-  `child.parent = weakref thread_shared this` on line 9, for one-thread nodes remove `share`"). A
+-  line that makes an object of the other kind is refused there: `thread_shared Node()` for a
+-  one-thread class is `E7015` ("`Node` keeps links to its nodes on one thread (`add_child`, line 7:
+-  `child.parent = weakref this`), and a `thread_shared Node` may be reached from any thread; for
+-  nodes shared between threads write `parent: weakref thread_shared Node = None` (line 4) and
+-  `child.parent = weakref thread_shared this` (line 7), and make every node `thread_shared
+-  Node()`"), and `Node()` for a `thread_shared` class is `E7017` ("every `Node` is shared between
+-  threads (`add_child`, line 9: `child.parent = weakref thread_shared this`), and line 14 makes one
+-  with one owner; write `root = thread_shared Node()`"). `weakref thread_shared x` before any value
+-  but `this` is `E0109` where `x`'s type already says `thread_shared` ("`log` is a `thread_shared
+-  Log`, so a link to it is a `weakref thread_shared Log` without the word; write `w = weakref log`")
+-  and `E7017` where it does not ("`names` was not created `thread_shared`, so no link to a shared
+-  value can name it; write `w = weakref names`, or create it shared: `names = thread_shared
+-  Names()`"). `weakref` before a new value (`weakref Player()`) is `E2119` ("the player would end at
+-  the end of the line and the link would find nothing; keep it in a name first: write `p = Player()`
+-  above, then `cam.target = weakref p`"); `sharedref mut x`, a changeable link other holders may
+-  share (`[LT-46]`); and `ref x` and `ref mut x`, views (`[BRW-12]`). An owner made from another may
+-  do no more than it: `shares mut x` needs `x` to be a name that may change the value (`E3023`: "`g2
+-  = shares mut game` would change the `Game` through `game`, which only reads it (`game = shares
+-  Game()`, line 1), and an owner made from it only reads too; write `g2 = shares game`, or, for two
+-  owners that both change the game, write `game = shares mut Game()` instead of line 1"). A plain
+-  parameter of a `shares mut` type only reads the caller's value (`[FN-1]`), so an owner made from
+-  it only reads too; a function that hands on an owner that may change takes one: `fn setup(owns
+-  game: shares mut Game)`, called `setup(shares mut game)`. In a lambda's capture list each word
+-  means what it means before a value (`[CLO-2]`). In a list of names declared without types of their
+-  own (a capture list, a loop's names, a pattern's names, a lambda's parameters written without
+-  types) each word belongs to the one name after it, and a name with no word may not follow a name
+-  with a word, so that no word can be read as covering the next name (`E0116`: "`ref mut` here
+-  belongs to `pos` only; say what `vel` is: `for ref mut pos, ref vel in q:`, or `ref mut vel` to
+-  change it too"). A `weakref x` whose target was made `using` an instance (its type says `using A`,
+-  `[TYP-46]`) is a `weakref T using A`, so the kind of manager travels with the link, and a
+-  `weakref` of a `Global` value is a plain `weakref T`.
++  only before a new value (`names = thread_shared Names()`), a value already `thread_shared` or
++  `this` in a method of a class it pins (below) (`E7017` otherwise: "`names` is `share_and_keep`'s
++  own object, which it may change; to share it between threads, create it shared: `names =
++  thread_shared Names()`"); `weakref x`, a link that does not keep it alive (`[WK-11]`), whose type
++  is read from the words on the path to `x`: `weakref thread_shared T` when the value `x` names is a
++  `thread_shared T` (an owner `log: thread_shared Log`, a parameter or a capture of that type, a
++  field of that type crossed last on the path, a name opened from a `weakref thread_shared Log`),
++  and `weakref T` otherwise (a class object with one owner, a `shares` or `shares mut` owner, a
++  `weakref T` link, a name opened from one, a view of any of these), so that `w = weakref log` is a
++  `weakref thread_shared Log` and `cam.target = weakref p` a `weakref Player`, with no second word.
++  **A `weakref T` link is made only to a value that no `thread_shared` value reaches**, so that only
++  this thread can end it and count its links: a value reached through a `thread_shared` value with
++  no `thread_shared` word on the value itself takes no `weakref T` (`E7015`: "`tree.items[0]` is
++  reached through `tree`, which threads share, so another thread may end the item, and `weakref
++  tree.items[0]` would count its links on this thread alone; share the items between threads: write
++  `items: Array[thread_shared Item]` in `Tree` (line 3), after which `weakref tree.items[0]` is a
++  `weakref thread_shared Item`"). In the package the path says it (for a view, what it points into,
++  `[LT-1]`); across a call it is the callee's summary (`[BLD-14]` item 9): a function that makes a
++  `weakref T` link to what a parameter names, `this` included, directly or through a call, records
++  it, and a call that gives that parameter a value reached through a `thread_shared` value is
++  `E7015` at the call, naming the chain ("`f` makes a link to the item `n` names (`w = weakref n`,
++  its line 2), counted on one thread, and `tree.items[0]` is reached through `tree`, which threads
++  share; share the items between threads: write `items: Array[thread_shared Item]` in `Tree` (line
++  3) and `fn f(n: thread_shared Item):`"). A call through a method another package may implement or
++  override, or a function-typed place it may fill (`[EFF-2a]`), is judged by the two routes of
++  `[WK-7]`: for a kind the caller gives through a `dyn`, interface or base-class parameter, the call
++  applies that kind's own record of the links it makes (item 9) as the function's (`[BLD-14]` item
++  11: a library's `visit(ref mut v: dyn Visitor, n: Item)` whose body is `v.see(n)`, given a
++  `Keeper` whose `see` does `this.last = weakref n` and `tree.items[0]` of a `thread_shared` tree,
++  is `E7015` at that call, naming `Keeper.see`'s line); for a kind a place holds, the line's record
++  names each argument reached through a `thread_shared` value, and a member that makes a `weakref T`
++  link of that parameter is `E7015` at the line that adds it (`[MOD-9a]`); a kind the judging
++  package cannot see counts as making the link. Inside a method `this` carries no word, so its link
++  says it: `weakref this`, and a `weakref` of anything reached through `this` with no
++  `thread_shared` word on the way (`weakref this.root`), is a `weakref` link to an object on one
++  thread and says that every object of the class is on one thread; `weakref thread_shared this`, the
++  one place `weakref thread_shared` is written before a value, is a `weakref thread_shared C` and
++  says, as `thread_shared this` does, that every object of the class is `thread_shared`. **A class's
++  kind is read from its own methods** and recorded in its interface (`[EFF-4]`, `[BLD-14]` item 8):
++  one-thread when a method of it makes a one-thread link of `this` (`weakref this`, `weakref this.f`
++  with no `thread_shared` word on the way, `sharedref mut this`; an owner of `this` on one thread,
++  `shares this` or `shares mut this`, is `E2122` in every method, `[RC-1]`); `thread_shared` when a
++  method of it writes `thread_shared this` or `weakref thread_shared this`; neither otherwise, and
++  such a class serves both kinds (`Log`, Annex A). A method pins the class that declares it and
++  every class derived from it, whose objects run it; a class pinned both ways, by its own methods or
++  with a base's, or pinned one-thread while it or a base promises `Send` (`[THR-8]`), is `E7015` at
++  the one-thread line ("`Node.add_child` (line 9) links its nodes on one thread (`weakref this`),
++  and `Node.share` (line 12) shares them between threads (`thread_shared this`); a class's objects
++  are one or the other: for nodes shared between threads write `child.parent = weakref thread_shared
++  this` on line 9, for one-thread nodes remove `share`"). A line that makes an object of the other
++  kind is refused there: `thread_shared Node()` for a one-thread class is `E7015` ("`Node` keeps
++  links to its nodes on one thread (`add_child`, line 7: `child.parent = weakref this`), and a
++  `thread_shared Node` may be reached from any thread; for nodes shared between threads write
++  `parent: weakref thread_shared Node = None` (line 4) and `child.parent = weakref thread_shared
++  this` (line 7), and make every node `thread_shared Node()`"), and `Node()` for a `thread_shared`
++  class is `E7017` ("every `Node` is shared between threads (`add_child`, line 9: `child.parent =
++  weakref thread_shared this`), and line 14 makes one with one owner; write `root = thread_shared
++  Node()`"). `weakref thread_shared x` before any value but `this` is `E0109` where `x`'s type
++  already says `thread_shared` ("`log` is a `thread_shared Log`, so a link to it is a `weakref
++  thread_shared Log` without the word; write `w = weakref log`") and `E7017` where it does not
++  ("`names` was not created `thread_shared`, so no link to a shared value can name it; write `w =
++  weakref names`, or create it shared: `names = thread_shared Names()`"). `weakref` before a new
++  value (`weakref Player()`) is `E2119` ("the player would end at the end of the line and the link
++  would find nothing; keep it in a name first: write `p = Player()` above, then `cam.target =
++  weakref p`"); `sharedref mut x`, a changeable link other holders may share (`[LT-46]`); and `ref
++  x` and `ref mut x`, views (`[BRW-12]`). An owner made from another may do no more than it: `shares
++  mut x` needs `x` to be a name that may change the value (`E3023`: "`g2 = shares mut game` would
++  change the `Game` through `game`, which only reads it (`game = shares Game()`, line 1), and an
++  owner made from it only reads too; write `g2 = shares game`, or, for two owners that both change
++  the game, write `game = shares mut Game()` instead of line 1"). A plain parameter of a `shares
++  mut` type only reads the caller's value (`[FN-1]`), so an owner made from it only reads too; a
++  function that hands on an owner that may change takes one: `fn setup(owns game: shares mut Game)`,
++  called `setup(shares mut game)`. In a lambda's capture list each word means what it means before a
++  value (`[CLO-2]`). In a list of names declared without types of their own (a capture list, a
++  loop's names, a pattern's names, a lambda's parameters written without types) each word belongs to
++  the one name after it, and a name with no word may not follow a name with a word, so that no word
++  can be read as covering the next name (`E0116`: "`ref mut` here belongs to `pos` only; say what
++  `vel` is: `for ref mut pos, ref vel in q:`, or `ref mut vel` to change it too"). A `weakref x`
++  whose target was made `using` an instance (its type says `using A`, `[TYP-46]`) is a `weakref T
++  using A`, so the kind of manager travels with the link, and a `weakref` of a `Global` value is a
++  plain `weakref T`.
+ 
+ ## VII.3 Copy and `copy of`
+ 
+@@ -4248,7 +4305,12 @@
+   or name the enemy again after it: `boss = ref mut enemies[0]`"), a call that reads elements and
+   removes included. Growing the list is not a use of the element. A list reached through a link (a
+   local or field holding a `shares`, `shares mut` or `sharedref mut` link) gives addresses,
+-  `[BRW-17]`.
++  `[BRW-17]`. A list here is an `Array[T]`, whose `xs[i]` and `xs.get(i)` are its own built-in
++  indexing (`[STD-15]`, `[STD-17]`), and an `SoA[T]`'s element proxy is a position likewise
++  (`[SOA-6]`); a name for an element of any other container (a `Deque`, a `SmallArray`, a `Map`'s
++  value, a type of the program's own that implements `Index`) is made by a call of that container's
++  `index`, a view a call gives, and is an address (`[BRW-17]`), which every reshape of the container
++  ends, adding to it included.
+ * `[BRW-17]` *(new in 0.9.15)* *(changed in 0.9.20)* **Addresses.** Every other view (a kept view; a
+   view reached through a link; a view into a value's own contents: a `String`'s text, an `Array`
+   field's elements, an enum's payload; every view a call gives, `[LT-1]`) ends at any change that
+@@ -4484,7 +4546,7 @@
+   hand-over ("`st` was made in `level` (line 7), which ends when `start` returns, and the thread
+   started on line 8 may outlive `start`; make it in the built-in manager, `st = thread_shared
+   Stats()`, in a `static` manager whose `allocate` reads it (a pool that locks inside), or run the
+-  thread as a task of a scope that ends before `level`: `with thread.scope() as scope:` and
++  thread as a task of a scope that ends before `level`: `with scope = thread.scope():` and
+   `scope.spawn(owns fn() owns st: ...)` in place of line 8"). A value whose manager may have several
+   instances keeps its instance's address, one word, so that its growth and its end go back to the
+   instance it came from; that address is a kept `sharedref mut` link to the instance (`[LT-46]`) for
+@@ -4867,6 +4929,7 @@
+ says that `ps` may be changed; `take(owns ps)` hands `ps` over, and using `ps` after it is `E3040`,
+ labelled at the hand-over. Nothing in this program names a lifetime, and nothing in it is checked while
+ it runs.
++
+ ---
+ 
+ # Part VIII — Classes, Shared Owners and Links
+@@ -5004,12 +5067,13 @@
+   counted away from the line that makes it and asks no thread which made it (`[RC-4]` point 4).
+ * `[OBJ-5]` *(changed in 0.9.15)* *(changed in 0.9.20)* **An ended object is never brought back.**
+   Inside a `drop`, and in everything it calls (by their summaries, `[EFF-1]`), no owner is made of
+-  the object being ended: an owner made from `this` (`shares this`, `shares mut this`,
+-  `thread_shared this`) is `E3016`, as storing `this` anywhere that outlives the call is
+-  (`[CLS-7a]`): "`drop` ends this `Player`; an owner made from it would point at a freed object;
+-  keep a copy of what you need: `NAMES.push(owns copy of this.name)`". `weakref this` and `weakref
+-  thread_shared this` stay allowed (`[OWN-13]`): the weak count keeps the block, and opening the
+-  link finds the object ended (`[WK-3]`). Nothing is checked for it while the program runs.
++  the object being ended: an owner made from `this` (`thread_shared this`; `shares this` and `shares
++  mut this` are refused in every method, `[RC-1]`) is `E3016`, as storing `this` anywhere that
++  outlives the call is (`[CLS-7a]`): "`drop` ends this `Player`; an owner made from it would point
++  at a freed object; keep a copy of what you need: `NAMES.push(owns copy of this.name)`". `weakref
++  this` and `weakref thread_shared this` stay allowed (`[OWN-13]`): the weak count keeps the block,
++  and opening the link finds the object ended (`[WK-3]`). Nothing is checked for it while the
++  program runs.
+ 
+ ## VIII.2 Owners and counts
+ 
+@@ -5032,23 +5096,27 @@
+   that is already a `shares` or `shares mut` owner (for an `owns` parameter, which this function
+   owns from its first line, the block is made at the function's entry, before any view of it is
+   made, so that the parameter's type is the shared type throughout the function and the caller's
+-  line is unchanged); `thread_shared x` is written only before a new value or a name that is already
+-  a `thread_shared` owner (`E7017`, `[OWN-13]`, `[THR-1]`), since its header and its making thread's
+-  record are written where the value is made, and `shares` or `shares mut` written before a
+-  `thread_shared` owner is `E7017` too, since its owners are counted for several threads and a plain
+-  count would race them ("`p` is `thread_shared` (made on line 10), so its owners are counted for
+-  several threads; for one more owner write `q = thread_shared p`, and for a name that only reads it
+-  `q = ref p`"). A place that has one owner and is not a local of this function, a list element
+-  (`shares mut players[1]` of an `Array[Player]`), a field (`shares this.items`) or a plain
+-  parameter (`fn keep(p: Player): LIST.push(shares p)`), is `E2122`: "`players[1]` has one owner,
+-  the list `players`, and no second owner can be made of one element; to let other names own the
+-  players, make the list share them from the start: write `players = [shares mut Player(), shares
+-  mut Player()]` in place of line 15". So a value in a one-owner place is ended by that place at
+-  once, with no count to test. **A count is checked before it rolls over:** before each +1 of an
+-  owner count it is compared with its maximum, and at the maximum the program stops, in every
+-  profile: "too many owners of a `Player` (4,294,967,295)" (`[RT-7]`), as Rust's `Rc` and `Arc` stop
+-  (a `thread_shared` count stops at the lower limit of `[RC-4]`). That is one compare per added
+-  owner and no extra memory.
++  line is unchanged); `thread_shared x` is written only before a new value, a name that is already a
++  `thread_shared` owner, or `this` in a method, which says that every object of the class is
++  `thread_shared`, so that `this` is one (`[OWN-13]`) (`E7017` anywhere else, `[THR-1]`), since its
++  header and its making thread's record are written where the value is made, and `shares` or `shares
++  mut` written before a `thread_shared` owner is `E7017` too, since its owners are counted for
++  several threads and a plain count would race them ("`p` is `thread_shared` (made on line 10), so
++  its owners are counted for several threads; for one more owner write `q = thread_shared p`, and
++  for a name that only reads it `q = ref p`"). A place that has one owner and is not a local of this
++  function, a list element (`shares mut players[1]` of an `Array[Player]`), a field (`shares
++  this.items`), a plain parameter (`fn keep(p: Player): LIST.push(shares p)`) or `this` in a method
++  (`shares this`, `shares mut this`: the object may have one owner, which ends it with no count to
++  test; "no second owner of a `Node` is made from inside its own method, since this `Node` may have
++  one owner; let the caller give one: write `static fn enrol(owns me: shares mut Node):` and call it
++  `Node.enrol(shares mut n)`"), is `E2122`: "`players[1]` has one owner, the list `players`, and no
++  second owner can be made of one element; to let other names own the players, make the list share
++  them from the start: write `players = [shares mut Player(), shares mut Player()]` in place of line
++  15". So a value in a one-owner place is ended by that place at once, with no count to test. **A
++  count is checked before it rolls over:** before each +1 of an owner count it is compared with its
++  maximum, and at the maximum the program stops, in every profile: "too many owners of a `Player`
++  (4,294,967,295)" (`[RT-7]`), as Rust's `Rc` and `Arc` stop (a `thread_shared` count stops at the
++  lower limit of `[RC-4]`). That is one compare per added owner and no extra memory.
+ * `[RC-7]` *(new in 0.9.15)* **Changing a shared value.** A value made shared is changed by its
+   owners that may change it: an owner made with `shares mut`, and the name it was first shared from,
+   which keeps what it could do. After `other = shares mut items` (or `other = shares items`),
+@@ -5590,7 +5658,35 @@
+   the dependant's call (`h.add(owns b)` for a `Host.add` that pushes its parameter into
+   `this.plugins`, with `b.host` a `shares mut lib.Host`: `E3032`, "this closes a loop of owners (`h`
+   → `b` → `h`): `add` stores `b` in `h.plugins` (`lib`, its line 7), and `b.host` owns `h`; make the
+-  link back `weakref`: `host: weakref lib.Host`").
++  link back `weakref`: `host: weakref lib.Host`"). **A function another package adds.** Where
++  another package may put a function behind a call (`[EFF-2a]`: a method of a `pub` interface called
++  through `dyn`, a `virtual` method of a `pub` class, a function-typed place another package can
++  fill), what that function stores of what the call gives it is judged where the function is seen,
++  by one of two routes, so that no loop is closed by a member no judging package saw (`[BCK-8]`). *A
++  kind the caller gives:* for a call through a `dyn`, interface or base-class parameter of a
++  function (`this` of an `open` or `abstract` class's method included), the function's summary
++  records the call with which of the function's own parameters, or what holds them, its object and
++  each of its arguments are (`[BLD-14]` item 11); a call of the function applies, for each kind it
++  gives, the called method's own record of the owners it stores (item 10) as the function's, and is
++  judged with them. With `pub fn install(owns host: shares mut Host, owns p: owns dyn Plugin):` in
++  `lib`, whose body is `p.attach(host)` and then `host.plugins.push(owns p)`, and a program's
++  `struct MyPlugin implements Plugin:` whose `fn attach(host: shares mut Host):` is `this.host =
++  Some(shares host)`, the call `install(shares mut h, owns MyPlugin())` is `E3032` ("this closes a
++  loop of owners (`h` → the plugin → `h`): `install` gives `h` to `MyPlugin.attach` (`lib`, its line
++  7), which keeps an owner of it (line 4), and then stores the plugin in `h.plugins` (its line 8);
++  keep a link in the plugin instead: write `host: weakref Host = None` in `MyPlugin` (line 2) and
++  `this.host = weakref host` in place of line 4"), and the same call with a plugin whose `attach`
++  keeps nothing compiles. *A kind a place holds:* for a call through such a method or place whose
++  object the package holds (a field, an element, a `static`), the line's record (`[MOD-9a]`) names,
++  for its object and each argument an owner can be made of (a `shares`, `shares mut` or
++  `thread_shared` owner, or a value holding one), which of the others owns it there by the package's
++  own stores, or will by a later line of the function; a package that adds an implementation, an
++  override or a stored function whose record stores an owner of one of them into another that the
++  line's record says owns it is refused at the line that adds it (`E3032`, naming the library's line
++  and its own store). A kind the judging package cannot see (a `dyn` value another package made and
++  gave it) counts as storing an owner of every argument an owner can be made of: where that closes a
++  loop the call is `E3032`, whose help is to make the value where its type is seen, or the `weakref`
++  link. Nothing runs for any of it while the program runs.
+ * `[WK-15]` *(new in 0.9.9)* *(changed in 0.9.15)* `ember run` and `ember test` in the `debug`
+   profile report the objects still alive when the program exits, by default; `--no-leak-check` turns
+   the report off. In Safe Ember nothing leaks through a loop of owners (`[WK-6]`) and nothing ends
+@@ -5618,7 +5714,9 @@
+   `using` has its making thread read from its chunk (`[OBJ-1]`), which a frame has not, and one made
+   `using` an instance stays in the block that instance gave, since the instance's `allocate` and
+   `deallocate` are the program's own work (`[RC-4]` point 4). This cannot be observed: how many
+-  times an embedding host's allocation functions (`[FFI-27]`) are called is not behaviour.---
++  times an embedding host's allocation functions (`[FFI-27]`) are called is not behaviour.
++
++---
+ 
+ # Part IX — Memory Facilities
+ 
+@@ -5886,8 +5984,8 @@
+   methods are compiled for that kind (its summaries recorded per kind, `[EFF-4]`), inside them
+   `this` carries the kind, and a field of the class written with the class's own type (`parent:
+   weakref Node`, `children: Array[Node]`) takes the kind of the object that holds it, so `weakref
+-  this`, `shares this` and `Node() using current` in a method all name one kind, read from `this`; a
+-  field written `using B` names `B` whatever kind the object is.
++  this`, `thread_shared this` and `Node() using current` in a method all name one kind, read from
++  `this`; a field written `using B` names `B` whatever kind the object is.
+ * `[ALC-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* `std.mem` declares `pub unsafe interface
+   Allocator` with `fn allocate(layout: Layout) -> *mut u8` (null on failure), `unsafe fn
+   deallocate(p: *mut u8, layout: Layout)` and `unsafe fn reallocate(p: *mut u8, old: Layout,
+@@ -6269,7 +6367,7 @@
+   which case no site is recorded and no comparison is emitted.
+ * `[DSJ-11]` *(new in 0.9.20)* **Views known apart.** Two views are known apart, with no compare,
+   exactly when the compiler proves them apart as `[BRW-11]` and §IX.8 say: the two results of one
+-  `split_at`, `split_at_mut`, `get_pair_mut` or `chunks_mut` call; two columns of one SoA; two
++  `split_at`, `get_pair_mut` or `chunks_mut` call; two columns of one SoA; two
+   `alloc*` results of one arena (`[ARN-1]`); two ranges of one list whose bounds are constants, or
+   `j` from `i + 1..`, that do not overlap; views of two different whole variables neither reached
+   through the other; and two names already given the fact by an earlier `assert_disjoint` or
+@@ -6290,7 +6388,9 @@
+   `mix` above, `s = tracks[src_name].as_span()` and `assert_disjoint(d, s)` are allowed while `d`, a
+   `ref mut` name of a list's elements, is in use, and the first element read through `s`, in
+   `blend`, comes after the two are proved apart. A read of an element through `s` before the proof
+-  is `E3021` (`[BRW-1]`).---
++  is `E3021` (`[BRW-1]`).
++
++---
+ 
+ # Part X — Effects, Contracts, Determinism and Cost
+ 
+@@ -6357,16 +6457,18 @@
+   put there: one that may call every `pub` function of this package, change and end every place a
+   `pub` name of this package reaches (a `pub static mut`; the fields of an object a `pub` function
+   is given, returns or holds), take every lock a `pub` function takes, and have every effect the
+-  place's or method's declared contracts do not exclude (verdict 106). A place or method no other
+-  package can reach keeps `[EFF-2]`'s rule, and so does a `virtual` method of a class that cannot be
+-  subclassed outside its package. The message names the route: `E3020` "`h()` (line 11) may add to
+-  `HANDLERS` (through `add`, which a function another package stores into a `Handler` may call)
+-  while this loop walks `HANDLERS` (line 10); walk a list of your own: write `todo = mem.take(ref
+-  mut HANDLERS)` above line 10, `for h in todo:` in place of line 10, and `HANDLERS.extend(owns
+-  todo)` below the loop"; `E4001` "`run_all` is `@noalloc`, and `h()` (line 11) may run a function
+-  another package stores into a `Handler`; say what a `Handler` may do: write `@noalloc` above `type
+-  Handler = fn()`". A dependant's stores and overrides are counted by the dependant at its own lines
+-  (`[EFF-4]`, `[CLO-17]`, `[MOD-9a]`), and `[DET-3]` counts the same way.
++  place's or method's declared contracts do not exclude (verdict 106); what it keeps of what the
++  call gives it, an owner it stores or a `weakref T` link it makes, is judged where the function is
++  seen (`[WK-7]`, `[OWN-13]`). A place or method no other package can reach keeps `[EFF-2]`'s rule,
++  and so does a `virtual` method of a class that cannot be subclassed outside its package. The
++  message names the route: `E3020` "`h()` (line 11) may add to `HANDLERS` (through `add`, which a
++  function another package stores into a `Handler` may call) while this loop walks `HANDLERS` (line
++  10); walk a list of your own: write `todo = mem.take(ref mut HANDLERS)` above line 10, `for h in
++  todo:` in place of line 10, and `HANDLERS.extend(owns todo)` below the loop"; `E4001` "`run_all`
++  is `@noalloc`, and `h()` (line 11) may run a function another package stores into a `Handler`; say
++  what a `Handler` may do: write `@noalloc` above `type Handler = fn()`". A dependant's stores and
++  overrides are counted by the dependant at its own lines (`[EFF-4]`, `[CLO-17]`, `[MOD-9a]`), and
++  `[DET-3]` counts the same way.
+ * `[EFF-3]` *(changed in 0.9.15)* An `extern` function carries the effects its contract declares
+   (`@ffi(effects=[…])`), `FFI` at least. What a call of one may change through the callbacks C keeps
+   is `[EFF-26]`'s.
+@@ -6379,17 +6481,17 @@
+   `thread_shared`, or neither, and for a function the parameters, `this` included, of which it makes
+   a `weakref T` link (`[OWN-13]`, `[BLD-14]` items 8 and 9), which parameter it stores an owner of
+   into a place of which other parameter or of `this` (`[WK-7]`, item 10), and what its body needs of
+-  the kinds that reach a `dyn`, interface or base-class parameter (`[LT-1]`, item 11); and the
+-  function values the package stores into a function type and the callbacks it hands to C, which a
+-  program that uses the package counts wherever such a value is called and at every foreign call
+-  (`[EFF-26]`). A change to any of them is reported as an interface change and re-checks every
+-  caller, and every line checked against a place the change fills (`[BCK-8]`, `[MOD-9a]`): an edit
+-  inside one function, or a library update (two lines of a function swapped, so that a use of a
+-  parameter falls below a line that clears what it views), can make a line elsewhere stop compiling,
+-  and the message names the chain of calls. A parent link proves itself (Part VIII) only when no
+-  other package can change it or the places that own its holders. What a generic function changes
+-  through its type parameters' methods is worked out for each instance, by the package that compiles
+-  that instance.
++  the kinds that reach a `dyn`, interface or base-class parameter (`[LT-1]`, `[OWN-13]`, `[WK-7]`,
++  item 11); and the function values the package stores into a function type and the callbacks it
++  hands to C, which a program that uses the package counts wherever such a value is called and at
++  every foreign call (`[EFF-26]`). A change to any of them is reported as an interface change and
++  re-checks every caller, and every line checked against a place the change fills (`[BCK-8]`,
++  `[MOD-9a]`): an edit inside one function, or a library update (two lines of a function swapped, so
++  that a use of a parameter falls below a line that clears what it views), can make a line elsewhere
++  stop compiling, and the message names the chain of calls. A parent link proves itself (Part VIII)
++  only when no other package can change it or the places that own its holders. What a generic
++  function changes through its type parameters' methods is worked out for each instance, by the
++  package that compiles that instance.
+ * `[EFF-9]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `RuntimeCheck(k)` enters a function's effect
+   set when a check of kind `k` survives the compiler's profile-independent proofs in its body.
+   `Arithmetic` covers integer overflow, division by zero, shift amounts and negative integer
+@@ -6765,16 +6867,16 @@
+   | a C++ override call or `delete` of a trampoline-class object on another thread (`[FFI-17d]`) | "C++ called `on_click` of a `Button` made on another thread (line 16); its class says `threads=creator`" |
+   | the checked trampoline: a `threads(creator)` callback on another thread, checked in every profile | "C called the callback registered on line 16 on another thread, but its contract says `threads(creator)`" |
+   | a bounds check | "index 3 is out of bounds for a length of 3; use `.get(i)` for an `Option`" |
+-| an overflow check (`[TYP-8]`) | "`integer overflow in '+'`: `x + 1` on line 3 (9,223,372,036,854,775,807 + 1); use `x.checked_add(1)` for an `Option`" |
+-| division by zero (`[TYP-6]`) | "`division by zero`: `7 // (y - y)` on line 4" |
+-| a shift out of range (`[TYP-10]`) | "`shift out of range`: `1 << n` on line 9 shifts an `int` by 70; use `wrapping_shl`" |
+-| capacity overflow (`[HEAP-8]`) | "`capacity overflow`: `xs.reserve(...)` on line 6 asks for 18,446,744,073,709,551,615 elements" |
+-| allocation failure (`[ALC-4]`, `[ALC-6]`) | "`out of memory`: `xs.reserve(...)` on line 6 asked `Global` for 1,073,741,824 bytes; use `try_reserve`" |
+-| an invalid `Layout` (`[ALC-2]`) | "`invalid Layout`: `Layout(3, 3)` on line 7, an alignment that is not a power of two" |
+-| a `FixedArena` exhausted (`[ARN-4]`) | "`fixed.alloc_zeroed(...)` on line 9: `fixed` has 16 bytes free and 32 were asked; use `try_alloc_zeroed` for an `Option`" |
+-| a full `Pool` (`[HND-3]`) | "`pool.insert(...)` on line 11: every slot is live or retired; use `try_insert` for a `Result`" |
+-| the callback table full (`[FFI-53]`) | "`on_click(...)` on line 16: no callback slot is free; every one of the 65,536 slots a 32-bit target has is live or retired" |
+-| a stale handle in `pool[h]` (`[HND-1]`) | "`pool[h]` on line 12: the handle is stale (slot 3, generation 2 of 5); use `pool.get(h)` for an `Option`" |
++  | an overflow check (`[TYP-8]`) | "`integer overflow in '+'`: `x + 1` on line 3 (9,223,372,036,854,775,807 + 1); use `x.checked_add(1)` for an `Option`" |
++  | division by zero (`[TYP-6]`) | "`division by zero`: `7 // (y - y)` on line 4" |
++  | a shift out of range (`[TYP-10]`) | "`shift out of range`: `1 << n` on line 9 shifts an `int` by 70; use `wrapping_shl`" |
++  | capacity overflow (`[HEAP-8]`) | "`capacity overflow`: `xs.reserve(...)` on line 6 asks for 18,446,744,073,709,551,615 elements" |
++  | allocation failure (`[ALC-4]`, `[ALC-6]`) | "`out of memory`: `xs.reserve(...)` on line 6 asked `Global` for 1,073,741,824 bytes; use `try_reserve`" |
++  | an invalid `Layout` (`[ALC-2]`) | "`invalid Layout`: `Layout(3, 3)` on line 7, an alignment that is not a power of two" |
++  | a `FixedArena` exhausted (`[ARN-4]`) | "`fixed.alloc_zeroed(...)` on line 9: `fixed` has 16 bytes free and 32 were asked; use `try_alloc_zeroed` for an `Option`" |
++  | a full `Pool` (`[HND-3]`) | "`pool.insert(...)` on line 11: every slot is live or retired; use `try_insert` for a `Result`" |
++  | the callback table full (`[FFI-53]`) | "`on_click(...)` on line 16: no callback slot is free; every one of the 65,536 slots a 32-bit target has is live or retired" |
++  | a stale handle in `pool[h]` (`[HND-1]`) | "`pool[h]` on line 12: the handle is stale (slot 3, generation 2 of 5); use `pool.get(h)` for an `Option`" |
+   | adopting one live object twice (`[FFI-36b]`) | a panic naming both places that adopted it |
+   | a GPU draw reading past what is bound (`[GPU-12]`) | the text `[GPU-12]` gives |
+ 
+@@ -6782,6 +6884,7 @@
+   maximum; for a `thread_shared` count, the limit Part VIII keeps below its maximum. The two count
+   limits are tested with a count that is easy to fill (`[TST-31]`); the language has no test-only
+   shortcut.
++
+ ---
+ 
+ # Part XI — Concurrency and Parallelism
+@@ -6914,8 +7017,9 @@
+   (`[THR-15]`).
+ * `[THR-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **A value several
+   threads own is made `thread_shared`.** `thread_shared x` makes one more owner of `x`, which may be
+-  on any thread; it is written before a new value (`st = thread_shared Stats()`) or on a value
+-  already `thread_shared` (`fn() thread_shared st:`), and on a value made otherwise it is `E7017`,
++  on any thread; it is written before a new value (`st = thread_shared Stats()`), on a value already
++  `thread_shared` (`fn() thread_shared st:`) or before `this` in a method, which says that every
++  object of its class is `thread_shared` (`[OWN-13]`), and on a value made otherwise it is `E7017`,
+   as `shares` or `shares mut` on a `thread_shared` owner is (`[RC-1]`) ("`names` is
+   `share_and_keep`'s own object, which it may change; to share it between threads, create it shared:
+   `names = thread_shared Names()`"). A `thread_shared` value lives until its last owner ends. Its
+@@ -7522,11 +7626,21 @@
+   it does not relax `[THR-11]`, which treats every job of a scope as running at once. (The 0.9.8
+   declared read/write access sets, verified only in debug builds, are removed: a safety property
+   checked in one profile is not a guarantee, `[PHIL-13]`.)
+-* `[JOB-5]` *(changed in 0.9.20)* `jobs.local_arena()` gives a `ref mut ThreadArena` whose region is
+-  the function the job runs, as a local of that function has, and the arena is reset when the job
+-  ends: a value made in it that would leave that function is `E3063` (`[LT-4]`), and a call of it
+-  outside a job stops the program ("`jobs.local_arena()` on line 7: `tick` is not running as a
+-  job").
++* `[JOB-5]` *(changed in 0.9.20)* `jobs.local_arena()` gives a `ref mut ThreadArena`, the arena of
++  the job the calling code runs in. Its region is the function the job runs, as a local of that
++  function has: a value made in it that would leave that function is `E3063` (`[LT-4]`). **The arena
++  is the job's own.** When a job starts, the runtime opens a scope of its worker thread's arena for
++  it (`[ARN-6]`) and ends that scope when the job ends, so the arena is reset by giving back the
++  job's own bytes and no others: a job that runs inside another job's wait on the same thread (a
++  chunk the calling thread runs itself, `[PAR-4]`; a job a waiting worker takes up) allocates above
++  the waiting job's bytes and gives back only its own, and every view the waiting job holds stays
++  valid. **It is one place for each job:** every call of `jobs.local_arena()` in one job names the
++  same arena, so a second call while the first's result is still used is a second `ref mut` name of
++  one place (`E3022`: "`b` would be a second name for this job's arena, which `a` (line 3) may
++  change until line 9; use `a`, or give it on: `fill(ref mut a)`"), and a function that calls it is
++  recorded as changing its job's arena (`[BCK-8]`), so a call of such a function while the job's own
++  name for the arena is still used is refused the same way. A call of it outside a job stops the
++  program ("`jobs.local_arena()` on line 7: `tick` is not running as a job").
+ 
+ ## XI.6 Async
+ 
+@@ -7535,6 +7649,7 @@
+ a view may not cross an `await` unless the future is scoped. Generators are designed so that this
+ remains possible: a generator frame is a sized value, and the same frame lowering serves an
+ `async fn`.
++
+ ---
+ 
+ # Part XII — Data-Oriented Programming
+@@ -7846,7 +7961,9 @@
+   functions on the registry. Work it runs at once goes through `std.thread` or `std.jobs` with the
+   rules of Part XI, and two pieces of work run at once that may touch one pool, one changing it, are
+   refused when compiling, worked out from every function the program can put there; nothing compares
+-  them while the program runs.---
++  them while the program runs.
++
++---
+ 
+ # Part XIII — Error Handling
+ 
+@@ -8010,6 +8127,7 @@
+ Python's `try`, `except`, `raise` and `finally` are not Ember syntax; each is diagnosed with the Ember
+ form (`[DIA-21]`): `raise e` → `return Err(e)`, a `try` body → `?` on each fallible call, `except E`
+ → `match` on the result, `finally` → `defer:`.
++
+ ---
+ 
+ # Part XIV — Compile-Time Programming
+@@ -8234,7 +8352,9 @@
+   `Default`; give the field a default: `captain: shares Player = shares Player()`").
+ * `[SER-2]` *(new in 0.9.9)* Deserialising never produces an invalid value: a range-typed field is
+   checked (`[RNG-10a]`), an unknown enum tag is an error, and a missing field without
+-  `@ser(default)` or `@ser(since=…)` is an error.---
++  `@ser(default)` or `@ser(since=…)` is an error.
++
++---
+ 
+ # Part XV — The Standard Library
+ 
+@@ -8789,6 +8909,7 @@
+   `rng.int_in(a..b)`, `rng.float()` (in `[0, 1)`), `rng.choice(span) -> Option[ref T]`,
+   `rng.shuffle(ref mut span)` (its parameter is `ref mut s: MutSpan[T]`). Each call changes `rng`,
+   which is therefore a name that may change it.
++
+ ---
+ 
+ # Part XVI — Calling C
+@@ -9018,8 +9139,10 @@
+   and those calls are fenced by `[FFI-2]`. A library linked by name or path (`link = [...]`, `[link]
+   libs`) is listed by `ember tcb` as an external library (`[TCB-4]`).
+ 
+-  ```ember,fragment # SAFETY: bridge.c is ours: it defines `add` and runs nothing before `main`
+-  unsafe import c "./bridge.c" as b ```
++  ```ember,fragment
++  # SAFETY: bridge.c is ours: it defines `add` and runs nothing before `main`
++  unsafe import c "./bridge.c" as b
++  ```
+ * `[FFI-6a]` *(changed in 0.9.10)* An object-like macro is imported when, after expansion, it is a
+   constant expression of integer, floating, string, null-pointer or pointer-cast type as Clang
+   evaluates it; its type is the C type of that value. A null-pointer or pointer-cast macro
+@@ -9298,9 +9421,9 @@
+   was checked: the `SDL.h` imported here declares `void SDL_FreeSurface(SDL_Surface*, int)`; check
+   the overlay against this header, then run `ember bind SDL.h --check overlays/sdl.em --merge`"); in
+   another package's build, an overlay or a declaration its package's record lacks is `E5010` too. A
+-  change to a declaration the overlay does not describe changes nothing. A program with a manifest
+-  keeps the record beside it; a single file with none (`[MAN-9]`) applies its overlay as at a first
+-  build, and gets a record once a manifest is written. An overlay in no package's folder is the
++  change to a declaration the overlay does not describe changes nothing. Every program has a
++  manifest, a single file with none being given a default one by its first compile (`[MAN-9]`), so
++  every program keeps the record beside it. An overlay in no package's folder is the
+   importing program's own: its record is that package's, naming the overlay by its path from the
+   package (`../vendor/sdl.em`). Nothing of this is written in the overlay or in the program.
+ * `[FFI-13]` An overlay may contain `extend` blocks with ordinary Ember wrapper methods; this is how
+@@ -9623,9 +9746,15 @@
+       unsafe:
+           return w.into_raw()
+ 
+-  fn main(): first = widget_new(1) widget_take(owns first) second = widget_new(2) p =
+-  address_for_c(owns second) # SAFETY: C keeps the widget as its user data and frees it with
+-  `widget_free` unsafe: set_user_data(p) ```
++  fn main():
++      first = widget_new(1)
++      widget_take(owns first)
++      second = widget_new(2)
++      p = address_for_c(owns second)
++      # SAFETY: C keeps the widget as its user data and frees it with `widget_free`
++      unsafe:
++          set_user_data(p)
++  ```
+ * `[FFI-56]` *(new in 0.9.15)* *(changed in 0.9.20)* **A C function pointer is unsafe to call.** A
+   function pointer that comes from C — a field of an imported struct, a typedef, a result, an
+   `extern static`, an argument C passes to a callback or to an export, itself or in a `@layout(c)`
+@@ -9783,7 +9912,9 @@
+   <target>` or, for C++, through the CMake File API (Annex C).
+ * `[BLD-FFI-3]` *(changed in 0.9.15)* *(changed in 0.9.20)* Existing libraries are linked by name
+   (`[link] libs = ["vulkan-1"]`, `[MAN-8]`) or path; link order follows declaration order. Each is
+-  listed by `ember tcb` as an external library (`[TCB-4]`).---
++  listed by `ember tcb` as an external library (`[TCB-4]`).
++
++---
+ 
+ # Part XVII — Toolchain, Diagnostics and Conformance
+ 
+@@ -9791,7 +9922,7 @@
+ 
+ ```text
+ ember new <name> [--lib | --bin | --cdylib]    create a package
+-ember run [file.em] [args…] [--hot | --interp] build and run; a single file needs no manifest
++ember run [file.em] [args…] [--hot | --interp] build and run; a single file gets a default manifest
+ ember build [--profile <name>] [--target <triple>] [--backend c|llvm]
+             [--emit tokens|ast|hir|mir|c|obj|header] [--out-dir <dir>]
+             [--emit-optimization-report] [--report=engine|instantiations] [--timings[=json]]
+@@ -9815,15 +9946,17 @@
+                      | --emit-cpp [--out <file>]] [--flag <flag>] [--instantiate <template-id>]
+ ember shader-bind <reflection.json>            Annex D
+ ember tcb [--module <m>]                       the trusted-base report (Annex C)
++ember audit <file>                             a one-page summary of the safety surface
+ ember toolchain list|install|default           manage installed C toolchains
+ ember clean
+ ember --help | --version [--matrix]
+ ```
+ 
+ * `[CLI-1]` Every command accepts `--json` and exits non-zero on error.
+-* `[CLI-4]` *(changed in 0.9.9)* `ember run file.em` and `ember build file.em` accept a single file
+-  with no manifest, as a package named after the file with default settings. A first program needs
+-  no manifest and no `main`: `println("hello")` on its own is a complete program (`[FN-8]`).
++* `[CLI-4]` *(changed in 0.9.9)* *(changed in 0.9.20)* `ember run file.em` and `ember build file.em`
++  accept a single file with no manifest: the first compile writes a default one beside it, which
++  names the package after the file's folder (`[MAN-9]`). A first program needs no manifest written
++  by hand and no `main`: `println("hello")` on its own is a complete program (`[FN-8]`).
+ * `[CLI-2]` *(changed in 0.9.15)* `ember build --emit c --out-dir <dir>` writes the C sources
+   without invoking a C compiler, for build systems that compile them themselves, and beside them
+   `<dir>/cflags.txt`, the C compiler flags those sources need for Ember's guarantees on the target,
+@@ -9843,28 +9976,29 @@
+   rewrites source written for an earlier version into the current one where the change is
+   mechanical, and lists, with the file and line, what it could not rewrite. From 0.9.15: the `#!
+   language` directive to the current version; the changes of 0.9.20 refuse programs that were unsafe
+-  and rewrite nothing (§H.51). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views` removal,
+-  `for k, v in m:` over a `Map` to `for k, v in m.items():` (`[CTL-1]`). From 0.9.10: `Box[T]` and
+-  `ForeignBox[T]` to `owns T`, `Box[T, A]` to `owns T using A`, `Array[T, A]` to `Array[T] using A`,
+-  `Weak[T]` to `weakref T`, the mode `owned` to `owns`, `mut x: T` on a parameter to `ref mut x: T`
+-  with `ref mut` written before each argument given to it, `self` to `this` with the object removed
+-  from a method's parameters (`fn reset(mut self):` to `fn reset():`, `owned self` to `owns this`
+-  after the parameters), a function in a type body with no object to `static fn`, `str` to
+-  `StrView`, `cstr` to `CStrView`, `x.clone()` to `copy of x`, `.copied()` to `.copy_each()`, `if
+-  Some(x) = e:` to `if e exists as x:`, `w.upgrade()` opened in an `if` to `if w exists as p:`,
+-  `cast x if D` and `as?` to `if x is D as d:`, `as!` to `cast x as D`, `@borrows(p)` to `from p`,
+-  `@static_safe` to `@no_alias_checks`, `@fp(contract)` to `@fp(allow_fma)`, `assert_disjoint` to
+-  `check_disjoint` and `assert_disjoint_or_panic` to `assert_disjoint`, a function's type parameters
+-  in brackets after its name to a line of their own above it (`fn f[T: Add](x: T)` to `[T: needs
+-  Add]` above `fn f(x: T)`, `[GRM-40]`), an `x: ref T` parameter to `x: T`, a `T: Sync` bound to `T:
+-  needs ThreadShared`, `for x in xs.iter_mut():` to `for ref mut x in xs:`, and a declaration left
+-  unsafe to call by the word `unsafe` to `unsafe fn`: an overlay entry's `unsafe` contract words
+-  (verdict 130), and `@ffi(unsafe)`, `param(p, unsafe)` and `result(unsafe)` on a hand declaration
+-  (verdict 133), the word taken out and an `@ffi(…)` left empty removed, and a plain `fn` in an
+-  `unsafe extern` block (verdict 136). It writes no `@safety` text: `L3015` asks for any that is
+-  missing (`[UNS-7]`). It does not rewrite what needs a choice the source does not say: `Shared[T]`
+-  (`shares T` or `shares mut T`), `RefCell`, `SyncShared` and `@sync` classes (`thread_shared` with
+-  `guarded by` fields or `Atomic`), `owned fn` (the capture words), and `mem.forget`.
++  and rewrite nothing (§H.52 to §H.56). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
++  removal, `for k, v in m:` over a `Map` to `for k, v in m.items():` (`[CTL-1]`). From 0.9.10:
++  `Box[T]` and `ForeignBox[T]` to `owns T`, `Box[T, A]` to `owns T using A`, `Array[T, A]` to
++  `Array[T] using A`, `Weak[T]` to `weakref T`, the mode `owned` to `owns`, `mut x: T` on a
++  parameter to `ref mut x: T` with `ref mut` written before each argument given to it, `self` to
++  `this` with the object removed from a method's parameters (`fn reset(mut self):` to `fn reset():`,
++  `owned self` to `owns this` after the parameters), a function in a type body with no object to
++  `static fn`, `str` to `StrView`, `cstr` to `CStrView`, `x.clone()` to `copy of x`, `.copied()` to
++  `.copy_each()`, `if Some(x) = e:` to `if e exists as x:`, `w.upgrade()` opened in an `if` to `if w
++  exists as p:`, `cast x if D` and `as?` to `if x is D as d:`, `as!` to `cast x as D`, `@borrows(p)`
++  to `from p`, `@static_safe` to `@no_alias_checks`, `@fp(contract)` to `@fp(allow_fma)`,
++  `assert_disjoint` to `check_disjoint` and `assert_disjoint_or_panic` to `assert_disjoint`, a
++  function's type parameters in brackets after its name to a line of their own above it (`fn f[T:
++  Add](x: T)` to `[T: needs Add]` above `fn f(x: T)`, `[GRM-40]`), an `x: ref T` parameter to `x:
++  T`, a `T: Sync` bound to `T: needs ThreadShared`, `for x in xs.iter_mut():` to `for ref mut x in
++  xs:`, and a declaration left unsafe to call by the word `unsafe` to `unsafe fn`: an overlay
++  entry's `unsafe` contract words (verdict 130), and `@ffi(unsafe)`, `param(p, unsafe)` and
++  `result(unsafe)` on a hand declaration (verdict 133), the word taken out and an `@ffi(…)` left
++  empty removed, and a plain `fn` in an `unsafe extern` block (verdict 136). It writes no `@safety`
++  text: `L3015` asks for any that is missing (`[UNS-7]`). It does not rewrite what needs a choice
++  the source does not say: `Shared[T]` (`shares T` or `shares mut T`), `RefCell`, `SyncShared` and
++  `@sync` classes (`thread_shared` with `guarded by` fields or `Atomic`), `owned fn` (the capture
++  words), and `mem.forget`.
+ * `[CLI-21]` *(new in 0.9.9)* *(changed in 0.9.20)* `ember run --interp` runs a program on the
+   compile-time evaluator instead of compiling it: no C compiler is needed; console and file I/O
+   work; foreign calls, `thread.spawn`, `thread.scope`, `jobs.submit` and `jobs.scope` are
+@@ -9979,14 +10113,15 @@
+   hand.
+ * `[MAN-9]` *(new in 0.9.15)* *(changed in 0.9.20)* **Every program is a package** (verdict 127). A
+   command that compiles a file (`ember build`, `check`, `run`, `test`, `lint`) with no `ember.toml`
+-  in its folder or any folder above it compiles it as a package named after the file's folder, with
+-  `version = "0.1.0"` and every other setting its default, and says so once on standard error:
+-  "note: `tools/` has no `ember.toml`, so `tools` is compiled as a package with default settings;
+-  write one with `ember new`, or by hand, to change them". No compile command writes a file the
+-  program did not ask for, so a check leaves nothing behind (verdict 135 had the manifest written on
+-  the first compile; reversed in 0.9.20 under the delegation, and reported); `ember bind` in a
+-  header's folder no package holds treats the folder the same way. `ember.overlays` is kept only
+-  beside a manifest that exists (`[FFI-55]`).
++  in its folder or any folder above it first writes a default one in the file's folder, `[package]`
++  with the folder's name as `name` and `version = "0.1.0"`, and says so on standard error: "note:
++  created `tools/ember.toml`: every program needs one, and this folder had none" (verdict 135);
++  `ember bind` does so in a header's folder no package holds. The program is then that package, and
++  `ember.overlays` sits beside its manifest (`[FFI-55]`), so the record of what each overlay was
++  checked against is kept for every program, a single file's included, and no program is compiled
++  apart from the others with settings no file shows. (0.9.20_Hardened_2 to 0.9.20_Hardened_4 wrote
++  no file and kept no record for such a program; the owner restored verdicts 127 and 135 on
++  2026-11-10, §H.56.)
+ * `[MAN-10]` *(new in 0.9.20)* **A dependency's manifest decides only its own code, never what runs
+   on the builder's machine.** Of a dependency's manifest the build reads `[package]`,
+   `[dependencies]`, `[lints]`, `[realtime]` and `[ffi]`. Its `[c]` section is taken with `compiler`
+@@ -10082,14 +10217,20 @@
+   10. for each function, which parameter, `this` included, or value holding one, it stores an owner
+       of into a place of which other parameter or of `this`, directly or through a call, which each
+       call judges as that store (`[WK-7]`); and
+-  11. for each `pub` function with a `dyn`, interface or base-class parameter, what its body needs
+-      of the kinds that reach it: for each call through the parameter and each argument of that
+-      call, whether the called method's result may point into it (`[LT-1]`), which a call from
+-      another package checks against the kinds it gives; and
++  11. for each `pub` function with a `dyn`, interface or base-class parameter (`this` of an `open`
++      or `abstract` class's method included), what its body needs of the kinds that reach it: for
++      each call through the parameter and each argument of that call, whether the called method's
++      result may point into it (`[LT-1]`), and which of the function's own parameters, or what
++      holds them, the call's object and each argument are, so that the links the called method
++      makes of them and the owners it stores (items 9 and 10) count as the function's for that
++      kind (`[OWN-13]`, `[WK-7]`), which a call from another package checks against the kinds it
++      gives; and
+   12. for each line that calls through a `virtual` method of a `pub` class, a method of a `pub`
+       interface used as `dyn`, or a `pub` function-typed place, what the line walks, holds `ref mut`
+-      and has lent, which a package adding an override, an implementation or a stored function
+-      checks that member against (`[MOD-9a]`);
++      and has lent, and, for its object and each argument, which of the others owns it there or
++      will by a later line of the function, and whether it is reached through a `thread_shared`
++      value (`[WK-7]`, `[OWN-13]`), which a package adding an override, an implementation or a
++      stored function checks that member against (`[MOD-9a]`);
+   13. for each `pub` function, the places each of its function-typed parameters flows into
+       (`[EFF-2]`: a place a value is copied into), so that a dependant checks `[CLO-17]` at the call
+       that hands the function over ("`on_click` would keep it in `b.handlers`"); and
+@@ -10206,11 +10347,12 @@
+   changes what a program means.** Every profile accepts the same programs, performs the same safety
+   checks while the program runs (`[PRF-4]`), stops in the same places with the same messages, and
+   computes the same results. The one check that differs is `debug_assert`, checked only where
+-  `[PRF-3]` says: it may not have side effects (`W2016`), so a program whose assertions hold
+-  computes the same results in every profile; a C sanitizer (`[PRF-3]`) is a tool for finding
+-  defects in foreign and `unsafe` code, outside Ember's checks: it stops the program only where that
+-  code is already outside the guarantee (`[PHIL-10]`), and never changes where Safe Ember stops.
+-  Only the following differ between profiles.
++  `[PRF-3]` says: its argument changes nothing (`E3023`, §VI.6; an effect of its own that changes
++  nothing is `W2016`), so a program whose assertions hold computes the same results in every
++  profile; a C sanitizer (`[PRF-3]`) is a tool for finding defects in foreign and `unsafe` code,
++  outside Ember's checks: it stops the program only where that code is already outside the guarantee
++  (`[PHIL-10]`), and never changes where Safe Ember stops. Only the following differ between
++  profiles.
+ * `[PRF-3]` *(new in 0.9.9)* *(changed in 0.9.10)* **What a profile may set.**
+ 
+   | Setting (key) | `debug` | `development` | `release` |
+@@ -10638,6 +10780,7 @@
+ The runtime ABI (the object header, `TypeInfo`, `ember_rt.h`) is stable within a major version
+ (`[VER-4]`).
+ 
++
+ ## XVII.9 The diagnostic code registry
+ 
+ Every diagnostic code, what it reports and the rule it enforces (`[DIA-6a]`). Codes are never
+@@ -10663,7 +10806,7 @@
+ | `E0106` | a lambda body of more than one statement, or an indented block after a lambda's `:` | `[GRM-17]` |
+ | `E0107` | a jump expression may not be an operand | `[GRM-16]` |
+ | `E0108` | attribute is not permitted on this statement | `[GRM-20]` |
+-| `E0109` | `owns` before a name whose place already hands the value over with no word (`e.mesh = m`; `b = a` for a value `=` hands over), after `return`, or before `fn` anywhere but an argument for an `owns` parameter, `owns` before a value made on the line for a place that is not an `owns T` (`b = owns (n * 2)`), and `weakref thread_shared x` before a value whose type already says `thread_shared` (`weakref x` is that link); `owns` before a function from a variable given to an `F`-bounded parameter; `owns` before a value made in the call with an owner's or a link's word (`owns shares mut game`), which says what is given (verdicts 147 and 160) | `[OWN-9]`, `[GRM-15]`, `[OWN-13]`, `[FN-2a]` |
++| `E0109` | `owns` before a name whose place already hands the value over with no word (`e.mesh = m`; `b = a` for a value `=` hands over), after `return`, or before `fn` anywhere but an argument for an `owns` parameter, `owns` before a value made on the line for a place that is not an `owns T` (`b = owns (n * 2)`), and `weakref thread_shared x` before a value whose type already says `thread_shared` (`weakref x` is that link); `owns` before a function from a variable given to an `F`-bounded parameter; `owns` before a value made in the call with an owner's or a link's word (`owns shares mut game`), which says what is given (verdicts 147 and 160); a second `owns` before a value made in the call for a parameter whose type is an `owns T`, where one `owns` says both the block and the hand-over | `[OWN-9]`, `[GRM-15]`, `[OWN-13]`, `[FN-2a]` |
+ | `E0110` | function declared without a body outside an interface, extern block or abstract class | `[GRM-33]` |
+ | `E0111` | `ref` of an expression that is not a place | `[GRM-36]` |
+ | `E0112` | nested more deeply than the compiler accepts | `[GRM-39]` |
+@@ -10732,7 +10875,7 @@
+ | `E2119` | a `weakref` of a part (a field, an element stored inline), of a value held `owns` or of a new value, whose target does not live on its own, and of a value whose kind is known only while the program runs (`dyn I`, `owns dyn I`, `shares dyn I`, `some I`; the type `weakref dyn I` too), whose header the link cannot know | `[WK-16]`, `[WK-11]`, `[OWN-13]` |
+ | `E2120` | inherent extension of a type from another package | `[IFC-2]` |
+ | `E2121` | an implementation outside the packages that may write it | `[TYP-20]` |
+-| `E2122` | `shares`, `shares mut` or `thread_shared` made of a place that has one owner and is not a local of this function (a list element, a field, a plain parameter) | `[RC-1]`, `[OWN-13]` |
++| `E2122` | `shares`, `shares mut` or `thread_shared` made of a place that has one owner and is not a local of this function (a list element, a field, a plain parameter), or of `this` in a method (`shares this`, `shares mut this`) | `[RC-1]`, `[OWN-13]` |
+ | `E2123` | a value made for a place that owns it alone (an `owns` field, an `Option[owns T]`, a list of `owns` values), at first or later, without `owns` on the line that makes it | `[OWN-10]`, `[GRM-15]`, `[TYP-46]` |
+ | `E2130` | a `const` of a type that owns heap memory; use a `static` | `[TYP-1]` |
+ | `E2131` | array length must be a constant | `[CT-1]` |
+@@ -10774,14 +10917,14 @@
+ | `E3016` | `this` escapes its own `drop`, or an owner of it is made there | `[OBJ-5]`, `[CLS-7a]` |
+ | `E3020` | a collection (a list, a map, a set or a string) changed while it is walked, whatever the change (an element written, a value under a key replaced, anything added or removed), by a `for` loop or by a generator that walks it and will still be used; through its own name, or through a call that may change it (a call through a function value or a library call by the functions it may run, a `spawn` by what its thread changes, a scoped task started in the walk, a foreign call by what the callbacks C keeps change, the end of an object by what its `drop` changes); a removal inside a counting loop; an override, implementation or stored function that changes what a recorded library line walks (`[MOD-9a]`); a call through a place another package can fill, counted as changing what a `pub` route reaches, while a loop walks it; an implementation, override or stored function that breaks a fact a library's recorded call relied on (`[BLD-14]` item 16) | `[BRW-18]`, `[CTL-2]`, `[MOD-9a]`, `[EFF-2a]` |
+ | `E3021` | a read and a change of one place overlap: a change of what a read-only name reads while it is still used, a view a `dyn` call may give included where the kind is known only while running (help: `runtime` on the parameter or the typed local the call goes through, or a `runtime` name for the value); a `ref mut` name's place read through another name while it is still used; an argument that may reach into a changeable argument of the same call; a reset or end of a manager's instance while a `weakref` link to a value made in it lives | `[BRW-1]`, `[BRW-11]`, `[LT-1]`, `[LT-48]`, `[ALC-5a]` |
+-| `E3022` | one place changed through two names: two changeable arguments of one call naming one place, other than one whole variable proved when compiling (a function value that changes it counts as one); a function value stored in a place that anything it changes through any name owns (a `static mut` included, `[CLO-17]`), or whose storing changes what a recorded library line holds or has lent (`[MOD-9a]`); a `ref mut` name's place changed through another name while it is still used, a reshape of a `ref mut` address included; a call through a function value, an interface, `dyn` or `virtual` method, or of an `extern` function, that names one whole variable twice | `[BRW-1]`, `[BRW-11]`, `[CLO-17]`, `[MOD-9a]`, `[MONO-10]` |
+-| `E3023` | a change the name does not allow: a change through a name that only reads (a plain parameter; a loop, pattern, opened or part name; a plain name holding a `MutSpan`; a value made when compiling); `=` on a name that keeps its place for its scope (a parameter; a loop, pattern or opened name, one opened `exists as copy of` excepted; a `const ref mut` name given another ref); a read-only `ref` given to a `ref mut` name; a method that may change its object, or a stored function that may change its own state, called through a read-only name; an owner that may change made from one that only reads (a plain parameter of a `shares mut` type included); `=` on a `static` (`HOOK = v`); `=` of a whole value on a `ref mut` name of a `dyn I` type; `using x` through a plain parameter; a function that changes its own state given without `ref mut` to an `F`-bounded parameter | `[BRW-14]`, `[BRW-15]`, `[STA-1]`, `[TYP-14]`, `[ALC-1]`, `[FN-2a]` |
++| `E3022` | one place changed through two names: two changeable arguments of one call naming one place, other than one whole variable proved when compiling (a function value that changes it counts as one); a function value stored in a place that anything it changes through any name owns (a `static mut` included, `[CLO-17]`), or whose storing changes what a recorded library line holds or has lent (`[MOD-9a]`); a `ref mut` name's place changed through another name while it is still used, a reshape of a `ref mut` address included; a call through a function value, an interface, `dyn` or `virtual` method, or of an `extern` function, that names one whole variable twice; a second name for a job's arena while the first is still used | `[BRW-1]`, `[BRW-11]`, `[CLO-17]`, `[MOD-9a]`, `[MONO-10]`, `[JOB-5]` |
++| `E3023` | a change the name does not allow: a change through a name that only reads (a plain parameter; a loop, pattern, opened or part name; a plain name holding a `MutSpan`; a value made when compiling); `=` on a name that keeps its place for its scope (a parameter; a loop, pattern or opened name, one opened `exists as copy of` excepted; a `const ref mut` name given another ref); a read-only `ref` given to a `ref mut` name; a method that may change its object, or a stored function that may change its own state, called through a read-only name; an owner that may change made from one that only reads (a plain parameter of a `shares mut` type included); `=` on a `static` (`HOOK = v`); `=` of a whole value on a `ref mut` name of a `dyn I` type; `using x` through a plain parameter; a function that changes its own state given without `ref mut` to an `F`-bounded parameter; a call in the argument of `debug_assert` of a function that changes or ends anything that outlives the argument | `[BRW-14]`, `[BRW-15]`, `[STA-1]`, `[TYP-14]`, `[ALC-1]`, `[FN-2a]`, `[PHIL-13]` |
+ | `E3024` | a struct field would point into another field of the same struct (shape B5) | `[TYP-15]` |
+ | `E3026` | a function value that may outlive a place it uses and does not own: a returned function that changes its maker's local without `owns`; a task or thread given a loop's name with no word, or with `ref` where it may outlive the element | `[CLO-4]` |
+ | `E3027` | `ref mut` before something this function may not change: an argument, a loop or pattern name over something it only reads, or a place reached through a read-only name; a default on a `ref mut` parameter; a `ref mut` argument inside `debug_assert`'s argument, which a `release` build never evaluates | `[FN-2a]`, `[FN-5]` |
+ | `E3028` | a call's word does not match its parameter: no `ref mut` (or no `const` for a `const ref mut` parameter) before an argument for a `ref mut` parameter, a `MutSpan` one included, or `ref mut` before one for a parameter that is not `ref mut`; no `owns` before an argument for an `owns` parameter, or `owns` before one for a parameter that is not `owns` (shape B10) | `[FN-2a]` |
+ | `E3031` | a call whose argument the callee's body reaches by another name in a way its parameter cannot allow: a part of what the callee may end or move before its last use of that parameter (a plain, `Span` or `ref mut` parameter, or a method's object); for a `ref mut` parameter, a part of what the callee reads or changes by another name while the parameter is used; at the line that stores a function into a function value, when that function does so with what the value's calls give it (shape B16); a call from another package whose argument a callback, export or override of that package changes across the callee's open line | `[BRW-21]`, `[FFI-52]` |
+-| `E3032` | a loop of owners (`shares`, `shares mut` or `thread_shared` owners, a function value's state, channel ends) that the compiler cannot prove is opened again before its objects lose their last owner from outside (shape B17) | `[WK-6]`, `[WK-5]` |
++| `E3032` | a loop of owners (`shares`, `shares mut` or `thread_shared` owners, a function value's state, channel ends) that the compiler cannot prove is opened again before its objects lose their last owner from outside (shape B17), a loop closed through a function another package adds included, at the call that gives its kind or at the line that adds it | `[WK-6]`, `[WK-5]`, `[WK-7]`, `[MOD-9a]` |
+ | `E3040` | a name used after it was handed over or ended (a number handed over with `owns` included); a part handed over on its own, or its owner used whole, before the part is given a new value | `[OWN-3]` |
+ | `E3050` | a view of an uninitialised place | `[BRW-7]` |
+ | `E3060` | a view used after what it points into was ended, handed over, replaced or reshaped: a position after a removal or reorder; an address after a reshape; a view put in through `ref mut` after one of the call's arguments changed; a name opened from a link after a line or call that may end its object; a view of what a function value's or an `owns dyn I` value's state owns after that value is replaced or ended; a stored function, override or implementation that may end what a name opened from a link reads across a recorded library line | `[BRW-17]`, `[LT-3]`, `[MOD-9a]` |
+@@ -10856,7 +10999,7 @@
+ | `E7012` | a `static mut` not `guarded by` a lock reached from another thread; a function given to a `thread_shared fn()` type whose chain reaches an unguarded `static mut` | `[THR-20]`, `[STA-1]`, `[CLO-16]` |
+ | `E7013` | a `guarded by` field used without holding its lock | `[THR-18]` |
+ | `E7014` | a `thread_shared` value changed directly, `ref mut` after `exists as` on a `weakref thread_shared T` link included; a reduction into a field of a `thread_shared` value | `[THR-1]`, `[TYP-45]`, `[THR-21]` |
+-| `E7015` | a one-thread owner (`shares`, `shares mut`, a `weakref T` link) or a lent value reaches another thread: held by a function any thread may run (`thread_shared fn()`, `thread.spawn`'s included), in a plain `fn()` field of a class whose object is made `thread_shared` (at that line); a `thread_shared` value whose type is not `ThreadShared` (a `Cell`, an `RwLock[Cell[int]]`, a `Receiver`, a plain `fn()` reachable from it), at the line that makes it (verdict 165), and a function given to a `thread_shared fn()` type (not a `once fn`) whose state is not `ThreadShared`; a channel of a `T` that is not `Send`, at the line that makes it (verdict 164); a `weakref T` link made to a value reached through a value every thread may reach (a `thread_shared` value, a `static`, a `guarded by` `static mut`, a `comptime(e)` result), at the line or at a call by the callee's summary; a class whose methods pin its objects both to one thread (`weakref this`) and `thread_shared` (`thread_shared this`), or one-thread while it or a base promises `Send`; a `thread_shared` object of a class pinned to one thread or with a `weakref T` field, or of a class with a `@cached` method that declares nothing saying its objects are shared (its kept result is filled with plain stores); `thread_shared T using A`, at the making line or at the type, where the value would hold a link to an instance of a manager that not every thread may call; a scoped task or job that may make or end a `shares` owner, make, end or open a `weakref T` link, or end an object of a class family that carries a weak count; a `shares` owner or `weakref` link in a `threads(main)` callback registered off the main thread; a view of an `extern type` or opaque class reaching another thread; a one-thread owner in a trampoline class under `threads=any`; a field or a method that is not `Send` or `ThreadShared` in a class whose header, or a base's, promises it (`open class Script implements Send:`), at the class; a value held by the type of an `open` or `abstract` class another package may derive from, whose header promises nothing, reaching another thread or made `thread_shared` | `[THR-1]`, `[THR-2]`, `[THR-10]`, `[CLO-16]`, `[FFI-22]`, `[OWN-13]`, `[THR-8]`, `[THR-9]`, `[THR-15]`, `[TYP-46a]`, `[THR-11]`, `[FFI-21]`, `[FFI-8]`, `[FFI-17d]`, `[CLS-4]`, `[CLS-12]` |
++| `E7015` | a one-thread owner (`shares`, `shares mut`, a `weakref T` link) or a lent value reaches another thread: held by a function any thread may run (`thread_shared fn()`, `thread.spawn`'s included), in a plain `fn()` field of a class whose object is made `thread_shared` (at that line); a `thread_shared` value whose type is not `ThreadShared` (a `Cell`, an `RwLock[Cell[int]]`, a `Receiver`, a plain `fn()` reachable from it), at the line that makes it (verdict 165), and a function given to a `thread_shared fn()` type (not a `once fn`) whose state is not `ThreadShared`; a channel of a `T` that is not `Send`, at the line that makes it (verdict 164); a `weakref T` link made to a value reached through a value every thread may reach (a `thread_shared` value, a `static`, a `guarded by` `static mut`, a `comptime(e)` result), at the line or at a call by the callee's summary; a class whose methods pin its objects both to one thread (`weakref this`) and `thread_shared` (`thread_shared this`), or one-thread while it or a base promises `Send`; a `thread_shared` object of a class pinned to one thread or with a `weakref T` field, or of a class with a `@cached` method that declares nothing saying its objects are shared (its kept result is filled with plain stores); `thread_shared T using A`, at the making line or at the type, where the value would hold a link to an instance of a manager that not every thread may call; a scoped task or job that may make or end a `shares` owner, make, end or open a `weakref T` link, or end an object of a class family that carries a weak count; a `shares` owner or `weakref` link in a `threads(main)` callback registered off the main thread; a view of an `extern type` or opaque class reaching another thread; a one-thread owner in a trampoline class under `threads=any`; a field or a method that is not `Send` or `ThreadShared` in a class whose header, or a base's, promises it (`open class Script implements Send:`), at the class; a value held by the type of an `open` or `abstract` class another package may derive from, whose header promises nothing, reaching another thread or made `thread_shared`; a `weakref T` link that a function another package adds makes of what a call gives it, where a `thread_shared` value reaches that, at the call that gives its kind or at the line that adds it | `[THR-1]`, `[THR-2]`, `[THR-10]`, `[CLO-16]`, `[FFI-22]`, `[OWN-13]`, `[THR-8]`, `[THR-9]`, `[THR-15]`, `[TYP-46a]`, `[THR-11]`, `[FFI-21]`, `[FFI-8]`, `[FFI-17d]`, `[CLS-4]`, `[CLS-12]`, `[MOD-9a]` |
+ | `E7016` | a `@parallel` loop over something it cannot split into chunks: neither a range nor a list walked by element | `[PAR-1]` |
+ | `E7017` | `thread_shared` on a name whose value was not created `thread_shared`; `weakref thread_shared x` where `x` was not; an object with one owner (`Node()`) of a class whose methods say its objects are `thread_shared`; `shares` or `shares mut` on a `thread_shared` owner | `[THR-1]`, `[OWN-13]`, `[RC-1]` |
+ | `E7018` | a wait for a lock this thread holds, while this thread holds that lock (its `with` block, a guard in a local until its last use, or a guard made as a temporary for its life, `[EXP-4]`): a call through a function value, or a `dyn` or virtual method, that may run a function taking that lock (inside a walk under that lock too), or a join of a thread (a scope's end included) whose function changes what the lock guards; a first access of a `static` whose initialiser takes the lock; a second `read()` of an `RwLock` this thread holds `read()`; a stored function, override or implementation that takes a lock held at a recorded library line | `[THR-19]`, `[MOD-9a]`, `[EXP-4]` |
+@@ -10901,7 +11044,7 @@
+ | `W1002` | binding shadows an enum variant of the same name | `[GRM-12]` |
+ | `W1003` | a package module shadows the standard module of the same name | `[MOD-3]` |
+ | `W2015` | float literal has more digits than its type keeps | `[LEX-17a]` |
+-| `W2016` | `debug_assert` argument has side effects | `[PAN-1]` |
++| `W2016` | `debug_assert` argument has an effect of its own that changes nothing (it prints, or takes a lock and lets it go) | `[PAN-1]` |
+ | `W2091` | unreachable match arm | `[CTL-5]` |
+ | `W2190` | unused `Result`, `check_disjoint`'s included | `[ERR-5]` |
+ | `W2192` | use of a deprecated item | `[VER-3]` |
+@@ -10957,6 +11100,7 @@
+ | `L3019` | an object is never deinitialised before its last owner ends (`[RC-3]`, ODR-063) |
+ | `W0001` | a dangling doc comment is discarded in silence (`[LEX-11]`) |
+ | `W2111` | `virtual` in a class that cannot be subclassed is refused (`E2112`) |
++
+ ---
+ 
+ # Part XVIII — Requirements on Implementations
+@@ -11240,8 +11384,9 @@
+   value) is checked by its own package with what that build sees (`[EFF-2a]`), and checked again,
+   with the same rules, by every package that puts a new function, implementation, override or
+   callback there, at the line that puts it (`[MOD-9a]`, `[BLD-14]` items 12 and 16, `[BRW-21]`'s
+-  open lines); a line checked this way by no build is a defect of the build (`[PHIL-12]`). Nothing
+-  is checked while the program runs.
++  open lines), or, for a kind a caller gives through a parameter, by that caller at its call
++  (`[BLD-14]` item 11); a line checked this way by no build is a defect of the build (`[PHIL-12]`).
++  Nothing is checked while the program runs.
+ 
+ ## XVIII.5 The runtime
+ 
+@@ -11351,6 +11496,7 @@
+   governs the C backend's `restrict` (`[SIMD-3]`: derived, never assumed); emits DWARF or CodeView
+   debug information with Ember's type names; and supports profile-guided optimisation through LLVM's
+   instrumentation and ThinLTO (`[BLD-6]`).
++
+ ---
+ 
+ # Annex A — Syntax Quick Reference
+@@ -11523,6 +11669,7 @@
+     for i in 0..xs.len():
+         consume_item(xs[i])
+ ```
++
+ ---
+ 
+ # Annex B — Hot Reload (the Dynamic profile)
+@@ -11737,7 +11884,7 @@
+   | fields reordered, `let` changed | carried over by name |
+   | methods added, removed or changed | no instance change, except as `[HR-44]` says for a `@cached` method |
+   | base class changed | refused |
+-| the promise an `open` or `abstract` class's header makes (`implements Send`, `implements ThreadShared`, an interface that needs them, `[THR-8]`) added or removed | refused (`E9030`) unless the image rebuilds every package that imports the class, whose derived classes and hand-overs are then checked again when they compile (`[HR-44]`) |
++  | the promise an `open` or `abstract` class's header makes (`implements Send`, `implements ThreadShared`, an interface that needs them, `[THR-8]`) added or removed | refused (`E9030`) unless the image rebuilds every package that imports the class, whose derived classes and hand-overs are then checked again when they compile (`[HR-44]`) |
+   | class removed while instances live | refused, naming the class and the count |
+   | enum variant added, reordered or renamed with `@renamed_from` | discriminants rewritten |
+   | enum variant removed while a value holds it | refused, naming the variant and the count |
+@@ -11932,7 +12079,9 @@
+ * `[HR-33]` `ember run --hot` is the toolchain's own host: it builds under `debug`, runs the
+   program, watches the sources and polls at the point the program declares with
+   `std.hot.checkpoint()`; a program that declares none is told so after ten seconds rather than
+-  appearing to hang.---
++  appearing to hang.
++
++---
+ 
+ # Annex C — C++ Interoperation (the Native profile, optional)
+ 
+@@ -11988,7 +12137,7 @@
+   | other classes | automatic, opaque behind a pointer; methods through thunks |
+   | the standard-library types of `[FFI-17a]` | automatic |
+   | explicit template instantiations | automatic (`[FFI-17b]`) |
+-| a name declared several times (overloads, default arguments, a `const` and non-`const` pair) | automatic (`[FFI-57]`, `[FFI-40b]`) |
++  | a name declared several times (overloads, default arguments, a `const` and non-`const` pair) | automatic (`[FFI-57]`, `[FFI-40b]`) |
+   | other templates, metaprogramming, concepts, compiler extensions | native island |
+   | function-like macros, `std::function` | overlay |
+   | single inheritance from a C++ base | automatic, bounded (`[FFI-39]`) |
+@@ -12087,7 +12236,7 @@
+   | multiple inheritance, virtual bases | the pointer adjustment is ABI-private and differs between MSVC and Itanium | a single-inheritance facade in C++ |
+   | C++20 modules | no stable AST for a compiled module interface | parse the headers |
+   | C++ coroutines | promise and frame layout are implementation-defined | a callback or completion handle |
+-    | casts across a hierarchy the importer did not model | no Ember equivalent of `dynamic_cast` there | cast in C++ and export the result |
++  | casts across a hierarchy the importer did not model | no Ember equivalent of `dynamic_cast` there | cast in C++ and export the result |
+   | non-type template parameters of class type | mangling differs between compilers | instantiate in C++ and export a typedef |
+   | allocator-parameterised containers | the allocator is part of the type and opaque | expose a span, or keep it native |
+ 
+@@ -12337,7 +12486,9 @@
+   headers and at least one third-party header-only library, each with its expected outcome recorded
+   (by value, opaque, behind an overlay, or refused with a named diagnostic) and its generated thunks
+   committed and diffed; it runs under MSVC and Clang, with debug and release runtimes and RTTI on
+-  and off, and two configurations that disagree must fail with `E9020`, never bind differently.---
++  and off, and two configurations that disagree must fail with `E9020`, never bind differently.
++
++---
+ 
+ # Annex D — GPU Host Model (`std.gpu`)
+ 
+@@ -12438,7 +12589,9 @@
+   built for another interface is `E2020`, naming both interfaces.
+ * `[GPU-11]` Ember assumes no shader language: anything that produces SPIR-V and reflection works.
+ * A kernel language (`@gpu fn`) is reserved for a later version; `@gpu` and `std.gpu.kernel` are
+-  reserved names.---
++  reserved names.
++
++---
+ 
+ # Appendix E — Coming from Python *(non-normative)*
+ 
+@@ -12597,6 +12750,7 @@
+ draws from a half-open range; `print` with a newline is `println`. Everything else — the script at
+ the top level, `range`, `len`, `sorted`, iterating a map's keys, f-strings, `//` — reads as in Python.
+ The two programs print different numbers only because their generators differ.
++
+ ---
+ 
+ # Appendix F — Glossary
+@@ -12609,7 +12763,7 @@
+ | **carries a weak count** | said of a type whose values have the weak count in their header: a class family with a `pub` class, one named in a `pub` signature, or one its own package links to, and a type that is not a class under the same conditions (`[OBJ-1]`); read from the declaration, never from the program |
+ | **class** | a type whose objects live each in a heap block of their own, with identity (`is`) and subclasses; an object has one owner unless a line says `shares`, and an 8-byte header (Part VIII) |
+ | **contract** | an attribute stating an effect a function must not have (`@noalloc`), checked over the call graph (§X.2); for FFI, the facts about a foreign pointer that a header does not state (§XVI.4) |
+-| **`Copy` type** | a type whose `=` copies a value bit for bit, the two copies independent: numbers, `bool`, `char`, `ref T`, `Span[T]`, `StrView`, raw pointers, `extern "C" fn` values, tuples and fixed arrays of `Copy` elements, structs and enums marked `@derive(Copy)`, and structs made only of these; class objects, `shares` values, links, `ref mut` views and `MutSpan`s are not `Copy` |
++| **`Copy` type** | a type whose `=` copies a value bit for bit, the two copies independent: numbers, `bool`, `char`, `ref T`, `Span[T]`, `StrView`, raw pointers, `extern "C" fn` values, tuples and fixed arrays of `Copy` elements, structs and enums marked `@derive(Copy)` (all of whose fields are `Copy`), and unit-only enums (`[ENM-3]`); no other struct is, whatever its fields (`[STR-5]`); class objects, `shares` values, links, `ref mut` views and `MutSpan`s are not `Copy` |
+ | **copy of** | a new value equal to the old one, made by its type's `Clone`, on which nothing done to the other is seen; before a link it copies the target, never the link |
+ | **count, weak count** | the number of owners in the header of a value with several owners, and the number of `weakref` links to an object, which keeps its memory block (not the object) until the last link ends, present in every value of a type that can be named from outside its package or that a `weakref` type in its own package names, decided by the declaring package (`[OBJ-1]`); each is compared with its limit before every +1 (its maximum for a one-thread count; half its range for a `thread_shared` count, which threads add to at once, `[RC-4]`), and the program stops there |
+ | **deferred-drop region** | a walk during which an object whose last owner ends is set aside whole, with everything it owns, marked ended at once and freed when the walk ends |
+@@ -12623,7 +12777,7 @@
+ | **fix-it** | a suggested edit attached to a diagnostic that tools can apply mechanically |
+ | **function value** | a function or lambda kept in a variable, a list or a field: two words, its code and its state (what it captured with a word); its type says its parameters, its result and whether any thread may run it (`thread_shared fn()`) |
+ | **generator frame** | a `gen fn`'s suspended state as a sized value; resuming runs the body to the next `yield` (`[CORO-1]`) |
+-| **hand-over** | the giver's name ends and the receiver becomes the owner, for every type, numbers included: `b = a`, an argument for an `owns` parameter, a capture `owns x` |
++| **hand-over** | the giver's name ends and the receiver becomes the owner, for every type, numbers included, wherever a line hands a value over: `b = a` (a value `=` copies, a number among them, is handed over by `b = owns a`), an argument for an `owns` parameter, `return a`, a capture `owns x` (`[OWN-9]`) |
+ | **handle** | a token that names something elsewhere: `Handle[T]`, a generational index into a `Pool` (`[HND-1]`), a `JoinHandle`, a C object's `@ffi(handle)`; never a class object |
+ | **interior mutability** | a change through a name that only reads, which only the types made to be shared between threads allow, by their own operations: `Atomic`, `Mutex`, `RwLock`, channel ends, and `guarded by` fields under their lock |
+ | **kept callback** | a function value C keeps after the call that hands it over (`callback(retained)` or `callback(once)`) and runs during later foreign calls |
+@@ -12643,7 +12797,7 @@
+ | **parent link** | a `weakref` field naming the object that owns its holder (`parent: weakref Node`), set by the program (`child.parent = weakref this`); read with no test where the compiler proves its target lives |
+ | **permanent thunk** | the fixed address standing for a reloadable function; a reload changes its target, never its address (`[HR-6]`) |
+ | **place** | where a value lives: a local, a field, a list element, an enum variant's payload, or what a `ref mut` name stands for |
+-| **position** | a name for a list element made by indexing, which finds the element again at each use; the list may grow while it is used, and a removal, reorder or clear ends it |
++| **position** | a name for an element of an `Array` made by indexing (an `SoA` proxy is one), which finds the element again at each use; the list may grow while it is used, and a removal, reorder or clear ends it; a name for an element of any other container is an address (`[BRW-16]`) |
+ | **profile** | `debug`, `development` or `release`: optimisation and diagnostic settings that never change meaning (`[PRF-1]`) |
+ | **proven fact** | a fact a verifying operation establishes for two names (`assert_disjoint` after its call, `check_disjoint` inside its `Ok` branch), dropped when either name is given another value (`[DSJ-2]`) |
+ | **read-only view** | every view except `ref mut T`, `sharedref mut T` and a `MutSpan` held by a `ref mut` name; it promises that what it reads does not change while it is used |
+@@ -12671,6 +12825,7 @@
+ | **view** | a name or value that points into a place someone else owns and may not outlive it: `ref T`, `ref mut T`, `sharedref mut T`, `Span[T]`, `MutSpan[T]`, `StrView`, a plain parameter, loop or pattern name, a name opened with `exists as` or named by a kind test, a name for a part (`[TYP-34]`) |
+ | **`weakref`** | a link that does not keep its target alive, read by opening it (`exists as`), which finds nothing once the target has ended; `weakref T` links a value on one thread (one header test to open), `weakref thread_shared T` a `thread_shared` value (its opening holds a count); the kind is in the type, read from the words on the path to the value when the link is made |
+ | **zero-cost** | for a use whose checks are all discharged, emitted code with nothing equivalent C would not contain (`[COST-1]`) |
++
+ ---
+ 
+ # Appendix G — Resolution of Findings F-001–F-214
+@@ -12896,6 +13051,7 @@
+ | F-212 — two errata are marked open that the grammar already fixed | OUT | The errata ledger is outside the document. | — |
+ | F-213 — `i32.MIN % -1` | SPEC | `MIN % -1 == 0`; `MIN // -1` panics as overflow, naming the right operator. | `[TYP-28]` |
+ | F-214 — the test suite is green (263 tests) but has a flaky UI pair, and `cargo test` hides everything after the first failure | GATE | The runner reports all failures and quarantines flaky tests by name. | `[TST-30]` |
++
+ ---
+ 
+ # Appendix H — Changes from 0.9.8_Hardened_3
+@@ -16250,6 +16406,99 @@
+ | `[TYP-17]` | changed |
+ | `[TYP-44a]` | changed |
+ | `[TYP-46a]` | changed |
++
++
++## H.56 Changes in 0.9.20_Hardened_5 (from 0.9.20_Hardened_4)
++
++**0.9.20_Hardened_5**, of 2026-11-10, follows the owner's review of Hardened_4 and a reading of the
++whole of it by the lead, solo (`tasks/96/redesign/spec-gaps-0.9.15/deep/check-0.9.20-H4.md`, findings 1
++to 23). The owner (2026-11-10): the departures of Hardened_2 to Hardened_4 from his verdicts stand
++where the lead judges them the better solution, which three do (ODR-264's list pattern on a `match`
++arm, ODR-261's `Error` and `AnyError`, N87's kept-by-C mark), and verdicts 127 and 135 are restored
++("Yes, restore them"); then "read the parts you haven't read and fix them too, before creating a new
++hardened spec". The rulings are N140 to N146 (`decisions.md` §16). Every change below restores an
++owner's verdict, refuses a program that was unsafe, states a fact a compiler would otherwise have to
++guess, or repairs the text; no feature is taken away. The accepted set changes, so the language
++version stays 0.9.20 and the hardening number moves (`[VER-9]`).
++
++* **The default manifest is written again** (N146, verdicts 127 and 135): a command that compiles a
++  file with no `ember.toml` writes one and says so, and `ember.overlays` sits beside it, so every
++  program keeps the record its overlays were checked against, a single file's included. Hardened_2's
++  "no compile command writes a file" had left a single file's overlay unchecked against its header on
++  every build (`[MAN-9]`, `[FFI-55]`, `[CLI-4]`, §XVII.1's listing).
++* **What a function another package adds keeps of what a call gives it** (N142): an owner stored, or
++  a `weakref T` link made, by an implementation, an override or a stored function that a library
++  calls and never saw is judged where the function is seen: at the call that gives its kind through
++  a parameter, by the kind's own record, or at the line that adds the member, against the library's
++  recorded line. Before, such a store closed a loop of owners that no package judged, and such a
++  link was counted on one thread for a value another thread may end (`[WK-7]`, `[OWN-13]`,
++  `[MOD-9a]`, `[BLD-14]` items 11 and 12, `[EFF-2a]`, `[EFF-4]`, `[BCK-8]`).
++* **One `owns` where the call's word and the making word meet** (N140): for a parameter whose type
++  is an `owns T`, one `owns` says both the block and the hand-over, and a second is `E0109`
++  (`[GRM-15]`, `[OWN-10]`).
++* **An owner of `this`** (N143): `thread_shared this` is written in a method, which pins the class;
++  `shares this` and `shares mut this` are `E2122`, since the object may have one owner (`[RC-1]`,
++  `[OWN-13]`, `[THR-1]`, `[CLS-2]`, `[CLS-7a]`, `[OBJ-5]`, `[ALC-1]`).
++* **The job's arena** (N144): it is the job's own, a scope of the worker's arena that gives back
++  only the job's bytes, and one place for each job (`[JOB-5]`).
++* **`debug_assert` changes nothing** (N145): a call in its argument of a function that changes or
++  ends anything that outlives the argument is `E3023`, so no profile changes what a program
++  computes; an effect that changes nothing stays `W2016` (§VI.6, `[PHIL-13]`, `[PRF-1]`).
++* **Positions** (N141): a position is made by indexing an `Array`, and an `SoA` proxy is one; a name
++  for an element of any other container is an address (`[BRW-16]`).
++* **Text repaired**: two example blocks whose line breaks Hardened_2's re-wrap had removed, which hid
++  three examples from the example check (`[FFI-51]`, `[FFI-54]`); the front matter, which described
++  Hardened_1; thirteen table rows that had lost their table's indent (`[COST-6]`, `[HR-14]`,
++  `[FFI-44]`, `[FFI-48]`); a help line the grammar does not accept (`[LT-4]`); `split_at_mut`, which
++  `[SPN-5]` says does not exist (`[DSJ-11]`); `ember audit` in the command listing (`[CLI-11]`,
++  `[CLI-15]`); the change log `[CLI-20]` cites; a sentence of `[TYP-32]`; a citation written twice
++  in §I.6; the glossary's lines for a `Copy` type, a hand-over and a position, which said other
++  than `[STR-5]`, `[OWN-9]` and `[BRW-16]`; unit-only enums in the lists of `Copy` types
++  (`[ENM-3]`); a parenthesis of `[TYP-36]` that read against `[OWN-8]`; a name split in two in
++  `[HASH-2]`; and a blank line at the end of every Part, the generated ones included, so that the
++  next Part's divider stands alone.
++
++Registry rows: E0109, E2122, E3022, E3023, E3032, E7015, W2016. No new rule, no new code, none
++retired. Owner verdicts: 127 and 135 restored to their letter; 155 and 110 as Hardened_4 left them,
++accepted by the owner on the lead's judgement; 160 extended to the word `owns` itself (N140).
++
++Generated: every rule whose text differs from 0.9.20_Hardened_4.
++
++| Rule | 0.9.20_Hardened_4 → 0.9.20_Hardened_5 |
++|---|---|
++| `[ALC-1]` | changed |
++| `[BCK-8]` | changed |
++| `[BLD-14]` | changed |
++| `[BRW-16]` | changed |
++| `[CLI-4]` | changed |
++| `[CLI-20]` | changed |
++| `[CLS-2]` | changed |
++| `[CLS-7a]` | changed |
++| `[COST-6]` | changed |
++| `[DSJ-11]` | changed |
++| `[EFF-2a]` | changed |
++| `[EFF-4]` | changed |
++| `[FFI-44]` | changed |
++| `[FFI-55]` | changed |
++| `[GRM-15]` | changed |
++| `[HASH-2]` | changed |
++| `[HR-14]` | changed |
++| `[JOB-5]` | changed |
++| `[LT-4]` | changed |
++| `[MAN-9]` | changed |
++| `[MOD-9a]` | changed |
++| `[OBJ-5]` | changed |
++| `[OWN-9]` | changed |
++| `[OWN-10]` | changed |
++| `[OWN-13]` | changed |
++| `[PHIL-13]` | changed |
++| `[PRF-1]` | changed |
++| `[RC-1]` | changed |
++| `[THR-1]` | changed |
++| `[TYP-32]` | changed |
++| `[TYP-36]` | changed |
++| `[WK-7]` | changed |
++
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -16443,7 +16692,7 @@
+ |---|---|---|
+ | `[CLI-1]` | XVII | Every command accepts `--json` and exits non-zero on error. |
+ | `[CLI-2]` | XVII | *(changed in 0.9.15)* `ember build --emit c --out-dir <dir>` writes … |
+-| `[CLI-4]` | XVII | `ember run file.em` and `ember build file.em` accept a single file … |
++| `[CLI-4]` | XVII | *(changed in 0.9.20)* `ember run file.em` and `ember build file.em` … |
+ | `[CLI-5]` | XVII | *(changed in 0.9.10)* *(changed in 0.9.20)* `ember bind --init … |
+ | `[CLI-6]` | XVII | `ember bind --report` lists every skipped declaration and every … |
+ | `[CLI-7]` | XVII | *(changed in 0.9.15)* `ember bind <header> --check <overlay>` checks … |
+@@ -17318,7 +17567,7 @@
+ | `[PHIL-10]` | I | *(changed in 0.9.15)* A program containing no `unsafe` boundary … |
+ | `[PHIL-11]` | I | *(changed in 0.9.15)* What remains possible, and is therefore not a … |
+ | `[PHIL-12]` | I | No silent acceptance. Every construct a program writes — an … |
+-| `[PHIL-13]` | I | One meaning per program. No build profile, compiler flag, manifest … |
++| `[PHIL-13]` | I | *(changed in 0.9.20)* One meaning per program. No build profile, … |
+ | `[PHIL-14]` | I | *(changed in 0.9.10)* Python spelling, Python meaning. Where Ember … |
+ | `[PHIL-15]` | I | *(changed in 0.9.15)* Costs are named. Every cost the language can … |
+ | `[PHIL-16]` | I | *(new in 0.9.15)* The words say what the code does. Whether a name … |
