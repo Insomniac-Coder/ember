@@ -1,5 +1,13 @@
 # Ember — handoff
 
+> **2026-11-11 evening — `ffi_direct_call` fixed (D-970), the local session, attended.** The gap was the C twin's:
+> with `noinline` alone its whole-program build (`-flto`, `/GL`) saw `ffi_mix`'s body and called a copy with the `3`
+> folded in, where the Ember program calls the function `ffi_direct_call_mix.c` compiles apart (D-897). The twin now
+> keeps the function as one compiled apart is (`dllexport` / `used` / `noipa`, checked by disassembly with Clang, GCC and
+> MSVC); bench 1.010 [1.000, 1.020], pass. **Found with it, open, for the owner:** D-971, Clang release builds' five
+> code layouts are one program (the alignment flag never reaches LTO's code generation), so `[BEN-1]` does not hold on
+> the LLVM backend. **Next after that:** collect round 2 and `lead-a1-3` (the block below).
+
 > **2026-11-11 evening — round 1 of the plan pushed (the local session, attended).** `main` holds the four workers'
 > batches of round 1 (`tasks/96/redesign/jobs/N-batch.md`, `L-batch.md`; review and every finding in `jobs/review.md`),
 > D-966 to D-969 fixed, `[OWN-9]`'s constructor rule (verdict 159: a constructor's argument is given as `=` gives it, a
