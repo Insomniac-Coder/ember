@@ -24606,6 +24606,17 @@ impl<'a> Checker<'a> {
         attrs: &[ast::Attribute],
         span: Span,
     ) -> Option<Function> {
+        // `[UNS-12]` — `drop` runs wherever a value ends, in safe code. Only this case is built: the
+        // `override` of a method that is not `unsafe` and the implementation of an interface method
+        // declared without `unsafe` come with milestone M11.
+        if decl.name.name.is("drop") && decl.is_unsafe && self.reported_stmt_attrs.insert(decl.name.span) {
+            let shown = self.types.display(owner);
+            self.error(
+                codes::E2020,
+                decl.name.span,
+                format!("`drop` runs wherever a `{shown}` ends, in safe code, so it cannot be an `unsafe fn`; write `fn drop():` and put what needs `unsafe` in it in an `unsafe:` block with a `# SAFETY:` note"),
+            );
+        }
         if let TyKind::Class(id) = self.types.kind(owner)
             && self.types.class_def(*id).is_sync
             && !decl.name.name.is("init")
