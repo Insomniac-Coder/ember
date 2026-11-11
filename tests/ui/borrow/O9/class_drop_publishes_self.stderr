@@ -1,10 +1,10 @@
-error[E3016]: `this` escapes its own `drop`
+error[E3016]: `drop` ends this `Token`; an owner made from it would point at a freed object; keep a copy of what you need
   --> tests/ui/borrow/O9/class_drop_publishes_self.em:13:28
    |
 13 |         retained.push(owns this)
    |                            ^^^^ published here
    |
-   = help: move the data out with `mem.take` instead
+   = help: on line 13, hand over a copy of what you need where it has `this`: `copy of this.payload`; or move the data out with `mem.take`
    = note: a destructor may not publish a handle to the object being destroyed [CLS-7a]
 
 error: could not compile due to 1 error(s)
