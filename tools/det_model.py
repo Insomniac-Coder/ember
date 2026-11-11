@@ -717,3 +717,414 @@ def pow64(x, y):
     r = (z * t1) / (t1 - 2.0) - (w + z * w)
     z = 1.0 - (r - z)
     return s * scalbn(z, n)
+
+
+# -- asin, acos -------------------------------------------------------------------
+
+AS_PIO2_HI = 1.57079632679489655800e+00
+AS_PIO2_LO = 6.12323399573676603587e-17
+PIO4_HI = 7.85398163397448278999e-01
+PS = [1.66666666666666657415e-01, -3.25565818622400915405e-01, 2.01212532134862925881e-01,
+      -4.00555345006794114027e-02, 7.91534994289814532176e-04, 3.47933107596021167570e-05]
+QS = [-2.40339491173441421878e+00, 2.02094576023350569471e+00, -6.88283971605453293030e-01,
+      7.70381505559019352791e-02]
+
+
+def asin_ratio(t):
+    p = t * (PS[0] + t * (PS[1] + t * (PS[2] + t * (PS[3] + t * (PS[4] + t * PS[5])))))
+    q = 1.0 + t * (QS[0] + t * (QS[1] + t * (QS[2] + t * QS[3])))
+    return p / q
+
+
+def asin64(x):
+    if x != x:
+        return x + x
+    ax = abs(x)
+    if ax >= 1.0:
+        if ax == 1.0:
+            return x * AS_PIO2_HI + x * AS_PIO2_LO
+        return NAN
+    if ax < 0.5:
+        if ax < 7.450580596923828e-09:
+            return x
+        t = x * x
+        return x + x * asin_ratio(t)
+    w = 1.0 - ax
+    t = w * 0.5
+    s = math.sqrt(t)
+    r = asin_ratio(t)
+    if ax >= 0.975:
+        t = AS_PIO2_HI - (2.0 * (s + s * r) - AS_PIO2_LO)
+    else:
+        h = split(s)[0]
+        c = (t - h * h) / (s + h)
+        p = 2.0 * s * r - (AS_PIO2_LO - 2.0 * c)
+        q = PIO4_HI - 2.0 * h
+        t = PIO4_HI - (p - q)
+    return -t if x < 0.0 else t
+
+
+def acos64(x):
+    if x != x:
+        return x + x
+    ax = abs(x)
+    if ax >= 1.0:
+        if ax == 1.0:
+            if x > 0.0:
+                return 0.0
+            return PI + 2.0 * AS_PIO2_LO
+        return NAN
+    if ax < 0.5:
+        if ax < 6.938893903907228e-18:
+            return AS_PIO2_HI + AS_PIO2_LO
+        z = x * x
+        r = asin_ratio(z)
+        return AS_PIO2_HI - (x - (AS_PIO2_LO - x * r))
+    if x < 0.0:
+        z = (1.0 + x) * 0.5
+        s = math.sqrt(z)
+        r = asin_ratio(z)
+        w = r * s - AS_PIO2_LO
+        return PI - 2.0 * (s + w)
+    z = (1.0 - x) * 0.5
+    s = math.sqrt(z)
+    h = split(s)[0]
+    c = (z - h * h) / (s + h)
+    r = asin_ratio(z)
+    w = r * s + c
+    return 2.0 * (h + w)
+
+
+# -- sinh, cosh, tanh -------------------------------------------------------------
+
+SH = [0.16666666666666666, 0.008333333333333333, 0.0001984126984126984, 2.7557319223985893e-06,
+      2.505210838544172e-08, 1.6059043836821613e-10, 7.647163731819816e-13, 2.8114572543455206e-15,
+      8.22063524662433e-18, 1.9572941063391263e-20]
+SINH_OVERFLOW = 7.10475860073943863426e+02
+
+
+def sinh_tail(x):
+    """sinh x - x for |x| < 1, from its Taylor series."""
+    z = x * x
+    p = SH[9]
+    for c in reversed(SH[:9]):
+        p = c + z * p
+    return x * z * p
+
+
+def exp_parts(x):
+    """e^x for 0.3466 <= x < 710 as (hi, lo, k) with e^x == (hi + lo) 2^k."""
+    if x < 1.0397205352783203:
+        hi = x - LN2HI
+        lo = LN2LO
+        k = 1
+    else:
+        k = int(INVLN2 * x + 0.5)
+        t = float(k)
+        hi = x - t * LN2HI
+        lo = t * LN2LO
+    r = hi - lo
+    t = r * r
+    c = r - t * (EP1 + t * (EP2 + t * (EP3 + t * (EP4 + t * EP5))))
+    q = -((lo - (r * c) / (2.0 - c)) - hi)
+    y = 1.0 + q
+    return y, (1.0 - y) + q, k
+
+
+def sinh64(x):
+    if x != x:
+        return x + x
+    ax = abs(x)
+    if ax < 1.0:
+        if ax < 3.725290298461914e-09:
+            return x
+        return x + sinh_tail(x)
+    if ax < 22.0:
+        yh, yl, k = exp_parts(ax)
+        ih = 1.0 / yh
+        p, e = two_product(ih, yh)
+        il = ((1.0 - p) - e - ih * yl) * ih
+        a = scalbn(yh, k)
+        b = scalbn(ih, -k)
+        d = a - b
+        tail = (((a - d) - b) + scalbn(yl, k)) - scalbn(il, -k)
+        r = 0.5 * (d + tail)
+        return -r if x < 0.0 else r
+    if ax <= SINH_OVERFLOW:
+        yh, yl, k = exp_parts(ax)
+        r = scalbn(yh + yl, k - 1)
+        return -r if x < 0.0 else r
+    return x * INF
+
+
+CH = [0.5, 0.041666666666666664, 0.001388888888888889, 2.48015873015873e-05, 2.755731922398589e-07,
+      2.08767569878681e-09, 1.1470745597729725e-11, 4.779477332387385e-14, 1.5619206968586225e-16,
+      4.110317623312165e-19, 8.896791392450574e-22]
+
+
+def cosh_tail(x):
+    """cosh x - 1 for |x| < 1."""
+    z = x * x
+    p = CH[10]
+    for c in reversed(CH[:10]):
+        p = c + z * p
+    return z * p
+
+
+def cosh64(x):
+    if x != x:
+        return x + x
+    ax = abs(x)
+    if ax < 1.0:
+        return 1.0 + cosh_tail(ax)
+    if ax < 22.0:
+        yh, yl, k = exp_parts(ax)
+        ih = 1.0 / yh
+        p, e = two_product(ih, yh)
+        il = ((1.0 - p) - e - ih * yl) * ih
+        a = scalbn(yh, k)
+        b = scalbn(ih, -k)
+        d = a + b
+        tail = (((a - d) + b) + scalbn(yl, k)) + scalbn(il, -k)
+        return 0.5 * (d + tail)
+    if ax <= SINH_OVERFLOW:
+        yh, yl, k = exp_parts(ax)
+        return scalbn(yh + yl, k - 1)
+    return INF
+
+
+EXPM1_Q = [-3.33333333333331316428e-02, 1.58730158725481460165e-03, -7.93650757867487942473e-05,
+           4.00821782732936239552e-06, -2.01099218183624371326e-07]
+
+
+def expm1_64(x):
+    """e^x - 1, fdlibm's expm1."""
+    if x != x:
+        return x + x
+    ax = abs(x)
+    if ax >= 38.816242111356935:
+        if ax == INF:
+            return x if x > 0.0 else -1.0
+        if x > O_THRESHOLD:
+            return INF
+        if x < 0.0:
+            return -1.0
+    k = 0
+    c = 0.0
+    r = x
+    if ax > 0.34657359027997264:
+        if ax < 1.0397207708399179:
+            if x >= 0.0:
+                hi = x - LN2HI
+                lo = LN2LO
+                k = 1
+            else:
+                hi = x + LN2HI
+                lo = -LN2LO
+                k = -1
+        else:
+            half = -0.5 if x < 0.0 else 0.5
+            k = int(INVLN2 * x + half)
+            t = float(k)
+            hi = x - t * LN2HI
+            lo = t * LN2LO
+        r = hi - lo
+        c = (hi - r) - lo
+    elif ax < 5.551115123125783e-17:
+        return x
+    hfx = 0.5 * r
+    hxs = r * hfx
+    q = EXPM1_Q
+    r1 = 1.0 + hxs * (q[0] + hxs * (q[1] + hxs * (q[2] + hxs * (q[3] + hxs * q[4]))))
+    t = 3.0 - r1 * hfx
+    e = hxs * ((r1 - t) / (6.0 - r * t))
+    if k == 0:
+        return r - (r * e - hxs)
+    e = r * (e - c) - c
+    e -= hxs
+    if k == -1:
+        return 0.5 * (r - e) - 0.5
+    if k == 1:
+        if r < -0.25:
+            return -2.0 * (e - (r + 0.5))
+        return 1.0 + 2.0 * (r - e)
+    if k <= -2 or k > 56:
+        y = 1.0 - (e - r)
+        if k == 1024:
+            y = y * 2.0 * P1023
+        else:
+            y = scalbn(y, k)
+        return y - 1.0
+    if k < 20:
+        t = 1.0 - two_to(-k)
+        y = t - (e - r)
+        return y * two_to(k)
+    t = two_to(-k)
+    y = r - (e + t)
+    y += 1.0
+    return y * two_to(k)
+
+
+def tanh64(x):
+    if x != x:
+        return x + x
+    ax = abs(x)
+    z = 1.0
+    if ax < 22.0:
+        if ax < 2.7755575615628914e-17:
+            return x * (1.0 + x)
+        if ax >= 1.0:
+            t = expm1_64(2.0 * ax)
+            z = 1.0 - 2.0 / (t + 2.0)
+        else:
+            ts = sinh_tail(ax)
+            tc = cosh_tail(ax)
+            nh = ax + ts
+            nl = (ax - nh) + ts
+            dh = 1.0 + tc
+            dl = (1.0 - dh) + tc
+            q = nh / dh
+            p, e = two_product(q, dh)
+            z = q + ((((nh - p) - e) + nl) - q * dl) / dh
+    return -z if x < 0.0 else z
+
+
+# -- exp2, log2, log10, cbrt, hypot ----------------------------------------------------
+
+LN2_D = 6.931471805599453094e-01
+LN2_TAIL = 2.319046813846299558e-17
+
+
+def exp2_64(x):
+    """2^x: x = n + r, 2^r from e^(r ln 2) with r ln 2 a sum of two doubles, 2^n by scaling."""
+    if x != x:
+        return x + x
+    if x >= 1024.0:
+        return INF
+    if x < -1075.0:
+        return 0.0
+    n = float(math.floor(x + 0.5))
+    r = x - n
+    p, e = two_product(r, LN2_D)
+    lo = e + r * LN2_TAIL
+    y = exp64(p)
+    y = y + y * lo
+    return scalbn(y, int(n))
+
+
+def log1p_split(f):
+    """ln(1 + f) as (hi, lo) for 1 + f in [sqrt(2)/2, sqrt(2)), as FreeBSD's k_log1p."""
+    s = f / (2.0 + f)
+    z = s * s
+    w = z * z
+    t1 = w * (LG2 + w * (LG4 + w * LG6))
+    t2 = z * (LG1 + w * (LG3 + w * (LG5 + w * LG7)))
+    r = t2 + t1
+    hfsq = 0.5 * f * f
+    hi = split(f - hfsq)[0]
+    lo = ((f - hi) - hfsq) + s * (hfsq + r)
+    return hi, lo
+
+
+def log_reduce(x):
+    """(k, f) with x = 2^k (1 + f) and 1 + f in [sqrt(2)/2, sqrt(2))."""
+    m, k = split_exponent(x)
+    if m >= 1.4142135623730951:
+        m *= 0.5
+        k += 1
+    return k, m - 1.0
+
+
+IVLN2_HI = 1.44269504072144627571e+00
+IVLN2_LO = 1.67517131648865118353e-10
+IVLN10_HI = 4.34294481878168880939e-01
+IVLN10_LO = 2.50829467116452752298e-11
+LOG10_2_HI = 3.01029995663611771306e-01
+LOG10_2_LO = 3.69423907715893078616e-13
+
+
+def log2_64(x):
+    if x != x:
+        return x + x
+    if x <= 0.0:
+        return -INF if x == 0.0 else NAN
+    if x == INF:
+        return x
+    k, f = log_reduce(x)
+    y = float(k)
+    if f == 0.0:
+        return y
+    hi, lo = log1p_split(f)
+    val_hi = hi * IVLN2_HI
+    val_lo = (lo + hi) * IVLN2_LO + lo * IVLN2_HI
+    w = y + val_hi
+    val_lo += (y - w) + val_hi
+    return val_lo + w
+
+
+def log10_64(x):
+    if x != x:
+        return x + x
+    if x <= 0.0:
+        return -INF if x == 0.0 else NAN
+    if x == INF:
+        return x
+    k, f = log_reduce(x)
+    y = float(k)
+    if f == 0.0 and k == 0:
+        return 0.0
+    hi = 0.0
+    lo = 0.0
+    if f != 0.0:
+        hi, lo = log1p_split(f)
+    val_hi = hi * IVLN10_HI
+    y2 = y * LOG10_2_HI
+    val_lo = y * LOG10_2_LO + (lo + hi) * IVLN10_LO + lo * IVLN10_HI
+    w = y2 + val_hi
+    val_lo += (y2 - w) + val_hi
+    return val_lo + w
+
+
+def cbrt64(x):
+    if x != x:
+        return x + x
+    if x == 0.0 or abs(x) == INF:
+        return x
+    m, e = split_exponent(abs(x))
+    q = e // 3
+    z = m * two_to(e - 3 * q)
+    y = 1.0 + (z - 1.0) / 3.0
+    for _ in range(6):
+        y = y - (y * y * y - z) / (3.0 * y * y)
+    p, pe = two_product(y, y)
+    a, b = two_product(p, y)
+    residual = ((a - z) + b) + pe * y
+    y = y - residual / (3.0 * p)
+    return math.copysign(scalbn(y, q), x)
+
+
+def hypot64(x, y):
+    ax = abs(x)
+    ay = abs(y)
+    if ax == INF or ay == INF:
+        return INF
+    if ax != ax or ay != ay:
+        return ax + ay
+    if ax < ay:
+        ax, ay = ay, ax
+    if ay == 0.0:
+        return ax
+    _, e = split_exponent(ax)
+    if ay < ax * 8.673617379884035e-19:
+        return ax
+    a = scalbn(ax, -e)
+    b = scalbn(ay, -e)
+    p1, e1 = two_product(a, a)
+    p2, e2 = two_product(b, b)
+    total = p1 + p2
+    tail = ((p1 - total) + p2) + e1 + e2
+    s = math.sqrt(total)
+    sp, se = two_product(s, s)
+    r = ((total - sp) - se) + tail
+    s = s + r / (2.0 * s)
+    return scalbn(s, e)

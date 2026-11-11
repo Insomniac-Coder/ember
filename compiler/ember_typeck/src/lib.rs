@@ -10372,6 +10372,7 @@ impl<'a> Checker<'a> {
                     self.declare_layout_attributes(self.qualified(decl.name.name), &item.attrs);
                     let mut fields = Vec::new();
                     let mut has_drop = false;
+                    let mut drop_span: Option<Span> = None;
                     for member in &decl.members {
                         match &member.kind {
                             ast::MemberKind::Field(field) => {
@@ -10390,7 +10391,10 @@ impl<'a> Checker<'a> {
                             }
                             // `[STR-3]` — a `drop` method makes the type
                             // move-only, whatever `@derive(Copy)` says.
-                            ast::MemberKind::Fn(f) if f.name.name.is("drop") => has_drop = true,
+                            ast::MemberKind::Fn(f) if f.name.name.is("drop") => {
+                                has_drop = true;
+                                drop_span.get_or_insert(member.span);
+                            }
                             _ => {}
                         }
                     }
@@ -10426,6 +10430,20 @@ impl<'a> Checker<'a> {
                     }
 
                     if has_derive(&item.attrs, "Copy") {
+                        // `[STR-3]` — a `drop` would run once per copy.
+                        if let (Some(drop_at), Some(derive_at)) = (drop_span, derives::derive_span(&item.attrs, "Copy")) {
+                            let name = decl.name.name;
+                            let var: String = name.as_str().chars().take(1).flat_map(char::to_lowercase).collect();
+                            let lines = self.line_of(drop_at).zip(self.line_of(derive_at));
+                            let (drop_line, derive_line) = lines.unwrap_or((0, 0));
+                            self.error(
+                                codes::E2080,
+                                derive_at,
+                                format!(
+                                    "`{name}` has a `drop` (line {drop_line}), which would run once per copy; remove `@derive(Copy)` (line {derive_line}), and hand a `{name}` over or write `copy of {var}` with a `clone` of its own"
+                                ),
+                            );
+                        }
                         let ty = self.named_types[&self.qualified(decl.name.name)];
                         let offenders: Vec<(Symbol, Ty, Span)> = self
                             .types
