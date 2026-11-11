@@ -45966,6 +45966,21 @@ impl<'a> Checker<'a> {
         } else {
             range_ty
         };
+        // `[RNG-9]` — `new_unchecked` asserts the range in `debug` (`[PRF-3]`): the value is held in
+        // a local no program can name, tested with `contains`, and then handed on as it is.
+        if which == 2 && self.debug_assertions {
+            let (bool_ty, str_ty, void) = (self.common.bool_, self.common.str_, self.common.void);
+            self.scopes.push(HashMap::new());
+            let local = self.declare(Some(Symbol::intern("$range_value")), def.repr, span);
+            self.scopes.pop();
+            let held = || Expr { ty: def.repr, kind: ExprKind::Local(local), span };
+            let inside = Expr { ty: bool_ty, kind: ExprKind::Builtin { which: hir::Builtin::RangeContains(id), args: vec![held()] }, span };
+            let message = Expr { ty: str_ty, kind: ExprKind::Str(format!("`{type_name}.new_unchecked`: the value is not in the range of `{type_name}`")), span };
+            let assertion = Expr { ty: void, kind: ExprKind::Builtin { which: hir::Builtin::Assert, args: vec![inside, message] }, span };
+            let stmts = vec![Stmt::Let { local, init: Some(value) }, Stmt::Expr(assertion)];
+            let handed_on = Expr { ty, kind: ExprKind::Builtin { which: builtin, args: vec![held()] }, span };
+            return Expr { ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(handed_on) }, span };
+        }
         Expr { ty, kind: ExprKind::Builtin { which: builtin, args: vec![value] }, span }
     }
 
