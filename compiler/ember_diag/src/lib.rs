@@ -167,9 +167,15 @@ fn starts_with_vowel_sound(word: &str) -> Option<bool> {
         'o' => !(lower.starts_with("one") || lower.starts_with("once")),
         'u' => lower.starts_with("un") && !lower.starts_with("uni"),
         // A short acronym spells its first letter's name: `SoA`, `SIMD`, `FFI`, `NaN`, `Rc` (ess, em, eff, en, ar).
+        // A lowercase name may be a word (`list`, `set`) or letters (`lto`, `msvc`), which its spelling does
+        // not tell: its article stays as the message has it.
         'f' | 'h' | 'l' | 'm' | 'n' | 'r' | 's' | 'x' => {
             let acronym = word.starts_with(|c: char| c.is_uppercase()) && (2..=4).contains(&word.len()) && word[1..].chars().filter(|c| c.is_lowercase()).count() <= 1;
-            acronym || (first == 'f' && word.len() > 1 && word[1..].chars().all(|c| c.is_ascii_digit()))
+            let float = first == 'f' && word.len() > 1 && word[1..].chars().all(|c| c.is_ascii_digit());
+            if !acronym && !float && word.chars().all(|c| !c.is_uppercase()) {
+                return None;
+            }
+            acronym || float
         }
         _ => false,
     })
@@ -881,5 +887,6 @@ mod tests {
         assert_eq!(fixed("a `SoA`, a `SIMD` lane, a `Rc`, an `Set`, a `Mat2`"), "an `SoA`, an `SIMD` lane, an `Rc`, a `Set`, a `Mat2`");
         assert_eq!(fixed("data `x`, extra `y`"), "data `x`, extra `y`");
         assert_eq!(fixed("a `n`, a `x`, an `b`, a `e`"), "an `n`, an `x`, a `b`, an `e`");
+        assert_eq!(fixed("an `lto` value, a `list`"), "an `lto` value, a `list`");
     }
 }
