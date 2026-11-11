@@ -304,6 +304,12 @@ impl Parser<'_> {
         }
         let _ = doc_span;
         let attrs = self.parse_attributes();
+        // `[GRM-20]` — attributes before a statement at file scope: the statement's, which the
+        // statement list then limits as it does anywhere.
+        if !attrs.is_empty() && !self.at_item_start() && !self.at_eof() {
+            self.carried_attrs = attrs;
+            return None;
+        }
         if self.refuse_bracket_line() {
             return None;
         }

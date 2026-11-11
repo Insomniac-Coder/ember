@@ -5,7 +5,7 @@
 //! than three for the same region, so a single typo cannot bury the real
 //! error under a cascade.
 
-use ember_ast::{Block, Dispatch, FnDecl, Ident, Item, ItemKind, Module, NodeId, NodeIds, Script, Stmt, Visibility};
+use ember_ast::{Attribute, Block, Dispatch, FnDecl, Ident, Item, ItemKind, Module, NodeId, NodeIds, Script, Stmt, Visibility};
 use ember_diag::{Code, Diagnostic, Sink, codes};
 use ember_lexer::{Kw, Punct, Token, TokenKind};
 use ember_span::{FileId, Span, Symbol};
@@ -59,6 +59,9 @@ pub(crate) struct Parser<'a> {
     unsafe_sites: Vec<ember_ast::UnsafeSite>,
     /// `[UNS-7]` — whether the attributes parsed last hold `@safety`, for the `unsafe fn` they precede.
     safety_attribute: bool,
+    /// `[GRM-20]` — the attributes read at file scope that turned out to precede a statement, which
+    /// the statement's parse takes over.
+    carried_attrs: Vec<Attribute>,
     /// `[GRM-28]` — see `Module::local_generators`.
     local_generators: bool,
     /// `[DIA-21]` P11 — whether the module imports `std.fs`, and where an import line goes: after
@@ -105,6 +108,7 @@ impl<'a> Parser<'a> {
             damaged_signatures: Vec::new(),
             unsafe_sites: Vec::new(),
             safety_attribute: false,
+            carried_attrs: Vec::new(),
             local_generators: false,
             fs_imported: false,
             import_at: None,
@@ -700,6 +704,14 @@ impl<'a> Parser<'a> {
             let before = self.pos;
             match self.parse_item() {
                 Some(item) => items.push(item),
+                // `[GRM-20]` — attributes before a file-scope statement, which is not an item.
+                None if !self.carried_attrs.is_empty() => match self.parse_statement() {
+                    Some(stmt) => {
+                        placement.push(items.len());
+                        script.push(stmt);
+                    }
+                    None => self.recover_to_item(),
+                },
                 None => {
                     if self.pos == before {
                         self.bump();
