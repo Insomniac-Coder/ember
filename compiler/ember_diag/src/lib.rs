@@ -158,6 +158,10 @@ pub fn articles(text: String) -> String {
 fn starts_with_vowel_sound(word: &str) -> Option<bool> {
     let first = word.chars().next().filter(|c| c.is_alphabetic())?.to_ascii_lowercase();
     let lower = word.to_ascii_lowercase();
+    // A one-letter name is said as its letter: `n` is "en", `b` is "bee".
+    if word.chars().count() == 1 {
+        return Some(matches!(first, 'a' | 'e' | 'f' | 'h' | 'i' | 'l' | 'm' | 'n' | 'o' | 'r' | 's' | 'x'));
+    }
     Some(match first {
         'a' | 'e' | 'i' => !lower.starts_with("eu"),
         'o' => !(lower.starts_with("one") || lower.starts_with("once")),
@@ -876,5 +880,6 @@ mod tests {
         assert_eq!(fixed("A `owns T` and a `[int; 3]` and `a` `x`"), "An `owns T` and a `[int; 3]` and `a` `x`");
         assert_eq!(fixed("a `SoA`, a `SIMD` lane, a `Rc`, an `Set`, a `Mat2`"), "an `SoA`, an `SIMD` lane, an `Rc`, a `Set`, a `Mat2`");
         assert_eq!(fixed("data `x`, extra `y`"), "data `x`, extra `y`");
+        assert_eq!(fixed("a `n`, a `x`, an `b`, a `e`"), "an `n`, an `x`, a `b`, an `e`");
     }
 }

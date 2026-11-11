@@ -277,3 +277,24 @@ after each work batch" is the owner's rule from this round.
   - **Found, open:**
     - a char literal with a surrogate escape reports `E0009` twice;
     - the checked helpers' `__builtin_*_overflow` calls live in `ember_rt.h`, not in the emitted C.
+- **W1, messages and std to the rules** (303k tokens, 48 min). 5 of 12 were done:
+  - **the article rule.** `ember_diag::articles` chooses "a" or "an" before a quoted name by its first
+    sound. The lead added one-letter names, which are said as their letter.
+  - **the E2114 and E2123 pages;**
+  - **CLS-1's tests;**
+  - **OBJ-2:** E2173 has the rule's message;
+  - **CLS-9a:** E2104 has the rule's message.
+
+  7 were reported:
+  - **OBJ-5's E3016** lives in `drops.rs`, which is the lead's.
+  - **DSJ-1, DSJ-2 and DSJ-5:** the spec's `check_disjoint` and statement `assert_disjoint` need facts kept
+    on the names (`[BRW-11]`, `[DSJ-11]`) in the analysis. Today the facts ride on the returned tuple, and
+    DSJ-3's `restrict` and the bench probe rely on that. **For the lead, with M5/M6c.**
+  - **`[int; 3]`:** the type table keeps no spelling, since `int` is `i64`'s alias. **A design question:**
+    a spelling kept per written type, or a display rule.
+  - **OBJ-3:** has no message.
+  - **Spec vs compiler:**
+    - `[OBJ-2]`'s reach: a bare interface with a class implementer is still taken as a class handle
+      (ODR-226).
+    - `[CLS-9a]`: a change through a `let` field (`push`) is still accepted.
+    - `[DSJ-5]`'s message has no general form, a spec slip for the next cut.
