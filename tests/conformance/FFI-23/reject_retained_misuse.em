@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: FFI-23, FFI-22, FFI-11
-# `[FFI-23]` — `Retained` pins a class handle or a `Box`, and a token crosses
+# `[FFI-23]` — `Retained` pins a class object or an `owns` value, and a token crosses
 # to C only through a `retained` contract. `[FFI-22]` — what foreign code
 # keeps is `Send`, unless the contract says which thread uses it. `tok.ptr()`
 # is typed by what the token holds (ODR-132): one class's address is not
