@@ -52,7 +52,7 @@ def arguments():
 
 # The kernels added in round 2, one per task: (Ember name, the model's function). Each takes
 # `x`; the binary ones also `y`. `f32` results are the `f64` ones rounded once.
-UNARY = [("asin", m.asin64), ("acos", m.acos64), ("atan", m.atan64), ("sinh", m.sinh64), ("cosh", m.cosh64), ("tanh", m.tanh64), ("exp2", m.exp2_64), ("log2", m.log2_64)]
+UNARY = [("asin", m.asin64), ("acos", m.acos64), ("atan", m.atan64), ("sinh", m.sinh64), ("cosh", m.cosh64), ("tanh", m.tanh64), ("exp2", m.exp2_64), ("log2", m.log2_64), ("log10", m.log10_64)]
 BINARY = []
 
 

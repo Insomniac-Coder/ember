@@ -1060,3 +1060,26 @@ def log2_64(x):
     w = y + val_hi
     val_lo += (y - w) + val_hi
     return val_lo + w
+
+
+def log10_64(x):
+    if x != x:
+        return x + x
+    if x <= 0.0:
+        return -INF if x == 0.0 else NAN
+    if x == INF:
+        return x
+    k, f = log_reduce(x)
+    y = float(k)
+    if f == 0.0 and k == 0:
+        return 0.0
+    hi = 0.0
+    lo = 0.0
+    if f != 0.0:
+        hi, lo = log1p_split(f)
+    val_hi = hi * IVLN10_HI
+    y2 = y * LOG10_2_HI
+    val_lo = y * LOG10_2_LO + (lo + hi) * IVLN10_LO + lo * IVLN10_HI
+    w = y2 + val_hi
+    val_lo += (y2 - w) + val_hi
+    return val_lo + w
