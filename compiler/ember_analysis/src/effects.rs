@@ -633,15 +633,19 @@ pub fn check_effects_all(bodies: &[Body], types: &TypeTable, map: &ember_span::S
 /// "`fall_off` is `@deterministic`, and `math.cbrt(d)` (line 6) is the platform's `cbrt`, whose last
 /// bits differ between C libraries; write `det.cbrt(d)`", the call as the program wrote it.
 fn det_help(body: &Body, types: &TypeTable, map: &ember_span::SourceMap, operation: &str, call: Span) -> Option<String> {
-    let name = operation.strip_prefix("the platform's `")?.strip_suffix('`')?;
-    let arity = FloatLib::named(name).map_or(2, |(_, arity)| arity);
+    if !operation.starts_with("a transcendental function") && operation != "the platform's `pow`" {
+        return None;
+    }
     let function = display_name(body, types);
     // A method call's span is its receiver's: the rest of the call is on the line after it.
     let written = map.get(call.file).and_then(|file| {
         let text = file.text.get(call.start as usize..call.end as usize)?.trim();
         let after = file.text.get(call.end as usize..)?;
-        let tail = format!(".{name}(");
-        let extended = if after.starts_with(&tail) && !text.contains('(') {
+        let method_call = after.strip_prefix('.').is_some_and(|rest| {
+            let word: String = rest.chars().take_while(|c| *c == '_' || c.is_alphanumeric()).collect();
+            !word.is_empty() && rest[word.len()..].starts_with('(')
+        });
+        let extended = if method_call && !text.contains('(') {
             let (mut depth, mut end) = (0usize, None);
             for (at, c) in after.char_indices().take_while(|(_, c)| *c != '\n') {
                 match c {
@@ -662,10 +666,10 @@ fn det_help(body: &Body, types: &TypeTable, map: &ember_span::SourceMap, operati
         };
         Some(extended.unwrap_or_else(|| text.to_string())).filter(|text| !text.is_empty() && !text.contains('\n'))
     });
-    let written = written.as_deref();
-    let Some(written) = written else {
-        return Some(format!("`{function}` is `@deterministic`, and this call is the platform's `{name}`, whose last bits differ between C libraries; write `det.{name}`, `std.math.det`'s function of the same name"));
-    };
+    let written = written.as_deref()?;
+    // The function the call names: after the last `.` before its `(`, or `pow` for `a ** b`.
+    let name = if written.contains(" ** ") { "pow" } else { written[..written.find('(')?].rsplit('.').next()? };
+    let arity = FloatLib::named(name).map_or(2, |(_, arity)| arity);
     let line = map.line_col(call).line;
     // The call as `det` takes it: a module call keeps its arguments (`math.cbrt(d)`), a method call
     // gives its receiver first (`x.sin()` is `det.sin(x)`), `a ** b` is `det.pow(a, b)`.
@@ -1593,24 +1597,6 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::FloatLib(lib) => match lib {
             FloatLib::Sqrt | FloatLib::Floor | FloatLib::Ceil | FloatLib::Trunc | FloatLib::Round
             | FloatLib::RoundHalfAway | FloatLib::Copysign | FloatLib::MulAdd => (Effects::NONE, ""),
-            FloatLib::Cbrt => (Effects::NONDET, "the platform's `cbrt`"),
-            FloatLib::Exp => (Effects::NONDET, "the platform's `exp`"),
-            FloatLib::Exp2 => (Effects::NONDET, "the platform's `exp2`"),
-            FloatLib::Ln => (Effects::NONDET, "the platform's `ln`"),
-            FloatLib::Log2 => (Effects::NONDET, "the platform's `log2`"),
-            FloatLib::Log10 => (Effects::NONDET, "the platform's `log10`"),
-            FloatLib::Sin => (Effects::NONDET, "the platform's `sin`"),
-            FloatLib::Cos => (Effects::NONDET, "the platform's `cos`"),
-            FloatLib::Tan => (Effects::NONDET, "the platform's `tan`"),
-            FloatLib::Asin => (Effects::NONDET, "the platform's `asin`"),
-            FloatLib::Acos => (Effects::NONDET, "the platform's `acos`"),
-            FloatLib::Atan => (Effects::NONDET, "the platform's `atan`"),
-            FloatLib::Sinh => (Effects::NONDET, "the platform's `sinh`"),
-            FloatLib::Cosh => (Effects::NONDET, "the platform's `cosh`"),
-            FloatLib::Tanh => (Effects::NONDET, "the platform's `tanh`"),
-            FloatLib::Atan2 => (Effects::NONDET, "the platform's `atan2`"),
-            FloatLib::Hypot => (Effects::NONDET, "the platform's `hypot`"),
-            FloatLib::Pow => (Effects::NONDET, "the platform's `pow`"),
             _ => (Effects::NONDET, "a transcendental function from the platform library"),
         },
         // `[DET-2]` — the system random source (`RandomState`'s seed).
