@@ -81,7 +81,7 @@ fn required_primary_fragments(shape: Shape) -> &'static [&'static str] {
         Shape::B1 => &["get_pair_mut", "split_at"],
         Shape::B2 => &["retain"],
         Shape::B3 => &["borrow"],
-        Shape::B4 => &["single owner"],
+        Shape::B4 => &["ref mut"],
         Shape::B5 => &["index", "Handle", "Weak"],
         Shape::B6 => &["from"],
         Shape::B7 => &["owned value"],
