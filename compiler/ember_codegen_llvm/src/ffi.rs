@@ -147,8 +147,8 @@ pub(crate) fn emit_counted_wrapper<'a>(m: &mut Module<'a>, body: &'a Body) -> Re
 }
 
 /// `[FFI-21]` — the trampoline C calls for callback `index`, and for a `retained` one the release
-/// its token's end calls. The trampoline attaches the thread (`[FFI-22]`), checks in `debug` that
-/// C calls it on the thread its contract names (`[FFI-33b]`), and calls the callable at the user
+/// its token's end calls. The trampoline attaches the thread (`[FFI-22]`), checks in every profile
+/// that C calls it on the thread its contract names (`[FFI-53]`, D-973), and calls the callable at the user
 /// data: a lambda's body directly with its environment, or a callable value through its entry.
 /// Under `once` it then ends the callable and frees what held it. The release unregisters the
 /// callback through `destroys(f)`, then ends the callable and frees the record.
@@ -159,7 +159,6 @@ fn trampoline<'a>(m: &mut Module<'a>, body: &'a Body, index: usize, callback: &'
     };
     let record = record(m, callback);
     let c_params: Vec<Param> = params.iter().map(|param| crate::closures::param_of(m, *param, true)).collect();
-    let debug = m.profile == crate::Profile::Debug;
     let closure = callback.closure.as_deref().and_then(|symbol| m.bodies.get(symbol).copied());
     let (_, callable_align) = m.ty.size_align(callback.callable);
     define_c_fn(m, &entry, "internal ", Some(ret), &c_params, "", |cx, values, result| {
@@ -174,7 +173,8 @@ fn trampoline<'a>(m: &mut Module<'a>, body: &'a Body, index: usize, callback: &'
             (Some(_), FfiCallbackMode::Borrowed) => cx.load(Sc::Ptr, &data, 8),
             _ => data.clone(),
         };
-        if debug {
+        // D-973, `[FFI-22]`, `[FFI-53]` — in every profile.
+        {
             let thread = match (&record, callback.threads) {
                 (Some(Record { creator: Some(at), .. }), _) => {
                     let at = cx.gep(&data, *at);
@@ -270,7 +270,7 @@ fn trampoline<'a>(m: &mut Module<'a>, body: &'a Body, index: usize, callback: &'
     let callee = global_name(&unregister.symbol);
     define_c_fn(m, &release, "internal ", None, &[Param::Ptr], "", |cx, values, _| {
         let Val::Imm(_, data) = values[0].clone() else { unreachable!("a pointer") };
-        if debug && let Some(at) = record.creator {
+        if let Some(at) = record.creator {
             let at = cx.gep(&data, at);
             let thread = cx.load(Sc::I(32), &at, 4);
             let what = cx.m.bytes(b"a callback");

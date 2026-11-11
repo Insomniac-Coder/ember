@@ -19,11 +19,12 @@ fn make(n: i32) -> Bag:
     return Bag(values)
 
 fn main():
-    slot: MaybeUninit[Bag] = MaybeUninit[Bag].uninit()
-    slot.write(make(1))
-    slot.write(make(2))
     _value: Bag
-    unsafe:  # SAFETY(uninit): every slot is written before it is read
+    # `[ARN-8]` — a `Bag` needs drop, so `uninit()` and `write` are `unsafe` operations.
+    unsafe:  # SAFETY(uninit): the first Bag is written over and never ended, which is what this test shows; the slot is read only after the second write
+        slot: MaybeUninit[Bag] = MaybeUninit[Bag].uninit()
+        slot.write(owns make(1))
+        slot.write(owns make(2))
         _value = slot.assume_init()
     println(99)
 #$ stdout: 99

@@ -1007,7 +1007,7 @@ const SCALES_HPP: &str = "#pragma once\n#include <stdexcept>\n\
 fn scaled_particles(call: &str, attribute: &str) -> String {
     MIGRATED
         .replace("from std.hot import ReloadError\n", "from std.hot import ReloadError\nimport cpp \"scales.hpp\"\n")
-        .replace("    static fn migrate_from(old: ref OldSelf)", &format!("    {attribute}static fn migrate_from(old: ref OldSelf)"))
+        .replace("    static fn migrate_from(old: OldSelf)", &format!("    {attribute}static fn migrate_from(old: OldSelf)"))
         .replace(
             "return Ok(Particle(old.x.load() * 100, old.step * 10))",
             &format!("unsafe:  # SAFETY(ffi): a C++ call by value\n            return Ok(Particle(old.x.load(), {call} as int))"),
@@ -1453,7 +1453,7 @@ fn an_enum_static_keeps_its_variant() {
 
 /// `[HR-15]`, `[HR-15a]`, `[HR-15b]` — an instance keeps its address where its new size fits: a
 /// `Particle` that loses a field migrates in place. One that gains a field must move, and every
-/// reference to it is rewritten: held in tuples, in `Box`es and in closures' captured state, which
+/// reference to it is rewritten: held in tuples and in closures' captured state, which
 /// the image describes to the runtime by its own layouts (ODR-126). Held as an interface value,
 /// which the runtime cannot follow, a reference is not found, and plan refuses before prepare runs,
 /// saying how many it could not follow. `[HR-13a]` — held in a `Map`, whose entries are payload
@@ -1475,8 +1475,8 @@ fn an_instance_moves_only_where_its_references_are_found() {
     assert_eq!(run.stdout, "3\napplied, 3 migrated\n6\n9\n", "{}", run.stderr);
 
     let boxed = PARTICLES
-        .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Array[(int, owns Particle)]] = Mutex([])")
-        .replace("                world.push(owns Particle())", "                world.push(owns (k, owns Particle()))")
+        .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Array[(int, Particle)]] = Mutex([])")
+        .replace("                world.push(owns Particle())", "                world.push(owns (k, Particle()))")
         .replace("        for p in world:\n            p.x.fetch_add(p.step)\n            total += p.x.load()",
                  "        for pair in world:\n            pair.1.x.fetch_add(pair.1.step)\n            total += pair.1.x.load()");
     let run = host_run("reload-box-moves", &boxed, &[&grow(&boxed)], 3);
@@ -1502,13 +1502,13 @@ fn an_instance_moves_only_where_its_references_are_found() {
 
 const MIGRATED: &str = "from std.sync import Atomic, Mutex\nfrom std.hot import ReloadError\n\n@sync\nclass Particle:\n    x: Atomic[int] = Atomic(0)\n    speed: int = 10\n\n    \
     fn init(x: int, speed: int):\n        this.x = Atomic(x)\n        this.speed = speed\n\n    \
-    static fn migrate_from(old: ref OldSelf) -> Result[Self, ReloadError]:\n        return Ok(Particle(old.x.load() * 100, old.step * 10))\n\n\
+    static fn migrate_from(old: OldSelf) -> Result[Self, ReloadError]:\n        return Ok(Particle(old.x.load() * 100, old.step * 10))\n\n\
     static WORLD: Mutex[Array[Particle]] = Mutex([])\n\n\
     @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with world = WORLD.lock():\n        \
     if world.len() == 0:\n            for k in 0..3:\n                world.push(owns Particle(0, 1))\n        \
     for p in world:\n            p.x.fetch_add(p.speed)\n            total += p.x.load()\n    return total\n\nfn main():\n    pass\n";
 
-/// `[HR-16]`, `[HR-2a]`, `[HR-38]` — a type declaring `migrate_from(old: ref OldSelf)` is built by it:
+/// `[HR-16]`, `[HR-2a]`, `[HR-38]` — a type declaring `migrate_from(old: OldSelf)` is built by it:
 /// `OldSelf` is the previous build's schema as `OldParticle`, which the runtime fills from each old
 /// instance by field name, and the new instances replace the old ones, which reclaim drops field by
 /// field: the old class's own `drop`, removed by this edit, is not called through its stub. The
@@ -1978,7 +1978,7 @@ fn the_reload_benchmark_times_three_edits() {
         .replace(
             "    step: int = 1\n    bonus: int = 3\n",
             "    step: f64 = 1.0\n    bonus: int = 3\n\n    fn init(x: int, step: f64, bonus: int):\n        this.x = Atomic(x)\n        \
-             this.step = step\n        this.bonus = bonus\n\n    static fn migrate_from(old: ref OldSelf) -> Result[Self, ReloadError]:\n        \
+             this.step = step\n        this.bonus = bonus\n\n    static fn migrate_from(old: OldSelf) -> Result[Self, ReloadError]:\n        \
              return Ok(Particle(old.x.load(), old.step as f64, old.bonus + 1))\n",
         )
         .replace("world.push(owns Particle())", "world.push(owns Particle(0, 1.0, 3))")

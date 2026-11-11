@@ -5,4 +5,4 @@
 fn main():
     arena = Arena.with_capacity(16)
     slots: MutSpan[MaybeUninit[i32]] = arena.alloc_uninit[i32](1)
-    slots.write_at(1, 7)
+    slots.write_at(1, owns 7)

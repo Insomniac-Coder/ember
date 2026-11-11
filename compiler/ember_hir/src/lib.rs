@@ -3131,3 +3131,22 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
     };
     format!("{body}:{}", types.symbol_name(expr.ty))
 }
+
+/// `[ERR-4]` (ODR-025), `[DIA-2]` — the checker routes `x.m(f)` on an `Option` or a `Result` to
+/// `std.core`'s `option_m(x, f)` or `result_m(x, f)` (`synth_wrapper_callback`): for such a
+/// function's qualified name, the method the program wrote, which a message names instead.
+pub fn routed_method(qualified: &str) -> Option<&str> {
+    let name = qualified.strip_prefix("std.core.").or_else(|| qualified.strip_prefix("core."))?;
+    name.strip_prefix("option_").or_else(|| name.strip_prefix("result_")).filter(|method| !method.is_empty())
+}
+
+#[cfg(test)]
+mod routed_method_tests {
+    #[test]
+    fn a_routed_function_is_named_by_its_method() {
+        assert_eq!(super::routed_method("std.core.option_map"), Some("map"));
+        assert_eq!(super::routed_method("std.core.result_and_then"), Some("and_then"));
+        assert_eq!(super::routed_method("std.core.optional"), None);
+        assert_eq!(super::routed_method("std.collections.option_map"), None);
+    }
+}

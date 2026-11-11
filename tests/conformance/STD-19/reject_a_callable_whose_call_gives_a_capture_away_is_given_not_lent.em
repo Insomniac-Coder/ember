@@ -14,7 +14,7 @@ fn main():
         kept = t
         return x + kept.value
     first = o.map(owns taker)
-    second = o.map(owns taker)  #$ error[E3040]: `taker` was handed over to `option_map` on line 16 and is used on line 17; to keep both, hand over a copy of your own: `copy of taker`
+    second = o.map(owns taker)  #$ error[E3040]: `taker` was handed over to `map` on line 16 and is used on line 17; to keep both, hand over a copy of your own: `copy of taker`
     keep = fn(owns x: int) -> int => x + 1
     third = o.map(owns keep)
     fourth = o.map(owns keep)

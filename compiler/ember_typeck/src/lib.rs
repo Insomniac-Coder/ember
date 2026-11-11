@@ -15673,13 +15673,13 @@ impl<'a> Checker<'a> {
             // (`owns T using A` for `Box[T, A]`). The type it names is still made, so that the rest
             // of the program is checked.
             let written: Vec<String> = args.iter().map(|&(arg, at)| self.written_line(at).unwrap_or_else(|| self.types.display(arg))).collect();
-            let diagnostic = Diagnostic::error(codes::E1010, span, "`Box` is not a type of Ember");
+            // `[TYP-45]` — the message gives what to write.
             let diagnostic = match written.as_slice() {
-                [inner] => diagnostic
-                    .help(format!("one owner in a block of its own is `owns {inner}`: write `owns {inner}`"))
+                [inner] => Diagnostic::error(codes::E1010, span, format!("`Box` is not a type of Ember: write `owns {inner}`"))
+                    .help("one owner in a block of its own is `owns T`")
                     .migrate("`Box[T]` is `owns T`", span, &format!("owns {inner}")),
-                [inner, manager] => diagnostic.help(format!("write `owns {inner} using {manager}`")),
-                _ => diagnostic.help("write `owns T`"),
+                [inner, manager] => Diagnostic::error(codes::E1010, span, format!("`Box` is not a type of Ember: write `owns {inner} using {manager}`")),
+                _ => Diagnostic::error(codes::E1010, span, "`Box` is not a type of Ember: write `owns T`"),
             };
             self.sink.emit(diagnostic);
             return match args.first() {
@@ -48040,7 +48040,8 @@ impl<'a> Checker<'a> {
                 let shown = self.written_line(receiver.span).unwrap_or_else(|| "the value".to_string());
                 let held = self.types.display(self.box_inner(receiver.ty).expect("a box"));
                 let line = self.line_with(Span::new(span.file, receiver.span.start, call_end), &shown);
-                let mut diagnostic = Diagnostic::error(codes::E1010, span, format!("`{shown}` is an `owns {held}`, which reads as its `{held}`: there is no `get`"));
+                // `[TYP-14]` — `E2072`, in the rule's words.
+                let mut diagnostic = Diagnostic::error(codes::E2072, span, format!("an `owns {held}` reads as a `{held}`; remove `.get()`"));
                 diagnostic = match line {
                     Some(line) => diagnostic.help(format!("remove `.get()`: `{line}`")),
                     None => diagnostic.help("remove `.get()`"),
@@ -52218,6 +52219,7 @@ impl<'a> Checker<'a> {
             );
             return error;
         }
+        self.maybe_uninit_unsafe(inner, "uninit", span);
         Expr {
             ty,
             kind: ExprKind::Builtin {
@@ -52226,6 +52228,28 @@ impl<'a> Checker<'a> {
             },
             span,
         }
+    }
+
+    /// `[ARN-8]` — a `MaybeUninit` never runs its value's clean-up, so for a `T` that needs drop,
+    /// `uninit()`, `write` and `write_at` are `unsafe` operations (`[UNS-1]`): outside `unsafe:` each
+    /// is `E3100`. For a `T` with nothing to drop they stay safe.
+    fn maybe_uninit_unsafe(&mut self, inner: Ty, operation: &str, span: Span) {
+        if !self.types.needs_drop(inner) {
+            return;
+        }
+        let shown = self.types.display(inner);
+        let step = UnsafeStep::Other(
+            format!("the `MaybeUninit[{shown}]` `{operation}`"),
+            format!("the `MaybeUninit[{shown}]` `{operation}`s"),
+        );
+        let refusal = Diagnostic::error(
+            codes::E3100,
+            span,
+            format!(
+                "`MaybeUninit` never runs a `{shown}`'s clean-up, so a value written into it may never be freed; write it inside `unsafe:`, or keep the value in an `Option[shares {shown}]`"
+            ),
+        );
+        self.unsafe_step(span, step, refusal);
     }
 
     /// `[ARN-8]`, `[ARN-8a]` — the transitions exposed by a
@@ -52269,7 +52293,10 @@ impl<'a> Checker<'a> {
 
         if method == "write" {
             let receiver = self.pass_receiver(receiver, Mode::Mut, span);
-            let value = self.check_expr(&args[0].value, inner);
+            self.maybe_uninit_unsafe(inner, "write", span);
+            // `[ARN-8]`, `[FN-2a]` — `write(owns v: T)`: the call says `owns`.
+            let given = self.taken_value(&args[0].value, "write", " (its first line says `write(owns v: T) -> ref mut T`)", false);
+            let value = self.check_expr(given, inner);
             let result = self.types.intern(TyKind::Ref { mutable: true, inner });
             return Expr {
                 ty: result,
@@ -58006,7 +58033,10 @@ impl<'a> Checker<'a> {
             let Some(index) = self.check_index(&args[0].value, None, span) else {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 };
-            let value = self.check_expr(&args[1].value, inner);
+            self.maybe_uninit_unsafe(inner, "write_at", span);
+            // `[ARN-8]`, `[FN-2a]` — `write_at(i, owns v: T)`: the call says `owns`.
+            let given = self.taken_value(&args[1].value, "write_at", " (its first line says `write_at(i: usize, owns v: T)`)", false);
+            let value = self.check_expr(given, inner);
             let result = self.types.intern(TyKind::Ref { mutable: true, inner });
             return Expr {
                 ty: result,
@@ -59105,7 +59135,11 @@ impl<'a> Checker<'a> {
                 return;
             }
             let function = self.declaring_function(declared).unwrap_or_else(|| "the function".to_string());
-            let first = self.written_line(declared).map_or_else(String::new, |first| format!(" (its first line says `{first}`)"));
+            // A routed method's first line is the library's, which the program never wrote.
+            let first = match self.declared_in_routed(declared) {
+                true => String::new(),
+                false => self.written_line(declared).map_or_else(String::new, |first| format!(" (its first line says `{first}`)")),
+            };
             self.missing_owns_word(arg, written, a_place, &function, &first);
             return;
         }
@@ -59239,7 +59273,26 @@ impl<'a> Checker<'a> {
     /// `declared`.
     fn declaring_function(&self, declared: Span) -> Option<String> {
         let def = self.signatures.iter().position(|signature| signature.params.iter().any(|(.., at)| *at == declared))?;
+        if let Some(method) = self.routed_method_of(DefId(def as u32)) {
+            return Some(method);
+        }
         self.declared_name(DefId(def as u32))
+    }
+
+    /// `[DIA-2]` — the method the program wrote, for a `std.core` function a method of `Option` or
+    /// `Result` is routed to (`ember_hir::routed_method`): its own first line is the library's,
+    /// not the program's.
+    fn routed_method_of(&self, def: DefId) -> Option<String> {
+        let (qualified, _) = self.fn_ids.iter().find(|(_, found)| **found == def)?;
+        ember_hir::routed_method(qualified.as_str()).map(str::to_string)
+    }
+
+    /// Whether the parameter declared at `declared` is a routed function's.
+    fn declared_in_routed(&self, declared: Span) -> bool {
+        self.signatures
+            .iter()
+            .position(|signature| signature.params.iter().any(|(.., at)| *at == declared))
+            .is_some_and(|def| self.routed_method_of(DefId(def as u32)).is_some())
     }
 
     /// The line `span` is on, as written and trimmed, with `span`'s text replaced by `with`: the line a

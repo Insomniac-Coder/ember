@@ -49,7 +49,8 @@ fn main():
     println(same)
     drop(token)
     println("released")
-    point = Retained.pin(owns Point(x = 3, y = 4))
+    block: owns Point = owns Point(x = 3, y = 4)
+    point = Retained.pin(owns block)
     keep_point(point)
     at: *mut Point = point.ptr()
     x: i64 = 0

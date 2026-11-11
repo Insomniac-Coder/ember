@@ -7,6 +7,6 @@
 fn main():
     arena = Arena.with_capacity(16)
     slots: MutSpan[MaybeUninit[i32]] = arena.alloc_uninit[i32](2)
-    slots.write_at(0, 7)
+    slots.write_at(0, owns 7)
     values = slots.assume_init() #$ error[E3100]: `assume_init` needs an `unsafe` block
     println(values[0])

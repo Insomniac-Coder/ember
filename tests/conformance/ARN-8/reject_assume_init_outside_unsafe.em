@@ -3,6 +3,6 @@
 
 fn main():
     slot: MaybeUninit[i32] = MaybeUninit[i32].uninit()
-    slot.write(1)
+    slot.write(owns 1)
     value = slot.assume_init() #$ error[E3100]: `assume_init` needs an `unsafe` block
     println(value)
