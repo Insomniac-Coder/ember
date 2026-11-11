@@ -6310,6 +6310,17 @@ impl<'a> Checker<'a> {
                                     self.failed_imports[index].insert(item.alias.map(|a| a.name).unwrap_or(item.name.name));
                                     continue;
                                 }
+                                // `[OWN-6]` — and so is `mem.forget`.
+                                if self.prefixes[target] == "std.mem" && item.name.name.is("forget") {
+                                    let edit = self.import_item_removal(import, items, item);
+                                    self.sink.emit(
+                                        Diagnostic::error(codes::E1010, item.name.span, "`mem.forget` is gone: a value always ends with its clean-up")
+                                            .help("to give a value to a C function that keeps it, hand it to a parameter its declaration says it takes, or, inside `unsafe:`, give it `x.into_raw()`")
+                                            .migrate_edits("`forget` is no longer imported", vec![(edit, ember_diag::Replacement::Text(String::new()))]),
+                                    );
+                                    self.failed_imports[index].insert(item.alias.map(|a| a.name).unwrap_or(item.name.name));
+                                    continue;
+                                }
                                 self.error(
                                     codes::E1061,
                                     item.name.span,
