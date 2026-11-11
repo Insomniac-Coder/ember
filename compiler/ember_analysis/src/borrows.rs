@@ -5078,17 +5078,27 @@ fn check_point(
                 if repeated {
                     continue;
                 }
+                // `[DIA-7a]` shape B2, `[DIA-10]`, `[DIA-25]` — the lines to write, with the program's own
+                // statement and the line it is on: the call moved below the loop, a list of your own
+                // added after the loop, `retain` after the loop; a change of an element through the
+                // loop's own handle, `for ref mut x in {owner}:`.
+                let statement = ember_diag::text_mark(span);
+                let line = ember_diag::line_mark(span);
+                let moved = format!("move line {line}, `{statement}`, below the loop");
+                let bare = name.trim_matches('`');
+                if matches!(access, Access::Write) {
+                    diagnostic = diagnostic
+                        .help(format!("{moved}, or change the elements through the loop's own handle: `for ref mut x in {bare}:`, and `x` where it reads an element"));
+                } else {
+                    diagnostic = diagnostic
+                        .help(moved)
+                        .help(format!(
+                            "or keep a list of your own (`added = []`), push what the loop adds to `added` inside the loop, and add its items to {name} after the loop"
+                        ))
+                        .help(format!("or, to drop items, call `{bare}.retain(owns fn(item) => keep(item))` after the loop"));
+                }
                 sink.emit_classified(
-                    diagnostic
-                        .help(
-                            "collect the indices or values first, then mutate; use `retain` or \
-                             `drain` when the operation fits",
-                        )
-                        .help(
-                            "or iterate over a fixed index range and mutate only after taking \
-                             the current value",
-                        )
-                        .note("a `for` loop borrows the iterable until the loop ends (CTL-2)"),
+                    diagnostic.note("a `for` loop borrows the iterable until the loop ends (CTL-2)"),
                 );
                 continue;
             }
