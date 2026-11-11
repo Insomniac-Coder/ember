@@ -1,5 +1,56 @@
 # Ember — handoff
 
+> **2026-11-11 late night — the day wrapped up on the owner's word ("work on wrapping up work, once the running agent
+> is done just call it a day"). Nothing pushed since `53da7981`. START HERE next session.**
+>
+> **Where things are:**
+>
+> - **`main` (local, `f9873ade`)** holds:
+>   - D-970 to D-973, plus A1-3, A1-6 (`owns T` replaces `Box`), A1-12, A6-17 and `E2072`;
+>   - rounds 2, 3 and 4;
+>   - the article rule (`ember_diag::articles`).
+> - **Quick check:** green on `main`.
+> - **The push gate's CI-style run** had five failures:
+>   - three `assert-c` needles that could never match, written with `\"`, which the needle parser does not
+>     unescape (CG-C-1, CG-C-8, TYP-10);
+>   - CLO-10's article;
+>   - the article rule overriding a written "an `lto`".
+>
+>   All five are fixed on branch **`lead-fix`** (`c5be3db7`), not merged yet. The MSVC and C-backend runs on
+>   `f9873ade` failed the same groups. The C-backend run also failed MONO-1's test, where the development
+>   build inlined `ident[f64]`; it is fixed with `@noinline` (`b09d8de5`, on `lead-fix`). The C warning sweeps
+>   are clean: msvc, clang and gcc, 0 of 2,710 programs. Logs: `…/scratchpad/check/gate3.txt` and
+>   `c_backend.txt` (UTF-16).
+> - **Branch `lead-m4`** (in the `.claude/worktrees/lead` worktree): M4's first slice, following `M4-plan.md`:
+>   - the words in the AST;
+>   - `TyKind::Link`;
+>   - `shares`, `shares mut` and `weakref` of a class object;
+>   - `exists as` on a link;
+>   - an owner reads as its object;
+>   - C, LLVM and the evaluator agree, with no leaks in debug. Tests RC-1 and WK-12.
+>
+>   Not on `main`: M4 lands whole (`M4-plan.md`).
+> - **Round 5:** W1 (Sonnet, 10 defects) and the Opus helper (M4's foreign owners, slice F2). Their results are
+>   in `jobs/review.md` if they finished; their branches are not merged.
+>
+> **Next, in order:**
+>
+> 1. Merge `lead-fix` into `main` and `lead-m4`.
+> 2. Collect round 5 (review, merge, quick check), then the 10-minute break.
+> 3. The three-way gate on `main`.
+> 4. The bench on both backends (D-972 and D-973 change emitted code), then push.
+> 5. **Percentages.** The README's 13% (`tools/phase_progress.py`) credits only `docs/phase-status.json`'s
+>    `built_for_0915`, last updated before this week's rounds. Add each rule now built and tested, rule by
+>    rule (never by judgment), then `--write`.
+> 6. M4 slices A to E (`M4-plan.md`).
+>
+> **Owner's rules now:**
+>
+> - Sonnet workers, at most 2 to 3 agents at once (the Opus helper counts).
+> - 10 to 20 tasks each, in rounds.
+> - A 10-minute break after each collected batch.
+> - Autonomous until he says stop. This time he said to stop once the running agents were done.
+
 > **2026-11-11 night — rounds 2 and 3 on `main`, A1-6 nearly done (the local session, the owner's "go
 > autonomous").** **The owner's rules now:**
 >
