@@ -6715,7 +6715,7 @@ impl<'a> Checker<'a> {
             Diagnostic::error(codes::E3015, span, message)
                 .primary_label("its drop could be skipped or put off")
                 .help("keep it in a local and let its scope end it, or bind it with `with`")
-                .note("a `@must_drop` value's drop is a safety guarantee: it may not be forgotten, stored in a class field, `Shared`, `SyncShared`, an `owns` block or a collection, captured by an `owned fn`, or returned from the function that made it (THR-6)"),
+                .note("a `@must_drop` value's drop is a safety guarantee: it may not be stored in a class field, `Shared`, `SyncShared`, an `owns` block or a collection, captured by an `owned fn`, or returned from the function that made it (THR-6)"),
         );
     }
 
@@ -17067,9 +17067,32 @@ impl<'a> Checker<'a> {
         Expr { ty: result, kind: ExprKind::Builtin { which: Builtin::AssertDisjoint { mode, result }, args: views }, span }
     }
 
-    /// `[OWN-6]` — `std.mem.take`, `replace`, `swap`, and `forget` are the sanctioned
+    /// `[OWN-6]` — there is no `mem.forget`: `E1010`, "`mem.forget` is gone: a value always ends
+    /// with its clean-up; to give the widget to a C function that keeps it, hand it to a parameter
+    /// its declaration says it takes (`widget_take(owns first)`), or, inside `unsafe:`, give it
+    /// `first.into_raw()`", with the value's type for the widget and the argument as written for
+    /// `first`. The argument is still checked, so that its own mistakes are reported.
+    fn refuse_mem_forget(&mut self, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let value = args.first().map(|arg| (self.synth_committed(&arg.value), arg.value.span));
+        let noun = match &value {
+            Some((value, _)) if value.ty != self.common.error => Self::common_noun(&self.types.display(value.ty)),
+            _ => "value".to_string(),
+        };
+        let written = value.and_then(|(_, at)| self.written_line(at)).unwrap_or_else(|| "it".to_string());
+        let taker = noun.replace(' ', "_");
+        self.sink.emit(
+            Diagnostic::error(codes::E1010, span, format!(
+                "`mem.forget` is gone: a value always ends with its clean-up; to give the {noun} to a C function that keeps it, hand it to a parameter its declaration says it takes (`{taker}_take(owns {written})`), or, inside `unsafe:`, give it `{written}.into_raw()`"
+            ))
+            .note("nothing ends an owner without its clean-up, so nothing can skip one [OWN-2] [OWN-6]"),
+        );
+        error
+    }
+
+    /// `[OWN-6]` — `std.mem.take`, `replace` and `swap` are the sanctioned
     /// operations that mutate a place while transferring its old ownership
-    /// without first dropping it. They are compiler-known while `std.mem` is
+    /// without first dropping it, and `drop` ends a value now; there is no `forget`. They are compiler-known while `std.mem` is
     /// staged, but their operands still use ordinary place, mutability,
     /// generic-inference, `Default`, borrow, and move rules.
     fn synth_mem_ownership_builtin(
@@ -17101,7 +17124,7 @@ impl<'a> Checker<'a> {
         } else if resolved.is("std.mem.swap") {
             "swap"
         } else if resolved.is("std.mem.forget") {
-            "forget"
+            return Some(self.refuse_mem_forget(args, span));
         } else if resolved.is("std.mem.drop") {
             "drop"
         } else {
@@ -17148,11 +17171,11 @@ impl<'a> Checker<'a> {
             }
         }
         let first_arg = if changed.contains(&0) { place_of(&args[0].value) } else { &args[0].value };
-        // `[DRP-1]` — `mem.drop(g)` and `mem.forget(g)` end the guard itself: a guard named here is
+        // `[DRP-1]` — `mem.drop(g)` ends the guard itself: a guard named here is
         // not read through to what it guards (D-594: the lock, or the `RefCell` borrow, stayed
         // held to the end of the scope).
         let named_guard = match &args[0].value.kind {
-            ast::ExprKind::Path { segments } if segments.len() == 1 && matches!(operation, "drop" | "forget") => self
+            ast::ExprKind::Path { segments } if segments.len() == 1 && operation == "drop" => self
                 .lookup(segments[0].name)
                 .map(|local| self.locals[local.0 as usize].ty)
                 .filter(|&ty| self.ref_guard_inner(ty).is_some()),
@@ -17166,19 +17189,6 @@ impl<'a> Checker<'a> {
             return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
         }
         let elem = explicit.first().copied().unwrap_or(first.ty);
-        if operation == "forget" && self.types.is_must_drop(elem) {
-            self.must_drop_error(args[0].value.span, elem, "forgotten");
-        }
-        if operation == "forget" {
-            return Some(Expr {
-                ty: self.common.void,
-                kind: ExprKind::Builtin {
-                    which: Builtin::MemForget { elem },
-                    args: vec![first],
-                },
-                span,
-            });
-        }
         if operation == "drop" {
             return Some(Expr {
                 ty: self.common.void,
@@ -38902,6 +38912,10 @@ impl<'a> Checker<'a> {
                     if self.report_skipped_foreign(module, name.name, name.span) {
                         return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                     }
+                    // `[OWN-6]` — `mem.forget` is gone, and its message says what to write.
+                    if qualified.is("std.mem.forget") {
+                        return self.refuse_mem_forget(args, span);
+                    }
                     let written = self
                         .namespace_segments(recv)
                         .expect("just resolved")
@@ -52072,8 +52086,8 @@ impl<'a> Checker<'a> {
         match which {
             Builtin::BoxNew { .. }
             | Builtin::SharedNew { .. }
-            | Builtin::MemForget { .. }
             | Builtin::IntoRaw { .. }
+            | Builtin::FmtSinkClose
             | Builtin::CellIntoInner
             | Builtin::MaybeUninitAssumeInit { .. }
             | Builtin::UnsafeCellIntoInner

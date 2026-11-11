@@ -1962,28 +1962,6 @@ impl<'a> Builder<'a> {
         self.push(StmtKind::Assign { place: Place::local(temp), rvalue: Rvalue::Use(operand) });
     }
 
-    fn lower_mem_forget(
-        &mut self,
-        dest: Place,
-        value: &'a hir::Expr,
-        elem: Ty,
-        span: ember_span::Span,
-    ) {
-        let value = self.lower_operand(value);
-        self.at(span);
-        let next = self.new_block();
-        self.terminate(Terminator::Call {
-            func: FuncRef::Builtin {
-                which: hir::Builtin::MemForget { elem },
-                arg_ty: elem,
-            },
-            args: vec![value],
-            dest,
-            next,
-        });
-        self.current = next;
-    }
-
     /// `[CELL-1]` — `c.into_inner()`, which takes `owned self`.
     ///
     /// The payload leaves and the cell must not be dropped behind it: the
@@ -3107,16 +3085,11 @@ impl<'a> Builder<'a> {
             } => {
                 self.lower_mem_swap(place, &args[0], &args[1], *elem, expr.span);
             }
-            hir::ExprKind::Builtin {
-                which: hir::Builtin::MemForget { elem },
-                args,
-            } => {
-                self.lower_mem_forget(place, &args[0], *elem, expr.span);
-            }
             // `[OWN-12]`, `[FFI-54]` — `x.into_raw()` takes `x` over: a move, which ends the name, and
-            // no drop of it follows.
+            // no drop of it follows. `[STD-18]` — so does the end of `format_to`'s text, whose bytes
+            // are the caller's.
             hir::ExprKind::Builtin {
-                which: which @ hir::Builtin::IntoRaw { .. },
+                which: which @ (hir::Builtin::IntoRaw { .. } | hir::Builtin::FmtSinkClose),
                 args,
             } => {
                 let value = self.lower_operand(&args[0]);

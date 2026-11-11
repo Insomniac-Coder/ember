@@ -293,7 +293,7 @@ impl<'a> FnCx<'_, 'a> {
                     }
                 }
             }
-            // `mem.replace` and `mem.swap` are a load and stores; `mem.forget` nothing.
+            // `mem.replace` and `mem.swap` are a load and stores.
             Builtin::MemReplace { elem } => {
                 let target = self.pointer(&args[0])?;
                 let value = self.operand(&args[1])?;
@@ -312,7 +312,6 @@ impl<'a> FnCx<'_, 'a> {
                 self.copy(&right, align, &held, align, size, false);
                 Ok(())
             }
-            Builtin::MemForget { .. } => Ok(()),
             // `[STD-20]` — over the value's own width, zero-extended: LLVM's bit counts, which give
             // the width for zero, as the runtime's helpers do.
             Builtin::IntBits(bits) => {
@@ -884,7 +883,11 @@ impl<'a> FnCx<'_, 'a> {
                 Ok(())
             }
             Builtin::FmtSinkClose => {
-                let sink = self.pointer(&args[0])?;
+                // The text itself, taken over: the runtime reads it where it lies.
+                let sink = match self.operand(&args[0])? {
+                    Val::Mem(at, _) => at,
+                    other => return unsupported(format!("a format sink held as {other:?}")),
+                };
                 let slot = self.alloca(8, 8);
                 self.call_rt("fmt_sink_close", vec![Val::Imm(Sc::Ptr, sink)], Some((&slot, 8)));
                 let held = self.load(Sc::I(64), &slot, 8);

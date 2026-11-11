@@ -2009,9 +2009,9 @@ pub enum Builtin {
     /// which never grows (a write that would not fit is refused and remembered), registered with
     /// the runtime until `FmtSinkClose`.
     FmtSinkOpen,
-    /// `[STD-18]` — the end of `FmtSinkOpen`'s text, read through a `ref` (the text is then
-    /// forgotten: its bytes are the caller's): how many bytes were written, or `usize.MAX` when a
-    /// write did not fit.
+    /// `[STD-18]` — the end of `FmtSinkOpen`'s text, which it takes over and never drops (its
+    /// bytes are the caller's): how many bytes were written, or `usize.MAX` when a write did not
+    /// fit.
     FmtSinkClose,
     /// `[STD-8b]` — `needle in text`, for a `str` needle and a `char` one.
     StrContains,
@@ -2188,8 +2188,6 @@ pub enum Builtin {
     /// `[OWN-6]` — exchange two mutably borrowed places without moving either
     /// value into an Ember-visible temporary.
     MemSwap { elem: Ty },
-    /// `[OWN-6]` — consume one value and deliberately suppress its drop.
-    MemForget { elem: Ty },
     /// `[OWN-6]` — `mem.drop(x)`: ends `x`'s ownership now. For a `Copy`
     /// value that needs drop (a class handle), passing it `owned` would pass
     /// a retained copy and end nothing (D-347, ODR-063), so the place is
@@ -2597,7 +2595,6 @@ impl Builtin {
             Builtin::AssertDisjoint { mode: DisjointMode::Assumed, .. } => "assume_disjoint",
             Builtin::AssertDisjoint { mode: DisjointMode::All, .. } => "assert_disjoint_all",
             Builtin::ViewsOverlap { .. } => "views_overlap",
-            Builtin::MemForget { .. } => "forget",
             Builtin::MemDrop { .. } => "drop",
             Builtin::HandOver => "owns",
             // `[RNG-10]`'s construction set. Named as they are

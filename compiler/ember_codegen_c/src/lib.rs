@@ -8863,19 +8863,6 @@ impl Emitter<'_> {
                 self.emit_next(next.0 as usize, index);
             }
             Terminator::Call {
-                func: FuncRef::Builtin {
-                    which: Builtin::MemForget { .. },
-                    ..
-                },
-                args,
-                next,
-                ..
-            } => {
-                let value = self.operand(&args[0], body);
-                self.line(&format!("    (void)({value}); /* mem.forget */"));
-                self.emit_next(next.0 as usize, index);
-            }
-            Terminator::Call {
                 func: func @ FuncRef::Builtin {
                     which: Builtin::ArrayPush,
                     arg_ty,
@@ -10214,7 +10201,6 @@ impl Emitter<'_> {
                     | Builtin::MemReplace { .. }
                     | Builtin::MemTake { .. }
                     | Builtin::MemSwap { .. }
-                    | Builtin::MemForget { .. }
                     | Builtin::MemDrop { .. }
                     | Builtin::HandOver
                     | Builtin::AlignOf
@@ -10512,7 +10498,7 @@ impl Emitter<'_> {
                         return format!("{RT}fmt_sink_open((void*){source}.ptr, {source}.len)");
                     }
                     Builtin::FmtSinkClose => {
-                        return format!("{RT}fmt_sink_close({})", rendered[0]);
+                        return format!("{RT}fmt_sink_close(&({}))", rendered[0]);
                     }
                     Builtin::SpanToStr => {
                         let source = self.span_value_expression(&rendered[0], *arg_ty);

@@ -635,10 +635,6 @@ impl Interp<'_, '_> {
                 self.mem.write(b, &x)?;
                 return Ok(None);
             }
-            Builtin::MemForget { .. } => {
-                let _ = self.operand(&args[0], None)?;
-                return Ok(None);
-            }
             Builtin::SizeOf => self.int_result(dest_ty, self.size(arg_ty) as i128),
             Builtin::TypeIsSend => vec![u8::from(self.types.is_send(arg_ty))],
             Builtin::TypeIsSync => vec![u8::from(self.types.is_sync(arg_ty))],
@@ -956,8 +952,9 @@ impl Interp<'_, '_> {
                 value
             }
             Builtin::FmtSinkClose => {
-                let sink = self.pointer(&args[0])?;
-                let len = self.mem.read_u64(sink + 8)?;
+                // The text itself, taken over and never dropped: its length is its second word.
+                let sink = self.operand(&args[0], None)?;
+                let len = u64_of(sink.get(8..16).unwrap_or(&[]));
                 let (_, refused) = self.system.sinks.pop().unwrap_or((0, false));
                 self.int_result(dest_ty, if refused { u64::MAX as i128 } else { len as i128 })
             }
