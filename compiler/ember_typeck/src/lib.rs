@@ -27633,6 +27633,7 @@ impl<'a> Checker<'a> {
             ast::Jump::Break { label } => {
                 if self.in_defer {
                     self.error(codes::E2160, span, "control flow cannot leave a `defer` block");
+                    return;
                 }
                 if let Some(depth) = self.loop_depth(*label, "break", span) {
                     out.push(Stmt::Break { depth });
@@ -27641,6 +27642,7 @@ impl<'a> Checker<'a> {
             ast::Jump::Continue { label } => {
                 if self.in_defer {
                     self.error(codes::E2160, span, "control flow cannot leave a `defer` block");
+                    return;
                 }
                 if let Some(depth) = self.loop_depth(*label, "continue", span) {
                     out.push(Stmt::Continue { depth });
