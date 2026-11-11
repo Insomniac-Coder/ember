@@ -3251,6 +3251,12 @@ fn named_parameters(body: &Body) -> Vec<usize> {
     parameters
 }
 
+/// `[LT-1a]` — a method whose `from` names a field of `this`: a reference to the object's own
+/// slot is a view of the object itself, which that `from` does not name (`E3062`, not `E3060`).
+fn names_a_field_of_this(body: &Body, types: &TypeTable, local: LocalId) -> bool {
+    is_method_body(body) && local == LocalId(1) && narrowed_parameters(body, types).iter().any(|(named, ..)| *named == local)
+}
+
 /// `[LT-1a]` (ODR-196) — each parameter `@borrows` names by its view fields
 /// only (`self.f`), with their names and the paths of the slots holding them:
 /// within the value it refers to when it is passed by reference.
@@ -3402,6 +3408,8 @@ fn return_region_offenders(
             offenders.push(local);
         }
     }
+    // `[LT-1a]` — a reference to the object's own copy, under a `from` naming one of its fields.
+    offenders.extend(own_slot.iter().copied().filter(|local| names_a_field_of_this(body, types, *local)));
     offenders.sort();
     offenders.dedup();
     offenders
@@ -3524,7 +3532,8 @@ fn check_return_regions(
                     format!("`{function}` returns a view of `{pointed_at}`, but its first line says `from {field}`"),
                     match right {
                         Some(right) => format!("return a view of `{field}`, or write `-> {} from {right}`", types.display(body.return_ty())),
-                        None => format!("return a view of `{field}`"),
+                        // The object itself has no name to give `from`: both ways out (rule 1).
+                        None => format!("return a view of `{field}`, or remove `from {field}`"),
                     },
                 )
             }
@@ -4013,6 +4022,10 @@ fn check_escapes(
             .capability
             .source_place()
             .expect("a loan has source storage");
+        // `[LT-1a]` — `check_return_regions` reports it as `E3062`.
+        if names_a_field_of_this(body, types, place.local) && types.is_view(body.local(place.local).ty) {
+            continue;
+        }
         let root = body.local(place.local);
         let is_parameter = matches!(
             loan.capability.provenance_root,
