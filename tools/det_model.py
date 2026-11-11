@@ -1083,3 +1083,21 @@ def log10_64(x):
     w = y2 + val_hi
     val_lo += (y2 - w) + val_hi
     return val_lo + w
+
+
+def cbrt64(x):
+    if x != x:
+        return x + x
+    if x == 0.0 or abs(x) == INF:
+        return x
+    m, e = split_exponent(abs(x))
+    q = e // 3
+    z = m * two_to(e - 3 * q)
+    y = 1.0 + (z - 1.0) / 3.0
+    for _ in range(6):
+        y = y - (y * y * y - z) / (3.0 * y * y)
+    p, pe = two_product(y, y)
+    a, b = two_product(p, y)
+    residual = ((a - z) + b) + pe * y
+    y = y - residual / (3.0 * p)
+    return math.copysign(scalbn(y, q), x)
