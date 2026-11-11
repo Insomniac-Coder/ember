@@ -11690,6 +11690,17 @@ impl Emitter<'_> {
                     self.operand(rhs, body)
                 )
             }
+            // D-972, `[TYP-10]` — a left shift discards the bits shifted out, which is no overflow;
+            // C's `<<` of a negative signed value is undefined (C11 6.5.7), so a signed value is
+            // shifted in the unsigned type of its width and converted back: the same bits, the
+            // same instruction. (The amount is in range: the check before the shift panics
+            // otherwise.)
+            Rvalue::BinaryOp { op: ember_mir::BinOp::Shl, lhs, rhs }
+                if let Some(unsigned) = self.operand_type(lhs, body).and_then(|ty| self.wrapping_unsigned(ty)) =>
+            {
+                let signed = self.c_type(self.operand_type(lhs, body).expect("a typed operand"));
+                format!("(({signed})(({unsigned})({}) << {}))", self.operand(lhs, body), self.shift_amount(rhs, body))
+            }
             Rvalue::BinaryOp { op: op @ (ember_mir::BinOp::Eq | ember_mir::BinOp::Ne), lhs, rhs }
                 if self.operand_type(lhs, body)
                     .is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Fn { abi: None, .. })) =>
