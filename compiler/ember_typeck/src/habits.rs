@@ -216,8 +216,8 @@ impl Checker<'_> {
     /// `[DIA-21]` P22 — the interfaces named as types before the implementations were known, asked
     /// now: each one implemented by values only is reported where it was named.
     pub(crate) fn report_early_interface_types(&mut self) {
-        for (interface, span) in std::mem::take(&mut self.early_interface_types) {
-            if let Some(diagnostic) = self.interface_of_values(interface, span) {
+        for (interface, span, root, param) in std::mem::take(&mut self.early_interface_types) {
+            if let Some(diagnostic) = self.interface_of_values(interface, span, root, param) {
                 self.values_only_interfaces.insert(interface);
                 self.sink.emit(diagnostic);
             }
@@ -599,21 +599,43 @@ impl Checker<'_> {
     /// `[DIA-21]` P22 (ODR-182) — an interface's name in a type position is a class handle typed by
     /// it (IV.1, `[OBJ-2]`); when the types implementing it are values (structs, enums) and none is a
     /// class, a place of any of them is written another way, which the help names.
-    pub(crate) fn interface_of_values(&self, interface: Symbol, span: Span) -> Option<Diagnostic> {
+    pub(crate) fn interface_of_values(&self, interface: Symbol, span: Span, root: Span, param: bool) -> Option<Diagnostic> {
         let mut implementers = self.implemented.iter().filter(|(_, each, _)| *each == interface).map(|&(ty, ..)| ty).peekable();
         implementers.peek()?;
         let mut implementers = implementers;
         if implementers.any(|ty| matches!(self.types.kind(ty), TyKind::Class(_))) {
             return None;
         }
-        Some(self.interface_of_values_diagnostic(interface, Diagnostic::error(codes::E2173, span, format!("`{}` is an interface, and the types implementing it are values, not classes", self.interface_shown(interface)))))
+        Some(self.interface_of_values_diagnostic(interface, Diagnostic::error(codes::E2173, span, self.bare_interface_message(interface, span, root, param))))
+    }
+
+    /// `[OBJ-2]`, `[IFC-5]` — "`Shape` is an interface, so `Array[Shape]` does not say who owns the
+    /// shapes; say who owns them: write `shapes: Array[owns dyn Shape]` in place of line 19 (the
+    /// list is their only owner)": the written type, its place, its line and the type with `owns dyn`
+    /// at the name, each read from where the type was written.
+    fn bare_interface_message(&self, interface: Symbol, span: Span, root: Span, param: bool) -> String {
+        let shown = self.interface_shown(interface);
+        let whole = root != span;
+        let (Some(written), Some(name)) = (self.written_line(root), self.written_line(span)) else {
+            return format!("`{shown}` is an interface, so it does not say who owns the values; say who owns them: write `owns dyn {shown}`");
+        };
+        let at = (span.start - root.start) as usize;
+        // `dyn I` alone is a parameter's type, a read-only view of the value (`[OBJ-2]`).
+        let word = if param && !whole { "dyn" } else { "owns dyn" };
+        let owned = format!("{}{word} {name}{}", &written[..at], &written[at + name.len()..]);
+        let lower = shown.rsplit('.').next().unwrap_or(&shown).to_lowercase();
+        let (who, them) = if whole { (format!("the {lower}s"), "them") } else { (format!("the {lower}"), "it") };
+        let place = self.declared_place(root).map_or(owned.clone(), |place| format!("{place}: {owned}"));
+        let line = self.line_of(root).map_or(String::new(), |line| format!(" in place of line {line}"));
+        let only = if written.starts_with("Array[") { " (the list is their only owner)" } else { "" };
+        format!("`{shown}` is an interface, so `{written}` does not say who owns {who}; say who owns {them}: write `{place}`{line}{only}")
     }
 
     fn interface_of_values_diagnostic(&self, interface: Symbol, diagnostic: Diagnostic) -> Diagnostic {
         let shown = self.interface_shown(interface);
         diagnostic
             .habit(Habit::P22)
-            .help(format!("hold such a value behind a pointer: `owns dyn {shown}` in a field or a collection (`owns v` makes one), `ref dyn {shown}` for a parameter; or take a type parameter, `[T: {shown}]`, and pass the value itself"))
+            .help(format!("`owns dyn {shown}` holds the value alone in a block of its own (`owns v` makes one); with `shares dyn {shown}` other names own it too, and each is made `shares`; `ref dyn {shown}` is a view; or take a type parameter, `[T: needs {shown}]`, and pass the value itself"))
             .note(format!("an interface's name as a type is a class handle typed by it [OBJ-2]; a value of a type implementing `{shown}` has its own size, which `dyn {shown}` keeps behind a pointer (ODR-182)"))
     }
 

@@ -3440,7 +3440,12 @@ struct Checker<'a> {
     /// `[DIA-21]` P22 — each interface named as a type before the implementations were known,
     /// with where; and the interfaces reported as implemented by values only, whose uses then say
     /// nothing more (`[DIA-14]`).
-    early_interface_types: Vec<(Symbol, Span)>,
+    early_interface_types: Vec<(Symbol, Span, Span, bool)>,
+    /// Inside a function's parameter types (`dyn I` is a view there, `[OBJ-2]`).
+    in_param_type: u32,
+    /// The written type being resolved, outermost first: where `Array[Shape]` begins, for a message that
+    /// quotes the whole of what was written (`[OBJ-2]`).
+    type_root: Option<Span>,
     values_only_interfaces: HashSet<Symbol>,
     /// `[DIA-21]` P25 — the locals holding an iterator that a list operation was answered for.
     iterators_answered: HashSet<LocalId>,
@@ -4194,6 +4199,8 @@ impl<'a> Checker<'a> {
             concrete_instances: HashMap::new(),
             implementations_known: false,
             early_interface_types: Vec::new(),
+            type_root: None,
+            in_param_type: 0,
             values_only_interfaces: HashSet::new(),
             iterators_answered: HashSet::new(),
             interfaces_collected: false,
@@ -5607,7 +5614,9 @@ impl<'a> Checker<'a> {
         index_base: usize,
     ) -> Ty {
         self.once_fn_parameter = matches!(ty.kind, ast::TypeKind::Fn { once: true, .. });
+        self.in_param_type += 1;
         let resolved = self.resolve_type(ty);
+        self.in_param_type -= 1;
         self.once_fn_parameter = false;
         let TyKind::Fn { abi: None, latebound, is_unsafe, send, params, ret, .. } = self.types.kind(resolved) else { return resolved };
         // ODR-264 — `f: fn(A) -> R + Send` is `F: fn(A) -> R + Send`: what is passed is `Send`.
@@ -13943,9 +13952,10 @@ impl<'a> Checker<'a> {
     fn class_interface_type(&mut self, interface: Symbol, span: Span) -> Ty {
         // `[DIA-21]` P22 (ODR-182) — an interface whose implementations are values, not classes;
         // asked once they are known.
+        let root = self.type_root.unwrap_or(span);
         if !self.implementations_known {
-            self.early_interface_types.push((interface, span));
-        } else if let Some(diagnostic) = self.interface_of_values(interface, span) {
+            self.early_interface_types.push((interface, span, root, self.in_param_type > 0));
+        } else if let Some(diagnostic) = self.interface_of_values(interface, span, root, self.in_param_type > 0) {
             self.values_only_interfaces.insert(interface);
             self.sink.emit(diagnostic);
             return self.common.error;
@@ -15204,6 +15214,14 @@ impl<'a> Checker<'a> {
     }
 
     fn resolve_type(&mut self, ty: &ast::TypeExpr) -> Ty {
+        let outer = self.type_root;
+        self.type_root.get_or_insert(ty.span);
+        let resolved = self.resolve_type_inner(ty);
+        self.type_root = outer;
+        resolved
+    }
+
+    fn resolve_type_inner(&mut self, ty: &ast::TypeExpr) -> Ty {
         // `[IDE-3]` — a hole where a type was written is one the parser gave up on (it reported
         // why): a placeholder. Desugaring's holes are filled before they reach here.
         if matches!(ty.kind, ast::TypeKind::Infer) {
