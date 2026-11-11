@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: CELL-10, FN-1, BRW-1, SPN-1, SPN-3, DIA-7, DIA-9
-#$ help: restructure to a single owner
+#$ help: for the parameter, and `ref mut` before the argument at each call
 #$ help: RefCell[T]
 # Mutable views are created by the centralized `view_of` path. That path must
 # enforce the source parameter's shared mode; otherwise `as_mut_span()` would

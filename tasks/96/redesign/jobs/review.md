@@ -170,3 +170,89 @@ Merged into `main` in this order: `lead-a1-3` (A1-3), W3, W4 up to `bcaa0288` (i
 - `[LEX-2]` (`eol=crlf`).
 - `[DIA-3]` (the label).
 - W1's 12 pages, W2's 18 tests, W3's model.
+
+## Round 3 (R3-batch.md): three workers, at most three agents at once (the owner, 2026-11-11 ~19:10)
+
+The owner cut the cap to "2-3 agent at once (including the opus helper agent)" before round 3 began, so
+the round was resized:
+- W1 had 15 error pages;
+- W2 had 20 tests;
+- W4 had 10 defects;
+- W3's FFI tests moved to the next round.
+
+When W1's job turned out empty, W1 took the FFI tests (15). The total stayed 45 tasks. "A 10-minute break
+after each work batch" is the owner's rule from this round.
+
+- **W1, error pages, then FFI tests** (168k tokens in all, 16 min).
+  - **The pages: none.** None of the 25 codes in the job sheet is emitted by the compiler: their rules are
+    not built. **The lead's mistake:** the sheet listed `codes_without_pages` without checking
+    `error_pages.py`'s `emitted_codes()`. The error-page lane has nothing left until more rules are built
+    (E9040 and W0001 are emitted; W0001 is the spec slip already queued).
+  - **FFI tests: 11 rules.** FFI-3, FFI-4, FFI-5a, FFI-13, FFI-22, FFI-24b, FFI-27, FFI-29a, FFI-29, FFI-29c and
+    FFI-30a are committed. 9 were skipped, each needing two builds, CLI output or a library a host loads,
+    which a conformance file cannot show. They are covered by driver tests, where they are covered at all:
+    FFI-7, FFI-14, FFI-17f, FFI-24c, FFI-24d, FFI-28, FFI-31, FFI-31a and FFI-31c.
+  - **Spec vs compiler:**
+    - `[FFI-22]`: a one-thread owner captured by a `threads(any)` callback is E7015, and a thread-bound value
+      is E7008. The compiler emits neither: a class handle gives E7004 (FFI-21's text). M9/M12.
+    - `[FFI-29a]`: "never names a symbol with internal linkage". The compiler calls a plain `static` C
+      function through the shim's wrapper. Taken as meeting the rule (the binding names the wrapper);
+      flagged in case the rule means the function must not be callable.
+  - **Tool note:** `error_pages.py` and `annotations.py` find the compiler at `ROOT/target/{release,debug,ci}`,
+    not at `CARGO_TARGET_DIR`. Jobs should build in the worktree's own `target/`.
+- **W2, worker D's other 20 tests** (124k tokens, 6 min). 12 of 20 are committed: MOD-4, CLS-3 (its reject
+  was removed: no code is given for a missing memberwise argument, a spec gap), CLS-6, DSP-2, MONO-1, MONO-3,
+  MONO-5, MONO-8, MONO-9, OBJ-3, OPT-3 and UNS-2. Left out, each following the spec where the compiler does not:
+  - **CLS-1:** `=` hands a class object over (M4). Its `owns Player` E2114 is now built by A1-6.
+  - **CLS-7a, OBJ-5:** E3016's message is not `[OBJ-5]`'s text ("`drop` ends this `Player`; …").
+  - **CLS-9a:** E2104's message is not the rule's ("`items` is `let`: …").
+  - **OBJ-2:** E2173's text. It needs `owns dyn`, which A1-6 now builds.
+  - **DSJ-2, DSJ-8:** `std.mem` has `assert_disjoint` returning a `Result`, and no `check_disjoint`.
+    `[DSJ-1]`, `[DSJ-2]` and `[DSJ-5]` give `check_disjoint(a, b) -> Result[void, void]` and
+    `assert_disjoint` as a statement. The DSJ-1 test already committed pins the wrong API.
+  - **RC-1:** `shares mut` is not built (M4).
+- **W4, defects** (298k tokens, 32 min). 8 of 10 done:
+  - **DIA-7 B4's help.** The line to write: `ref mut clock: Clock` and `ref mut` at each call.
+  - **LEX-16:** `128i8` is E2010, while `-128i8` fits.
+  - **TYP-34:** E2030's message is the rule's.
+  - **DIA-7a:** the first-week shape table is §XVII.6.1's, with a test that compares it row by row with the
+    pinned spec.
+  - **CTL-5 / GRM-13:** a list pattern that can never match is E2020.
+  - **CLS-3:** a memberwise base `init` is built through `super.init(…)`. A base that itself derives is not.
+  - **GRM-20:** three parser paths now give E0108.
+  - **DIA-6:** E1042's page now shows the real output.
+
+  Reported, because their files are the lead's:
+  - **DIA-10 B2's help** is in `borrows.rs`.
+  - **The internal std names in hand-over messages** are in `drops.rs`: a table from `option_map` to `map`
+    and its kin.
+
+  Found: E3025, E3030, E3061 and E3080 are still emitted though retired. `shapes.rs` keeps the old shapes.
+  `[int; 3]` prints `[i64; 3]` (DIA-2).
+
+**Collected by the lead:**
+- **Merged into `main`:** W1 (`072d43b7`), W2 (`ef3de060`) and W4 (`8b226a06`). The rule-index baseline
+  conflict kept both sides' removals.
+- **The push gate on round 2's tree (`99f21806`):**
+  - The CI-style run is green.
+  - The MSVC run and the C-backend run each failed `TYP-9b`'s test (round 2's W2): with MSVC the
+    development build inlined `plain`, so its `assert-c` lines found nothing. Fixed with `@noinline`
+    (`[CG-C-3a]`), and checked in the emitted C.
+  - The C-backend run also failed two speed tests, during the owner's room switch:
+    - the bench's "void: the machine is on battery power";
+    - the compiler-speed test's timings.
+
+    The owner said to ignore any dip then. Both pass when rerun on mains.
+
+**Spec findings for the next cut (continued):**
+
+3. **CLS-3:** a missing memberwise-constructor argument has no code (W2). W4 used E2020, as TYP-25 did.
+
+**Queued for the next rounds:**
+- the E3016 and E2104 messages (W2);
+- `std.mem`'s `check_disjoint` and `assert_disjoint`, to the spec (W2);
+- the internal std names in hand-over messages, `drops.rs` (W4, lead);
+- DIA-10 B2's help, `borrows.rs` (W4, lead);
+- E3025, E3030, E3061 and E3080, which are still emitted (W4);
+- `[int; 3]` printed as `[i64; 3]` (DIA-2);
+- "a `owns …`" in messages, which should read "an".

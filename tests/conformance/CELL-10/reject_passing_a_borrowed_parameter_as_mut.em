@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: CELL-10, FN-1, BRW-1, DIA-7, DIA-9
-#$ help: restructure to a single owner
+#$ help: for the parameter, and `ref mut` before the argument at each call
 #$ not-help: RefCell
 # A mutable argument is formed after ordinary expression checking. Preserving
 # the default parameter's shared-borrow mode to this boundary prevents the ABI

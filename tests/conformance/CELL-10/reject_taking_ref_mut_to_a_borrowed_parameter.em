@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: CELL-10, FN-1, BRW-1, DIA-7, DIA-9
-#$ help: restructure to a single owner
+#$ help: for the parameter, and `ref mut` before the argument at each call
 #$ help: RefCell[T]
 # Explicit `ref mut` is a write-capable access, just like assignment. This
 # probe ensures the shared parameter mode is enforced before MIR borrow

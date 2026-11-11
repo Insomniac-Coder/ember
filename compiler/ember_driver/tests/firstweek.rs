@@ -20,19 +20,44 @@ fn workspace_root() -> PathBuf {
 /// §XVII.6.2 shape is reported with). An empty list: the row names no code. `[DIA-21]`'s Python
 /// habits, `P1`…, are `ember_diag::habits`' own, each with its codes (ODR-179).
 const SHAPES: &[(&str, &[&str])] = &[
-    // A1-3: `E3041` and `E3042` are folded into `E3040` and `E3012` into `E3013`, so O3 and O4 are O1's.
-    ("O1", &["E3040"]), ("O2", &["E3010", "E3011", "E3013"]),
-    ("O5", &["E3030"]), ("O6", &["E3050"]), ("O7", &["E3070"]),
-    ("O8", &["E3014", "E3015"]), ("O9", &["E3016"]),
+    // §XVII.6.1's rows. The ids O3, O4, O5, B8, B14, B15 and X1 are no longer used (their cases are
+    // `E3040`, `E3013`, `E2020`, or no longer arise), and `E3012`, `E3025`, `E3030`, `E3041`,
+    // `E3042`, `E3061`, `E3064`, `E3065` and `E3080` are retired.
+    ("O1", &["E3040"]), ("O2", &["E3010", "E3011", "E3013"]), ("O6", &["E3050"]), ("O7", &["E3070"]),
+    ("O8", &["E3014", "E3015"]), ("O9", &["E3016"]), ("S1", &["E4030"]),
+    ("A1", &["E3090", "E3096"]), ("U1", &["E3100", "E3105"]), ("R1", &[]),
     ("B1", &["E3022"]), ("B2", &["E3020"]), ("B3", &["E3021"]), ("B4", &["E3023"]), ("B5", &["E3024"]),
-    ("B6", &["E3062"]), ("B7", &["E3060"]), ("B8", &["E3025"]), ("B9", &["E3026"]), ("B10", &["E3027"]),
-    ("B11", &["E3095"]), ("B12", &["E3063"]), ("B14", &["E3065"]), ("B15", &["E2228"]),
-    ("X1", &["E3080"]), ("S1", &["E4030"]), ("A1", &["E3061", "E3090", "E3096"]), ("U1", &["E3100", "E3105"]),
-    ("R1", &[]),
+    ("B6", &["E3062"]), ("B7", &["E3060"]), ("B9", &["E3026"]), ("B10", &["E3027", "E3028"]),
+    ("B11", &["E3095"]), ("B12", &["E3063"]), ("B16", &["E3031"]), ("B17", &["E3032"]),
+    // §XVII.6.2's: the code each is reported with.
     ("N1", &["E1010"]), ("N2", &["E1010", "E1061"]), ("N3", &["E2072", "E1010"]), ("N4", &["E2020"]),
     ("N5", &["E2010"]), ("N6", &["E2020"]), ("N7", &[]), ("N8", &[]), ("N9", &["E2040"]),
     ("N10", &["E2050"]), ("N11", &["E2070"]), ("N12", &["E0002", "E0003", "E0004"]), ("N13", &["E2072"]),
 ];
+
+/// `[DIA-7a]` — the ownership and view shapes above are §XVII.6.1's table of the development
+/// target: the same shapes, each with the codes its row names, read from the document.
+#[test]
+fn the_ownership_shapes_are_the_specifications_catalogue() {
+    let root = workspace_root();
+    let pin = std::fs::read_to_string(root.join("docs/spec-source/development-target.json")).expect("the pin");
+    let path = pin.split("\"path\": \"").nth(1).and_then(|rest| rest.split('"').next()).expect("its path");
+    let spec = std::fs::read_to_string(root.join(path)).expect("the development target");
+    let section = spec.split("### XVII.6.1 Ownership and view shapes").nth(1).expect("XVII.6.1");
+    let mut catalogue: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for row in section.lines().skip_while(|l| !l.starts_with('|')).take_while(|l| l.starts_with('|')).skip(2) {
+        let cells: Vec<&str> = row.split('|').map(str::trim).collect();
+        let codes = cells[3].split('`').skip(1).step_by(2).map(str::to_string).collect();
+        catalogue.insert(cells[1].to_string(), codes);
+    }
+    assert!(catalogue.len() >= 20, "read the catalogue's rows: {catalogue:?}");
+    let table: BTreeMap<String, Vec<String>> = SHAPES
+        .iter()
+        .filter(|(name, _)| !name.starts_with('N'))
+        .map(|(name, codes)| (name.to_string(), codes.iter().map(|c| c.to_string()).collect()))
+        .collect();
+    assert_eq!(table, catalogue, "firstweek.rs's shape table and §XVII.6.1 disagree");
+}
 
 /// Whether `shape` may be the shape of a first error with `code` and, for a Python habit, the shape
 /// `--json` gave it: a catalogued shape whose row allows the code, a habit the diagnostic answers

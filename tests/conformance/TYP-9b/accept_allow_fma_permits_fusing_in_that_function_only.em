@@ -10,12 +10,14 @@
 #$ stdout: 0.0
 # `[TYP-9b]` — `@fp(allow_fma)` permits fused multiply-add within that function only: the function
 # next to it is two roundings: `fused` is built in a unit of its own with contraction on
-# (`[CG-C-11]`), `plain` stays in the main unit, which has it off.
+# (`[CG-C-11]`), `plain` stays in the main unit, which has it off. `plain` is `@noinline`
+# (`[CG-C-3a]`) so that it stays a function of its own in every profile and with every C compiler.
 
 @fp(allow_fma)
 fn fused(a: f64, b: f64, c: f64) -> f64:
     return a * b + c
 
+@noinline
 fn plain(a: f32, b: f32, c: f32) -> f32:
     return a * b + c
 

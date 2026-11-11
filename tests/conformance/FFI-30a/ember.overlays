@@ -1,0 +1,21 @@
+# ember.overlays: the headers this package's overlays were checked against.
+# Written by ember; `ember bind <header> --check <overlay> --merge` rewrites a line.
+version = "1"
+
+[[overlay]]
+file = "overlays/other.em"
+header = "pair.h"
+[overlay.declarations]
+"pair_sum" = "blake3:9d6c2eab370b1037916df10ce75b9f9300f0438e02ed136f23858f9c36a9126b"
+
+[[overlay]]
+file = "overlays/plain.em"
+header = "pair.h"
+[overlay.declarations]
+"pair_sum" = "blake3:9d6c2eab370b1037916df10ce75b9f9300f0438e02ed136f23858f9c36a9126b"
+
+[[overlay]]
+file = "overlays/retype.em"
+header = "pair.h"
+[overlay.declarations]
+"Pair" = "blake3:f1bd85920d5659fc6fd6c4014a3c948933b48baa420439c8d4954e63bbf69f88"
