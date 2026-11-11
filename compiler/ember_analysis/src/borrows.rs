@@ -4878,10 +4878,6 @@ fn check_point(
                     format!("{name} cannot be written while it is borrowed"),
                 ),
             };
-            // `[EXC-3]` — conflicting accesses to a class field through one
-            // local the compiler can see are `E3080` (shape X1), not an
-            // ordinary borrow overlap (D-466).
-            let code = if field_boundaries(body, types, loan_place, false).is_empty() { code } else { codes::E3080 };
 
             // `[DIA-3]` — the borrow site, the conflicting access, and the
             // later use that keeps the borrow alive. The last of those is not

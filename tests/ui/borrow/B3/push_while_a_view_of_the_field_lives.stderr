@@ -1,5 +1,5 @@
-error[E3080]: `b.items` is borrowed here and mutably borrowed elsewhere
- --> tests/ui/borrow/X1/push_while_a_view_of_the_field_lives.em:7:5
+error[E3021]: `b.items` is borrowed here and mutably borrowed elsewhere
+ --> tests/ui/borrow/B3/push_while_a_view_of_the_field_lives.em:7:5
   |
 6 |     view = b.items[..]
   |            ------- borrow of `b.items` starts here
