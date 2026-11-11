@@ -3768,7 +3768,7 @@ fn check_body(
                     // through `Return`, so the compiler-generated arena drop
                     // at that boundary is the *manifestation* of `[LT-4]`, not
                     // a second ordinary alias error. `check_escapes` reports
-                    // the required A1/E3061 shape below. User-visible reset
+                    // the required A1/E3063 shape below. User-visible reset
                     // and every non-returning drop remain ordinary writes.
                     //
                     // D-190 — the same holds for any storage a loan still
@@ -4078,7 +4078,7 @@ fn check_escapes(
             };
             sink.emit_classified(
                 Diagnostic::error(
-                    codes::E3061,
+                    codes::E3063,
                     span,
                     format!("arena allocation cannot outlive `{owner_name}`"),
                 )
@@ -4095,7 +4095,7 @@ fn check_escapes(
             // `[JOB-5]` — the anchor of a `jobs.local_arena()` view: what is allocated from it
             // goes when the job ends, so nothing of it outlives the call that asked.
             sink.emit_classified(
-                Diagnostic::error(codes::E3060, span, "the job's arena view does not live long enough")
+                Diagnostic::error(codes::E3063, span, "the job's arena view does not live long enough")
                     .primary_label("this outlives the call that took the job's arena")
                     .secondary(loan.span, "`jobs.local_arena()` is taken here")
                     .help("copy the value out of the arena, or allocate it from an arena the caller owns")

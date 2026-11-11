@@ -338,7 +338,7 @@ codes! {
     E3096 = (Error, 3096, Ownership, "[ARN-6], [ARN-1]", "the parent arena, or a view into it made before the scope, used while a scope of it is live");
     E3050 = (Error, 3050, Ownership, "[BRW-7]", "a view of an uninitialised place");
     E3060 = (Error, 3060, Ownership, "[BRW-17], [LT-3], [MOD-9a]", "a view used after what it points into was ended, handed over, replaced or reshaped: a position after a removal or reorder; an address after a reshape; a view put in through `ref mut` after one of the call's arguments changed; a name opened from a link after a line or call that may end its object; a view of what a function value's or an `owns dyn I` value's state owns after that value is replaced or ended; a stored function, override or implementation that may end what a name opened from a link reads across a recorded library line");
-    E3061 = (Error, 3061, Ownership, "[LT-4]", "arena allocation cannot outlive its arena");
+    E3061 = (Error, 3061, Ownership, "[LT-4]", "retired: folded into `E3063`: a value made in a memory manager's instance kept where it would outlive it");
     E3062 = (Error, 3062, Ownership, "[LT-1a]", "a result that points into something its first line's `from` does not name (shape B6)");
     E3070 = (Error, 3070, Ownership, "[DRP-1]", "`drop` cannot be called explicitly");
     E3080 = (Error, 3080, Ownership, "[EXC-3]", "overlapping access through the same handle");
