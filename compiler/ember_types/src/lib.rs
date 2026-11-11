@@ -27,7 +27,7 @@ pub struct Ty(u32);
 /// `[IMP-7]` — the canonical identity exchanged by semantic passes for one
 /// interned type. `Ty` remains the compact representation; this name makes the
 /// contract explicit without creating a second type universe.
-pub type TypeIdentity = Ty;
+pub type TypeId = Ty;
 
 /// A type cannot enter an interface artifact until type checking has resolved
 /// it to a real semantic identity. This deliberately rejects the diagnostic-
@@ -262,7 +262,7 @@ pub struct Layout {
     pub field_offsets: Vec<u64>,
 }
 
-/// `[IMP-7]` — the canonical target layout attached to a `TypeIdentity`.
+/// `[IMP-7]` — the canonical target layout attached to a `TypeId`.
 /// `Layout` remains the representation so existing layout and ABI consumers
 /// cannot drift onto a parallel descriptor.
 pub type LayoutDescriptor = Layout;

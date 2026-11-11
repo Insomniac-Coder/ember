@@ -216,7 +216,7 @@ impl<'a> Checker<'a> {
     }
 
     /// `[ERR-8]` (ADR-186) — `std.core`'s two compiler-known helpers of
-    /// `AnyError`: `type_identity[T]()`, the 128-bit FNV-1a hash of `T`'s
+    /// `AnyError`: `type_id[T]()`, the 128-bit FNV-1a hash of `T`'s
     /// canonical name (the same for one type in every module and every
     /// compilation; as Rust's `TypeId`, two types share one only by a
     /// collision of a 128-bit hash), and
@@ -231,7 +231,7 @@ impl<'a> Checker<'a> {
             return Some(self.synth_format_to(args, span));
         }
         let helper = match resolved.as_str() {
-            "std.core.type_identity" => "type_identity",
+            "std.core.type_id" => "type_id",
             "std.core.dyn_payload" => "dyn_payload",
             _ => return None,
         };
@@ -245,7 +245,7 @@ impl<'a> Checker<'a> {
             self.error(codes::E2020, span, format!("`{helper}` takes {wanted} argument(s), found {}", args.len()));
             return Some(error);
         }
-        if helper == "type_identity" {
+        if helper == "type_id" {
             // A parameter of an opaque body: never emitted.
             let text = self.types.canonical_name(*ty).unwrap_or_default();
             let hash = text.bytes().fold(0x6c62_272e_07bb_0142_62b8_2175_6295_c58d_u128, |hash, byte| {
