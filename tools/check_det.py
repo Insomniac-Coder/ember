@@ -56,10 +56,10 @@ def f64_program(xs, ys):
         "    for i in range(len(xs)):",
         "        x = xs[i]",
         "        y = ys[i]",
-        "        println(det.sin(x), det.cos(x), det.tan(x), det.exp(x), det.log(abs(x)), det.atan2(x, y), "
+        "        println(det.sin(x), det.cos(x), det.tan(x), det.exp(x), det.ln(abs(x)), det.atan2(x, y), "
         "det.pow(abs(x), y), det.pow(y, x.floor()), det.sqrt(abs(x)))",
         "        s: f32 = y as f32",
-        "        println(det.sin(s), det.cos(s), det.tan(s), det.exp(s), det.log(abs(s)), det.atan2(s, 0.75), "
+        "        println(det.sin(s), det.cos(s), det.tan(s), det.exp(s), det.ln(abs(s)), det.atan2(s, 0.75), "
         "det.pow(abs(s), 1.25), det.sqrt(abs(s)))",
         "",
     ])

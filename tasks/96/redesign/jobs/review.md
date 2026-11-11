@@ -36,6 +36,75 @@ no diagnostic. The row moves to the retired codes.
   yet. A1-6, M3.
 - **E2090's wording, and E2070's,** are to be compared with the spec's text. A7-16, M15.
 
+**B's follow-ups** (after the owner's cap; 414k tokens in all):
+- `c78243cf`: E2050 is one message, and the required-interface case is built.
+- `6bc190b3`: `[PAR-2]`'s message names the type to keep.
+- A1-3 was not done; the work in progress is in the scratchpad, `item3-wip.patch`. It goes back to
+  the queue.
+
+## Worker A: N-A and 18 pages (164k tokens, 81 min, 20 items)
+
+- N1 `[GRM-29]` (`06951db8`): one-element tuples are E0100 in four places.
+- N9 `[GRM-2]` (`23674a3c`): an import below an item or a statement is E0100.
+- 18 pages, E0002 to E1030.
+- Not reached (cap): E1041 E1050 E1051 E2010 E2020 E2030 E2031 E2035 E2036 E2040 E2041 E2060 E2061.
+- Pre-existing: the pages of E5060 and E5062 fail `error_pages.py` in the workers' runs (both
+  workers saw it). To check on `main`.
+
+## Worker C: N-C, 5 codes, 18 rules (338k tokens, 77 min, 26 items)
+
+- N7 (`f9e3d461`): `type_identity` is `std.core.type_id[T]()`.
+- N5 (`f4034ab0`): `unwrap` and `expect` need `E: needs Display`, with the panic texts. `Display` was
+  added for `Utf8Error`, `NulError` and `SendError[T]`.
+- N11 (`df1b0527`): `det` has every `Nondet` name of `std.math`. Ten new fdlibm-style kernels,
+  checked by C against mpmath on about 35,000 arguments: worst 0.89 ulp. **Still to be spot-checked
+  by the lead.**
+- Tests for E1051 E2115 E2173 E0001 E1021, and for 16 rules.
+- **Lead's change at integration (`28796304`):** `det.log`'s help came from a test of one qualified
+  name. It is now a table, `STD_RENAMED`, which covers `std.math.log` too.
+
+**Not built (found by C):**
+- `[ARN-5]` `ArenaArray.in` (`in` is a keyword);
+- `[ALC-1]` `using A`;
+- `[ALC-4]` `try_push`, `try_reserve`;
+- `[ALC-3]` under `--interp`;
+- `[RNG-9]`'s debug assert;
+- `[STR-3]`'s E2080 for `@derive(Copy)` with `drop`;
+- `[STD-6]`'s E1042;
+- `[DET-3]`'s E4070 through a `dyn` method;
+- `[DET-4]`'s E4070 help.
+
+## Worker D: N-D and 17 rules (345k tokens, 83 min, 20 items committed)
+
+- N2 `[MNG-1]` (`3fa99ea9`): the instance hash has 32 hex digits. The 61 tests that spell one were
+  updated from the compiler's own output.
+- N8 (`7030e69f`): `this` messages, E2118's help, E3062's help.
+- N10 (`874895fd`): 72 registry rows brought to the spec's table, with a unit test that compares
+  every row.
+- Tests for 17 rules (`e4e81325` to `202c2939`).
+- **Merge conflict:** both B and D added fields to `Checker`; both were kept.
+- **Left in D's worktree, not merged:** passing tests for about 40 more rules, written before the
+  cap. They are to be reviewed before any is taken. TYP-15a is weak, and CLS-1 has an accept test
+  only.
+- **LEX-2's CRLF test** is stored LF by `.gitattributes`, so it tests nothing. It needs an `eol=crlf`
+  line, or another test.
+
+**Defects found by D:**
+- `[DIA-3]` the E3040 label;
+- `[DIA-2]` `int` printed `i64`;
+- `[CTL-7]` `break` in a `defer` gives E1010, not E2160;
+- `[GRM-20]` E0104 where the table says E0108;
+- `[ATT-4]` two attributes on a line;
+- `[OBJ-2]` E2173's reach and message;
+- `[LT-1a]` E3060 where E3062 is wanted;
+- `[CLS-1]` class objects still counted handles (M4);
+- `[CLS-3]` a memberwise base's `init`;
+- `[MNG-2]` `@unsafe(export)`;
+- `[CTL-5]` E2020's code.
+
+**Not built (found by D):** `weakref`, `shares`, the 8/12-byte header, kind tests, `transmute` and
+friends. Each is its milestone's (M3 to M6b).
+
 ## Spec findings for the next cut (Hardened_13)
 
 1. The `W0001` row (above).
