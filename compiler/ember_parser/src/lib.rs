@@ -607,6 +607,8 @@ impl<'a> Parser<'a> {
         // preceded each, for the implicit `main` of a script.
         let mut script = Vec::new();
         let mut placement = Vec::new();
+        // `[GRM-2]` (0.20) — where the first item or statement begins; an import after it is `E0100`.
+        let mut first_decl: Option<ember_span::Span> = None;
 
         loop {
             self.eat_newlines();
@@ -634,6 +636,11 @@ impl<'a> Parser<'a> {
             }
             if self.at_kw(Kw::Import) || self.at_contextual("from") {
                 if let Some(import) = self.parse_import() {
+                    if let Some(first) = first_decl {
+                        let line = self.src[..first.start as usize].matches('\n').count() + 1;
+                        let text = self.src.get(import.span.start as usize..import.span.end as usize).unwrap_or("import").trim();
+                        self.report_code(codes::E0100, import.span, format!("imports come first: move `{text}` above line {line}"));
+                    }
                     // `[DIA-21]` P11 — where an import line goes, and whether `std.fs` is in.
                     self.import_at = Some((import.span, true));
                     let names = |path: &[Ident], last: &str| path.len() == 2 && path[0].name.is("std") && path[1].name.is(last);
@@ -651,6 +658,7 @@ impl<'a> Parser<'a> {
             if self.import_at.is_none() {
                 self.import_at = Some((self.span().shrink_to_start(), false));
             }
+            first_decl.get_or_insert(self.span());
             // `[FFI-30b]` — `pub import c "…"`: only a foreign import may be re-exported.
             if self.at_kw(Kw::Pub)
                 && matches!(self.peek_at(1), TokenKind::Keyword(Kw::Import))
