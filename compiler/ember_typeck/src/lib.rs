@@ -38986,6 +38986,15 @@ impl<'a> Checker<'a> {
                     // `[LEX-16]` — untyped until context decides.
                     None => self.common.int_lit,
                 };
+                // `[LEX-16]` — a suffixed literal that does not fit its suffix's type is `E2010`,
+                // unless a minus directly before it forms the negative constant (checked there).
+                if suffix.is_some()
+                    && self.negated_literal != Some(span)
+                    && int_max(self.types, ty).is_some_and(|max| *value > max)
+                {
+                    let shown = self.types.display(ty);
+                    self.error(codes::E2010, span, format!("the literal `{value}` does not fit in `{shown}`"));
+                }
                 Expr { ty, kind: ExprKind::Int(*value), span }
             }
             ast::Literal::Float { value, suffix, text, .. } => {
