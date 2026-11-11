@@ -9834,6 +9834,20 @@ impl Emitter<'_> {
                         return format!("{RT}ffi_release((void*)({}), {})", rendered[0], rendered[1]);
                     }
                     Builtin::ForeignThread => return format!("{RT}ffi_thread()"),
+                    // `[OWN-12]`, `[FFI-54]` — the address the owner's first word holds; the owner
+                    // was handed to the call and nothing drops it. A foreign object's leaves the
+                    // runtime's record first, as an `owns` parameter's does.
+                    Builtin::IntoRaw { foreign } => {
+                        let TyKind::Struct(id) = *self.types.kind(*arg_ty) else { unreachable!("an `owns T` is a struct") };
+                        let fields = &self.types.struct_def(id).fields;
+                        let (word, typed) = (member(fields[0].name), self.c_type(fields[0].ty));
+                        let address = format!("(({typed})({}).{word})", rendered[0]);
+                        if !*foreign {
+                            return address;
+                        }
+                        let creator = if fields.len() == 2 { format!("({}).{}", rendered[0], member(fields[1].name)) } else { "0".to_string() };
+                        return format!("({RT}ffi_release((void*){address}, {creator}), {address})");
+                    }
                     // `[FFI-23]` — a class object is pinned in its header; a `Box`'s value is
                     // its own, and needs nothing.
                     // `[HR-20]` (ODR-194) — with an `on_relocate` callback, a class object is

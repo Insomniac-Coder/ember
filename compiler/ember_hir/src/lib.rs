@@ -1859,6 +1859,13 @@ pub enum Builtin {
     /// `[FFI-33b]` — the number of the thread running it, recorded by an
     /// `owns T` of a type bound to its thread (`threads(creator)`).
     ForeignThread,
+    /// `[OWN-12]`, `[FFI-54]` — `x.into_raw()`: the address of what an `owns
+    /// T` holds (the argument, handed over and never dropped), as the
+    /// result's raw pointer: the block's first word (`*mut u8` for `owns dyn
+    /// I`). With `foreign` it is an `owns T` of a foreign type, whose address
+    /// also leaves the runtime's record (`[FFI-36b]`), as a parameter
+    /// contracted `owns` takes it.
+    IntoRaw { foreign: bool },
     /// `[FFI-23]` — `Retained.pin`'s mark: a class object's header gets its
     /// pinned flag; a `Box` needs none. The arguments are the value pinned and
     /// its `on_relocate` callback (`[HR-20]`, ODR-194): given one, a class
@@ -2475,6 +2482,7 @@ impl Builtin {
             Builtin::ForeignAdopt => "ffi_adopt",
             Builtin::ForeignRelease => "ffi_release",
             Builtin::ForeignThread => "ffi_thread",
+            Builtin::IntoRaw { .. } => "into_raw",
             Builtin::RetainedPin => "retained_pin",
             Builtin::RetainedUnpin => "retained_unpin",
             Builtin::RetainedAddress => "retained_address",

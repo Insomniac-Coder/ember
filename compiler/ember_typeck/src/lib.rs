@@ -48244,6 +48244,13 @@ impl<'a> Checker<'a> {
         {
             return self.clone_value(receiver);
         }
+        // `[OWN-12]`, `[FFI-54]` — `x.into_raw()` on an `owns` value is the compiler's own, before
+        // the value's (a `T` with an `into_raw` of its own is called below).
+        if name.name.is("into_raw")
+            && self.box_inner(receiver.ty).is_some_and(|inner| self.lookup_method(inner, name.name).is_none())
+        {
+            return self.synth_into_raw(receiver, args, &explicit, span);
+        }
         if self.box_inner(receiver.ty).is_some() && !dyn_box {
             // `[HEAP-9]` — an `owns T` reads as its `T`, with nothing written in between: a `get` of
             // the block itself is not Ember (a `T` with a `get` of its own is called below).
@@ -52066,6 +52073,7 @@ impl<'a> Checker<'a> {
             Builtin::BoxNew { .. }
             | Builtin::SharedNew { .. }
             | Builtin::MemForget { .. }
+            | Builtin::IntoRaw { .. }
             | Builtin::CellIntoInner
             | Builtin::MaybeUninitAssumeInit { .. }
             | Builtin::UnsafeCellIntoInner
@@ -52749,6 +52757,50 @@ impl<'a> Checker<'a> {
             kind: ExprKind::Ref { place: Box::new(payload), mutable },
             span,
         }
+    }
+
+    /// `[OWN-12]`, `[FFI-54]` — `x.into_raw()` on an `owns T`, built into the compiler: the address
+    /// of what `x` holds (a `*mut T`; a `*mut u8` for an `owns dyn I`), with Ember freeing nothing,
+    /// so nothing else can skip a value's clean-up (there is no `mem.forget`). `x` is handed over:
+    /// the name ends and nothing of it is dropped. An `owns T` of a foreign type's address leaves
+    /// the runtime's record (`[FFI-36b]`), as a parameter contracted `owns` takes it. Outside
+    /// `unsafe:` it is `E3100`: "`into_raw()` stops Ember from freeing the widget, so a mistake
+    /// leaks it or frees it twice; write it inside `unsafe:`: above line 18 write `# SAFETY:` and
+    /// the reason, then `unsafe:`, and indent line 18 under it".
+    fn synth_into_raw(&mut self, receiver: Expr, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if !args.is_empty() || !explicit.is_empty() {
+            self.error(codes::E2020, span, "`into_raw()` takes no arguments");
+            return error;
+        }
+        let Some(inner) = self.box_inner(receiver.ty) else { return error };
+        let step = UnsafeStep::Other("the `into_raw()`".to_string(), "the `into_raw()`s".to_string());
+        self.note_unsafe_step(&step);
+        if !self.unsafe_context() {
+            let noun = Self::common_noun(&self.types.display(inner));
+            let message = format!("`into_raw()` stops Ember from freeing the {noun}, so a mistake leaks it or frees it twice; write it inside `unsafe:`");
+            let block = match self.stmt_lines() {
+                Some(StmtLines { first, last, alone: true }) => {
+                    let these = if first == last { format!("line {first}") } else { format!("lines {first} to {last}") };
+                    format!(": above line {first} write `# SAFETY:` and the reason, then `unsafe:`, and indent {these} under it")
+                }
+                Some(StmtLines { first, .. }) => format!(": put the statement on line {first} on a line of its own, in an `unsafe:` block with a `# SAFETY:` note"),
+                None => String::new(),
+            };
+            let refusal = Diagnostic::error(codes::E3100, span, format!("{message}{block}"))
+                .note("C may then keep or end what the address points to, and nothing checks that [OWN-12] [UNS-1]");
+            if self.in_safe_block {
+                self.refuse_unsafe(span, step, refusal);
+            } else {
+                self.sink.emit(refusal);
+            }
+        }
+        let pointer = match self.types.kind(inner) {
+            TyKind::Dyn { .. } => self.types.intern(TyKind::Ptr { mutable: true, inner: self.common.u8 }),
+            _ => self.types.intern(TyKind::Ptr { mutable: true, inner }),
+        };
+        let foreign = self.foreign_owner_inner(receiver.ty).is_some();
+        Expr { ty: pointer, kind: ExprKind::Builtin { which: Builtin::IntoRaw { foreign }, args: vec![receiver] }, span }
     }
 
     /// `[FFI-48]` — a C++ object Ember holds as a value or behind a pointer (an opaque class or a

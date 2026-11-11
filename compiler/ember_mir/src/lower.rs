@@ -3113,6 +3113,23 @@ impl<'a> Builder<'a> {
             } => {
                 self.lower_mem_forget(place, &args[0], *elem, expr.span);
             }
+            // `[OWN-12]`, `[FFI-54]` — `x.into_raw()` takes `x` over: a move, which ends the name, and
+            // no drop of it follows.
+            hir::ExprKind::Builtin {
+                which: which @ hir::Builtin::IntoRaw { .. },
+                args,
+            } => {
+                let value = self.lower_operand(&args[0]);
+                self.at(expr.span);
+                let next = self.new_block();
+                self.terminate(Terminator::Call {
+                    func: FuncRef::Builtin { which: *which, arg_ty: args[0].ty },
+                    args: vec![value],
+                    dest: place,
+                    next,
+                });
+                self.current = next;
+            }
             hir::ExprKind::Builtin {
                 which: hir::Builtin::AssertDisjoint { mode, result },
                 args,

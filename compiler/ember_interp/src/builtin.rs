@@ -1468,6 +1468,8 @@ impl Interp<'_, '_> {
             Builtin::ForeignStatic { .. } | Builtin::ForeignAdopt | Builtin::ForeignRelease | Builtin::ForeignThread => {
                 "a foreign object"
             }
+            // `[OWN-12]` — the evaluator's values have no address C could keep.
+            Builtin::IntoRaw { .. } => "an address given to C (`into_raw()`)",
             Builtin::CppObjectAddress | Builtin::CppObjectHandle { .. } | Builtin::CppObjectGive | Builtin::CppSpan { .. } | Builtin::CppPointee => {
                 "a C++ object"
             }

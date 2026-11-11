@@ -1141,6 +1141,32 @@ impl<'a> FnCx<'_, 'a> {
                 Ok(())
             }
             Builtin::ForeignThread => self.call_rt_into("ffi_thread", Vec::new(), dest),
+            // `[OWN-12]`, `[FFI-54]` — the address the owner's first word holds; the owner was handed
+            // to the call and nothing drops it. A foreign object's leaves the runtime's record first.
+            Builtin::IntoRaw { foreign } => {
+                let held = self.operand(&args[0])?;
+                let (address, creator) = match held {
+                    Val::Imm(Sc::Ptr, value) => (value, None),
+                    Val::Mem(at, align) => {
+                        let address = self.load(Sc::Ptr, &at, align.min(8));
+                        let offsets = self.m.ty.table.layout(arg_ty).field_offsets;
+                        let creator = match offsets.get(1) {
+                            Some(&offset) if *foreign => {
+                                let creator_at = self.gep(&at, offset);
+                                Some(self.load(Sc::I(32), &creator_at, 4))
+                            }
+                            _ => None,
+                        };
+                        (address, creator)
+                    }
+                    other => return unsupported(format!("an `owns` value held as {other:?}")),
+                };
+                if *foreign {
+                    let creator = creator.unwrap_or_else(|| "0".to_string());
+                    self.call_rt("ffi_release", vec![Val::Imm(Sc::Ptr, address.clone()), Val::Imm(Sc::I(32), creator)], None);
+                }
+                self.store_result(dest, &address, Sc::Ptr, false)
+            }
             other => unsupported(format!("the built-in `{}`", other.name())),
         }
     }
