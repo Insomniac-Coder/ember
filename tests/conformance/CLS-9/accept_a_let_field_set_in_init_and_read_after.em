@@ -1,12 +1,12 @@
 #$ test: run-pass
 #$ rules: CLS-9, CLS-9a
 #$ stdout: 7 3
-# `[CLS-9]` — a `let` field is set in `init`; `[CLS-9a]` — one that is not
-# `Copy` may still be changed through.
+# `[CLS-9]`, `[CLS-9a]` — a `let` field is set in `init` (a list in it filled there too) and only
+# read after; a list that is to change is written without `let`.
 
 class Ledger:
     let id: int
-    let entries: Array[int] = []
+    entries: Array[int] = []
 
     fn init(id: int):
         this.id = id

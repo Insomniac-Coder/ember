@@ -463,6 +463,13 @@ pub fn line_mark(span: Span) -> String {
     format!("\u{1}{}:{}\u{2}", span.file.0, span.start)
 }
 
+/// The program's own text of `span`, for a message written where the source text is not at hand
+/// (the analyses; `[DIA-2]`: a refusal names what was refused as the program wrote it): a marker
+/// the renderer replaces by the span's text, a run of whitespace shown as one space.
+pub fn text_mark(span: Span) -> String {
+    format!("\u{1}={}:{}:{}\u{2}", span.file.0, span.start, span.end)
+}
+
 fn has_line_marks(d: &Diagnostic) -> bool {
     let marked = |text: &str| text.contains('\u{1}');
     marked(&d.message)
@@ -501,6 +508,19 @@ fn expand_marks(text: &str, map: &SourceMap) -> String {
         out.push_str(&rest[..open]);
         let after = &rest[open + 1..];
         let Some(close) = after.find('\u{2}') else { break };
+        if let Some(range) = after[..close].strip_prefix('=') {
+            let mut parts = range.split(':').map(|part| part.parse::<u32>().ok());
+            let text = match (parts.next().flatten(), parts.next().flatten(), parts.next().flatten()) {
+                (Some(file), Some(start), Some(end)) => map
+                    .get(FileId(file))
+                    .and_then(|file| file.text.get(start as usize..end as usize))
+                    .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" ")),
+                _ => None,
+            };
+            out.push_str(&text.unwrap_or_else(|| "?".to_string()));
+            rest = &after[close + 1..];
+            continue;
+        }
         let line = after[..close].split_once(':').and_then(|(file, start)| {
             let file = map.get(FileId(file.parse().ok()?))?;
             Some(file.line_of(start.parse().ok()?))

@@ -1,7 +1,7 @@
 #$ test: compile-fail
 #$ rules: EXC-15, DRP-1
 #$ profiles: debug, development
-#$ error[E3080]: `this.items` is borrowed here and mutably borrowed elsewhere
+#$ error[E3021]: `this.items` is borrowed here and mutably borrowed elsewhere
 # `[EXC-15]`, `[DRP-1]` — what a method does to its object is worked out from its body: `reset`
 # gives `this.items` a new list, so it changes its object, and `drop` calls it while `v`, a view of
 # `this.items`, is still used. The call would free what `v` points into (D-453), and is refused

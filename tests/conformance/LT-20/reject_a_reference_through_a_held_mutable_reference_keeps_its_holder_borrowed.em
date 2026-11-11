@@ -17,7 +17,7 @@ fn main():
     xs = [1, 2, 3]
     s = Slots(xs = ref mut xs, name = "n")
     (a, n1) = s.take()
-    (b, n2) = s.take() #$ error[E3025]
+    (b, n2) = s.take() #$ error[E3022]: `s.xs` is already mutably borrowed
     a = 7
     b = 8
     println(n1, n2)

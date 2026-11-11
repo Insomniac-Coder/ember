@@ -566,7 +566,7 @@ fn check_drop_self_escapes(
                             owned_closure_environments,
                         ))
                 {
-                    report_drop_self_escape(sink, stmt.span);
+                    report_drop_self_escape(sink, types, body.local(self_local).ty, stmt.span);
                     errors += 1;
                 }
                 update_self_handle_aliases(place, rvalue, &mut aliases, self_local);
@@ -587,7 +587,7 @@ fn check_drop_self_escapes(
                     .get(*argument)
                     .is_some_and(|argument| operand_is_drop_self(argument, &aliases, self_local))
                 {
-                    report_drop_self_escape(sink, block.terminator_span);
+                    report_drop_self_escape(sink, types, body.local(self_local).ty, block.terminator_span);
                     errors += 1;
                 }
             }
@@ -706,12 +706,36 @@ fn operand_is_drop_self(
         || (aliases.contains(&place.local) && place.projection.is_empty())
 }
 
-fn report_drop_self_escape(sink: &mut Sink, span: Span) {
+/// `[OBJ-5]`, `[CLS-7a]` — the object being ended, named as the program names it, the statement as
+/// written (its line), and a field to keep a copy of: "`drop` ends this `Player`; an owner made from it would
+/// point at a freed object; keep a copy of what you need".
+fn report_drop_self_escape(sink: &mut Sink, types: &TypeTable, self_ty: Ty, span: Span) {
+    let inner = match types.kind(self_ty) {
+        TyKind::Ref { inner, .. } => *inner,
+        _ => self_ty,
+    };
+    let field = match types.kind(inner) {
+        TyKind::Class(id) => types.class_def(*id).fields.first().map(|field| field.name),
+        TyKind::Struct(id) => types.struct_def(*id).fields.first().map(|field| field.name),
+        _ => None,
+    };
+    let line = ember_diag::line_mark(span);
+    let help = match field {
+        Some(field) => format!("on line {line}, hand over a copy of what you need where it has `this`: `copy of this.{field}`; or move the data out with `mem.take`"),
+        None => format!("on line {line}, hand over a value of your own where it has `this`; or move the data out with `mem.take`"),
+    };
     sink.emit_classified(
-        Diagnostic::error(codes::E3016, span, "`this` escapes its own `drop`")
-            .primary_label("published here")
-            .note("a destructor may not publish a handle to the object being destroyed [CLS-7a]")
-            .help("move the data out with `mem.take` instead"),
+        Diagnostic::error(
+            codes::E3016,
+            span,
+            format!(
+                "`drop` ends this `{}`; an owner made from it would point at a freed object; keep a copy of what you need",
+                types.display(inner)
+            ),
+        )
+        .primary_label("published here")
+        .note("a destructor may not publish a handle to the object being destroyed [CLS-7a]")
+        .help(help),
     );
 }
 

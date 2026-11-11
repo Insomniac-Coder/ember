@@ -1,0 +1,10 @@
+error[E3013]: this function gives `values` away, so it can run only once, and `invoke` may run it more than once
+  --> tests/ui/borrow/O2/once_callable_required.em:11:20
+   |
+11 |     println(invoke(task))
+   |                    ^^^^ this function can run only once
+   |
+   = help: take the parameter `owns f: once fn(...) -> ...` in `invoke` when it runs the function at most once; or hand over a copy each time instead (`copy of values` where it is given away)
+   = note: a function that gives one of its captures away can be called only once [CLO-6]
+
+error: could not compile due to 1 error(s)

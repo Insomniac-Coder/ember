@@ -26,7 +26,7 @@ fn main():
     values: Array[i32] = Array[i32]()
     values.push(owns 7)
     task = owned fn() => consume(owns values)
-    println(twice(task))  #$ error[E3030]: closure would move a captured value out
+    println(twice(task))  #$ error[E3013]: this function gives `values` away, so it can run only once, and `twice` may run it more than once
     moves_twice()
     reads_nothing()
     println(wrong_type())

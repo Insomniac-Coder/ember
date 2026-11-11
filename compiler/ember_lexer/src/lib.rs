@@ -673,14 +673,17 @@ impl<'a> Lexer<'a> {
             return;
         }
 
-        match value.and_then(char::from_u32) {
-            Some(c) => self.push(TokenKind::Lit(Lit::Char(c)), start),
-            None => {
+        // `[DIA-26]` — an escape that is wrong has been reported on the escape (`lex_escape`), which
+        // is the whole mistake: the literal is an error token, with nothing more said about it.
+        match value.map(char::from_u32) {
+            Some(Some(c)) => self.push(TokenKind::Lit(Lit::Char(c)), start),
+            Some(None) => {
                 let span = self.span(start);
                 let d = Diagnostic::error(codes::E0009, span, "not a Unicode scalar value");
                 self.sink.emit(d);
                 self.push(TokenKind::Error, start);
             }
+            None => self.push(TokenKind::Error, start),
         }
     }
 

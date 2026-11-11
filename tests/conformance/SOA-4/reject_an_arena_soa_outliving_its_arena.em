@@ -9,7 +9,7 @@ struct Point:
 
 fn escape() -> ArenaSoA[Point]:
     arena = Arena.with_capacity(64)
-    return ArenaSoA[Point].with_capacity(arena, 1)  #$ error[E3061]: arena allocation cannot outlive `arena`
+    return ArenaSoA[Point].with_capacity(arena, 1)  #$ error[E3063]: arena allocation cannot outlive `arena`
 
 fn main():
     arena = Arena.with_capacity(64)

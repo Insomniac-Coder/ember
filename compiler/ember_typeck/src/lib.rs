@@ -2050,6 +2050,8 @@ struct ClosureCall {
     once: bool,
     /// An `owned fn`: its environment owns what it captured (`[CLO-2]`).
     owned: bool,
+    /// The capture a `once` closure gives away, as the program names it (`[CLO-6]`).
+    moved: Option<Symbol>,
 }
 
 /// Whose field default `check_field_default` checks.
@@ -3895,6 +3897,8 @@ struct Checker<'a> {
     pub(crate) assumed_object_reads: HashSet<DefId>,
     /// The same, taken by a closure's capture probe, which reads the checker only.
     probe_object_reads: std::cell::RefCell<Vec<DefId>>,
+    /// The first captured field a closure body gives away (`[CLO-6]`'s message names it).
+    first_moved_capture: std::cell::Cell<Option<usize>>,
     /// The method of each call through a `dyn` value, by its receiver's place: a capture probe asks
     /// whether its object is implicit.
     interface_call_methods: HashMap<Span, DefId>,
@@ -4352,6 +4356,7 @@ impl<'a> Checker<'a> {
             object_changers: HashSet::new(),
             assumed_object_reads: HashSet::new(),
             probe_object_reads: std::cell::RefCell::new(Vec::new()),
+            first_moved_capture: std::cell::Cell::new(None),
             interface_call_methods: HashMap::new(),
             members_of: None,
             unstated_calls: HashMap::new(),
@@ -27362,7 +27367,7 @@ impl<'a> Checker<'a> {
                 let through_shared_ref =
                     self.reject_write_through_shared_ref(&place, target.span);
                 if !through_shared_ref {
-                    self.reject_borrowed_parameter_write(&place, target.span, true);
+                    self.reject_borrowed_parameter_write_as(&place, target.span, true, true);
                 }
                 let place_ty = place.ty;
                 // `[RNG-5a1]` — "No `*Assign` form is generated: `r += 1.0`
@@ -27861,7 +27866,7 @@ impl<'a> Checker<'a> {
             let through_shared_ref =
                 self.reject_write_through_shared_ref(&place, leaf.target.span);
             if !through_shared_ref {
-                self.reject_borrowed_parameter_write(&place, leaf.target.span, true);
+                self.reject_borrowed_parameter_write_as(&place, leaf.target.span, true, true);
             }
             let place_ty = place.ty;
             let source = self.coerce(source, place_ty);
@@ -37147,9 +37152,9 @@ impl<'a> Checker<'a> {
         // `[CLO-3]`, `[CLO-10]` — a closure where an owned callable value is
         // wanted: an `owned fn` gives the value its environment; a lambda
         // that borrows is a view (`E3063`), and one that moves a capture out
-        // can be called only once (`E3030`).
+        // can be called only once (`E3013`).
         if let TyKind::Struct(id) = *self.types.kind(expr.ty)
-            && let Some(closure) = self.closure_calls.get(&id).map(|call| (call.def, call.once, call.owned))
+            && let Some(closure) = self.closure_calls.get(&id).map(|call| (call.def, call.once, call.owned, call.moved))
             && let TyKind::Fn { abi: None, stateless: false, params: wanted, ret: wanted_ret, .. } =
                 self.types.kind(expected).clone()
             && let Some(signature) = self.callable_signature_of_value(expr.ty)
@@ -37157,7 +37162,7 @@ impl<'a> Checker<'a> {
             && found == wanted
             && found_ret == wanted_ret
         {
-            let (def, once, owned) = closure;
+            let (def, once, owned, moved) = closure;
             let span = expr.span;
             let wanted_shown = self.types.display(expected);
             // `[LT-42]` — an `owned fn`'s captured views are the region analysis's: static ones may
@@ -37182,10 +37187,20 @@ impl<'a> Checker<'a> {
             let wanted_once = matches!(self.types.kind(expected), TyKind::Fn { once: true, .. });
             if once && !wanted_once {
                 self.sink.emit_classified(
-                    Diagnostic::error(codes::E3030, span, "closure would move a captured value out")
-                        .primary_label("this closure is callable only once")
-                        .help(format!("`{wanted_shown}` may be called many times; write `once {wanted_shown}` where it is called once"))
-                        .note("the closure moves a non-`Copy` capture out of its environment [CLO-6]"),
+                    Diagnostic::error(
+                        codes::E3013,
+                        span,
+                        format!(
+                            "this function gives {} away, so it can run only once, and `{wanted_shown}` may run it more than once",
+                            moved.map_or("a captured value".to_string(), |name| format!("`{name}`"))
+                        ),
+                    )
+                    .primary_label("this function can run only once")
+                    .help(match moved {
+                        Some(name) => format!("write `once {wanted_shown}` where it is held; or hand over a copy each time instead (`copy of {name}` where it is given away)"),
+                        None => format!("write `once {wanted_shown}` where it is held"),
+                    })
+                    .note("a function that gives one of its captures away can be called only once [CLO-6]"),
                 );
                 return Expr { ty: expected, kind: ExprKind::Error, span };
             }
@@ -40915,6 +40930,7 @@ impl<'a> Checker<'a> {
         // A closure refused at its argument would be refused again inside the instance
         // ([DIA-14]).
         if self.reject_once_closures_for_callable_bounds(
+            name,
             args,
             &declared_modes,
             &generics,
@@ -41317,6 +41333,7 @@ impl<'a> Checker<'a> {
         // A closure refused at its argument would be refused again inside the instance
         // ([DIA-14]).
         if self.reject_once_closures_for_callable_bounds(
+            name,
             args,
             &declared_modes,
             &generics,
@@ -41410,6 +41427,7 @@ impl<'a> Checker<'a> {
     /// carries the source parameter's callable capability.
     fn reject_once_closures_for_callable_bounds(
         &mut self,
+        callee: Symbol,
         args: &[ast::Arg],
         declared: &[(Ty, Mode)],
         generics: &[GenericParam],
@@ -41432,11 +41450,13 @@ impl<'a> Checker<'a> {
             }
             // `[CLO-6a]` — a `once fn` value is called at most once, as such a closure is.
             let once_value = matches!(self.types.kind(value.ty), TyKind::Fn { once: true, .. });
+            let mut moved = None;
             if !once_value {
                 let TyKind::Struct(id) = *self.types.kind(value.ty) else { continue };
                 if !self.closure_calls.get(&id).is_some_and(|closure| closure.once) {
                     continue;
                 }
+                moved = self.closure_calls.get(&id).and_then(|closure| closure.moved);
             }
             // A routed method's parameter is not the user's to change.
             let help = match self.routed_method {
@@ -41444,26 +41464,36 @@ impl<'a> Checker<'a> {
                     "move a clone of the capture into the closure, or use `mem.take` when it implements `Default`: \
                      `{method}` takes a `fn(…)`, which a closure that gives away its captures does not satisfy"
                 ),
-                None => "declare the parameter `f: once fn(...) -> ...` when it is called at most once, or use `mem.take` when the capture implements `Default`; clone only as a last resort".to_string(),
+                None => format!("take the parameter `owns f: once fn(...) -> ...` in `{callee}` when it runs the function at most once"),
             };
             if once_value {
                 let shown = self.types.display(value.ty);
                 self.sink.emit_classified(
-                    Diagnostic::error(codes::E3030, arg.value.span, format!("a `{shown}` value may be called only once"))
-                        .primary_label("this value is callable only once")
-                        .help("declare the parameter `f: once fn(...) -> ...` when it is called at most once")
-                        .note("a `fn(A) -> R` parameter may be called any number of times [CLO-6]"),
+                    Diagnostic::error(
+                        codes::E3013,
+                        arg.value.span,
+                        format!("a `{shown}` value can run only once, and `{callee}` may run it more than once"),
+                    )
+                    .primary_label("this value is callable only once")
+                    .help("take the parameter `owns f: once fn(...) -> ...` when it is called at most once")
+                    .note("a `fn(A) -> R` parameter may be called any number of times [CLO-6]"),
                 );
             } else {
                 self.sink.emit_classified(
                     Diagnostic::error(
-                        codes::E3030,
+                        codes::E3013,
                         arg.value.span,
-                        "closure would move a captured value out",
+                        format!(
+                            "this function gives {} away, so it can run only once, and `{callee}` may run it more than once",
+                            moved.map_or("a captured value".to_string(), |name| format!("`{name}`"))
+                        ),
                     )
-                    .primary_label("this closure is callable only once")
-                    .help(help)
-                    .note("the closure moves a non-`Copy` capture out of its environment [CLO-2]"),
+                    .primary_label("this function can run only once")
+                    .help(match moved {
+                        Some(name) => format!("{help}; or hand over a copy each time instead (`copy of {name}` where it is given away)"),
+                        None => help,
+                    })
+                    .note("a function that gives one of its captures away can be called only once [CLO-6]"),
                 );
             }
             rejected = true;
@@ -41714,7 +41744,7 @@ impl<'a> Checker<'a> {
                     origin: None,
                     declaring_module: self.current_module,
                 });
-                self.closure_calls.insert(id, ClosureCall { def, once: false, owned: false });
+                self.closure_calls.insert(id, ClosureCall { def, once: false, owned: false, moved: None });
                 let ty = self.types.intern(TyKind::Struct(id));
                 (id, Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields: Vec::new() }, span }, Mode::Borrow)
             }
@@ -46105,6 +46135,18 @@ impl<'a> Checker<'a> {
         span: Span,
         offer_interior_mutability: bool,
     ) -> bool {
+        self.reject_borrowed_parameter_write_as(place, span, offer_interior_mutability, false)
+    }
+
+    /// `assigns`: the write is the assignment of the whole parameter (`n = n + 1`), Python's
+    /// rebinding of its name, which a borrowed parameter reached through its borrow is too.
+    fn reject_borrowed_parameter_write_as(
+        &mut self,
+        place: &Expr,
+        span: Span,
+        offer_interior_mutability: bool,
+        assigns: bool,
+    ) -> bool {
         let Some(local) = root_local(&place.kind) else { return false };
         if !self.borrowed_params.contains(&local) {
             return false;
@@ -46146,14 +46188,26 @@ impl<'a> Checker<'a> {
         let shown = self.types.display(ty);
         // D-823 (B2) — the whole parameter given a new value is Python's rebinding of a name: the
         // value it means is a new local's, and the caller's stays as it was.
-        let rebinding = matches!(place.kind, ExprKind::Local(_)) && !self.callable_parameter_locals.contains(&local);
+        let rebinding = match &place.kind {
+            ExprKind::Local(_) => true,
+            ExprKind::Deref(inner) => assigns && matches!(inner.kind, ExprKind::Local(_)),
+            _ => false,
+        } && !self.callable_parameter_locals.contains(&local);
         let structural_help = if self.callable_parameter_locals.contains(&local) {
             format!(
                 "declare this callable parameter `ref mut {name}: fn(...) -> ...` so it receives a mutable closure place"
             )
         } else if rebinding {
+            // `[DIA-7]`, `[DIA-25]`, shape B4 — a local of your own first (`count = n`), the parameter
+            // as the program wrote it (`n: int`) where the caller is to see the new value.
+            let written = self
+                .sources
+                .get(&declaration.file)
+                .and_then(|source| source.text.get(declaration.start as usize..declaration.end as usize))
+                .filter(|text| !text.is_empty())
+                .map_or_else(|| format!("{name}: {shown}"), str::to_string);
             format!(
-                "bind the new value to a new local (`new_{name} = …`) and use that from here on; declare the parameter `ref mut {name}: {shown}` only if the caller is to see the new value, as a single owner passing it `ref mut`"
+                "give the value a local of your own first, `new_{name} = {name}`, and change and use `new_{name}` from here on; or write `ref mut {written}` for the parameter, and `ref mut` before the argument at each call, if the caller is to see the new value"
             )
         } else {
             // `[DIA-10]`, shape B4 — the line to write: the parameter with `ref mut`, and the same
@@ -46211,7 +46265,7 @@ impl<'a> Checker<'a> {
     }
 
     fn reject_readonly_write(&mut self, place: &Expr, span: Span) {
-        self.reject_readonly_write_inner(place, span, false);
+        self.reject_readonly_write_inner(place, span);
     }
 
     /// An assignment: also the place `[CLS-9]` restricts, a `let` field
@@ -46219,17 +46273,17 @@ impl<'a> Checker<'a> {
     /// any handle (`[CLS-7]`); the access it takes is checked at run time
     /// (VIII.3, `[EXC-16]`; D-462).
     fn reject_readonly_write_in_assignment(&mut self, place: &Expr, span: Span) {
-        self.reject_readonly_write_inner(place, span, true);
+        self.reject_readonly_write_inner(place, span);
     }
 
     /// `[EXC-1]` — a class field passed to a `mut` parameter is a long-term
     /// access at the call boundary: the caller's MIR lowering surrounds the
     /// call with the run-time access interval.
     fn reject_readonly_write_in_mut_argument(&mut self, place: &Expr, span: Span) {
-        self.reject_readonly_write_inner(place, span, false);
+        self.reject_readonly_write_inner(place, span);
     }
 
-    fn reject_readonly_write_inner(&mut self, place: &Expr, span: Span, assignment: bool) {
+    fn reject_readonly_write_inner(&mut self, place: &Expr, span: Span) {
         self.note_written(place);
         let mut current = place;
         loop {
@@ -46268,13 +46322,12 @@ impl<'a> Checker<'a> {
                                 )
                             },
                         );
-                        // `[CLS-9]` — only assignment to the binding itself is
-                        // restricted. A `ref mut` or a `mut` call through the
-                        // field reaches this helper through another entry
-                        // point and remains permitted by `[CLS-9a]`.
-                        let reassigns_let_field = assignment
-                            && std::ptr::eq(current, place)
-                            && field.is_some_and(|(_, _, is_let, _)| is_let)
+                        // `[CLS-9]`, `[CLS-9a]` — after `init`, nothing is changed through a
+                        // `let` field, for every type: it is not assigned, a list in it is not
+                        // added to, and what an object it names is not changed through it. A
+                        // change reaches this helper as an assignment, a `ref mut` or a `mut`
+                        // argument (a method's receiver included), through any depth of path.
+                        let reassigns_let_field = field.is_some_and(|(_, _, is_let, _)| is_let)
                             && self.class_init_field_index(current).is_none();
                         if reassigns_let_field {
                             let (owner_id, field_name, _, _) =
@@ -46293,6 +46346,8 @@ impl<'a> Checker<'a> {
                                     "`{field_name}` is `let`: it is set in `init` and never changed after; to {change}, write the field without `let`: `{field_name}: {shown}`"
                                 ),
                             );
+                            // One mistake, one error: the outer `let` fields on the path are not repeated.
+                            return;
                         }
                         if let Some((owner_id, field_name, _, read_only_outside)) = field {
                             if !reassigns_let_field
@@ -50268,7 +50323,7 @@ impl<'a> Checker<'a> {
                             ffi_counted: None,
                         });
                         self.closure_symbols.insert(def, call.symbol);
-                        self.closure_calls.insert(id, ClosureCall { def, once: call.once, owned: call.owned });
+                        self.closure_calls.insert(id, ClosureCall { def, once: call.once, owned: call.owned, moved: None });
                     }
                     self.types.intern(TyKind::Struct(id))
                 } else if let Some((generic, args)) = &entry.origin {
@@ -50761,7 +50816,9 @@ impl<'a> Checker<'a> {
         // `[CLO-2]` — an `owned fn` stays reusable when it merely reads its
         // directly owned captures. It becomes `CallableOnce` only when the
         // typed body actually consumes a non-`Copy` capture.
+        self.first_moved_capture.set(None);
         let once = owned && self.closure_body_moves_capture(&body, LocalId(0));
+        let moved = if once { self.first_moved_capture.get().and_then(|index| captured.get(index)).map(|(name, _)| *name) } else { None };
         debug_assert_eq!(once, probe_once, "closure probe and final body disagree about CallableOnce");
         let call_mode = if once {
             Mode::Owned
@@ -50787,7 +50844,7 @@ impl<'a> Checker<'a> {
             skipped_before,
             reserved,
         );
-        self.closure_calls.insert(struct_id, ClosureCall { def, once, owned: owned });
+        self.closure_calls.insert(struct_id, ClosureCall { def, once, owned: owned, moved });
 
         // The closure *value* is its environment. Ordinary closures borrow
         // each captured local; `owned fn` moves or copies each capture into
@@ -51704,8 +51761,11 @@ impl<'a> Checker<'a> {
     ) -> bool {
         if consuming
             && !self.types.is_copy(expr.ty)
-            && Self::is_closure_capture_place(expr, environment)
+            && let Some(index) = Self::closure_capture_field_index(expr, environment)
         {
+            if self.first_moved_capture.get().is_none() {
+                self.first_moved_capture.set(Some(index));
+            }
             return true;
         }
 
@@ -51825,11 +51885,6 @@ impl<'a> Checker<'a> {
             | ExprKind::Error => false,
         }
     }
-
-    fn is_closure_capture_place(expr: &Expr, environment: LocalId) -> bool {
-        Self::closure_capture_field_index(expr, environment).is_some()
-    }
-
     /// Return the first generated-environment field on a place projection.
     /// `(*env).field.subfield` and `(*env).field[index]` still belong to the
     /// same capture for both its mutable-borrow and move-out capability.
