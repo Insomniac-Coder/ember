@@ -3954,6 +3954,9 @@ struct Checker<'a> {
     constructing: Option<Symbol>,
     /// The name of the function whose body is being checked, where it is declared (`[PAR-2]`'s `?` message).
     fn_decl: Span,
+    /// `[LEX-16]` — the integer literal a unary minus stands directly before: its fit is checked as
+    /// the negative constant (`-128i8` fits, `128i8` does not), by the minus.
+    negated_literal: Option<Span>,
     /// `[PAR-2]` — the lambda depth of the `@parallel` loop's chunk closure being checked, where a
     /// `?` is `E7010`.
     parallel_try: Option<usize>,
@@ -4362,6 +4365,7 @@ impl<'a> Checker<'a> {
             ret_ty,
             constructing: None,
             fn_decl: Span::DUMMY,
+            negated_literal: None,
             parallel_try: None,
             default_overflow: OverflowPolicy::default(),
             module_overflow: Vec::new(),
@@ -11284,8 +11288,8 @@ impl<'a> Checker<'a> {
 
     fn not_a_view(&mut self, name: Symbol, span: Span) {
         self.sink.emit(
-            Diagnostic::error(codes::E2030, span, format!("`@view` on `{name}`, which is not a view type"))
-                .help("remove `@view`; a type is a view when it holds a reference, a `Span`, a `MutSpan`, a `StrView` or another view")
+            Diagnostic::error(codes::E2030, span, format!("`@view` on `{name}`, which holds no view; remove `@view`"))
+                .help("delete the `@view` line; a type is a view when it holds a reference, a `Span`, a `MutSpan`, a `StrView` or another view")
                 .note("`@view` documents what the compiler infers [TYP-34]"),
         );
     }
@@ -38598,7 +38602,11 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Unary { op, operand } => {
                 let direct_integer_literal = *op == ast::UnOp::Neg
                     && matches!(&operand.kind, ast::ExprKind::Lit(ast::Literal::Int { .. }));
+                if direct_integer_literal {
+                    self.negated_literal = Some(operand.span);
+                }
                 let operand = self.synth(operand);
+                self.negated_literal = None;
                 // `[LEX-24]` — a direct negative integer literal is one
                 // literal even when nested inside arithmetic. In particular
                 // `-128i8 + 0i8` must not evaluate the positive magnitude
