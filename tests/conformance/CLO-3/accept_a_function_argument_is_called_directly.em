@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 31 8
 #$ stdout: 34 9
-#$ assert-c-count: contains("em_5applyG8a771c17434ecee2(") == 4
+#$ assert-c-count: contains("em_5applyG8a771c17434ecee20cf13f63b2f0e4cb(") == 4
 #$ assert-c-count: contains("int64_t em_5applyG") == 2
 # `[CLO-3]` — a callable parameter is an implicit generic: each function
 # passed to it gets `apply`'s own copy, in which the call through the

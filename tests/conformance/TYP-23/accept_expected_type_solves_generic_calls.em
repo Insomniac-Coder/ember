@@ -6,10 +6,10 @@
 #$ 7
 #$ 11
 #$ 6 8
-#$ assert-c: contains("int32_t em_2idG2c2a47066b4fc729")
-#$ assert-c: contains("int32_t em_4pickG2c2a47066b4fc729")
-#$ assert-c: contains("em_6HolderG2c2a47066b4fc729")
-#$ assert-c: !contains("em_6HolderG73498f1dbd18d400")
+#$ assert-c: contains("int32_t em_2idG2c2a47066b4fc729d207037bb273fa35")
+#$ assert-c: contains("int32_t em_4pickG2c2a47066b4fc729d207037bb273fa35")
+#$ assert-c: contains("em_6HolderG2c2a47066b4fc729d207037bb273fa35")
+#$ assert-c: !contains("em_6HolderG73498f1dbd18d400e7759d24661b8d8a")
 #$ assert-c: contains("sizeof(int32_t), _Alignof(int32_t)")
 # The expected type flows into a generic call and a generic constructor, and a
 # literal argument waits for the typed arguments: nothing here becomes `int`.

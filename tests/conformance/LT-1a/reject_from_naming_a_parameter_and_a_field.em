@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: LT-1a
-#$ help: rename the parameter
+#$ help: rename the parameter: for a view of the field write `fn next_word(src_param: StrView) -> StrView from src:`, for a view of the parameter `fn next_word(src_param: StrView) -> StrView from src_param:`
 # `[LT-1a]` — `from` names a parameter, or a field of `this` written bare; a name that is both could
 # mean either, so it is refused until the parameter is renamed.
 

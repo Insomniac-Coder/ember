@@ -2,7 +2,7 @@
 #$ rules: TYP-16, IFC-1, CLS-4, DSP-2
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(em_5Child5valueGda5cc12a188c7619)
+#$ assert-c: contains(em_5Child5valueGda5cc12a188c7619b25d920e0657739a)
 #$ assert-c: contains(->slot0)
 
 [T]

@@ -2,7 +2,7 @@
 #$ rules: TYP-16, IFC-1
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(em_6Holder7projectG572e1ef4d9565eac)
+#$ assert-c: contains(em_6Holder7projectG572e1ef4d9565eace55ddad6c9b989e5)
 
 interface Project:
     [U]

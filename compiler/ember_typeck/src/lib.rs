@@ -3949,6 +3949,9 @@ struct Checker<'a> {
     /// `[PAR-2]` — the lambda depth of the `@parallel` loop's chunk closure being checked, where a
     /// `?` is `E7010`.
     parallel_try: Option<usize>,
+    /// `[FN-4]` — the function whose body is being checked, and whether it is a `static fn` (it has no
+    /// object): what `this` where there is none names in its `E1010`.
+    body_fn: Option<(Symbol, bool)>,
     /// The default `[TYP-8]` policy when a module has no overflow attribute.
     default_overflow: OverflowPolicy,
     /// Each source module's lexical default, selected before checking bodies.
@@ -4359,6 +4362,7 @@ impl<'a> Checker<'a> {
             param_defaults: HashMap::new(),
             reported_defaults: HashSet::new(),
             open: OpenState::default(),
+            body_fn: None,
         }
     }
 
@@ -4407,6 +4411,32 @@ impl<'a> Checker<'a> {
     /// is a contract (`[VER-2]` makes widening it a breaking change), so a
     /// typo in it is worth catching loudly.
 
+    /// `[LT-1a]` — `E2118`'s help: the function's first line as written, with the parameter `name`
+    /// renamed (`name` and `_param`) and `from` naming the field, then the parameter.
+    fn e2118_help(&self, from: Span, parameter: Span, name: Symbol) -> String {
+        let plain = format!("rename the parameter, adding `_param` to its name: `from {name}` then names the field, and `from {name}_param` the parameter");
+        let Some(source) = self.sources.get(&from.file) else { return plain };
+        let text: &str = &source.text;
+        let (start, end) = (from.start as usize, from.end as usize);
+        if end > text.len() || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+            return plain;
+        }
+        let line_start = text[..start].rfind('\n').map_or(0, |at| at + 1);
+        let line_end = text[end..].find('\n').map_or(text.len(), |at| end + at);
+        // The line as written, without a comment after it.
+        let line = &text[line_start..line_end];
+        let line = line.find('#').map_or(line, |at| &line[..at]);
+        let (from_at, param_at) = (start - line_start, (parameter.start as usize).wrapping_sub(line_start));
+        let Some(name_at) = line.get(param_at..).and_then(|rest| rest.find(name.as_str())).map(|at| at + param_at) else { return plain };
+        let renamed = format!("{}{}_param{}", &line[..name_at], name, &line[name_at + name.as_str().len()..]);
+        let from_shift = if name_at < from_at { "_param".len() } else { 0 };
+        let end_of_from = from_at + from_shift + name.as_str().len();
+        let (before, after) = (&renamed[..from_at + from_shift], &renamed[end_of_from..]);
+        let (field_line, param_line) = (format!("{before}{name}{after}"), format!("{before}{name}_param{after}"));
+        let (field_line, param_line) = (field_line.trim(), param_line.trim());
+        format!("rename the parameter: for a view of the field write `{field_line}`, for a view of the parameter `{param_line}`")
+    }
+
     /// `[LT-1a]` — what a returned view points into, as `-> T from name` (`[GRM-41]`) says: a
     /// parameter, or a field of `this` written bare. 0.9.10's `@borrows(…)` is gone (`E0104`, which
     /// says what to write); one naming one thing is read quietly, for what it means.
@@ -4445,7 +4475,7 @@ impl<'a> Checker<'a> {
                     self.sink.emit(
                         Diagnostic::error(codes::E2118, from.span, format!("`{name}` is both a parameter of `{function}` and a field of `{owner}`, so `from {name}` could mean either"))
                             .secondary(at, format!("the parameter `{name}`"))
-                            .help(format!("rename the parameter: then `from {name}` names the field, and `from` with the new name names the parameter")),
+                            .help(self.e2118_help(from.span, at, name)),
                     );
                     return None;
                 }
@@ -20928,6 +20958,7 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let ast::ItemKind::Fn(decl) = &item.kind else { continue };
+            self.body_fn = Some((decl.name.name, false));
             // `[BLD-8]` — a body whose kept checked form stands for it is not checked again.
             let keep_body = decl.body.as_ref().is_some_and(|block| self.keep_bodies.contains(&block.span));
             self.skip_bodies = self.module_skipped || keep_body;
@@ -23715,7 +23746,9 @@ impl<'a> Checker<'a> {
     ) -> Function {
         let wrappers = self.some_wrappers_named(self.signatures[def.0 as usize].ret);
         let saved = std::mem::replace(&mut self.some_checking, wrappers);
+        let outer_fn = self.body_fn.replace((decl.name.name, false));
         let function = self.check_one_function_inner(decl, block, def, attrs, directives, span);
+        self.body_fn = outer_fn;
         self.some_checking = saved;
         function
     }
@@ -24593,7 +24626,10 @@ impl<'a> Checker<'a> {
     ) -> Option<Function> {
         let wrappers = self.some_wrappers_named(self.signatures[def.0 as usize].ret);
         let saved = std::mem::replace(&mut self.some_checking, wrappers);
+        let is_static = !decl.params.iter().any(|param| matches!(param.kind, ast::ParamKind::Receiver { .. }));
+        let outer_fn = self.body_fn.replace((decl.name.name, is_static));
         let function = self.check_one_method_inner(owner, decl, block, def, attrs, span);
+        self.body_fn = outer_fn;
         self.some_checking = saved;
         function
     }
@@ -37583,14 +37619,27 @@ impl<'a> Checker<'a> {
                     // as it captures any other local of the method.
                     None if let Some(captured) = self.resolve_capture(name, span) => captured,
                     None => {
-                        // `[FN-4]`, `[LEX-15]` — `self` anywhere is `E1010`, whose message gives the
-                        // word to write; `this` outside a method keeps this one (N33).
-                        let message = if self.written_line(span).as_deref() == Some("self") {
-                            "inside a method its object is `this`"
+                        // `[FN-4]`, `[LEX-15]` — `self` anywhere is `E1010`, whose help gives `this`;
+                        // `this` where there is no object (a free function, a `static fn`) is `E1010` too.
+                        let diagnostic = if self.written_line(span).as_deref() == Some("self") {
+                            Diagnostic::error(codes::E1010, span, "inside a method its object is `this`").help("write `this`")
                         } else {
-                            "`self` outside a method"
+                            match self.body_fn {
+                                Some((name, true)) => Diagnostic::error(
+                                    codes::E1010,
+                                    span,
+                                    format!("`this` can only be used in a method, and `{name}` is a `static fn`, not a method"),
+                                ),
+                                Some((name, false)) => Diagnostic::error(
+                                    codes::E1010,
+                                    span,
+                                    format!("`this` can only be used in a method, and `{name}` is not a method"),
+                                )
+                                .help(format!("to make `{name}` a method, move it into the struct or class it belongs to")),
+                                None => Diagnostic::error(codes::E1010, span, "`this` can only be used in a method"),
+                            }
                         };
-                        self.error(codes::E1010, span, message);
+                        self.sink.emit(diagnostic);
                         Expr { ty: self.common.error, kind: ExprKind::Error, span }
                     }
                 }
@@ -61525,7 +61574,7 @@ fn instance_collision(symbol: &str, first: &str, first_span: Span, second: &str,
     )
     .secondary(first_span, format!("`{first}` is made here"))
     .note(format!(
-        "a generic instance's symbol is its path's, then `{}` and the first {} hex digits of the BLAKE3 hash of its arguments [MNG-1]",
+        "a generic instance's symbol is its path's, then `{}` and the {} hex digits of the BLAKE3 hash of its arguments [MNG-1]",
         ember_branding::INSTANCE_MARK,
         ember_branding::INSTANCE_HASH_DIGITS
     ));

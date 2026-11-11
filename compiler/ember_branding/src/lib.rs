@@ -88,7 +88,7 @@ fn prefix() -> &'static str {
 
 /// `[MNG-1]` — how many hex digits of the BLAKE3 hash of a generic instance's arguments its
 /// symbol keeps.
-pub const INSTANCE_HASH_DIGITS: usize = 16;
+pub const INSTANCE_HASH_DIGITS: usize = 32;
 
 /// `[MNG-1]` — the letter between an instance's path and its hash: `em_3maxG…`. A component
 /// begins with a digit or [`TRANSLITERATED_MARK`] and one, so the letter ends the path.
@@ -147,7 +147,7 @@ fn split_component(rest: &str) -> Option<(bool, &str, &str)> {
     Some((marked, text, &body[digits + length..]))
 }
 
-/// `[MNG-1]` — the end of a generic instance's symbol: `G` and the first 16 hex digits of the
+/// `[MNG-1]` — the end of a generic instance's symbol: `G` and the 32 hex digits of the
 /// BLAKE3 hash of the canonical spelling of its arguments.
 pub fn instance_suffix(arguments: &str) -> String {
     let hash = blake3::hash(arguments.as_bytes());
@@ -595,11 +595,11 @@ mod tests {
         assert!(!symbol_path_starts_with(&item_symbol("größe.f"), &["gr_u00F6__u00DF_e"]));
     }
 
-    /// `[MNG-1]` — an instance's hash: `G` and 16 hex digits of BLAKE3 of its arguments' spelling.
+    /// `[MNG-1]` — an instance's hash: `G` and 32 hex digits of BLAKE3 of its arguments' spelling.
     #[test]
     fn an_instance_ends_with_its_arguments_hash() {
         let symbol = instance_symbol("max", Some("[i64]"));
-        let expected = format!("em_3maxG{}", &blake3::hash(b"[i64]").to_hex()[..16]);
+        let expected = format!("em_3maxG{}", &blake3::hash(b"[i64]").to_hex()[..32]);
         assert_eq!(symbol, expected);
         assert_ne!(symbol, instance_symbol("max", Some("[f64]")));
         assert_eq!(instance_symbol("max", None), "em_3max");
