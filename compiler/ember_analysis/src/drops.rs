@@ -1659,7 +1659,7 @@ impl Reporter<'_> {
                     span,
                     format!("`{name}` is partially moved"),
                 )
-                .primary_label("used here as a whole after one of its fields was moved")
+                .primary_label("used here")
                 .secondary(decl.span, format!("`{name}` is declared here"))
                 .note("moving a field out leaves the rest of the struct live, but the struct cannot be used as a whole [EXP-6]")
                 .help("reassign the moved field, or destructure the whole struct up front"),
@@ -1711,7 +1711,7 @@ impl Reporter<'_> {
                 format!("`{name}` may have been moved out of")
             };
             let diagnostic = Diagnostic::error(codes::E3040, span, message)
-                .primary_label("used here after the move")
+                .primary_label("used here")
                 .note("a move gives the value away; the old owner cannot use it again")
                 .help("clone the value, or borrow it instead of moving it");
             let diagnostic = self.kept_by_copy(diagnostic, body, local, again.then_some(span));
@@ -1786,7 +1786,7 @@ impl Reporter<'_> {
             )
         };
         let diagnostic = Diagnostic::error(codes::E3040, span, message)
-            .primary_label("borrowed here after the move")
+            .primary_label("used here")
             .note(note)
             .help("borrow before the move, or clone the value so the move takes the copy");
         let diagnostic = self.kept_by_copy(diagnostic, body, local, None);

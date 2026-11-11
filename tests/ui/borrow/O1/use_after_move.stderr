@@ -4,7 +4,7 @@ error[E3040]: `values` has been moved out of
 7 |     println(take(owns values))
   |                       ------ moved here
 8 |     println(take(owns values))
-  |                       ^^^^^^ used here after the move
+  |                       ^^^^^^ used here
   |
   = help: clone the value, or borrow it instead of moving it
   = note: a move gives the value away; the old owner cannot use it again

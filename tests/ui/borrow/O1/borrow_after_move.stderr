@@ -5,7 +5,7 @@ error[E3040]: `values` is borrowed after it has been moved out of
   |             ------ moved here
 5 |     println(moved.len())
 6 |     view: ref Array[i32] = ref values
-  |                            ^^^^^^^^^^ borrowed here after the move
+  |                            ^^^^^^^^^^ used here
   |
   = help: borrow before the move, or clone the value so the move takes the copy
   = note: the borrow would point at memory whose owner gave it away

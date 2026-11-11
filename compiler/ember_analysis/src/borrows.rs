@@ -5028,7 +5028,7 @@ fn check_point(
                 )
                 .primary_label("a temporary value, dropped at the end of this statement");
                 if let Some(later) = later {
-                    diagnostic = diagnostic.secondary(later, "borrow later used here");
+                    diagnostic = diagnostic.secondary(later, "used here");
                 }
                 // ODR-065 — the temporary is a handle read out of an object
                 // to keep what it points to alive for the borrow.
@@ -5065,7 +5065,7 @@ fn check_point(
                 .primary_label("this borrow remains live after its source's scope ends")
                 .secondary(span, format!("{name} ends its scope here"));
                 if let Some(later) = later {
-                    diagnostic = diagnostic.secondary(later, "borrow later used here");
+                    diagnostic = diagnostic.secondary(later, "used here");
                 }
                 if repeated {
                     continue;
@@ -5176,7 +5176,7 @@ fn check_point(
                     },
                 );
             if !iteration_borrow && let Some(later) = later {
-                diagnostic = diagnostic.secondary(later, "borrow later used here");
+                diagnostic = diagnostic.secondary(later, "used here");
             }
             if iteration_borrow {
                 if repeated {

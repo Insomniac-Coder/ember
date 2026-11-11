@@ -6,7 +6,7 @@ error[E3025]: cannot call a method on `pair` while `pair.x` is mutably borrowed
 15 |     pair.set_y(10)
    |     ^^^^^^^^^^^^^^ conflicting access here
 16 |     println(view)
-   |             ---- borrow later used here
+   |             ---- used here
    |
    = help: inline the field access, take the two fields as separate parameters, or split the method
    = note: a call borrows the fields of `self` its method uses (BRW-10); this method uses all of `self`, so the other fields do not stay disjoint across the call (BRW-4)
