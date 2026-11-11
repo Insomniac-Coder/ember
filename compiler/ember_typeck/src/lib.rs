@@ -27367,7 +27367,7 @@ impl<'a> Checker<'a> {
                 let through_shared_ref =
                     self.reject_write_through_shared_ref(&place, target.span);
                 if !through_shared_ref {
-                    self.reject_borrowed_parameter_write(&place, target.span, true);
+                    self.reject_borrowed_parameter_write_as(&place, target.span, true, true);
                 }
                 let place_ty = place.ty;
                 // `[RNG-5a1]` — "No `*Assign` form is generated: `r += 1.0`
@@ -27866,7 +27866,7 @@ impl<'a> Checker<'a> {
             let through_shared_ref =
                 self.reject_write_through_shared_ref(&place, leaf.target.span);
             if !through_shared_ref {
-                self.reject_borrowed_parameter_write(&place, leaf.target.span, true);
+                self.reject_borrowed_parameter_write_as(&place, leaf.target.span, true, true);
             }
             let place_ty = place.ty;
             let source = self.coerce(source, place_ty);
@@ -46135,6 +46135,18 @@ impl<'a> Checker<'a> {
         span: Span,
         offer_interior_mutability: bool,
     ) -> bool {
+        self.reject_borrowed_parameter_write_as(place, span, offer_interior_mutability, false)
+    }
+
+    /// `assigns`: the write is the assignment of the whole parameter (`n = n + 1`), Python's
+    /// rebinding of its name, which a borrowed parameter reached through its borrow is too.
+    fn reject_borrowed_parameter_write_as(
+        &mut self,
+        place: &Expr,
+        span: Span,
+        offer_interior_mutability: bool,
+        assigns: bool,
+    ) -> bool {
         let Some(local) = root_local(&place.kind) else { return false };
         if !self.borrowed_params.contains(&local) {
             return false;
@@ -46176,14 +46188,26 @@ impl<'a> Checker<'a> {
         let shown = self.types.display(ty);
         // D-823 (B2) — the whole parameter given a new value is Python's rebinding of a name: the
         // value it means is a new local's, and the caller's stays as it was.
-        let rebinding = matches!(place.kind, ExprKind::Local(_)) && !self.callable_parameter_locals.contains(&local);
+        let rebinding = match &place.kind {
+            ExprKind::Local(_) => true,
+            ExprKind::Deref(inner) => assigns && matches!(inner.kind, ExprKind::Local(_)),
+            _ => false,
+        } && !self.callable_parameter_locals.contains(&local);
         let structural_help = if self.callable_parameter_locals.contains(&local) {
             format!(
                 "declare this callable parameter `ref mut {name}: fn(...) -> ...` so it receives a mutable closure place"
             )
         } else if rebinding {
+            // `[DIA-7]`, `[DIA-25]`, shape B4 — a local of your own first (`count = n`), the parameter
+            // as the program wrote it (`n: int`) where the caller is to see the new value.
+            let written = self
+                .sources
+                .get(&declaration.file)
+                .and_then(|source| source.text.get(declaration.start as usize..declaration.end as usize))
+                .filter(|text| !text.is_empty())
+                .map_or_else(|| format!("{name}: {shown}"), str::to_string);
             format!(
-                "bind the new value to a new local (`new_{name} = …`) and use that from here on; declare the parameter `ref mut {name}: {shown}` only if the caller is to see the new value, as a single owner passing it `ref mut`"
+                "give the value a local of your own first, `new_{name} = {name}`, and change and use `new_{name}` from here on; or write `ref mut {written}` for the parameter, and `ref mut` before the argument at each call, if the caller is to see the new value"
             )
         } else {
             // `[DIA-10]`, shape B4 — the line to write: the parameter with `ref mut`, and the same
