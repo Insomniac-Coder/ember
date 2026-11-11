@@ -1054,6 +1054,7 @@ mod tests {
                 param_modes: Vec::new(),
                 ret: common.i32,
                 layout: vec![Some(ember_hir::InterfaceSlot {
+                    deterministic: true,
                     params: Vec::new(),
                     ret: common.i32,
                 })],
@@ -2150,6 +2151,7 @@ mod interface_upcast_invariant_tests {
                                 },
                                 interfaces: vec![interface],
                                 layout: vec![Some(ember_hir::InterfaceSlot {
+                    deterministic: true,
                                     params: Vec::new(),
                                     ret: common.i32,
                                 })],

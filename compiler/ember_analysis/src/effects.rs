@@ -1097,7 +1097,15 @@ impl SiteBuilder<'_> {
             }
             // `[EFF-2]` — every implementation the program's casts put in the table's slot, and the
             // overrides below them.
-            FuncRef::Interface { interfaces, slot, .. } if !self.targets.of_dyn(interfaces, *slot).is_empty() => {
+            FuncRef::Interface { interfaces, slot, layout, .. } if !self.targets.of_dyn(interfaces, *slot).is_empty() => {
+                // `[DET-3]` — admitted under `@deterministic` only when the method declares it.
+                if layout.get(*slot).and_then(Option::as_ref).is_some_and(|slot| !slot.deterministic) {
+                    sites.push(Site {
+                        effects: Effects::NONDET,
+                        span,
+                        origin: Origin::Operation("a call through a `dyn` method that does not declare `@deterministic`"),
+                    });
+                }
                 for &target in self.targets.of_dyn(interfaces, *slot) {
                     sites.push(Site { effects: Effects::ALL, span, origin: Origin::Call(target) });
                 }

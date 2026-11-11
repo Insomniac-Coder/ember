@@ -3986,6 +3986,10 @@ struct Checker<'a> {
     /// `[FN-5]` — each function's parameter defaults by parameter name, with
     /// the module they are resolved in.
     param_defaults: HashMap<DefId, (usize, Vec<(Symbol, ast::Expr)>)>,
+    /// `[DET-3]` — the declarations of interface methods a `@deterministic` function may call
+    /// through a `dyn` value: those that declare `@deterministic`, and every method of an interface
+    /// that is not `pub` (the rule is about `pub` ones).
+    dyn_deterministic: HashSet<DefId>,
     reported_defaults: HashSet<Span>,
     open: OpenState,
 }
@@ -4369,6 +4373,7 @@ impl<'a> Checker<'a> {
             reported_stmt_attrs: HashSet::new(),
             debug_assertions: true,
             param_defaults: HashMap::new(),
+            dyn_deterministic: HashSet::new(),
             reported_defaults: HashSet::new(),
             open: OpenState::default(),
             body_fn: None,
@@ -13120,6 +13125,9 @@ impl<'a> Checker<'a> {
                     signature.overflow,
                 )));
             }
+            if has_attribute(&member.attrs, "deterministic") || visibility == ast::VisKind::Private {
+                self.dyn_deterministic.insert(def);
+            }
             methods.push((f.name.name, def, receiver, f.body.is_some()));
             // `[FN-5]` — a default method's parameter defaults, which each
             // implementing type's copy takes.
@@ -13383,6 +13391,9 @@ impl<'a> Checker<'a> {
             }
             if let Some(defaults) = self.param_defaults.get(declaration).cloned() {
                 self.param_defaults.insert(instance_declaration, defaults);
+            }
+            if self.dyn_deterministic.contains(declaration) {
+                self.dyn_deterministic.insert(instance_declaration);
             }
             declarations.insert(*declaration, instance_declaration);
             methods.push((*method, instance_declaration, *receiver, *has_body));
@@ -13761,7 +13772,7 @@ impl<'a> Checker<'a> {
                         }
                     })
                     .collect();
-                Some(hir::InterfaceSlot { params, ret: signature.ret })
+                Some(hir::InterfaceSlot { params, ret: signature.ret, deterministic: self.dyn_deterministic.contains(&declaration) })
             })
             .collect()
     }
