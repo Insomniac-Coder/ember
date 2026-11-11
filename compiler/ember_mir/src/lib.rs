@@ -1284,7 +1284,7 @@ pub use ember_hir::{AtomicOp, BinOp, Builtin, FormatSpec, IntBits, IntOp, Memory
 
 /// `[LT-48]` — the kind a `dyn` table holds a value of, the last word of every table: the 64-bit
 /// FNV-1a hash of the concrete type's canonical name, the same in every unit and every build (as
-/// `type_identity`, two types share one only by a collision of the hash).
+/// `type_id`, two types share one only by a collision of the hash).
 pub fn kind_identity(types: &ember_types::TypeTable, concrete: Ty) -> u64 {
     let name = types.canonical_name(concrete).unwrap_or_else(|_| types.display(concrete));
     name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3))

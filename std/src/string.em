@@ -29,6 +29,12 @@ extend ParseError implements Error:
 pub enum Utf8Error:
     Invalid
 
+## `[ERR-4]` — `unwrap` and `expect` on a `Result` panic with the error's `Display`.
+extend Utf8Error implements Display:
+    ## It allocates as the `String` it writes to grows.
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
+        return f.write_str("the bytes are not valid UTF-8")
+
 ## `[TXT-10]` — the iterators a `str` gives, each holding a view of the text,
 ## so every item it gives borrows the text too. `s.chars()` gives the
 ## characters, `s.char_indices()` each with its byte offset, `s.bytes()` the

@@ -1,7 +1,8 @@
 ## `std.math.det` — maths functions that give the same bits on every target
 ## (`[DET-4]`).
 ##
-## `sin`, `cos`, `tan`, `exp`, `log`, `pow`, `atan2` and `sqrt`, for `f32` and
+## `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `exp`,
+## `exp2`, `ln`, `log2`, `log10`, `pow`, `cbrt`, `hypot` and `sqrt`, for `f32` and
 ## `f64`. `std.math`'s functions are the platform's C library, whose last bits
 ## differ between systems, so a program that must compute the same thing on
 ## every machine (lock-step networking, replays, golden images) uses these
@@ -19,7 +20,7 @@
 ## integer arithmetic over the bits of 2/π.
 ##
 ## Accuracy: within one unit in the last place, and within 1.3 for `atan2`
-## (fdlibm's bounds). The `f32` functions compute in `f64` and round once.
+## (`[DET-4]`). The `f32` functions compute in `f64` and round once.
 
 ## -- the types these functions take --------------------------------------------
 
@@ -28,10 +29,21 @@ interface Deterministic:
     fn det_sin() -> Self
     fn det_cos() -> Self
     fn det_tan() -> Self
+    fn det_asin() -> Self
+    fn det_acos() -> Self
+    fn det_atan() -> Self
+    fn det_sinh() -> Self
+    fn det_cosh() -> Self
+    fn det_tanh() -> Self
     fn det_exp() -> Self
-    fn det_log() -> Self
+    fn det_exp2() -> Self
+    fn det_ln() -> Self
+    fn det_log2() -> Self
+    fn det_log10() -> Self
+    fn det_cbrt() -> Self
     fn det_pow(e: Self) -> Self
     fn det_atan2(x: Self) -> Self
+    fn det_hypot(y: Self) -> Self
     fn det_sqrt() -> Self
 
 extend f64 implements Deterministic:
@@ -44,17 +56,50 @@ extend f64 implements Deterministic:
     fn det_tan() -> f64:
         return tan64(this)
 
+    fn det_asin() -> f64:
+        return asin64(this)
+
+    fn det_acos() -> f64:
+        return acos64(this)
+
+    fn det_atan() -> f64:
+        return atan64(this)
+
+    fn det_sinh() -> f64:
+        return sinh64(this)
+
+    fn det_cosh() -> f64:
+        return cosh64(this)
+
+    fn det_tanh() -> f64:
+        return tanh64(this)
+
     fn det_exp() -> f64:
         return exp64(this)
 
-    fn det_log() -> f64:
-        return log64(this)
+    fn det_exp2() -> f64:
+        return exp2_64(this)
+
+    fn det_ln() -> f64:
+        return ln64(this)
+
+    fn det_log2() -> f64:
+        return log2_64(this)
+
+    fn det_log10() -> f64:
+        return log10_64(this)
+
+    fn det_cbrt() -> f64:
+        return cbrt64(this)
 
     fn det_pow(e: f64) -> f64:
         return pow64(this, e)
 
     fn det_atan2(x: f64) -> f64:
         return atan2_64(this, x)
+
+    fn det_hypot(y: f64) -> f64:
+        return hypot64(this, y)
 
     fn det_sqrt() -> f64:
         return this.sqrt()
@@ -69,17 +114,50 @@ extend f32 implements Deterministic:
     fn det_tan() -> f32:
         return tan64(this as f64) as f32
 
+    fn det_asin() -> f32:
+        return asin64(this as f64) as f32
+
+    fn det_acos() -> f32:
+        return acos64(this as f64) as f32
+
+    fn det_atan() -> f32:
+        return atan64(this as f64) as f32
+
+    fn det_sinh() -> f32:
+        return sinh64(this as f64) as f32
+
+    fn det_cosh() -> f32:
+        return cosh64(this as f64) as f32
+
+    fn det_tanh() -> f32:
+        return tanh64(this as f64) as f32
+
     fn det_exp() -> f32:
         return exp64(this as f64) as f32
 
-    fn det_log() -> f32:
-        return log64(this as f64) as f32
+    fn det_exp2() -> f32:
+        return exp2_64(this as f64) as f32
+
+    fn det_ln() -> f32:
+        return ln64(this as f64) as f32
+
+    fn det_log2() -> f32:
+        return log2_64(this as f64) as f32
+
+    fn det_log10() -> f32:
+        return log10_64(this as f64) as f32
+
+    fn det_cbrt() -> f32:
+        return cbrt64(this as f64) as f32
 
     fn det_pow(e: f32) -> f32:
         return pow64(this as f64, e as f64) as f32
 
     fn det_atan2(x: f32) -> f32:
         return atan2_64(this as f64, x as f64) as f32
+
+    fn det_hypot(y: f32) -> f32:
+        return hypot64(this as f64, y as f64) as f32
 
     fn det_sqrt() -> f32:
         return this.sqrt()
@@ -99,15 +177,60 @@ pub fn cos(x: T) -> T:
 pub fn tan(x: T) -> T:
     return x.det_tan()
 
+## The arcsine of `x`, in `[-π/2, π/2]`: `nan` outside `[-1, 1]`.
+[T: needs Deterministic]
+pub fn asin(x: T) -> T:
+    return x.det_asin()
+
+## The arccosine of `x`, in `[0, π]`: `nan` outside `[-1, 1]`.
+[T: needs Deterministic]
+pub fn acos(x: T) -> T:
+    return x.det_acos()
+
+## The arctangent of `x`, in `[-π/2, π/2]`.
+[T: needs Deterministic]
+pub fn atan(x: T) -> T:
+    return x.det_atan()
+
+## The hyperbolic sine of `x`.
+[T: needs Deterministic]
+pub fn sinh(x: T) -> T:
+    return x.det_sinh()
+
+## The hyperbolic cosine of `x`.
+[T: needs Deterministic]
+pub fn cosh(x: T) -> T:
+    return x.det_cosh()
+
+## The hyperbolic tangent of `x`.
+[T: needs Deterministic]
+pub fn tanh(x: T) -> T:
+    return x.det_tanh()
+
 ## e to the power `x`.
 [T: needs Deterministic]
 pub fn exp(x: T) -> T:
     return x.det_exp()
 
+## 2 to the power `x`.
+[T: needs Deterministic]
+pub fn exp2(x: T) -> T:
+    return x.det_exp2()
+
 ## The natural logarithm of `x`: `nan` below 0, `-inf` at 0.
 [T: needs Deterministic]
-pub fn log(x: T) -> T:
-    return x.det_log()
+pub fn ln(x: T) -> T:
+    return x.det_ln()
+
+## The base-2 logarithm of `x`: `nan` below 0, `-inf` at 0.
+[T: needs Deterministic]
+pub fn log2(x: T) -> T:
+    return x.det_log2()
+
+## The base-10 logarithm of `x`: `nan` below 0, `-inf` at 0.
+[T: needs Deterministic]
+pub fn log10(x: T) -> T:
+    return x.det_log10()
 
 ## `x` to the power `e`, as C's `pow` defines each special case.
 [T: needs Deterministic]
@@ -118,6 +241,16 @@ pub fn pow(x: T, e: T) -> T:
 [T: needs Deterministic]
 pub fn atan2(y: T, x: T) -> T:
     return y.det_atan2(x)
+
+## The cube root of `x`, negative for a negative `x`.
+[T: needs Deterministic]
+pub fn cbrt(x: T) -> T:
+    return x.det_cbrt()
+
+## The length of the hypotenuse of a right triangle with sides `x` and `y`: `inf` if either is infinite, even when the other is `nan`.
+[T: needs Deterministic]
+pub fn hypot(x: T, y: T) -> T:
+    return x.det_hypot(y)
 
 ## The square root, correctly rounded (IEEE 754 requires it of every target).
 [T: needs Deterministic]
@@ -291,7 +424,7 @@ const LG5: f64 = 1.818357216161805012e-01
 const LG6: f64 = 1.531383769920937332e-01
 const LG7: f64 = 1.479819860511658591e-01
 
-fn log64(x: f64) -> f64:
+fn ln64(x: f64) -> f64:
     if x != x:
         return x + x
     if x <= 0.0:
@@ -877,3 +1010,447 @@ fn pow64(x: f64, y: f64) -> f64:
     r = (z * t1) / (t1 - 2.0) - (w + z * w)
     z = 1.0 - (r - z)
     return s * scalbn(z, n)
+
+## -- asin, acos --------------------------------------------------------------------
+
+const AS_PIO2_HI: f64 = 1.57079632679489655800e+00
+const AS_PIO2_LO: f64 = 6.12323399573676603587e-17
+const PIO4_HI: f64 = 7.85398163397448278999e-01
+const PI_F64: f64 = 3.14159265358979311600e+00
+const PS0: f64 = 1.66666666666666657415e-01
+const PS1: f64 = -3.25565818622400915405e-01
+const PS2: f64 = 2.01212532134862925881e-01
+const PS3: f64 = -4.00555345006794114027e-02
+const PS4: f64 = 7.91534994289814532176e-04
+const PS5: f64 = 3.47933107596021167570e-05
+const QS1: f64 = -2.40339491173441421878e+00
+const QS2: f64 = 2.02094576023350569471e+00
+const QS3: f64 = -6.88283971605453293030e-01
+const QS4: f64 = 7.70381505559019352791e-02
+
+## fdlibm's `R(z)`: the rational part of asin and acos, `p / q`.
+fn asin_ratio(t: f64) -> f64:
+    p = t * (PS0 + t * (PS1 + t * (PS2 + t * (PS3 + t * (PS4 + t * PS5)))))
+    q = 1.0 + t * (QS1 + t * (QS2 + t * (QS3 + t * QS4)))
+    return p / q
+
+fn asin64(x: f64) -> f64:
+    if x != x:
+        return x + x
+    ax = abs(x)
+    if ax >= 1.0:
+        if ax == 1.0:
+            return x * AS_PIO2_HI + x * AS_PIO2_LO
+        return f64.NAN
+    if ax < 0.5:
+        if ax < 7.450580596923828e-09:
+            return x
+        t = x * x
+        return x + x * asin_ratio(t)
+    w = 1.0 - ax
+    t = w * 0.5
+    s = sqrt(t)
+    r = asin_ratio(t)
+    if ax >= 0.975:
+        t = AS_PIO2_HI - (2.0 * (s + s * r) - AS_PIO2_LO)
+    else:
+        h = high_part(s)
+        c = (t - h * h) / (s + h)
+        p = 2.0 * s * r - (AS_PIO2_LO - 2.0 * c)
+        q = PIO4_HI - 2.0 * h
+        t = PIO4_HI - (p - q)
+    if x < 0.0:
+        return -t
+    return t
+
+fn acos64(x: f64) -> f64:
+    if x != x:
+        return x + x
+    ax = abs(x)
+    if ax >= 1.0:
+        if ax == 1.0:
+            if x > 0.0:
+                return 0.0
+            return PI_F64 + 2.0 * AS_PIO2_LO
+        return f64.NAN
+    if ax < 0.5:
+        if ax < 6.938893903907228e-18:
+            return AS_PIO2_HI + AS_PIO2_LO
+        z = x * x
+        r = asin_ratio(z)
+        return AS_PIO2_HI - (x - (AS_PIO2_LO - x * r))
+    if x < 0.0:
+        z = (1.0 + x) * 0.5
+        s = sqrt(z)
+        r = asin_ratio(z)
+        w = r * s - AS_PIO2_LO
+        return PI_F64 - 2.0 * (s + w)
+    z = (1.0 - x) * 0.5
+    s = sqrt(z)
+    h = high_part(s)
+    c = (z - h * h) / (s + h)
+    r = asin_ratio(z)
+    w = r * s + c
+    return 2.0 * (h + w)
+
+## -- expm1, sinh, cosh, tanh ---------------------------------------------------------
+
+const EXPM1_Q1: f64 = -3.33333333333331316428e-02
+const EXPM1_Q2: f64 = 1.58730158725481460165e-03
+const EXPM1_Q3: f64 = -7.93650757867487942473e-05
+const EXPM1_Q4: f64 = 4.00821782732936239552e-06
+const EXPM1_Q5: f64 = -2.01099218183624371326e-07
+
+## `e^x - 1`, fdlibm's `expm1`.
+fn expm1_64(x: f64) -> f64:
+    if x != x:
+        return x + x
+    ax = abs(x)
+    if ax >= 38.816242111356935:
+        # 56 ln 2: e^x is huge, or e^x - 1 is -1 to the last bit.
+        if ax == f64.INF:
+            if x > 0.0:
+                return x
+            return -1.0
+        if x > O_THRESHOLD:
+            return f64.INF
+        if x < 0.0:
+            return -1.0
+    k = 0
+    c = 0.0
+    r = x
+    if ax > 0.34657359027997264:
+        # |x| > ln2 / 2: x = k ln2 + r.
+        hi = 0.0
+        lo = 0.0
+        if ax < 1.0397207708399179:
+            if x >= 0.0:
+                hi = x - LN2HI
+                lo = LN2LO
+                k = 1
+            else:
+                hi = x + LN2HI
+                lo = -LN2LO
+                k = -1
+        else:
+            half = 0.5
+            if x < 0.0:
+                half = -0.5
+            k = (INVLN2 * x + half) as int
+            t = k as f64
+            hi = x - t * LN2HI
+            lo = t * LN2LO
+        r = hi - lo
+        c = (hi - r) - lo
+    elif ax < 5.551115123125783e-17:
+        return x
+    hfx = 0.5 * r
+    hxs = r * hfx
+    r1 = 1.0 + hxs * (EXPM1_Q1 + hxs * (EXPM1_Q2 + hxs * (EXPM1_Q3 + hxs * (EXPM1_Q4 + hxs * EXPM1_Q5))))
+    t = 3.0 - r1 * hfx
+    e = hxs * ((r1 - t) / (6.0 - r * t))
+    if k == 0:
+        return r - (r * e - hxs)
+    e = r * (e - c) - c
+    e -= hxs
+    if k == -1:
+        return 0.5 * (r - e) - 0.5
+    if k == 1:
+        if r < -0.25:
+            return -2.0 * (e - (r + 0.5))
+        return 1.0 + 2.0 * (r - e)
+    if k <= -2 or k > 56:
+        y = 1.0 - (e - r)
+        if k == 1024:
+            y = y * 2.0 * P1023
+        else:
+            y = scalbn(y, k)
+        return y - 1.0
+    if k < 20:
+        t = 1.0 - two_to(-k)
+        y = t - (e - r)
+        return y * two_to(k)
+    t = two_to(-k)
+    y = r - (e + t)
+    y += 1.0
+    return y * two_to(k)
+
+const SH1: f64 = 0.16666666666666666
+const SH2: f64 = 0.008333333333333333
+const SH3: f64 = 0.0001984126984126984
+const SH4: f64 = 2.7557319223985893e-06
+const SH5: f64 = 2.505210838544172e-08
+const SH6: f64 = 1.6059043836821613e-10
+const SH7: f64 = 7.647163731819816e-13
+const SH8: f64 = 2.8114572543455206e-15
+const SH9: f64 = 8.22063524662433e-18
+const SH10: f64 = 1.9572941063391263e-20
+const CH1: f64 = 0.5
+const CH2: f64 = 0.041666666666666664
+const CH3: f64 = 0.001388888888888889
+const CH4: f64 = 2.48015873015873e-05
+const CH5: f64 = 2.755731922398589e-07
+const CH6: f64 = 2.08767569878681e-09
+const CH7: f64 = 1.1470745597729725e-11
+const CH8: f64 = 4.779477332387385e-14
+const CH9: f64 = 1.5619206968586225e-16
+const CH10: f64 = 4.110317623312165e-19
+const CH11: f64 = 8.896791392450574e-22
+const SINH_OVERFLOW: f64 = 7.10475860073943863426e+02
+
+## `sinh x - x` for `|x| < 1`, from its Taylor series: `x^3` times a polynomial in `x^2`.
+fn sinh_tail(x: f64) -> f64:
+    z = x * x
+    p = SH1 + z * (SH2 + z * (SH3 + z * (SH4 + z * (SH5 + z * (SH6 + z * (SH7 + z * (SH8 + z * (SH9 + z * SH10))))))))
+    return x * z * p
+
+## `cosh x - 1` for `|x| < 1`.
+fn cosh_tail(x: f64) -> f64:
+    z = x * x
+    p = CH1 + z * (CH2 + z * (CH3 + z * (CH4 + z * (CH5 + z * (CH6 + z * (CH7 + z * (CH8 + z * (CH9 + z * (CH10 + z * CH11)))))))))
+    return z * p
+
+## `e^x` for `0.3466 <= x < 710` as `(hi, lo, k)` with `e^x == (hi + lo) 2^k`, as `exp64`
+## reduces it, but keeping the part of the result that rounding would lose.
+fn exp_parts(x: f64) -> (f64, f64, int):
+    k = 0
+    hi = 0.0
+    lo = 0.0
+    if x < 1.0397205352783203:
+        hi = x - LN2HI
+        lo = LN2LO
+        k = 1
+    else:
+        k = (INVLN2 * x + 0.5) as int
+        t = k as f64
+        hi = x - t * LN2HI
+        lo = t * LN2LO
+    r = hi - lo
+    t = r * r
+    c = r - t * (EP1 + t * (EP2 + t * (EP3 + t * (EP4 + t * EP5))))
+    q = -((lo - (r * c) / (2.0 - c)) - hi)
+    y = 1.0 + q
+    return (y, (1.0 - y) + q, k)
+
+fn sinh64(x: f64) -> f64:
+    if x != x:
+        return x + x
+    ax = abs(x)
+    if ax < 1.0:
+        if ax < 3.725290298461914e-09:
+            return x
+        return x + sinh_tail(x)
+    if ax < 22.0:
+        (yh, yl, k) = exp_parts(ax)
+        # `1 / e^ax` as a pair, `ih + il`.
+        ih = 1.0 / yh
+        (p, e) = two_product(ih, yh)
+        il = ((1.0 - p) - e - ih * yl) * ih
+        a = scalbn(yh, k)
+        b = scalbn(ih, -k)
+        d = a - b
+        tail = (((a - d) - b) + scalbn(yl, k)) - scalbn(il, -k)
+        r = 0.5 * (d + tail)
+        if x < 0.0:
+            return -r
+        return r
+    if ax <= SINH_OVERFLOW:
+        (yh, yl, k) = exp_parts(ax)
+        r = scalbn(yh + yl, k - 1)
+        if x < 0.0:
+            return -r
+        return r
+    return x * f64.INF
+
+fn cosh64(x: f64) -> f64:
+    if x != x:
+        return x + x
+    ax = abs(x)
+    if ax < 1.0:
+        return 1.0 + cosh_tail(ax)
+    if ax < 22.0:
+        (yh, yl, k) = exp_parts(ax)
+        ih = 1.0 / yh
+        (p, e) = two_product(ih, yh)
+        il = ((1.0 - p) - e - ih * yl) * ih
+        a = scalbn(yh, k)
+        b = scalbn(ih, -k)
+        d = a + b
+        tail = (((a - d) + b) + scalbn(yl, k)) + scalbn(il, -k)
+        return 0.5 * (d + tail)
+    if ax <= SINH_OVERFLOW:
+        (yh, yl, k) = exp_parts(ax)
+        return scalbn(yh + yl, k - 1)
+    return f64.INF
+
+fn tanh64(x: f64) -> f64:
+    if x != x:
+        return x + x
+    ax = abs(x)
+    z = 1.0
+    if ax < 22.0:
+        if ax < 2.7755575615628914e-17:
+            return x * (1.0 + x)
+        if ax >= 1.0:
+            t = expm1_64(2.0 * ax)
+            z = 1.0 - 2.0 / (t + 2.0)
+        else:
+            # `sinh / cosh` as a quotient of pairs, its last bits from the remainder.
+            ts = sinh_tail(ax)
+            tc = cosh_tail(ax)
+            nh = ax + ts
+            nl = (ax - nh) + ts
+            dh = 1.0 + tc
+            dl = (1.0 - dh) + tc
+            q = nh / dh
+            (p, e) = two_product(q, dh)
+            z = q + ((((nh - p) - e) + nl) - q * dl) / dh
+    if x < 0.0:
+        return -z
+    return z
+
+## -- exp2, log2, log10 ---------------------------------------------------------------
+
+const LN2_D: f64 = 6.931471805599453094e-01
+const LN2_TAIL: f64 = 2.319046813846299558e-17
+
+## `2^x`: `x = n + r` with `r` in `[-1/2, 1/2]` exact, `2^r` from `e^(r ln 2)` with
+## `r ln 2` kept as a sum of two doubles, and `2^n` by scaling.
+fn exp2_64(x: f64) -> f64:
+    if x != x:
+        return x + x
+    if x >= 1024.0:
+        return f64.INF
+    if x < -1075.0:
+        return 0.0
+    n = (x + 0.5).floor()
+    r = x - n
+    (p, e) = two_product(r, LN2_D)
+    lo = e + r * LN2_TAIL
+    y = exp64(p)
+    y = y + y * lo
+    return scalbn(y, n as int)
+
+## `ln m` as `(hi, lo)` for `m` in `[sqrt(2)/2, sqrt(2))`, with `f = m - 1`, as FreeBSD's
+## `k_log1p`: `hi` has at most 26 significant bits.
+fn log1p_split(f: f64) -> (f64, f64):
+    s = f / (2.0 + f)
+    z = s * s
+    w = z * z
+    t1 = w * (LG2 + w * (LG4 + w * LG6))
+    t2 = z * (LG1 + w * (LG3 + w * (LG5 + w * LG7)))
+    r = t2 + t1
+    hfsq = 0.5 * f * f
+    hi = high_part(f - hfsq)
+    lo = ((f - hi) - hfsq) + s * (hfsq + r)
+    return (hi, lo)
+
+## `(k, f)` with `x = 2^k (1 + f)` and `1 + f` in `[sqrt(2)/2, sqrt(2))`.
+fn log_reduce(x: f64) -> (int, f64):
+    (m, k) = split_exponent(x)
+    if m >= 1.4142135623730951:
+        m *= 0.5
+        k += 1
+    return (k, m - 1.0)
+
+const IVLN2_HI: f64 = 1.44269504072144627571e+00
+const IVLN2_LO: f64 = 1.67517131648865118353e-10
+const IVLN10_HI: f64 = 4.34294481878168880939e-01
+const IVLN10_LO: f64 = 2.50829467116452752298e-11
+const LOG10_2_HI: f64 = 3.01029995663611771306e-01
+const LOG10_2_LO: f64 = 3.69423907715893078616e-13
+
+fn log2_64(x: f64) -> f64:
+    if x != x:
+        return x + x
+    if x <= 0.0:
+        if x == 0.0:
+            return -f64.INF
+        return f64.NAN
+    if x == f64.INF:
+        return x
+    (k, f) = log_reduce(x)
+    y = k as f64
+    if f == 0.0:
+        return y
+    (hi, lo) = log1p_split(f)
+    val_hi = hi * IVLN2_HI
+    val_lo = (lo + hi) * IVLN2_LO + lo * IVLN2_HI
+    w = y + val_hi
+    val_lo += (y - w) + val_hi
+    return val_lo + w
+
+fn log10_64(x: f64) -> f64:
+    if x != x:
+        return x + x
+    if x <= 0.0:
+        if x == 0.0:
+            return -f64.INF
+        return f64.NAN
+    if x == f64.INF:
+        return x
+    (k, f) = log_reduce(x)
+    y = k as f64
+    if f == 0.0 and k == 0:
+        return 0.0
+    hi = 0.0
+    lo = 0.0
+    if f != 0.0:
+        (hi, lo) = log1p_split(f)
+    val_hi = hi * IVLN10_HI
+    y2 = y * LOG10_2_HI
+    val_lo = y * LOG10_2_LO + (lo + hi) * IVLN10_LO + lo * IVLN10_HI
+    w = y2 + val_hi
+    val_lo += (y2 - w) + val_hi
+    return val_lo + w
+
+## -- cbrt, hypot -----------------------------------------------------------------------
+
+## The cube root, correctly rounded but for a last step's error: `|x| = z 2^(3q)` with
+## `z` in `[1, 8)`, Newton's method on `z`, and one last step on the exact residual.
+fn cbrt64(x: f64) -> f64:
+    if x != x:
+        return x + x
+    if x == 0.0 or abs(x) == f64.INF:
+        return x
+    (m, e) = split_exponent(abs(x))
+    q = e // 3
+    z = m * two_to(e - 3 * q)
+    y = 1.0 + (z - 1.0) / 3.0
+    for i in range(6):
+        y = y - (y * y * y - z) / (3.0 * y * y)
+    # `y^3 - z` exactly, as a sum of doubles, then `y -= (y^3 - z) / (3 y^2)`.
+    (p, pe) = two_product(y, y)
+    (a, b) = two_product(p, y)
+    residual = ((a - z) + b) + pe * y
+    y = y - residual / (3.0 * p)
+    result = scalbn(y, q)
+    return result.copysign(x)
+
+fn hypot64(x: f64, y: f64) -> f64:
+    ax = abs(x)
+    ay = abs(y)
+    if ax == f64.INF or ay == f64.INF:
+        return f64.INF
+    if ax != ax or ay != ay:
+        return ax + ay
+    if ax < ay:
+        t = ax
+        ax = ay
+        ay = t
+    if ay == 0.0:
+        return ax
+    (_, e) = split_exponent(ax)
+    if ay < ax * 8.673617379884035e-19:
+        return ax
+    a = scalbn(ax, -e)
+    b = scalbn(ay, -e)
+    (p1, e1) = two_product(a, a)
+    (p2, e2) = two_product(b, b)
+    sum = p1 + p2
+    tail = ((p1 - sum) + p2) + e1 + e2
+    s = sqrt(sum)
+    (sp, se) = two_product(s, s)
+    r = ((sum - sp) - se) + tail
+    s = s + r / (2.0 * s)
+    return scalbn(s, e)

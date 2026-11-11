@@ -29061,7 +29061,7 @@ impl<'a> Checker<'a> {
                     parts.push(hir::FStringPart::Value(message, None));
                     parts.push(hir::FStringPart::Text(": ".to_string()));
                 }
-                if self.has_text(error_ty) {
+                if self.has_display(error_ty) {
                     let shown = if matches!(*self.types.kind(error_ty), TyKind::Vec { text: true, .. }) {
                         self.coerce(failed_value, str_ty)
                     } else {
@@ -29071,7 +29071,14 @@ impl<'a> Checker<'a> {
                     let piece = self.plain_text_piece(shown);
                     parts.push(piece);
                 } else {
-                    parts.push(hir::FStringPart::Text("called `unwrap` on an `Err` value".to_string()));
+                    // `[ERR-4]` — `unwrap` and `expect` on a `Result[T, E]` need `E: needs Display`.
+                    let shown = self.types.display(error_ty);
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2040, span, format!("`{shown}` does not implement `Display`, which `{method}` on a `Result` needs of its error"))
+                            .help(format!("implement `Display` for `{shown}`: `extend {shown} implements Display:`"))
+                            .note("`unwrap` and `expect` panic with the error's `Display` text [ERR-4]"),
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
                 let string_ty = self.common.string;
                 let buffer_ref = self.types.intern(TyKind::Ref { mutable: true, inner: string_ty });
@@ -29126,7 +29133,7 @@ impl<'a> Checker<'a> {
                     which: Builtin::Panic,
                     args: vec![Expr {
                         ty: self.common.str_,
-                        kind: ExprKind::Str("called `unwrap` on `None`".to_string()),
+                        kind: ExprKind::Str("called unwrap on None".to_string()),
                         span,
                     }],
                 },
@@ -38190,11 +38197,22 @@ impl<'a> Checker<'a> {
                         .map(|segment| segment.name.as_str())
                         .collect::<Vec<_>>()
                         .join(".");
-                    let diagnostic = Diagnostic::error(
+                    let mut diagnostic = Diagnostic::error(
                         codes::E1010,
                         name.span,
                         format!("cannot find `{qualified}` in this scope"),
                     );
+                    // `[DET-4]` — `det.log` is `E1010`: the natural logarithm is `ln`.
+                    if qualified.as_str() == "std.math.det.log" {
+                        let shown = match args.first().map(|arg| &arg.value.kind) {
+                            Some(ast::ExprKind::Path { segments }) if args.len() == 1 && segments.len() == 1 => segments[0].name.to_string(),
+                            _ => "x".to_string(),
+                        };
+                        self.sink.emit(diagnostic.help(format!(
+                            "the natural logarithm is `ln` in `std.math` and `std.math.det` alike: write `{written}.ln({shown})`"
+                        )));
+                        return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                    }
                     self.sink.emit(self.add_qualified_name_suggestions(
                         diagnostic,
                         module,

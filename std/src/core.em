@@ -87,7 +87,7 @@ pub interface Error: needs (Debug, Display):
 ## with its `From`, allocating once, on the failure path (`[ERR-11]`). It is
 ## not an `Error` itself: its `From[E]` is for every `E: Error`, and every
 ## type's own `From` (`[ERR-7]`) moves an `AnyError` on through `?`.
-## `identity` is the boxed error's type (`type_identity`), for `is` and
+## `identity` is the boxed error's type (`std.core.type_id`), for `is` and
 ## `downcast_ref`.
 pub struct AnyError:
     error: Box[dyn Error]
@@ -96,7 +96,7 @@ pub struct AnyError:
 
 extend[E: needs Error] AnyError implements From[E]:
     static fn from(owns value: E) -> AnyError:
-        return AnyError(Box(value), type_identity[E](), [])
+        return AnyError(Box(value), type_id[E](), [])
 
 ## `[ERR-10]` — its text is each context message, the last added first, then
 ## the error's own: `reading app.cfg: line 3: expected `key = value``.
@@ -131,12 +131,12 @@ extend AnyError:
     ## Whether the boxed error is an `E`.
     [E]
     pub fn is() -> bool:
-        return this.identity == type_identity[E]()
+        return this.identity == type_id[E]()
 
     ## The boxed error, as the `E` it is, or `None` when it is another type.
     [E]
     pub fn downcast_ref() -> Option[ref E]:
-        if this.identity != type_identity[E]():
+        if this.identity != type_id[E]():
             return None
         unsafe:  # SAFETY: `identity` is the boxed value's type's, so the box holds an `E`
             return Some(dyn_payload[E](this.error))
@@ -216,7 +216,7 @@ fn option_with_context(owns o: Option[T], owns f: Call) -> Result[T, AnyError]:
 extend AnyError:
     ## It allocates: the error is boxed (`[ERR-11]`), on the failure path only.
     pub static fn msg(owns text: String) -> AnyError:
-        return AnyError(Box(Message(text)), type_identity[Message](), [])
+        return AnyError(Box(Message(text)), type_id[Message](), [])
 
 ## The error `AnyError.msg` makes: its text alone.
 @derive(Error)
@@ -246,10 +246,13 @@ pub fn __coroutine_yield(owns _value: T) -> bool:
 pub fn __coroutine_resumed(_resumed: bool):
     pass
 
-## `[ERR-8]` — a type's identity: a 128-bit hash of its canonical name, the
+## `[TYP-44]`, `[ECS-2]` — what `type_id` gives: a type's identity.
+pub type TypeId = u128
+
+## `[ERR-8]`, `[ECS-2]` — a type's identity: a 128-bit hash of its canonical name, the
 ## same for one type in every module and every build. Compiler-known.
 [T]
-fn type_identity() -> u128:
+pub fn type_id() -> TypeId:
     pass
 
 ## `[ERR-8]` — the boxed `dyn Error`, borrowed, as the `ref E` it was made

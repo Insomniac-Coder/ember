@@ -55,6 +55,7 @@
 ## anything else is only read through.
 
 from std.mem import UnsafeCell
+from std.fmt import Formatter, FmtError
 
 [T]
 pub struct Mutex:
@@ -124,6 +125,14 @@ pub struct SendError:
     pub value: T
     ## True once the receiver is gone; false when `try_send` found the queue full.
     pub disconnected: bool
+
+## `[ERR-4]` — `unwrap` and `expect` on a `Result` panic with the error's `Display`.
+extend[T] SendError[T] implements Display:
+    ## It allocates as the `String` it writes to grows.
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
+        if this.disconnected:
+            return f.write_str("sending on a channel whose receiver is gone")
+        return f.write_str("sending on a full channel")
 
 ## A first-in, first-out ring of `slots`, `count` of them full from `head` on, and who is asleep on
 ## it: changed only under the channel's lock, so a value that finds nobody asleep costs the lock

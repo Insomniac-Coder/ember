@@ -2,7 +2,7 @@
 //!
 //! This is the first incremental `ARCH-096-1` slice. It names and centralizes
 //! facts the compiler already proved instead of introducing a parallel safety
-//! model. `TypeIdentity` and `LayoutDescriptor` remain aliases of the existing
+//! model. `TypeId` and `LayoutDescriptor` remain aliases of the existing
 //! interned type/layout representations; borrow checking now consumes the
 //! capability and access contract below; definite initialization consumes the
 //! shared lattice. Ownership graphs and effect sets are intentionally not
@@ -11,7 +11,7 @@
 use std::collections::BTreeSet;
 
 use ember_mir::{LocalId, Place, Projection};
-pub use ember_types::{LayoutDescriptor, TypeIdentity};
+pub use ember_types::{LayoutDescriptor, TypeId};
 
 use crate::regions::{Point, RegionVid};
 
@@ -279,7 +279,7 @@ pub struct AccessContract {
 /// The canonical facts for one borrow-derived capability in current MIR.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct BorrowCapability {
-    pub type_identity: TypeIdentity,
+    pub type_id: TypeId,
     pub provenance_root: ProvenanceRoot,
     pub source_place: Option<Place>,
     pub storage_identity: StorageIdentity,
@@ -295,7 +295,7 @@ pub struct BorrowCapability {
 impl BorrowCapability {
     #[allow(clippy::too_many_arguments)]
     pub fn statically_checked_reference(
-        type_identity: TypeIdentity,
+        type_id: TypeId,
         provenance_root: ProvenanceRoot,
         source_place: Place,
         storage_identity: StorageIdentity,
@@ -304,7 +304,7 @@ impl BorrowCapability {
         reference_kind: ReferenceKind,
     ) -> BorrowCapability {
         BorrowCapability {
-            type_identity,
+            type_id,
             provenance_root,
             projection_path: source_place.projection.clone(),
             source_place: Some(source_place),

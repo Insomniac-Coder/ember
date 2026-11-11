@@ -1,0 +1,4 @@
+[package]
+name = "STD-6"
+version = "0.1.0"
+layers = ["core"]
