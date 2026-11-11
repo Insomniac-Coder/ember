@@ -41,9 +41,19 @@ def arguments():
     xs += [k * 1.5707963267948966 for k in range(-20, 21)]
     xs += [0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1e-310, 5e-324, 1e308, -1e308, 709.78, -745.13, 1e300,
            6381956970095103.0 * 2.0 ** 797]
+    for edge in (0.5, 0.975, 1.0, 0.4375, 0.6875, 1.1875, 2.4375, 22.0, 38.816242111356935, 710.4758600739439,
+                 0.34657359027997264, 1.0397207708399179, 1024.0, -1075.0, 1e-5, 3e-9, 1e-17, 7.5e-9, 27.0, 0.001):
+        xs += [edge, -edge, math.nextafter(edge, 0), math.nextafter(edge, 1e308), -math.nextafter(edge, 0)]
+    xs += [rng.uniform(0.5, 1.0) * rng.choice((-1, 1)) for _ in range(100)]
     xs = [x for x in xs if math.isfinite(x)]
     ys = [rng.uniform(-5, 5) for _ in xs]
     return xs, ys
+
+
+# The kernels added in round 2, one per task: (Ember name, the model's function). Each takes
+# `x`; the binary ones also `y`. `f32` results are the `f64` ones rounded once.
+UNARY = [("asin", m.asin64)]
+BINARY = []
 
 
 def f64_program(xs, ys):
@@ -57,12 +67,16 @@ def f64_program(xs, ys):
         "        x = xs[i]",
         "        y = ys[i]",
         "        println(det.sin(x), det.cos(x), det.tan(x), det.exp(x), det.ln(abs(x)), det.atan2(x, y), "
-        "det.pow(abs(x), y), det.pow(y, x.floor()), det.sqrt(abs(x)))",
+        "det.pow(abs(x), y), det.pow(y, x.floor()), det.sqrt(abs(x))" + extra("x", "y") + ")",
         "        s: f32 = y as f32",
         "        println(det.sin(s), det.cos(s), det.tan(s), det.exp(s), det.ln(abs(s)), det.atan2(s, 0.75), "
-        "det.pow(abs(s), 1.25), det.sqrt(abs(s)))",
+        "det.pow(abs(s), 1.25), det.sqrt(abs(s))" + extra("s", "0.75") + ")",
         "",
     ])
+
+
+def extra(x, y):
+    return "".join(f", det.{n}({x})" for n, _ in UNARY) + "".join(f", det.{n}({x}, {y})" for n, _ in BINARY)
 
 
 def same(a, b):
@@ -90,9 +104,11 @@ def main():
         s = m.f32(y)
         wanted = [
             [m.sin64(x), m.cos64(x), m.tan64(x), m.exp64(x), m.log64(abs(x)), m.atan2_64(x, y),
-             m.pow64(abs(x), y), m.pow64(y, math.floor(x)), math.sqrt(abs(x))],
+             m.pow64(abs(x), y), m.pow64(y, math.floor(x)), math.sqrt(abs(x))]
+            + [f(x) for _, f in UNARY] + [f(x, y) for _, f in BINARY],
             [m.f32(m.sin64(s)), m.f32(m.cos64(s)), m.f32(m.tan64(s)), m.f32(m.exp64(s)), m.f32(m.log64(abs(s))),
-             m.f32(m.atan2_64(s, 0.75)), m.f32(m.pow64(abs(s), 1.25)), m.f32(math.sqrt(abs(s)))],
+             m.f32(m.atan2_64(s, 0.75)), m.f32(m.pow64(abs(s), 1.25)), m.f32(math.sqrt(abs(s)))]
+            + [m.f32(f(s)) for _, f in UNARY] + [m.f32(f(s, 0.75)) for _, f in BINARY],
         ]
         for row, want in enumerate(wanted):
             have = [float(v) for v in lines[2 * i + row].split()]
@@ -103,7 +119,7 @@ def main():
                     bad += 1
                     if bad <= 10:
                         print(f"x={x!r} y={y!r}: std.math.det gives {h!r}, the model {w!r}")
-    total = len(xs) * 17
+    total = len(xs) * (17 + 2 * (len(UNARY) + len(BINARY)))
     if bad:
         print(f"{bad} of {total} results differ from tools/det_model.py")
         return 1

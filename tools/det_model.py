@@ -717,3 +717,48 @@ def pow64(x, y):
     r = (z * t1) / (t1 - 2.0) - (w + z * w)
     z = 1.0 - (r - z)
     return s * scalbn(z, n)
+
+
+# -- asin, acos -------------------------------------------------------------------
+
+AS_PIO2_HI = 1.57079632679489655800e+00
+AS_PIO2_LO = 6.12323399573676603587e-17
+PIO4_HI = 7.85398163397448278999e-01
+PS = [1.66666666666666657415e-01, -3.25565818622400915405e-01, 2.01212532134862925881e-01,
+      -4.00555345006794114027e-02, 7.91534994289814532176e-04, 3.47933107596021167570e-05]
+QS = [-2.40339491173441421878e+00, 2.02094576023350569471e+00, -6.88283971605453293030e-01,
+      7.70381505559019352791e-02]
+
+
+def asin_ratio(t):
+    p = t * (PS[0] + t * (PS[1] + t * (PS[2] + t * (PS[3] + t * (PS[4] + t * PS[5])))))
+    q = 1.0 + t * (QS[0] + t * (QS[1] + t * (QS[2] + t * QS[3])))
+    return p / q
+
+
+def asin64(x):
+    if x != x:
+        return x + x
+    ax = abs(x)
+    if ax >= 1.0:
+        if ax == 1.0:
+            return x * AS_PIO2_HI + x * AS_PIO2_LO
+        return NAN
+    if ax < 0.5:
+        if ax < 7.450580596923828e-09:
+            return x
+        t = x * x
+        return x + x * asin_ratio(t)
+    w = 1.0 - ax
+    t = w * 0.5
+    s = math.sqrt(t)
+    r = asin_ratio(t)
+    if ax >= 0.975:
+        t = AS_PIO2_HI - (2.0 * (s + s * r) - AS_PIO2_LO)
+    else:
+        h = split(s)[0]
+        c = (t - h * h) / (s + h)
+        p = 2.0 * s * r - (AS_PIO2_LO - 2.0 * c)
+        q = PIO4_HI - 2.0 * h
+        t = PIO4_HI - (p - q)
+    return -t if x < 0.0 else t
