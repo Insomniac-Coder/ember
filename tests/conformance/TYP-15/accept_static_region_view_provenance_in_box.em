@@ -10,12 +10,12 @@ fn produced(_selector: i32) -> StrView:
 
 fn main():
     local: StrView = "local"
-    from_local: Box[StrView] = Box(local)
-    from_static: Box[StrView] = Box(NAMED)
-    from_call: Box[StrView] = Box(produced(1))
-    println(from_local.get())
-    println(from_static.get())
-    println(from_call.get())
+    from_local: owns StrView = owns local
+    from_static: owns StrView = owns NAMED
+    from_call: owns StrView = owns produced(1)
+    println(from_local)
+    println(from_static)
+    println(from_call)
 #$ stdout: local
 #$ named
 #$ produced

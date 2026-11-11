@@ -23,6 +23,6 @@ class Pair implements Left, Right:
         return this.second
 
 fn main():
-    boxed: Box[dyn Left + Right] = Box(Pair(20, 22))
+    boxed: owns dyn Left + Right = owns Pair(20, 22)
     println(boxed.left())
     println(boxed.right())

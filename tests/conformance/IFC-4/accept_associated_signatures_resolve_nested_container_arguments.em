@@ -19,7 +19,7 @@ interface Source:
     type Item: needs Copy
     fn packet() -> Packet[Item]
     fn handle() -> Handle[Item]
-    fn boxed() -> Box[Item]
+    fn boxed() -> owns Item
     fn cell() -> Cell[Item]
     fn record() -> Record[Item]
     fn fixed() -> [Item; 2]
@@ -35,8 +35,8 @@ extend Numbers implements Source:
         return Packet[int].Value(this.n)
     fn handle() -> Handle[int]:
         return Handle[int](this.n)
-    fn boxed() -> Box[int]:
-        return Box(this.n)
+    fn boxed() -> owns int:
+        return owns this.n
     fn cell() -> Cell[int]:
         return Cell(this.n)
     fn record() -> Record[int]:
@@ -57,7 +57,7 @@ fn handle(s: S) -> Handle[S.Item]:
     return s.handle()
 
 [S: needs Source]
-fn boxed(s: S) -> Box[S.Item]:
+fn boxed(s: S) -> owns S.Item:
     return s.boxed()
 
 [S: needs Source]

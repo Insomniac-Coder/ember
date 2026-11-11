@@ -888,7 +888,7 @@ fn replace_self(ty: &mut ast::TypeExpr, owner: &ast::TypeExpr) {
                 }
             }
         }
-        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } => replace_self(inner, owner),
+        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => replace_self(inner, owner),
         ast::TypeKind::Array { elem, .. } => replace_self(elem, owner),
         ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
             for item in items {

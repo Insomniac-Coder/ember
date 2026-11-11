@@ -36,7 +36,7 @@ class Holder(Base[T]) implements Observe:
 
 fn main():
     strong = Token(7)
-    boxed: Box[dyn Observe] = Box(Holder[bool](Weak(strong), true))
+    boxed: owns dyn Observe = owns Holder[bool](Weak(strong), true)
     weak = boxed.observer()
     match weak.upgrade():
         Some(owner):

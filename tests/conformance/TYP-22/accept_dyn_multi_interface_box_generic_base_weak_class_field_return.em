@@ -48,7 +48,7 @@ class Holder(Base[T]) implements Observe, Bump:
 
 fn main():
     strong = Token(7)
-    boxed: Box[dyn Observe + Bump] = Box(Holder[bool](Weak(strong), true))
+    boxed: owns dyn Observe + Bump = owns Holder[bool](Weak(strong), true)
     weak = boxed.observer()
     println(boxed.bump())
     match weak.upgrade():

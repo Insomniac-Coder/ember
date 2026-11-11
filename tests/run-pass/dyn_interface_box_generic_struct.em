@@ -21,5 +21,5 @@ fn render_it(value: ref dyn Render) -> i32:
 fn main():
     payload = Payload(42)
     println(render_it(ref payload))
-    boxed: Box[dyn Render] = Box(Payload(42))
+    boxed: owns dyn Render = owns Payload(42)
     println(boxed.render())

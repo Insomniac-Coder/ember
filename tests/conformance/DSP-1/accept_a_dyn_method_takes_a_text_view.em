@@ -23,8 +23,8 @@ fn show(p: ref dyn Titled, s: StrView):
     println(p.title(s))
 
 fn main():
-    mine: Box[dyn Titled] = Box(Mine(name=String("mine")))
-    echo: Box[dyn Titled] = Box(Echo())
+    mine: owns dyn Titled = owns Mine(name=String("mine"))
+    echo: owns dyn Titled = owns Echo()
     text = String("ab")
     show(mine, text)
     show(echo, text)

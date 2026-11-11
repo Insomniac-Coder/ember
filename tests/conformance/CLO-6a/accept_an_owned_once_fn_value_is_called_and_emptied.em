@@ -34,7 +34,7 @@ fn main():
     a = "aaaa".to_string()
     t = Task("t".to_string(), owned fn() => consume(owns a))
     println(t.run(), t.name)
-    boxed: Box[once fn() -> int] = Box(owned fn() => 9)
+    boxed: once fn() -> int = owned fn() => 9
     println(boxed())
     jobs: Deque[once fn() -> int] = Deque.new()
     for word in ["x", "yy", "zzz"]:

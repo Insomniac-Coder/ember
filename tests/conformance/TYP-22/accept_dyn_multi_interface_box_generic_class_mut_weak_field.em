@@ -38,6 +38,6 @@ class Counter implements Read, Bump:
 
 fn main():
     strong = Shared(Token(7))
-    boxed: Box[dyn Read + Bump] = Box(Counter[bool](Weak(strong), true, 0))
+    boxed: owns dyn Read + Bump = owns Counter[bool](Weak(strong), true, 0)
     println(boxed.bump())
     println(boxed.read())

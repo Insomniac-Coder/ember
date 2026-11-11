@@ -30,5 +30,5 @@ class Reader implements Observe:
 
 fn main():
     strong = Shared(Token(7))
-    boxed: Box[dyn Observe] = Box(Reader[bool](true))
+    boxed: owns dyn Observe = owns Reader[bool](true)
     println(boxed.observe(Weak(strong)))

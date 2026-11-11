@@ -35,10 +35,10 @@ extend Handle implements Sendable:  #$ error[E2040]: `Sendable` requires `Send`,
         return this.n
 
 fn main():
-    loose: Box[dyn Loose] = Box(Plain(1))
-    h = thread.spawn(owns owned fn() -> int => loose.value())  #$ error[E7004]: captures `loose`, a `Box[dyn Loose]`, which is not Send
+    loose: owns dyn Loose = owns Plain(1)
+    h = thread.spawn(owns owned fn() -> int => loose.value())  #$ error[E7004]: captures `loose`, a `owns dyn Loose`, which is not Send
     println(h.join())
-    sendable: Box[dyn Sendable] = Box(Plain(2))
+    sendable: owns dyn Sendable = owns Plain(2)
     with scope = thread.scope():
-        a = scope.spawn(owns fn() => sendable.value())  #$ error[E7005]: borrows `sendable`, a `Box[dyn Sendable]`, which is not Sync
+        a = scope.spawn(owns fn() => sendable.value())  #$ error[E7005]: borrows `sendable`, a `owns dyn Sendable`, which is not Sync
         println(a.join())

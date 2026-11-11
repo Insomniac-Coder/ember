@@ -1920,10 +1920,16 @@ impl Parser<'_> {
             );
         }
 
-        // `[TYP-45]`, `[LEX-14]` — a word before a type that says who owns the value (`owns Mesh`,
-        // `weakref Node`, `shares mut Game`): the grammar's (`type := "owns" base_type | ...`), never a
-        // name, and not built by this compiler yet (M4); the type after it is read as written.
-        if let TokenKind::Keyword(word @ (Kw::Owns | Kw::Shares | Kw::ThreadShared | Kw::Weakref | Kw::Sharedref)) = self.peek().clone() {
+        // `[TYP-45]`, `[HEAP-9]` — `owns T`, the grammar's `type := "owns" base_type | ...`.
+        if self.at_kw(Kw::Owns) {
+            self.bump();
+            let inner = self.parse_type_nested(suffix);
+            return TypeExpr { id, kind: TypeKind::Owns(Box::new(inner)), span: start.to(self.prev_span()) };
+        }
+        // `[TYP-45]`, `[LEX-14]` — the other words before a type that say who owns the value
+        // (`weakref Node`, `shares mut Game`): never a name, and not built by this compiler yet (M4);
+        // the type after it is read as written.
+        if let TokenKind::Keyword(word @ (Kw::Shares | Kw::ThreadShared | Kw::Weakref | Kw::Sharedref)) = self.peek().clone() {
             let at = self.span();
             self.bump();
             if matches!(word, Kw::Shares | Kw::Sharedref) {

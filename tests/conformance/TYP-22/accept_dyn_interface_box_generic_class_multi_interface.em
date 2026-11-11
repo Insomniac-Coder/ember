@@ -24,5 +24,5 @@ class Pair implements Parent, Child:
         return this.right
 
 fn main():
-    boxed: Box[dyn Child] = Box(Pair[bool](20, 22, false))
+    boxed: owns dyn Child = owns Pair[bool](20, 22, false)
     println(boxed.parent() + boxed.child())

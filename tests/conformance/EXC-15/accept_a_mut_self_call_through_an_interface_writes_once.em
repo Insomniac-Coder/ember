@@ -27,7 +27,7 @@ fn main():
     holder = Holder(record)
     holder.log.add(1)
     alias = record
-    boxed: Box[dyn Log] = Box(alias)
+    boxed: owns dyn Log = owns alias
     boxed.add(2)
     record.add(3)
     println(record.items)

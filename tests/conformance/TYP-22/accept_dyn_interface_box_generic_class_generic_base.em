@@ -26,5 +26,5 @@ class Pixel(Base[T]) implements Render:
         return this.value
 
 fn main():
-    boxed: Box[dyn Render] = Box(Pixel[bool](42, false))
+    boxed: owns dyn Render = owns Pixel[bool](42, false)
     println(boxed.render())

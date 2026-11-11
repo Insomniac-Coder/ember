@@ -607,6 +607,9 @@ pub enum TypeKind {
     Ref { mutable: bool, inner: Box<TypeExpr> },
     /// `*T` / `*mut T`.
     Ptr { mutable: bool, inner: Box<TypeExpr> },
+    /// `[TYP-45]`, `[HEAP-9]` — `owns T`: one owner, in a heap block of its own; `owns dyn I` holds
+    /// any implementer of `I`.
+    Owns(Box<TypeExpr>),
     Tuple(Vec<TypeExpr>),
     /// A callable type, optionally at a late-bound callback boundary. The
     /// modifier belongs to this type, never to the function declaration that

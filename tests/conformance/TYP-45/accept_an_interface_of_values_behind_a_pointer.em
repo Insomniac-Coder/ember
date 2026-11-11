@@ -16,6 +16,6 @@ extend Square implements Shape:
         return this.side * this.side
 
 fn main():
-    shapes: Array[Box[dyn Shape]] = []
-    shapes.push(owns Box(Square(side=4)))
+    shapes: Array[owns dyn Shape] = []
+    shapes.push(owns Square(side=4))
     println(shapes[0].area())

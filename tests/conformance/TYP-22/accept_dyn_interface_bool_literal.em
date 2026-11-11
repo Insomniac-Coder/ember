@@ -14,6 +14,6 @@ extend bool implements Truth:
         return this
 
 fn main():
-    boxed: Box[dyn Truth] = Box(true)
+    boxed: owns dyn Truth = owns true
     if boxed.truth():
         println(42)

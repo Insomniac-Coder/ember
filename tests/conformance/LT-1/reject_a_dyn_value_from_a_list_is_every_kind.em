@@ -20,5 +20,5 @@ fn show(p: dyn Picker):
     println(r)
 
 fn main():
-    ps: Array[Box[dyn Picker]] = [Box(Mine(items=[9]))]
+    ps: Array[owns dyn Picker] = [owns Mine(items=[9])]
     show(ps[0])

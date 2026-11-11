@@ -14,5 +14,5 @@ enum Signal implements Bump:
         return 42
 
 fn main():
-    boxed: Box[dyn Bump] = Box(Signal.Ready)
+    boxed: owns dyn Bump = owns Signal.Ready
     println(boxed.bump())

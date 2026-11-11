@@ -38,7 +38,7 @@ class Counter implements Observe, Bump:
 
 fn main():
     strong = Shared(Token(7))
-    boxed: Box[dyn Observe + Bump] = Box(Counter[bool](Weak(strong), true, 0))
+    boxed: owns dyn Observe + Bump = owns Counter[bool](Weak(strong), true, 0)
     weak = boxed.observer()
     println(boxed.bump())
     match weak.upgrade():

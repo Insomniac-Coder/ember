@@ -33,13 +33,13 @@ extend Loose implements Shape:
         return this.n
 
 fn main():
-    a: Box[dyn Shape] = Box(Square(2))
-    b: Box[dyn Shape] = Box(Square(2))
-    c: Box[dyn Shape] = Box(Loose(4))
-    d: Box[dyn Shape] = Box(Loose(14))
+    a: owns dyn Shape = owns Square(2)
+    b: owns dyn Shape = owns Square(2)
+    c: owns dyn Shape = owns Loose(4)
+    d: owns dyn Shape = owns Loose(14)
     println(a == b, a == c, c == d, a != c)
-    shapes: Array[Box[dyn Shape]] = [Box(Square(2)), Box(Loose(4))]
-    same: Array[Box[dyn Shape]] = [Box(Square(2)), Box(Loose(24))]
-    swapped: Array[Box[dyn Shape]] = [Box(Loose(4)), Box(Square(2))]
+    shapes: Array[owns dyn Shape] = [owns Square(2), owns Loose(4)]
+    same: Array[owns dyn Shape] = [owns Square(2), owns Loose(24)]
+    swapped: Array[owns dyn Shape] = [owns Loose(4), owns Square(2)]
     println(shapes == same, shapes == swapped)
     println(a.area(), c.area())

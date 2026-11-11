@@ -26,7 +26,7 @@ class Person implements Named:
 fn main():
     p = Person()
     alias = p
-    boxed: Box[dyn Named] = Box(alias)
+    boxed: owns dyn Named = owns alias
     n = boxed.name()
     println(n)
     p.rename()

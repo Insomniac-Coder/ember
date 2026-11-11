@@ -17,13 +17,14 @@ extend Square implements Shape:
         return this.side
 
 @noalloc
-fn same(a: Box[dyn Shape], b: Box[dyn Shape]) -> bool:
+fn same(a: owns dyn Shape, b: owns dyn Shape) -> bool:
     return a == b  #$ error[E4001]: `@noalloc` function `same` reaches an allocation
 
 @noalloc
-fn same_int(a: Box[int], b: Box[int]) -> bool:
+fn same_int(a: owns int, b: owns int) -> bool:
     return a == b
 
 fn main():
-    a: Box[dyn Shape] = Box(Square(1))
-    println(same(a, a), same_int(Box(1), Box(1)))
+    a: owns dyn Shape = owns Square(1)
+    one: owns int = owns 1
+    println(same(a, a), same_int(one, one))

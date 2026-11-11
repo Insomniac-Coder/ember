@@ -11,10 +11,10 @@ struct Payload:
         this.n = this.n + 1
 
 fn main():
-    b: Box[Payload] = Box(Payload(40))
+    b: owns Payload = owns Payload(40)
     b.bump()
     b.n = b.n + 1
-    r: ref Payload = b.get()
+    r: ref Payload = b
     println(r.n)
     b.n = 43
     println(b.n)

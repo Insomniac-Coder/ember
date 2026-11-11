@@ -10,5 +10,5 @@ from generic_enum_inherited_defaults_imported_support.model import Signal
 from generic_enum_inherited_defaults_imported_support.traits import Child
 
 fn main():
-    boxed: Box[dyn Child] = Box(Signal[i32].Ready(7))
+    boxed: owns dyn Child = owns Signal[i32].Ready(7)
     println(boxed.parent() + boxed.child())

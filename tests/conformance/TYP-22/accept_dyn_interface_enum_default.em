@@ -19,5 +19,5 @@ fn answer_ref(value: ref dyn Answer) -> i32:
 fn main():
     signal = Signal.Ready
     println(answer_ref(ref signal))
-    boxed: Box[dyn Answer] = Box(Signal.Ready)
+    boxed: owns dyn Answer = owns Signal.Ready
     println(boxed.answer())

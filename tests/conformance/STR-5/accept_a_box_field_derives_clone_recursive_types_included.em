@@ -15,12 +15,12 @@ struct Point:
     label: String
 
 struct Holder:
-    p: Box[Point]
+    p: owns Point
     n: int
 
 enum Tree:
     Leaf(int)
-    Node(Box[Tree], Box[Tree])
+    Node(owns Tree, owns Tree)
 
 fn total(t: Tree) -> int:
     match t:
@@ -30,18 +30,18 @@ fn total(t: Tree) -> int:
             return total(left) + total(right)
 
 fn main():
-    b = Box(Point(7, "a"))
-    c: Box[Point] = b.clone()
+    b: owns Point = owns Point(7, "a")
+    c: owns Point = b.clone()
     println(b.x, c.x)
-    h = Holder(Box(Point(1, "b")), 1)
+    h = Holder(owns Point(1, "b"), 1)
     k = h.clone()
     h.p.x = 2
     println(h.p.x, k.p.x)
-    t = Tree.Node(Box(Tree.Leaf(1)), Box(Tree.Node(Box(Tree.Leaf(2)), Box(Tree.Leaf(3)))))
+    t = Tree.Node(owns Tree.Leaf(1), owns Tree.Node(owns Tree.Leaf(2), owns Tree.Leaf(3)))
     u = t.clone()
     t = Tree.Leaf(10)
     println(total(t), total(u))
-    nested: Box[Box[Point]] = Box(Box(Point(1, "c")))
+    nested: owns owns Point = owns owns Point(1, "c")
     copy = nested.clone()
     nested.x = 3
     println(copy.x, nested.x)

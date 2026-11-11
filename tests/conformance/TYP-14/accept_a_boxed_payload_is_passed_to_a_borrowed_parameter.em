@@ -7,7 +7,7 @@
 
 enum Tree:
     Leaf(int)
-    Pair(Box[Tree], Box[Tree])
+    Pair(owns Tree, owns Tree)
 
 fn leaves(t: Tree) -> int:
     match t:
@@ -24,5 +24,5 @@ fn total(t: Tree) -> int:
             return total(a) + total(b)
 
 fn main():
-    t = Tree.Pair(Box(Tree.Leaf(1)), Box(Tree.Pair(Box(Tree.Leaf(2)), Box(Tree.Leaf(2)))))
+    t = Tree.Pair(owns Tree.Leaf(1), owns Tree.Pair(owns Tree.Leaf(2), owns Tree.Leaf(2)))
     println(leaves(t), total(t))

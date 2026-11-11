@@ -19,5 +19,5 @@ class Pixel implements Render:
         println(this.value)
 
 fn main():
-    boxed: Box[dyn Render] = Box(Pixel(42))
+    boxed: owns dyn Render = owns Pixel(42)
     println(boxed.render())

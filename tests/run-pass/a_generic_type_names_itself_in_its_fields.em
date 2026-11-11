@@ -12,11 +12,11 @@
 [T]
 struct Node:
     value: T
-    next: Option[Box[Node[T]]]
+    next: Option[owns Node[T]]
 
 enum List[T]:
     Nil
-    Cons(T, Box[List[T]])
+    Cons(T, owns List[T])
 
 [T]
 class Tree:
@@ -43,9 +43,9 @@ fn length(l: List[int]) -> int:
 
 fn main():
     last = Node[int](value=3, next=None)
-    middle = Node[int](value=2, next=Some(Box(last)))
-    println(node_sum(Node[int](value=1, next=Some(Box(middle)))))
-    println(length(List[int].Cons(1, Box(List[int].Cons(2, Box(List[int].Nil))))))
+    middle = Node[int](value=2, next=Some(owns last))
+    println(node_sum(Node[int](value=1, next=Some(owns middle))))
+    println(length(List[int].Cons(1, owns List[int].Cons(2, owns List[int].Nil))))
     root = Tree[int](1)
     kid = Tree[int](2)
     root.kids.push(owns Weak(kid))

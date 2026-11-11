@@ -27,5 +27,5 @@ fn show(p: runtime dyn Picker):
 fn main():
     y = Yours(items=[9])
     show(ref y)
-    p: Box[dyn Picker] = Box(Mine(items=[9])) if input() == "m" else Box(Yours(items=[9]))
+    p: owns dyn Picker = owns Mine(items=[9]) if input() == "m" else owns Yours(items=[9])
     show(p)

@@ -40,7 +40,7 @@ class Holder(Base[T]) implements Revise:
 
 fn main():
     strong = Token(7)
-    boxed: Box[dyn Revise] = Box(Holder[bool](Weak(strong), true))
+    boxed: owns dyn Revise = owns Holder[bool](Weak(strong), true)
     weak = boxed.observer()
     match weak.upgrade():
         Some(owner):

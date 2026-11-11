@@ -9,5 +9,5 @@ from generic_enum_mut_interface_imported_support.model import Signal
 from generic_enum_mut_interface_imported_support.traits import Bump
 
 fn main():
-    boxed: Box[dyn Bump] = Box(Signal[i32].Ready(7))
+    boxed: owns dyn Bump = owns Signal[i32].Ready(7)
     println(boxed.bump())

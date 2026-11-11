@@ -79,7 +79,7 @@ fn main():
     println(Pair[int](1, 2), f"{Pair[Thing](Thing(1), Thing(2))}")
     n = Node(7)
     println(n, show(n))
-    b = Box(Thing(9))
+    b: owns Thing = owns Thing(9)
     println(b, f"[{b}]")
     println(by_ref(ref t), t.to_string())
     println(Cell(Temp(21)))

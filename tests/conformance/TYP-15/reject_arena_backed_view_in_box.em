@@ -9,4 +9,4 @@ fn allocate(arena: Arena) -> ref mut i32 from arena:
 fn main():
     arena = Arena.with_capacity(16)
     slot = allocate(arena)
-    _boxed: Box[ref mut i32] = Box[ref mut i32](slot) #$ error[E3063]: `ref mut i32` is a view, so it may not be stored in a Box's contents
+    _boxed: owns ref mut i32 = owns slot #$ error[E3063]: `ref mut i32` is a view, so it may not be stored in an `owns` block

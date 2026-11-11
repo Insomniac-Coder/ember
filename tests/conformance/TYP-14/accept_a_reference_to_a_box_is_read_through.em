@@ -27,13 +27,13 @@ fn measure_square(s: Square) -> float:
     return s.area()
 
 fn main():
-    boxed: Box[dyn Shape] = Box(Square(side=2.0))
+    boxed: owns dyn Shape = owns Square(side=2.0)
     held = ref boxed
     println(measure(boxed), measure(held))
-    shapes: Array[Box[dyn Shape]] = [Box(Square(side=1.0))]
+    shapes: Array[owns dyn Shape] = [owns Square(side=1.0)]
     for s in shapes:
         println(measure(s))
-    square: Box[Square] = Box(Square(side=3.0))
+    square: owns Square = owns Square(side=3.0)
     seen = ref square
     println(measure_square(square))
     println(measure_square(seen))

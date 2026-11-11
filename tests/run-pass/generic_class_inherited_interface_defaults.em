@@ -23,5 +23,5 @@ fn total(value: ref dyn Child) -> i32:
 fn main():
     pixel = Pixel[bool](false)
     println(total(ref pixel))
-    boxed: Box[dyn Child] = Box(Pixel[bool](false))
+    boxed: owns dyn Child = owns Pixel[bool](false)
     println(boxed.parent() + boxed.child())

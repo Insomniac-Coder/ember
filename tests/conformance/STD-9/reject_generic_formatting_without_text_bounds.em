@@ -64,7 +64,7 @@ fn projected_to_string(x: H.Item) -> String:
     return x.to_string()    #$ error[E2040]
 
 [T]
-fn transparent_box(x: Box[T]):
+fn transparent_box(x: owns T):
     println(x)    #$ error[E2040]: requires `Display` or `Debug`
 
 [T: needs Copy]

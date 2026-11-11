@@ -27,7 +27,7 @@ class Holder implements Observe:
 
 fn expired() -> Weak[Token]:
     strong = Token(7)
-    boxed: Box[dyn Observe] = Box(Holder[bool](Weak(strong), true))
+    boxed: owns dyn Observe = owns Holder[bool](Weak(strong), true)
     return boxed.observer()
 
 fn main():

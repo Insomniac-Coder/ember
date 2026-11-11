@@ -6,14 +6,14 @@
 #$ stdout: none
 # Box[int] is a non-null pointer; None fits in its null value.
 fn main():
-    println(mem.size_of[Option[Box[int]]](), mem.size_of[Box[int]]())
-    present: Option[Box[int]] = Some(Box(7))
+    println(mem.size_of[Option[owns int]](), mem.size_of[owns int]())
+    present: Option[owns int] = Some(owns 7)
     match present:
         Some(boxed):
-            println(boxed.get())
+            println(boxed)
         None:
             println("unexpected")
-    absent: Option[Box[int]] = None
+    absent: Option[owns int] = None
     match absent:
         Some(_):
             println("unexpected")

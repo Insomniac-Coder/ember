@@ -17,7 +17,7 @@ class Quiet:
 fn address_of_another(token: Retained[Noisy]) -> ObjectPtr[Quiet]:
     return token.ptr()    #$ error[E2020]: expected `std.ffi.ObjectPtr[Quiet]`, found `std.ffi.ObjectPtr[Noisy]`
 
-fn bytes_of_a_box(token: Retained[Box[i64]]) -> *mut u8:
+fn bytes_of_a_box(token: Retained[owns i64]) -> *mut u8:
     return token.ptr()    #$ error[E2020]: expected `*mut u8`, found `*mut i64`
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
@@ -25,7 +25,7 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     safe fn keep(object: Retained[Noisy])    #$ error[E7004]: `object` hands foreign code a `Noisy` to keep, and a `Noisy` is not `Send`
     @ffi(param(object, retained, one))
     safe fn keep_plain(object: i32)    #$ error[E5002]: `retained` contract for `object` needs `object: Retained[T]`
-    safe fn keep_quietly(object: Retained[Box[i32]])    #$ error[E5002]: a `Retained` parameter crosses only as an address C keeps
+    safe fn keep_quietly(object: Retained[owns i32])    #$ error[E5002]: a `Retained` parameter crosses only as an address C keeps
 
 fn main():
     number = Retained.pin(5)    #$ error[E2020]: `Retained` pins a class handle or a `Box`, not a `i64`

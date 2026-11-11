@@ -33,5 +33,5 @@ fn via_generic(x: T) -> int:
 fn main():
     d = Dog(3)
     c = Cat(4)
-    boxed: Box[dyn Speak] = Box(c)
+    boxed: owns dyn Speak = owns c
     println(d.speak(), via_generic(d), boxed.speak())

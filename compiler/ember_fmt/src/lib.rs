@@ -1391,6 +1391,7 @@ impl Printer<'_> {
                 let kind = if *mutable { "*mut " } else { "*" };
                 format!("{kind}{}", self.type_expr(inner))
             }
+            ast::TypeKind::Owns(inner) => format!("owns {}", self.type_expr(inner)),
             ast::TypeKind::Tuple(items) => {
                 let items: Vec<String> = items.iter().map(|t| self.type_expr(t)).collect();
                 format!("({})", items.join(", "))

@@ -12,7 +12,7 @@ struct P:
 struct H:
     s: Span[int]
     arr: Array[int]
-    b: Box[P]
+    b: owns P
 
 fn from_span(h: H) -> ref int:
     return ref h.s[0]

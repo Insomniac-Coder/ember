@@ -592,7 +592,7 @@ pub(crate) fn members_name(decl: &ast::InterfaceDecl, name: Symbol) -> bool {
                 ast::GenericArg::Type(inner) | ast::GenericArg::Assoc { ty: inner, .. } => names_dyn(inner, name),
                 ast::GenericArg::Const(_) => false,
             }),
-            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Array { elem: inner, .. } => {
+            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Array { elem: inner, .. } => {
                 names_dyn(inner, name)
             }
             ast::TypeKind::Tuple(items) => items.iter().any(|item| names_dyn(item, name)),
