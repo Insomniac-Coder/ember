@@ -962,35 +962,34 @@ const WIDGETS_C: &str = "#include \"widgets.h\"\n#include <stdio.h>\n#include <s
                          void widget_free(Widget* w) { printf(\"widget %d freed\\n\", (int)w->id); fflush(stdout); free(w); }\n\
                          int32_t widget_id(const Widget* w) { return w->id; }\n";
 const WIDGETS_OVERLAY: &str = "unsafe overlay c \"widgets.h\":\n    @ffi(destroys(widget_free))\n    type Widget\n\n    \
-                               fn widget_new(id) -> returns_owned(destructor=widget_free) one\n";
+                               fn widget_new(id) -> returns_owned(destructor=widget_free) one\n    fn widget_id(w: borrowed one)\n";
 
-/// `[HR-22]` — a foreign object Ember owns (a `ForeignBox`) is carried across a reload unchanged:
-/// the instance holding it migrates (a field replaced beside it), the box's object and destructor
-/// are the same afterwards, and nothing frees it then; only when an edit removes the field holding
-/// it does reclaim drop the box, freeing the object once, by the destructor it was made with.
+/// `[HR-22]` — a foreign object Ember owns (an `owns T` of its type) is carried across a reload
+/// unchanged: the instance holding it migrates (a field replaced beside it), the object is the same
+/// afterwards, and nothing frees it then; only when an edit removes the field holding it does
+/// reclaim end the `owns T`, freeing the object once, by its type's destructor (`[FFI-36a]`).
 #[test]
 fn a_foreign_object_ember_owns_is_carried_across() {
-    let v1 = "import std.hot\nfrom std.ffi import ForeignBox\nimport c \"./widgets.c\" with (overlay = \"widgets_overlay.em\") as b\n\n\
-              class Device:\n    w: ForeignBox[b.Widget]\n    n: int = 1\n    spare: int = 0\n\n    \
-              fn init(owns w: ForeignBox[b.Widget]):\n        this.w = w\n\n\
-              fn tick(d: Device) -> int:\n    unsafe:  # SAFETY(ffi): the box keeps the widget alive for the call\n        \
-              return b.widget_id(d.w.as_ptr() as *b.Widget) as int + d.n\n\n\
+    let v1 = "import std.hot\nimport c \"./widgets.c\" with (overlay = \"widgets_overlay.em\") as b\n\n\
+              class Device:\n    w: owns b.Widget\n    n: int = 1\n    spare: int = 0\n\n    \
+              fn init(owns w: owns b.Widget):\n        this.w = w\n\n\
+              fn tick(d: Device) -> int:\n    \
+              return b.widget_id(d.w) as int + d.n\n\n\
               fn main():\n    d = Device(b.widget_new(7))\n    for i in 0..2:\n        println(tick(d))\n        hot.checkpoint()\n    \
               println(\"end\")\n";
     let overlay = ember_branding::source_file("widgets_overlay");
     let files = [("widgets.h", WIDGETS_H), ("widgets.c", WIDGETS_C), (overlay.as_str(), WIDGETS_OVERLAY)];
-    // `spare` gives way to `bonus`: the instance migrates in place, its box carried.
+    // `spare` gives way to `bonus`: the instance migrates in place, its widget carried.
     let grown = v1.replace("    spare: int = 0\n", "    bonus: int = 100\n").replace("as int + d.n\n", "as int + d.n + d.bonus\n");
     let (run, reloads) = reload_run_with("reload-foreign-carried", RELOAD_ALL, &files, v1, &[&grown]);
     assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
     assert_eq!(run.exit, 0, "{}\n{}", run.stdout, run.stderr);
     assert_eq!(run.stdout, "8\n108\nend\nwidget 7 freed\n", "{}", run.stderr);
-    // The field holding it removed: reclaim drops the box, which frees the widget once, then.
+    // The field holding it removed: reclaim ends the `owns b.Widget`, freeing the widget once, then.
     let removed = v1
-        .replace("    w: ForeignBox[b.Widget]\n", "    other: int = 0\n")
+        .replace("    w: owns b.Widget\n", "    other: int = 0\n")
         .replace("        this.w = w\n", "        pass\n")
-        .replace("fn tick(d: Device) -> int:\n    unsafe:  # SAFETY(ffi): the box keeps the widget alive for the call\n        return b.widget_id(d.w.as_ptr() as *b.Widget) as int + d.n\n",
-                 "fn tick(d: Device) -> int:\n    return d.n\n");
+        .replace("fn tick(d: Device) -> int:\n    return b.widget_id(d.w) as int + d.n\n", "fn tick(d: Device) -> int:\n    return d.n\n");
     let (run, reloads) = reload_run_with("reload-foreign-dropped", RELOAD_ALL, &files, v1, &[&removed]);
     assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
     assert_eq!(run.exit, 0, "{}\n{}", run.stdout, run.stderr);

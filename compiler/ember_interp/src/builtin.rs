@@ -1465,7 +1465,7 @@ impl Interp<'_, '_> {
             Builtin::JobScope | Builtin::JobScopeSubmit { .. } | Builtin::JobSubmit { .. } | Builtin::JobWait | Builtin::ParallelFor { .. } => {
                 "a job on the pool"
             }
-            Builtin::ForeignStatic { .. } | Builtin::ForeignAdopt | Builtin::ForeignRelease | Builtin::ForeignThread | Builtin::ForeignDestructor { .. } => {
+            Builtin::ForeignStatic { .. } | Builtin::ForeignAdopt | Builtin::ForeignRelease | Builtin::ForeignThread => {
                 "a foreign object"
             }
             Builtin::CppObjectAddress | Builtin::CppObjectHandle { .. } | Builtin::CppObjectGive | Builtin::CppSpan { .. } | Builtin::CppPointee => {

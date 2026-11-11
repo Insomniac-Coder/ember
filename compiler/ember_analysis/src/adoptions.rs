@@ -102,7 +102,7 @@ fn check_adoptions(body: &Body, sink: &mut Sink) -> usize {
             Diagnostic::error(codes::E5068, here, "this foreign object is already adopted")
                 .primary_label("adopted a second time here")
                 .secondary(first, "first adopted here")
-                .note("two `ForeignBox`es would each free it; the second `adopt` panics at run time [FFI-36b]")
+                .note("two owners would each free it; the second `adopt` panics at run time [FFI-36b]")
                 .help("adopt it once and pass the box, or `adopt` a different object"),
         );
     }

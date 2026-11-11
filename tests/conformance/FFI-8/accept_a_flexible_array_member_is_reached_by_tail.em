@@ -5,7 +5,7 @@
 #$ stdout: 10 20 30
 #$ stdout: 8 true
 # `[FFI-8]` — a struct a flexible array member ends is unsized: it is held behind a reference or a
-# pointer (here the `ForeignBox` C hands over), its fields are read as any struct's, and its
+# pointer (here the `owns T` C hands over), its fields are read as any struct's, and its
 # elements are reached by `unsafe fn tail(self, n) -> Span[T]`, which borrows the struct; its size
 # and alignment are C's (`[FFI-5]` checks them).
 
@@ -19,7 +19,7 @@ fn elements(packet: ref p.Packet) -> Span[i64]:
 
 fn main():
     packet = p.packet_new(3)
-    held: ref p.Packet = packet.get()
+    held: ref p.Packet = packet
     println(held.kind, held.count, p.packet_sum(held))
     values = elements(held)
     println(values[0], values[1], values[2])

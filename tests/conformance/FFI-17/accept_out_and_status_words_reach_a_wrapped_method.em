@@ -12,16 +12,16 @@ import cpp "statuses.hpp" with (overlay = "overlays/statuses.em")
 
 fn main():
     splitter = cpp.Splitter.new()
-    match splitter.get().split(42):
+    match splitter.split(42):
         Ok(half):
-            match splitter.get().split(21):
+            match splitter.split(21):
                 Ok(_):
                     println(half, "even")
                 Err(_):
                     println(half, "odd")
         Err(_):
             println("odd")
-    match splitter.get().decade(43):
+    match splitter.decade(43):
         Ok((decade, low, high)):
             println(decade, low, high)
         Err(error):

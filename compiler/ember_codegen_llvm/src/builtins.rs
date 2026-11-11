@@ -1141,12 +1141,6 @@ impl<'a> FnCx<'_, 'a> {
                 Ok(())
             }
             Builtin::ForeignThread => self.call_rt_into("ffi_thread", Vec::new(), dest),
-            // A destructor with a result is called through its `void` thunk.
-            Builtin::ForeignDestructor { symbol, ret, .. } => {
-                let given = self.pointer(&args[0])?;
-                let destructor = if self.m.ty.is_zst(*ret) { given } else { crate::ffi::foreign_destructor(self.m, symbol.as_str(), *ret)? };
-                self.store_result(dest, &destructor, Sc::Ptr, false)
-            }
             other => unsupported(format!("the built-in `{}`", other.name())),
         }
     }

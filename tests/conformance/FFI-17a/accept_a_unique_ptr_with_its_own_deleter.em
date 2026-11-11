@@ -9,17 +9,18 @@
 #$ warning[W5002]: `make_tracked` is not imported from `deleters.hpp`: its result: `std::unique_ptr<Widget, void (*)(Widget *)>`: a deleter that holds state
 #$ stdout: 7 1
 #$ stdout: 8 2
-# `[FFI-17a]` — a `std::unique_ptr<T, D>` crosses as a `ForeignBox[T]` dropped through its deleter:
+# `[FFI-17a]` — a `std::unique_ptr<T, D>` crosses as an `owns T` ended through its deleter:
 # the box's end hands the object to a `D`, as the `std::unique_ptr` would have, and a parameter
 # taking one gives the object up. A deleter that holds state (a function pointer, a class with
-# members) is not imported: a `ForeignBox` keeps only its object's address.
+# members) is not imported: an `owns T` holds one address. `[FFI-36a]` — the deleter is the
+# class's one destructor, as every `std::unique_ptr` of the class gives it.
 
 import cpp "deleters.hpp"
 
 fn made_and_dropped() -> i32:
     unsafe:  # SAFETY(ffi): the widget lives while its value is read
         widget = cpp.make_widget(7)
-        return widget.get().value()
+        return widget.value()
 
 fn main():
     seven = made_and_dropped()

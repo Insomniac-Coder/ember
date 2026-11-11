@@ -1675,7 +1675,7 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         // and the second-owner panic; a box's end may panic on the wrong thread (`[FFI-33b]`).
         B::ForeignAdopt => (ALLOC | Effects::SYNC, "recording a foreign object Ember owns"),
         B::ForeignRelease => (Effects::SYNC | Effects::PANIC, "a foreign object's end"),
-        B::ForeignThread | B::ForeignDestructor { .. } | B::RetainedAddress | B::CppObjectAddress | B::CppOverrides { .. } | B::UnionLit { .. } => (Effects::NONE, ""),
+        B::ForeignThread | B::RetainedAddress | B::CppObjectAddress | B::CppOverrides { .. } | B::UnionLit { .. } => (Effects::NONE, ""),
         // `[UNS-5]` — through a raw pointer, which is `unsafe`.
         B::VolatileRead | B::VolatileWrite => (Effects::UNSAFE, "a volatile access through a raw pointer"),
         // `[FFI-39]`, `[FFI-17d]` — a count of a class object, and the check that a foreign

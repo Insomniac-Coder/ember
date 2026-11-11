@@ -24,14 +24,14 @@
 # An operator an overlay entry does not assert safe to call (`operator-` with an operand, `sub`)
 # is an `unsafe` method of its class, under its interface method's name.
 
-from std.ffi import CppError, ForeignBox
+from std.ffi import CppError
 import cpp "operators.hpp" with (overlay = "overlays/operators.em")
 
 fn difference(a: cpp.Vec2, b: cpp.Vec2) -> cpp.Vec2:
     unsafe:  # SAFETY(ffi): `sub` takes and gives values; its overlay asserts nothing
         return a.sub(b)
 
-fn new_grid() -> Result[ForeignBox[cpp.Grid], CppError]:
+fn new_grid() -> Result[owns cpp.Grid, CppError]:
     unsafe:  # SAFETY(ffi): the constructor makes a grid the box owns
         return cpp.Grid.new()
 
@@ -57,18 +57,18 @@ fn main():
             println(error.what)
     match new_grid():
         Ok(cells):
-            cells.get_mut()[0] = 9
-            seven = cells.get()[0] - 2
-            cells.get_mut()[3] = seven
-            println(cells.get()[0], cells.get()[1])
+            cells[0] = 9
+            seven = cells[0] - 2
+            cells[3] = seven
+            println(cells[0], cells[1])
         Err(error):
             println(error.what)
     g = difference(a, c)
     println(g.x, g.y)
     match new_grid():
         Ok(cells):
-            cells.get_mut()[2] = 16
-            println(cells.get().total())
+            cells[2] = 16
+            println(cells.total())
         Err(error):
             println(error.what)
     price = cpp.bank.Money(cents = 100)

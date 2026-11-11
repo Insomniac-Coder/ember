@@ -145,7 +145,7 @@ pub struct FfiCounted {
     /// A counted result's length is supplied by this visible input span.
     pub result_span: Option<FfiSpanResult>,
     /// `[FFI-36a]` — a result contracted `returns_owned(destructor=f)`: the C
-    /// pointer becomes a `ForeignBox` the runtime records.
+    /// pointer becomes an `owns T` the runtime records.
     pub result_owned: Option<FfiOwnedResult>,
     /// `[FFI-11]`, `[FFI-16]` — a call that returns its `out` parameters, or a
     /// status as a `Result`, in place of C's own result.
@@ -238,13 +238,12 @@ pub struct FfiOutputs {
     pub status_ok: Option<i128>,
 }
 
-/// `[FFI-36a]`, `[FFI-33b]` — a new foreign object the caller owns: freed by
-/// `destructor` (whose result, when it has one, is dropped), `None` for null
-/// when `nullable`, and its box records its creator thread when `creator`.
+/// `[FFI-36a]`, `[FFI-33b]` — a new foreign object the caller owns, an `owns T`
+/// of `pointee` (ended by `T`'s one destructor, which its end calls): `None`
+/// for null when `nullable`, and with the creator thread when `creator` (the
+/// type is bound to its thread, and the value is two words).
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct FfiOwnedResult {
-    pub destructor: Symbol,
-    pub destructor_ret: Ty,
     pub pointee: Ty,
     pub nullable: bool,
     pub creator: bool,
@@ -274,7 +273,7 @@ pub enum FfiAbiParam {
     /// (`[FFI-11b]`'s `inout_count(p)`) the address of a local holding them,
     /// which C writes back and the call returns.
     Count { sources: Vec<FfiCountSource>, ty: Ty, inout: bool },
-    /// `[FFI-11]` — `param(p, owned, one)`: the `ForeignBox` (an `Option` of
+    /// `[FFI-11]` — `param(p, owns, one)`: the `owns T` (an `Option` of
     /// one when `nullable`) gives C its pointer and leaves the runtime's
     /// record, freeing nothing.
     Owned { public_index: usize, nullable: bool },
@@ -1852,18 +1851,14 @@ pub enum Builtin {
     /// (the one argument, also the result) as one Ember owns, with where;
     /// a second owner of a live one panics naming both places.
     ForeignAdopt,
-    /// `[FFI-36b]`, `[FFI-33b]` — a `ForeignBox`'s end, or its object given
-    /// to C: out of the record. Arguments: the pointer, the creator thread
-    /// (0 for none), checked in the debug profile.
+    /// `[FFI-36b]`, `[FFI-33b]` — the end of an `owns T` of a foreign type,
+    /// or its object given to C: out of the record. Arguments: the pointer
+    /// (a `*mut T`, whose `T` the stop names), the creator thread (0 for
+    /// none), checked in every profile.
     ForeignRelease,
-    /// `[FFI-33b]` — the number of the thread running it, recorded by a box
-    /// whose contract says `threads(creator)`.
+    /// `[FFI-33b]` — the number of the thread running it, recorded by an
+    /// `owns T` of a type bound to its thread (`threads(creator)`).
     ForeignThread,
-    /// `[FFI-36a]` — the foreign function `symbol` (the argument is its
-    /// value) as a box's destructor, of type `fn_ty` (`extern "C" fn(*mut
-    /// T)`): itself when it returns nothing (`ret` void), else a C thunk that
-    /// calls it and drops its result.
-    ForeignDestructor { symbol: Symbol, pointee: Ty, ret: Ty, fn_ty: Ty },
     /// `[FFI-23]` — `Retained.pin`'s mark: a class object's header gets its
     /// pinned flag; a `Box` needs none. The arguments are the value pinned and
     /// its `on_relocate` callback (`[HR-20]`, ODR-194): given one, a class
@@ -2480,7 +2475,6 @@ impl Builtin {
             Builtin::ForeignAdopt => "ffi_adopt",
             Builtin::ForeignRelease => "ffi_release",
             Builtin::ForeignThread => "ffi_thread",
-            Builtin::ForeignDestructor { .. } => "ffi_destructor",
             Builtin::RetainedPin => "retained_pin",
             Builtin::RetainedUnpin => "retained_unpin",
             Builtin::RetainedAddress => "retained_address",

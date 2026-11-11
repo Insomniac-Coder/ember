@@ -7,7 +7,7 @@
 #$ stdout: 4 0
 #$ stdout: 1
 # `[FFI-36]` — a C++ function returning a raw pointer with no ownership contract yields `*mut T`;
-# `adopt[T](p)` (`unsafe`) turns it into a `ForeignBox[T]` using the destructor the class's
+# `adopt[T](p)` (`unsafe`) turns it into an `owns T` using the destructor the class's
 # declaration names (`@ffi(destroys(…))`, the importer's thunk for its destructor), which frees it
 # when the box ends.
 
@@ -17,7 +17,7 @@ import cpp "widgets.hpp"
 fn use_one() -> (c_int, c_int):
     unsafe:  # SAFETY(ffi): `make_widget` returns a new object nothing else owns
         widget = adopt[cpp.Widget](cpp.make_widget(4))
-        return (widget.get().size(), cpp.Widget.freed().read())
+        return (widget.size(), cpp.Widget.freed().read())
 
 fn main():
     (size, freed) = use_one()
