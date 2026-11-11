@@ -15,3 +15,10 @@ pub fn clamp_to(x: i32, hi: i32) -> Result[i32, i32]:
     if x > hi:
         return Err(x - hi)
     return Ok(x)
+
+fn main():
+    data: [u8; 4] = [1, 2, 3, 4]
+    sum = checksum(data)
+    clamped = clamp_to(9, 5)
+    if sum.is_none() or clamped.is_ok():
+        return

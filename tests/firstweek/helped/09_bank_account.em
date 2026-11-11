@@ -1,4 +1,5 @@
 # Bank accounts with deposits, withdrawals and transfers that fail with typed errors instead of exceptions.
+from std.fmt import Formatter, FmtError
 
 enum BankError:
     InsufficientFunds(balance: int, requested: int)
@@ -91,3 +92,7 @@ fn main():
         println(f"{account.owner} #{account.number}: {account.balance}")
         for entry in account.history:
             println(f"    {entry}")
+
+extend BankError implements Display:
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
+        return f.write_str("the bank refused the operation")

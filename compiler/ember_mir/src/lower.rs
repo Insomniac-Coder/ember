@@ -6076,28 +6076,43 @@ impl<'a> Builder<'a> {
             });
             self.current = next;
         } else {
-            let above_lo = self.temp(self.bool_ty, span);
-            self.push(StmtKind::Assign {
-                place: Place::local(above_lo),
-                rvalue: Rvalue::BinaryOp { op: BinOp::Ge, lhs: value.clone(), rhs: lo },
-            });
-            let below_hi = self.temp(self.bool_ty, span);
-            self.push(StmtKind::Assign {
-                place: Place::local(below_hi),
-                rvalue: Rvalue::BinaryOp {
-                    op: if def.inclusive { BinOp::Le } else { BinOp::Lt },
-                    lhs: value.clone(),
-                    rhs: hi,
-                },
-            });
-            self.push(StmtKind::Assign {
-                place: Place::local(in_range),
-                rvalue: Rvalue::BinaryOp {
+            // `[RNG-3]` — a bound every value of the representation meets is no test (`u8 in 0 ..= 100`'s
+            // `>= 0`): the comparison says nothing, and a C compiler warns of it (`-Wtype-limits`).
+            let (low, high) = self.representation_limits(repr);
+            let lo_test = !matches!((def.lo, low), (ember_types::Bound::Int(bound), Some(limit)) if bound <= limit);
+            let hi_test = !(def.inclusive && matches!((def.hi, high), (ember_types::Bound::Int(bound), Some(limit)) if bound >= limit));
+            let mut tests = Vec::new();
+            if lo_test {
+                let above_lo = self.temp(self.bool_ty, span);
+                self.push(StmtKind::Assign {
+                    place: Place::local(above_lo),
+                    rvalue: Rvalue::BinaryOp { op: BinOp::Ge, lhs: value.clone(), rhs: lo },
+                });
+                tests.push(above_lo);
+            }
+            if hi_test {
+                let below_hi = self.temp(self.bool_ty, span);
+                self.push(StmtKind::Assign {
+                    place: Place::local(below_hi),
+                    rvalue: Rvalue::BinaryOp {
+                        op: if def.inclusive { BinOp::Le } else { BinOp::Lt },
+                        lhs: value.clone(),
+                        rhs: hi,
+                    },
+                });
+                tests.push(below_hi);
+            }
+            let rvalue = match tests.as_slice() {
+                [] => Rvalue::Use(Operand::Const(Const::Bool(true))),
+                [one] => Rvalue::Use(Operand::Copy(Place::local(*one))),
+                [a, b] => Rvalue::BinaryOp {
                     op: BinOp::BitAnd,
-                    lhs: Operand::Copy(Place::local(above_lo)),
-                    rhs: Operand::Copy(Place::local(below_hi)),
+                    lhs: Operand::Copy(Place::local(*a)),
+                    rhs: Operand::Copy(Place::local(*b)),
                 },
-            });
+                _ => unreachable!("a range has two bounds"),
+            };
+            self.push(StmtKind::Assign { place: Place::local(in_range), rvalue });
         }
 
         // `Result[T, RangeError]` — `Ok` is variant 0 and `Err` variant 1, in
@@ -6273,6 +6288,37 @@ impl<'a> Builder<'a> {
     }
 
     /// A range endpoint as a MIR operand of the representation type.
+    /// The least and the greatest value of an integer representation of a fixed width, where both
+    /// fit an `i128` (`[RNG-3]`): what a bound equal to one of them makes no test of. `None` for a
+    /// width the target decides (`isize`, `usize`) or one an `i128` cannot hold.
+    fn representation_limits(&self, repr: Ty) -> (Option<i128>, Option<i128>) {
+        use ember_types::{IntTy, UintTy};
+        match self.types.kind(repr) {
+            TyKind::Uint(width) => {
+                let bits = match width {
+                    UintTy::U8 => 8,
+                    UintTy::U16 => 16,
+                    UintTy::U32 => 32,
+                    UintTy::U64 => 64,
+                    _ => return (Some(0), None),
+                };
+                (Some(0), Some((1i128 << bits) - 1))
+            }
+            TyKind::Int(width) => {
+                let bits = match width {
+                    IntTy::I8 => 8,
+                    IntTy::I16 => 16,
+                    IntTy::I32 => 32,
+                    IntTy::I64 => 64,
+                    IntTy::I128 => return (Some(i128::MIN), Some(i128::MAX)),
+                    _ => return (None, None),
+                };
+                (Some(-(1i128 << (bits - 1))), Some((1i128 << (bits - 1)) - 1))
+            }
+            _ => (None, None),
+        }
+    }
+
     fn bound_operand(&mut self, bound: ember_types::Bound, repr: Ty) -> Operand {
         match bound {
             ember_types::Bound::Int(v) => {

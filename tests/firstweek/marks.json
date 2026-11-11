@@ -40,7 +40,7 @@
     "helps": ["R1:P7", "R1:P6", "R1:P26", "R1:P23", "R2:P6", "R2:P27", "R2:P26", "R2:P30", "R3:P27", "R4:O2"]
   },
   "09_bank_account.em": {
-    "mark": "rejected", "shape": "P1", "codes": ["E1010", "E2020", "E3012"], "after_helps": "accepted",
+    "mark": "rejected", "shape": "P1", "codes": ["E1010", "E2020", "E2040", "E3012"], "after_helps": "accepted",
     "shapes": ["P1", "P26"],
     "helps": ["R1:P1", "R1:P26", "R2:O2"]
   },

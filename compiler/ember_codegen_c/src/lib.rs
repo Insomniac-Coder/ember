@@ -217,7 +217,8 @@ fn split_view_params(bodies: &[Body], types: &TypeTable) -> BTreeMap<String, Vec
                         Rvalue::Cast { operand, kind, .. } => {
                             note(operand, &mut taken);
                             if let CastKind::InterfaceUpcast { implementations, .. }
-                            | CastKind::ClassInterfaceUpcast { implementations, .. } = kind
+                            | CastKind::ClassInterfaceUpcast { implementations, .. }
+                            | CastKind::DynKindIs { implementations, .. } = kind
                             {
                                 taken.extend(implementations.iter().flatten().map(|method| method.symbol.as_str()));
                             }
@@ -238,8 +239,14 @@ fn split_view_params(bodies: &[Body], types: &TypeTable) -> BTreeMap<String, Vec
             }
             match &block.terminator {
                 Terminator::Call { func, args, .. } => {
-                    if let FuncRef::Indirect { operand, .. } = func {
-                        note(operand, &mut taken);
+                    match func {
+                        FuncRef::Indirect { operand, .. } => note(operand, &mut taken),
+                        // D-969 — a `Box[dyn I]` made of a value: its table's adapters call the
+                        // implementations with whole views, as every table does.
+                        FuncRef::DynBoxNew { implementations, .. } => {
+                            taken.extend(implementations.iter().flatten().map(|method| method.symbol.as_str()))
+                        }
+                        _ => {}
                     }
                     args.iter().for_each(|o| note(o, &mut taken));
                 }

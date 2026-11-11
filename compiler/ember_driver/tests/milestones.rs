@@ -2930,7 +2930,8 @@ fn every_command_accepts_json() {
     assert_eq!(explained.exit, 0, "{}", explained.stderr);
     let value = parse(&explained);
     assert_eq!(value["code"], "E9001");
-    assert_eq!(value["rule"], "[MAN-1], [PRF-3]");
+    // The rules of `E9001`'s row in the specification's code table (`p17a-codes.md`).
+    assert_eq!(value["rule"], "[MAN-1], [PRF-3], [MAN-10], [BLD-FFI-3], [FFI-51]");
     let unknown = ember(&["explain", "--json", "E99999"], &root);
     assert_ne!(unknown.exit, 0, "[CLI-1] an unknown code succeeded");
 

@@ -63,6 +63,8 @@ def render(template: str, prefix: str) -> str:
     rendered = rendered.replace("ember_", f"{prefix}_")
     # The macro's value is the only un-suffixed use that reaches C.
     rendered = re.sub(r"\bember\b", prefix, rendered)
+    # `[MNG-1]` — the instance hash's digits, from the one constant the compiler mangles with.
+    rendered = rendered.replace("@INSTANCE_HASH_DIGITS@", str(instance_hash_digits()))
     return f"/* {GENERATED_MARKER} */\n{rendered}"
 
 
@@ -100,6 +102,15 @@ def generated_tests(out_dir: Path, prefix: str) -> list[tuple[Path, str]]:
 
 
 CMAKE_TEMPLATE = ROOT / "cmake" / "Ember.cmake.in"
+
+
+def instance_hash_digits() -> int:
+    """`[MNG-1]` — `INSTANCE_HASH_DIGITS` of the branding module: the hex digits of an instance's hash."""
+
+    match = re.search(r"pub const INSTANCE_HASH_DIGITS: usize = ([0-9]+);", BRANDING.read_text(encoding="utf-8"))
+    if match is None:
+        raise RuntimeError(f"could not find INSTANCE_HASH_DIGITS in {BRANDING}")
+    return int(match.group(1))
 
 
 def branding_value(name: str) -> str:

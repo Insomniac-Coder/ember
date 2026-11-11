@@ -11663,6 +11663,9 @@ static bool rl_path_untransliterated(const char* text, size_t len, char* out, si
  * instance's hash follows `[#`, as `ember demangle` writes it (`max[#3f2a…]`). An export's slot is
  * its exact symbol ([MNG-2]), and a name that is not exactly an item's, or whose path does not fit
  * `out`, is shown as it is. A path is never longer than its symbol. Only the reports call it. */
+/* `[MNG-1]` — the hex digits of a generic instance's hash in its symbol, as the compiler writes them. */
+#define EMBER_INSTANCE_HASH_DIGITS @INSTANCE_HASH_DIGITS@
+
 static const char* rl_path(const char* symbol, uint32_t flags, char* out, size_t cap) {
     static const char brand[] = RL_XSTRING(EMBER_SYMBOL_PREFIX);
     /* The mangled prefix: the brand's first two characters, then `_` (`ember_branding`'s). */
@@ -11701,17 +11704,18 @@ static const char* rl_path(const char* symbol, uint32_t flags, char* out, size_t
     if (components == 0) {
         return symbol;
     }
-    /* `G` and the first 16 hex digits of the arguments' hash: an instance. */
+    /* `G` and the hex digits of the arguments' hash: an instance (`[MNG-1]`; the count is the
+     * compiler's, `ember_branding::INSTANCE_HASH_DIGITS`, written here by the generator). */
     if (rest[0] == 'G') {
         size_t hex = 0;
-        while (hex < 16 && rl_hex_digit((unsigned char)rest[1 + hex]) >= 0) {
+        while (hex < EMBER_INSTANCE_HASH_DIGITS && rl_hex_digit((unsigned char)rest[1 + hex]) >= 0) {
             ++hex;
         }
-        if (hex != 16 || !rl_path_put(out, cap, &used, "[#", 2) || !rl_path_put(out, cap, &used, rest + 1, 16)
-            || !rl_path_put(out, cap, &used, "]", 1)) {
+        if (hex != EMBER_INSTANCE_HASH_DIGITS || !rl_path_put(out, cap, &used, "[#", 2)
+            || !rl_path_put(out, cap, &used, rest + 1, EMBER_INSTANCE_HASH_DIGITS) || !rl_path_put(out, cap, &used, "]", 1)) {
             return symbol;
         }
-        rest += 17;
+        rest += 1 + EMBER_INSTANCE_HASH_DIGITS;
     }
     return rest[0] == '\0' ? out : symbol;
 }
