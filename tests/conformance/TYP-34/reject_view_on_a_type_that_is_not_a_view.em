@@ -3,12 +3,12 @@
 # `[TYP-34]` — "`@view` on a type that is not a view is `E2030`": it would
 # document a restriction the type does not have.
 
-@view  #$ error[E2030]: `@view` on `Point`, which is not a view type
+@view  #$ error[E2030]: `@view` on `Point`, which holds no view; remove `@view`
 struct Point:
     x: i32
     y: i32
 
-@view  #$ error[E2030]
+@view  #$ error[E2030]: `@view` on `Mode`, which holds no view; remove `@view`
 enum Mode:
     Fast
     Slow(level: int)

@@ -139,7 +139,16 @@ impl Parser<'_> {
         // statement. Parsed before the label so `@parallel` may precede
         // `outer: for …`.
         // `[EFF-7]` — `@assume_noalloc(…)` begins an expression, not an attribute.
-        let attrs = if self.at_assume_noalloc() { Vec::new() } else { self.parse_attributes() };
+        let mut attrs = std::mem::take(&mut self.carried_attrs);
+        if !self.at_assume_noalloc() {
+            attrs.extend(self.parse_attributes());
+        }
+        // `[GRM-20]` — an attribute with no statement after it (the block or the file ends) has
+        // nothing to attach to: one message, not a second for the statement that is missing.
+        if !attrs.is_empty() && (self.at_dedent() || self.at_eof()) {
+            self.check_stmt_attrs(attrs, None);
+            return None;
+        }
         // `[GRM-40]` — a line that begins with `[` is a type-parameter line above a local function,
         // and nothing else.
         if self.refuse_bracket_line() {
@@ -181,6 +190,10 @@ impl Parser<'_> {
             if self.at_newline() {
                 self.bump();
             }
+            // `[GRM-20]`, `[ATT-3]` — Python's statements are checked for their attributes as any
+            // statement is: a simple one takes none, and a compound one only what it may carry.
+            let simple = matches!(kind, StmtKind::Expr(_) | StmtKind::Assign { .. } | StmtKind::Decl { .. } | StmtKind::Pass);
+            let attrs = self.check_stmt_attrs(attrs, (!simple).then_some(&kind));
             return Some(Stmt { id, attrs, kind, span: start.to(self.prev_span()) });
         }
         let kind = match self.peek() {

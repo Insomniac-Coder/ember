@@ -3954,6 +3954,9 @@ struct Checker<'a> {
     constructing: Option<Symbol>,
     /// The name of the function whose body is being checked, where it is declared (`[PAR-2]`'s `?` message).
     fn_decl: Span,
+    /// `[LEX-16]` — the integer literal a unary minus stands directly before: its fit is checked as
+    /// the negative constant (`-128i8` fits, `128i8` does not), by the minus.
+    negated_literal: Option<Span>,
     /// `[PAR-2]` — the lambda depth of the `@parallel` loop's chunk closure being checked, where a
     /// `?` is `E7010`.
     parallel_try: Option<usize>,
@@ -4362,6 +4365,7 @@ impl<'a> Checker<'a> {
             ret_ty,
             constructing: None,
             fn_decl: Span::DUMMY,
+            negated_literal: None,
             parallel_try: None,
             default_overflow: OverflowPolicy::default(),
             module_overflow: Vec::new(),
@@ -11284,8 +11288,8 @@ impl<'a> Checker<'a> {
 
     fn not_a_view(&mut self, name: Symbol, span: Span) {
         self.sink.emit(
-            Diagnostic::error(codes::E2030, span, format!("`@view` on `{name}`, which is not a view type"))
-                .help("remove `@view`; a type is a view when it holds a reference, a `Span`, a `MutSpan`, a `StrView` or another view")
+            Diagnostic::error(codes::E2030, span, format!("`@view` on `{name}`, which holds no view; remove `@view`"))
+                .help("delete the `@view` line; a type is a view when it holds a reference, a `Span`, a `MutSpan`, a `StrView` or another view")
                 .note("`@view` documents what the compiler infers [TYP-34]"),
         );
     }
@@ -16527,6 +16531,22 @@ impl<'a> Checker<'a> {
     fn is_aggregate_text(&self, ty: Ty) -> bool {
         !self.is_text(ty)
             && !matches!(self.types.kind(ty), TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Error)
+    }
+
+    /// `[GRM-13]` — whether a list pattern of `count` elements (`at_least` when it has `..`) can
+    /// never match a value of type `ty`: text is no list, and a `[T; N]` holds exactly `N`.
+    fn slice_pattern_never_fits(&self, ty: Ty, count: usize, at_least: bool) -> bool {
+        let inner = match *self.types.kind(ty) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => ty,
+        };
+        if self.is_text(inner) {
+            return true;
+        }
+        match *self.types.kind(inner) {
+            TyKind::Array { len, .. } => if at_least { (count as u64) > len } else { (count as u64) != len },
+            _ => false,
+        }
     }
 
     /// `str` or `String`: ordered and compared by bytes (`[TYP-37]`'s table).
@@ -29629,6 +29649,34 @@ impl<'a> Checker<'a> {
 
             ast::PatternKind::Error => wild(self.common.error),
 
+            // `[GRM-13]` — a list pattern against text is `E2020`, whose help gives `split`; one
+            // that cannot equal a `[T; N]`'s count is `E2020` naming both. The patterns that fit
+            // are not built yet and stay below.
+            ast::PatternKind::Slice { prefix, rest, suffix }
+                if self.slice_pattern_never_fits(expected, prefix.len() + suffix.len(), rest.is_some()) =>
+            {
+                let shown = self.types.display(expected);
+                let count = prefix.len() + suffix.len();
+                let at_least = if rest.is_some() { "at least " } else { "" };
+                let inner = match *self.types.kind(expected) {
+                    TyKind::Ref { inner, .. } => inner,
+                    _ => expected,
+                };
+                if self.is_text(inner) {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2020, span, format!("a list pattern cannot match `{shown}`, which is text and not a list"))
+                            .help("take the text apart with `split` (`words = line.split(\" \").collect[Array[StrView]]()`) and match the list it gives"),
+                    );
+                } else if let TyKind::Array { len, .. } = *self.types.kind(inner) {
+                    self.error(
+                        codes::E2020,
+                        span,
+                        format!("`{shown}` has {len} elements, but this list pattern has {at_least}{count}"),
+                    );
+                }
+                wild(self.common.error)
+            }
+
             _ => {
                 self.error(
                     codes::E1010,
@@ -38598,7 +38646,11 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Unary { op, operand } => {
                 let direct_integer_literal = *op == ast::UnOp::Neg
                     && matches!(&operand.kind, ast::ExprKind::Lit(ast::Literal::Int { .. }));
+                if direct_integer_literal {
+                    self.negated_literal = Some(operand.span);
+                }
                 let operand = self.synth(operand);
+                self.negated_literal = None;
                 // `[LEX-24]` — a direct negative integer literal is one
                 // literal even when nested inside arithmetic. In particular
                 // `-128i8 + 0i8` must not evaluate the positive magnitude
@@ -38978,6 +39030,15 @@ impl<'a> Checker<'a> {
                     // `[LEX-16]` — untyped until context decides.
                     None => self.common.int_lit,
                 };
+                // `[LEX-16]` — a suffixed literal that does not fit its suffix's type is `E2010`,
+                // unless a minus directly before it forms the negative constant (checked there).
+                if suffix.is_some()
+                    && self.negated_literal != Some(span)
+                    && int_max(self.types, ty).is_some_and(|max| *value > max)
+                {
+                    let shown = self.types.display(ty);
+                    self.error(codes::E2010, span, format!("the literal `{value}` does not fit in `{shown}`"));
+                }
                 Expr { ty, kind: ExprKind::Int(*value), span }
             }
             ast::Literal::Float { value, suffix, text, .. } => {
@@ -45762,9 +45823,22 @@ impl<'a> Checker<'a> {
                 "bind the new value to a new local (`new_{name} = …`) and use that from here on; declare the parameter `ref mut {name}: {shown}` only if the caller is to see the new value, as a single owner passing it `ref mut`"
             )
         } else {
-            format!(
-                "restructure to a single owner and declare this parameter `ref mut {name}: {shown}`"
-            )
+            // `[DIA-10]`, shape B4 — the line to write: the parameter with `ref mut`, and the same
+            // word before the argument at each call (`tick(ref mut clock)`).
+            let function = self
+                .sources
+                .get(&self.fn_decl.file)
+                .and_then(|source| source.text.get(self.fn_decl.start as usize..self.fn_decl.end as usize))
+                .filter(|text| !text.is_empty())
+                .map(str::to_string);
+            match function {
+                Some(function) => format!(
+                    "write `ref mut {name}: {shown}` for the parameter, and `ref mut` before the argument at each call (`{function}(ref mut …)`)"
+                ),
+                None => format!(
+                    "write `ref mut {name}: {shown}` for the parameter, and `ref mut` before the argument at each call"
+                ),
+            }
         };
         let mut diagnostic = Diagnostic::error(
             codes::E3023,
@@ -46272,6 +46346,11 @@ impl<'a> Checker<'a> {
         // each: the one of the call's arity whose parameters take its arguments.
         let chosen = if self.cpp_trampoline(base_id).is_some() { self.cpp_base_constructor(base_ty, args, span) } else { None };
         let Some(entry) = chosen.or_else(|| self.methods.get(&(base_ty, Symbol::intern("init"))).copied()) else {
+            // `[CLS-3]` — a base with no `init` and no base class has the memberwise constructor as
+            // its `init`: `super.init(name=name)` gives its fields their values.
+            if self.types.class_def(base_id).base.is_none() && self.cpp_trampoline(base_id).is_none() {
+                return self.super_init_memberwise(base_id, args, span);
+            }
             self.error(codes::E1010, span, "the direct base class has no explicit `init`");
             if let Some(state) = self.class_init.as_mut() {
                 state.base_initialized = true;
@@ -46305,6 +46384,62 @@ impl<'a> Checker<'a> {
             },
             span,
         }
+    }
+
+    /// `[CLS-3]` — `super.init(…)` of a memberwise base: the constructor is the base's fields, with
+    /// positional or named arguments in field order (`[TYP-25]`); a field with a default left out
+    /// keeps the default `[CLS-2]` has already stored. Each argument is handed over to its field as
+    /// `this.field = argument` is, in the derived `init`, after `[CLS-11]`'s check of its own fields.
+    fn super_init_memberwise(&mut self, base_id: ClassId, args: &[ast::Arg], span: Span) -> Expr {
+        let fields: Vec<FieldDef> = (0..self.types.class_field_count(base_id))
+            .filter_map(|index| self.types.class_field_at(base_id, index).cloned())
+            .collect();
+        let name = self.types.class_def(base_id).name;
+        let names: Vec<Symbol> = fields.iter().map(|field| field.name).collect();
+        let slots = self.constructor_slots(name, &names, args, span);
+        let mut complete = true;
+        for (index, field) in fields.iter().enumerate() {
+            if !field.has_default && !slots.iter().any(|(_, slot)| *slot == index) {
+                self.error(codes::E2020, span, format!("field `{}` of `{name}` has no value", field.name));
+                complete = false;
+            }
+        }
+        self.mark_class_init_base(span);
+        let base_count = fields.len();
+        if let Some(state) = self.class_init.as_mut() {
+            // A field's default is already stored: the argument replaces it.
+            for status in state.initialized.iter_mut().take(base_count) {
+                *status = ClassFieldInit::Default;
+            }
+        }
+        let mut stmts = Vec::new();
+        if complete {
+            for (arg, index) in slots {
+                let at = args[arg].span;
+                let this = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::SelfExpr, span: at };
+                let target = ast::Expr {
+                    id: ast::NodeId::DUMMY,
+                    kind: ast::ExprKind::Field { base: Box::new(this), name: ast::Ident { name: fields[index].name, span: at } },
+                    span: at,
+                };
+                let assign = ast::Stmt {
+                    id: ast::NodeId::DUMMY,
+                    attrs: Vec::new(),
+                    kind: ast::StmtKind::Assign { targets: vec![target], op: None, value: args[arg].value.clone() },
+                    span: at,
+                };
+                self.check_stmt(&assign, &mut stmts);
+            }
+        }
+        if let Some(state) = self.class_init.as_mut() {
+            for status in state.initialized.iter_mut().take(base_count) {
+                *status = ClassFieldInit::Init;
+            }
+        }
+        if !complete {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        Expr { ty: self.common.void, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(self.void_value(span)) }, span }
     }
 
     /// `[FFI-39b]` — the constructor of a C++ base `super.init(args)` selects: of its `init` and

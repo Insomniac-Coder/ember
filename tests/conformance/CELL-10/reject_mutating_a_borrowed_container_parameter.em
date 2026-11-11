@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: CELL-10, FN-1, BRW-1, DIA-7, DIA-9
-#$ help: restructure to a single owner
+#$ help: for the parameter, and `ref mut` before the argument at each call
 #$ not-help: RefCell
 # A method with `mut self` is another write through the default-mode parameter.
 # The type checker must retain parameter-mode provenance through method-call
