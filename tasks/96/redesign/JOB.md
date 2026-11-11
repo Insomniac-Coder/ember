@@ -1283,6 +1283,8 @@ After the lead's check of 0.9.20_Hardened_4 (`tasks/96/redesign/spec-gaps-0.9.15
 
 174. **A library only one system has is named for that system.** `ember.toml` named a library for every system at once, so `libcpmt`, which verdict 173 has an MSVC program name, was named for Linux too. Owner (2026-11-10): "how can we address that gap?"; shown `[link]` for every system and `[link.windows]`, `[link.linux]`, `[link.macos]` each taking `unsafe_libs`, with the code unchanged: "Yes, add them". Applied in 0.9.20_Hardened_10 (N156).
 
+175. **The eight fixes of the review of 0.9.20_Hardened_10 go in, the three language decisions among them.** Another agent reviewed Hardened_10 and wrote a tested fix for each of its eight items (`tasks/96/redesign/spec-gaps-0.9.15/deep/fixes-0.9.20-H10.md`); it marked three as the owner's decisions, with its proposals: 5, a library another library asks for is named under `unsafe_libs` too, the runtime's own libraries excepted, and shims are compiled with `/Zl`; 7, a C++ call stands for the member Clang chooses, in place of Ember's own ranking; 8, a library named and used by nothing is an error. Shown the eight with those proposals, the owner (2026-11-11): "fix everything". Applied in 0.9.20_Hardened_11 (N157 to N164).
+
 ## Messages and tests: the lead's to settle (owner, 2026-11-01 evening)
 
 "your error messages are okay it's the language implementation part that concerns me most of the time so

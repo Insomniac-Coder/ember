@@ -37,6 +37,7 @@ NEW_SYNTAX = [
     (re.compile(r'(' + OPERAND + r') (<=|<|>=|>) (' + OPERAND + r') (<=|<|>=|>) (' + OPERAND + r')'),
      r'\1 \2 \3 and \3 \4 \5', 'chained comparisons'),
     (re.compile(r'^(\s+)safe fn '), r'\1fn ', '`safe fn` in an extern block'),
+    (re.compile(r'^unsafe import (c|cpp) '), r'import \1 ', '`unsafe import` (`[FFI-51]`)'),
     (re.compile(r'\(([^()]*\([^()]*\))*[^()]* for [^()]*\)'), '([])', 'generator expressions'),
 ]
 

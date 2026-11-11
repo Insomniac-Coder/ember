@@ -3627,3 +3627,52 @@ Generated: every rule whose text differs from 0.9.20_Hardened_9.
 | `[MAN-8]` | changed |
 | `[MAN-10]` | changed |
 
+
+## H.62 Changes in 0.9.20_Hardened_11 (from 0.9.20_Hardened_10)
+
+**0.9.20_Hardened_11**, of 2026-11-11, applies the eight fixes another agent wrote and tested for
+the eight items of its review of Hardened_10
+(`tasks/96/redesign/spec-gaps-0.9.15/deep/review-0.9.20-H10.md` and `fixes-0.9.20-H10.md`). Five
+make a promise the text already made hold; three are language decisions, put to the owner with the
+proposals, and the owner: "fix everything" (verdict 175). The rulings are N157 to N164
+(`decisions.md` §22).
+
+* **Where a file a dependency's C reads really is** (N157): each file is judged by its real path,
+  links resolved, and one with more than one hard link is refused, so a link inside the
+  dependency's folder no longer reaches a file outside it (`[MAN-10]`).
+* **The removed `link` option** (N158): it was still among an import's options and in Annex A's
+  example; both are gone, and the message for it says where libraries go (`[FFI-6]`, Annex A).
+* **What assembly is** (N159): an `asm` label that is one plain symbol name only renames its
+  declaration, so glibc's `<stdio.h>` is not assembly; and where the C compiler writes assembly
+  text (GCC), a dependency's build reads it for directives that read files, which a label, a
+  section name or a `symver` can carry there (`[FFI-51]`, `[MAN-10]`).
+* **Which folders the toolchain's headers are** (N160): those the C compiler searches with no
+  manifest flag and no environment variable that adds folders, as the compiler lists them
+  (`[MAN-10]`).
+* **Libraries something else asks for** (N161, the owner's): a library an object of a named
+  library asks for is named under `unsafe_libs` too; the runtime's own libraries are the build's;
+  shims are compiled without the C compiler's default-library names (`[BLD-FFI-3]`).
+* **Which thread C ends an object on** (N162): an object whose type is not `Send` is ended, and
+  taken back, on the thread that made it, checked in every profile (`[FFI-54]`, `[FFI-27]`, a row
+  of `[COST-3]`).
+* **A C++ call stands for the member C++ chooses** (N163, the owner's): Clang's own overload
+  resolution names it, in place of Ember's ranking, which chose otherwise where a template and a
+  function, or two templates, both fit (`[FFI-57]`).
+* **A library named and used by nothing** (N164, the owner's): refused, since its start-up code
+  would still run (`[BLD-FFI-3]`).
+
+Registry rows: E5035, E9001. No new rule, no new code, none retired. Owner verdicts: 175 applied.
+
+Generated: every rule whose text differs from 0.9.20_Hardened_10.
+
+| Rule | 0.9.20_Hardened_10 → 0.9.20_Hardened_11 |
+|---|---|
+| `[BLD-FFI-3]` | changed |
+| `[CLI-20]` | changed |
+| `[FFI-6]` | changed |
+| `[FFI-27]` | changed |
+| `[FFI-51]` | changed |
+| `[FFI-54]` | changed |
+| `[FFI-57]` | changed |
+| `[MAN-10]` | changed |
+

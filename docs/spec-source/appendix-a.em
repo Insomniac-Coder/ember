@@ -13,7 +13,7 @@ import std.io                                   # module import: binds `io`
 import std.thread
 from std.math import Vec3, sin as sine          # item import
 from std.sync import Atomic, Lock
-import c "zlib.h" with (link=["z"]) as zlib     # C header import (Part XVI)
+import c "zlib.h" as zlib                       # C header import (Part XVI)
 
 const MAX: int = 1024                           # compile-time constant
 static HITS: Atomic[int] = Atomic(0)            # never replaced; changed by its own operations

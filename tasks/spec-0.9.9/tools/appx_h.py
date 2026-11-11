@@ -799,7 +799,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.20', 10)
+CURRENT = ('0.9.20', 11)
 H52_PARTS = '0.9.9_Hardened_52'
 V010_H1_PARTS = '0.9.10_Hardened_1'
 V010_H2_PARTS = '0.9.10_Hardened_2'
@@ -856,7 +856,8 @@ V0920_H6_PARTS = '0.9.20_Hardened_6'
 V0920_H7_PARTS = '0.9.20_Hardened_7'
 V0920_H8_PARTS = '0.9.20_Hardened_8'
 V0920_H9_PARTS = '0.9.20_Hardened_9'
-V0920_H10_PARTS = os.path.join(HERE, '..', 'parts')
+V0920_H10_PARTS = '0.9.20_Hardened_10'
+V0920_H11_PARTS = os.path.join(HERE, '..', 'parts')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -2366,6 +2367,54 @@ def v0920_h10():
     return H61_HEAD + rule_diff(V0920_H9_PARTS, V0920_H10_PARTS)
 
 
+H62_HEAD = r'''
+
+## H.62 Changes in 0.9.20_Hardened_11 (from 0.9.20_Hardened_10)
+
+**0.9.20_Hardened_11**, of 2026-11-11, applies the eight fixes another agent wrote and tested for
+the eight items of its review of Hardened_10
+(`tasks/96/redesign/spec-gaps-0.9.15/deep/review-0.9.20-H10.md` and `fixes-0.9.20-H10.md`). Five
+make a promise the text already made hold; three are language decisions, put to the owner with the
+proposals, and the owner: "fix everything" (verdict 175). The rulings are N157 to N164
+(`decisions.md` §22).
+
+* **Where a file a dependency's C reads really is** (N157): each file is judged by its real path,
+  links resolved, and one with more than one hard link is refused, so a link inside the
+  dependency's folder no longer reaches a file outside it (`[MAN-10]`).
+* **The removed `link` option** (N158): it was still among an import's options and in Annex A's
+  example; both are gone, and the message for it says where libraries go (`[FFI-6]`, Annex A).
+* **What assembly is** (N159): an `asm` label that is one plain symbol name only renames its
+  declaration, so glibc's `<stdio.h>` is not assembly; and where the C compiler writes assembly
+  text (GCC), a dependency's build reads it for directives that read files, which a label, a
+  section name or a `symver` can carry there (`[FFI-51]`, `[MAN-10]`).
+* **Which folders the toolchain's headers are** (N160): those the C compiler searches with no
+  manifest flag and no environment variable that adds folders, as the compiler lists them
+  (`[MAN-10]`).
+* **Libraries something else asks for** (N161, the owner's): a library an object of a named
+  library asks for is named under `unsafe_libs` too; the runtime's own libraries are the build's;
+  shims are compiled without the C compiler's default-library names (`[BLD-FFI-3]`).
+* **Which thread C ends an object on** (N162): an object whose type is not `Send` is ended, and
+  taken back, on the thread that made it, checked in every profile (`[FFI-54]`, `[FFI-27]`, a row
+  of `[COST-3]`).
+* **A C++ call stands for the member C++ chooses** (N163, the owner's): Clang's own overload
+  resolution names it, in place of Ember's ranking, which chose otherwise where a template and a
+  function, or two templates, both fit (`[FFI-57]`).
+* **A library named and used by nothing** (N164, the owner's): refused, since its start-up code
+  would still run (`[BLD-FFI-3]`).
+
+Registry rows: E5035, E9001. No new rule, no new code, none retired. Owner verdicts: 175 applied.
+
+Generated: every rule whose text differs from 0.9.20_Hardened_10.
+
+| Rule | 0.9.20_Hardened_10 → 0.9.20_Hardened_11 |
+|---|---|
+'''
+
+
+def v0920_h11():
+    return H62_HEAD + rule_diff(V0920_H10_PARTS, V0920_H11_PARTS)
+
+
 def h1_to_h2():
     return rule_diff(H1_PARTS, H2_PARTS)
 
@@ -2436,7 +2485,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n' + v0915_h3_to_h4() + '\n' + v0915_h4_to_h5() + '\n' + v0915_h5_to_h6() + '\n' + v0915_h6_to_h7() + '\n' + v0915_h7_to_h8() + '\n' + v0915_h8_to_h9() + '\n' + v0915_h9_to_h10() + '\n' + v0915_h10_to_h11() + '\n' + v0920_h1() + '\n' + v0920_h2() + '\n' + v0920_h3() + '\n' + v0920_h4() + '\n' + v0920_h5() + '\n' + v0920_h6() + '\n' + v0920_h7() + '\n' + v0920_h8() + '\n' + v0920_h9() + '\n' + v0920_h10() + '\n\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n' + v0915_h3_to_h4() + '\n' + v0915_h4_to_h5() + '\n' + v0915_h5_to_h6() + '\n' + v0915_h6_to_h7() + '\n' + v0915_h7_to_h8() + '\n' + v0915_h8_to_h9() + '\n' + v0915_h9_to_h10() + '\n' + v0915_h10_to_h11() + '\n' + v0920_h1() + '\n' + v0920_h2() + '\n' + v0920_h3() + '\n' + v0920_h4() + '\n' + v0920_h5() + '\n' + v0920_h6() + '\n' + v0920_h7() + '\n' + v0920_h8() + '\n' + v0920_h9() + '\n' + v0920_h10() + '\n' + v0920_h11() + '\n\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

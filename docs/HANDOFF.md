@@ -1,5 +1,22 @@
 # Ember — handoff
 
+> **2026-11-11 — the local session (branch `spec-0.9.20-hardening`), attended, the lead solo. START HERE.**
+> **Hardened_11 of 0.9.20 is cut** and is the development target
+> (`docs/spec-source/Ember_v0.9.20_Hardened_11.md`, 18330 lines, 1,020 rules, SHA-256 `703D97138CFB…`). Another agent
+> reviewed Hardened_10 and wrote a tested fix for each of its eight items
+> (`tasks/96/redesign/spec-gaps-0.9.15/deep/review-0.9.20-H10.md`, `fixes-0.9.20-H10.md`); the owner: "fix
+> everything" (`tasks/96/redesign/JOB.md` verdict 175). **The record:** `decisions.md` §22 (N157 to N164),
+> `docs/AUDIT-0.9.20.md` §16, §H.62. **What changed:** a dependency's C is judged by the real path of what it
+> reads, and GCC's assembly text is read (`[MAN-10]`); an `asm` label that only renames is not assembly
+> (`[FFI-51]`); a library another library asks for is named under `unsafe_libs`, and one nothing uses is refused
+> (`[BLD-FFI-3]`); C ends an object that is not `Send` on its own thread, checked (`[FFI-54]`); a C++ call stands
+> for the member Clang chooses (`[FFI-57]`); the removed `link` option is out of `[FFI-6]` and Annex A. **Cut by
+> the new recipe** (the block below: `spec_history.py add`, no old copy kept). **Checked:** the spec gates,
+> `spec_history.py verify`, `ember_diag`, `ember_parser` and the spec-tied milestone tests green; the compiler
+> is untouched. **Not done:** nothing is pushed and `main` is not moved (the owner: "Not yet"); the full suite
+> and the bench were not run; the lead did not run the other agent's tests again. **Open with the owner:** his
+> look at the lead's rulings N140 to N164; his word on pushing.
+
 > **2026-11-10, the spec's old copies are now diffs — the local session, attended, solo. READ BEFORE THE
 > NEXT CUT.** The owner: "keep the first copy and then consecutively create diff files for each cut and
 > keep the final spec that is being use". `docs/spec-source/history/` holds the first copy whole
@@ -13,8 +30,8 @@
 > (`appx_h.py` rewrites `p26-appx-h.md` and `p00-front.md` unchanged). **A cut now records its diff with
 > `spec_history.py add` and keeps no copy** (the recipe "A new hardening" below, step 5). Not committed.
 
-> **2026-11-10, end of the session — the local session (branch `spec-0.9.20-hardening`), attended, the lead
-> solo. START HERE.** **Hardened_10 of 0.9.20 is cut** and is the development target
+> **2026-11-10, the tenth cut — the local session (branch `spec-0.9.20-hardening`), attended, the lead
+> solo. (The first block of this file is newer.)** **Hardened_10 of 0.9.20 was cut** and was the development target
 > (`docs/spec-source/Ember_v0.9.20_Hardened_10.md`, 18234 lines, 1,020 rules, SHA-256 `D88B6EF1D687…`). One verdict of the
 > owner's (174, `tasks/96/redesign/JOB.md`): a library only one system has is named for that system, in
 > `[link.windows]`, `[link.linux]` or `[link.macos]`, each taking `unsafe_libs` (N156, `decisions.md` §21;

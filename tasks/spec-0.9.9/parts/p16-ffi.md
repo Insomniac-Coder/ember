@@ -203,11 +203,13 @@ import c "vulkan/vulkan.h" with (
 ) as vk
 ```
 
-* `[FFI-6]` `import c "header" with (…) [as name]` parses the header with libclang under the
-  project's target, language standard, defines and include paths, and exposes its functions,
-  structs, unions, enums, typedefs, globals and constant macros as a module (`c`, or `name`).
-  Options: `include_paths`, `defines`, `link`, `overlay`, `implementation` (`[FFI-29b]`). An unknown
-  option is `E0104`.
+* `[FFI-6]` *(changed in 0.9.20)* `import c "header" with (…) [as name]` parses the header with
+  libclang under the project's target, language standard, defines and include paths, and exposes its
+  functions, structs, unions, enums, typedefs, globals and constant macros as a module (`c`, or
+  `name`). Options: `include_paths`, `defines`, `overlay`, `implementation` (`[FFI-29b]`). An
+  unknown option is `E0104`; for `link`, which named a library before 0.9.20_Hardened_8, the message
+  says where libraries go: "`link` is not an option of `import c`; name the library under `[link]
+  unsafe_libs` in `ember.toml`" (`[BLD-FFI-3]`).
 * `[FFI-51]` *(new in 0.9.15)* *(changed in 0.9.20)* **C compiled into the program is vouched for.**
   An import that compiles into the program foreign code that runs with no call from Ember — a C
   source file (`import c "./bridge.c"`, `[BLD-FFI-1]`), a header with `implementation = [...]`
@@ -238,23 +240,26 @@ import c "vulkan/vulkan.h" with (
   anything the header places in a section it names (`__attribute__((section(…)))`,
   `__declspec(allocate(…))`, `#pragma section`, `data_seg`, `code_seg`, `init_seg`), which is how a
   start-up table is filled with no initialiser to see; assembly, at file scope or in the body of a
-  function the shim compiles; and an order to the linker, a library asked for by name included
-  (`#pragma comment(linker, …)`, `#pragma comment(lib, "uuid.lib")`), since what is linked brings
-  code of its own; only a check that can do nothing but stop the link (`#pragma detect_mismatch`) is
-  none of these. **No header is exempt** (verdict 171: any code that cannot be guaranteed safe is
-  written with `unsafe`): the C or C++ compiler's own headers, its standard libraries' and the
-  platform's are judged as every other header is, by what they hold. So `import c "windows.h"`,
-  which has the linker add `uuid.lib`, and with MSVC an `import cpp` of a header that includes
-  `<string>`, which asks for the C++ library and gives the linker an order, are written `unsafe
-  import`, the note saying what is vouched for ("`import c "windows.h"` has the linker add
-  `uuid.lib`, asked for by a header it includes, which brings code nothing checks; write `unsafe
-  import c "windows.h" as win` with a `# SAFETY:` note above it"), and a header that declares its
-  own functions and types, and includes only headers that do the same, needs no word. What decides
-  is what the compiled header leaves in the program, on the target it is compiled for: with the
-  Windows C runtime `<stdio.h>` defines `sprintf` and its family in every file that includes it, so
-  an import that reaches it is written `unsafe import c` there, and one that reaches only
-  `<stdlib.h>`, `<string.h>` or `<math.h>` is not. A library a header asks for is named in the
-  manifest too, under `[link] unsafe_libs` or the list of the system the build is for
+  function the shim compiles (an `asm` label whose text, after preprocessing, is one plain symbol
+  name, made of letters, digits, `_`, `$`, `.` and `@` and not starting with a digit, only renames
+  the declaration it is on and is judged as that declaration, as glibc's `__isoc23_fscanf` and
+  Apple's `fopen$DARWIN_EXTSN` are; any other label is assembly); and an order to the linker, a
+  library asked for by name included (`#pragma comment(linker, …)`, `#pragma comment(lib,
+  "uuid.lib")`), since what is linked brings code of its own; only a check that can do nothing but
+  stop the link (`#pragma detect_mismatch`) is none of these. **No header is exempt** (verdict 171:
+  any code that cannot be guaranteed safe is written with `unsafe`): the C or C++ compiler's own
+  headers, its standard libraries' and the platform's are judged as every other header is, by what
+  they hold. So `import c "windows.h"`, which has the linker add `uuid.lib`, and with MSVC an
+  `import cpp` of a header that includes `<string>`, which asks for the C++ library and gives the
+  linker an order, are written `unsafe import`, the note saying what is vouched for ("`import c
+  "windows.h"` has the linker add `uuid.lib`, asked for by a header it includes, which brings code
+  nothing checks; write `unsafe import c "windows.h" as win` with a `# SAFETY:` note above it"), and
+  a header that declares its own functions and types, and includes only headers that do the same,
+  needs no word. What decides is what the compiled header leaves in the program, on the target it is
+  compiled for: with the Windows C runtime `<stdio.h>` defines `sprintf` and its family in every
+  file that includes it, so an import that reaches it is written `unsafe import c` there, and one
+  that reaches only `<stdlib.h>`, `<string.h>` or `<math.h>` is not. A library a header asks for is
+  named in the manifest too, under `[link] unsafe_libs` or the list of the system the build is for
   (`[link.windows]`, `[BLD-FFI-3]`), as every linked library is (verdict 173); where the manifest
   does not name it the import is `E9001` ("`windows.h` has the linker add `uuid.lib`, and
   `ember.toml` does not name it; add `unsafe_libs = [\"uuid\"]` under `[link.windows]`, or under
@@ -858,8 +863,17 @@ call: a `VkViewport` holds only numbers, `pViewports` is a counted view, and `co
   at run time in every profile, and `E5068` on one local). A C host ends an object given with
   `into_raw()` with `ember_rt_object_release(void*)` (`[FFI-27]`), on an attached thread, which does
   what its last owner's end would (`[CLS-6]`: the block is freed only when no `weakref` link
-  remains). An `ObjectPtr[C]` is a raw pointer for `[THR-8]`, `[THR-9]` and `[UNS-1]`: thread-bound,
-  and read through only in unsafe code.
+  remains). An object whose type is not `Send` is ended, and taken back with `from_raw`, on the
+  thread that made it, and that is checked: `into_raw()` records the thread, one entry in a table of
+  the runtime that is removed when C ends the object or Ember takes it back, and
+  `ember_rt_object_release` and `from_raw` compare it with the calling thread, in every profile, and
+  stop the program otherwise ("C ended a `Widget` made on another thread; `Widget` is not `Send`:
+  its `log` is a `shares` owner"), as a `threads(creator)` trampoline does (`[FFI-17d]`,
+  `[FFI-22]`). When that thread has ended, the objects of it that C still holds can only be ended,
+  one at a time under the runtime's lock, and `from_raw` of one stops the program. An object of a
+  `Send` type is ended or taken back on any attached thread (§X.4). An `ObjectPtr[C]` is a raw
+  pointer for `[THR-8]`, `[THR-9]` and `[UNS-1]`: thread-bound, and read through only in unsafe
+  code.
 
   ```ember
   unsafe extern "C":
@@ -1013,11 +1027,12 @@ pub extern "C" fn on_update(entity: u64, dt: f32) -> i32:
   panics otherwise; in exchange the body may use thread-confined state, the module's `static mut`s
   among it. *(changed in 0.9.10)* A field of an `@export_table` takes the thread contract of the
   function it holds (`[FFI-33]`); the field itself carries none.
-* `[FFI-27]` The runtime `ember_rt` is a C11 static library with no global constructors. A C host
-  calls `ember_rt_init(&cfg)` once (optionally routing allocation and logging to its own functions),
-  `ember_rt_thread_attach()` on each thread that calls Ember, `ember_rt_object_release(void*)` to
-  end an object Ember gave it with `into_raw()` (`[FFI-54]`), and `ember_rt_shutdown()` at the end,
-  which runs at-exit hooks and, in `debug`, prints the leak report (`[WK-15]`).
+* `[FFI-27]` *(changed in 0.9.20)* The runtime `ember_rt` is a C11 static library with no global
+  constructors. A C host calls `ember_rt_init(&cfg)` once (optionally routing allocation and logging
+  to its own functions), `ember_rt_thread_attach()` on each thread that calls Ember,
+  `ember_rt_object_release(void*)` to end an object Ember gave it with `into_raw()`, on the thread
+  `[FFI-54]` allows, and `ember_rt_shutdown()` at the end, which runs at-exit hooks and, in `debug`,
+  prints the leak report (`[WK-15]`).
 * `[FFI-28]` *(changed in 0.9.10)* A package built as `kind = "staticlib"` produces a library and
   header to link into a C or C++ program; `kind = "cdylib"` a shared library exporting only its
   `@export` symbols, its `@export_table`s, `ember_module_init`, `ember_module_shutdown`, and the
@@ -1055,6 +1070,21 @@ pub extern "C" fn on_update(entity: u64, dt: f32) -> i32:
   ["libcpmt", "uuid"]` under `[link.windows]` leaves a Linux build as it was; a library named in
   both lists is linked once, and the import of its header is written `unsafe import` on every
   system, one line of source serving them all. The key `libs` is not Ember (`E9001`: "`libs =
-  [\"vulkan-1\"]` links code that nothing checks; write `unsafe_libs = [\"vulkan-1\"]`"). Each is
-  listed by `ember tcb` as an external library (`[TCB-4]`).
+  [\"vulkan-1\"]` links code that nothing checks; write `unsafe_libs = [\"vulkan-1\"]`"). Besides
+  the libraries the manifest names, a build links only the runtime's own: the C runtime and the
+  system libraries `ember_rt` needs (`[RT-1]`), which the toolchain names for each system
+  (`[TOOL-2]`) and `ember tcb` lists under the runtime. Every other library the link would add
+  because something asked for it is named under `unsafe_libs` too, whether a header asked (verdict
+  173) or an object of a named library did (`/DEFAULTLIB` in a COFF `.drectve` section, `.deplibs`
+  in ELF, `LC_LINKER_OPTION` in Mach-O); otherwise it is `E9001`, naming the library, what asked for
+  it and the line to add. Shims and thunk units are compiled without the C compiler's own
+  default-library names (`/Zl`), so a request left in one is the header's. What a shared library
+  loads when it runs is that library's code, vouched for with it, and `ember tcb` lists it under it.
+  A library named under `unsafe_libs` that nothing uses is `E9001` too (verdict 175): one of which
+  no import and no `unsafe extern` block of the package declares a name, and which no header and no
+  named library asks for ("`unsafe_libs` names `foo` (`ember.toml`, line 7), which nothing in this
+  package imports, and its start-up code would still run when the program loads; remove the line, or
+  import its header with `unsafe import`"); it is judged by what is declared, not by what is called,
+  so a library used only for what it does when it loads stays possible, with the code saying so.
+  Each named library is listed by `ember tcb` as an external library (`[TCB-4]`).
 

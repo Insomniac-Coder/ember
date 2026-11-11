@@ -1,7 +1,7 @@
 # Ember Programming Language — Specification
 
-**Version:** 0.9.20_Hardened_10
-**Supersedes:** 0.9.20_Hardened_9 (development target until this one), 0.9.20_Hardened_8 to
+**Version:** 0.9.20_Hardened_11
+**Supersedes:** 0.9.20_Hardened_10 (development target until this one), 0.9.20_Hardened_9 to
 0.9.20_Hardened_1, 0.9.15_Hardened_11 to 0.9.15_Hardened_1 and every earlier file:
 0.9.10_Hardened_1 to 0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3
 and 0.8.5_Hardened_1 (adopted). This document is the single specification of Ember; the earlier
@@ -52,8 +52,10 @@ that no header is exempt from `unsafe import`, the toolchain's own included;
 **0.9.20_Hardened_8**, of 2026-11-10 (§H.59): his verdict 172, that a linked library is named
 under `unsafe_libs` in the manifest and its import is written `unsafe import`;
 **0.9.20_Hardened_9**, of 2026-11-10 (§H.60): his verdict 173, that a library a header asks for
-is named there too; and **0.9.20_Hardened_10**, of 2026-11-10 (§H.61): his verdict 174, that a
-library only one system has is named for that system (`[link.windows]`). Each of them changes
+is named there too; **0.9.20_Hardened_10**, of 2026-11-10 (§H.61): his verdict 174, that a
+library only one system has is named for that system (`[link.windows]`); and
+**0.9.20_Hardened_11**, of 2026-11-11 (§H.62): the eight fixes of a review of Hardened_10, on his
+word. Each of them changes
 the set of accepted programs, so the language version moves (`[VER-9]`). What a program means is written in
 words on the thing it describes: one owner unless a line says `shares`; `owns` for a hand-over and a
 value held alone, at the call too; `copy of` for a copy; `ref mut` on a name, and at the call, for a
@@ -64,7 +66,7 @@ cost (§X.4). It replaces `Box`, `Shared`, `Weak`, `RefCell`, `SyncShared`, `For
 `@borrows`, the mode `owned`, `self`, `mem.forget`, effect clauses on a first line and every check of
 exclusive access made while the program runs. It changes the set of accepted programs, so the
 language version moves (`[VER-9]`); Appendix H §H.41 to §H.51 list every change of 0.9.15, and §H.52
-to §H.61 those of 0.9.20. The revisions before it were
+to §H.62 those of 0.9.20. The revisions before it were
 authored at the owner's direction of 2026-09-23 with delegated authority to decide open language
 questions against the project goal; Appendix H lists each one's changes (§H.1 to §H.40), and every
 finding of the 2026-09-23 research pass (`tasks/audit/FINDINGS.md`, F-001–F-214) is resolved in
@@ -126,7 +128,7 @@ invariant (`[PHIL-10]`) with its conformance tests.
 | Appendix E | Coming from Python (non-normative) |
 | Appendix F | Glossary |
 | Appendix G | Resolution of findings F-001–F-214 |
-| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.51) and in 0.9.20 (§H.52 to §H.61) |
+| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.51) and in 0.9.20 (§H.52 to §H.62) |
 | Appendix I | Rule index |
 
 **Normative words.** MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119. Text marked
@@ -6843,6 +6845,7 @@ compute the same bits, on one machine and across machines running the same binar
 | An override call or `delete` of a trampoline-class object under `threads=creator` (`[FFI-17d]`) | guaranteed present | one compare of the calling thread with the id the trampoline subobject holds, one word per object |
 | An `owns T` of a `threads(creator)` type (`[FFI-33b]`) | guaranteed present | one word more, the making thread's id, and one compare at its end |
 | Entering Ember code from C in a reloadable build (`[HR-42]`) | guaranteed present | one increment, one fence and one load; a thread waits only for the length of a commit it meets |
+| An object of a type that is not `Send` given to C with `into_raw()` (`[FFI-54]`) | guaranteed present | one entry in a table of the runtime when it is given, and one compare when C ends it or `from_raw` takes it back; nothing for an object of a `Send` type |
 | Registering an object in a reloadable build (`[HR-12]`) | guaranteed present | four stores when it is made and two when it ends, plain for an object whose own type is not `Send`; with one lock or one atomic exchange for an object of a `Send` type and for a `thread_shared` object, either of which another thread may end; a `thread_shared` header of 48 bytes |
 | A value handed over on some paths only (`[OWN-3]`) | guaranteed present | one hidden drop flag in the frame: a store at the hand-over and one test where the owner would end; none where every path hands it over or none does |
 | First access of a `static` built on first access (`[STA-3]`) | guaranteed present | one test of its once-flag per access, and the initialiser once, during which a first access on another thread waits; none for a static placed in the image |
@@ -9128,11 +9131,13 @@ import c "vulkan/vulkan.h" with (
 ) as vk
 ```
 
-* `[FFI-6]` `import c "header" with (…) [as name]` parses the header with libclang under the
-  project's target, language standard, defines and include paths, and exposes its functions,
-  structs, unions, enums, typedefs, globals and constant macros as a module (`c`, or `name`).
-  Options: `include_paths`, `defines`, `link`, `overlay`, `implementation` (`[FFI-29b]`). An unknown
-  option is `E0104`.
+* `[FFI-6]` *(changed in 0.9.20)* `import c "header" with (…) [as name]` parses the header with
+  libclang under the project's target, language standard, defines and include paths, and exposes its
+  functions, structs, unions, enums, typedefs, globals and constant macros as a module (`c`, or
+  `name`). Options: `include_paths`, `defines`, `overlay`, `implementation` (`[FFI-29b]`). An
+  unknown option is `E0104`; for `link`, which named a library before 0.9.20_Hardened_8, the message
+  says where libraries go: "`link` is not an option of `import c`; name the library under `[link]
+  unsafe_libs` in `ember.toml`" (`[BLD-FFI-3]`).
 * `[FFI-51]` *(new in 0.9.15)* *(changed in 0.9.20)* **C compiled into the program is vouched for.**
   An import that compiles into the program foreign code that runs with no call from Ember — a C
   source file (`import c "./bridge.c"`, `[BLD-FFI-1]`), a header with `implementation = [...]`
@@ -9163,23 +9168,26 @@ import c "vulkan/vulkan.h" with (
   anything the header places in a section it names (`__attribute__((section(…)))`,
   `__declspec(allocate(…))`, `#pragma section`, `data_seg`, `code_seg`, `init_seg`), which is how a
   start-up table is filled with no initialiser to see; assembly, at file scope or in the body of a
-  function the shim compiles; and an order to the linker, a library asked for by name included
-  (`#pragma comment(linker, …)`, `#pragma comment(lib, "uuid.lib")`), since what is linked brings
-  code of its own; only a check that can do nothing but stop the link (`#pragma detect_mismatch`) is
-  none of these. **No header is exempt** (verdict 171: any code that cannot be guaranteed safe is
-  written with `unsafe`): the C or C++ compiler's own headers, its standard libraries' and the
-  platform's are judged as every other header is, by what they hold. So `import c "windows.h"`,
-  which has the linker add `uuid.lib`, and with MSVC an `import cpp` of a header that includes
-  `<string>`, which asks for the C++ library and gives the linker an order, are written `unsafe
-  import`, the note saying what is vouched for ("`import c "windows.h"` has the linker add
-  `uuid.lib`, asked for by a header it includes, which brings code nothing checks; write `unsafe
-  import c "windows.h" as win` with a `# SAFETY:` note above it"), and a header that declares its
-  own functions and types, and includes only headers that do the same, needs no word. What decides
-  is what the compiled header leaves in the program, on the target it is compiled for: with the
-  Windows C runtime `<stdio.h>` defines `sprintf` and its family in every file that includes it, so
-  an import that reaches it is written `unsafe import c` there, and one that reaches only
-  `<stdlib.h>`, `<string.h>` or `<math.h>` is not. A library a header asks for is named in the
-  manifest too, under `[link] unsafe_libs` or the list of the system the build is for
+  function the shim compiles (an `asm` label whose text, after preprocessing, is one plain symbol
+  name, made of letters, digits, `_`, `$`, `.` and `@` and not starting with a digit, only renames
+  the declaration it is on and is judged as that declaration, as glibc's `__isoc23_fscanf` and
+  Apple's `fopen$DARWIN_EXTSN` are; any other label is assembly); and an order to the linker, a
+  library asked for by name included (`#pragma comment(linker, …)`, `#pragma comment(lib,
+  "uuid.lib")`), since what is linked brings code of its own; only a check that can do nothing but
+  stop the link (`#pragma detect_mismatch`) is none of these. **No header is exempt** (verdict 171:
+  any code that cannot be guaranteed safe is written with `unsafe`): the C or C++ compiler's own
+  headers, its standard libraries' and the platform's are judged as every other header is, by what
+  they hold. So `import c "windows.h"`, which has the linker add `uuid.lib`, and with MSVC an
+  `import cpp` of a header that includes `<string>`, which asks for the C++ library and gives the
+  linker an order, are written `unsafe import`, the note saying what is vouched for ("`import c
+  "windows.h"` has the linker add `uuid.lib`, asked for by a header it includes, which brings code
+  nothing checks; write `unsafe import c "windows.h" as win` with a `# SAFETY:` note above it"), and
+  a header that declares its own functions and types, and includes only headers that do the same,
+  needs no word. What decides is what the compiled header leaves in the program, on the target it is
+  compiled for: with the Windows C runtime `<stdio.h>` defines `sprintf` and its family in every
+  file that includes it, so an import that reaches it is written `unsafe import c` there, and one
+  that reaches only `<stdlib.h>`, `<string.h>` or `<math.h>` is not. A library a header asks for is
+  named in the manifest too, under `[link] unsafe_libs` or the list of the system the build is for
   (`[link.windows]`, `[BLD-FFI-3]`), as every linked library is (verdict 173); where the manifest
   does not name it the import is `E9001` ("`windows.h` has the linker add `uuid.lib`, and
   `ember.toml` does not name it; add `unsafe_libs = [\"uuid\"]` under `[link.windows]`, or under
@@ -9783,8 +9791,17 @@ call: a `VkViewport` holds only numbers, `pViewports` is a counted view, and `co
   at run time in every profile, and `E5068` on one local). A C host ends an object given with
   `into_raw()` with `ember_rt_object_release(void*)` (`[FFI-27]`), on an attached thread, which does
   what its last owner's end would (`[CLS-6]`: the block is freed only when no `weakref` link
-  remains). An `ObjectPtr[C]` is a raw pointer for `[THR-8]`, `[THR-9]` and `[UNS-1]`: thread-bound,
-  and read through only in unsafe code.
+  remains). An object whose type is not `Send` is ended, and taken back with `from_raw`, on the
+  thread that made it, and that is checked: `into_raw()` records the thread, one entry in a table of
+  the runtime that is removed when C ends the object or Ember takes it back, and
+  `ember_rt_object_release` and `from_raw` compare it with the calling thread, in every profile, and
+  stop the program otherwise ("C ended a `Widget` made on another thread; `Widget` is not `Send`:
+  its `log` is a `shares` owner"), as a `threads(creator)` trampoline does (`[FFI-17d]`,
+  `[FFI-22]`). When that thread has ended, the objects of it that C still holds can only be ended,
+  one at a time under the runtime's lock, and `from_raw` of one stops the program. An object of a
+  `Send` type is ended or taken back on any attached thread (§X.4). An `ObjectPtr[C]` is a raw
+  pointer for `[THR-8]`, `[THR-9]` and `[UNS-1]`: thread-bound, and read through only in unsafe
+  code.
 
   ```ember
   unsafe extern "C":
@@ -9938,11 +9955,12 @@ pub extern "C" fn on_update(entity: u64, dt: f32) -> i32:
   panics otherwise; in exchange the body may use thread-confined state, the module's `static mut`s
   among it. *(changed in 0.9.10)* A field of an `@export_table` takes the thread contract of the
   function it holds (`[FFI-33]`); the field itself carries none.
-* `[FFI-27]` The runtime `ember_rt` is a C11 static library with no global constructors. A C host
-  calls `ember_rt_init(&cfg)` once (optionally routing allocation and logging to its own functions),
-  `ember_rt_thread_attach()` on each thread that calls Ember, `ember_rt_object_release(void*)` to
-  end an object Ember gave it with `into_raw()` (`[FFI-54]`), and `ember_rt_shutdown()` at the end,
-  which runs at-exit hooks and, in `debug`, prints the leak report (`[WK-15]`).
+* `[FFI-27]` *(changed in 0.9.20)* The runtime `ember_rt` is a C11 static library with no global
+  constructors. A C host calls `ember_rt_init(&cfg)` once (optionally routing allocation and logging
+  to its own functions), `ember_rt_thread_attach()` on each thread that calls Ember,
+  `ember_rt_object_release(void*)` to end an object Ember gave it with `into_raw()`, on the thread
+  `[FFI-54]` allows, and `ember_rt_shutdown()` at the end, which runs at-exit hooks and, in `debug`,
+  prints the leak report (`[WK-15]`).
 * `[FFI-28]` *(changed in 0.9.10)* A package built as `kind = "staticlib"` produces a library and
   header to link into a C or C++ program; `kind = "cdylib"` a shared library exporting only its
   `@export` symbols, its `@export_table`s, `ember_module_init`, `ember_module_shutdown`, and the
@@ -9980,8 +9998,23 @@ pub extern "C" fn on_update(entity: u64, dt: f32) -> i32:
   ["libcpmt", "uuid"]` under `[link.windows]` leaves a Linux build as it was; a library named in
   both lists is linked once, and the import of its header is written `unsafe import` on every
   system, one line of source serving them all. The key `libs` is not Ember (`E9001`: "`libs =
-  [\"vulkan-1\"]` links code that nothing checks; write `unsafe_libs = [\"vulkan-1\"]`"). Each is
-  listed by `ember tcb` as an external library (`[TCB-4]`).
+  [\"vulkan-1\"]` links code that nothing checks; write `unsafe_libs = [\"vulkan-1\"]`"). Besides
+  the libraries the manifest names, a build links only the runtime's own: the C runtime and the
+  system libraries `ember_rt` needs (`[RT-1]`), which the toolchain names for each system
+  (`[TOOL-2]`) and `ember tcb` lists under the runtime. Every other library the link would add
+  because something asked for it is named under `unsafe_libs` too, whether a header asked (verdict
+  173) or an object of a named library did (`/DEFAULTLIB` in a COFF `.drectve` section, `.deplibs`
+  in ELF, `LC_LINKER_OPTION` in Mach-O); otherwise it is `E9001`, naming the library, what asked for
+  it and the line to add. Shims and thunk units are compiled without the C compiler's own
+  default-library names (`/Zl`), so a request left in one is the header's. What a shared library
+  loads when it runs is that library's code, vouched for with it, and `ember tcb` lists it under it.
+  A library named under `unsafe_libs` that nothing uses is `E9001` too (verdict 175): one of which
+  no import and no `unsafe extern` block of the package declares a name, and which no header and no
+  named library asks for ("`unsafe_libs` names `foo` (`ember.toml`, line 7), which nothing in this
+  package imports, and its start-up code would still run when the program loads; remove the line, or
+  import its header with `unsafe import`"); it is judged by what is declared, not by what is called,
+  so a library used only for what it does when it loads stays possible, with the code saying so.
+  Each named library is listed by `ember tcb` as an external library (`[TCB-4]`).
 
 ---
 
@@ -10045,7 +10078,7 @@ ember --help | --version [--matrix]
   rewrites source written for an earlier version into the current one where the change is
   mechanical, and lists, with the file and line, what it could not rewrite. From 0.9.15: the `#!
   language` directive to the current version; the changes of 0.9.20 refuse programs that were unsafe
-  and rewrite nothing (§H.52 to §H.61). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
+  and rewrite nothing (§H.52 to §H.62). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
   removal, `for k, v in m:` over a `Map` to `for k, v in m.items():` (`[CTL-1]`). From 0.9.10:
   `Box[T]` and `ForeignBox[T]` to `owns T`, `Box[T, A]` to `owns T using A`, `Array[T, A]` to
   `Array[T] using A`, `Weak[T]` to `weakref T`, the mode `owned` to `owns`, `mut x: T` on a
@@ -10212,19 +10245,34 @@ large_copy = { level = "warn", threshold = 256 }
   is compiled from is limited the same way, since a header names any file of the machine itself,
   whatever its `-I` paths (`#include "/home/ci/.ssh/config"`, C23's `#embed`): the compile of a
   dependency's shim, thunk unit or C source reads only files under the dependency's own root and the
-  headers of the toolchain itself (the C or C++ compiler's own, its standard libraries' and the
-  platform kit's, in the directories of those installations as the build finds them, `[TOOL-2]`,
-  never a directory a manifest, a flag or an import's `include_paths` adds; reading one is not
-  vouching for it, `[FFI-51]`), which the build checks against the files the C compiler reports it
-  read, included and embedded alike (a build that cannot learn what a compiler embedded refuses
-  `#embed` there), and that C holds no assembly, at file scope or in a function's body, since an
-  assembler directive reads a file no report names (`.incbin`). A file from anywhere else, or
-  assembly, is `E9001` unless the root names the dependency in `native` ("`parser`'s `lexer.h` (line
-  3) reads `/home/ci/.aws/credentials` into the program with `#embed`; a dependency's C reads only
-  its own folder and the toolchain's headers; to allow it, add `native = [\"parser\"]` under
-  `[build]` in `ember.toml`"). Each flag reaches the C compiler as one argument of its own, never
-  through a shell, so a define's value cannot add a second flag. `ember tcb` lists every dependency
-  so named as an external library (`[TCB-4]`).
+  toolchain's headers, which the build checks against the files the C compiler reports it read,
+  included and embedded alike (a build that cannot learn what a compiler embedded refuses `#embed`
+  there). Each such file is judged by where it really is, not by the name it was reached by: the
+  build opens it and asks the system for its real path, every symbolic link, junction and `..`
+  resolved and, on Windows, the case and short names made canonical, and that path lies under the
+  real path of the dependency's root or of a toolchain folder; a file under the dependency's root
+  that has more than one hard link is refused too, since its real path names only the copy inside (a
+  package cache copies files and never hard-links them). The toolchain's headers are in the folders
+  the C compiler searches for `#include <…>` when it is given no flag from any manifest and none of
+  the environment variables that add folders (`INCLUDE`, `CPATH`, `C_INCLUDE_PATH`,
+  `CPLUS_INCLUDE_PATH`, `OBJC_INCLUDE_PATH`), taken as the compiler lists them itself (`-E -v`; for
+  MSVC's `cl`, the MSVC and Windows SDK installations the toolchain finds, `[TOOL-2]`), each by its
+  real path; the build compiles a dependency's C with those variables removed, and reading a
+  toolchain header is not vouching for it (`[FFI-51]`). That C holds no `asm` statement, at file
+  scope or in a function's body, judged after preprocessing, since an assembler directive reads a
+  file no report names (`.incbin`) and a macro of the assembler builds one out of pieces no search
+  of the text finds. And where the C compiler writes assembly text and runs an assembler on it
+  (GCC), the build reads that text before it is assembled and refuses it when it holds, outside a
+  quoted name, a directive that reads a file or makes directives (`.incbin`, `.include`, `.macro`,
+  `.irp`, `.irpc`, `.rept`, `.altmacro`): GCC writes none of these itself, so one there came from a
+  string the source gave it (a label, a section name, a `symver`), while Clang writes such strings
+  quoted and needs no such read. A file from anywhere else, or assembly, is `E9001` unless the root
+  names the dependency in `native` ("`parser`'s `lexer.h` (line 3) reads `/home/ci/.aws/credentials`
+  into the program with `#embed`; a dependency's C reads only its own folder and the toolchain's
+  headers; to allow it, add `native = [\"parser\"]` under `[build]` in `ember.toml`"). Each flag
+  reaches the C compiler as one argument of its own, never through a shell, so a define's value
+  cannot add a second flag. `ember tcb` lists every dependency so named as an external library
+  (`[TCB-4]`).
 * `[MAN-3]` *(changed in 0.9.9)* Every key in `[lints]` names a lint the compiler defines (`E9010`
   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
   parameters.
@@ -11049,7 +11097,7 @@ reused; retired codes are listed with the reason.
 | `E5031` | C++ parameter cannot be mapped | `[FFI-32]` |
 | `E5032` | opaque C++ type may not be constructed | `[FFI-32]` |
 | `E5034` | unsupported C++ construct | `[FFI-48]` |
-| `E5035` | a use of a C++ name of several members (a call, `T.new(…)`, `super.init(…)`, a function value) that fits no member, fits two that neither beats, or chooses one declared `= delete` | `[FFI-57]` |
+| `E5035` | a use of a C++ name of several members (a call, `T.new(…)`, `super.init(…)`, a function value) that fits no member, is ambiguous in C++, is reached only through a conversion Ember does not make, or chooses one declared `= delete` | `[FFI-57]` |
 | `E5040` | capturing closure passed where a C function pointer is expected | `[FFI-21]` |
 | `E5041` | a `retained` or `once` callback needs a release function (`destroys(f)`) in the overlay | `[FFI-21]` |
 | `E5042` | a function C may call returns a pointer into a parameter C passes as a copy | `[FFI-21a]` |
@@ -11090,7 +11138,7 @@ reused; retired codes are listed with the reason.
 | `E7017` | `thread_shared` on a name whose value was not created `thread_shared`; `weakref thread_shared x` where `x` was not; an object with one owner (`Node()`) of a class whose methods say its objects are `thread_shared`; `shares` or `shares mut` on a `thread_shared` owner | `[THR-1]`, `[OWN-13]`, `[RC-1]` |
 | `E7018` | a wait for a lock this thread holds, while this thread holds that lock (its `with` block, a guard in a local until its last use, or a guard made as a temporary for its life, `[EXP-4]`): a call through a function value, or a `dyn` or virtual method, that may run a function taking that lock (inside a walk under that lock too), or a join of a thread (a scope's end included) whose function changes what the lock guards; a first access of a `static` whose initialiser takes the lock; a second `read()` of an `RwLock` this thread holds `read()`; a stored function, override or implementation that takes a lock held at a recorded library line | `[THR-19]`, `[MOD-9a]`, `[EXP-4]` |
 | `E8001` | GPU layout does not match the CPU layout | `[GPU-10]` |
-| `E9001` | invalid manifest, including an unknown key; a dependency's manifest section or flag honoured only when the root names it in `[build] native`, and a dependency's C that reads a file outside its own root and the toolchain's headers, or holds assembly, without it; a library a header asks for that `[link] unsafe_libs` does not name | `[MAN-1]`, `[PRF-3]`, `[MAN-10]`, `[BLD-FFI-3]`, `[FFI-51]` |
+| `E9001` | invalid manifest, including an unknown key; a dependency's manifest section or flag honoured only when the root names it in `[build] native`, and a dependency's C that reads a file outside its own root and the toolchain's headers, or holds assembly, without it; a library the link would add, because a header or a named library asks for it, that `[link] unsafe_libs` does not name; a library named there that nothing the package imports or links uses | `[MAN-1]`, `[PRF-3]`, `[MAN-10]`, `[BLD-FFI-3]`, `[FFI-51]` |
 | `E9002` | no C compiler found, or it failed; the help names the host's remedy | `[BLD-FFI-1]` |
 | `E9003` | invalid command line | `[CLI-1]` |
 | `E9010` | `[lints]` names a lint the compiler does not define | `[MAN-3]` |
@@ -11595,7 +11643,7 @@ import std.io                                   # module import: binds `io`
 import std.thread
 from std.math import Vec3, sin as sine          # item import
 from std.sync import Atomic, Lock
-import c "zlib.h" with (link=["z"]) as zlib     # C header import (Part XVI)
+import c "zlib.h" as zlib                       # C header import (Part XVI)
 
 const MAX: int = 1024                           # compile-time constant
 static HITS: Atomic[int] = Atomic(0)            # never replaced; changed by its own operations
@@ -12287,45 +12335,44 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   parameter's contract word names, `count(n)`, but not that parameter, is no member). The program
   declares none of them, so the name is not `E1030` (`[TYP-26]`). Each use of the name stands for
   one member, read from the header and the use's own words, nothing around it. A call (a method
-  call, `T.new(…)`, `super.init(…)`, `[FFI-39b]`) fits a member when that member, declared alone,
-  would accept it: its arguments' number, by position or by name (`[TYP-25]`; a parameter with a
-  default may be left out), the word before each (`ref mut`, `owns`, none: `[FN-2a]`, `[FFI-40]`)
-  and each argument's type, the parameter's own or one that reaches it by a coercion of `[TYP-5]`;
-  an untyped literal's own type is the one C++ gives its spelling, `c_int` for a whole number and
-  `f64` for one with a point, and any other type it may take (`[LEX-16]`, `[LEX-17]`) it reaches as
-  by a coercion. Of the members a call fits, one beats another when, argument by argument, it takes
-  each at least as directly — the argument's own type before a coercion and, for an argument of a
-  known type, among coercions as C++ ranks them, a promotion C++ makes (an integer type narrower
-  than `c_int` taken as `c_int`, `f32` taken as `f64`) before any other number type, every other
-  number type alike whatever its size, and the nearer base class before a farther; an untyped
-  literal reaches every type not its own alike — and takes one more directly; the call stands for
-  the member that beats every other it fits, so where C++ chooses one Ember chooses the same, where
-  C++ calls two alike so does Ember, and Ember never chooses one C++ would not consider: for `n:
-  i8`, `w.set(n)` with `set(short)` and `set(int)` stands for `set(int)`, as in C++, and with
-  `set(short)` and `set(long long)` it fits both alike (`E5035`: "write `w.set(n as i16)` or
-  `w.set(n as i64)`"). A member declared `= delete` takes part and, chosen, is refused. A name used
-  without a call stands for the member whose first line is exactly the callable type expected there
-  (`[CLO-3]`), and with none expected is `E5035`. What the code around the use allows — unsafe code
-  (`[FFI-2]`, `E3100`), a read-only name (`E3023`), its effects, the loop and view rules — is
-  checked after, on the member chosen, so one line stands for one member wherever it is written. A
-  use that fits no member, or two with neither beating the other, is `E5035`, naming each member as
-  the header declares it and why it does or does not fit, and the way out, the argument written with
-  its type or the overlay line: "`w.value(7)` (line 8) fits `void value(long long)` and `void
-  value(double)` of `ui::Widget` alike: `7` is C++'s `int`, which neither takes as it is, and
-  reaches each; write `w.value(7 as i64)` or `w.value(7.0)`". Two members alike in every parameter
-  as the import spells them (two instances of one template differing only in the result), or alike
-  on this target (`put(int)` and `put(long)` for an `i32` argument where `long` is 32 bits; a
-  literal still takes `int`), fit such a call together; the overlay tells them apart by the tables'
-  spelling or by the result, which no target changes (`rename put(v: c_long) as put_long`, `hide
-  put(v: c_long)`, `rename get() -> f64 as get_f64`, `[GRM-35]`), and the message of `E5035` gives
-  that line. An `override fn` matches one virtual member by its first line exactly (`[FFI-39]`),
-  never through this ranking; a class derived from a C++ class whose header declares one virtual
-  name several times writes one `override fn` per member it replaces, each matched so, and two
-  overrides fitting one member are `E1030`. `ember bind --report` lists each such name with its
-  members as the header writes them; `ember bind --emit-cpp` writes one thunk per member, named by
-  the member's mangled name (`[MNG-1]`); `ember bind --init` writes one entry per member
-  (`[CLI-5]`). Nothing runs for this while the program runs: a use is one direct call of its
-  member's thunk, as any imported C++ function's (§X.4, "FFI call").
+  call, `T.new(…)`, `super.init(…)`, `[FFI-39b]`) stands for the member C++ chooses (verdict 175).
+  The importer writes each call of a name with several members as a C++ call in the package's thunk
+  unit, with the arguments' C++ types and words (`owns` an rvalue, `ref mut` a non-const lvalue,
+  none a const lvalue, and an untyped literal as it is written, `c_int` for a whole number and `f64`
+  for one with a point), a parameter with a default left out where the call leaves it out, and
+  Clang's own overload resolution, which the importer already runs to read the header (`[FFI-6]`),
+  names the member: every rule of C++ is applied, its choices between a function and a template,
+  between two templates and between references included, and Ember keeps no copy of C++'s ranking to
+  drift from it. A member Clang reaches only through a conversion Ember does not make (a converting
+  constructor, a user-defined conversion) is not chosen: the call is `E5035`, naming it. So Ember
+  chooses what C++ chooses or refuses, never another: for `n: i8`, `w.set(n)` with `set(short)` and
+  `set(int)` stands for `set(int)`; `w.g(b)` for `b: c_int`, with a plain `g(int)` and a template
+  `g(T)`, stands for the plain one; and with `set(short)` and `set(long long)` the call is ambiguous
+  in C++ and so here (`E5035`: "write `w.set(n as i16)` or `w.set(n as i64)`"). It costs one Clang
+  parse of a package's calls of such names when the package compiles, kept with the build's other
+  results, and nothing while the program runs. A member declared `= delete` takes part and, chosen,
+  is refused. A name used without a call stands for the member whose first line is exactly the
+  callable type expected there (`[CLO-3]`), and with none expected is `E5035`. What the code around
+  the use allows — unsafe code (`[FFI-2]`, `E3100`), a read-only name (`E3023`), its effects, the
+  loop and view rules — is checked after, on the member chosen, so one line stands for one member
+  wherever it is written. A use that fits no member, or that C++ finds ambiguous, is `E5035`, naming
+  each candidate as the header declares it, with Clang's reason why it does or does not fit, and the
+  way out, the argument written with its type or the overlay line: "`w.value(7)` (line 8) fits `void
+  value(long long)` and `void value(double)` of `ui::Widget` alike: `7` is C++'s `int`, which
+  neither takes as it is, and reaches each; write `w.value(7 as i64)` or `w.value(7.0)`". Two
+  members alike in every parameter as the import spells them (two instances of one template
+  differing only in the result), or alike on this target (`put(int)` and `put(long)` for an `i32`
+  argument where `long` is 32 bits; a literal still takes `int`), fit such a call together; the
+  overlay tells them apart by the tables' spelling or by the result, which no target changes
+  (`rename put(v: c_long) as put_long`, `hide put(v: c_long)`, `rename get() -> f64 as get_f64`,
+  `[GRM-35]`), and the message of `E5035` gives that line. An `override fn` matches one virtual
+  member by its first line exactly (`[FFI-39]`), never through this ranking; a class derived from a
+  C++ class whose header declares one virtual name several times writes one `override fn` per member
+  it replaces, each matched so, and two overrides fitting one member are `E1030`. `ember bind
+  --report` lists each such name with its members as the header writes them; `ember bind --emit-cpp`
+  writes one thunk per member, named by the member's mangled name (`[MNG-1]`); `ember bind --init`
+  writes one entry per member (`[CLI-5]`). Nothing runs for this while the program runs: a use is
+  one direct call of its member's thunk, as any imported C++ function's (§X.4, "FFI call").
 * `[FFI-11f]` A result lifetime derived from `[[clang::lifetimebound]]` imports as an asserted fact:
   the attribute is not enforced by C++, so it never counts as checked.
 * `[FFI-48]` *(changed in 0.9.10)* *(changed in 0.9.20)* **Unsupported constructs** (`E5034`, naming
@@ -16782,6 +16829,55 @@ Generated: every rule whose text differs from 0.9.20_Hardened_9.
 | `[MAN-8]` | changed |
 | `[MAN-10]` | changed |
 
+
+## H.62 Changes in 0.9.20_Hardened_11 (from 0.9.20_Hardened_10)
+
+**0.9.20_Hardened_11**, of 2026-11-11, applies the eight fixes another agent wrote and tested for
+the eight items of its review of Hardened_10
+(`tasks/96/redesign/spec-gaps-0.9.15/deep/review-0.9.20-H10.md` and `fixes-0.9.20-H10.md`). Five
+make a promise the text already made hold; three are language decisions, put to the owner with the
+proposals, and the owner: "fix everything" (verdict 175). The rulings are N157 to N164
+(`decisions.md` §22).
+
+* **Where a file a dependency's C reads really is** (N157): each file is judged by its real path,
+  links resolved, and one with more than one hard link is refused, so a link inside the
+  dependency's folder no longer reaches a file outside it (`[MAN-10]`).
+* **The removed `link` option** (N158): it was still among an import's options and in Annex A's
+  example; both are gone, and the message for it says where libraries go (`[FFI-6]`, Annex A).
+* **What assembly is** (N159): an `asm` label that is one plain symbol name only renames its
+  declaration, so glibc's `<stdio.h>` is not assembly; and where the C compiler writes assembly
+  text (GCC), a dependency's build reads it for directives that read files, which a label, a
+  section name or a `symver` can carry there (`[FFI-51]`, `[MAN-10]`).
+* **Which folders the toolchain's headers are** (N160): those the C compiler searches with no
+  manifest flag and no environment variable that adds folders, as the compiler lists them
+  (`[MAN-10]`).
+* **Libraries something else asks for** (N161, the owner's): a library an object of a named
+  library asks for is named under `unsafe_libs` too; the runtime's own libraries are the build's;
+  shims are compiled without the C compiler's default-library names (`[BLD-FFI-3]`).
+* **Which thread C ends an object on** (N162): an object whose type is not `Send` is ended, and
+  taken back, on the thread that made it, checked in every profile (`[FFI-54]`, `[FFI-27]`, a row
+  of `[COST-3]`).
+* **A C++ call stands for the member C++ chooses** (N163, the owner's): Clang's own overload
+  resolution names it, in place of Ember's ranking, which chose otherwise where a template and a
+  function, or two templates, both fit (`[FFI-57]`).
+* **A library named and used by nothing** (N164, the owner's): refused, since its start-up code
+  would still run (`[BLD-FFI-3]`).
+
+Registry rows: E5035, E9001. No new rule, no new code, none retired. Owner verdicts: 175 applied.
+
+Generated: every rule whose text differs from 0.9.20_Hardened_10.
+
+| Rule | 0.9.20_Hardened_10 → 0.9.20_Hardened_11 |
+|---|---|
+| `[BLD-FFI-3]` | changed |
+| `[CLI-20]` | changed |
+| `[FFI-6]` | changed |
+| `[FFI-27]` | changed |
+| `[FFI-51]` | changed |
+| `[FFI-54]` | changed |
+| `[FFI-57]` | changed |
+| `[MAN-10]` | changed |
+
 ---
 
 # Appendix I — Rule Index
@@ -17319,7 +17415,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-4]` | XVI | No Ember panic crosses into foreign code (`[FFI-25]`). |
 | `[FFI-5]` | XVI | Layouts are verified, not assumed: the importer records `sizeof`, … |
 | `[FFI-5a]` | XVI | The generated shim (`[FFI-29]`) contains a `_Static_assert` for the … |
-| `[FFI-6]` | XVI | `import c "header" with (…) [as name]` parses the header with … |
+| `[FFI-6]` | XVI | *(changed in 0.9.20)* `import c "header" with (…) [as name]` parses … |
 | `[FFI-6a]` | XVI | *(changed in 0.9.10)* An object-like macro is imported when, after … |
 | `[FFI-6b]` | XVI | *(changed in 0.9.10)* A function-like macro is exposed only when an … |
 | `[FFI-7]` | XVI | A header is re-parsed only when its content, its overlay, or a … |
@@ -17354,7 +17450,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-24d]` | Annex C | A header that adds or removes `noexcept` changes the Ember signature; … |
 | `[FFI-25]` | XVI | *(changed in 0.9.15)* A panic in an exported function, or anywhere … |
 | `[FFI-26]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* … |
-| `[FFI-27]` | XVI | The runtime `ember_rt` is a C11 static library with no global … |
+| `[FFI-27]` | XVI | *(changed in 0.9.20)* The runtime `ember_rt` is a C11 static library … |
 | `[FFI-28]` | XVI | *(changed in 0.9.10)* A package built as `kind = "staticlib"` … |
 | `[FFI-29]` | XVI | For every `import c` the importer emits a shim C file, compiled with … |
 | `[FFI-29a]` | XVI | A binding never names a symbol with internal linkage. |

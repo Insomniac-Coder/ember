@@ -181,7 +181,7 @@ reused; retired codes are listed with the reason.
 | `E5031` | C++ parameter cannot be mapped | `[FFI-32]` |
 | `E5032` | opaque C++ type may not be constructed | `[FFI-32]` |
 | `E5034` | unsupported C++ construct | `[FFI-48]` |
-| `E5035` | a use of a C++ name of several members (a call, `T.new(…)`, `super.init(…)`, a function value) that fits no member, fits two that neither beats, or chooses one declared `= delete` | `[FFI-57]` |
+| `E5035` | a use of a C++ name of several members (a call, `T.new(…)`, `super.init(…)`, a function value) that fits no member, is ambiguous in C++, is reached only through a conversion Ember does not make, or chooses one declared `= delete` | `[FFI-57]` |
 | `E5040` | capturing closure passed where a C function pointer is expected | `[FFI-21]` |
 | `E5041` | a `retained` or `once` callback needs a release function (`destroys(f)`) in the overlay | `[FFI-21]` |
 | `E5042` | a function C may call returns a pointer into a parameter C passes as a copy | `[FFI-21a]` |
@@ -222,7 +222,7 @@ reused; retired codes are listed with the reason.
 | `E7017` | `thread_shared` on a name whose value was not created `thread_shared`; `weakref thread_shared x` where `x` was not; an object with one owner (`Node()`) of a class whose methods say its objects are `thread_shared`; `shares` or `shares mut` on a `thread_shared` owner | `[THR-1]`, `[OWN-13]`, `[RC-1]` |
 | `E7018` | a wait for a lock this thread holds, while this thread holds that lock (its `with` block, a guard in a local until its last use, or a guard made as a temporary for its life, `[EXP-4]`): a call through a function value, or a `dyn` or virtual method, that may run a function taking that lock (inside a walk under that lock too), or a join of a thread (a scope's end included) whose function changes what the lock guards; a first access of a `static` whose initialiser takes the lock; a second `read()` of an `RwLock` this thread holds `read()`; a stored function, override or implementation that takes a lock held at a recorded library line | `[THR-19]`, `[MOD-9a]`, `[EXP-4]` |
 | `E8001` | GPU layout does not match the CPU layout | `[GPU-10]` |
-| `E9001` | invalid manifest, including an unknown key; a dependency's manifest section or flag honoured only when the root names it in `[build] native`, and a dependency's C that reads a file outside its own root and the toolchain's headers, or holds assembly, without it; a library a header asks for that `[link] unsafe_libs` does not name | `[MAN-1]`, `[PRF-3]`, `[MAN-10]`, `[BLD-FFI-3]`, `[FFI-51]` |
+| `E9001` | invalid manifest, including an unknown key; a dependency's manifest section or flag honoured only when the root names it in `[build] native`, and a dependency's C that reads a file outside its own root and the toolchain's headers, or holds assembly, without it; a library the link would add, because a header or a named library asks for it, that `[link] unsafe_libs` does not name; a library named there that nothing the package imports or links uses | `[MAN-1]`, `[PRF-3]`, `[MAN-10]`, `[BLD-FFI-3]`, `[FFI-51]` |
 | `E9002` | no C compiler found, or it failed; the help names the host's remedy | `[BLD-FFI-1]` |
 | `E9003` | invalid command line | `[CLI-1]` |
 | `E9010` | `[lints]` names a lint the compiler does not define | `[MAN-3]` |

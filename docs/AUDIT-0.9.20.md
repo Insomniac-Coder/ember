@@ -11,7 +11,14 @@ session, or a workflow the owner allows, starts here and does not redo the readi
 
 ## 0. State, and how to resume
 
-* **Cut and pinned (tenth pass, 2026-11-10, the local session):** `docs/spec-source/Ember_v0.9.20_Hardened_10.md`
+* **Cut and pinned (eleventh pass, 2026-11-11, the local session):** `docs/spec-source/Ember_v0.9.20_Hardened_11.md`
+  (18330 lines, 1,020 rules, SHA-256 `703D97138CFB…`) is the development target; the cut is recorded in
+  `docs/spec-source/history/` (`spec_history.py add`; no frozen folder and no old copy is kept), change log
+  §H.62, the owner's verdict 175 (`JOB.md`), N157 to N164 (`decisions.md` §22), record §16 below. To cut
+  Hardened_12: `CURRENT = ('0.9.20', 12)`, `V0920_H11_PARTS = '0.9.20_Hardened_11'`, add `V0920_H12_PARTS`
+  (the `parts` folder), `H63_HEAD`, `v0920_h12()` and its term in `main()`; then the recipe "A new hardening"
+  of `docs/HANDOFF.md`.
+* **Cut and pinned (tenth pass, 2026-11-10, the local session), superseded:** `docs/spec-source/Ember_v0.9.20_Hardened_10.md`
   (18234 lines, 1,020 rules, SHA-256 `D88B6EF1D687…`) is the development target; sources frozen in
   `tasks/spec-0.9.9/parts-0.9.20-h10/`, change log §H.61, the owner's verdict 174 (`JOB.md`), N156
   (`decisions.md` §21), record §15 below. To cut Hardened_11: `CURRENT = ('0.9.20', 11)`, point
@@ -715,3 +722,23 @@ gate. **For the compiler, from the six cuts of 2026-11-10 (Hardened_5 to _10):**
 `unsafe_libs` and the per-system sections, with `libs` refused; the import checks of `[FFI-51]` (a header that
 does more than declare; a header that declares what a named library defines; a library a header asks for
 that the manifest does not name); the limits of `[MAN-10]` on what a dependency's C reads.
+
+## 16. The eleventh pass: 0.9.20_Hardened_11 (2026-11-11, the local session, attended, the lead solo)
+
+Another agent reviewed Hardened_10 (`tasks/96/redesign/spec-gaps-0.9.15/deep/review-0.9.20-H10.md`) and wrote
+a fix for each of its eight items, each tested (`tasks/96/redesign/spec-gaps-0.9.15/deep/fixes-0.9.20-H10.md`). The owner: "fix everything" (verdict 175).
+Applied as N157 to N164 (`decisions.md` §22): `[MAN-10]`, `[FFI-6]`, `[FFI-51]`, `[BLD-FFI-3]`, `[FFI-54]`,
+`[FFI-27]`, `[FFI-57]`, a row of `[COST-3]`, Annex A; registry rows E5035 and E9001.
+
+* **Where the lead departed from the fixes as written:** Annex A's line is a plain `import c "zlib.h" as zlib`,
+  not the `unsafe import` form, because a test compiles the fixture and the compiler does not build `unsafe
+  import`; and N164 does not refuse a library that a header or a named library asks for, which N161 requires
+  the manifest to name.
+* **Tools:** `tools/spec_check.py` fails when a spelling a cut removed is still in the text before the change
+  logs (first rows: `with (link=`, a `libs =` line); `check_examples.py` counts `unsafe import` as a feature the
+  compiler has not built.
+* **Not checked by the lead:** the tests behind items 1 and 3 to 8 are the other agent's; only item 2 was
+  confirmed again. Nothing here is built by the compiler or the runtime.
+* **Checked at the cut:** the spec's gates, `spec_history.py verify`, `ember_diag`, `ember_parser` and the
+  spec-tied milestone tests, the Annex A fixture test among them, green against the pin. **Not run:** the full
+  suite, the bench, the push gate.

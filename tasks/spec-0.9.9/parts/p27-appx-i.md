@@ -535,7 +535,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-4]` | XVI | No Ember panic crosses into foreign code (`[FFI-25]`). |
 | `[FFI-5]` | XVI | Layouts are verified, not assumed: the importer records `sizeof`, … |
 | `[FFI-5a]` | XVI | The generated shim (`[FFI-29]`) contains a `_Static_assert` for the … |
-| `[FFI-6]` | XVI | `import c "header" with (…) [as name]` parses the header with … |
+| `[FFI-6]` | XVI | *(changed in 0.9.20)* `import c "header" with (…) [as name]` parses … |
 | `[FFI-6a]` | XVI | *(changed in 0.9.10)* An object-like macro is imported when, after … |
 | `[FFI-6b]` | XVI | *(changed in 0.9.10)* A function-like macro is exposed only when an … |
 | `[FFI-7]` | XVI | A header is re-parsed only when its content, its overlay, or a … |
@@ -570,7 +570,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-24d]` | Annex C | A header that adds or removes `noexcept` changes the Ember signature; … |
 | `[FFI-25]` | XVI | *(changed in 0.9.15)* A panic in an exported function, or anywhere … |
 | `[FFI-26]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* … |
-| `[FFI-27]` | XVI | The runtime `ember_rt` is a C11 static library with no global … |
+| `[FFI-27]` | XVI | *(changed in 0.9.20)* The runtime `ember_rt` is a C11 static library … |
 | `[FFI-28]` | XVI | *(changed in 0.9.10)* A package built as `kind = "staticlib"` … |
 | `[FFI-29]` | XVI | For every `import c` the importer emits a shim C file, compiled with … |
 | `[FFI-29a]` | XVI | A binding never names a symbol with internal linkage. |

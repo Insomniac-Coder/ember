@@ -173,6 +173,26 @@ def emit_appendix():
     return 0
 
 
+# Spellings a hardening removed. Today's compiler still accepts them, so no block check catches one left
+# in the text: an example, a fixture or a rule before the change logs (Appendix G on) that holds one
+# fails this gate. (pattern, the cut that removed it, the rule)
+REMOVED_SPELLINGS = [
+    (re.compile(r"with \(link\s*="), "0.9.20_Hardened_8", "[FFI-6]"),
+    (re.compile(r"^libs\s*=", re.M), "0.9.20_Hardened_8", "[BLD-FFI-3]"),
+]
+
+
+def removed_spellings():
+    text = SPEC.read_text(encoding="utf-8")
+    cut = text.find("\n# Appendix G")
+    body = text if cut < 0 else text[:cut]
+    found = []
+    for pattern, version, rule in REMOVED_SPELLINGS:
+        for m in pattern.finditer(body):
+            found.append((body.count("\n", 0, m.start()) + 1, m.group(0), version, rule))
+    return found
+
+
 def gate_state(cases, baselined):
     """`[TST-29]` — a gate whose baseline covers more than a tenth of its cases is `baselined`, not green."""
     return "baselined" if baselined * 10 > cases else "green"
@@ -238,6 +258,12 @@ def main():
             first = next((l for l in output.splitlines() if l.startswith("error")), "")
             print(f"  {ident}: {first}")
         return 0
+
+    stale = removed_spellings()
+    for line, text, version, rule in stale:
+        print(f"  line {line}: `{text}` was removed in {version} ({rule})")
+    if stale:
+        return 1
 
     new = [(i, o) for i, o in failing if i not in known]
     for ident in unexplained_ignores:
