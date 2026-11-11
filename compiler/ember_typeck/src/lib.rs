@@ -2895,6 +2895,13 @@ struct ForeignStatic {
     thunk: bool,
 }
 
+/// `[DET-4]` — names a program reaches for that a std module spells otherwise: the name written, the
+/// name the module has, and why (the help of their `E1010`).
+const STD_RENAMED: &[(&str, &str, &str)] = &[
+    ("std.math.log", "ln", "the natural logarithm is `ln` in `std.math` and `std.math.det` alike"),
+    ("std.math.det.log", "ln", "the natural logarithm is `ln` in `std.math` and `std.math.det` alike"),
+];
+
 struct Checker<'a> {
     types: &'a mut TypeTable,
     common: &'a CommonTypes,
@@ -21002,7 +21009,7 @@ impl<'a> Checker<'a> {
                     self.latebound_callable_parameter_locals.clear();
                     self.callable_value_bindings.clear();
                     self.ret_ty = self.signatures[def.0 as usize].ret;
-        self.fn_decl = self.signatures[def.0 as usize].decl;
+                    self.fn_decl = self.signatures[def.0 as usize].decl;
                     let signature_params: Vec<(Symbol, Ty, Mode, Span)> = self.signatures
                         [def.0 as usize]
                         .params
@@ -21076,7 +21083,7 @@ impl<'a> Checker<'a> {
             self.latebound_callable_parameter_locals.clear();
             self.callable_value_bindings.clear();
             self.ret_ty = self.signatures[def.0 as usize].ret;
-        self.fn_decl = self.signatures[def.0 as usize].decl;
+            self.fn_decl = self.signatures[def.0 as usize].decl;
             let outer_static_safe = self.in_static_safe;
             let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
             self.in_static_safe = no_alias_checks(&item.attrs);
@@ -38197,20 +38204,19 @@ impl<'a> Checker<'a> {
                         .map(|segment| segment.name.as_str())
                         .collect::<Vec<_>>()
                         .join(".");
-                    let mut diagnostic = Diagnostic::error(
+                    let diagnostic = Diagnostic::error(
                         codes::E1010,
                         name.span,
                         format!("cannot find `{qualified}` in this scope"),
                     );
-                    // `[DET-4]` — `det.log` is `E1010`: the natural logarithm is `ln`.
-                    if qualified.as_str() == "std.math.det.log" {
+                    // `[DET-4]` — a name the program reaches for that the module spells otherwise
+                    // (`det.log` is `E1010`): the help names the one it has.
+                    if let Some((_, renamed, why)) = STD_RENAMED.iter().find(|(old, ..)| qualified.as_str() == *old) {
                         let shown = match args.first().map(|arg| &arg.value.kind) {
                             Some(ast::ExprKind::Path { segments }) if args.len() == 1 && segments.len() == 1 => segments[0].name.to_string(),
                             _ => "x".to_string(),
                         };
-                        self.sink.emit(diagnostic.help(format!(
-                            "the natural logarithm is `ln` in `std.math` and `std.math.det` alike: write `{written}.ln({shown})`"
-                        )));
+                        self.sink.emit(diagnostic.help(format!("{why}: write `{written}.{renamed}({shown})`")));
                         return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                     }
                     self.sink.emit(self.add_qualified_name_suggestions(
