@@ -1942,8 +1942,16 @@ enum Keep {
 /// name it.
 fn hand_over_site(body: &Body, types: &TypeTable, local: LocalId, at: Span) -> Option<HandOver> {
     // A function by the name the program wrote (`take`, not `em_4take`).
+    // A method of `Option` or `Result` the checker routes to `std.core` is the method written
+    // (`map`, not `option_map`).
     let short = |symbol: &str| {
-        ember_branding::demangle(symbol)
+        let demangled = ember_branding::demangle(symbol);
+        if let Some(found) = &demangled
+            && let Some(method) = ember_hir::routed_method(&found.components.join("."))
+        {
+            return method.to_string();
+        }
+        demangled
             .and_then(|found| found.components.last().cloned())
             .unwrap_or_else(|| symbol.rsplit(['.', ':']).next().unwrap_or(symbol).to_string())
     };

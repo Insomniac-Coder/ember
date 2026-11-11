@@ -59135,7 +59135,11 @@ impl<'a> Checker<'a> {
                 return;
             }
             let function = self.declaring_function(declared).unwrap_or_else(|| "the function".to_string());
-            let first = self.written_line(declared).map_or_else(String::new, |first| format!(" (its first line says `{first}`)"));
+            // A routed method's first line is the library's, which the program never wrote.
+            let first = match self.declared_in_routed(declared) {
+                true => String::new(),
+                false => self.written_line(declared).map_or_else(String::new, |first| format!(" (its first line says `{first}`)")),
+            };
             self.missing_owns_word(arg, written, a_place, &function, &first);
             return;
         }
@@ -59269,7 +59273,26 @@ impl<'a> Checker<'a> {
     /// `declared`.
     fn declaring_function(&self, declared: Span) -> Option<String> {
         let def = self.signatures.iter().position(|signature| signature.params.iter().any(|(.., at)| *at == declared))?;
+        if let Some(method) = self.routed_method_of(DefId(def as u32)) {
+            return Some(method);
+        }
         self.declared_name(DefId(def as u32))
+    }
+
+    /// `[DIA-2]` — the method the program wrote, for a `std.core` function a method of `Option` or
+    /// `Result` is routed to (`ember_hir::routed_method`): its own first line is the library's,
+    /// not the program's.
+    fn routed_method_of(&self, def: DefId) -> Option<String> {
+        let (qualified, _) = self.fn_ids.iter().find(|(_, found)| **found == def)?;
+        ember_hir::routed_method(qualified.as_str()).map(str::to_string)
+    }
+
+    /// Whether the parameter declared at `declared` is a routed function's.
+    fn declared_in_routed(&self, declared: Span) -> bool {
+        self.signatures
+            .iter()
+            .position(|signature| signature.params.iter().any(|(.., at)| *at == declared))
+            .is_some_and(|def| self.routed_method_of(DefId(def as u32)).is_some())
     }
 
     /// The line `span` is on, as written and trimmed, with `span`'s text replaced by `with`: the line a
