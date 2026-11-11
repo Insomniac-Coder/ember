@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: CLO-3, CLO-6
-#$ error[E3030]: closure would move a captured value out
+#$ error[E3013]: this function gives `s` away, so it can run only once, and `subscribe` may run it more than once
 ## `[CLO-3]` (ODR-189) — only a consumed callable parameter is an owned callable value in its
 ## function: one given to a borrowed parameter is lent, and may be called and lent on but not
 ## stored. A stored `fn(A) -> R` may be called many times, so an argument that moves a capture out
