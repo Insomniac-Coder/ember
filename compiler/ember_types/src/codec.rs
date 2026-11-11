@@ -156,6 +156,8 @@ pub enum KindRecord {
     Dyn { interfaces: Vec<Symbol> },
     Param { index: u32, name: Symbol },
     Assoc { name: Symbol },
+    /// Last, so the records before it keep their numbers.
+    Link { kind: crate::LinkKind, target: u32 },
 }
 
 /// A nominal type (a struct, an enum or a class): found again by its name, made again as its
@@ -367,6 +369,7 @@ fn kind_record(kind: &TyKind, numbering: &mut Numbering) -> Result<KindRecord, U
         TyKind::Tuple(items) => KindRecord::Tuple(items.iter().map(|item| ty(*item)).collect()),
         TyKind::Ref { mutable, inner } => KindRecord::Ref { mutable: *mutable, inner: ty(*inner) },
         TyKind::Ptr { mutable, inner } => KindRecord::Ptr { mutable: *mutable, inner: ty(*inner) },
+        TyKind::Link { kind, target } => KindRecord::Link { kind: *kind, target: ty(*target) },
         TyKind::Array { elem, len } => KindRecord::Array { elem: ty(*elem), len: *len },
         TyKind::ArrayN { elem, len } => KindRecord::ArrayN { elem: ty(*elem), len: len.clone() },
         TyKind::Const(value) => KindRecord::Const(value.clone()),
@@ -449,6 +452,7 @@ impl KindRecord {
             KindRecord::Tuple(items) => TyKind::Tuple(items.iter().map(ty).collect::<Option<_>>()?),
             KindRecord::Ref { mutable, inner } => TyKind::Ref { mutable: *mutable, inner: ty(inner)? },
             KindRecord::Ptr { mutable, inner } => TyKind::Ptr { mutable: *mutable, inner: ty(inner)? },
+            KindRecord::Link { kind, target } => TyKind::Link { kind: *kind, target: ty(target)? },
             KindRecord::Array { elem, len } => TyKind::Array { elem: ty(elem)?, len: *len },
             KindRecord::ArrayN { elem, len } => TyKind::ArrayN { elem: ty(elem)?, len: len.clone() },
             KindRecord::Const(value) => TyKind::Const(value.clone()),

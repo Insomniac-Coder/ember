@@ -130,6 +130,27 @@ pub struct FnParam {
     pub mode: FnParamMode,
 }
 
+/// `[OWN-13]`, `[TYP-45]` — the kind of a `TyKind::Link`.
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum LinkKind {
+    Shares,
+    SharesMut,
+    ThreadShared,
+    Weakref,
+}
+
+impl LinkKind {
+    /// The word as the program writes it.
+    pub fn word(self) -> &'static str {
+        match self {
+            LinkKind::Shares => "shares",
+            LinkKind::SharesMut => "shares mut",
+            LinkKind::ThreadShared => "thread_shared",
+            LinkKind::Weakref => "weakref",
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum TyKind {
     Bool,
@@ -196,6 +217,10 @@ pub enum TyKind {
     Tuple(Vec<Ty>),
     Ref { mutable: bool, inner: Ty },
     Ptr { mutable: bool, inner: Ty },
+    /// `[RC-1]`, `[WK-11]`, `[TYP-45]` — one more owner of `target` (`shares`, `shares mut`,
+    /// `thread_shared`) or a link to it (`weakref`): one pointer, to the object for a class target and
+    /// to a `{header, value}` block for any other (`gap/03` D4). Not `Copy`; it needs drop.
+    Link { kind: LinkKind, target: Ty },
     Array { elem: Ty, len: u64 },
     /// `[TYP-41]` — `[T; n]` whose length names a `const` parameter, in
     /// generic code; a length that is a number is `Array`.
@@ -1626,7 +1651,7 @@ impl TypeTable {
                 align: self.pointer_size,
                 field_offsets: vec![0, self.pointer_size, self.pointer_size * 2],
             },
-            TyKind::Ref { .. } | TyKind::Ptr { .. } | TyKind::Fn { .. } | TyKind::CStr => {
+            TyKind::Ref { .. } | TyKind::Ptr { .. } | TyKind::Fn { .. } | TyKind::CStr | TyKind::Link { .. } => {
                 Layout::scalar(self.pointer_size)
             }
             TyKind::Array { elem, len } => {
@@ -1850,6 +1875,13 @@ impl TypeTable {
         }
         let both = |child, visiting: &mut HashSet<Ty>| self.thread_properties(child, visiting, params);
         let result = match self.kind(ty) {
+            // `[RC-1]`, `[THR-8]` — a one-thread owner or link is neither `Send` nor `ThreadShared`; a
+            // `thread_shared` owner is both when its target is.
+            TyKind::Link { kind: LinkKind::ThreadShared, target } => {
+                let (send, sync) = both(*target, visiting);
+                (send && sync, send && sync)
+            }
+            TyKind::Link { .. } => (false, false),
             // `[TYP-41]` — a number, sent and shared as one is.
             TyKind::Const(_) => (true, true),
             // ODR-102 — an owned callable value hides what it captured, so it stays on the
@@ -2151,6 +2183,8 @@ impl TypeTable {
 
     fn copy_with(&self, ty: Ty, params: bool) -> bool {
         match self.kind(ty) {
+            // `[RC-1]`, `[WK-11]` — an owner or a link is never `Copy`.
+            TyKind::Link { .. } => false,
             TyKind::Const(_) => true,
             // `[CLO-3]` — an owned callable value owns its captured state,
             // so it moves; only `extern fn` is `Copy` (Part VI's list).
@@ -2638,6 +2672,7 @@ impl TypeTable {
     /// inside its declared validity interval.
     pub fn is_builtin_zeroable(&self, ty: Ty) -> bool {
         match self.kind(ty) {
+            TyKind::Link { .. } => false,
             TyKind::Const(_) => true,
             TyKind::Bool
             | TyKind::Char
@@ -2717,6 +2752,8 @@ impl TypeTable {
     /// elaboration (Part XVIII §4.9).
     pub fn needs_drop(&self, ty: Ty) -> bool {
         match self.kind(ty) {
+            // `[RC-1]`, `[WK-11]` — an owner's end subtracts one, and so does a link's.
+            TyKind::Link { .. } => true,
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);
                 // `[WK-2]` — compiler-known weak handles are Copy wrappers
@@ -3011,6 +3048,7 @@ impl TypeTable {
 
     fn render(&self, ty: Ty, user: bool) -> String {
         match self.kind(ty) {
+            TyKind::Link { kind, target } => format!("{} {}", kind.word(), self.render(*target, user)),
             TyKind::CLongDouble => "c_longdouble".into(),
             TyKind::VaList => "VaList".into(),
             TyKind::Bool => "bool".into(),
@@ -3170,6 +3208,8 @@ impl TypeTable {
     /// the type table, so two modules' `Thing` types cannot collide.
     pub fn canonical_name(&self, ty: Ty) -> Result<String, CanonicalTypeError> {
         Ok(match self.kind(ty) {
+            // `[MNG-6]` — the type words as written.
+            TyKind::Link { kind, target } => format!("{} {}", kind.word(), self.canonical_name(*target)?),
             TyKind::CLongDouble => "std.ffi.c_longdouble".into(),
             TyKind::VaList => "std.ffi.VaList".into(),
             TyKind::Bool => "bool".into(),

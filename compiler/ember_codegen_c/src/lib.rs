@@ -5215,6 +5215,14 @@ impl Emitter<'_> {
             TyKind::Class(_) => out.push(format!(
                 "visitor(context, ({header}*)({access}), {field_c}, EMBER_OWNERSHIP_EDGE_STRONG, {replacement}, {statically_predicted});"
             )),
+            // `[RC-1]`, `[WK-11]` — an owner is a strong edge to the object it points at, a link a
+            // weak one.
+            TyKind::Link { kind: ember_types::LinkKind::Weakref, .. } => out.push(format!(
+                "visitor(context, ({header}*)({access}), {field_c}, EMBER_OWNERSHIP_EDGE_WEAK, NULL, true);"
+            )),
+            TyKind::Link { .. } => out.push(format!(
+                "visitor(context, ({header}*)({access}), {field_c}, EMBER_OWNERSHIP_EDGE_STRONG, NULL, {statically_predicted});"
+            )),
             // An erased class-interface field is still a strong handle, but
             // its concrete target is deliberately unknown to static analysis.
             // The debug runtime receives the actual object header without
@@ -12257,6 +12265,10 @@ impl Emitter<'_> {
 
     fn c_type(&self, ty: ember_types::Ty) -> String {
         match self.types.kind(ty) {
+            // `[RC-1]`, `[WK-11]` (`gap/03` D4) — one pointer: a class target's own handle type (the
+            // pointer to its object); any other target's block (M4 slice A builds class targets).
+            TyKind::Link { target, .. } if matches!(self.types.kind(*target), TyKind::Class(_)) => self.c_type(*target),
+            TyKind::Link { .. } => format!("{}*", ember_branding::runtime("obj_header")),
             // `[FFI-8]` — C's own, so it is passed and returned as C passes it.
             TyKind::CLongDouble => "long double".into(),
             // `[FFI-8]` — C's `va_list` as a parameter of it holds it (the runtime header's typedef).
