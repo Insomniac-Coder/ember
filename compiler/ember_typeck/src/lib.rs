@@ -64,6 +64,11 @@ pub struct LoadedModule {
 pub trait ExportIndex {
     /// Every module that exports `name` to the program being checked.
     fn exporters(&self, name: &str) -> &[Exported];
+    /// `[STD-6]` — the name of the package `file` belongs to when that package does not declare
+    /// `layer` of `std`; `None` when it does, or when nothing is known.
+    fn package_omitting(&self, _file: ember_span::FileId, _layer: &str) -> Option<String> {
+        None
+    }
 }
 
 /// One exporter of a name: its module's path (`std.math`) and whether the item is a type.
@@ -15742,6 +15747,24 @@ impl<'a> Checker<'a> {
             && args.len() == 1
             && let Some(&any_error) = self.named_types.get(&Symbol::intern("std.core.AnyError"))
         {
+            // `[STD-6]` — `AnyError` is a name of the alloc layer, which this package may not use.
+            if let Some(package) = self.exports.and_then(|exports| exports.package_omitting(name_span.file, "alloc")) {
+                let shown = self.written_line(args[0].1).unwrap_or_else(|| self.types.display(args[0].0));
+                let error: String = package
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter(|part| !part.is_empty())
+                    .map(|part| part[..1].to_uppercase() + &part[1..])
+                    .collect();
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E1042,
+                        span,
+                        format!("`Result[{shown}]` means `Result[{shown}, AnyError]`, and `AnyError` needs the `alloc` layer, which `{package}` does not declare"),
+                    )
+                    .help(format!("name the error type: `Result[{shown}, {error}Error]`")),
+                );
+                return self.common.error;
+            }
             return self.result_of(args[0].0, any_error);
         }
         if !require(self, arity) {
