@@ -224,14 +224,6 @@ fn run_checks(
         .iter()
         .map(|body| (body.symbol.clone(), elision_of(body, types)))
         .collect();
-    // `[BRW-4]` — a method's first parameter is its `self` receiver, so a
-    // direct call to one of these bodies is a method call. Read once here
-    // because the conflict is reported while checking the *caller's* body.
-    let mut methods: HashSet<String> = bodies
-        .iter()
-        .filter(|body| is_method_body(body))
-        .map(|body| body.symbol.clone())
-        .collect();
     // Borrow checking consumes the installed MIR/interface metadata, not the
     // temporary inference table. That makes the artifact a real producer /
     // consumer boundary rather than a duplicate cache beside the analysis.
@@ -255,21 +247,12 @@ fn run_checks(
     );
     for (symbol, contract) in &expansion.contracts {
         summaries.insert(symbol.clone(), contract.clone());
-        if crate::dyn_kinds::is_joined(symbol) {
-            methods.insert(symbol.clone());
-        }
     }
-    // A form is a method as its body is.
     let form_of: Vec<(usize, String)> = expansion
         .forms
         .iter()
         .flat_map(|(&index, forms)| forms.iter().filter_map(move |form| Some((index, form.body.as_ref()?.symbol.clone()))))
         .collect();
-    for (index, symbol) in &form_of {
-        if methods.contains(&bodies[*index].symbol) {
-            methods.insert(symbol.clone());
-        }
-    }
     let base_contract = |func: &FuncRef| contract_for(func, &summaries, &signatures);
     let capture_contracts = closure_capture_contracts(bodies, &summaries);
     // `[TYP-15]` (D-352) — what each callee stores where its caller's regions
@@ -335,11 +318,6 @@ fn run_checks(
         .filter_map(|body| body.closure_environment)
         .filter(|environment| !scoped_task_environments.contains(environment))
         .collect();
-    let is_method = |func: &FuncRef| match func {
-        FuncRef::Direct { symbol, .. } => methods.contains(symbol.as_str()),
-        FuncRef::Interface { .. } | FuncRef::Virtual { .. } => true,
-        _ => false,
-    };
     // `[LT-1]` (verdict 151) — a body in each of its forms (`dyn_kinds`), each diagnostic once.
     // `[BLD-1]` — a kept body is checked again when what its forms read is not what its record says
     // they read (or its record says nothing): only its errors are new, its warnings are its record's.
@@ -363,7 +341,6 @@ fn run_checks(
                 &call_contract,
                 &capture_paths,
                 &owned_closure_environments,
-                &is_method,
                 dynamic.contains(&body.symbol),
                 &names,
                 form,
@@ -3689,19 +3666,12 @@ fn check_owned_closure_capture_regions(
 }
 
 pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
-    let is_method = |func: &FuncRef| match func {
-        FuncRef::Direct { symbol, .. } => {
-            symbol.as_str() == body.symbol.as_str() && is_method_body(body)
-        }
-        _ => false,
-    };
     check_body(
         body,
         types,
         &|_| conservative_contract(Elision::Everything, false),
         &HashMap::new(),
         &HashSet::new(),
-        &is_method,
         false,
         &HashMap::new(),
         &crate::dyn_kinds::Form::default(),
@@ -3717,7 +3687,6 @@ fn check_body(
     call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
     capture_paths: &HashMap<Point, NarrowedBorrow>,
     owned_closure_environments: &HashSet<StructId>,
-    is_method: &dyn Fn(&FuncRef) -> bool,
     dynamic: bool,
     names: &HashMap<String, String>,
     form: &crate::dyn_kinds::Form,
@@ -3837,7 +3806,6 @@ fn check_body(
                             point,
                             &[(place.clone(), Access::Write)],
                             stmt.span,
-                            is_method,
                             form,
                             sink,
                             &mut reported,
@@ -3882,7 +3850,6 @@ fn check_body(
                         point,
                         &[(Place::local(*local), Access::Write)],
                         stmt.span,
-                        is_method,
                         form,
                         sink,
                         &mut reported,
@@ -3904,7 +3871,6 @@ fn check_body(
                 point,
                 &accesses,
                 stmt.span,
-                is_method,
                 form,
                 sink,
                 &mut reported,
@@ -3928,7 +3894,6 @@ fn check_body(
                     point,
                     args,
                     block.terminator_span,
-                    is_method,
                     form,
                     sink,
                     &mut reported,
@@ -3956,7 +3921,6 @@ fn check_body(
             point,
             &accesses,
             block.terminator_span,
-            is_method,
             form,
             sink,
             &mut reported,
@@ -4644,48 +4608,6 @@ fn call_reservation(
     Some((window, activation?))
 }
 
-/// `[BRW-4]`, shape B8 — the place a method call takes, when the conflict at
-/// `point` is its receiver autoref.
-///
-/// A `mut self` call lowers to `tmp = &mut place` (borrower: a temporary the
-/// lowering created) with the consuming call later whenever other arguments
-/// need evaluating first. The walk below is `reservation_window`'s forward
-/// search answering provenance instead of a window: the temporary's first use
-/// must be a call's receiver, and the callee must be a method body. Anything
-/// else — reassigned, read by another statement, fed to a free function or a
-/// builtin — is not B8, and the conflict keeps its ordinary code.
-fn method_autoref_target(
-    body: &Body,
-    point: Point,
-    is_method: &dyn Fn(&FuncRef) -> bool,
-) -> Option<Place> {
-    let stmt = body.blocks.get(point.block)?.stmts.get(point.index)?;
-    let StmtKind::Assign {
-        place: borrower,
-        rvalue: Rvalue::Ref {
-            place: borrowed,
-            mutable: true,
-        },
-    } = &stmt.kind
-    else {
-        return None;
-    };
-    if !borrower.projection.is_empty() || body.local(borrower.local).kind != LocalKind::Temp {
-        return None;
-    }
-    let borrower = borrower.local;
-    let borrowed = borrowed.clone();
-    let (_, activation) = call_reservation(body, borrower, point)?;
-    let Terminator::Call { func, args, .. } = &body.blocks[activation].terminator else {
-        return None;
-    };
-    let receiver = args.first().and_then(|arg| match arg {
-        Operand::Copy(p) | Operand::Move(p) => Some(p.local),
-        Operand::Const(_) => None,
-    });
-    (receiver == Some(borrower) && is_method(func)).then_some(borrowed)
-}
-
 /// `[BRW-2]` — the loans in scope at a point: created before it, and with the
 /// borrower still live. Liveness *is* the region, for a borrow held in a local.
 fn in_scope(loans: &Loans, point: Point) -> Vec<&Loan> {
@@ -4744,7 +4666,6 @@ fn check_call_activation(
     point: Point,
     args: &[Operand],
     span: Span,
-    is_method: &dyn Fn(&FuncRef) -> bool,
     form: &crate::dyn_kinds::Form,
     sink: &mut Sink,
     reported: &mut HashSet<(usize, usize)>,
@@ -4787,7 +4708,6 @@ fn check_call_activation(
         point,
         &argument_reads,
         span,
-        is_method,
         form,
         sink,
         reported,
@@ -4812,7 +4732,6 @@ fn check_call_activation(
             point,
             &[(place, Access::Borrow { mutable: true })],
             span,
-            is_method,
             form,
             sink,
             reported,
@@ -4830,7 +4749,6 @@ fn check_point(
     point: Point,
     accesses: &[(Place, Access)],
     span: Span,
-    is_method: &dyn Fn(&FuncRef) -> bool,
     form: &crate::dyn_kinds::Form,
     sink: &mut Sink,
     reported: &mut HashSet<(usize, usize)>,
@@ -5084,30 +5002,12 @@ fn check_point(
             let iteration_borrow =
                 matches!(access, Access::Write | Access::Borrow { mutable: true })
                     && loan_held_by_for_iterator(body, regions, loan, point);
-            // `[BRW-4]` — when the conflicting access is a method call's
-            // receiver autoref, disjoint-field access is defeated by the call:
-            // shape B8, which `[DIA-7a]` keys to `E3025` (D-040). A free
-            // function's `mut` argument lowers through the same temporary, so
-            // the consuming call must be to a method body — otherwise a
-            // whole-place `mut` argument misreports as B8 rather than B1.
-            let method_root = if loan_mutable && matches!(access, Access::Borrow { mutable: true })
-            {
-                method_autoref_target(body, point, is_method)
-                    .map(|taken| quoted_place(body, types, &taken))
-            } else {
-                None
-            };
             let (code, message) = if loan.arena_scope {
                 (codes::E3096, format!("{name} is scoped here"))
             } else if iteration_borrow {
                 (
                     codes::E3020,
                     format!("cannot mutate {name} while it is borrowed by this loop"),
-                )
-            } else if let Some(taken) = method_root.as_deref() {
-                (
-                    codes::E3025,
-                    format!("cannot call a method on {taken} while {name} is mutably borrowed"),
                 )
             } else {
                 (code, message)
@@ -5202,39 +5102,32 @@ fn check_point(
                         &borrower,
                         loan.arena_scope,
                         runtime_help,
-                        method_root.as_deref(),
                         indexed_conflict,
                         exact_mutable_conflict,
                     ) {
                         // `[LT-48]` — the line is unsafe for a kind known only while running.
-                        (_, _, Some(help), _, _, _) => help.to_string(),
-                        (_, true, _, _, _, _) => String::from(
+                        (_, _, Some(help), _, _) => help.to_string(),
+                        (_, true, _, _, _) => String::from(
                             "allocate from `scope` instead, or take this allocation before opening the scope",
-                        ),
-                        // `[DIA-7a]` shape B8's help: the call takes all of
-                        // `self`, so the fix is structural, not a shorter borrow.
-                        (_, _, _, Some(_), _, _) => String::from(
-                            "inline the field access, take the two fields as separate \
-                             parameters, or split the method",
                         ),
                         // ODR-068 — two elements chosen at run time are
                         // `get_pair_mut`'s; a split is the structural fix.
-                        (_, _, _, _, true, _) => format!(
+                        (_, _, _, true, _) => format!(
                             "use `{owner}.get_pair_mut(i, j)` for two elements at once (`None` when \
                              they are the same), or `{owner}.as_mut_span().split_at(k)` for two \
                              non-overlapping mutable spans; `swap`, `chunks_mut` and `iter_mut` cover \
                              other patterns"
                         ),
-                        (_, _, _, _, _, true) => String::from(
+                        (_, _, _, _, true) => String::from(
                             "use one mutable access rather than borrowing the same place twice; \
                              split the owner's mutable view with `split_at` when the intended operands are \
                              disjoint parts of it"
                         ),
-                        (Some(name), _, _, _, _, _) => format!(
+                        (Some(name), _, _, _, _) => format!(
                             "end the borrow before this: `{name}` is what keeps it alive, so \
                              shorten its last use or put it in a block of its own"
                         ),
-                        (None, _, _, _, _, _) => format!(
+                        (None, _, _, _, _) => format!(
                             "bind the borrow of {name} to a local and finish with it before \
                              this line, or copy the value out first",
                             name = name
@@ -5242,8 +5135,6 @@ fn check_point(
                     })
                     .note(if loan.arena_scope {
                         "a ScopedArena holds its parent's mutable borrow for the scope's whole region (ARN-6)"
-                    } else if method_root.is_some() {
-                        "a call borrows the fields of `self` its method uses (BRW-10); this method uses all of `self`, so the other fields do not stay disjoint across the call (BRW-4)"
                     } else if indexed_conflict {
                         "computed indices may overlap; a structural split proves non-overlap (BRW-5)"
                     } else {
