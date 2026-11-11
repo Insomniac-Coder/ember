@@ -45762,9 +45762,22 @@ impl<'a> Checker<'a> {
                 "bind the new value to a new local (`new_{name} = …`) and use that from here on; declare the parameter `ref mut {name}: {shown}` only if the caller is to see the new value, as a single owner passing it `ref mut`"
             )
         } else {
-            format!(
-                "restructure to a single owner and declare this parameter `ref mut {name}: {shown}`"
-            )
+            // `[DIA-10]`, shape B4 — the line to write: the parameter with `ref mut`, and the same
+            // word before the argument at each call (`tick(ref mut clock)`).
+            let function = self
+                .sources
+                .get(&self.fn_decl.file)
+                .and_then(|source| source.text.get(self.fn_decl.start as usize..self.fn_decl.end as usize))
+                .filter(|text| !text.is_empty())
+                .map(str::to_string);
+            match function {
+                Some(function) => format!(
+                    "write `ref mut {name}: {shown}` for the parameter, and `ref mut` before the argument at each call (`{function}(ref mut …)`)"
+                ),
+                None => format!(
+                    "write `ref mut {name}: {shown}` for the parameter, and `ref mut` before the argument at each call"
+                ),
+            }
         };
         let mut diagnostic = Diagnostic::error(
             codes::E3023,

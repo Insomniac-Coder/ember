@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: CELL-10, FN-1, BRW-1, DIA-7, DIA-9, DIA-10, DIA-16
-#$ help: restructure to a single owner
+#$ help: for the parameter, and `ref mut` before the argument at each call
 #$ help: Cell[T]
 #$ help: RefCell[T]
 # A default-mode value parameter is a shared borrow. Writing through it would
