@@ -4750,7 +4750,7 @@ fn cycle_explanation_covers_standalone_generic_dynamic_and_stale_roots() {
     let dynamic = directory.join(ember_branding::source_file("dynamic"));
     std::fs::write(
         &dynamic,
-        "interface Link:\n    fn ping()\n\nclass Node:\n    next: Box[dyn Link]\n\nfn main():\n    return\n",
+        "interface Link:\n    fn ping()\n\nclass Node:\n    next: owns dyn Link\n\nfn main():\n    return\n",
     )
     .expect("dynamic-cycle source is writable");
     let dynamic_arg = dynamic.to_string_lossy().into_owned();
@@ -5482,7 +5482,7 @@ fn inspect_alloc_reports_the_mechanism_each_declaration_uses() {
         ("local", "main", "node", "class"),
         ("local", "main", "xs", "Array, Map, Set, String"),
         ("local", "main", "ages", "Array, Map, Set, String"),
-        ("local", "main", "boxed", "Box[T]"),
+        ("local", "main", "boxed", "owns T"),
         ("local", "main", "shared", "Shared[T]"),
         ("local", "main", "many", "callable"),
     ] {
@@ -5528,7 +5528,7 @@ fn inspect_alloc_lists_every_allocating_form() {
         ("main", 35, "a new `Array`"),
         ("main", 36, "std.collections.Map.index_set`"),
         ("main", 37, "std.collections.Set.add`"),
-        ("main", 38, "`Box(…)`"),
+        ("main", 38, "an `owns` block"),
         ("main", 39, "`Shared(…)`"),
         ("main", 40, "`Array.push`"),
         ("main", 41, "std.collections.Map.insert`"),

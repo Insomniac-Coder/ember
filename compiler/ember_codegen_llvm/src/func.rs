@@ -2723,7 +2723,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
             FuncRef::Builtin { which, arg_ty } => self.builtin(which, *arg_ty, args, dest, span),
             FuncRef::Virtual { .. } => unsupported("a virtual call ([DSP-2])"),
             FuncRef::Interface { .. } => unsupported("a call through an interface ([TYP-22])"),
-            FuncRef::DynBoxNew { .. } => unsupported("a `Box[dyn]` ([TYP-22])"),
+            FuncRef::DynBoxNew { .. } => unsupported("an `owns dyn` value ([TYP-22])"),
             FuncRef::Indirect { .. } => unsupported("a call through a function value ([CLO-3])"),
         }
     }

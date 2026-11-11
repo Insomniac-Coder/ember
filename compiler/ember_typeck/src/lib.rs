@@ -6626,7 +6626,7 @@ impl<'a> Checker<'a> {
             Diagnostic::error(codes::E3015, span, message)
                 .primary_label("its drop could be skipped or put off")
                 .help("keep it in a local and let its scope end it, or bind it with `with`")
-                .note("a `@must_drop` value's drop is a safety guarantee: it may not be forgotten, stored in a class field, `Shared`, `SyncShared`, `Box` or a collection, captured by an `owned fn`, or returned from the function that made it (THR-6)"),
+                .note("a `@must_drop` value's drop is a safety guarantee: it may not be forgotten, stored in a class field, `Shared`, `SyncShared`, an `owns` block or a collection, captured by an `owned fn`, or returned from the function that made it (THR-6)"),
         );
     }
 
@@ -7673,7 +7673,7 @@ impl<'a> Checker<'a> {
                         Diagnostic::error(codes::E2261, span, format!("this returns `{found}`, but an earlier `return` gave `{wanted_shown}`"))
                             .primary_label(format!("this is `{found}`"))
                             .secondary(first, format!("this is `{wanted_shown}`, the type the `some` stands for"))
-                            .help("a `some I` function returns one concrete type; to return different ones, return a `Box[dyn I]`")
+                            .help("a `some I` function returns one concrete type; to return different ones, return an `owns dyn I`")
                             .note("`some I` is the one type the body chooses, the same at every `return` [TYP-32]"),
                     );
                     return Expr { ty: expected, kind: ExprKind::Error, span };
@@ -17328,8 +17328,8 @@ impl<'a> Checker<'a> {
             if !pinnable {
                 let shown = self.types.display(value.ty);
                 self.sink.emit(
-                    Diagnostic::error(codes::E2020, span, format!("`Retained` pins a class handle or a `Box`, not a `{shown}`"))
-                        .note("foreign code keeps Ember memory only through a class object or a `Box`'s value [FFI-23]"),
+                    Diagnostic::error(codes::E2020, span, format!("`Retained` pins a class object or an `owns` value, not a `{shown}`"))
+                        .note("foreign code keeps Ember memory only through a class object or an `owns` value [FFI-23]"),
                 );
                 return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
             }
@@ -19407,8 +19407,8 @@ impl<'a> Checker<'a> {
         {
             let shown = self.types.display(*held);
             self.sink.emit(
-                Diagnostic::error(codes::E2020, span, format!("`Retained` pins a class handle or a `Box`, not a `{shown}`"))
-                    .note("foreign code keeps Ember memory only through a class object or a `Box`'s value [FFI-23]"),
+                Diagnostic::error(codes::E2020, span, format!("`Retained` pins a class object or an `owns` value, not a `{shown}`"))
+                    .note("foreign code keeps Ember memory only through a class object or an `owns` value [FFI-23]"),
             );
             return self.common.error;
         }
@@ -39771,6 +39771,18 @@ impl<'a> Checker<'a> {
             // the value for an `owns T` place: `Box(v)` is not Ember. A new name given one is
             // declared `owns T`, `T` the value's type.
             let value = self.written_line(args[0].value.span);
+            // `[CLI-20]` — `Box[dyn fn(A) -> R]` is the owned callable type `fn(A) -> R`, so a
+            // `Box(f)` given where one is wanted is `f` itself.
+            if let Some(callable) = expected.filter(|wanted| matches!(self.types.kind(*wanted), TyKind::Fn { .. })) {
+                let mut diagnostic = Diagnostic::error(codes::E1010, span, "`Box` is not Ember");
+                if let Some(value) = &value {
+                    diagnostic = diagnostic
+                        .help(format!("a callable value is owned already: `{value}`"))
+                        .migrate("`Box(f)` of a callable is `f`", span, value);
+                }
+                self.sink.emit(diagnostic);
+                return self.check_expr(&args[0].value, callable);
+            }
             let fresh = self.bound_name(span).filter(|(name, _)| self.lookup(Symbol::intern(name)).is_none());
             let made = self.owned_block(&args[0].value, hint, span);
             let held = self.box_inner(made.ty).map(|held| self.types.display(held));

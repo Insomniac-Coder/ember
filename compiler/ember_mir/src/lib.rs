@@ -2029,7 +2029,7 @@ fn dump_terminator(terminator: &Terminator, types: &ember_types::TypeTable) -> S
                 }
                 FuncRef::DynBoxNew { interfaces, .. } => {
                     let bounds = interfaces.iter().map(ToString::to_string).collect::<Vec<_>>().join(" + ");
-                    ("", format!("Box[dyn {bounds}]"))
+                    ("", format!("owns dyn {bounds}"))
                 }
                 FuncRef::Indirect { operand, latebound, .. } => (
                     if *latebound { "@latebound " } else { "" },

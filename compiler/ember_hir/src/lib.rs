@@ -3053,7 +3053,7 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
         }
         ExprKind::DynBoxNew { interfaces, value, .. } => {
             let bounds = interfaces.iter().map(ToString::to_string).collect::<Vec<_>>().join(" + ");
-            format!("Box[dyn {bounds}]({})", dump_expr(value, function, types))
+            format!("owns dyn {bounds}({})", dump_expr(value, function, types))
         }
         ExprKind::EraseRange(inner) => {
             format!("(erase {})", dump_expr(inner, function, types))

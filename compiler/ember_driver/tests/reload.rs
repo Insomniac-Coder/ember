@@ -252,8 +252,8 @@ fn a_closure_holding_an_instance_follows_it_when_it_moves() {
         .replace("@export(\"game_frame\")", "interface Speak:\n    fn speak() -> int\n\n\
                   class Mote implements Speak:\n    n: int = 0\n    keep: Option[Holder] = None\n\n    \
                   fn speak() -> int:\n        return this.n\n\n\
-                  class Holder:\n    s: Box[dyn Speak]\n\n\
-                  fn tie():\n    m = Mote()\n    keeper = m\n    boxed: Box[dyn Speak] = Box(m)\n    keeper.keep = Some(Holder(boxed))\n\n@export(\"game_frame\")")
+                  class Holder:\n    s: owns dyn Speak\n\n\
+                  fn tie():\n    m = Mote()\n    keeper = m\n    boxed: owns dyn Speak = owns m\n    keeper.keep = Some(Holder(boxed))\n\n@export(\"game_frame\")")
         .replace("            for k in 0..3:\n", "            tie()\n            for k in 0..3:\n");
     let run = host_run("reload-dyn-cannot-move", &boxed, &[&grow(&boxed)], 2);
     assert!(run.stdout.contains("an instance of `Mote` must move (its new size does not fit), but 1 of its 1 references are held where the runtime cannot follow them"), "exit {} {}{}", run.exit, run.stdout, run.stderr);
@@ -1096,8 +1096,8 @@ fn a_foreign_failure_in_migrate_from_is_foreign() {
 fn value_data_a_reload_cannot_reach_is_refused() {
     let v1 = "import std.hot\n\ninterface Speak:\n    fn speak() -> int\n\nstruct Point:\n    x: int = 7\n\n\
               extend Point implements Speak:\n    fn speak() -> int:\n        return this.x\n\n\
-              fn tick(b: Box[dyn Speak]) -> int:\n    return b.speak()\n\n\
-              fn main():\n    b: Box[dyn Speak] = Box(Point())\n    for i in 0..2:\n        println(tick(b))\n        hot.checkpoint()\n";
+              fn tick(b: owns dyn Speak) -> int:\n    return b.speak()\n\n\
+              fn main():\n    b: owns dyn Speak = owns Point()\n    for i in 0..2:\n        println(tick(b))\n        hot.checkpoint()\n";
     let v2 = v1.replace("    x: int = 7\n", "    pad: int = 1000\n    x: int = 7\n");
     let (run, reloads) = reload_run("reload-unreached-dyn", RELOAD_ALL, v1, &[&v2]);
     assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
@@ -1108,8 +1108,8 @@ fn value_data_a_reload_cannot_reach_is_refused() {
     // discriminant, read as another variant by the new code.
     let modes = "import std.hot\n\ninterface Speak:\n    fn speak() -> int\n\nenum Mode:\n    Slow\n    Fast\n\n\
                  extend Mode implements Speak:\n    fn speak() -> int:\n        match this:\n            Mode.Slow:\n                return 1\n            Mode.Fast:\n                return 10\n\n\
-                 fn tick(b: Box[dyn Speak]) -> int:\n    return b.speak()\n\n\
-                 fn main():\n    b: Box[dyn Speak] = Box(Mode.Fast)\n    for i in 0..2:\n        println(tick(b))\n        hot.checkpoint()\n";
+                 fn tick(b: owns dyn Speak) -> int:\n    return b.speak()\n\n\
+                 fn main():\n    b: owns dyn Speak = owns Mode.Fast\n    for i in 0..2:\n        println(tick(b))\n        hot.checkpoint()\n";
     let reordered = modes.replace("enum Mode:\n    Slow\n    Fast\n", "enum Mode:\n    Fast\n    Slow\n");
     let (run, reloads) = reload_run("reload-unreached-enum", RELOAD_ALL, modes, &[&reordered]);
     assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
@@ -1475,8 +1475,8 @@ fn an_instance_moves_only_where_its_references_are_found() {
     assert_eq!(run.stdout, "3\napplied, 3 migrated\n6\n9\n", "{}", run.stderr);
 
     let boxed = PARTICLES
-        .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Array[(int, Box[Particle])]] = Mutex([])")
-        .replace("                world.push(owns Particle())", "                world.push(owns (k, Box(Particle())))")
+        .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Array[(int, owns Particle)]] = Mutex([])")
+        .replace("                world.push(owns Particle())", "                world.push(owns (k, owns Particle()))")
         .replace("        for p in world:\n            p.x.fetch_add(p.step)\n            total += p.x.load()",
                  "        for pair in world:\n            pair.1.x.fetch_add(pair.1.step)\n            total += pair.1.x.load()");
     let run = host_run("reload-box-moves", &boxed, &[&grow(&boxed)], 3);

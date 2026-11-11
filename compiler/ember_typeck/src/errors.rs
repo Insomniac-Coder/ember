@@ -258,7 +258,7 @@ impl<'a> Checker<'a> {
         let boxed = self.synth_committed(&args[0].value);
         if !self.box_inner(boxed.ty).is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. })) {
             let shown = self.types.display(boxed.ty);
-            self.error(codes::E2020, args[0].value.span, format!("`dyn_payload` reads a `Box[dyn …]`, not `{shown}`"));
+            self.error(codes::E2020, args[0].value.span, format!("`dyn_payload` reads an `owns dyn …`, not `{shown}`"));
             return Some(error);
         }
         let borrowed = self.types.intern(TyKind::Ref { mutable: false, inner: boxed.ty });

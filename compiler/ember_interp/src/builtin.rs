@@ -1205,7 +1205,7 @@ impl Interp<'_, '_> {
                     return Ok(false);
                 }
                 let Some((memory::Region::Table, index)) = memory::decode(table_a) else {
-                    return fault("a `Box[dyn I]` with no table");
+                    return fault("an `owns dyn I` with no table");
                 };
                 let concrete = self.calls.tables[index].concrete;
                 let Some(symbol) = self.types.dyn_eq_symbol(concrete).map(str::to_string) else {

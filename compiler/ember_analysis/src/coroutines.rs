@@ -656,7 +656,7 @@ pub fn check_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) -> usize {
             if next == *frame {
                 sink.emit(
                     Diagnostic::error(codes::E2200, *span, "this generator holds its own frame across a `yield`, which gives the frame no size")
-                        .note("a frame's size is fixed when it is compiled [CORO-5]; a recursive generator holds the inner one in a `Box[dyn Iterator[Item = …]]`"),
+                        .note("a frame's size is fixed when it is compiled [CORO-5]; a recursive generator holds the inner one in an `owns dyn Iterator[Item = …]`"),
                 );
                 errors += 1;
                 break;
