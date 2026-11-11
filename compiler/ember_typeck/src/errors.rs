@@ -639,14 +639,7 @@ impl<'a> Checker<'a> {
     /// while its methods were still to come; now they are known.
     pub(crate) fn check_self_dyn(&mut self, name: Symbol, span: Span) {
         if let Some(reason) = self.dyn_incompatibility(name) {
-            self.sink.emit(
-                Diagnostic::error(
-                    codes::E2050,
-                    span,
-                    format!("interface `{name}` names itself in its methods, but is not `dyn`-compatible"),
-                )
-                .primary_label(reason),
-            );
+            self.sink.emit(Diagnostic::error(codes::E2050, span, self.dyn_refusal(name, &reason)));
         }
     }
 }

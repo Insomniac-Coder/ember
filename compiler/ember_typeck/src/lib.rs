@@ -13432,14 +13432,22 @@ impl<'a> Checker<'a> {
     /// diagnostic names the offending interface member instead of allowing an
     /// unsized type to drift into later lowering with an invalid vtable shape.
     fn dyn_incompatibility(&self, interface: Symbol) -> Option<String> {
-        self.dyn_incompatibility_inner(interface, &mut HashSet::new())
+        self.dyn_incompatibility_inner(interface, &mut HashSet::new(), false)
+    }
+
+    /// `[TYP-22]` — E2050's one message: "`Same` cannot be used as `dyn Same`: <reason>".
+    fn dyn_refusal(&self, interface: Symbol, reason: &str) -> String {
+        let shown = self.interface_shown(interface);
+        format!("`{shown}` cannot be used as `dyn {shown}`: {reason}")
     }
 
     fn dyn_incompatibility_inner(
         &self,
         interface: Symbol,
         visiting: &mut HashSet<Symbol>,
+        required: bool,
     ) -> Option<String> {
+        let shown = self.interface_shown(interface);
         // Malformed cyclic supertraits are diagnosed by the interface
         // collection/validation pass. Do not turn such a declaration into an
         // infinite recursion while checking a later `dyn` bound.
@@ -13449,32 +13457,37 @@ impl<'a> Checker<'a> {
         let def = self.interfaces.get(&interface)?;
         for (method, declaration, receiver, _) in &def.methods {
             if receiver.is_none() {
-                return Some(format!("method `{method}` has no receiver"));
+                return Some(format!("`{method}` is a `static fn`, and a `dyn` value has no object to call it on"));
             }
             // `[CLO-6a]` — an owned receiver consumes the concrete value and
             // therefore has no v1 `dyn` vtable ABI. Reject this when `dyn I`
             // is formed rather than allowing a later call to invent a move
             // from the borrowed fat-pointer carrier.
             if *receiver == Some(Mode::Owned) {
-                return Some(format!("method `{method}` has an owned receiver"));
+                return Some(format!("`{method}` takes its object with `owns`, and a `dyn` value cannot hand its object over"));
             }
             let signature = &self.signatures[declaration.0 as usize];
             if !signature.generics.is_empty() {
-                return Some(format!("method `{method}` is generic"));
+                // `[TYP-22]` — "`make` returns its `V`, and a `dyn` value has one entry per method".
+                if let TyKind::Param { name, .. } = self.types.kind(signature.ret)
+                    && signature.generics.iter().any(|param| param.name == *name)
+                {
+                    return Some(format!("`{method}` returns its `{name}`, and a `dyn` value has one entry per method; take the value in instead of returning it, as a `ref mut` parameter"));
+                }
+                return Some(format!("`{method}` is generic, and a `dyn` value has one entry per method; a type parameter is allowed only as the type of a parameter that views its value"));
             }
             if matches!(self.types.kind(signature.ret), TyKind::Param { index, .. } if *index == ember_types::SELF_PARAM)
                 && !def.dyn_sized_defaults.contains(declaration)
             {
-                return Some(format!("method `{method}` returns `Self` by value"));
+                return Some(format!("`{method}` returns `Self` by value, and through a `dyn {shown}` the kind of the result is unknown; mark `{method}` with `where Self: needs Sized` and call it on the concrete types"));
             }
             // `[TYP-22]` — `Self` as a parameter's type, or inside one: through a `dyn I` value the
             // kind of any other value is unknown.
-            if !def.dyn_sized_defaults.contains(declaration) {
+            // A method of a required interface that names `Self` elsewhere is refused at the call.
+            if !required && !def.dyn_sized_defaults.contains(declaration) {
                 // The receiver is not among `params` here.
                 for (name, ty, _, _) in &signature.params {
                     if self.names_self(*ty, &mut HashSet::new()) {
-                        let shown = interface.as_str();
-                        let shown = shown.rsplit('.').next().unwrap_or(shown);
                         return Some(format!(
                             "`{method}` takes `{name}: Self`, and through a `dyn {shown}` the kind of `{name}` is unknown; take `{name}: dyn {shown}` and test its kind in the body, `if {name} is Tag as o:`, or mark `{method}` with `where Self: needs Sized` and call it on the concrete types"
                         ));
@@ -13488,7 +13501,7 @@ impl<'a> Checker<'a> {
             if parent.is("std.core.Clone") || parent.is("std.core.Eq") {
                 continue;
             }
-            if let Some(reason) = self.dyn_incompatibility_inner(*parent, visiting) {
+            if let Some(reason) = self.dyn_incompatibility_inner(*parent, visiting, true) {
                 return Some(format!("supertrait `{parent}` is not `dyn`-compatible: {reason}"));
             }
         }
@@ -13858,14 +13871,7 @@ impl<'a> Checker<'a> {
             return self.common.error;
         }
         if let Some(reason) = self.dyn_incompatibility(interface) {
-            self.sink.emit(
-                Diagnostic::error(
-                    codes::E2050,
-                    span,
-                    format!("interface `{interface}` is not usable as a class-handle interface"),
-                )
-                .primary_label(reason),
-            );
+            self.sink.emit(Diagnostic::error(codes::E2050, span, self.dyn_refusal(interface, &reason)));
             return self.common.error;
         }
         self.types.intern(TyKind::ClassInterface(interface))
@@ -15277,14 +15283,7 @@ impl<'a> Checker<'a> {
                 }
                 for interface in &interfaces {
                     if let Some(reason) = self.dyn_incompatibility(*interface) {
-                        self.sink.emit(
-                            Diagnostic::error(
-                                codes::E2050,
-                                ty.span,
-                                format!("interface `{interface}` is not `dyn`-compatible"),
-                            )
-                            .primary_label(reason),
-                        );
+                        self.sink.emit(Diagnostic::error(codes::E2050, ty.span, self.dyn_refusal(*interface, &reason)));
                         return self.common.error;
                     }
                 }
@@ -47454,6 +47453,20 @@ impl<'a> Checker<'a> {
                     codes::E2020,
                     span,
                     "an owned interface receiver cannot be called through `ref dyn` yet",
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            // `[TYP-22]` — a method of a required interface that names `Self` as a parameter's type
+            // is reached through `dyn I` only by the entries the rule gives (`clone`, `eq`).
+            if let Some((param, _, _, _)) = self.signatures[def.0 as usize].params.iter().find(|(_, ty, _, _)| self.names_self(*ty, &mut HashSet::new())) {
+                let shown = self.interface_shown(interface);
+                self.error(
+                    codes::E2050,
+                    name.span,
+                    format!(
+                        "`{}` takes `{param}: Self`, and through a `dyn {shown}` the kind of `{param}` is unknown; test the kinds first, `if a is Circle as x:` and inside it `if b is Circle as y:`, and call `x.{}(y)`",
+                        name.name, name.name
+                    ),
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
