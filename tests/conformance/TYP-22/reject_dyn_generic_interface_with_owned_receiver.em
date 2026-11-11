@@ -6,5 +6,5 @@ interface Consume[T]:
     fn consume() owns this:
         pass
 
-fn take(x: ref dyn Consume[i32]):    #$ error[E2050]: method `consume` has an owned receiver
+fn take(x: ref dyn Consume[i32]):    #$ error[E2050]: `Consume[i32]` cannot be used as `dyn Consume[i32]`: `consume` takes its object with `owns`, and a `dyn` value cannot hand its object over
     pass

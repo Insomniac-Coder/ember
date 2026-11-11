@@ -1446,6 +1446,8 @@ impl ParallelWalk {
                     self.expr(checker, base);
                 }
             }
+            // `[PAR-2]` — a `?` in the body is refused where it is checked (`synth_try`), which
+            // knows the type of its operand; a callee read through (`[PAR-2b]`) returns from itself.
             ast::ExprKind::Unary { operand, .. } | ast::ExprKind::Paren(operand) | ast::ExprKind::Try(operand) | ast::ExprKind::Owned(operand) => self.expr(checker, operand),
             ast::ExprKind::Cast { expr: inner, .. } | ast::ExprKind::Downcast { expr: inner, .. } => self.expr(checker, inner),
             ast::ExprKind::Binary { lhs, rhs, .. } | ast::ExprKind::Logical { lhs, rhs, .. } => {
@@ -3935,6 +3937,11 @@ struct Checker<'a> {
     /// in both its signature and body.
     static_safe_unsafe_cell_reported: bool,
     ret_ty: Ty,
+    /// The name of the function whose body is being checked, where it is declared (`[PAR-2]`'s `?` message).
+    fn_decl: Span,
+    /// `[PAR-2]` — the lambda depth of the `@parallel` loop's chunk closure being checked, where a
+    /// `?` is `E7010`.
+    parallel_try: Option<usize>,
     /// The default `[TYP-8]` policy when a module has no overflow attribute.
     default_overflow: OverflowPolicy,
     /// Each source module's lexical default, selected before checking bodies.
@@ -4331,6 +4338,8 @@ impl<'a> Checker<'a> {
             in_generic_template: false,
             static_safe_unsafe_cell_reported: false,
             ret_ty,
+            fn_decl: Span::DUMMY,
+            parallel_try: None,
             default_overflow: OverflowPolicy::default(),
             module_overflow: Vec::new(),
             module_deterministic: Vec::new(),
@@ -13418,14 +13427,22 @@ impl<'a> Checker<'a> {
     /// diagnostic names the offending interface member instead of allowing an
     /// unsized type to drift into later lowering with an invalid vtable shape.
     fn dyn_incompatibility(&self, interface: Symbol) -> Option<String> {
-        self.dyn_incompatibility_inner(interface, &mut HashSet::new())
+        self.dyn_incompatibility_inner(interface, &mut HashSet::new(), false)
+    }
+
+    /// `[TYP-22]` — E2050's one message: "`Same` cannot be used as `dyn Same`: <reason>".
+    fn dyn_refusal(&self, interface: Symbol, reason: &str) -> String {
+        let shown = self.interface_shown(interface);
+        format!("`{shown}` cannot be used as `dyn {shown}`: {reason}")
     }
 
     fn dyn_incompatibility_inner(
         &self,
         interface: Symbol,
         visiting: &mut HashSet<Symbol>,
+        required: bool,
     ) -> Option<String> {
+        let shown = self.interface_shown(interface);
         // Malformed cyclic supertraits are diagnosed by the interface
         // collection/validation pass. Do not turn such a declaration into an
         // infinite recursion while checking a later `dyn` bound.
@@ -13435,23 +13452,42 @@ impl<'a> Checker<'a> {
         let def = self.interfaces.get(&interface)?;
         for (method, declaration, receiver, _) in &def.methods {
             if receiver.is_none() {
-                return Some(format!("method `{method}` has no receiver"));
+                return Some(format!("`{method}` is a `static fn`, and a `dyn` value has no object to call it on"));
             }
             // `[CLO-6a]` — an owned receiver consumes the concrete value and
             // therefore has no v1 `dyn` vtable ABI. Reject this when `dyn I`
             // is formed rather than allowing a later call to invent a move
             // from the borrowed fat-pointer carrier.
             if *receiver == Some(Mode::Owned) {
-                return Some(format!("method `{method}` has an owned receiver"));
+                return Some(format!("`{method}` takes its object with `owns`, and a `dyn` value cannot hand its object over"));
             }
             let signature = &self.signatures[declaration.0 as usize];
             if !signature.generics.is_empty() {
-                return Some(format!("method `{method}` is generic"));
+                // `[TYP-22]` — "`make` returns its `V`, and a `dyn` value has one entry per method".
+                if let TyKind::Param { name, .. } = self.types.kind(signature.ret)
+                    && signature.generics.iter().any(|param| param.name == *name)
+                {
+                    return Some(format!("`{method}` returns its `{name}`, and a `dyn` value has one entry per method; take the value in instead of returning it, as a `ref mut` parameter"));
+                }
+                return Some(format!("`{method}` is generic, and a `dyn` value has one entry per method; a type parameter is allowed only as the type of a parameter that views its value"));
             }
             if matches!(self.types.kind(signature.ret), TyKind::Param { index, .. } if *index == ember_types::SELF_PARAM)
                 && !def.dyn_sized_defaults.contains(declaration)
             {
-                return Some(format!("method `{method}` returns `Self` by value"));
+                return Some(format!("`{method}` returns `Self` by value, and through a `dyn {shown}` the kind of the result is unknown; mark `{method}` with `where Self: needs Sized` and call it on the concrete types"));
+            }
+            // `[TYP-22]` — `Self` as a parameter's type, or inside one: through a `dyn I` value the
+            // kind of any other value is unknown.
+            // A method of a required interface that names `Self` elsewhere is refused at the call.
+            if !required && !def.dyn_sized_defaults.contains(declaration) {
+                // The receiver is not among `params` here.
+                for (name, ty, _, _) in &signature.params {
+                    if self.names_self(*ty, &mut HashSet::new()) {
+                        return Some(format!(
+                            "`{method}` takes `{name}: Self`, and through a `dyn {shown}` the kind of `{name}` is unknown; take `{name}: dyn {shown}` and test its kind in the body, `if {name} is Tag as o:`, or mark `{method}` with `where Self: needs Sized` and call it on the concrete types"
+                        ));
+                    }
+                }
             }
         }
         for parent in &def.supertraits {
@@ -13460,11 +13496,26 @@ impl<'a> Checker<'a> {
             if parent.is("std.core.Clone") || parent.is("std.core.Eq") {
                 continue;
             }
-            if let Some(reason) = self.dyn_incompatibility_inner(*parent, visiting) {
+            if let Some(reason) = self.dyn_incompatibility_inner(*parent, visiting, true) {
                 return Some(format!("supertrait `{parent}` is not `dyn`-compatible: {reason}"));
             }
         }
         None
+    }
+
+    /// Whether `ty` is `Self` of an interface, or has it inside (`Array[Self]`, `ref mut Self`).
+    fn names_self(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Param { index, .. } => *index == ember_types::SELF_PARAM,
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.names_self(*inner, seen),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => self.names_self(*elem, seen),
+            TyKind::Tuple(items) => items.iter().any(|&t| self.names_self(t, seen)),
+            TyKind::Fn { params, ret, .. } => params.iter().any(|p| self.names_self(p.ty, seen)) || self.names_self(*ret, seen),
+            TyKind::Struct(id) => seen.insert(ty) && self.types.struct_def(*id).origin.as_ref().is_some_and(|(_, args)| args.iter().any(|&a| self.names_self(a, seen))),
+            TyKind::Class(id) => seen.insert(ty) && self.types.class_def(*id).origin.as_ref().is_some_and(|(_, args)| args.iter().any(|&a| self.names_self(a, seen))),
+            TyKind::Enum(id) => seen.insert(ty) && self.types.enum_def(*id).origin.as_ref().is_some_and(|(_, args)| args.iter().any(|&a| self.names_self(a, seen))),
+            _ => false,
+        }
     }
 
     /// `[MONO-5]` — what keeps the generic function `decl` (`def`) from being shareable: the first use
@@ -13815,14 +13866,7 @@ impl<'a> Checker<'a> {
             return self.common.error;
         }
         if let Some(reason) = self.dyn_incompatibility(interface) {
-            self.sink.emit(
-                Diagnostic::error(
-                    codes::E2050,
-                    span,
-                    format!("interface `{interface}` is not usable as a class-handle interface"),
-                )
-                .primary_label(reason),
-            );
+            self.sink.emit(Diagnostic::error(codes::E2050, span, self.dyn_refusal(interface, &reason)));
             return self.common.error;
         }
         self.types.intern(TyKind::ClassInterface(interface))
@@ -15234,14 +15278,7 @@ impl<'a> Checker<'a> {
                 }
                 for interface in &interfaces {
                     if let Some(reason) = self.dyn_incompatibility(*interface) {
-                        self.sink.emit(
-                            Diagnostic::error(
-                                codes::E2050,
-                                ty.span,
-                                format!("interface `{interface}` is not `dyn`-compatible"),
-                            )
-                            .primary_label(reason),
-                        );
+                        self.sink.emit(Diagnostic::error(codes::E2050, ty.span, self.dyn_refusal(*interface, &reason)));
                         return self.common.error;
                     }
                 }
@@ -16492,6 +16529,22 @@ impl<'a> Checker<'a> {
     fn synth_try(&mut self, inner: &ast::Expr, span: Span) -> Expr {
         let value = self.synth_committed(inner);
         let ret_ty = self.ret_ty;
+        // `[PAR-2]` — `?` in a `@parallel` loop's body would return from the function in the middle
+        // of the loop; the result to keep is of the operand's type.
+        if self.parallel_try == Some(self.lambda_depth) {
+            if value.ty != self.common.error {
+                let line = self.line_of(span).map_or(String::new(), |n| format!(" on line {n}"));
+                let function = self.written_line(self.fn_decl).unwrap_or_else(|| "the function".to_string());
+                let result = self.written_line(inner.span).unwrap_or_else(|| "the result".to_string());
+                let kept = self.types.display(value.ty);
+                self.error(
+                    codes::E7010,
+                    span,
+                    format!("`?`{line} would return from `{function}` in the middle of the parallel loop; keep each result instead: write `out[i] = {result}` into an `Array[{kept}]` and check them after the loop"),
+                );
+            }
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         let is_option = self.is_option(value.ty);
         let is_result = self.is_result(value.ty);
 
@@ -20949,6 +21002,7 @@ impl<'a> Checker<'a> {
                     self.latebound_callable_parameter_locals.clear();
                     self.callable_value_bindings.clear();
                     self.ret_ty = self.signatures[def.0 as usize].ret;
+        self.fn_decl = self.signatures[def.0 as usize].decl;
                     let signature_params: Vec<(Symbol, Ty, Mode, Span)> = self.signatures
                         [def.0 as usize]
                         .params
@@ -21022,6 +21076,7 @@ impl<'a> Checker<'a> {
             self.latebound_callable_parameter_locals.clear();
             self.callable_value_bindings.clear();
             self.ret_ty = self.signatures[def.0 as usize].ret;
+        self.fn_decl = self.signatures[def.0 as usize].decl;
             let outer_static_safe = self.in_static_safe;
             let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
             self.in_static_safe = no_alias_checks(&item.attrs);
@@ -23678,6 +23733,7 @@ impl<'a> Checker<'a> {
         self.latebound_callable_parameter_locals.clear();
         self.callable_value_bindings.clear();
         self.ret_ty = self.signatures[def.0 as usize].ret;
+        self.fn_decl = self.signatures[def.0 as usize].decl;
         let outer_overflow = std::mem::replace(&mut self.active_overflow,
             self.signatures[def.0 as usize].overflow);
         let outer_fp = std::mem::replace(&mut self.active_fp, self.signatures[def.0 as usize].fp);
@@ -24560,6 +24616,17 @@ impl<'a> Checker<'a> {
         attrs: &[ast::Attribute],
         span: Span,
     ) -> Option<Function> {
+        // `[UNS-12]` — `drop` runs wherever a value ends, in safe code. Only this case is built: the
+        // `override` of a method that is not `unsafe` and the implementation of an interface method
+        // declared without `unsafe` come with milestone M11.
+        if decl.name.name.is("drop") && decl.is_unsafe && self.reported_stmt_attrs.insert(decl.name.span) {
+            let shown = self.types.display(owner);
+            self.error(
+                codes::E2020,
+                decl.name.span,
+                format!("`drop` runs wherever a `{shown}` ends, in safe code, so it cannot be an `unsafe fn`; write `fn drop():` and put what needs `unsafe` in it in an `unsafe:` block with a `# SAFETY:` note"),
+            );
+        }
         if let TyKind::Class(id) = self.types.kind(owner)
             && self.types.class_def(*id).is_sync
             && !decl.name.name.is("init")
@@ -24579,6 +24646,7 @@ impl<'a> Checker<'a> {
         self.latebound_callable_parameter_locals.clear();
         self.method_owner = Some(owner);
         self.ret_ty = self.signatures[def.0 as usize].ret;
+        self.fn_decl = self.signatures[def.0 as usize].decl;
         let outer_overflow = std::mem::replace(&mut self.active_overflow,
             self.signatures[def.0 as usize].overflow);
         let outer_fp = std::mem::replace(&mut self.active_fp, self.signatures[def.0 as usize].fp);
@@ -47399,6 +47467,20 @@ impl<'a> Checker<'a> {
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
+            // `[TYP-22]` — a method of a required interface that names `Self` as a parameter's type
+            // is reached through `dyn I` only by the entries the rule gives (`clone`, `eq`).
+            if let Some((param, _, _, _)) = self.signatures[def.0 as usize].params.iter().find(|(_, ty, _, _)| self.names_self(*ty, &mut HashSet::new())) {
+                let shown = self.interface_shown(interface);
+                self.error(
+                    codes::E2050,
+                    name.span,
+                    format!(
+                        "`{}` takes `{param}: Self`, and through a `dyn {shown}` the kind of `{param}` is unknown; test the kinds first, `if a is Circle as x:` and inside it `if b is Circle as y:`, and call `x.{}(y)`",
+                        name.name, name.name
+                    ),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             if let Some(other) = ambiguity {
                 let (interface, other) = (self.interface_shown(interface), self.interface_shown(other));
                 self.error(
@@ -53714,7 +53796,9 @@ impl<'a> Checker<'a> {
             params: vec![ember_types::FnParam { ty: int, mode: ember_types::FnParamMode::Borrow }, ember_types::FnParam { ty: int, mode: ember_types::FnParamMode::Borrow }],
             ret: result_ty,
         });
+        let outer_try = self.parallel_try.replace(self.lambda_depth + 1);
         let closure_value = self.synth_lambda_fresh(&lambda, Some(expected), span, None);
+        self.parallel_try = outer_try;
         if closure_value.ty == self.common.error {
             return;
         }

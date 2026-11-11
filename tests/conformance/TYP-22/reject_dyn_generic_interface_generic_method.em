@@ -7,5 +7,5 @@ interface Generic[T]:
     fn convert(value: U):
         pass
 
-fn take(x: ref dyn Generic[i32]):    #$ error[E2050]: method `convert` is generic
+fn take(x: ref dyn Generic[i32]):    #$ error[E2050]: `Generic[i32]` cannot be used as `dyn Generic[i32]`: `convert` is generic, and a `dyn` value has one entry per method
     pass

@@ -5,6 +5,6 @@ interface Static:
     static fn make() -> i32:
         return 1
 
-fn take(x: ref dyn Static):    #$ error[E2050]: method `make` has no receiver
+fn take(x: ref dyn Static):    #$ error[E2050]: `Static` cannot be used as `dyn Static`: `make` is a `static fn`, and a `dyn` value has no object to call it on
     pass
 
