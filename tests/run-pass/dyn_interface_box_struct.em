@@ -20,5 +20,5 @@ struct Payload implements Render:
         println(this.value)
 
 fn main():
-    boxed: Box[dyn Render] = Box(Payload(42))
+    boxed: owns dyn Render = owns Payload(42)
     println(boxed.render())

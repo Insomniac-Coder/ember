@@ -30,5 +30,5 @@ class Observer implements Render:
 
 fn main():
     strong = Shared(Token(7))
-    boxed: Box[dyn Render] = Box(Observer[bool](Weak(strong), true))
+    boxed: owns dyn Render = owns Observer[bool](Weak(strong), true)
     println(boxed.render())

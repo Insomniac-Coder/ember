@@ -39,5 +39,5 @@ class Pixel(Base[T]) implements Render:
 
 fn main():
     strong = Shared(Token(7))
-    boxed: Box[dyn Render] = Box(Pixel[bool](Weak(strong), true))
+    boxed: owns dyn Render = owns Pixel[bool](Weak(strong), true)
     println(boxed.render())

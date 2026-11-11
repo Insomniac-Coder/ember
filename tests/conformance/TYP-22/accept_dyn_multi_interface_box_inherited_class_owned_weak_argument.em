@@ -45,6 +45,6 @@ class Pixel(Base) implements Observe, Bump:
 
 fn main():
     strong = Shared(Token(7))
-    boxed: Box[dyn Observe + Bump] = Box(Pixel())
+    boxed: owns dyn Observe + Bump = owns Pixel()
     println(boxed.observe(owns Weak(strong)))
     println(boxed.bump())

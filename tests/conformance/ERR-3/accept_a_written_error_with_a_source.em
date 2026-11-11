@@ -48,6 +48,6 @@ fn chain(e: ref dyn Error):
 fn main():
     l = Load(Disk(7))
     chain(ref l)
-    b: Box[dyn Error] = Box(Disk(9))
+    b: owns dyn Error = owns Disk(9)
     println(f"{b} {b!r}")
     println(b)

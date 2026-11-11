@@ -18,7 +18,7 @@ extend Count implements Tick:
         return this.n
 
 fn main():
-    r: Box[dyn Tick] = Box(Count(0))
+    r: owns dyn Tick = owns Count(0)
     with scope = thread.scope():
         a = scope.spawn(owns fn() => r.tick())
         b = scope.spawn(owns fn() => r.tick())

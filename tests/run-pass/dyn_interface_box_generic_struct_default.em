@@ -19,5 +19,5 @@ fn answer_it(value: ref dyn Answer) -> i32:
 fn main():
     payload = Payload(0)
     println(answer_it(ref payload))
-    boxed: Box[dyn Answer] = Box(Payload(0))
+    boxed: owns dyn Answer = owns Payload(0)
     println(boxed.answer())

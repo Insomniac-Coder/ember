@@ -11,8 +11,8 @@ struct Resource:
         println(this.n)
 
 fn main():
-    boxed = Box(Resource(7))
-    _payload = boxed.get()
+    boxed: owns Resource = owns Resource(7)
+    _payload: ref Resource = boxed
     println(0)
 #$ stdout: 0
 #$ 7

@@ -25,12 +25,12 @@ class Person implements Named:
         this.label = "bob"
 
 class Holder:
-    named: Box[dyn Named]
+    named: owns dyn Named
 
 fn main():
     p = Person()
     alias = p
-    h = Holder(Box(alias))
+    h = Holder(owns alias)
     n = h.named.name()
     println(n)
     p.rename()

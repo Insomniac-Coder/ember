@@ -22,5 +22,5 @@ fn answer(value: ref dyn Answer) -> i32:
 fn main():
     holder = Holder[bool](false)
     println(answer(ref holder))
-    boxed: Box[dyn Answer] = Box(Holder[bool](false))
+    boxed: owns dyn Answer = owns Holder[bool](false)
     println(boxed.answer())

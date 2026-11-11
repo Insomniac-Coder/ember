@@ -25,5 +25,5 @@ fn show(p: runtime dyn Titled):
     println(r)
 
 fn main():
-    p: Box[dyn Titled] = Box(Mine(name=String("mine"))) if input() == "m" else Box(Yours(name=String("yours")))
+    p: owns dyn Titled = owns Mine(name=String("mine")) if input() == "m" else owns Yours(name=String("yours"))
     show(p)

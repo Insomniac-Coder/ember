@@ -90,13 +90,13 @@ pub interface Error: needs (Debug, Display):
 ## `identity` is the boxed error's type (`std.core.type_id`), for `is` and
 ## `downcast_ref`.
 pub struct AnyError:
-    error: Box[dyn Error]
+    error: owns dyn Error
     identity: u128
     context: Array[String]
 
 extend[E: needs Error] AnyError implements From[E]:
     static fn from(owns value: E) -> AnyError:
-        return AnyError(Box(value), type_id[E](), [])
+        return AnyError(owns value, type_id[E](), [])
 
 ## `[ERR-10]` — its text is each context message, the last added first, then
 ## the error's own: `reading app.cfg: line 3: expected `key = value``.
@@ -216,7 +216,7 @@ fn option_with_context(owns o: Option[T], owns f: Call) -> Result[T, AnyError]:
 extend AnyError:
     ## It allocates: the error is boxed (`[ERR-11]`), on the failure path only.
     pub static fn msg(owns text: String) -> AnyError:
-        return AnyError(Box(Message(text)), type_id[Message](), [])
+        return AnyError(owns Message(text), type_id[Message](), [])
 
 ## The error `AnyError.msg` makes: its text alone.
 @derive(Error)
@@ -259,7 +259,7 @@ pub fn type_id() -> TypeId:
 ## from. Compiler-known; the box must hold an `E`.
 @safety("the caller has checked the boxed value is an `E`")
 [E]
-unsafe fn dyn_payload(boxed: Box[dyn Error]) -> ref E:
+unsafe fn dyn_payload(boxed: owns dyn Error) -> ref E:
     pass
 
 ## `[ERR-7]` — every type converts from itself, unchanged, so `?` passes on

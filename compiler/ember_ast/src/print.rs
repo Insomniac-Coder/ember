@@ -657,6 +657,7 @@ pub fn type_str(ty: &TypeExpr) -> String {
             let kw = if *mutable { "*mut " } else { "*" };
             format!("{kw}{}", type_str(inner))
         }
+        TypeKind::Owns(inner) => format!("owns {}", type_str(inner)),
         TypeKind::Tuple(items) => {
             format!("({})", items.iter().map(type_str).collect::<Vec<_>>().join(", "))
         }

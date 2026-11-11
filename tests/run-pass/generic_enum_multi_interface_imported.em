@@ -11,7 +11,7 @@ from generic_enum_multi_interface_imported_support.traits import Read
 from generic_enum_multi_interface_imported_support.traits import Write
 
 fn main():
-    reader: Box[dyn Read] = Box(Signal[i32].Ready(7))
-    writer: Box[dyn Write] = Box(Signal[i32].Ready(7))
+    reader: owns dyn Read = owns Signal[i32].Ready(7)
+    writer: owns dyn Write = owns Signal[i32].Ready(7)
     println(reader.read())
     println(writer.write())

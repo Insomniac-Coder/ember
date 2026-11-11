@@ -4,7 +4,7 @@
 # not replace the chosen instantiation.
 
 fn main():
-    boxed: Box[i64] = Box[i64](41)
-    println(boxed.get())
+    boxed: owns i64 = owns 41
+    println(boxed)
 #$ stdout: 41
 

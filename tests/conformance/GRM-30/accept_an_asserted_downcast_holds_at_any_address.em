@@ -19,13 +19,13 @@ class Dog(Animal):
 
 fn main():
     animals: Array[Animal] = []
-    boxes: Array[Box[int]] = []
+    boxes: Array[owns int] = []
     for i in 0..300:
         d = Dog()
         d.tag = i
         animals.push(owns d)
         if i % 3 == 0:
-            boxes.push(owns Box(i))
+            boxes.push(owns i)
     count = 0
     total = 0
     for a in animals:

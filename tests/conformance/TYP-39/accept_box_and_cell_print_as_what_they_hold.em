@@ -10,14 +10,14 @@
 # f-string with a spec, inside a collection, and one inside the other.
 
 fn main():
-    b = Box(5)
+    b: owns i64 = owns 5
     c = Cell(7)
     println(b)
     println(c)
     println(f"{b} and {c}")
-    s = Box("hi".to_string())
+    s: owns String = owns "hi".to_string()
     println(s)
-    xs = [Box(1), Box(2)]
+    xs: Array[owns int] = [owns 1, owns 2]
     println(xs)
-    nested = Box(Cell(3))
+    nested: owns Cell[i64] = owns Cell(3)
     println(nested, f"{nested:>4}")

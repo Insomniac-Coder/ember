@@ -27,7 +27,7 @@ class Observer implements Observe:
 
 fn expired() -> Weak[Shared[Token]]:
     strong = Shared(Token(7))
-    boxed: Box[dyn Observe] = Box(Observer[bool](Weak(strong), true))
+    boxed: owns dyn Observe = owns Observer[bool](Weak(strong), true)
     return boxed.observer()
 
 fn main():

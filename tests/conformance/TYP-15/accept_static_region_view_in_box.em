@@ -5,6 +5,6 @@
 # the otherwise-valid Box[str] type.
 
 fn main():
-    greeting: Box[StrView] = Box("hello")
-    println(greeting.get())
+    greeting: owns StrView = owns "hello"
+    println(greeting)
 #$ stdout: hello

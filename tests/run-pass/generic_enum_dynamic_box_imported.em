@@ -11,5 +11,5 @@ from generic_enum_dynamic_box_imported_support.model import Token
 from generic_enum_dynamic_box_imported_support.traits import Render
 
 fn main():
-    boxed: Box[dyn Render] = Box(Signal[Token].Ready(Token(7)))
+    boxed: owns dyn Render = owns Signal[Token].Ready(Token(7))
     println(boxed.render())

@@ -31,7 +31,7 @@ class Observer implements Revise:
 
 fn main():
     strong = Shared(Token(7))
-    boxed: Box[dyn Revise] = Box(Observer[bool](Weak(strong), true, 0))
+    boxed: owns dyn Revise = owns Observer[bool](Weak(strong), true, 0)
     weak = boxed.observer()
     match weak.upgrade():
         Some(owner):

@@ -23,5 +23,5 @@ enum Signal implements Render:
         return 42
 
 fn main():
-    boxed: Box[dyn Render] = Box(Signal.Ready(Token(7)))
+    boxed: owns dyn Render = owns Signal.Ready(Token(7))
     println(boxed.render())

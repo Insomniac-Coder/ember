@@ -9,5 +9,5 @@ from generic_enum_generic_interface_default_imported_support.model import Signal
 from generic_enum_generic_interface_default_imported_support.traits import Answer
 
 fn main():
-    boxed: Box[dyn Answer[i32]] = Box(Signal[i32].Ready(7))
+    boxed: owns dyn Answer[i32] = owns Signal[i32].Ready(7)
     println(boxed.answer(7))

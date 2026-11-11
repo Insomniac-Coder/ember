@@ -16,16 +16,16 @@ enum Fail:
     Net(host: String)
 
 struct Holder:
-    e: Box[dyn Error]
+    e: owns dyn Error
     tries: int
 
 fn main():
-    errs: Array[Box[dyn Error]] = []
-    errs.push(owns Box(Fail.Disk))
-    errs.push(owns Box(Fail.Net("example.org")))
+    errs: Array[owns dyn Error] = []
+    errs.push(owns Fail.Disk)
+    errs.push(owns Fail.Net("example.org"))
     println(errs)
-    h = Holder(Box(Fail.Disk), 3)
+    h = Holder(owns Fail.Disk, 3)
     println(f"{h!r}")
-    maybe: Option[Box[dyn Error]] = Some(Box(Fail.Net("x")))
+    maybe: Option[owns dyn Error] = Some(owns Fail.Net("x"))
     println(maybe)
     println(errs[0])

@@ -36,18 +36,18 @@ fn measure(s: ref dyn Shape) -> int:
     return s.area()
 
 struct Holder:
-    boxed: Box[dyn Shape]
+    boxed: owns dyn Shape
 
 fn main():
-    a: Box[dyn Shape] = Box(Square(2))
-    b: Box[dyn Shape] = Box(Square(3))
+    a: owns dyn Shape = owns Square(2)
+    b: owns dyn Shape = owns Square(3)
     println(measure(a), measure(b), a.area())
     tile = Tile(7)
     keep = tile
-    t: Box[dyn Shape] = Box(tile)
+    t: owns dyn Shape = owns tile
     m = measure(t)
     keep.grow()
     println(m, measure(t))
-    h = Holder(Box(Square(1)))
-    h.boxed = Box(Tile(5))
+    h = Holder(owns Square(1))
+    h.boxed = owns Tile(5)
     println(measure(h.boxed))

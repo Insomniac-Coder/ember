@@ -13,5 +13,5 @@ from generic_enum_generic_interface_default_drop_imported_support.model import T
 from generic_enum_generic_interface_default_drop_imported_support.traits import Answer
 
 fn main():
-    boxed: Box[dyn Answer[Token]] = Box(Signal[Token].Ready(Token(7)))
+    boxed: owns dyn Answer[Token] = owns Signal[Token].Ready(Token(7))
     println(boxed.answer(Token(8)))

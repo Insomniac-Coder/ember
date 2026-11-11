@@ -43,4 +43,6 @@ fn main():
     units.truncate(1)
     units.clear()
     last = units.pop()
-    println(units, last, mem.size_of[void](), Box(()) == Box(()))
+    one: owns void = owns ()
+    two: owns void = owns ()
+    println(units, last, mem.size_of[void](), one == two)

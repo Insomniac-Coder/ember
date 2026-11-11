@@ -685,10 +685,13 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "__link" => Ok(ExitCode::from(ember_build::link_guard_main(&args[1..]).clamp(0, 255) as u8)),
         // The repository's own migration (`M1-plan.md`): `fmt --migrate --write` on each file, its
         // layout kept, so the lines and columns the tests expect move with the text only.
+        // `--checker`: the checker's rewrites too, for a milestone that removes a spelling the checker
+        // rewrites (A1-6's `Box`).
         "__migrate" => {
             let mut code = ExitCode::SUCCESS;
-            for file in &args[1..] {
-                if migrate_file(Path::new(file.as_str()), true, false, true)? != ExitCode::SUCCESS {
+            let checker = args[1..].iter().any(|arg| arg == "--checker");
+            for file in args[1..].iter().filter(|arg| *arg != "--checker") {
+                if migrate_file(Path::new(file.as_str()), true, false, true, checker)? != ExitCode::SUCCESS {
                     code = ExitCode::FAILURE;
                 }
             }
@@ -837,7 +840,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 if check_only {
                     return Err("`--migrate` and `--check` cannot be combined".to_string());
                 }
-                return migrate_file(Path::new(input), write, json, false);
+                return migrate_file(Path::new(input), write, json, false, true);
             }
             format_file(Path::new(input), check_only, write, json)
         }
@@ -3338,7 +3341,7 @@ fn format_file(input: &Path, check_only: bool, write: bool, json: bool) -> Resul
 /// `E3040` and `E3041`, which run once the file type-checks. Only the named file is
 /// rewritten. `repository`: the repository's own migration, whose every file is 0.9.10 source:
 /// 0.9.15's rewrites alone, with the file's own layout.
-fn migrate_file(input: &Path, write: bool, json: bool, repository: bool) -> Result<ExitCode, String> {
+fn migrate_file(input: &Path, write: bool, json: bool, repository: bool, checker: bool) -> Result<ExitCode, String> {
     const ROUNDS: usize = 8;
     let mut original = SourceMap::new();
     let original_file = original.load(input).map_err(|error| error.to_string())?;
@@ -3423,7 +3426,7 @@ fn migrate_file(input: &Path, write: bool, json: bool, repository: bool) -> Resu
         // The repository's own migration makes this version's rewrites only: a test may be written
         // to meet an earlier version's refusal, which the checker's migrations would rewrite away.
         // A round that rewrote spellings checks the rewritten text in the next.
-        if !sink.has_errors() && !repository && edits.is_empty() {
+        if !sink.has_errors() && checker && edits.is_empty() {
             let root_dir = package_source_root(input);
             let lints = manifest_lint_settings(&root_dir, &mut map, &mut sink);
             let modules = load_modules(module, &root_dir, &mut map, &mut sink);
@@ -3455,7 +3458,7 @@ fn migrate_file(input: &Path, write: bool, json: bool, repository: bool) -> Resu
         }
         left.clear();
         for diagnostic in sink.diagnostics() {
-            let mut migrations = diagnostic.suggestions.iter().filter(|s| s.migration && !repository).peekable();
+            let mut migrations = diagnostic.suggestions.iter().filter(|s| s.migration && checker).peekable();
             if migrations.peek().is_none() {
                 if diagnostic.severity == ember_diag::Severity::Error {
                     let at = if diagnostic.primary.span.file == file {

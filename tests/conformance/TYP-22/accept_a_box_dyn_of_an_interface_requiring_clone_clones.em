@@ -45,9 +45,9 @@ extend Tile implements Shape:
         return this.size
 
 struct Scene:
-    shape: Box[dyn Shape]
+    shape: owns dyn Shape
 
-fn show(shapes: Span[Box[dyn Shape]]):
+fn show(shapes: Span[owns dyn Shape]):
     out = String()
     for s in shapes:
         if not out.is_empty():
@@ -56,11 +56,11 @@ fn show(shapes: Span[Box[dyn Shape]]):
     println(out)
 
 fn main():
-    shapes: Array[Box[dyn Shape]] = [Box(Square(2.0, "a")), Box(Rect.Sized(2.0, 3.0)), Box(1.0), Box(Tile(0.5))]
+    shapes: Array[owns dyn Shape] = [owns Square(2.0, "a"), owns Rect.Sized(2.0, 3.0), owns 1.0, owns Tile(0.5)]
     copies = shapes.clone()
     show(shapes.as_span())
     show(copies.as_span())
-    scene = Scene(Box(Square(3.0, "b")))
+    scene = Scene(owns Square(3.0, "b"))
     other = scene.clone()
-    scene.shape = Box(Square(2.0, "c"))
+    scene.shape = owns Square(2.0, "c")
     println(other.shape.area(), scene.shape.area())

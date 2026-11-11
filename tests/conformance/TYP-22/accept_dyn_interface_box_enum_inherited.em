@@ -22,5 +22,5 @@ enum Signal implements Parent, Child:
         return 22
 
 fn main():
-    boxed: Box[dyn Child] = Box(Signal.Ready)
+    boxed: owns dyn Child = owns Signal.Ready
     println(boxed.parent() + boxed.child())

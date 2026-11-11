@@ -20,12 +20,12 @@ struct Yours implements Picker:
     fn pick(other: Array[int]) -> Span[int]:
         return other
 
-fn change(ref mut q: Box[dyn Picker]):
-    q = Box(Yours(items=[9]))
+fn change(ref mut q: owns dyn Picker):
+    q = owns Yours(items=[9])
 
 fn swapped():
-    a: Box[dyn Picker] = Box(Mine(items=[9]))
-    b: Box[dyn Picker] = Box(Yours(items=[9]))
+    a: owns dyn Picker = owns Mine(items=[9])
+    b: owns dyn Picker = owns Yours(items=[9])
     mem.swap(ref mut a, ref mut b)
     xs = [1, 2]
     r = a.pick(xs)
@@ -33,7 +33,7 @@ fn swapped():
     println(r)
 
 fn changed():
-    a: Box[dyn Picker] = Box(Mine(items=[9]))
+    a: owns dyn Picker = owns Mine(items=[9])
     change(ref mut a)
     xs = [1, 2]
     r = a.pick(xs)

@@ -10,8 +10,8 @@ struct Resource:
         println(this.n)
 
 fn main():
-    _boxed = Box(Resource(1))
-    _boxed = Box(Resource(2))
+    _boxed: owns Resource = owns Resource(1)
+    _boxed = owns Resource(2)
     println(0)
 #$ stdout: 1
 #$ 0

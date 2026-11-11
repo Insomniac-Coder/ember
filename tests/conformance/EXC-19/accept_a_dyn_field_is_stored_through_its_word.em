@@ -28,20 +28,20 @@ extend Square implements Speak:
         return this.side
 
 class Holder:
-    s: Box[dyn Speak]
+    s: owns dyn Speak
 
 fn main():
     m = Mote()
     m.n = 7
     alias = m
-    h = Holder(Box(alias))
+    h = Holder(owns alias)
     println(h.s.speak(), m.speak())
     m.n = 8
-    h.s = Box(Square(5))
+    h.s = owns Square(5)
     println(m.speak(), h.s.speak())
-    m.keep = Some(Holder(Box(Square(2))))
+    m.keep = Some(Holder(owns Square(2)))
     again = m
-    h.s = Box(again)
+    h.s = owns again
     m.n = 9
     match m.keep:
         Some(k):

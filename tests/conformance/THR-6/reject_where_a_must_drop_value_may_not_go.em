@@ -28,6 +28,6 @@ fn make() -> Guard:
 fn main():
     g = Guard(2)
     mem.forget(g)    #$ error[E3015]: `Guard` holds a `@must_drop` value, which may not be forgotten
-    b = Box(Guard(3))    #$ error[E3015]: `Box[Guard]` would hold a `@must_drop` value
+    b: owns Guard = owns Guard(3)    #$ error[E3015]: `owns Guard` would hold a `@must_drop` value
     h = Guard(4)
     f = owned fn() => h.id    #$ error[E3015]: `Guard` holds a `@must_drop` value, which may not be captured by an `owned fn` (`h`)

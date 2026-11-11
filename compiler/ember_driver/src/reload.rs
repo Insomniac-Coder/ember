@@ -443,7 +443,7 @@ fn rename_old_self(ty: &mut ember_ast::TypeExpr, old: Symbol) {
                 }
             }
         }
-        ember_ast::TypeKind::Ref { inner, .. } | ember_ast::TypeKind::Ptr { inner, .. } => rename_old_self(inner, old),
+        ember_ast::TypeKind::Ref { inner, .. } | ember_ast::TypeKind::Ptr { inner, .. } | ember_ast::TypeKind::Owns(inner) => rename_old_self(inner, old),
         ember_ast::TypeKind::Tuple(items) => items.iter_mut().for_each(|item| rename_old_self(item, old)),
         _ => {}
     }

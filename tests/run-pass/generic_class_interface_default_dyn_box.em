@@ -19,5 +19,5 @@ fn answer_it(value: ref dyn Answer) -> i32:
 fn main():
     pixel = Pixel(0)
     println(answer_it(ref pixel))
-    boxed: Box[dyn Answer] = Box(Pixel(0))
+    boxed: owns dyn Answer = owns Pixel(0)
     println(boxed.answer())

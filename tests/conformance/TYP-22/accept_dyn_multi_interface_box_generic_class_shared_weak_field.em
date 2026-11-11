@@ -40,6 +40,6 @@ class Pair implements Read, Write:
 
 fn main():
     strong = Shared(Token(7))
-    boxed: Box[dyn Read + Write] = Box(Pair[i32](Weak(strong), 0, 42))
+    boxed: owns dyn Read + Write = owns Pair[i32](Weak(strong), 0, 42)
     println(boxed.read())
     println(boxed.write())

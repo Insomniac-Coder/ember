@@ -49,14 +49,14 @@ extend Tile implements Shape:
         return this.size + k
 
 fn main():
-    a: Box[dyn Shape] = Box(Square(2))
+    a: owns dyn Shape = owns Square(2)
     b = a.clone()
-    t: Box[dyn Shape] = Box(Tile(5))
+    t: owns dyn Shape = owns Tile(5)
     println(a.scaled(3), b.scaled(6), b.sides(), a == b, a == t)
-    u: Box[dyn Shape] = Box(Tile(5))
-    v: Box[dyn Shape] = Box(Tile(6))
+    u: owns dyn Shape = owns Tile(5)
+    v: owns dyn Shape = owns Tile(6)
     w = t.clone()
     println(w.scaled(2), w.sides(), t == u, w == t, t == v)
-    shapes: Array[Box[dyn Shape]] = [a.clone(), t.clone()]
+    shapes: Array[owns dyn Shape] = [a.clone(), t.clone()]
     copies = shapes.clone()
     println(copies[1].scaled(1), copies == shapes)

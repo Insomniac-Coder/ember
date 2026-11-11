@@ -21,6 +21,6 @@ class Pixel implements Render:
         this.value = this.value + 1
 
 fn main():
-    boxed: Box[dyn Render] = Box(Pixel[bool](41, false))
+    boxed: owns dyn Render = owns Pixel[bool](41, false)
     boxed.bump()
     println(boxed.render())

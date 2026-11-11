@@ -12,7 +12,7 @@ struct Resource:
         println(this.n)
 
 fn main():
-    _outer = Box(Box(Resource(5)))
+    _outer: owns owns Resource = owns owns Resource(5)
     println(0)
 #$ stdout: 0
 #$ 5

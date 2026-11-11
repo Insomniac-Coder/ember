@@ -71,9 +71,10 @@ fn main():
     local = Line(a = 5, b = 6)
     h = Holder(tag = 1, line = local)
     pair = (7 as u8, local)
-    boxed = Box(Line(a = 1, b = 100))
+    boxed: owns Line = owns Line(a = 1, b = 100)
+    boxed_line: ref Line = boxed
     full = Slot.Full(5)
-    println(off(ref_to_ptr(ref local)), off(ref_to_ptr(ref h.line)), off(ref_to_ptr(ref pair.1)), off(ref_to_ptr(boxed.get())), 0)
+    println(off(ref_to_ptr(ref local)), off(ref_to_ptr(ref h.line)), off(ref_to_ptr(ref pair.1)), off(ref_to_ptr(ref boxed_line)), 0)
     held = match full:
         Slot.Empty => 0 as u64
         Slot.Full(n) => n

@@ -27,7 +27,9 @@ extend Opaque implements Compared:  #$ error[E2040]: `Compared` requires `Eq`, w
         return this.n
 
 fn main():
-    a: Box[dyn Plain] = Box(Block(1))
-    b: Box[dyn Plain] = Box(Block(1))
-    println(a == b)  #$ error[E2040]: `Box[dyn Plain]` does not implement `Eq`
-    println(Box(Opaque(1)) == Box(Opaque(1)))  #$ error[E2040]: `Opaque` does not implement `Eq`
+    a: owns dyn Plain = owns Block(1)
+    b: owns dyn Plain = owns Block(1)
+    println(a == b)  #$ error[E2040]: `owns dyn Plain` does not implement `Eq`
+    c: owns Opaque = owns Opaque(1)
+    d: owns Opaque = owns Opaque(1)
+    println(c == d)  #$ error[E2040]: `Opaque` does not implement `Eq`

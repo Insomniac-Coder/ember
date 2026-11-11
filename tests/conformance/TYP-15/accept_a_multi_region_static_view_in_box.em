@@ -13,5 +13,5 @@ struct Pair:
 
 fn main():
     pair = Pair("left", "right")
-    _boxed: Box[Pair] = Box(pair)
+    _boxed: owns Pair = owns pair
     println(1)

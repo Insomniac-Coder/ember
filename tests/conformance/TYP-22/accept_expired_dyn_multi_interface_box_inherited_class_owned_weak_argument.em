@@ -48,6 +48,6 @@ fn expired() -> Weak[Shared[Token]]:
     return Weak(strong)
 
 fn main():
-    boxed: Box[dyn Observe + Bump] = Box(Pixel())
+    boxed: owns dyn Observe + Bump = owns Pixel()
     println(boxed.observe(owns expired()))
     println(boxed.bump())

@@ -3952,6 +3952,10 @@ struct Checker<'a> {
     /// `[OWN-9]`, `[FN-2a]` (verdict 159) — the type whose constructor's arguments the next
     /// `check_bound_call_arguments` checks: they are given as `=` gives a value (`given_as_equals`).
     constructing: Option<Symbol>,
+    /// `[OWN-10]` — the value a memberwise constructor is checking, and the field it is for.
+    filling: Option<(Span, Symbol)>,
+    /// `[GRM-15]` — a built-in `push` is checking the value it takes over.
+    pushing: bool,
     /// The name of the function whose body is being checked, where it is declared (`[PAR-2]`'s `?` message).
     fn_decl: Span,
     /// `[LEX-16]` — the integer literal a unary minus stands directly before: its fit is checked as
@@ -4364,6 +4368,8 @@ impl<'a> Checker<'a> {
             static_safe_unsafe_cell_reported: false,
             ret_ty,
             constructing: None,
+            filling: None,
+            pushing: false,
             fn_decl: Span::DUMMY,
             negated_literal: None,
             parallel_try: None,
@@ -5286,7 +5292,7 @@ impl<'a> Checker<'a> {
     fn alias_body_is_resolvable(&self, ty: &ast::TypeExpr) -> bool {
         match &ty.kind {
             ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::SelfType => true,
-            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } => {
+            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => {
                 self.alias_body_is_resolvable(inner)
             }
             ast::TypeKind::Tuple(items) => {
@@ -6624,7 +6630,7 @@ impl<'a> Checker<'a> {
             Diagnostic::error(codes::E3015, span, message)
                 .primary_label("its drop could be skipped or put off")
                 .help("keep it in a local and let its scope end it, or bind it with `with`")
-                .note("a `@must_drop` value's drop is a safety guarantee: it may not be forgotten, stored in a class field, `Shared`, `SyncShared`, `Box` or a collection, captured by an `owned fn`, or returned from the function that made it (THR-6)"),
+                .note("a `@must_drop` value's drop is a safety guarantee: it may not be forgotten, stored in a class field, `Shared`, `SyncShared`, an `owns` block or a collection, captured by an `owned fn`, or returned from the function that made it (THR-6)"),
         );
     }
 
@@ -7671,7 +7677,7 @@ impl<'a> Checker<'a> {
                         Diagnostic::error(codes::E2261, span, format!("this returns `{found}`, but an earlier `return` gave `{wanted_shown}`"))
                             .primary_label(format!("this is `{found}`"))
                             .secondary(first, format!("this is `{wanted_shown}`, the type the `some` stands for"))
-                            .help("a `some I` function returns one concrete type; to return different ones, return a `Box[dyn I]`")
+                            .help("a `some I` function returns one concrete type; to return different ones, return an `owns dyn I`")
                             .note("`some I` is the one type the body chooses, the same at every `return` [TYP-32]"),
                     );
                     return Expr { ty: expected, kind: ExprKind::Error, span };
@@ -15266,6 +15272,12 @@ impl<'a> Checker<'a> {
                 let inner = self.resolve_type(inner);
                 self.types.intern(TyKind::Ref { mutable: *mutable, inner })
             }
+            // `[TYP-45]`, `[HEAP-9]` — `owns T`: one owner, in a block of its own, which a class
+            // object always has (`E2114`).
+            ast::TypeKind::Owns(owned) => {
+                let inner = self.resolve_type(owned);
+                self.owns_type(inner, owned.span, ty.span)
+            }
             ast::TypeKind::Ptr { mutable, inner } => {
                 let inner = self.resolve_type(inner);
                 if matches!(self.types.kind(inner), TyKind::Dyn { .. }) {
@@ -15657,14 +15669,23 @@ impl<'a> Checker<'a> {
             return self.types.intern(TyKind::Vec { elem, text: false });
         }
         if name.is("Box") {
-            if !require(self, 1) {
-                return self.common.error;
-            }
-            // `[TYP-15]` is a value-region rule, not a prohibition on forming
-            // the type: `Box[str]` is legal when the stored `str` has the
-            // static region. Construction/storage checks the actual value.
-            let (inner, _) = args[0];
-            return self.box_of(inner);
+            // `[TYP-45]` — `Box` is not a type of Ember: one owner in a block of its own is `owns T`
+            // (`owns T using A` for `Box[T, A]`). The type it names is still made, so that the rest
+            // of the program is checked.
+            let written: Vec<String> = args.iter().map(|&(arg, at)| self.written_line(at).unwrap_or_else(|| self.types.display(arg))).collect();
+            let diagnostic = Diagnostic::error(codes::E1010, span, "`Box` is not a type of Ember");
+            let diagnostic = match written.as_slice() {
+                [inner] => diagnostic
+                    .help(format!("one owner in a block of its own is `owns {inner}`: write `owns {inner}`"))
+                    .migrate("`Box[T]` is `owns T`", span, &format!("owns {inner}")),
+                [inner, manager] => diagnostic.help(format!("write `owns {inner} using {manager}`")),
+                _ => diagnostic.help("write `owns T`"),
+            };
+            self.sink.emit(diagnostic);
+            return match args.first() {
+                Some(&(inner, _)) => self.box_of(inner),
+                None => self.common.error,
+            };
         }
         if name.is("Shared") || self.is_sync_shared_name(name) {
             if !require(self, 1) {
@@ -17327,8 +17348,8 @@ impl<'a> Checker<'a> {
             if !pinnable {
                 let shown = self.types.display(value.ty);
                 self.sink.emit(
-                    Diagnostic::error(codes::E2020, span, format!("`Retained` pins a class handle or a `Box`, not a `{shown}`"))
-                        .note("foreign code keeps Ember memory only through a class object or a `Box`'s value [FFI-23]"),
+                    Diagnostic::error(codes::E2020, span, format!("`Retained` pins a class object or an `owns` value, not a `{shown}`"))
+                        .note("foreign code keeps Ember memory only through a class object or an `owns` value [FFI-23]"),
                 );
                 return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
             }
@@ -19406,8 +19427,8 @@ impl<'a> Checker<'a> {
         {
             let shown = self.types.display(*held);
             self.sink.emit(
-                Diagnostic::error(codes::E2020, span, format!("`Retained` pins a class handle or a `Box`, not a `{shown}`"))
-                    .note("foreign code keeps Ember memory only through a class object or a `Box`'s value [FFI-23]"),
+                Diagnostic::error(codes::E2020, span, format!("`Retained` pins a class object or an `owns` value, not a `{shown}`"))
+                    .note("foreign code keeps Ember memory only through a class object or an `owns` value [FFI-23]"),
             );
             return self.common.error;
         }
@@ -20120,6 +20141,257 @@ impl<'a> Checker<'a> {
         self.named_types.insert(name, ty);
         self.boxes.insert(id, inner);
         ty
+    }
+
+    /// `[TYP-45]`, `[HEAP-9]` — a block of its own for the value `value` writes, of type `hint` when
+    /// it is known: for `owns dyn I` the value's own type, with `I`'s table for it.
+    fn owned_block(&mut self, value: &ast::Expr, hint: Option<Ty>, span: Span) -> Expr {
+        let dyn_target = hint.is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. }));
+        let value = match hint {
+            Some(inner) if !dyn_target => self.check_expr(value, inner),
+            _ => self.synth_committed(value),
+        };
+        if value.ty == self.common.error {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        self.block_around(value, hint.filter(|_| dyn_target), span)
+    }
+
+    /// The block of its own around `value`, checked: for `owns dyn I` (`dyn_target`), the value's
+    /// type must implement `I`.
+    fn block_around(&mut self, value: Expr, dyn_target: Option<Ty>, span: Span) -> Expr {
+        if let Some(inner) = dyn_target {
+            let TyKind::Dyn { interfaces } = self.types.kind(inner).clone() else { unreachable!("a dyn target") };
+            let concrete = value.ty;
+            // ADR-186 — a parameter bounded by the interfaces, in a body
+            // checked with its parameters opaque (never emitted): each
+            // instance boxes its own type, with that type's table.
+            let opaque = matches!(self.types.kind(concrete), TyKind::Param { .. })
+                && interfaces.iter().all(|&interface| self.implements(concrete, interface));
+            let adapter = match opaque {
+                true => Some(vec![None; self.dyn_vtable_layout(&interfaces).len()]),
+                false => self.dyn_concrete_adapter(concrete, &interfaces),
+            };
+            let Some(implementations) = adapter else {
+                self.error(
+                    codes::E2020,
+                    value.span,
+                    format!("expected `{}`, found `{}`", self.types.display(inner), self.types.display(concrete)),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
+            let boxed = self.box_of(inner);
+            let layout = self.dyn_vtable_layout(&interfaces);
+            return Expr {
+                ty: boxed,
+                kind: ExprKind::DynBoxNew { concrete, interfaces, layout, implementations, value: Box::new(value) },
+                span,
+            };
+        }
+        let inner = value.ty;
+        // `[TYP-15]` is region-based: forming `owns str` is legal, and
+        // whether this particular value may enter unbounded storage
+        // depends on its inferred region rather than its syntax. The MIR
+        // region pass checks the Box builtin after provenance has flowed
+        // through locals and calls; doing it here would wrongly reject a
+        // static view merely because it was first bound to a name.
+        let boxed = self.box_of(inner);
+        Expr { ty: boxed, kind: ExprKind::Builtin { which: Builtin::BoxNew { elem: inner, boxed }, args: vec![value] }, span }
+    }
+
+    /// Whether a value of type `found` is what an `owns T` block of `target` holds: `T` itself, or for
+    /// `owns dyn I` a type implementing `I`.
+    fn fits_block(&mut self, found: Ty, target: Ty) -> bool {
+        match self.types.kind(target).clone() {
+            TyKind::Dyn { interfaces } => {
+                !matches!(self.types.kind(found), TyKind::Dyn { .. }) && interfaces.iter().all(|&interface| self.implements(found, interface))
+            }
+            _ => found == target,
+        }
+    }
+
+    /// `[OWN-10]` — `E2123` for `value`, written with no `owns` where its place holds it in a block of
+    /// its own: the place in the program's words, and the line that says `owns` ("`mesh` owns its
+    /// mesh; say so where it is made: `mesh=owns Mesh(points=[0.0, 1.0])`", "`left` holds its tree in
+    /// a block of its own; say so where it is made: `left=Some(owns Tree(value=2))`").
+    fn missing_owns_block(&mut self, value: &ast::Expr, target: Ty) {
+        let noun = Self::common_noun(&self.types.display(target));
+        let at = Span::new(value.span.file, value.span.start, value.span.start);
+        let edit = vec![(at, ember_diag::Replacement::Text("owns ".to_string()))];
+        let written = self.written_line(value.span);
+        // The place: a constructor's field or an argument's parameter, or the place on the left of `=`.
+        // The innermost of a constructor's field and a call's argument that holds the value.
+        let holds = |(argument, _): &(Span, Symbol)| argument.file == value.span.file && argument.start <= value.span.start && value.span.end <= argument.end;
+        let field = [self.filling, self.argument_of.map(|(argument, name, _)| (argument, name))]
+            .into_iter()
+            .flatten()
+            .filter(holds)
+            .min_by_key(|(argument, _)| argument.end - argument.start);
+        let (place, shown) = match field {
+            Some((argument, name)) => {
+                let shown = self.written_line(argument).map(|text| {
+                    let offset = (value.span.start - argument.start) as usize;
+                    format!("{name}={}owns {}", &text[..offset], &text[offset..])
+                });
+                (Some((name.to_string(), argument == value.span)), shown)
+            }
+            _ => match self.assigned_place(value.span) {
+                Some((name, line)) => (Some((name, true)), Some(line)),
+                None => (None, written.as_ref().map(|text| format!("owns {text}"))),
+            },
+        };
+        let shown = shown.unwrap_or_else(|| "owns …".to_string());
+        let message = match place {
+            Some((name, true)) => format!("`{name}` owns its {noun}; say so where it is made: `{shown}`"),
+            Some((name, false)) => format!("`{name}` holds its {noun} in a block of its own; say so where it is made: `{shown}`"),
+            None => format!("this {noun} is held in a block of its own; say so where it is made: `{shown}`"),
+        };
+        self.sink.emit(Diagnostic::error(codes::E2123, value.span, message).migrate_edits("`owns` where an owned block is made", edit));
+    }
+
+    /// A type's name as the common noun a message says ("its mesh", "its int pool"): no `dyn`, no
+    /// type arguments, each capitalised word in lower case.
+    fn common_noun(display: &str) -> String {
+        let mut name = display;
+        while let Some(rest) = name.strip_prefix("owns ").or_else(|| name.strip_prefix("dyn ")) {
+            name = rest;
+        }
+        let name = name.split('[').next().unwrap_or(name);
+        let name = name.rsplit('.').next().unwrap_or(name);
+        let mut words: Vec<String> = Vec::new();
+        for c in name.chars() {
+            if c.is_uppercase() || words.is_empty() {
+                words.push(String::new());
+            }
+            if let Some(word) = words.last_mut() {
+                word.extend(c.to_lowercase());
+            }
+        }
+        words.join(" ")
+    }
+
+    /// The plain name on the left of a line `name = value`, `value` the whole right side, and its
+    /// span: `b` for `b = Box(5)`.
+    fn bound_name(&self, value: Span) -> Option<(String, Span)> {
+        let text = &self.sources.get(&value.file)?.text;
+        let line_start = text.get(..value.start as usize)?.rfind('\n').map_or(0, |at| at + 1);
+        let before = text.get(line_start..value.start as usize)?;
+        let name = before.trim_start().strip_suffix(' ').unwrap_or(before.trim_start()).trim_end().strip_suffix('=')?.trim_end();
+        if name.is_empty() || !name.chars().all(|c| c == '_' || c.is_alphanumeric()) || name.starts_with(|c: char| c.is_ascii_digit()) {
+            return None;
+        }
+        let start = line_start + (before.len() - before.trim_start().len());
+        let after = text.get(value.end as usize..)?;
+        // The value is the whole right side.
+        if !after.split('\n').next().unwrap_or("").trim().is_empty() && !after.split('\n').next().unwrap_or("").trim_start().starts_with('#') {
+            return None;
+        }
+        Some((name.to_string(), Span::new(value.file, start as u32, (start + name.len()) as u32)))
+    }
+
+    /// Whether `expr` is a plain name already holding a block of type `block`, which `owns` would
+    /// only hand over.
+    fn names_a_block(&self, expr: &ast::Expr, block: Ty) -> bool {
+        match &expr.kind {
+            ast::ExprKind::Path { segments, .. } if segments.len() == 1 => {
+                self.lookup(segments[0].name).is_some_and(|local| self.locals[local.0 as usize].ty == block)
+            }
+            _ => false,
+        }
+    }
+
+    /// The value of a call `Box(v)` or `Box[T](v)`, the compiler's `Box` (not a program's own).
+    fn box_call_argument(expr: &ast::Expr) -> Option<&ast::Expr> {
+        let ast::ExprKind::Call { callee, args, .. } = &expr.kind else { return None };
+        let named_box = match &callee.kind {
+            ast::ExprKind::Path { segments, .. } => matches!(segments.as_slice(), [name] if name.name.is("Box")),
+            ast::ExprKind::IndexOrInstantiate { base, .. } => matches!(&base.kind, ast::ExprKind::Path { segments, .. } if matches!(segments.as_slice(), [name] if name.name.is("Box"))),
+            _ => false,
+        };
+        match args.as_slice() {
+            [arg] if named_box && arg.name.is_none() => Some(&arg.value),
+            _ => None,
+        }
+    }
+
+    /// The place on the left of `=` whose whole value starts at `value`, and the line with `owns`
+    /// before the value: `("mesh", "e.mesh = owns Mesh(points=[1.0])")` for `e.mesh = Mesh(...)`.
+    fn assigned_place(&self, value: Span) -> Option<(String, String)> {
+        let text = &self.sources.get(&value.file)?.text;
+        let line_start = text.get(..value.start as usize)?.rfind('\n').map_or(0, |at| at + 1);
+        let before = text.get(line_start..value.start as usize)?;
+        let place = before.trim_end().strip_suffix('=')?.trim();
+        if place.is_empty() || place.ends_with(['=', '!', '<', '>', '+', '-', '*', '/', '%']) || place.contains('(') {
+            return None;
+        }
+        let name: String = place.rsplit('.').next()?.chars().filter(|c| *c == '_' || c.is_alphanumeric()).collect();
+        let written = self.written_line(value)?;
+        (!name.is_empty()).then(|| (name, format!("{place} = owns {written}")))
+    }
+
+    /// `[GRM-15]`, `[OWN-10]` — the value under an `owns` word, for a place of type `expected`. Where
+    /// that place is an `owns T` and the value is not one already, the word says both that the value
+    /// has a block of its own and that the place takes it over (`mesh=owns Mesh(points=[0.0])`,
+    /// `r.pools.push(owns IntPool(items=[1, 2]))`), and the block is made; a name that already holds
+    /// its own block is handed over (`take(owns m)` for `m: owns Mesh`). Anywhere else the word only
+    /// hands the value over, and the value is checked for the place.
+    fn check_owned_value(&mut self, inner: &ast::Expr, expected: Ty, span: Span) -> Expr {
+        let Some(target) = self.box_inner(expected) else { return self.check_expr(inner, expected) };
+        // `[TYP-45]` — `owns Box(v)`: `Box` is not Ember, and the word before it already says that
+        // the value has a block of its own.
+        if let Some(boxed) = Self::box_call_argument(inner) {
+            let shown = self.written_line(boxed.span);
+            let mut diagnostic = Diagnostic::error(codes::E1010, inner.span, "`Box` is not Ember");
+            if let Some(shown) = shown {
+                diagnostic = diagnostic
+                    .help(format!("`owns` already says the value has a block of its own: `owns {shown}`"))
+                    .migrate("`owns Box(v)` is `owns v`", inner.span, &shown);
+            }
+            self.sink.emit(diagnostic);
+            return self.check_owned_value(boxed, expected, span);
+        }
+        // A block holding a block (`owns owns T`): the inner `owns` makes the value this one holds.
+        if let ast::ExprKind::Owned(again) = &inner.kind
+            && self.box_inner(target).is_some()
+        {
+            let held = self.check_owned_value(again, target, inner.span);
+            if held.ty == self.common.error {
+                return held;
+            }
+            return self.block_around(held, None, span);
+        }
+        // `[GRM-15]` — one `owns` says both; a second is `E0109`.
+        if let ast::ExprKind::Owned(again) = &inner.kind {
+            let noun = Self::common_noun(&self.types.display(target));
+            let taker = self.word_of.and_then(|(_, declared)| self.declaring_function(declared)).or_else(|| self.pushing.then(|| "push".to_string()));
+            let takes = taker.map_or_else(|| "the place takes it over".to_string(), |taker| format!("`{taker}` takes it over"));
+            let line = self.written_line(again.span).and_then(|kept| self.line_with(span, &format!("owns {kept}")));
+            let line = line.map_or_else(String::new, |line| format!(": `{line}`"));
+            self.error(codes::E0109, span, format!("one `owns` already says that the {noun} has a block of its own and that {takes}; remove one{line}"));
+            return self.check_owned_value(again, expected, span);
+        }
+        let named = matches!(
+            inner.kind,
+            ast::ExprKind::Path { .. } | ast::ExprKind::Field { .. } | ast::ExprKind::IndexOrInstantiate { .. } | ast::ExprKind::SelfExpr
+        );
+        if !named {
+            return self.owned_block(inner, Some(target), span);
+        }
+        // A block that holds a view (`owns ref mut i32`) is given the view, which a name of that
+        // type reads through otherwise.
+        let found = match self.types.kind(target) {
+            TyKind::Ref { .. } => self.check_expr(inner, target),
+            _ => self.synth_committed(inner),
+        };
+        if found.ty == expected || found.ty == self.common.error {
+            return self.coerce(found, expected);
+        }
+        let dyn_target = matches!(self.types.kind(target), TyKind::Dyn { .. });
+        let value = if dyn_target { found } else { self.coerce(found, target) };
+        if value.ty == self.common.error {
+            return value;
+        }
+        self.block_around(value, dyn_target.then_some(target), span)
     }
 
     fn box_inner(&self, ty: Ty) -> Option<Ty> {
@@ -23383,6 +23655,31 @@ impl<'a> Checker<'a> {
     fn line_of(&self, span: Span) -> Option<usize> {
         let source = self.sources.get(&span.file)?;
         (span.start as usize <= source.text.len()).then(|| source.line_of(span.start))
+    }
+
+    /// `[TYP-45]`, `[HEAP-9]` — the type `owns T` (written at `whole`, `T` at `owned`): one owner, in
+    /// a block of its own, which a class object always has (`E2114`).
+    fn owns_type(&mut self, inner: Ty, owned: Span, whole: Span) -> Ty {
+        if let TyKind::Class(_) = self.types.kind(inner) {
+            let class = self.types.display(inner);
+            let written = self.written_line(owned).unwrap_or_else(|| class.clone());
+            let place = self.declared_place(whole).map_or(written.clone(), |name| format!("{name}: {written}"));
+            self.error(codes::E2114, whole, format!("a `{class}` object always lives in its own block; remove `owns`: `{place}`"));
+            return inner;
+        }
+        if inner == self.common.error {
+            return inner;
+        }
+        self.box_of(inner)
+    }
+
+    /// The name a type written at `span` is declared for, as written: `p` for `p: owns Player`, a
+    /// field's, a parameter's or a local's; `None` where the type follows no `name:`.
+    fn declared_place(&self, span: Span) -> Option<String> {
+        let before = self.sources.get(&span.file)?.text.get(..span.start as usize)?;
+        let before = before.trim_end().strip_suffix(':')?.trim_end();
+        let name: String = before.chars().rev().take_while(|c| *c == '_' || c.is_alphanumeric()).collect::<Vec<_>>().into_iter().rev().collect();
+        (!name.is_empty() && !name.starts_with(|c: char| c.is_ascii_digit())).then_some(name)
     }
 
     /// The code `span` covers as written, when it is on one line.
@@ -27667,6 +27964,8 @@ impl<'a> Checker<'a> {
                     Some(expr) => {
                         // `[OWN-9]` (verdict 148) — `return` hands the value over with no word.
                         let expr = match &expr.kind {
+                            // `[OWN-10]` — the line that makes the value for an `owns T` result.
+                            ast::ExprKind::Owned(inner) if self.box_inner(ret_ty).is_some() && !self.names_a_block(inner, ret_ty) => &**expr,
                             ast::ExprKind::Owned(inner) => {
                                 let line = self.written_line(inner.span).unwrap_or_else(|| "it".to_string());
                                 self.error(codes::E0109, expr.span, format!("`return` always hands the value over; remove `owns`: `return {line}`"));
@@ -36478,7 +36777,27 @@ impl<'a> Checker<'a> {
         if let Some(system) = self.ecs_system_of(expr, expected) {
             return system;
         }
+        // `[OWN-10]` — `owns e` made for an `owns T` place.
+        if let ast::ExprKind::Owned(inner) = &expr.kind
+            && self.box_inner(expected).is_some()
+            && !matches!(inner.kind, ast::ExprKind::Lambda(_))
+        {
+            return self.check_owned_value(inner, expected, expr.span);
+        }
         let mut found = self.synth_with_expectation(expr, Some(expected));
+        // `[OWN-10]` — a value given to an `owns T` place with no `owns` on the line that makes it:
+        // `E2123`, and the block is made, so that one mistake is one error.
+        if !borrowed
+            && let Some(target) = self.box_inner(expected)
+            && found.ty != expected
+            && found.ty != self.common.error
+            && self.fits_block(found.ty, target)
+        {
+            self.missing_owns_block(expr, target);
+            let dyn_target = matches!(self.types.kind(target), TyKind::Dyn { .. });
+            let value = if dyn_target { found } else { self.coerce(found, target) };
+            return self.block_around(value, dyn_target.then_some(target), expr.span);
+        }
         while borrowed && found.ty != expected {
             if self.box_inner(found.ty).is_some() {
                 found = self.read_box_through(found);
@@ -36518,6 +36837,22 @@ impl<'a> Checker<'a> {
         }
         if expr.ty == expected || expected == self.common.error || expr.ty == self.common.error {
             return expr;
+        }
+        // `[HEAP-9]` — an `owns T` reads as its `T`, with nothing written in between: where a
+        // `ref T` is wanted its payload is borrowed, and where a `T` that `=` copies is wanted the
+        // payload is copied.
+        if let Some(held) = self.box_inner(expr.ty)
+            && !matches!(self.types.kind(held), TyKind::Dyn { .. })
+        {
+            match *self.types.kind(expected) {
+                TyKind::Ref { mutable: false, inner } if inner == held && is_place(&expr.kind) => {
+                    let span = expr.span;
+                    let payload = self.read_box_through(expr);
+                    return Expr { ty: expected, kind: ExprKind::Ref { place: Box::new(payload), mutable: false }, span };
+                }
+                _ if held == expected && self.types.is_copy(held) && !self.types.needs_drop(held) => return self.read_box_through(expr),
+                _ => {}
+            }
         }
         // ODR-278, `[TYP-5]` — a function where a callable type is wanted: its value as its
         // shape, which then converts as a function's value does.
@@ -39493,74 +39828,49 @@ impl<'a> Checker<'a> {
             }
             let expected_inner = expected.and_then(|ty| self.box_inner(ty));
             let hint = explicit.first().copied().or(expected_inner);
-            let dyn_target = hint.and_then(|inner| match self.types.kind(inner) {
-                TyKind::Dyn { interfaces } => Some((inner, interfaces.clone())),
-                _ => None,
-            });
-            let value = if dyn_target.is_some() {
-                self.synth_committed(&args[0].value)
-            } else {
-                match hint {
-                    Some(inner) => self.check_expr(&args[0].value, inner),
-                    None => self.synth_committed(&args[0].value),
+            // `[TYP-45]`, `[OWN-10]` — a block of its own is made with `owns` on the line that makes
+            // the value for an `owns T` place: `Box(v)` is not Ember. A new name given one is
+            // declared `owns T`, `T` the value's type.
+            let value = self.written_line(args[0].value.span);
+            // `[CLI-20]` — `Box[dyn fn(A) -> R]` is the owned callable type `fn(A) -> R`, so a
+            // `Box(f)` given where one is wanted is `f` itself.
+            if let Some(callable) = expected.filter(|wanted| matches!(self.types.kind(*wanted), TyKind::Fn { .. })) {
+                let mut diagnostic = Diagnostic::error(codes::E1010, span, "`Box` is not Ember");
+                if let Some(value) = &value {
+                    diagnostic = diagnostic
+                        .help(format!("a callable value is owned already: `{value}`"))
+                        .migrate("`Box(f)` of a callable is `f`", span, value);
                 }
-            };
-            if value.ty == self.common.error {
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                self.sink.emit(diagnostic);
+                return self.check_expr(&args[0].value, callable);
             }
-            if let Some((inner, interfaces)) = dyn_target {
-                let concrete = value.ty;
-                // ADR-186 — a parameter bounded by the interfaces, in a body
-                // checked with its parameters opaque (never emitted): each
-                // instance boxes its own type, with that type's table.
-                let opaque = matches!(self.types.kind(concrete), TyKind::Param { .. })
-                    && interfaces.iter().all(|&interface| self.implements(concrete, interface));
-                let adapter = match opaque {
-                    true => Some(vec![None; self.dyn_vtable_layout(&interfaces).len()]),
-                    false => self.dyn_concrete_adapter(concrete, &interfaces),
-                };
-                let Some(implementations) = adapter
-                else {
-                    self.error(
-                        codes::E2020,
-                        value.span,
-                        format!(
-                            "expected `{}`, found `{}`",
-                            self.types.display(inner),
-                            self.types.display(concrete)
-                        ),
-                    );
-                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-                };
-                let boxed = self.box_of(inner);
-                return Expr {
-                    ty: boxed,
-                    kind: ExprKind::DynBoxNew {
-                        concrete,
-                        interfaces: interfaces.clone(),
-                        layout: self.dyn_vtable_layout(&interfaces),
-                        implementations,
-                        value: Box::new(value),
-                    },
-                    span,
-                };
-            }
-            let inner = value.ty;
-            // `[TYP-15]` is region-based: forming `Box[str]` is legal, and
-            // whether this particular value may enter unbounded storage
-            // depends on its inferred region rather than its syntax. The MIR
-            // region pass checks the Box builtin after provenance has flowed
-            // through locals and calls; doing it here would wrongly reject a
-            // static view merely because it was first bound to a name.
-            let boxed = self.box_of(inner);
-            return Expr {
-                ty: boxed,
-                kind: ExprKind::Builtin {
-                    which: Builtin::BoxNew { elem: inner, boxed },
-                    args: vec![value],
-                },
-                span,
+            let fresh = self.bound_name(span).filter(|(name, _)| self.lookup(Symbol::intern(name)).is_none());
+            let made = self.owned_block(&args[0].value, hint, span);
+            let held = self.box_inner(made.ty).map(|held| self.types.display(held));
+            let mut diagnostic = Diagnostic::error(codes::E1010, span, "`Box` is not Ember");
+            diagnostic = match (&value, expected_inner.is_some(), fresh, held) {
+                (Some(value), true, _, _) => diagnostic
+                    .help(format!("say `owns` where the value is made: `owns {value}`"))
+                    .migrate("`Box(v)` is `owns v`", span, &format!("owns {value}")),
+                (Some(value), false, Some((name, at)), Some(held)) => {
+                    let after = Span::new(at.file, at.end, at.end);
+                    diagnostic
+                        .help(format!("a name that owns a block of its own says so: `{name}: owns {held} = owns {value}`"))
+                        .migrate_edits(
+                            "`b = Box(v)` is `b: owns T = owns v`",
+                            vec![
+                                (after, ember_diag::Replacement::Text(format!(": owns {held}"))),
+                                (span, ember_diag::Replacement::Text(format!("owns {value}"))),
+                            ],
+                        )
+                }
+                (Some(value), ..) => diagnostic.help(format!(
+                    "say `owns` where the value is made for a place of type `owns T`: `name: owns T = owns {value}`"
+                )),
+                (None, ..) => diagnostic.help("say `owns` where the value is made for a place of type `owns T`"),
             };
+            self.sink.emit(diagnostic);
+            return made;
         }
 
         // `[HEAP-3]` — `Shared(value)` creates the first strong owner. Like
@@ -40025,6 +40335,11 @@ impl<'a> Checker<'a> {
                     expr.span,
                     segments[0].span,
                 )
+            }
+            // `[TYP-45]` — `owns T` among a call's type arguments arrives as an expression too.
+            ast::ExprKind::Owned(owned) => {
+                let inner = self.type_from_expr(owned);
+                self.owns_type(inner, owned.span, expr.span)
             }
             // `[GRM-8a]` — a tuple of types (`(int, int)`) and a fixed array
             // (`[int; 4]`) arrive as expressions too, and are read back the
@@ -42616,7 +42931,7 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } => self.induced_projections(inner, out),
+            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => self.induced_projections(inner, out),
             ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
                 items.iter().for_each(|item| self.induced_projections(item, out))
             }
@@ -42766,7 +43081,7 @@ impl<'a> Checker<'a> {
                         out.push(ty.clone());
                     }
                 }
-                ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } => uses(inner, out),
+                ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => uses(inner, out),
                 ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => items.iter().for_each(|item| uses(item, out)),
                 ast::TypeKind::Array { elem, .. } => uses(elem, out),
                 ast::TypeKind::Fn { params, ret, .. } => {
@@ -47384,7 +47699,7 @@ impl<'a> Checker<'a> {
         if value.ty == self.common.error {
             return value;
         }
-        if let Some(given) = given
+        if let Some(given) = given.as_ref()
             && root_local(&value.kind).is_some()
         {
             // VII.1 — `=` copies only a `Copy` type's value; a counted one (a class handle, a `shares`
@@ -47395,6 +47710,17 @@ impl<'a> Checker<'a> {
                 return value;
             }
             return Expr { ty: value.ty, kind: ExprKind::Builtin { which: Builtin::HandOver, args: vec![value] }, span };
+        }
+        // `[GRM-15]`, `[OWN-9]` — before a value made on the line for a place that is not an `owns T`,
+        // the word ends nothing: `=` already hands the value over.
+        if let Some(given) = given {
+            let shown = match &inner.kind {
+                ast::ExprKind::Paren(within) => self.written_line(within.span),
+                _ => self.written_line(inner.span),
+            };
+            let shown = shown.map_or_else(String::new, |shown| format!(": `{given} = {shown}`"));
+            self.error(codes::E0109, span, format!("`=` already hands a value made on the line over; remove `owns`{shown}"));
+            return value;
         }
         self.sink.emit(
             Diagnostic::error(codes::E0900, span, "`owns` before a value here is not built by this compiler yet")
@@ -47705,7 +48031,35 @@ impl<'a> Checker<'a> {
             return self.clone_value(receiver);
         }
         if self.box_inner(receiver.ty).is_some() && !dyn_box {
-            if name.name.is("get") {
+            // `[HEAP-9]` — an `owns T` reads as its `T`, with nothing written in between: a `get` of
+            // the block itself is not Ember (a `T` with a `get` of its own is called below).
+            let inner_get = self.box_inner(receiver.ty).is_some_and(|inner| self.lookup_method(inner, name.name).is_some());
+            if name.name.is("get") && !inner_get {
+                let call_end = span.end;
+                let dot = Span::new(span.file, receiver.span.end, call_end);
+                let shown = self.written_line(receiver.span).unwrap_or_else(|| "the value".to_string());
+                let held = self.types.display(self.box_inner(receiver.ty).expect("a box"));
+                let line = self.line_with(Span::new(span.file, receiver.span.start, call_end), &shown);
+                let mut diagnostic = Diagnostic::error(codes::E1010, span, format!("`{shown}` is an `owns {held}`, which reads as its `{held}`: there is no `get`"));
+                diagnostic = match line {
+                    Some(line) => diagnostic.help(format!("remove `.get()`: `{line}`")),
+                    None => diagnostic.help("remove `.get()`"),
+                };
+                // A new name given the view says it is one: `r: ref T = b`, not a hand-over of `b`.
+                let fresh = self.bound_name(span).filter(|(name, _)| self.lookup(Symbol::intern(name)).is_none());
+                let diagnostic = match fresh {
+                    Some((_, at)) => diagnostic.migrate_edits(
+                        "`r = b.get()` is `r: ref T = b`",
+                        vec![
+                            (Span::new(at.file, at.end, at.end), ember_diag::Replacement::Text(format!(": ref {held}"))),
+                            (dot, ember_diag::Replacement::Text(String::new())),
+                        ],
+                    ),
+                    None => diagnostic.migrate("`.get()` of an `owns` value removed", dot, ""),
+                };
+                self.sink.emit(diagnostic);
+            }
+            if name.name.is("get") && !inner_get {
                 if !explicit.is_empty() {
                     self.error(
                         codes::E2020,
@@ -53384,7 +53738,7 @@ impl<'a> Checker<'a> {
             }
             "push" if in_arena => {
                 // `[SOA-4]`, `[ARN-5]` — past capacity, `Err(CapacityError.Full)` and nothing changed.
-                let value = { let pushed = self.pushed_value(&args[0].value); self.check_expr(pushed, inner) };
+                let value = { let pushed = self.pushed_value(&args[0].value); if pushed.span != args[0].value.span && self.box_inner(inner).is_some() { let outer = std::mem::replace(&mut self.pushing, true); let value = self.check_owned_value(pushed, inner, args[0].value.span); self.pushing = outer; value } else { self.check_expr(pushed, inner) } };
                 let target = self.pass_receiver(receiver, Mode::Mut, span);
                 let full = call(hir::SoAOp::TryPush, vec![target, value], bool_ty);
                 let Some(capacity_error) = self.named_types.get(&Symbol::intern("std.collections.CapacityError")).copied() else {
@@ -53408,7 +53762,7 @@ impl<'a> Checker<'a> {
                 Expr { ty: int, kind: ExprKind::Cast { expr: Box::new(read), to: int }, span }
             }
             "push" => {
-                let value = { let pushed = self.pushed_value(&args[0].value); self.check_expr(pushed, inner) };
+                let value = { let pushed = self.pushed_value(&args[0].value); if pushed.span != args[0].value.span && self.box_inner(inner).is_some() { let outer = std::mem::replace(&mut self.pushing, true); let value = self.check_owned_value(pushed, inner, args[0].value.span); self.pushing = outer; value } else { self.check_expr(pushed, inner) } };
                 let target = self.pass_receiver(receiver, Mode::Mut, span);
                 call(hir::SoAOp::Push, vec![target, value], void)
             }
@@ -57877,7 +58231,15 @@ impl<'a> Checker<'a> {
         let mut call_args = vec![receiver];
         if let Some(param_ty) = takes {
             let value = if which == Builtin::ArrayPush { self.pushed_value(&args[0].value) } else { &args[0].value };
-            call_args.push(self.check_expr(value, param_ty));
+            let checked = if value.span != args[0].value.span && self.box_inner(param_ty).is_some() {
+                let outer = std::mem::replace(&mut self.pushing, which == Builtin::ArrayPush);
+                let checked = self.check_owned_value(value, param_ty, args[0].value.span);
+                self.pushing = outer;
+                checked
+            } else {
+                self.check_expr(value, param_ty)
+            };
+            call_args.push(checked);
         }
         let call = Expr { ty: ret, kind: ExprKind::Builtin { which, args: call_args }, span };
         if matches!(which, Builtin::ArrayLen | Builtin::StringLen) { self.size_as_int(call) } else { call }
@@ -58695,9 +59057,13 @@ impl<'a> Checker<'a> {
             return value;
         }
         let copied = self.types.is_copy(value.ty) && !self.types.needs_drop(value.ty);
+        // `[OWN-10]` — `owns` that made a block of its own for an `owns T` field is the line's
+        // required word, not a second hand-over.
+        let made_a_block = matches!(value.kind, ExprKind::DynBoxNew { .. } | ExprKind::Builtin { which: Builtin::BoxNew { .. }, .. });
         match &arg.kind {
             ast::ExprKind::Owned(inner)
                 if !copied
+                    && !made_a_block
                     && matches!(
                         inner.kind,
                         ast::ExprKind::Path { .. } | ast::ExprKind::Field { .. } | ast::ExprKind::IndexOrInstantiate { .. } | ast::ExprKind::SelfExpr
@@ -58935,6 +59301,9 @@ impl<'a> Checker<'a> {
             // `[FN-2a]` — `owns` at a call says how the argument is passed; the value is under it
             // (`E3028` above where the parameter does not take it over).
             if let ast::ExprKind::Owned(inner) = &arg.kind {
+                if self.box_inner(param_ty).is_some() {
+                    return self.check_owned_value(inner, param_ty, arg.span);
+                }
                 return self.check_argument_by(inner, param_ty, mode, by_address);
             }
         }
@@ -58943,6 +59312,9 @@ impl<'a> Checker<'a> {
         if mode == Mode::Owned
             && let ast::ExprKind::Owned(inner) = &arg.kind
         {
+            if self.box_inner(param_ty).is_some() {
+                return self.check_owned_value(inner, param_ty, arg.span);
+            }
             return self.check_argument_by(inner, param_ty, mode, by_address);
         }
         // `[STD-19]` (ODR-240) — a named callable lent to a callable parameter (`lend_named_callable`).
@@ -59119,7 +59491,10 @@ impl<'a> Checker<'a> {
         let slots = self.constructor_slots(name, &names, args, span);
         let mut values: Vec<Option<Expr>> = (0..field_info.len()).map(|_| None).collect();
         for (arg, field) in slots {
+            // `[OWN-10]` — the field a value is made for, for `E2123`'s words.
+            let outer = self.filling.replace((args[arg].value.span, field_info[field].0));
             values[field] = Some(self.check_expr(&args[arg].value, field_info[field].1));
+            self.filling = outer;
         }
         self.finish_struct_literal(id, name, values, span)
     }
@@ -61451,7 +61826,7 @@ fn type_names(ty: &ast::TypeExpr, out: &mut HashSet<Symbol>) {
                 }
             }
         }
-        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } => type_names(inner, out),
+        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => type_names(inner, out),
         ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
             for item in items {
                 type_names(item, out);
@@ -61875,7 +62250,7 @@ fn type_expr_names(ty: &ast::TypeExpr, out: &mut Vec<Symbol>) {
                 }
             }
         }
-        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } => type_expr_names(inner, out),
+        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => type_expr_names(inner, out),
         ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
             for item in items {
                 type_expr_names(item, out);
@@ -61950,7 +62325,7 @@ fn collect_projection_paths(ty: &ast::TypeExpr, out: &mut Vec<(Symbol, ast::Iden
                 }
             }
         }
-        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } => collect_projection_paths(inner, out),
+        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => collect_projection_paths(inner, out),
         ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
             items.iter().for_each(|item| collect_projection_paths(item, out))
         }
@@ -62372,7 +62747,7 @@ impl ShareWalk<'_> {
                     }
                 }
             }
-            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::SomeType(inner) => self.ty(inner),
+            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::SomeType(inner) => self.ty(inner),
             ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
                 for item in items {
                     self.ty(item);
@@ -62645,7 +63020,7 @@ fn type_shaped(expr: &ast::Expr) -> bool {
             | ast::ExprKind::IndexOrInstantiate { .. }
             | ast::ExprKind::Tuple(_)
             | ast::ExprKind::ArrayRepeat { .. }
-    )
+    ) || matches!(&expr.kind, ast::ExprKind::Owned(inner) if type_shaped(inner))
 }
 
 fn has_attribute(attrs: &[ast::Attribute], name: &str) -> bool {

@@ -441,12 +441,12 @@ pub fn storage_mechanism(types: &TypeTable, ty: Ty) -> &'static str {
         TyKind::Vec { .. } => "Array, Map, Set, String",
         TyKind::Class(_) | TyKind::ClassInterface(_) => "class",
         TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::ArrayN { .. } | TyKind::Enum(_) => AGGREGATE,
-        TyKind::Dyn { .. } => "Box[T]",
+        TyKind::Dyn { .. } => "owns T",
         TyKind::Struct(_) => {
             let shown = types.display(ty);
             let head = shown.split('[').next().unwrap_or("");
             match head.rsplit('.').next().unwrap_or(head) {
-                "Box" => "Box[T]",
+                "Box" | "owns" => "owns T",
                 "Shared" => "Shared[T]",
                 "SyncShared" => "SyncShared[T]",
                 "Weak" => "Weak[O]",
@@ -1303,7 +1303,7 @@ impl SiteBuilder<'_> {
             FuncRef::DynBoxNew { .. } => sites.push(Site {
                 effects: Effects::ALLOC | Effects::PANIC,
                 span,
-                origin: Origin::Operation("`Box[dyn …]`"),
+                origin: Origin::Operation("`owns dyn …`"),
             }),
             FuncRef::Builtin { which, arg_ty } => {
                 let (effects, operation) = builtin_effects(which);
@@ -1579,7 +1579,7 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::ArrayNew | B::ArrayFromLiteral => (ALLOC, "a new `Array`"),
         B::StringNew => (ALLOC, "a new `String`"),
         B::ClassNew { .. } => (ALLOC, "a new class instance"),
-        B::BoxNew { .. } => (ALLOC, "`Box(…)`"),
+        B::BoxNew { .. } => (ALLOC, "an `owns` block"),
         B::SharedNew { .. } => (ALLOC, "`Shared(…)`"),
         B::ArrayPush => (ALLOC, "`Array.push`"),
         B::ArrayInsert => (ALLOC | Effects::CHECK_BOUNDS, "`Array.insert`"),

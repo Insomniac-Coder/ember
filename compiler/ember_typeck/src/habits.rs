@@ -613,7 +613,7 @@ impl Checker<'_> {
         let shown = self.interface_shown(interface);
         diagnostic
             .habit(Habit::P22)
-            .help(format!("hold such a value behind a pointer: `Box[dyn {shown}]` in a field or a collection (`Box(v)` makes one), `ref dyn {shown}` for a parameter; or take a type parameter, `[T: {shown}]`, and pass the value itself"))
+            .help(format!("hold such a value behind a pointer: `owns dyn {shown}` in a field or a collection (`owns v` makes one), `ref dyn {shown}` for a parameter; or take a type parameter, `[T: {shown}]`, and pass the value itself"))
             .note(format!("an interface's name as a type is a class handle typed by it [OBJ-2]; a value of a type implementing `{shown}` has its own size, which `dyn {shown}` keeps behind a pointer (ODR-182)"))
     }
 

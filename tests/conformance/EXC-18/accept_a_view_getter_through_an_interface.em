@@ -30,7 +30,7 @@ fn main():
     p = Person()
     show(p)
     alias = p
-    boxed: Box[dyn Named] = Box(alias)
+    boxed: owns dyn Named = owns alias
     println(boxed.name())
     p.rename()
     println(boxed.name())

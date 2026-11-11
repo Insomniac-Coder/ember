@@ -5,7 +5,7 @@ interface Drawable:
     fn draw():
         pass
 
-fn take(x: ref dyn Drawable, owns boxed: Box[dyn Drawable]):
+fn take(x: ref dyn Drawable, owns boxed: owns dyn Drawable):
     pass
 
 fn main():

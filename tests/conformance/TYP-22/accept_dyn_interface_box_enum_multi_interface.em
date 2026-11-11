@@ -24,7 +24,7 @@ enum Signal implements Read, Write:
         return 22
 
 fn main():
-    reader: Box[dyn Read] = Box(Signal.Ready)
-    writer: Box[dyn Write] = Box(Signal.Ready)
+    reader: owns dyn Read = owns Signal.Ready
+    writer: owns dyn Write = owns Signal.Ready
     println(reader.read())
     println(writer.write())

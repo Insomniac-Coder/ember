@@ -29,5 +29,5 @@ fn main():
     clone = pixel.clone()
     println(clone.draw())
     println(draw_it(ref pixel))
-    boxed: Box[dyn Factory] = Box(Pixel[bool](42, false))
+    boxed: owns dyn Factory = owns Pixel[bool](42, false)
     println(boxed.draw())

@@ -51,7 +51,7 @@ extend[G: needs Iterator[Item = Wait]] G implements Sequence:
 ## The sequences running, each with what it waits for. A sequence starts on
 ## the `update` after it is added.
 pub struct Scheduler:
-    running: Array[Box[dyn Sequence]]
+    running: Array[owns dyn Sequence]
     waiting: Array[Wait]
 
 extend Scheduler:
@@ -62,7 +62,7 @@ extend Scheduler:
     ## Run `sequence` from the next `update`.
     [G: needs Sequence]
     pub fn start(owns sequence: G):
-        this.running.push(owns Box[dyn Sequence](sequence))
+        this.running.push(owns sequence)
         this.waiting.push(owns Wait.NextFrame)
 
     ## How many sequences have not finished.

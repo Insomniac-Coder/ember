@@ -17,7 +17,7 @@ fn same(a: T, b: T) -> bool:
 @derive(Eq)
 struct Node:
     value: int
-    next: Option[Box[Node]]
+    next: Option[owns Node]
 
 ## Equal when the last digits are.
 struct Digit:
@@ -27,13 +27,21 @@ struct Digit:
         return this.n % 10 == other.n % 10
 
 fn main():
-    println(Box(3) == Box(3), Box(3) == Box(4), same(Box(3), Box(3)), same(Box(3), Box(4)))
-    xs = [Box(1), Box(2)]
-    ys = [Box(1), Box(2)]
-    o: Option[Box[int]] = Some(Box(5))
-    println(xs == ys, o == Some(Box(5)), o == Some(Box(6)))
-    one = Node(1, Some(Box(Node(2, None))))
-    also = Node(1, Some(Box(Node(2, None))))
-    other = Node(1, Some(Box(Node(3, None))))
+    three: owns int = owns 3
+    also_three: owns int = owns 3
+    four: owns int = owns 4
+    println(three == also_three, three == four, same(three, also_three), same(three, four))
+    xs: Array[owns int] = [owns 1, owns 2]
+    ys: Array[owns int] = [owns 1, owns 2]
+    o: Option[owns int] = Some(owns 5)
+    five: Option[owns int] = Some(owns 5)
+    six: Option[owns int] = Some(owns 6)
+    println(xs == ys, o == five, o == six)
+    one = Node(1, Some(owns Node(2, None)))
+    also = Node(1, Some(owns Node(2, None)))
+    other = Node(1, Some(owns Node(3, None)))
     println(one == also, one == other)
-    println(Box(Digit(12)) == Box(Digit(2)), same(Box(Digit(12)), Box(Digit(3))))
+    twelve: owns Digit = owns Digit(12)
+    two: owns Digit = owns Digit(2)
+    three_digit: owns Digit = owns Digit(3)
+    println(twelve == two, same(twelve, three_digit))

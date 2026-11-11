@@ -1230,7 +1230,7 @@ extend[T: needs Component] AddChange[T] implements Change:
 ## `run_parallel` runs fills its own on a job, and the calling thread applies it (`[THR-1]`).
 @sync
 pub class Commands:
-    queued: Mutex[Array[Box[dyn Change]]]
+    queued: Mutex[Array[owns dyn Change]]
     ## Whether a system `run_parallel` runs fills it, on another thread.
     parallel: bool
 
@@ -1243,7 +1243,7 @@ pub class Commands:
     ## It allocates the change it queues.
     pub fn destroy(e: Entity):
         with queued = this.queued.lock():
-            queued.push(owns Box(DestroyChange(e)))
+            queued.push(owns DestroyChange(e))
 
     ## Gives `e` the component `value`. In a system `run_parallel` runs, the component is `Send`
     ## (ODR-218): it moves to the calling thread.
@@ -1253,14 +1253,14 @@ pub class Commands:
         if this.parallel and not type_is_send[T]():
             panic(f"a system `run_parallel` runs adds a `{T.component_name()}`, which is not Send")
         with queued = this.queued.lock():
-            queued.push(owns Box(AddChange[T](e, Some(value))))
+            queued.push(owns AddChange[T](e, Some(value)))
 
     ## Removes `e`'s component of type `T`.
     ## It allocates the change it queues.
     [T: needs Component]
     pub fn remove(e: Entity):
         with queued = this.queued.lock():
-            queued.push(owns Box(RemoveChange(e, T.component_hash())))
+            queued.push(owns RemoveChange(e, T.component_hash()))
 
     ## How many changes are waiting.
     pub fn len() -> int:

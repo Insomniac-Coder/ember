@@ -11,9 +11,9 @@ struct Token:
     fn read() -> i32:
         return this.value
 
-fn read_boxed(value: ref Box[Token]) -> i32:
+fn read_boxed(value: ref owns Token) -> i32:
     return value.read()
 
 fn main():
-    boxed = Box(Token(7))
+    boxed: owns Token = owns Token(7)
     println(read_boxed(ref boxed))

@@ -12,6 +12,6 @@ class Pixel implements Render:
 
 fn main():
     pixel = Pixel(42)
-    boxed: Box[dyn Render] = Box(pixel)
+    boxed: owns dyn Render = owns pixel
     println(pixel.value) #$ error[E3040]: `pixel` was handed over on line 15 and is used on line 16; to keep it, write `owns copy of pixel`
     println(boxed.render())

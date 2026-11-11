@@ -49,16 +49,16 @@ extend Triangle implements Shape:
 fn describe(s: ref dyn Shape):
     println(f"{s.name():<20} area {s.area():8.2f}  perimeter {s.perimeter():8.2f}")
 
-fn total_area(shapes: Array[Box[dyn Shape]]) -> float:
+fn total_area(shapes: Array[owns dyn Shape]) -> float:
     return sum(s.area() for s in shapes)
 
 fn main():
-    shapes: Array[Box[dyn Shape]] = [
-        Box(Circle(radius=1.5)),
-        Box(Rectangle(width=2.0, height=3.0)),
-        Box(Triangle(a=3.0, b=4.0, c=5.0)),
-        Box(Rectangle(width=2.5, height=2.5)),
-        Box(Circle(radius=0.5)),
+    shapes: Array[owns dyn Shape] = [
+        owns Circle(radius=1.5),
+        owns Rectangle(width=2.0, height=3.0),
+        owns Triangle(a=3.0, b=4.0, c=5.0),
+        owns Rectangle(width=2.5, height=2.5),
+        owns Circle(radius=0.5),
     ]
     for s in shapes:
         describe(s)

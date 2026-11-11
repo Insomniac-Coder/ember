@@ -3055,6 +3055,8 @@ impl TypeTable {
             // name for a lambda's own type, never shown.
             TyKind::Struct(_) if user && self.is_closure_environment(ty) => "lambda".to_string(),
             TyKind::Struct(id) if user && self.shown_as.contains_key(id) => self.shown_as[id].clone(),
+            // `[TYP-45]` — the compiler's heap block of one owner is written `owns T`.
+            TyKind::Struct(id) if user && let Some(inner) = self.compiler_box_inner(*id) => format!("owns {}", self.render(inner, user)),
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);
                 self.render_named(def.name, def.origin.as_ref().or(self.written_as.get(id)), user)

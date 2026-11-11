@@ -22,7 +22,7 @@ fn inspect_ref(value: ref dyn Inspect) -> i32:
 fn main():
     value: i32 = 41
     println(inspect_ref(ref value))
-    boxed: Box[dyn Inspect] = Box(value)
+    boxed: owns dyn Inspect = owns value
     println(boxed.inspect())
-    boxed_literal: Box[dyn Inspect] = Box(42i32)
+    boxed_literal: owns dyn Inspect = owns 42i32
     println(boxed_literal.inspect())

@@ -14,6 +14,6 @@ struct Circle implements Shape:
         return 3 * this.r * this.r
 
 fn main():
-    s: Box[dyn Shape] = Box(Circle(r=2))
+    s: owns dyn Shape = owns Circle(r=2)
     if s is Circle as c:    #$ error[E0900]: a kind test that names what it finds is not built by this compiler yet
         println(c.r)

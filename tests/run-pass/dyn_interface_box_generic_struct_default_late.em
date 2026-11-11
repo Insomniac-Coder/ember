@@ -17,7 +17,7 @@ struct Factory:
     value: T
 
     fn run():
-        boxed: Box[dyn Answer] = Box(Payload(0))
+        boxed: owns dyn Answer = owns Payload(0)
         println(boxed.answer())
 
 fn main():

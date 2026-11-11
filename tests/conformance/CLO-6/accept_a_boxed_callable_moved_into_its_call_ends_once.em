@@ -31,19 +31,19 @@ fn make_once(owns name: String) -> once fn() -> int:
     n = Noisy(name)
     return owned fn() -> int => n.name.len()
 
-fn call_box(owns b: Box[fn() -> int]) -> int:
+fn call_box(owns b: owns fn() -> int) -> int:
     return b()
 
-fn call_once_box(owns b: Box[once fn() -> int]) -> int:
+fn call_once_box(owns b: owns once fn() -> int) -> int:
     return b()
 
 fn call_once(owns f: once fn() -> int) -> int:
     return f()
 
 fn main():
-    f: Box[fn() -> int] = Box(make(owns "a".to_string()))
+    f: owns fn() -> int = owns make(owns "a".to_string())
     println(call_box(owns f))
-    g: Box[once fn() -> int] = Box(make_once(owns "bb".to_string()))
+    g: owns once fn() -> int = owns make_once(owns "bb".to_string())
     println(call_once_box(owns g))
     println(call_once(owns make_once(owns "ccc".to_string())))
     println("end")

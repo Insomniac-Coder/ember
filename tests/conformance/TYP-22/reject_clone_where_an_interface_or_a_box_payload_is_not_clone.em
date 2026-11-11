@@ -25,8 +25,8 @@ extend Unique implements Plain:
 
 @derive(Clone)
 struct Holder:
-    unique: Box[Unique]  #$ error[E2040]: field `unique` has type `Box[Unique]`, which does not implement `Clone`
+    unique: owns Unique  #$ error[E2040]: field `unique` has type `owns Unique`, which does not implement `Clone`
 
 fn main():
-    plain: Box[dyn Plain] = Box(Unique(1))
-    _copy = plain.clone()  #$ error[E2072]: `Box[dyn Plain]` has no method named `clone`
+    plain: owns dyn Plain = owns Unique(1)
+    _copy = plain.clone()  #$ error[E2072]: `owns dyn Plain` has no method named `clone`
