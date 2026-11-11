@@ -15673,13 +15673,13 @@ impl<'a> Checker<'a> {
             // (`owns T using A` for `Box[T, A]`). The type it names is still made, so that the rest
             // of the program is checked.
             let written: Vec<String> = args.iter().map(|&(arg, at)| self.written_line(at).unwrap_or_else(|| self.types.display(arg))).collect();
-            let diagnostic = Diagnostic::error(codes::E1010, span, "`Box` is not a type of Ember");
+            // `[TYP-45]` — the message gives what to write.
             let diagnostic = match written.as_slice() {
-                [inner] => diagnostic
-                    .help(format!("one owner in a block of its own is `owns {inner}`: write `owns {inner}`"))
+                [inner] => Diagnostic::error(codes::E1010, span, format!("`Box` is not a type of Ember: write `owns {inner}`"))
+                    .help("one owner in a block of its own is `owns T`")
                     .migrate("`Box[T]` is `owns T`", span, &format!("owns {inner}")),
-                [inner, manager] => diagnostic.help(format!("write `owns {inner} using {manager}`")),
-                _ => diagnostic.help("write `owns T`"),
+                [inner, manager] => Diagnostic::error(codes::E1010, span, format!("`Box` is not a type of Ember: write `owns {inner} using {manager}`")),
+                _ => Diagnostic::error(codes::E1010, span, "`Box` is not a type of Ember: write `owns T`"),
             };
             self.sink.emit(diagnostic);
             return match args.first() {
@@ -48040,7 +48040,8 @@ impl<'a> Checker<'a> {
                 let shown = self.written_line(receiver.span).unwrap_or_else(|| "the value".to_string());
                 let held = self.types.display(self.box_inner(receiver.ty).expect("a box"));
                 let line = self.line_with(Span::new(span.file, receiver.span.start, call_end), &shown);
-                let mut diagnostic = Diagnostic::error(codes::E1010, span, format!("`{shown}` is an `owns {held}`, which reads as its `{held}`: there is no `get`"));
+                // `[TYP-14]` — `E2072`, in the rule's words.
+                let mut diagnostic = Diagnostic::error(codes::E2072, span, format!("an `owns {held}` reads as a `{held}`; remove `.get()`"));
                 diagnostic = match line {
                     Some(line) => diagnostic.help(format!("remove `.get()`: `{line}`")),
                     None => diagnostic.help("remove `.get()`"),
