@@ -38129,11 +38129,22 @@ impl<'a> Checker<'a> {
                         .map(|segment| segment.name.as_str())
                         .collect::<Vec<_>>()
                         .join(".");
-                    let diagnostic = Diagnostic::error(
+                    let mut diagnostic = Diagnostic::error(
                         codes::E1010,
                         name.span,
                         format!("cannot find `{qualified}` in this scope"),
                     );
+                    // `[DET-4]` — `det.log` is `E1010`: the natural logarithm is `ln`.
+                    if qualified.as_str() == "std.math.det.log" {
+                        let shown = match args.first().map(|arg| &arg.value.kind) {
+                            Some(ast::ExprKind::Path { segments }) if args.len() == 1 && segments.len() == 1 => segments[0].name.to_string(),
+                            _ => "x".to_string(),
+                        };
+                        self.sink.emit(diagnostic.help(format!(
+                            "the natural logarithm is `ln` in `std.math` and `std.math.det` alike: write `{written}.ln({shown})`"
+                        )));
+                        return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                    }
                     self.sink.emit(self.add_qualified_name_suggestions(
                         diagnostic,
                         module,
