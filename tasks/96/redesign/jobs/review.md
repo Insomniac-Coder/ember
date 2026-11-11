@@ -108,3 +108,29 @@ friends. Each is its milestone's (M3 to M6b).
 ## Spec findings for the next cut (Hardened_13)
 
 1. The `W0001` row (above).
+
+## Round 2 (R2-batch.md): 13, 20, 12 and 12 tasks
+
+- **W1, error pages** (129k tokens, 21 min): 12 of 13 written, E1050 to E2061, one commit each; baselines
+  `3db854db`. E1041 has no page: an import cycle needs two packages, and a page holds one.
+  - **Spec vs compiler:**
+    - `[LEX-16]`: `128i8` is accepted, where the rule says E2010.
+    - `[TYP-34]`: E2030's message is not the rule's.
+    - `[DIA-2]`: `int` is printed `i64` (W4's item 9).
+  - **Base:** its worktree started from origin/main (`baa4ffdc`), before round 1.
+- **W2, D's tests reviewed** (124k tokens, 10 min): 18 of 20 committed.
+  - TYP-9b was rewritten: the old test showed nothing about `allow_fma`.
+  - TYP-25's reject was removed: the spec gives no code for a positional argument after a named one.
+    A spec gap, for the next cut.
+  - DIA-7 and DIA-10 were left out: the compiler's helps for B4 and B2 are category words, where the
+    rules want the line to write. Defects.
+- **W3, deterministic maths** (145k tokens, 13 min): all 12.
+  - `tools/det_model.py` models the 11 new kernels. `check_det.py` matches bit for bit: 45,045
+    results. Worst error against mpmath is 0.93 ulp.
+  - `[STR-3]`: `@derive(Copy)` with a `drop` is E2080 (`f9fb6aa4`).
+  - **Base:** it started from origin/main too, and reset itself onto local `main`.
+- **W4, defects:** running.
+
+## Spec findings for the next cut (continued)
+
+2. **TYP-25:** the code for a positional argument after a named one (W2).
