@@ -611,7 +611,7 @@ pub fn check_effects_all(bodies: &[Body], types: &TypeTable, map: &ember_span::S
             // `[DET-4]` — a platform function of `std.math` has `det`'s function of the same name.
             if effect == Effects::NONDET
                 && !relaxed
-                && let Some(help) = det_help(body, types, map, first.span)
+                && let Some(help) = det_help(body, types, map, first.span, &chain)
             {
                 diagnostic = diagnostic.help(help);
             }
@@ -634,8 +634,18 @@ pub fn check_effects_all(bodies: &[Body], types: &TypeTable, map: &ember_span::S
 /// The function is the call's own builtin; only its arguments are read from the program's text. A
 /// call that reaches the platform through another function gets no such help: that function's own
 /// call is the one to change.
-fn det_help(body: &Body, types: &TypeTable, map: &ember_span::SourceMap, call: Span) -> Option<String> {
-    let (name, arity, operator) = platform_function(body, call)?;
+fn det_help(body: &Body, types: &TypeTable, map: &ember_span::SourceMap, call: Span, chain: &[String]) -> Option<String> {
+    // The chain is the function, the functions between, and the operation: the platform function
+    // is the call's own builtin, or the `std.math` function the call names, whose body reaches it.
+    let (name, arity, operator) = match chain {
+        [_, _] => platform_function(body, call)?,
+        [_, callee, _] => {
+            let name = callee.strip_prefix("std.math.")?;
+            let arity = if name == "pow" { 2 } else { FloatLib::named(name)?.1 };
+            (FloatLib::ALL.iter().map(|(_, known, _)| *known).find(|known| *known == name)?, arity, false)
+        }
+        _ => return None,
+    };
     let function = display_name(body, types);
     let generic = || {
         format!("`{function}` is `@deterministic`, and this call is the platform's `{name}`, whose last bits differ between C libraries; write `det.{name}`, `std.math.det`'s function of the same name")
