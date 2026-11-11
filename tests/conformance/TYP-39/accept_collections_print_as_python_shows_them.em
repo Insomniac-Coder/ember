@@ -4,7 +4,7 @@
 #$ stdout: [1, 2, 3]
 #$ ['a', "it's"] ['x']
 #$ [[1], []] [1.5, 2.0]
-#$ (1, 'x') (7,)
+#$ (1, 'x') (7, 8)
 #$ Some(3) None Some('hi')
 #$ Ok(1) Err('bad')
 #$ [true, false] [1, 2, 3]
@@ -26,7 +26,7 @@ fn main():
     println(names, chars)
     nested: Array[Array[int]] = [[1], []]
     println(nested, [1.5, 2.0])
-    println((1, "x"), (7,))
+    println((1, "x"), (7, 8))
     some: Option[int] = Some(3)
     none: Option[int] = None
     text: Option[String] = "hi"
