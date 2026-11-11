@@ -64,6 +64,11 @@ pub struct LoadedModule {
 pub trait ExportIndex {
     /// Every module that exports `name` to the program being checked.
     fn exporters(&self, name: &str) -> &[Exported];
+    /// `[STD-6]` — the name of the package `file` belongs to when that package does not declare
+    /// `layer` of `std`; `None` when it does, or when nothing is known.
+    fn package_omitting(&self, _file: ember_span::FileId, _layer: &str) -> Option<String> {
+        None
+    }
 }
 
 /// One exporter of a name: its module's path (`std.math`) and whether the item is a type.
@@ -3981,6 +3986,10 @@ struct Checker<'a> {
     /// `[FN-5]` — each function's parameter defaults by parameter name, with
     /// the module they are resolved in.
     param_defaults: HashMap<DefId, (usize, Vec<(Symbol, ast::Expr)>)>,
+    /// `[DET-3]` — the declarations of interface methods a `@deterministic` function may call
+    /// through a `dyn` value: those that declare `@deterministic`, and every method of an interface
+    /// that is not `pub` (the rule is about `pub` ones).
+    dyn_deterministic: HashSet<DefId>,
     reported_defaults: HashSet<Span>,
     open: OpenState,
 }
@@ -4364,6 +4373,7 @@ impl<'a> Checker<'a> {
             reported_stmt_attrs: HashSet::new(),
             debug_assertions: true,
             param_defaults: HashMap::new(),
+            dyn_deterministic: HashSet::new(),
             reported_defaults: HashSet::new(),
             open: OpenState::default(),
             body_fn: None,
@@ -13133,6 +13143,9 @@ impl<'a> Checker<'a> {
                     signature.overflow,
                 )));
             }
+            if has_attribute(&member.attrs, "deterministic") || visibility == ast::VisKind::Private {
+                self.dyn_deterministic.insert(def);
+            }
             methods.push((f.name.name, def, receiver, f.body.is_some()));
             // `[FN-5]` — a default method's parameter defaults, which each
             // implementing type's copy takes.
@@ -13396,6 +13409,9 @@ impl<'a> Checker<'a> {
             }
             if let Some(defaults) = self.param_defaults.get(declaration).cloned() {
                 self.param_defaults.insert(instance_declaration, defaults);
+            }
+            if self.dyn_deterministic.contains(declaration) {
+                self.dyn_deterministic.insert(instance_declaration);
             }
             declarations.insert(*declaration, instance_declaration);
             methods.push((*method, instance_declaration, *receiver, *has_body));
@@ -13774,7 +13790,7 @@ impl<'a> Checker<'a> {
                         }
                     })
                     .collect();
-                Some(hir::InterfaceSlot { params, ret: signature.ret })
+                Some(hir::InterfaceSlot { params, ret: signature.ret, deterministic: self.dyn_deterministic.contains(&declaration) })
             })
             .collect()
     }
@@ -15760,6 +15776,24 @@ impl<'a> Checker<'a> {
             && args.len() == 1
             && let Some(&any_error) = self.named_types.get(&Symbol::intern("std.core.AnyError"))
         {
+            // `[STD-6]` — `AnyError` is a name of the alloc layer, which this package may not use.
+            if let Some(package) = self.exports.and_then(|exports| exports.package_omitting(name_span.file, "alloc")) {
+                let shown = self.written_line(args[0].1).unwrap_or_else(|| self.types.display(args[0].0));
+                let error: String = package
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter(|part| !part.is_empty())
+                    .map(|part| part[..1].to_uppercase() + &part[1..])
+                    .collect();
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E1042,
+                        span,
+                        format!("`Result[{shown}]` means `Result[{shown}, AnyError]`, and `AnyError` needs the `alloc` layer, which `{package}` does not declare"),
+                    )
+                    .help(format!("name the error type: `Result[{shown}, {error}Error]`")),
+                );
+                return self.common.error;
+            }
             return self.result_of(args[0].0, any_error);
         }
         if !require(self, arity) {
@@ -27651,6 +27685,7 @@ impl<'a> Checker<'a> {
             ast::Jump::Break { label } => {
                 if self.in_defer {
                     self.error(codes::E2160, span, "control flow cannot leave a `defer` block");
+                    return;
                 }
                 if let Some(depth) = self.loop_depth(*label, "break", span) {
                     out.push(Stmt::Break { depth });
@@ -27659,6 +27694,7 @@ impl<'a> Checker<'a> {
             ast::Jump::Continue { label } => {
                 if self.in_defer {
                     self.error(codes::E2160, span, "control flow cannot leave a `defer` block");
+                    return;
                 }
                 if let Some(depth) = self.loop_depth(*label, "continue", span) {
                     out.push(Stmt::Continue { depth });
@@ -45982,6 +46018,21 @@ impl<'a> Checker<'a> {
         } else {
             range_ty
         };
+        // `[RNG-9]` — `new_unchecked` asserts the range in `debug` (`[PRF-3]`): the value is held in
+        // a local no program can name, tested with `contains`, and then handed on as it is.
+        if which == 2 && self.debug_assertions {
+            let (bool_ty, str_ty, void) = (self.common.bool_, self.common.str_, self.common.void);
+            self.scopes.push(HashMap::new());
+            let local = self.declare(Some(Symbol::intern("$range_value")), def.repr, span);
+            self.scopes.pop();
+            let held = || Expr { ty: def.repr, kind: ExprKind::Local(local), span };
+            let inside = Expr { ty: bool_ty, kind: ExprKind::Builtin { which: hir::Builtin::RangeContains(id), args: vec![held()] }, span };
+            let message = Expr { ty: str_ty, kind: ExprKind::Str(format!("`{type_name}.new_unchecked`: the value is not in the range of `{type_name}`")), span };
+            let assertion = Expr { ty: void, kind: ExprKind::Builtin { which: hir::Builtin::Assert, args: vec![inside, message] }, span };
+            let stmts = vec![Stmt::Let { local, init: Some(value) }, Stmt::Expr(assertion)];
+            let handed_on = Expr { ty, kind: ExprKind::Builtin { which: builtin, args: vec![held()] }, span };
+            return Expr { ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(handed_on) }, span };
+        }
         Expr { ty, kind: ExprKind::Builtin { which: builtin, args: vec![value] }, span }
     }
 

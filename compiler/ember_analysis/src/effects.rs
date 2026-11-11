@@ -586,7 +586,7 @@ fn own_place_after(body: &Body, block: usize, position: usize, own_file: &dyn Fn
 
 /// `[EFF-5]`, `[EFF-6]` — check every function's contracts against its effects. Returns how many
 /// were broken.
-pub fn check_effects_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) -> usize {
+pub fn check_effects_all(bodies: &[Body], types: &TypeTable, map: &ember_span::SourceMap, sink: &mut Sink) -> usize {
     if bodies.iter().all(|body| body.contracts.forbidden.is_empty()) {
         return 0;
     }
@@ -608,6 +608,14 @@ pub fn check_effects_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) ->
             let span = if first.span.file == body.span.file { first.span } else { body.span };
             let relaxed = matches!(last.origin, Origin::Operation(operation) if operation == RELAXED);
             let mut diagnostic = contract_diagnostic(body, effect, span, &chain, types, relaxed);
+            // `[DET-4]` — a platform function of `std.math` has `det`'s function of the same name.
+            if effect == Effects::NONDET
+                && !relaxed
+                && let Origin::Operation(operation) = last.origin
+                && let Some(help) = det_help(body, types, map, operation, first.span)
+            {
+                diagnostic = diagnostic.help(help);
+            }
             for lambda in lambdas {
                 diagnostic = diagnostic.secondary(lambda, "the lambda the call runs");
             }
@@ -619,6 +627,74 @@ pub fn check_effects_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) ->
         }
     }
     reported
+}
+
+/// `[DET-4]` — `E4070`'s help for a platform float function (`operation` is "the platform's `cbrt`"):
+/// "`fall_off` is `@deterministic`, and `math.cbrt(d)` (line 6) is the platform's `cbrt`, whose last
+/// bits differ between C libraries; write `det.cbrt(d)`", the call as the program wrote it.
+fn det_help(body: &Body, types: &TypeTable, map: &ember_span::SourceMap, operation: &str, call: Span) -> Option<String> {
+    if !operation.starts_with("a transcendental function") && operation != "the platform's `pow`" {
+        return None;
+    }
+    let function = display_name(body, types);
+    // A method call's span is its receiver's: the rest of the call is on the line after it.
+    let written = map.get(call.file).and_then(|file| {
+        let text = file.text.get(call.start as usize..call.end as usize)?.trim();
+        let after = file.text.get(call.end as usize..)?;
+        let method_call = after.strip_prefix('.').is_some_and(|rest| {
+            let word: String = rest.chars().take_while(|c| *c == '_' || c.is_alphanumeric()).collect();
+            !word.is_empty() && rest[word.len()..].starts_with('(')
+        });
+        let extended = if method_call && !text.contains('(') {
+            let (mut depth, mut end) = (0usize, None);
+            for (at, c) in after.char_indices().take_while(|(_, c)| *c != '\n') {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(at + 1);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            end.map(|end| format!("{text}{}", &after[..end]))
+        } else {
+            None
+        };
+        Some(extended.unwrap_or_else(|| text.to_string())).filter(|text| !text.is_empty() && !text.contains('\n'))
+    });
+    let written = written.as_deref()?;
+    // The function the call names: after the last `.` before its `(`, or `pow` for `a ** b`.
+    let name = if written.contains(" ** ") { "pow" } else { written[..written.find('(')?].rsplit('.').next()? };
+    let arity = FloatLib::named(name).map_or(2, |(_, arity)| arity);
+    let line = map.line_col(call).line;
+    // The call as `det` takes it: a module call keeps its arguments (`math.cbrt(d)`), a method call
+    // gives its receiver first (`x.sin()` is `det.sin(x)`), `a ** b` is `det.pow(a, b)`.
+    let replacement = if let Some((base, exponent)) = written.split_once(" ** ") {
+        Some(format!("det.pow({}, {})", base.trim(), exponent.trim()))
+    } else if let (Some(open), true) = (written.find('('), written.ends_with(')')) {
+        let (callee, arguments) = (&written[..open], &written[open + 1..written.len() - 1]);
+        let given = if arguments.trim().is_empty() { 0 } else { arguments.matches(',').count() + 1 };
+        match callee.rsplit_once('.') {
+            Some((receiver, method)) if method == name => Some(if given == arity {
+                format!("det.{name}({arguments})")
+            } else if given == 0 {
+                format!("det.{name}({receiver})")
+            } else {
+                format!("det.{name}({receiver}, {arguments})")
+            }),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let replacement = replacement.unwrap_or_else(|| format!("det.{name}(…)"));
+    Some(format!(
+        "`{function}` is `@deterministic`, and `{written}` (line {line}) is the platform's `{name}`, whose last bits differ between C libraries; write `{replacement}`"
+    ))
 }
 
 fn contract_diagnostic(
@@ -1097,7 +1173,15 @@ impl SiteBuilder<'_> {
             }
             // `[EFF-2]` — every implementation the program's casts put in the table's slot, and the
             // overrides below them.
-            FuncRef::Interface { interfaces, slot, .. } if !self.targets.of_dyn(interfaces, *slot).is_empty() => {
+            FuncRef::Interface { interfaces, slot, layout, .. } if !self.targets.of_dyn(interfaces, *slot).is_empty() => {
+                // `[DET-3]` — admitted under `@deterministic` only when the method declares it.
+                if layout.get(*slot).and_then(Option::as_ref).is_some_and(|slot| !slot.deterministic) {
+                    sites.push(Site {
+                        effects: Effects::NONDET,
+                        span,
+                        origin: Origin::Operation("a call through a `dyn` method that does not declare `@deterministic`"),
+                    });
+                }
                 for &target in self.targets.of_dyn(interfaces, *slot) {
                     sites.push(Site { effects: Effects::ALL, span, origin: Origin::Call(target) });
                 }

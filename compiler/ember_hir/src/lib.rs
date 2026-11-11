@@ -611,6 +611,9 @@ pub struct Expr {
 pub struct InterfaceSlot {
     pub params: Vec<Ty>,
     pub ret: Ty,
+    /// `[DET-3]` — a call through this slot is admitted under `@deterministic`: the method declares
+    /// it, or its interface is not `pub`.
+    pub deterministic: bool,
 }
 
 /// One concrete method supplied to an erased `[TYP-22]` interface table.

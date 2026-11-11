@@ -4,7 +4,7 @@
 #$ error[E2036]: this pattern always matches
 #$ error[E0109]: `owns` is not written before `fn`
 #$ error[E0108]: must precede a compound statement
-#$ error[E0104]: is not permitted on a statement
+#$ error[E0108]: is not permitted on a statement
 
 fn main():
     ## `[GRM-18]` (`OQ-25`) — one line carries one statement.

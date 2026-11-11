@@ -1731,7 +1731,7 @@ impl Reporter<'_> {
             let mut diagnostic = Diagnostic::error(codes::E3040, span, format!("{message}; give it a new value first, or keep a copy: {keep}"))
                 // `[DIA-7a]` shape O1, a part: a new value first, or a copy of your own.
                 .help(format!("give `{part}` a new value before `{name}` is used whole (`{part} = …`), or keep a copy: {keep}"))
-                .primary_label("used here as a whole while one of its parts was handed over")
+                .primary_label("used here")
                 .note("a part handed over on its own leaves the rest of the value usable, but neither the part nor the whole until the part has a new value [OWN-11]");
             if let Some(at) = moved_at {
                 diagnostic = diagnostic.secondary(at, "handed over here");
@@ -1786,7 +1786,7 @@ impl Reporter<'_> {
             // primary one, the line to write.
             let diagnostic = Diagnostic::error(codes::E3040, span, message)
                 .help(help)
-                .primary_label("used here after the hand-over")
+                .primary_label("used here")
                 .note("handing a value over gives it away; the old owner cannot use it again [OWN-3]");
             let diagnostic = self.kept_by_copy(diagnostic, body, local, again.then_some(span));
             self.moved_from(diagnostic, body, local, span)
@@ -1901,7 +1901,7 @@ impl Reporter<'_> {
         };
         let diagnostic = Diagnostic::error(codes::E3040, span, message)
             .help(help)
-            .primary_label("used here after the hand-over")
+            .primary_label("used here")
             .note(note);
         let diagnostic = self.kept_by_copy(diagnostic, body, local, None);
         let diagnostic = self.moved_from(diagnostic, body, local, span);

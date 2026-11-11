@@ -11,3 +11,6 @@ docs/spec-source/as-received/** -text -diff
 
 *.png binary
 *.pdf binary
+
+# [LEX-2] — the CRLF test is stored with CRLF line endings in the working tree, so that it tests CRLF.
+tests/conformance/LEX-2/accept_crlf_line_endings_read_as_lf.em text eol=crlf

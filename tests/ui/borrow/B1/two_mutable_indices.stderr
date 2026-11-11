@@ -6,7 +6,7 @@ error[E3022]: `values[…]` is already mutably borrowed
 8 |     second: ref mut i32 = ref mut values[j]
   |                                          ^ conflicting access here
 9 |     first = 10
-  |             -- borrow later used here
+  |             -- used here
   |
   = help: use `values.get_pair_mut(i, j)` for two elements at once (`None` when they are the same), or `values.as_mut_span().split_at(k)` for two non-overlapping mutable spans; `swap`, `chunks_mut` and `iter_mut` cover other patterns
   = note: computed indices may overlap; a structural split proves non-overlap (BRW-5)

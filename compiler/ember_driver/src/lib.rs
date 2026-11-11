@@ -5100,6 +5100,8 @@ struct Exports {
     root_dir: PathBuf,
     whole_tree: bool,
     index: std::cell::OnceCell<std::collections::HashMap<String, Vec<ember_typeck::Exported>>>,
+    /// `[STD-6]` — the files of packages that leave `alloc` out, with the package's name.
+    without_alloc: std::collections::HashMap<ember_span::FileId, String>,
 }
 
 impl Exports {
@@ -5109,7 +5111,19 @@ impl Exports {
             root_dir: root_dir.to_path_buf(),
             whole_tree: nearest_manifest_path(input).is_some(),
             index: std::cell::OnceCell::new(),
+            without_alloc: std::collections::HashMap::new(),
         }
+    }
+
+    /// `[STD-6]` — remember which modules belong to a package that does not declare `alloc`.
+    fn with_layers(mut self, modules: &[ember_typeck::LoadedModule], packages: &packages::Packages) -> Exports {
+        for loaded in modules {
+            let Some(package) = loaded.package.map(|index| &packages.list[index]) else { continue };
+            if !package.uses("alloc") {
+                self.without_alloc.insert(loaded.module.span.file, package.name.clone());
+            }
+        }
+        self
     }
 
     fn build(&self) -> std::collections::HashMap<String, Vec<ember_typeck::Exported>> {
@@ -5178,6 +5192,10 @@ impl Exports {
 impl ember_typeck::ExportIndex for Exports {
     fn exporters(&self, name: &str) -> &[ember_typeck::Exported] {
         self.index.get_or_init(|| self.build()).get(name).map_or(&[], Vec::as_slice)
+    }
+
+    fn package_omitting(&self, file: ember_span::FileId, layer: &str) -> Option<String> {
+        if layer == "alloc" { self.without_alloc.get(&file).cloned() } else { None }
     }
 }
 
@@ -5437,7 +5455,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     // answered, until nothing is left to evaluate; a pass that asks for
     // values says nothing (its errors are the next pass's too).
     let mut answers = ember_typeck::ComptimeAnswers::new();
-    let exports = Exports::new(input, &root_dir);
+    let exports = Exports::new(input, &root_dir).with_layers(&modules, &packages);
     let mut reports = Vec::new();
     let mut blocked = Vec::new();
     let mut passes = 0;
@@ -5815,7 +5833,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     // `[EFF-5]`, `[EFF-15]` — the contracts, checked once on the effects left after the
     // profile-independent proofs and before inlining; a known function passed to a callable
     // parameter is called directly by now, so it contributes its own effects (`[EFF-2]`).
-    if ember_analysis::check_effects_all(mir.bodies(), &types, &mut sink) > 0 {
+    if ember_analysis::check_effects_all(mir.bodies(), &types, &map, &mut sink) > 0 {
         return Ok(finish(&sink, &map, options));
     }
     // `[STD-6]`, `[BLD-11]` — a package's functions use only the layers it declares: the effects
