@@ -855,3 +855,39 @@ def sinh64(x):
         r = scalbn(yh + yl, k - 1)
         return -r if x < 0.0 else r
     return x * INF
+
+
+CH = [0.5, 0.041666666666666664, 0.001388888888888889, 2.48015873015873e-05, 2.755731922398589e-07,
+      2.08767569878681e-09, 1.1470745597729725e-11, 4.779477332387385e-14, 1.5619206968586225e-16,
+      4.110317623312165e-19, 8.896791392450574e-22]
+
+
+def cosh_tail(x):
+    """cosh x - 1 for |x| < 1."""
+    z = x * x
+    p = CH[10]
+    for c in reversed(CH[:10]):
+        p = c + z * p
+    return z * p
+
+
+def cosh64(x):
+    if x != x:
+        return x + x
+    ax = abs(x)
+    if ax < 1.0:
+        return 1.0 + cosh_tail(ax)
+    if ax < 22.0:
+        yh, yl, k = exp_parts(ax)
+        ih = 1.0 / yh
+        p, e = two_product(ih, yh)
+        il = ((1.0 - p) - e - ih * yl) * ih
+        a = scalbn(yh, k)
+        b = scalbn(ih, -k)
+        d = a + b
+        tail = (((a - d) + b) + scalbn(yl, k)) + scalbn(il, -k)
+        return 0.5 * (d + tail)
+    if ax <= SINH_OVERFLOW:
+        yh, yl, k = exp_parts(ax)
+        return scalbn(yh + yl, k - 1)
+    return INF
