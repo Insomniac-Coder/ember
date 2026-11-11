@@ -1446,18 +1446,9 @@ impl ParallelWalk {
                     self.expr(checker, base);
                 }
             }
-            // `[PAR-2]` — `?` would return from the function in the middle of the loop; a callee
-            // read through (`[PAR-2b]`) returns from itself.
-            ast::ExprKind::Try(operand) => {
-                if self.frames.is_empty() {
-                    let line = checker.line_of(expr.span).map_or(String::new(), |n| format!(" on line {n}"));
-                    let function = checker.written_line(checker.fn_decl).unwrap_or_else(|| "the function".to_string());
-                    let result = checker.written_line(operand.span).unwrap_or_else(|| "the result".to_string());
-                    self.problems.push((expr.span, format!("`?`{line} would return from `{function}` in the middle of the parallel loop; keep each result instead: write `out[i] = {result}` into an `Array` of the results and check them after the loop")));
-                }
-                self.expr(checker, operand);
-            }
-            ast::ExprKind::Unary { operand, .. } | ast::ExprKind::Paren(operand) | ast::ExprKind::Owned(operand) => self.expr(checker, operand),
+            // `[PAR-2]` — a `?` in the body is refused where it is checked (`synth_try`), which
+            // knows the type of its operand; a callee read through (`[PAR-2b]`) returns from itself.
+            ast::ExprKind::Unary { operand, .. } | ast::ExprKind::Paren(operand) | ast::ExprKind::Try(operand) | ast::ExprKind::Owned(operand) => self.expr(checker, operand),
             ast::ExprKind::Cast { expr: inner, .. } | ast::ExprKind::Downcast { expr: inner, .. } => self.expr(checker, inner),
             ast::ExprKind::Binary { lhs, rhs, .. } | ast::ExprKind::Logical { lhs, rhs, .. } => {
                 self.expr(checker, lhs);
@@ -3948,6 +3939,9 @@ struct Checker<'a> {
     ret_ty: Ty,
     /// The name of the function whose body is being checked, where it is declared (`[PAR-2]`'s `?` message).
     fn_decl: Span,
+    /// `[PAR-2]` — the lambda depth of the `@parallel` loop's chunk closure being checked, where a
+    /// `?` is `E7010`.
+    parallel_try: Option<usize>,
     /// The default `[TYP-8]` policy when a module has no overflow attribute.
     default_overflow: OverflowPolicy,
     /// Each source module's lexical default, selected before checking bodies.
@@ -4345,6 +4339,7 @@ impl<'a> Checker<'a> {
             static_safe_unsafe_cell_reported: false,
             ret_ty,
             fn_decl: Span::DUMMY,
+            parallel_try: None,
             default_overflow: OverflowPolicy::default(),
             module_overflow: Vec::new(),
             module_deterministic: Vec::new(),
@@ -16534,6 +16529,22 @@ impl<'a> Checker<'a> {
     fn synth_try(&mut self, inner: &ast::Expr, span: Span) -> Expr {
         let value = self.synth_committed(inner);
         let ret_ty = self.ret_ty;
+        // `[PAR-2]` — `?` in a `@parallel` loop's body would return from the function in the middle
+        // of the loop; the result to keep is of the operand's type.
+        if self.parallel_try == Some(self.lambda_depth) {
+            if value.ty != self.common.error {
+                let line = self.line_of(span).map_or(String::new(), |n| format!(" on line {n}"));
+                let function = self.written_line(self.fn_decl).unwrap_or_else(|| "the function".to_string());
+                let result = self.written_line(inner.span).unwrap_or_else(|| "the result".to_string());
+                let kept = self.types.display(value.ty);
+                self.error(
+                    codes::E7010,
+                    span,
+                    format!("`?`{line} would return from `{function}` in the middle of the parallel loop; keep each result instead: write `out[i] = {result}` into an `Array[{kept}]` and check them after the loop"),
+                );
+            }
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         let is_option = self.is_option(value.ty);
         let is_result = self.is_result(value.ty);
 
@@ -53785,7 +53796,9 @@ impl<'a> Checker<'a> {
             params: vec![ember_types::FnParam { ty: int, mode: ember_types::FnParamMode::Borrow }, ember_types::FnParam { ty: int, mode: ember_types::FnParamMode::Borrow }],
             ret: result_ty,
         });
+        let outer_try = self.parallel_try.replace(self.lambda_depth + 1);
         let closure_value = self.synth_lambda_fresh(&lambda, Some(expected), span, None);
+        self.parallel_try = outer_try;
         if closure_value.ty == self.common.error {
             return;
         }

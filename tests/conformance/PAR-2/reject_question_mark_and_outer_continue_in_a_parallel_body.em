@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: PAR-2
-#$ error[E7010]: `?` on line 14 would return from `parse_all` in the middle of the parallel loop; keep each result instead: write `out[i] = parse(i)` into an `Array` of the results and check them after the loop
+#$ error[E7010]: `?` on line 14 would return from `parse_all` in the middle of the parallel loop; keep each result instead: write `out[i] = parse(i)` into an `Array[Result[i64, i64]]` and check them after the loop
 #$ error[E7010]: a `@parallel` loop's body may not `continue` an outer loop
 # `[PAR-2]` — the body of a `@parallel` loop has no `?` (it would return from the function in the
 # middle of the loop) and no `continue` naming an outer loop.
