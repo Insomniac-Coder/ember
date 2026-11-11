@@ -16,4 +16,4 @@ fn main():
     shown: Array[owns dyn Display] = []
     shown.push(owns Sq(2))
     println(shown[0])
-    println(shown)    #$ error[E2040]: `owns dyn std.core.Display` does not implement `Debug`, which printing a `Array[owns dyn std.core.Display]` needs
+    println(shown)    #$ error[E2040]: `owns dyn std.core.Display` does not implement `Debug`, which printing an `Array[owns dyn std.core.Display]` needs

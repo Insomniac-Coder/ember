@@ -24,5 +24,5 @@ fn main():
     println(s)    #$ error[E2040]: `Secret` does not implement `Debug`, which printing it needs
     println([s.key])
     secrets: Array[Secret] = [Secret(key="j")]
-    println(secrets)    #$ error[E2040]: `Secret` does not implement `Debug`, which printing a `Array[Secret]` needs
+    println(secrets)    #$ error[E2040]: `Secret` does not implement `Debug`, which printing an `Array[Secret]` needs
     println(s.key, a.id, Odd(n=1).n)
