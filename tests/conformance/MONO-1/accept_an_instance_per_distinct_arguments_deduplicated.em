@@ -6,7 +6,9 @@
 #$ stdout: 3 1.5 3
 # `[MONO-1]` — generic code is instantiated per distinct set of type arguments; instances are named
 # deterministically and deduplicated: `ident[i32]` called twice is one function, `ident[f64]` another.
+# `ident` is `@noinline` (`[CG-C-3a]`) so that each instance stays a function of its own in every profile.
 
+@noinline
 [T]
 fn ident(x: T) -> T:
     return x
