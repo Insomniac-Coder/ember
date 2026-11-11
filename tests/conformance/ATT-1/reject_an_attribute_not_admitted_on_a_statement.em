@@ -4,6 +4,6 @@
 ## `@simd` and `@allow`.
 
 fn main():
-    @inline    #$ error[E0104]: `@inline` is not permitted on a statement
+    @inline    #$ error[E0108]: `@inline` is not permitted on a statement
     x = 1
     println(x)

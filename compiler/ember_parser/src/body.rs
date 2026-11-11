@@ -300,7 +300,7 @@ impl Parser<'_> {
             if !permitted {
                 self.report(
                     Diagnostic::error(
-                        codes::E0104,
+                        codes::E0108,
                         attr.span,
                         format!("`@{name}` is not permitted on a statement"),
                     )
