@@ -1,0 +1,10 @@
+error[E3040]: `values` is handed over on line 9 and the loop comes round again, so the next round finds it gone; give it a new value before the next round (`values = …`), declare it inside the loop, or hand over a copy of your own: `copy of values`
+ --> tests/ui/borrow/O1/move_in_loop.em:9:30
+  |
+9 |         println(consume(owns values))
+  |                              ^^^^^^ handed over here, and the loop comes round again
+  |
+  = help: declare it inside the loop, hand over a copy of your own for each round, or use `mem.take` when replacing it on every pass
+  = note: the first round hands it over and the next finds it gone; a value handed over in a loop must be given a value again before the next round [OWN-4]
+
+error: could not compile due to 1 error(s)

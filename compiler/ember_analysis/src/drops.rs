@@ -921,6 +921,55 @@ fn through_class_field(place: &Place, body: &Body, types: &TypeTable) -> bool {
     false
 }
 
+/// The class type of the object whose field `place` reaches through its handle, if it does.
+fn class_object_of_field(place: &Place, body: &Body, types: &TypeTable) -> Option<Ty> {
+    if !through_class_field(place, body, types) {
+        return None;
+    }
+    let mut ty = body.local(place.local).ty;
+    for projection in &place.projection {
+        match (projection, types.kind(ty)) {
+            (Projection::Field(_), TyKind::Class(_)) => return Some(ty),
+            (Projection::Field(i), TyKind::Struct(id)) => ty = types.struct_def(*id).fields.get(*i).map(|f| f.ty).unwrap_or(ty),
+            (Projection::Field(i), TyKind::Tuple(items)) => ty = items.get(*i).copied().unwrap_or(ty),
+            (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => ty = *inner,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// A place as the program wrote it: `p.name`, `q.items`.
+fn describe_place(place: &Place, body: &Body, types: &TypeTable) -> String {
+    let mut text = body.local(place.local).name.clone().unwrap_or_else(|| format!("_{}", place.local.0));
+    let mut ty = body.local(place.local).ty;
+    for projection in &place.projection {
+        match (projection, types.kind(ty)) {
+            (Projection::Field(i), TyKind::Struct(id)) => {
+                if let Some(field) = types.struct_def(*id).fields.get(*i) {
+                    text.push('.');
+                    text.push_str(field.name.as_str());
+                    ty = field.ty;
+                }
+            }
+            (Projection::Field(i), TyKind::Class(id)) => {
+                if let Some(field) = types.class_def(*id).fields.get(*i) {
+                    text.push('.');
+                    text.push_str(field.name.as_str());
+                    ty = field.ty;
+                }
+            }
+            (Projection::Field(i), TyKind::Tuple(items)) => {
+                text.push_str(&format!(".{i}"));
+                ty = items.get(*i).copied().unwrap_or(ty);
+            }
+            (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => ty = *inner,
+            _ => {}
+        }
+    }
+    text
+}
+
 fn deref_through_ref(place: &Place, body: &Body, types: &TypeTable) -> bool {
     let mut ty = body.local(place.local).ty;
     let mut variant = None;
@@ -1009,18 +1058,25 @@ fn holds_mutable_borrow(types: &TypeTable, ty: Ty, depth: usize) -> bool {
 fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usize {
     let drop_self_local = drop_self(body, types);
     let mut errors = 0;
-    let mut report = |place: &Place, span: Span| {
+    let mut report = |place: &Place, span: Span, binding: bool| {
         if drop_self_local == Some(place.local) {
             return;
         }
-        // `[EXP-6]` — the object still holds the field, and every alias of
-        // the handle can still reach it: moving it out is `E3012` (D-302).
-        if through_class_field(place, body, types) {
+        // `[EXP-6]`, `[OWN-11]` — the object still holds the field, and every alias of the handle
+        // can still reach it and would see the hole: `E3013` (`E3012` is folded into it).
+        if let Some(object) = class_object_of_field(place, body, types) {
+            let part = describe_place(place, body, types);
+            let owner = body.local(place.local).name.clone().unwrap_or_else(|| "the object".to_string());
+            let class = types.display(object);
             sink.emit_classified(
-                Diagnostic::error(codes::E3012, span, "cannot move out of a class field")
-                    .primary_label("moved out here")
-                    .note("the object keeps the field, and every handle to it can still reach it [EXP-6]")
-                    .help("borrow it, `ref` (`ref mut` to change it in the object); leave a value in its place with `mem.take` or `mem.replace`; or clone it"),
+                Diagnostic::error(
+                    codes::E3013,
+                    span,
+                    format!("`{owner}` is a `{class}` object, which other names may reach, so `{part}` cannot be taken out and leave a hole; take it and leave a value in its place: `mem.take(ref mut {part})`"),
+                )
+                .primary_label("taken out here")
+                .note("the object keeps the field, and every handle to it can still reach it [OWN-11]")
+                .help(format!("take it and leave a value in its place, `mem.take(ref mut {part})` or `mem.replace(ref mut {part}, …)`; or keep a copy: `copy of {part}`")),
             );
             errors += 1;
             return;
@@ -1036,8 +1092,13 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
         // that writes its captures, `[CLO-1]`) is not a copy either: two copies
         // would be two live mutable borrows of one place (D-422, the `E3050` a
         // direct copy gets).
+        // `[OWN-11]`, `[EXP-6]` — a hand-over out of a name that does not own the value is `E3013`
+        // whatever the type: the owner still holds it.
         let moved = moved_place_ty(place, body, types);
-        if !types.needs_drop(moved) && !holds_mutable_borrow(types, moved, 0) && !types.is_copy(moved) {
+        // `[OWN-3]` — `b = a` of a value that owns nothing, out of a name that does not own it, is
+        // what makes `b` a view (A1-4), not a hand-over; until that is built it keeps 0.9.10's
+        // answer. A hand-over (an `owns` argument, a store) is `E3013` whatever the type.
+        if binding && !types.needs_drop(moved) && !holds_mutable_borrow(types, moved, 0) && !types.is_copy(moved) {
             return;
         }
         // `[EXP-6]` (D-599) — an element of an array, `Array`, `Span` or `SoA` column stays in its
@@ -1076,7 +1137,7 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
             );
             errors += 1;
         } else if borrowed {
-            let note = if types.needs_drop(moved) {
+            let note = if types.needs_drop(moved) || !holds_mutable_borrow(types, moved, 0) {
                 "a borrowed parameter is owned by its caller [FN-1]; moving it out destroys the value twice — once here, once with the caller"
             } else {
                 "a borrowed parameter is its caller's value [FN-1]; it holds a mutable borrow, and moving it out would leave the caller a second one [CLO-2]"
@@ -1090,38 +1151,37 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
             errors += 1;
         }
     };
-    let check_operand = |operand: &Operand, span: Span, report: &mut dyn FnMut(&Place, Span)| {
+    let check_operand = |operand: &Operand, span: Span, binding: bool, report: &mut dyn FnMut(&Place, Span, bool)| {
         if let Operand::Move(place) = operand {
-            report(place, span);
+            report(place, span, binding);
         }
     };
     for block in &body.blocks {
         for stmt in &block.stmts {
             match &stmt.kind {
                 StmtKind::Assign { rvalue, .. } => match rvalue {
-                    Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } => {
-                        check_operand(o, stmt.span, &mut report);
-                    }
+                    Rvalue::Use(o) => check_operand(o, stmt.span, true, &mut report),
+                    Rvalue::UnaryOp { operand: o, .. } => check_operand(o, stmt.span, false, &mut report),
                     Rvalue::Cast { operand, .. } => {
-                        check_operand(operand, stmt.span, &mut report);
+                        check_operand(operand, stmt.span, false, &mut report);
                     }
                     Rvalue::BinaryOp { lhs, rhs, .. } => {
-                        check_operand(lhs, stmt.span, &mut report);
-                        check_operand(rhs, stmt.span, &mut report);
+                        check_operand(lhs, stmt.span, false, &mut report);
+                        check_operand(rhs, stmt.span, false, &mut report);
                     }
                     Rvalue::Aggregate { operands, .. } => {
                         for operand in operands {
-                            check_operand(operand, stmt.span, &mut report);
+                            check_operand(operand, stmt.span, false, &mut report);
                         }
                     }
                     Rvalue::Repeat { value, .. } => {
-                        check_operand(value, stmt.span, &mut report);
+                        check_operand(value, stmt.span, false, &mut report);
                     }
                     Rvalue::Discriminant(_) | Rvalue::Ref { .. } => {}
                 },
                 StmtKind::CheckedBinaryOp { lhs, rhs, .. } => {
-                    check_operand(lhs, stmt.span, &mut report);
-                    check_operand(rhs, stmt.span, &mut report);
+                    check_operand(lhs, stmt.span, false, &mut report);
+                    check_operand(rhs, stmt.span, false, &mut report);
                 }
                 StmtKind::StorageLive(_)
                 | StmtKind::StorageDead(_)
@@ -1137,17 +1197,17 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
         match &block.terminator {
             Terminator::Call { func, args, .. } => {
                 if let ember_mir::FuncRef::Indirect { operand, .. } = func {
-                    check_operand(operand, span, &mut report);
+                    check_operand(operand, span, false, &mut report);
                 }
                 for arg in args {
-                    check_operand(arg, span, &mut report);
+                    check_operand(arg, span, false, &mut report);
                 }
             }
             Terminator::SwitchInt { discr, .. } => {
-                check_operand(discr, span, &mut report);
+                check_operand(discr, span, false, &mut report);
             }
             Terminator::Assert { cond, .. } => {
-                check_operand(cond, span, &mut report);
+                check_operand(cond, span, false, &mut report);
             }
             Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
         }
@@ -1642,36 +1702,47 @@ impl Reporter<'_> {
             // D-426 — `(s, s)`, `f(s, s)`: the second operand finds the value
             // the first one took.
             self.sink.emit_classified(
-                Diagnostic::error(codes::E3040, span, format!("`{name}` is moved twice in one expression"))
-                    .primary_label("a part of this expression before it already moved the value")
+                Diagnostic::error(codes::E3040, span, format!("`{name}` is handed over twice in one expression"))
+                    .primary_label("a part of this expression before it already handed the value over")
                     .note(concat!(
                         "the parts of a call, a tuple, a list or a constructor are evaluated left to ",
-                        "right, and the first that takes the value by move gives it away [OWN-3]"
+                        "right, and the first that takes the value gives it away [OWN-3]"
                     ))
-                    .help("clone it for one of the two, or borrow it where the callee does not need to own it"),
+                    .help(format!("to keep both, give one of the two a copy of your own: `copy of {name}`")),
             );
             return;
         }
         if state.is_partial() {
-            self.sink.emit_classified(
-                Diagnostic::error(
-                    codes::E3042,
-                    span,
-                    format!("`{name}` is partially moved"),
-                )
-                .primary_label("used here as a whole after one of its fields was moved")
-                .secondary(decl.span, format!("`{name}` is declared here"))
-                .note("moving a field out leaves the rest of the struct live, but the struct cannot be used as a whole [EXP-6]")
-                .help("reassign the moved field, or destructure the whole struct up front"),
-            );
+            // `[OWN-11]` (`E3042` is folded into `E3040`) — a part handed over on its own, then its
+            // owner used whole before the part has a new value.
+            let moved_at = moves_reaching(body, local, self.point).into_iter().find(|moved| *moved != span);
+            let site = moved_at.and_then(|at| hand_over_site(body, self.types, local, at));
+            let part = site.as_ref().and_then(|site| site.part.clone()).unwrap_or_else(|| name.clone());
+            let message = match (&site, moved_at) {
+                (Some(HandOver { dest: Some(dest), .. }), Some(at)) => format!("`{part}` was handed over to `{dest}` on line {}; `{name}` is used whole on line {}", ember_diag::line_mark(at), ember_diag::line_mark(span)),
+                (_, Some(at)) => format!("`{part}` was handed over on line {}; `{name}` is used whole on line {}", ember_diag::line_mark(at), ember_diag::line_mark(span)),
+                _ => format!("`{part}` was handed over; `{name}` is used whole on line {}", ember_diag::line_mark(span)),
+            };
+            let keep = match site.as_ref().map(|site| &site.keep) {
+                Some(Keep::Call { receiver, callee }) => format!("`{receiver}.{callee}(owns copy of {part})`"),
+                Some(Keep::Store { dest }) => format!("`{dest} = copy of {part}`"),
+                _ => format!("`copy of {part}`"),
+            };
+            let mut diagnostic = Diagnostic::error(codes::E3040, span, format!("{message}; give it a new value first, or keep a copy: {keep}"))
+                // `[DIA-7a]` shape O1, a part: a new value first, or a copy of your own.
+                .help(format!("give `{part}` a new value before `{name}` is used whole (`{part} = …`), or keep a copy: {keep}"))
+                .primary_label("used here as a whole while one of its parts was handed over")
+                .note("a part handed over on its own leaves the rest of the value usable, but neither the part nor the whole until the part has a new value [OWN-11]");
+            if let Some(at) = moved_at {
+                diagnostic = diagnostic.secondary(at, "handed over here");
+            }
+            self.sink.emit_classified(diagnostic);
             return;
         }
-        // `[OWN-4]` — "A loop body that moves a value declared outside the loop
-        // is `E3041` unless the value is reassigned before the next iteration
-        // on every path." That is a different rule from `[OWN-3]`'s use after
-        // move, and `[DIA-7a]` keys it to a different shape: O3, "move in a
-        // loop", whose help is about the next iteration rather than about this
-        // use.
+        // `[OWN-4]` — "A loop body that hands over a value declared outside the loop
+        // is `E3040`, unless every path gives it a value again before the next round".
+        // Its message is about the next round rather than about this use (`E3041`,
+        // which said so, is folded into `E3040`; `[DIA-7a]` files it under O1).
         //
         // The two are told apart by where the use is and what the analysis
         // knows. A move and a use in one iteration leaves the local definitely
@@ -1684,40 +1755,87 @@ impl Reporter<'_> {
             // The use is where the analysis notices; the move that left the
             // value gone for the next iteration is what to point at.
             let moved_at = moves_reaching(body, local, self.point).into_iter().find(|moved| *moved != span);
+            // `[OWN-4]` (`E3041` is folded into `E3040`) — the value is gone in the next round.
+            let at = moved_at.unwrap_or(span);
             let diagnostic = Diagnostic::error(
-                codes::E3041,
-                moved_at.unwrap_or(span),
-                format!("`{name}` is moved in a loop"),
+                codes::E3040,
+                at,
+                format!(
+                    "`{name}` is handed over on line {} and the loop comes round again, so the next round finds it gone; give it a new value before the next round (`{name} = …`), declare it inside the loop, or hand over a copy of your own: `copy of {name}`",
+                    ember_diag::line_mark(at)
+                ),
             );
             let diagnostic = match moved_at {
-                Some(_) => diagnostic.secondary(span, "and used here on the next iteration"),
+                Some(_) => diagnostic.secondary(span, "and used here in the next round"),
                 None => diagnostic,
             };
             let diagnostic = self.kept_by_copy(diagnostic, body, local, again.then_some(span));
             diagnostic
-            .primary_label("moved here, and the loop comes back")
+            .primary_label("handed over here, and the loop comes round again")
             .note(concat!(
-                "the first iteration moves it and the second finds it gone; a value ",
-                "moved in a loop must be put back before the next iteration [OWN-4]"
+                "the first round hands it over and the next finds it gone; a value ",
+                "handed over in a loop must be given a value again before the next round [OWN-4]"
             ))
             .help(concat!(
-                "move the declaration inside the loop, clone it for each iteration, or use ",
+                "declare it inside the loop, hand over a copy of your own for each round, or use ",
                 "`mem.take` when replacing it on every pass"
             ))
         } else {
-            let message = if state.is_moved() {
-                format!("`{name}` has been moved out of")
-            } else {
-                format!("`{name}` may have been moved out of")
-            };
+            let (message, help) = self.hand_over_message(body, local, &name, span, state.is_moved());
+            // `[DIA-7a]` shape O1 — the message names the ways out (`[OWN-3]`), and the help is the
+            // primary one, the line to write.
             let diagnostic = Diagnostic::error(codes::E3040, span, message)
-                .primary_label("used here after the move")
-                .note("a move gives the value away; the old owner cannot use it again")
-                .help("clone the value, or borrow it instead of moving it");
+                .help(help)
+                .primary_label("used here after the hand-over")
+                .note("handing a value over gives it away; the old owner cannot use it again [OWN-3]");
             let diagnostic = self.kept_by_copy(diagnostic, body, local, again.then_some(span));
             self.moved_from(diagnostic, body, local, span)
         };
         self.sink.emit_classified(diagnostic);
+    }
+
+    /// `[OWN-3]` — "`items` was handed over to `snapshot` on line 3 and is used on line 4; to keep
+    /// both, write `snapshot = copy of items` (a copy of your own) or `snapshot = shares items`
+    /// (two owners of one list)". `sure`: the value is gone on every path that reaches the use.
+    fn hand_over_message(&self, body: &Body, local: LocalId, name: &str, span: Span, sure: bool) -> (String, String) {
+        let moved_at = moves_reaching(body, local, self.point).into_iter().find(|moved| *moved != span);
+        let site = moved_at.and_then(|at| hand_over_site(body, self.types, local, at));
+        let was = if sure { "was" } else { "may have been" };
+        let used = ember_diag::line_mark(span);
+        // `[CLO-6]` — "calling `f` uses it up; a second call is `E3040`": a value of a `once fn` type,
+        // or one whose own call handed it over.
+        let once = matches!(self.types.kind(body.local(local).ty), TyKind::Fn { once: true, .. })
+            || matches!(&site, Some(HandOver { keep: Keep::Called, .. }));
+        if let (true, Some(at)) = (once, moved_at) {
+            return (
+                format!(
+                    "`{name}` is a `once fn`: its call on line {} uses it up, and it is used again on line {used}; a `once fn` runs once (take `{name}: fn(…)` where it is called more than once)",
+                    ember_diag::line_mark(at)
+                ),
+                format!("take `{name}: fn(…)` where it is called more than once"),
+            );
+        }
+        let head = match (&site, moved_at) {
+            (Some(HandOver { dest: Some(dest), .. }), Some(at)) => format!("`{name}` {was} handed over to `{dest}` on line {} and is used on line {used}", ember_diag::line_mark(at)),
+            (_, Some(at)) => format!("`{name}` {was} handed over on line {} and is used on line {used}", ember_diag::line_mark(at)),
+            _ => format!("`{name}` {was} handed over and is used on line {used}"),
+        };
+        let ty = body.local(local).ty;
+        let (tail, help) = if self.types.is_copy(ty) {
+            (format!("to keep it, write `owns copy of {name}`"), format!("write `owns copy of {name}` where it is handed over"))
+        } else {
+            match site.as_ref().map(|site| &site.keep) {
+                Some(Keep::Store { dest }) => (
+                    format!("to keep both, write `{dest} = copy of {name}` (a copy of your own) or `{dest} = shares {name}` (two owners of one value)"),
+                    format!("write `{dest} = copy of {name}` (a copy of your own) or `{dest} = shares {name}` (two owners), or use `{name}` before it is handed over"),
+                ),
+                _ => (
+                    format!("to keep both, hand over a copy of your own: `copy of {name}`"),
+                    format!("hand over `copy of {name}` (a copy of your own), or use `{name}` before it is handed over"),
+                ),
+            }
+        };
+        (format!("{head}; {tail}"), help)
     }
 
     /// `[CLI-20]` (N30) — 0.9.10 copied a number given to an `owned` parameter; 0.9.15 hands it over
@@ -1746,9 +1864,10 @@ impl Reporter<'_> {
         if let Some(moved) = moves_reaching(body, local, self.point).into_iter().find(|moved| *moved != span) {
             diagnostic = diagnostic.secondary(moved, "moved here");
         }
+        // `[DIA-7a]` shape O1 — "for a list, a note that `=` hands a list over where Python's aliases it".
         if is_collection(self.types, body.local(local).ty) {
             diagnostic = diagnostic.note(
-                "assigning a list, a map or a set moves it; in Python both names would point at one list (Appendix E)",
+                "`=` hands a list, a map or a set over; in Python both names would point at one list (Appendix E)",
             );
         }
         diagnostic
@@ -1774,25 +1893,131 @@ impl Reporter<'_> {
         self.reported[index] = true;
         self.errors += 1;
         let name = decl.name.clone().unwrap_or_else(|| format!("_{}", local.0));
-        let (message, note) = if state.is_moved() {
-            (
-                format!("`{name}` is borrowed after it has been moved out of"),
-                "the borrow would point at memory whose owner gave it away",
-            )
+        let (message, help) = self.hand_over_message(body, local, &name, span, state.is_moved());
+        let note = if state.is_moved() {
+            "the view would point at memory whose owner gave it away"
         } else {
-            (
-                format!("`{name}` may have been moved out of when it is borrowed here"),
-                "on at least one path reaching this line the value is gone",
-            )
+            "on at least one path reaching this line the value is gone"
         };
         let diagnostic = Diagnostic::error(codes::E3040, span, message)
-            .primary_label("borrowed here after the move")
-            .note(note)
-            .help("borrow before the move, or clone the value so the move takes the copy");
+            .help(help)
+            .primary_label("used here after the hand-over")
+            .note(note);
         let diagnostic = self.kept_by_copy(diagnostic, body, local, None);
         let diagnostic = self.moved_from(diagnostic, body, local, span);
         self.sink.emit_classified(diagnostic);
     }
+}
+
+/// A name the program wrote: it begins with a letter or one `_` (`__it`, a `for` loop's iterator, and
+/// `$receiver` are the compiler's own).
+fn written_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some('_') => chars.next() != Some('_'),
+        Some(first) => first.is_alphabetic(),
+        None => false,
+    }
+}
+
+/// Where a value was handed over: to what, and how the program keeps a copy there.
+struct HandOver {
+    /// The place or function it went to: `snapshot` in `snapshot = items`, `names` in
+    /// `names.push(owns p.name)`.
+    dest: Option<String>,
+    /// For a part handed over on its own, the part as written (`p.name`).
+    part: Option<String>,
+    keep: Keep,
+}
+
+enum Keep {
+    Store { dest: String },
+    Call { receiver: String, callee: String },
+    /// `[CLO-6]` — the value is a `once fn`, used up by its own call.
+    Called,
+    Other,
+}
+
+/// The statement at `at` that handed `local` (or a part of it) over, as `[OWN-3]` and `[OWN-11]`
+/// name it.
+fn hand_over_site(body: &Body, types: &TypeTable, local: LocalId, at: Span) -> Option<HandOver> {
+    // A function by the name the program wrote (`take`, not `em_4take`).
+    let short = |symbol: &str| {
+        ember_branding::demangle(symbol)
+            .and_then(|found| found.components.last().cloned())
+            .unwrap_or_else(|| symbol.rsplit(['.', ':']).next().unwrap_or(symbol).to_string())
+    };
+    // A place by the name the program wrote: not a temporary, nor a name the compiler declares
+    // itself (`__it`, a `for` loop's iterator).
+    let named = |place: &Place| {
+        let decl = body.local(place.local);
+        (decl.kind != LocalKind::Temp).then(|| decl.name.clone()).flatten().filter(|name| written_name(name))
+    };
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            if stmt.span != at {
+                continue;
+            }
+            if let StmtKind::Assign { place, rvalue } = &stmt.kind {
+                let mut moved = Vec::new();
+                moved_by_rvalue(rvalue, &mut moved);
+                if let Some(taken) = moved.iter().find(|moved| moved.local == local) {
+                    // `[CLO-6]` — taken into the temporary the block's own call calls: the call uses it up.
+                    // A callable parameter is made for each function given (`[CLO-3]`): its value is
+                    // that function's item, and the call a direct call of it.
+                    let item = match types.kind(body.local(local).ty) {
+                        TyKind::FnItem { symbol, .. } => Some(symbol.as_str()),
+                        _ => None,
+                    };
+                    let calls_it = match &block.terminator {
+                        Terminator::Call { func: FuncRef::Indirect { operand: Operand::Move(callee) | Operand::Copy(callee), .. }, .. } => callee.local == place.local,
+                        Terminator::Call { func: FuncRef::Direct { symbol, .. }, .. } => item == Some(symbol.as_str()),
+                        _ => false,
+                    };
+                    if taken.projection.is_empty() && place.projection.is_empty() && calls_it {
+                        return Some(HandOver { dest: None, part: None, keep: Keep::Called });
+                    }
+                    let part = (!taken.projection.is_empty()).then(|| describe_place(taken, body, types));
+                    return Some(match named(place) {
+                        Some(dest) if place.projection.is_empty() => HandOver { dest: Some(dest.clone()), part, keep: Keep::Store { dest } },
+                        _ => HandOver { dest: None, part, keep: Keep::Other },
+                    });
+                }
+            }
+        }
+        if block.terminator_span == at
+            && let Terminator::Call { func, args, .. } = &block.terminator
+        {
+            // `[CLO-6]` — a `once fn` value called: the call uses it up.
+            if let FuncRef::Indirect { operand: Operand::Move(place) | Operand::Copy(place), .. } = func
+                && place.local == local
+                && place.projection.is_empty()
+            {
+                return Some(HandOver { dest: None, part: None, keep: Keep::Called });
+            }
+            let mut moved = Vec::new();
+            for arg in args {
+                moved_by_operand(arg, &mut moved);
+            }
+            if let Some(taken) = moved.iter().find(|moved| moved.local == local) {
+                let part = (!taken.projection.is_empty()).then(|| describe_place(taken, body, types));
+                let callee = match func {
+                    FuncRef::Direct { symbol, .. } => Some(short(symbol)),
+                    _ => None,
+                };
+                let receiver = args.first().and_then(|arg| match arg {
+                    Operand::Move(place) | Operand::Copy(place) if place.local != local => named(place),
+                    _ => None,
+                });
+                return Some(match (receiver, callee) {
+                    (Some(receiver), Some(callee)) => HandOver { dest: Some(receiver.clone()), part, keep: Keep::Call { receiver, callee } },
+                    (None, Some(callee)) => HandOver { dest: Some(callee), part, keep: Keep::Other },
+                    _ => HandOver { dest: None, part, keep: Keep::Other },
+                });
+            }
+        }
+    }
+    None
 }
 
 /// A list, a map or a set (text included): what Python users expect assignment to alias.

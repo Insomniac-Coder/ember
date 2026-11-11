@@ -17,4 +17,4 @@ fn main():
         println(consume(owns kept))
     else:
         kept = Marker(2)
-    println(kept.n)  #$ error[E3040]: `kept` may have been moved out of
+    println(kept.n)  #$ error[E3040]: `kept` may have been handed over to `consume` on line 17 and is used on line 20; to keep both, hand over a copy of your own: `copy of kept`

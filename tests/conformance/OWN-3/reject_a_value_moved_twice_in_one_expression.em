@@ -13,13 +13,13 @@ fn both(owns x: String, owns y: String) -> int:
 
 fn main():
     s = "a".to_string()
-    t = (s, s)              #$ error[E3040]: `s` is moved twice in one expression
+    t = (s, s)              #$ error[E3040]: `s` is handed over twice in one expression
     u = "b".to_string()
-    n = both(owns u, owns u)          #$ error[E3040]: `u` is moved twice in one expression
+    n = both(owns u, owns u)          #$ error[E3040]: `u` is handed over twice in one expression
     v = "c".to_string()
-    p = Pair(v, v)          #$ error[E3040]: `v` is moved twice in one expression
+    p = Pair(v, v)          #$ error[E3040]: `v` is handed over twice in one expression
     w = "d".to_string()
-    xs = [w, w]             #$ error[E3040]: `w` is moved twice in one expression
+    xs = [w, w]             #$ error[E3040]: `w` is handed over twice in one expression
     q = Pair("e".to_string(), "f".to_string())
-    r = (q, q.a)            #$ error[E3040]: `q` is moved twice in one expression
+    r = (q, q.a)            #$ error[E3040]: `q` is handed over twice in one expression
     println(t.0, n, p.a, xs.len(), r.1)

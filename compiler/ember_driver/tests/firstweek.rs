@@ -20,8 +20,9 @@ fn workspace_root() -> PathBuf {
 /// §XVII.6.2 shape is reported with). An empty list: the row names no code. `[DIA-21]`'s Python
 /// habits, `P1`…, are `ember_diag::habits`' own, each with its codes (ODR-179).
 const SHAPES: &[(&str, &[&str])] = &[
-    ("O1", &["E3040"]), ("O2", &["E3010", "E3011", "E3012", "E3013"]), ("O3", &["E3041"]),
-    ("O4", &["E3042"]), ("O5", &["E3030"]), ("O6", &["E3050"]), ("O7", &["E3070"]),
+    // A1-3: `E3041` and `E3042` are folded into `E3040` and `E3012` into `E3013`, so O3 and O4 are O1's.
+    ("O1", &["E3040"]), ("O2", &["E3010", "E3011", "E3013"]),
+    ("O5", &["E3030"]), ("O6", &["E3050"]), ("O7", &["E3070"]),
     ("O8", &["E3014", "E3015"]), ("O9", &["E3016"]),
     ("B1", &["E3022"]), ("B2", &["E3020"]), ("B3", &["E3021"]), ("B4", &["E3023"]), ("B5", &["E3024"]),
     ("B6", &["E3062"]), ("B7", &["E3060"]), ("B8", &["E3025"]), ("B9", &["E3026"]), ("B10", &["E3027"]),

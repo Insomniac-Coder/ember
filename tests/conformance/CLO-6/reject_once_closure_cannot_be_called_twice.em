@@ -12,4 +12,4 @@ fn main():
     values.push(owns 7)
     task = owned fn() => consume(owns values)
     _first = task()
-    println(task()) #$ error[E3040]: `task` has been moved out of
+    println(task()) #$ error[E3040]: `task` was handed over to `em_closure_4main_c0` on line 14 and is used on line 15; to keep both, hand over a copy of your own: `copy of task`

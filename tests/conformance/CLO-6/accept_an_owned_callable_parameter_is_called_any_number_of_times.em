@@ -4,7 +4,7 @@
 #$ stdout: 14 21 6
 # `[CLO-6]` (D-850) — only `once fn` is single-call: an `owned f: fn(A) -> R` parameter is taken
 # over and called any number of times, in a loop too (it was `E3040` for a second call and
-# `E3041` in a loop, as if it were `once fn`).
+# `E3040` in a loop's later round, as if it were `once fn`).
 
 fn twice(owns f: fn() -> i32) -> i32:
     first = f()

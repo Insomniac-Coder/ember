@@ -1,14 +1,14 @@
-error[E3040]: `values` is borrowed after it has been moved out of
+error[E3040]: `values` was handed over to `moved` on line 4 and is used on line 6; to keep both, write `moved = copy of values` (a copy of your own) or `moved = shares values` (two owners of one value)
  --> tests/ui/borrow/O1/borrow_after_move.em:6:28
   |
 4 |     moved = values
   |             ------ moved here
 5 |     println(moved.len())
 6 |     view: ref Array[i32] = ref values
-  |                            ^^^^^^^^^^ borrowed here after the move
+  |                            ^^^^^^^^^^ used here after the hand-over
   |
-  = help: borrow before the move, or clone the value so the move takes the copy
-  = note: the borrow would point at memory whose owner gave it away
-  = note: assigning a list, a map or a set moves it; in Python both names would point at one list (Appendix E)
+  = help: write `moved = copy of values` (a copy of your own) or `moved = shares values` (two owners), or use `values` before it is handed over
+  = note: the view would point at memory whose owner gave it away
+  = note: `=` hands a list, a map or a set over; in Python both names would point at one list (Appendix E)
 
 error: could not compile due to 1 error(s)

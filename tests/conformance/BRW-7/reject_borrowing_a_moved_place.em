@@ -7,5 +7,5 @@ fn main():
     a: Array[i32] = Array[i32]()
     a.push(owns 1)
     _b = a
-    r: ref Array[i32] = ref a      #$ error[E3040]: `a` is borrowed after it has been moved out of
+    r: ref Array[i32] = ref a      #$ error[E3040]: `a` was handed over to `_b` on line 9 and is used on line 10; to keep both, write `_b = copy of a` (a copy of your own) or `_b = shares a` (two owners of one value)
     println(r.len())

@@ -10,4 +10,4 @@ fn main():
     m = buf.as_mut_span()
     m2 = m
     println(m2.len())
-    println(m.len())   #$ error[E3040]: `m` has been moved out of
+    println(m.len())   #$ error[E3040]: `m` was handed over to `m2` on line 11 and is used on line 13; to keep both, write `m2 = copy of m` (a copy of your own) or `m2 = shares m` (two owners of one value)

@@ -10,4 +10,4 @@ class Node:
 fn main():
     a = Node(1)
     mem.drop(a)
-    println(a.v) #$ error[E3040]: `a` has been moved out of
+    println(a.v) #$ error[E3040]: `a` was handed over on line 12 and is used on line 13; to keep it, write `owns copy of a`

@@ -8,4 +8,4 @@ fn main():
     second = first
     value: ref mut i32 = second.alloc(1)
     println(value)
-    first.reset()             #$ error[E3040]: `first` is borrowed after it has been moved out of
+    first.reset()             #$ error[E3040]: `first` was handed over to `second` on line 8 and is used on line 11; to keep both, write `second = copy of first` (a copy of your own) or `second = shares first` (two owners of one value)

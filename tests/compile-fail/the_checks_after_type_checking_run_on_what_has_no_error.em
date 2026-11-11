@@ -14,7 +14,7 @@ fn twice(f: fn() -> i32) -> i32:
 fn moves_twice():
     xs: Array[int] = [1]
     ys = xs
-    println(xs.len(), ys.len())  #$ error[E3040]: `xs` has been moved out of
+    println(xs.len(), ys.len())  #$ error[E3040]: `xs` was handed over to `ys` on line 16 and is used on line 17; to keep both, write `ys = copy of xs` (a copy of your own) or `ys = shares xs` (two owners of one value)
 
 fn reads_nothing():
     k = 3  #$ warning[L1001]: `k` is never read

@@ -347,6 +347,13 @@ impl Sink {
         let mut first: std::collections::HashMap<&str, (usize, Vec<Span>)> = std::collections::HashMap::new();
         let mut out: Vec<std::borrow::Cow<'_, Diagnostic>> = Vec::with_capacity(ordered.len());
         for d in ordered {
+            // A line number a pass without the source wrote as `line_mark(span)`.
+            if has_line_marks(d) {
+                let mut marked = d.clone();
+                expand_line_marks(&mut marked, map);
+                out.push(std::borrow::Cow::Owned(marked));
+                continue;
+            }
             let Some(key) = once_per_function(d) else {
                 out.push(std::borrow::Cow::Borrowed(d));
                 continue;
@@ -390,6 +397,61 @@ impl Sink {
 // ---------------------------------------------------------------------------
 // Human rendering
 // ---------------------------------------------------------------------------
+
+/// The line `span` starts on, for a message written where the source text is not at hand (the
+/// analyses): a marker the renderer (`Sink::ordered`) replaces by the number.
+pub fn line_mark(span: Span) -> String {
+    format!("\u{1}{}:{}\u{2}", span.file.0, span.start)
+}
+
+fn has_line_marks(d: &Diagnostic) -> bool {
+    let marked = |text: &str| text.contains('\u{1}');
+    marked(&d.message)
+        || d.helps.iter().any(|t| marked(t))
+        || d.notes.iter().any(|t| marked(t))
+        || d.primary.message.as_deref().is_some_and(marked)
+        || d.secondary.iter().any(|label| label.message.as_deref().is_some_and(marked))
+}
+
+/// `text` with each `line_mark` replaced by its line number: what every place that shows a message
+/// outside `Sink::ordered` (the migrator's list of what is left) writes.
+pub fn lined(text: &str, map: &SourceMap) -> String {
+    expand_marks(text, map)
+}
+
+fn expand_line_marks(d: &mut Diagnostic, map: &SourceMap) {
+    let expand = expand_marks;
+    d.message = expand(&d.message, map);
+    for text in d.helps.iter_mut().chain(d.notes.iter_mut()) {
+        *text = expand(text, map);
+    }
+    if let Some(text) = d.primary.message.as_mut() {
+        *text = expand(text, map);
+    }
+    for label in &mut d.secondary {
+        if let Some(text) = label.message.as_mut() {
+            *text = expand(text, map);
+        }
+    }
+}
+
+fn expand_marks(text: &str, map: &SourceMap) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('\u{1}') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('\u{2}') else { break };
+        let line = after[..close].split_once(':').and_then(|(file, start)| {
+            let file = map.get(FileId(file.parse().ok()?))?;
+            Some(file.line_of(start.parse().ok()?))
+        });
+        out.push_str(&line.map_or_else(|| "?".to_string(), |line| line.to_string()));
+        rest = &after[close + 1..];
+    }
+    out.push_str(rest);
+    out
+}
 
 /// Render one diagnostic in the format of XIX §6.
 ///
