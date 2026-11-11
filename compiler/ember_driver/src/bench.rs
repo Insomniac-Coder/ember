@@ -826,12 +826,8 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], instructions: &mut
     let own = cores()?;
     pin_to_core(core)?;
     set_cores(&own)?;
-    // D-755 — clang-cl's linker has no layout option: one layout.
-    let layouts = if matches!(&toolchain, ember_build::Toolchain::Msvc { cl, .. } if cl.file_stem().is_some_and(|stem| stem.eq_ignore_ascii_case("clang-cl"))) {
-        1
-    } else {
-        ember_build::LAYOUTS
-    };
+    // D-755, D-971 — every toolchain moves the code (clang-cl by its loops' alignment).
+    let layouts = ember_build::LAYOUTS;
     println!(
         "{} benchmark(s), {} on core {core}, the {backend} backend, each side at its fastest of {layouts} code layout(s), then {WARMUP} untimed and {TIMED} timed runs [BEN-1]",
         pairs.len(),

@@ -811,19 +811,36 @@ fn env_layout() -> usize {
     std::env::var(ember_branding::bench_layout_var()).ok().and_then(|value| value.parse().ok()).filter(|layout| *layout < LAYOUTS).unwrap_or(0)
 }
 
-/// D-755 — the flags that put a program's code at `layout`: MSVC's linker pads before each function
-/// (`/FUNCTIONPADMIN`, which pads to the next 16 bytes), so a function's address moves by a multiple
-/// of 16 with the functions before it; gcc and clang align every loop to 16, 32, 64 or 128 bytes
-/// (`-falign-loops`), padding run once before the loop is entered. clang-cl's linker has no such
-/// option: one layout.
-fn layout_flags(toolchain: &Toolchain, layout: usize) -> (Option<String>, Option<String>) {
+/// D-755 — the flags that put a program's code at `layout`, for the compile and for the link:
+/// MSVC's linker pads before each function (`/FUNCTIONPADMIN`, which pads to the next 16 bytes), so
+/// a function's address moves by a multiple of 16 with the functions before it; GCC, Clang and
+/// clang-cl align every loop to 32, 64, 128 or 256 bytes, padding run once before the loop is entered
+/// (not 16, which is LLVM's own on x86: a layout that moves nothing).
+/// D-971 — the alignment is given where the machine code is made. GCC keeps the compile's
+/// `-falign-loops` in its link-time objects; LLVM's bitcode does not keep it, so when the link makes
+/// the code (`lto`, the link-time optimisation the build's link does) Clang's linker is given it too:
+/// `lld-link`'s `/mllvm:`, Apple's `-mllvm`, an ELF linker's plugin option (`ld.lld`, and the LLVM
+/// plugin of `ld.bfd` and `gold`).
+fn layout_flags(toolchain: &Toolchain, layout: usize, lto: Lto) -> (Option<String>, Option<String>) {
     if layout == 0 {
         return (None, None);
     }
+    let align = 16 << layout;
+    let at_link = lto != Lto::Off;
     match toolchain {
         Toolchain::Msvc { cl, .. } if !is_clang_cl(cl) => (None, Some(format!("/FUNCTIONPADMIN:{}", 16 * (layout - 1)))),
-        Toolchain::Msvc { .. } => (None, None),
-        Toolchain::Clang(_) | Toolchain::Gcc(_) => (Some(format!("-falign-loops={}", 8 << layout)), None),
+        Toolchain::Msvc { .. } => (Some(format!("/clang:-falign-loops={align}")), at_link.then(|| format!("/mllvm:-align-loops={align}"))),
+        Toolchain::Gcc(_) => (Some(format!("-falign-loops={align}")), None),
+        Toolchain::Clang(_) => {
+            let link = if cfg!(windows) {
+                format!("-Wl,/mllvm:-align-loops={align}")
+            } else if cfg!(target_os = "macos") {
+                format!("-Wl,-mllvm,-align-loops={align}")
+            } else {
+                format!("-Wl,-plugin-opt=-align-loops={align}")
+            };
+            (Some(format!("-falign-loops={align}")), at_link.then_some(link))
+        }
     }
 }
 
@@ -1007,7 +1024,7 @@ fn compile_and_link_impl(
         }
         _ => compiler_command(toolchain),
     };
-    let (layout_compile, layout_link) = layout_flags(toolchain, layout);
+    let (layout_compile, layout_link) = layout_flags(toolchain, layout, lto_record(toolchain, request.profile, Link::Here).1);
     let lto = build_lto(toolchain, request.profile, Link::Here);
     match toolchain {
         Toolchain::Msvc { cl, .. } => {
@@ -1173,6 +1190,7 @@ fn compile_and_link_impl(
             if cfg!(windows) && let Some(natvis) = natvis_beside(request) {
                 command.arg(format!("-Wl,/NATVIS:{}", natvis.display()));
             }
+            command.args(layout_link.iter());
         }
     }
     let started = std::time::SystemTime::now();
@@ -2866,6 +2884,28 @@ mod tests {
                 }
                 result => return result,
             }
+        }
+    }
+
+    /// D-971, `[BEN-1]` — a layout's loop alignment reaches whichever step makes the machine code:
+    /// LLVM's bitcode keeps none, so a link that optimises is given it too; GCC's objects keep the
+    /// compile's, and cl moves functions at its link.
+    #[test]
+    fn a_layout_reaches_the_step_that_makes_the_code() {
+        let clang = Toolchain::Clang(PathBuf::from("clang"));
+        let clang_cl = Toolchain::Msvc { cl: PathBuf::from("clang-cl.exe"), env: BTreeMap::new() };
+        let cl = Toolchain::Msvc { cl: PathBuf::from("cl.exe"), env: BTreeMap::new() };
+        let gcc = Toolchain::Gcc(PathBuf::from("gcc"));
+        let (compile, link) = layout_flags(&clang, 2, Lto::On);
+        assert_eq!(compile.as_deref(), Some("-falign-loops=64"));
+        assert!(link.is_some_and(|flag| flag.starts_with("-Wl,") && flag.ends_with("align-loops=64")));
+        assert!(layout_flags(&clang, 2, Lto::Thin).1.is_some());
+        assert_eq!(layout_flags(&clang, 2, Lto::Off).1, None);
+        assert_eq!(layout_flags(&clang_cl, 4, Lto::On), (Some("/clang:-falign-loops=256".to_string()), Some("/mllvm:-align-loops=256".to_string())));
+        assert_eq!(layout_flags(&gcc, 1, Lto::On), (Some("-falign-loops=32".to_string()), None));
+        assert_eq!(layout_flags(&cl, 3, Lto::On), (None, Some("/FUNCTIONPADMIN:32".to_string())));
+        for toolchain in [&clang, &clang_cl, &cl, &gcc] {
+            assert_eq!(layout_flags(toolchain, 0, Lto::On), (None, None));
         }
     }
 

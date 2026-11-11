@@ -243,7 +243,7 @@ fn object_of(toolchain: &Toolchain, dir: &Path, unit: &Path) -> PathBuf {
 /// The program's compile flags, without the unit and the object: the one-call build's.
 fn compile_args(toolchain: &Toolchain, program: &Program<'_>, lto: Lto) -> Vec<OsString> {
     let mut args: Vec<OsString> = Vec::new();
-    let (layout_compile, _) = layout_flags(toolchain, crate::env_layout());
+    let (layout_compile, _) = layout_flags(toolchain, crate::env_layout(), lto);
     match toolchain {
         Toolchain::Msvc { cl, .. } => {
             // Each object holds its own debug information (`/Z7`): units compiled at once share no
@@ -366,7 +366,7 @@ fn image_link_args(toolchain: &Toolchain, program: &Program<'_>, image: &Image<'
 /// The program's link flags after its objects: the one-call build's.
 fn link_args(toolchain: &Toolchain, program: &Program<'_>, lto: Lto, retained: &[String], libraries: &[String]) -> Vec<OsString> {
     let mut args: Vec<OsString> = Vec::new();
-    let (_, layout_link) = layout_flags(toolchain, crate::env_layout());
+    let (_, layout_link) = layout_flags(toolchain, crate::env_layout(), crate::lto_record(toolchain, program.profile, Link::Here).1);
     match toolchain {
         Toolchain::Msvc { cl, .. } => {
             args.extend(msvc_flags(program.profile).into_iter().map(OsString::from));
@@ -429,6 +429,7 @@ fn link_args(toolchain: &Toolchain, program: &Program<'_>, lto: Lto, retained: &
                     args.extend(["-Wl,/OPT:REF", "-Wl,/OPT:ICF"].map(OsString::from));
                 }
             }
+            args.extend(layout_link.iter().map(OsString::from));
         }
     }
     args
