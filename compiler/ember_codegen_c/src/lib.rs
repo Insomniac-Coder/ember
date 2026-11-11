@@ -9840,8 +9840,13 @@ impl Emitter<'_> {
                     Builtin::IntoRaw { foreign } => {
                         let TyKind::Struct(id) = *self.types.kind(*arg_ty) else { unreachable!("an `owns T` is a struct") };
                         let fields = &self.types.struct_def(id).fields;
-                        let (word, typed) = (member(fields[0].name), self.c_type(fields[0].ty));
-                        let address = format!("(({typed})({}).{word})", rendered[0]);
+                        let typed = self.c_type(fields[0].ty);
+                        // The compiler's block is its pointer in C (`{data, vtable}` for `owns dyn I`).
+                        let address = match self.box_inner_id(id) {
+                            Some(inner) if matches!(self.types.kind(inner), TyKind::Dyn { .. }) => format!("((uint8_t*)({}).data)", rendered[0]),
+                            Some(_) => format!("(({typed})({}))", rendered[0]),
+                            None => format!("(({typed})({}).{})", rendered[0], member(fields[0].name)),
+                        };
                         if !*foreign {
                             return address;
                         }
