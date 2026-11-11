@@ -793,3 +793,65 @@ def acos64(x):
     r = asin_ratio(z)
     w = r * s + c
     return 2.0 * (h + w)
+
+
+# -- sinh, cosh, tanh -------------------------------------------------------------
+
+SH = [0.16666666666666666, 0.008333333333333333, 0.0001984126984126984, 2.7557319223985893e-06,
+      2.505210838544172e-08, 1.6059043836821613e-10, 7.647163731819816e-13, 2.8114572543455206e-15,
+      8.22063524662433e-18, 1.9572941063391263e-20]
+SINH_OVERFLOW = 7.10475860073943863426e+02
+
+
+def sinh_tail(x):
+    """sinh x - x for |x| < 1, from its Taylor series."""
+    z = x * x
+    p = SH[9]
+    for c in reversed(SH[:9]):
+        p = c + z * p
+    return x * z * p
+
+
+def exp_parts(x):
+    """e^x for 0.3466 <= x < 710 as (hi, lo, k) with e^x == (hi + lo) 2^k."""
+    if x < 1.0397205352783203:
+        hi = x - LN2HI
+        lo = LN2LO
+        k = 1
+    else:
+        k = int(INVLN2 * x + 0.5)
+        t = float(k)
+        hi = x - t * LN2HI
+        lo = t * LN2LO
+    r = hi - lo
+    t = r * r
+    c = r - t * (EP1 + t * (EP2 + t * (EP3 + t * (EP4 + t * EP5))))
+    q = -((lo - (r * c) / (2.0 - c)) - hi)
+    y = 1.0 + q
+    return y, (1.0 - y) + q, k
+
+
+def sinh64(x):
+    if x != x:
+        return x + x
+    ax = abs(x)
+    if ax < 1.0:
+        if ax < 3.725290298461914e-09:
+            return x
+        return x + sinh_tail(x)
+    if ax < 22.0:
+        yh, yl, k = exp_parts(ax)
+        ih = 1.0 / yh
+        p, e = two_product(ih, yh)
+        il = ((1.0 - p) - e - ih * yl) * ih
+        a = scalbn(yh, k)
+        b = scalbn(ih, -k)
+        d = a - b
+        tail = (((a - d) - b) + scalbn(yl, k)) - scalbn(il, -k)
+        r = 0.5 * (d + tail)
+        return -r if x < 0.0 else r
+    if ax <= SINH_OVERFLOW:
+        yh, yl, k = exp_parts(ax)
+        r = scalbn(yh + yl, k - 1)
+        return -r if x < 0.0 else r
+    return x * INF
