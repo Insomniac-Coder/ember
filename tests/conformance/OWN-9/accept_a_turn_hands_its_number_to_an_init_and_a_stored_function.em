@@ -4,8 +4,9 @@
 #$ 1
 #$ 0
 #$ 1
-# `[OWN-9]` — a counted loop's turn hands its own number over to a class's `init`, and through a
-# name holding a function, as to any `owns` parameter.
+# `[OWN-9]` — a counted loop's turn gives its number to a class's `init` as `=` gives it, copied
+# (a constructor's argument takes no word, verdict 159), and hands it over through a name holding a
+# function, as to any `owns` parameter.
 
 class Node:
     v: int

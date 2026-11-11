@@ -3944,6 +3944,9 @@ struct Checker<'a> {
     /// in both its signature and body.
     static_safe_unsafe_cell_reported: bool,
     ret_ty: Ty,
+    /// `[OWN-9]`, `[FN-2a]` (verdict 159) — the type whose constructor's arguments the next
+    /// `check_bound_call_arguments` checks: they are given as `=` gives a value (`given_as_equals`).
+    constructing: Option<Symbol>,
     /// The name of the function whose body is being checked, where it is declared (`[PAR-2]`'s `?` message).
     fn_decl: Span,
     /// `[PAR-2]` — the lambda depth of the `@parallel` loop's chunk closure being checked, where a
@@ -4348,6 +4351,7 @@ impl<'a> Checker<'a> {
             in_generic_template: false,
             static_safe_unsafe_cell_reported: false,
             ret_ty,
+            constructing: None,
             fn_decl: Span::DUMMY,
             parallel_try: None,
             default_overflow: OverflowPolicy::default(),
@@ -18951,7 +18955,12 @@ impl<'a> Checker<'a> {
         let value = self.finish_struct_literal(id, name, slots, span);
         let local = self.declare(None, ty, span);
         let receiver = Expr { ty, kind: ExprKind::Local(local), span };
+        // `[OWN-9]` (verdict 159) — as a class's: a constructor's argument takes no word.
+        let outer_written = std::mem::replace(&mut self.written_call, false);
+        self.constructing = Some(name);
         let call = self.synth_registered_method(receiver, span, ast::Ident { name: init, span }, args, Vec::new(), span);
+        self.constructing = None;
+        self.written_call = outer_written;
         let result = Expr { ty, kind: ExprKind::Local(local), span };
         Some(Expr {
             ty,
@@ -58443,6 +58452,8 @@ impl<'a> Checker<'a> {
         slots: &[Option<usize>],
         callee: Option<DefId>,
     ) -> Vec<Expr> {
+        // A call inside an argument is not the constructor's: the flag is this call's alone.
+        let constructing = self.constructing.take();
         let mut checked: Vec<Option<Expr>> = (0..params.len()).map(|_| None).collect();
         for (arg, slot) in args.iter().zip(slots.iter().copied()) {
             let Some(slot) = slot else { continue };
@@ -58455,11 +58466,44 @@ impl<'a> Checker<'a> {
             // `[DIA-22]` — a mismatch points at the parameter too.
             let outer = self.argument_of.replace((arg.value.span, name, declared));
             let word = self.word_of.replace((arg.value.span, declared));
-            checked[slot] = Some(self.check_argument_by(&arg.value, param_ty, mode, by_address));
+            let value = self.check_argument_by(&arg.value, param_ty, mode, by_address);
+            let value = match constructing {
+                Some(type_name) if mode == Mode::Owned => self.given_as_equals(type_name, &arg.value, value),
+                _ => value,
+            };
+            checked[slot] = Some(value);
             self.argument_of = outer;
             self.word_of = word;
         }
         checked.into_iter().flatten().collect()
+    }
+
+    /// `[OWN-9]`, `[FN-2a]` (verdict 159) — an argument for an `owns` parameter of a constructor is given
+    /// as `=` gives a value, with no word: handed over, and a value `=` copies copied (`Counter(k)`
+    /// keeps `k`). `owns` before a name the constructor already hands over is `E0109`
+    /// ("`Emitter(...)` already hands `label` over; remove `owns`"); before a value `=` copies it hands
+    /// the value over, as `b = owns n` does.
+    fn given_as_equals(&mut self, type_name: Symbol, arg: &ast::Expr, value: Expr) -> Expr {
+        if value.ty == self.common.error {
+            return value;
+        }
+        let copied = self.types.is_copy(value.ty) && !self.types.needs_drop(value.ty);
+        match &arg.kind {
+            ast::ExprKind::Owned(inner)
+                if !copied
+                    && matches!(
+                        inner.kind,
+                        ast::ExprKind::Path { .. } | ast::ExprKind::Field { .. } | ast::ExprKind::IndexOrInstantiate { .. } | ast::ExprKind::SelfExpr
+                    ) =>
+            {
+                let name = self.written_line(inner.span).unwrap_or_else(|| "it".to_string());
+                self.error(codes::E0109, arg.span, format!("`{type_name}(...)` already hands `{name}` over; remove `owns`"));
+                value
+            }
+            ast::ExprKind::Owned(_) => value,
+            _ if copied => Self::a_value(value),
+            _ => value,
+        }
     }
 
     /// `[FN-2a]` — "a call says `ref mut` before an argument the callee may change, and `owns` before one
@@ -59018,7 +59062,9 @@ impl<'a> Checker<'a> {
                 // `[OWN-9]` (verdict 159) — a constructor's argument takes no word: it is given as `=`
                 // gives a value, whatever `init`'s first line says.
                 let outer_written = std::mem::replace(&mut self.written_call, false);
+                self.constructing = Some(name);
                 let values = self.check_bound_call_arguments(args, params, &slots, Some(init));
+                self.constructing = None;
                 self.written_call = outer_written;
                 (init, values, Self::call_eval_order(&slots))
             } else {
@@ -59026,7 +59072,9 @@ impl<'a> Checker<'a> {
                 // (`[CLO-3]`): construction instantiates it for the
                 // arguments, as a generic method call does.
                 let outer_written = std::mem::replace(&mut self.written_call, false);
+                self.constructing = Some(name);
                 let call = self.synth_generic_method_call(init, name, None, true, args, Vec::new(), span, true);
+                self.constructing = None;
                 self.written_call = outer_written;
                 let ExprKind::Call { callee, args: values, arg_eval_order, .. } = call.kind else {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
