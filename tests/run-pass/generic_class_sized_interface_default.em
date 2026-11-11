@@ -4,7 +4,7 @@
 #$ stdout: 42
 #$ stdout: 42
 #$ stdout: 42
-#$ assert-c: contains(static const struct em_vt_dyn_7Factory em_vt_dyn_7Factory_for_5PixelGda5cc12a188c7619)
+#$ assert-c: contains(static const struct em_vt_dyn_7Factory em_vt_dyn_7Factory_for_5PixelGda5cc12a188c7619b25d920e0657739a)
 #$ assert-c: contains(NULL,)
 
 interface Factory:

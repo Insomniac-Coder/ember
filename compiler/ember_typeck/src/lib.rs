@@ -61417,7 +61417,7 @@ fn instance_collision(symbol: &str, first: &str, first_span: Span, second: &str,
     )
     .secondary(first_span, format!("`{first}` is made here"))
     .note(format!(
-        "a generic instance's symbol is its path's, then `{}` and the first {} hex digits of the BLAKE3 hash of its arguments [MNG-1]",
+        "a generic instance's symbol is its path's, then `{}` and the {} hex digits of the BLAKE3 hash of its arguments [MNG-1]",
         ember_branding::INSTANCE_MARK,
         ember_branding::INSTANCE_HASH_DIGITS
     ));

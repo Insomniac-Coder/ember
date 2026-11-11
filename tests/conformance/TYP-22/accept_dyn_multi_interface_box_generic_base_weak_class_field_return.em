@@ -3,8 +3,8 @@
 #$ profiles: debug, development, release
 #$ stdout: 1
 #$ stdout: 7
-#$ assert-c: contains("em_vt_dyn_7Observe_4Bump_for_6HolderGda5cc12a188c7619_slot0")
-#$ assert-c: contains("em_vt_dyn_7Observe_4Bump_for_6HolderGda5cc12a188c7619_slot1")
+#$ assert-c: contains("em_vt_dyn_7Observe_4Bump_for_6HolderGda5cc12a188c7619b25d920e0657739a_slot0")
+#$ assert-c: contains("em_vt_dyn_7Observe_4Bump_for_6HolderGda5cc12a188c7619b25d920e0657739a_slot1")
 #$ assert-c: contains("ember_object_begin_write")
 #$ assert-c: contains("ember_weak_retain(")
 #$ assert-c: contains("ember_weak_release(")

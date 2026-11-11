@@ -10,7 +10,7 @@
 #$ stdout: Some(12)
 #$ stdout: None false
 #$ stdout: 0 3
-#$ assert-c: contains("int64_t em_3std11collections3Map4findGe58d3b7b642b305f")
+#$ assert-c: contains("int64_t em_3std11collections3Map4findGe58d3b7b642b305ff7e921dfd7a47bca")
 # Lookup stays checked and uses the same probe path after removal and reinsertion.
 # Both owning and borrowed string keys exercise the general Map implementation.
 

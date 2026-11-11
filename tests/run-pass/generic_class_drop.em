@@ -2,7 +2,7 @@
 #$ rules: TYP-16, CLS-6, DRP-1
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(em_6Marker4dropGda5cc12a188c7619)
+#$ assert-c: contains(em_6Marker4dropGda5cc12a188c7619b25d920e0657739a)
 
 [T]
 class Marker:

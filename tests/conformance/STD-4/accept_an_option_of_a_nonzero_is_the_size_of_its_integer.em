@@ -5,7 +5,7 @@
 #$ stdout: Some(NonZero(value=5)) None
 #$ stdout: true false true
 #$ stdout: Some(NonZero(value=-3)) Some(NonZero(value=7)) None
-#$ assert-c: contains("typedef em_3std4core7NonZeroG73498f1dbd18d400 em_3std4core6OptionGda39fd57c38a548a;")
+#$ assert-c: contains("typedef em_3std4core7NonZeroG73498f1dbd18d400e7759d24661b8d8a em_3std4core6OptionGda39fd57c38a548a87c230a8c35b8a84;")
 # `[TYP-13]`, `[STD-4]` — `Option[NonZero[T]]` is the size of `T`: no
 # `NonZero` holds 0, so `None` is kept as 0 and the `Option` needs no tag of
 # its own. In every other way it is an `Option`: matched, compared, printed,

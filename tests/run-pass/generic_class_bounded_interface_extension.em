@@ -2,7 +2,7 @@
 #$ rules: TYP-16, TYP-17, IFC-1, TYP-22
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(static const struct em_vt_dyn_7Measure em_vt_dyn_7Measure_for_6HolderGe6a28f706a47f67f)
+#$ assert-c: contains(static const struct em_vt_dyn_7Measure em_vt_dyn_7Measure_for_6HolderGe6a28f706a47f67f0e77529bd802f82e)
 
 interface Display:
     fn score() -> i32

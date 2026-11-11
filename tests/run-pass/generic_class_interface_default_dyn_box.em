@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 #$ stdout: 42
-#$ assert-c: contains(static const struct em_vt_dyn_6Answer em_vt_dyn_6Answer_for_5PixelG73498f1dbd18d400)
+#$ assert-c: contains(static const struct em_vt_dyn_6Answer em_vt_dyn_6Answer_for_5PixelG73498f1dbd18d400e7759d24661b8d8a)
 
 interface Answer:
     fn answer() -> i32:

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-3, CTL-4, CTL-6, CTL-7, CTL-8
-#$ assert-c: !contains("struct em_3std4core9RangeIterG2c2a47066b4fc729")
+#$ assert-c: !contains("struct em_3std4core9RangeIterG2c2a47066b4fc729d207037bb273fa35")
 # (`[MNG-1]`: `std.core.RangeIter[i32]`, its arguments' hash `2c2a47066b4fc729`.)
 
 # `[CTL-3]` — a range loop is a counted loop, with no iterator object.

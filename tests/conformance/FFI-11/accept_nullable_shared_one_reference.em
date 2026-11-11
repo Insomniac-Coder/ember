@@ -1,7 +1,7 @@
 #$ test: compile-pass
 #$ rules: FFI-11, FFI-10
 #$ profiles: debug
-#$ assert-c: contains("typedef int32_t* em_3std4core6OptionGacdf02bf7ba2defe;")
+#$ assert-c: contains("typedef int32_t* em_3std4core6OptionGacdf02bf7ba2defe9e3a227280896fff;")
 #$ assert-c: contains("extern int32_t em_0x726561645f6f7074696f6e616c_13read_optional(")
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition

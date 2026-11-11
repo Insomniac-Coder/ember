@@ -22,4 +22,4 @@ fn main():
 #$ 43
 #$ assert-c: contains("ember_box_new_copy")
 #$ assert-c: contains("ember_free")
-#$ assert-c: contains("typedef em_7Payload* em_3std4core3BoxGb5c6f15ec6e60e13;")
+#$ assert-c: contains("typedef em_7Payload* em_3std4core3BoxGb5c6f15ec6e60e138e770c03531bf755;")

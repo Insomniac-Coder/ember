@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 7
 #$ assert-c: contains(em_51generic_enum_derived_clone_noncopy_imported_support5model5Token5clone)
-#$ assert-c: contains(em_51generic_enum_derived_clone_noncopy_imported_support5model5Entry5cloneG63d4d374f4d940dc)
+#$ assert-c: contains(em_51generic_enum_derived_clone_noncopy_imported_support5model5Entry5cloneG63d4d374f4d940dcf5647bafd4feb96a)
 
 from generic_enum_derived_clone_noncopy_imported_support.model import Entry
 from generic_enum_derived_clone_noncopy_imported_support.model import Token

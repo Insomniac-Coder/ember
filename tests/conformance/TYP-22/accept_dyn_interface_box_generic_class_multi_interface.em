@@ -2,7 +2,7 @@
 #$ rules: TYP-16, TYP-22, IFC-1, DRP-6, HEAP-1
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(em_vt_dyn_5Child_for_4PairGda5cc12a188c7619)
+#$ assert-c: contains(em_vt_dyn_5Child_for_4PairGda5cc12a188c7619b25d920e0657739a)
 #$ assert-c: !contains(ember_box_new_copy)
 
 interface Parent:

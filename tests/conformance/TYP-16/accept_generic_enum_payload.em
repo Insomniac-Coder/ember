@@ -2,8 +2,8 @@
 #$ rules: TYP-16, ENM-1, MONO-1
 #$ stdout: 42
 #$ stdout: 7
-#$ assert-c: contains(struct em_7MessageG2c2a47066b4fc729)
-#$ assert-c: contains(struct em_7MessageGaf29ae0d2798f0fb)
+#$ assert-c: contains(struct em_7MessageG2c2a47066b4fc729d207037bb273fa35)
+#$ assert-c: contains(struct em_7MessageGaf29ae0d2798f0fb5b8d9c352ca3a3a3)
 #$ assert-c: contains(em_5Token4drop(&)
 
 enum Message[T]:
