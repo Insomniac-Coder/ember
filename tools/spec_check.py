@@ -177,7 +177,7 @@ def emit_appendix():
 # in the text: an example, a fixture or a rule before the change logs (Appendix G on) that holds one
 # fails this gate. (pattern, the cut that removed it, the rule)
 REMOVED_SPELLINGS = [
-    (re.compile(r"with \(link\s*="), "0.9.20_Hardened_8", "[FFI-6]"),
+    (re.compile(r"\bwith\s*\([^)]*\blink\s*="), "0.9.20_Hardened_8", "[FFI-6]"),
     (re.compile(r"^libs\s*=", re.M), "0.9.20_Hardened_8", "[BLD-FFI-3]"),
 ]
 

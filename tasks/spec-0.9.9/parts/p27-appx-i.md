@@ -1130,7 +1130,7 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[RT-1]` | XVIII | The runtime `ember_rt` is C11 depending on libc and the OS only. … |
+| `[RT-1]` | XVIII | *(changed in 0.9.20)* The runtime `ember_rt` is C11 depending on libc … |
 | `[RT-2]` | XVIII | The runtime has no global constructors; the generated `main` calls … |
 | `[RT-3]` | XVIII | *(changed in 0.9.20)* `TypeInfo` holds size, alignment, flags (among … |
 | `[RT-4]` | XVIII | A panic prints `panic at <file>:<line>:<col>: <message>` naming Ember … |

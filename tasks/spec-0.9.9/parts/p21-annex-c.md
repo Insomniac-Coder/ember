@@ -112,8 +112,10 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   call, `T.new(…)`, `super.init(…)`, `[FFI-39b]`) stands for the member C++ chooses (verdict 175).
   The importer writes each call of a name with several members as a C++ call in the package's thunk
   unit, with the arguments' C++ types and words (`owns` an rvalue, `ref mut` a non-const lvalue,
-  none a const lvalue, and an untyped literal as it is written, `c_int` for a whole number and `f64`
-  for one with a point), a parameter with a default left out where the call leaves it out, and
+  none a const lvalue, and an untyped literal as C++ spells its value, `1_000` as `1000`, so that
+  C++ gives it the type it gives that spelling: `int` for `7`, `double` for `2.5`, and for
+  `3000000000` the first of `long` and `long long` that holds it), a parameter with a default left
+  out where the call leaves it out, and
   Clang's own overload resolution, which the importer already runs to read the header (`[FFI-6]`),
   names the member: every rule of C++ is applied, its choices between a function and a template,
   between two templates and between references included, and Ember keeps no copy of C++'s ranking to
@@ -135,12 +137,15 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   value(long long)` and `void value(double)` of `ui::Widget` alike: `7` is C++'s `int`, which
   neither takes as it is, and reaches each; write `w.value(7 as i64)` or `w.value(7.0)`". Two
   members alike in every parameter as the import spells them (two instances of one template
-  differing only in the result), or alike on this target (`put(int)` and `put(long)` for an `i32`
-  argument where `long` is 32 bits; a literal still takes `int`), fit such a call together; the
-  overlay tells them apart by the tables' spelling or by the result, which no target changes
+  differing only in the result), or alike on this target (`put(int)` and `put(long)` where `long` is
+  32 bits, each taking an `i32`), have one callable type, so a name used without a call cannot be
+  told between them and is `E5035`. A call is decided by Clang as any other is: an `i32` argument,
+  whose C++ type is `int32_t`, and a literal stand for `put(int)`, as in C++, and a call of the two
+  instances fits neither, since C++ cannot infer the template's parameter from it. The overlay tells
+  such members apart by the tables' spelling or by the result, which no target changes
   (`rename put(v: c_long) as put_long`, `hide put(v: c_long)`, `rename get() -> f64 as get_f64`,
   `[GRM-35]`), and the message of `E5035` gives that line. An `override fn` matches one virtual
-  member by its first line exactly (`[FFI-39]`), never through this ranking; a class derived from a
+  member by its first line exactly (`[FFI-39]`), not by overload resolution; a class derived from a
   C++ class whose header declares one virtual name several times writes one `override fn` per member
   it replaces, each matched so, and two overrides fitting one member are `E1030`. `ember bind
   --report` lists each such name with its members as the header writes them; `ember bind --emit-cpp`

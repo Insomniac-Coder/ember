@@ -287,10 +287,17 @@ points, and with each call standing for what its callee's summary (`[BCK-8]`) sa
 
 ## XVIII.5 The runtime
 
-* `[RT-1]` *(changed in 0.9.9)* The runtime `ember_rt` is C11 depending on libc and the OS only.
+* `[RT-1]` *(changed in 0.9.9)* *(changed in 0.9.20)* The runtime `ember_rt` is C11 depending on
+  libc and the OS only.
   Allocation uses the system `malloc`/`realloc`/`free` for alignments up to `alignof(max_align_t)`
   and an aligned allocator above it; `realloc` grows in place where the allocator can. A host may
-  supply its own allocator (`[FFI-27]`).
+  supply its own allocator (`[FFI-27]`). Its libraries, the runtime's own (`[BLD-FFI-3]`), are the C
+  runtime the profile chooses with the libraries that runtime asks for itself, the C compiler's own
+  support library (`libgcc` with GCC, compiler-rt's builtins with Clang) and the system libraries
+  `ember_rt` calls: on Windows `libcmt`, `msvcrt` or a debug form of either, which brings its
+  `ucrt`, `vcruntime` and `kernel32`, with `oldnames`, and `synchronization` for `WaitOnAddress`; on
+  Linux `libc`, `libm` and `libpthread`; on macOS `libSystem`. A library outside this list is the
+  program's, named in its manifest.
 * `[RT-2]` The runtime has no global constructors; the generated `main` calls `ember_rt_init`.
 * `[RT-3]` *(changed in 0.9.20)* `TypeInfo` holds size, alignment, flags (among them whether the
   type's values carry the weak count and whether they may own values that do, `[OBJ-1]`), name,

@@ -6,14 +6,15 @@
 #$ `annex_a_is_generated_from_a_fixture_that_compiles`), so the quick reference is code that
 #$ compiles, not only code that parses. The lines between `#$ begin fixture` and `#$ end fixture`
 #$ declare what the printed fragment names and are not printed; every `#$` line is the harness's.
-#$ `import c "zlib.h"` reads the header the test writes beside this file.
+#$ `unsafe import c "zlib.h"` reads the header the test writes beside this file.
 #$ begin fixture
 #$ end fixture
 import std.io                                   # module import: binds `io`
 import std.thread
 from std.math import Vec3, sin as sine          # item import
 from std.sync import Atomic, Lock
-import c "zlib.h" as zlib                       # C header import (Part XVI)
+# SAFETY: zlib is the standard compression library; ember.toml names it: unsafe_libs = ["z"]
+unsafe import c "zlib.h" as zlib                # C header import (Part XVI)
 
 const MAX: int = 1024                           # compile-time constant
 static HITS: Atomic[int] = Atomic(0)            # never replaced; changed by its own operations

@@ -10,7 +10,8 @@ import std.io                                   # module import: binds `io`
 import std.thread
 from std.math import Vec3, sin as sine          # item import
 from std.sync import Atomic, Lock
-import c "zlib.h" as zlib                       # C header import (Part XVI)
+# SAFETY: zlib is the standard compression library; ember.toml names it: unsafe_libs = ["z"]
+unsafe import c "zlib.h" as zlib                # C header import (Part XVI)
 
 const MAX: int = 1024                           # compile-time constant
 static HITS: Atomic[int] = Atomic(0)            # never replaced; changed by its own operations

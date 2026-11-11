@@ -1,7 +1,24 @@
 # Ember — handoff
 
-> **2026-11-11 — the local session (branch `spec-0.9.20-hardening`), attended, the lead solo. START HERE.**
-> **Hardened_11 of 0.9.20 is cut** and is the development target
+> **2026-11-11, the twelfth cut — the local session (branch `spec-0.9.20-hardening`), attended, solo. START HERE.**
+> **Hardened_12 of 0.9.20 is cut** and is the development target
+> (`docs/spec-source/Ember_v0.9.20_Hardened_12.md`, 18392 lines, 1,020 rules, SHA-256 `BAAC229E58CD…`). The session
+> that wrote the fixes of Hardened_10 checked Hardened_11 against them
+> (`tasks/96/redesign/spec-gaps-0.9.15/deep/check-0.9.20-H11.md`) and found six things to fix; the owner: "option A and
+> then fix the rest yourself" (`tasks/96/redesign/JOB.md` verdict 176). **The record:** `decisions.md` §23 (N165 to
+> N170), `docs/AUDIT-0.9.20.md` §17, §H.63. **What changed:** with GCC, the shim's and the thunk unit's assembly
+> text is read for directives that read files, which a `weakref` target or an `#ident` line can put there
+> (`[FFI-51]`); a C++ call between members alike on this target is Clang's to decide (`[FFI-57]`); the runtime's
+> own libraries are listed (`[RT-1]`, cited by `[BLD-FFI-3]`); Annex A imports zlib with `unsafe import` and a
+> note; `tools/spec_check.py` finds the removed `link` option anywhere among an import's options. **Checked:**
+> the spec gates,
+> `spec_history.py verify`, `ember_diag`, `ember_parser`, the guide tests and six spec-tied milestone tests green;
+> `every_example_of_the_specification_checks` had failed since Hardened_3 (IX.7's `owns (…)` example was missing from
+> its list of examples not built yet) and now has the entry. **Not done:** nothing is pushed and `main` is not moved; the full suite and the bench were
+> not run. **Open with the owner:** his look at the rulings N140 to N170; his word on pushing.
+
+> **2026-11-11, the eleventh cut — the local session (branch `spec-0.9.20-hardening`), attended, the lead solo.
+> (The first block of this file is newer.)** **Hardened_11 of 0.9.20 was cut** and was the development target
 > (`docs/spec-source/Ember_v0.9.20_Hardened_11.md`, 18330 lines, 1,020 rules, SHA-256 `703D97138CFB…`). Another agent
 > reviewed Hardened_10 and wrote a tested fix for each of its eight items
 > (`tasks/96/redesign/spec-gaps-0.9.15/deep/review-0.9.20-H10.md`, `fixes-0.9.20-H10.md`); the owner: "fix

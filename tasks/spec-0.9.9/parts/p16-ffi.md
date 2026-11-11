@@ -258,7 +258,16 @@ import c "vulkan/vulkan.h" with (
   needs no word. What decides is what the compiled header leaves in the program, on the target it is
   compiled for: with the Windows C runtime `<stdio.h>` defines `sprintf` and its family in every
   file that includes it, so an import that reaches it is written `unsafe import c` there, and one
-  that reaches only `<stdlib.h>`, `<string.h>` or `<math.h>` is not. A library a header asks for is
+  that reaches only `<stdlib.h>`, `<string.h>` or `<math.h>` is not. And where the C compiler writes
+  assembly text and runs an assembler on it (GCC), the build reads the text of the shim and of the
+  thunk unit before it is assembled, as `[MAN-10]` reads a dependency's, since a string a header
+  gives GCC reaches that text as it is written (a `weakref` target, an `#ident` line): a directive
+  there, outside a quoted name, that reads a file or makes directives (`.incbin`, `.include`,
+  `.macro`, `.irp`, `.irpc`, `.rept`, `.altmacro`) is assembly the header holds, and the import
+  without `unsafe` is `E3100` ("`import c "lib.h"` has GCC read `/home/ci/.aws/credentials` into the
+  program with `.incbin`, from a string the header gives it; write `unsafe import c "lib.h" as lib`
+  with a `# SAFETY:` note above it"). Clang writes such strings quoted, and its text needs no such
+  read. A library a header asks for is
   named in the manifest too, under `[link] unsafe_libs` or the list of the system the build is for
   (`[link.windows]`, `[BLD-FFI-3]`), as every linked library is (verdict 173); where the manifest
   does not name it the import is `E9001` ("`windows.h` has the linker add `uuid.lib`, and
@@ -1072,8 +1081,8 @@ pub extern "C" fn on_update(entity: u64, dt: f32) -> i32:
   system, one line of source serving them all. The key `libs` is not Ember (`E9001`: "`libs =
   [\"vulkan-1\"]` links code that nothing checks; write `unsafe_libs = [\"vulkan-1\"]`"). Besides
   the libraries the manifest names, a build links only the runtime's own: the C runtime and the
-  system libraries `ember_rt` needs (`[RT-1]`), which the toolchain names for each system
-  (`[TOOL-2]`) and `ember tcb` lists under the runtime. Every other library the link would add
+  system libraries `ember_rt` needs, which `[RT-1]` lists for each system and `ember tcb` lists
+  under the runtime. Every other library the link would add
   because something asked for it is named under `unsafe_libs` too, whether a header asked (verdict
   173) or an object of a named library did (`/DEFAULTLIB` in a COFF `.drectve` section, `.deplibs`
   in ELF, `LC_LINKER_OPTION` in Mach-O); otherwise it is `E9001`, naming the library, what asked for

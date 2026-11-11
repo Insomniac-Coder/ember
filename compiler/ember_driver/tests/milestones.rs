@@ -9401,9 +9401,10 @@ fn main():
 #[test]
 fn every_example_of_the_specification_checks() {
     // The blocks known to fail: the heading they are under, how many, and why. The development
-    // target is 0.9.15 and this compiler implements 0.9.10; each milestone of
+    // target is 0.9.20 and this compiler implements 0.9.10; each milestone of
     // `tasks/96/redesign/compiler-0.9.15/MILESTONES.md` that lands lowers these counts.
     const WRITTEN_IN_0915: &str = "written in 0.9.15, which this compiler does not implement yet";
+    const WRITTEN_IN_0920: &str = "written in 0.9.20, which this compiler does not implement yet";
     const BASELINE: &[(&str, usize, &str)] = &[
         ("IV.6a The words in a type: who owns a value, and where its memory comes from", 1, WRITTEN_IN_0915),
         ("V.7 Constants and statics", 1, WRITTEN_IN_0915),
@@ -9414,6 +9415,8 @@ fn every_example_of_the_specification_checks() {
         ("VIII.5 `weakref` links, parent links and loops of owners", 1, WRITTEN_IN_0915),
         ("IX.2 Arenas", 1, WRITTEN_IN_0915),
         ("IX.3 Memory managers: `using` and `Allocator`", 1, WRITTEN_IN_0915),
+        // `owns (…)` before an argument for an `owns` parameter, since 0.9.20_Hardened_3.
+        ("IX.7 `Cell`, and changes checked when compiling", 1, WRITTEN_IN_0920),
         ("IX.8 Establishing disjointness", 1, WRITTEN_IN_0915),
         ("Part XI — Concurrency and Parallelism", 1, WRITTEN_IN_0915),
         ("XI.2 Threads and synchronisation (`std.thread`, `std.sync`)", 1, WRITTEN_IN_0915),

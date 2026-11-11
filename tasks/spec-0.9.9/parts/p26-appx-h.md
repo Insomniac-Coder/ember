@@ -3676,3 +3676,41 @@ Generated: every rule whose text differs from 0.9.20_Hardened_10.
 | `[FFI-57]` | changed |
 | `[MAN-10]` | changed |
 
+
+## H.63 Changes in 0.9.20_Hardened_12 (from 0.9.20_Hardened_11)
+
+**0.9.20_Hardened_12**, of 2026-11-11, applies the six fixes of a check of Hardened_11 against the
+fixes it applied (`tasks/96/redesign/spec-gaps-0.9.15/deep/check-0.9.20-H11.md`), each tested. Five
+make a promise the text already made hold; the sixth, Annex A's C import, is the owner's choice of
+two shown to him (verdict 176: "option A and then fix the rest yourself"). The rulings are N165 to
+N170 (`decisions.md` §23).
+
+* **A string a header gives GCC** (N165): with GCC, a `weakref` target or an `#ident` line in a
+  header that only declares put a file into the program. Where the C compiler writes assembly text
+  (GCC), the shim's and the thunk unit's text is now read as a dependency's is, and such a directive
+  makes the header one that runs (`[FFI-51]`, `[MAN-10]`).
+* **A C++ call between members alike on this target** (N166): Clang decides it as any other call
+  (`put(int)` for an `i32`); only a use without a call, which has one callable type for both, is
+  `E5035` (`[FFI-57]`).
+* **The runtime's own libraries** (N167): listed for each system in `[RT-1]`, which `[BLD-FFI-3]`
+  cites in place of `[TOOL-2]`, which named none.
+* **Annex A's C import** (N168, the owner's): `unsafe import c "zlib.h" as zlib` with its note and
+  `unsafe_libs = ["z"]`, the form a linked library takes (verdict 172).
+* **The removed `link` option** (N169): the check that fails on it finds it in any place among an
+  import's options (`tools/spec_check.py`).
+* **Two wordings** (N170): an untyped literal reaches C++ as C++ spells its value (`[FFI-57]`); the
+  `E9001` row says a library of which nothing declares a name, as `[BLD-FFI-3]` does.
+
+Registry rows: E9001. No new rule, no new code, none retired. Owner verdicts: 176 applied.
+
+Generated: every rule whose text differs from 0.9.20_Hardened_11.
+
+| Rule | 0.9.20_Hardened_11 → 0.9.20_Hardened_12 |
+|---|---|
+| `[BLD-FFI-3]` | changed |
+| `[CLI-20]` | changed |
+| `[FFI-51]` | changed |
+| `[FFI-57]` | changed |
+| `[MAN-10]` | changed |
+| `[RT-1]` | changed |
+

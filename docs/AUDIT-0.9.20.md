@@ -11,7 +11,13 @@ session, or a workflow the owner allows, starts here and does not redo the readi
 
 ## 0. State, and how to resume
 
-* **Cut and pinned (eleventh pass, 2026-11-11, the local session):** `docs/spec-source/Ember_v0.9.20_Hardened_11.md`
+* **Cut and pinned (twelfth pass, 2026-11-11, the local session):** `docs/spec-source/Ember_v0.9.20_Hardened_12.md`
+  (18392 lines, 1,020 rules, SHA-256 `BAAC229E58CD…`) is the development target; the cut is recorded in
+  `docs/spec-source/history/` (`133_0.9.20_Hardened_12.diff`), change log §H.63, the owner's verdict 176
+  (`JOB.md`), N165 to N170 (`decisions.md` §23), record §17 below. To cut Hardened_13: `CURRENT = ('0.9.20',
+  13)`, `V0920_H12_PARTS = '0.9.20_Hardened_12'`, add `V0920_H13_PARTS` (the `parts` folder), `H64_HEAD`,
+  `v0920_h13()` and its term in `main()`; then the recipe "A new hardening" of `docs/HANDOFF.md`.
+* **Cut and pinned (eleventh pass, 2026-11-11, the local session), superseded:** `docs/spec-source/Ember_v0.9.20_Hardened_11.md`
   (18330 lines, 1,020 rules, SHA-256 `703D97138CFB…`) is the development target; the cut is recorded in
   `docs/spec-source/history/` (`spec_history.py add`; no frozen folder and no old copy is kept), change log
   §H.62, the owner's verdict 175 (`JOB.md`), N157 to N164 (`decisions.md` §22), record §16 below. To cut
@@ -742,3 +748,31 @@ Applied as N157 to N164 (`decisions.md` §22): `[MAN-10]`, `[FFI-6]`, `[FFI-51]`
 * **Checked at the cut:** the spec's gates, `spec_history.py verify`, `ember_diag`, `ember_parser` and the
   spec-tied milestone tests, the Annex A fixture test among them, green against the pin. **Not run:** the full
   suite, the bench, the push gate.
+
+## 17. The twelfth pass: 0.9.20_Hardened_12 (2026-11-11, the local session, attended, solo)
+
+The session that wrote the fixes of Hardened_10 checked Hardened_11 against them (`tasks/96/redesign/spec-gaps-0.9.15/deep/check-0.9.20-H11.md`)
+and found six things to fix, two of them gaps in its own fixes. Shown the one that reversed the lead's choice, Annex
+A's import, as two options, the owner: "option A and then fix the rest yourself" (verdict 176). Applied as N165 to
+N170 (`decisions.md` §23): `[FFI-51]`, `[MAN-10]`, `[FFI-57]`, `[RT-1]`, `[BLD-FFI-3]`, `[CLI-20]` (its range of
+sections), Annex A and its fixture; registry row E9001; `tools/spec_check.py`.
+
+* **What the compiler now owes:** with GCC, a read of the shim's and the thunk unit's assembly text for directives
+  that read files or make directives (`[FFI-51]`); `[RT-1]`'s list as the only libraries a build links besides the
+  manifest's (`[BLD-FFI-3]`); a call between members alike on this target decided by Clang, and a use without a
+  call between them `E5035` (`[FFI-57]`).
+* **Tested for this cut:** GCC 15.2 in WSL puts a file into the object from a header that only declares, through
+  a `weakref` target (at `-O0` and `-O2`) and through an `#ident` line; Clang 21.1.8 quotes both and reads
+  nothing, and its syntax tree does not show `#ident`. Clang 22.1.8 on Windows chooses `put(int)` over
+  `put(long)` for an `int32_t` and for `7`, refuses a call that cannot infer a template's parameter, and gives
+  `3000000000` the type `long long`; GCC gives it `long` on Linux. The MSVC C runtime's own requests: `libcmt`
+  asks for `kernel32`, `libucrt` and `libvcruntime`, `msvcrt` for `kernel32`, `ucrt` and `vcruntime`.
+* **The Annex A fixture test needs no change:** it already marks the fixture as one the compiler does not build
+  yet (`FIXTURE_KNOWN_TO_FAIL`), so the `unsafe import` line keeps it passing; `spec_check`'s known-failing Annex A
+  block is re-keyed (still 10 blocks).
+* **Checked at the cut:** the spec's ten gates, `spec_history.py verify` (134 cuts, 0 mismatches), `ember_diag`, `ember_parser`,
+  the guide tests and six spec-tied milestone tests against the pin, all green.
+  `every_example_of_the_specification_checks` had failed since 0.9.20_Hardened_3 (checked by pinning Hardened_11
+  again): IX.7's example became `s.frame.set(owns (…))` (`E0900`, not built) and the test's list of examples the
+  compiler does not build yet had no entry for that section; it has one now, on the owner's word ("fix the
+  test"). **Not run:** the full suite, the bench, the push gate.

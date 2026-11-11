@@ -60,7 +60,7 @@ ember --help | --version [--matrix]
   rewrites source written for an earlier version into the current one where the change is
   mechanical, and lists, with the file and line, what it could not rewrite. From 0.9.15: the `#!
   language` directive to the current version; the changes of 0.9.20 refuse programs that were unsafe
-  and rewrite nothing (§H.52 to §H.62). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
+  and rewrite nothing (§H.52 to §H.63). From 0.9.8: `::` to `.`, integer `/` to `//`, `with_views`
   removal, `for k, v in m:` over a `Map` to `for k, v in m.items():` (`[CTL-1]`). From 0.9.10:
   `Box[T]` and `ForeignBox[T]` to `owns T`, `Box[T, A]` to `owns T using A`, `Array[T, A]` to
   `Array[T] using A`, `Weak[T]` to `weakref T`, the mode `owned` to `owns`, `mut x: T` on a
@@ -247,7 +247,8 @@ large_copy = { level = "warn", threshold = 256 }
   (GCC), the build reads that text before it is assembled and refuses it when it holds, outside a
   quoted name, a directive that reads a file or makes directives (`.incbin`, `.include`, `.macro`,
   `.irp`, `.irpc`, `.rept`, `.altmacro`): GCC writes none of these itself, so one there came from a
-  string the source gave it (a label, a section name, a `symver`), while Clang writes such strings
+  string the source gave it (a label, a section name, a `symver`, a `weakref` target, an `#ident`
+  line), while Clang writes such strings
   quoted and needs no such read. A file from anywhere else, or assembly, is `E9001` unless the root
   names the dependency in `native` ("`parser`'s `lexer.h` (line 3) reads `/home/ci/.aws/credentials`
   into the program with `#embed`; a dependency's C reads only its own folder and the toolchain's
