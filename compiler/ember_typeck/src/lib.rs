@@ -16533,6 +16533,22 @@ impl<'a> Checker<'a> {
             && !matches!(self.types.kind(ty), TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Error)
     }
 
+    /// `[GRM-13]` — whether a list pattern of `count` elements (`at_least` when it has `..`) can
+    /// never match a value of type `ty`: text is no list, and a `[T; N]` holds exactly `N`.
+    fn slice_pattern_never_fits(&self, ty: Ty, count: usize, at_least: bool) -> bool {
+        let inner = match *self.types.kind(ty) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => ty,
+        };
+        if self.is_text(inner) {
+            return true;
+        }
+        match *self.types.kind(inner) {
+            TyKind::Array { len, .. } => if at_least { (count as u64) > len } else { (count as u64) != len },
+            _ => false,
+        }
+    }
+
     /// `str` or `String`: ordered and compared by bytes (`[TYP-37]`'s table).
     fn is_text(&self, ty: Ty) -> bool {
         matches!(self.types.kind(ty), TyKind::Str)
@@ -29632,6 +29648,34 @@ impl<'a> Checker<'a> {
             }
 
             ast::PatternKind::Error => wild(self.common.error),
+
+            // `[GRM-13]` — a list pattern against text is `E2020`, whose help gives `split`; one
+            // that cannot equal a `[T; N]`'s count is `E2020` naming both. The patterns that fit
+            // are not built yet and stay below.
+            ast::PatternKind::Slice { prefix, rest, suffix }
+                if self.slice_pattern_never_fits(expected, prefix.len() + suffix.len(), rest.is_some()) =>
+            {
+                let shown = self.types.display(expected);
+                let count = prefix.len() + suffix.len();
+                let at_least = if rest.is_some() { "at least " } else { "" };
+                let inner = match *self.types.kind(expected) {
+                    TyKind::Ref { inner, .. } => inner,
+                    _ => expected,
+                };
+                if self.is_text(inner) {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2020, span, format!("a list pattern cannot match `{shown}`, which is text and not a list"))
+                            .help("take the text apart with `split` (`words = line.split(\" \").collect[Array[StrView]]()`) and match the list it gives"),
+                    );
+                } else if let TyKind::Array { len, .. } = *self.types.kind(inner) {
+                    self.error(
+                        codes::E2020,
+                        span,
+                        format!("`{shown}` has {len} elements, but this list pattern has {at_least}{count}"),
+                    );
+                }
+                wild(self.common.error)
+            }
 
             _ => {
                 self.error(
