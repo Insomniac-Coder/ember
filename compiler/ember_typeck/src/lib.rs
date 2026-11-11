@@ -46279,13 +46279,18 @@ impl<'a> Checker<'a> {
                         if reassigns_let_field {
                             let (owner_id, field_name, _, _) =
                                 field.expect("a reassignable class field has metadata");
-                            let owner = self.types.intern(TyKind::Class(owner_id));
-                            let owner = self.types.display(owner);
+                            // `[CLS-9a]` — "`items` is `let`: it is set in `init` and never changed
+                            // after; to add to it, write the field without `let`: `items: Array[int]`".
+                            let field_def = self.types.class_field_at_info(owner_id, *index).map(|(_, f)| (f.ty, f.ty_span));
+                            let field_ty = field_def.map(|(ty, _)| ty);
+                            // The type as the program wrote it (`Array[int]`, where the table has `i64`).
+                            let shown = field_def.map_or(String::new(), |(ty, written)| self.written_line(written).unwrap_or_else(|| self.types.display(ty)));
+                            let change = if field_ty.is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Vec { .. } | TyKind::Array { .. })) { "add to it" } else { "change it" };
                             self.error(
                                 codes::E2104,
                                 span,
                                 format!(
-                                    "cannot assign to `let` field `{owner}.{field_name}` outside its `init`"
+                                    "`{field_name}` is `let`: it is set in `init` and never changed after; to {change}, write the field without `let`: `{field_name}: {shown}`"
                                 ),
                             );
                         }

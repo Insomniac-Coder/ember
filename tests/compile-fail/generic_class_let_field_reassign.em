@@ -9,7 +9,7 @@ class Version:
     let value: T
 
     fn replace(value: T):
-        this.value = value      #$ error[E2104]: cannot assign to `let` field `Version[T].value` outside its `init`
+        this.value = value      #$ error[E2104]: `value` is `let`: it is set in `init` and never changed after; to change it, write the field without `let`: `value: T`
 
 fn main():
     version = Version[i32](1)
