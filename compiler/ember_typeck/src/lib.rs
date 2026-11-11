@@ -13453,6 +13453,20 @@ impl<'a> Checker<'a> {
             {
                 return Some(format!("method `{method}` returns `Self` by value"));
             }
+            // `[TYP-22]` — `Self` as a parameter's type, or inside one: through a `dyn I` value the
+            // kind of any other value is unknown.
+            if !def.dyn_sized_defaults.contains(declaration) {
+                // The receiver is not among `params` here.
+                for (name, ty, _, _) in &signature.params {
+                    if self.names_self(*ty, &mut HashSet::new()) {
+                        let shown = interface.as_str();
+                        let shown = shown.rsplit('.').next().unwrap_or(shown);
+                        return Some(format!(
+                            "`{method}` takes `{name}: Self`, and through a `dyn {shown}` the kind of `{name}` is unknown; take `{name}: dyn {shown}` and test its kind in the body, `if {name} is Tag as o:`, or mark `{method}` with `where Self: needs Sized` and call it on the concrete types"
+                        ));
+                    }
+                }
+            }
         }
         for parent in &def.supertraits {
             // `[TYP-22]` (ODR-237) — a required `Clone` is the table's copy entry, not a method;
@@ -13465,6 +13479,21 @@ impl<'a> Checker<'a> {
             }
         }
         None
+    }
+
+    /// Whether `ty` is `Self` of an interface, or has it inside (`Array[Self]`, `ref mut Self`).
+    fn names_self(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Param { index, .. } => *index == ember_types::SELF_PARAM,
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.names_self(*inner, seen),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => self.names_self(*elem, seen),
+            TyKind::Tuple(items) => items.iter().any(|&t| self.names_self(t, seen)),
+            TyKind::Fn { params, ret, .. } => params.iter().any(|p| self.names_self(p.ty, seen)) || self.names_self(*ret, seen),
+            TyKind::Struct(id) => seen.insert(ty) && self.types.struct_def(*id).origin.as_ref().is_some_and(|(_, args)| args.iter().any(|&a| self.names_self(a, seen))),
+            TyKind::Class(id) => seen.insert(ty) && self.types.class_def(*id).origin.as_ref().is_some_and(|(_, args)| args.iter().any(|&a| self.names_self(a, seen))),
+            TyKind::Enum(id) => seen.insert(ty) && self.types.enum_def(*id).origin.as_ref().is_some_and(|(_, args)| args.iter().any(|&a| self.names_self(a, seen))),
+            _ => false,
+        }
     }
 
     /// `[MONO-5]` — what keeps the generic function `decl` (`def`) from being shareable: the first use
