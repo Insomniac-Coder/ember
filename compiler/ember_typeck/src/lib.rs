@@ -46241,7 +46241,7 @@ impl<'a> Checker<'a> {
     }
 
     fn reject_readonly_write(&mut self, place: &Expr, span: Span) {
-        self.reject_readonly_write_inner(place, span, false);
+        self.reject_readonly_write_inner(place, span);
     }
 
     /// An assignment: also the place `[CLS-9]` restricts, a `let` field
@@ -46249,17 +46249,17 @@ impl<'a> Checker<'a> {
     /// any handle (`[CLS-7]`); the access it takes is checked at run time
     /// (VIII.3, `[EXC-16]`; D-462).
     fn reject_readonly_write_in_assignment(&mut self, place: &Expr, span: Span) {
-        self.reject_readonly_write_inner(place, span, true);
+        self.reject_readonly_write_inner(place, span);
     }
 
     /// `[EXC-1]` — a class field passed to a `mut` parameter is a long-term
     /// access at the call boundary: the caller's MIR lowering surrounds the
     /// call with the run-time access interval.
     fn reject_readonly_write_in_mut_argument(&mut self, place: &Expr, span: Span) {
-        self.reject_readonly_write_inner(place, span, false);
+        self.reject_readonly_write_inner(place, span);
     }
 
-    fn reject_readonly_write_inner(&mut self, place: &Expr, span: Span, assignment: bool) {
+    fn reject_readonly_write_inner(&mut self, place: &Expr, span: Span) {
         self.note_written(place);
         let mut current = place;
         loop {
@@ -46298,13 +46298,12 @@ impl<'a> Checker<'a> {
                                 )
                             },
                         );
-                        // `[CLS-9]` — only assignment to the binding itself is
-                        // restricted. A `ref mut` or a `mut` call through the
-                        // field reaches this helper through another entry
-                        // point and remains permitted by `[CLS-9a]`.
-                        let reassigns_let_field = assignment
-                            && std::ptr::eq(current, place)
-                            && field.is_some_and(|(_, _, is_let, _)| is_let)
+                        // `[CLS-9]`, `[CLS-9a]` — after `init`, nothing is changed through a
+                        // `let` field, for every type: it is not assigned, a list in it is not
+                        // added to, and what an object it names is not changed through it. A
+                        // change reaches this helper as an assignment, a `ref mut` or a `mut`
+                        // argument (a method's receiver included), through any depth of path.
+                        let reassigns_let_field = field.is_some_and(|(_, _, is_let, _)| is_let)
                             && self.class_init_field_index(current).is_none();
                         if reassigns_let_field {
                             let (owner_id, field_name, _, _) =
@@ -46323,6 +46322,8 @@ impl<'a> Checker<'a> {
                                     "`{field_name}` is `let`: it is set in `init` and never changed after; to {change}, write the field without `let`: `{field_name}: {shown}`"
                                 ),
                             );
+                            // One mistake, one error: the outer `let` fields on the path are not repeated.
+                            return;
                         }
                         if let Some((owner_id, field_name, _, read_only_outside)) = field {
                             if !reassigns_let_field
