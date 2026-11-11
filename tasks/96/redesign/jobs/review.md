@@ -298,3 +298,26 @@ after each work batch" is the owner's rule from this round.
       (ODR-226).
     - `[CLS-9a]`: a change through a `let` field (`push`) is still accepted.
     - `[DSJ-5]`'s message has no general form, a spec slip for the next cut.
+
+## Round 5 (R5-batch.md): W1 (Sonnet) and the Opus helper
+
+- **W1, defects** (428k tokens, 100 min). 9 of 10 merged (`fd24bf9d`, without `2f66bff7`).
+  - **Retired codes:**
+    - E3025 is retired; a method call conflicts as its body does (E3022).
+    - E3030 becomes E3013, with CLO-6's message. The captured name comes from the closure.
+    - E3061 becomes E3063.
+    - E3080 is retired (E3021/E3022).
+  - **Messages and helps:**
+    - DIA-10: B2's help gives the lines. It uses a new `ember_diag::text_mark(span)`, rendered like `line_mark`.
+    - OBJ-5: E3016 has the rule's message.
+    - CLS-9a: E2104 for every change through a `let` field.
+    - TYP-3: one E0009 for a bad char escape.
+    - DIA-7: B4's rebinding case, named `new_<param>`, a name the rule does not give.
+  - **Not merged: `2f66bff7`.** TYP-15's test, rewritten to TYP-15a (a list of views bounded by what each
+    points into), which the compiler still refuses (E3063). For the lead, M5. `TYP-15/reject_a_slice_stored_in_an_array`
+    pins the old reading too.
+  - **Left by W1:**
+    - B8, O5 and X1 are still variants of `ember_diag::shapes`, mapped from their retired codes.
+    - JOB-5 gives two E3063 on one line (DIA-26).
+    - E3030's help is not the rule's exact line: it needs the argument's text.
+- **`lead-fix` merged** (`e49a8545`): the push gate's failures. Its conformance run is green.
