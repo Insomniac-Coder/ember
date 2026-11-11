@@ -5,7 +5,7 @@ error[E3040]: `values` was handed over to `moved` on line 4 and is used on line 
   |             ------ moved here
 5 |     println(moved.len())
 6 |     view: ref Array[i32] = ref values
-  |                            ^^^^^^^^^^ used here after the hand-over
+  |                            ^^^^^^^^^^ used here
   |
   = help: write `moved = copy of values` (a copy of your own) or `moved = shares values` (two owners), or use `values` before it is handed over
   = note: the view would point at memory whose owner gave it away

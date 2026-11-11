@@ -4,7 +4,7 @@ error[E3040]: `values` was handed over to `take` on line 7 and is used on line 8
 7 |     println(take(owns values))
   |                       ------ moved here
 8 |     println(take(owns values))
-  |                       ^^^^^^ used here after the hand-over
+  |                       ^^^^^^ used here
   |
   = help: hand over `copy of values` (a copy of your own), or use `values` before it is handed over
   = note: handing a value over gives it away; the old owner cannot use it again [OWN-3]

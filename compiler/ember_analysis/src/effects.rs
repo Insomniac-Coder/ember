@@ -611,8 +611,7 @@ pub fn check_effects_all(bodies: &[Body], types: &TypeTable, map: &ember_span::S
             // `[DET-4]` — a platform function of `std.math` has `det`'s function of the same name.
             if effect == Effects::NONDET
                 && !relaxed
-                && let Origin::Operation(operation) = last.origin
-                && let Some(help) = det_help(body, types, map, operation, first.span)
+                && let Some(help) = det_help(body, types, map, first.span)
             {
                 diagnostic = diagnostic.help(help);
             }
@@ -629,72 +628,156 @@ pub fn check_effects_all(bodies: &[Body], types: &TypeTable, map: &ember_span::S
     reported
 }
 
-/// `[DET-4]` — `E4070`'s help for a platform float function (`operation` is "the platform's `cbrt`"):
-/// "`fall_off` is `@deterministic`, and `math.cbrt(d)` (line 6) is the platform's `cbrt`, whose last
-/// bits differ between C libraries; write `det.cbrt(d)`", the call as the program wrote it.
-fn det_help(body: &Body, types: &TypeTable, map: &ember_span::SourceMap, operation: &str, call: Span) -> Option<String> {
-    if !operation.starts_with("a transcendental function") && operation != "the platform's `pow`" {
-        return None;
-    }
+/// `[DET-4]` — `E4070`'s help for a call of a platform float function in `body` at `call`: "`fall_off`
+/// is `@deterministic`, and `math.cbrt(d)` (line 6) is the platform's `cbrt`, whose last bits differ
+/// between C libraries; write `det.cbrt(d)`", the call as the program wrote it and the one to write.
+/// The function is the call's own builtin; only its arguments are read from the program's text. A
+/// call that reaches the platform through another function gets no such help: that function's own
+/// call is the one to change.
+fn det_help(body: &Body, types: &TypeTable, map: &ember_span::SourceMap, call: Span) -> Option<String> {
+    let (name, arity, operator) = platform_function(body, call)?;
     let function = display_name(body, types);
-    // A method call's span is its receiver's: the rest of the call is on the line after it.
-    let written = map.get(call.file).and_then(|file| {
-        let text = file.text.get(call.start as usize..call.end as usize)?.trim();
-        let after = file.text.get(call.end as usize..)?;
-        let method_call = after.strip_prefix('.').is_some_and(|rest| {
-            let word: String = rest.chars().take_while(|c| *c == '_' || c.is_alphanumeric()).collect();
-            !word.is_empty() && rest[word.len()..].starts_with('(')
-        });
-        let extended = if method_call && !text.contains('(') {
-            let (mut depth, mut end) = (0usize, None);
-            for (at, c) in after.char_indices().take_while(|(_, c)| *c != '\n') {
-                match c {
-                    '(' => depth += 1,
-                    ')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            end = Some(at + 1);
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            end.map(|end| format!("{text}{}", &after[..end]))
-        } else {
-            None
-        };
-        Some(extended.unwrap_or_else(|| text.to_string())).filter(|text| !text.is_empty() && !text.contains('\n'))
-    });
-    let written = written.as_deref()?;
-    // The function the call names: after the last `.` before its `(`, or `pow` for `a ** b`.
-    let name = if written.contains(" ** ") { "pow" } else { written[..written.find('(')?].rsplit('.').next()? };
-    let arity = FloatLib::named(name).map_or(2, |(_, arity)| arity);
-    let line = map.line_col(call).line;
-    // The call as `det` takes it: a module call keeps its arguments (`math.cbrt(d)`), a method call
-    // gives its receiver first (`x.sin()` is `det.sin(x)`), `a ** b` is `det.pow(a, b)`.
-    let replacement = if let Some((base, exponent)) = written.split_once(" ** ") {
-        Some(format!("det.pow({}, {})", base.trim(), exponent.trim()))
-    } else if let (Some(open), true) = (written.find('('), written.ends_with(')')) {
-        let (callee, arguments) = (&written[..open], &written[open + 1..written.len() - 1]);
-        let given = if arguments.trim().is_empty() { 0 } else { arguments.matches(',').count() + 1 };
-        match callee.rsplit_once('.') {
-            Some((receiver, method)) if method == name => Some(if given == arity {
-                format!("det.{name}({arguments})")
-            } else if given == 0 {
-                format!("det.{name}({receiver})")
-            } else {
-                format!("det.{name}({receiver}, {arguments})")
-            }),
-            _ => None,
-        }
-    } else {
-        None
+    let generic = || {
+        format!("`{function}` is `@deterministic`, and this call is the platform's `{name}`, whose last bits differ between C libraries; write `det.{name}`, `std.math.det`'s function of the same name")
     };
-    let replacement = replacement.unwrap_or_else(|| format!("det.{name}(…)"));
+    let Some(file) = map.get(call.file) else { return Some(generic()) };
+    let Some(text) = file.text.get(call.start as usize..call.end as usize).map(str::trim) else { return Some(generic()) };
+    // A method call's span is its receiver's: the rest of the call follows it.
+    let tail = format!(".{name}(");
+    let written = match file.text.get(call.end as usize..).and_then(|after| after.strip_prefix(tail.as_str())) {
+        Some(rest) if !operator => match closing_paren(rest) {
+            Some(close) => format!("{text}{tail}{}", &rest[..=close]),
+            None => return Some(generic()),
+        },
+        _ => text.to_string(),
+    };
+    let Some(replacement) = det_call(&written, name, arity, operator).filter(|_| !written.contains('\n')) else { return Some(generic()) };
+    let line = map.line_col(call).line;
     Some(format!(
         "`{function}` is `@deterministic`, and `{written}` (line {line}) is the platform's `{name}`, whose last bits differ between C libraries; write `{replacement}`"
     ))
+}
+
+/// The platform float function the call at `call` in `body` is: its `std.math` name, its arity, and
+/// whether it is the `**` operator.
+fn platform_function(body: &Body, call: Span) -> Option<(&'static str, usize, bool)> {
+    body.blocks.iter().find_map(|block| match &block.terminator {
+        Terminator::Call { func: FuncRef::Builtin { which, .. }, .. } if call_span(block) == call => match which {
+            Builtin::FloatPow => Some(("pow", 2, true)),
+            Builtin::FloatLib(lib) => FloatLib::named(lib.method()).map(|(_, arity)| (lib.method(), arity, false)),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+/// The `det` call for `written`, a call of the platform's `name` as the program wrote it: a module
+/// call keeps its arguments (`math.cbrt(d)` is `det.cbrt(d)`), a method call gives its receiver first
+/// (`x.sin()` is `det.sin(x)`, `y.atan2(x)` is `det.atan2(y, x)`), and `a ** b` is `det.pow(a, b)`.
+fn det_call(written: &str, name: &str, arity: usize, operator: bool) -> Option<String> {
+    if operator {
+        let parts = split_top_level(written, "**");
+        return (parts.len() == 2).then(|| format!("det.pow({}, {})", parts[0], parts[1]));
+    }
+    let inner = written.strip_suffix(')')?;
+    let open = call_paren(written)?;
+    let (callee, arguments) = (written[..open].trim_end(), &inner[open + 1..]);
+    let arguments = if arguments.trim().is_empty() { Vec::new() } else { split_top_level(arguments, ",") };
+    let receiver = callee.strip_suffix(name)?.trim_end();
+    let receiver = if receiver.is_empty() { None } else { Some(receiver.strip_suffix('.')?.trim_end()) };
+    let given = arguments.join(", ");
+    match receiver {
+        _ if arguments.len() == arity => Some(format!("det.{name}({given})")),
+        Some(receiver) if arguments.len() + 1 == arity && arguments.is_empty() => Some(format!("det.{name}({receiver})")),
+        Some(receiver) if arguments.len() + 1 == arity => Some(format!("det.{name}({receiver}, {given})")),
+        _ => None,
+    }
+}
+
+/// What a scan of program text is inside: a text or character literal (its quote, and whether the
+/// last character was an escape), or the code around it.
+#[derive(Default)]
+struct Quoted {
+    quote: Option<char>,
+    escaped: bool,
+}
+
+impl Quoted {
+    /// Whether `c` is code (outside every literal), after taking it in.
+    fn code(&mut self, c: char) -> bool {
+        match self.quote {
+            Some(_) if self.escaped => self.escaped = false,
+            Some(_) if c == '\\' => self.escaped = true,
+            Some(open) if c == open => self.quote = None,
+            Some(_) => {}
+            None if c == '"' || c == '\'' => self.quote = Some(c),
+            None => return true,
+        }
+        false
+    }
+}
+
+/// The offset in `rest` of the `)` that closes a `(` just before it, past nested brackets and
+/// literals.
+fn closing_paren(rest: &str) -> Option<usize> {
+    let (mut depth, mut quoted) = (1usize, Quoted::default());
+    for (at, c) in rest.char_indices() {
+        if !quoted.code(c) {
+            continue;
+        }
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return (c == ')').then_some(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The offset of the `(` whose `)` ends `written`: the call's own parentheses.
+fn call_paren(written: &str) -> Option<usize> {
+    let (mut opens, mut quoted, mut call) = (Vec::new(), Quoted::default(), None);
+    for (at, c) in written.char_indices() {
+        if !quoted.code(c) {
+            continue;
+        }
+        match c {
+            '(' | '[' | '{' => opens.push(at),
+            ')' | ']' | '}' => call = opens.pop(),
+            _ => {}
+        }
+    }
+    call.filter(|_| opens.is_empty())
+}
+
+/// `text` split at each `separator` outside brackets and literals, each part trimmed.
+fn split_top_level<'t>(text: &'t str, separator: &str) -> Vec<&'t str> {
+    let (mut parts, mut depth, mut quoted, mut from) = (Vec::new(), 0usize, Quoted::default(), 0);
+    let mut chars = text.char_indices();
+    while let Some((at, c)) = chars.next() {
+        if !quoted.code(c) {
+            continue;
+        }
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            _ if depth == 0 && text[at..].starts_with(separator) => {
+                parts.push(text[from..at].trim());
+                from = at + separator.len();
+                for _ in 1..separator.chars().count() {
+                    chars.next();
+                }
+            }
+            _ => {}
+        }
+    }
+    parts.push(text[from..].trim());
+    parts
 }
 
 fn contract_diagnostic(
@@ -1626,5 +1709,26 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         | B::ArenaArrayGet { .. } | B::ArenaArrayPush { .. } | B::ArenaArrayClear | B::ArenaArrayIterNext { .. }
         | B::ArenaMapGet { .. } | B::ArenaMapContains { .. } | B::ArenaMapInsert { .. } | B::ArenaMapRemove { .. }
         | B::ArenaMapClear | B::ArenaMapIterNext { .. } => (Effects::NONE, ""),
+    }
+}
+
+#[cfg(test)]
+mod det_help_tests {
+    use super::{det_call, split_top_level};
+
+    /// `[DET-4]` — the `det` call for each way a program writes a platform call.
+    #[test]
+    fn the_det_call_is_the_call_the_program_wrote() {
+        assert_eq!(det_call("math.cbrt(d)", "cbrt", 1, false).as_deref(), Some("det.cbrt(d)"));
+        assert_eq!(det_call("cbrt(d)", "cbrt", 1, false).as_deref(), Some("det.cbrt(d)"));
+        assert_eq!(det_call("x.sin()", "sin", 1, false).as_deref(), Some("det.sin(x)"));
+        assert_eq!(det_call("(a + b).sin()", "sin", 1, false).as_deref(), Some("det.sin((a + b))"));
+        assert_eq!(det_call("y.atan2(x)", "atan2", 2, false).as_deref(), Some("det.atan2(y, x)"));
+        assert_eq!(det_call("math.atan2(f(a, b), c)", "atan2", 2, false).as_deref(), Some("det.atan2(f(a, b), c)"));
+        assert_eq!(det_call("math.hypot(p[0, 1], q(\"),\"))", "hypot", 2, false).as_deref(), Some("det.hypot(p[0, 1], q(\"),\"))"));
+        assert_eq!(det_call("a ** b", "pow", 2, true).as_deref(), Some("det.pow(a, b)"));
+        assert_eq!(det_call("x**(y ** 2)", "pow", 2, true).as_deref(), Some("det.pow(x, (y ** 2))"));
+        assert_eq!(det_call("math.cbrt(d", "cbrt", 1, false), None);
+        assert_eq!(split_top_level("a, (b, c), \"d, e\"", ","), ["a", "(b, c)", "\"d, e\""]);
     }
 }

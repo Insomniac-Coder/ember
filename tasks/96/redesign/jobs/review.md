@@ -134,3 +134,39 @@ friends. Each is its milestone's (M3 to M6b).
 ## Spec findings for the next cut (continued)
 
 2. **TYP-25:** the code for a positional argument after a named one (W2).
+
+## Round 2 collected (the lead, 2026-11-11 evening)
+
+Merged into `main` in this order: `lead-a1-3` (A1-3), W3, W4 up to `bcaa0288` (its `[DIA-2]` commit
+`29cc91df` left out), W1, W2.
+
+**Conflicts, resolved by the lead:**
+- `drops.rs`: A1-3's hand-over messages were kept, with `[DIA-3]`'s "used here" label (W4) in each.
+- `E3040.md`, the O1 and O4 snapshots, and `E3042.md` (retired by A1-3): main's side, with the
+  snapshots written again from the merged compiler.
+- `error_pages_baseline.json`, `rule_index_baseline.json`: each side had removed other entries. The
+  merge keeps both removals.
+
+**Changed by the lead at integration:**
+- **`[DET-4]` (W4).** The help rebuilt the `det` call from the program's text. It took the
+  function's name from that text, and counted every comma as an argument boundary, so
+  `math.atan2(f(a, b), c)` gave `det.atan2(math, f(a, b), c)` and `(a + b).sin()` gave
+  `det.(…)`. Now:
+  - the name and arity come from the MIR call's own builtin (`platform_function`);
+  - arguments are split only at top-level commas, past brackets and literals;
+  - the call's parentheses are found from its end, and `**` is found at the top level.
+
+  A call that reaches the platform through another function gets no `det` help. Unit test:
+  `det_help_tests`.
+- **`[STD-6]` (W4).** The error type's name was built from the package's name by slicing the first
+  byte of each part, which would panic on a non-ASCII letter. It now goes by characters.
+
+**Reviewed and taken as they are:**
+- `[CTL-7]` (a `return` after `E2160`).
+- `[GRM-20]` (`E0108`).
+- `[LT-1a]` (`E3062` for a view of the object itself; its help is the spec's text word for word).
+- `[RNG-9]` (the debug assertion).
+- `[DET-3]` (the slot's `deterministic`).
+- `[LEX-2]` (`eol=crlf`).
+- `[DIA-3]` (the label).
+- W1's 12 pages, W2's 18 tests, W3's model.

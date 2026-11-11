@@ -5,7 +5,7 @@ error[E3040]: `pair.first` was handed over to `_first` on line 16; `pair` is use
    |              ---------- handed over here
 17 |     println(pair.second.n)
 18 |     consume(owns pair)
-   |                  ^^^^ used here as a whole while one of its parts was handed over
+   |                  ^^^^ used here
    |
    = help: give `pair.first` a new value before `pair` is used whole (`pair.first = …`), or keep a copy: `_first = copy of pair.first`
    = note: a part handed over on its own leaves the rest of the value usable, but neither the part nor the whole until the part has a new value [OWN-11]

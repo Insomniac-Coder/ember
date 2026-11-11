@@ -15782,7 +15782,10 @@ impl<'a> Checker<'a> {
                 let error: String = package
                     .split(|c: char| !c.is_alphanumeric())
                     .filter(|part| !part.is_empty())
-                    .map(|part| part[..1].to_uppercase() + &part[1..])
+                    .map(|part| {
+                        let mut letters = part.chars();
+                        letters.next().map_or_else(String::new, |first| first.to_uppercase().chain(letters).collect())
+                    })
                     .collect();
                 self.sink.emit(
                     Diagnostic::error(
