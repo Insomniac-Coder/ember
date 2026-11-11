@@ -1,5 +1,43 @@
 # Ember — handoff
 
+> **2026-11-11 night — rounds 2 and 3 on `main`, A1-6 nearly done (the local session, the owner's "go
+> autonomous").** **The owner's rules now:**
+>
+> - Sonnet workers, at most 2 to 3 agents at once (an Opus helper counts).
+> - Rounds of 10 to 20 tasks each.
+> - **A 10-minute break after each batch is collected and combined.**
+> - Work goes on until he says stop.
+>
+> **Done:**
+>
+> - **D-971:** every bench layout moves the code under Clang and clang-cl. Bench 25/25 on the LLVM backend.
+> - **Round 2:** collected, with A1-3, `[DET-4]`'s help redone and `[STD-6]`'s naming.
+> - **Round 3:** W1's 11 FFI tests, W2's 12 tests and W4's 8 defects, all in `jobs/review.md`.
+>
+> **The push gate on round 2's tree:** CI-style green. `TYP-9b`'s test was fixed with `@noinline`. The two speed
+> tests that failed during the owner's room switch (battery) pass on mains. Nothing is pushed since `53da7981`.
+>
+> **A1-6 (M3), branch `lead-a1-6`** in the `.claude/worktrees/lead` worktree, with `main` merged in. Full quick
+> check green before that merge.
+>
+> - **The type.** `owns T` (`TypeKind::Owns`) is shown as `owns T`, and `owns` on a class type is `E2114`.
+> - **Making the block.** `owns e` makes the block for an `owns T` place: a field, an assignment, an argument,
+>   `push`, `Some(...)` or a return. A value made without it is `E2123`, with the place named. A second `owns`,
+>   or `owns` before a value made for a place that is not `owns T`, is `E0109`.
+> - **Reading through.** An `owns T` reads as its `T`.
+> - **`Box` removed.** `Box[T]`, `Box(v)` and `.get()` are `E1010`, each with a migration.
+>   `ember __migrate --checker` applies them in the repository: 152 test files were migrated, and std by hand.
+>
+> **Next:**
+>
+> 1. The quick check on the merged branch.
+> 2. Merge into `main`.
+> 3. The three-way gate.
+> 4. The bench.
+> 5. Push.
+> 6. Round 4: OBJ-2's `E2173` text (now unblocked), the E3016 and E2104 messages, `std.mem`'s disjointness
+>    API, and the retired codes still emitted (E3025, E3030, E3061, E3080).
+
 > **2026-11-11 evening — `ffi_direct_call` fixed (D-970), the local session, attended.** The gap was the C twin's:
 > with `noinline` alone its whole-program build (`-flto`, `/GL`) saw `ffi_mix`'s body and called a copy with the `3`
 > folded in, where the Ember program calls the function `ffi_direct_call_mix.c` compiles apart (D-897). The twin now
