@@ -1010,3 +1010,53 @@ def exp2_64(x):
     y = exp64(p)
     y = y + y * lo
     return scalbn(y, int(n))
+
+
+def log1p_split(f):
+    """ln(1 + f) as (hi, lo) for 1 + f in [sqrt(2)/2, sqrt(2)), as FreeBSD's k_log1p."""
+    s = f / (2.0 + f)
+    z = s * s
+    w = z * z
+    t1 = w * (LG2 + w * (LG4 + w * LG6))
+    t2 = z * (LG1 + w * (LG3 + w * (LG5 + w * LG7)))
+    r = t2 + t1
+    hfsq = 0.5 * f * f
+    hi = split(f - hfsq)[0]
+    lo = ((f - hi) - hfsq) + s * (hfsq + r)
+    return hi, lo
+
+
+def log_reduce(x):
+    """(k, f) with x = 2^k (1 + f) and 1 + f in [sqrt(2)/2, sqrt(2))."""
+    m, k = split_exponent(x)
+    if m >= 1.4142135623730951:
+        m *= 0.5
+        k += 1
+    return k, m - 1.0
+
+
+IVLN2_HI = 1.44269504072144627571e+00
+IVLN2_LO = 1.67517131648865118353e-10
+IVLN10_HI = 4.34294481878168880939e-01
+IVLN10_LO = 2.50829467116452752298e-11
+LOG10_2_HI = 3.01029995663611771306e-01
+LOG10_2_LO = 3.69423907715893078616e-13
+
+
+def log2_64(x):
+    if x != x:
+        return x + x
+    if x <= 0.0:
+        return -INF if x == 0.0 else NAN
+    if x == INF:
+        return x
+    k, f = log_reduce(x)
+    y = float(k)
+    if f == 0.0:
+        return y
+    hi, lo = log1p_split(f)
+    val_hi = hi * IVLN2_HI
+    val_lo = (lo + hi) * IVLN2_LO + lo * IVLN2_HI
+    w = y + val_hi
+    val_lo += (y - w) + val_hi
+    return val_lo + w
