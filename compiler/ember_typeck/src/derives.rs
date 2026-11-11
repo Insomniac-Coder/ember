@@ -295,7 +295,7 @@ fn interface(derive: &str) -> &'static str {
 }
 
 /// Where `@derive(…, name, …)` names `name`.
-fn derive_span(attrs: &[ast::Attribute], name: &str) -> Option<Span> {
+pub(crate) fn derive_span(attrs: &[ast::Attribute], name: &str) -> Option<Span> {
     attrs
         .iter()
         .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("derive"))
