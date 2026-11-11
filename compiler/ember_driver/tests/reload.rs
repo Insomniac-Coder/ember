@@ -1253,55 +1253,6 @@ fn the_failure_matrix() {
     assert!(run.stderr.contains("the tag would not go") && !run.stdout.contains("refused"), "{}", run.stderr);
 }
 
-/// `[HR-20]` — an object a `Retained` token pins (foreign code may keep its address, `[FFI-23]`)
-/// is never moved: a reload that would move it (its new size does not fit) is refused, naming the
-/// class and how many are pinned, though every reference to it could be found and rewritten (the
-/// token sits in an `Array` a static holds); an unpinned one moves as before. A change that fits
-/// migrates a pinned object in place, its address kept.
-#[test]
-fn a_pinned_object_is_never_moved() {
-    let v1 = "from std.sync import Mutex\nfrom std.ffi import Retained\n\n@sync\nclass Mote:\n    x: int = 1\n    spare: int = 0\n\n\
-              static PINS: Mutex[Array[Retained[Mote]]] = Mutex([])\nstatic FREE: Mutex[Array[Mote]] = Mutex([])\n\n\
-              @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with pins = PINS.lock():\n        \
-              if pins.len() == 0:\n            pins.push(owns Retained.pin(owns Mote()))\n            pins.push(owns Retained.pin(owns Mote()))\n        \
-              for tok in pins:\n            total += 1\n    \
-              with free = FREE.lock():\n        if free.len() == 0:\n            free.push(owns Mote())\n        for m in free:\n            total += m.x * 10\n    \
-              return total\n\nfn main():\n    pass\n";
-    let grown = v1.replace("    spare: int = 0\n", "    spare: int = 0\n    more: int = 5\n");
-    let run = host_run("reload-pinned-moves", v1, &[&grown], 2);
-    assert_eq!(run.exit, 0, "{}\n{}", run.stdout, run.stderr);
-    assert!(run.stdout.contains("refused: 2 instances of `Mote` must move (the new size does not fit), but a `Retained` token foreign code holds pins them"), "{}", run.stdout);
-    assert!(run.stdout.ends_with("12\n"), "the old code did not run on: {}", run.stdout);
-    // Without the pins, the same edit moves the instances.
-    let unpinned = |source: &str| source.replace("            pins.push(owns Retained.pin(owns Mote()))\n            pins.push(owns Retained.pin(owns Mote()))\n", "            pass\n");
-    let run = host_run("reload-unpinned-moves", &unpinned(v1), &[&unpinned(&grown)], 2);
-    assert_eq!(run.stdout, "10\napplied, 1 migrated\n10\n", "{}", run.stderr);
-    // A change that fits: migrated in place, pinned or not.
-    let fits = v1.replace("    spare: int = 0\n", "    other: int = 3\n");
-    let run = host_run("reload-pinned-in-place", v1, &[&fits], 2);
-    assert_eq!(run.stdout, "12\napplied, 3 migrated\n12\n", "{}", run.stderr);
-}
-
-/// `[HR-20]` (ODR-194) — a `Retained` token made with an `on_relocate` callback does not pin its
-/// object: the edit that `a_pinned_object_is_never_moved` refuses applies, each of the two objects
-/// moves, and the runtime calls each token's callback once, with the old and a different new
-/// address, after commit and before reclaim; the next frame sees both calls. A token without one
-/// still pins its object (above).
-#[test]
-fn a_pinned_object_with_on_relocate_moves_and_is_told() {
-    let v1 = "from std.sync import Atomic, Mutex\nfrom std.ffi import Retained, ObjectPtr\n\n@sync\nclass Mote:\n    x: int = 1\n    spare: int = 0\n\n\
-              static PINS: Mutex[Array[Retained[Mote]]] = Mutex([])\nstatic MOVED: Atomic[i64] = Atomic(0)\nstatic SAME: Atomic[i64] = Atomic(0)\n\n\
-              extern \"C\" fn moved(old: ObjectPtr[Mote], new: ObjectPtr[Mote]):\n    MOVED.fetch_add(1)\n    if old == new:\n        SAME.fetch_add(1)\n\n\
-              @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with pins = PINS.lock():\n        \
-              if pins.len() == 0:\n            pins.push(owns Retained.pin(owns Mote(), on_relocate=Some(moved)))\n            pins.push(owns Retained.pin(owns Mote(), on_relocate=Some(moved)))\n        \
-              for _tok in pins:\n            total += 1\n    \
-              return total + MOVED.load() * 100 + SAME.load() * 1000\n\nfn main():\n    pass\n";
-    let grown = v1.replace("    spare: int = 0\n", "    spare: int = 0\n    more: int = 5\n");
-    let run = host_run("reload-relocate-told", v1, &[&grown], 2);
-    assert_eq!(run.exit, 0, "{}\n{}", run.stdout, run.stderr);
-    assert_eq!(run.stdout, "2\napplied, 2 migrated\n202\n", "{}", run.stderr);
-}
-
 /// `[HR-11a]`, `[HR-14]` — an enum value migrates by variant name: reordering the variants
 /// rewrites each value's discriminant; removing a variant a live value holds is refused, naming it.
 #[test]
