@@ -3561,7 +3561,9 @@ fn check_return_regions(
                     match (allowed_names.is_empty(), rewrite) {
                         (true, Some(rewrite)) => rewrite,
                         (false, Some(rewrite)) => format!("return a view of {}, or {rewrite}", allowed_names.join(" or ")),
-                        (_, None) => format!("return a view of {}", allowed_names.join(" or ")),
+                        // `[LT-1a]` — the object itself has no name to give `from`: both ways out.
+                        (true, None) => format!("remove `from {}`", named.join(", ")),
+                        (false, None) => format!("return a view of {}, or remove `from {}`", allowed_names.join(" or "), named.join(", ")),
                     },
                 )
             }
