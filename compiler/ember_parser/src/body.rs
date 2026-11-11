@@ -377,6 +377,11 @@ impl Parser<'_> {
         let mut targets = vec![first];
         while self.at_punct(Punct::Comma) {
             self.bump();
+            if targets.len() == 1 && self.at_punct(Punct::Eq) {
+                let span = targets[0].span.to(self.prev_span());
+                self.one_element_tuple(span);
+                break;
+            }
             targets.push(self.parse_expr());
         }
 
@@ -877,7 +882,16 @@ impl Parser<'_> {
             }
             items.push(self.parse_expr_bp(0, allow_block_lambda));
         }
+        if items.len() == 1 {
+            self.one_element_tuple(start.to(self.prev_span()));
+            return items.pop().expect("one item");
+        }
         Expr { id, kind: ExprKind::Tuple(items), span: start.to(self.prev_span()) }
+    }
+
+    /// `[GRM-29]` (0.9.20) — one expression, target or pattern followed by a comma is `E0100`.
+    fn one_element_tuple(&mut self, span: ember_span::Span) {
+        self.report_code(codes::E0100, span, "a tuple has two or more elements; write `e`");
     }
 
     fn parse_jump(&mut self, allow_block_lambda: bool) -> Expr {
@@ -1465,7 +1479,12 @@ impl Parser<'_> {
                             items.push(self.parse_expr());
                         }
                         self.expect_punct(Punct::RParen);
-                        ExprKind::Tuple(items)
+                        if items.len() == 1 {
+                            self.one_element_tuple(start.to(self.prev_span()));
+                            ExprKind::Paren(Box::new(items.pop().expect("one item")))
+                        } else {
+                            ExprKind::Tuple(items)
+                        }
                     } else {
                         self.expect_punct(Punct::RParen);
                         ExprKind::Paren(Box::new(first))
@@ -2197,13 +2216,19 @@ impl Parser<'_> {
             TokenKind::Punct(Punct::LParen) => {
                 self.bump();
                 let mut items = Vec::new();
+                let mut comma = false;
                 while !self.at_punct(Punct::RParen) && !self.at_eof() {
                     items.push(self.parse_pattern());
                     if !self.eat_punct(Punct::Comma) {
                         break;
                     }
+                    comma = true;
                 }
                 self.expect_punct(Punct::RParen);
+                if comma && items.len() == 1 {
+                    self.one_element_tuple(start.to(self.prev_span()));
+                    return items.pop().expect("one item");
+                }
                 PatternKind::Tuple(items)
             }
             TokenKind::Punct(Punct::LBracket) => {

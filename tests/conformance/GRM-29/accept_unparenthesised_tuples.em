@@ -6,9 +6,8 @@
 #$ -4
 #$ 1
 #$ 7
-#$ 5
 #$ 2.5
-# An `expr_list` of two or more expressions, or of one followed by a comma, is
+# An `expr_list` of two or more expressions is
 # a tuple: after `return`, on the right of `=`, and as a declaration's value.
 
 fn pair() -> (int, int):
@@ -27,7 +26,5 @@ fn main():
     println(r)
     t = 3, 4
     println(t.0 + t.1)
-    one = 5,
-    println(one.0)
     p: (int, float) = 1, 2.5
     println(p.1)
