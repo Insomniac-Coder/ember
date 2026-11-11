@@ -1,5 +1,14 @@
 # Ember — handoff
 
+> **2026-11-11, THE GOAL NOW — the owner: "the goal is the implement 0.9.20's latest spec and any further changes
+> will lead to new hardened version and then that will turn into the new goal and you can use 3-4 sonnet agents";
+> then "proceed with steps all of it autonomously" (an Opus helper for load sharing is the lead's call). START HERE.**
+> The plan: `tasks/96/redesign/compiler-0.9.15/PLAN-0.9.20.md`. Step 0: `main` takes `spec-0.9.20-hardening` (a
+> fast-forward), the milestone map is refreshed for the 383 rules changed or new since 0.9.15_Hardened_1, D-966 to
+> D-968 are fixed; then `MILESTONES.md`'s order, the lead writing the critical path (M2's rest to M7) and at most
+> four workers at once on the side lanes (tests, error pages, std, the LLVM backend), each diff reviewed and its
+> checks run by the lead before a merge. The target is whatever `development-target.json` pins.
+
 > **2026-11-11, the twelfth cut — the local session (branch `spec-0.9.20-hardening`), attended, solo. START HERE.**
 > **Hardened_12 of 0.9.20 is cut** and is the development target
 > (`docs/spec-source/Ember_v0.9.20_Hardened_12.md`, 18392 lines, 1,020 rules, SHA-256 `BAAC229E58CD…`). The session
