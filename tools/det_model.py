@@ -1101,3 +1101,30 @@ def cbrt64(x):
     residual = ((a - z) + b) + pe * y
     y = y - residual / (3.0 * p)
     return math.copysign(scalbn(y, q), x)
+
+
+def hypot64(x, y):
+    ax = abs(x)
+    ay = abs(y)
+    if ax == INF or ay == INF:
+        return INF
+    if ax != ax or ay != ay:
+        return ax + ay
+    if ax < ay:
+        ax, ay = ay, ax
+    if ay == 0.0:
+        return ax
+    _, e = split_exponent(ax)
+    if ay < ax * 8.673617379884035e-19:
+        return ax
+    a = scalbn(ax, -e)
+    b = scalbn(ay, -e)
+    p1, e1 = two_product(a, a)
+    p2, e2 = two_product(b, b)
+    total = p1 + p2
+    tail = ((p1 - total) + p2) + e1 + e2
+    s = math.sqrt(total)
+    sp, se = two_product(s, s)
+    r = ((total - sp) - se) + tail
+    s = s + r / (2.0 * s)
+    return scalbn(s, e)

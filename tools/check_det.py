@@ -46,15 +46,15 @@ def arguments():
         xs += [edge, -edge, math.nextafter(edge, 0), math.nextafter(edge, 1e308), -math.nextafter(edge, 0)]
     xs += [rng.uniform(0.5, 1.0) * rng.choice((-1, 1)) for _ in range(100)]
     xs = [x for x in xs if math.isfinite(x)]
-    ys = [rng.uniform(-5, 5) for _ in xs]
+    # every third y is of x's size (for hypot); the others are small
+    ys = [rng.uniform(-5, 5) if i % 3 else x * rng.uniform(-1.9, 1.9) for i, x in enumerate(xs)]
     return xs, ys
 
 
 # The kernels added in round 2, one per task: (Ember name, the model's function). Each takes
 # `x`; the binary ones also `y`. `f32` results are the `f64` ones rounded once.
 UNARY = [("asin", m.asin64), ("acos", m.acos64), ("atan", m.atan64), ("sinh", m.sinh64), ("cosh", m.cosh64), ("tanh", m.tanh64), ("exp2", m.exp2_64), ("log2", m.log2_64), ("log10", m.log10_64), ("cbrt", m.cbrt64)]
-BINARY = []
-
+BINARY = [("hypot", m.hypot64)]
 
 def f64_program(xs, ys):
     return "\n".join([
