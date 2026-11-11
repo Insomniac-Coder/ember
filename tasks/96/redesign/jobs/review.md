@@ -256,3 +256,24 @@ after each work batch" is the owner's rule from this round.
 - E3025, E3030, E3061 and E3080, which are still emitted (W4);
 - `[int; 3]` printed as `[i64; 3]` (DIA-2);
 - "a `owns …`" in messages, which should read "an".
+
+## Round 4 (R4-batch.md): two workers, 12 and 15 tasks
+
+- **W2, tests for rules without one** (146k tokens, 12 min). 8 of 15 are committed: EFF-20, EFF-14,
+  EFF-18, TYP-3, CG-C-1, CG-C-5, CG-C-8 and PRF-1. The baseline went from 241 to 233. The other 7 slots
+  could not be filled.
+  - **Not built:**
+    - TYP-15a (the compiler is still at TYP-15's old rule; its test `reject_a_borrowed_str_pushed_into_an_array`
+      pins that and contradicts TYP-15a);
+    - ARN-5's `ArenaArray.in`;
+    - UNS-5's `std.mem.copy` and friends;
+    - WK-1 to WK-3 (`weakref`, M4);
+    - ALC-1 (`using`);
+    - ALC-3 (`global_allocator`);
+    - ALC-4 (`try_push`).
+  - **Skipped:** CLI, toolchain or host needed.
+  - **Found, fixed by the lead: D-972.** The C backend emitted C's `<<` on negative signed values, which
+    is undefined in C11. It now shifts in the unsigned type of the width, the same instruction.
+  - **Found, open:**
+    - a char literal with a surrogate escape reports `E0009` twice;
+    - the checked helpers' `__builtin_*_overflow` calls live in `ember_rt.h`, not in the emitted C.
