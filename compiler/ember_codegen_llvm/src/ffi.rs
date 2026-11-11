@@ -773,7 +773,11 @@ impl<'a> FnCx<'_, 'a> {
             }
             None => "0".to_string(),
         };
-        self.call_rt("ffi_release", vec![Val::Imm(Sc::Ptr, pointer.clone()), Val::Imm(Sc::I(32), creator)], None);
+        // `[FFI-33b]` — with the type a stop names.
+        let TyKind::Struct(id) = *self.m.ty.table.kind(boxed) else { unreachable!("an `owns T` of a foreign type is a struct") };
+        let shown = self.m.ty.table.foreign_object_shown(self.m.ty.table.struct_def(id).fields[0].ty);
+        let shown = self.m.bytes(shown.as_bytes());
+        self.call_rt("ffi_release", vec![Val::Imm(Sc::Ptr, pointer.clone()), Val::Imm(Sc::I(32), creator), Val::Imm(Sc::Ptr, shown)], None);
         pointer
     }
 

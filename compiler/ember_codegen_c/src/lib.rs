@@ -7213,17 +7213,19 @@ impl Emitter<'_> {
                     let boxed = self.foreign_box_type(ty, *nullable);
                     let fields = self.foreign_box_fields(boxed);
                     let pointer = self.c_type(fields[0]);
+                    // `[FFI-33b]` — the creator, and the type a stop names.
                     let creator = |value: &str| if fields.len() == 2 { format!("({value}).creator") } else { "0".to_string() };
+                    let shown = c_string_literal(&self.types.foreign_object_shown(fields[0]));
                     if *nullable {
                         let (some_tag, payload) = self.option_some_parts(ty, arg);
                         self.line(&format!("    {pointer} _ffi_owned{public_index} = NULL;"));
                         self.line(&format!(
-                            "    if ({some_tag}) {{ _ffi_owned{public_index} = {payload}.pointer; {RT}ffi_release((void*){payload}.pointer, {}); }}",
+                            "    if ({some_tag}) {{ _ffi_owned{public_index} = {payload}.pointer; {RT}ffi_release((void*){payload}.pointer, {}, {shown}); }}",
                             creator(&payload),
                         ));
                         foreign_args.push(format!("_ffi_owned{public_index}"));
                     } else {
-                        self.line(&format!("    {RT}ffi_release((void*)({arg}).pointer, {});", creator(arg)));
+                        self.line(&format!("    {RT}ffi_release((void*)({arg}).pointer, {}, {shown});", creator(arg)));
                         foreign_args.push(format!("({arg}).pointer"));
                     }
                 }
@@ -9830,8 +9832,10 @@ impl Emitter<'_> {
                         return format!("(({}){RT}ffi_adopt((void*)({}), {}))",
                             self.c_type(*arg_ty), rendered[0], self.location(span));
                     }
+                    // `[FFI-33b]` — with the type a stop names.
                     Builtin::ForeignRelease => {
-                        return format!("{RT}ffi_release((void*)({}), {})", rendered[0], rendered[1]);
+                        let shown = c_string_literal(&self.types.foreign_object_shown(*arg_ty));
+                        return format!("{RT}ffi_release((void*)({}), {}, {shown})", rendered[0], rendered[1]);
                     }
                     Builtin::ForeignThread => return format!("{RT}ffi_thread()"),
                     // `[OWN-12]`, `[FFI-54]` — the address the owner's first word holds; the owner
@@ -9851,7 +9855,8 @@ impl Emitter<'_> {
                             return address;
                         }
                         let creator = if fields.len() == 2 { format!("({}).{}", rendered[0], member(fields[1].name)) } else { "0".to_string() };
-                        return format!("({RT}ffi_release((void*){address}, {creator}), {address})");
+                        let shown = c_string_literal(&self.types.foreign_object_shown(fields[0].ty));
+                        return format!("({RT}ffi_release((void*){address}, {creator}, {shown}), {address})");
                     }
                     // `[FFI-23]` — a class object is pinned in its header; a `Box`'s value is
                     // its own, and needs nothing.

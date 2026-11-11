@@ -2969,6 +2969,17 @@ impl TypeTable {
         self.render(ty, true)
     }
 
+    /// `[FFI-33b]` — the name a run-time stop gives the foreign object a pointer of type `pointer`
+    /// points to: its type as the program writes it, without the module (`GlContext`).
+    pub fn foreign_object_shown(&self, pointer: Ty) -> String {
+        let pointee = match self.kind(pointer) {
+            TyKind::Ptr { inner, .. } => *inner,
+            _ => pointer,
+        };
+        let shown = self.display(pointee);
+        shown.rsplit('.').next().unwrap_or(&shown).to_string()
+    }
+
     /// A class's name as the user writes it: a generic instance is its
     /// generic's name and arguments (`Bag[int]`), never its instance's
     /// symbol (`[DIA-23]`).

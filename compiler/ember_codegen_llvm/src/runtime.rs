@@ -492,7 +492,7 @@ pub const FNS: &[RtFn] = &[
     f("ffi_thread", "uint32_t", &[]),
     f("ffi_check_thread", "void", &["uint32_t", "const char*"]),
     f("ffi_adopt", "void*", &["void*", "$loc"]),
-    f("ffi_release", "void", &["void*", "uint32_t"]),
+    f("ffi_release", "void", &["void*", "uint32_t", "const char*"]),
     f("rt_set_args", "void", &["int", "char**"]),
     f("rt_init_v3", "int", &["const $rt_config*", "uint32_t"]),
     f("rt_shutdown", "void", &[]),

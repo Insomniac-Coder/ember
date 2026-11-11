@@ -2450,7 +2450,7 @@ void ember_rt_thread_detach(void) {
 
 /* -- foreign objects Ember owns ([FFI-36a], [FFI-36b], [FFI-33b]) -------------
  *
- * An open-addressing table of the addresses `ForeignBox`es own, each with where it was taken,
+ * An open-addressing table of the addresses `owns T`s of foreign types hold, each with where it was taken,
  * under a spin lock as the leak tracker's: adoption is rare (a foreign object's life), so the
  * lock is never held for long. A removed entry is a tombstone, dropped at the next rehash. */
 typedef struct foreign_owned_slot {
@@ -2555,37 +2555,35 @@ void* ember_ffi_adopt(void* object, ember_loc at) {
     return object;
 }
 
-void ember_ffi_release(void* object, uint32_t creator) {
-#ifdef EMBER_RT_DEBUG_ACCESS
-    if (creator != 0 && creator != thread_number()) {
-        char buffer[320];
-        int written = snprintf(buffer, sizeof buffer,
-            "a foreign object at %p made on thread %u%s ends on thread %u%s: its contract says "
-            "`threads(creator)` [FFI-33b]",
-            object, (unsigned)creator, creator == g_main_thread_number ? " (main)" : "",
-            (unsigned)thread_number(), thread_number() == g_main_thread_number ? " (main)" : "");
-        ember_loc loc = { "<foreign-object>", 0, 0 };
-        ember_panic(buffer, written > 0 ? (size_t)written : 0, loc);
-    }
-#else
-    (void)creator;
-#endif
-    if (object == NULL) {
-        return;
-    }
-    foreign_owned_lock();
-    if (g_foreign_owned_cap != 0) {
-        size_t slot = debug_slot_of(object, g_foreign_owned_cap);
-        while (g_foreign_owned[slot].object != NULL) {
-            if (g_foreign_owned[slot].object == object) {
-                g_foreign_owned[slot].object = FOREIGN_REMOVED;
-                g_foreign_owned_used -= 1;
-                break;
+void ember_ffi_release(void* object, uint32_t creator, const char* type) {
+    ember_loc made = { "<foreign-object>", 0, 0 };
+    if (object != NULL) {
+        foreign_owned_lock();
+        if (g_foreign_owned_cap != 0) {
+            size_t slot = debug_slot_of(object, g_foreign_owned_cap);
+            while (g_foreign_owned[slot].object != NULL) {
+                if (g_foreign_owned[slot].object == object) {
+                    made = g_foreign_owned[slot].at;
+                    g_foreign_owned[slot].object = FOREIGN_REMOVED;
+                    g_foreign_owned_used -= 1;
+                    break;
+                }
+                slot = (slot + 1) & (g_foreign_owned_cap - 1);
             }
-            slot = (slot + 1) & (g_foreign_owned_cap - 1);
         }
+        foreign_owned_unlock();
     }
-    foreign_owned_unlock();
+    /* `[FFI-33b]`, `[COST-6]` — one compare, in every profile: a `threads(creator)` value ends on
+     * the thread that made it. Safe code never moves one, so this stop backs unsafe code and C. */
+    uint32_t here = thread_number();
+    if (creator != 0 && creator != here) {
+        char buffer[384];
+        int written = snprintf(buffer, sizeof buffer,
+            "a `%s` made on thread %u (line %u), ended on thread %u; a `threads(creator)` value ends "
+            "where it was made [FFI-33b]",
+            type, (unsigned)creator, (unsigned)made.line, (unsigned)here);
+        ember_panic(buffer, written > 0 ? (size_t)written : 0, made);
+    }
 }
 
 uint32_t ember_ffi_thread(void) {

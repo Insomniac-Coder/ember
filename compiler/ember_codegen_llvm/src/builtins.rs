@@ -1137,7 +1137,10 @@ impl<'a> FnCx<'_, 'a> {
             Builtin::ForeignRelease => {
                 let object = self.pointer(&args[0])?;
                 let creator = self.operand(&args[1])?;
-                self.call_rt("ffi_release", vec![Val::Imm(Sc::Ptr, object), creator], None);
+                // `[FFI-33b]` — with the type a stop names.
+                let shown = self.m.ty.table.foreign_object_shown(arg_ty);
+                let shown = self.m.bytes(shown.as_bytes());
+                self.call_rt("ffi_release", vec![Val::Imm(Sc::Ptr, object), creator, Val::Imm(Sc::Ptr, shown)], None);
                 Ok(())
             }
             Builtin::ForeignThread => self.call_rt_into("ffi_thread", Vec::new(), dest),
@@ -1163,7 +1166,10 @@ impl<'a> FnCx<'_, 'a> {
                 };
                 if *foreign {
                     let creator = creator.unwrap_or_else(|| "0".to_string());
-                    self.call_rt("ffi_release", vec![Val::Imm(Sc::Ptr, address.clone()), Val::Imm(Sc::I(32), creator)], None);
+                    let TyKind::Struct(id) = *self.m.ty.table.kind(arg_ty) else { return unsupported("an `owns T` that is not a struct") };
+                    let shown = self.m.ty.table.foreign_object_shown(self.m.ty.table.struct_def(id).fields[0].ty);
+                    let shown = self.m.bytes(shown.as_bytes());
+                    self.call_rt("ffi_release", vec![Val::Imm(Sc::Ptr, address.clone()), Val::Imm(Sc::I(32), creator), Val::Imm(Sc::Ptr, shown)], None);
                 }
                 self.store_result(dest, &address, Sc::Ptr, false)
             }
