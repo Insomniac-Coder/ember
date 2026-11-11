@@ -586,7 +586,7 @@ fn own_place_after(body: &Body, block: usize, position: usize, own_file: &dyn Fn
 
 /// `[EFF-5]`, `[EFF-6]` — check every function's contracts against its effects. Returns how many
 /// were broken.
-pub fn check_effects_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) -> usize {
+pub fn check_effects_all(bodies: &[Body], types: &TypeTable, map: &ember_span::SourceMap, sink: &mut Sink) -> usize {
     if bodies.iter().all(|body| body.contracts.forbidden.is_empty()) {
         return 0;
     }
@@ -608,6 +608,14 @@ pub fn check_effects_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) ->
             let span = if first.span.file == body.span.file { first.span } else { body.span };
             let relaxed = matches!(last.origin, Origin::Operation(operation) if operation == RELAXED);
             let mut diagnostic = contract_diagnostic(body, effect, span, &chain, types, relaxed);
+            // `[DET-4]` — a platform function of `std.math` has `det`'s function of the same name.
+            if effect == Effects::NONDET
+                && !relaxed
+                && let Origin::Operation(operation) = last.origin
+                && let Some(help) = det_help(body, types, map, operation, first.span)
+            {
+                diagnostic = diagnostic.help(help);
+            }
             for lambda in lambdas {
                 diagnostic = diagnostic.secondary(lambda, "the lambda the call runs");
             }
@@ -619,6 +627,70 @@ pub fn check_effects_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) ->
         }
     }
     reported
+}
+
+/// `[DET-4]` — `E4070`'s help for a platform float function (`operation` is "the platform's `cbrt`"):
+/// "`fall_off` is `@deterministic`, and `math.cbrt(d)` (line 6) is the platform's `cbrt`, whose last
+/// bits differ between C libraries; write `det.cbrt(d)`", the call as the program wrote it.
+fn det_help(body: &Body, types: &TypeTable, map: &ember_span::SourceMap, operation: &str, call: Span) -> Option<String> {
+    let name = operation.strip_prefix("the platform's `")?.strip_suffix('`')?;
+    let arity = FloatLib::named(name).map_or(2, |(_, arity)| arity);
+    let function = display_name(body, types);
+    // A method call's span is its receiver's: the rest of the call is on the line after it.
+    let written = map.get(call.file).and_then(|file| {
+        let text = file.text.get(call.start as usize..call.end as usize)?.trim();
+        let after = file.text.get(call.end as usize..)?;
+        let tail = format!(".{name}(");
+        let extended = if after.starts_with(&tail) && !text.contains('(') {
+            let (mut depth, mut end) = (0usize, None);
+            for (at, c) in after.char_indices().take_while(|(_, c)| *c != '\n') {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(at + 1);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            end.map(|end| format!("{text}{}", &after[..end]))
+        } else {
+            None
+        };
+        Some(extended.unwrap_or_else(|| text.to_string())).filter(|text| !text.is_empty() && !text.contains('\n'))
+    });
+    let written = written.as_deref();
+    let Some(written) = written else {
+        return Some(format!("`{function}` is `@deterministic`, and this call is the platform's `{name}`, whose last bits differ between C libraries; write `det.{name}`, `std.math.det`'s function of the same name"));
+    };
+    let line = map.line_col(call).line;
+    // The call as `det` takes it: a module call keeps its arguments (`math.cbrt(d)`), a method call
+    // gives its receiver first (`x.sin()` is `det.sin(x)`), `a ** b` is `det.pow(a, b)`.
+    let replacement = if let Some((base, exponent)) = written.split_once(" ** ") {
+        Some(format!("det.pow({}, {})", base.trim(), exponent.trim()))
+    } else if let (Some(open), true) = (written.find('('), written.ends_with(')')) {
+        let (callee, arguments) = (&written[..open], &written[open + 1..written.len() - 1]);
+        let given = if arguments.trim().is_empty() { 0 } else { arguments.matches(',').count() + 1 };
+        match callee.rsplit_once('.') {
+            Some((receiver, method)) if method == name => Some(if given == arity {
+                format!("det.{name}({arguments})")
+            } else if given == 0 {
+                format!("det.{name}({receiver})")
+            } else {
+                format!("det.{name}({receiver}, {arguments})")
+            }),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let replacement = replacement.unwrap_or_else(|| format!("det.{name}(…)"));
+    Some(format!(
+        "`{function}` is `@deterministic`, and `{written}` (line {line}) is the platform's `{name}`, whose last bits differ between C libraries; write `{replacement}`"
+    ))
 }
 
 fn contract_diagnostic(
@@ -1521,6 +1593,24 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::FloatLib(lib) => match lib {
             FloatLib::Sqrt | FloatLib::Floor | FloatLib::Ceil | FloatLib::Trunc | FloatLib::Round
             | FloatLib::RoundHalfAway | FloatLib::Copysign | FloatLib::MulAdd => (Effects::NONE, ""),
+            FloatLib::Cbrt => (Effects::NONDET, "the platform's `cbrt`"),
+            FloatLib::Exp => (Effects::NONDET, "the platform's `exp`"),
+            FloatLib::Exp2 => (Effects::NONDET, "the platform's `exp2`"),
+            FloatLib::Ln => (Effects::NONDET, "the platform's `ln`"),
+            FloatLib::Log2 => (Effects::NONDET, "the platform's `log2`"),
+            FloatLib::Log10 => (Effects::NONDET, "the platform's `log10`"),
+            FloatLib::Sin => (Effects::NONDET, "the platform's `sin`"),
+            FloatLib::Cos => (Effects::NONDET, "the platform's `cos`"),
+            FloatLib::Tan => (Effects::NONDET, "the platform's `tan`"),
+            FloatLib::Asin => (Effects::NONDET, "the platform's `asin`"),
+            FloatLib::Acos => (Effects::NONDET, "the platform's `acos`"),
+            FloatLib::Atan => (Effects::NONDET, "the platform's `atan`"),
+            FloatLib::Sinh => (Effects::NONDET, "the platform's `sinh`"),
+            FloatLib::Cosh => (Effects::NONDET, "the platform's `cosh`"),
+            FloatLib::Tanh => (Effects::NONDET, "the platform's `tanh`"),
+            FloatLib::Atan2 => (Effects::NONDET, "the platform's `atan2`"),
+            FloatLib::Hypot => (Effects::NONDET, "the platform's `hypot`"),
+            FloatLib::Pow => (Effects::NONDET, "the platform's `pow`"),
             _ => (Effects::NONDET, "a transcendental function from the platform library"),
         },
         // `[DET-2]` — the system random source (`RandomState`'s seed).

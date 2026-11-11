@@ -5833,7 +5833,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     // `[EFF-5]`, `[EFF-15]` — the contracts, checked once on the effects left after the
     // profile-independent proofs and before inlining; a known function passed to a callable
     // parameter is called directly by now, so it contributes its own effects (`[EFF-2]`).
-    if ember_analysis::check_effects_all(mir.bodies(), &types, &mut sink) > 0 {
+    if ember_analysis::check_effects_all(mir.bodies(), &types, &map, &mut sink) > 0 {
         return Ok(finish(&sink, &map, options));
     }
     // `[STD-6]`, `[BLD-11]` — a package's functions use only the layers it declares: the effects
