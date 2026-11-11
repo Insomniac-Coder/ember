@@ -16,4 +16,4 @@ class Pixel implements Render:
 fn main():
     pixel = Pixel[bool](42, false)
     _boxed: Box[dyn Render] = Box(pixel)
-    println(pixel.value) #$ error[E3040]: `pixel` has been moved out of
+    println(pixel.value) #$ error[E3040]: `pixel` was handed over on line 18 and is used on line 19; to keep it, write `owns copy of pixel`

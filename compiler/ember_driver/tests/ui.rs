@@ -67,7 +67,9 @@ fn required_primary_fragments(shape: Shape) -> &'static [&'static str] {
     // this second check prevents an intentionally refreshed snapshot from
     // silently blessing help for a different shape.
     match shape {
-        Shape::O1 => &["clone", "borrow"],
+        // `[DIA-7a]` 0.9.20 — O1 holds the loop and part cases (O3, O4 folded into it): `copy of x` or
+        // `shares x`, or for a part a new value first.
+        Shape::O1 => &["copy of"],
         Shape::O2 => &["mem.take", "mem.replace", "swap"],
         Shape::O3 => &["loop"],
         Shape::O4 => &["reassign", "destructure"],

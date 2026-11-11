@@ -31,4 +31,4 @@ fn main():
     writer = ys.iter_mut()
     for a, b in xs.iter().zip(owns writer):
         b += a
-    writer.next()  #$ error[E3040]: `writer` has been moved out of
+    writer.next()  #$ error[E3040]: `writer` was handed over on line 32 and is used on line 34; to keep both, hand over a copy of your own: `copy of writer`

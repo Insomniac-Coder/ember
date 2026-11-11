@@ -10,4 +10,4 @@ fn main():
     a = Named(name="ember".to_string())
     b = a
     println(b.name)
-    println(a.name)    #$ error[E3040]: `a` is borrowed after it has been moved out of
+    println(a.name)    #$ error[E3040]: `a` was handed over to `b` on line 11 and is used on line 13; to keep both, write `b = copy of a` (a copy of your own) or `b = shares a` (two owners of one value)

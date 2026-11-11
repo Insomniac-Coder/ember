@@ -1,13 +1,13 @@
-error[E3040]: `values` has been moved out of
+error[E3040]: `values` was handed over to `take` on line 7 and is used on line 8; to keep both, hand over a copy of your own: `copy of values`
  --> tests/ui/borrow/O1/use_after_move.em:8:23
   |
 7 |     println(take(owns values))
   |                       ------ moved here
 8 |     println(take(owns values))
-  |                       ^^^^^^ used here after the move
+  |                       ^^^^^^ used here after the hand-over
   |
-  = help: clone the value, or borrow it instead of moving it
-  = note: a move gives the value away; the old owner cannot use it again
-  = note: assigning a list, a map or a set moves it; in Python both names would point at one list (Appendix E)
+  = help: hand over `copy of values` (a copy of your own), or use `values` before it is handed over
+  = note: handing a value over gives it away; the old owner cannot use it again [OWN-3]
+  = note: `=` hands a list, a map or a set over; in Python both names would point at one list (Appendix E)
 
 error: could not compile due to 1 error(s)

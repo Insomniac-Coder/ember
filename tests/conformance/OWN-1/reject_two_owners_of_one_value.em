@@ -7,4 +7,4 @@ fn main():
     a: Array[i32] = Array[i32]()
     a.push(owns 1)
     _b = a
-    println(a[0])          #$ error[E3040]: `a` has been moved out of
+    println(a[0])          #$ error[E3040]: `a` was handed over to `_b` on line 9 and is used on line 10; to keep both, write `_b = copy of a` (a copy of your own) or `_b = shares a` (two owners of one value)

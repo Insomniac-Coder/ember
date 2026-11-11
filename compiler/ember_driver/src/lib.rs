@@ -3463,7 +3463,7 @@ fn migrate_file(input: &Path, write: bool, json: bool, repository: bool) -> Resu
                     } else {
                         map.location(diagnostic.primary.span)
                     };
-                    left.push(format!("{at}: {}", diagnostic.message));
+                    left.push(format!("{at}: {}", ember_diag::lined(&diagnostic.message, &map)));
                 }
                 continue;
             }

@@ -14,5 +14,5 @@ fn main():
     println(peek(x))    #$ error[E3050]: `x` is used before it is given a value
     s: String = "moved"
     t = s
-    println(size(s))    #$ error[E3040]: `s` is borrowed after it has been moved out of
+    println(size(s))    #$ error[E3040]: `s` was handed over to `t` on line 16 and is used on line 17; to keep both, write `t = copy of s` (a copy of your own) or `t = shares s` (two owners of one value)
     println(t)

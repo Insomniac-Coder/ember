@@ -10,4 +10,4 @@ fn main():
     a.push(owns 1)
     b = a
     println(take(owns b))
-    println(take(owns a))       #$ error[E3040]: `a` has been moved out of
+    println(take(owns a))       #$ error[E3040]: `a` was handed over to `b` on line 11 and is used on line 13; to keep both, write `b = copy of a` (a copy of your own) or `b = shares a` (two owners of one value)

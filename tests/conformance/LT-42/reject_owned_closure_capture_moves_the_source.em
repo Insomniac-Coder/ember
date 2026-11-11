@@ -8,5 +8,5 @@ fn main():
     data: Array[i32] = Array[i32]()
     data.push(owns 7)
     task = owned fn() => data[0]
-    println(data[0]) #$ error[E3040]: `data` has been moved out of
+    println(data[0]) #$ error[E3040]: `data` was handed over to `task` on line 10 and is used on line 11; to keep both, write `task = copy of data` (a copy of your own) or `task = shares data` (two owners of one value)
     println(task())

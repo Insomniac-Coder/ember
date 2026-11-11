@@ -13,5 +13,5 @@ struct Bag:
 fn main():
     a: Cell[Bag] = Cell(Bag(Array[i32]()))
     _b = a
-    _c = a.replace(Bag(Array[i32]()))   #$ error[E3040]: `a` has been moved out of
+    _c = a.replace(Bag(Array[i32]()))   #$ error[E3040]: `a` was handed over to `_b` on line 15 and is used on line 16; to keep both, write `_b = copy of a` (a copy of your own) or `_b = shares a` (two owners of one value)
     println(0)

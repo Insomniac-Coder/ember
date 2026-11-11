@@ -1,11 +1,11 @@
 #$ test: compile-fail
 #$ rules: OWN-4, DIA-7a
-# "A loop body that moves a value declared outside the loop is `E3041` unless
+# "A loop body that moves a value declared outside the loop is `E3040` unless
 # the value is reassigned before the next iteration on every path."
 #
 # This was reported as `E3040` — shape O1, "use after move" — whose help is
 # "clone it, or borrow it instead". Correct advice for a different program.
-# `[DIA-7a]` keys `E3041` to shape O3, "move in a loop", and its help is about
+# `[DIA-7a]` keys `E3040` in a loop's later round to shape O3, "move in a loop", and its help is about
 # the *next iteration*, which is where the problem actually is.
 #
 # The two are told apart by what the analysis knows: a move and a use in one
@@ -21,5 +21,5 @@ fn main():
     a.push(owns 1)
     i: i32 = 0
     while i < 2:
-        println(consume(owns a))        #$ error[E3041]: `a` is moved in a loop
+        println(consume(owns a))        #$ error[E3040]: `a` is handed over on line 24 and the loop comes round again, so the next round finds it gone; give it a new value before the next round (`a = …`), declare it inside the loop, or hand over a copy of your own: `copy of a`
         i = i + 1
