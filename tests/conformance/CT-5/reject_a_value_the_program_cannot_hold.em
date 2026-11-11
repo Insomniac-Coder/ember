@@ -1,7 +1,7 @@
 #$ test: compile-fail
 #$ rules: CT-5, V.7
 #$ error[E6010]: a compile-time value cannot be a `Node`
-#$ error[E2130]: a `const` cannot hold a `Array[i64]`
+#$ error[E2130]: a `const` cannot hold an `Array[i64]`
 # `[CT-5]` — a compile-time value is placed in the program as constant data, so it cannot be a
 # class handle (or any view into the evaluator's memory); and a `const` cannot own heap memory.
 

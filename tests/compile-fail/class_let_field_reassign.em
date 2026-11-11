@@ -6,10 +6,10 @@ class Version:
     let value: i32
 
     fn replace():
-        this.value = 2      #$ error[E2104]: cannot assign to `let` field `Version.value` outside its `init`
+        this.value = 2      #$ error[E2104]: `value` is `let`: it is set in `init` and never changed after; to change it, write the field without `let`: `value: i32`
 
     fn increment():
-        this.value += 1     #$ error[E2104]: cannot assign to `let` field `Version.value` outside its `init`
+        this.value += 1     #$ error[E2104]: `value` is `let`: it is set in `init` and never changed after; to change it, write the field without `let`: `value: i32`
 
 fn main():
     version = Version(1)

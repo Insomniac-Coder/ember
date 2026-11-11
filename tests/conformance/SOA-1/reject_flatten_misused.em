@@ -18,4 +18,4 @@ struct Tagged:
 fn main():
     bodies = SoA[Body].with_capacity(2)
     whole = bodies.pos  #$ error[E2020]: `pos` is split into a column per field by `@soa(flatten)`
-    tags = SoA[Tagged].with_capacity(2)  #$ error[E0104]: `@soa(flatten)` splits a struct field, and `tag` is a `i64`
+    tags = SoA[Tagged].with_capacity(2)  #$ error[E0104]: `@soa(flatten)` splits a struct field, and `tag` is an `i64`

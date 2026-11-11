@@ -3,7 +3,7 @@
 #$ error[E7010]: a `@parallel` loop's body may not `break` out of it
 #$ error[E7010]: a `@parallel` loop's body may not `return`
 #$ error[E7010]: the parallel loop writes `seen`, which its chunks share
-#$ error[E7010]: the parallel loop writes `xs`, a `Array[i64]`; it may write a `MutSpan` or an `SoA` column
+#$ error[E7010]: the parallel loop writes `xs`, an `Array[i64]`; it may write a `MutSpan` or an `SoA` column
 #$ error[E7010]: the parallel loop writes `xs`, and reaches it here at an index that is not `i` plus a constant
 #$ error[E7010]: the parallel loop gives `xs` to a call, which may write any element of it
 # `[PAR-2]` — a `@parallel` loop's chunks run at once, so its iterations must be independent: no

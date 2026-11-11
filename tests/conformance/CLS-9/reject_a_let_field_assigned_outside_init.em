@@ -9,7 +9,7 @@ class Ledger:
         this.id = id
 
     fn renumber(id: int):
-        this.id = id #$ error[E2104]: cannot assign to `let` field `Ledger.id` outside its `init`
+        this.id = id #$ error[E2104]: `id` is `let`: it is set in `init` and never changed after; to change it, write the field without `let`: `id: int`
 
 fn main():
     l = Ledger(7)

@@ -26,7 +26,7 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     safe fn past_the_end(visit: extern "C" fn(*mut void, c_int), data: *mut void)    #$ error[E5002]: parameter 3 of the callback `visit` does not exist: it takes 2
 
     @ffi(param(visit, callback(borrowed, user_data=data@2)))
-    safe fn other_type(visit: extern "C" fn(*mut void, c_int), data: *mut void)    #$ error[E5002]: parameter 2 of the callback `visit` is a `i32`, not the user data's `*mut void`
+    safe fn other_type(visit: extern "C" fn(*mut void, c_int), data: *mut void)    #$ error[E5002]: parameter 2 of the callback `visit` is an `i32`, not the user data's `*mut void`
 
     @ffi(param(visit, callback(borrowed, user_data=data@0)))    #$ error[E0104]: the callback's parameters are counted from 1
     safe fn no_place(visit: extern "C" fn(*mut void, c_int), data: *mut void)

@@ -64,7 +64,7 @@ pub struct Label {
 
 impl Label {
     pub fn new(span: Span, message: impl Into<String>) -> Label {
-        Label { span, message: Some(message.into()) }
+        Label { span, message: Some(articles(message.into())) }
     }
 
     /// A label that only points, with no text of its own.
@@ -116,12 +116,67 @@ pub struct Diagnostic {
     pub habit: Option<habits::Habit>,
 }
 
+/// `[DIA-2]` — "a `owns Player`" reads "an `owns Player`": the article before a quoted name is chosen
+/// from the word that follows it, for every message however it was built. Only a standalone `a` or
+/// `an` directly before a backtick is read; a name that does not begin with a letter (`[int; 3]`,
+/// `*mut T`) leaves its article as written.
+pub fn articles(text: String) -> String {
+    if !text.contains("a `") && !text.contains("an `") && !text.contains("A `") && !text.contains("An `") {
+        return text;
+    }
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len() + 4);
+    let mut at = 0;
+    while at < text.len() {
+        let rest = &text[at..];
+        let standalone = at == 0 || !(bytes[at - 1].is_ascii_alphanumeric() || matches!(bytes[at - 1], b'`' | b'_' | b'.' | b'-' | b'\''));
+        let article = ["An `", "an `", "a `", "A `"].into_iter().find(|a| rest.starts_with(*a));
+        if standalone && let Some(article) = article {
+            let word: String = rest[article.len()..].chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+            if let Some(vowel) = starts_with_vowel_sound(&word) {
+                let upper = article.starts_with(|c: char| c.is_uppercase());
+                out.push_str(match (vowel, upper) {
+                    (true, false) => "an",
+                    (true, true) => "An",
+                    (false, false) => "a",
+                    (false, true) => "A",
+                });
+                out.push_str(" `");
+                at += article.len();
+                continue;
+            }
+        }
+        let c = rest.chars().next().expect("a character");
+        out.push(c);
+        at += c.len_utf8();
+    }
+    out
+}
+
+/// Whether `word` is said with a vowel sound first: `owns`, `int`, `Option`, `f32` (eff), `unsafe` do;
+/// `u8`, `unit`, `once`, `String` do not; nor do `Set` or `Map`, while the acronyms `SoA` and `Rc` do. `None` where it does not begin with a letter.
+fn starts_with_vowel_sound(word: &str) -> Option<bool> {
+    let first = word.chars().next().filter(|c| c.is_alphabetic())?.to_ascii_lowercase();
+    let lower = word.to_ascii_lowercase();
+    Some(match first {
+        'a' | 'e' | 'i' => !lower.starts_with("eu"),
+        'o' => !(lower.starts_with("one") || lower.starts_with("once")),
+        'u' => lower.starts_with("un") && !lower.starts_with("uni"),
+        // A short acronym spells its first letter's name: `SoA`, `SIMD`, `FFI`, `NaN`, `Rc` (ess, em, eff, en, ar).
+        'f' | 'h' | 'l' | 'm' | 'n' | 'r' | 's' | 'x' => {
+            let acronym = word.starts_with(|c: char| c.is_uppercase()) && (2..=4).contains(&word.len()) && word[1..].chars().filter(|c| c.is_lowercase()).count() <= 1;
+            acronym || (first == 'f' && word.len() > 1 && word[1..].chars().all(|c| c.is_ascii_digit()))
+        }
+        _ => false,
+    })
+}
+
 impl Diagnostic {
     pub fn error(code: Code, span: Span, message: impl Into<String>) -> Diagnostic {
         Diagnostic {
             severity: Severity::Error,
             code: Some(code),
-            message: message.into(),
+            message: articles(message.into()),
             primary: Label::bare(span),
             secondary: Vec::new(),
             helps: Vec::new(),
@@ -150,7 +205,7 @@ impl Diagnostic {
 
     /// Text on the primary caret itself, distinct from the header message.
     pub fn primary_label(mut self, text: impl Into<String>) -> Diagnostic {
-        self.primary.message = Some(text.into());
+        self.primary.message = Some(articles(text.into()));
         self
     }
 
@@ -160,24 +215,24 @@ impl Diagnostic {
     }
 
     pub fn help(mut self, text: impl Into<String>) -> Diagnostic {
-        self.helps.push(text.into());
+        self.helps.push(articles(text.into()));
         self
     }
 
     /// Each note `notes` holds (none, or one an `Option` gives).
     pub fn notes_from(mut self, notes: impl IntoIterator<Item = String>) -> Diagnostic {
-        self.notes.extend(notes);
+        self.notes.extend(notes.into_iter().map(articles));
         self
     }
 
     pub fn note(mut self, text: impl Into<String>) -> Diagnostic {
-        self.notes.push(text.into());
+        self.notes.push(articles(text.into()));
         self
     }
 
     pub fn suggest(mut self, message: impl Into<String>, span: Span, text: impl Into<String>) -> Diagnostic {
         self.suggestions.push(Suggestion {
-            message: message.into(),
+            message: articles(message.into()),
             edits: vec![(span, Replacement::Text(text.into()))],
             migration: false,
         });
@@ -809,5 +864,17 @@ mod tests {
         assert!(sink.has_errors());
         assert_eq!(sink.warning_count(), 1);
         assert!(sink.render(&map).contains("warning[W0001]"));
+    }
+
+    /// `[DIA-2]` — the article before a quoted name follows the word after it.
+    #[test]
+    fn articles_follow_the_next_word() {
+        let fixed = |text: &str| articles(text.to_string());
+        assert_eq!(fixed("a `owns Player` here"), "an `owns Player` here");
+        assert_eq!(fixed("a `int`, a `Option[int]`, a `f32`, a `unsafe fn`"), "an `int`, an `Option[int]`, an `f32`, an `unsafe fn`");
+        assert_eq!(fixed("an `String`, an `u8`, an `unit`, an `once fn`, an `Utf8Error`"), "a `String`, a `u8`, a `unit`, a `once fn`, a `Utf8Error`");
+        assert_eq!(fixed("A `owns T` and a `[int; 3]` and `a` `x`"), "An `owns T` and a `[int; 3]` and `a` `x`");
+        assert_eq!(fixed("a `SoA`, a `SIMD` lane, a `Rc`, an `Set`, a `Mat2`"), "an `SoA`, an `SIMD` lane, an `Rc`, a `Set`, a `Mat2`");
+        assert_eq!(fixed("data `x`, extra `y`"), "data `x`, extra `y`");
     }
 }
