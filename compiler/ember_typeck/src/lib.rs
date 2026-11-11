@@ -46302,6 +46302,11 @@ impl<'a> Checker<'a> {
         // each: the one of the call's arity whose parameters take its arguments.
         let chosen = if self.cpp_trampoline(base_id).is_some() { self.cpp_base_constructor(base_ty, args, span) } else { None };
         let Some(entry) = chosen.or_else(|| self.methods.get(&(base_ty, Symbol::intern("init"))).copied()) else {
+            // `[CLS-3]` — a base with no `init` and no base class has the memberwise constructor as
+            // its `init`: `super.init(name=name)` gives its fields their values.
+            if self.types.class_def(base_id).base.is_none() && self.cpp_trampoline(base_id).is_none() {
+                return self.super_init_memberwise(base_id, args, span);
+            }
             self.error(codes::E1010, span, "the direct base class has no explicit `init`");
             if let Some(state) = self.class_init.as_mut() {
                 state.base_initialized = true;
@@ -46335,6 +46340,62 @@ impl<'a> Checker<'a> {
             },
             span,
         }
+    }
+
+    /// `[CLS-3]` — `super.init(…)` of a memberwise base: the constructor is the base's fields, with
+    /// positional or named arguments in field order (`[TYP-25]`); a field with a default left out
+    /// keeps the default `[CLS-2]` has already stored. Each argument is handed over to its field as
+    /// `this.field = argument` is, in the derived `init`, after `[CLS-11]`'s check of its own fields.
+    fn super_init_memberwise(&mut self, base_id: ClassId, args: &[ast::Arg], span: Span) -> Expr {
+        let fields: Vec<FieldDef> = (0..self.types.class_field_count(base_id))
+            .filter_map(|index| self.types.class_field_at(base_id, index).cloned())
+            .collect();
+        let name = self.types.class_def(base_id).name;
+        let names: Vec<Symbol> = fields.iter().map(|field| field.name).collect();
+        let slots = self.constructor_slots(name, &names, args, span);
+        let mut complete = true;
+        for (index, field) in fields.iter().enumerate() {
+            if !field.has_default && !slots.iter().any(|(_, slot)| *slot == index) {
+                self.error(codes::E2020, span, format!("field `{}` of `{name}` has no value", field.name));
+                complete = false;
+            }
+        }
+        self.mark_class_init_base(span);
+        let base_count = fields.len();
+        if let Some(state) = self.class_init.as_mut() {
+            // A field's default is already stored: the argument replaces it.
+            for status in state.initialized.iter_mut().take(base_count) {
+                *status = ClassFieldInit::Default;
+            }
+        }
+        let mut stmts = Vec::new();
+        if complete {
+            for (arg, index) in slots {
+                let at = args[arg].span;
+                let this = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::SelfExpr, span: at };
+                let target = ast::Expr {
+                    id: ast::NodeId::DUMMY,
+                    kind: ast::ExprKind::Field { base: Box::new(this), name: ast::Ident { name: fields[index].name, span: at } },
+                    span: at,
+                };
+                let assign = ast::Stmt {
+                    id: ast::NodeId::DUMMY,
+                    attrs: Vec::new(),
+                    kind: ast::StmtKind::Assign { targets: vec![target], op: None, value: args[arg].value.clone() },
+                    span: at,
+                };
+                self.check_stmt(&assign, &mut stmts);
+            }
+        }
+        if let Some(state) = self.class_init.as_mut() {
+            for status in state.initialized.iter_mut().take(base_count) {
+                *status = ClassFieldInit::Init;
+            }
+        }
+        if !complete {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        Expr { ty: self.common.void, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(self.void_value(span)) }, span }
     }
 
     /// `[FFI-39b]` — the constructor of a C++ base `super.init(args)` selects: of its `init` and
