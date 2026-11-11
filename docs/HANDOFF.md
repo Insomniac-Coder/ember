@@ -1,5 +1,16 @@
 # Ember — handoff
 
+> **2026-11-11 evening — round 1 of the plan pushed (the local session, attended).** `main` holds the four workers'
+> batches of round 1 (`tasks/96/redesign/jobs/N-batch.md`, `L-batch.md`; review and every finding in `jobs/review.md`),
+> D-966 to D-969 fixed, `[OWN-9]`'s constructor rule (verdict 159: a constructor's argument is given as `=` gives it, a
+> struct's `init` too), and what the three-way push gate found (the runtime's instance digits from `ember_branding`, a
+> range test of a bound the type meets left out, five tests made to follow the spec). **Gate:** three ways green on
+> `fd73baf6`. **Bench:** 24 of 25; `ffi_direct_call` is 1.065x C on the LLVM backend, the same with the compiler of
+> `baa4ffdc` (so not today's); pushed on the owner's word ("push it and fix ffi_direct_call next"), and it is the next
+> task. **Not on `main` yet:** branch `lead-a1-3` (A1-3, M3, checked), and round 2's four branches (`jobs/R2-batch.md`;
+> W4's `[DIA-2]` commit `29cc91df` is a program-wide guess and is not to be merged). Owner's rules for workers: rounds of
+> 10 to 20 tasks each, at most 4 agents at once, each round collected, tested and combined by the lead before the next.
+
 > **2026-11-11, THE GOAL NOW — the owner: "the goal is the implement 0.9.20's latest spec and any further changes
 > will lead to new hardened version and then that will turn into the new goal and you can use 3-4 sonnet agents";
 > then "proceed with steps all of it autonomously" (an Opus helper for load sharing is the lead's call). START HERE.**
