@@ -450,6 +450,15 @@ impl Interp<'_, '_> {
                 let object = self.mem.read_u64(addr)?;
                 self.release_object(object)
             }
+            // `[WK-11]`, `[RC-1]` — a link's or an owner's end.
+            TyKind::Link { kind: ember_types::LinkKind::Weakref, .. } => {
+                let object = self.mem.read_u64(addr)?;
+                self.weak_release(object)
+            }
+            TyKind::Link { .. } => {
+                let object = self.mem.read_u64(addr)?;
+                self.release_object(object)
+            }
             TyKind::Vec { elem, .. } => {
                 let (ptr, len) = (self.mem.read_u64(addr)?, self.mem.read_u64(addr + 8)?);
                 if self.types.needs_drop(elem) {

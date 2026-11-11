@@ -570,6 +570,16 @@ impl<'a> FnCx<'_, 'a> {
         let table = self.m.ty.table;
         match table.kind(ty).clone() {
             TyKind::Class(_) | TyKind::ClassInterface(_) => self.drop_at(ptr, align, ty)?,
+            // `[WK-11]` — a link's end subtracts one from its target's weak count; `[RC-1]` an owner's
+            // end one from its count.
+            TyKind::Link { kind: ember_types::LinkKind::Weakref, .. } => {
+                let handle = self.load(Sc::Ptr, ptr, align.min(8));
+                self.call_rt("weak_release", vec![Val::Imm(Sc::Ptr, handle)], None);
+            }
+            TyKind::Link { target, .. } => {
+                let handle = self.load(Sc::Ptr, ptr, align.min(8));
+                self.release_handle(&handle, target);
+            }
             // `[CLO-10]` — an owned callable value ends its captured state.
             TyKind::Fn { abi: None, .. } => {
                 let descriptor_at = self.gep(ptr, 8);

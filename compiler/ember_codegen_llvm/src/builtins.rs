@@ -839,6 +839,28 @@ impl<'a> FnCx<'_, 'a> {
                 self.call_rt("weak_upgrade", vec![Val::Imm(Sc::Ptr, handle)], dest.as_ref().map(|(p, a)| (p.as_str(), *a)));
                 Ok(())
             }
+            // `[RC-1]`, `[WK-11]` (M4 slice A) — one more owner (+1) or link (a weak +1) of the object,
+            // the same pointer; a counted copy of an owner's handle; an opening is an upgrade.
+            Builtin::LinkMake { kind, link } => {
+                let handle = self.pointer(&args[0])?;
+                let TyKind::Link { target, .. } = self.m.ty.kind(*link).clone() else { return unsupported("a link builtin without a link") };
+                match kind {
+                    ember_types::LinkKind::Weakref => self.call_rt("weak_retain", vec![Val::Imm(Sc::Ptr, handle.clone())], None),
+                    _ => self.retain_handle(&handle, target),
+                }
+                self.store_result(dest, &handle, Sc::Ptr, false)
+            }
+            Builtin::LinkTarget { class, .. } => {
+                let handle = self.pointer(&args[0])?;
+                self.retain_handle(&handle, *class);
+                self.store_result(dest, &handle, Sc::Ptr, false)
+            }
+            Builtin::LinkOpen { .. } => {
+                let handle = self.pointer(&args[0])?;
+                let dest = self.dest_of(dest)?;
+                self.call_rt("weak_upgrade", vec![Val::Imm(Sc::Ptr, handle)], dest.as_ref().map(|(p, a)| (p.as_str(), *a)));
+                Ok(())
+            }
             Builtin::WeakEmpty { .. } | Builtin::MaybeUninitUninit { .. } => {
                 let at = self.place(dest)?;
                 let size = self.m.ty.size_align(at.ty).0;

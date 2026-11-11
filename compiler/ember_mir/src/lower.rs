@@ -3012,6 +3012,22 @@ impl<'a> Builder<'a> {
             } => {
                 self.lower_weak_upgrade(place, &args[0], *class, *option, expr.span);
             }
+            // `[WK-12]` — an opening is lowered as an upgrade is, through the link's own builtin.
+            hir::ExprKind::Builtin { which: which @ hir::Builtin::LinkOpen { class, option }, args } => {
+                self.lower_option_query(place, &args[0], *which, *class, *option, expr.span);
+            }
+            // `[RC-1]`, `[WK-11]` — the owner or the handle is read where it is, never moved.
+            hir::ExprKind::Builtin { which: which @ (hir::Builtin::LinkMake { .. } | hir::Builtin::LinkTarget { .. }), args } => {
+                let source = self.lower_operand_borrowed(&args[0]);
+                let next = self.new_block();
+                self.terminate(Terminator::Call {
+                    func: FuncRef::Builtin { which: *which, arg_ty: expr.ty },
+                    args: vec![source],
+                    dest: place,
+                    next,
+                });
+                self.current = next;
+            }
             hir::ExprKind::Builtin { which: hir::Builtin::SpanGet, args } => {
                 self.lower_span_get(place, &args[0], &args[1], expr.ty, expr.span);
             }
@@ -7218,6 +7234,21 @@ impl<'a> Builder<'a> {
         option: ember_types::EnumId,
         span: ember_span::Span,
     ) {
+        self.lower_option_query(place, source, hir::Builtin::WeakUpgrade { class, option }, class, option, span);
+    }
+
+    /// A builtin that answers a class handle or null (`which`: an upgrade, or `[WK-12]`'s opening of
+    /// a link), made into `option`: `None` for null, `Some` of the handle otherwise. The source is
+    /// read where it is.
+    fn lower_option_query(
+        &mut self,
+        place: Place,
+        source: &'a hir::Expr,
+        which: hir::Builtin,
+        class: Ty,
+        option: ember_types::EnumId,
+        span: ember_span::Span,
+    ) {
         let source = self.lower_operand_borrowed(source);
         let raw = self.temp(class, span);
         self.push(StmtKind::StorageLive(raw));
@@ -7225,7 +7256,7 @@ impl<'a> Builder<'a> {
         let checked = self.new_block();
         self.terminate(Terminator::Call {
             func: FuncRef::Builtin {
-                which: hir::Builtin::WeakUpgrade { class, option },
+                which,
                 arg_ty: class,
             },
             args: vec![source],

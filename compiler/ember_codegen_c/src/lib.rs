@@ -10848,6 +10848,34 @@ impl Emitter<'_> {
                         let weak_c = self.c_type(*weak);
                         return format!("({weak_c}){{0}}");
                     }
+                    // `[RC-1]`, `[WK-11]` — one more owner (+1) or link (a weak +1) of the object the
+                    // operand points at, the same pointer; `LinkTarget` is a counted copy of an
+                    // owner's handle (M4 slice A).
+                    Builtin::LinkMake { kind, link } => {
+                        let header = ember_branding::runtime("obj_header");
+                        let link_c = self.c_type(*link);
+                        let TyKind::Link { target, .. } = self.types.kind(*link) else { unreachable!("a link's type") };
+                        let count = match kind {
+                            ember_types::LinkKind::Weakref => ember_branding::runtime("weak_retain"),
+                            _ => self.count_function("retain", *target),
+                        };
+                        return format!("({count}(({header}*){}), ({link_c}){})", rendered[0], rendered[0]);
+                    }
+                    Builtin::LinkTarget { class, .. } => {
+                        let header = ember_branding::runtime("obj_header");
+                        let class_c = self.c_type(*class);
+                        let count = self.count_function("retain", *class);
+                        return format!("({count}(({header}*){}), ({class_c}){})", rendered[0], rendered[0]);
+                    }
+                    Builtin::LinkOpen { class, .. } => {
+                        let class_c = self.c_type(*class);
+                        return format!(
+                            "(({class_c}){}(({}*){}))",
+                            ember_branding::runtime("weak_upgrade"),
+                            ember_branding::runtime("obj_header"),
+                            rendered[0]
+                        );
+                    }
                     Builtin::ArrayPush => {
                         let elem = self.element_of(*arg_ty);
                         // A scalar or a handle is pushed by value, so the

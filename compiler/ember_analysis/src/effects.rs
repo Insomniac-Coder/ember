@@ -1662,6 +1662,10 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         // `[DSJ-1]` — it establishes a static fact; `@static_safe` allows it (`[EFF-12]`).
         B::AssertDisjoint { .. } => (Effects::CHECK_ALIASING, "`assert_disjoint`"),
         B::WeakUpgrade { .. } => (Effects::CHECK_STALE, "`Weak.upgrade`"),
+        // `[RC-1]`, `[WK-11]` — a count or a weak count of one more, with its limit's stop; an opening
+        // tests whether the target lives.
+        B::LinkMake { .. } | B::LinkTarget { .. } => (Effects::PANIC, "one more owner or link, whose count may reach its limit"),
+        B::LinkOpen { .. } => (Effects::CHECK_STALE, "`exists as` of a `weakref` link"),
         B::LazyStatic { .. } => (Effects::SYNC | Effects::BLOCK, "a static's first access, which may wait for another thread's"),
         B::ConstStatic { .. } => (Effects::NONE, "a static in the image"),
         // `[CT-2]` — the two inputs compile time is given, recorded as build inputs.

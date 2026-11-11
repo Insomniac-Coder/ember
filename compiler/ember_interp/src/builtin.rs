@@ -619,6 +619,24 @@ impl Interp<'_, '_> {
                 self.weak_upgrade(u64_of(&weak))?.to_le_bytes().to_vec()
             }
             Builtin::WeakEmpty { weak } => vec![0; self.size(*weak) as usize],
+            // `[RC-1]`, `[WK-11]` (M4 slice A).
+            Builtin::LinkMake { kind, .. } => {
+                let object = self.pointer(&args[0])?;
+                match kind {
+                    ember_types::LinkKind::Weakref => self.weak_retain(object)?,
+                    _ => self.retain_object(object)?,
+                }
+                object.to_le_bytes().to_vec()
+            }
+            Builtin::LinkTarget { .. } => {
+                let object = self.pointer(&args[0])?;
+                self.retain_object(object)?;
+                object.to_le_bytes().to_vec()
+            }
+            Builtin::LinkOpen { .. } => {
+                let object = self.pointer(&args[0])?;
+                self.weak_upgrade(object)?.to_le_bytes().to_vec()
+            }
             Builtin::MemReplace { elem } => {
                 let target = self.pointer(&args[0])?;
                 let value = self.operand(&args[1], Some(*elem))?;

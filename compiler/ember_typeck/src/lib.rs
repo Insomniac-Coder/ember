@@ -15296,10 +15296,27 @@ impl<'a> Checker<'a> {
                 let inner = self.resolve_type(owned);
                 self.owns_type(inner, owned.span, ty.span)
             }
-            // `[TYP-45]`, `[RC-1]`, `[WK-11]` — M4 builds these (`M4-plan.md`).
+            // `[TYP-45]`, `[RC-1]`, `[WK-11]` — M4 slice A: owners and links of a class object, on one
+            // thread (`M4-plan.md`).
             ast::TypeKind::Link { kind, inner } => {
-                self.error(codes::E0900, ty.span, format!("`{}` before a type is not built by this compiler yet", kind.word()));
-                self.resolve_type(inner)
+                let target = self.resolve_type(inner);
+                if target == self.common.error {
+                    return target;
+                }
+                let kind = match kind {
+                    ast::LinkKind::Shares => ember_types::LinkKind::Shares,
+                    ast::LinkKind::SharesMut => ember_types::LinkKind::SharesMut,
+                    ast::LinkKind::Weakref => ember_types::LinkKind::Weakref,
+                    other => {
+                        self.error(codes::E0900, ty.span, format!("`{}` before a type is not built by this compiler yet", other.word()));
+                        return target;
+                    }
+                };
+                if !matches!(self.types.kind(target), TyKind::Class(_)) {
+                    self.error(codes::E0900, ty.span, format!("`{}` of a value that is not a class object is not built by this compiler yet", kind.word()));
+                    return target;
+                }
+                self.types.intern(TyKind::Link { kind, target })
             }
             ast::TypeKind::Ptr { mutable, inner } => {
                 let inner = self.resolve_type(inner);
@@ -20546,6 +20563,61 @@ impl<'a> Checker<'a> {
     /// reaches source: the private pointer projection and dereference are
     /// introduced together by the compiler, rooted at the Box owner so the
     /// ordinary borrow and move analyses retain the ownership relationship.
+    /// `[OWN-13]`, `[RC-1]`, `[WK-11]` — `shares x`, `shares mut x`, `weakref x` (M4 slice A): one more
+    /// owner, or a link, of the class object `x` names (a handle, or an owner of one; for `weakref`, a
+    /// link too). The value is read where it is, never handed over.
+    fn synth_link(&mut self, kind: ast::LinkKind, value: &ast::Expr, span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let kind = match kind {
+            ast::LinkKind::Shares => ember_types::LinkKind::Shares,
+            ast::LinkKind::SharesMut => ember_types::LinkKind::SharesMut,
+            ast::LinkKind::Weakref => ember_types::LinkKind::Weakref,
+            other => {
+                self.error(codes::E0900, span, format!("`{}` before a value is not built by this compiler yet", other.word()));
+                return self.synth(value);
+            }
+        };
+        let source = self.synth_committed(value);
+        if source.ty == self.common.error {
+            return error;
+        }
+        let class = match *self.types.kind(source.ty) {
+            TyKind::Class(_) => source.ty,
+            // An owner makes another owner or a link; a link makes only another link.
+            TyKind::Link { kind: ember_types::LinkKind::Weakref, target } if kind == ember_types::LinkKind::Weakref => target,
+            TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut, target } => target,
+            _ => {
+                let shown = self.types.display(source.ty);
+                self.error(codes::E0900, span, format!("`{}` of a `{shown}` is not built by this compiler yet", kind.word()));
+                return error;
+            }
+        };
+        let link = self.types.intern(TyKind::Link { kind, target: class });
+        Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkMake { kind, link }, args: vec![source] }, span }
+    }
+
+    /// `[RC-1]` — an owner (`shares C`, `shares mut C`) read where its object is wanted: the object's
+    /// handle (M4 slice A: a counted copy, which its end gives back).
+    fn read_link_through(&mut self, owner: Expr) -> Expr {
+        let TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut, target } = *self.types.kind(owner.ty) else {
+            return owner;
+        };
+        let span = owner.span;
+        let link = owner.ty;
+        Expr { ty: target, kind: ExprKind::Builtin { which: Builtin::LinkTarget { link, class: target }, args: vec![owner] }, span }
+    }
+
+    /// `[WK-12]` — a `weakref C` link opened by `exists as`: `Some` of the object while it lives.
+    fn open_link(&mut self, link: Expr) -> Expr {
+        let TyKind::Link { kind: ember_types::LinkKind::Weakref, target } = *self.types.kind(link.ty) else {
+            return link;
+        };
+        let option = self.option_of(target);
+        let TyKind::Enum(option_id) = *self.types.kind(option) else { return link };
+        let span = link.span;
+        Expr { ty: option, kind: ExprKind::Builtin { which: Builtin::LinkOpen { class: target, option: option_id }, args: vec![link] }, span }
+    }
+
     fn read_box_through(&mut self, boxed: Expr) -> Expr {
         let Some(inner) = self.box_inner(boxed.ty) else { return boxed };
         let span = boxed.span;
@@ -28078,6 +28150,8 @@ impl<'a> Checker<'a> {
         };
         let calls = self.changed_calls.len();
         let mut scrutinee = self.synth_committed(scrutinee);
+        // `[WK-12]` — a link is opened by `exists as`.
+        scrutinee = self.open_link(scrutinee);
         // `[FFI-24d]` — a `match` on a call whose result a header's `noexcept` change made another
         // type: its patterns are where that shows.
         if let Some((_, note)) = self.changed_calls.get(calls).cloned() {
@@ -36861,6 +36935,12 @@ impl<'a> Checker<'a> {
         if expr.ty == expected || expected == self.common.error || expr.ty == self.common.error {
             return expr;
         }
+        // `[RC-1]` — an owner where its object is wanted.
+        if let TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut, target } = *self.types.kind(expr.ty)
+            && target == expected
+        {
+            return self.read_link_through(expr);
+        }
         // `[HEAP-9]` — an `owns T` reads as its `T`, with nothing written in between: where a
         // `ref T` is wanted its payload is borrowed, and where a `T` that `=` copies is wanted the
         // payload is copied.
@@ -39291,11 +39371,8 @@ impl<'a> Checker<'a> {
             }
 
             ast::ExprKind::CopyOf(operand) => self.synth_copy_of(operand, span),
-            // `[OWN-13]`, `[RC-1]`, `[WK-11]` — M4 builds these (`M4-plan.md`).
-            ast::ExprKind::Link { kind, value } => {
-                self.error(codes::E0900, span, format!("`{}` before a value is not built by this compiler yet", kind.word()));
-                self.synth(value)
-            }
+            // `[OWN-13]`, `[RC-1]`, `[WK-11]` — M4 slice A (`M4-plan.md`).
+            ast::ExprKind::Link { kind, value } => self.synth_link(*kind, value, span),
             ast::ExprKind::Owned(inner) => self.synth_owns(inner, span),
             // `[BRW-*]` — `ref place` and `ref mut place`, the explicit forms.
             // They are needed only when initialising a `ref`-typed local or a
@@ -48108,6 +48185,8 @@ impl<'a> Checker<'a> {
                 receiver = self.read_box_through(receiver);
             }
         }
+        // `[RC-1]` — an owner's methods are its object's.
+        receiver = self.read_link_through(receiver);
         // `[TYP-22]` — once the receiver is an interface reference, method
         // lookup is a vtable lookup rather than a concrete `DefId` call. The
         // interface declaration still supplies the ordinary argument
@@ -49727,6 +49806,8 @@ impl<'a> Checker<'a> {
         while self.box_inner(base.ty).is_some() {
             base = self.read_box_through(base);
         }
+        // `[RC-1]` — an owner reads as its object.
+        base = self.read_link_through(base);
         match *self.types.kind(base.ty) {
             TyKind::Struct(id) => match self.types.struct_def(id).field(name.name) {
                 Some((index, field)) => {

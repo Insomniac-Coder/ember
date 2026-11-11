@@ -2116,6 +2116,17 @@ pub enum Builtin {
     WeakUpgrade { class: Ty, option: EnumId },
     /// `[WK-1]` — `Weak[C].empty()` has no object/control-block allocation.
     WeakEmpty { weak: Ty },
+    /// `[RC-1]`, `[WK-11]` — `shares x`, `shares mut x`, `weakref x` of a class object (M4 slice A):
+    /// its one argument is a reference to the handle or owner `x` names; one more owner (+1) or link
+    /// (a weak +1) of the same object, the same pointer.
+    LinkMake { kind: ember_types::LinkKind, link: Ty },
+    /// `[RC-1]` — a `shares C` owner read where a `C` is wanted: its one argument is a reference to
+    /// the owner; a counted copy of the handle (+1), which the copy's end gives back (until M4's
+    /// slice C makes such a read a view).
+    LinkTarget { link: Ty, class: Ty },
+    /// `[WK-12]` — `if w exists as p:` on a `weakref C` link: `Some` of the object while it lives
+    /// (a +1, given back at the view's end), `None` once it has ended. Lowered as `WeakUpgrade` is.
+    LinkOpen { class: Ty, option: EnumId },
     /// `a.push(x)`. The receiver is a `ref mut`, so it grows in place.
     ArrayPush,
     /// Part VI's slice row, `[TXT-4]` — `v[lo..hi]` of a view (`Span` or
@@ -2565,6 +2576,9 @@ impl Builtin {
             Builtin::WeakNew { .. } => "Weak",
             Builtin::WeakUpgrade { .. } => "upgrade",
             Builtin::WeakEmpty { .. } => "empty",
+            Builtin::LinkMake { kind, .. } => kind.word(),
+            Builtin::LinkTarget { .. } => "the owner's object",
+            Builtin::LinkOpen { .. } => "exists as",
             Builtin::ArrayPush => "push",
             Builtin::ArrayLen => "len",
             Builtin::StringNew => "String",
