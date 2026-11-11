@@ -425,6 +425,7 @@ pub(crate) struct Explained<'s> {
 /// `[LT-1]`, `[LT-48]` — where the loan `borrower` holds is an argument of a `dyn` or virtual call of
 /// `sites`: the call's block and site, and the kinds that make a change of what it holds unsafe.
 pub(crate) fn explain<'s>(body: &Body, sites: &'s DynSites, borrower: LocalId) -> Option<Explained<'s>> {
+    let borrower = converted(body, sites, borrower);
     let mut found: Vec<(usize, &DynSite, usize)> = sites
         .iter()
         .filter_map(|(&block, site)| {
@@ -445,6 +446,32 @@ pub(crate) fn explain<'s>(body: &Body, sites: &'s DynSites, borrower: LocalId) -
     names.dedup();
     let culprits = (!names.is_empty() && names.len() < kinds.len()).then_some(names);
     (culprits.is_some() || site.help.is_some()).then_some(Explained { block, argument, site, culprits })
+}
+
+/// `[LT-48]` (D-967) — the value a conversion makes of `local` for the call: an argument given as
+/// another view type is converted first (a `String` where a `StrView` is wanted: `_7 = &s`,
+/// `_6 = as_str(copy _7)`, then `p.title(_6)`), so the loan `_7` holds reaches the `dyn` call
+/// through `_6`. Followed while `local` is a temporary only a call of it alone reads, and that call's
+/// result a temporary and not itself a `dyn` call; any view type is converted so, `Span` and text alike.
+fn converted(body: &Body, sites: &DynSites, mut local: LocalId) -> LocalId {
+    for _ in 0..body.blocks.len() {
+        let next = body.blocks.iter().enumerate().find_map(|(at, basic)| {
+            let Terminator::Call { args, dest, .. } = &basic.terminator else { return None };
+            let [Operand::Copy(place) | Operand::Move(place)] = args.as_slice() else { return None };
+            (place.local == local
+                && place.projection.is_empty()
+                && dest.projection.is_empty()
+                && !sites.contains_key(&at)
+                && body.local(dest.local).kind == ember_mir::LocalKind::Temp
+                && only_the_call_reads(body, local, at))
+                .then_some(dest.local)
+        });
+        match next {
+            Some(next) if next != local => local = next,
+            _ => break,
+        }
+    }
+    local
 }
 
 /// Whether `local` is a temporary that nothing reads but the call at `block`.
@@ -531,8 +558,9 @@ fn handed(types: &TypeTable, mut ty: Ty) -> String {
         ty = *inner;
     }
     let noun = match types.kind(ty) {
+        // D-968: a `String` is a `Vec` marked as text; it is named as the text it is.
+        TyKind::Str | TyKind::Vec { text: true, .. } => "text".to_string(),
         TyKind::Array { .. } | TyKind::ArrayN { .. } | TyKind::Vec { .. } | TyKind::Span { .. } => "list".to_string(),
-        TyKind::Str => "text".to_string(),
         _ => format!("`{}`", types.display(ty)),
     };
     format!("the {noun} it was handed")

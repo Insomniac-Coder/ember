@@ -1431,15 +1431,16 @@ impl Parser<'_> {
                 }
                 self.bump_value_word();
                 // `[IDE-3]` — the value it marks, which is checked as written.
-                self.parse_expr_bp(BP_CAST, allow_block_lambda).kind
+                self.parse_expr_bp(BP_UNARY + 1, allow_block_lambda).kind
             }
             // `[GRM-15]` — `owns` before a value hands it over, a function made there too (`owns
             // fn(x: int): println(x)`, verdict 158); where it may stand is the checker's, which sees
             // the line and the value's type (`b = owns n` for a number, `owns fn` other than as an
             // argument for an `owns` parameter, `E0109`).
+            // It binds as `-` does (`unary := value_word unary`): `owns v as u8` is `(owns v) as u8`.
             TokenKind::Keyword(Kw::Owns) => {
                 self.bump();
-                ExprKind::Owned(Box::new(self.parse_expr_bp(BP_CAST, allow_block_lambda)))
+                ExprKind::Owned(Box::new(self.parse_expr_bp(BP_UNARY + 1, allow_block_lambda)))
             }
             TokenKind::Punct(Punct::LParen) => {
                 self.bump();
