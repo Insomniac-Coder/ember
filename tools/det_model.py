@@ -891,3 +891,99 @@ def cosh64(x):
         yh, yl, k = exp_parts(ax)
         return scalbn(yh + yl, k - 1)
     return INF
+
+
+EXPM1_Q = [-3.33333333333331316428e-02, 1.58730158725481460165e-03, -7.93650757867487942473e-05,
+           4.00821782732936239552e-06, -2.01099218183624371326e-07]
+
+
+def expm1_64(x):
+    """e^x - 1, fdlibm's expm1."""
+    if x != x:
+        return x + x
+    ax = abs(x)
+    if ax >= 38.816242111356935:
+        if ax == INF:
+            return x if x > 0.0 else -1.0
+        if x > O_THRESHOLD:
+            return INF
+        if x < 0.0:
+            return -1.0
+    k = 0
+    c = 0.0
+    r = x
+    if ax > 0.34657359027997264:
+        if ax < 1.0397207708399179:
+            if x >= 0.0:
+                hi = x - LN2HI
+                lo = LN2LO
+                k = 1
+            else:
+                hi = x + LN2HI
+                lo = -LN2LO
+                k = -1
+        else:
+            half = -0.5 if x < 0.0 else 0.5
+            k = int(INVLN2 * x + half)
+            t = float(k)
+            hi = x - t * LN2HI
+            lo = t * LN2LO
+        r = hi - lo
+        c = (hi - r) - lo
+    elif ax < 5.551115123125783e-17:
+        return x
+    hfx = 0.5 * r
+    hxs = r * hfx
+    q = EXPM1_Q
+    r1 = 1.0 + hxs * (q[0] + hxs * (q[1] + hxs * (q[2] + hxs * (q[3] + hxs * q[4]))))
+    t = 3.0 - r1 * hfx
+    e = hxs * ((r1 - t) / (6.0 - r * t))
+    if k == 0:
+        return r - (r * e - hxs)
+    e = r * (e - c) - c
+    e -= hxs
+    if k == -1:
+        return 0.5 * (r - e) - 0.5
+    if k == 1:
+        if r < -0.25:
+            return -2.0 * (e - (r + 0.5))
+        return 1.0 + 2.0 * (r - e)
+    if k <= -2 or k > 56:
+        y = 1.0 - (e - r)
+        if k == 1024:
+            y = y * 2.0 * P1023
+        else:
+            y = scalbn(y, k)
+        return y - 1.0
+    if k < 20:
+        t = 1.0 - two_to(-k)
+        y = t - (e - r)
+        return y * two_to(k)
+    t = two_to(-k)
+    y = r - (e + t)
+    y += 1.0
+    return y * two_to(k)
+
+
+def tanh64(x):
+    if x != x:
+        return x + x
+    ax = abs(x)
+    z = 1.0
+    if ax < 22.0:
+        if ax < 2.7755575615628914e-17:
+            return x * (1.0 + x)
+        if ax >= 1.0:
+            t = expm1_64(2.0 * ax)
+            z = 1.0 - 2.0 / (t + 2.0)
+        else:
+            ts = sinh_tail(ax)
+            tc = cosh_tail(ax)
+            nh = ax + ts
+            nl = (ax - nh) + ts
+            dh = 1.0 + tc
+            dl = (1.0 - dh) + tc
+            q = nh / dh
+            p, e = two_product(q, dh)
+            z = q + ((((nh - p) - e) + nl) - q * dl) / dh
+    return -z if x < 0.0 else z
