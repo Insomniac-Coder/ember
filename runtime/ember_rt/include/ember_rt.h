@@ -3290,15 +3290,9 @@ EMBER_PANIC_FN void ember_reload_removed_called(const char* name);
  * (`owns`). With `creator` nonzero (`threads(creator)`, `[FFI-33b]`), every profile checks that it
  * ends on the thread that made it, which `ember_ffi_thread` names, and stops the program
  * otherwise, naming `type`, the line that made it and both threads. */
-/* `[FFI-23]` — `Retained.pin` of a class object: its header's pinned flag, set for good (an object
- * foreign code may hold is never moved, `[HR-20]`). */
+/* `[FFI-17d]`, `[HR-20]` — a class object C++ was given: its header's pinned flag, set for good
+ * (an object foreign code may hold is never moved). */
 void ember_obj_pin(ember_obj_header* object);
-/* `[HR-20]` (ODR-194) — `Retained.pin(handle, on_relocate=Some(f))`: the object is not pinned; a
- * reload that moves it calls `f` (an `extern "C" fn(ObjectPtr[C], ObjectPtr[C])`) with the old and
- * the new address, after commit publishes the move and before reclaim. Returns the token's number,
- * which `ember_obj_unpin_relocatable` takes when the token ends (`0` is no token). */
-uint64_t ember_obj_pin_relocatable(ember_obj_header* object, void (*callback)(void));
-void ember_obj_unpin_relocatable(uint64_t id);
 /* `[FFI-17d]` — a foreign `delete` of a class object whose trampoline declares
  * `owner="foreign"`: the count C++ was given becomes a handle again, which must be the object's
  * only one (Ember code that still held one would be left with a deleted C++ object); otherwise

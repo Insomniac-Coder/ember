@@ -442,7 +442,7 @@ impl<'a> FnCx<'_, 'a> {
             }
         };
         let Some(unregister) = &callback.unregister else { return Ok(Passed { data, token: None, some }) };
-        // The token: `{ {data, release}, 0 }` (`[HR-20]` — no `on_relocate` record).
+        // The token: `{ {data, release} }`, the `ForeignCallback` alone (`[FFI-23]`).
         let TyKind::Struct(token) = *table.kind(unregister.token) else { return unsupported("a `Retained` token that is not a struct") };
         let held_ty = table.struct_def(token).fields[0].ty;
         let held_at = table.layout(unregister.token).field_offsets[0];
@@ -594,20 +594,7 @@ impl<'a> FnCx<'_, 'a> {
                         values.push(Val::Imm(Sc::I(bits), count));
                     }
                 }
-                // `[FFI-23]` — C keeps the address of the object the token holds.
-                FfiAbiParam::Retained { public_index } => {
-                    let ty = body.args().nth(*public_index).expect("the retained parameter").1.ty;
-                    let at = self.param_place(*public_index)?;
-                    let (token_at, token) = match *table.kind(ty) {
-                        TyKind::Ref { inner, .. } => (self.load(Sc::Ptr, &at.ptr, at.align.min(8)), inner),
-                        _ => (at.ptr.clone(), ty),
-                    };
-                    let value_at = self.gep(&token_at, table.layout(token).field_offsets[0]);
-                    let address = self.load(Sc::Ptr, &value_at, 8);
-                    shapes.push(PTR);
-                    values.push(Val::Imm(Sc::Ptr, address));
-                }
-                // `[FFI-11]` — C takes the object: its box leaves the record and frees nothing.
+                // `[FFI-11]` — C takes the object: it leaves the record, and Ember frees nothing.
                 FfiAbiParam::Owned { public_index, nullable } => {
                     let ty = body.args().nth(*public_index).expect("the owned parameter").1.ty;
                     let at = self.param_place(*public_index)?;

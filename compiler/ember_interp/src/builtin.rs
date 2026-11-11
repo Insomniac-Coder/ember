@@ -1470,7 +1470,6 @@ impl Interp<'_, '_> {
             Builtin::CppObjectAddress | Builtin::CppObjectHandle { .. } | Builtin::CppObjectGive | Builtin::CppSpan { .. } | Builtin::CppPointee => {
                 "a C++ object"
             }
-            Builtin::RetainedPin | Builtin::RetainedAddress => "a pinned object's address",
             // `[JOB-5]` — the evaluator runs no job (one is refused above), so every call is outside one.
             Builtin::JobLocalArena { .. } => {
                 return self.panic("`jobs.local_arena()` is called outside a job: the arena is the running job's [JOB-5]", span);

@@ -7583,8 +7583,6 @@ fn wrapper_param(param: &str, ty: &CType) -> String {
         Some((inner, _)) if ty.mode == "bridged " => format!("{param}: {inner}"),
         Some((inner, _)) if ty.mode == "bridged mut " => format!("ref mut {param}: {inner}"),
         Some((inner, _)) if ty.mode == "bridged owned " => format!("owns {param}: {inner}"),
-        // `[FFI-39c]` (ODR-156) — a `retained` one: the token the program pinned and keeps.
-        Some((inner, _)) if ty.mode == "token " => format!("{param}: Retained[{inner}]"),
         // `[GRM-41]` — the mode on the name: `ref mut other: Bag`.
         Some((inner, _)) if ty.mode == "ref mut " => format!("ref mut {param}: {inner}"),
         Some((inner, _)) if wrapped(ty) => format!("{param}: {}{inner}", ty.mode),
@@ -7602,8 +7600,6 @@ fn wrapper_argument(param: &str, ty: &CType) -> String {
         // `[FFI-39]` — the C++ object a trampoline class's object owns.
         Some((_, true)) if ty.mode == "tramp " => format!("{param}.{prefix}_cpp_base.object as {}", ty.ember),
         Some((_, false)) if ty.mode == "tramp " => format!("{param}.{prefix}_cpp_base.object"),
-        Some((_, true)) if ty.mode == "token " => format!("{prefix}_cpp_token_object({param}).{prefix}_cpp_base.object as {}", ty.ember),
-        Some((_, false)) if ty.mode == "token " => format!("{prefix}_cpp_token_object({param}).{prefix}_cpp_base.object"),
         Some((inner, true)) if wrapped(ty) => format!("(ref {param}) as *{inner}"),
         // The caller lent it mutably; the borrow the wrapper passes on is its own.
         Some((inner, false)) if wrapped(ty) => format!("((ref {param}) as *{inner}) as *mut {inner}"),
@@ -7640,7 +7636,13 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         None => format!("{prefix}_raw_{}", function.name),
     };
     let catching = policy != Policy::Direct;
-    let contract = entry.filter(|entry| member != Some(Member::Destructor) && contracts_everything(entry));
+    // `[FFI-11]`, `[FFI-39c]` — `retained` on an object of a trampoline class makes no safe parameter:
+    // C++ keeps Ember memory only when it is handed over (`owns`, with `owner="foreign"`) or given
+    // with `into_raw()`, so the call stays unsafe, with a raw pointer.
+    let keeps_raw = |index: usize| function.params.get(index).is_some_and(|(_, ty)| ty.mode == "tramp ")
+        && entry.and_then(|entry| entry.params.get(index)).is_some_and(|words| words.iter().any(|written| word(written) == "retained"));
+    let contract = entry.filter(|entry| member != Some(Member::Destructor) && contracts_everything(entry))
+        .filter(|_| !(0..function.params.len()).any(keeps_raw));
     let contracted = contract.is_some();
     let words_of = |index: usize| contract.and_then(|entry| entry.params.get(index)).map_or(&[][..], Vec::as_slice);
     // The words the importer itself acts on, whatever else the entry leaves unknown.
@@ -7697,10 +7699,11 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         let opaque = ty.ember.trim_start_matches('*').trim_start_matches("mut ").to_string();
         let mutable_word = if constant { "" } else { "mut " };
         let mut ty = ty.clone();
-        // `[FFI-39c]` (ODR-156), `[FFI-17d]` — an object of a class with a trampoline that C++ keeps
-        // is passed as the token the program holds; one given up gets a count of its own.
-        if ty.mode == "tramp " && said(index, "retained") {
-            ty.mode = "token ".to_string();
+        // `[FFI-11]`, `[FFI-39c]` — an object of a class with a trampoline that C++ keeps by a raw
+        // pointer is that pointer (`into_raw()` gives it); one handed over gets a count of its own
+        // (`[FFI-17d]`).
+        if keeps_raw(index) {
+            ty.mode = String::new();
         }
         if ty.mode == "tramp " && said(index, "owned") {
             given.push(format!("{prefix}_cpp_give({param})"));
@@ -7784,7 +7787,6 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
             ("bridged ", true) => (format!("{param}: ref CppObject"), one(false), deref(format!("{param}.as_ptr() as *CppObject"), true)),
             ("bridged mut " | "bridged owned ", true) => (format!("{param}: ref mut CppObject"), one(true), deref(format!("{param}.as_ptr() as *mut CppObject"), false)),
             ("tramp ", true) => (format!("{param}: ref {mutable_word}{opaque}"), one(!constant), deref(format!("{param}.{prefix}_cpp_base.object"), constant)),
-            ("token ", true) => (format!("{param}: ref {mutable_word}{opaque}"), one(!constant), deref(format!("{prefix}_cpp_token_object({param}).{prefix}_cpp_base.object"), constant)),
             // `[FFI-17a]` — `std::optional<T>`: a pointer to the value, null for none.
             ("optional ", true) => (format!("{param}: Option[ref {inner}]"), ["borrowed", "one", "nullable"].map(str::to_string).to_vec(), format!("{param}.as_ref()")),
             ("optional ", false) => {
@@ -7826,7 +7828,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
             ("unique ", false) => (format!("{param}: {}", ty.ember), Vec::new(), format!("{param}.into_raw()")),
             (_, _) => (format!("{param}: {}", ty.ember), Vec::new(), wrapper_argument(param, &ty)),
         };
-        call_unsafe |= ty.mode.starts_with("bridged ") || matches!(ty.mode.as_str(), "tramp " | "token ");
+        call_unsafe |= ty.mode.starts_with("bridged ") || ty.mode == "tramp ";
         slots.push((param.clone(), text, contract_words, Some(argument)));
     }
     // What the thunk writes where the caller says: a class by value (`[FFI-32]`), a view's length,

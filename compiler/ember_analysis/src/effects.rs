@@ -1678,15 +1678,13 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         // `[OWN-12]`, `[FFI-54]` — the address an `owns T` holds; a foreign object's leaves the record.
         B::IntoRaw { foreign: true } => (Effects::SYNC | Effects::PANIC, "a foreign object given to C"),
         B::IntoRaw { foreign: false } => (Effects::NONE, ""),
-        B::ForeignThread | B::RetainedAddress | B::CppObjectAddress | B::CppOverrides { .. } | B::UnionLit { .. } => (Effects::NONE, ""),
+        B::ForeignThread | B::CppObjectAddress | B::CppOverrides { .. } | B::UnionLit { .. } => (Effects::NONE, ""),
         // `[UNS-5]` — through a raw pointer, which is `unsafe`.
         B::VolatileRead | B::VolatileWrite => (Effects::UNSAFE, "a volatile access through a raw pointer"),
         // `[FFI-39]`, `[FFI-17d]` — a count of a class object, and the check that a foreign
         // `delete` ends the only one.
         B::CppObjectHandle { .. } | B::CppObjectGive => (Effects::SYNC | Effects::PANIC, "a count of an object C++ holds"),
         B::CppSpan { .. } | B::CppPointee => (Effects::NONE, ""),
-        // `[FFI-23]` — setting a Sync object's pinned flag is an atomic or.
-        B::RetainedPin | B::RetainedUnpin => (Effects::SYNC, "pinning an object for foreign code"),
         // `[JOB-5]` — the job's arena is made on first use, and asking outside a job panics.
         B::JobLocalArena { .. } => (Effects(Effects::ALLOC.0 | Effects::PANIC.0), "`jobs.local_arena`"),
         // `[DET-2]` — a transcendental function from the platform library.

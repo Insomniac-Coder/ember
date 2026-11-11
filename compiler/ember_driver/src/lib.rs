@@ -1954,7 +1954,6 @@ impl EngineReport {
                             if *inout { ", passed by address and returned" } else { "" },
                         ),
                         ember_mir::FfiAbiParam::Owned { .. } => "a foreign object's `owns T` handed over".to_string(),
-                        ember_mir::FfiAbiParam::Retained { .. } => "a retained object's address".to_string(),
                         ember_mir::FfiAbiParam::Out { .. } => "an `out` local zeroed and returned".to_string(),
                         ember_mir::FfiAbiParam::Callback { index } => match counted.callbacks[*index].mode {
                             ember_mir::FfiCallbackMode::Borrowed => "a callback's trampoline, its callable where the caller has it".to_string(),

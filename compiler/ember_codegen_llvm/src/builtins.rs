@@ -925,53 +925,8 @@ impl<'a> FnCx<'_, 'a> {
                 };
                 self.call_rt_into("str_char_next_wide_usize", vec![Val::Imm(Sc::Ptr, base), Val::Imm(Sc::Ptr, cursor), lead], dest)
             }
-            // `[FFI-23]` — a class object is pinned in its header (or, with an `on_relocate`
-            // callback, recorded with it, `[HR-20]`); a `Box`'s value never moves: `0`.
-            Builtin::RetainedPin => {
-                if matches!(self.m.ty.kind(arg_ty), TyKind::Struct(_)) {
-                    return self.store_result(dest, "0", Sc::I(64), false);
-                }
-                let object = self.pointer(&args[0])?;
-                let callback = match args.get(1) {
-                    None => "null".to_string(),
-                    Some(argument) => match self.operand_ty(argument).map(|ty| (ty, self.m.ty.kind(ty).clone())) {
-                        Some((ty, TyKind::Enum(id))) if self.m.ty.table.option_niche(id).is_none() => {
-                            let value = self.operand(argument)?;
-                            let (size, align) = self.m.ty.size_align(ty);
-                            let (at, align) = self.spill(&value, size, align);
-                            let place = crate::func::PlaceRef { ptr: at.clone(), ty, variant: None, align };
-                            let (discriminant, bits) = self.discriminant_at(&place)?;
-                            let some = self.m.ty.table.enum_def(id).variants[1].discriminant;
-                            let is_some = self.value(format!("icmp eq i{bits} {discriminant}, {some}"));
-                            let payload_at = self.gep(&at, self.m.ty.table.variant_field_offsets(id)[1][0]);
-                            let payload = self.load(Sc::Ptr, &payload_at, 8);
-                            self.value(format!("select i1 {is_some}, ptr {payload}, ptr null"))
-                        }
-                        _ => self.pointer(argument)?,
-                    },
-                };
-                let id = self.alloca(8, 8);
-                let none = self.value(format!("icmp eq ptr {callback}, null"));
-                let (pin, record, done) = (self.label(), self.label(), self.label());
-                self.emit(format!("br i1 {none}, label %{pin}, label %{record}"));
-                self.start(&pin);
-                self.call_rt("obj_pin", vec![Val::Imm(Sc::Ptr, object.clone())], None);
-                self.emit(format!("store i64 0, ptr {id}, align 8"));
-                self.emit(format!("br label %{done}"));
-                self.start(&record);
-                self.call_rt("obj_pin_relocatable", vec![Val::Imm(Sc::Ptr, object), Val::Imm(Sc::Ptr, callback)], Some((&id, 8)));
-                self.emit(format!("br label %{done}"));
-                self.start(&done);
-                let id = self.load(Sc::I(64), &id, 8);
-                self.store_result(dest, &id, Sc::I(64), false)
-            }
-            Builtin::RetainedUnpin => {
-                let id = self.operand(&args[0])?;
-                self.call_rt("obj_unpin_relocatable", vec![id], None);
-                Ok(())
-            }
-            // The object's address: a handle's or a `Box`'s pointer, a `Box[dyn]`'s data.
-            Builtin::RetainedAddress | Builtin::CppObjectAddress => {
+            // The object's address: a handle's pointer.
+            Builtin::CppObjectAddress => {
                 let address = self.pointer(&args[0])?;
                 self.store_result(dest, &address, Sc::Ptr, false)
             }

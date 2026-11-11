@@ -208,31 +208,17 @@ fn foreign_end(pointer: *mut T, creator: u32):
 pub unsafe fn adopt(h: *mut T) -> owns T:
     pass
 
-## `[FFI-23]` — `Retained[T]` is the only way to let foreign code keep Ember memory.
-## `Retained.pin(v)` takes `v`, a class handle or a `Box`: for a class handle the token holds a
-## strong count of the object (it is retained) and the object's header gets its pinned flag, which
-## stays (`[HR-20]`: an object foreign code may hold is never moved); for a `Box` the token owns it.
-## `tok.ptr()` is the object's address, which C keeps, typed by what the token holds (ODR-132): an
-## `ObjectPtr[C]` for a class `C`, a `*mut U` for a `Box[U]`, a `*mut u8` for a `Box[dyn I]`, whose
-## value's type is not known. Compiler-known. Dropping the token releases the object (the class
-## handle's count, or the box and its value). A parameter contracted `retained` takes a token and
-## gives C its address (`[FFI-11]`).
-## `[HR-20]` (ODR-194) — `on_relocate`, when given, lets a reload move the class object the token
-## holds: the runtime calls it with the old and the new address right after commit publishes the
-## move and before reclaim, so foreign code can follow it (a `Box`'s value never moves). Without
-## one, the object is pinned and a reload that would move it is refused.
+## `[FFI-23]` — `Retained[ForeignCallback]` is the token a registering call returns for a callback C
+## keeps (`[FFI-21]`): it keeps the callback's block on Ember's side while C holds its user data,
+## and its end unregisters the callback through `destroys(f)` and then ends the block (the
+## `ForeignCallback`'s end). Only the registering call makes one, and `Retained` holds nothing
+## else: it gives no object away and keeps none for C. An Ember value C keeps is handed to a
+## parameter whose contract says `owns` (the name ends and Ember frees nothing, `[FFI-11]`), or, for
+## a C function whose declaration cannot say so, given with `into_raw()` inside `unsafe:`
+## (`[FFI-54]`). `tok.ptr()` is the user data C was given. Compiler-known.
 [T]
 pub struct Retained:
     value: T
-    ## The runtime's record of `on_relocate` (`0`: none), which the token's end takes out.
-    relocation: u64
-
-    pub static fn pin(owns value: T, on_relocate: Option[extern "C" fn(ObjectPtr[T], ObjectPtr[T])] = None) -> Retained[T]:
-        relocation = retained_pin(value, on_relocate)
-        return Retained(value, relocation)
-
-    fn drop():
-        retained_unpin(this.relocation)
 
 ## `[FFI-21]` — what C keeps of a callback contracted `callback(retained, user_data=p)`: the
 ## callable, moved into an allocation of its own whose address C was given as the user data. Only
@@ -249,10 +235,9 @@ pub struct ForeignCallback:
         release = this.release
         release(this.data)
 
-## `[FFI-23]` (ODR-132) — the address of a class object, for foreign code to keep or to be handed
-## back: no count of its own, so it says nothing about how long the object lives (a `Retained`
-## token keeps it alive). To C it is one pointer to the object. Two are equal when they are the
-## address of one object.
+## `[FFI-23]` (ODR-132) — the address of a class object, which `into_raw()` gives (`[FFI-54]`),
+## for foreign code to keep or to be handed back: no count of its own (to C, one pointer). Two are
+## equal when they are the address of one object.
 @derive(Copy)
 [C]
 pub struct ObjectPtr:
@@ -263,16 +248,6 @@ extend[C] ObjectPtr[C] implements Eq:
     fn eq(other: ObjectPtr[C]) -> bool:
         return this.address == other.address
 
-## `[FFI-23]` — compiler-known: a class object's pinned flag is set, or with `on_relocate` its
-## record made (`[HR-20]`), a `Box` needs nothing, and any other value is refused. The result is
-## the record's number, `0` for none.
-[T]
-fn retained_pin(value: T, on_relocate: Option[extern "C" fn(ObjectPtr[T], ObjectPtr[T])]) -> u64:
-    return 0
-
-## `[HR-20]` — compiler-known: a token's `on_relocate` record goes.
-fn retained_unpin(relocation: u64):
-    pass
 
 
 ## `[FFI-17a]` — the C++ object a bridge value owns (a `std::vector`, a `std::string`, a

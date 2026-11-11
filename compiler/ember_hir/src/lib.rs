@@ -277,9 +277,6 @@ pub enum FfiAbiParam {
     /// one when `nullable`) gives C its pointer and leaves the runtime's
     /// record, freeing nothing.
     Owned { public_index: usize, nullable: bool },
-    /// `[FFI-11]`, `[FFI-23]` — `param(p, retained, one)`: C keeps the
-    /// address of the object a `Retained` token holds; the token stays.
-    Retained { public_index: usize },
     /// `[FFI-11]` — `param(p, out, one)`: the address of a local C writes,
     /// which the call returns; not a parameter of the Ember function.
     Out { ty: Ty },
@@ -1866,18 +1863,6 @@ pub enum Builtin {
     /// also leaves the runtime's record (`[FFI-36b]`), as a parameter
     /// contracted `owns` takes it.
     IntoRaw { foreign: bool },
-    /// `[FFI-23]` — `Retained.pin`'s mark: a class object's header gets its
-    /// pinned flag; a `Box` needs none. The arguments are the value pinned and
-    /// its `on_relocate` callback (`[HR-20]`, ODR-194): given one, a class
-    /// object is recorded with it instead of pinned. The result is the
-    /// record's number (`0`: none), which `RetainedUnpin` takes.
-    RetainedPin,
-    /// `[HR-20]` (ODR-194) — a `Retained` token's end: its `on_relocate`
-    /// record goes. The argument is the number `RetainedPin` gave.
-    RetainedUnpin,
-    /// `[FFI-23]` — the address of the object a class handle or a `Box`
-    /// holds, as `*mut u8`.
-    RetainedAddress,
     /// `[FFI-39]` — in a module `import cpp` wrote: a class object's address
     /// (the argument, a handle), which a trampoline keeps without a count.
     CppObjectAddress,
@@ -1900,7 +1885,7 @@ pub enum Builtin {
     /// held, which must be the object's only one (`[FFI-17d]`).
     CppObjectHandle { adopt: bool },
     /// `[FFI-17d]` — a count of a class object (the argument, a handle) for
-    /// C++ to hold, its header pinned, as `Retained.pin` does.
+    /// C++ to hold, its header pinned (an object C++ may hold is never moved).
     CppObjectGive,
     /// `[FFI-17e]` — a view of a C++ container's elements: the owner (a
     /// reference, which the view borrows), their address and their count.
@@ -2481,9 +2466,6 @@ impl Builtin {
             Builtin::ForeignRelease => "ffi_release",
             Builtin::ForeignThread => "ffi_thread",
             Builtin::IntoRaw { .. } => "into_raw",
-            Builtin::RetainedPin => "retained_pin",
-            Builtin::RetainedUnpin => "retained_unpin",
-            Builtin::RetainedAddress => "retained_address",
             Builtin::CppObjectAddress => "cpp_object_address",
             Builtin::CppOverrides { .. } => "cpp_overrides",
             Builtin::UnionLit { .. } => "union_literal",

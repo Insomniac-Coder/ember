@@ -485,8 +485,6 @@ pub const FNS: &[RtFn] = &[
     ),
     // -- pinned objects ([FFI-23], [HR-20]) and C++ objects ([FFI-39])
     f("obj_pin", "void", &["$obj_header*"]),
-    f("obj_pin_relocatable", "uint64_t", &["$obj_header*", "void (*)(void)"]),
-    f("obj_unpin_relocatable", "void", &["uint64_t"]),
     f("cpp_object_adopt", "$obj_header*", &["$obj_header*", "$loc"]),
     // -- foreign objects and threads ([FFI-36a], [FFI-33b])
     f("ffi_thread", "uint32_t", &[]),

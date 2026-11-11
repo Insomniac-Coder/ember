@@ -6647,7 +6647,6 @@ impl Emitter<'_> {
                     let boxed = self.foreign_box_type(arg, *nullable);
                     self.c_type(self.foreign_box_fields(boxed)[0])
                 }
-                FfiAbiParam::Retained { .. } => "uint8_t*".to_string(),
                 FfiAbiParam::Out { ty } => format!("{}*", self.c_type(*ty)),
                 FfiAbiParam::Callback { index } => self.c_type(counted.callbacks[*index].c_fn),
                 FfiAbiParam::CallbackData { index } => self.c_type(counted.callbacks[*index].data),
@@ -6660,14 +6659,6 @@ impl Emitter<'_> {
             None => result,
         };
         format!("{result} {}{}({params})", calling_convention(counted.abi.as_deref()), counted.foreign_symbol)
-    }
-
-    /// `[FFI-23]` — the address of the object `value`, a class handle or a `Box`, holds: the
-    /// handle itself, the `Box`'s pointer (`T*`), or a `Box[dyn …]`'s data.
-    fn retained_address(&self, value: &str, ty: Ty) -> String {
-        let dyn_box = matches!(self.types.kind(ty), TyKind::Struct(id)
-            if self.box_inner_id(*id).is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. })));
-        if dyn_box { format!("((uint8_t*)({value}).data)") } else { format!("((uint8_t*)({value}))") }
     }
 
     /// An `Option` value `access` of type `ty` (with a tag): the test that it is `Some`, and its
@@ -7075,9 +7066,9 @@ impl Emitter<'_> {
         let held = self.types.struct_def(token).fields[0].ty;
         let TyKind::Struct(record) = *self.types.kind(held) else { unreachable!("a `ForeignCallback` is a struct") };
         let fields: Vec<Ty> = self.types.struct_def(record).fields.iter().map(|field| field.ty).collect();
-        // `[HR-20]` — a callback's token has no `on_relocate` record: its `relocation` is `0`.
+        // `[FFI-23]` — the token holds the `ForeignCallback` alone.
         let made = format!(
-            "({}){{ ({}){{ ({})_ffi_data{index}, ({}){}_release }}, 0 }}",
+            "({}){{ ({}){{ ({})_ffi_data{index}, ({}){}_release }} }}",
             self.c_type(unregister.token),
             self.c_type(held),
             self.c_type(fields[0]),
@@ -7194,17 +7185,6 @@ impl Emitter<'_> {
                     } else {
                         foreign_args.push(format!("({}){first}", self.c_type(*ty)));
                     }
-                }
-                // `[FFI-23]` — C keeps the address of the object the token holds.
-                FfiAbiParam::Retained { public_index } => {
-                    let ty = body.args().nth(*public_index).expect("the retained parameter").1.ty;
-                    let (token, ty) = match *self.types.kind(ty) {
-                        TyKind::Ref { inner, .. } => (format!("(*{})", args[*public_index]), inner),
-                        _ => (args[*public_index].clone(), ty),
-                    };
-                    let TyKind::Struct(id) = *self.types.kind(ty) else { unreachable!("a `Retained` token is a struct") };
-                    let held = self.types.struct_def(id).fields[0].ty;
-                    foreign_args.push(self.retained_address(&format!("({token}).value"), held));
                 }
                 // `[FFI-11]` — C takes the object: it leaves the record, and Ember frees nothing.
                 FfiAbiParam::Owned { public_index, nullable } => {
@@ -8970,17 +8950,6 @@ impl Emitter<'_> {
                     self.call_expression(func, args, body, body.blocks[index].terminator_span)
                 };
                 let dest_ty = self.place_ty(dest, body);
-                // `[FFI-23]` (ODR-132) — the object's address as the type `ptr()` gives it: an
-                // `ObjectPtr[C]` holds it, a `*mut U` is it.
-                let call = match (func, self.types.kind(dest_ty)) {
-                    (FuncRef::Builtin { which: Builtin::RetainedAddress, .. }, TyKind::Struct(_)) => {
-                        format!("(({}){{ {call} }})", self.c_type(dest_ty))
-                    }
-                    (FuncRef::Builtin { which: Builtin::RetainedAddress, .. }, TyKind::Ptr { .. }) => {
-                        format!("(({}){call})", self.c_type(dest_ty))
-                    }
-                    _ => call,
-                };
                 if let Some((ptr, len)) = self.view_parts(func, args, dest_ty, body) {
                     let dest_text = self.place_in(dest, body);
                     self.line(&format!("    ({dest_text}).ptr = {ptr};"));
@@ -9845,35 +9814,6 @@ impl Emitter<'_> {
                         let shown = c_string_literal(&self.types.foreign_object_shown(fields[0].ty));
                         return format!("({RT}ffi_release((void*){address}, {creator}, {shown}), {address})");
                     }
-                    // `[FFI-23]` — a class object is pinned in its header; a `Box`'s value is
-                    // its own, and needs nothing.
-                    // `[HR-20]` (ODR-194) — with an `on_relocate` callback, a class object is
-                    // recorded with it instead of pinned, and may move; a `Box`'s value never does.
-                    Builtin::RetainedPin => {
-                        // A `Box` needs nothing, and neither does a retained callback (`[FFI-21]`).
-                        let boxed = matches!(self.types.kind(*arg_ty), TyKind::Struct(_));
-                        if boxed {
-                            // `on_relocate` is for a class object: a box's value never moves.
-                            return match rendered.get(1) {
-                                Some(on_relocate) => format!("((void)({on_relocate}), (uint64_t)0)"),
-                                None => "((uint64_t)0)".to_string(),
-                            };
-                        }
-                        let callback = match args.get(1).and_then(|arg| self.operand_type(arg, body)).map(|ty| self.types.kind(ty).clone()) {
-                            Some(TyKind::Enum(id)) if self.types.option_niche(id).is_none() => {
-                                let ty = self.operand_type(&args[1], body).expect("typed above");
-                                let (some, payload) = self.option_some_parts(ty, &rendered[1]);
-                                format!("(({some}) ? (void (*)(void)){payload} : NULL)")
-                            }
-                            _ => format!("((void (*)(void))({}))", rendered[1]),
-                        };
-                        let object = format!("(({RT}obj_header*)({}))", rendered[0]);
-                        return format!(
-                            "({callback} == NULL ? ({RT}obj_pin({object}), (uint64_t)0) : {RT}obj_pin_relocatable({object}, {callback}))"
-                        );
-                    }
-                    Builtin::RetainedUnpin => return format!("{RT}obj_unpin_relocatable({})", rendered[0]),
-                    Builtin::RetainedAddress => return self.retained_address(&rendered[0], *arg_ty),
                     // `[FFI-39]`, `[FFI-17d]` — a class object's address, and its handle again.
                     Builtin::CppObjectAddress => return format!("((uint8_t*)({}))", rendered[0]),
                     // `[UNS-5]` — through a pointer to a volatile object: each access is made.

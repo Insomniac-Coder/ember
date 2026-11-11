@@ -10304,6 +10304,15 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> Expr {
+        // `[FFI-23]` — 0.9.10's `Retained.pin` is gone: `Retained` is only the token of a callback C
+        // keeps, which the registering call makes.
+        if generic.is("std.ffi.Retained") && name.name.is("pin") {
+            self.sink.emit(
+                Diagnostic::error(codes::E1010, span, "`Retained.pin` is gone: C keeps an Ember value handed to a parameter contracted `owns`, or given with `into_raw()` inside `unsafe:`")
+                    .note("`Retained[ForeignCallback]` is only the token a registering call returns for a callback C keeps [FFI-23]"),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         let Some(decl) = self.generic_structs.get(&generic).cloned() else {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
@@ -17459,30 +17468,6 @@ impl<'a> Checker<'a> {
             let value = self.check_expr(&args[1].value, inner);
             return Some(Expr { ty: self.common.void, kind: ExprKind::Builtin { which: Builtin::VolatileWrite, args: vec![pointer, value] }, span });
         }
-        // `[HR-20]` (ODR-194) — a `Retained` token's end: its `on_relocate` record goes.
-        if resolved.is("std.ffi.retained_unpin") && args.len() == 1 {
-            let u64_ty = self.common.u64;
-            let id = self.check_expr(&args[0].value, u64_ty);
-            return Some(Expr { ty: self.common.void, kind: ExprKind::Builtin { which: Builtin::RetainedUnpin, args: vec![id] }, span });
-        }
-        // `[FFI-23]` — what `Retained` pins: a class handle, a `Box` or a retained callback, with its `on_relocate`.
-        if resolved.is("std.ffi.retained_pin") && args.len() == 2 {
-            let value = self.synth_committed(&args[0].value);
-            let pinnable = matches!(self.types.kind(value.ty), TyKind::Class(_) | TyKind::Param { .. } | TyKind::Error)
-                || self.box_inner(value.ty).is_some()
-                || self.is_foreign_callback(value.ty);
-            if !pinnable {
-                let shown = self.types.display(value.ty);
-                self.sink.emit(
-                    Diagnostic::error(codes::E2020, span, format!("`Retained` pins a class object or an `owns` value, not a `{shown}`"))
-                        .note("foreign code keeps Ember memory only through a class object or an `owns` value [FFI-23]"),
-                );
-                return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
-            }
-            let callback = self.synth_committed(&args[1].value);
-            let u64_ty = self.common.u64;
-            return Some(Expr { ty: u64_ty, kind: ExprKind::Builtin { which: Builtin::RetainedPin, args: vec![value, callback] }, span });
-        }
         // `[FFI-17e]` — a C++ container's elements, viewed in place, and a smart pointer's object:
         // `cpp_span(ref owner, pointer, count)`, `cpp_span_mut(ref mut owner, …)` and
         // `cpp_pointee(ref owner, pointer)`, each borrowing the owner.
@@ -18096,14 +18081,14 @@ impl<'a> Checker<'a> {
     /// to hold, the object pinned.
     fn synth_cpp_object(&mut self, name: Symbol, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Option<Expr> {
         let prefix = ember_branding::SYMBOL_PREFIX;
-        let which = ["address", "handle", "adopt", "give", "token_object", "overrides"].into_iter().position(|word| name.is(&format!("{prefix}_cpp_{word}")))?;
+        let which = ["address", "handle", "adopt", "give", "overrides"].into_iter().position(|word| name.is(&format!("{prefix}_cpp_{word}")))?;
         if !self.foreign_cpp.get(self.current_module).copied().unwrap_or(false) {
             return None;
         }
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         // `[FFI-39]` (ODR-221) — `ember_cpp_overrides[C](self, "name")`: whether the object's own
         // class overrides `C`'s virtual method `name`.
-        if which == 5 {
+        if which == 4 {
             let ([object, method], [class]) = (args, explicit) else { return Some(error) };
             let TyKind::Class(owner) = *self.types.kind(*class) else { return Some(error) };
             let ast::ExprKind::Lit(ast::Literal::Str(method)) = &method.value.kind else { return Some(error) };
@@ -18116,13 +18101,6 @@ impl<'a> Checker<'a> {
         }
         let [arg] = args else { return Some(error) };
         let value = self.synth_committed(&arg.value);
-        // `[FFI-39c]` — the object a `Retained` token holds (a count of its own).
-        if which == 4 {
-            let Some(held) = self.lock_inner(value.ty, "std.ffi.Retained").filter(|held| matches!(self.types.kind(*held), TyKind::Class(_))) else {
-                return Some(error);
-            };
-            return Some(Expr { ty: held, kind: ExprKind::Field { base: Box::new(value), index: 0 }, span });
-        }
         if matches!(which, 0 | 3) {
             if !matches!(self.types.kind(value.ty), TyKind::Class(_)) {
                 return Some(error);
@@ -19533,19 +19511,18 @@ impl<'a> Checker<'a> {
         }
         let forms = self.const_params_as_forms(&decl.generic_params, args);
         let args = forms.as_slice();
-        // `[FFI-23]` — a `Retained` token holds a class handle or a `Box`: what foreign code keeps
-        // is an object's address. Refused where the type is named (or inferred, at `pin`).
+        // `[FFI-23]` — `Retained[ForeignCallback]` is only the token of a callback C keeps: it gives
+        // no object away and keeps none for C.
         if name.is("std.ffi.Retained")
             && let [held] = args
-            && !matches!(self.types.kind(*held), TyKind::Class(_) | TyKind::Param { .. } | TyKind::Error | TyKind::Infer(_))
-            && self.box_inner(*held).is_none()
-            // `[FFI-21]` — or what C keeps of a `retained` callback.
+            && !matches!(self.types.kind(*held), TyKind::Param { .. } | TyKind::Error | TyKind::Infer(_))
             && !self.is_foreign_callback(*held)
         {
             let shown = self.types.display(*held);
             self.sink.emit(
-                Diagnostic::error(codes::E2020, span, format!("`Retained` pins a class object or an `owns` value, not a `{shown}`"))
-                    .note("foreign code keeps Ember memory only through a class object or an `owns` value [FFI-23]"),
+                Diagnostic::error(codes::E2020, span, format!("`Retained` is only the token of a callback C keeps, `Retained[ForeignCallback]`, not a `Retained[{shown}]`"))
+                    .help("C keeps an Ember value handed to a parameter contracted `owns`, or given with `into_raw()` inside `unsafe:`")
+                    .note("`Retained` gives no object away and keeps none for C [FFI-23]"),
             );
             return self.common.error;
         }
@@ -22943,7 +22920,10 @@ impl<'a> Checker<'a> {
                     self.error(codes::E5002, span,
                         format!("`safe fn` needs an `@ffi` nullable count contract for span parameter `{name}`"));
                 }
-                if self.foreign_pointer_contract_required(ty) && !callback_params.contains(&name) {
+                // `[FFI-11]` — a `retained` pointer that is no callback is refused once, by
+                // `check_foreign_ownership`.
+                let retained = ffi_retained_params(attrs).iter().any(|(slot, _)| *slot == name);
+                if self.foreign_pointer_contract_required(ty) && !callback_params.contains(&name) && !retained {
                     if contract.is_some() {
                         self.error(codes::E5002, span,
                             format!("`safe fn` cannot expose raw pointer parameter `{name}`"));
@@ -23318,30 +23298,18 @@ impl<'a> Checker<'a> {
             ty.and_then(|ty| this.foreign_owner_inner(ty))
         };
         let owned = ffi_owned_params(attrs);
-        // `[FFI-23]`, `[FFI-22]` — a `retained` parameter takes a `Retained[T]` token; foreign code
-        // may use what it keeps on any thread, so `T` is `Send` unless the contract binds it.
+        // `[FFI-11]`, `[FFI-23]` — `retained` on a pointer that is no callback makes no safe
+        // parameter: C keeps Ember memory only when it is handed over (`owns`) or given with
+        // `into_raw()`, so the call stays unsafe, with a raw pointer. A `Retained` token stays on
+        // Ember's side.
         let retained = ffi_retained_params(attrs);
-        for &(name, ty, mode, span) in signature {
-            let token = self.lock_inner(ty, "std.ffi.Retained");
-            match retained.iter().find(|(slot, _)| *slot == name) {
-                Some(&(_, bound)) => match token {
-                    Some(held) if mode == Mode::Borrow => {
-                        if !bound && !self.is_send(held) {
-                            let shown = self.types.display(held);
-                            self.sink.emit(
-                                Diagnostic::error(codes::E7004, span, format!("`{name}` hands foreign code a `{shown}` to keep, and a `{shown}` is not `Send`"))
-                                    .help(format!("say which thread C uses it on: `param({name}, retained, one, threads(creator))` or `threads(main)`"))
-                                    .note("C may call back from any thread, so what it keeps must be `Send` unless the contract says otherwise [FFI-22]"),
-                            );
-                        }
-                    }
-                    _ => self.error(codes::E5002, span, format!("`retained` contract for `{name}` needs `{name}: Retained[T]`")),
-                },
-                None if token.is_some() => {
-                    self.error(codes::E5002, span,
-                        format!("a `Retained` parameter crosses only as an address C keeps: `param({name}, retained, one)`"));
-                }
-                None => {}
+        for &(name, ty, _, span) in signature {
+            if retained.iter().any(|(slot, _)| *slot == name) {
+                self.error(codes::E5002, span, format!(
+                    "`retained` on `{name}` makes no safe parameter: C keeps Ember memory only when it is handed over (`param({name}, owns, one)`) or given with `into_raw()`; declare `{}` an `unsafe fn`",
+                    decl.name.name));
+            } else if self.lock_inner(ty, "std.ffi.Retained").is_some() {
+                self.error(codes::E5002, span, format!("`{name}` is a `Retained` token, which stays on Ember's side: C is given no token"));
             }
         }
         for &(name, ty, mode, span) in signature {
@@ -23581,7 +23549,6 @@ impl<'a> Checker<'a> {
         // `[FFI-11]`, `[FFI-36a]` — the objects the call moves: a parameter C takes, a result the
         // caller comes to own.
         let owned_params = ffi_owned_params(attrs);
-        let retained_params = ffi_retained_params(attrs);
         let result_owned = match ffi_owned_result(attrs) {
             Some((destructor, nullable, _)) => {
                 let boxed = if nullable { self.option_some_payload(result_ty)? } else { result_ty };
@@ -23745,7 +23712,7 @@ impl<'a> Checker<'a> {
         let callback_decls = self.foreign_callbacks.get(&def).cloned().unwrap_or_default();
         if counted.is_empty() && fixed.is_empty() && result_array.is_none()
             && result_span.is_none() && !borrowed_aggregate
-            && owned_params.is_empty() && retained_params.is_empty() && result_owned.is_none()
+            && owned_params.is_empty() && result_owned.is_none()
             && outputs.is_none() && callbacks.is_empty() { return None; }
         let mut abi_params = Vec::new();
         for param in &decl.params {
@@ -23768,9 +23735,6 @@ impl<'a> Checker<'a> {
             } else if let Some(&(_, nullable)) = owned_params.iter().find(|(slot, _)| *slot == name.name) {
                 let public_index = visible.iter().position(|(slot, _, _, _)| *slot == name.name)?;
                 abi_params.push(hir::FfiAbiParam::Owned { public_index, nullable });
-            } else if retained_params.iter().any(|(slot, _)| *slot == name.name) {
-                let public_index = visible.iter().position(|(slot, _, _, _)| *slot == name.name)?;
-                abi_params.push(hir::FfiAbiParam::Retained { public_index });
             } else if let Some(&(_, ty)) = outs.iter().find(|(slot, _)| *slot == name.name) {
                 abi_params.push(hir::FfiAbiParam::Out { ty });
             } else {
@@ -37149,36 +37113,6 @@ impl<'a> Checker<'a> {
         if self.emit_callable_mode_mismatch(expr.span, expected, expr.ty) {
             return Expr { ty: expected, kind: ExprKind::Error, span: expr.span };
         }
-        // `[FFI-23]`, `[FFI-39c]` (ODR-156) — a `Retained` token of a class is a token of its base:
-        // the same object, held as long. The base's token holds the upcast handle, a count of its
-        // own that the token's end releases.
-        if let (Some(found), Some(wanted)) = (self.lock_inner(expr.ty, "std.ffi.Retained"), self.lock_inner(expected, "std.ffi.Retained"))
-            && let (TyKind::Class(derived), TyKind::Class(base)) = (self.types.kind(found).clone(), self.types.kind(wanted).clone())
-            && self.types.class_is_subclass_of(derived, base)
-            && let TyKind::Struct(token) = *self.types.kind(expected)
-        {
-            let span = expr.span;
-            let handle = Expr { ty: found, kind: ExprKind::Field { base: Box::new(expr), index: 0 }, span };
-            let upcast = Expr { ty: wanted, kind: ExprKind::Cast { expr: Box::new(handle), to: wanted }, span };
-            // `[HR-20]` — no `on_relocate` record of its own (`0`): the token it was made from keeps it.
-            let relocation = Expr { ty: self.common.u64, kind: ExprKind::Int(0), span };
-            return Expr { ty: expected, kind: ExprKind::StructLit { struct_id: token, fields: vec![upcast, relocation] }, span };
-        }
-        // `[FFI-39c]` (ODR-156) — an object of a class with a trampoline passed bare where C++
-        // keeps it: nothing would hold the token that keeps it alive.
-        if let Some(wanted) = self.lock_inner(expected, "std.ffi.Retained")
-            && let (TyKind::Class(derived), TyKind::Class(base)) = (self.types.kind(expr.ty).clone(), self.types.kind(wanted).clone())
-            && (derived == base || self.types.class_is_subclass_of(derived, base))
-            && self.cpp_trampoline(base).is_some()
-        {
-            let shown = self.types.display(wanted).rsplit('.').next().unwrap_or_default().to_string();
-            self.sink.emit(
-                Diagnostic::error(codes::E5060, expr.span, format!("C++ keeps this object, and nothing here holds the `Retained` token that keeps it alive for C++"))
-                    .help(format!("pin it and keep the token as long as C++ needs the object: `token = Retained.pin(…)`, then pass `token` (a `Retained[{shown}]`)"))
-                    .note("a parameter that keeps the object takes the token the program holds (ODR-156) [FFI-39c]"),
-            );
-            return Expr { ty: expected, kind: ExprKind::Error, span: expr.span };
-        }
         // `[CLS-4]`/`[DSP-1]` — single-inheritance handles upcast to an
         // open/abstract base without changing the pointed-to object. Keep
         // this as a distinct compiler-inserted cast so C receives a pointer
@@ -48027,27 +47961,12 @@ impl<'a> Checker<'a> {
         self.synth_method_on(receiver, recv.span, name, generic_args, args, expected, span)
     }
 
-    /// `[FFI-23]` (ODR-132) — `token.ptr()`: an `ObjectPtr[C]` for a class `C`, a `*mut U` for a
-    /// `Box[U]`, a `*mut u8` for a `Box[dyn I]` (and for a token over an opaque parameter, which a
-    /// concrete instance types). The object's address, read from the token's value.
+    /// `[FFI-21]`, `[FFI-23]` — `token.ptr()` of a `Retained[ForeignCallback]`: the user data C was
+    /// given, read from the token's value.
     fn synth_retained_ptr(&mut self, token: Expr, held: Ty, span: Span) -> Expr {
         let bytes = self.types.intern(TyKind::Ptr { mutable: true, inner: self.common.u8 });
-        // `[FFI-21]` — a retained callback's: the user data C was given.
-        if self.is_foreign_callback(held) {
-            let value = Expr { ty: held, kind: ExprKind::Field { base: Box::new(token), index: 0 }, span };
-            return Expr { ty: bytes, kind: ExprKind::Field { base: Box::new(value), index: 0 }, span };
-        }
-        let ty = match *self.types.kind(held) {
-            TyKind::Class(_) => self.instantiate_named_generic("std.ffi.ObjectPtr", &[held], span),
-            _ => match self.box_inner(held) {
-                Some(inner) if !matches!(self.types.kind(inner), TyKind::Dyn { .. }) => {
-                    self.types.intern(TyKind::Ptr { mutable: true, inner })
-                }
-                _ => bytes,
-            },
-        };
         let value = Expr { ty: held, kind: ExprKind::Field { base: Box::new(token), index: 0 }, span };
-        Expr { ty, kind: ExprKind::Builtin { which: Builtin::RetainedAddress, args: vec![value] }, span }
+        Expr { ty: bytes, kind: ExprKind::Field { base: Box::new(value), index: 0 }, span }
     }
 
     /// The rest of a method call, once its receiver is checked: what `recv.name(args)` means for
@@ -48091,10 +48010,10 @@ impl<'a> Checker<'a> {
             self.sink.emit_all(answer);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        // `[FFI-23]` (ODR-132) — `token.ptr()`: the address foreign code keeps, typed by what the
-        // token holds.
+        // `[FFI-21]`, `[FFI-23]` — `token.ptr()`: the user data C keeps for the callback.
         if name.name.is("ptr") && args.is_empty() && generic_args.is_empty()
             && let Some(held) = self.lock_inner(receiver.ty, "std.ffi.Retained")
+            && self.is_foreign_callback(held)
         {
             return self.synth_retained_ptr(receiver, held, span);
         }
