@@ -987,3 +987,26 @@ def tanh64(x):
             p, e = two_product(q, dh)
             z = q + ((((nh - p) - e) + nl) - q * dl) / dh
     return -z if x < 0.0 else z
+
+
+# -- exp2, log2, log10, cbrt, hypot ----------------------------------------------------
+
+LN2_D = 6.931471805599453094e-01
+LN2_TAIL = 2.319046813846299558e-17
+
+
+def exp2_64(x):
+    """2^x: x = n + r, 2^r from e^(r ln 2) with r ln 2 a sum of two doubles, 2^n by scaling."""
+    if x != x:
+        return x + x
+    if x >= 1024.0:
+        return INF
+    if x < -1075.0:
+        return 0.0
+    n = float(math.floor(x + 0.5))
+    r = x - n
+    p, e = two_product(r, LN2_D)
+    lo = e + r * LN2_TAIL
+    y = exp64(p)
+    y = y + y * lo
+    return scalbn(y, int(n))
