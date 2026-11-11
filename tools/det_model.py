@@ -762,3 +762,34 @@ def asin64(x):
         q = PIO4_HI - 2.0 * h
         t = PIO4_HI - (p - q)
     return -t if x < 0.0 else t
+
+
+def acos64(x):
+    if x != x:
+        return x + x
+    ax = abs(x)
+    if ax >= 1.0:
+        if ax == 1.0:
+            if x > 0.0:
+                return 0.0
+            return PI + 2.0 * AS_PIO2_LO
+        return NAN
+    if ax < 0.5:
+        if ax < 6.938893903907228e-18:
+            return AS_PIO2_HI + AS_PIO2_LO
+        z = x * x
+        r = asin_ratio(z)
+        return AS_PIO2_HI - (x - (AS_PIO2_LO - x * r))
+    if x < 0.0:
+        z = (1.0 + x) * 0.5
+        s = math.sqrt(z)
+        r = asin_ratio(z)
+        w = r * s - AS_PIO2_LO
+        return PI - 2.0 * (s + w)
+    z = (1.0 - x) * 0.5
+    s = math.sqrt(z)
+    h = split(s)[0]
+    c = (z - h * h) / (s + h)
+    r = asin_ratio(z)
+    w = r * s + c
+    return 2.0 * (h + w)
