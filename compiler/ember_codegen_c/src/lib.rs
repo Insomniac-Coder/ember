@@ -5772,6 +5772,14 @@ impl Emitter<'_> {
                     ember_branding::runtime("obj_header")
                 ));
             }
+            // `[WK-11]` — a link's end subtracts one from its target's weak count; `[RC-1]` an owner's
+            // end one from its count, and the subtraction that reaches zero ends the value.
+            TyKind::Link { kind: ember_types::LinkKind::Weakref, .. } => {
+                out.push(format!("{}(({}*){access});", ember_branding::runtime("weak_release"), ember_branding::runtime("obj_header")));
+            }
+            TyKind::Link { target, .. } => {
+                out.push(format!("{}(({}*){access});", self.count_function("release", *target), ember_branding::runtime("obj_header")));
+            }
             TyKind::Vec { elem, .. } => {
                 // An `Array[T]` owns its elements as well as its buffer.
                 if self.types.needs_drop(*elem) {

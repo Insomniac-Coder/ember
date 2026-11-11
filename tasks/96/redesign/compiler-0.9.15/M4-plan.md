@@ -101,3 +101,29 @@ there.
   one.
 - **A `weakref` opening** is one load and one compare.
 - **The bench:** `counted_handles` and `counted_sync_handles` on the laptop, before and after each slice.
+
+## Progress (branch `lead-m4`)
+
+- **Step 1** (`0f9b3baf`): the words are in the AST (`LinkKind`, `TypeKind::Link`, `ExprKind::Link`), and
+  the parser builds them. The checker still gives `E0900`.
+- **Step 2** (`979328a8`): `TyKind::Link { kind, target }` is in the type table:
+  - layout, copy, drop, display, mangling, thread properties and the codec;
+  - the cycle lint and the debug owner graph;
+  - C: a class target's handle type, and the end of a link (`ember_release_*`, `ember_weak_release`).
+- **Step 3, next:** the checker makes `Link` values for **class targets**, on today's counted handles.
+  - **Builtins.** Each takes its argument by reference (`ref x`), so that reading an owner never moves it:
+    - `Builtin::LinkMake { kind, link }`: a +1, or a weak +1, and the same pointer (C: `(retain(*x), *x)`,
+      as `WeakNew` does);
+    - `Builtin::LinkTarget { link, class }`: a `shares C` read where a `C` is wanted, as a counted copy of
+      the handle (+1). The temporary's end gives the -1, as today's handle copies do. This is a priced
+      deviation until slice C, when a read is a view with no count.
+    - `Builtin::LinkOpen { link, class }`: `if w exists as p:` gives `Option[C]` (`weak_upgrade`: a +1
+      while the target lives). `[WK-12]`'s "one test and nothing else" waits for slice C's views and
+      M6b's header.
+  - **Refusals:**
+    - `E2122` for `shares` of a list element, a field, a plain parameter or `this`, with `[RC-1]`'s text;
+    - `E2119` for `weakref` of an `owns` value;
+    - `E2020` for an unopened read of a `weakref` (`[WK-16]`);
+    - `E0900` for a target that is not a class object (D5's block, in a later step) and for
+      `thread_shared` (slice E).
+  - **Everywhere a builtin goes:** effects, MIR, both backends and the evaluator.
