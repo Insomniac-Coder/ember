@@ -6934,10 +6934,10 @@ impl Emitter<'_> {
             self.line(&format!("    (void){};", if record.is_some() { "_record".to_string() } else { format!("_cb{}", callback.slot) }));
         }
         let thread = thread.or_else(|| (callback.threads == ExportThreadPolicy::Main).then(|| format!("EMBER_FFI_MAIN_THREAD")));
+        // D-973, `[FFI-22]`, `[FFI-53]` — the trampoline checks a `threads(creator)` or
+        // `threads(main)` callback's thread in every profile (in `release`, one compare).
         if let Some(thread) = thread {
-            self.line("#ifdef EMBER_RT_DEBUG_ACCESS");
             self.line(&format!("    {RT}ffi_check_thread({thread}, \"a callback\");"));
-            self.line("#endif");
         }
         // The other parameters, in the callable's own ABI.
         let others: Vec<(usize, FnParam)> = params.iter().cloned().enumerate().filter(|(at, _)| *at != callback.slot).collect();
@@ -7017,9 +7017,7 @@ impl Emitter<'_> {
         self.line(&format!("static EMBER_MAYBE_UNUSED void {entry}_release(uint8_t* _data) {{"));
         self.line(&format!("    struct {name}* _record = (struct {name}*)(void*)_data;"));
         if callback.threads == ExportThreadPolicy::Creator {
-            self.line("#ifdef EMBER_RT_DEBUG_ACCESS");
             self.line(&format!("    {RT}ffi_check_thread(_record->creator, \"a callback\");"));
-            self.line("#endif");
         }
         let arguments: Vec<String> = unregister.args.iter().zip(&unregister.params).map(|(arg, ty)| match arg {
             FfiUnregisterArg::Entry => format!("({}){entry}", self.c_type(*ty)),

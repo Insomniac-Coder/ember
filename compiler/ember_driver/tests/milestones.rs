@@ -584,14 +584,17 @@ fn make() -> Box[dyn fn(int) -> int]:
     return Box(fn(x: int) => x + 1)
 
 fn main():
-    println(make()(1))
+    println(make()(1), Box(3) == Box(4))
 ").expect("the old source is writable");
     let migrated = ember(&["fmt", "--migrate", &old.to_string_lossy()], &root);
     assert_ne!(migrated.exit, 0, "{}", migrated.stderr);
+    // The boxed callable is the owned callable type, and its `Box(f)` is `f` (`[CLI-20]`).
     assert!(migrated.stdout.contains("fn make() -> fn(int) -> int:"), "{}", migrated.stdout);
+    assert!(migrated.stdout.contains("    return fn(x: int) => x + 1"), "{}", migrated.stdout);
     assert!(migrated.stderr.contains(":1:22: `Box[dyn fn]` to an owned callable type"), "{}", migrated.stderr);
+    // Two blocks no place owns are not mechanical (`[TYP-45]`): listed, by their line.
     let left: Vec<&str> = migrated.stderr.lines().filter(|line| line.starts_with("not rewritten: ")).collect();
-    assert!(left.len() == 1 && left[0].contains(":2:"), "the boxed lambda is not listed:\n{}", migrated.stderr);
+    assert!(left.len() == 2 && left.iter().all(|line| line.contains(":5:")), "the two boxes are not listed:\n{}", migrated.stderr);
 }
 
 /// `[CLI-20]` (N30) — 0.9.10 copied a number given to an `owned` parameter, and 0.9.15 hands it over

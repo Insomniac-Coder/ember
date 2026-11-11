@@ -442,11 +442,12 @@ pub fn storage_mechanism(types: &TypeTable, ty: Ty) -> &'static str {
         TyKind::Class(_) | TyKind::ClassInterface(_) => "class",
         TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::ArrayN { .. } | TyKind::Enum(_) => AGGREGATE,
         TyKind::Dyn { .. } => "owns T",
+        // `[SEL-1]` — the compiler's block of one owner, `owns T`, by the type itself.
+        TyKind::Struct(id) if types.compiler_box_inner(*id).is_some() => "owns T",
         TyKind::Struct(_) => {
             let shown = types.display(ty);
             let head = shown.split('[').next().unwrap_or("");
             match head.rsplit('.').next().unwrap_or(head) {
-                "Box" | "owns" => "owns T",
                 "Shared" => "Shared[T]",
                 "SyncShared" => "SyncShared[T]",
                 "Weak" => "Weak[O]",

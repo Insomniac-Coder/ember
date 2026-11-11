@@ -1453,7 +1453,7 @@ fn an_enum_static_keeps_its_variant() {
 
 /// `[HR-15]`, `[HR-15a]`, `[HR-15b]` — an instance keeps its address where its new size fits: a
 /// `Particle` that loses a field migrates in place. One that gains a field must move, and every
-/// reference to it is rewritten: held in tuples, in `Box`es and in closures' captured state, which
+/// reference to it is rewritten: held in tuples and in closures' captured state, which
 /// the image describes to the runtime by its own layouts (ODR-126). Held as an interface value,
 /// which the runtime cannot follow, a reference is not found, and plan refuses before prepare runs,
 /// saying how many it could not follow. `[HR-13a]` — held in a `Map`, whose entries are payload
@@ -1475,8 +1475,8 @@ fn an_instance_moves_only_where_its_references_are_found() {
     assert_eq!(run.stdout, "3\napplied, 3 migrated\n6\n9\n", "{}", run.stderr);
 
     let boxed = PARTICLES
-        .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Array[(int, owns Particle)]] = Mutex([])")
-        .replace("                world.push(owns Particle())", "                world.push(owns (k, owns Particle()))")
+        .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Array[(int, Particle)]] = Mutex([])")
+        .replace("                world.push(owns Particle())", "                world.push(owns (k, Particle()))")
         .replace("        for p in world:\n            p.x.fetch_add(p.step)\n            total += p.x.load()",
                  "        for pair in world:\n            pair.1.x.fetch_add(pair.1.step)\n            total += pair.1.x.load()");
     let run = host_run("reload-box-moves", &boxed, &[&grow(&boxed)], 3);
