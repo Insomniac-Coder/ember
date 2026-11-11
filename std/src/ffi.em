@@ -13,6 +13,12 @@ from std.string import Utf8Error
 pub struct NulError:
     pub index: usize
 
+## `[ERR-4]` — `unwrap` and `expect` on a `Result` panic with the error's `Display`.
+extend NulError implements Display:
+    ## It allocates as the `String` it writes to grows.
+    fn fmt(ref mut f: Formatter) -> Result[void, FmtError]:
+        return f.write_str(f"the text has a NUL byte at index {this.index}")
+
 pub struct CString:
     bytes: String
 

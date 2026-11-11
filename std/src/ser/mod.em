@@ -350,9 +350,9 @@ pub fn or_default(owns value: Option[T]) -> T:
 ## `[RNG-10a]` — a range-typed field's value, checked: failure is `OutOfRange`.
 [T, E]
 pub fn in_range(owns value: Result[T, E], name: StrView) -> Result[T, SerError]:
-    if value.is_err():
-        return Err(SerError.OutOfRange(String.from(name)))
-    return Ok(value.unwrap())
+    return match value:
+        Ok(v) => Ok(v)
+        Err(_) => Err(SerError.OutOfRange(String.from(name)))
 
 ## `[SER-1]` — what a derived `Serialize` writes a field with: its name, then its value.
 [W: needs Writer, T: needs Serialize]
