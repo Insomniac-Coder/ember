@@ -28,4 +28,4 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     safe fn keep_quietly(object: Retained[owns i32])    #$ error[E5002]: a `Retained` parameter crosses only as an address C keeps
 
 fn main():
-    number = Retained.pin(5)    #$ error[E2020]: `Retained` pins a class handle or a `Box`, not a `i64`
+    number = Retained.pin(5)    #$ error[E2020]: `Retained` pins a class object or an `owns` value, not a `i64`
