@@ -1498,7 +1498,7 @@ impl ParallelWalk {
                 }
             }
             ast::ExprKind::Match { scrutinee, arms } => self.arms(checker, scrutinee, arms),
-            ast::ExprKind::RefOf { place, .. } | ast::ExprKind::CopyOf(place) => self.argument(checker, place),
+            ast::ExprKind::RefOf { place, .. } | ast::ExprKind::CopyOf(place) | ast::ExprKind::Link { value: place, .. } => self.argument(checker, place),
             // A lambda or a comprehension in the body is its own code: one that reaches a place the
             // loop writes cannot be read through.
             ast::ExprKind::Lambda(_) | ast::ExprKind::Comprehension { .. } => {}
@@ -5299,7 +5299,7 @@ impl<'a> Checker<'a> {
     fn alias_body_is_resolvable(&self, ty: &ast::TypeExpr) -> bool {
         match &ty.kind {
             ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::SelfType => true,
-            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => {
+            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => {
                 self.alias_body_is_resolvable(inner)
             }
             ast::TypeKind::Tuple(items) => {
@@ -15295,6 +15295,11 @@ impl<'a> Checker<'a> {
             ast::TypeKind::Owns(owned) => {
                 let inner = self.resolve_type(owned);
                 self.owns_type(inner, owned.span, ty.span)
+            }
+            // `[TYP-45]`, `[RC-1]`, `[WK-11]` — M4 builds these (`M4-plan.md`).
+            ast::TypeKind::Link { kind, inner } => {
+                self.error(codes::E0900, ty.span, format!("`{}` before a type is not built by this compiler yet", kind.word()));
+                self.resolve_type(inner)
             }
             ast::TypeKind::Ptr { mutable, inner } => {
                 let inner = self.resolve_type(inner);
@@ -25441,7 +25446,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Unary { operand, .. }
             | ast::ExprKind::Try(operand)
             | ast::ExprKind::RefOf { place: operand, .. }
-            | ast::ExprKind::CopyOf(operand)
+            | ast::ExprKind::CopyOf(operand) | ast::ExprKind::Link { value: operand, .. }
             | ast::ExprKind::Paren(operand)
             | ast::ExprKind::Owned(operand) => Self::class_init_uses_whole_self(operand),
             ast::ExprKind::Binary { lhs, rhs, .. }
@@ -39286,6 +39291,11 @@ impl<'a> Checker<'a> {
             }
 
             ast::ExprKind::CopyOf(operand) => self.synth_copy_of(operand, span),
+            // `[OWN-13]`, `[RC-1]`, `[WK-11]` — M4 builds these (`M4-plan.md`).
+            ast::ExprKind::Link { kind, value } => {
+                self.error(codes::E0900, span, format!("`{}` before a value is not built by this compiler yet", kind.word()));
+                self.synth(value)
+            }
             ast::ExprKind::Owned(inner) => self.synth_owns(inner, span),
             // `[BRW-*]` — `ref place` and `ref mut place`, the explicit forms.
             // They are needed only when initialising a `ref`-typed local or a
@@ -42949,7 +42959,7 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => self.induced_projections(inner, out),
+            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => self.induced_projections(inner, out),
             ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
                 items.iter().for_each(|item| self.induced_projections(item, out))
             }
@@ -43099,7 +43109,7 @@ impl<'a> Checker<'a> {
                         out.push(ty.clone());
                     }
                 }
-                ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => uses(inner, out),
+                ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => uses(inner, out),
                 ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => items.iter().for_each(|item| uses(item, out)),
                 ast::TypeKind::Array { elem, .. } => uses(elem, out),
                 ast::TypeKind::Fn { params, ret, .. } => {
@@ -61902,7 +61912,7 @@ fn type_names(ty: &ast::TypeExpr, out: &mut HashSet<Symbol>) {
                 }
             }
         }
-        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => type_names(inner, out),
+        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => type_names(inner, out),
         ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
             for item in items {
                 type_names(item, out);
@@ -62326,7 +62336,7 @@ fn type_expr_names(ty: &ast::TypeExpr, out: &mut Vec<Symbol>) {
                 }
             }
         }
-        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => type_expr_names(inner, out),
+        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => type_expr_names(inner, out),
         ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
             for item in items {
                 type_expr_names(item, out);
@@ -62401,7 +62411,7 @@ fn collect_projection_paths(ty: &ast::TypeExpr, out: &mut Vec<(Symbol, ast::Iden
                 }
             }
         }
-        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) => collect_projection_paths(inner, out),
+        ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } => collect_projection_paths(inner, out),
         ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
             items.iter().for_each(|item| collect_projection_paths(item, out))
         }
@@ -62823,7 +62833,7 @@ impl ShareWalk<'_> {
                     }
                 }
             }
-            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::SomeType(inner) => self.ty(inner),
+            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::Owns(inner) | ast::TypeKind::Link { inner, .. } | ast::TypeKind::SomeType(inner) => self.ty(inner),
             ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
                 for item in items {
                     self.ty(item);
@@ -62933,7 +62943,7 @@ impl ShareWalk<'_> {
                 self.ty(ty);
             }
             E::Try(inner) | E::Paren(inner) | E::Owned(inner) | E::Comptime(inner) | E::AssumeNoalloc(inner) => self.expr(inner),
-            E::RefOf { place, .. } | E::CopyOf(place) => self.expr(place),
+            E::RefOf { place, .. } | E::CopyOf(place) | E::Link { value: place, .. } => self.expr(place),
             E::OptChain { base, generic_args, args, .. } => {
                 self.expr(base);
                 for arg in generic_args {

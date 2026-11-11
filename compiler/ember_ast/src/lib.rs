@@ -599,6 +599,34 @@ pub struct CallableTypeParam {
     pub span: Span,
 }
 
+/// `[OWN-13]`, `[TYP-45]` — the word that says a value has several owners, or is linked to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LinkKind {
+    /// One more owner on this thread that reads the value.
+    Shares,
+    /// One more owner on this thread that may also change it.
+    SharesMut,
+    /// One more owner on any thread.
+    ThreadShared,
+    /// A link that does not keep its target alive.
+    Weakref,
+    /// A view several holders share and may change (`[LT-46]`).
+    SharedrefMut,
+}
+
+impl LinkKind {
+    /// The word as the program writes it.
+    pub fn word(self) -> &'static str {
+        match self {
+            LinkKind::Shares => "shares",
+            LinkKind::SharesMut => "shares mut",
+            LinkKind::ThreadShared => "thread_shared",
+            LinkKind::Weakref => "weakref",
+            LinkKind::SharedrefMut => "sharedref mut",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum TypeKind {
     /// `std.math.Vec3`, `Array[T]`, `Iterator[Item = i32]`.
@@ -610,6 +638,9 @@ pub enum TypeKind {
     /// `[TYP-45]`, `[HEAP-9]` — `owns T`: one owner, in a heap block of its own; `owns dyn I` holds
     /// any implementer of `I`.
     Owns(Box<TypeExpr>),
+    /// `[TYP-45]`, `[RC-1]`, `[WK-11]` — `shares T`, `shares mut T`, `thread_shared T`, `weakref T`,
+    /// `sharedref mut T`: who owns the value, or a link to it.
+    Link { kind: LinkKind, inner: Box<TypeExpr> },
     Tuple(Vec<TypeExpr>),
     /// A callable type, optionally at a late-bound callback boundary. The
     /// modifier belongs to this type, never to the function declaration that
@@ -828,6 +859,9 @@ pub enum ExprKind {
     RefOf { mutable: bool, place: Box<Expr> },
     /// `[GRM-43]`, `[OWN-8]` — `copy of e`, a copy of the program's own made with `Clone`.
     CopyOf(Box<Expr>),
+    /// `[OWN-13]`, `[RC-1]`, `[WK-11]` — `shares x`, `shares mut x`, `thread_shared x`, `weakref x`,
+    /// `sharedref mut x`: one more owner of what `x` names, or a link to it.
+    Link { kind: LinkKind, value: Box<Expr> },
     Paren(Box<Expr>),
     /// `[GRM-16]` — `return e`, `break label`, `continue label`. Type `!`,
     /// parsed at the lowest precedence and never as an atom, so a jump is

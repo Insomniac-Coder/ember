@@ -1145,6 +1145,7 @@ impl Printer<'_> {
             // through with each line trimmed and would flatten a nested block.
             ast::ExprKind::Owned(inner) => format!("owns {}", self.expr_pure(inner)),
             ast::ExprKind::CopyOf(inner) => format!("copy of {}", self.expr_pure(inner)),
+            ast::ExprKind::Link { kind, value: inner } => format!("{} {}", kind.word(), self.expr_pure(inner)),
             ast::ExprKind::Comptime(inner) => format!("comptime({})", self.expr_pure(inner)),
             ast::ExprKind::AssumeNoalloc(inner) => format!("@assume_noalloc({})", self.expr_pure(inner)),
             ast::ExprKind::Jump(jump) => match jump {
@@ -1392,6 +1393,7 @@ impl Printer<'_> {
                 format!("{kind}{}", self.type_expr(inner))
             }
             ast::TypeKind::Owns(inner) => format!("owns {}", self.type_expr(inner)),
+            ast::TypeKind::Link { kind, inner } => format!("{} {}", kind.word(), self.type_expr(inner)),
             ast::TypeKind::Tuple(items) => {
                 let items: Vec<String> = items.iter().map(|t| self.type_expr(t)).collect();
                 format!("({})", items.join(", "))
