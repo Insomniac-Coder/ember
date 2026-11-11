@@ -6,8 +6,8 @@
 fn main():
     first: MaybeUninit[i64] = MaybeUninit[i64].uninit()
     second = first
-    first.write(10i64)
-    second.write(20i64)
+    first.write(owns 10i64)
+    second.write(owns 20i64)
     a: i64
     b: i64
     unsafe:  # SAFETY(uninit): every slot is written before it is read

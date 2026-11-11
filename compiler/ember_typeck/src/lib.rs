@@ -52218,6 +52218,7 @@ impl<'a> Checker<'a> {
             );
             return error;
         }
+        self.maybe_uninit_unsafe(inner, "uninit", span);
         Expr {
             ty,
             kind: ExprKind::Builtin {
@@ -52226,6 +52227,28 @@ impl<'a> Checker<'a> {
             },
             span,
         }
+    }
+
+    /// `[ARN-8]` — a `MaybeUninit` never runs its value's clean-up, so for a `T` that needs drop,
+    /// `uninit()`, `write` and `write_at` are `unsafe` operations (`[UNS-1]`): outside `unsafe:` each
+    /// is `E3100`. For a `T` with nothing to drop they stay safe.
+    fn maybe_uninit_unsafe(&mut self, inner: Ty, operation: &str, span: Span) {
+        if !self.types.needs_drop(inner) {
+            return;
+        }
+        let shown = self.types.display(inner);
+        let step = UnsafeStep::Other(
+            format!("the `MaybeUninit[{shown}]` `{operation}`"),
+            format!("the `MaybeUninit[{shown}]` `{operation}`s"),
+        );
+        let refusal = Diagnostic::error(
+            codes::E3100,
+            span,
+            format!(
+                "`MaybeUninit` never runs a `{shown}`'s clean-up, so a value written into it may never be freed; write it inside `unsafe:`, or keep the value in an `Option[shares {shown}]`"
+            ),
+        );
+        self.unsafe_step(span, step, refusal);
     }
 
     /// `[ARN-8]`, `[ARN-8a]` — the transitions exposed by a
@@ -52269,7 +52292,10 @@ impl<'a> Checker<'a> {
 
         if method == "write" {
             let receiver = self.pass_receiver(receiver, Mode::Mut, span);
-            let value = self.check_expr(&args[0].value, inner);
+            self.maybe_uninit_unsafe(inner, "write", span);
+            // `[ARN-8]`, `[FN-2a]` — `write(owns v: T)`: the call says `owns`.
+            let given = self.taken_value(&args[0].value, "write", " (its first line says `write(owns v: T) -> ref mut T`)", false);
+            let value = self.check_expr(given, inner);
             let result = self.types.intern(TyKind::Ref { mutable: true, inner });
             return Expr {
                 ty: result,
@@ -58006,7 +58032,10 @@ impl<'a> Checker<'a> {
             let Some(index) = self.check_index(&args[0].value, None, span) else {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 };
-            let value = self.check_expr(&args[1].value, inner);
+            self.maybe_uninit_unsafe(inner, "write_at", span);
+            // `[ARN-8]`, `[FN-2a]` — `write_at(i, owns v: T)`: the call says `owns`.
+            let given = self.taken_value(&args[1].value, "write_at", " (its first line says `write_at(i: usize, owns v: T)`)", false);
+            let value = self.check_expr(given, inner);
             let result = self.types.intern(TyKind::Ref { mutable: true, inner });
             return Expr {
                 ty: result,
