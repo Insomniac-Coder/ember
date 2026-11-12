@@ -170,6 +170,11 @@ benchmarks) before the next one:
 - **10 minutes** after a medium batch;
 - **15 minutes** after a heavy one: several builders, a push gate or a bench.
 
+**The percentage after each batch.** The owner, verbatim (2026-11-12): "after each batch completion you have to tell
+me percentage completion status". When a batch is collected, the lead runs `tools/phase_progress.py` and reports
+its table to the owner, in §7's form (a table first, one bold percentage per phase, a text bar, and the overall
+row), with what changed since the last report and why.
+
 ## 4. Rules of this codebase
 
 - **Generated code runs as close to C speed as possible.** The owner, 2026-09-27: "since we are
