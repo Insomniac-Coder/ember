@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: FN-5
-#$ error[E2020]: `three` needs a value for `c`
+#$ error[E2021]: `three(a=1, b=2)` gives nothing for `c`, which has no default: `fn three(a: int, b: int = 1, c: int) -> int`
 # `[FN-5]` — a named argument may skip a defaulted parameter, but not one
 # without a default.
 

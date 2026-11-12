@@ -17435,7 +17435,9 @@ impl<'a> Checker<'a> {
             let signature = &self.signatures[def.0 as usize];
             let (params, ret) = (signature.params.clone(), signature.ret);
             if args.len() != params.len() {
-                self.error(codes::E2020, span, format!("`{}` takes {} arguments, found {}", name, params.len(), args.len()));
+                let what = format!("gives {} arguments, and `{name}` takes {}", args.len(), params.len());
+                let diagnostic = self.argument_misfit(span, span, &name.to_string(), what, self.declaration_first_line(def));
+                self.sink.emit(diagnostic);
                 return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
             }
             let checked = args.iter().zip(&params).map(|(arg, &(_, ty, mode, _))| self.check_argument_by(&arg.value, ty, mode, false)).collect();
@@ -18951,43 +18953,58 @@ impl<'a> Checker<'a> {
         fields: &[Symbol],
         args: &[ast::Arg],
         span: Span,
+        line: Option<String>,
     ) -> Vec<(usize, usize)> {
         // `[TYP-25]` — positional arguments first, in field order, then named
-        // ones; each field at most once.
+        // ones; each field at most once. A mistake is `E2021`.
         let mut slots = Vec::new();
         let mut given = vec![false; fields.len()];
         let mut named_seen = false;
+        let callee = name.to_string();
         let positional = args.iter().filter(|a| a.name.is_none()).count();
         if positional > fields.len() {
-            self.error(
-                codes::E2020,
-                span,
-                format!("`{name}` has {} fields, found {positional} arguments", fields.len()),
-            );
+            let what = format!("gives {positional} arguments, and `{name}` takes {}", fields.len());
+            let diagnostic = self.argument_misfit(span, span, &callee, what, line.clone());
+            self.sink.emit(diagnostic);
         }
         for (index, arg) in args.iter().enumerate() {
             let field = match arg.name {
                 None if named_seen => {
-                    self.error(codes::E2020, arg.span, "positional arguments must come before named ones");
-                    continue;
+                    let earlier = args[..index].iter().rev().find(|earlier| earlier.name.is_some()).and_then(|earlier| self.written_line(earlier.span));
+                    let free_slot = given.iter().position(|taken| !taken);
+                    let free = free_slot.map(|slot| fields[slot]);
+                    let mut what = match (self.written_line(span).and(self.written_line(arg.span)), &earlier) {
+                        (Some(this), Some(earlier)) => format!("gives `{this}` after the named `{earlier}`, and positional arguments come first"),
+                        _ => "gives a positional argument after a named one, and positional arguments come first".to_string(),
+                    };
+                    if let Some(fixed) = free.and_then(|free| self.call_with_argument_named(span, arg.span, free)) {
+                        what.push_str(&format!("; write `{fixed}`"));
+                    }
+                    let diagnostic = self.argument_misfit(arg.span, span, &callee, what, None);
+                    self.sink.emit(diagnostic);
+                    // The argument fills the field the line names, so the field is not reported missing too.
+                    match free_slot {
+                        Some(slot) => slot,
+                        None => continue,
+                    }
                 }
                 None if index < fields.len() => index,
                 None => continue,
                 Some(arg_name) => {
                     named_seen = true;
                     let Some(field) = fields.iter().position(|field| *field == arg_name.name) else {
-                        self.error(
-                            codes::E2020,
-                            arg_name.span,
-                            format!("`{name}` has no field `{}`", arg_name.name),
-                        );
+                        let what = format!("names `{}`, and `{name}` has no field of that name", arg_name.name);
+                        let diagnostic = self.argument_misfit(arg_name.span, span, &callee, what, line.clone());
+                        self.sink.emit(diagnostic);
                         continue;
                     };
                     field
                 }
             };
             if std::mem::replace(&mut given[field], true) {
-                self.error(codes::E1030, arg.value.span, format!("field `{}` is given twice", fields[field]));
+                let what = format!("gives `{}` twice", fields[field]);
+                let diagnostic = self.argument_misfit(arg.value.span, span, &callee, what, line.clone());
+                self.sink.emit(diagnostic);
                 continue;
             }
             slots.push((index, field));
@@ -19144,7 +19161,7 @@ impl<'a> Checker<'a> {
                 })
             })
             .collect();
-        let value = self.finish_struct_literal(id, name, slots, span);
+        let value = self.finish_struct_literal(id, name, slots, span, true);
         let local = self.declare(None, ty, span);
         let receiver = Expr { ty, kind: ExprKind::Local(local), span };
         // `[OWN-9]` (verdict 159) — as a class's: a constructor's argument takes no word.
@@ -19250,7 +19267,13 @@ impl<'a> Checker<'a> {
         let fields: Vec<Ty> =
             decl.fields.iter().map(|field| if cell_kept { self.types.cell_held(field.ty) } else { field.ty }).collect();
         let names: Vec<Symbol> = decl.fields.iter().map(|field| field.name).collect();
-        let slots = self.constructor_slots(name, &names, args, span);
+        let line = {
+            let info: Vec<(Symbol, Ty, bool, Span)> = decl.fields.iter().map(|field| (field.name, field.ty, field.has_default, field.ty_span)).collect();
+            self.memberwise_line(name, &info)
+        };
+        let slots = self.constructor_slots(name, &names, args, span, Some(line));
+        // An argument that did not bind was reported, and may be the one meant for a field left empty.
+        let bound_all = slots.len() == args.len();
         let values =
             self.infer_constructor_arguments(name, args, &slots, &fields, expected, &mut solved, explicit.len());
 
@@ -19293,7 +19316,7 @@ impl<'a> Checker<'a> {
             })
             .collect();
         let instance = self.types.struct_def(id).name;
-        self.finish_struct_literal(id, instance, values, span)
+        self.finish_struct_literal(id, instance, values, span, bound_all)
     }
 
     fn synth_generic_class_constructor(
@@ -19331,7 +19354,7 @@ impl<'a> Checker<'a> {
         // The constructor checks the arguments again, so this pass only
         // infers, and reports nothing of its own.
         let quiet = self.sink.mark();
-        let slots = self.constructor_slots(name, &names, args, span);
+        let slots = self.constructor_slots(name, &names, args, span, None);
         self.infer_constructor_arguments(name, args, &slots, &fields, expected, &mut solved, explicit.len());
         self.sink.rollback(quiet);
         self.fill_solved_defaults(&decl.generic_params, &mut solved);
@@ -31592,7 +31615,9 @@ impl<'a> Checker<'a> {
         };
         if let Some(arg) = unknown {
             let key = arg.name.expect("named");
-            self.error(codes::E2020, key.span, format!("`{name}` has no parameter `{}`", key.name));
+            let what = format!("names `{}`, and `{name}` has no parameter of that name", key.name);
+            let diagnostic = self.argument_misfit(key.span, iter.span, name, what, None);
+            self.sink.emit(diagnostic);
             return None;
         }
         match name {
@@ -34809,7 +34834,9 @@ impl<'a> Checker<'a> {
             },
         };
         if args.len() + 1 != arity || args.iter().any(|arg| arg.name.is_some()) {
-            self.error(codes::E2020, span, format!("`{method}` takes {} argument(s), found {}", arity - 1, args.len()));
+            let what = format!("gives {} argument(s), and `{method}` takes {}", args.len(), arity - 1);
+            let diagnostic = self.argument_misfit(span, span, &method.to_string(), what, None);
+            self.sink.emit(diagnostic);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         let mut operands = vec![receiver];
@@ -40455,10 +40482,10 @@ impl<'a> Checker<'a> {
             self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
         let ret = self.signatures[def.0 as usize].ret;
         if !self.arity_fits(def, args.len(), signature.len()) {
-            self.report_arity(def, format!("`{name}`"), signature.len(), args.len(), span);
+            self.report_arity(def, format!("`{name}`"), signature.len(), args.len(), span, args);
         }
         let params = self.signatures[def.0 as usize].params.clone();
-        let slots = self.call_argument_slots(name, args, &params);
+        let slots = self.call_argument_slots(name, args, &params, span, Some(def));
         let (checked, slots, default_arg_locals) =
             self.check_call_with_defaults(def, name, args, &params, &slots, span, None, None);
         // `[FFI-21]`, `[FFI-22]` (ODR-253) — what a `nullable` callback's callable value captures.
@@ -40813,10 +40840,10 @@ impl<'a> Checker<'a> {
         }
 
         if !self.arity_fits(def, args.len(), declared.len()) {
-            self.report_arity(def, format!("`{name}`"), declared.len(), args.len(), span);
+            self.report_arity(def, format!("`{name}`"), declared.len(), args.len(), span, args);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        let slots = self.call_argument_slots(name, args, &declared);
+        let slots = self.call_argument_slots(name, args, &declared, span, Some(def));
         let declared_modes = declared
             .iter()
             .map(|(_, ty, mode, _)| (*ty, *mode))
@@ -41277,10 +41304,10 @@ impl<'a> Checker<'a> {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         if !self.arity_fits(def, args.len(), declared.len()) {
-            self.report_arity(def, format!("`{name}`"), declared.len(), args.len(), span);
+            self.report_arity(def, format!("`{name}`"), declared.len(), args.len(), span, args);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        let slots = self.call_argument_slots(name, args, &declared);
+        let slots = self.call_argument_slots(name, args, &declared, span, Some(def));
         let declared_modes = declared
             .iter()
             .map(|(_, ty, mode, _)| (*ty, *mode))
@@ -41719,7 +41746,7 @@ impl<'a> Checker<'a> {
             self.signatures[own.def.0 as usize].params.iter().map(|(_, ty, mode, _)| (*ty, *mode)).collect();
         let ret = self.signatures[own.def.0 as usize].ret;
         if args.len() != signature.len() {
-            self.report_arity(own.def, format!("`{}`", own.name), signature.len(), args.len(), span);
+            self.report_arity(own.def, format!("`{}`", own.name), signature.len(), args.len(), span, args);
             return Expr { ty: ret, kind: ExprKind::Error, span };
         }
         let env = if matches!(self.types.kind(env.ty), TyKind::Ref { .. }) { self.read_through(env) } else { env };
@@ -42415,7 +42442,7 @@ impl<'a> Checker<'a> {
             // Its own parameters are what a program counts.
             let declared = self.signatures[def.0 as usize].params.len();
             if !self.arity_fits(def, args.len() + 1, declared) {
-                self.report_arity(def, format!("`{name}`"), declared - 1, args.len(), span);
+                self.report_arity(def, format!("`{name}`"), declared - 1, args.len(), span, args);
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             let value = ast::Expr {
@@ -45468,10 +45495,10 @@ impl<'a> Checker<'a> {
             self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
         let ret = self.signatures[def.0 as usize].ret;
         if !self.arity_fits(def, args.len(), signature.len()) {
-            self.report_arity(def, format!("`{qualified}`"), signature.len(), args.len(), span);
+            self.report_arity(def, format!("`{qualified}`"), signature.len(), args.len(), span, args);
         }
         let params = self.signatures[def.0 as usize].params.clone();
-        let slots = self.call_argument_slots(qualified, args, &params);
+        let slots = self.call_argument_slots(qualified, args, &params, span, Some(def));
         let (checked, slots, default_arg_locals) =
             self.check_call_with_defaults(def, qualified, args, &params, &slots, span, None, None);
         self.note_callable_value_args(def, &checked, span);
@@ -45732,7 +45759,7 @@ impl<'a> Checker<'a> {
             .collect::<Vec<_>>();
         let ret = self.signatures[def.0 as usize].ret;
         if !self.arity_fits(def, args.len(), signature.len()) {
-            self.report_arity(def, format!("`{}.{}`", self.types.display(owner), name.name), signature.len(), args.len(), span);
+            self.report_arity(def, format!("`{}.{}`", self.types.display(owner), name.name), signature.len(), args.len(), span, args);
         }
         let params = self.signatures[def.0 as usize].params.clone();
         let params = params
@@ -45741,7 +45768,7 @@ impl<'a> Checker<'a> {
                 (param, self.substitute_self(ty, owner), mode, param_span)
             })
             .collect::<Vec<_>>();
-        let slots = self.call_argument_slots(name.name, args, &params);
+        let slots = self.call_argument_slots(name.name, args, &params, span, Some(def));
         let (checked, slots, default_arg_locals) = self.check_call_with_defaults(
             def, name.name, args, &params, &slots, span, None, Some(owner));
         self.note_callable_value_args(def, &checked, span);
@@ -45852,7 +45879,7 @@ impl<'a> Checker<'a> {
         let ret = self.substitute_self(self.signatures[def.0 as usize].ret, owner);
         let ret = self.resolve_assoc(ret, owner);
         if !self.arity_fits(def, args.len(), signature.len()) {
-            self.report_arity(def, format!("`{}.{}`", param, name.name), signature.len(), args.len(), span);
+            self.report_arity(def, format!("`{}.{}`", param, name.name), signature.len(), args.len(), span, args);
         }
         let params = self.signatures[def.0 as usize].params.clone();
         let params = params
@@ -45863,7 +45890,7 @@ impl<'a> Checker<'a> {
             })
             .collect::<Vec<_>>();
         self.assoc_instance = saved_instance;
-        let slots = self.call_argument_slots(name.name, args, &params);
+        let slots = self.call_argument_slots(name.name, args, &params, span, Some(def));
         let (checked, slots, default_arg_locals) = self.check_call_with_defaults(
             def, name.name, args, &params, &slots, span, None, Some(owner));
         self.note_callable_value_args(def, &checked, span);
@@ -46940,7 +46967,7 @@ impl<'a> Checker<'a> {
         }
         let params = &signature[1..];
         if args.len() != params.len() {
-            self.report_arity(entry.def, "`super.init(...)`".to_string(), params.len(), args.len(), span);
+            self.report_arity(entry.def, "`super.init(...)`".to_string(), params.len(), args.len(), span, args);
             return error();
         }
         let values = args
@@ -46969,11 +46996,15 @@ impl<'a> Checker<'a> {
             .collect();
         let name = self.types.class_def(base_id).name;
         let names: Vec<Symbol> = fields.iter().map(|field| field.name).collect();
-        let slots = self.constructor_slots(name, &names, args, span);
+        let info: Vec<(Symbol, Ty, bool, Span)> = fields.iter().map(|field| (field.name, field.ty, field.has_default, field.ty_span)).collect();
+        let line = self.memberwise_line(name, &info);
+        let slots = self.constructor_slots(name, &names, args, span, Some(line.clone()));
         let mut complete = true;
         for (index, field) in fields.iter().enumerate() {
-            if !field.has_default && !slots.iter().any(|(_, slot)| *slot == index) {
-                self.error(codes::E2020, span, format!("field `{}` of `{name}` has no value", field.name));
+            if !field.has_default && slots.len() == args.len() && !slots.iter().any(|(_, slot)| *slot == index) {
+                let what = format!("gives nothing for `{}`, which has no default", field.name);
+                let diagnostic = self.argument_misfit(span, span, &name.to_string(), what, Some(line.clone()));
+                self.sink.emit(diagnostic);
                 complete = false;
             }
         }
@@ -48412,9 +48443,9 @@ impl<'a> Checker<'a> {
             }
             let signature = self.signatures[def.0 as usize].clone();
             if args.len() != signature.params.len() {
-                self.report_arity(def, format!("`{}`", name.name), signature.params.len(), args.len(), span);
+                self.report_arity(def, format!("`{}`", name.name), signature.params.len(), args.len(), span, args);
             }
-            let slots = self.call_argument_slots(name.name, args, &signature.params);
+            let slots = self.call_argument_slots(name.name, args, &signature.params, span, Some(def));
             let checked = self.check_bound_call_arguments(args, &signature.params, &slots, None);
             let modes = signature.params.iter().map(|(_, _, mode, _)| *mode).collect();
             let layout = self.dyn_vtable_layout(&interfaces);
@@ -49568,7 +49599,7 @@ impl<'a> Checker<'a> {
         // rest.
         let expected = signature.len().saturating_sub(1);
         if !self.arity_fits(def, args.len(), expected) {
-            self.report_arity(def, format!("`{}`", name.name), expected, args.len(), span);
+            self.report_arity(def, format!("`{}`", name.name), expected, args.len(), span, args);
         }
         // `[IFC-4]` — the receiver is concrete here, so an associated type in
         // the signature resolves to what this type declared it to be.
@@ -49614,7 +49645,7 @@ impl<'a> Checker<'a> {
         };
         let mut checked = vec![checked_receiver];
         let params = self.signatures[def.0 as usize].params[1..].to_vec();
-        let slots = self.call_argument_slots(name.name, args, &params);
+        let slots = self.call_argument_slots(name.name, args, &params, span, Some(def));
         let owner = self.signatures[def.0 as usize].params[0].1;
         let (values, slots, default_arg_locals) = self.check_call_with_defaults(
             def, name.name, args, &params, &slots, span, Some(checked[0].ty), Some(owner));
@@ -49779,7 +49810,7 @@ impl<'a> Checker<'a> {
         // An interface declaration has no receiver in its parameter list, so
         // every declared parameter is a written argument.
         if args.len() != signature.len() {
-            self.report_arity(def, format!("`{}`", name.name), signature.len(), args.len(), span);
+            self.report_arity(def, format!("`{}`", name.name), signature.len(), args.len(), span, args);
         }
         let mut checked = vec![self.pass_receiver_to(receiver, receiver_mode, def, span)];
         let params = self.signatures[def.0 as usize].params.clone();
@@ -49794,7 +49825,7 @@ impl<'a> Checker<'a> {
             })
             .collect::<Vec<_>>();
         self.assoc_instance = saved_instance;
-        let slots = self.call_argument_slots(name.name, args, &params);
+        let slots = self.call_argument_slots(name.name, args, &params, span, Some(def));
         self.check_direct_call_safety(def, span);
         checked.extend(self.check_bound_call_arguments(args, &params, &slots, Some(def)));
         Expr {
@@ -50185,11 +50216,9 @@ impl<'a> Checker<'a> {
         let latebound = latebound || latebound_override;
         if args.len() != params.len() {
             let shown = self.types.display(signature);
-            self.error(
-                codes::E2020,
-                span,
-                format!("`{shown}` takes {} arguments, found {}", params.len(), args.len()),
-            );
+            let what = format!("gives {} arguments, and `{shown}` takes {}", args.len(), params.len());
+            let diagnostic = self.argument_misfit(span, span, &shown, what, None);
+            self.sink.emit(diagnostic);
             return Expr { ty: ret, kind: ExprKind::Error, span };
         }
         let mut checked = Vec::new();
@@ -50197,11 +50226,9 @@ impl<'a> Checker<'a> {
             if let Some(name) = arg.name {
                 // `[TYP-25]`'s named arguments match parameter *names*, and a
                 // function type has none.
-                self.error(
-                    codes::E2020,
-                    name.span,
-                    "a call through a function value takes positional arguments",
-                );
+                let what = format!("names `{}`, and a function value has no parameter names: give it by position", name.name);
+                let diagnostic = self.argument_misfit(name.span, span, "f", what, None);
+                self.sink.emit(diagnostic);
             }
             checked.push(self.check_argument(&arg.value, param.ty, hir_mode(param.mode)));
         }
@@ -50232,11 +50259,9 @@ impl<'a> Checker<'a> {
             self.signatures[def.0 as usize].params.iter().map(|(_, ty, mode, _)| (*ty, *mode)).collect();
         let ret = self.signatures[def.0 as usize].ret;
         if args.len() != signature.len() {
-            self.error(
-                codes::E2020,
-                span,
-                format!("this function takes {} argument{}, found {}", signature.len(), if signature.len() == 1 { "" } else { "s" }, args.len()),
-            );
+            let what = format!("gives {} argument{}, and this function takes {}", args.len(), if args.len() == 1 { "" } else { "s" }, signature.len());
+            let diagnostic = self.argument_misfit(span, span, "f", what, self.declaration_first_line(def));
+            self.sink.emit(diagnostic);
             return Expr { ty: ret, kind: ExprKind::Error, span };
         }
         let checked = args
@@ -50244,11 +50269,9 @@ impl<'a> Checker<'a> {
             .zip(signature.iter())
             .map(|(arg, &(param_ty, mode))| {
                 if let Some(name) = arg.name {
-                    self.error(
-                        codes::E2020,
-                        name.span,
-                        "a call through a function value takes positional arguments",
-                    );
+                    let what = format!("names `{}`, and a function value has no parameter names: give it by position", name.name);
+                    let diagnostic = self.argument_misfit(name.span, span, "f", what, None);
+                    self.sink.emit(diagnostic);
                 }
                 self.check_argument(&arg.value, param_ty, mode)
             })
@@ -59010,11 +59033,85 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// `[DIA-22]` — a call with the wrong number of arguments, reported at the call with the
-    /// callee's declaration as a secondary span.
-    fn report_arity(&mut self, def: DefId, shown: String, declared: usize, given: usize, span: Span) {
-        let noun = if declared == 1 { "argument" } else { "arguments" };
-        let mut diagnostic = Diagnostic::error(codes::E2020, span, format!("{shown} takes {declared} {noun}, found {given}"));
+    /// `[TYP-25]` — the first line of the declaration of `def`, as written (`fn area(w: int, h: int)
+    /// -> int`): what an `E2021` message shows of the callee.
+    fn declaration_first_line(&self, def: DefId) -> Option<String> {
+        let span = self.signatures[def.0 as usize].decl;
+        if span == Span::DUMMY {
+            return None;
+        }
+        let text = &self.sources.get(&span.file)?.text;
+        let start = text.get(..span.start as usize)?.rfind('\n').map_or(0, |at| at + 1);
+        let line = text.get(start..)?.lines().next()?.trim();
+        let line = line.strip_suffix(':').unwrap_or(line).trim_end();
+        (!line.is_empty()).then(|| line.to_string())
+    }
+
+    /// `[STR-1]` — a memberwise constructor's first line, as its parameters would read: `Point(x:
+    /// int, y: int)`, a field with a default `y: int = …`.
+    fn memberwise_line(&self, name: Symbol, fields: &[(Symbol, Ty, bool, Span)]) -> String {
+        let shown: Vec<String> = fields
+            .iter()
+            .map(|(field, ty, has_default, written)| {
+                // The type as the declaration wrote it (`int`), else as the checker names it.
+                let ty = self
+                    .sources
+                    .get(&written.file)
+                    .and_then(|source| source.text.get(written.start as usize..written.end as usize))
+                    .filter(|text| !text.is_empty() && !text.contains('\n'))
+                    .map_or_else(|| self.types.display(*ty), str::to_string);
+                format!("{field}: {ty}{}", if *has_default { " = …" } else { "" })
+            })
+            .collect();
+        format!("{name}({})", shown.join(", "))
+    }
+
+    /// `[TYP-25]` — `E2021` (shape N6): `what` about the call written at `call`, with the callee's
+    /// first line when it has one.
+    fn argument_misfit(&self, span: Span, call: Span, callee: &str, what: String, line: Option<String>) -> Diagnostic {
+        let call = self.written_line(call).unwrap_or_else(|| format!("{callee}(…)"));
+        let mut message = format!("`{call}` {what}");
+        if let Some(line) = line {
+            message.push_str(&format!(": `{line}`"));
+        }
+        Diagnostic::error(codes::E2021, span, message)
+    }
+
+    /// `[TYP-25]` — the call with a parameter's name before one positional argument, which `E2021`
+    /// writes for an argument that came after a named one.
+    fn call_with_argument_named(&self, call: Span, argument: Span, name: Symbol) -> Option<String> {
+        let text = self.written_line(call)?;
+        let (from, to) = (argument.start.checked_sub(call.start)? as usize, argument.end.checked_sub(call.start)? as usize);
+        Some(format!("{}{name}={}{}", text.get(..from)?, text.get(from..to)?, text.get(to..)?))
+    }
+
+    /// `[DIA-22]`, `[TYP-25]` — a call with more arguments than the callee has parameters, or too few
+    /// for the parameters that have no default: `E2021` at the call, with the callee's first line and
+    /// its declaration as a secondary span.
+    fn report_arity(&mut self, def: DefId, shown: String, declared: usize, given: usize, span: Span, args: &[ast::Arg]) {
+        let callee = shown.trim_matches('`').to_string();
+        let line = self.declaration_first_line(def);
+        let params: Vec<Symbol> = {
+            let all = &self.signatures[def.0 as usize].params;
+            let skip = all.len().saturating_sub(declared);
+            all.iter().skip(skip).map(|(name, ..)| *name).collect()
+        };
+        let what = if given > declared {
+            let noun = |n: usize| if n == 1 { "argument" } else { "arguments" };
+            format!("gives {given} {}, and `{callee}` takes {declared}", noun(given))
+        } else {
+            // The first parameter that nothing gives and that has no default.
+            let defaults = self.param_defaults.get(&def).map(|(_, list)| list.iter().map(|(name, _)| *name).collect::<Vec<_>>()).unwrap_or_default();
+            let positional = args.iter().filter(|arg| arg.name.is_none()).count();
+            let missing = params.iter().enumerate().find(|(index, name)| {
+                *index >= positional && !args.iter().any(|arg| arg.name.is_some_and(|given| given.name == **name)) && !defaults.contains(name)
+            });
+            match missing {
+                Some((_, name)) => format!("gives nothing for `{name}`, which has no default"),
+                None => format!("gives {given} {}, and `{callee}` takes {declared}", if given == 1 { "argument" } else { "arguments" }),
+            }
+        };
+        let mut diagnostic = self.argument_misfit(span, span, &callee, what, line);
         let decl = self.signatures[def.0 as usize].decl;
         if decl != Span::DUMMY {
             diagnostic = diagnostic.secondary(decl, format!("{shown} is declared here"));
@@ -59038,7 +59135,11 @@ impl<'a> Checker<'a> {
         callee: Symbol,
         args: &[ast::Arg],
         params: &[(Symbol, Ty, Mode, Span)],
+        call: Span,
+        def: Option<DefId>,
     ) -> Vec<Option<usize>> {
+        let line = def.and_then(|def| self.declaration_first_line(def));
+        let callee_shown = callee.to_string();
         // `[DIA-22]` — where the parameters are declared, for an unknown name.
         let declared = params.first().map_or(Span::DUMMY, |param| param.3);
         let mut slots = vec![None; args.len()];
@@ -59052,7 +59153,8 @@ impl<'a> Checker<'a> {
                 match params.iter().position(|(param, _, _, _)| *param == name.name) {
                     Some(slot) => Some(slot),
                     None => {
-                        let mut diagnostic = Diagnostic::error(codes::E2020, name.span, format!("`{callee}` has no parameter `{}`", name.name));
+                        let what = format!("names `{}`, and `{callee}` has no parameter of that name", name.name);
+                        let mut diagnostic = self.argument_misfit(name.span, call, &callee_shown, what, line.clone());
                         if declared != Span::DUMMY {
                             let names: Vec<String> = params.iter().map(|(param, ..)| format!("`{param}`")).collect();
                             diagnostic = diagnostic.secondary(declared, format!("its parameters are {}", names.join(", ")));
@@ -59063,11 +59165,19 @@ impl<'a> Checker<'a> {
                 }
             } else {
                 if named_seen {
-                    self.error(
-                        codes::E2020,
-                        arg.span,
-                        "positional arguments must come before named ones",
-                    );
+                    // The line to write names this argument with the first parameter no argument before it gives.
+                    let earlier = args[..arg_index].iter().rev().find(|earlier| earlier.name.is_some()).and_then(|earlier| self.written_line(earlier.span));
+                    let free = assigned.iter().position(|taken| !taken).map(|slot| params[slot].0);
+                    let written = self.written_line(call).and(self.written_line(arg.span));
+                    let mut what = match (&written, &earlier) {
+                        (Some(this), Some(earlier)) => format!("gives `{this}` after the named `{earlier}`, and positional arguments come first"),
+                        _ => "gives a positional argument after a named one, and positional arguments come first".to_string(),
+                    };
+                    if let Some(fixed) = free.and_then(|free| self.call_with_argument_named(call, arg.span, free)) {
+                        what.push_str(&format!("; write `{fixed}`"));
+                    }
+                    let diagnostic = self.argument_misfit(arg.span, call, &callee_shown, what, None);
+                    self.sink.emit(diagnostic);
                 }
                 while next_positional < assigned.len() && assigned[next_positional] {
                     next_positional += 1;
@@ -59079,11 +59189,9 @@ impl<'a> Checker<'a> {
 
             let Some(slot) = slot else { continue };
             if assigned[slot] {
-                self.error(
-                    codes::E1030,
-                    arg.value.span,
-                    format!("parameter `{}` is given twice", params[slot].0),
-                );
+                let what = format!("gives `{}` twice", params[slot].0);
+                let diagnostic = self.argument_misfit(arg.value.span, call, &callee_shown, what, line.clone());
+                self.sink.emit(diagnostic);
                 continue;
             }
             assigned[slot] = true;
@@ -59227,7 +59335,8 @@ impl<'a> Checker<'a> {
                 // was reported already, and may be the one meant here.
                 if slots.iter().all(Option::is_some) && self.arity_fits(def, slots.len(), params.len()) {
                     let declared = params[index].3;
-                    let mut diagnostic = Diagnostic::error(codes::E2020, span, format!("`{callee}` needs a value for `{name}`"));
+                    let line = self.declaration_first_line(def);
+                    let mut diagnostic = self.argument_misfit(span, span, &callee.to_string(), format!("gives nothing for `{name}`, which has no default"), line);
                     if declared != Span::DUMMY {
                         diagnostic = diagnostic.secondary(declared, format!("`{name}` is declared here, with no default"));
                     }
@@ -59807,17 +59916,19 @@ impl<'a> Checker<'a> {
             let value = self.check_expr(&args[0].value, fields[field].ty);
             return Expr { ty, kind: ExprKind::Builtin { which: Builtin::UnionLit { union: id, field }, args: vec![value] }, span };
         }
-        let field_info: Vec<(Symbol, Ty, bool)> = self
+        let field_info: Vec<(Symbol, Ty, bool, Span)> = self
             .types
             .struct_def(id)
             .fields
             .iter()
-            .map(|f| (f.name, f.ty, f.has_default))
+            .map(|f| (f.name, f.ty, f.has_default, f.ty_span))
             .collect();
 
         // `[STR-1]` — positional or named; fields with defaults may be omitted.
-        let names: Vec<Symbol> = field_info.iter().map(|(field, _, _)| *field).collect();
-        let slots = self.constructor_slots(name, &names, args, span);
+        let names: Vec<Symbol> = field_info.iter().map(|(field, ..)| *field).collect();
+        let line = self.memberwise_line(name, &field_info);
+        let slots = self.constructor_slots(name, &names, args, span, Some(line));
+        let bound_all = slots.len() == args.len();
         let mut values: Vec<Option<Expr>> = (0..field_info.len()).map(|_| None).collect();
         for (arg, field) in slots {
             // `[OWN-10]` — the field a value is made for, for `E2123`'s words.
@@ -59825,22 +59936,22 @@ impl<'a> Checker<'a> {
             values[field] = Some(self.check_expr(&args[arg].value, field_info[field].1));
             self.filling = outer;
         }
-        self.finish_struct_literal(id, name, values, span)
+        self.finish_struct_literal(id, name, values, span, bound_all)
     }
 
     /// The literal of struct `id` from the value for each field; a field
     /// given none takes its default (`[STR-2]`) or is reported.
-    fn finish_struct_literal(&mut self, id: StructId, name: Symbol, mut values: Vec<Option<Expr>>, span: Span) -> Expr {
-        let field_info: Vec<(Symbol, Ty, bool)> = self
+    fn finish_struct_literal(&mut self, id: StructId, name: Symbol, mut values: Vec<Option<Expr>>, span: Span, complain: bool) -> Expr {
+        let field_info: Vec<(Symbol, Ty, bool, Span)> = self
             .types
             .struct_def(id)
             .fields
             .iter()
-            .map(|f| (f.name, f.ty, f.has_default))
+            .map(|f| (f.name, f.ty, f.has_default, f.ty_span))
             .collect();
         let ty = self.types.intern(TyKind::Struct(id));
         let mut fields = Vec::with_capacity(field_info.len());
-        for (index, (field_name, field_ty, has_default)) in field_info.iter().enumerate() {
+        for (index, (field_name, field_ty, has_default, _)) in field_info.iter().enumerate() {
             match values[index].take() {
                 Some(expr) => fields.push(expr),
                 None => {
@@ -59862,12 +59973,11 @@ impl<'a> Checker<'a> {
                             fields.push(value);
                         }
                         _ => {
-                            if !has_default {
-                                self.error(
-                                    codes::E2020,
-                                    span,
-                                    format!("field `{field_name}` of `{name}` has no value"),
-                                );
+                            if !has_default && complain {
+                                let line = self.memberwise_line(name, &field_info);
+                                let what = format!("gives nothing for `{field_name}`, which has no default");
+                                let diagnostic = self.argument_misfit(span, span, &name.to_string(), what, Some(line));
+                                self.sink.emit(diagnostic);
                             }
                             fields.push(Expr { ty: self.common.error, kind: ExprKind::Error, span });
                         }
@@ -59933,11 +60043,11 @@ impl<'a> Checker<'a> {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         if !has_init && !has_base && args.len() > fields.len() {
-            self.error(
-                codes::E2020,
-                span,
-                format!("`{name}()` has {} fields, found {} arguments", fields.len(), args.len()),
-            );
+            let info: Vec<(Symbol, Ty, bool, Span)> = fields.iter().map(|field| (field.name, field.ty, field.has_default, field.ty_span)).collect();
+            let line = self.memberwise_line(name, &info);
+            let what = format!("gives {} arguments, and `{name}` takes {}", args.len(), fields.len());
+            let diagnostic = self.argument_misfit(span, span, &name.to_string(), what, Some(line));
+            self.sink.emit(diagnostic);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         if has_init {
@@ -59965,10 +60075,10 @@ impl<'a> Checker<'a> {
             let (init, values, arg_eval_order) = if self.signatures[init.0 as usize].generics.is_empty() {
                 let params = &signature_params[1..];
                 if args.len() != params.len() {
-                    self.report_arity(init, format!("`{name}()`"), params.len(), args.len(), span);
+                    self.report_arity(init, format!("`{name}()`"), params.len(), args.len(), span, args);
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
-                let slots = self.call_argument_slots(name, args, params);
+                let slots = self.call_argument_slots(name, args, params, span, Some(init));
                 self.check_direct_call_safety(init, span);
                 // `[OWN-9]` (verdict 159) — a constructor's argument takes no word: it is given as `=`
                 // gives a value, whatever `init`'s first line says.
@@ -60084,7 +60194,12 @@ impl<'a> Checker<'a> {
         // are a function-call contract, not field names.
         let mut values_by_field: Vec<Option<Expr>> = (0..fields.len()).map(|_| None).collect();
         let names: Vec<Symbol> = fields.iter().map(|field| field.name).collect();
-        for (arg, index) in self.constructor_slots(name, &names, args, span) {
+        let info: Vec<(Symbol, Ty, bool, Span)> = fields.iter().map(|field| (field.name, field.ty, field.has_default, field.ty_span)).collect();
+        let line = self.memberwise_line(name, &info);
+        let bound = self.constructor_slots(name, &names, args, span, Some(line.clone()));
+        // An argument that did not bind was reported, and may be the one meant for a field left empty.
+        let bound_all = bound.len() == args.len();
+        for (arg, index) in bound {
             values_by_field[index] = Some(self.check_expr(&args[arg].value, fields[index].ty));
         }
 
@@ -60096,11 +60211,11 @@ impl<'a> Checker<'a> {
                 continue;
             }
             if !field.has_default {
-                self.error(
-                    codes::E2020,
-                    span,
-                    format!("field `{}` of `{name}` has no value", field.name),
-                );
+                if bound_all {
+                    let what = format!("gives nothing for `{}`, which has no default", field.name);
+                    let diagnostic = self.argument_misfit(span, span, &name.to_string(), what, Some(line.clone()));
+                    self.sink.emit(diagnostic);
+                }
                 invalid = true;
                 continue;
             }
@@ -60971,7 +61086,9 @@ impl<'a> Checker<'a> {
                 None if spec.is_none() => spec = Some(&arg.value),
                 Some(name) if name.name.is("spec") && spec.is_none() => spec = Some(&arg.value),
                 Some(name) => {
-                    self.error(codes::E2020, name.span, format!("`format` has no parameter `{}`", name.name));
+                    let what = format!("names `{}`, and `format` has no parameter of that name", name.name);
+                    let diagnostic = self.argument_misfit(name.span, span, "format", what, None);
+                    self.sink.emit(diagnostic);
                     return error;
                 }
                 None => {
