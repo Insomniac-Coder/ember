@@ -596,17 +596,20 @@ impl Checker<'_> {
         diagnostic.help("build the text in a `String`: declare the place `String`")
     }
 
-    /// `[DIA-21]` P22 (ODR-182) — an interface's name in a type position is a class handle typed by
-    /// it (IV.1, `[OBJ-2]`); when the types implementing it are values (structs, enums) and none is a
-    /// class, a place of any of them is written another way, which the help names.
+    /// `[OBJ-2]` (0.9.20) — a bare interface name in a type position does not say who owns the value,
+    /// whatever implements it: `E2173`, with the words that say it. `[DIA-21]` P22 (ODR-182) adds,
+    /// where the types implementing it are values (structs, enums) and none is a class, how a place
+    /// of one of them is written.
     pub(crate) fn interface_of_values(&self, interface: Symbol, span: Span, root: Span, param: bool) -> Option<Diagnostic> {
-        let mut implementers = self.implemented.iter().filter(|(_, each, _)| *each == interface).map(|&(ty, ..)| ty).peekable();
-        implementers.peek()?;
-        let mut implementers = implementers;
+        let mut implementers = self.implemented.iter().filter(|(_, each, _)| *each == interface).map(|&(ty, ..)| ty);
+        let diagnostic = Diagnostic::error(codes::E2173, span, self.bare_interface_message(interface, span, root, param));
         if implementers.any(|ty| matches!(self.types.kind(ty), TyKind::Class(_))) {
-            return None;
+            let shown = self.interface_shown(interface);
+            return Some(diagnostic.habit(Habit::P22).help(format!(
+                "`owns dyn {shown}` holds the object alone in a block of its own (`owns v` makes one); with `shares dyn {shown}` other names own it too, and each is made `shares`; `ref dyn {shown}` is a view"
+            )));
         }
-        Some(self.interface_of_values_diagnostic(interface, Diagnostic::error(codes::E2173, span, self.bare_interface_message(interface, span, root, param))))
+        Some(self.interface_of_values_diagnostic(interface, diagnostic))
     }
 
     /// `[OBJ-2]`, `[IFC-5]` — "`Shape` is an interface, so `Array[Shape]` does not say who owns the
