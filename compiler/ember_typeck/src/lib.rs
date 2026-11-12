@@ -8181,6 +8181,20 @@ impl<'a> Checker<'a> {
             // only an extension implementing an interface may add to it (`[IFC-2]`).
             let tuple_args: Vec<ast::GenericArg>;
             let (name, args): (Symbol, &[ast::GenericArg]) = match &decl.target.kind {
+                // `[TYP-47]` — `extend[A, B, Ts...] (A, B, Ts...)`: every tuple of the elements
+                // before the pack and any number after, written once from two elements up.
+                ast::TypeKind::Tuple(items) if items.iter().any(|item| matches!(item.kind, ast::TypeKind::Spread(_))) => {
+                    if !matches!(items.last().map(|item| &item.kind), Some(ast::TypeKind::Spread(_))) {
+                        let at = items.iter().find(|item| matches!(item.kind, ast::TypeKind::Spread(_))).map_or(decl.target.span, |item| item.span);
+                        self.sink.emit(
+                            Diagnostic::error(codes::E0100, at, "a pack spelled out in an extended tuple is its last element")
+                                .note("the pack takes the elements after those written before it [TYP-47]"),
+                        );
+                        continue;
+                    }
+                    tuple_args = items.iter().cloned().map(ast::GenericArg::Type).collect();
+                    (Self::tuple_pack_extension_target(items.len() - 1), &tuple_args)
+                }
                 ast::TypeKind::Tuple(items) => {
                     tuple_args = items.iter().cloned().map(ast::GenericArg::Type).collect();
                     (Self::tuple_extension_target(items.len()), &tuple_args)
@@ -8232,7 +8246,7 @@ impl<'a> Checker<'a> {
                     self.error(codes::E1010, decl.target.span, "expected a type argument");
                     continue;
                 };
-                target_args.push(self.resolve_type(arg));
+                target_args.push(self.resolve_type_argument(arg));
             }
             // D-414 — a target that leaves out a defaulted type argument
             // (`extend[K] Store[K]` of `struct Store[K, H = Tag]`) means the
@@ -9412,6 +9426,12 @@ impl<'a> Checker<'a> {
         Symbol::intern(&format!("$tuple{arity}"))
     }
 
+    /// `[TYP-47]` — where an extension of tuples of `fixed` written elements and a pack after them
+    /// is kept: `extend[A, B, Ts...] (A, B, Ts...)` under `$tuple+2`.
+    fn tuple_pack_extension_target(fixed: usize) -> Symbol {
+        Symbol::intern(&format!("$tuple+{fixed}"))
+    }
+
     /// The name an extension of the generic type written `segment` is kept
     /// under: a generic struct, enum or class recipe's, or one of the
     /// built-in generic types'.
@@ -9730,8 +9750,14 @@ impl<'a> Checker<'a> {
         args: &[Ty],
     ) -> Vec<(usize, GenericExtension, Vec<(Symbol, Ty)>)> {
         let Some(extensions) = self.generic_extensions.get(&name).cloned() else { return Vec::new() };
+        // `[TYP-47]` — a tuple's extensions over a pack are counted apart from its own.
+        let offset = match name.as_str().strip_prefix("$tuple+").and_then(|fixed| fixed.parse::<usize>().ok()) {
+            Some(fixed) => (fixed + 1) << 20,
+            None => 0,
+        };
         let mut matching = Vec::new();
         for (index, extension) in extensions.into_iter().enumerate() {
+            let index = index + offset;
             if self.applied_extensions.contains(&(ty, index)) {
                 continue;
             }
@@ -9785,6 +9811,24 @@ impl<'a> Checker<'a> {
     /// its own, for their vtable slots. `extend_early_instances` calls it for
     /// every kind.
     fn apply_generic_extensions(&mut self, ty: Ty, name: Symbol, args: &[Ty]) {
+        // `[TYP-47]` — a tuple takes the extensions of tuples over a pack whose written elements
+        // it has, the rest of its elements the pack's types, from two elements up.
+        if let Some(arity) = name
+            .as_str()
+            .strip_prefix("$tuple")
+            .filter(|count| count.bytes().all(|digit| digit.is_ascii_digit()))
+            .and_then(|count| count.parse::<usize>().ok())
+        {
+            for fixed in 0..=arity {
+                let target = Self::tuple_pack_extension_target(fixed);
+                if !self.generic_extensions.contains_key(&target) || arity < 2 {
+                    continue;
+                }
+                let mut grouped = args[..fixed].to_vec();
+                grouped.push(self.types.pack_of(args[fixed..].to_vec()));
+                self.apply_generic_extensions(ty, target, &grouped);
+            }
+        }
         let matching = self.matching_generic_extensions(ty, name, args);
         if matching.is_empty() {
             return;
