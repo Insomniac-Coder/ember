@@ -959,7 +959,8 @@ pub(crate) fn shared_type_info(m: &mut Module<'_>, id: ember_types::StructId) ->
     } else {
         "null".to_string()
     };
-    let display = format!("{}[{}]", if sync { "SyncShared" } else { "Shared" }, table.display(inner));
+    // `[RT-7]` — the value is named by its own type: "too many owners of a `Counter`".
+    let display = table.display(inner);
     let name = m.bytes(display.as_bytes());
     // Annex B — a shared value's type information has no identity of its own.
     let (identity_ty, identity) = if m.reload.is_some() { (", ptr", ", ptr null") } else { ("", "") };

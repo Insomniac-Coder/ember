@@ -239,7 +239,8 @@ impl Interp<'_, '_> {
     pub(crate) fn object_name(&self, object: u64) -> R<String> {
         Ok(match self.object_info(object)? {
             Info::Class(id) => self.types.class_display_name(id),
-            Info::Shared(id) => self.types.display(self.types.find(&TyKind::Struct(id)).unwrap_or(self.common.void)),
+            // `[RT-7]` — a value in a block is named by its own type: "too many owners of a `Counter`".
+            Info::Shared(id) => shared_inner(self.types, id).map_or_else(String::new, |inner| self.types.display(inner)),
         })
     }
 

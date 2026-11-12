@@ -5417,7 +5417,8 @@ impl Emitter<'_> {
             let info = self.shared_type_info_symbol(id);
             let inner_c = self.c_type(inner);
             let sync = self.types.struct_def(id).origin.as_ref().is_some_and(|(name, _)| name.is("SyncShared"));
-            let display = format!("{}[{}]", if sync { "SyncShared" } else { "Shared" }, self.types.display(inner));
+            // `[RT-7]` — the value is named by its own type: "too many owners of a `Counter`".
+            let display = self.types.display(inner);
             self.line(&format!("{linkage}const {} {info} = {{", ember_branding::runtime("type_info")));
             self.line(&format!(
                 "    (uint32_t)(EMBER_OBJ_PAYLOAD_OFFSET({inner_c_align}) + {inner_c_size}),", inner_c_align = c_align(&inner_c), inner_c_size = c_size(&inner_c)
