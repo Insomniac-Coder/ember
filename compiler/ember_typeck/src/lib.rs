@@ -2059,6 +2059,8 @@ struct ClosureCall {
     owned: bool,
     /// The capture a `once` closure gives away, as the program names it (`[CLO-6]`).
     moved: Option<Symbol>,
+    /// Where it is given away in the body, for the help's rewritten line (`[CLO-6]`).
+    moved_at: Option<Span>,
 }
 
 /// Whose field default `check_field_default` checks.
@@ -3915,6 +3917,8 @@ struct Checker<'a> {
     probe_object_reads: std::cell::RefCell<Vec<DefId>>,
     /// The first captured field a closure body gives away (`[CLO-6]`'s message names it).
     first_moved_capture: std::cell::Cell<Option<usize>>,
+    /// Where it is given away.
+    first_moved_span: std::cell::Cell<Option<Span>>,
     /// The method of each call through a `dyn` value, by its receiver's place: a capture probe asks
     /// whether its object is implicit.
     interface_call_methods: HashMap<Span, DefId>,
@@ -4376,6 +4380,7 @@ impl<'a> Checker<'a> {
             assumed_object_reads: HashSet::new(),
             probe_object_reads: std::cell::RefCell::new(Vec::new()),
             first_moved_capture: std::cell::Cell::new(None),
+            first_moved_span: std::cell::Cell::new(None),
             interface_call_methods: HashMap::new(),
             members_of: None,
             unstated_calls: HashMap::new(),
@@ -41607,12 +41612,14 @@ impl<'a> Checker<'a> {
             // `[CLO-6a]` — a `once fn` value is called at most once, as such a closure is.
             let once_value = matches!(self.types.kind(value.ty), TyKind::Fn { once: true, .. });
             let mut moved = None;
+            let mut moved_at = None;
             if !once_value {
                 let TyKind::Struct(id) = *self.types.kind(value.ty) else { continue };
                 if !self.closure_calls.get(&id).is_some_and(|closure| closure.once) {
                     continue;
                 }
                 moved = self.closure_calls.get(&id).and_then(|closure| closure.moved);
+                moved_at = self.closure_calls.get(&id).and_then(|closure| closure.moved_at);
             }
             // A routed method's parameter is not the user's to change.
             let help = match self.routed_method {
@@ -41635,7 +41642,17 @@ impl<'a> Checker<'a> {
                     .note("a `fn(A) -> R` parameter may be called any number of times [CLO-6]"),
                 );
             } else {
-                self.sink.emit_classified(
+                // The argument as written with `copy of` before the capture where it is given away;
+                // a call of one argument is shown whole, as `[CLO-6]` writes it.
+                let copied_line = moved.zip(moved_at).and_then(|(name, at)| {
+                    let span = arg.value.span;
+                    let text = self.written_line(span)?;
+                    let (from, to) = (at.start.checked_sub(span.start)? as usize, at.end.checked_sub(span.start)? as usize);
+                    let (head, tail) = (text.get(..from)?, text.get(to..)?);
+                    let shown = format!("{head}copy of {name}{tail}");
+                    Some(if args.len() == 1 { format!("{}({shown})", callee.as_str().rsplit('.').next().unwrap_or(callee.as_str())) } else { shown })
+                });
+                let mut diagnostic =
                     Diagnostic::error(
                         codes::E3013,
                         arg.value.span,
@@ -41645,12 +41662,19 @@ impl<'a> Checker<'a> {
                         ),
                     )
                     .primary_label("this function can run only once")
-                    .help(match moved {
-                        Some(name) => format!("{help}; or hand over a copy each time instead (`copy of {name}` where it is given away)"),
-                        None => help,
+                    .help(match (moved, &copied_line) {
+                        (Some(_), Some(_)) if self.routed_method.is_none() => help,
+                        (Some(name), _) => format!("{help}; or hand over a copy each time instead (`copy of {name}` where it is given away)"),
+                        (None, _) => help,
                     })
-                    .note("a function that gives one of its captures away can be called only once [CLO-6]"),
-                );
+                    .note("a function that gives one of its captures away can be called only once [CLO-6]");
+                // `[CLO-6]` — the rule's own line: the call with a copy given away.
+                if self.routed_method.is_none()
+                    && let Some(line) = copied_line
+                {
+                    diagnostic = diagnostic.help(format!("hand over a copy each time instead: `{line}`"));
+                }
+                self.sink.emit_classified(diagnostic);
             }
             rejected = true;
         }
@@ -41900,7 +41924,7 @@ impl<'a> Checker<'a> {
                     origin: None,
                     declaring_module: self.current_module,
                 });
-                self.closure_calls.insert(id, ClosureCall { def, once: false, owned: false, moved: None });
+                self.closure_calls.insert(id, ClosureCall { def, once: false, owned: false, moved: None, moved_at: None });
                 let ty = self.types.intern(TyKind::Struct(id));
                 (id, Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields: Vec::new() }, span }, Mode::Borrow)
             }
@@ -50472,7 +50496,7 @@ impl<'a> Checker<'a> {
                             ffi_counted: None,
                         });
                         self.closure_symbols.insert(def, call.symbol);
-                        self.closure_calls.insert(id, ClosureCall { def, once: call.once, owned: call.owned, moved: None });
+                        self.closure_calls.insert(id, ClosureCall { def, once: call.once, owned: call.owned, moved: None, moved_at: None });
                     }
                     self.types.intern(TyKind::Struct(id))
                 } else if let Some((generic, args)) = &entry.origin {
@@ -50966,8 +50990,10 @@ impl<'a> Checker<'a> {
         // directly owned captures. It becomes `CallableOnce` only when the
         // typed body actually consumes a non-`Copy` capture.
         self.first_moved_capture.set(None);
+        self.first_moved_span.set(None);
         let once = owned && self.closure_body_moves_capture(&body, LocalId(0));
         let moved = if once { self.first_moved_capture.get().and_then(|index| captured.get(index)).map(|(name, _)| *name) } else { None };
+        let moved_at = if moved.is_some() { self.first_moved_span.get() } else { None };
         debug_assert_eq!(once, probe_once, "closure probe and final body disagree about CallableOnce");
         let call_mode = if once {
             Mode::Owned
@@ -50993,7 +51019,7 @@ impl<'a> Checker<'a> {
             skipped_before,
             reserved,
         );
-        self.closure_calls.insert(struct_id, ClosureCall { def, once, owned: owned, moved });
+        self.closure_calls.insert(struct_id, ClosureCall { def, once, owned: owned, moved, moved_at });
 
         // The closure *value* is its environment. Ordinary closures borrow
         // each captured local; `owned fn` moves or copies each capture into
@@ -51914,6 +51940,7 @@ impl<'a> Checker<'a> {
         {
             if self.first_moved_capture.get().is_none() {
                 self.first_moved_capture.set(Some(index));
+                self.first_moved_span.set(Some(expr.span));
             }
             return true;
         }
