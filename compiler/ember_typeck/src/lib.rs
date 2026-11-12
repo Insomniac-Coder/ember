@@ -2900,6 +2900,9 @@ struct ForeignTypeContract {
     destroys: Option<ast::Ident>,
     adopt: bool,
     creator: bool,
+    /// `[FFI-8]`, `[THR-8]` — `threads(main)`: its objects are used by the main thread only, so an
+    /// `owns T` of it is no more `Send` than a `threads(creator)` one.
+    main: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -20317,7 +20320,14 @@ impl<'a> Checker<'a> {
     /// the thread that made it (`ThreadForeignOwner[T]`). It is shown as `owns T` and read through
     /// as every `owns T` is; its end calls `T`'s one destructor (`foreign_end`).
     fn foreign_owner_of(&mut self, inner: Ty) -> Ty {
-        let generic = if self.foreign_creator(inner) { "std.ffi.ThreadForeignOwner" } else { "std.ffi.ForeignOwner" };
+        let main = self.foreign_object_name(inner).and_then(|name| self.foreign_type_contracts.get(&name)).is_some_and(|contract| contract.main);
+        let generic = if self.foreign_creator(inner) {
+            "std.ffi.ThreadForeignOwner"
+        } else if main {
+            "std.ffi.MainForeignOwner"
+        } else {
+            "std.ffi.ForeignOwner"
+        };
         let ty = self.instantiate_named_generic(generic, &[inner], Span::DUMMY);
         if let TyKind::Struct(id) = *self.types.kind(ty)
             && !self.boxes.contains_key(&id)
@@ -40842,7 +40852,7 @@ impl<'a> Checker<'a> {
                 if !self.is_send(ty) {
                     let shown = self.types.display(ty);
                     self.sink.emit(
-                        Diagnostic::error(codes::E7004, span, format!("{name} captures `{capture}`, a `{shown}`, which is not Send"))
+                        Diagnostic::error(self.not_send_code(ty), span, format!("{name} captures `{capture}`, a `{shown}`, which is not Send"))
                             .note(note),
                     );
                 }
@@ -42706,6 +42716,30 @@ impl<'a> Checker<'a> {
 
     fn is_send(&self, ty: Ty) -> bool {
         self.thread_facts(ty).0
+    }
+
+    /// `[THR-8]`, `[FFI-33b]` — `E7008` where a value that is not `Send` is a thread-bound foreign
+    /// owner (an `owns T` of a type whose contract says `threads(creator)` or `threads(main)`, held
+    /// whole or as a part), `E7004` for any other.
+    fn not_send_code(&self, ty: Ty) -> ember_diag::Code {
+        if self.holds_thread_bound_foreign_owner(ty, &mut HashSet::new()) { codes::E7008 } else { codes::E7004 }
+    }
+
+    fn holds_thread_bound_foreign_owner(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+        if !seen.insert(ty) {
+            return false;
+        }
+        match self.types.kind(ty) {
+            TyKind::Struct(id) => {
+                let def = self.types.struct_def(*id);
+                def.origin.as_ref().is_some_and(|(name, _)| name.is("std.ffi.ThreadForeignOwner") || name.is("std.ffi.MainForeignOwner"))
+                    || def.fields.iter().any(|field| self.holds_thread_bound_foreign_owner(field.ty, seen))
+            }
+            TyKind::Enum(id) => self.types.enum_def(*id).variants.iter().flat_map(|variant| &variant.fields).any(|field| self.holds_thread_bound_foreign_owner(field.ty, seen)),
+            TyKind::Tuple(items) => items.iter().any(|&item| self.holds_thread_bound_foreign_owner(item, seen)),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } => self.holds_thread_bound_foreign_owner(*elem, seen),
+            _ => false,
+        }
     }
 
     fn is_sync(&self, ty: Ty) -> bool {
@@ -55211,7 +55245,7 @@ impl<'a> Checker<'a> {
                     refused = true;
                 } else if !self.is_send(ty) {
                     let mut diagnostic =
-                        Diagnostic::error(codes::E7004, arg_span, format!("{} captures `{capture}`, a `{ty_shown}`, which is not Send", words.who))
+                        Diagnostic::error(self.not_send_code(ty), arg_span, format!("{} captures `{capture}`, a `{ty_shown}`, which is not Send", words.who))
                             .note(words.moves_note);
                     if let Some(advice) = self.sync_class_advice(ty) {
                         diagnostic = diagnostic.help(advice);
@@ -55590,7 +55624,7 @@ impl<'a> Checker<'a> {
                 let (code, what, ok) = match *self.types.kind(ty) {
                     TyKind::Ref { mutable: false, inner } => (codes::E7005, (inner, "borrows", "Sync"), self.is_sync(inner)),
                     TyKind::Ref { mutable: true, inner } => (codes::E7004, (inner, "borrows mutably", "Send"), self.is_send(inner)),
-                    _ => (codes::E7004, (ty, "captures", "Send"), self.is_send(ty)),
+                    _ => (self.not_send_code(ty), (ty, "captures", "Send"), self.is_send(ty)),
                 };
                 if !ok {
                     let (ty, verb, marker) = what;
@@ -56404,7 +56438,7 @@ impl<'a> Checker<'a> {
                     continue;
                 }
                 let shown = self.types.display(capture_ty);
-                let mut diagnostic = Diagnostic::error(codes::E7004, span, format!("this lambda captures `{capture}`, a `{shown}`, which is not Send"))
+                let mut diagnostic = Diagnostic::error(self.not_send_code(capture_ty), span, format!("this lambda captures `{capture}`, a `{shown}`, which is not Send"))
                     .primary_label("passed here")
                     .note("the parameter takes only what may move to another thread [CLO-10], [THR-8]");
                 if let Some(advice) = self.sync_class_advice(capture_ty) {
@@ -64091,7 +64125,7 @@ fn ffi_link_name(attrs: &[ast::Attribute]) -> Option<String> {
 /// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — an opaque foreign type's `@ffi(…)`: `destroys(f)`,
 /// `adopt=false`, `threads(creator)` (the other words are checked where the attribute is).
 fn foreign_type_contract(attrs: &[ast::Attribute], module: usize) -> ForeignTypeContract {
-    let mut contract = ForeignTypeContract { module, destroys: None, adopt: true, creator: false };
+    let mut contract = ForeignTypeContract { module, destroys: None, adopt: true, creator: false, main: false };
     for arg in attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi")).flat_map(|attr| &attr.args) {
         match arg {
             ast::AttrArg::Named { name, value } if name.name.is("adopt") => {
@@ -64107,6 +64141,7 @@ fn foreign_type_contract(attrs: &[ast::Attribute], module: usize) -> ForeignType
                     contract.destroys = Some(segments[0]);
                 } else if word.is("threads") {
                     contract.creator = ffi_contract_word(&only.value).is_some_and(|thread| thread.is("creator"));
+                    contract.main = ffi_contract_word(&only.value).is_some_and(|thread| thread.is("main"));
                 }
             }
             _ => {}
