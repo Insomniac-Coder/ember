@@ -67,13 +67,10 @@ fn required_primary_fragments(shape: Shape) -> &'static [&'static str] {
     // this second check prevents an intentionally refreshed snapshot from
     // silently blessing help for a different shape.
     match shape {
-        // `[DIA-7a]` 0.9.20 — O1 holds the loop and part cases (O3, O4 folded into it): `copy of x` or
+        // `[DIA-7a]` 0.9.20 — O1 holds the loop and part cases (O3 and O4 are no longer used): `copy of x` or
         // `shares x`, or for a part a new value first.
         Shape::O1 => &["copy of"],
         Shape::O2 => &["mem.take", "mem.replace", "swap", "once fn"],
-        Shape::O3 => &["loop"],
-        Shape::O4 => &["reassign", "destructure"],
-        Shape::O5 => &["owned", "mem.take"],
         Shape::O6 => &["every path", "declaration"],
         Shape::O7 => &["mem.drop"],
         Shape::O8 => &["scope"],
@@ -85,17 +82,13 @@ fn required_primary_fragments(shape: Shape) -> &'static [&'static str] {
         Shape::B5 => &["index", "Handle", "Weak"],
         Shape::B6 => &["from"],
         Shape::B7 => &["owned value"],
-        Shape::B8 => &["separate parameters"],
         Shape::B9 => &["owned fn"],
         Shape::B10 => &["local"],
         Shape::B11 => &["assert_disjoint"],
         Shape::B12 => &["owned copy"],
         Shape::B13 => &["separate parameters"],
-        Shape::B14 => &["owned value", "separately"],
-        Shape::B15 => &["expected callable signature", "supplied callable signature"],
         Shape::B16 => &["copy of"],
         Shape::B17 => &["weakref"],
-        Shape::X1 => &["block"],
         Shape::S1 => &["access"],
         Shape::A1 => &["Arena", "arena", "alloc_nodrop", "scope"],
     }

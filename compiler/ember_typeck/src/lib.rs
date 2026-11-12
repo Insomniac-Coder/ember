@@ -37875,9 +37875,11 @@ impl<'a> Checker<'a> {
 
         let expected_signature = self.types.display(expected);
         let found_signature = self.types.display(found);
-        self.sink.emit_classified(
+        // §XVII.6.1 — `E2228` is folded into `E2020`: a lambda parameter whose word differs from the
+        // function type it is given to.
+        self.sink.emit(
             Diagnostic::error(
-                codes::E2228,
+                codes::E2020,
                 span,
                 format!(
                     "callable parameter mode mismatch at parameter {index}: expected `{}`, found `{}`",
@@ -50923,7 +50925,7 @@ impl<'a> Checker<'a> {
             // is no keyword for "borrowed") receives the value, so
             // `opt.map(fn(s) => s)` can hand `s` on. `mut` is never inferred:
             // a write to the caller's place is written where it happens, and
-            // an unwritten `mut` stays `E2228` (shape B15).
+            // an unwritten `mut` stays `E2020`.
             let mode = match (param.mode, expected) {
                 (ast::Mode::Borrow, Some(expected)) if expected.mode == FnParamMode::Owned => {
                     FnParamMode::Owned
