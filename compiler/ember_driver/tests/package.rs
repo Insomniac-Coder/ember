@@ -296,6 +296,24 @@ fn dependency_errors() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// D-863, `[MNG-1]`, `[MOD-1]` — the root package's modules are written without its name and a
+/// dependency's start with it, so a root module (or a folder of modules) named like a dependency
+/// would give two modules one path and their items one symbol: it is `E9001`, never two modules.
+#[test]
+fn a_root_module_never_shares_a_path_with_a_dependency() {
+    let dir = scratch();
+    package(&dir.join("util"), "[package]\nname = \"util\"\nversion = \"1.0.0\"\nkind = \"lib\"\n", &[("lib", "pub fn f() -> i32:\n    return 1\n")]);
+    let manifest = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nutil = { path = \"../util\" }\n";
+    package(&dir.join("app"), manifest, &[("main", "import util\nprintln(util.f())\n"), ("util", "pub fn f() -> i32:\n    return 2\n")]);
+    let file = ember(&["check"], &dir.join("app"));
+    assert!(!file.ok && file.stderr.contains("error[E9001]: dependency `util` has the name of this package's own module `util`"), "{}", file.stderr);
+    std::fs::remove_file(dir.join("app/src/util.em")).unwrap();
+    package(&dir.join("app"), manifest, &[("util/inner", "pub fn f() -> i32:\n    return 2\n")]);
+    let folder = ember(&["check"], &dir.join("app"));
+    assert!(!folder.ok && folder.stderr.contains("error[E9001]: dependency `util` has the name of this package's own module `util`"), "{}", folder.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `[STD-6]` — `std` is layered (core, alloc, sync, io, ffi), each depending only on the ones
 /// before it, and a package that declares `[package] layers = ["core"]` may use only core: its
 /// options, results, integers, fixed arrays and math are there, an `Array` (the allocator) is not,
