@@ -681,6 +681,7 @@ fn check_round(
         checker.current_module = index;
         checker.collect_methods(&loaded.module);
     }
+    checker.check_deferred_static_sync();
     // A default body gives the implementing type a method it did not write. These have to exist
     // before any body is checked, or a call to one would not resolve. D-878 — once every module's
     // implementations are collected: given module by module, an implementation in a module after
@@ -2969,6 +2970,10 @@ struct Checker<'a> {
     /// `[FFI-33b]` — the foreign types a `returns_owned` result binds to the thread that made the
     /// object (`threads(creator)` on the result), as their declaration's `threads(creator)` does.
     foreign_result_creators: HashSet<Symbol>,
+    /// `[STA-1]`, D-834 — the statics whose type was not `Sync` when `collect` met them: a `Send` or
+    /// `Sync` written by hand (`unsafe extend`, std's `ForeignOwner`) is recorded later, by
+    /// `collect_methods`, so each is asked again once every module's are known (type, where, foreign).
+    deferred_static_sync: Vec<(Ty, Span, bool)>,
     /// `[FFI-36a]` — the structs a header lays out that a `returns_owned` result gives objects of:
     /// foreign types, whose `owns T` holds the object C made.
     foreign_owned_structs: HashSet<Symbol>,
@@ -4054,6 +4059,7 @@ impl<'a> Checker<'a> {
             foreign_type_contracts: HashMap::new(),
             foreign_result_destructors: HashMap::new(),
             foreign_result_creators: HashSet::new(),
+            deferred_static_sync: Vec::new(),
             foreign_owned_structs: HashSet::new(),
             signatures: Vec::new(),
             methods: HashMap::new(),
@@ -10777,12 +10783,10 @@ impl<'a> Checker<'a> {
                     // one, and a foreign one read safely (`@ffi(immutable)`). A foreign static read
                     // only in `unsafe` (Part XVI's table) is the programmer's to share (the owner's
                     // ruling of 2026-10-21, ODR-163).
+                    // D-834 — asked again after `collect_methods` (`check_deferred_static_sync`): a
+                    // `Send` written by hand is not recorded yet.
                     if !self.is_sync(ty) && (!decl.is_foreign_decl || ffi_static_immutable(&item.attrs)) {
-                        let shown = self.types.display(ty);
-                        self.error(codes::E7002, decl.ty.span,
-                            format!("{}static type `{shown}` is not Sync",
-                                if decl.is_foreign_decl { "foreign " } else { "" }));
-                        continue;
+                        self.deferred_static_sync.push((ty, decl.ty.span, decl.is_foreign_decl));
                     }
                     if decl.is_foreign_decl {
                         // `[FFI-10]` — any value C can lay out is a global C may
@@ -14628,6 +14632,17 @@ impl<'a> Checker<'a> {
     /// with no members; a generic one holds for the instances whose arguments meet the parameters'
     /// marker bounds. `Copy` comes from `@derive(Copy)` and `Sized` from what a type is (`E2040`).
     /// `unsafe extend` writes markers only.
+    /// `[STA-1]` — a static's type that was not `Sync` when it was collected, now that every `Send`
+    /// and `Sync` written by hand is recorded: still not `Sync` is `E7002`.
+    fn check_deferred_static_sync(&mut self) {
+        for (ty, span, foreign) in std::mem::take(&mut self.deferred_static_sync) {
+            if !self.is_sync(ty) {
+                let shown = self.types.display(ty);
+                self.error(codes::E7002, span, format!("{}static type `{shown}` is not Sync", if foreign { "foreign " } else { "" }));
+            }
+        }
+    }
+
     fn collect_markers(&mut self, decl: &ast::ExtendDecl) {
         let markers: Vec<(&'static str, Span)> = decl
             .implements
