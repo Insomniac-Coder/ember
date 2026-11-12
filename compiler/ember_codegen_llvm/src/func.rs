@@ -207,6 +207,7 @@ pub(crate) fn place_type(m: &Module<'_>, body: &Body, place: &Place) -> Ty {
                 let fields = &types.enum_def(*id).variants[variant.take().unwrap_or(0)].fields;
                 fields.get(*index).map_or(ty, |field| field.ty)
             }
+            (Projection::Field(0), TyKind::Link { .. }) => types.link_payload(ty).unwrap_or(ty),
             (Projection::Field(index), TyKind::Struct(id)) => types.struct_def(*id).fields.get(*index).map_or(ty, |field| field.ty),
             (Projection::Field(index), TyKind::Class(id)) => types.class_field_at(*id, *index).map_or(ty, |field| field.ty),
             (Projection::Field(index), TyKind::Tuple(items)) => items.get(*index).copied().unwrap_or(ty),
@@ -983,6 +984,17 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 }
                 let offset = table.variant_field_offsets(id)[variant][*index];
                 self.field(&at, offset, field_ty)
+            }
+            // `[RC-1]`, `[WK-11]` (D4) — a link to a value that is not a class object points at its
+            // block: the logical field is the value's address, after the header, as a `Shared`'s.
+            (Projection::Field(0), TyKind::Link { target, .. }) if self.m.ty.table.link_payload(at.ty).is_some() => {
+                let field_ty = self.m.ty.table.link_payload(at.ty).expect("tested above");
+                let header = self.load(Sc::Ptr, &at.ptr, at.align.min(8));
+                let (_, align) = self.m.ty.size_align(target);
+                let payload = self.gep(&header, self.m.ty.payload_offset(align));
+                let slot = self.alloca(8, 8);
+                self.emit(format!("store ptr {payload}, ptr {slot}, align 8"));
+                return Ok(PlaceRef { ptr: slot, ty: field_ty, variant: None, align: 8 });
             }
             (Projection::Field(index), TyKind::Struct(id)) => {
                 let table = self.m.ty.table;

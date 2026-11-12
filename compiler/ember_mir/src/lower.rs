@@ -7276,7 +7276,8 @@ impl<'a> Builder<'a> {
             place,
             rvalue: Rvalue::Aggregate {
                 kind: AggregateKind::Enum(option, 1),
-                operands: vec![Operand::Copy(Place::local(raw))],
+                // `[WK-12]` — an owner opened from a link (`shares T`, not `Copy`) moves into `Some`.
+                operands: vec![self.read(Place::local(raw), class)],
             },
         });
         self.terminate(Terminator::Goto(join));

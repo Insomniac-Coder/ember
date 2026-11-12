@@ -3272,6 +3272,11 @@ struct Checker<'a> {
     /// ODR-278 — the names the body being checked assigns more than once (`[CLO-13]`'s scan): a
     /// local declared from a function and assigned again holds any function of its shape.
     reassigned: HashSet<Symbol>,
+    /// D5, `[RC-1]` — the declarations (by span) of the locals and `owns` parameters a line of their
+    /// function shares: each is made in a block of its own where it is declared, and its type is the
+    /// shared type throughout the function. Set while a body is checked; a new one asks for another
+    /// pass of the body, which writes the block.
+    block_locals: HashSet<Span>,
     /// `[CLO-2]` — set while a closure body is checked, so that a read of an
     /// enclosing local is seen as a capture rather than as an ordinary read.
     captures: Option<CaptureWatch>,
@@ -4118,6 +4123,7 @@ impl<'a> Checker<'a> {
             function_symbols: HashMap::new(),
             generic_paths: HashMap::new(),
             reassigned: HashSet::new(),
+            block_locals: HashSet::new(),
             lambdas: Vec::new(),
             comptime_answers: ComptimeAnswers::new(),
             comptime_requests: Vec::new(),
@@ -15416,8 +15422,8 @@ impl<'a> Checker<'a> {
                 let inner = self.resolve_type(owned);
                 self.owns_type(inner, owned.span, ty.span)
             }
-            // `[TYP-45]`, `[RC-1]`, `[WK-11]` — M4 slice A: owners and links of a class object, on one
-            // thread (`M4-plan.md`).
+            // `[TYP-45]`, `[RC-1]`, `[WK-11]` — M4 slice A: owners and links on one thread
+            // (`M4-plan.md`), of a class object or of a value in a block of its own (D4, D5).
             ast::TypeKind::Link { kind, inner } => {
                 let target = self.resolve_type(inner);
                 if target == self.common.error {
@@ -15432,11 +15438,16 @@ impl<'a> Checker<'a> {
                         return target;
                     }
                 };
-                if !matches!(self.types.kind(target), TyKind::Class(_)) {
-                    self.error(codes::E0900, ty.span, format!("`{}` of a value that is not a class object is not built by this compiler yet", kind.word()));
-                    return target;
+                if matches!(self.types.kind(target), TyKind::Dyn { .. }) {
+                    // `[WK-16]` — the kind of the object is known only while the program runs.
+                    if kind == ember_types::LinkKind::Weakref {
+                        self.refuse_link_to_a_kind_known_at_run_time(target, ty.span, None);
+                    } else {
+                        self.error(codes::E0900, ty.span, format!("`{} dyn` is not built by this compiler yet", kind.word()));
+                    }
+                    return self.common.error;
                 }
-                self.types.intern(TyKind::Link { kind, target })
+                self.link_of(kind, target)
             }
             ast::TypeKind::Ptr { mutable, inner } => {
                 let inner = self.resolve_type(inner);
@@ -18455,6 +18466,11 @@ impl<'a> Checker<'a> {
                 let inner = map(self, inner);
                 self.types.intern(TyKind::Ref { mutable, inner })
             }
+            // `[MONO-1]` — an owner or a link of the substituted target (its block made with it).
+            TyKind::Link { kind, target } => {
+                let target = map(self, target);
+                self.link_of(kind, target)
+            }
             TyKind::Ptr { mutable, inner } => {
                 let inner = map(self, inner);
                 self.types.intern(TyKind::Ptr { mutable, inner })
@@ -20711,65 +20727,526 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// The safe place reached by Box auto-deref. Raw-pointer syntax never
-    /// reaches source: the private pointer projection and dereference are
-    /// introduced together by the compiler, rooted at the Box owner so the
-    /// ordinary borrow and move analyses retain the ownership relationship.
+    /// `[TYP-45]`, D4 — the link type `kind target`, one pointer: to the object for a class target,
+    /// and otherwise to a block holding `[OBJ-1]`'s header and the value, which is `Shared[T]`'s block
+    /// (made here, so that every backend lays it out and writes its type information), with the
+    /// pointer to the value as its one logical field (`TypeTable::link_payload`).
+    fn link_of(&mut self, kind: ember_types::LinkKind, target: Ty) -> Ty {
+        if !matches!(self.types.kind(target), TyKind::Class(_)) {
+            self.counted_of(target, false);
+            self.types.intern(TyKind::Ptr { mutable: true, inner: target });
+        }
+        self.types.intern(TyKind::Link { kind, target })
+    }
+
+    /// The 1-based number and the code, trimmed, of the line `span` starts on.
+    fn line_text(&self, span: Span) -> Option<(usize, String)> {
+        let source = self.sources.get(&span.file)?;
+        let line = source.line_of(span.start);
+        let start = *source.lines.get(line.checked_sub(1)?)? as usize;
+        let end = source.text.get(start..)?.find('\n').map_or(source.text.len(), |at| start + at);
+        Some((line, Self::code_of(source.text.get(start..end)?).trim().to_string()))
+    }
+
+    /// A value's type as the noun a message says of it: "the list", "the player".
+    fn link_noun(&self, ty: Ty) -> String {
+        match self.types.kind(ty) {
+            TyKind::Vec { text: false, .. } => "list".to_string(),
+            TyKind::Vec { text: true, .. } | TyKind::Str => "text".to_string(),
+            _ => Self::common_noun(&self.types.display(ty)),
+        }
+    }
+
+    /// The name a message gives a value of type `ty` it opens or keeps (`p` for a `Player`).
+    fn link_short_name(&self, ty: Ty) -> String {
+        self.link_noun(ty).chars().next().filter(|c| c.is_alphabetic()).map_or_else(|| "v".to_string(), |c| c.to_string())
+    }
+
+    /// `[RC-1]`, `[OWN-13]` — the local a written operand names, when it is a bare name.
+    fn written_local(&self, written: &ast::Expr) -> Option<LocalId> {
+        match &unparenthesized(written).kind {
+            ast::ExprKind::Path { segments } if segments.len() == 1 => self.lookup(segments[0].name),
+            _ => None,
+        }
+    }
+
+    /// `[RC-1]`, `[OWN-13]` (`E2122`) — `shares x` or `shares mut x` of a place that has one owner and is
+    /// not a local of this function: a list element, a field, a plain parameter, or a view of a value
+    /// another name owns. Reported here, with what to write; true when refused.
+    fn refuse_owner_of_one_owner_place(&mut self, kind: ember_types::LinkKind, written: &ast::Expr, source: &Expr, span: Span) -> bool {
+        let word = kind.word();
+        let written = unparenthesized(written);
+        let place = self.written_line(written.span).unwrap_or_else(|| "it".to_string());
+        let ty = source.ty;
+        let shown = self.types.display(ty);
+        let noun = self.link_noun(ty);
+        let message = match &written.kind {
+            ast::ExprKind::IndexOrInstantiate { base, .. } => {
+                let list = self.written_line(base.span).unwrap_or_else(|| "it".to_string());
+                let plural = format!("{noun}s");
+                // The line to write: the list's own, each element made with the word.
+                let rewrite = self.written_local(base).and_then(|local| {
+                    let declared = self.locals[local.0 as usize].span;
+                    let (line, text) = self.line_text(declared)?;
+                    let open = text.find('[')?;
+                    let close = text.rfind(']')?;
+                    let elements: Vec<String> = split_top_level(&text[open + 1..close]).into_iter().map(|element| format!("{word} {element}")).collect();
+                    (!elements.is_empty()).then(|| format!("write `{}{}{}` in place of line {line}", &text[..open + 1], elements.join(", "), &text[close..]))
+                });
+                let rewrite = rewrite.unwrap_or_else(|| format!("hold `{word} {shown}` elements in it"));
+                format!("`{place}` has one owner, the list `{list}`, and no second owner can be made of one element; to let other names own the {plural}, make the list share them from the start: {rewrite}")
+            }
+            ast::ExprKind::Field { base, name } => {
+                let holder_ty = self.synth_quiet_type(base);
+                let holder = self.types.display(self.read_link_type(holder_ty));
+                let declared = self.field_declaration(base, name.name);
+                let field = name.name;
+                let at = declared.and_then(|span| self.line_of(span)).map_or_else(String::new, |line| format!(" (line {line})"));
+                format!("`{place}` has one owner, the `{holder}` that holds it, and no second owner can be made of one field; to let other names own the {noun}, make the field share it from the start: write `{field}: {word} {shown}` in `{holder}`{at}")
+            }
+            ast::ExprKind::Path { .. } => {
+                let Some(local) = self.written_local(written) else { return false };
+                let parameter = (local.0 as usize) < self.body_locals_from;
+                if parameter && self.borrowed_params.contains(&local) {
+                    let function = self.body_fn.map_or_else(|| "f".to_string(), |(name, _)| name.to_string());
+                    format!("`{place}` is the caller's `{shown}`, which `{function}` only reads, and no second owner can be made of it; let the caller give one: write `owns {place}: {word} {shown}` for the parameter, and `{word}` before the argument at each call (`{function}({word} …)`)")
+                } else if matches!(self.types.kind(self.locals[local.0 as usize].ty), TyKind::Ref { .. }) {
+                    format!("`{place}` is a view of a `{shown}` another name owns, and no second owner can be made of a view; write `{word}` before the name that owns it")
+                } else {
+                    return false;
+                }
+            }
+            _ => return false,
+        };
+        self.error(codes::E2122, span, message);
+        true
+    }
+
+    /// The type an expression has, checked with its diagnostics dropped.
+    fn synth_quiet_type(&mut self, expr: &ast::Expr) -> Ty {
+        let quiet = self.sink.mark();
+        let ty = self.synth(expr).ty;
+        self.sink.rollback(quiet);
+        ty
+    }
+
+    /// The target of an owner or a link, the value a view names, or the type itself.
+    fn read_link_type(&self, ty: Ty) -> Ty {
+        match *self.types.kind(ty) {
+            TyKind::Link { target, .. } => target,
+            TyKind::Ref { inner, .. } => inner,
+            _ => ty,
+        }
+    }
+
+    /// Where the field `name` of what `base` names is declared.
+    fn field_declaration(&mut self, base: &ast::Expr, name: Symbol) -> Option<Span> {
+        let holder_ty = self.synth_quiet_type(base);
+        let holder = self.read_link_type(holder_ty);
+        match *self.types.kind(holder) {
+            TyKind::Struct(id) => self.types.struct_def(id).field(name).map(|(_, field)| field.span),
+            TyKind::Class(id) => (0..self.types.class_field_count(id))
+                .filter_map(|index| self.types.class_field_at(id, index))
+                .find(|field| field.name == name)
+                .map(|field| field.span),
+            _ => None,
+        }
+    }
+
+    /// `[RC-1]` (`E2122`) — `shares this` or `shares mut this` in a method: the object may have one
+    /// owner, which ends it with no count to test; the caller gives an owner instead.
+    fn refuse_owner_of_this(&mut self, kind: ember_types::LinkKind, span: Span) {
+        let word = kind.word();
+        let class = self.self_ty.map_or_else(|| "Self".to_string(), |ty| self.types.display(ty));
+        let method = self.body_fn.map_or_else(|| "f".to_string(), |(name, _)| name.to_string());
+        let short = self.self_ty.map_or_else(|| "x".to_string(), |ty| self.link_short_name(ty));
+        // The method's own line, made a static function that takes the owner.
+        let header = self.line_text(self.fn_decl).and_then(|(_, text)| {
+            let open = text.find('(')?;
+            let rest = &text[open + 1..];
+            let rest = if rest.trim_start().starts_with(')') { rest.trim_start().to_string() } else { format!(", {rest}") };
+            let start = text.find("fn ")?;
+            Some(format!("static {}(owns me: {word} {class}{rest}", &text[start..open]))
+        });
+        let others: String = self.body_parameter_names().into_iter().map(|name| format!(", {name}")).collect();
+        let header = header.unwrap_or_else(|| format!("static fn {method}(owns me: {word} {class}):"));
+        self.error(
+            codes::E2122,
+            span,
+            format!(
+                "no second owner of a `{class}` is made from inside its own method, since this `{class}` may have one owner; let the caller give one: write `{header}` and call it `{class}.{method}({word} {short}{others})`"
+            ),
+        );
+    }
+
+    /// The names of the parameters of the function whose body is being checked, `this` left out.
+    fn body_parameter_names(&self) -> Vec<Symbol> {
+        self.locals[..self.body_locals_from.min(self.locals.len())]
+            .iter()
+            .filter_map(|decl| decl.name)
+            .filter(|name| !name.is("this") && !name.is("self"))
+            .collect()
+    }
+
+    /// `[WK-16]` (`E2119`) — a link to a value whose kind is known only while the program runs (`dyn
+    /// I`, `owns dyn I`, `some I`, and the type `weakref dyn I`): its class fixes its header, so the
+    /// link names a base class. `held` is the name holding the value, for a `weakref x`.
+    fn refuse_link_to_a_kind_known_at_run_time(&mut self, ty: Ty, span: Span, held: Option<(&str, Ty)>) {
+        let interface = Self::interface_written(&self.types.display(ty));
+        let mut lines: Vec<String> = Vec::new();
+        let qualified = self.resolve_name(Symbol::intern(&interface));
+        if let Some(def) = self.interfaces.get(&qualified) {
+            let methods: Vec<Span> = def.methods.iter().map(|(_, def, _, _)| self.signatures[def.0 as usize].decl).collect();
+            let header = self.item_spans.get(&qualified).and_then(|&at| self.line_of(at));
+            let virtuals: Vec<String> = methods
+                .iter()
+                .filter_map(|&at| self.line_text(at))
+                .map(|(_, text)| format!("`virtual {}: pass`", text.trim_end_matches(':').trim_end()))
+                .collect();
+            let numbers: Vec<usize> = header.into_iter().chain(methods.iter().filter_map(|&at| self.line_of(at))).collect();
+            let places = match numbers.as_slice() {
+                [one] => format!("line {one}"),
+                [a, b] => format!("lines {a} and {b}"),
+                [first, .., last] => format!("lines {first} to {last}"),
+                [] => String::new(),
+            };
+            let with = if virtuals.is_empty() { String::new() } else { format!(" with {}", virtuals.join(" and ")) };
+            lines.push(format!("`open class {interface}:`{with} in place of {places}"));
+            // The classes that implement it, as declared: each derives from the base class instead.
+            let mut classes: Vec<(usize, String)> = Vec::new();
+            for module in self.module_asts.clone() {
+                for item in &module.items {
+                    let ast::ItemKind::Class(decl) = &item.kind else { continue };
+                    let written: Vec<String> = decl.implements.iter().filter_map(|named| self.written_line(named.span)).collect();
+                    if !written.iter().any(|named| named == &interface || named.ends_with(&format!(".{interface}"))) {
+                        continue;
+                    }
+                    let others: Vec<&String> = written.iter().filter(|named| *named != &interface && !named.ends_with(&format!(".{interface}"))).collect();
+                    let rest = if others.is_empty() { String::new() } else { format!(" implements {}", others.iter().map(|named| named.as_str()).collect::<Vec<_>>().join(", ")) };
+                    if let Some(line) = self.line_of(decl.name.span) {
+                        classes.push((line, format!("`class {}({interface}){rest}:` in place of line {line}", decl.name.name)));
+                    }
+                }
+            }
+            classes.sort();
+            lines.extend(classes.into_iter().map(|(_, line)| line));
+        }
+        let what = match held {
+            Some((name, held)) => format!("`{name}` holds a `{}`, a kind known only while the program runs", self.types.display(held)),
+            None => {
+                let written = self.written_line(span).unwrap_or_else(|| format!("weakref dyn {interface}"));
+                let at = self.line_of(span);
+                if let (Some(line), Some(number)) = (self.line_with(span, &format!("weakref {interface}")), at) {
+                    lines.push(format!("`{line}` in place of line {number}"));
+                }
+                format!("`{written}`{} names a kind known only while the program runs", at.map_or_else(String::new, |line| format!(" (line {line})")))
+            }
+        };
+        let fix = match lines.as_slice() {
+            [] => format!("make `{interface}` an `open class` with `virtual` methods, derive the classes from it, and link to it: `weakref {interface}`"),
+            [one] => format!("write {one}"),
+            [init @ .., last] => format!("write {}, and {last}", init.join(", ")),
+        };
+        self.error(codes::E2119, span, format!("{what}, and a `weakref` link needs a class that fixes its header; link to a base class: {fix}"));
+    }
+
+    /// An interface's name as a type names it: `Listener` for `dyn Listener` or `owns dyn Listener`.
+    fn interface_written(display: &str) -> String {
+        let mut name = display;
+        while let Some(rest) = name.strip_prefix("owns ").or_else(|| name.strip_prefix("dyn ")).or_else(|| name.strip_prefix("some ")) {
+            name = rest;
+        }
+        let name = name.split('[').next().unwrap_or(name);
+        name.rsplit('.').next().unwrap_or(name).to_string()
+    }
+
     /// `[OWN-13]`, `[RC-1]`, `[WK-11]` — `shares x`, `shares mut x`, `weakref x` (M4 slice A): one more
-    /// owner, or a link, of the class object `x` names (a handle, or an owner of one; for `weakref`, a
-    /// link too). The value is read where it is, never handed over.
+    /// owner, or a link, of what `x` names: a class object (a handle, or an owner of one; for `weakref`,
+    /// a link too), or a value in a block of its own (D5). The value is read where it is, never handed
+    /// over, except a new value, which becomes the block's.
     fn synth_link(&mut self, kind: ast::LinkKind, value: &ast::Expr, span: Span) -> Expr {
+        use ember_types::LinkKind;
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         let kind = match kind {
-            ast::LinkKind::Shares => ember_types::LinkKind::Shares,
-            ast::LinkKind::SharesMut => ember_types::LinkKind::SharesMut,
-            ast::LinkKind::Weakref => ember_types::LinkKind::Weakref,
+            ast::LinkKind::Shares => LinkKind::Shares,
+            ast::LinkKind::SharesMut => LinkKind::SharesMut,
+            ast::LinkKind::Weakref => LinkKind::Weakref,
             other => {
                 self.error(codes::E0900, span, format!("`{}` before a value is not built by this compiler yet", other.word()));
                 return self.synth(value);
             }
         };
+        let written = unparenthesized(value);
+        // `[RC-1]` — `shares this` and `shares mut this` are refused in every method.
+        if kind != LinkKind::Weakref && matches!(written.kind, ast::ExprKind::SelfExpr) {
+            self.refuse_owner_of_this(kind, span);
+            return error;
+        }
         let source = self.synth_committed(value);
         if source.ty == self.common.error {
             return error;
         }
-        let class = match *self.types.kind(source.ty) {
-            TyKind::Class(_) => source.ty,
+        let place = self.written_line(written.span).unwrap_or_else(|| "it".to_string());
+        let new_value = !is_place(&source.kind);
+        match *self.types.kind(source.ty) {
             // An owner makes another owner or a link; a link makes only another link.
-            TyKind::Link { kind: ember_types::LinkKind::Weakref, target } if kind == ember_types::LinkKind::Weakref => target,
-            TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut, target } => target,
-            _ => {
-                let shown = self.types.display(source.ty);
-                self.error(codes::E0900, span, format!("`{}` of a `{shown}` is not built by this compiler yet", kind.word()));
-                return error;
+            TyKind::Link { kind: LinkKind::Weakref, target } => {
+                if kind != LinkKind::Weakref {
+                    // `[WK-16]` — an owner of a link's target is made from the opened name.
+                    let short = self.link_short_name(target);
+                    self.error(codes::E2020, written.span, format!("`{place}` may be gone; open it: `if {place} exists as {short}:`"));
+                    return error;
+                }
+                let link = self.link_of(kind, target);
+                Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkMake { kind, link }, args: vec![source] }, span }
             }
-        };
-        let link = self.types.intern(TyKind::Link { kind, target: class });
-        Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkMake { kind, link }, args: vec![source] }, span }
+            TyKind::Link { kind: owner, target } => {
+                if kind == LinkKind::SharesMut && !self.may_change_through_owner(&source, owner) {
+                    self.refuse_changing_owner_of_reader(written, &source, target, span);
+                    return error;
+                }
+                let link = self.link_of(kind, target);
+                Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkMake { kind, link }, args: vec![source] }, span }
+            }
+            TyKind::Class(_) => {
+                if kind == LinkKind::Weakref {
+                    if new_value {
+                        self.refuse_link_to_a_new_value(written, source.ty, span);
+                        return error;
+                    }
+                } else if self.refuse_owner_of_one_owner_place(kind, written, &source, span) {
+                    return error;
+                }
+                let link = self.link_of(kind, source.ty);
+                Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkMake { kind, link }, args: vec![source] }, span }
+            }
+            _ => self.synth_value_link(kind, written, source, span),
+        }
     }
 
-    /// `[RC-1]` — an owner (`shares C`, `shares mut C`) read where its object is wanted: the object's
-    /// handle (M4 slice A: a counted copy, which its end gives back).
+    /// `[RC-7]`, `[OWN-13]` — whether an owner that may change the value can be made from `source`, an
+    /// owner of kind `owner`: one made `shares` only reads, and so does a plain parameter.
+    fn may_change_through_owner(&self, source: &Expr, owner: ember_types::LinkKind) -> bool {
+        if owner == ember_types::LinkKind::Shares {
+            return false;
+        }
+        !root_local(&source.kind).is_some_and(|local| self.borrowed_params.contains(&local))
+    }
+
+    /// `[OWN-13]`, `[RC-7]` (`E3023`) — `shares mut x` where `x` only reads the value: an owner made from
+    /// it only reads too.
+    fn refuse_changing_owner_of_reader(&mut self, written: &ast::Expr, source: &Expr, target: Ty, span: Span) {
+        let place = self.written_line(written.span).unwrap_or_else(|| "it".to_string());
+        let shown = self.types.display(target);
+        let noun = self.link_noun(target);
+        let changing = format!("shares mut {place}");
+        let line = self.line_text(span).map(|(_, text)| text).filter(|text| text.contains(&changing));
+        let written_line = line.clone().unwrap_or_else(|| changing.clone());
+        let reading = line.map_or_else(|| format!("shares {place}"), |text| text.replacen(&changing, &format!("shares {place}"), 1));
+        let local = root_local(&source.kind);
+        let plain = local.is_some_and(|local| self.borrowed_params.contains(&local));
+        let message = if plain {
+            format!(
+                "`{written_line}` would change the `{shown}` through `{place}`, which only reads the caller's {noun} (a plain parameter), and an owner made from it only reads too; write `{reading}`, or, to hand on an owner that may change, take one: write `owns {place}: shares mut {shown}` for the parameter, and `shares mut` before the argument at each call"
+            )
+        } else {
+            let declared = local.map(|local| self.locals[local.0 as usize].span).and_then(|at| self.line_text(at)).filter(|(_, text)| text.contains("shares "));
+            match declared {
+                Some((line, text)) => format!(
+                    "`{written_line}` would change the `{shown}` through `{place}`, which only reads it (`{text}`, line {line}), and an owner made from it only reads too; write `{reading}`, or, for two owners that both change the {noun}, write `{}` instead of line {line}",
+                    text.replacen("shares ", "shares mut ", 1)
+                ),
+                None => format!(
+                    "`{written_line}` would change the `{shown}` through `{place}`, which only reads it, and an owner made from it only reads too; write `{reading}`"
+                ),
+            }
+        };
+        self.error(codes::E3023, span, message);
+    }
+
+    /// `[OWN-13]` (`E2119`) — `weakref` before a new value: it would end at the end of the line.
+    fn refuse_link_to_a_new_value(&mut self, written: &ast::Expr, ty: Ty, span: Span) {
+        let noun = self.link_noun(ty);
+        let short = self.link_short_name(ty);
+        let value = self.written_line(written.span).unwrap_or_else(|| self.types.display(ty));
+        let then = self.line_with(span, &format!("weakref {short}")).unwrap_or_else(|| format!("weakref {short}"));
+        self.error(
+            codes::E2119,
+            span,
+            format!("the {noun} would end at the end of the line and the link would find nothing; keep it in a name first: write `{short} = {value}` above, then `{then}`"),
+        );
+    }
+
+    /// `[RC-1]`, `[WK-11]`, `[WK-16]` — the words before a value that is not a class object: an owner
+    /// of a new value is its block (`shares Counter(value=1)`); a local of this function, or an `owns`
+    /// parameter, is made in a block from the line that declares it (D5), which a second pass of the
+    /// body writes; a `weakref` needs a value held `shares` (`E2119` otherwise).
+    fn synth_value_link(&mut self, kind: ember_types::LinkKind, written: &ast::Expr, source: Expr, span: Span) -> Expr {
+        use ember_types::LinkKind;
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let ty = source.ty;
+        let place = self.written_line(written.span).unwrap_or_else(|| "it".to_string());
+        let new_value = !is_place(&source.kind);
+        // `[WK-16]` — a value whose kind is known only while the program runs.
+        let dynamic = match self.box_inner(ty) {
+            Some(inner) => matches!(self.types.kind(inner), TyKind::Dyn { .. }),
+            None => matches!(self.types.kind(ty), TyKind::Dyn { .. } | TyKind::Opaque(_)) || self.types.display(ty).starts_with("some "),
+        };
+        if kind == LinkKind::Weakref {
+            if dynamic {
+                self.refuse_link_to_a_kind_known_at_run_time(ty, span, Some((&place, ty)));
+                return error;
+            }
+            if new_value {
+                self.refuse_link_to_a_new_value(written, ty, span);
+                return error;
+            }
+            let held = self.box_inner(ty).unwrap_or(ty);
+            let shown = self.types.display(held);
+            let noun = self.link_noun(held);
+            let then = self.line_text(span).map_or_else(|| format!("weakref {place}"), |(_, text)| text);
+            let written_kind = &unparenthesized(written).kind;
+            let declared = match written_kind {
+                ast::ExprKind::Path { .. } => self.written_local(written).map(|local| self.locals[local.0 as usize].span).and_then(|at| self.line_text(at)),
+                _ => None,
+            };
+            let message = match (written_kind, self.box_inner(ty)) {
+                // `[WK-11]` — a value held `owns` lives in a block with no header.
+                (ast::ExprKind::Path { .. }, Some(_)) => match declared.filter(|(_, text)| text.contains("owns ")) {
+                    Some((line, text)) => format!(
+                        "`{place}` holds its {noun} in a block with no header, which a link cannot test; a link names a class object or a value held `shares` or `thread_shared`: write `{}` in place of line {line}, then `{then}`",
+                        text.replace("owns ", "shares ")
+                    ),
+                    None => format!("`{place}` holds its {noun} in a block with no header, which a link cannot test; a link names a class object or a value held `shares` or `thread_shared`: hold it `shares {shown}`, then `{then}`"),
+                },
+                // A local holding its value in place: shared, it lives in a block with the header.
+                (ast::ExprKind::Path { .. }, None) => match declared.filter(|(_, text)| text.contains('=')) {
+                    Some((line, text)) => {
+                        let equals = text.find('=').expect("tested above");
+                        format!(
+                            "a `weakref` link needs an object that lives on its own, and `{place}` holds its {noun} in place; share it: write `{} shares {}` in place of line {line}, then `{then}`",
+                            text[..=equals].trim_end(),
+                            text[equals + 1..].trim_start()
+                        )
+                    }
+                    None => format!("a `weakref` link needs an object that lives on its own, and `{place}` holds its {noun} in place; hold it `shares {shown}`, then `{then}`"),
+                },
+                // `[WK-16]` — a part: a field, or an element stored inline.
+                (ast::ExprKind::Field { base, .. } | ast::ExprKind::TupleField { base, .. } | ast::ExprKind::IndexOrInstantiate { base, .. }, _) => {
+                    let owner = self.written_line(base.span).unwrap_or_else(|| "it".to_string());
+                    let holder_ty = self.synth_quiet_type(base);
+                    let holder = self.read_link_type(holder_ty);
+                    if matches!(self.types.kind(holder), TyKind::Class(_)) && matches!(written_kind, ast::ExprKind::Field { .. }) {
+                        let noun = self.link_noun(holder);
+                        let line = self.line_with(span, &format!("weakref {owner}")).unwrap_or_else(|| format!("weakref {owner}"));
+                        format!("a `weakref` link needs an object that lives on its own; link to the {noun}: `{line}`")
+                    } else {
+                        format!("a `weakref` link needs an object that lives on its own, and `{place}` is a part of `{owner}`; hold it in a block of its own, `shares {shown}`, and link to that")
+                    }
+                }
+                _ => format!("a `weakref` link needs an object that lives on its own; hold the {noun} `shares {shown}` in a name, and link to that"),
+            };
+            self.error(codes::E2119, span, message);
+            return error;
+        }
+        if dynamic || self.box_inner(ty).is_some() {
+            self.error(codes::E0900, span, format!("`{}` of a `{}` is not built by this compiler yet", kind.word(), self.types.display(ty)));
+            return error;
+        }
+        // `[RC-1]` — before a new value: the value is made in its block.
+        if new_value {
+            let link = self.link_of(kind, ty);
+            let block = self.counted_of(ty, false);
+            return Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::SharedNew { elem: ty, shared: block }, args: vec![source] }, span };
+        }
+        if self.refuse_owner_of_one_owner_place(kind, written, &source, span) {
+            return error;
+        }
+        // D5 — a local of this function that owns its value, or an `owns` parameter: its block is made
+        // where it is declared, which the next pass of the body writes.
+        if let ExprKind::Local(local) = source.kind
+            && matches!(unparenthesized(written).kind, ast::ExprKind::Path { .. })
+        {
+            let declared = self.locals[local.0 as usize].span;
+            self.block_locals.insert(declared);
+            return error;
+        }
+        self.error(codes::E0900, span, format!("`{}` of `{place}` is not built by this compiler yet", kind.word()));
+        error
+    }
+
+    /// D5 — a local's value, made in its block (`[RC-1]`): the declaration of a local a line of its
+    /// function shares, as if it said `shares`, with the type `shares mut T` throughout the function,
+    /// since the name it was first shared from keeps what it could do (`[RC-7]`).
+    fn into_block(&mut self, init: Expr) -> Expr {
+        if init.ty == self.common.error
+            || matches!(self.types.kind(init.ty), TyKind::Class(_) | TyKind::Link { .. } | TyKind::Ref { .. } | TyKind::Infer(_))
+        {
+            return init;
+        }
+        let ty = init.ty;
+        let span = init.span;
+        let link = self.link_of(ember_types::LinkKind::SharesMut, ty);
+        let block = self.counted_of(ty, false);
+        Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::SharedNew { elem: ty, shared: block }, args: vec![init] }, span }
+    }
+
+    /// D5 — at a body's entry, each `owns` parameter a line of it shares, moved into its block, under
+    /// its own name: `[RC-1]`'s "the block is made at the function's entry, before any view of it is
+    /// made", so that the caller's line is unchanged.
+    fn enter_parameter_blocks(&mut self) -> Vec<Stmt> {
+        let mut entry = Vec::new();
+        for index in 0..self.body_locals_from.min(self.locals.len()) {
+            let local = LocalId(index as u32);
+            let (name, ty, span) = (self.locals[index].name, self.locals[index].ty, self.locals[index].span);
+            let Some(name) = name else { continue };
+            if !self.block_locals.contains(&span) || self.borrowed_params.contains(&local) || self.lookup(name) != Some(local) {
+                continue;
+            }
+            let init = self.into_block(Expr { ty, kind: ExprKind::Local(local), span });
+            if init.ty == ty {
+                continue;
+            }
+            let shared = self.declare(Some(name), init.ty, span);
+            entry.push(Stmt::Let { local: shared, init: Some(init) });
+        }
+        entry
+    }
+
+    /// `[RC-1]` — an owner (`shares T`, `shares mut T`) read where its value is wanted: a class
+    /// object's handle (M4 slice A: a counted copy, which its end gives back), or the place of the
+    /// value in its block, rooted at the owner (as `Shared`'s was), so that borrows of it are borrows
+    /// of the owner.
     fn read_link_through(&mut self, owner: Expr) -> Expr {
         let TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut, target } = *self.types.kind(owner.ty) else {
             return owner;
         };
         let span = owner.span;
         let link = owner.ty;
+        if let Some(pointer) = self.types.link_payload(link) {
+            let field = Expr { ty: pointer, kind: ExprKind::Field { base: Box::new(owner), index: 0 }, span };
+            return Expr { ty: target, kind: ExprKind::Deref(Box::new(field)), span };
+        }
         Expr { ty: target, kind: ExprKind::Builtin { which: Builtin::LinkTarget { link, class: target }, args: vec![owner] }, span }
     }
 
-    /// `[WK-12]` — a `weakref C` link opened by `exists as`: `Some` of the object while it lives.
+    /// `[WK-12]` — a `weakref T` link opened by `exists as`: `Some` while its target lives, of the class
+    /// object, or of an owner of the value that only reads it (`shares T`) for a value in a block.
     fn open_link(&mut self, link: Expr) -> Expr {
         let TyKind::Link { kind: ember_types::LinkKind::Weakref, target } = *self.types.kind(link.ty) else {
             return link;
         };
-        let option = self.option_of(target);
+        let opened = if self.types.link_payload(link.ty).is_some() { self.link_of(ember_types::LinkKind::Shares, target) } else { target };
+        let option = self.option_of(opened);
         let TyKind::Enum(option_id) = *self.types.kind(option) else { return link };
         let span = link.span;
-        Expr { ty: option, kind: ExprKind::Builtin { which: Builtin::LinkOpen { class: target, option: option_id }, args: vec![link] }, span }
+        Expr { ty: option, kind: ExprKind::Builtin { which: Builtin::LinkOpen { class: opened, option: option_id }, args: vec![link] }, span }
     }
 
+    /// The safe place reached by Box auto-deref. Raw-pointer syntax never
+    /// reaches source: the private pointer projection and dereference are
+    /// introduced together by the compiler, rooted at the Box owner so the
+    /// ordinary borrow and move analyses retain the ownership relationship.
     fn read_box_through(&mut self, boxed: Expr) -> Expr {
         let Some(inner) = self.box_inner(boxed.ty) else { return boxed };
         let span = boxed.span;
@@ -27337,6 +27814,14 @@ impl<'a> Checker<'a> {
                     (Some(expr), None) => Some(self.synth_committed(expr)),
                     (None, _) => None,
                 };
+                // D5 — a local a line of this function shares is made in its block here.
+                let (declared, init) = match init {
+                    Some(init) if self.block_locals.contains(&stmt.span) => {
+                        let init = self.into_block(init);
+                        (declared.map(|_| init.ty), Some(init))
+                    }
+                    init => (declared, init),
+                };
                 let ty = declared
                     .or_else(|| init.as_ref().map(|e| e.ty))
                     .unwrap_or(self.common.error);
@@ -27468,6 +27953,8 @@ impl<'a> Checker<'a> {
                         // ODR-278 — a local declared from a function and assigned again holds any
                         // function of its shape.
                         let init = if self.reassigned.contains(&segments[0].name) { self.item_to_shape(init) } else { init };
+                        // D5 — a local a line of this function shares is made in its block here.
+                        let init = if self.block_locals.contains(&stmt.span) { self.into_block(init) } else { init };
                         self.warn_if_literal_loses_precision(value, init.ty);
                         let local = self.declare(Some(segments[0].name), init.ty, stmt.span);
                         self.plain_declared.insert(local);
@@ -31367,10 +31854,16 @@ impl<'a> Checker<'a> {
             self.open.deps.clear();
             self.open.per_use.clear();
             self.copy_captures.clear();
-            let body = self.check_block(block);
+            // D5 — the `owns` parameters a line of the body shares, each in its block from the entry.
+            let blocks = self.block_locals.len();
+            let entry = self.enter_parameter_blocks();
+            let mut body = self.check_block(block);
+            body.stmts.splice(0..0, entry);
             // A name a count or a number relied on, that the body changes,
             // is known no more: another pass (`[STD-19]`).
             let mut fixed_one = self.forget_changed(&body);
+            // D5 — a local a line shares, found in this pass: the next one makes its block.
+            fixed_one |= self.block_locals.len() != blocks;
             let mut still_open: Vec<OpenLocal> = Vec::new();
             for (_, open) in std::mem::take(&mut self.open.locals) {
                 match open.fixed {
@@ -36200,6 +36693,10 @@ impl<'a> Checker<'a> {
         while self.box_inner(iterable.ty).is_some_and(|inner| !matches!(self.types.kind(inner), TyKind::Dyn { .. })) && is_place(&iterable.kind) {
             iterable = self.read_box_through(iterable);
         }
+        // `[RC-1]` — and a loop over an owner of a value in a block, over the value.
+        if self.types.link_payload(iterable.ty).is_some() && is_place(&iterable.kind) {
+            iterable = self.read_link_through(iterable);
+        }
         let referent = match *self.types.kind(iterable.ty) {
             TyKind::Ref { inner, .. } => inner,
             _ => iterable.ty,
@@ -37079,6 +37576,15 @@ impl<'a> Checker<'a> {
                 found = self.read_box_through(found);
                 continue;
             }
+            // `[RC-1]` — an owner of a value in a block, given to a parameter that borrows it: the
+            // value in its block.
+            if self.types.link_payload(found.ty).is_some()
+                && matches!(self.types.kind(found.ty), TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut, .. })
+                && is_place(&found.kind)
+            {
+                found = self.read_link_through(found);
+                continue;
+            }
             // A reference to a `Box` is read through too, the reference first (`for b in boxes:
             // f(b)` with `f(s: ref dyn Shape)`): `[TYP-14]` reads through both.
             if let TyKind::Ref { inner, .. } = *self.types.kind(found.ty)
@@ -37114,11 +37620,43 @@ impl<'a> Checker<'a> {
         if expr.ty == expected || expected == self.common.error || expr.ty == self.common.error {
             return expr;
         }
-        // `[RC-1]` — an owner where its object is wanted.
-        if let TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut, target } = *self.types.kind(expr.ty)
-            && target == expected
+        // `[RC-1]` — an owner where its object is wanted. A value in a block is read where it is: copied
+        // when `=` copies it, borrowed where a view of it is wanted, and never moved out of its block.
+        if let TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut, target } = *self.types.kind(expr.ty) {
+            let block = self.types.link_payload(expr.ty).is_some();
+            if target == expected && (!block || (self.types.is_copy(target) && !self.types.needs_drop(target))) {
+                return self.read_link_through(expr);
+            }
+            if block
+                && is_place(&expr.kind)
+                && let TyKind::Ref { mutable, inner } = *self.types.kind(expected)
+                && inner == target
+            {
+                let span = expr.span;
+                let payload = self.read_link_through(expr);
+                if mutable {
+                    self.reject_borrowed_parameter_write(&payload, span, false);
+                }
+                return Expr { ty: expected, kind: ExprKind::Ref { place: Box::new(payload), mutable }, span };
+            }
+        }
+        // `[WK-16]`, `[TYP-45]` — a link used as its target without opening it.
+        if let TyKind::Link { kind: ember_types::LinkKind::Weakref, target } = *self.types.kind(expr.ty)
+            && (target == expected || matches!(*self.types.kind(expected), TyKind::Ref { inner, .. } if inner == target))
         {
-            return self.read_link_through(expr);
+            let place = self.written_line(expr.span).unwrap_or_else(|| "the link".to_string());
+            let short = self.link_short_name(target);
+            self.error(codes::E2020, expr.span, format!("`{place}` may be gone; open it: `if {place} exists as {short}:`"));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span: expr.span };
+        }
+        // `[WK-16]`, `[TYP-45]` — an object stored into a `weakref` place without the word.
+        if let TyKind::Link { kind: ember_types::LinkKind::Weakref, target } = *self.types.kind(expected)
+            && (expr.ty == target || matches!(*self.types.kind(expr.ty), TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut, target: held } if held == target))
+        {
+            let value = self.written_line(expr.span).unwrap_or_else(|| "it".to_string());
+            let line = self.line_with(expr.span, &format!("weakref {value}")).unwrap_or_else(|| format!("weakref {value}"));
+            self.error(codes::E2020, expr.span, format!("`=` alone would hand `{value}` over; write `{line}`"));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span: expr.span };
         }
         // `[HEAP-9]` — an `owns T` reads as its `T`, with nothing written in between: where a
         // `ref T` is wanted its payload is borrowed, and where a `T` that `=` copies is wanted the
@@ -38717,6 +39255,8 @@ impl<'a> Checker<'a> {
                 while self.box_inner(base.ty).is_some() {
                     base = self.read_box_through(base);
                 }
+                // `[RC-1]` — an owner reads as its value.
+                let base = self.read_link_through(base);
                 let index = *index as usize;
                 let found = match self.types.kind(base.ty) {
                     TyKind::Tuple(items) => Some((items.len(), items.get(index).copied())),
@@ -38763,6 +39303,10 @@ impl<'a> Checker<'a> {
                 let mut base = self.read_through(base);
                 while self.box_inner(base.ty).is_some() {
                     base = self.read_box_through(base);
+                }
+                // `[RC-1]` — an owner of a list is indexed as the list.
+                if self.types.link_payload(base.ty).is_some() {
+                    base = self.read_link_through(base);
                 }
                 if self.soa_inner(base.ty).is_some() {
                     return self.synth_soa_element(base, args, span);
@@ -46382,6 +46926,69 @@ impl<'a> Checker<'a> {
         self.reject_borrowed_parameter_write_as(place, span, offer_interior_mutability, false)
     }
 
+    /// `[RC-7]` (`E3023`) — a change reached through a `shares` owner, which only reads the value it
+    /// shares: what the change is, the owner, and the line that makes the owner one that may change.
+    fn reject_change_through_reader(&mut self, place: &Expr, span: Span) -> bool {
+        let mut current = place;
+        let owner = loop {
+            match &current.kind {
+                ExprKind::Builtin { which: Builtin::LinkTarget { link, .. }, args }
+                    if matches!(self.types.kind(*link), TyKind::Link { kind: ember_types::LinkKind::Shares, .. }) =>
+                {
+                    break &args[0];
+                }
+                ExprKind::Deref(inner) => {
+                    if let ExprKind::Field { base, index: 0 } = &inner.kind
+                        && self.types.link_payload(base.ty).is_some()
+                        && matches!(self.types.kind(base.ty), TyKind::Link { kind: ember_types::LinkKind::Shares, .. })
+                    {
+                        break &**base;
+                    }
+                    current = inner;
+                }
+                ExprKind::Field { base, .. } | ExprKind::Index { base, .. } => current = base,
+                ExprKind::Ref { place, .. } => current = place,
+                _ => return false,
+            }
+        };
+        let TyKind::Link { target, .. } = *self.types.kind(owner.ty) else { return false };
+        let noun = self.link_noun(target);
+        let shown = self.types.display(target);
+        let change = self.written_line(span).unwrap_or_else(|| "this change".to_string());
+        let held = self.written_line(owner.span).unwrap_or_else(|| "the owner".to_string());
+        let mut refused = Diagnostic::error(codes::E3023, span, format!("`{change}` changes the {noun}, but `{held}` only reads the {noun} it shares"))
+            .note("an owner made with `shares` only reads the value; one made with `shares mut`, and the name it was first shared from, change it [RC-7]");
+        let declared = root_local(&owner.kind).filter(|_| matches!(owner.kind, ExprKind::Local(_)));
+        if let Some(local) = declared {
+            let parameter = (local.0 as usize) < self.body_locals_from;
+            let declaration = self.locals[local.0 as usize].span;
+            if parameter {
+                refused = refused.help(format!("to change it through `{held}`, take an owner that may change: `owns {held}: shares mut {shown}`"));
+            } else if let Some((line, text)) = self.line_text(declaration).filter(|(_, text)| text.contains("shares ")) {
+                refused = refused.help(format!("to change it through `{held}`, write `{}` in place of line {line}", text.replacen("shares ", "shares mut ", 1)));
+            }
+        } else if let ExprKind::Field { base, .. } = &owner.kind {
+            let holder = self.read_link_type(base.ty);
+            let field = held.rsplit('.').next().unwrap_or(&held).to_string();
+            let at = match *self.types.kind(holder) {
+                TyKind::Class(id) => (0..self.types.class_field_count(id))
+                    .filter_map(|index| self.types.class_field_at(id, index))
+                    .find(|declared| declared.name.as_str() == field)
+                    .map(|declared| declared.span),
+                TyKind::Struct(id) => self.types.struct_def(id).field(Symbol::intern(&field)).map(|(_, declared)| declared.span),
+                _ => None,
+            };
+            let holder_shown = self.types.display(holder);
+            let line = at.and_then(|at| self.line_of(at)).map_or_else(String::new, |line| format!(" (line {line})"));
+            refused = refused.help(format!(
+                "to change it through the {}, write `{field}: shares mut {shown}` in `{holder_shown}`{line}, and make its owner with `shares mut`",
+                self.link_noun(holder)
+            ));
+        }
+        self.sink.emit(refused);
+        true
+    }
+
     /// `assigns`: the write is the assignment of the whole parameter (`n = n + 1`), Python's
     /// rebinding of its name, which a borrowed parameter reached through its borrow is too.
     fn reject_borrowed_parameter_write_as(
@@ -46391,6 +46998,9 @@ impl<'a> Checker<'a> {
         offer_interior_mutability: bool,
         assigns: bool,
     ) -> bool {
+        if self.reject_change_through_reader(place, span) {
+            return true;
+        }
         let Some(local) = root_local(&place.kind) else { return false };
         if !self.borrowed_params.contains(&local) {
             return false;
@@ -48388,6 +48998,18 @@ impl<'a> Checker<'a> {
         }
         // `[RC-1]` — an owner's methods are its object's.
         receiver = self.read_link_through(receiver);
+        // `[WK-12]`, `[WK-16]` — a link is opened before its target is used; `upgrade` is gone.
+        if let TyKind::Link { kind: ember_types::LinkKind::Weakref, target } = *self.types.kind(receiver.ty) {
+            let place = self.written_line(receiver.span).unwrap_or_else(|| "the link".to_string());
+            let short = self.link_short_name(target);
+            let open = format!("if {place} exists as {short}:");
+            if name.name.is("upgrade") {
+                self.error(codes::E1010, span, format!("a `weakref` link is opened with `exists as`: `{open}`"));
+            } else {
+                self.error(codes::E2020, receiver.span, format!("`{place}` may be gone; open it: `{open}`"));
+            }
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         // `[TYP-22]` — once the receiver is an interface reference, method
         // lookup is a vtable lookup rather than a concrete `DefId` call. The
         // interface declaration still supplies the ordinary argument
@@ -50013,6 +50635,13 @@ impl<'a> Checker<'a> {
         }
         // `[RC-1]` — an owner reads as its object.
         base = self.read_link_through(base);
+        // `[WK-16]` — a link is opened before its target is used.
+        if let TyKind::Link { kind: ember_types::LinkKind::Weakref, target } = *self.types.kind(base.ty) {
+            let place = self.written_line(base.span).unwrap_or_else(|| "the link".to_string());
+            let short = self.link_short_name(target);
+            self.error(codes::E2020, base.span, format!("`{place}` may be gone; open it: `if {place} exists as {short}:`"));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         match *self.types.kind(base.ty) {
             TyKind::Struct(id) => match self.types.struct_def(id).field(name.name) {
                 Some((index, field)) => {
@@ -61515,6 +62144,13 @@ impl<'a> Checker<'a> {
         while !dyn_boxes && self.box_inner(rhs.ty).is_some() {
             rhs = self.read_box_through(rhs);
         }
+        // `[RC-1]` — an owner of a value in a block is an operand as its value.
+        if self.types.link_payload(lhs.ty).is_some() {
+            lhs = self.read_link_through(lhs);
+        }
+        if self.types.link_payload(rhs.ty).is_some() {
+            rhs = self.read_link_through(rhs);
+        }
         // `[SIMD-8]` — a lane-wise operator on two `std.simd` vectors or masks.
         (lhs, rhs) = match self.synth_simd_binary(hir_op, lhs, rhs, span) {
             Ok(call) => return call,
@@ -62789,6 +63425,8 @@ fn is_place(kind: &ExprKind) -> bool {
         ExprKind::Local(_) | ExprKind::Index { .. } => true,
         ExprKind::Field { base, .. } => is_place(&base.kind),
         ExprKind::Deref(_) => true,
+        // `[RC-1]` — a class object read through an owner is the object the owner names, where it is.
+        ExprKind::Builtin { which: Builtin::LinkTarget { .. }, args } => is_place(&args[0].kind),
         _ => false,
     }
 }
@@ -65435,6 +66073,28 @@ struct CaptureWatch {
     /// declared: the closure's local standing for it is declared there too, so the variable
     /// counts as read where the closure reads it (`L1001`).
     item_spans: HashMap<Symbol, Span>,
+}
+
+/// The comma-separated items of `text` at its top level, trimmed: `Player(), Player(hp=2)`'s two,
+/// commas inside brackets, parentheses, braces and quotes left alone.
+fn split_top_level(text: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    let (mut depth, mut quoted, mut start) = (0i32, false, 0);
+    for (at, c) in text.char_indices() {
+        match c {
+            '"' => quoted = !quoted,
+            '(' | '[' | '{' if !quoted => depth += 1,
+            ')' | ']' | '}' if !quoted => depth -= 1,
+            ',' if !quoted && depth == 0 => {
+                items.push(text[start..at].trim().to_string());
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    items.push(text[start..].trim().to_string());
+    items.retain(|item| !item.is_empty());
+    items
 }
 
 /// An expression without the parentheses around it: `(0..10)` is `0..10`.

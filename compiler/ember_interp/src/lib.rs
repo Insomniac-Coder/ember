@@ -402,6 +402,7 @@ impl<'a, 'io> Interp<'a, 'io> {
                 let fields = &self.types.enum_def(*id).variants[variant].fields;
                 (fields.get(*index).map_or(ty, |f| f.ty), None)
             }
+            (Projection::Field(0), TyKind::Link { .. }) => (self.types.link_payload(ty).unwrap_or(ty), None),
             (Projection::Field(index), TyKind::Struct(id)) => {
                 (self.types.struct_def(*id).fields.get(*index).map_or(ty, |f| f.ty), None)
             }
@@ -575,6 +576,13 @@ impl<'a, 'io> Interp<'a, 'io> {
                     let offsets = self.types.variant_field_offsets(*id);
                     plain(at.addr + offsets[v][*index])
                 }
+            }
+            // `[RC-1]`, `[WK-11]` (D4) — a link to a value that is not a class object points at its
+            // block: the logical field is the value's address, after the header, as a `Shared`'s.
+            (Projection::Field(0), TyKind::Link { target, .. }) if self.types.link_payload(at.ty).is_some() => {
+                let header = self.pointer_at(at)?;
+                let payload = header + object::payload_offset(self.layout(*target).align);
+                Loc { addr: 0, ty, variant: None, value: Some(payload) }
             }
             (Projection::Field(index), TyKind::Struct(id)) => {
                 if let Some(inner) = object::shared_inner(self.types, *id) {

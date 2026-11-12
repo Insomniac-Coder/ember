@@ -865,6 +865,19 @@ impl TypeTable {
         self.lookup.get(kind).copied()
     }
 
+    /// `[RC-1]`, `[WK-11]` (D4) — a link to a value that is not a class object is one pointer to a
+    /// block holding the header of `[OBJ-1]` and the value after it, as `Shared[T]`'s block: its one
+    /// logical field (`Field(0)`) is the pointer to the value, which the checker interns with the link.
+    /// `None` for a class target, whose link is the object's own pointer.
+    pub fn link_payload(&self, ty: Ty) -> Option<Ty> {
+        match *self.kind(ty) {
+            TyKind::Link { target, .. } if !matches!(self.kind(target), TyKind::Class(_)) => {
+                self.find(&TyKind::Ptr { mutable: true, inner: target })
+            }
+            _ => None,
+        }
+    }
+
     pub fn intern(&mut self, kind: TyKind) -> Ty {
         if let Some(&ty) = self.lookup.get(&kind) {
             return ty;

@@ -11287,6 +11287,18 @@ impl Emitter<'_> {
                             member(variant.name), member(variant.fields[*index].name)
                         ));
                     }
+                    // `[RC-1]`, `[WK-11]` (D4) — a link to a value that is not a class object points at
+                    // its block: the logical field is the value's address, after the header.
+                    (_, TyKind::Link { target, .. }) if self.types.link_payload(at.ty).is_some() => {
+                        let inner_c = self.c_type(*target);
+                        out = format!(
+                            "(({}*){}(({}*){out}, {}))",
+                            inner_c,
+                            ember_branding::runtime("obj_payload"),
+                            ember_branding::runtime("obj_header"),
+                            c_align(&inner_c),
+                        );
+                    }
                     (_, TyKind::Struct(id)) => {
                         let def = self.types.struct_def(*id);
                         // The checker models Box auto-deref as private field 0
@@ -11409,6 +11421,7 @@ impl Emitter<'_> {
                 let fields = &self.types.enum_def(*id).variants[variant].fields;
                 plain(fields.get(*index).map(|f| f.ty).unwrap_or(at.ty))
             }
+            (Projection::Field(0), TyKind::Link { .. }) => plain(self.types.link_payload(at.ty).unwrap_or(at.ty)),
             (Projection::Field(index), TyKind::Struct(id)) => {
                 let fields = &self.types.struct_def(*id).fields;
                 plain(fields.get(*index).map(|f| f.ty).unwrap_or(at.ty))
