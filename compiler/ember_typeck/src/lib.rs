@@ -59752,13 +59752,22 @@ impl<'a> Checker<'a> {
     /// for the parameters that have no default: `E2021` at the call, with the callee's first line and
     /// its declaration as a secondary span.
     fn report_arity(&mut self, def: DefId, shown: String, declared: usize, given: usize, span: Span, args: &[ast::Arg]) {
-        let callee = shown.trim_matches('`').to_string();
-        let line = self.declaration_first_line(def);
+        // The parameters a call gives: the signature's last `declared` (a method's receiver comes first).
         let params: Vec<Symbol> = {
             let all = &self.signatures[def.0 as usize].params;
             let skip = all.len().saturating_sub(declared);
             all.iter().skip(skip).map(|(name, ..)| *name).collect()
         };
+        self.report_arity_of(def, shown, &params, given, span, args);
+    }
+
+    /// `[TYP-25]` (N171) — `E2021` for a call that gives too many arguments or leaves out a parameter with no
+    /// default, against `params`, the parameters its positional arguments fill (for a function over a pack,
+    /// the ones before the pack's values, `[TYP-47]`).
+    fn report_arity_of(&mut self, def: DefId, shown: String, params: &[Symbol], given: usize, span: Span, args: &[ast::Arg]) {
+        let declared = params.len();
+        let callee = shown.trim_matches('`').to_string();
+        let line = self.declaration_first_line(def);
         let what = if given > declared {
             let noun = |n: usize| if n == 1 { "argument" } else { "arguments" };
             format!("gives {given} {}, and `{callee}` takes {declared}", noun(given))

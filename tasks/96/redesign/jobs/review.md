@@ -435,3 +435,31 @@ after each work batch" is the owner's rule from this round.
       … for the whole call";
     - `[CLO-6]`'s E3013 example (`consume(copy of s)`) without the `owns` that `[FN-2a]` requires;
     - with the DIA-2 "you" question above.
+- **H1 (Opus): `[TYP-47]`** (954k tokens, 4 h 6 min). All 13 tasks, plus 3 fixes its quick check found. Merged as
+  `7de3dd14`. The one conflict was in `report_missed_bound`; both sides were kept, W1's `[DIA-14]` error guard
+  first, then `Printable`'s report.
+  - **Built:**
+    - packs in the grammar, types, needs, calls, loops, structs and classes;
+    - tuple interfaces written once;
+    - instances with `[MNG-*]` symbols;
+    - `Printable`;
+    - `print`, `println`, `eprint`, `eprintln` (`std.core`, `@inline`, over `write_stdout`/`write_stderr`) and
+      `format_to` (`std.fmt`) as library functions, with `Builtin::from_name` gone;
+    - `zip` of any number.
+  - **Print calls before and after:** one direct inlined call per type list. The machine code of a print-heavy
+    `main` is the same (clang -O2: 133 to 132 instructions from LLVM, 134 to 134 from C), and the output is byte
+    for byte the same on both backends. Compile time went from 6.0 s to 5.2 s on 400 calls; the LLVM exe is
+    2.5 KB bigger (stack-name tables).
+  - **Not built (E0900):**
+    - methods over a pack, and enum, interface and alias packs, so `reg.view[A, B]()` waits (M14);
+    - an extension over `(A, B, Ts...)` reaches only the written elements of `this`.
+  - **Spec findings for Hardened_14, with the lead's view:**
+    - `[STD-18]`'s `format_to` signature has no `sep`/`end`, which H1 kept as print has them; consistency says
+      add them to the signature;
+    - `[TYP-47]` puts `[A, B, Ts...]` "above" `extend`, where `[GRM-40]` puts an extend block's brackets after
+      `extend`: a text repair;
+    - `Printable` is not in `[MOD-5]`'s prelude list: a text repair;
+    - `values...` into a function with no pack is E2020 (H1's choice, since a body is checked before its
+      instances): say so.
+  - **A defect for round 7:** instance spellings write `StrView`, where `[MNG-1]`/`[MNG-6]` put built-in types
+    under `std.core`. The spec says it; the symbols change.

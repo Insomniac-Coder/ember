@@ -340,7 +340,11 @@ impl Checker<'_> {
         let n = match (values_at, explicit.len() > at) {
             (Some(values_at), given) => {
                 let Some(n) = positional.checked_sub(values_at) else {
-                    self.report_arity(def, format!("`{name}`"), values_at, positional, span);
+                    {
+                        // The parameters before the pack's values are the ones positional arguments fill.
+                        let leading: Vec<Symbol> = self.signatures[def.0 as usize].params.iter().take(values_at).map(|(name, ..)| *name).collect();
+                        self.report_arity_of(def, format!("`{name}`"), &leading, positional, span, &args);
+                    }
                     return Some(error);
                 };
                 if given && explicit.len() - at != n {
