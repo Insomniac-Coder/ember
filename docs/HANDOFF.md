@@ -1,5 +1,33 @@
 # Ember — handoff
 
+> **2026-11-12 — pushed, Hardened_13 is the target, round 6 running (the owner: "run the gate and bench, then push
+> and continue the work you can use upto 4 agents").** START HERE.
+>
+> - **Pushed:** origin/main = `2150f53c`.
+>   - The gate's one failure, `the_cpp_corpus_binds_as_recorded`, was A6-5's leftover `document.get()` in the
+>     corpus program. It is fixed, and the test passes three ways.
+>   - The bench: 25 of 25 on both backends.
+> - **Local `main`, not pushed:**
+>   - `f7c61773` merges **0.9.20_Hardened_13**, which the Opus deputy cut: N171 to N175, `decisions.md` §24.
+>     `check_examples` gives Hardened_12's results exactly; the gates and the quick check are green.
+>   - `2572d2b6` adds `R6-batch.md`.
+> - **Round 6** (`tasks/96/redesign/jobs/R6-batch.md`):
+>   - H1 (Opus): `[TYP-47]` variadic generics;
+>   - H2 (Opus): M4's rest of slice A and slice B, on `lead-m4` (`4a7a0d8a`, which has `main` merged in);
+>   - W1 (Sonnet): 18 defects;
+>   - C (Opus): a pilot of crediting 20 rules to `built_for_0915`. There are 195 candidates in all.
+> - **The owner's rules for agents (2026-11-12), only while he allows agents:**
+>   - up to 4 at once;
+>   - Sonnet does light and medium development and never rules a spec question;
+>   - Opus (the lead or a helper) takes reviews, merges and ODRs; Fable only with his yes;
+>   - 10 to 30 tasks each;
+>   - 10 to 15 minutes of rest after each batch.
+> - **Next:**
+>   1. Collect round 6: review, merge, the quick check.
+>   2. Bench `counted_handles` before and after M4's slices.
+>   3. Round 7: W2's 16 tasks, which are queued in `R6-batch.md`.
+>   4. The credit review, scaled if the pilot works.
+
 > **2026-11-12 morning — round 5 collected (the owner awake: "resume it and merge its work").** The Opus helper
 > was cut off by Windows Update's planned restart at 01:00 (System log: `MoUsoCoreWorker.exe`, "Service pack (Planned)";
 > a clean shutdown, not a crash). It was resumed and finished, and is merged (`4a7a48c4`). Round 5's W1 is merged without
