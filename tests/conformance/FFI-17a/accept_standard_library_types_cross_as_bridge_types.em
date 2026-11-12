@@ -21,7 +21,7 @@
 # and passed back by `const&` (borrowed) or `&` (lent mutably); a `std::string` is a `CppString`,
 # `to_str()` when its bytes are UTF-8 and `String.from(c)` copying them (an invalid byte becoming
 # U+FFFD); a `std::shared_ptr<T>` is a `CppShared[T]`, whose `clone()` C++ counts; a
-# `std::unique_ptr<T>` is a `ForeignBox[T]`. `[FFI-17e]` — the bridge types are `std.ffi`'s.
+# `std::unique_ptr<T>` is an `owns T`. `[FFI-17e]` — the bridge types are `std.ffi`'s.
 
 from std.ffi import CppVector, CppString, CppShared
 import cpp "library.hpp"
@@ -60,6 +60,6 @@ fn main():
                 println(error.what)
         match cpp.unique_counter(11):
             Ok(boxed):
-                println(boxed.get().value())
+                println(boxed.value())
             Err(error):
                 println(error.what)

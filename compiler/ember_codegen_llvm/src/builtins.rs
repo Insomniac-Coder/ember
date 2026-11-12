@@ -293,7 +293,7 @@ impl<'a> FnCx<'_, 'a> {
                     }
                 }
             }
-            // `mem.replace` and `mem.swap` are a load and stores; `mem.forget` nothing.
+            // `mem.replace` and `mem.swap` are a load and stores.
             Builtin::MemReplace { elem } => {
                 let target = self.pointer(&args[0])?;
                 let value = self.operand(&args[1])?;
@@ -312,7 +312,6 @@ impl<'a> FnCx<'_, 'a> {
                 self.copy(&right, align, &held, align, size, false);
                 Ok(())
             }
-            Builtin::MemForget { .. } => Ok(()),
             // `[STD-20]` — over the value's own width, zero-extended: LLVM's bit counts, which give
             // the width for zero, as the runtime's helpers do.
             Builtin::IntBits(bits) => {
@@ -884,7 +883,11 @@ impl<'a> FnCx<'_, 'a> {
                 Ok(())
             }
             Builtin::FmtSinkClose => {
-                let sink = self.pointer(&args[0])?;
+                // The text itself, taken over: the runtime reads it where it lies.
+                let sink = match self.operand(&args[0])? {
+                    Val::Mem(at, _) => at,
+                    other => return unsupported(format!("a format sink held as {other:?}")),
+                };
                 let slot = self.alloca(8, 8);
                 self.call_rt("fmt_sink_close", vec![Val::Imm(Sc::Ptr, sink)], Some((&slot, 8)));
                 let held = self.load(Sc::I(64), &slot, 8);
@@ -922,53 +925,8 @@ impl<'a> FnCx<'_, 'a> {
                 };
                 self.call_rt_into("str_char_next_wide_usize", vec![Val::Imm(Sc::Ptr, base), Val::Imm(Sc::Ptr, cursor), lead], dest)
             }
-            // `[FFI-23]` — a class object is pinned in its header (or, with an `on_relocate`
-            // callback, recorded with it, `[HR-20]`); a `Box`'s value never moves: `0`.
-            Builtin::RetainedPin => {
-                if matches!(self.m.ty.kind(arg_ty), TyKind::Struct(_)) {
-                    return self.store_result(dest, "0", Sc::I(64), false);
-                }
-                let object = self.pointer(&args[0])?;
-                let callback = match args.get(1) {
-                    None => "null".to_string(),
-                    Some(argument) => match self.operand_ty(argument).map(|ty| (ty, self.m.ty.kind(ty).clone())) {
-                        Some((ty, TyKind::Enum(id))) if self.m.ty.table.option_niche(id).is_none() => {
-                            let value = self.operand(argument)?;
-                            let (size, align) = self.m.ty.size_align(ty);
-                            let (at, align) = self.spill(&value, size, align);
-                            let place = crate::func::PlaceRef { ptr: at.clone(), ty, variant: None, align };
-                            let (discriminant, bits) = self.discriminant_at(&place)?;
-                            let some = self.m.ty.table.enum_def(id).variants[1].discriminant;
-                            let is_some = self.value(format!("icmp eq i{bits} {discriminant}, {some}"));
-                            let payload_at = self.gep(&at, self.m.ty.table.variant_field_offsets(id)[1][0]);
-                            let payload = self.load(Sc::Ptr, &payload_at, 8);
-                            self.value(format!("select i1 {is_some}, ptr {payload}, ptr null"))
-                        }
-                        _ => self.pointer(argument)?,
-                    },
-                };
-                let id = self.alloca(8, 8);
-                let none = self.value(format!("icmp eq ptr {callback}, null"));
-                let (pin, record, done) = (self.label(), self.label(), self.label());
-                self.emit(format!("br i1 {none}, label %{pin}, label %{record}"));
-                self.start(&pin);
-                self.call_rt("obj_pin", vec![Val::Imm(Sc::Ptr, object.clone())], None);
-                self.emit(format!("store i64 0, ptr {id}, align 8"));
-                self.emit(format!("br label %{done}"));
-                self.start(&record);
-                self.call_rt("obj_pin_relocatable", vec![Val::Imm(Sc::Ptr, object), Val::Imm(Sc::Ptr, callback)], Some((&id, 8)));
-                self.emit(format!("br label %{done}"));
-                self.start(&done);
-                let id = self.load(Sc::I(64), &id, 8);
-                self.store_result(dest, &id, Sc::I(64), false)
-            }
-            Builtin::RetainedUnpin => {
-                let id = self.operand(&args[0])?;
-                self.call_rt("obj_unpin_relocatable", vec![id], None);
-                Ok(())
-            }
-            // The object's address: a handle's or a `Box`'s pointer, a `Box[dyn]`'s data.
-            Builtin::RetainedAddress | Builtin::CppObjectAddress => {
+            // The object's address: a handle's pointer.
+            Builtin::CppObjectAddress => {
                 let address = self.pointer(&args[0])?;
                 self.store_result(dest, &address, Sc::Ptr, false)
             }
@@ -1137,15 +1095,41 @@ impl<'a> FnCx<'_, 'a> {
             Builtin::ForeignRelease => {
                 let object = self.pointer(&args[0])?;
                 let creator = self.operand(&args[1])?;
-                self.call_rt("ffi_release", vec![Val::Imm(Sc::Ptr, object), creator], None);
+                // `[FFI-33b]` — with the type a stop names.
+                let shown = self.m.ty.table.foreign_object_shown(arg_ty);
+                let shown = self.m.bytes(shown.as_bytes());
+                self.call_rt("ffi_release", vec![Val::Imm(Sc::Ptr, object), creator, Val::Imm(Sc::Ptr, shown)], None);
                 Ok(())
             }
             Builtin::ForeignThread => self.call_rt_into("ffi_thread", Vec::new(), dest),
-            // A destructor with a result is called through its `void` thunk.
-            Builtin::ForeignDestructor { symbol, ret, .. } => {
-                let given = self.pointer(&args[0])?;
-                let destructor = if self.m.ty.is_zst(*ret) { given } else { crate::ffi::foreign_destructor(self.m, symbol.as_str(), *ret)? };
-                self.store_result(dest, &destructor, Sc::Ptr, false)
+            // `[OWN-12]`, `[FFI-54]` — the address the owner's first word holds; the owner was handed
+            // to the call and nothing drops it. A foreign object's leaves the runtime's record first.
+            Builtin::IntoRaw { foreign } => {
+                let held = self.operand(&args[0])?;
+                let (address, creator) = match held {
+                    Val::Imm(Sc::Ptr, value) => (value, None),
+                    Val::Mem(at, align) => {
+                        let address = self.load(Sc::Ptr, &at, align.min(8));
+                        let offsets = self.m.ty.table.layout(arg_ty).field_offsets;
+                        let creator = match offsets.get(1) {
+                            Some(&offset) if *foreign => {
+                                let creator_at = self.gep(&at, offset);
+                                Some(self.load(Sc::I(32), &creator_at, 4))
+                            }
+                            _ => None,
+                        };
+                        (address, creator)
+                    }
+                    other => return unsupported(format!("an `owns` value held as {other:?}")),
+                };
+                if *foreign {
+                    let creator = creator.unwrap_or_else(|| "0".to_string());
+                    let TyKind::Struct(id) = *self.m.ty.table.kind(arg_ty) else { return unsupported("an `owns T` that is not a struct") };
+                    let shown = self.m.ty.table.foreign_object_shown(self.m.ty.table.struct_def(id).fields[0].ty);
+                    let shown = self.m.bytes(shown.as_bytes());
+                    self.call_rt("ffi_release", vec![Val::Imm(Sc::Ptr, address.clone()), Val::Imm(Sc::I(32), creator), Val::Imm(Sc::Ptr, shown)], None);
+                }
+                self.store_result(dest, &address, Sc::Ptr, false)
             }
             other => unsupported(format!("the built-in `{}`", other.name())),
         }

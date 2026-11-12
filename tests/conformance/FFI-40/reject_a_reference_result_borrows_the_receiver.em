@@ -13,5 +13,5 @@ import cpp "bag.hpp"
 fn main():
     unsafe:  # SAFETY(ffi): the box owns the bag for every call
         bag = cpp.Bag.new()
-        slot: ref mut c_int = bag.get_mut().slot()
-        slot = bag.get().total() + 1  #$ error[E3021]: `bag` is borrowed here and mutably borrowed elsewhere
+        slot: ref mut c_int = bag.slot()
+        slot = bag.total() + 1  #$ error[E3021]: `bag` is borrowed here and mutably borrowed elsewhere

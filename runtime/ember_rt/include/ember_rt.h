@@ -3282,29 +3282,24 @@ void ember_obj_header_v40(void);
 EMBER_PANIC_FN void ember_reload_removed_called(const char* name);
 /* -- foreign objects Ember owns ------------------------------------------------
  *
- * `[FFI-36a]`, `[FFI-36b]` — a `ForeignBox` owns a foreign object: the runtime records each one
- * by address with where it was taken (`std.ffi.adopt`, a `returns_owned` result), and taking a
- * live one again panics, naming both places, in every profile: two owners would free it twice.
- * `ember_ffi_adopt` records `object` (a null pointer is no object, and is not recorded) and
- * returns it; `ember_ffi_release` removes it when its box ends or gives it to C (`owned`). With
- * `creator` nonzero (`threads(creator)`, `[FFI-33b]`), the debug profile checks that the box
- * ends on the thread that made it, which `ember_ffi_thread` names. */
-/* `[FFI-23]` — `Retained.pin` of a class object: its header's pinned flag, set for good (an object
- * foreign code may hold is never moved, `[HR-20]`). */
+ * `[FFI-36a]`, `[FFI-36b]` — an `owns T` of a foreign type holds a foreign object: the runtime
+ * records each one by address with where it was taken (`std.ffi.adopt`, a `returns_owned`
+ * result), and taking a live one again panics, naming both places, in every profile: two owners
+ * would free it twice. `ember_ffi_adopt` records `object` (a null pointer is no object, and is not
+ * recorded) and returns it; `ember_ffi_release` removes it when its owner ends or gives it to C
+ * (`owns`). With `creator` nonzero (`threads(creator)`, `[FFI-33b]`), every profile checks that it
+ * ends on the thread that made it, which `ember_ffi_thread` names, and stops the program
+ * otherwise, naming `type`, the line that made it and both threads. */
+/* `[FFI-17d]`, `[HR-20]` — a class object C++ was given: its header's pinned flag, set for good
+ * (an object foreign code may hold is never moved). */
 void ember_obj_pin(ember_obj_header* object);
-/* `[HR-20]` (ODR-194) — `Retained.pin(handle, on_relocate=Some(f))`: the object is not pinned; a
- * reload that moves it calls `f` (an `extern "C" fn(ObjectPtr[C], ObjectPtr[C])`) with the old and
- * the new address, after commit publishes the move and before reclaim. Returns the token's number,
- * which `ember_obj_unpin_relocatable` takes when the token ends (`0` is no token). */
-uint64_t ember_obj_pin_relocatable(ember_obj_header* object, void (*callback)(void));
-void ember_obj_unpin_relocatable(uint64_t id);
 /* `[FFI-17d]` — a foreign `delete` of a class object whose trampoline declares
  * `owner="foreign"`: the count C++ was given becomes a handle again, which must be the object's
  * only one (Ember code that still held one would be left with a deleted C++ object); otherwise
  * it panics, naming `at`. */
 ember_obj_header* ember_cpp_object_adopt(ember_obj_header* object, ember_loc at);
 void* ember_ffi_adopt(void* object, ember_loc at);
-void ember_ffi_release(void* object, uint32_t creator);
+void ember_ffi_release(void* object, uint32_t creator, const char* type);
 uint32_t ember_ffi_thread(void);
 /* `[FFI-22]`, `[FFI-33b]`, `[FFI-1]` — a callback, or a foreign function, whose contract says
  * `threads(creator)` or `threads(main)`: the debug profile checks that it is called on that

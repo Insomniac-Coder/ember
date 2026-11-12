@@ -1,7 +1,7 @@
 #$ test: parse-pass
 #$ rules: FFI-36b, FFI-36a
 # `[FFI-36b]` — adopting one live foreign object twice is caught at run time in every profile: the
-# runtime records each address a `ForeignBox` owns with where it was taken, and the second `adopt`
+# runtime records each address an `owns T` of a foreign type holds with where it was taken, and the second `adopt`
 # panics naming both places, before a second owner could free it twice. Here the two calls adopt
 # two locals holding one pointer, which the compile-time check (`E5068`, one local) does not follow.
 # The milestone `adopted_foreign_objects_are_freed_by_their_destructor` builds this program with

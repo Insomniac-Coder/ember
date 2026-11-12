@@ -95,27 +95,6 @@ fn entry_symbol(body: &Body, index: usize) -> String {
     format!("{}_cb{index}", body.symbol)
 }
 
-/// `[FFI-36a]` — the `void (T*)` a `ForeignBox` holds for `destructor`: the function itself, or
-/// for one with a result a thunk that calls it and drops the result.
-pub(crate) fn foreign_destructor(m: &mut Module<'_>, destructor: &str, ret: Ty) -> Result<String> {
-    let returns = !m.ty.is_zst(ret);
-    declare_c(m, destructor, returns.then_some(ret), &[Param::Ptr]);
-    if !returns {
-        return Ok(global_name(destructor));
-    }
-    let thunk = format!("{}_ffi_destroy_{destructor}", ember_branding::SYMBOL_PREFIX);
-    if !m.helper_defined(&thunk) {
-        let callee = global_name(destructor);
-        define_c_fn(m, &thunk, "internal ", None, &[Param::Ptr], "", |cx, values, _| {
-            let (size, align) = cx.m.ty.size_align(ret);
-            let scratch = cx.alloca(size, align);
-            cx.call_c(&callee, Some(ret), &[Param::Ptr], values.to_vec(), Some((&scratch, align)));
-            Ok(())
-        })?;
-    }
-    Ok(global_name(&thunk))
-}
-
 /// A foreign C function's declaration, by the linker's symbol.
 pub(crate) fn declare_c(m: &mut Module<'_>, symbol: &str, ret: Option<Ty>, params: &[Param]) {
     let sig = crate::func::c_fn_signature(m, ret, params);
@@ -463,7 +442,7 @@ impl<'a> FnCx<'_, 'a> {
             }
         };
         let Some(unregister) = &callback.unregister else { return Ok(Passed { data, token: None, some }) };
-        // The token: `{ {data, release}, 0 }` (`[HR-20]` — no `on_relocate` record).
+        // The token: `{ {data, release} }`, the `ForeignCallback` alone (`[FFI-23]`).
         let TyKind::Struct(token) = *table.kind(unregister.token) else { return unsupported("a `Retained` token that is not a struct") };
         let held_ty = table.struct_def(token).fields[0].ty;
         let held_at = table.layout(unregister.token).field_offsets[0];
@@ -615,20 +594,7 @@ impl<'a> FnCx<'_, 'a> {
                         values.push(Val::Imm(Sc::I(bits), count));
                     }
                 }
-                // `[FFI-23]` — C keeps the address of the object the token holds.
-                FfiAbiParam::Retained { public_index } => {
-                    let ty = body.args().nth(*public_index).expect("the retained parameter").1.ty;
-                    let at = self.param_place(*public_index)?;
-                    let (token_at, token) = match *table.kind(ty) {
-                        TyKind::Ref { inner, .. } => (self.load(Sc::Ptr, &at.ptr, at.align.min(8)), inner),
-                        _ => (at.ptr.clone(), ty),
-                    };
-                    let value_at = self.gep(&token_at, table.layout(token).field_offsets[0]);
-                    let address = self.load(Sc::Ptr, &value_at, 8);
-                    shapes.push(PTR);
-                    values.push(Val::Imm(Sc::Ptr, address));
-                }
-                // `[FFI-11]` — C takes the object: its box leaves the record and frees nothing.
+                // `[FFI-11]` — C takes the object: it leaves the record, and Ember frees nothing.
                 FfiAbiParam::Owned { public_index, nullable } => {
                     let ty = body.args().nth(*public_index).expect("the owned parameter").1.ty;
                     let at = self.param_place(*public_index)?;
@@ -782,18 +748,28 @@ impl<'a> FnCx<'_, 'a> {
         }
     }
 
-    /// `[FFI-11]` — a `ForeignBox` at `at` given to C: out of the runtime's record; its pointer.
+    /// `[FFI-11]` — an `owns T` of a foreign type at `at` given to C: out of the runtime's record;
+    /// its pointer. A type bound to its thread holds its creator after the pointer (`[FFI-33b]`).
     fn release_box(&mut self, at: &str, boxed: Ty) -> String {
         let offsets = self.m.ty.table.layout(boxed).field_offsets;
         let pointer = self.load(Sc::Ptr, at, 8);
-        let creator_at = self.gep(at, offsets[2]);
-        let creator = self.load(Sc::I(32), &creator_at, 4);
-        self.call_rt("ffi_release", vec![Val::Imm(Sc::Ptr, pointer.clone()), Val::Imm(Sc::I(32), creator)], None);
+        let creator = match offsets.get(1) {
+            Some(&offset) => {
+                let creator_at = self.gep(at, offset);
+                self.load(Sc::I(32), &creator_at, 4)
+            }
+            None => "0".to_string(),
+        };
+        // `[FFI-33b]` — with the type a stop names.
+        let TyKind::Struct(id) = *self.m.ty.table.kind(boxed) else { unreachable!("an `owns T` of a foreign type is a struct") };
+        let shown = self.m.ty.table.foreign_object_shown(self.m.ty.table.struct_def(id).fields[0].ty);
+        let shown = self.m.bytes(shown.as_bytes());
+        self.call_rt("ffi_release", vec![Val::Imm(Sc::Ptr, pointer.clone()), Val::Imm(Sc::I(32), creator), Val::Imm(Sc::Ptr, shown)], None);
         pointer
     }
 
-    /// `[FFI-36a]` — a new foreign object's `ForeignBox` (recorded, with its destructor and under
-    /// `threads(creator)` its creator), or for a nullable one `None` for null: its slot.
+    /// `[FFI-36a]`, `[FFI-33b]` (D2) — a new foreign object's `owns T` (recorded, and for a type
+    /// bound to its thread with its creator), or for a nullable one `None` for null: its slot.
     fn adopt(&mut self, object: String, owned: &ember_hir::FfiOwnedResult, ty: Ty, span: ember_span::Span) -> Result<String> {
         let table = self.m.ty.table;
         let boxed = if owned.nullable {
@@ -802,7 +778,6 @@ impl<'a> FnCx<'_, 'a> {
         } else {
             ty
         };
-        let destructor = foreign_destructor(self.m, owned.destructor.as_str(), owned.destructor_ret)?;
         let (size, align) = self.m.ty.size_align(ty);
         let slot = self.alloca(size, align);
         self.zero(&slot, align, size);
@@ -810,10 +785,8 @@ impl<'a> FnCx<'_, 'a> {
             let offsets = cx.m.ty.table.layout(boxed).field_offsets;
             let loc = cx.loc(span);
             cx.call_rt("ffi_adopt", vec![Val::Imm(Sc::Ptr, object.clone()), loc], Some((at, 8)));
-            let destructor_at = cx.gep(at, offsets[1]);
-            cx.emit(format!("store ptr {destructor}, ptr {destructor_at}, align 8"));
-            if owned.creator {
-                let creator_at = cx.gep(at, offsets[2]);
+            if let Some(&offset) = offsets.get(1) {
+                let creator_at = cx.gep(at, offset);
                 cx.call_rt("ffi_thread", Vec::new(), Some((&creator_at, 4)));
             }
         };

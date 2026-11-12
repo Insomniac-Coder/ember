@@ -15,4 +15,4 @@ fn main():
     println(port as u16)
     println(cpp.halve(1.5 as cpp.ratio_t) as f64)
     socket = cpp.Socket.new(8080 as cpp.port_t)
-    println(socket.get().port() as u16)
+    println(socket.port() as u16)

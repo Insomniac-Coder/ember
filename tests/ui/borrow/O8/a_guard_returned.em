@@ -1,5 +1,3 @@
-import std.mem
-
 @must_drop
 struct Guard:
     id: int
@@ -7,6 +5,9 @@ struct Guard:
     fn drop():
         println(f"released {this.id}")
 
-fn main():
+fn make() -> Guard:
     g = Guard(1)
-    mem.forget(g)
+    return g
+
+fn main():
+    _g = make()

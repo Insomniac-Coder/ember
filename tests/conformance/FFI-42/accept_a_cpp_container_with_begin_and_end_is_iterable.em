@@ -23,18 +23,18 @@ fn main():
     match cpp.Bag.new():
         Ok(bag):
             for value in [5, 7, 9]:
-                match bag.get_mut().put(value as i32):
+                match bag.put(value as i32):
                     Ok(_):
                         pass
                     Err(error):
                         println(error.what)
             seen: Array[i32] = []
             total: i32 = 0
-            for item in bag.get_mut():
+            for item in bag:
                 seen.push(owns item)
                 total += item
             println(seen[0], seen[1], seen[2])
-            println(total, bag.get().size())
+            println(total, bag.size())
         Err(error):
             println(error.what)
     row = cpp.Row(cells = [5, 6, 7])
@@ -45,7 +45,7 @@ fn main():
     match cpp.Bag.new():
         Ok(empty):
             count = 0
-            for _ in empty.get_mut():
+            for _ in empty:
                 count += 1
             println(count)
         Err(error):

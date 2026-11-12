@@ -1222,11 +1222,6 @@ fn foreign_symbol_declaration(declaration: &str, alias: &str, exact: &str) -> St
     )
 }
 
-/// `[FFI-36a]` — the thunk that calls foreign destructor `symbol` and drops its result.
-fn foreign_destructor_thunk(symbol: &str) -> String {
-    format!("{RT}ffi_destroy_{symbol}")
-}
-
 /// `[FFI-9]` — the macro naming a declaration's C calling convention, with a
 /// trailing space, or nothing for `extern "C"` (`calling_convention_macros`
 /// defines them).
@@ -6329,29 +6324,6 @@ impl Emitter<'_> {
                 self.line(&format!("{signature};"));
             }
         }
-        // `[FFI-36a]` — a foreign destructor that returns a value is called through a thunk
-        // that drops it, so the box's destructor is `void (*)(T*)` exactly.
-        let mut thunks = BTreeMap::new();
-        for block in bodies.iter().flat_map(|body| &body.blocks) {
-            if let Terminator::Call { func: FuncRef::Builtin { which: Builtin::ForeignDestructor { symbol, pointee, ret, .. }, .. }, .. } = &block.terminator
-                && !self.is_void(*ret)
-            {
-                thunks.insert(symbol.to_string(), (*pointee, *ret));
-            }
-        }
-        for owned in bodies.iter().filter_map(|body| body.ffi_counted.as_ref()?.result_owned.as_ref()) {
-            if !self.is_void(owned.destructor_ret) {
-                thunks.insert(owned.destructor.to_string(), (owned.pointee, owned.destructor_ret));
-            }
-        }
-        for (symbol, (pointee, ret)) in thunks {
-            let pointer = format!("{}*", self.c_type(pointee));
-            self.line(&format!(
-                "static EMBER_MAYBE_UNUSED void {}({pointer} object) {{ extern {} {symbol}({pointer}); (void){symbol}(object); }}",
-                foreign_destructor_thunk(&symbol),
-                self.c_type(ret),
-            ));
-        }
         self.line("");
     }
 
@@ -6675,7 +6647,6 @@ impl Emitter<'_> {
                     let boxed = self.foreign_box_type(arg, *nullable);
                     self.c_type(self.foreign_box_fields(boxed)[0])
                 }
-                FfiAbiParam::Retained { .. } => "uint8_t*".to_string(),
                 FfiAbiParam::Out { ty } => format!("{}*", self.c_type(*ty)),
                 FfiAbiParam::Callback { index } => self.c_type(counted.callbacks[*index].c_fn),
                 FfiAbiParam::CallbackData { index } => self.c_type(counted.callbacks[*index].data),
@@ -6690,25 +6661,18 @@ impl Emitter<'_> {
         format!("{result} {}{}({params})", calling_convention(counted.abi.as_deref()), counted.foreign_symbol)
     }
 
-    /// `[FFI-23]` — the address of the object `value`, a class handle or a `Box`, holds: the
-    /// handle itself, the `Box`'s pointer (`T*`), or a `Box[dyn …]`'s data.
-    fn retained_address(&self, value: &str, ty: Ty) -> String {
-        let dyn_box = matches!(self.types.kind(ty), TyKind::Struct(id)
-            if self.box_inner_id(*id).is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. })));
-        if dyn_box { format!("((uint8_t*)({value}).data)") } else { format!("((uint8_t*)({value}))") }
-    }
-
     /// An `Option` value `access` of type `ty` (with a tag): the test that it is `Some`, and its
     /// payload.
     fn option_some_parts(&self, ty: Ty, access: &str) -> (String, String) {
         let TyKind::Enum(id) = *self.types.kind(ty) else { unreachable!("an `Option`") };
-        assert!(self.types.option_niche(id).is_none(), "an `Option[ForeignBox[T]]` has a tag");
+        assert!(self.types.option_niche(id).is_none(), "an `Option[owns T]` of a foreign type has a tag");
         let def = self.types.enum_def(id);
         let some = &def.variants[1];
         (format!("({access}).tag == {}", some.discriminant), format!("({access}).payload.{}.{}", member(some.name), member(some.fields[0].name)))
     }
 
-    /// `[FFI-36a]` — the `ForeignBox[T]` a value of `ty` is (or holds, as `Option`'s `Some`).
+    /// `[FFI-36a]` — the `owns T` of a foreign type a value of `ty` is (or holds, as `Option`'s
+    /// `Some`).
     fn foreign_box_type(&self, ty: Ty, nullable: bool) -> Ty {
         if !nullable {
             return ty;
@@ -6717,10 +6681,10 @@ impl Emitter<'_> {
         self.types.enum_def(id).variants[1].fields[0].ty
     }
 
-    /// A `ForeignBox[T]`'s three field types: `*mut T`, the destructor's `extern "C" fn(*mut T)`,
-    /// the creator's `u32`.
+    /// `[FFI-36a]`, `[FFI-33b]` (D2) — an `owns T` of a foreign type's field types: the object's
+    /// `*mut T`, and for a type bound to its thread the creator's `u32`.
     fn foreign_box_fields(&self, boxed: Ty) -> Vec<Ty> {
-        let TyKind::Struct(id) = *self.types.kind(boxed) else { unreachable!("a `ForeignBox` is a struct") };
+        let TyKind::Struct(id) = *self.types.kind(boxed) else { unreachable!("an `owns T` of a foreign type is a struct") };
         self.types.struct_def(id).fields.iter().map(|field| field.ty).collect()
     }
 
@@ -6793,30 +6757,25 @@ impl Emitter<'_> {
 
     /// `[FFI-10]`, `[FFI-11]`, `[FFI-36a]` — C's result as the Ember value its contract makes
     /// of it, of type `ty`, in the local `_ffi_value`: a counted result's view, a fixed array's
-    /// reference, a new object's `ForeignBox` (recorded, with its destructor and, under
-    /// `threads(creator)`, its creator), or the value itself. `None` when C returns `void`.
+    /// reference, a new object's `owns T` (recorded, and for a type bound to its thread with its
+    /// creator), or the value itself. `None` when C returns `void`.
     fn emit_ffi_result_value(&mut self, body: &Body, counted: &FfiCounted, ty: Ty, call: &str) -> Option<String> {
         let args: Vec<_> = body.args().map(|(id, _)| format!("_{}", id.0)).collect();
         if let Some(owned) = &counted.result_owned {
             let boxed = self.foreign_box_type(ty, owned.nullable);
             let fields = self.foreign_box_fields(boxed);
-            let (pointer, destructor_ty, box_c) = (self.c_type(fields[0]), self.c_type(fields[1]), self.c_type(boxed));
-            self.line(&format!("    extern {} {}({pointer});", self.c_type(owned.destructor_ret), owned.destructor));
-            let destructor = if self.is_void(owned.destructor_ret) {
-                owned.destructor.to_string()
-            } else {
-                foreign_destructor_thunk(owned.destructor.as_str())
-            };
-            let creator = if owned.creator { format!("{RT}ffi_thread()") } else { "0".to_string() };
+            let (pointer, box_c) = (self.c_type(fields[0]), self.c_type(boxed));
+            // `[FFI-33b]` (D2) — one word, or two for a type bound to the thread that made it.
+            let creator = if fields.len() == 2 { format!(", {RT}ffi_thread()") } else { String::new() };
             self.line(&format!("    {pointer} _ffi_object = {call};"));
             let made = format!(
-                "({box_c}){{ ({pointer}){RT}ffi_adopt((void*)_ffi_object, {}), ({destructor_ty}){destructor}, {creator} }}",
+                "({box_c}){{ ({pointer}){RT}ffi_adopt((void*)_ffi_object, {}){creator} }}",
                 self.location(body.span),
             );
             self.line(&format!("    {} _ffi_value;", self.c_type(ty)));
             if owned.nullable {
                 let TyKind::Enum(id) = *self.types.kind(ty) else { unreachable!("a nullable owned result is an `Option`") };
-                assert!(self.types.option_niche(id).is_none(), "an `Option[ForeignBox[T]]` has a tag");
+                assert!(self.types.option_niche(id).is_none(), "an `Option[owns T]` of a foreign type has a tag");
                 let def = self.types.enum_def(id);
                 let (none, some) = (&def.variants[0], &def.variants[1]);
                 self.line("    memset(&_ffi_value, 0, sizeof _ffi_value);");
@@ -7107,9 +7066,9 @@ impl Emitter<'_> {
         let held = self.types.struct_def(token).fields[0].ty;
         let TyKind::Struct(record) = *self.types.kind(held) else { unreachable!("a `ForeignCallback` is a struct") };
         let fields: Vec<Ty> = self.types.struct_def(record).fields.iter().map(|field| field.ty).collect();
-        // `[HR-20]` — a callback's token has no `on_relocate` record: its `relocation` is `0`.
+        // `[FFI-23]` — the token holds the `ForeignCallback` alone.
         let made = format!(
-            "({}){{ ({}){{ ({})_ffi_data{index}, ({}){}_release }}, 0 }}",
+            "({}){{ ({}){{ ({})_ffi_data{index}, ({}){}_release }} }}",
             self.c_type(unregister.token),
             self.c_type(held),
             self.c_type(fields[0]),
@@ -7227,32 +7186,26 @@ impl Emitter<'_> {
                         foreign_args.push(format!("({}){first}", self.c_type(*ty)));
                     }
                 }
-                // `[FFI-23]` — C keeps the address of the object the token holds.
-                FfiAbiParam::Retained { public_index } => {
-                    let ty = body.args().nth(*public_index).expect("the retained parameter").1.ty;
-                    let (token, ty) = match *self.types.kind(ty) {
-                        TyKind::Ref { inner, .. } => (format!("(*{})", args[*public_index]), inner),
-                        _ => (args[*public_index].clone(), ty),
-                    };
-                    let TyKind::Struct(id) = *self.types.kind(ty) else { unreachable!("a `Retained` token is a struct") };
-                    let held = self.types.struct_def(id).fields[0].ty;
-                    foreign_args.push(self.retained_address(&format!("({token}).value"), held));
-                }
-                // `[FFI-11]` — C takes the object: its box leaves the record and frees nothing.
+                // `[FFI-11]` — C takes the object: it leaves the record, and Ember frees nothing.
                 FfiAbiParam::Owned { public_index, nullable } => {
                     let arg = &args[*public_index];
                     let ty = body.args().nth(*public_index).expect("the owned parameter").1.ty;
                     let boxed = self.foreign_box_type(ty, *nullable);
-                    let pointer = self.c_type(self.foreign_box_fields(boxed)[0]);
+                    let fields = self.foreign_box_fields(boxed);
+                    let pointer = self.c_type(fields[0]);
+                    // `[FFI-33b]` — the creator, and the type a stop names.
+                    let creator = |value: &str| if fields.len() == 2 { format!("({value}).creator") } else { "0".to_string() };
+                    let shown = c_string_literal(&self.types.foreign_object_shown(fields[0]));
                     if *nullable {
                         let (some_tag, payload) = self.option_some_parts(ty, arg);
                         self.line(&format!("    {pointer} _ffi_owned{public_index} = NULL;"));
                         self.line(&format!(
-                            "    if ({some_tag}) {{ _ffi_owned{public_index} = {payload}.pointer; {RT}ffi_release((void*){payload}.pointer, {payload}.creator); }}"
+                            "    if ({some_tag}) {{ _ffi_owned{public_index} = {payload}.pointer; {RT}ffi_release((void*){payload}.pointer, {}, {shown}); }}",
+                            creator(&payload),
                         ));
                         foreign_args.push(format!("_ffi_owned{public_index}"));
                     } else {
-                        self.line(&format!("    {RT}ffi_release((void*)({arg}).pointer, ({arg}).creator);"));
+                        self.line(&format!("    {RT}ffi_release((void*)({arg}).pointer, {}, {shown});", creator(arg)));
                         foreign_args.push(format!("({arg}).pointer"));
                     }
                 }
@@ -8890,19 +8843,6 @@ impl Emitter<'_> {
                 self.emit_next(next.0 as usize, index);
             }
             Terminator::Call {
-                func: FuncRef::Builtin {
-                    which: Builtin::MemForget { .. },
-                    ..
-                },
-                args,
-                next,
-                ..
-            } => {
-                let value = self.operand(&args[0], body);
-                self.line(&format!("    (void)({value}); /* mem.forget */"));
-                self.emit_next(next.0 as usize, index);
-            }
-            Terminator::Call {
                 func: func @ FuncRef::Builtin {
                     which: Builtin::ArrayPush,
                     arg_ty,
@@ -9010,17 +8950,6 @@ impl Emitter<'_> {
                     self.call_expression(func, args, body, body.blocks[index].terminator_span)
                 };
                 let dest_ty = self.place_ty(dest, body);
-                // `[FFI-23]` (ODR-132) — the object's address as the type `ptr()` gives it: an
-                // `ObjectPtr[C]` holds it, a `*mut U` is it.
-                let call = match (func, self.types.kind(dest_ty)) {
-                    (FuncRef::Builtin { which: Builtin::RetainedAddress, .. }, TyKind::Struct(_)) => {
-                        format!("(({}){{ {call} }})", self.c_type(dest_ty))
-                    }
-                    (FuncRef::Builtin { which: Builtin::RetainedAddress, .. }, TyKind::Ptr { .. }) => {
-                        format!("(({}){call})", self.c_type(dest_ty))
-                    }
-                    _ => call,
-                };
                 if let Some((ptr, len)) = self.view_parts(func, args, dest_ty, body) {
                     let dest_text = self.place_in(dest, body);
                     self.line(&format!("    ({dest_text}).ptr = {ptr};"));
@@ -9859,39 +9788,32 @@ impl Emitter<'_> {
                         return format!("(({}){RT}ffi_adopt((void*)({}), {}))",
                             self.c_type(*arg_ty), rendered[0], self.location(span));
                     }
+                    // `[FFI-33b]` — with the type a stop names.
                     Builtin::ForeignRelease => {
-                        return format!("{RT}ffi_release((void*)({}), {})", rendered[0], rendered[1]);
+                        let shown = c_string_literal(&self.types.foreign_object_shown(*arg_ty));
+                        return format!("{RT}ffi_release((void*)({}), {}, {shown})", rendered[0], rendered[1]);
                     }
                     Builtin::ForeignThread => return format!("{RT}ffi_thread()"),
-                    // `[FFI-23]` — a class object is pinned in its header; a `Box`'s value is
-                    // its own, and needs nothing.
-                    // `[HR-20]` (ODR-194) — with an `on_relocate` callback, a class object is
-                    // recorded with it instead of pinned, and may move; a `Box`'s value never does.
-                    Builtin::RetainedPin => {
-                        // A `Box` needs nothing, and neither does a retained callback (`[FFI-21]`).
-                        let boxed = matches!(self.types.kind(*arg_ty), TyKind::Struct(_));
-                        if boxed {
-                            // `on_relocate` is for a class object: a box's value never moves.
-                            return match rendered.get(1) {
-                                Some(on_relocate) => format!("((void)({on_relocate}), (uint64_t)0)"),
-                                None => "((uint64_t)0)".to_string(),
-                            };
-                        }
-                        let callback = match args.get(1).and_then(|arg| self.operand_type(arg, body)).map(|ty| self.types.kind(ty).clone()) {
-                            Some(TyKind::Enum(id)) if self.types.option_niche(id).is_none() => {
-                                let ty = self.operand_type(&args[1], body).expect("typed above");
-                                let (some, payload) = self.option_some_parts(ty, &rendered[1]);
-                                format!("(({some}) ? (void (*)(void)){payload} : NULL)")
-                            }
-                            _ => format!("((void (*)(void))({}))", rendered[1]),
+                    // `[OWN-12]`, `[FFI-54]` — the address the owner's first word holds; the owner
+                    // was handed to the call and nothing drops it. A foreign object's leaves the
+                    // runtime's record first, as an `owns` parameter's does.
+                    Builtin::IntoRaw { foreign } => {
+                        let TyKind::Struct(id) = *self.types.kind(*arg_ty) else { unreachable!("an `owns T` is a struct") };
+                        let fields = &self.types.struct_def(id).fields;
+                        let typed = self.c_type(fields[0].ty);
+                        // The compiler's block is its pointer in C (`{data, vtable}` for `owns dyn I`).
+                        let address = match self.box_inner_id(id) {
+                            Some(inner) if matches!(self.types.kind(inner), TyKind::Dyn { .. }) => format!("((uint8_t*)({}).data)", rendered[0]),
+                            Some(_) => format!("(({typed})({}))", rendered[0]),
+                            None => format!("(({typed})({}).{})", rendered[0], member(fields[0].name)),
                         };
-                        let object = format!("(({RT}obj_header*)({}))", rendered[0]);
-                        return format!(
-                            "({callback} == NULL ? ({RT}obj_pin({object}), (uint64_t)0) : {RT}obj_pin_relocatable({object}, {callback}))"
-                        );
+                        if !*foreign {
+                            return address;
+                        }
+                        let creator = if fields.len() == 2 { format!("({}).{}", rendered[0], member(fields[1].name)) } else { "0".to_string() };
+                        let shown = c_string_literal(&self.types.foreign_object_shown(fields[0].ty));
+                        return format!("({RT}ffi_release((void*){address}, {creator}, {shown}), {address})");
                     }
-                    Builtin::RetainedUnpin => return format!("{RT}obj_unpin_relocatable({})", rendered[0]),
-                    Builtin::RetainedAddress => return self.retained_address(&rendered[0], *arg_ty),
                     // `[FFI-39]`, `[FFI-17d]` — a class object's address, and its handle again.
                     Builtin::CppObjectAddress => return format!("((uint8_t*)({}))", rendered[0]),
                     // `[UNS-5]` — through a pointer to a volatile object: each access is made.
@@ -9940,19 +9862,6 @@ impl Emitter<'_> {
                     Builtin::CppPointee => return format!("((void)({}), (void*)({}))", rendered[0], rendered[1]),
                     Builtin::CppObjectGive => {
                         return format!("({RT}obj_retain(({RT}obj_header*)({0})), {RT}obj_pin(({RT}obj_header*)({0})))", rendered[0]);
-                    }
-                    Builtin::ForeignDestructor { symbol, ret, fn_ty, .. } => {
-                        if self.is_void(*ret) {
-                            return format!("(({}){})", self.c_type(*fn_ty), rendered[0]);
-                        }
-                        // A destructor with a result is called through its `void` thunk; the
-                        // function value given is still read, so its local is not left unused.
-                        return format!(
-                            "((void)({}), ({}){})",
-                            rendered[0],
-                            self.c_type(*fn_ty),
-                            foreign_destructor_thunk(symbol.as_str())
-                        );
                     }
                     // `[STA-3]` — the accessor `lazy_static_definitions` writes.
                     Builtin::LazyStatic { init, .. } => return format!("{init}_static()"),
@@ -10232,7 +10141,6 @@ impl Emitter<'_> {
                     | Builtin::MemReplace { .. }
                     | Builtin::MemTake { .. }
                     | Builtin::MemSwap { .. }
-                    | Builtin::MemForget { .. }
                     | Builtin::MemDrop { .. }
                     | Builtin::HandOver
                     | Builtin::AlignOf
@@ -10530,7 +10438,7 @@ impl Emitter<'_> {
                         return format!("{RT}fmt_sink_open((void*){source}.ptr, {source}.len)");
                     }
                     Builtin::FmtSinkClose => {
-                        return format!("{RT}fmt_sink_close({})", rendered[0]);
+                        return format!("{RT}fmt_sink_close(&({}))", rendered[0]);
                     }
                     Builtin::SpanToStr => {
                         let source = self.span_value_expression(&rendered[0], *arg_ty);

@@ -1953,8 +1953,7 @@ impl EngineReport {
                             if sources.len() > 1 { ", the views' lengths compared" } else { "" },
                             if *inout { ", passed by address and returned" } else { "" },
                         ),
-                        ember_mir::FfiAbiParam::Owned { .. } => "a foreign box handed over".to_string(),
-                        ember_mir::FfiAbiParam::Retained { .. } => "a retained object's address".to_string(),
+                        ember_mir::FfiAbiParam::Owned { .. } => "a foreign object's `owns T` handed over".to_string(),
                         ember_mir::FfiAbiParam::Out { .. } => "an `out` local zeroed and returned".to_string(),
                         ember_mir::FfiAbiParam::Callback { index } => match counted.callbacks[*index].mode {
                             ember_mir::FfiCallbackMode::Borrowed => "a callback's trampoline, its callable where the caller has it".to_string(),
@@ -1968,7 +1967,7 @@ impl EngineReport {
                     work.push("the result as a view".to_string());
                 }
                 if counted.result_owned.is_some() {
-                    work.push("the result adopted into a foreign box".to_string());
+                    work.push("the result adopted into an `owns T`".to_string());
                 }
                 if let Some(outputs) = &counted.outputs {
                     work.push(if outputs.status_ok.is_some() { "the status as a `Result`".to_string() } else { "the outputs as the result".to_string() });
@@ -4009,6 +4008,18 @@ fn load_package_modules(
             // declarations, so that module is loaded wherever they are, imported or not.
             if module.items.iter().any(|item| item.attrs.iter().any(names_std_ser)) {
                 wanted.push((vec![ember_branding::STD_PACKAGE.to_string(), "ser".to_string()], ember_span::Span::DUMMY, false, None));
+            }
+            // `[FFI-36a]` — an `owns T` of a foreign type is `std.ffi`'s, so that module is loaded
+            // wherever foreign declarations are (an `extern` block, a module `import c` wrote),
+            // imported or not.
+            let foreign_decl = |item: &ember_ast::Item| match &item.kind {
+                ember_ast::ItemKind::TypeAlias(decl) => decl.is_foreign_decl,
+                ember_ast::ItemKind::Fn(decl) => decl.is_foreign_decl,
+                ember_ast::ItemKind::ExternBlock(_) => true,
+                _ => false,
+            };
+            if foreign.is_some() || module.items.iter().any(foreign_decl) {
+                wanted.push((vec![ember_branding::STD_PACKAGE.to_string(), "ffi".to_string()], ember_span::Span::DUMMY, false, None));
             }
 
             // `[GRM-2]` (0.9.9) — only the entry file (the root, with an empty

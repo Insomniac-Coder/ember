@@ -394,7 +394,7 @@ pub enum Derived {
 /// `[FFI-40]`, `[FFI-41]`, `[FFI-32]` — what a C++ member function is to its class's Ember type:
 /// a `const` method (`self`), any other (`mut self`), a static one (an associated function), a
 /// constructor of a class by value (`new(…) -> T`) or of an opaque one (`new(…) ->
-/// ForeignBox[T]`), or the destructor a `ForeignBox` calls.
+/// owns T`), or the destructor an `owns T` of it calls.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Member {
     Method,
@@ -442,7 +442,7 @@ pub struct CType {
     pub c: String,
     /// `[FFI-40]` — the parameter's mode: `mut ` for a C++ `T&`, `owned ` for a `T&&`, else none.
     /// With a `pointee`, the parameter is an opaque class's, which the wrapper takes as a reference
-    /// (`ref `, `ref mut `) or as the `ForeignBox` it moves from (`owned `), and passes on as the
+    /// (`ref `, `ref mut `) or as the `owns T` it moves from (`owned `), and passes on as the
     /// raw pointer `ember` names ([`wrapped`]).
     pub mode: String,
     /// `[FFI-8]` — a data pointer to an incomplete type (an `extern type`): `one` makes it a
@@ -1617,6 +1617,10 @@ struct Writer {
     /// `[FFI-17a]` — each bridge type the module uses (by its C++ type and the namespace it is
     /// used in), with the thunks written for it.
     bridges: HashMap<(String, Vec<String>), Bridge>,
+    /// `[FFI-36a]`, `[FFI-17a]` — how the `std::unique_ptr`s of each opaque class end it, by the
+    /// class's name: `None` by `delete`, or a stateless deleter's spelling and its thunk, the
+    /// class's one destructor.
+    deleters: HashMap<String, Option<(String, String)>>,
     /// `[FFI-42]` — the member operators imported (`Imported::operators`).
     operators: Vec<(String, String, String)>,
     /// `[FFI-42]` — for each class with `begin()` and `end()`, as C++ spells it, the type of
@@ -2874,7 +2878,7 @@ impl Writer {
     /// `[FFI-40]`, `[FFI-41]`, `[FFI-32]` — a C++ class's public members, each through a thunk: its
     /// methods (`const` ones as `self`, unless the class has a `mutable` member, `[FFI-40a]`), its
     /// static member functions, its first constructor (not a copy or move one, nor an abstract
-    /// class's), and, for an opaque class, its destructor, which the type's `ForeignBox` calls
+    /// class's), and, for an opaque class, its destructor, which an `owns T` of the type calls
     /// (`@ffi(destroys(…))`, `[FFI-36a]`). An `&&`-qualified member is `W5033`; an operator and an
     /// overload are skipped (`W5002`).
     fn cpp_members(&mut self, class: CXCursor, record: Record) {
@@ -2914,7 +2918,12 @@ impl Writer {
             let destructible = by_value
                 || declared.is_none_or(|destructor| clang_getCXXAccessSpecifier(destructor) == CX_CXXPublic && clang_getCursorAvailability(destructor) != CXAvailability_NotAvailable);
             if !by_value && destructible && trampoline.is_none() {
-                let destroys = format!("{}_cpp_delete_{owner}", ember_branding::SYMBOL_PREFIX);
+                // `[FFI-36a]`, `[FFI-17a]` — the class's one destructor: the deleter of the
+                // `std::unique_ptr`s the header gives it, when they name one, else `delete`.
+                let destroys = match self.deleters.get(&owner) {
+                    Some(Some((_, thunk))) => thunk.clone(),
+                    _ => format!("{}_cpp_delete_{owner}", ember_branding::SYMBOL_PREFIX),
+                };
                 let thunk = format!("{}_cpp_{}_{}", ember_branding::SYMBOL_PREFIX, self.stem, self.thunks);
                 self.thunks += 1;
                 let _ = writeln!(self.shim, "extern \"C\" void {thunk}({class_spelled}* self) noexcept {{ delete self; }}");
@@ -2992,7 +3001,7 @@ impl Writer {
                             continue;
                         }
                         if !destructible {
-                            self.skip(child, &format!("{owner}.new"), "a constructor of a class whose destructor is not public: no `ForeignBox` could free what it makes");
+                            self.skip(child, &format!("{owner}.new"), "a constructor of a class whose destructor is not public: no `owns T` could free what it makes");
                             continue;
                         }
                         if by_value { Member::Constructor } else { Member::BoxedConstructor }
@@ -3192,10 +3201,10 @@ impl Writer {
                     "[E5034] `{spelled}`: an allocator-parameterised container: the allocator is part of the type and opaque; expose a span, or keep it native ([FFI-48])"
                 )));
             }
-            // `[FFI-17a]` — a `std::unique_ptr` with a deleter of its own: its `ForeignBox` frees the
+            // `[FFI-17a]` — a `std::unique_ptr` with a deleter of its own: its `owns T` frees the
             // object through the deleter, which a stateless one is wherever it is made. One that
             // holds state (a function pointer, a class with members) would need its state kept
-            // beside the object, which a `ForeignBox` does not hold.
+            // beside the object, which an `owns T` does not hold: it holds one address.
             let deleter = if name == "unique_ptr" && !defaulted(1, "default_delete") {
                 let deleter = clang_getCanonicalType(clang_Type_getTemplateArgumentAsType(ty, 1));
                 let definition = clang_getCursorDefinition(clang_getTypeDeclaration(deleter));
@@ -3205,13 +3214,13 @@ impl Writer {
                     && !children(definition).into_iter().any(|member| kind(member) == CXCursor_FieldDecl);
                 if !stateless {
                     return Some(Err(format!(
-                        "[E5034] `{spelled}`: a deleter that holds state (`{}`): a `ForeignBox` keeps only its object's address; free it in C++, or give it a stateless deleter [FFI-17a]",
+                        "[E5034] `{spelled}`: a deleter that holds state (`{}`): an `owns T` holds one address; free it in C++, or give it a stateless deleter [FFI-17a]",
                         cpp_spelling(deleter)
                     )));
                 }
-                true
+                Some(cpp_spelling(deleter))
             } else {
-                false
+                None
             };
             let argument = clang_Type_getTemplateArgumentAsType(ty, 0);
             let prefix = ember_branding::SYMBOL_PREFIX;
@@ -3386,28 +3395,54 @@ impl Writer {
                     }
                 }
                 _ => {
-                    // `std::unique_ptr<T>`: the object it gives up, owned by a `ForeignBox` that frees
-                    // it with the class's destructor thunk (an opaque class's, `[FFI-36a]`).
+                    // `std::unique_ptr<T>`: the object it gives up, owned by an `owns T` that frees
+                    // it with the class's one destructor (an opaque class's, `[FFI-36a]`).
                     let declaration = clang_getTypeDeclaration(clang_getCanonicalType(argument));
-                    let opaque = matches!(self.record(declaration, None), Record::Opaque(_, None));
+                    let record = self.record(declaration, None);
+                    let owner = match &record {
+                        Record::Opaque(owner, None) => owner.clone(),
+                        _ => String::new(),
+                    };
                     let mapped = match self.ty(argument, true) {
-                        Ok(mapped) if opaque => mapped,
-                        Ok(_) => return Some(Err(format!("`{spelled}`: a `std::unique_ptr` crosses as a `ForeignBox` of a class Ember holds behind a pointer ([FFI-17a])"))),
+                        Ok(mapped) if !owner.is_empty() => mapped,
+                        Ok(_) => return Some(Err(format!("`{spelled}`: a `std::unique_ptr` crosses as an `owns T` of a class Ember holds behind a pointer ([FFI-17a])"))),
                         Err(reason) => return Some(Err(format!("`{spelled}`: the type it owns does not map ({reason}) [FFI-17a]"))),
                     };
-                    if !deleter {
-                        let bridge = Bridge { ember: format!("ForeignBox[{mapped}]"), spelled: spelled.clone(), make: format!("adopt[{mapped}](@ as *mut {mapped})"), unique: Some(mapped) };
+                    // `[FFI-36a]` — a foreign type has one destructor, so an `owns T` is one
+                    // address: every `std::unique_ptr` of one class ends it alike.
+                    let ending = |deleter: &Option<(String, String)>| deleter.as_ref().map_or_else(|| "`delete`".to_string(), |(spelled, _)| format!("`{spelled}`"));
+                    if let Some(first) = self.deleters.get(&owner)
+                        && first.as_ref().map(|(spelled, _)| spelled) != deleter.as_ref()
+                    {
+                        let now = deleter.clone().map(|spelled| (spelled, String::new()));
+                        return Some(Err(format!(
+                            "[E5002] `{spelled}`: `{mapped}` is ended by {} elsewhere in the header, and this `std::unique_ptr` ends it by {}; a foreign type has one destructor [FFI-36a]",
+                            ending(first), ending(&now),
+                        )));
+                    }
+                    let Some(deleter) = deleter else {
+                        self.deleters.insert(owner, None);
+                        let bridge = Bridge { ember: format!("owns {mapped}"), spelled: spelled.clone(), make: format!("adopt[{mapped}](@ as *mut {mapped})"), unique: Some(mapped) };
                         self.bridges.insert(key, bridge.clone());
                         return Some(Ok(bridge));
-                    }
+                    };
                     // The deleter's thunk: a `std::unique_ptr<T, D>` made of the object ends, so
-                    // `D{}` frees it.
+                    // `D{}` frees it. It is the class's one destructor, which its `destroys(…)` names
+                    // (`cpp_members`), the first such thunk where the header names it more than once.
                     let _ = writeln!(self.shim, "extern \"C\" void {ops}_delete({element}* object) noexcept {{ {spelled} owner(object); }}");
                     declare(&mut decls, "delete", &format!("(object: *mut {mapped})"));
+                    if !self.deleters.contains_key(&owner) {
+                        let thunk = format!("{ops}_delete");
+                        let default = format!("@ffi(destroys({prefix}_cpp_delete_{owner}))");
+                        if let Some(item) = self.items.iter_mut().find(|item| ident(&item.name) == owner && item.kind == Kind::Opaque) {
+                            item.text = item.text.replace(&default, &format!("@ffi(destroys({thunk}))"));
+                        }
+                        self.deleters.insert(owner, Some((deleter, thunk)));
+                    }
                     Bridge {
-                        ember: format!("ForeignBox[{mapped}]"),
+                        ember: format!("owns {mapped}"),
                         spelled: spelled.clone(),
-                        make: format!("{prefix}_cpp_adopt_deleted[{mapped}](@ as *mut {mapped}, {ops}_delete)"),
+                        make: format!("adopt[{mapped}](@ as *mut {mapped})"),
                         unique: Some(mapped),
                     }
                 }
@@ -3761,7 +3796,7 @@ impl Writer {
     /// function, a `const` one `self` (unless the class has a `mutable` member, `[FFI-40a]`), any
     /// other `mut self`; `None` for an `&&`-qualified one (`W5033`).
     /// `[FFI-32]` (ODR-166) — the Ember name of the opaque class a by-value C++ value of `ty` is,
-    /// when a `ForeignBox` can own one: a complete class of the header, not the standard library's
+    /// when an `owns T` can own one: a complete class of the header, not the standard library's
     /// (`[FFI-17a]` bridges those), that is not abstract and whose destructor is public.
     fn boxed_class(&mut self, ty: CXType) -> Option<String> {
         if !self.cpp {
@@ -3923,7 +3958,7 @@ impl Writer {
                 }
                 (_, CXType_Void) => (None, None, call),
                 _ if discarded => (None, None, call),
-                // `[FFI-32]` (ODR-166) — moved into an object of its own, which the `ForeignBox` the
+                // `[FFI-32]` (ODR-166) — moved into an object of its own, which the `owns T` the
                 // wrapper adopts it into frees with the class's destructor.
                 _ if let Some(owner) = &boxed => {
                     let class = cpp_spelling(result_ty);
@@ -4098,7 +4133,7 @@ impl Writer {
     /// `MutSpan[T]`) as its pointer and its length, from which the thunk makes the view the callee
     /// takes; a `std::optional<T>` of a `T` that maps by value (`Option[T]`) as a pointer to its
     /// value, null for none; a `std::unique_ptr<T>` taken by value or `&&` as the object the
-    /// caller's `ForeignBox[T]` gives up. `value` is the parameter's type without its reference,
+    /// caller's `owns T` gives up. `value` is the parameter's type without its reference,
     /// `ty` its type as written. `None` for any other type.
     fn std_parameter(&mut self, value: CXType, ty: CXType, name: &str) -> Result<Option<(CType, String, String)>, String> {
         // SAFETY(ffi): types and cursors of a live translation unit.
@@ -4152,7 +4187,7 @@ impl Writer {
                 }
                 "unique_ptr" => {
                     if ty.kind == CXType_LValueReference {
-                        return Err(format!("`{spelled}` by reference: the callee takes no ownership a `ForeignBox` could give; take it by value or by `&&` ([FFI-17a])"));
+                        return Err(format!("`{spelled}` by reference: the callee takes no ownership an `owns T` could give; take it by value or by `&&` ([FFI-17a])"));
                     }
                     let bridge = match self.bridge(canonical) {
                         Some(Ok(bridge)) => bridge,
@@ -4273,7 +4308,7 @@ impl Writer {
                     let spelled = cpp_spelling(pointee);
                     match self.ty(pointee, false) {
                         Ok(mapped) => Ok((plain(mapped, "owned "), format!("{spelled} {name}"), format!("std::move({name})"))),
-                        // An opaque class that can be moved: the `ForeignBox` the caller gives up,
+                        // An opaque class that can be moved: the `owns T` the caller gives up,
                         // whose object the callee moves from and whose drop frees what is left.
                         Err(reason) => {
                             let class = usr(clang_getTypeDeclaration(clang_getCanonicalType(pointee)));
@@ -7090,7 +7125,7 @@ fn safe_parameter(name: &str, ty: &CType, words: &[String]) -> String {
     let nullable = has("nullable");
     let optional = |base: String| if nullable { format!("Option[{base}]") } else { base };
     if has("owned") {
-        return format!("owns {name}: {}", optional(format!("ForeignBox[{inner}]")));
+        return format!("owns {name}: {}", optional(format!("owns {inner}")));
     }
     if !has("borrowed") {
         return raw;
@@ -7171,7 +7206,7 @@ fn safe_result(ty: &CType, words: &[String]) -> String {
     let exclusive = has("exclusive");
     let fixed = words.iter().find_map(|written| written.strip_prefix("fixed(").and_then(|rest| rest.strip_suffix(')')));
     let base = if has("returns_owned") {
-        format!("ForeignBox[{inner}]")
+        format!("owns {inner}")
     } else if !has("borrowed") {
         return ty.ember.clone();
     } else if has("nul_terminated") && ty.char_pointer {
@@ -7471,9 +7506,9 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
         let path: Vec<&str> = root.iter().chain(home).map(String::as_str).collect();
         let _ = writeln!(imports, "import {} as {}", path.join("."), namespace_alias(home));
     }
-    // `std.ffi`'s names the module's text uses: its C aliases (`[FFI-8]`) and `ForeignBox`.
+    // `std.ffi`'s names the module's text uses: its C aliases (`[FFI-8]`), `adopt` and the C++ bridges.
     let words: HashSet<&str> = body.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).collect();
-    let mut used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError", "adopt", "Retained", "CppVector", "CppString", "CppShared", "CppWeak", "CppObject", "CppFunction", "VaList"]).filter(|name| words.contains(name)).collect();
+    let mut used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["CppError", "adopt", "Retained", "CppVector", "CppString", "CppShared", "CppWeak", "CppObject", "CppFunction", "VaList"]).filter(|name| words.contains(name)).collect();
     // `[FFI-21]` — a `retained` callback's call returns a `Retained[ForeignCallback]`.
     if body.contains("callback(retained") {
         used.push("ForeignCallback");
@@ -7533,7 +7568,7 @@ fn operator_interface(interface: &str, owner: &str, wrapper: &str) -> Option<(St
 }
 
 /// `[FFI-40]` — a parameter of an opaque class, which the wrapper takes as a reference or a
-/// `ForeignBox` and passes on as a raw pointer, or one the importer passes in its own way (a bridge
+/// `owns T` and passes on as a raw pointer, or one the importer passes in its own way (a bridge
 /// value's object, a trampoline's, a view, an optional value).
 fn wrapped(ty: &CType) -> bool {
     ty.pointee.is_some() && !ty.mode.is_empty()
@@ -7542,14 +7577,12 @@ fn wrapped(ty: &CType) -> bool {
 /// `[FFI-40]`, `[FFI-39]` — a wrapper's parameter as Ember code writes it.
 fn wrapper_param(param: &str, ty: &CType) -> String {
     match &ty.pointee {
-        Some((inner, _)) if ty.mode == "owned " => format!("owns {param}: ForeignBox[{inner}]"),
+        Some((inner, _)) if ty.mode == "owned " => format!("owns {param}: owns {inner}"),
         Some((inner, _)) if ty.mode == "tramp " => format!("{param}: {inner}"),
         // `[FFI-17a]` — a bridge value, as the C++ parameter takes it.
         Some((inner, _)) if ty.mode == "bridged " => format!("{param}: {inner}"),
         Some((inner, _)) if ty.mode == "bridged mut " => format!("ref mut {param}: {inner}"),
         Some((inner, _)) if ty.mode == "bridged owned " => format!("owns {param}: {inner}"),
-        // `[FFI-39c]` (ODR-156) — a `retained` one: the token the program pinned and keeps.
-        Some((inner, _)) if ty.mode == "token " => format!("{param}: Retained[{inner}]"),
         // `[GRM-41]` — the mode on the name: `ref mut other: Bag`.
         Some((inner, _)) if ty.mode == "ref mut " => format!("ref mut {param}: {inner}"),
         Some((inner, _)) if wrapped(ty) => format!("{param}: {}{inner}", ty.mode),
@@ -7561,13 +7594,12 @@ fn wrapper_param(param: &str, ty: &CType) -> String {
 fn wrapper_argument(param: &str, ty: &CType) -> String {
     let prefix = ember_branding::SYMBOL_PREFIX;
     match &ty.pointee {
-        _ if ty.mode == "owned " && wrapped(ty) => format!("{param}.as_ptr()"),
+        // The object the `owns T` holds, which C++ moves from; its end destroys what is left.
+        Some((inner, _)) if ty.mode == "owned " && wrapped(ty) => format!("((ref {param}) as *{inner}) as *mut {inner}"),
         _ if ty.mode.starts_with("bridged ") => format!("{param}.as_ptr()"),
         // `[FFI-39]` — the C++ object a trampoline class's object owns.
         Some((_, true)) if ty.mode == "tramp " => format!("{param}.{prefix}_cpp_base.object as {}", ty.ember),
         Some((_, false)) if ty.mode == "tramp " => format!("{param}.{prefix}_cpp_base.object"),
-        Some((_, true)) if ty.mode == "token " => format!("{prefix}_cpp_token_object({param}).{prefix}_cpp_base.object as {}", ty.ember),
-        Some((_, false)) if ty.mode == "token " => format!("{prefix}_cpp_token_object({param}).{prefix}_cpp_base.object"),
         Some((inner, true)) if wrapped(ty) => format!("(ref {param}) as *{inner}"),
         // The caller lent it mutably; the borrow the wrapper passes on is its own.
         Some((inner, false)) if wrapped(ty) => format!("((ref {param}) as *{inner}) as *mut {inner}"),
@@ -7582,7 +7614,7 @@ fn wrapper_argument(param: &str, ty: &CType) -> String {
 /// and the function the module exports — a method, associated function or constructor of the
 /// class's type in an `extend` block, or a function returning `Result[T, CppError]` (or `T`,
 /// panicking on a throw, when an overlay asserts `@ffi(noexcept)`). A destructor has only its
-/// declaration, which the type's `ForeignBox` calls.
+/// declaration, which an `owns T` of the type calls.
 ///
 /// `[FFI-2]`, `[FFI-11]` (D-808) — when an overlay entry states every fact, the declaration is
 /// contracted as a C function's is (`safe fn`, `@ffi(param(…), result(…))`), so the checker lowers
@@ -7604,7 +7636,13 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         None => format!("{prefix}_raw_{}", function.name),
     };
     let catching = policy != Policy::Direct;
-    let contract = entry.filter(|entry| member != Some(Member::Destructor) && contracts_everything(entry));
+    // `[FFI-11]`, `[FFI-39c]` — `retained` on an object of a trampoline class makes no safe parameter:
+    // C++ keeps Ember memory only when it is handed over (`owns`, with `owner="foreign"`) or given
+    // with `into_raw()`, so the call stays unsafe, with a raw pointer.
+    let keeps_raw = |index: usize| function.params.get(index).is_some_and(|(_, ty)| ty.mode == "tramp ")
+        && entry.and_then(|entry| entry.params.get(index)).is_some_and(|words| words.iter().any(|written| word(written) == "retained"));
+    let contract = entry.filter(|entry| member != Some(Member::Destructor) && contracts_everything(entry))
+        .filter(|_| !(0..function.params.len()).any(keeps_raw));
     let contracted = contract.is_some();
     let words_of = |index: usize| contract.and_then(|entry| entry.params.get(index)).map_or(&[][..], Vec::as_slice);
     // The words the importer itself acts on, whatever else the entry leaves unknown.
@@ -7661,10 +7699,11 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         let opaque = ty.ember.trim_start_matches('*').trim_start_matches("mut ").to_string();
         let mutable_word = if constant { "" } else { "mut " };
         let mut ty = ty.clone();
-        // `[FFI-39c]` (ODR-156), `[FFI-17d]` — an object of a class with a trampoline that C++ keeps
-        // is passed as the token the program holds; one given up gets a count of its own.
-        if ty.mode == "tramp " && said(index, "retained") {
-            ty.mode = "token ".to_string();
+        // `[FFI-11]`, `[FFI-39c]` — an object of a class with a trampoline that C++ keeps by a raw
+        // pointer is that pointer (`into_raw()` gives it); one handed over gets a count of its own
+        // (`[FFI-17d]`).
+        if keeps_raw(index) {
+            ty.mode = String::new();
         }
         if ty.mode == "tramp " && said(index, "owned") {
             given.push(format!("{prefix}_cpp_give({param})"));
@@ -7713,7 +7752,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
             "view " => format!("{param}: Span[{inner}]"),
             "view mut " => format!("{param}: MutSpan[{inner}]"),
             "optional " => format!("{param}: Option[{inner}]"),
-            "unique " => format!("owns {param}: ForeignBox[{inner}]"),
+            "unique " => format!("owns {param}: owns {inner}"),
             // `[GRM-41]` — a mutable one's mode on the name: `ref mut values: [c_int; 2]`.
             fixed if fixed.starts_with("fixed ") => match fixed_array(fixed, &inner).1.strip_prefix("mut ") {
                 Some(array) => format!("ref mut {param}: {array}"),
@@ -7743,12 +7782,11 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         let (text, contract_words, argument) = match (ty.mode.as_str(), contracted) {
             ("ref ", true) => (format!("{param}: ref {inner}"), one(false), param.clone()),
             ("ref mut ", true) => (format!("{param}: ref mut {inner}"), one(true), param.clone()),
-            // The `ForeignBox` the callee moves from, whose drop frees what is left.
-            ("owned ", true) => (format!("{param}: ref mut {inner}"), one(true), format!("{param}.get_mut()")),
+            // The `owns T` the callee moves from, whose end frees what is left.
+            ("owned ", true) => (format!("{param}: ref mut {inner}"), one(true), format!("ref mut {param}")),
             ("bridged ", true) => (format!("{param}: ref CppObject"), one(false), deref(format!("{param}.as_ptr() as *CppObject"), true)),
             ("bridged mut " | "bridged owned ", true) => (format!("{param}: ref mut CppObject"), one(true), deref(format!("{param}.as_ptr() as *mut CppObject"), false)),
             ("tramp ", true) => (format!("{param}: ref {mutable_word}{opaque}"), one(!constant), deref(format!("{param}.{prefix}_cpp_base.object"), constant)),
-            ("token ", true) => (format!("{param}: ref {mutable_word}{opaque}"), one(!constant), deref(format!("{prefix}_cpp_token_object({param}).{prefix}_cpp_base.object"), constant)),
             // `[FFI-17a]` — `std::optional<T>`: a pointer to the value, null for none.
             ("optional ", true) => (format!("{param}: Option[ref {inner}]"), ["borrowed", "one", "nullable"].map(str::to_string).to_vec(), format!("{param}.as_ref()")),
             ("optional ", false) => {
@@ -7786,11 +7824,11 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
                 (format!("{param}: {pointer}"), Vec::new(), format!("ref_to_ptr({}{param}) as {pointer}", if mutable { "ref mut " } else { "ref " }))
             }
             // `[FFI-17a]` — a `std::unique_ptr<T>` parameter: the box is given up (`owned`).
-            ("unique ", true) => (format!("owns {param}: ForeignBox[{inner}]"), vec!["owns".to_string(), "one".to_string()], param.clone()),
+            ("unique ", true) => (format!("owns {param}: owns {inner}"), vec!["owns".to_string(), "one".to_string()], param.clone()),
             ("unique ", false) => (format!("{param}: {}", ty.ember), Vec::new(), format!("{param}.into_raw()")),
             (_, _) => (format!("{param}: {}", ty.ember), Vec::new(), wrapper_argument(param, &ty)),
         };
-        call_unsafe |= ty.mode.starts_with("bridged ") || matches!(ty.mode.as_str(), "tramp " | "token ");
+        call_unsafe |= ty.mode.starts_with("bridged ") || ty.mode == "tramp ";
         slots.push((param.clone(), text, contract_words, Some(argument)));
     }
     // What the thunk writes where the caller says: a class by value (`[FFI-32]`), a view's length,
@@ -7920,8 +7958,8 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
                 (slot.map(|slot| format!("{ops}_take({slot})")), Some(ember.to_string()), false)
             }
             _ if function.out => (slot, Some(result_ty.clone()), false),
-            (Some(Member::BoxedConstructor), _) => (Some(format!("adopt[{owner}]({} as *mut {owner})", given_or("0"))), Some(format!("ForeignBox[{owner}]")), true),
-            (_, "boxed") => (Some(format!("adopt[{pointee}]({} as *mut {pointee})", given_or("0"))), Some(format!("ForeignBox[{pointee}]")), true),
+            (Some(Member::BoxedConstructor), _) => (Some(format!("adopt[{owner}]({} as *mut {owner})", given_or("0"))), Some(format!("owns {owner}")), true),
+            (_, "boxed") => (Some(format!("adopt[{pointee}]({} as *mut {pointee})", given_or("0"))), Some(format!("owns {pointee}")), true),
             (_, made) if made.starts_with("bridge ") => (Some(made.trim_start_matches("bridge ").replace('@', &given_or("0"))), Some(pointee.clone()), true),
             // ODR-199 — a `std::function`: the object, owned; with `@ffi(std_function)`, the callable
             // capturing it.

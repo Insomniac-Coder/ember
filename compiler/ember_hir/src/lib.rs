@@ -145,7 +145,7 @@ pub struct FfiCounted {
     /// A counted result's length is supplied by this visible input span.
     pub result_span: Option<FfiSpanResult>,
     /// `[FFI-36a]` — a result contracted `returns_owned(destructor=f)`: the C
-    /// pointer becomes a `ForeignBox` the runtime records.
+    /// pointer becomes an `owns T` the runtime records.
     pub result_owned: Option<FfiOwnedResult>,
     /// `[FFI-11]`, `[FFI-16]` — a call that returns its `out` parameters, or a
     /// status as a `Result`, in place of C's own result.
@@ -238,13 +238,12 @@ pub struct FfiOutputs {
     pub status_ok: Option<i128>,
 }
 
-/// `[FFI-36a]`, `[FFI-33b]` — a new foreign object the caller owns: freed by
-/// `destructor` (whose result, when it has one, is dropped), `None` for null
-/// when `nullable`, and its box records its creator thread when `creator`.
+/// `[FFI-36a]`, `[FFI-33b]` — a new foreign object the caller owns, an `owns T`
+/// of `pointee` (ended by `T`'s one destructor, which its end calls): `None`
+/// for null when `nullable`, and with the creator thread when `creator` (the
+/// type is bound to its thread, and the value is two words).
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct FfiOwnedResult {
-    pub destructor: Symbol,
-    pub destructor_ret: Ty,
     pub pointee: Ty,
     pub nullable: bool,
     pub creator: bool,
@@ -274,13 +273,10 @@ pub enum FfiAbiParam {
     /// (`[FFI-11b]`'s `inout_count(p)`) the address of a local holding them,
     /// which C writes back and the call returns.
     Count { sources: Vec<FfiCountSource>, ty: Ty, inout: bool },
-    /// `[FFI-11]` — `param(p, owned, one)`: the `ForeignBox` (an `Option` of
+    /// `[FFI-11]` — `param(p, owns, one)`: the `owns T` (an `Option` of
     /// one when `nullable`) gives C its pointer and leaves the runtime's
     /// record, freeing nothing.
     Owned { public_index: usize, nullable: bool },
-    /// `[FFI-11]`, `[FFI-23]` — `param(p, retained, one)`: C keeps the
-    /// address of the object a `Retained` token holds; the token stays.
-    Retained { public_index: usize },
     /// `[FFI-11]` — `param(p, out, one)`: the address of a local C writes,
     /// which the call returns; not a parameter of the Ember function.
     Out { ty: Ty },
@@ -1852,30 +1848,21 @@ pub enum Builtin {
     /// (the one argument, also the result) as one Ember owns, with where;
     /// a second owner of a live one panics naming both places.
     ForeignAdopt,
-    /// `[FFI-36b]`, `[FFI-33b]` — a `ForeignBox`'s end, or its object given
-    /// to C: out of the record. Arguments: the pointer, the creator thread
-    /// (0 for none), checked in the debug profile.
+    /// `[FFI-36b]`, `[FFI-33b]` — the end of an `owns T` of a foreign type,
+    /// or its object given to C: out of the record. Arguments: the pointer
+    /// (a `*mut T`, whose `T` the stop names), the creator thread (0 for
+    /// none), checked in every profile.
     ForeignRelease,
-    /// `[FFI-33b]` — the number of the thread running it, recorded by a box
-    /// whose contract says `threads(creator)`.
+    /// `[FFI-33b]` — the number of the thread running it, recorded by an
+    /// `owns T` of a type bound to its thread (`threads(creator)`).
     ForeignThread,
-    /// `[FFI-36a]` — the foreign function `symbol` (the argument is its
-    /// value) as a box's destructor, of type `fn_ty` (`extern "C" fn(*mut
-    /// T)`): itself when it returns nothing (`ret` void), else a C thunk that
-    /// calls it and drops its result.
-    ForeignDestructor { symbol: Symbol, pointee: Ty, ret: Ty, fn_ty: Ty },
-    /// `[FFI-23]` — `Retained.pin`'s mark: a class object's header gets its
-    /// pinned flag; a `Box` needs none. The arguments are the value pinned and
-    /// its `on_relocate` callback (`[HR-20]`, ODR-194): given one, a class
-    /// object is recorded with it instead of pinned. The result is the
-    /// record's number (`0`: none), which `RetainedUnpin` takes.
-    RetainedPin,
-    /// `[HR-20]` (ODR-194) — a `Retained` token's end: its `on_relocate`
-    /// record goes. The argument is the number `RetainedPin` gave.
-    RetainedUnpin,
-    /// `[FFI-23]` — the address of the object a class handle or a `Box`
-    /// holds, as `*mut u8`.
-    RetainedAddress,
+    /// `[OWN-12]`, `[FFI-54]` — `x.into_raw()`: the address of what an `owns
+    /// T` holds (the argument, handed over and never dropped), as the
+    /// result's raw pointer: the block's first word (`*mut u8` for `owns dyn
+    /// I`). With `foreign` it is an `owns T` of a foreign type, whose address
+    /// also leaves the runtime's record (`[FFI-36b]`), as a parameter
+    /// contracted `owns` takes it.
+    IntoRaw { foreign: bool },
     /// `[FFI-39]` — in a module `import cpp` wrote: a class object's address
     /// (the argument, a handle), which a trampoline keeps without a count.
     CppObjectAddress,
@@ -1898,7 +1885,7 @@ pub enum Builtin {
     /// held, which must be the object's only one (`[FFI-17d]`).
     CppObjectHandle { adopt: bool },
     /// `[FFI-17d]` — a count of a class object (the argument, a handle) for
-    /// C++ to hold, its header pinned, as `Retained.pin` does.
+    /// C++ to hold, its header pinned (an object C++ may hold is never moved).
     CppObjectGive,
     /// `[FFI-17e]` — a view of a C++ container's elements: the owner (a
     /// reference, which the view borrows), their address and their count.
@@ -2007,9 +1994,9 @@ pub enum Builtin {
     /// which never grows (a write that would not fit is refused and remembered), registered with
     /// the runtime until `FmtSinkClose`.
     FmtSinkOpen,
-    /// `[STD-18]` — the end of `FmtSinkOpen`'s text, read through a `ref` (the text is then
-    /// forgotten: its bytes are the caller's): how many bytes were written, or `usize.MAX` when a
-    /// write did not fit.
+    /// `[STD-18]` — the end of `FmtSinkOpen`'s text, which it takes over and never drops (its
+    /// bytes are the caller's): how many bytes were written, or `usize.MAX` when a write did not
+    /// fit.
     FmtSinkClose,
     /// `[STD-8b]` — `needle in text`, for a `str` needle and a `char` one.
     StrContains,
@@ -2186,8 +2173,6 @@ pub enum Builtin {
     /// `[OWN-6]` — exchange two mutably borrowed places without moving either
     /// value into an Ember-visible temporary.
     MemSwap { elem: Ty },
-    /// `[OWN-6]` — consume one value and deliberately suppress its drop.
-    MemForget { elem: Ty },
     /// `[OWN-6]` — `mem.drop(x)`: ends `x`'s ownership now. For a `Copy`
     /// value that needs drop (a class handle), passing it `owned` would pass
     /// a retained copy and end nothing (D-347, ODR-063), so the place is
@@ -2480,10 +2465,7 @@ impl Builtin {
             Builtin::ForeignAdopt => "ffi_adopt",
             Builtin::ForeignRelease => "ffi_release",
             Builtin::ForeignThread => "ffi_thread",
-            Builtin::ForeignDestructor { .. } => "ffi_destructor",
-            Builtin::RetainedPin => "retained_pin",
-            Builtin::RetainedUnpin => "retained_unpin",
-            Builtin::RetainedAddress => "retained_address",
+            Builtin::IntoRaw { .. } => "into_raw",
             Builtin::CppObjectAddress => "cpp_object_address",
             Builtin::CppOverrides { .. } => "cpp_overrides",
             Builtin::UnionLit { .. } => "union_literal",
@@ -2595,7 +2577,6 @@ impl Builtin {
             Builtin::AssertDisjoint { mode: DisjointMode::Assumed, .. } => "assume_disjoint",
             Builtin::AssertDisjoint { mode: DisjointMode::All, .. } => "assert_disjoint_all",
             Builtin::ViewsOverlap { .. } => "views_overlap",
-            Builtin::MemForget { .. } => "forget",
             Builtin::MemDrop { .. } => "drop",
             Builtin::HandOver => "owns",
             // `[RNG-10]`'s construction set. Named as they are

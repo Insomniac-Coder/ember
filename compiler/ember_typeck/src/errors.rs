@@ -271,7 +271,7 @@ impl<'a> Checker<'a> {
     /// arguments' text, as `print` writes it (`[STD-9]`), written into `buf`; `Ok` of a view of what
     /// was written, or `Err(FmtError.Failed)` when it does not fit. The text is a `String` over
     /// `buf` that never grows (`FmtSinkOpen`): each piece is appended to it as an f-string's is (a
-    /// written `Display` as its text, as `print` writes one), and `FmtSinkClose` forgets it and gives
+    /// written `Display` as its text, as `print` writes one), and `FmtSinkClose` takes it over (never dropping it) and gives
     /// its length. The buffer is evaluated first, then every argument where it is written, before
     /// any is appended (`[EXP-1]`).
     fn synth_format_to(&mut self, args: &[ast::Arg], span: Span) -> Expr {
@@ -345,13 +345,9 @@ impl<'a> Checker<'a> {
             stmts.push(Stmt::Expr(Expr { ty: void, kind: ExprKind::Builtin { which: Builtin::Format, args: vec![target, value] }, span: at }));
         }
         let written = self.declare(None, usize_ty, span);
-        let sink_read = self.types.intern(TyKind::Ref { mutable: false, inner: string_ty });
-        let lent = Expr { ty: sink_read, kind: ExprKind::Ref { place: Box::new(local(sink, string_ty)), mutable: false }, span };
-        let close = Expr { ty: usize_ty, kind: ExprKind::Builtin { which: Builtin::FmtSinkClose, args: vec![lent] }, span };
+        // Its bytes are the caller's: `FmtSinkClose` takes the text over and never drops it.
+        let close = Expr { ty: usize_ty, kind: ExprKind::Builtin { which: Builtin::FmtSinkClose, args: vec![local(sink, string_ty)] }, span };
         stmts.push(Stmt::Let { local: written, init: Some(close) });
-        // Its bytes are the caller's: the text is forgotten, never dropped.
-        let forget = Builtin::MemForget { elem: string_ty };
-        stmts.push(Stmt::Expr(Expr { ty: void, kind: ExprKind::Builtin { which: forget, args: vec![local(sink, string_ty)] }, span }));
         let fit = Expr {
             ty: bool_ty,
             kind: ExprKind::Binary {

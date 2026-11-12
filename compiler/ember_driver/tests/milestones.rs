@@ -1875,10 +1875,11 @@ fn link_with_fixture(source: &Path, fixture: &str, profile: Profile, directory: 
     output
 }
 
-/// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — `adopt` makes a `ForeignBox` that frees its object
-/// once with the destructor its type's declaration names (a status-returning one too); adopting a
-/// live object a second time panics in every profile, naming both places; and a box of a
-/// `threads(creator)` type that ends on another thread panics in the debug profile.
+/// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — `adopt` makes an `owns T` that frees its object once
+/// with the destructor its type's declaration names (a status-returning one too); adopting a live
+/// object a second time panics in every profile, naming both places; and an `owns T` of a
+/// `threads(creator)` type that ends on another thread stops the program in every profile, naming
+/// the type, the line that made it and both threads.
 #[test]
 fn adopted_foreign_objects_are_freed_by_their_destructor() {
     let root = workspace_root();
@@ -1899,7 +1900,9 @@ fn adopted_foreign_objects_are_freed_by_their_destructor() {
         assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "2 1\nnone\n3 2\n3 1\n23 0\n1063 0\n1\n", "{profile:?}");
     }
 
-    let declarations = "from std.ffi import adopt, ForeignBox\nimport std.thread\n\nunsafe extern \"C\":\n    @ffi(destroys(widget_free))\n    type Widget\n    @ffi(destroys(gadget_close), threads(creator))\n    type Gadget\n    unsafe fn widget_new(id: i32) -> *mut Widget\n    unsafe fn widget_free(widget: *mut Widget)\n    unsafe fn gadget_new(id: i32) -> *mut Gadget\n    unsafe fn gadget_close(gadget: *mut Gadget) -> i32\n\n";
+    // Safe code never hands an `owns Gadget` to another thread (it is not `Send`): a carrier the
+    // program declares `Send` by hand does, and the stop backs it.
+    let declarations = "from std.ffi import adopt\nimport std.thread\n\nunsafe extern \"C\":\n    @ffi(destroys(gadget_close), threads(creator))\n    type Gadget\n    unsafe fn gadget_new(id: i32) -> *mut Gadget\n    unsafe fn gadget_close(gadget: *mut Gadget) -> i32\n\nstruct Carrier:\n    gadget: owns Gadget\n\nunsafe extend Carrier implements Send:  # SAFETY: wrongly, which the stop catches\n    pass\n\nfn look(carrier: Carrier):\n    pass\n\n";
     // `[FFI-36b]` — the second `adopt` of one live object, at line 23; the first is at 22.
     let twice = root.join(format!("tests/conformance/FFI-36b/accept_a_second_owner_panics_naming_both_places.{SOURCE_EXT}"));
     for profile in [Profile::Debug, Profile::Development] {
@@ -1915,30 +1918,17 @@ fn adopted_foreign_objects_are_freed_by_their_destructor() {
     }
 
     let elsewhere = directory.join(format!("elsewhere.{SOURCE_EXT}"));
-    std::fs::write(&elsewhere, format!("{declarations}fn make() -> ForeignBox[Gadget]:\n    unsafe:  # SAFETY(ffi): a fresh gadget\n        return adopt(gadget_new(2))\n\nfn main():\n    gadget = make()\n    worker = thread.spawn(owns owned fn() => gadget.as_ptr() == gadget.as_ptr())\n    println(worker.join())\n")).expect("program is writable");
-    let program = link_with_fixture(&elsewhere, "foreign_objects.c", Profile::Debug, &directory, "elsewhere_debug");
-    let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
-    let stderr = String::from_utf8_lossy(&run.stderr);
-    assert!(!run.status.success(), "a creator box ended on another thread without a panic");
-    assert!(stderr.contains("made on thread 1 (main) ends on thread") && stderr.contains("`threads(creator)`"), "{stderr}");
-    let program = link_with_fixture(&elsewhere, "foreign_objects.c", Profile::Development, &directory, "elsewhere_development");
-    let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
-    assert!(run.status.success(), "development does not check the thread: {}", String::from_utf8_lossy(&run.stderr));
-}
-
-/// `[FFI-23]`, `[FFI-11]` — a `Retained` token lets C keep an Ember object's address: a class
-/// object outlives the handle it was pinned from until the token is dropped, its address is the
-/// one C keeps, and a pinned `Box`'s value is read by C through the kept address.
-#[test]
-fn retained_tokens_let_c_keep_ember_objects() {
-    let root = workspace_root();
-    let directory = temporary_directory("retained");
-    let source = root.join(format!("tests/conformance/FFI-23/accept_retained_lets_foreign_code_keep_ember_memory.{SOURCE_EXT}"));
-    for profile in [Profile::Debug, Profile::Development] {
-        let program = link_with_fixture(&source, "foreign_objects.c", profile, &directory, &format!("retained_{profile:?}"));
+    std::fs::write(&elsewhere, format!("{declarations}fn make() -> owns Gadget:\n    unsafe:  # SAFETY(ffi): a fresh gadget\n        return adopt(gadget_new(2))\n\nfn main():\n    carrier = Carrier(gadget=make())\n    worker = thread.spawn(owns owned fn() => look(carrier))\n    worker.join()\n    println(\"unreachable\")\n")).expect("program is writable");
+    // The line `adopt` made it on.
+    let made = declarations.lines().count() + 3;
+    for profile in [Profile::Debug, Profile::Development, Profile::Release] {
+        let program = link_with_fixture(&elsewhere, "foreign_objects.c", profile, &directory, &format!("elsewhere_{profile:?}"));
         let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
-        assert!(run.status.success(), "{profile:?}: {}", String::from_utf8_lossy(&run.stderr));
-        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "still alive\n1\ndropped kept\nreleased\n3\n7\n", "{profile:?}");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(!run.status.success(), "{profile:?}: an owns Gadget ended on another thread without a stop");
+        assert!(stderr.contains(&format!("a `Gadget` made on thread 1 (line {made}), ended on thread ")), "{profile:?}: {stderr}");
+        assert!(stderr.contains("; a `threads(creator)` value ends where it was made"), "{profile:?}: {stderr}");
+        assert!(!String::from_utf8_lossy(&run.stdout).contains("unreachable"), "{profile:?}");
     }
 }
 
@@ -8813,8 +8803,8 @@ fn bind_init_writes_ffi_const_above_a_cpp_method_that_only_reads() {
     assert!(!written.contains("@ffi(const)\n        unsafe fn grow("), "`grow` changes its object:\n{written}");
     std::fs::write(dir.join(ember_branding::source_file("main")), format!(
         "import cpp \"body.hpp\" with (overlay = \"body.overlay.{SOURCE_EXT}\")\n\nfn main():\n    \
-         unsafe:  # SAFETY(ffi): the box owns the body for every call\n        \
-         body = cpp.Body.new(3)\n        shared = body.get()\n        println(shared.mass())\n")).unwrap();
+         unsafe:  # SAFETY(ffi): the `owns cpp.Body` holds the body for every call\n        \
+         body = cpp.Body.new(3)\n        shared: ref cpp.Body = body\n        println(shared.mass())\n")).unwrap();
     let checked = ember(&["check", &ember_branding::source_file("main")], &dir);
     assert_eq!(checked.exit, 0, "the starter overlay does not compile:\n{}", checked.stderr);
 }

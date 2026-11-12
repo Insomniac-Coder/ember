@@ -19,14 +19,14 @@ fn main():
     offset: c_int = 10
     println(cpp.sum_with(fn(i: c_int) -> c_int => i + offset, 4))
     bus = cpp.Bus.new()
-    bus.get_mut().add(3)
-    bus.get_mut().add(4)
+    bus.add(3)
+    bus.add(4)
     total: c_int = 0
     seen = 0
     fn tally(value: c_int):
         total += value
         seen += 1
-    bus.get().each(tally)
+    bus.each(tally)
     println(total, seen)
     scale: c_int = 3
     token = cpp.listen(owns owned fn(event: c_int) -> c_int => event * scale)

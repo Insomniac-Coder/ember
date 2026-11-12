@@ -9,10 +9,10 @@ import cpp "../classes.hpp" with (overlay = "overlays/classes_doubled.em") as ot
 
 pub fn made() -> c_int:
     counter = same.Counter.new()
-    counter.get_mut().add(2)
+    counter.add(2)
     again = other.Counter.new()
-    again.get_mut().add(5)
-    return counter.get().count() * 10 + again.get().count()
+    again.add(5)
+    return counter.count() * 10 + again.count()
 
 pub fn twice(n: c_int) -> c_int:
     return other.doubled(n)

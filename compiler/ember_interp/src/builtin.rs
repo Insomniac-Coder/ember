@@ -635,10 +635,6 @@ impl Interp<'_, '_> {
                 self.mem.write(b, &x)?;
                 return Ok(None);
             }
-            Builtin::MemForget { .. } => {
-                let _ = self.operand(&args[0], None)?;
-                return Ok(None);
-            }
             Builtin::SizeOf => self.int_result(dest_ty, self.size(arg_ty) as i128),
             Builtin::TypeIsSend => vec![u8::from(self.types.is_send(arg_ty))],
             Builtin::TypeIsSync => vec![u8::from(self.types.is_sync(arg_ty))],
@@ -956,8 +952,9 @@ impl Interp<'_, '_> {
                 value
             }
             Builtin::FmtSinkClose => {
-                let sink = self.pointer(&args[0])?;
-                let len = self.mem.read_u64(sink + 8)?;
+                // The text itself, taken over and never dropped: its length is its second word.
+                let sink = self.operand(&args[0], None)?;
+                let len = u64_of(sink.get(8..16).unwrap_or(&[]));
                 let (_, refused) = self.system.sinks.pop().unwrap_or((0, false));
                 self.int_result(dest_ty, if refused { u64::MAX as i128 } else { len as i128 })
             }
@@ -1465,13 +1462,14 @@ impl Interp<'_, '_> {
             Builtin::JobScope | Builtin::JobScopeSubmit { .. } | Builtin::JobSubmit { .. } | Builtin::JobWait | Builtin::ParallelFor { .. } => {
                 "a job on the pool"
             }
-            Builtin::ForeignStatic { .. } | Builtin::ForeignAdopt | Builtin::ForeignRelease | Builtin::ForeignThread | Builtin::ForeignDestructor { .. } => {
+            Builtin::ForeignStatic { .. } | Builtin::ForeignAdopt | Builtin::ForeignRelease | Builtin::ForeignThread => {
                 "a foreign object"
             }
+            // `[OWN-12]` — the evaluator's values have no address C could keep.
+            Builtin::IntoRaw { .. } => "an address given to C (`into_raw()`)",
             Builtin::CppObjectAddress | Builtin::CppObjectHandle { .. } | Builtin::CppObjectGive | Builtin::CppSpan { .. } | Builtin::CppPointee => {
                 "a C++ object"
             }
-            Builtin::RetainedPin | Builtin::RetainedAddress => "a pinned object's address",
             // `[JOB-5]` — the evaluator runs no job (one is refused above), so every call is outside one.
             Builtin::JobLocalArena { .. } => {
                 return self.panic("`jobs.local_arena()` is called outside a job: the arena is the running job's [JOB-5]", span);
