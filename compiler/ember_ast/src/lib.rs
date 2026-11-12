@@ -404,6 +404,8 @@ pub struct GenericParam {
     pub default: Option<TypeExpr>,
     /// `const N: usize` — a const generic.
     pub const_ty: Option<TypeExpr>,
+    /// `[TYP-47]` — `Ts...`: a pack, any number of types.
+    pub pack: bool,
     pub span: Span,
 }
 
@@ -638,6 +640,9 @@ pub enum TypeKind {
     Never,
     /// A hole for inference; only produced by desugaring, never parsed.
     Infer,
+    /// `[TYP-47]` — `Ts...`: a pack's types spelled out, among type arguments, a tuple's
+    /// elements and a function type's parameters, and as a parameter's type (`values: Ts...`).
+    Spread(Ident),
 }
 
 #[derive(Clone, Debug)]
@@ -848,6 +853,8 @@ pub enum ExprKind {
     Comptime(Box<Expr>),
     /// `[EFF-7]` — `@assume_noalloc(call)`: the call, taken to carry no `Alloc`.
     AssumeNoalloc(Box<Expr>),
+    /// `[TYP-47]` — `values...` among a call's arguments: a pack's values passed on.
+    Spread(Ident),
     /// A node the parser could not build. Keeps later stages from cascading.
     Error,
 }

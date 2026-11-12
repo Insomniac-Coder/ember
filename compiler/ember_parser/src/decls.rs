@@ -522,6 +522,7 @@ impl Parser<'_> {
         self.expect_kw(Kw::Type);
         let name = self.expect_ident();
         let generics = self.parse_generic_params();
+        self.refuse_pack_here(&generics, "a `type` alias");
         let mut bounds = Vec::new();
         if self.eat_punct(Punct::Colon) {
             bounds = self.parse_needs();
@@ -1306,6 +1307,7 @@ impl Parser<'_> {
         self.slot_ending_with(&[Kw::Implements, Kw::Where]);
         let name = self.expect_ident();
         let generics = self.parse_generic_params();
+        self.refuse_pack_here(&generics, "an enum");
         let implements = self.parse_implements();
         self.expect_punct(Punct::Colon);
 
@@ -1382,6 +1384,7 @@ impl Parser<'_> {
         self.slot_ending_with(&[Kw::Where]);
         let name = self.expect_ident();
         let generics = self.parse_generic_params();
+        self.refuse_pack_here(&generics, "an interface");
         // `interface Ord: Eq:` — supertraits sit between the name and the body
         // colon, so a `:` here is only a supertrait list when a type follows.
         let mut supertraits = Vec::new();
@@ -1697,6 +1700,7 @@ impl Parser<'_> {
                     bounds: Vec::new(),
                     default: None,
                     const_ty: Some(ty),
+                    pack: false,
                     span: start.to(self.prev_span()),
                 });
                 if !self.eat_punct(Punct::Comma) {
@@ -1707,6 +1711,8 @@ impl Parser<'_> {
                 None
             };
             let name = self.expect_ident();
+            // `[TYP-47]` — `Ts...`: a pack.
+            let pack = self.eat_punct(Punct::DotDotDot);
             let mut bounds = Vec::new();
             if self.eat_punct(Punct::Colon) {
                 bounds = self.parse_needs();
@@ -1718,6 +1724,7 @@ impl Parser<'_> {
                 bounds,
                 default,
                 const_ty,
+                pack,
                 span: start.to(self.prev_span()),
             });
             if !self.eat_punct(Punct::Comma) {
@@ -2073,11 +2080,50 @@ impl Parser<'_> {
             _ => {
                 let segments = self.parse_dotted_path();
                 let args = self.parse_generic_args();
+                // `[TYP-47]` — `Ts...` spells a pack's types out; `...` follows a pack's name alone.
+                if self.at_punct(Punct::DotDotDot) {
+                    let written = start.to(self.prev_span());
+                    self.bump();
+                    if let ([name], true) = (segments.as_slice(), args.is_empty()) {
+                        return TypeExpr { id, kind: TypeKind::Spread(*name), span: start.to(self.prev_span()) };
+                    }
+                    self.refuse_formed_pack(written, start.to(self.prev_span()));
+                    return TypeExpr { id, kind: TypeKind::Infer, span: start.to(self.prev_span()) };
+                }
                 TypeKind::Path { segments, args }
             }
         };
 
+        // `[TYP-47]` — `ref T...`, `(A, B)...`: a type formed over each type of a pack.
+        if self.at_punct(Punct::DotDotDot) {
+            let written = start.to(self.prev_span());
+            self.bump();
+            self.refuse_formed_pack(written, start.to(self.prev_span()));
+            return TypeExpr { id, kind: TypeKind::Infer, span: start.to(self.prev_span()) };
+        }
         TypeExpr { id, kind, span: start.to(self.prev_span()) }
+    }
+
+    /// `[TYP-47]` — a pack over an enum, an interface or a `type` alias, which this compiler does
+    /// not build yet (functions, structs, classes and `extend` blocks over a pack it does).
+    fn refuse_pack_here(&mut self, generics: &[GenericParam], what: &str) {
+        if let Some(pack) = generics.iter().find(|param| param.pack) {
+            self.report(
+                Diagnostic::error(codes::E0900, pack.span, format!("{what} over a pack (`{}...`) is not built by this compiler yet", pack.name.name))
+                    .note("functions, structs, classes and `extend` blocks over a pack are built [TYP-47]"),
+            );
+        }
+    }
+
+    /// `[TYP-47]` — `Option[Cs]...`: a type formed over each type of a pack (C++'s pattern
+    /// expansion), which is not Ember: `...` follows a pack's name alone (`E0100`).
+    fn refuse_formed_pack(&mut self, written: ember_span::Span, span: ember_span::Span) {
+        let text = self.src.get(written.start as usize..written.end as usize).unwrap_or("T").to_string();
+        self.report(
+            Diagnostic::error(codes::E0100, span, format!("`{text}...` forms a type over each type of a pack, which Ember does not do"))
+                .help("take the pack itself (`[Cs...]` above the function, `Cs...` where its types are spelled out) and form the other types in the function's body")
+                .note("`...` is written after a pack's name only (`Cs...`, `values...`), and a function takes one pack [TYP-47]"),
+        );
     }
 
     /// `[CLO-10]`, `[THR-8]` (ODR-264) — `+ Send` after a callable type: its values are `Send`.

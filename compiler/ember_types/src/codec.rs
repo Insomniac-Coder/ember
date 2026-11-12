@@ -156,6 +156,8 @@ pub enum KindRecord {
     Dyn { interfaces: Vec<Symbol> },
     Param { index: u32, name: Symbol },
     Assoc { name: Symbol },
+    /// `[TYP-47]` — a pack's types.
+    Pack(Vec<u32>),
 }
 
 /// A nominal type (a struct, an enum or a class): found again by its name, made again as its
@@ -365,6 +367,7 @@ fn kind_record(kind: &TyKind, numbering: &mut Numbering) -> Result<KindRecord, U
         TyKind::Range(id) => KindRecord::Range(numbering.ranges.number(*id)),
         TyKind::Newtype(id) => KindRecord::Newtype(numbering.newtypes.number(*id)),
         TyKind::Tuple(items) => KindRecord::Tuple(items.iter().map(|item| ty(*item)).collect()),
+        TyKind::Pack(items) => KindRecord::Pack(items.iter().map(|item| ty(*item)).collect()),
         TyKind::Ref { mutable, inner } => KindRecord::Ref { mutable: *mutable, inner: ty(*inner) },
         TyKind::Ptr { mutable, inner } => KindRecord::Ptr { mutable: *mutable, inner: ty(*inner) },
         TyKind::Array { elem, len } => KindRecord::Array { elem: ty(*elem), len: *len },
@@ -447,6 +450,7 @@ impl KindRecord {
             KindRecord::Range(id) => TyKind::Range(found.range_id(*id)?),
             KindRecord::Newtype(id) => TyKind::Newtype(found.newtype_id(*id)?),
             KindRecord::Tuple(items) => TyKind::Tuple(items.iter().map(ty).collect::<Option<_>>()?),
+            KindRecord::Pack(items) => TyKind::Pack(items.iter().map(ty).collect::<Option<_>>()?),
             KindRecord::Ref { mutable, inner } => TyKind::Ref { mutable: *mutable, inner: ty(inner)? },
             KindRecord::Ptr { mutable, inner } => TyKind::Ptr { mutable: *mutable, inner: ty(inner)? },
             KindRecord::Array { elem, len } => TyKind::Array { elem: ty(elem)?, len: *len },
@@ -477,7 +481,7 @@ impl KindRecord {
                 vec![Part::Ty(*elem)]
             }
             KindRecord::Ref { inner, .. } | KindRecord::Ptr { inner, .. } | KindRecord::FnItem { shape: inner, .. } => vec![Part::Ty(*inner)],
-            KindRecord::Tuple(items) => items.iter().map(|item| Part::Ty(*item)).collect(),
+            KindRecord::Tuple(items) | KindRecord::Pack(items) => items.iter().map(|item| Part::Ty(*item)).collect(),
             KindRecord::Fn { params, ret, .. } => params.iter().map(|(param, _)| Part::Ty(*param)).chain([Part::Ty(*ret)]).collect(),
             KindRecord::Struct(id) => vec![Part::Struct(*id)],
             KindRecord::Class(id) => vec![Part::Class(*id)],

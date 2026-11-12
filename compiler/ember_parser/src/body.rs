@@ -600,6 +600,10 @@ impl Parser<'_> {
             self.bump();
             return TypeOrExpr::Binding { name, ty: self.parse_type() };
         }
+        // `[TYP-47]` — `f[Ts...]`: a pack's types spelled out among type arguments.
+        if self.at_ident() && self.at_punct_at(1, Punct::DotDotDot) {
+            return TypeOrExpr::Type(self.parse_type());
+        }
         let type_only = matches!(
             self.peek(),
             TokenKind::Keyword(Kw::Ref | Kw::Dyn | Kw::Fn | Kw::Extern | Kw::Void)
@@ -1905,6 +1909,22 @@ impl Parser<'_> {
                         .help("write `f((e for x in xs), other)`, as Python requires [GRM-38]"),
                     );
                 }
+            }
+            // `[TYP-47]` — `values...`: a pack's values passed on.
+            if self.at_punct(Punct::DotDotDot) {
+                self.bump();
+                let span = start.to(self.prev_span());
+                value = match &value.kind {
+                    ExprKind::Path { segments } if segments.len() == 1 => Expr { id: value.id, kind: ExprKind::Spread(segments[0]), span },
+                    _ => {
+                        self.report(
+                            Diagnostic::error(codes::E0100, span, "`...` among a call's arguments follows the name of a pack's values alone")
+                                .help("pass a pack's values on as `values...`, where `values: Ts...` is the function's parameter")
+                                .note("`...` is written after a pack's name only (`Cs...`, `values...`) [TYP-47]"),
+                        );
+                        Expr { id: value.id, kind: ExprKind::Error, span }
+                    }
+                };
             }
             args.push(Arg { name, value, span: start.to(self.prev_span()) });
             if !self.eat_punct(Punct::Comma) {

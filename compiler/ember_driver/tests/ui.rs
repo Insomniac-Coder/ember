@@ -642,9 +642,12 @@ fn cross_file_name_suggestions_ignore_file_and_import_discovery_order() {
             "from io import print as prtin\nfrom text import print",
         ),
     ];
+    // `eprint` is the prelude's, a library function now (`[STD-9]`, verdict 117), so a name near
+    // it is offered too, after the program's own.
     let expected = vec![
         "did you mean `prtin`?".to_owned(),
         "did you mean `print`?".to_owned(),
+        "did you mean `eprint`?".to_owned(),
     ];
 
     for (label, creation_order, imports) in cases {

@@ -227,8 +227,29 @@ impl<'a> Checker<'a> {
         if resolved.as_str() == "std.fmt.append_debug" {
             return Some(self.synth_append_debug(args, span));
         }
-        if resolved.as_str() == "std.fmt.format_to" {
-            return Some(self.synth_format_to(args, span));
+        // `[STD-9]` (verdict 117) — the writes under `print`, `println`, `eprint` and `eprintln`,
+        // which `std.core` declares and the compiler knows by these names: each piece written, the
+        // stream held from the first to the last.
+        if resolved.as_str() == "std.core.write_stdout" || resolved.as_str() == "std.core.write_stderr" {
+            let builtin = if resolved.as_str() == "std.core.write_stderr" { Builtin::EPrint } else { Builtin::Print };
+            let args = self.expand_spread_args(args);
+            for arg in &args {
+                if let ast::ExprKind::Spread(_) = arg.value.kind {
+                    self.pack_spreads.insert(arg.value.span);
+                }
+            }
+            return Some(self.synth_print_pieces(builtin, &args, span));
+        }
+        // `[STD-18]` (verdict 117) — the writes under `format_to`, which `std.fmt` declares and the
+        // compiler knows by this name.
+        if resolved.as_str() == "std.fmt.write_into" {
+            let args = self.expand_spread_args(args);
+            for arg in &args {
+                if let ast::ExprKind::Spread(_) = arg.value.kind {
+                    self.pack_spreads.insert(arg.value.span);
+                }
+            }
+            return Some(self.synth_format_to(&args, span));
         }
         let helper = match resolved.as_str() {
             "std.core.type_id" => "type_id",
@@ -267,7 +288,7 @@ impl<'a> Checker<'a> {
         Some(Expr { ty: to, kind: ExprKind::Cast { expr: Box::new(boxed), to }, span })
     }
 
-    /// `[STD-18]` — `std.fmt.format_to(buf, a, b, …, sep=" ", end="")`, compiler-known: the
+    /// `[STD-18]` — `std.fmt.write_into(buf, a, b, …, sep=" ", end="")`, under `format_to`: the
     /// arguments' text, as `print` writes it (`[STD-9]`), written into `buf`; `Ok` of a view of what
     /// was written, or `Err(FmtError.Failed)` when it does not fit. The text is a `String` over
     /// `buf` that never grows (`FmtSinkOpen`): each piece is appended to it as an f-string's is (a

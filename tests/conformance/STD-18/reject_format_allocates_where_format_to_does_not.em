@@ -7,8 +7,8 @@
 from std.fmt import format_to, FmtError
 
 @noalloc
-fn into(buf: MutSpan[u8], n: int) -> Result[StrView, FmtError]:
-    return format_to(buf, n)
+fn into(ref mut buf: MutSpan[u8], n: int) -> Result[StrView, FmtError] from buf:
+    return format_to(ref mut buf, n)
 
 @noalloc
 fn built(n: int) -> int:

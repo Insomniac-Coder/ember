@@ -2449,16 +2449,6 @@ pub enum Builtin {
 }
 
 impl Builtin {
-    pub fn from_name(name: &str) -> Option<Builtin> {
-        match name {
-            "println" => Some(Builtin::Println),
-            "print" => Some(Builtin::Print),
-            "eprintln" => Some(Builtin::EPrintln),
-            "eprint" => Some(Builtin::EPrint),
-            _ => None,
-        }
-    }
-
     pub fn name(self) -> &'static str {
         match self {
             Builtin::Runtime(function) => function.runtime(),
