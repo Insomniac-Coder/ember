@@ -364,3 +364,37 @@ after each work batch" is the owner's rule from this round.
     blocks: 42 compile, 1 unbuilt, 13 errors, the same errors); `ember_diag`, `ember_parser`, the guide and
     first-week tests and the three spec-tied milestone tests green; the 14 gates and `spec_history.py verify`
     (135 cuts, 0 mismatches) green.
+- **C, the Opus credit pilot: 20 rules** (242k tokens, 17 min; read-only, probes with the release binary). Only
+  **OWN-2** and **CLI-7** have every clause built and shown. The other 18 are partial or not built. OWN-2 was
+  checked by the lead and credited. CLI-7 waits for a test of its fourth clause (`--merge` writes nothing until the
+  overlay passes), which only a probe showed.
+  - **The lead's rulings on the method** (tooling, not ODRs):
+    - a probe becomes a test before a rule is credited (`phase_progress.py`'s first condition);
+    - a docstring's one-off measurement is no evidence: DET-4's ulp bounds need a test against reference values.
+  - **Not scaled.** At about 12k tokens a rule, the other 175 would cost about 2.1M tokens and credit perhaps 15 to
+    20. Instead, each job credits the rules it builds whole, in its own commit.
+  - **Passing tests that pin the old behaviour against Hardened_13** (the tests follow the spec, so each is a
+    task):
+    - DIA-2: `int` shown as `i64`, in `DIA-2/reject_a_message_says_an_before_a_vowel_sound.em:9`,
+      `compile-fail/generic_instances_are_named_as_written.em:14` and
+      `MOD-5/reject_a_programs_box_is_named_as_written.em:12`;
+    - FFI-10/FFI-21: a callback parameter is the Ember callable (`owns cb: fn()`), not `extern "C" fn`
+      (`FFI-21/accept_a_borrowed_callback_takes_a_lambda.em`);
+    - DIA-10 B9: its help says `owned fn`, which the target makes E1010;
+    - TYP-15a: `TYP-15/accept_an_owning_container_at_a_view_type.em`;
+    - STD-26: `sorted` of views, in `accept_sorted_of_an_iterator_of_references_copies_or_clones.em`;
+    - ECS-2: `type_hash` is pinned as `fnv1a("Position")`, and the pools are not `Map[TypeId, owns dyn AnyStorage]`;
+    - FFI-33b: `accept_a_creator_callback_on_its_thread.em` still says "the debug profile checks each call".
+  - **Gaps found, beyond the milestones that own them** (for round 7 and later):
+    - `@ffi(no_callbacks)` is refused as no contract word, and E0104's help still lists `unsafe`;
+    - `Array[int, Global]` is E2020 where E1010 is due;
+    - OWN-11's messages (E3040 "handed over to `names` on line 4", E3013's lines to write, and a hand-over out
+      of a non-owning name), and `while jobs.pop() exists as job: done.push(owns job)` is accepted;
+    - DIA-10 B5's help is a category;
+    - TYP-26: `fn sqrt` beside `from std.math import sqrt` compiles;
+    - TCB-4: the library and the `unsafe import`/`@unsafe(export)` lines are not listed;
+    - DSP-3: the per-entry fact;
+    - `zip` of three or more (TYP-47's, H1);
+    - HR-16 and HR-20 untested.
+  - **Spec question for the next cut (Hardened_14):** `[DIA-2]` says a message never says "you", while the
+    spec's own B2 help says "a list of your own" and the compiler says "a copy of your own".
