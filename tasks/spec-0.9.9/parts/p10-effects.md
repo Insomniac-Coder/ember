@@ -465,7 +465,7 @@ compute the same bits, on one machine and across machines running the same binar
 
   | Check | The stop's text |
   |---|---|
-  | `assert_disjoint` (`[DSJ-1]`) | "`assert_disjoint(d, s)` on line 11: the two spans overlap (`dst_name` and `src_name` name one track)" |
+  | `assert_disjoint` (`[DSJ-1]`, `[DSJ-5]`) | "`assert_disjoint(d, s)` on line 10: the two spans overlap (`d` views `tracks[dst_name]`, line 8, and `s` views `tracks[src_name]`, line 9)" |
   | a `runtime` name's test (`[LT-48]`) | "`xs` changes while `r` looks at it: `p` is a `Yours`, whose `pick` gives back the list it was handed" |
   | a one-thread owner count at its maximum | "too many owners of a `Player` (4,294,967,295)" |
   | a one-thread weak count at its maximum | "too many `weakref` links to a `Player` (4,294,967,295)" |

@@ -1,0 +1,474 @@
+--- Ember_v0.9.20_Hardened_12.md
++++ Ember_v0.9.20_Hardened_13.md
+@@ -1,7 +1,7 @@
+ # Ember Programming Language — Specification
+ 
+-**Version:** 0.9.20_Hardened_12
+-**Supersedes:** 0.9.20_Hardened_11 (development target until this one), 0.9.20_Hardened_10 to
++**Version:** 0.9.20_Hardened_13
++**Supersedes:** 0.9.20_Hardened_12 (development target until this one), 0.9.20_Hardened_11 to
+ 0.9.20_Hardened_1, 0.9.15_Hardened_11 to 0.9.15_Hardened_1 and every earlier file:
+ 0.9.10_Hardened_1 to 0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3
+ and 0.8.5_Hardened_1 (adopted). This document is the single specification of Ember; the earlier
+@@ -55,8 +55,9 @@
+ is named there too; **0.9.20_Hardened_10**, of 2026-11-10 (§H.61): his verdict 174, that a
+ library only one system has is named for that system (`[link.windows]`);
+ **0.9.20_Hardened_11**, of 2026-11-11 (§H.62): the eight fixes of a review of Hardened_10, on his
+-word; and **0.9.20_Hardened_12**, of 2026-11-11 (§H.63): the six fixes of a check of Hardened_11,
+-on his word. Each of them changes
++word; **0.9.20_Hardened_12**, of 2026-11-11 (§H.63): the six fixes of a check of Hardened_11,
++on his word; and **0.9.20_Hardened_13**, of 2026-11-12 (§H.64): the spec findings of the
++workers' rounds of 2026-11-11, ruled under his delegation. Each of them changes
+ the set of accepted programs, so the language version moves (`[VER-9]`). What a program means is written in
+ words on the thing it describes: one owner unless a line says `shares`; `owns` for a hand-over and a
+ value held alone, at the call too; `copy of` for a copy; `ref mut` on a name, and at the call, for a
+@@ -67,7 +68,7 @@
+ `@borrows`, the mode `owned`, `self`, `mem.forget`, effect clauses on a first line and every check of
+ exclusive access made while the program runs. It changes the set of accepted programs, so the
+ language version moves (`[VER-9]`); Appendix H §H.41 to §H.51 list every change of 0.9.15, and §H.52
+-to §H.63 those of 0.9.20. The revisions before it were
++to §H.64 those of 0.9.20. The revisions before it were
+ authored at the owner's direction of 2026-09-23 with delegated authority to decide open language
+ questions against the project goal; Appendix H lists each one's changes (§H.1 to §H.40), and every
+ finding of the 2026-09-23 research pass (`tasks/audit/FINDINGS.md`, F-001–F-214) is resolved in
+@@ -129,7 +130,7 @@
+ | Appendix E | Coming from Python (non-normative) |
+ | Appendix F | Glossary |
+ | Appendix G | Resolution of findings F-001–F-214 |
+-| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.51) and in 0.9.20 (§H.52 to §H.63) |
++| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.51) and in 0.9.20 (§H.52 to §H.64) |
+ | Appendix I | Rule index |
+ 
+ **Normative words.** MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119. Text marked
+@@ -2368,8 +2369,17 @@
+    object is not called through a name that only reads it (`E3023`), and one written `owns this`
+    takes its object over, so the caller's name ends (`E3040` at a later use) (`[FN-4]`).
+ 
+-* `[TYP-25]` Arguments may be positional or named; positional arguments come first; a parameter with
+-  a default may be omitted.
++* `[TYP-25]` *(changed in 0.9.20)* Arguments may be positional or named; positional arguments come
++  first; a parameter with a default may be omitted. A call whose arguments do not fit the callee's
++  parameters (a positional argument after a named one, more arguments than parameters, a parameter
++  with no default given none, a name no parameter has, one parameter given twice) is `E2021`
++  (shape N6), and its message gives the callee's first line: "`area(2)` gives nothing for `h`,
++  which has no default: `fn area(w: int, h: int, scale: int = 1) -> int`". For a positional
++  argument after a named one, the line to write names it with the first parameter that no argument
++  before it gives: "`area(w=2, 3)` gives `3` after the named `w=2`, and positional arguments come
++  first; write `area(w=2, h=3)`". A memberwise constructor and `super.init(…)` are such calls
++  (`[STR-1]`, `[CLS-3]`); a use of a C++ name of several members that no member fits is `E5035`
++  (`[FFI-57]`).
+ * `[TYP-26]` *(changed in 0.9.9)* *(changed in 0.9.20)* There is no overloading: two functions of one name in one scope
+   are `E1030`, except operator-interface implementations and `extend` blocks for different types. A
+   C++ name a header declares several times is one Ember name of several members, each use standing
+@@ -2688,13 +2698,15 @@
+ 
+ * `[STR-1]` *(changed in 0.9.15)* *(changed in 0.9.20)* Every struct has a **memberwise
+   constructor** `Name(field0, field1, …)` taking positional or named arguments in field order; a
+-  field with a default may be omitted. Its visibility is the narrowest among its fields', since
+-  construction writes every field: `pub` when every field is `pub` (a struct with no fields
+-  included), `pub(package)` when every field is `pub` or `pub(package)`, and private to its module
+-  otherwise (a private, `pub(read)` or `pub(package, read)` field, `[MOD-7]`); a call from where it
+-  is not visible is `E1052`, naming the field that narrows it ("`Packet(...)` is not visible here:
+-  `seq` is `pub(package)`, so a `Packet` is built only inside the `net` package"). A declared `fn
+-  init(…)` replaces it (`[STR-6]`). An argument for an `owns` field is made with `owns` on its line
++  field with a default may be omitted, and arguments that do not fit the fields are `E2021`, as at
++  any call (`[TYP-25]`: "`Point(1)` gives nothing for `y`, which has no default: `Point(x: int, y:
++  int)`"). Its visibility is the narrowest among its fields', since construction writes every
++  field: `pub` when every field is `pub` (a struct with no fields included), `pub(package)` when
++  every field is `pub` or `pub(package)`, and private to its module otherwise (a private,
++  `pub(read)` or `pub(package, read)` field, `[MOD-7]`); a call from where it is not visible is
++  `E1052`, naming the field that narrows it ("`Packet(...)` is not visible here: `seq` is
++  `pub(package)`, so a `Packet` is built only inside the `net` package"). A declared `fn init(…)`
++  replaces it (`[STR-6]`). An argument for an `owns` field is made with `owns` on its line
+   (`mesh=owns Mesh(points=[0.0])`, `[OWN-10]`).
+ * `[STR-2]` *(changed in 0.9.9)* *(changed in 0.9.20)* A field default is any expression; at a
+   construction that omits the field, the written arguments are evaluated first, left to right
+@@ -2821,18 +2833,18 @@
+   `E2108` ("`init` builds the object, so it cannot take it over; write `fn init(name: String):`").
+   Several constructors are written as `static fn`s that call `Self(…)`.
+ * `[CLS-3]` *(changed in 0.9.20)* A class with no `init` and no base class gets a memberwise
+-  constructor as a struct does (`[STR-1]`), and that constructor is its `init` for every purpose: a
+-  derived `init` calls it as `super.init(…)`, with positional or named arguments in field order, a
+-  field with a default left out keeping the default `[CLS-2]` has already stored
+-  (`super.init(name=name)` for a base with `name: String` and `visible: bool = true`); `[CLS-11]`'s
+-  two phases hold around that call as around any `super.init(…)`; and a derived class with no `init`
+-  gets it as its base's constructor (`[CLS-10]`: `Panel(name=String("side"))`), and passes it on the
+-  same way to a class derived from it. The arguments of `super.init(…)` take the words a call of
+-  that constructor takes: none for a memberwise one, whose values are handed over as to every
+-  constructor (`[OWN-9]`, so the derived `init` holds them `owns`: `fn init(owns name: String, owns
+-  label: String):`), and, for a written base `init`, the words a call of that constructor takes
+-  (`[FN-2a]`: none before an argument for its `owns` parameter, `ref mut` before one for its `ref
+-  mut` parameter).
++  constructor as a struct does (`[STR-1]`), and that constructor is its `init` for every purpose:
++  a derived `init` calls it as `super.init(…)`, with positional or named arguments in field order
++  (`E2021` where they do not fit the fields, `[TYP-25]`), a field with a default left out keeping
++  the default `[CLS-2]` has already stored (`super.init(name=name)` for a base with `name: String`
++  and `visible: bool = true`); `[CLS-11]`'s two phases hold around that call as around any
++  `super.init(…)`; and a derived class with no `init` gets it as its base's constructor
++  (`[CLS-10]`: `Panel(name=String("side"))`), and passes it on the same way to a class derived
++  from it. The arguments of `super.init(…)` take the words a call of that constructor takes: none
++  for a memberwise one, whose values are handed over as to every constructor (`[OWN-9]`, so the
++  derived `init` holds them `owns`: `fn init(owns name: String, owns label: String):`), and, for a
++  written base `init`, the words a call of that constructor takes (`[FN-2a]`: none before an
++  argument for its `owns` parameter, `ref mut` before one for its `ref mut` parameter).
+ * `[CLS-10]` *(new in 0.9.9)* *(changed in 0.9.20)* A derived class with no `init` gets its base's
+   constructor: `Door(entity)` evaluates `Door`'s field defaults and then runs `Script.init(entity)`
+   (the base's memberwise constructor where it declares no `init`, `[CLS-3]`). A derived class with a
+@@ -4076,19 +4088,29 @@
+   mut a`, so it always refers to `a`; to refer to `b` use a new name, `rb = ref mut b`, or make `r`
+   with plain `ref mut`: `r = ref mut a`").
+ * `[BRW-14]` *(new in 0.9.15)* *(changed in 0.9.20)* **Names that keep their place.** A parameter
+-  that is not `owns`, a loop or pattern name that views its value (one under `for x in e:` or `match
+-  e:`) and a name opened with `exists as` (`[GRM-44]`) or named by a kind test (`[DSP-4]`) stand for
+-  what the caller, the loop, the opening or the test gave, and keep it for their whole scope: `=` on
+-  one is `E3023` ("`line` is the text the caller passed and stays that text for the whole call; for
+-  a view of your own write `rest = line.trim()`"; "`n` is the number the caller passed; for a number
+-  of your own write `count = n` and change `count`"), and so is any other change through one that is
+-  plain (`[BRW-15]`). A name that was handed its value owns it, as a local does, and keeps no place:
+-  an `owns` parameter (`[FN-1]`), a loop name under `for x in owns e:` (`[CTL-1]`) and a name of the
+-  branch that runs under `match owns e:` (`[GRM-13]`) may be changed and given a new value with no
+-  word (`job.retries += 1` under `for job in owns jobs:`; `name = String("unnamed")` on `owns name:
++  that is not `owns`, a loop or pattern name that views its value (one under `for x in e:` or
++  `match e:`) and a name opened with `exists as` (`[GRM-44]`) or named by a kind test (`[DSP-4]`)
++  stand for what the caller, the loop, the opening or the test gave, and keep it for their whole
++  scope: `=` on one is `E3023` ("`line` is the text the caller passed and stays that text for the
++  whole call; for a view of your own write `new_line = line.trim()` in place of line 2, and
++  `new_line` for `line` in line 3"; "`n` is the number the caller passed; for a number of your own
++  write `new_n = n` above line 2, as the first line of `countdown`'s body, and `new_n` for `n` in
++  lines 3, 4 and 6"), and so is any other change through one that is plain (`[BRW-15]`). The local
++  of your own such a message gives is named `new_` and the parameter's name, or, where the
++  function already has that name, the first of `new_n_2`, `new_n_3`, … it does not have. It is
++  made by the refused line itself where that line is a plain `=` at the top level of the body and
++  no line above it reads the parameter (`new_line = line.trim()`), and otherwise by a new first
++  line of the body (`new_n = n`; `new_s = copy of s` for a value that is neither `Copy` nor a
++  view, offered only where `copy of` applies), never inside a loop or a branch, where it would be
++  made again each time; every later use of the parameter in the body is written with the local,
++  each line named (`[DIA-25]`), so the function does what Python's rebinding of the name does. A
++  name that was handed its value owns it, as a local does, and keeps no place: an `owns` parameter
++  (`[FN-1]`), a loop name under `for x in owns e:` (`[CTL-1]`) and a name of the branch that runs
++  under `match owns e:` (`[GRM-13]`) may be changed and given a new value with no word
++  (`job.retries += 1` under `for job in owns jobs:`; `name = String("unnamed")` on `owns name:
+   String` ends the string the caller handed over, as `=` on a local does, `[OWN-3]`), and `kept =
+-  job` hands it over. The one exception is a name opened `exists as copy of v`, a copy of your own,
+-  which may be changed (`if scores.get(name) exists as copy of v:` then `v += 1`; the map is
++  job` hands it over. The one exception is a name opened `exists as copy of v`, a copy of your
++  own, which may be changed (`if scores.get(name) exists as copy of v:` then `v += 1`; the map is
+   untouched). A `ref mut` one writes the caller's place, and may be given another ref, as any `ref
+   mut` name may: a `ref mut dst: MutSpan[float]` parameter given another span points the caller's
+   `d` at it, and `ref mut c: Counter` given another ref points `c`, for the rest of the call, at
+@@ -5785,7 +5807,9 @@
+   when `T` is: `copy of` it makes a new block holding a copy of the value, so a struct or enum with
+   an `owns` field derives `Clone` (`[STR-5]`). `owns dyn I` is `Clone` when `I` requires it
+   (`interface I: needs Clone:`), copying through the entry `I`'s method table holds for it
+-  (`[TYP-22]`). A foreign type held `owns` is ended through its contract's destructor (Part XVI).
++  (`[TYP-22]`). A foreign type held `owns` is ended through its contract's destructor,
++  and its `owns T` holds only an object foreign code made, so Ember makes none and it is not
++  `Clone` (`[FFI-36a]`).
+ * `[HEAP-3]` *(changed in 0.9.15)* A value with several owners (`shares`, `shares mut`,
+   `thread_shared`) lives in one heap block that holds its owner count, and, where `weakref` links
+   may reach it, its weak count (`[OBJ-1]`). A class object already has its block, so another owner
+@@ -6374,10 +6398,17 @@
+   references are `E3095`.
+ * `[DSJ-5]` *(changed in 0.9.15)* *(changed in 0.9.20)* `assert_disjoint(a, b)` makes the same
+   comparison and stops the program if the views overlap, saying where and which names:
+-  "`assert_disjoint(d, s)` on line 11: the two spans overlap (`dst_name` and `src_name` name one
+-  track)". Both forms record a `RuntimeCheck(Aliasing)` site whose reason is
+-  `establishes_static_fact` (`[EFF-11]`), unless the two views are known apart by `[DSJ-11]`, in
+-  which case no site is recorded and no comparison is emitted.
++  "`assert_disjoint(d, s)` on line 10: the two spans overlap (`d` views `tracks[dst_name]`, line
++  8, and `s` views `tracks[src_name]`, line 9)". The text gives the call as written and its line;
++  "spans" where both views are `Span` or `MutSpan`, "views" otherwise; and, for each argument that
++  is a name, the place it views as the program writes it and the line that made the view, as
++  `ember explain --view` does (`[DIA-8]`), or, for a parameter, that it is one ("`d` and `s` are
++  parameters of `mix`: its caller gave views that overlap"). All of it is fixed when compiling, so
++  the stop reads nothing of the views but their two address ranges. `assert_disjoint_all` names
++  the first two that overlap, in the order they are written. Both forms record a
++  `RuntimeCheck(Aliasing)` site whose reason is `establishes_static_fact` (`[EFF-11]`), unless the
++  two views are known apart by `[DSJ-11]`, in which case no site is recorded and no comparison is
++  emitted.
+ * `[DSJ-11]` *(new in 0.9.20)* **Views known apart.** Two views are known apart, with no compare,
+   exactly when the compiler proves them apart as `[BRW-11]` and §IX.8 say: the two results of one
+   `split_at`, `get_pair_mut` or `chunks_mut` call; two columns of one SoA; two
+@@ -6870,7 +6901,7 @@
+ 
+   | Check | The stop's text |
+   |---|---|
+-  | `assert_disjoint` (`[DSJ-1]`) | "`assert_disjoint(d, s)` on line 11: the two spans overlap (`dst_name` and `src_name` name one track)" |
++  | `assert_disjoint` (`[DSJ-1]`, `[DSJ-5]`) | "`assert_disjoint(d, s)` on line 10: the two spans overlap (`d` views `tracks[dst_name]`, line 8, and `s` views `tracks[src_name]`, line 9)" |
+   | a `runtime` name's test (`[LT-48]`) | "`xs` changes while `r` looks at it: `p` is a `Yours`, whose `pick` gives back the list it was handed" |
+   | a one-thread owner count at its maximum | "too many owners of a `Player` (4,294,967,295)" |
+   | a one-thread weak count at its maximum | "too many `weakref` links to a `Player` (4,294,967,295)" |
+@@ -9287,9 +9318,10 @@
+   | `va_list`, variadic `...` | `VaList`, forwardable only and never constructed (`E5018`); variadic calls only in `unsafe`, each further argument of a written type (a literal's suffix or `as`); one C's default argument promotions would change (`bool`, an integer narrower than `int`, `f32`) is `E5013`, which names only C's promotion, since what the C function reads is in C (verdict 123): "C passes `narrow` as a 4-byte `int` through `...`; write the size `sum_wide` expects: `narrow as c_int` for 4 bytes, or `narrow as i64` for 8"; for an `f32`, "C passes `single` as an 8-byte `double` through `...`; write `single as f64`" |
+   | an identifier that is an Ember keyword | a raw identifier `r#type` (`[LEX-14]`) |
+ 
+-* `[FFI-29]` For every `import c` the importer emits a **shim** C file, compiled with that import's
+-  flags and linked into the package, containing the layout assertions (`[FFI-5a]`), an external
+-  wrapper for every `static inline` function Ember calls, and the wrappers of `[FFI-6b]`.
++* `[FFI-29]` *(changed in 0.9.20)* For every `import c` the importer emits a **shim** C file,
++  compiled with that import's flags and linked into the package, containing the layout assertions
++  (`[FFI-5a]`), an external wrapper for every `static` or `static inline` function Ember calls,
++  through which it is called (`[FFI-29a]`), and the wrappers of `[FFI-6b]`.
+ * `[FFI-29a]` A binding never names a symbol with internal linkage.
+ * `[FFI-29b]` *(changed in 0.9.15)* `implementation = ["MINIAUDIO_IMPLEMENTATION"]` compiles a
+   single-header library's implementation exactly once per build, in an `unsafe import c`
+@@ -9540,15 +9572,36 @@
+   function contracted `-> status` returns `Result[T, N]`, where `T` is the tuple of its `out`
+   parameters (or `void`).
+ * `[FFI-36a]` *(changed in 0.9.15)* *(changed in 0.9.20)* `std.ffi.adopt[T](h) -> owns T` is an
+-  `unsafe fn` that takes ownership of a foreign object, reading its destructor from the contract of
+-  `T`'s declaration, `@ffi(destroys(f))` on `type T`, or, for an imported C++ class with no such
+-  entry, the class's own destructor and `delete` (`[FFI-36]`); the `owns T` value's end calls `f`
+-  once. Where the contract already records the transfer (`returns_owned(destructor=f)`), the import
+-  returns an `owns T` directly and no `adopt` is written. A foreign type has one destructor: every
+-  `returns_owned(destructor=f)` giving an `owns T` and `T`'s `@ffi(destroys(f))` name the same `f`,
+-  and two different ones are `E5002` ("`Widget` is ended by `widget_free` (line 3), and line 12 says
+-  `widget_destroy`; a foreign type has one destructor"), so an `owns T` foreign value stays one
+-  word, two for a `threads(creator)` type (`[FFI-33b]`).
++  `unsafe fn` that takes ownership of a foreign object, reading its destructor from the contract
++  of `T`'s declaration, `@ffi(destroys(f))` on `type T`, or, for an imported C++ class with no
++  such entry, the deleter its `std::unique_ptr`s name, else the class's own destructor and
++  `delete` (`[FFI-36]`); the `owns T` value's end calls `f` once. Where the contract already
++  records the transfer (`returns_owned(destructor=f)`), the import returns an `owns T` directly
++  and no `adopt` is written. A foreign type has one destructor: every
++  `returns_owned(destructor=f)` giving an `owns T`, `T`'s `@ffi(destroys(f))`, and every
++  `std::unique_ptr<T, D>` an import gives, which names `D` (`[FFI-17a]`), name the same one; for
++  an imported C++ class, each of its constructors, a `T` result by value (`[FFI-32]`) and a
++  `std::unique_ptr<T>` with the default deleter make or hold an object `new` made, and name the
++  class's own destructor and `delete`. Two different ones are `E5002`, naming both places
++  ("`Widget` is ended by `widget_free` (line 3), and line 12 says `widget_destroy`; a foreign type
++  has one destructor"; "`Node` is ended by `delete` (its constructor, node.hpp line 4) and by
++  `PoolDeleter` (`make_pooled`'s `std::unique_ptr`, line 9); a foreign type has one destructor:
++  write `hide make_pooled` in `overlays/node.em`"), so an `owns T` foreign value stays one word,
++  two for a `threads(creator)` type (`[FFI-33b]`): an address given with `into_raw()` and taken
++  back with `adopt` carries nothing else, so the type alone says how its objects end. **The
++  foreign types** are those whose objects foreign code makes: an `extern type`, an opaque C++
++  class (`[FFI-32]`), a `@ffi(handle)` type (`[FFI-8]`), and a `@layout(c)` struct that a contract
++  gives a destructor (`@ffi(destroys(f))` on its declaration, or a `returns_owned(destructor=f)`
++  result giving an `owns T` of it); a `returns_owned` result giving an `owns T` of any other type
++  is `E5002`, since C cannot make an object whose block only Ember lays out ("`make_counter` gives
++  an `owns c_int` C made, and Ember makes the blocks of a `c_int`; declare a type for it, `type
++  Counter` with `@ffi(destroys(free_counter))`, and write `-> owns Counter`"). An `owns T` of a
++  foreign type holds only an object foreign code made, so Ember makes none: `owns` before a value
++  of such a struct made in Ember is `E2114` ("`Packet`'s objects are made by C and ended by
++  `packet_free` (packet.h, line 4), so an `owns Packet` holds only one C made; get one from
++  `packet_new`, or keep this one where it is made: `p = Packet(len=0)`", the second offered only
++  for a sized struct), and it is not `Clone`, since a copy would be a block Ember made that the
++  type's destructor would end (`copy of` it is `E2116`).
+ * `[FFI-36b]` Adopting a type whose overlay says `adopt = false` is `E5052`. Adopting one live
+   object twice is caught at run time in every profile (a panic naming both sites) and, when both
+   calls are on one local in one function, at compile time (`E5068`).
+@@ -9857,14 +9910,16 @@
+   its type's entry asserts it so under the same limit (`[FFI-17a]`). A function pointer made from an
+   Ember function is a safe `extern "C" fn` (`[FN-6]`). The end of an `owns T` foreign value calls
+   the destructor its asserted `destroys(f)` names, which the compiler generates.
+-* `[FFI-33b]` *(changed in 0.9.15)* *(changed in 0.9.20)* `returns_owned` results and callbacks may
+-  carry `threads(creator)`: an `owns T` foreign value of such a type is two words, the address and
+-  the id of the thread that made it, and its end is one compare of that id with the current
+-  thread's, in every profile, stopping the program when it ends on another, naming the type, the
+-  line that made it and both threads; safe code never hands such a value to another thread
+-  (`[THR-8]`, `E7008`), so the stop backs unsafe code and C, which may move it — the rule that makes
+-  GPU, GL-context and COM handles safe to hold in ordinary values. A callback's thread is the
+-  trampoline's to check (`[FFI-53]`).
++* `[FFI-33b]` *(changed in 0.9.15)* *(changed in 0.9.20)* `returns_owned` results and callbacks
++  may carry `threads(creator)`: a type is such a type when its declaration says `threads(creator)`
++  (`[FFI-10]`) or a `returns_owned` result giving an `owns T` of it does, and, since an `owns T`
++  has one layout, every `owns T` foreign value of such a type is two words, the address and the id
++  of the thread that made it, and its end is one compare of that id with the current thread's, in
++  every profile, stopping the program when it ends on another, naming the type, the line that made
++  it and both threads; safe code never hands such a value to another thread (`[THR-8]`, `E7008`),
++  so the stop backs unsafe code and C, which may move it — the rule that makes GPU, GL-context and
++  COM handles safe to hold in ordinary values. A callback's thread is the trampoline's to check
++  (`[FFI-53]`).
+ * `[FFI-33a]` *(changed in 0.9.15)* Attaching a thread (`[FFI-22]`) gives it no right to touch
+   another thread's values. What may go to another thread is decided when compiling (`[THR-8]`,
+   `[THR-9]`, `E7008`, `E7015`): no one-thread owner reaches C (`[FFI-31b]`). The run-time thread
+@@ -10647,13 +10702,16 @@
+ 
+ * `[DIA-1]` A diagnostic has a code, one primary span, labelled secondary spans, an optional `help`
+   (with a machine-applicable fix-it where possible) and notes. `--json` gives the same structure.
+-* `[DIA-2]` *(changed in 0.9.15)* Messages start lowercase, have no trailing period, name the thing,
+-  and say what is wrong; `help` says what to do; a message never says "you" and never blames the
+-  programmer. Every refusal names what was refused in the program's own names (`enemies[0]`, not
+-  `*enemies[0]`; `line.to_lower()`, not a temporary's internal name; `int`, not `i64`; `fn()`, not
+-  an internal callable type; at a call, the caller's variable, not the callee's parameter), says why
+-  in one line, and gives the exact line to write (`[DIA-25]`). Compiler-internal facts (internal
+-  names) may appear only as secondary evidence.
++* `[DIA-2]` *(changed in 0.9.15)* *(changed in 0.9.20)* Messages start lowercase, have no trailing
++  period, name the thing, and say what is wrong; `help` says what to do; a message never says
++  "you" and never blames the programmer. Every refusal names what was refused in the program's own
++  names (`enemies[0]`, not `*enemies[0]`; `line.to_lower()`, not a temporary's internal name;
++  `int`, not `i64`; `fn()`, not an internal callable type; at a call, the caller's variable, not
++  the callee's parameter), says why in one line, and gives the exact line to write (`[DIA-25]`). A
++  type is named as the program spells it where it is written, and otherwise as the declaration it
++  comes from spells it: `[int; 3]` where the program writes `[int; 3]`, `i64` where it writes
++  `i64`, `int` for an untyped literal's default and for `len()`'s result. Compiler-internal facts
++  (internal names) may appear only as secondary evidence.
+ * `[DIA-25]` *(new in 0.9.15)* **The line a message gives compiles** under this document, in that
+   program: its fix never runs into another error. Where it replaces several lines, the message names
+   every line it replaces ("instead of `i = 0`, the `while` line and `i += 1`, write `for i in
+@@ -10789,7 +10847,7 @@
+ | B1 | one place changed through two names: two changeable arguments of one place, a `ref mut` name's place changed through another name while it is used, a function value stored where a variable it changes, or a place its run may reshape or end, owns it | `E3022` | `if i != j:` above the call; `split_at`, `chunks_mut`, `for ref mut x in xs:`, `swap(i, j)`; `SoA` columns; for a `ref mut` name, the change made through it or after its last use |
+ | B2 | a collection changed while a loop or a generator walks it | `E3020` | the loop's own handle (`for ref mut x in xs:`, `for k, ref mut v in m:`); a list of your own, added after the loop; `retain` after the loop; the call that changes it moved below the loop |
+ | B3 | a read and a change of one place overlap: a change of what a read-only name reads while it is still used; a `ref mut` name's place read through another name; an argument that may reach into a changeable argument of the same call | `E3021` | the change moved after the read-only name's last use, or the name made `ref mut` (`boss = ref mut enemies[0]`) and the change made through it; a copy of your own for the other argument (`old = copy of tracks[src_name]`) |
+-| B4 | a change the name does not allow: through a plain parameter, a loop, pattern or opened name, or a plain name holding a `MutSpan`; `=` on a name that keeps its place; an owner that may change made from one that only reads | `E3023` | `ref mut` on the name and at the call (`fn tick(ref mut s: Clock):`, `tick(ref mut clock)`), on the pattern (`State.Walking(ref mut path):`) or on the loop (`for ref mut p in players:`); for a parameter given a new value, a local of your own first (`count = n`) |
++| B4 | a change the name does not allow: through a plain parameter, a loop, pattern or opened name, or a plain name holding a `MutSpan`; `=` on a name that keeps its place; an owner that may change made from one that only reads | `E3023` | `ref mut` on the name and at the call (`fn tick(ref mut s: Clock):`, `tick(ref mut clock)`), on the pattern (`State.Walking(ref mut path):`) or on the loop (`for ref mut p in players:`); for a parameter given a new value, a local of your own first, `new_n = n`, used in its place from there on (`[BRW-14]`) |
+ | B5 | self-referential struct | `E3024` | store an index or `Handle`; split the struct; or a class whose view field says `from` a `let` field |
+ | B6 | a result that points into something its `from` does not name | `E3062` | a view of what `from` names, or `from` naming what the result points into |
+ | B7 | a view used after what it points into was ended, handed over, replaced or reshaped | `E3060` | the use moved above that line, or the place named again after it (`boss = ref mut enemies[0]`; `if cam.target exists as q:`); a value of your own (`String(...)`, `.copy_each()`) |
+@@ -10816,7 +10874,7 @@
+ | N3 | unknown method or field (`E2072`) | nearest member; the interface that would supply it; a Python name per `[DIA-21]` |
+ | N4 | scalar mismatch | the exact lossless `as`, and which side set the expected type; for an `int` and a `float` operand (`i * 0.5`), `i as float * 0.5` as a machine-applicable fix-it |
+ | N5 | literal does not fit (`E2010`) | the suffix or annotation that fits |
+-| N6 | wrong number of arguments | the signature with names and the words in front of them |
++| N6 | arguments that do not fit the parameters (`E2021`): a positional one after a named one, too many, one missing, a name no parameter has, a parameter given twice | the callee's first line, with names and the words in front of them; for a positional argument after a named one, the call with it named (`[TYP-25]`) |
+ | N7 | changing a place that never changes (a `const`, a `static`, a `let` field after `init`) | the declaration to change, with its location |
+ | N8 | argument does not fit the word in front of the parameter | the parameter's words in the callee's first line and the caller's fix (`copy of x`, `ref mut x` at the call, or ending the value's use before the call) (`[FN-2a]`) |
+ | N9 | missing bound (`E2040`) | the bound to add, and the one module where `extend` may be written (`[TYP-20]`) |
+@@ -10981,6 +11039,7 @@
+ | `E2010` | literal does not fit its type; a suffixed literal that does not fit its suffix's type (`128i8`) | `[LEX-16]` |
+ | `E2011` | negative literal index | `[TYP-31]`, `[LEX-24]` |
+ | `E2020` | mismatched types, among them a lambda parameter whose word differs from the function type it is given to (a plain `fn(s)` where the type hands the value over, `fn(owns String)`); a `weakref` link used as its target without opening it; an object stored into a `weakref` place without `weakref`; a value given to a `using A` place that was not made in an instance of `A`; a `weakref T` link given to a `weakref thread_shared T` place, or the reverse (neither converts); an integer cast to an enum (`7 as Color`), `as` between types no pair of `[TYP-6]` lists, and a `ref mut Dog` given to a `ref mut Animal` place; an `unsafe fn` written as `drop`, as an `override` of a method that is not `unsafe`, or as the implementation of an interface method the interface declares without `unsafe`; a parameter or result of an `extern "C" fn` type outside what an export's signature admits; a list pattern against a `String` or `StrView`, or against a `[T; N]` whose `N` can never equal the pattern's count | `[TYP-4]`, `[CLO-3]`, `[TYP-45]`, `[TYP-6]`, `[TYP-5]`, `[UNS-12]`, `[FN-6]`, `[GRM-13]` |
++| `E2021` | a call whose arguments do not fit the callee's parameters: a positional argument after a named one, more arguments than parameters, a parameter with no default given none, a name no parameter has, one parameter given twice; at a memberwise constructor or `super.init(…)`, the same of the fields (shape N6) | `[TYP-25]`, `[STR-1]`, `[CLS-3]` |
+ | `E2030` | `@view` on a type that is not a view | `[TYP-34]` |
+ | `E2031` | `from` names a parameter the result cannot point into (a number, or an `owns` parameter that is not a view) | `[LT-1a]` |
+ | `E2035` | condition must be `bool` | `[CTL-0]` |
+@@ -11012,7 +11071,7 @@
+ | `E2111` | a method that replaces an inherited virtual one without `override` | `[CLS-4]` |
+ | `E2112` | `virtual` in a class that cannot be subclassed | `[CLS-4]` |
+ | `E2113` | an `override` whose first line differs from the virtual method it replaces: a parameter's name, word or type, the words on `this`, or the result | `[CLS-4]` |
+-| `E2114` | a type word that cannot apply to its type: `owns` on a class type (it always has its own block); `using` after a type with no heap memory of its own; `into_raw()` on a value Ember made `using` a manager other than the built-in one (C ends it through the runtime, which gives back only blocks of the built-in manager); `runtime` before a type with one kind (a struct, an enum, a class neither `open` nor `abstract`, `some I`, a list, a number) | `[TYP-45]`, `[TYP-46]`, `[ALC-1]`, `[LT-48]`, `[FFI-54]` |
++| `E2114` | a type word that cannot apply to its type: `owns` on a class type (it always has its own block); `using` after a type with no heap memory of its own; `into_raw()` on a value Ember made `using` a manager other than the built-in one (C ends it through the runtime, which gives back only blocks of the built-in manager); `runtime` before a type with one kind (a struct, an enum, a class neither `open` nor `abstract`, `some I`, a list, a number); `owns` before a value Ember makes of a foreign type, whose `owns T` holds only an object foreign code made | `[TYP-45]`, `[TYP-46]`, `[ALC-1]`, `[LT-48]`, `[FFI-54]`, `[FFI-36a]` |
+ | `E2115` | `static fn` outside a type body | `[GRM-41]`, `[FN-4]` |
+ | `E2116` | `copy of` before what it cannot copy as itself: a `weakref` link, a `ref mut T` view, a `MutSpan[T]`, or a struct holding one, a type with no `Clone`, a value whose views point into its own `let` field | `[OWN-8]`, `[TYP-36]` |
+ | `E2117` | `@cached` on a method whose result it cannot keep safely: one with other parameters; one whose body changes anything, or reads a `shares`, `shares mut`, `thread_shared`, `weakref`, `sharedref mut` or `Cell` field, or a field another thread may change by its own operations (an `Atomic`, a `Mutex`, an `RwLock`, a channel end, a `guarded by` field); on a `virtual` method or an `override`; a `sharedref mut` link or `shares mut` owner made into what a `@cached` method reads, at the line that makes it; a `@cached` body that reads a field of a class object of a class carrying a weak count, reached through a field or element of `this`; on one whose body reads a `static mut` or a `static` with its own operations | `[CLS-12]`, `[EFF-27]` |
+@@ -11093,7 +11152,7 @@
+ | `E4070` | `@deterministic` function reaches a nondeterministic operation; a read whose value depends on which thread acted first (a receive on a channel several threads send to, `try_lock` and `try_recv`, a lock's view or an `Atomic` read of a place another thread or an unjoined task may change); a platform floating-point function, or `**` on a float base, whose result IEEE 754 does not fix, where `std.math.det`'s is not used, and a SIMD `_approx` operation; a call through a `dyn` or `virtual` method of a `pub` interface or class that does not declare `@deterministic` | `[DET-1]`, `[DET-2]`, `[DET-3]` |
+ | `E4072` | `@fastmath` or `@fp(allow_fma)` inside `@deterministic` | `[DET-5]` |
+ | `E5001` | imported type layout does not match | `[FFI-5]` |
+-| `E5002` | a foreign declaration whose contract cannot stand: a hand declaration that says neither `safe fn` nor `unsafe fn`, or both; `safe fn` on a function whose contract is incomplete; an assertion of the safe-to-call fact (`safe fn`, an overlay function entry not written `unsafe fn`, `@ffi(safe)` on a function-pointer typedef, `@ffi(std_function, safe)` on a `std::function` type) for a function whose calls the other rules make safe and would carry foreign code a raw pointer or C function pointer the caller supplies, as an argument, held at any depth by what an argument passes, or returned by an Ember function given to the call (`[FFI-2]`'s limit); two destructors for one foreign type, or `adopt` of a C++ class with no public destructor (a call of a function without a verified contract outside `unsafe` is `E3100`); a function-pointer parameter of a `safe fn` with no `callback(…)` word, or a `callback(…)` parameter written as the C pointer type or without `owns` under `retained` or `once`; a `user_data` witness too narrow for the tagged number; a pointer word on a handle parameter | `[FFI-2]`, `[FFI-10]`, `[FFI-56]`, `[FFI-17a]`, `[FFI-36a]`, `[FFI-36]`, `[FFI-21]`, `[FFI-8]` |
++| `E5002` | a foreign declaration whose contract cannot stand: a hand declaration that says neither `safe fn` nor `unsafe fn`, or both; `safe fn` on a function whose contract is incomplete; an assertion of the safe-to-call fact (`safe fn`, an overlay function entry not written `unsafe fn`, `@ffi(safe)` on a function-pointer typedef, `@ffi(std_function, safe)` on a `std::function` type) for a function whose calls the other rules make safe and would carry foreign code a raw pointer or C function pointer the caller supplies, as an argument, held at any depth by what an argument passes, or returned by an Ember function given to the call (`[FFI-2]`'s limit); two destructors for one foreign type (a `std::unique_ptr`'s deleter among them), a `returns_owned` result giving an `owns T` of a type that is not foreign, or `adopt` of a C++ class with no public destructor (a call of a function without a verified contract outside `unsafe` is `E3100`); a function-pointer parameter of a `safe fn` with no `callback(…)` word, or a `callback(…)` parameter written as the C pointer type or without `owns` under `retained` or `once`; a `user_data` witness too narrow for the tagged number; a pointer word on a handle parameter | `[FFI-2]`, `[FFI-10]`, `[FFI-56]`, `[FFI-17a]`, `[FFI-36a]`, `[FFI-36]`, `[FFI-21]`, `[FFI-8]` |
+ | `E5010` | overlay does not match the C declaration; a declaration an overlay describes differs from the one `ember.overlays` records, or the package has no record of the overlay; an entry outside a class section that names only members of classes; an entry, `rename` or `hide` whose words fit none or several members of a C++ name declared several times; an overlay applied by an import of a header other than the one its first line names | `[FFI-12]`, `[FFI-55]`, `[GRM-35]` |
+ | `E5011` | one C identity imported with two different layouts | `[FFI-30]` |
+ | `E5012` | pointer contract has no count | `[FFI-11]` |
+@@ -12317,7 +12376,7 @@
+   | `std::string_view` | `Span[u8]`; `.to_str()` is the fallible conversion to `StrView` (`[TXT-2]`); a result needs a lifetime word (`[FFI-2a]`) |
+   | `std::string` | `CppString`; `.to_str() -> Result[StrView, Utf8Error]`; `String.from(c)` copies |
+   | `std::vector<T>` | `CppVector[T]` with `.span()`, `.span_mut()`, `.to_array()`, `push_back`, `len` |
+-  | `std::unique_ptr<T>` | `owns T`, ended through the deleter; one whose deleter holds state is refused (`E5034`): an `owns T` holds one address |
++  | `std::unique_ptr<T>`, `std::unique_ptr<T, D>` | `owns T`, ended through the deleter: with the default one, `T`'s own destructor and `delete`; with a `D` that holds no state, `D`, called through a thunk, which names `D` as `T`'s one destructor (`[FFI-36a]`); one whose deleter holds state is refused (`E5034`): an `owns T` holds one address |
+   | `std::optional<T>` | `Option[T]` for a `T` that maps by value; the thunk converts at the call, in both directions (`has_value()` and the value: one branch and one copy of `T`), since the two layouts differ, as it does for a `std::variant`'s generated enum, a conversion `ember inspect` reports (`[FFI-17f]`) |
+   | `std::shared_ptr<T>`, `std::weak_ptr<T>` | `CppShared[T]`, `CppWeak[T]` — never `shares`/`weakref` (`[WK-14]`, `E5065`) |
+   | `std::variant<…>` | a generated enum, when every alternative maps and the overlay names each: `@ffi(variant=["A", "B"])` on a `type` entry naming the header's alias of the variant, the names in the alternatives' order |
+@@ -12434,16 +12493,17 @@
+ 
+ ## C.3 Classes and inheritance
+ 
+-* `[FFI-36]` *(changed in 0.9.15)* *(changed in 0.9.20)* A C++ function returning a raw pointer with
+-  no ownership contract yields `*mut T`; `ffi.adopt[T](p)` (`unsafe`) turns it into an `owns T`
+-  ended through the contract's destructor: `@ffi(destroys(f))` on the class's overlay entry where
+-  one is written, else, for an imported C++ class, its own destructor and deallocation, `delete` in
+-  a thunk the importer generates (`[FFI-17]`), as a `std::unique_ptr<T>` with the default deleter
+-  ends it (`[FFI-17a]`); that the pointer is to an object made with `new` that nothing else ends is
+-  what the `adopt`'s `@safety` asks of its caller (`[UNS-7]`). A class with no public destructor is
+-  refused (`E5002`: "`Enemy` has no public destructor, so nothing Ember can call ends an adopted
+-  one; name the function that does in the overlay: `@ffi(destroys(destroy_enemy))` above `type
+-  Enemy`").
++* `[FFI-36]` *(changed in 0.9.15)* *(changed in 0.9.20)* A C++ function returning a raw pointer
++  with no ownership contract yields `*mut T`; `ffi.adopt[T](p)` (`unsafe`) turns it into an `owns
++  T` ended through `T`'s one destructor (`[FFI-36a]`): `@ffi(destroys(f))` on the class's overlay
++  entry where one is written, else the deleter `D` that the `std::unique_ptr<T, D>`s an import
++  gives name, where they name one (`[FFI-17a]`), else, for an imported C++ class, its own
++  destructor and deallocation, `delete` in a thunk the importer generates (`[FFI-17]`), as a
++  `std::unique_ptr<T>` with the default deleter ends it; that the pointer is to an object that
++  destructor may end (one made with `new`, for `delete`) and that nothing else ends is what the
++  `adopt`'s `@safety` asks of its caller (`[UNS-7]`). A class with no public destructor is refused
++  (`E5002`: "`Enemy` has no public destructor, so nothing Ember can call ends an adopted one; name
++  the function that does in the overlay: `@ffi(destroys(destroy_enemy))` above `type Enemy`").
+ * `[FFI-39]` *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* An Ember class may
+   derive from a C++ class with no overlay entry (`[FFI-44]`), which makes the base open and sized;
+   the importer generates a C++ subclass, the trampoline, which passes on to the Ember class exactly
+@@ -16940,6 +17000,56 @@
+ | `[MAN-10]` | changed |
+ | `[RT-1]` | changed |
+ 
++
++## H.64 Changes in 0.9.20_Hardened_13 (from 0.9.20_Hardened_12)
++
++**0.9.20_Hardened_13**, of 2026-11-12, rules the spec findings the workers' rounds of 2026-11-11
++queued (`tasks/96/redesign/jobs/review.md`), each read against the pinned text and, where it helped,
++run on the compiler. Of the fourteen, five are rulings under the delegation, N171 to N175
++(`decisions.md` §24); the others the text already decides, for the compiler to build, and three of
++those are written out here.
++
++* **Arguments that do not fit a call** (N171): a positional argument after a named one, too many,
++  one missing, a name no parameter has and a parameter given twice, at any call and at a memberwise
++  constructor or `super.init(…)`, are `E2021`, shape N6, whose message gives the callee's first line
++  (`[TYP-25]`, `[STR-1]`, `[CLS-3]`).
++* **What `assert_disjoint`'s stop says** (N172): the call and its line, and for each name the place
++  it views and the line that made the view, as `ember explain --view` shows it (`[DSJ-5]`,
++  `[COST-6]`).
++* **A `std::unique_ptr` with a deleter of its own** (N173): a stateless `D` names `T`'s one
++  destructor; a class whose constructors, results by value or default `std::unique_ptr`s need
++  `delete`, and which a `std::unique_ptr<T, D>` ends otherwise, has two, `E5002` (`[FFI-17a]`,
++  `[FFI-36]`, `[FFI-36a]`).
++* **The local of your own in shape B4** (N174): `new_n`, made by a new first line of the body or by
++  the refused line itself, and written for the parameter in every later line (`[BRW-14]`,
++  §XVII.6.1).
++* **Which types are foreign** (N175): an `extern type`, an opaque C++ class, a `@ffi(handle)` type
++  and a `@layout(c)` struct a contract gives a destructor; Ember makes no `owns T` of one (`E2114`)
++  and copies none (`[FFI-36a]`, §IX.1's `owns T`).
++* **Written out, no ruling:** a `static` function of a header is called through the shim's wrapper
++  (`[FFI-29]`); a type is named as the program spells it (`[DIA-2]`); what makes a type a
++  `threads(creator)` type (`[FFI-33b]`).
++
++Registry rows: E2021 (new), E2114, E5002. One new code, no new rule, none retired. Owner verdicts:
++none touched.
++
++Generated: every rule whose text differs from 0.9.20_Hardened_12.
++
++| Rule | 0.9.20_Hardened_12 → 0.9.20_Hardened_13 |
++|---|---|
++| `[BRW-14]` | changed |
++| `[CLS-3]` | changed |
++| `[COST-6]` | changed |
++| `[DIA-2]` | changed |
++| `[DSJ-5]` | changed |
++| `[FFI-17a]` | changed |
++| `[FFI-29]` | changed |
++| `[FFI-33b]` | changed |
++| `[FFI-36]` | changed |
++| `[FFI-36a]` | changed |
++| `[STR-1]` | changed |
++| `[TYP-25]` | changed |
++
+ ---
+ 
+ # Appendix I — Rule Index
+@@ -17284,7 +17394,7 @@
+ | Rule | Part | Begins |
+ |---|---|---|
+ | `[DIA-1]` | XVII | A diagnostic has a code, one primary span, labelled secondary spans, … |
+-| `[DIA-2]` | XVII | *(changed in 0.9.15)* Messages start lowercase, have no trailing … |
++| `[DIA-2]` | XVII | *(changed in 0.9.15)* *(changed in 0.9.20)* Messages start lowercase, … |
+ | `[DIA-3]` | XVII | *(changed in 0.9.15)* Ownership and view errors (§XVII.6.1) label the … |
+ | `[DIA-4]` | XVII | Contract errors print the whole call chain (`[EFF-6]`). |
+ | `[DIA-5]` | XVII | FFI errors name the header and the C declaration. |
+@@ -17514,7 +17624,7 @@
+ | `[FFI-26]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* … |
+ | `[FFI-27]` | XVI | *(changed in 0.9.20)* The runtime `ember_rt` is a C11 static library … |
+ | `[FFI-28]` | XVI | *(changed in 0.9.10)* A package built as `kind = "staticlib"` … |
+-| `[FFI-29]` | XVI | For every `import c` the importer emits a shim C file, compiled with … |
++| `[FFI-29]` | XVI | *(changed in 0.9.20)* For every `import c` the importer emits a shim … |
+ | `[FFI-29a]` | XVI | A binding never names a symbol with internal linkage. |
+ | `[FFI-29b]` | XVI | *(changed in 0.9.15)* `implementation = ["MINIAUDIO_IMPLEMENTATION"]` … |
+ | `[FFI-29c]` | XVI | A call to a wrapped `static inline` function costs one extra call … |
+@@ -18314,7 +18424,7 @@
+ | `[TYP-22]` | IV | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* An … |
+ | `[TYP-23]` | IV | *(changed in 0.9.15)* Inference is local to a function body and … |
+ | `[TYP-24]` | IV | *(changed in 0.9.15)* An interface method is found through any … |
+-| `[TYP-25]` | IV | Arguments may be positional or named; positional arguments come … |
++| `[TYP-25]` | IV | *(changed in 0.9.20)* Arguments may be positional or named; … |
+ | `[TYP-26]` | IV | *(changed in 0.9.20)* There is no overloading: two functions of one … |
+ | `[TYP-27]` | IV | `()` is the value of type `void`; `Ok(())` is the success value of … |
+ | `[TYP-28]` | IV | Division. `/` is true division and applies to floats. `/` with two … |

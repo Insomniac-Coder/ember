@@ -358,9 +358,10 @@ import c "vulkan/vulkan.h" with (
   | `va_list`, variadic `...` | `VaList`, forwardable only and never constructed (`E5018`); variadic calls only in `unsafe`, each further argument of a written type (a literal's suffix or `as`); one C's default argument promotions would change (`bool`, an integer narrower than `int`, `f32`) is `E5013`, which names only C's promotion, since what the C function reads is in C (verdict 123): "C passes `narrow` as a 4-byte `int` through `...`; write the size `sum_wide` expects: `narrow as c_int` for 4 bytes, or `narrow as i64` for 8"; for an `f32`, "C passes `single` as an 8-byte `double` through `...`; write `single as f64`" |
   | an identifier that is an Ember keyword | a raw identifier `r#type` (`[LEX-14]`) |
 
-* `[FFI-29]` For every `import c` the importer emits a **shim** C file, compiled with that import's
-  flags and linked into the package, containing the layout assertions (`[FFI-5a]`), an external
-  wrapper for every `static inline` function Ember calls, and the wrappers of `[FFI-6b]`.
+* `[FFI-29]` *(changed in 0.9.20)* For every `import c` the importer emits a **shim** C file,
+  compiled with that import's flags and linked into the package, containing the layout assertions
+  (`[FFI-5a]`), an external wrapper for every `static` or `static inline` function Ember calls,
+  through which it is called (`[FFI-29a]`), and the wrappers of `[FFI-6b]`.
 * `[FFI-29a]` A binding never names a symbol with internal linkage.
 * `[FFI-29b]` *(changed in 0.9.15)* `implementation = ["MINIAUDIO_IMPLEMENTATION"]` compiles a
   single-header library's implementation exactly once per build, in an `unsafe import c`
@@ -611,15 +612,36 @@ call: a `VkViewport` holds only numbers, `pViewports` is a counted view, and `co
   function contracted `-> status` returns `Result[T, N]`, where `T` is the tuple of its `out`
   parameters (or `void`).
 * `[FFI-36a]` *(changed in 0.9.15)* *(changed in 0.9.20)* `std.ffi.adopt[T](h) -> owns T` is an
-  `unsafe fn` that takes ownership of a foreign object, reading its destructor from the contract of
-  `T`'s declaration, `@ffi(destroys(f))` on `type T`, or, for an imported C++ class with no such
-  entry, the class's own destructor and `delete` (`[FFI-36]`); the `owns T` value's end calls `f`
-  once. Where the contract already records the transfer (`returns_owned(destructor=f)`), the import
-  returns an `owns T` directly and no `adopt` is written. A foreign type has one destructor: every
-  `returns_owned(destructor=f)` giving an `owns T` and `T`'s `@ffi(destroys(f))` name the same `f`,
-  and two different ones are `E5002` ("`Widget` is ended by `widget_free` (line 3), and line 12 says
-  `widget_destroy`; a foreign type has one destructor"), so an `owns T` foreign value stays one
-  word, two for a `threads(creator)` type (`[FFI-33b]`).
+  `unsafe fn` that takes ownership of a foreign object, reading its destructor from the contract
+  of `T`'s declaration, `@ffi(destroys(f))` on `type T`, or, for an imported C++ class with no
+  such entry, the deleter its `std::unique_ptr`s name, else the class's own destructor and
+  `delete` (`[FFI-36]`); the `owns T` value's end calls `f` once. Where the contract already
+  records the transfer (`returns_owned(destructor=f)`), the import returns an `owns T` directly
+  and no `adopt` is written. A foreign type has one destructor: every
+  `returns_owned(destructor=f)` giving an `owns T`, `T`'s `@ffi(destroys(f))`, and every
+  `std::unique_ptr<T, D>` an import gives, which names `D` (`[FFI-17a]`), name the same one; for
+  an imported C++ class, each of its constructors, a `T` result by value (`[FFI-32]`) and a
+  `std::unique_ptr<T>` with the default deleter make or hold an object `new` made, and name the
+  class's own destructor and `delete`. Two different ones are `E5002`, naming both places
+  ("`Widget` is ended by `widget_free` (line 3), and line 12 says `widget_destroy`; a foreign type
+  has one destructor"; "`Node` is ended by `delete` (its constructor, node.hpp line 4) and by
+  `PoolDeleter` (`make_pooled`'s `std::unique_ptr`, line 9); a foreign type has one destructor:
+  write `hide make_pooled` in `overlays/node.em`"), so an `owns T` foreign value stays one word,
+  two for a `threads(creator)` type (`[FFI-33b]`): an address given with `into_raw()` and taken
+  back with `adopt` carries nothing else, so the type alone says how its objects end. **The
+  foreign types** are those whose objects foreign code makes: an `extern type`, an opaque C++
+  class (`[FFI-32]`), a `@ffi(handle)` type (`[FFI-8]`), and a `@layout(c)` struct that a contract
+  gives a destructor (`@ffi(destroys(f))` on its declaration, or a `returns_owned(destructor=f)`
+  result giving an `owns T` of it); a `returns_owned` result giving an `owns T` of any other type
+  is `E5002`, since C cannot make an object whose block only Ember lays out ("`make_counter` gives
+  an `owns c_int` C made, and Ember makes the blocks of a `c_int`; declare a type for it, `type
+  Counter` with `@ffi(destroys(free_counter))`, and write `-> owns Counter`"). An `owns T` of a
+  foreign type holds only an object foreign code made, so Ember makes none: `owns` before a value
+  of such a struct made in Ember is `E2114` ("`Packet`'s objects are made by C and ended by
+  `packet_free` (packet.h, line 4), so an `owns Packet` holds only one C made; get one from
+  `packet_new`, or keep this one where it is made: `p = Packet(len=0)`", the second offered only
+  for a sized struct), and it is not `Clone`, since a copy would be a block Ember made that the
+  type's destructor would end (`copy of` it is `E2116`).
 * `[FFI-36b]` Adopting a type whose overlay says `adopt = false` is `E5052`. Adopting one live
   object twice is caught at run time in every profile (a panic naming both sites) and, when both
   calls are on one local in one function, at compile time (`E5068`).
@@ -928,14 +950,16 @@ call: a `VkViewport` holds only numbers, `pViewports` is a counted view, and `co
   its type's entry asserts it so under the same limit (`[FFI-17a]`). A function pointer made from an
   Ember function is a safe `extern "C" fn` (`[FN-6]`). The end of an `owns T` foreign value calls
   the destructor its asserted `destroys(f)` names, which the compiler generates.
-* `[FFI-33b]` *(changed in 0.9.15)* *(changed in 0.9.20)* `returns_owned` results and callbacks may
-  carry `threads(creator)`: an `owns T` foreign value of such a type is two words, the address and
-  the id of the thread that made it, and its end is one compare of that id with the current
-  thread's, in every profile, stopping the program when it ends on another, naming the type, the
-  line that made it and both threads; safe code never hands such a value to another thread
-  (`[THR-8]`, `E7008`), so the stop backs unsafe code and C, which may move it — the rule that makes
-  GPU, GL-context and COM handles safe to hold in ordinary values. A callback's thread is the
-  trampoline's to check (`[FFI-53]`).
+* `[FFI-33b]` *(changed in 0.9.15)* *(changed in 0.9.20)* `returns_owned` results and callbacks
+  may carry `threads(creator)`: a type is such a type when its declaration says `threads(creator)`
+  (`[FFI-10]`) or a `returns_owned` result giving an `owns T` of it does, and, since an `owns T`
+  has one layout, every `owns T` foreign value of such a type is two words, the address and the id
+  of the thread that made it, and its end is one compare of that id with the current thread's, in
+  every profile, stopping the program when it ends on another, naming the type, the line that made
+  it and both threads; safe code never hands such a value to another thread (`[THR-8]`, `E7008`),
+  so the stop backs unsafe code and C, which may move it — the rule that makes GPU, GL-context and
+  COM handles safe to hold in ordinary values. A callback's thread is the trampoline's to check
+  (`[FFI-53]`).
 * `[FFI-33a]` *(changed in 0.9.15)* Attaching a thread (`[FFI-22]`) gives it no right to touch
   another thread's values. What may go to another thread is decided when compiling (`[THR-8]`,
   `[THR-9]`, `E7008`, `E7015`): no one-thread owner reaches C (`[FFI-31b]`). The run-time thread

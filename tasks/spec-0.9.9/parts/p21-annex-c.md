@@ -72,7 +72,7 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   | `std::string_view` | `Span[u8]`; `.to_str()` is the fallible conversion to `StrView` (`[TXT-2]`); a result needs a lifetime word (`[FFI-2a]`) |
   | `std::string` | `CppString`; `.to_str() -> Result[StrView, Utf8Error]`; `String.from(c)` copies |
   | `std::vector<T>` | `CppVector[T]` with `.span()`, `.span_mut()`, `.to_array()`, `push_back`, `len` |
-  | `std::unique_ptr<T>` | `owns T`, ended through the deleter; one whose deleter holds state is refused (`E5034`): an `owns T` holds one address |
+  | `std::unique_ptr<T>`, `std::unique_ptr<T, D>` | `owns T`, ended through the deleter: with the default one, `T`'s own destructor and `delete`; with a `D` that holds no state, `D`, called through a thunk, which names `D` as `T`'s one destructor (`[FFI-36a]`); one whose deleter holds state is refused (`E5034`): an `owns T` holds one address |
   | `std::optional<T>` | `Option[T]` for a `T` that maps by value; the thunk converts at the call, in both directions (`has_value()` and the value: one branch and one copy of `T`), since the two layouts differ, as it does for a `std::variant`'s generated enum, a conversion `ember inspect` reports (`[FFI-17f]`) |
   | `std::shared_ptr<T>`, `std::weak_ptr<T>` | `CppShared[T]`, `CppWeak[T]` — never `shares`/`weakref` (`[WK-14]`, `E5065`) |
   | `std::variant<…>` | a generated enum, when every alternative maps and the overlay names each: `@ffi(variant=["A", "B"])` on a `type` entry naming the header's alias of the variant, the names in the alternatives' order |
@@ -189,16 +189,17 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
 
 ## C.3 Classes and inheritance
 
-* `[FFI-36]` *(changed in 0.9.15)* *(changed in 0.9.20)* A C++ function returning a raw pointer with
-  no ownership contract yields `*mut T`; `ffi.adopt[T](p)` (`unsafe`) turns it into an `owns T`
-  ended through the contract's destructor: `@ffi(destroys(f))` on the class's overlay entry where
-  one is written, else, for an imported C++ class, its own destructor and deallocation, `delete` in
-  a thunk the importer generates (`[FFI-17]`), as a `std::unique_ptr<T>` with the default deleter
-  ends it (`[FFI-17a]`); that the pointer is to an object made with `new` that nothing else ends is
-  what the `adopt`'s `@safety` asks of its caller (`[UNS-7]`). A class with no public destructor is
-  refused (`E5002`: "`Enemy` has no public destructor, so nothing Ember can call ends an adopted
-  one; name the function that does in the overlay: `@ffi(destroys(destroy_enemy))` above `type
-  Enemy`").
+* `[FFI-36]` *(changed in 0.9.15)* *(changed in 0.9.20)* A C++ function returning a raw pointer
+  with no ownership contract yields `*mut T`; `ffi.adopt[T](p)` (`unsafe`) turns it into an `owns
+  T` ended through `T`'s one destructor (`[FFI-36a]`): `@ffi(destroys(f))` on the class's overlay
+  entry where one is written, else the deleter `D` that the `std::unique_ptr<T, D>`s an import
+  gives name, where they name one (`[FFI-17a]`), else, for an imported C++ class, its own
+  destructor and deallocation, `delete` in a thunk the importer generates (`[FFI-17]`), as a
+  `std::unique_ptr<T>` with the default deleter ends it; that the pointer is to an object that
+  destructor may end (one made with `new`, for `delete`) and that nothing else ends is what the
+  `adopt`'s `@safety` asks of its caller (`[UNS-7]`). A class with no public destructor is refused
+  (`E5002`: "`Enemy` has no public destructor, so nothing Ember can call ends an adopted one; name
+  the function that does in the overlay: `@ffi(destroys(destroy_enemy))` above `type Enemy`").
 * `[FFI-39]` *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* An Ember class may
   derive from a C++ class with no overlay entry (`[FFI-44]`), which makes the base open and sized;
   the importer generates a C++ subclass, the trampoline, which passes on to the Ember class exactly

@@ -342,7 +342,7 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[DIA-1]` | XVII | A diagnostic has a code, one primary span, labelled secondary spans, … |
-| `[DIA-2]` | XVII | *(changed in 0.9.15)* Messages start lowercase, have no trailing … |
+| `[DIA-2]` | XVII | *(changed in 0.9.15)* *(changed in 0.9.20)* Messages start lowercase, … |
 | `[DIA-3]` | XVII | *(changed in 0.9.15)* Ownership and view errors (§XVII.6.1) label the … |
 | `[DIA-4]` | XVII | Contract errors print the whole call chain (`[EFF-6]`). |
 | `[DIA-5]` | XVII | FFI errors name the header and the C declaration. |
@@ -572,7 +572,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-26]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* … |
 | `[FFI-27]` | XVI | *(changed in 0.9.20)* The runtime `ember_rt` is a C11 static library … |
 | `[FFI-28]` | XVI | *(changed in 0.9.10)* A package built as `kind = "staticlib"` … |
-| `[FFI-29]` | XVI | For every `import c` the importer emits a shim C file, compiled with … |
+| `[FFI-29]` | XVI | *(changed in 0.9.20)* For every `import c` the importer emits a shim … |
 | `[FFI-29a]` | XVI | A binding never names a symbol with internal linkage. |
 | `[FFI-29b]` | XVI | *(changed in 0.9.15)* `implementation = ["MINIAUDIO_IMPLEMENTATION"]` … |
 | `[FFI-29c]` | XVI | A call to a wrapped `static inline` function costs one extra call … |
@@ -1372,7 +1372,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[TYP-22]` | IV | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* An … |
 | `[TYP-23]` | IV | *(changed in 0.9.15)* Inference is local to a function body and … |
 | `[TYP-24]` | IV | *(changed in 0.9.15)* An interface method is found through any … |
-| `[TYP-25]` | IV | Arguments may be positional or named; positional arguments come … |
+| `[TYP-25]` | IV | *(changed in 0.9.20)* Arguments may be positional or named; … |
 | `[TYP-26]` | IV | *(changed in 0.9.20)* There is no overloading: two functions of one … |
 | `[TYP-27]` | IV | `()` is the value of type `void`; `Ok(())` is the success value of … |
 | `[TYP-28]` | IV | Division. `/` is true division and applies to floats. `/` with two … |
