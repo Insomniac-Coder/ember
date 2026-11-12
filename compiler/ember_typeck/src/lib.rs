@@ -11126,9 +11126,7 @@ impl<'a> Checker<'a> {
     }
 
     /// `[TYP-12]` — the integer type the tag lives in. `@repr(u8)` names it;
-    /// otherwise the compiler picks the smallest type up to 32 bits that holds
-    /// every discriminant, which is what the spec's "`i32`-sized-or-smaller,
-    /// chosen by the compiler" means.
+    /// otherwise the compiler picks the smallest signed type that holds every discriminant.
     fn enum_repr(&mut self, attrs: &[ast::Attribute], decl: &ast::EnumDecl) -> (Ty, bool) {
         // `[LAY-2]` — the discriminant type is one of the eight fixed-width integers.
         if let Some(attr) = attrs.iter().find(|attr| attr.path.len() == 1 && attr.path[0].name.is("repr")) {
@@ -11161,25 +11159,18 @@ impl<'a> Checker<'a> {
             next += 1;
         }
         let c = self.common;
-        // D-720 — a discriminant beyond 32 bits widens the type to 64 (it was truncated to 32).
-        let ty = if lo >= 0 {
-            if hi <= u8::MAX as i128 {
-                c.u8
-            } else if hi <= u16::MAX as i128 {
-                c.u16
-            } else if hi <= u32::MAX as i128 {
-                c.u32
-            } else {
-                c.u64
-            }
-        } else if lo >= i8::MIN as i128 && hi <= i8::MAX as i128 {
+        // `[TYP-12]` (D-720) — the smallest *signed* type that holds every discriminant. A value
+        // above `i64::MAX` has no signed type; `u64` holds it (the spec is silent there).
+        let ty = if lo >= i8::MIN as i128 && hi <= i8::MAX as i128 {
             c.i8
         } else if lo >= i16::MIN as i128 && hi <= i16::MAX as i128 {
             c.i16
         } else if lo >= i32::MIN as i128 && hi <= i32::MAX as i128 {
             c.i32
-        } else {
+        } else if hi <= i64::MAX as i128 {
             c.i64
+        } else {
+            c.u64
         };
         (ty, false)
     }
