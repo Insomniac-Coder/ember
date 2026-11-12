@@ -31914,9 +31914,18 @@ impl<'a> Checker<'a> {
                 _ => wrong(self, "one to three arguments"),
             },
             "enumerate" | "reversed" | "zip" => {
-                let arity = if name == "zip" { 2 } else { 1 };
-                if positional.len() != arity {
-                    return wrong(self, if arity == 2 { "two iterables" } else { "one iterable" });
+                // `[TYP-47]` — `zip` of any number of iterables: of one, its items plainly; of
+                // three or more over lists bound to as many names, one counted loop as of two.
+                if name == "zip" {
+                    if positional.is_empty() {
+                        return wrong(self, "one iterable or more");
+                    }
+                    let flat = matches!(&pattern.kind, ast::PatternKind::Tuple(items) if items.len() == positional.len());
+                    if positional.len() == 1 || (positional.len() > 2 && !flat) {
+                        return self.check_for_iterator(label, pattern, iter, body, else_block, span);
+                    }
+                } else if positional.len() != 1 {
+                    return wrong(self, "one iterable");
                 }
                 let mut sources = Vec::new();
                 for arg in &positional {
@@ -31939,7 +31948,26 @@ impl<'a> Checker<'a> {
                 if name != "reversed" {
                     let shape = match name {
                         "enumerate" => FusedShape::Pair(Box::new(FusedShape::Value), Box::new(FusedShape::Ref)),
-                        _ => FusedShape::Pair(Box::new(FusedShape::Ref), Box::new(FusedShape::Ref)),
+                        _ => {
+                            // `((a, b), c)`, as the zips nest: the names are bound to it.
+                            let mut shape = FusedShape::Ref;
+                            for _ in 1..positional.len() {
+                                shape = FusedShape::Pair(Box::new(shape), Box::new(FusedShape::Ref));
+                            }
+                            shape
+                        }
+                    };
+                    let nested;
+                    let pattern = match &pattern.kind {
+                        ast::PatternKind::Tuple(items) if name == "zip" && items.len() > 2 => {
+                            let mut grouped = items[0].clone();
+                            for item in &items[1..] {
+                                grouped = ast::Pattern { id: ast::NodeId::DUMMY, kind: ast::PatternKind::Tuple(vec![grouped, item.clone()]), span: pattern.span };
+                            }
+                            nested = grouped;
+                            &nested
+                        }
+                        _ => pattern,
                     };
                     if !Self::fused_pattern_fits(pattern, &shape) {
                         self.error(
@@ -31980,7 +32008,9 @@ impl<'a> Checker<'a> {
                         });
                         chain.links.push(FusedLink::Enumerate(start, pos, values));
                     } else {
-                        chain.links.push(FusedLink::Zip(chains.remove(0)));
+                        while !chains.is_empty() {
+                            chain.links.push(FusedLink::Zip(chains.remove(0)));
+                        }
                     }
                     let fused = self.check_for_fused(label, pattern, chain, body, else_block, span)?;
                     stmts.push(fused);
@@ -35690,11 +35720,12 @@ impl<'a> Checker<'a> {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         let positional: Vec<&ast::Expr> = args.iter().filter(|a| a.name.is_none()).map(|a| &a.value).collect();
         let named: Vec<ast::Arg> = args.iter().filter(|a| a.name.is_some()).cloned().collect();
-        let arity = if name == "zip" { 2 } else { 1 };
+        // `[STD-26]`, `[TYP-47]` — `zip` takes any number of iterables, one or more.
+        let fits = if name == "zip" { !positional.is_empty() } else { positional.len() == 1 };
         let named_ok = named.len() <= 1
             && named.iter().all(|a| name == "enumerate" && a.name.is_some_and(|n| n.name.is("start")));
-        if positional.len() != arity || !named_ok {
-            let wanted = if name == "enumerate" { "one iterable and an optional `start`" } else if arity == 2 { "two iterables" } else { "one iterable" };
+        if !fits || !named_ok {
+            let wanted = if name == "enumerate" { "one iterable and an optional `start`" } else if name == "zip" { "one iterable or more" } else { "one iterable" };
             self.error(codes::E2020, span, format!("`{name}` takes {wanted}"));
             return error;
         }
@@ -35707,27 +35738,72 @@ impl<'a> Checker<'a> {
         match name {
             "enumerate" => self.synth_method_on(first, span, method("enumerate"), &[], &named, None, span),
             "reversed" => self.synth_method_on(first, span, method("rev"), &[], &[], None, span),
+            // `[TYP-47]` — `zip(xs)` gives each item plainly (there is no one-element tuple).
+            _ if positional.len() == 1 => first,
             _ => {
-                let second = self.synth_committed(positional[1]);
-                if second.ty == self.common.error {
-                    return error;
-                }
-                let Some(second) = self.iterator_of(second, positional[1].span) else { return error };
-                // The second iterator, checked, is handed to `zip` through a hidden local.
-                let hidden = Symbol::intern("$zipped");
+                // Each further iterator, checked where it is written, is handed to `zip` through
+                // a hidden local: `a.zip(b).zip(c)…`, stopping at the shortest.
+                let mut stmts = Vec::new();
+                let mut call = first;
                 self.scopes.push(HashMap::new());
-                let local = self.declare(Some(hidden), second.ty, span);
-                let path = ast::Expr {
-                    id: ast::NodeId::DUMMY,
-                    kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: hidden, span }] },
-                    span,
-                };
-                let call = self.synth_method_on(first, span, method("zip"), &[], &[ast::Arg { name: None, value: path, span }], None, span);
+                for (index, written) in positional.iter().enumerate().skip(1) {
+                    let next = self.synth_committed(written);
+                    if next.ty == self.common.error {
+                        self.scopes.pop();
+                        return error;
+                    }
+                    let Some(next) = self.iterator_of(next, written.span) else {
+                        self.scopes.pop();
+                        return error;
+                    };
+                    let hidden = Symbol::intern(&format!("$zipped{index}"));
+                    let local = self.declare(Some(hidden), next.ty, span);
+                    stmts.push(Stmt::Let { local, init: Some(next) });
+                    let path = ast::Expr {
+                        id: ast::NodeId::DUMMY,
+                        kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: hidden, span }] },
+                        span,
+                    };
+                    call = self.synth_method_on(call, span, method("zip"), &[], &[ast::Arg { name: None, value: path, span }], None, span);
+                    if call.ty == self.common.error {
+                        self.scopes.pop();
+                        return error;
+                    }
+                }
+                // `[TYP-47]` — of three or more, each item is one flat tuple, `(a, b, c)`, read
+                // from the nested pairs `((a, b), c)`: `(p.0.0, p.0.1, p.1)`.
+                if positional.len() > 2 {
+                    let item = ast::Ident { name: Symbol::intern("$zipped"), span };
+                    let at = |expr: ast::Expr, index: u32| ast::Expr {
+                        id: ast::NodeId::DUMMY,
+                        kind: ast::ExprKind::TupleField { base: Box::new(expr), index },
+                        span,
+                    };
+                    let count = positional.len();
+                    let items = (0..count)
+                        .map(|index| {
+                            let mut part = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Path { segments: vec![item] }, span };
+                            // The first is under every pair; each other one is the second of its own.
+                            let depth = if index == 0 { count - 1 } else { count - index };
+                            for _ in 1..depth {
+                                part = at(part, 0);
+                            }
+                            at(part, u32::from(index != 0))
+                        })
+                        .collect();
+                    let flat = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Tuple(items), span };
+                    let pattern = ast::Pattern {
+                        id: ast::NodeId::DUMMY,
+                        kind: ast::PatternKind::Bind { name: item, by_ref: false, mutable: false, sub: None },
+                        span,
+                    };
+                    call = self.call_adapter(call, "map", clause_lambda(&pattern, flat, span), span);
+                }
                 self.scopes.pop();
                 if call.ty == self.common.error {
                     return error;
                 }
-                let block = Block { stmts: vec![Stmt::Let { local, init: Some(second) }], span };
+                let block = Block { stmts, span };
                 Expr { ty: call.ty, kind: ExprKind::Block { block, value: Box::new(call) }, span }
             }
         }
