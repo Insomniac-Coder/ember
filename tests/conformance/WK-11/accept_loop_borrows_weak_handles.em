@@ -20,7 +20,7 @@ fn program():
     token = Token(7)
     weak: weakref Token = weakref token
     copies: Array[weakref Token] = Array[weakref Token]()
-    copies.push(owns weak)
+    copies.push(owns (weakref weak))
     for observed in copies:
         if observed exists as owner:
             println(owner.value)

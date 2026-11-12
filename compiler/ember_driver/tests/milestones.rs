@@ -4418,37 +4418,6 @@ fn loop_access_hoisting_requires_the_complete_local_proof() {
     }
 }
 
-#[test]
-fn static_access_elision_is_recorded_in_the_safety_side_table() {
-    let root = workspace_root();
-    let out_dir = temporary_directory("static-elision-side-table");
-    let run = ember(
-        &[
-            "build",
-            &format!("tests/conformance/HEAP-5/accept_unique_shared_get_mut_elides_access.{SOURCE_EXT}"),
-            "--out-dir",
-            &out_dir.to_string_lossy(),
-        ],
-        &root,
-    );
-    assert_eq!(run.exit, 0, "build failed:\n{}", run.stderr);
-
-    let side_table = out_dir
-        .join("debug")
-        .join("inspect")
-        .join("accept_unique_shared_get_mut_elides_access.safety.json");
-    let json = std::fs::read_to_string(&side_table)
-        .unwrap_or_else(|error| panic!("{}: {error}", side_table.display()));
-    assert!(
-        json.contains("\"reason\":\"unique_handle\""),
-        "missing unique-handle elision: {json}"
-    );
-    assert!(
-        json.contains("\"status\":\"elided\""),
-        "missing elided status: {json}"
-    );
-}
-
 /// `[EXC-3]`, `[EXC-3a]` — a check that nothing held anywhere in the program
 /// could make fail is removed, and recorded in the safety side table.
 #[test]
@@ -9457,13 +9426,10 @@ fn every_example_of_the_specification_checks() {
     const WRITTEN_IN_0915: &str = "written in 0.9.15, which this compiler does not implement yet";
     const WRITTEN_IN_0920: &str = "written in 0.9.20, which this compiler does not implement yet";
     const BASELINE: &[(&str, usize, &str)] = &[
-        ("IV.6a The words in a type: who owns a value, and where its memory comes from", 1, WRITTEN_IN_0915),
         ("V.7 Constants and statics", 1, WRITTEN_IN_0915),
         ("VI.5 Lambdas and function values", 1, WRITTEN_IN_0915),
         ("Views with several regions", 1, WRITTEN_IN_0915),
         ("VII.7 Views over containers: `Span` and `MutSpan`", 1, WRITTEN_IN_0915),
-        ("Part VIII — Classes, Shared Owners and Links", 1, WRITTEN_IN_0915),
-        ("VIII.5 `weakref` links, parent links and loops of owners", 1, WRITTEN_IN_0915),
         ("IX.2 Arenas", 1, WRITTEN_IN_0915),
         ("IX.3 Memory managers: `using` and `Allocator`", 1, WRITTEN_IN_0915),
         // `owns (…)` before an argument for an `owns` parameter, since 0.9.20_Hardened_3.

@@ -6,9 +6,9 @@
 #$ stdout: 7
 #$ stdout: end
 
-# A normal closure keeps the loop's borrowed `weakref` handle by reference. Calling
-# upgrade through that reference must auto-dereference the receiver without
-# creating another weak owner.
+# A normal closure keeps the loop's borrowed `weakref` handle by reference. Opening
+# it through that reference must reach the link without creating another weak
+# owner.
 class Token:
     value: i32
 
@@ -20,7 +20,7 @@ fn program():
     token = Token(7)
     weak: weakref Token = weakref token
     copies: Array[weakref Token] = Array[weakref Token]()
-    copies.push(owns weak)
+    copies.push(owns (weakref weak))
     for observed in copies:
         task = fn() -> i32:
             if observed exists as owner:

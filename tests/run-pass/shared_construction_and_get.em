@@ -15,6 +15,6 @@ struct Token:
 
 fn main():
     first = shares mut Token(7)
-    second = first
+    second = shares mut first
     value = second
     println(value.value)

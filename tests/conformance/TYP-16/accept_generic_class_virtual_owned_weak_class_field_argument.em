@@ -5,7 +5,7 @@
 #$ assert-c: contains("static int32_t em_vt_7DerivedGda5cc12a188c7619b25d920e0657739a_slot0")
 #$ assert-c: contains("->slot0")
 #$ assert-c-count: contains("ember_weak_retain(") == 2
-#$ assert-c: contains("ember_weak_release((ember_obj_header*)weak.value);")
+#$ assert-c: contains("ember_weak_release((ember_obj_header*)weak);")
 #$ assert-c: contains("ember_weak_upgrade(")
 
 # Passing weakref Token to an owned generic virtual parameter copies one weak

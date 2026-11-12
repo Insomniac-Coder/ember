@@ -211,3 +211,13 @@ there.
   1 (1), GRM-33 1 (1), HR-12 1 (1), LEX-15 1 (1), LNT-6 1 (1), MNG-4 1 (1), OBJ-4 1 (1), PHIL-1 1 (1),
   PHIL-3 1 (1), RC-1 1 (1), RFL-2 1 (1), SPN-1 1 (1), STR-5 1 (1), STR-6 1 (1), THR-1 1 (1), TYP-13 1
   (1).
+- **Task 15, the suites** (round 6, H2): the quick check (failing 0; the touched folders on the C backend
+  too), `cargo test -p` of every crate touched (`ember_types`, `ember_hir`, `ember_typeck`, `ember_mir`,
+  `ember_analysis`, `ember_interp`, `ember_codegen_c`, `ember_codegen_llvm`, `ember_driver`; the reload
+  test of `[HR-15]` ignored, above), `rule_index`, `error_pages` and `check_branding` green. The driver's
+  suite found what the quick check does not read: eleven tests whose `assert-c` lines named the old
+  `Weak` struct's C (`weak.value`, its `ember_obj_header* value`) or counted the +1 of a copy that is now
+  a hand-over (the copy written `weakref x`/`shares mut x` where the test is about the copy); three
+  examples of the specification that now check (IV.6a, Part VIII, VIII.5: their baseline entries go);
+  and a test of `Shared.get_mut`'s elided access (HEAP-5's, retired with it), deleted with the dead path
+  of `access.rs` that served it.

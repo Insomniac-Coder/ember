@@ -17,7 +17,7 @@ struct Token:
 # would go with it.
 fn program():
     empty: weakref Token = None
-    copy = empty
+    copy = weakref empty
     if copy exists as _:
         println(0)
     else:

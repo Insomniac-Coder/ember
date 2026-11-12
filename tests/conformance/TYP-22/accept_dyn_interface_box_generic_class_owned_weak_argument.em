@@ -10,8 +10,8 @@
 
 # An owned weakref Token argument crossing a Box[dyn] call receives an
 # independent observer in the generic class implementation. The original
-# `shares` owner remains separate while the dynamic callee upgrades and destroys
-# its owned argument copy.
+# `shares` owner remains separate while the dynamic callee opens and destroys
+# its owned argument link.
 interface Observe:
     fn observe(owns weak: weakref Token) -> i32
 
@@ -32,4 +32,4 @@ fn main():
     strong = shares mut Token(7)
     weak = weakref strong
     boxed: owns dyn Observe = owns Reader[bool](true)
-    println(boxed.observe(owns weak))
+    println(boxed.observe(owns (weakref weak)))
