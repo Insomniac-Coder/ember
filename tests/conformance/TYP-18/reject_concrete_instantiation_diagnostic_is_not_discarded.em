@@ -18,7 +18,7 @@ extend BorrowedKey implements Hash:
 
 [K: needs (Eq, Hash), V]
 fn reserve(arena: Arena, capacity: usize) -> ArenaMap[K, V] from arena:
-    return ArenaMap[K, V].with_capacity(arena, capacity) #$ error[E2130]: an ArenaMap cannot store a view key or value
+    return ArenaMap[K, V].with_capacity(arena, capacity) #$ error[E0900]: an `ArenaMap` with a view key or value is not built by this compiler yet
 
 fn main():
     arena = Arena.with_capacity(1024)

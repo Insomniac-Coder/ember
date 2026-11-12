@@ -8871,6 +8871,34 @@ fn bind_report_and_check_count_what_is_safe_unsafe_and_skipped() {
     assert!(drifted.stderr.contains("E5010") && drifted.stderr.contains("`bind_add` takes 2 parameters"), "{}", drifted.stderr);
 }
 
+/// `[CLI-7]` — `ember bind <header> --check <overlay> --merge` records the header in `ember.overlays`
+/// only once the overlay passes: an overlay that does not pass is `E5010`, the command exits 1, and
+/// `ember.overlays` is not written (and one that exists is not changed).
+#[test]
+fn bind_check_merge_writes_nothing_when_the_overlay_does_not_pass() {
+    let dir = temporary_directory("bind-check-merge-fails");
+    std::fs::write(dir.join(ember_branding::MANIFEST), "[package]\nname = \"calc\"\nversion = \"0.1.0\"\n").unwrap();
+    std::fs::write(dir.join("calc.h"), BIND_HEADER).unwrap();
+    std::fs::write(dir.join(format!("good.{SOURCE_EXT}")), "unsafe overlay c \"calc.h\":\n    fn bind_add(a, b)\n").unwrap();
+    std::fs::write(dir.join(format!("drifted.{SOURCE_EXT}")), "unsafe overlay c \"calc.h\":\n    fn bind_add(a)\n").unwrap();
+    let record = dir.join("ember.overlays");
+
+    // No record yet: the failing check writes none.
+    let failed = ember(&["bind", "calc.h", "--check", &format!("drifted.{SOURCE_EXT}"), "--merge"], &dir);
+    assert_eq!(failed.exit, 1, "{}{}", failed.stdout, failed.stderr);
+    assert!(failed.stderr.contains("E5010") && failed.stderr.contains("`bind_add` takes 2 parameters"), "{}", failed.stderr);
+    assert!(!record.exists(), "`--check … --merge` wrote `ember.overlays` for an overlay that does not pass");
+
+    // A passing overlay is recorded; a later failing one leaves the record as it was.
+    let passed = ember(&["bind", "calc.h", "--check", &format!("good.{SOURCE_EXT}"), "--merge"], &dir);
+    assert_eq!(passed.exit, 0, "{}", passed.stderr);
+    let recorded = std::fs::read_to_string(&record).expect("a passing overlay is recorded");
+    assert!(recorded.contains(&format!("file = \"good.{SOURCE_EXT}\"")), "{recorded}");
+    let failed = ember(&["bind", "calc.h", "--check", &format!("drifted.{SOURCE_EXT}"), "--merge"], &dir);
+    assert_eq!(failed.exit, 1, "{}{}", failed.stdout, failed.stderr);
+    assert_eq!(std::fs::read_to_string(&record).unwrap(), recorded, "`ember.overlays` changed for an overlay that does not pass");
+}
+
 /// `[FFI-29c]` — a call to a wrapped `static inline` function costs one extra call: `ember inspect
 /// --cost` reports it as `wrapped (static inline)`, beside an ordinary foreign call's one direct
 /// call; a variadic `static inline` function cannot be wrapped and is skipped with `W5002`.

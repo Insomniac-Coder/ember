@@ -682,6 +682,7 @@ fn check_round(
         checker.current_module = index;
         checker.collect_methods(&loaded.module);
     }
+    checker.check_deferred_static_sync();
     // A default body gives the implementing type a method it did not write. These have to exist
     // before any body is checked, or a call to one would not resolve. D-878 — once every module's
     // implementations are collected: given module by module, an implementation in a module after
@@ -2909,6 +2910,9 @@ struct ForeignTypeContract {
     destroys: Option<ast::Ident>,
     adopt: bool,
     creator: bool,
+    /// `[FFI-8]`, `[THR-8]` — `threads(main)`: its objects are used by the main thread only, so an
+    /// `owns T` of it is no more `Send` than a `threads(creator)` one.
+    main: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -2979,6 +2983,15 @@ struct Checker<'a> {
     /// `[FFI-33b]` — the foreign types a `returns_owned` result binds to the thread that made the
     /// object (`threads(creator)` on the result), as their declaration's `threads(creator)` does.
     foreign_result_creators: HashSet<Symbol>,
+    /// `[FFI-36a]` (N175) — the structs declared `@layout(c)`: the only structs C can make an object of.
+    layout_c_structs: HashSet<Symbol>,
+    /// `[FFI-36a]` (N175) — the first function whose `returns_owned` result gives an `owns T` of each
+    /// foreign type `T`, which a message names as where to get one.
+    foreign_result_makers: HashMap<Symbol, Symbol>,
+    /// `[STA-1]`, D-834 — the statics whose type was not `Sync` when `collect` met them: a `Send` or
+    /// `Sync` written by hand (`unsafe extend`, std's `ForeignOwner`) is recorded later, by
+    /// `collect_methods`, so each is asked again once every module's are known (type, where, foreign).
+    deferred_static_sync: Vec<(Ty, Span, bool)>,
     /// `[FFI-36a]` — the structs a header lays out that a `returns_owned` result gives objects of:
     /// foreign types, whose `owns T` holds the object C made.
     foreign_owned_structs: HashSet<Symbol>,
@@ -4078,6 +4091,9 @@ impl<'a> Checker<'a> {
             foreign_type_contracts: HashMap::new(),
             foreign_result_destructors: HashMap::new(),
             foreign_result_creators: HashSet::new(),
+            layout_c_structs: HashSet::new(),
+            foreign_result_makers: HashMap::new(),
+            deferred_static_sync: Vec::new(),
             foreign_owned_structs: HashSet::new(),
             signatures: Vec::new(),
             methods: HashMap::new(),
@@ -5147,13 +5163,16 @@ impl<'a> Checker<'a> {
             let resolved = self.resolve_name(name.name);
             let named = match self.named_types.get(&resolved).map(|&ty| self.types.kind(ty).clone()) {
                 Some(TyKind::Opaque(_)) if self.foreign_type_contracts.contains_key(&resolved) => resolved,
-                Some(TyKind::Struct(id)) => {
+                // `[FFI-36a]` (N175) — only a `@layout(c)` struct is one C can make an object of; any
+                // other is `E5002` where the result is checked (`check_foreign_ownership`).
+                Some(TyKind::Struct(id)) if self.layout_c_structs.contains(&self.types.struct_def(id).name) => {
                     let name = self.types.struct_def(id).name;
                     self.foreign_owned_structs.insert(name);
                     name
                 }
                 _ => continue,
             };
+            self.foreign_result_makers.entry(named).or_insert(decl.name.name);
             if creator {
                 self.foreign_result_creators.insert(named);
             }
@@ -6560,6 +6579,9 @@ impl<'a> Checker<'a> {
                     }
                     if has_derive(&item.attrs, "Hash") {
                         self.hash_derived.insert(name);
+                    }
+                    if item.attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is("layout") && (attribute_names(attr, "c") || layout_names(attr).is_some())) {
+                        self.layout_c_structs.insert(name);
                     }
                     if has_derive(&item.attrs, "Zeroable") {
                         self.types.derive_zeroable(name);
@@ -10836,17 +10858,12 @@ impl<'a> Checker<'a> {
                         }
                     };
                     // D-327 — `-1.5` and `-5` are literals too (`[LEX-24]`).
-                    if !is_literal_value(&value.kind) && value.ty != self.common.error
-                        // Already reported: the value did not check ([DIA-14]).
-                        && !matches!(value.kind, ExprKind::Error)
-                    {
-                        self.error(
-                            codes::E2130,
-                            decl.value.span,
-                            "a `const` must be a literal in this phase of the compiler",
-                        );
-                        continue;
-                    }
+                    // D-721 — what is not a literal as written is evaluated (`[CT-1]`, `expr_const`); a
+                    // literal as written checks to a literal value, so nothing else reaches here.
+                    debug_assert!(
+                        is_literal_value(&value.kind) || value.ty == self.common.error || matches!(value.kind, ExprKind::Error),
+                        "a `const` written as a literal checked to something else"
+                    );
                     let const_name = self.qualified(decl.name.name);
                     if self.constants.contains_key(&const_name) {
                         self.error(
@@ -10867,12 +10884,10 @@ impl<'a> Checker<'a> {
                     // one, and a foreign one read safely (`@ffi(immutable)`). A foreign static read
                     // only in `unsafe` (Part XVI's table) is the programmer's to share (the owner's
                     // ruling of 2026-10-21, ODR-163).
+                    // D-834 — asked again after `collect_methods` (`check_deferred_static_sync`): a
+                    // `Send` written by hand is not recorded yet.
                     if !self.is_sync(ty) && (!decl.is_foreign_decl || ffi_static_immutable(&item.attrs)) {
-                        let shown = self.types.display(ty);
-                        self.error(codes::E7002, decl.ty.span,
-                            format!("{}static type `{shown}` is not Sync",
-                                if decl.is_foreign_decl { "foreign " } else { "" }));
-                        continue;
+                        self.deferred_static_sync.push((ty, decl.ty.span, decl.is_foreign_decl));
                     }
                     if decl.is_foreign_decl {
                         // `[FFI-10]` — any value C can lay out is a global C may
@@ -14741,6 +14756,17 @@ impl<'a> Checker<'a> {
     /// with no members; a generic one holds for the instances whose arguments meet the parameters'
     /// marker bounds. `Copy` comes from `@derive(Copy)` and `Sized` from what a type is (`E2040`).
     /// `unsafe extend` writes markers only.
+    /// `[STA-1]` — a static's type that was not `Sync` when it was collected, now that every `Send`
+    /// and `Sync` written by hand is recorded: still not `Sync` is `E7002`.
+    fn check_deferred_static_sync(&mut self) {
+        for (ty, span, foreign) in std::mem::take(&mut self.deferred_static_sync) {
+            if !self.is_sync(ty) {
+                let shown = self.types.display(ty);
+                self.error(codes::E7002, span, format!("{}static type `{shown}` is not Sync", if foreign { "foreign " } else { "" }));
+            }
+        }
+    }
+
     fn collect_markers(&mut self, decl: &ast::ExtendDecl) {
         let markers: Vec<(&'static str, Span)> = decl
             .implements
@@ -15961,6 +15987,17 @@ impl<'a> Checker<'a> {
             return self.types.intern(TyKind::Span { elem, mutable: name.is("MutSpan") });
         }
         if name.is("Array") {
+            // `[ALC-1]` — the memory manager is named by `using`, never as a type argument: `Array[int,
+            // Global]` is `E1010` as `Box[int, Global]` is, and the type it names is still made.
+            if let [(elem, elem_at), (_, manager_at)] = args {
+                let inner = self.written_line(*elem_at).unwrap_or_else(|| self.types.display(*elem));
+                let manager = self.written_line(*manager_at).unwrap_or_else(|| "A".to_string());
+                self.sink.emit(
+                    Diagnostic::error(codes::E1010, span, format!("`Array[{inner}, {manager}]` is not a type of Ember: write `Array[{inner}] using {manager}`"))
+                        .help("the place names the kind of memory manager with `using` after the type; without it the memory comes from the built-in manager, `Global` [ALC-1]"),
+                );
+                return self.types.intern(TyKind::Vec { elem: *elem, text: false });
+            }
             if !require(self, 1) {
                 return self.common.error;
             }
@@ -20508,7 +20545,14 @@ impl<'a> Checker<'a> {
     /// the thread that made it (`ThreadForeignOwner[T]`). It is shown as `owns T` and read through
     /// as every `owns T` is; its end calls `T`'s one destructor (`foreign_end`).
     fn foreign_owner_of(&mut self, inner: Ty) -> Ty {
-        let generic = if self.foreign_creator(inner) { "std.ffi.ThreadForeignOwner" } else { "std.ffi.ForeignOwner" };
+        let main = self.foreign_object_name(inner).and_then(|name| self.foreign_type_contracts.get(&name)).is_some_and(|contract| contract.main);
+        let generic = if self.foreign_creator(inner) {
+            "std.ffi.ThreadForeignOwner"
+        } else if main {
+            "std.ffi.MainForeignOwner"
+        } else {
+            "std.ffi.ForeignOwner"
+        };
         let ty = self.instantiate_named_generic(generic, &[inner], Span::DUMMY);
         if let TyKind::Struct(id) = *self.types.kind(ty)
             && !self.boxes.contains_key(&id)
@@ -20582,6 +20626,26 @@ impl<'a> Checker<'a> {
                 kind: ExprKind::DynBoxNew { concrete, interfaces, layout, implementations, value: Box::new(value) },
                 span,
             };
+        }
+        // `[FFI-36a]` (N175) — an `owns T` of a foreign type holds only an object foreign code made.
+        if let Some(name) = self.foreign_object_name(value.ty).filter(|_| matches!(self.types.kind(value.ty), TyKind::Struct(_))) {
+            let shown = self.types.display(value.ty);
+            let ended = self.foreign_type_destructor(value.ty).map(|(def, at)| {
+                let line = self.line_of(at).map_or_else(String::new, |line| format!(" (line {line})"));
+                format!(" and ended by `{}`{line}", self.declared_name(def).unwrap_or_else(|| "its destructor".to_string()))
+            }).unwrap_or_default();
+            let maker = self.foreign_result_makers.get(&name).map_or_else(
+                || "get one from the function that returns it".to_string(), |maker| format!("get one from `{maker}`"));
+            // The second is offered for a value written whole (a sized struct): `p = Packet(len=0)`.
+            let given = self.owns_at_equals.get(&span).cloned();
+            let kept = match (self.written_line(value.span), given) {
+                (Some(text), Some(given)) => format!(", or keep this one where it is made: `{given} = {text}`"),
+                (Some(text), None) => format!(", or keep this one where it is made: `{text}`"),
+                _ => String::new(),
+            };
+            self.error(codes::E2114, span, format!(
+                "`{shown}`'s objects are made by C{ended}, so an `owns {shown}` holds only one C made; {maker}{kept}"));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         let inner = value.ty;
         // `[TYP-15]` is region-based: forming `owns str` is legal, and
@@ -23594,6 +23658,22 @@ impl<'a> Checker<'a> {
         match ffi_owned_result(attrs) {
             Some((destructor, nullable, _)) => {
                 let Some(pointee) = foreign_box(self, ret, nullable) else {
+                    // `[FFI-36a]` (N175) — an `owns T` of a type Ember lays out is one C cannot make.
+                    let written = if nullable { self.option_some_payload(ret) } else { Some(ret) };
+                    if let Some(inner) = written.and_then(|ty| self.box_inner(ty)) {
+                        let shown = self.types.display(inner);
+                        let function = decl.name.name.to_string();
+                        let stem = ["make_", "new_", "create_", "alloc_"].iter().find_map(|prefix| function.strip_prefix(prefix)).unwrap_or(&function);
+                        let suggested: String = stem.split('_').filter(|part| !part.is_empty()).map(|part| {
+                            let mut letters = part.chars();
+                            letters.next().map_or_else(String::new, |first| first.to_uppercase().chain(letters).collect())
+                        }).collect();
+                        let result = if nullable { format!("Option[owns {suggested}]") } else { format!("owns {suggested}") };
+                        self.error(codes::E5002, decl.name.span, format!(
+                            "`{function}` gives an `owns {shown}` C made, and Ember makes the blocks of a `{shown}`; declare a type for it, `type {suggested}` with `@ffi(destroys({}))`, and write `-> {result}`",
+                            destructor.name));
+                        return;
+                    }
                     self.error(codes::E5002, decl.name.span, format!(
                         "`returns_owned` needs a `{}` result of a foreign type",
                         if nullable { "Option[owns T]" } else { "owns T" }));
@@ -24916,6 +24996,11 @@ impl<'a> Checker<'a> {
     /// `Array`/`String` whose elements can be, or a tuple, `Option` or
     /// `Result` whose parts can be.
     fn is_cloneable(&self, ty: Ty) -> bool {
+        // `[FFI-36a]` (N175) — an `owns T` of a foreign type is not `Clone`: a copy would be a block
+        // Ember made, which the type's destructor would end.
+        if self.foreign_owner_inner(ty).is_some() {
+            return false;
+        }
         self.types.is_copy(ty)
             || self.clone_method(ty).is_some()
             || self.assumed_cloneable.contains(&ty)
@@ -38165,9 +38250,11 @@ impl<'a> Checker<'a> {
 
         let expected_signature = self.types.display(expected);
         let found_signature = self.types.display(found);
-        self.sink.emit_classified(
+        // §XVII.6.1 — `E2228` is folded into `E2020`: a lambda parameter whose word differs from the
+        // function type it is given to.
+        self.sink.emit(
             Diagnostic::error(
-                codes::E2228,
+                codes::E2020,
                 span,
                 format!(
                     "callable parameter mode mismatch at parameter {index}: expected `{}`, found `{}`",
@@ -41166,7 +41253,7 @@ impl<'a> Checker<'a> {
                 if !self.is_send(ty) {
                     let shown = self.types.display(ty);
                     self.sink.emit(
-                        Diagnostic::error(codes::E7004, span, format!("{name} captures `{capture}`, a `{shown}`, which is not Send"))
+                        Diagnostic::error(self.not_send_code(ty), span, format!("{name} captures `{capture}`, a `{shown}`, which is not Send"))
                             .note(note),
                     );
                 }
@@ -43091,6 +43178,30 @@ impl<'a> Checker<'a> {
 
     fn is_send(&self, ty: Ty) -> bool {
         self.thread_facts(ty).0
+    }
+
+    /// `[THR-8]`, `[FFI-33b]` — `E7008` where a value that is not `Send` is a thread-bound foreign
+    /// owner (an `owns T` of a type whose contract says `threads(creator)` or `threads(main)`, held
+    /// whole or as a part), `E7004` for any other.
+    fn not_send_code(&self, ty: Ty) -> ember_diag::Code {
+        if self.holds_thread_bound_foreign_owner(ty, &mut HashSet::new()) { codes::E7008 } else { codes::E7004 }
+    }
+
+    fn holds_thread_bound_foreign_owner(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+        if !seen.insert(ty) {
+            return false;
+        }
+        match self.types.kind(ty) {
+            TyKind::Struct(id) => {
+                let def = self.types.struct_def(*id);
+                def.origin.as_ref().is_some_and(|(name, _)| name.is("std.ffi.ThreadForeignOwner") || name.is("std.ffi.MainForeignOwner"))
+                    || def.fields.iter().any(|field| self.holds_thread_bound_foreign_owner(field.ty, seen))
+            }
+            TyKind::Enum(id) => self.types.enum_def(*id).variants.iter().flat_map(|variant| &variant.fields).any(|field| self.holds_thread_bound_foreign_owner(field.ty, seen)),
+            TyKind::Tuple(items) => items.iter().any(|&item| self.holds_thread_bound_foreign_owner(item, seen)),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } => self.holds_thread_bound_foreign_owner(*elem, seen),
+            _ => false,
+        }
     }
 
     fn is_sync(&self, ty: Ty) -> bool {
@@ -48495,6 +48606,17 @@ impl<'a> Checker<'a> {
             );
             return true;
         }
+        if let Some(inner) = self.foreign_owner_inner(ty) {
+            let object = self.types.display(inner);
+            let ended = self.foreign_type_destructor(inner).and_then(|(def, _)| self.declared_name(def))
+                .map_or_else(String::new, |name| format!(" and `{name}` ends"));
+            self.sink.emit(
+                Diagnostic::error(codes::E2116, span, format!(
+                    "`{text}` is an `owns {object}`, an object C made{ended}, so `copy of` cannot copy it: a copy would be a block Ember made that the destructor would end"))
+                    .help(format!("keep a view of it: `ref {text}`, or get another from the function that returns one")),
+            );
+            return true;
+        }
         let has_clone = self.is_cloneable(ty) || self.implements(ty, Symbol::intern("std.core.Clone"));
         if !has_clone {
             let help = match self.types.kind(ty) {
@@ -51350,7 +51472,7 @@ impl<'a> Checker<'a> {
             // is no keyword for "borrowed") receives the value, so
             // `opt.map(fn(s) => s)` can hand `s` on. `mut` is never inferred:
             // a write to the caller's place is written where it happens, and
-            // an unwritten `mut` stays `E2228` (shape B15).
+            // an unwritten `mut` stays `E2020`.
             let mode = match (param.mode, expected) {
                 (ast::Mode::Borrow, Some(expected)) if expected.mode == FnParamMode::Owned => {
                     FnParamMode::Owned
@@ -55667,7 +55789,7 @@ impl<'a> Checker<'a> {
                     refused = true;
                 } else if !self.is_send(ty) {
                     let mut diagnostic =
-                        Diagnostic::error(codes::E7004, arg_span, format!("{} captures `{capture}`, a `{ty_shown}`, which is not Send", words.who))
+                        Diagnostic::error(self.not_send_code(ty), arg_span, format!("{} captures `{capture}`, a `{ty_shown}`, which is not Send", words.who))
                             .note(words.moves_note);
                     if let Some(advice) = self.sync_class_advice(ty) {
                         diagnostic = diagnostic.help(advice);
@@ -56052,7 +56174,7 @@ impl<'a> Checker<'a> {
                 let (code, what, ok) = match *self.types.kind(ty) {
                     TyKind::Ref { mutable: false, inner } => (codes::E7005, (inner, "borrows", "Sync"), self.is_sync(inner)),
                     TyKind::Ref { mutable: true, inner } => (codes::E7004, (inner, "borrows mutably", "Send"), self.is_send(inner)),
-                    _ => (codes::E7004, (ty, "captures", "Send"), self.is_send(ty)),
+                    _ => (self.not_send_code(ty), (ty, "captures", "Send"), self.is_send(ty)),
                 };
                 if !ok {
                     let (ty, verb, marker) = what;
@@ -56872,7 +56994,7 @@ impl<'a> Checker<'a> {
                     continue;
                 }
                 let shown = self.types.display(capture_ty);
-                let mut diagnostic = Diagnostic::error(codes::E7004, span, format!("this lambda captures `{capture}`, a `{shown}`, which is not Send"))
+                let mut diagnostic = Diagnostic::error(self.not_send_code(capture_ty), span, format!("this lambda captures `{capture}`, a `{shown}`, which is not Send"))
                     .primary_label("passed here")
                     .note("the parameter takes only what may move to another thread [CLO-10], [THR-8]");
                 if let Some(advice) = self.sync_class_advice(capture_ty) {
@@ -57789,10 +57911,11 @@ impl<'a> Checker<'a> {
             return error;
         }
         if self.types.is_view(key) || self.types.is_view(value) {
-            self.error(
-                codes::E2130,
-                span,
-                "an ArenaMap cannot store a view key or value",
+            // `[TYP-15a]`, `[ARN-5]` allow it; the check that keeps such views no longer than the arena
+            // is not built, so it is never accepted until then.
+            self.sink.emit(
+                Diagnostic::error(codes::E0900, span, "an `ArenaMap` with a view key or value is not built by this compiler yet")
+                    .note("`[TYP-15a]` and `[ARN-5]` allow it, but the check that keeps such views no longer than the arena is not built"),
             );
             return error;
         }
@@ -58098,10 +58221,9 @@ impl<'a> Checker<'a> {
             }
             let inner = explicit[0];
             if self.types.is_view(inner) {
-                self.error(
-                    codes::E2130,
-                    span,
-                    "an uninitialized arena span cannot itself contain a view type",
+                self.sink.emit(
+                    Diagnostic::error(codes::E0900, span, "an uninitialized arena span of views is not built by this compiler yet")
+                        .note("`[TYP-15a]` and `[ARN-5]` allow it, but the check that keeps such views no longer than the arena is not built"),
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
@@ -64571,7 +64693,7 @@ fn ffi_link_name(attrs: &[ast::Attribute]) -> Option<String> {
 /// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — an opaque foreign type's `@ffi(…)`: `destroys(f)`,
 /// `adopt=false`, `threads(creator)` (the other words are checked where the attribute is).
 fn foreign_type_contract(attrs: &[ast::Attribute], module: usize) -> ForeignTypeContract {
-    let mut contract = ForeignTypeContract { module, destroys: None, adopt: true, creator: false };
+    let mut contract = ForeignTypeContract { module, destroys: None, adopt: true, creator: false, main: false };
     for arg in attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi")).flat_map(|attr| &attr.args) {
         match arg {
             ast::AttrArg::Named { name, value } if name.name.is("adopt") => {
@@ -64587,6 +64709,7 @@ fn foreign_type_contract(attrs: &[ast::Attribute], module: usize) -> ForeignType
                     contract.destroys = Some(segments[0]);
                 } else if word.is("threads") {
                     contract.creator = ffi_contract_word(&only.value).is_some_and(|thread| thread.is("creator"));
+                    contract.main = ffi_contract_word(&only.value).is_some_and(|thread| thread.is("main"));
                 }
             }
             _ => {}

@@ -16,7 +16,7 @@ fn take(a: Node) -> Option[String]:
     return a.name    #$ error[E3013]: `a` is a `Node` object, which other names may reach, so `a.name` cannot be taken out and leave a hole; take it and leave a value in its place: `mem.take(ref mut a.name)`
 
 fn keep(a: Node):
-    x = a.name    #$ error[E3013]: `a` is a `Node` object, which other names may reach, so `a.name` cannot be taken out and leave a hole; take it and leave a value in its place: `mem.take(ref mut a.name)`
+    x = a.name    #$ error[E3013]: `a` is a `Node` object, which other names may reach, so `a.name` cannot be taken out and leave a hole; take it and leave a value in its place: `x = mem.take(ref mut a.name)`
     println(x)
 
 fn main():

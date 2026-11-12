@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: FN-6, FN-6a, TYP-18
-#$ error[E2228]: callable parameter mode mismatch at parameter 0: expected `ref mut`, found `ref`
+#$ error[E2020]: callable parameter mode mismatch at parameter 0: expected `ref mut`, found `ref`
 
 fn identity(value: i32) -> i32:
     return value

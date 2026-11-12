@@ -4110,6 +4110,15 @@ fn check_escapes(
         } else if root.name.as_deref() == Some(ember_types::JOB_ARENA_ANCHOR) {
             // `[JOB-5]` — the anchor of a `jobs.local_arena()` view: what is allocated from it
             // goes when the job ends, so nothing of it outlives the call that asked.
+            // `[DIA-26]` — one mistake, one message: where the allocation is also tied to the arena
+            // the program named (`arena = jobs.local_arena()`), that arena's message is the one.
+            let named_arena = in_scope(loans, point).into_iter().any(|other| {
+                other.capability.storage_identity.arena_owner().is_some()
+                    || other.capability.source_place().is_some_and(|other| is_arena_ty(types, body.local(other.local).ty))
+            });
+            if named_arena {
+                continue;
+            }
             sink.emit_classified(
                 Diagnostic::error(codes::E3063, span, "the job's arena view does not live long enough")
                     .primary_label("this outlives the call that took the job's arena")

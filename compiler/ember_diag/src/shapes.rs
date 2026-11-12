@@ -29,12 +29,6 @@ pub enum Shape {
     O1,
     /// move out of a container
     O2,
-    /// move in a loop
-    O3,
-    /// partial move then whole use
-    O4,
-    /// closure moves out a capture
-    O5,
     /// borrow of a moved or uninitialised place
     O6,
     /// explicit `drop` call
@@ -57,8 +51,6 @@ pub enum Shape {
     B6,
     /// borrow outlives its source
     B7,
-    /// method takes all of `self`
-    B8,
     /// closure outlives its captures
     B9,
     /// `mut` argument is not a mutable place
@@ -69,16 +61,10 @@ pub enum Shape {
     B12,
     /// two independent regions in one view struct
     B13,
-    /// returned multi-region view has no sound field-to-source relation
-    B14,
-    /// callable parameter mode mismatch
-    B15,
     /// a part handed to a callee whose body may end or move it
     B16,
     /// a loop of owners that nothing opens again
     B17,
-    /// static exclusivity conflict
-    X1,
     /// `@static_safe` violated
     S1,
     /// arena lifetime
@@ -98,9 +84,6 @@ impl Shape {
         match self {
             Shape::O1 => "a place is read or borrowed after being moved",
             Shape::O2 => "a move out of an index, a span element, or a field of a `Drop` type",
-            Shape::O3 => "a value declared outside a loop is moved inside it",
-            Shape::O4 => "a struct is used as a whole after one field moved out",
-            Shape::O5 => "a closure body moves out a captured non-`Copy` value",
             Shape::O6 => "a borrow of a place that is not initialised on every path",
             Shape::O7 => "`drop` called explicitly",
             Shape::O8 => "a scope guard moved out, forgotten, or stored where it may cycle",
@@ -112,17 +95,13 @@ impl Shape {
             Shape::B5 => "a struct field would borrow another field of the same struct",
             Shape::B6 => "elision cannot tie the return's region to an input",
             Shape::B7 => "a loan is live past the storage of what it borrows",
-            Shape::B8 => "disjoint-field access defeated by a method call",
             Shape::B9 => "a non-`owned` closure escapes",
             Shape::B10 => "a temporary or immutable binding passed to a `mut` parameter",
             Shape::B11 => "two views whose ranges cannot be related",
             Shape::B12 => "a view stored where it outlives its source",
             Shape::B13 => "a view struct needing two independent regions",
-            Shape::B14 => "a multi-region result whose field provenance cannot be inferred",
-            Shape::B15 => "a callable parameter mode differs from the expected contract",
             Shape::B16 => "a call that hands the callee a part of what its body may end or move before its last use of that parameter",
             Shape::B17 => "a loop of owners that nothing opens again before its objects lose their last owner from outside",
-            Shape::X1 => "two overlapping long-term accesses through one handle local",
             Shape::S1 => "a `@no_alias_checks` function carries a dynamic aliasing check",
             Shape::A1 => "an arena view outliving its arena",
         }
@@ -146,25 +125,18 @@ pub fn shape_for(code: codes::Code) -> Option<Shape> {
         3022 => Shape::B1,
         3023 => Shape::B4,
         3024 => Shape::B5,
-        3025 => Shape::B8,
         3026 => Shape::B9,
         3027 | 3028 => Shape::B10,
-        3030 => Shape::O5,
         3031 => Shape::B16,
         3032 => Shape::B17,
         3040 => Shape::O1,
-        3041 => Shape::O3,
-        3042 => Shape::O4,
         3050 => Shape::O6,
         3060 => Shape::B7,
         3061 | 3090 | 3096 => Shape::A1,
         3062 => Shape::B6,
         3063 => Shape::B12,
         3064 => Shape::B13,
-        3065 => Shape::B14,
-        2228 => Shape::B15,
         3070 => Shape::O7,
-        3080 => Shape::X1,
         3095 => Shape::B11,
         4030 => Shape::S1,
         _ => return None,
@@ -201,6 +173,8 @@ pub fn ownership_codes_are_all_classified() -> Vec<codes::Code> {
             c.kind == codes::CodeKind::Error
                 && c.subsystem == codes::Subsystem::Ownership
                 && !NOT_OWNERSHIP_ERRORS.contains(&c.number)
+                // `[DIA-7a]`, §XVII.6.1 — a retired code is emitted nowhere, so it has no shape.
+                && !c.title.starts_with("retired:")
                 && shape_for(*c).is_none()
         })
         .collect()

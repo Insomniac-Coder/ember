@@ -1092,15 +1092,23 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
             let part = describe_place(place, body, types);
             let owner = body.local(place.local).name.clone().unwrap_or_else(|| "the object".to_string());
             let class = types.display(object);
+            // `[OWN-11]` — the line to write, the call that handed it over with `mem.take` in place of the part:
+            // `names.push(owns mem.take(ref mut q.name))`.
+            let take = format!("mem.take(ref mut {part})");
+            let line = match hand_over_site(body, types, place.local, span).map(|site| site.keep) {
+                Some(Keep::Call { receiver, callee }) => format!("{receiver}.{callee}(owns {take})"),
+                Some(Keep::Store { dest }) => format!("{dest} = {take}"),
+                _ => take.clone(),
+            };
             sink.emit_classified(
                 Diagnostic::error(
                     codes::E3013,
                     span,
-                    format!("`{owner}` is a `{class}` object, which other names may reach, so `{part}` cannot be taken out and leave a hole; take it and leave a value in its place: `mem.take(ref mut {part})`"),
+                    format!("`{owner}` is a `{class}` object, which other names may reach, so `{part}` cannot be taken out and leave a hole; take it and leave a value in its place: `{line}`"),
                 )
                 .primary_label("taken out here")
                 .note("the object keeps the field, and every handle to it can still reach it [OWN-11]")
-                .help(format!("take it and leave a value in its place, `mem.take(ref mut {part})` or `mem.replace(ref mut {part}, …)`; or keep a copy: `copy of {part}`")),
+                .help(format!("take it and leave a value in its place, `{line}` or `mem.replace(ref mut {part}, …)`; or keep a copy: `copy of {part}`")),
             );
             errors += 1;
             return;
@@ -1166,6 +1174,39 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
             } else {
                 "a borrowed parameter is its caller's value [FN-1]; it holds a mutable borrow, and moving it out would leave the caller a second one [CLO-2]"
             };
+            // `[OWN-11]` — "`v.push(owns template)` would hand over the caller's player, but `template` only
+            // reads it; to put a player of your own in the list write `v.push(owns copy of template)`".
+            let written = body.local(place.local).name.clone();
+            if place.projection.iter().all(|p| matches!(p, Projection::Deref))
+                && let Some(name) = written
+                && let Some(site) = hand_over_site(body, types, place.local, span)
+            {
+                let noun = noun_of(&types.display(moved));
+                let said = match &site.keep {
+                    Keep::Call { receiver, callee } => {
+                        let list = match types.kind(body.locals.iter().find(|decl| decl.name.as_deref() == Some(receiver.as_str())).map_or(moved, |decl| decl.ty)) {
+                            TyKind::Vec { .. } | TyKind::Array { .. } => "the list".to_string(),
+                            _ => format!("`{receiver}`"),
+                        };
+                        Some((format!("{receiver}.{callee}(owns {name})"), format!("{receiver}.{callee}(owns copy of {name})"), list))
+                    }
+                    _ => None,
+                };
+                if let Some((wrote, copy, place_name)) = said {
+                    sink.emit_classified(
+                        Diagnostic::error(
+                            codes::E3013,
+                            span,
+                            format!("`{wrote}` would hand over the caller's {noun}, but `{name}` only reads it; to put a {noun} of your own in {place_name} write `{copy}`"),
+                        )
+                        .primary_label("moved out here")
+                        .note(note)
+                        .help(format!("write `{copy}`, or take the parameter `owns`, or `ref mut` and move it out with `mem.take`, `mem.replace` or `swap`, leaving a value behind")),
+                    );
+                    errors += 1;
+                    return;
+                }
+            }
             sink.emit_classified(
                 Diagnostic::error(codes::E3013, span, "cannot move out of a borrowed parameter")
                     .primary_label("moved out here")
@@ -1839,6 +1880,20 @@ impl Reporter<'_> {
                 format!("take `{name}: fn(…)` where it is called more than once"),
             );
         }
+        // `[OWN-11]` — a part handed over on its own, and used again itself: "`p.name` was handed over to
+        // `names` on line 4; give it a new value first, or keep a copy: `names.push(owns copy of p.name)`".
+        if let (Some(HandOver { part: Some(part), dest, keep }), Some(at)) = (&site, moved_at) {
+            let to = dest.as_ref().map_or_else(String::new, |dest| format!(" to `{dest}`"));
+            let copy = match keep {
+                Keep::Call { receiver, callee } => format!("`{receiver}.{callee}(owns copy of {part})`"),
+                Keep::Store { dest } => format!("`{dest} = copy of {part}`"),
+                _ => format!("`copy of {part}`"),
+            };
+            return (
+                format!("`{part}` {was} handed over{to} on line {}; give it a new value first, or keep a copy: {copy}", ember_diag::line_mark(at)),
+                format!("give `{part}` a new value (`{part} = …`) before it is used again, or keep a copy: {copy}"),
+            );
+        }
         let head = match (&site, moved_at) {
             (Some(HandOver { dest: Some(dest), .. }), Some(at)) => format!("`{name}` {was} handed over to `{dest}` on line {} and is used on line {used}", ember_diag::line_mark(at)),
             (_, Some(at)) => format!("`{name}` {was} handed over on line {} and is used on line {used}", ember_diag::line_mark(at)),
@@ -1985,6 +2040,37 @@ fn hand_over_site(body: &Body, types: &TypeTable, local: LocalId, at: Span) -> O
         let decl = body.local(place.local);
         (decl.kind != LocalKind::Temp).then(|| decl.name.clone()).flatten().filter(|name| written_name(name))
     };
+    // The receiver of a call is a name the program wrote, or the temporary a borrow of one was put in
+    // (`names.push(…)` passes `ref mut names`).
+    let through_temp = |place: &Place| {
+        named(place).or_else(|| {
+            body.blocks.iter().flat_map(|block| &block.stmts).find_map(|stmt| match &stmt.kind {
+                StmtKind::Assign { place: made, rvalue: Rvalue::Ref { place: target, .. } } if made.local == place.local && made.projection.is_empty() => named(target),
+                StmtKind::Assign { place: made, rvalue: Rvalue::Use(Operand::Move(target) | Operand::Copy(target)) } if made.local == place.local && made.projection.is_empty() => named(target),
+                _ => None,
+            })
+        })
+    };
+    // A call that took `handed` (the value, or the temporary it was moved into): to what it went.
+    let call_site = |func: &FuncRef, args: &[Operand], handed: LocalId, part: Option<String>| {
+        let callee = match func {
+            FuncRef::Direct { symbol, .. } => Some(short(symbol)),
+            // A method the compiler builds in (`names.push(…)` of an `Array`).
+            FuncRef::Builtin { which, .. } => Some(which.clone().name().to_string()),
+            _ => None,
+        };
+        let receiver = args.first().and_then(|arg| match arg {
+            Operand::Move(place) | Operand::Copy(place) if place.local != handed => through_temp(place),
+            _ => None,
+        });
+        match (receiver, callee) {
+            // A whole value is said to have gone to the method (`o.map(taker)` is `map`, as it always was);
+            // a part, to the place that keeps it (`names.push(owns p.name)` is `names`, `[OWN-11]`).
+            (Some(receiver), Some(callee)) => HandOver { dest: Some(if part.is_some() { receiver.clone() } else { callee.clone() }), part, keep: Keep::Call { receiver, callee } },
+            (None, Some(callee)) => HandOver { dest: Some(callee), part, keep: Keep::Other },
+            _ => HandOver { dest: None, part, keep: Keep::Other },
+        }
+    };
     for block in &body.blocks {
         for stmt in &block.stmts {
             if stmt.span != at {
@@ -2010,6 +2096,14 @@ fn hand_over_site(body: &Body, types: &TypeTable, local: LocalId, at: Span) -> O
                         return Some(HandOver { dest: None, part: None, keep: Keep::Called });
                     }
                     let part = (!taken.projection.is_empty()).then(|| describe_place(taken, body, types));
+                    // Moved into a temporary the block's call takes: the call is where it went.
+                    if place.projection.is_empty()
+                        && body.local(place.local).kind == LocalKind::Temp
+                        && let Terminator::Call { func, args, .. } = &block.terminator
+                        && args.iter().any(|arg| matches!(arg, Operand::Move(t) | Operand::Copy(t) if t.local == place.local && t.projection.is_empty()))
+                    {
+                        return Some(call_site(func, args, place.local, part));
+                    }
                     return Some(match named(place) {
                         Some(dest) if place.projection.is_empty() => HandOver { dest: Some(dest.clone()), part, keep: Keep::Store { dest } },
                         _ => HandOver { dest: None, part, keep: Keep::Other },
@@ -2033,19 +2127,7 @@ fn hand_over_site(body: &Body, types: &TypeTable, local: LocalId, at: Span) -> O
             }
             if let Some(taken) = moved.iter().find(|moved| moved.local == local) {
                 let part = (!taken.projection.is_empty()).then(|| describe_place(taken, body, types));
-                let callee = match func {
-                    FuncRef::Direct { symbol, .. } => Some(short(symbol)),
-                    _ => None,
-                };
-                let receiver = args.first().and_then(|arg| match arg {
-                    Operand::Move(place) | Operand::Copy(place) if place.local != local => named(place),
-                    _ => None,
-                });
-                return Some(match (receiver, callee) {
-                    (Some(receiver), Some(callee)) => HandOver { dest: Some(receiver.clone()), part, keep: Keep::Call { receiver, callee } },
-                    (None, Some(callee)) => HandOver { dest: Some(callee), part, keep: Keep::Other },
-                    _ => HandOver { dest: None, part, keep: Keep::Other },
-                });
+                return Some(call_site(func, args, local, part));
             }
         }
     }
@@ -2157,4 +2239,16 @@ mod tests {
             assert!((0..paths).all(|node| joined.get(node) == plain[0][node].join(plain[1][node])));
         }
     }
+}
+
+/// A type's name as the noun a message uses: `Player` is `player`, `ChatLog` is `chat log`.
+fn noun_of(shown: &str) -> String {
+    let mut out = String::new();
+    for (index, c) in shown.chars().enumerate() {
+        if c.is_uppercase() && index > 0 {
+            out.push(' ');
+        }
+        out.extend(c.to_lowercase());
+    }
+    out
 }

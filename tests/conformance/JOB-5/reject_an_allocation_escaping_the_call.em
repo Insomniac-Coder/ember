@@ -2,14 +2,14 @@
 #$ rules: JOB-5, LT-4, TYP-15
 ## `[JOB-5]` — what a job allocates from `jobs.local_arena()` cannot escape the job: the view borrows
 ## a hidden local of the call that asked for it, so returning an allocation, or keeping one in a
-## place that outlives the call, is refused by the region rules.
+## place that outlives the call, is refused by the region rules. `[DIA-26]` — one mistake, one message:
+## the first is one error, naming `arena`.
 
 import std.jobs
 
 fn leak() -> ref mut int:
     arena = jobs.local_arena()
-    return arena.alloc(5)    #$ error[E3063]: the job's arena view does not live long enough
-    #$ error[E3063]: arena allocation cannot outlive `arena`
+    return arena.alloc(5)    #$ error[E3063]: arena allocation cannot outlive `arena`
 
 fn main():
     kept: Option[ref mut int] = None
