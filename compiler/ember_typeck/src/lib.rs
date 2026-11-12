@@ -46345,6 +46345,105 @@ impl<'a> Checker<'a> {
         self.reject_borrowed_parameter_write_as(place, span, offer_interior_mutability, false)
     }
 
+    /// `[BRW-14]` (N174) — the message for a parameter given a new value: the local of your own
+    /// (`new_n`, or `new_n_2` and on where the name is taken), made by the refused line itself where
+    /// that line is a plain `=` at the top level of the body and no line above reads the parameter,
+    /// otherwise by a new first line of the body, and each later use written with it, each line named.
+    /// `None` where the source cannot be read as that (the plain message stands).
+    fn rebound_parameter_message(&self, name: &str, ty: Ty, write: Span) -> Option<String> {
+        let source = self.sources.get(&write.file)?;
+        let text = &source.text[..];
+        let mut lines: Vec<(usize, &str)> = Vec::new();
+        let mut at = 0;
+        for line in text.split('\n') {
+            lines.push((at, line.trim_end_matches('\r')));
+            at += line.len() + 1;
+        }
+        let line_of = |offset: usize| lines.partition_point(|(start, _)| *start <= offset).checked_sub(1);
+        let indent = |line: &str| line.len() - line.trim_start().len();
+        let blank = |line: &str| line.trim().is_empty() || line.trim_start().starts_with('#');
+        let head = line_of(self.fn_decl.start as usize)?;
+        let fn_indent = indent(lines[head].1);
+        // The signature ends at the first line that closes its parentheses and ends in `:`.
+        let mut depth = 0i32;
+        let mut signature_end = None;
+        for (index, (_, line)) in lines.iter().enumerate().skip(head) {
+            let code = line.split('#').next().unwrap_or("");
+            depth += code.matches('(').count() as i32 - code.matches(')').count() as i32;
+            if depth <= 0 && code.trim_end().ends_with(':') {
+                signature_end = Some(index);
+                break;
+            }
+        }
+        let first = (signature_end? + 1..lines.len()).find(|&index| !blank(lines[index].1))?;
+        let body_indent = indent(lines[first].1);
+        if body_indent <= fn_indent {
+            return None;
+        }
+        let last = (first..lines.len()).take_while(|&index| blank(lines[index].1) || indent(lines[index].1) >= body_indent).last()?;
+        let refused = line_of(write.start as usize)?;
+        if refused < first || refused > last {
+            return None;
+        }
+        let uses: Vec<usize> = (first..=last).filter(|&index| line_mentions(lines[index].1, name)).collect();
+        // The local's name: `new_n`, or the first `new_n_2`, `new_n_3`, … the function does not have.
+        let mut local = format!("new_{name}");
+        let mut number = 1;
+        while (head..=last).any(|index| line_mentions(lines[index].1, &local)) {
+            number += 1;
+            local = format!("new_{name}_{number}");
+        }
+        let listed = |indexes: &[usize]| -> String {
+            let numbers: Vec<String> = indexes.iter().map(|index| (index + 1).to_string()).collect();
+            match numbers.as_slice() {
+                [one] => format!("line {one}"),
+                [init @ .., last] => format!("lines {} and {last}", init.join(", ")),
+                [] => String::new(),
+            }
+        };
+        let noun = if self.types.is_numeric(ty) {
+            "number"
+        } else if ty == self.common.str_ || matches!(self.types.kind(ty), TyKind::Vec { text: true, .. }) {
+            "text"
+        } else {
+            "value"
+        };
+        let refused_text = code_before_comment(lines[refused].1).trim();
+        let plain = refused_text
+            .strip_prefix(name)
+            .map(str::trim_start)
+            .is_some_and(|rest| rest.starts_with('=') && !rest.starts_with("=="))
+            && indent(lines[refused].1) == body_indent
+            && !uses.iter().any(|&index| index < refused);
+        let later: Vec<usize> = uses.iter().copied().filter(|&index| index > refused).collect();
+        let plan = if plain {
+            let rewritten = format!("{local}{}", &refused_text[name.len()..]);
+            let mut plan = format!("write `{rewritten}` in place of line {}", refused + 1);
+            if !later.is_empty() {
+                plan.push_str(&format!(", and `{local}` for `{name}` in {}", listed(&later)));
+            }
+            plan
+        } else {
+            let init = if self.types.is_copy(ty) || self.types.is_view(ty) {
+                name.to_string()
+            } else if self.implements(ty, Symbol::intern("std.core.Clone")) {
+                format!("copy of {name}")
+            } else {
+                return None;
+            };
+            let function = text
+                .get(self.fn_decl.start as usize..self.fn_decl.end as usize)
+                .map(|written| written.trim().trim_start_matches("fn ").split('(').next().unwrap_or("").trim().to_string())
+                .filter(|written| !written.is_empty() && written.chars().all(|c| c == '_' || c == '.' || c.is_alphanumeric()))?;
+            format!(
+                "write `{local} = {init}` above line {}, as the first line of `{function}`'s body, and `{local}` for `{name}` in {}",
+                first + 1,
+                listed(&uses)
+            )
+        };
+        Some(format!("`{name}` is the {noun} the caller passed and stays that {noun} for the whole call; for a {noun} of your own {plan}"))
+    }
+
     /// `assigns`: the write is the assignment of the whole parameter (`n = n + 1`), Python's
     /// rebinding of its name, which a borrowed parameter reached through its borrow is too.
     fn reject_borrowed_parameter_write_as(
@@ -46434,14 +46533,24 @@ impl<'a> Checker<'a> {
                 ),
             }
         };
-        let mut diagnostic = Diagnostic::error(
-            codes::E3023,
-            span,
-            format!("cannot mutate borrowed parameter `{name}`"),
-        )
-        .primary_label("this write needs mutable access")
-        .secondary(declaration, format!("`{name}` is borrowed here"))
-        .help(structural_help);
+        // `[BRW-14]` — a parameter given a new value: the rule's message, with the local of your own.
+        let rebound = if rebinding { self.rebound_parameter_message(&name, ty, span) } else { None };
+        let (message, structural_help) = match rebound {
+            Some(message) => {
+                let written = self
+                    .sources
+                    .get(&declaration.file)
+                    .and_then(|source| source.text.get(declaration.start as usize..declaration.end as usize))
+                    .filter(|text| !text.is_empty())
+                    .map_or_else(|| format!("{name}: {shown}"), str::to_string);
+                (message, format!("or write `ref mut {written}` for the parameter, and `ref mut` before the argument at each call, if the caller is to see the new value"))
+            }
+            None => (format!("cannot mutate borrowed parameter `{name}`"), structural_help),
+        };
+        let mut diagnostic = Diagnostic::error(codes::E3023, span, message)
+            .primary_label("this write needs mutable access")
+            .secondary(declaration, format!("`{name}` is borrowed here"))
+            .help(structural_help);
         if rebinding {
             diagnostic = diagnostic.note(format!("Python rebinds a parameter's name; an Ember parameter is the caller's `{shown}`, borrowed [FN-1]"));
         }
@@ -65843,4 +65952,91 @@ fn variadic_arg_text(expr: &ast::Expr) -> Option<String> {
         ast::ExprKind::Lit(ast::Literal::Str(text)) => Some(format!("{text:?}")),
         _ => None,
     }
+}
+
+/// `[BRW-14]` — whether `line` of a program uses the name `name`: an identifier of that spelling in
+/// its code or in an f-string's braces, not after a `.`, not a named argument's name (`f(n=1)`), not
+/// in a plain string or a comment.
+fn line_mentions(line: &str, name: &str) -> bool {
+    let bytes = line.as_bytes();
+    let word = |c: u8| c == b'_' || c.is_ascii_alphanumeric();
+    let (mut at, mut string, mut braces): (usize, Option<(u8, bool)>, usize) = (0, None, 0);
+    while at < bytes.len() {
+        let c = bytes[at];
+        match string {
+            Some((quote, formatted)) if braces == 0 => {
+                if c == b'\\' {
+                    at += 2;
+                    continue;
+                }
+                if c == quote {
+                    string = None;
+                } else if formatted && c == b'{' {
+                    if bytes.get(at + 1) == Some(&b'{') {
+                        at += 1;
+                    } else {
+                        braces = 1;
+                    }
+                }
+                at += 1;
+                continue;
+            }
+            Some(_) => {
+                if c == b'}' {
+                    braces -= 1;
+                } else if c == b'{' {
+                    braces += 1;
+                }
+            }
+            None => {
+                if c == b'#' {
+                    return false;
+                }
+                if c == b'"' || c == b'\'' {
+                    let formatted = at > 0 && bytes[at - 1] == b'f' && (at == 1 || !word(bytes[at - 2]));
+                    string = Some((c, formatted));
+                    at += 1;
+                    continue;
+                }
+            }
+        }
+        if word(c) {
+            let end = (at..bytes.len()).find(|&i| !word(bytes[i])).unwrap_or(bytes.len());
+            if &line[at..end] == name {
+                let before = line[..at].trim_end().as_bytes().last().copied();
+                let after = line[end..].trim_start();
+                let named_argument = matches!(before, Some(b'(' | b',')) && after.starts_with('=') && !after.starts_with("==");
+                if before != Some(b'.') && !named_argument {
+                    return true;
+                }
+            }
+            at = end;
+            continue;
+        }
+        at += 1;
+    }
+    false
+}
+
+/// `[BRW-14]` — `line` without a trailing comment (a `#` outside a string).
+fn code_before_comment(line: &str) -> &str {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (at, c) in line.char_indices() {
+        match quote {
+            Some(open) => {
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == open {
+                    quote = None;
+                }
+            }
+            None if c == '"' || c == '\'' => quote = Some(c),
+            None if c == '#' => return &line[..at],
+            None => {}
+        }
+    }
+    line
 }
