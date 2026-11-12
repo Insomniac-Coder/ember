@@ -166,3 +166,48 @@ there.
     local shared by a line keeps its class type (spec question); `shares mut T` to `shares T` and the
     class-family upcasts of `[TYP-5]` item 8 on links; the design tests that wait for `copy of` (slice
     D), the views of `[BRW-17]`/`[BRW-18]`, `[WK-17]`/`[WK-18]`'s walks and the cycle rule (A3-9).
+- **Slice B** (round 6, H2; R6-batch.md tasks 9 to 13; `SyncShared` stays until slice E):
+  - **`E1010`** (`[TYP-45]`) for `Shared[T]`, `Weak[T]`, `Shared(v)`, `Weak(x)` and `Weak.empty()`, each
+    message giving what to write; `w.upgrade()` is `E1010` with `exists as` (`[WK-12]`); an owner's
+    `.get()`/`.get_mut()` is `E2072` ("reads as a `T`; remove `.get()`").
+  - **The migration** (`ember __migrate --checker`): `Shared[T]`/`Shared(v)` to `shares mut T`/`shares mut
+    v`, `Weak[…]` to `weakref T`, `Weak(x)` to `weakref x`, `Weak.empty()` to `None`, `.get()` away, `if
+    w.upgrade() exists as p:` to `if w exists as p:`, and `match w.upgrade():` with `Some(p)`/`None` arms
+    to `if w exists as p:` and `else:`.
+  - **The repository migrated**: the tests, `docs/book`, the error pages; the copies of a link or owner
+    that a plain parameter or a class's field cannot give up (`Weak` and `Shared` were `Copy`) are
+    written `weakref x`/`shares x` (another link or owner, as the copy was).
+  - **Deleted**: `weak_of`, `Weak[T]`'s struct and every backend's and the analysis's code for it,
+    `Builtin::WeakNew` and `WeakUpgrade`, `Shared`'s `get_mut`. `WeakEmpty` is `LinkNone`, a link's
+    `None`. **What stays**: `counted_of`'s block (`Shared[T]`'s struct, `SharedNew`, its type information
+    and its payload's place in every backend), which holds both a value made `shares` and `SyncShared[T]`
+    (with atomic counts and its `get`).
+  - **`ember inspect --alloc`** (`[SEL-1]`, `[PHIL-2]`): a link's declaration is reported by its row
+    ("shares T, shares mut T", "thread_shared T", "weakref T"), and the allocation of a value made shared
+    as "a value made shared". The reload test of `[HR-15]` (`weak_handles_follow_a_moved_instance`) is
+    migrated and ignored: `[THR-2]` refuses a `weakref Particle` in a `static`, this compiler has no `static
+    mut`, and the legal program needs `weakref thread_shared Particle` (slice E).
+- **Slice C, measured only** (round 6, H2; R6-batch.md task 14; nothing rewritten):
+  `count_handle_copies.py` counts the copies of a class handle the compiler keeps as a +1 that no line
+  asks for (`ember_retain*((ember_obj_header*)x);` statements in the emitted C): **581 in 289 of the 2436
+  programs** of the quick check's folders that build (compile-fail tests skipped; the 20 left out are
+  parse-level tests), and **65 in 19 functions of `std`** (a generic function once, at its most):
+  `std.ecs.World.add` 24, `std.ecs.aos_storage` 12, `std.ecs.run_staged` 4, `std.sync.open_channel` 4,
+  `std.ecs.soa_storage` 3, and 1 or 2 in each of `Map.index_set`, `Map.push_new`, `Map.insert`,
+  `Set.add`, `Query.commands`, `ecs.system`, `coroutine.wait_until`, `RemoveChange.apply`,
+  `Without.fetch`, `World.destroy`, `World.remove`, `World.run_parallel`, `World.storage`,
+  `Sender.clone`. By folder, copies (programs): tests/run-pass 65 (38), TYP-16 58 (26), RC-2e 37 (15),
+  WK-11 31 (10), TYP-22 30 (20), RC-3 26 (12), EXC-18 22 (16), EXC-8 20 (6), FFI-39 18 (4), GRM-30 16
+  (3), EXC-19 13 (9), DSP-3 12 (1), WK-12 11 (5), CTL-3 10 (1), ECS-4 9 (4), RC-5 9 (3), FN-9 8 (2),
+  RT-10 8 (1), TYP-36 8 (3), CORO-11 5 (1), EXC-15 5 (2), CLS-7 4 (4), EXC-1 4 (4), EXC-6 4 (4), FFI-39e
+  4 (3), OPT-2 4 (3), THR-10 4 (1), THR-13 4 (1), TYP-9 4 (2), WK-16 4 (1), WK-4 4 (1), CLO-10 3 (2),
+  DRP-2 3 (1), DSP-1 3 (1), ECS-6 3 (1), EXC-10 3 (3), EXC-3 3 (3), FFI-17d 3 (3), GRM-19 3 (1), HEAP-10
+  3 (1), HR-35 3 (1), OPT-1 3 (2), OWN-7 3 (2), WK-8 3 (3), tests/compile-pass 2 (1), BLD-FFI-5a 2 (1),
+  CELL-5 2 (2), CLO-6 2 (1), CLS-2 2 (1), CLS-4 2 (1), DSP-2 2 (1), DSP-5 2 (1), ECS-2 2 (1), FFI-39c 2
+  (1), FFI-39d 2 (2), FN-5 2 (1), GRM-13 2 (2), LT-1 2 (1), OWN-13 2 (1), PHIL-4 2 (1), RC-2c 2 (1), RC-6
+  2 (1), RNG-4 2 (1), RT-7 2 (1), THR-11 2 (1), THR-2 2 (1), TYP-38 2 (1), WK-15 2 (1), WK-5 2 (1),
+  tests/run-fail 2 (2), BCK-7 1 (1), CELL-3 1 (1), CELL-6 1 (1), CLO-5 1 (1), CORO-1 1 (1), CORO-12 1
+  (1), ECS-5 1 (1), EFF-8 1 (1), EXC-2 1 (1), EXC-5 1 (1), EXC-7 1 (1), EXP-9 1 (1), GRM-1 1 (1), GRM-21
+  1 (1), GRM-33 1 (1), HR-12 1 (1), LEX-15 1 (1), LNT-6 1 (1), MNG-4 1 (1), OBJ-4 1 (1), PHIL-1 1 (1),
+  PHIL-3 1 (1), RC-1 1 (1), RFL-2 1 (1), SPN-1 1 (1), STR-5 1 (1), STR-6 1 (1), THR-1 1 (1), TYP-13 1
+  (1).
