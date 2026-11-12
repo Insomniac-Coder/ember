@@ -463,3 +463,35 @@ after each work batch" is the owner's rule from this round.
       instances): say so.
   - **A defect for round 7:** instance spellings write `StrView`, where `[MNG-1]`/`[MNG-6]` put built-in types
     under `std.core`. The spec says it; the symbols change.
+- **W2 (Sonnet), 21 tasks** (457k tokens, 2 h 35 min). 16 commits, merged `18485e7f` cleanly.
+  - **Done:**
+    - D-834: a static's `Sync` was asked before the hand-written `Send` markers were recorded; now deferred;
+    - D-721: the dead E2130 path is a `debug_assert`, and views in arena storage are E0900;
+    - JOB-5: one E3063;
+    - N175: foreign structs are `@layout(c)` ones; no Ember-made `owns` of one; not `Clone`;
+    - E7008 for a thread-bound foreign owner, with `MainForeignOwner`;
+    - the retired shapes removed;
+    - CLI-7's fourth clause and DET-4's accuracy as tests (`tools/det_reference.py`, mpmath at 400 bits, 169
+      cases);
+    - `Array[int, Global]` is E1010;
+    - OWN-11's three messages.
+  - **Already held, now with tests:** D-859, D-862, D-863, D-882, D-693.
+  - **The lead's rulings on what W2 asked:**
+    - **E2228 to E2020:** confirmed; the code table folds it.
+    - **N175's suggested type name** from the function's name, and "(line N)": accepted.
+    - **FFI-33b's variable and the call's line:** option (c). The checker wraps a `returns_owned` call in a builtin
+      carrying the call's line, and a named local's end passes its name to the release. One mechanism serves both
+      backends, with no ABI change and no lookup while running. Round 7.
+    - **CG-C-1's checked helpers:** (a), no code change; the helpers are the builtins on gcc and clang. The wording
+      goes to Hardened_14.
+  - **Left:**
+    - FFI-35a's header mark: M4's files, after H2;
+    - E5060: the importer marks a parameter that keeps the object, and the checker gives E5060 at the call;
+    - N173 in the importer (below);
+    - `ArenaMap.in(ref mut frame, n)` not built;
+    - E7008 for `unsafe extend … implements ThreadShared` on a creator or main type, and other thread-bound values;
+    - the `match owns jobs.pop():` help.
+  - **Spec findings for Hardened_14:**
+    - N173's `hide`: does a hidden declaration still count for the two-destructor conflict, given that `hide` makes
+      a declaration private and does not remove it? And in what order are by-value `T` results taken?
+    - CG-C-1's wording on where the checked helpers live.
