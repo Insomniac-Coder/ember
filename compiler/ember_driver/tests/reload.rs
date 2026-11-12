@@ -962,7 +962,7 @@ const WIDGETS_C: &str = "#include \"widgets.h\"\n#include <stdio.h>\n#include <s
                          void widget_free(Widget* w) { printf(\"widget %d freed\\n\", (int)w->id); fflush(stdout); free(w); }\n\
                          int32_t widget_id(const Widget* w) { return w->id; }\n";
 const WIDGETS_OVERLAY: &str = "unsafe overlay c \"widgets.h\":\n    @ffi(destroys(widget_free))\n    type Widget\n\n    \
-                               fn widget_new(id) -> returns_owned(destructor=widget_free) one\n    fn widget_id(w: borrowed one)\n";
+                               fn widget_new(id) -> returns_owned(destructor=widget_free) one\n    fn widget_id(widget: borrowed one)\n";
 
 /// `[HR-22]` — a foreign object Ember owns (an `owns T` of its type) is carried across a reload
 /// unchanged: the instance holding it migrates (a field replaced beside it), the object is the same

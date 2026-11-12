@@ -8803,8 +8803,8 @@ fn bind_init_writes_ffi_const_above_a_cpp_method_that_only_reads() {
     assert!(!written.contains("@ffi(const)\n        unsafe fn grow("), "`grow` changes its object:\n{written}");
     std::fs::write(dir.join(ember_branding::source_file("main")), format!(
         "import cpp \"body.hpp\" with (overlay = \"body.overlay.{SOURCE_EXT}\")\n\nfn main():\n    \
-         unsafe:  # SAFETY(ffi): the box owns the body for every call\n        \
-         body = cpp.Body.new(3)\n        shared = body.get()\n        println(shared.mass())\n")).unwrap();
+         unsafe:  # SAFETY(ffi): the `owns cpp.Body` holds the body for every call\n        \
+         body = cpp.Body.new(3)\n        shared: ref cpp.Body = body\n        println(shared.mass())\n")).unwrap();
     let checked = ember(&["check", &ember_branding::source_file("main")], &dir);
     assert_eq!(checked.exit, 0, "the starter overlay does not compile:\n{}", checked.stderr);
 }
