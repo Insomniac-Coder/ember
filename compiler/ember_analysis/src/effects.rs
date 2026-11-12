@@ -1595,7 +1595,7 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::StrReplace => (ALLOC, "`str.replace`"),
         B::StrRepeat => (ALLOC, "`str.repeat`"),
         B::StrToUpper | B::StrToLower => (ALLOC, "a case conversion"),
-        B::ProcessArgs => (ALLOC, "`args`"),
+        B::ProcessArgs => (ALLOC | Effects::IO, "`args`"),
         B::MemAlloc => (ALLOC | Effects::UNSAFE, "`mem.alloc`"),
         B::ArenaWithCapacity | B::ArenaArrayWithCapacity { .. } | B::ArenaMapWithCapacity { .. } => {
             (ALLOC, "a new arena")
