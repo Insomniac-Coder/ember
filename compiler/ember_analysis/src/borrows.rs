@@ -1980,20 +1980,30 @@ pub(crate) fn quiet_builtin(types: &TypeTable, which: &Builtin, arg_ty: Ty) -> b
 /// only. A class handle's release may run a `drop`; so may a `dyn`, a counted
 /// `Shared` or `Weak`, and anything with a `drop` of its own.
 pub(crate) fn drop_is_quiet(types: &TypeTable, ty: Ty) -> bool {
+    drop_is_quiet_in(types, ty, &mut HashSet::new())
+}
+
+/// `seen` holds the types already being looked at: a type that holds itself through an owner
+/// (`struct Tree: kids: Array[Tree]`) adds nothing when it is met again, and without the set the
+/// walk never ended.
+fn drop_is_quiet_in(types: &TypeTable, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+    if !seen.insert(ty) {
+        return true;
+    }
     match types.kind(ty) {
         TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Dyn { .. } => false,
         TyKind::Struct(id) => {
             let def = types.struct_def(*id);
             !def.has_drop
                 && !matches!(&def.origin, Some((name, _)) if name.is("Weak") || name.is("Shared") || name.is("SyncShared"))
-                && def.fields.iter().all(|field| drop_is_quiet(types, field.ty))
+                && def.fields.iter().all(|field| drop_is_quiet_in(types, field.ty, seen))
         }
         TyKind::Enum(id) => {
             let def = types.enum_def(*id);
-            !def.has_drop && def.variants.iter().all(|v| v.fields.iter().all(|f| drop_is_quiet(types, f.ty)))
+            !def.has_drop && def.variants.iter().all(|v| v.fields.iter().all(|f| drop_is_quiet_in(types, f.ty, seen)))
         }
-        TyKind::Tuple(items) => items.iter().all(|&item| drop_is_quiet(types, item)),
-        TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => drop_is_quiet(types, *elem),
+        TyKind::Tuple(items) => items.iter().all(|&item| drop_is_quiet_in(types, item, seen)),
+        TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => drop_is_quiet_in(types, *elem, seen),
         _ => !types.needs_drop(ty),
     }
 }
