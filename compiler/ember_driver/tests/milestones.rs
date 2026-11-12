@@ -6289,7 +6289,7 @@ fn a_call_diagnostic_points_at_the_callee_declaration() {
         assert!(out.stderr.contains(label), "[DIA-22] no secondary span {label:?}:
 {}", out.stderr);
     }
-    assert!(!out.stderr.contains("needs a value for"), "[DIA-22] one diagnostic per wrong call:
+    assert_eq!(out.stderr.matches("error[E2021]: `area(1)` gives nothing for `h`, which has no default: `fn area(w: int, h: int) -> int`\n  -->").count(), 1, "[DIA-22] one diagnostic per wrong call:
 {}", out.stderr);
 }
 

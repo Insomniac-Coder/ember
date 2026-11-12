@@ -1796,7 +1796,8 @@ impl RuntimeFn {
             RuntimeFn::Entropy => (Effects::NONDET, "the system random source"),
             RuntimeFn::ProcessExit => (Effects::IO, "`process.exit`"),
             RuntimeFn::ProcessAbort => (Effects::IO, "`process.abort`"),
-            RuntimeFn::ProcessArgs | RuntimeFn::ProcessArgsOs => (Effects::ALLOC, "the command line"),
+            // `[STD-6]` — processes are the `io` layer's.
+            RuntimeFn::ProcessArgs | RuntimeFn::ProcessArgsOs => (Effects(Effects::IO.0 | Effects::ALLOC.0), "the command line"),
             RuntimeFn::EnvVar => (Effects(Effects::IO.0 | Effects::ALLOC.0), "`env.var`"),
             // `[STD-22]` — every operation on the outside world carries `Io`.
             RuntimeFn::FsRead => (Effects(Effects::IO.0 | Effects::ALLOC.0), "`std.fs`"),

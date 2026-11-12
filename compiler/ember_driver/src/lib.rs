@@ -5502,6 +5502,18 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
             reload_additions.as_ref().map_or(&no_conditional, |additions| &additions.if_default),
             reuse.as_ref(),
         );
+        // `[DIA-14]` (D-835) — the reload helpers are written from the program's own declarations: when
+        // the program's own code has an error, a helper that repeats it (a field type that does not
+        // resolve) adds nothing, so only the program's error is reported.
+        if let Some(additions) = &reload_additions
+            && sink.diagnostics().iter().any(|d| d.severity == ember_diag::Severity::Error && !additions.files.contains(&d.primary.span.file))
+        {
+            for diagnostic in sink.take() {
+                if !(diagnostic.severity == ember_diag::Severity::Error && additions.files.contains(&diagnostic.primary.span.file)) {
+                    sink.emit(diagnostic);
+                }
+            }
+        }
         // `[BLD-1]` — the compile-time evaluator runs function bodies: every module's are checked.
         if !checked.comptime.is_empty() && plan.as_ref().is_some_and(|plan| !plan.whole().is_empty() || !plan.partial().is_empty()) {
             attempts.whole = true;

@@ -472,7 +472,7 @@ codes! {
     E9042 = (Error, 9042, Build, "[BLD-15]", "a link ran past its time limit");
 
     // --- warnings --------------------------------------------------------------
-    W0001 = (Warning, 1, Lex, "[LEX-11]", "dangling doc comment");
+    W0001 = (Warning, 1, Lex, "[LEX-11]", "retired: a dangling doc comment is discarded in silence");
     W1002 = (Warning, 1002, Resolve, "[GRM-12]", "binding shadows an enum variant of the same name");
     W1003 = (Warning, 1003, Resolve, "[MOD-3]", "a package module shadows the standard module of the same name");
     W2091 = (Warning, 2091, Types, "[CTL-5]", "unreachable match arm");
@@ -689,6 +689,6 @@ mod tests {
     fn display_is_four_digits() {
         assert_eq!(E0001.to_string(), "E0001");
         assert_eq!(E3040.to_string(), "E3040");
-        assert_eq!(W0001.to_string(), "W0001");
+        assert_eq!(W2192.to_string(), "W2192");
     }
 }
