@@ -2970,6 +2970,11 @@ struct Checker<'a> {
     /// `[FFI-33b]` — the foreign types a `returns_owned` result binds to the thread that made the
     /// object (`threads(creator)` on the result), as their declaration's `threads(creator)` does.
     foreign_result_creators: HashSet<Symbol>,
+    /// `[FFI-36a]` (N175) — the structs declared `@layout(c)`: the only structs C can make an object of.
+    layout_c_structs: HashSet<Symbol>,
+    /// `[FFI-36a]` (N175) — the first function whose `returns_owned` result gives an `owns T` of each
+    /// foreign type `T`, which a message names as where to get one.
+    foreign_result_makers: HashMap<Symbol, Symbol>,
     /// `[STA-1]`, D-834 — the statics whose type was not `Sync` when `collect` met them: a `Send` or
     /// `Sync` written by hand (`unsafe extend`, std's `ForeignOwner`) is recorded later, by
     /// `collect_methods`, so each is asked again once every module's are known (type, where, foreign).
@@ -4059,6 +4064,8 @@ impl<'a> Checker<'a> {
             foreign_type_contracts: HashMap::new(),
             foreign_result_destructors: HashMap::new(),
             foreign_result_creators: HashSet::new(),
+            layout_c_structs: HashSet::new(),
+            foreign_result_makers: HashMap::new(),
             deferred_static_sync: Vec::new(),
             foreign_owned_structs: HashSet::new(),
             signatures: Vec::new(),
@@ -5123,13 +5130,16 @@ impl<'a> Checker<'a> {
             let resolved = self.resolve_name(name.name);
             let named = match self.named_types.get(&resolved).map(|&ty| self.types.kind(ty).clone()) {
                 Some(TyKind::Opaque(_)) if self.foreign_type_contracts.contains_key(&resolved) => resolved,
-                Some(TyKind::Struct(id)) => {
+                // `[FFI-36a]` (N175) — only a `@layout(c)` struct is one C can make an object of; any
+                // other is `E5002` where the result is checked (`check_foreign_ownership`).
+                Some(TyKind::Struct(id)) if self.layout_c_structs.contains(&self.types.struct_def(id).name) => {
                     let name = self.types.struct_def(id).name;
                     self.foreign_owned_structs.insert(name);
                     name
                 }
                 _ => continue,
             };
+            self.foreign_result_makers.entry(named).or_insert(decl.name.name);
             if creator {
                 self.foreign_result_creators.insert(named);
             }
@@ -6524,6 +6534,9 @@ impl<'a> Checker<'a> {
                     }
                     if has_derive(&item.attrs, "Hash") {
                         self.hash_derived.insert(name);
+                    }
+                    if item.attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is("layout") && (attribute_names(attr, "c") || layout_names(attr).is_some())) {
+                        self.layout_c_structs.insert(name);
                     }
                     if has_derive(&item.attrs, "Zeroable") {
                         self.types.derive_zeroable(name);
@@ -20379,6 +20392,26 @@ impl<'a> Checker<'a> {
                 span,
             };
         }
+        // `[FFI-36a]` (N175) — an `owns T` of a foreign type holds only an object foreign code made.
+        if let Some(name) = self.foreign_object_name(value.ty).filter(|_| matches!(self.types.kind(value.ty), TyKind::Struct(_))) {
+            let shown = self.types.display(value.ty);
+            let ended = self.foreign_type_destructor(value.ty).map(|(def, at)| {
+                let line = self.line_of(at).map_or_else(String::new, |line| format!(" (line {line})"));
+                format!(" and ended by `{}`{line}", self.declared_name(def).unwrap_or_else(|| "its destructor".to_string()))
+            }).unwrap_or_default();
+            let maker = self.foreign_result_makers.get(&name).map_or_else(
+                || "get one from the function that returns it".to_string(), |maker| format!("get one from `{maker}`"));
+            // The second is offered for a value written whole (a sized struct): `p = Packet(len=0)`.
+            let given = self.owns_at_equals.get(&span).cloned();
+            let kept = match (self.written_line(value.span), given) {
+                (Some(text), Some(given)) => format!(", or keep this one where it is made: `{given} = {text}`"),
+                (Some(text), None) => format!(", or keep this one where it is made: `{text}`"),
+                _ => String::new(),
+            };
+            self.error(codes::E2114, span, format!(
+                "`{shown}`'s objects are made by C{ended}, so an `owns {shown}` holds only one C made; {maker}{kept}"));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         let inner = value.ty;
         // `[TYP-15]` is region-based: forming `owns str` is legal, and
         // whether this particular value may enter unbounded storage
@@ -23372,6 +23405,22 @@ impl<'a> Checker<'a> {
         match ffi_owned_result(attrs) {
             Some((destructor, nullable, _)) => {
                 let Some(pointee) = foreign_box(self, ret, nullable) else {
+                    // `[FFI-36a]` (N175) — an `owns T` of a type Ember lays out is one C cannot make.
+                    let written = if nullable { self.option_some_payload(ret) } else { Some(ret) };
+                    if let Some(inner) = written.and_then(|ty| self.box_inner(ty)) {
+                        let shown = self.types.display(inner);
+                        let function = decl.name.name.to_string();
+                        let stem = ["make_", "new_", "create_", "alloc_"].iter().find_map(|prefix| function.strip_prefix(prefix)).unwrap_or(&function);
+                        let suggested: String = stem.split('_').filter(|part| !part.is_empty()).map(|part| {
+                            let mut letters = part.chars();
+                            letters.next().map_or_else(String::new, |first| first.to_uppercase().chain(letters).collect())
+                        }).collect();
+                        let result = if nullable { format!("Option[owns {suggested}]") } else { format!("owns {suggested}") };
+                        self.error(codes::E5002, decl.name.span, format!(
+                            "`{function}` gives an `owns {shown}` C made, and Ember makes the blocks of a `{shown}`; declare a type for it, `type {suggested}` with `@ffi(destroys({}))`, and write `-> {result}`",
+                            destructor.name));
+                        return;
+                    }
                     self.error(codes::E5002, decl.name.span, format!(
                         "`returns_owned` needs a `{}` result of a foreign type",
                         if nullable { "Option[owns T]" } else { "owns T" }));
@@ -24650,6 +24699,11 @@ impl<'a> Checker<'a> {
     /// `Array`/`String` whose elements can be, or a tuple, `Option` or
     /// `Result` whose parts can be.
     fn is_cloneable(&self, ty: Ty) -> bool {
+        // `[FFI-36a]` (N175) — an `owns T` of a foreign type is not `Clone`: a copy would be a block
+        // Ember made, which the type's destructor would end.
+        if self.foreign_owner_inner(ty).is_some() {
+            return false;
+        }
         self.types.is_copy(ty)
             || self.clone_method(ty).is_some()
             || self.assumed_cloneable.contains(&ty)
@@ -48000,6 +48054,17 @@ impl<'a> Checker<'a> {
             self.sink.emit(
                 Diagnostic::error(codes::E0900, span, message)
                     .note("`copy of` makes a new object [OWN-8]; this compiler's `Clone` of a class object keeps the same one"),
+            );
+            return true;
+        }
+        if let Some(inner) = self.foreign_owner_inner(ty) {
+            let object = self.types.display(inner);
+            let ended = self.foreign_type_destructor(inner).and_then(|(def, _)| self.declared_name(def))
+                .map_or_else(String::new, |name| format!(" and `{name}` ends"));
+            self.sink.emit(
+                Diagnostic::error(codes::E2116, span, format!(
+                    "`{text}` is an `owns {object}`, an object C made{ended}, so `copy of` cannot copy it: a copy would be a block Ember made that the destructor would end"))
+                    .help(format!("keep a view of it: `ref {text}`, or get another from the function that returns one")),
             );
             return true;
         }
