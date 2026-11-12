@@ -1096,8 +1096,17 @@ For `recv.m(args)`:
    object is not called through a name that only reads it (`E3023`), and one written `owns this`
    takes its object over, so the caller's name ends (`E3040` at a later use) (`[FN-4]`).
 
-* `[TYP-25]` Arguments may be positional or named; positional arguments come first; a parameter with
-  a default may be omitted.
+* `[TYP-25]` *(changed in 0.9.20)* Arguments may be positional or named; positional arguments come
+  first; a parameter with a default may be omitted. A call whose arguments do not fit the callee's
+  parameters (a positional argument after a named one, more arguments than parameters, a parameter
+  with no default given none, a name no parameter has, one parameter given twice) is `E2021`
+  (shape N6), and its message gives the callee's first line: "`area(2)` gives nothing for `h`,
+  which has no default: `fn area(w: int, h: int, scale: int = 1) -> int`". For a positional
+  argument after a named one, the line to write names it with the first parameter that no argument
+  before it gives: "`area(w=2, 3)` gives `3` after the named `w=2`, and positional arguments come
+  first; write `area(w=2, h=3)`". A memberwise constructor and `super.init(…)` are such calls
+  (`[STR-1]`, `[CLS-3]`); a use of a C++ name of several members that no member fits is `E5035`
+  (`[FFI-57]`).
 * `[TYP-26]` *(changed in 0.9.9)* *(changed in 0.9.20)* There is no overloading: two functions of one name in one scope
   are `E1030`, except operator-interface implementations and `extend` blocks for different types. A
   C++ name a header declares several times is one Ember name of several members, each use standing

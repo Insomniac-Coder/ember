@@ -776,3 +776,42 @@ sections), Annex A and its fixture; registry row E9001; `tools/spec_check.py`.
   again): IX.7's example became `s.frame.set(owns (…))` (`E0900`, not built) and the test's list of examples the
   compiler does not build yet had no entry for that section; it has one now, on the owner's word ("fix the
   test"). **Not run:** the full suite, the bench, the push gate.
+
+## 18. The thirteenth pass: 0.9.20_Hardened_13 (2026-11-12, a worktree branch, the lead's Opus deputy, under the delegation)
+
+The fourteen spec findings `tasks/96/redesign/jobs/review.md` queued from the workers' rounds of 2026-11-11, ruled
+as N171 to N175 (`decisions.md` §24), with three rules written out where the text already decided: `[TYP-25]`,
+`[STR-1]`, `[CLS-3]`, shape N6 (`E2021`, new); `[DSJ-5]`, `[COST-6]`; `[FFI-17a]`, `[FFI-36]`, `[FFI-36a]`;
+`[BRW-14]`, shape B4; IX.1's `owns T`; `[FFI-29]`, `[DIA-2]`, `[FFI-33b]`; registry rows E2021, E2114, E5002, and the same three rows in `compiler/ember_diag/src/codes.rs`, which
+`ember_diag`'s tests compare with the pinned table.
+
+* **What the compiler now owes:**
+  * `E2021` for every argument that does not fit (today `E2020`, and `E1030` for a parameter given twice), its message
+    with the callee's first line and, after a named argument, the named form (`[TYP-25]`, `[STR-1]`, `[CLS-3]`); its
+    registry row in `codes.rs` and its page. The count message also ignores defaults ("takes 3 arguments, found 1"
+    for a function that takes 2 or 3).
+  * `assert_disjoint`'s stop text (`[DSJ-5]`), with `check_disjoint` and the statement form already queued (`[DSJ-1]`,
+    `[DSJ-2]`).
+  * the importer: a C++ class whose constructors, results by value or default `std::unique_ptr`s need `delete`, and
+    which a `std::unique_ptr<T, D>` ends otherwise, is `E5002` (today `D`'s thunk replaces the class's `destroys` and a
+    constructor's object would be freed by `D`); `adopt` ends with `D` where it is the class's (`[FFI-36a]`).
+  * shape B4: `new_n_2` where `new_n` is taken, the local made by the first line of the body (or the refused line),
+    each later line named; and `[BRW-14]`'s message, which the binary of 2026-11-11 22:59 still gives as "cannot
+    mutate borrowed parameter `n`" with `i64` for `int`.
+  * foreign types (`[FFI-36a]`): only a `@layout(c)` struct becomes one through a `returns_owned` result (any other
+    is `E5002`; `collect_foreign_results` takes any struct today); `owns` before an Ember-made value of one is `E2114`;
+    its `owns T` is not `Clone`.
+  * `[OBJ-2]`: `E2173` for a bare interface name in a type position whatever implements it (a class implementer is
+    accepted today).
+  * `[DIA-2]`: the written spelling of an alias (`int`, `[int; 3]`) kept for messages.
+  * `[THR-8]`, `[FFI-33b]`: a thread-bound foreign owner sent to another thread is `E7008` (today `E7004`), and a
+    `threads(main)` foreign type is not `Send` either (`[FFI-8]`).
+  * `W0001`: retired in `codes.rs`, and `ember_diag`'s unit test moved to a live code.
+* **Probed** (the built `ember.exe`, `check` only): `w0001.em`, `w0001b.em` (no `W0001`), `args.em`, `args2.em`,
+  `ctor.em` (`E2020`, `E1030`), `bare.em` (accepted), `b4.em` (the old message).
+* **Checked at the cut:** `check_ids` 0 problems (1,020 rules), `check_citations` 0 undefined, `code_registry
+  --check` 0 problems (272 live, 36 retired), `split_inline` the same 14 flags as Hardened_12, `spec_history.py
+  verify` (135 cuts, 0 mismatches), `tools/spec_check.py` (run with the main checkout's compiler: no new failures),
+  `split_spec.py --check`, `hardening_check.py`, `rule_index.py` (its baseline grows by `E2021`'s page and
+  test, the gap this cut opens, written with `--allow-growth`; three entries closed since left it), `phase_progress.py --check` (README written by it:
+  phase 5 from 13% to 12%), `check_branding.py`. **Not run:** `check_examples` (left for the lead), no `cargo`.

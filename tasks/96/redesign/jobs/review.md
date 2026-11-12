@@ -346,3 +346,21 @@ after each work batch" is the owner's rule from this round.
     - `threads(creator)` on a result makes the whole type creator-bound;
     - foreign owners are `Send` unless creator-bound (E7004 today, where FFI-33b says E7008);
     - `std.ffi` is loaded wherever foreign declarations exist.
+
+## Round 6 (R6-batch.md): the Opus deputy first, then H1, H2 and W1
+
+- **D, the Opus deputy: the spec findings, ruled** (454k tokens, 40 min, during the push gate; no builds). It cut
+  **`0.9.20_Hardened_13`** (`31140baf`, merged `f7c61773`): `decisions.md` §24, rows N171 to N175, all under the
+  delegation; none touches an owner verdict, and none is left open for him.
+  - **N171:** `E2021` (shape N6) for a call whose arguments do not fit (`[TYP-25]`, `[STR-1]`, `[CLS-3]`).
+  - **N172:** `[DSJ-5]`'s stop names the call, and for each view the place it views and the line that made it.
+  - **N173:** a stateless `unique_ptr` deleter is `T`'s one destructor; a class `delete` also ends is `E5002`.
+  - **N174:** B4's local is `new_n`, never made inside a loop or a branch (`[BRW-14]`).
+  - **N175:** which types are foreign; `owns` before an Ember-made foreign struct is `E2114`.
+  - **Not rulings** (the text already decides them, each now on a job list): `W0001`'s row is already among the
+    retired codes; `[OBJ-2]` refuses every bare interface name (ODR-226 is 0.9.10's, superseded); `[DIA-2]`
+    keeps the written spelling; `[OBJ-3]` reports nothing; `E7008`, not `E7004`, for a thread-bound foreign owner.
+  - **The lead's checks on the merge:** `check_examples` on Hardened_13 gives Hardened_12's results exactly (56
+    blocks: 42 compile, 1 unbuilt, 13 errors, the same errors); `ember_diag`, `ember_parser`, the guide and
+    first-week tests and the three spec-tied milestone tests green; the 14 gates and `spec_history.py verify`
+    (135 cuts, 0 mismatches) green.

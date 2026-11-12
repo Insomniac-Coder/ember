@@ -799,7 +799,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.20', 12)
+CURRENT = ('0.9.20', 13)
 H52_PARTS = '0.9.9_Hardened_52'
 V010_H1_PARTS = '0.9.10_Hardened_1'
 V010_H2_PARTS = '0.9.10_Hardened_2'
@@ -858,7 +858,8 @@ V0920_H8_PARTS = '0.9.20_Hardened_8'
 V0920_H9_PARTS = '0.9.20_Hardened_9'
 V0920_H10_PARTS = '0.9.20_Hardened_10'
 V0920_H11_PARTS = '0.9.20_Hardened_11'
-V0920_H12_PARTS = os.path.join(HERE, '..', 'parts')
+V0920_H12_PARTS = '0.9.20_Hardened_12'
+V0920_H13_PARTS = os.path.join(HERE, '..', 'parts')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -2455,6 +2456,51 @@ def v0920_h12():
     return H63_HEAD + rule_diff(V0920_H11_PARTS, V0920_H12_PARTS)
 
 
+H64_HEAD = r'''
+
+## H.64 Changes in 0.9.20_Hardened_13 (from 0.9.20_Hardened_12)
+
+**0.9.20_Hardened_13**, of 2026-11-12, rules the spec findings the workers' rounds of 2026-11-11
+queued (`tasks/96/redesign/jobs/review.md`), each read against the pinned text and, where it helped,
+run on the compiler. Of the fourteen, five are rulings under the delegation, N171 to N175
+(`decisions.md` §24); the others the text already decides, for the compiler to build, and three of
+those are written out here.
+
+* **Arguments that do not fit a call** (N171): a positional argument after a named one, too many,
+  one missing, a name no parameter has and a parameter given twice, at any call and at a memberwise
+  constructor or `super.init(…)`, are `E2021`, shape N6, whose message gives the callee's first line
+  (`[TYP-25]`, `[STR-1]`, `[CLS-3]`).
+* **What `assert_disjoint`'s stop says** (N172): the call and its line, and for each name the place
+  it views and the line that made the view, as `ember explain --view` shows it (`[DSJ-5]`,
+  `[COST-6]`).
+* **A `std::unique_ptr` with a deleter of its own** (N173): a stateless `D` names `T`'s one
+  destructor; a class whose constructors, results by value or default `std::unique_ptr`s need
+  `delete`, and which a `std::unique_ptr<T, D>` ends otherwise, has two, `E5002` (`[FFI-17a]`,
+  `[FFI-36]`, `[FFI-36a]`).
+* **The local of your own in shape B4** (N174): `new_n`, made by a new first line of the body or by
+  the refused line itself, and written for the parameter in every later line (`[BRW-14]`,
+  §XVII.6.1).
+* **Which types are foreign** (N175): an `extern type`, an opaque C++ class, a `@ffi(handle)` type
+  and a `@layout(c)` struct a contract gives a destructor; Ember makes no `owns T` of one (`E2114`)
+  and copies none (`[FFI-36a]`, §IX.1's `owns T`).
+* **Written out, no ruling:** a `static` function of a header is called through the shim's wrapper
+  (`[FFI-29]`); a type is named as the program spells it (`[DIA-2]`); what makes a type a
+  `threads(creator)` type (`[FFI-33b]`).
+
+Registry rows: E2021 (new), E2114, E5002. One new code, no new rule, none retired. Owner verdicts:
+none touched.
+
+Generated: every rule whose text differs from 0.9.20_Hardened_12.
+
+| Rule | 0.9.20_Hardened_12 → 0.9.20_Hardened_13 |
+|---|---|
+'''
+
+
+def v0920_h13():
+    return H64_HEAD + rule_diff(V0920_H12_PARTS, V0920_H13_PARTS)
+
+
 def h1_to_h2():
     return rule_diff(H1_PARTS, H2_PARTS)
 
@@ -2525,7 +2571,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n' + v0915_h3_to_h4() + '\n' + v0915_h4_to_h5() + '\n' + v0915_h5_to_h6() + '\n' + v0915_h6_to_h7() + '\n' + v0915_h7_to_h8() + '\n' + v0915_h8_to_h9() + '\n' + v0915_h9_to_h10() + '\n' + v0915_h10_to_h11() + '\n' + v0920_h1() + '\n' + v0920_h2() + '\n' + v0920_h3() + '\n' + v0920_h4() + '\n' + v0920_h5() + '\n' + v0920_h6() + '\n' + v0920_h7() + '\n' + v0920_h8() + '\n' + v0920_h9() + '\n' + v0920_h10() + '\n' + v0920_h11() + '\n' + v0920_h12() + '\n\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n' + v0915_h3_to_h4() + '\n' + v0915_h4_to_h5() + '\n' + v0915_h5_to_h6() + '\n' + v0915_h6_to_h7() + '\n' + v0915_h7_to_h8() + '\n' + v0915_h8_to_h9() + '\n' + v0915_h9_to_h10() + '\n' + v0915_h10_to_h11() + '\n' + v0920_h1() + '\n' + v0920_h2() + '\n' + v0920_h3() + '\n' + v0920_h4() + '\n' + v0920_h5() + '\n' + v0920_h6() + '\n' + v0920_h7() + '\n' + v0920_h8() + '\n' + v0920_h9() + '\n' + v0920_h10() + '\n' + v0920_h11() + '\n' + v0920_h12() + '\n' + v0920_h13() + '\n\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

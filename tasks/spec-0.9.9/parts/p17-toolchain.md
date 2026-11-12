@@ -619,13 +619,16 @@ fn main():
 
 * `[DIA-1]` A diagnostic has a code, one primary span, labelled secondary spans, an optional `help`
   (with a machine-applicable fix-it where possible) and notes. `--json` gives the same structure.
-* `[DIA-2]` *(changed in 0.9.15)* Messages start lowercase, have no trailing period, name the thing,
-  and say what is wrong; `help` says what to do; a message never says "you" and never blames the
-  programmer. Every refusal names what was refused in the program's own names (`enemies[0]`, not
-  `*enemies[0]`; `line.to_lower()`, not a temporary's internal name; `int`, not `i64`; `fn()`, not
-  an internal callable type; at a call, the caller's variable, not the callee's parameter), says why
-  in one line, and gives the exact line to write (`[DIA-25]`). Compiler-internal facts (internal
-  names) may appear only as secondary evidence.
+* `[DIA-2]` *(changed in 0.9.15)* *(changed in 0.9.20)* Messages start lowercase, have no trailing
+  period, name the thing, and say what is wrong; `help` says what to do; a message never says
+  "you" and never blames the programmer. Every refusal names what was refused in the program's own
+  names (`enemies[0]`, not `*enemies[0]`; `line.to_lower()`, not a temporary's internal name;
+  `int`, not `i64`; `fn()`, not an internal callable type; at a call, the caller's variable, not
+  the callee's parameter), says why in one line, and gives the exact line to write (`[DIA-25]`). A
+  type is named as the program spells it where it is written, and otherwise as the declaration it
+  comes from spells it: `[int; 3]` where the program writes `[int; 3]`, `i64` where it writes
+  `i64`, `int` for an untyped literal's default and for `len()`'s result. Compiler-internal facts
+  (internal names) may appear only as secondary evidence.
 * `[DIA-25]` *(new in 0.9.15)* **The line a message gives compiles** under this document, in that
   program: its fix never runs into another error. Where it replaces several lines, the message names
   every line it replaces ("instead of `i = 0`, the `while` line and `i += 1`, write `for i in
@@ -761,7 +764,7 @@ fn main():
 | B1 | one place changed through two names: two changeable arguments of one place, a `ref mut` name's place changed through another name while it is used, a function value stored where a variable it changes, or a place its run may reshape or end, owns it | `E3022` | `if i != j:` above the call; `split_at`, `chunks_mut`, `for ref mut x in xs:`, `swap(i, j)`; `SoA` columns; for a `ref mut` name, the change made through it or after its last use |
 | B2 | a collection changed while a loop or a generator walks it | `E3020` | the loop's own handle (`for ref mut x in xs:`, `for k, ref mut v in m:`); a list of your own, added after the loop; `retain` after the loop; the call that changes it moved below the loop |
 | B3 | a read and a change of one place overlap: a change of what a read-only name reads while it is still used; a `ref mut` name's place read through another name; an argument that may reach into a changeable argument of the same call | `E3021` | the change moved after the read-only name's last use, or the name made `ref mut` (`boss = ref mut enemies[0]`) and the change made through it; a copy of your own for the other argument (`old = copy of tracks[src_name]`) |
-| B4 | a change the name does not allow: through a plain parameter, a loop, pattern or opened name, or a plain name holding a `MutSpan`; `=` on a name that keeps its place; an owner that may change made from one that only reads | `E3023` | `ref mut` on the name and at the call (`fn tick(ref mut s: Clock):`, `tick(ref mut clock)`), on the pattern (`State.Walking(ref mut path):`) or on the loop (`for ref mut p in players:`); for a parameter given a new value, a local of your own first (`count = n`) |
+| B4 | a change the name does not allow: through a plain parameter, a loop, pattern or opened name, or a plain name holding a `MutSpan`; `=` on a name that keeps its place; an owner that may change made from one that only reads | `E3023` | `ref mut` on the name and at the call (`fn tick(ref mut s: Clock):`, `tick(ref mut clock)`), on the pattern (`State.Walking(ref mut path):`) or on the loop (`for ref mut p in players:`); for a parameter given a new value, a local of your own first, `new_n = n`, used in its place from there on (`[BRW-14]`) |
 | B5 | self-referential struct | `E3024` | store an index or `Handle`; split the struct; or a class whose view field says `from` a `let` field |
 | B6 | a result that points into something its `from` does not name | `E3062` | a view of what `from` names, or `from` naming what the result points into |
 | B7 | a view used after what it points into was ended, handed over, replaced or reshaped | `E3060` | the use moved above that line, or the place named again after it (`boss = ref mut enemies[0]`; `if cam.target exists as q:`); a value of your own (`String(...)`, `.copy_each()`) |
@@ -788,7 +791,7 @@ The ids O3, O4, O5, B8, B14, B15 and X1 are no longer used: their cases are O1 (
 | N3 | unknown method or field (`E2072`) | nearest member; the interface that would supply it; a Python name per `[DIA-21]` |
 | N4 | scalar mismatch | the exact lossless `as`, and which side set the expected type; for an `int` and a `float` operand (`i * 0.5`), `i as float * 0.5` as a machine-applicable fix-it |
 | N5 | literal does not fit (`E2010`) | the suffix or annotation that fits |
-| N6 | wrong number of arguments | the signature with names and the words in front of them |
+| N6 | arguments that do not fit the parameters (`E2021`): a positional one after a named one, too many, one missing, a name no parameter has, a parameter given twice | the callee's first line, with names and the words in front of them; for a positional argument after a named one, the call with it named (`[TYP-25]`) |
 | N7 | changing a place that never changes (a `const`, a `static`, a `let` field after `init`) | the declaration to change, with its location |
 | N8 | argument does not fit the word in front of the parameter | the parameter's words in the callee's first line and the caller's fix (`copy of x`, `ref mut x` at the call, or ending the value's use before the call) (`[FN-2a]`) |
 | N9 | missing bound (`E2040`) | the bound to add, and the one module where `extend` may be written (`[TYP-20]`) |

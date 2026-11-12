@@ -322,19 +322,29 @@ view hands nothing over and makes no copy.
   mut a`, so it always refers to `a`; to refer to `b` use a new name, `rb = ref mut b`, or make `r`
   with plain `ref mut`: `r = ref mut a`").
 * `[BRW-14]` *(new in 0.9.15)* *(changed in 0.9.20)* **Names that keep their place.** A parameter
-  that is not `owns`, a loop or pattern name that views its value (one under `for x in e:` or `match
-  e:`) and a name opened with `exists as` (`[GRM-44]`) or named by a kind test (`[DSP-4]`) stand for
-  what the caller, the loop, the opening or the test gave, and keep it for their whole scope: `=` on
-  one is `E3023` ("`line` is the text the caller passed and stays that text for the whole call; for
-  a view of your own write `rest = line.trim()`"; "`n` is the number the caller passed; for a number
-  of your own write `count = n` and change `count`"), and so is any other change through one that is
-  plain (`[BRW-15]`). A name that was handed its value owns it, as a local does, and keeps no place:
-  an `owns` parameter (`[FN-1]`), a loop name under `for x in owns e:` (`[CTL-1]`) and a name of the
-  branch that runs under `match owns e:` (`[GRM-13]`) may be changed and given a new value with no
-  word (`job.retries += 1` under `for job in owns jobs:`; `name = String("unnamed")` on `owns name:
+  that is not `owns`, a loop or pattern name that views its value (one under `for x in e:` or
+  `match e:`) and a name opened with `exists as` (`[GRM-44]`) or named by a kind test (`[DSP-4]`)
+  stand for what the caller, the loop, the opening or the test gave, and keep it for their whole
+  scope: `=` on one is `E3023` ("`line` is the text the caller passed and stays that text for the
+  whole call; for a view of your own write `new_line = line.trim()` in place of line 2, and
+  `new_line` for `line` in line 3"; "`n` is the number the caller passed; for a number of your own
+  write `new_n = n` above line 2, as the first line of `countdown`'s body, and `new_n` for `n` in
+  lines 3, 4 and 6"), and so is any other change through one that is plain (`[BRW-15]`). The local
+  of your own such a message gives is named `new_` and the parameter's name, or, where the
+  function already has that name, the first of `new_n_2`, `new_n_3`, … it does not have. It is
+  made by the refused line itself where that line is a plain `=` at the top level of the body and
+  no line above it reads the parameter (`new_line = line.trim()`), and otherwise by a new first
+  line of the body (`new_n = n`; `new_s = copy of s` for a value that is neither `Copy` nor a
+  view, offered only where `copy of` applies), never inside a loop or a branch, where it would be
+  made again each time; every later use of the parameter in the body is written with the local,
+  each line named (`[DIA-25]`), so the function does what Python's rebinding of the name does. A
+  name that was handed its value owns it, as a local does, and keeps no place: an `owns` parameter
+  (`[FN-1]`), a loop name under `for x in owns e:` (`[CTL-1]`) and a name of the branch that runs
+  under `match owns e:` (`[GRM-13]`) may be changed and given a new value with no word
+  (`job.retries += 1` under `for job in owns jobs:`; `name = String("unnamed")` on `owns name:
   String` ends the string the caller handed over, as `=` on a local does, `[OWN-3]`), and `kept =
-  job` hands it over. The one exception is a name opened `exists as copy of v`, a copy of your own,
-  which may be changed (`if scores.get(name) exists as copy of v:` then `v += 1`; the map is
+  job` hands it over. The one exception is a name opened `exists as copy of v`, a copy of your
+  own, which may be changed (`if scores.get(name) exists as copy of v:` then `v += 1`; the map is
   untouched). A `ref mut` one writes the caller's place, and may be given another ref, as any `ref
   mut` name may: a `ref mut dst: MutSpan[float]` parameter given another span points the caller's
   `d` at it, and `ref mut c: Counter` given another ref points `c`, for the rest of the call, at
