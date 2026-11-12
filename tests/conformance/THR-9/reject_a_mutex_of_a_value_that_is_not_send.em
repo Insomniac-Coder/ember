@@ -7,10 +7,10 @@ from std.sync import Mutex
 
 @sync
 class Holder:
-    held: Mutex[Shared[int]]
+    held: Mutex[shares mut int]
 
-    fn init(owns value: Shared[int]):
+    fn init(owns value: shares mut int):
         this.held = Mutex(value)
 
 fn main():
-    h = Holder(Shared(1))
+    h = Holder(shares mut 1)

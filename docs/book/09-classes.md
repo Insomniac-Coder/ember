@@ -86,12 +86,13 @@ generic says ...
 Rex says woof
 ```
 
-## Cycles and `Weak`
+## Cycles and `weakref`
 
 Two objects holding handles to each other keep each other alive: neither is freed. A debug run
 reports such a cycle when the program ends, naming the field to change. A back-pointer — a child to
-its parent, an item to its list — is a `Weak` handle, which does not keep its object alive;
-`upgrade()` gives the object back as an `Option`, `None` once it is gone:
+its parent, an item to its list — is a `weakref` link, which does not keep its object alive and may
+hold none (`= None`). A link is made with `weakref x`, and opened with `exists as`, which runs its
+block while the object lives:
 
 ```ember
 class Parent:
@@ -100,17 +101,16 @@ class Parent:
 
 class Child:
     name: String
-    parent: Option[Weak[Parent]] = None
+    parent: weakref Parent = None
 
 fn main():
     mum = Parent("Ada")
     kid = Child("Byron")
-    kid.parent = Some(Weak(mum))
+    kid.parent = weakref mum
     mum.children.push(owns kid)
     for child in mum.children:
-        if child.parent exists as weak:
-            if weak.upgrade() exists as parent:
-                println(f"{child.name} is {parent.name}'s")
+        if child.parent exists as parent:
+            println(f"{child.name} is {parent.name}'s")
 ```
 
 ```output

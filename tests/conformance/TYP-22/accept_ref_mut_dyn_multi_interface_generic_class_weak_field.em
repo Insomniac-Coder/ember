@@ -9,7 +9,7 @@
 
 # An explicit ref mut generic-class borrow coerces to ref mut dyn Read + Bump.
 # The mut slot updates the original class, then the shared slot observes its
-# Weak[Shared[T]] field without creating an owner copy at the coercion boundary.
+# weakref T field without creating an owner copy at the coercion boundary.
 interface Read:
     fn read() -> i32
 
@@ -21,16 +21,15 @@ struct Token:
 
 [T]
 class Counter implements Read, Bump:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
     marker: T
     count: i32
 
     fn read() -> i32:
-        match this.weak.upgrade():
-            Some(owner):
-                return owner.get().value + this.count
-            None:
-                return this.count
+        if this.weak exists as owner:
+            return owner.value + this.count
+        else:
+            return this.count
 
     fn bump() -> i32:
         this.count = this.count + 1
@@ -41,6 +40,6 @@ fn revise(ref mut value: dyn Read + Bump) -> i32:
     return value.read()
 
 fn main():
-    strong = Shared(Token(7))
-    counter = Counter[bool](Weak(strong), true, 0)
+    strong = shares mut Token(7)
+    counter = Counter[bool](weakref strong, true, 0)
     println(revise(ref mut counter))

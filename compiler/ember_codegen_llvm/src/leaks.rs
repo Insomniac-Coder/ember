@@ -24,7 +24,7 @@ fn class_edges(m: &mut Module<'_>, id: ClassId) -> Result<String> {
             let Some((owner, field)) = table.class_field_at_info(id, index) else { continue };
             let label = format!("{}.{}", table.class_def(owner).name, field.name);
             let replacement = match (table.class_def(owner).origin.is_none(), table.kind(field.ty)) {
-                (true, TyKind::Class(target)) => Some(format!("Weak[{}]", table.class_def(*target).name)),
+                (true, TyKind::Class(target)) => Some(format!("weakref {}", table.class_def(*target).name)),
                 _ => None,
             };
             let at = cx.gep("%p0", offsets[index]);
@@ -70,6 +70,15 @@ impl<'a> FnCx<'_, 'a> {
             TyKind::ClassInterface(_) => {
                 let target = self.load(Sc::Ptr, at, 8);
                 self.visit(&target, field, STRONG, None, false);
+            }
+            // `[RC-1]`, `[WK-11]` — an owner is a strong edge to the block it points at, a link a weak one.
+            TyKind::Link { kind: ember_types::LinkKind::Weakref, .. } => {
+                let target = self.load(Sc::Ptr, at, 8);
+                self.visit(&target, field, WEAK, None, true);
+            }
+            TyKind::Link { .. } => {
+                let target = self.load(Sc::Ptr, at, 8);
+                self.visit(&target, field, STRONG, None, predicted);
             }
             TyKind::Vec { elem, .. } => {
                 let (size, _) = self.m.ty.size_align(elem);

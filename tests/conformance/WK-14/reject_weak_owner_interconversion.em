@@ -9,7 +9,7 @@ class ClassOwner:
 
 fn main():
     class_owner = ClassOwner(1)
-    class_weak = Weak(class_owner)
-    shared = Shared(Token(2))
-    shared_weak = Weak(shared)
+    class_weak = weakref class_owner
+    shared = shares mut Token(2)
+    shared_weak = weakref shared
     class_weak = shared_weak    #$ error[E2020]: expected

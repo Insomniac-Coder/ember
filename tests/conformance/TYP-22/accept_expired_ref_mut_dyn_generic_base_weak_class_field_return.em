@@ -8,47 +8,46 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# A ref mut dyn call may return Weak[Token] from a generic base after updating
+# A ref mut dyn call may return weakref Token from a generic base after updating
 # an inherited counter, but it cannot keep the final class owner alive. After
 # helper teardown, the returned observer must take the expired upgrade path.
 interface Revise:
-    fn observer() -> Weak[Token]
+    fn observer() -> weakref Token
 
 class Token:
     value: i32
 
 [T]
 open class Base:
-    weak: Weak[Token]
+    weak: weakref Token
     marker: T
     count: i32
 
-    fn init(weak: Weak[Token], marker: T):
-        this.weak = weak
+    fn init(weak: weakref Token, marker: T):
+        this.weak = weakref weak
         this.marker = marker
         this.count = 0
 
 [T]
 class Holder(Base[T]) implements Revise:
-    fn init(weak: Weak[Token], marker: T):
+    fn init(weak: weakref Token, marker: T):
         super.init(weak, marker)
 
-    fn observer() -> Weak[Token]:
+    fn observer() -> weakref Token:
         this.count = this.count + 1
-        return this.weak
+        return weakref this.weak
 
-fn inspect(ref mut value: dyn Revise) -> Weak[Token]:
+fn inspect(ref mut value: dyn Revise) -> weakref Token:
     return value.observer()
 
-fn expired() -> Weak[Token]:
+fn expired() -> weakref Token:
     strong = Token(7)
-    holder = Holder[bool](Weak(strong), true)
+    holder = Holder[bool](weakref strong, true)
     return inspect(ref mut holder)
 
 fn main():
     weak = expired()
-    match weak.upgrade():
-        Some(_):
-            println(0)
-        None:
-            println(7)
+    if weak exists as _:
+        println(0)
+    else:
+        println(7)

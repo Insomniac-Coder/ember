@@ -6,8 +6,8 @@
 #$ stdout: 42
 #$ stdout: end
 
-# An empty Weak[Shared[T]] remains empty when copied. The copy is a weak-handle
-# operation, never a construction of a Shared control block or strong owner.
+# An empty weakref T remains empty when copied. The copy is a weak-handle
+# operation, never a construction of a `shares` control block or strong owner.
 struct Token:
     value: i32
 
@@ -16,13 +16,12 @@ struct Token:
 # memory to the operating system (`[PHIL-5]`), and the drops read here
 # would go with it.
 fn program():
-    empty: Weak[Shared[Token]] = Weak[Shared[Token]].empty()
+    empty: weakref Token = None
     copy = empty
-    match copy.upgrade():
-        Some(_):
-            println(0)
-        None:
-            println(42)
+    if copy exists as _:
+        println(0)
+    else:
+        println(42)
 
 fn main():
     program()

@@ -13,7 +13,7 @@
 # copy and then takes None after expiry. The mutable Observe slot still updates
 # inherited state before the Bump slot returns it.
 interface Observe:
-    fn observe(owns weak: Weak[Shared[Token]]) -> i32
+    fn observe(owns weak: weakref Token) -> i32
 
 interface Bump:
     fn bump() -> i32
@@ -35,23 +35,22 @@ class Holder(Base[T]) implements Observe, Bump:
     fn init(marker: T):
         super.init(marker)
 
-    fn observe(owns weak: Weak[Shared[Token]]) -> i32:
+    fn observe(owns weak: weakref Token) -> i32:
         this.count = this.count + 1
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
     fn bump() -> i32:
         return this.count
 
-fn expired() -> Weak[Shared[Token]]:
-    strong = Shared(Token(7))
-    return Weak(strong)
+fn expired() -> weakref Token:
+    strong = shares mut Token(7)
+    return weakref strong
 
-fn inspect(ref mut value: dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
-    return value.observe(owns weak) + value.bump()
+fn inspect(ref mut value: dyn Observe + Bump, weak: weakref Token) -> i32:
+    return value.observe(owns (weakref weak)) + value.bump()
 
 fn main():
     holder = Holder[bool](true)

@@ -9,13 +9,13 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 
 # An owned weak argument crossing a generic virtual call remains only a
-# control-block observer after its Shared target has expired. The derived
+# control-block observer after its `shares` target has expired. The derived
 # override must take the None path and release its independent argument copy.
 struct Token:
     value: i32
 
 class Holder:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
 
 [T]
 open class Base:
@@ -24,31 +24,29 @@ open class Base:
     fn init(marker: T):
         this.marker = marker
 
-    virtual fn observe(owns weak: Weak[Shared[Token]]) -> i32:
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+    virtual fn observe(owns weak: weakref Token) -> i32:
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
 [T]
 class Derived(Base[T]):
     fn init(marker: T):
         super.init(marker)
 
-    override fn observe(owns weak: Weak[Shared[Token]]) -> i32:
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+    override fn observe(owns weak: weakref Token) -> i32:
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
 fn expired_holder() -> Holder:
-    strong = Shared(Token(7))
-    return Holder(Weak(strong))
+    strong = shares mut Token(7)
+    return Holder(weakref strong)
 
 fn main():
     holder = expired_holder()
     derived = Derived[bool](true)
     base: Base[bool] = derived
-    println(base.observe(owns holder.weak))
+    println(base.observe(owns (weakref holder.weak)))

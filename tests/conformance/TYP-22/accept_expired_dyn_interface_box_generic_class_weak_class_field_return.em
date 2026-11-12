@@ -8,32 +8,31 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 #$ assert-c: !contains("ember_box_new_copy")
 
-# A Weak[Token] returned by Box[dyn Observe] outlives the generic class payload
+# A weakref Token returned by Box[dyn Observe] outlives the generic class payload
 # and its final class owner without keeping either alive. The later upgrade must
 # take the expired path rather than reconstructing a class handle.
 interface Observe:
-    fn observer() -> Weak[Token]
+    fn observer() -> weakref Token
 
 class Token:
     value: i32
 
 [T]
 class Holder implements Observe:
-    weak: Weak[Token]
+    weak: weakref Token
     marker: T
 
-    fn observer() -> Weak[Token]:
-        return this.weak
+    fn observer() -> weakref Token:
+        return weakref this.weak
 
-fn expired() -> Weak[Token]:
+fn expired() -> weakref Token:
     strong = Token(7)
-    boxed: owns dyn Observe = owns Holder[bool](Weak(strong), true)
+    boxed: owns dyn Observe = owns Holder[bool](weakref strong, true)
     return boxed.observer()
 
 fn main():
     weak = expired()
-    match weak.upgrade():
-        Some(_):
-            println(0)
-        None:
-            println(7)
+    if weak exists as _:
+        println(0)
+    else:
+        println(7)

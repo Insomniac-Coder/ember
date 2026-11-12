@@ -3,13 +3,13 @@
 #$ profiles: debug, development, release
 #$ warning[L3001]: potential reference cycle
 
-# Shared class handles are strong owners, unlike Weak handles; they participate
-# in the visible graph but keep their declared Shared ownership contract.
+# `shares` class handles are strong owners, unlike `weakref` handles; they participate
+# in the visible graph but keep their declared `shares` ownership contract.
 class Parent:
-    child: Shared[Child]
+    child: shares mut Child
 
 class Child:
-    parent: Shared[Parent]
+    parent: shares mut Parent
 
 fn main():
     return

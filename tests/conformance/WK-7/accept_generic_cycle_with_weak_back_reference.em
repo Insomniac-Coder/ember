@@ -14,7 +14,7 @@ class Parent:
 
 class Child:
     value: i32 = 7
-    parent: Weak[Parent] = Weak[Parent].empty()
+    parent: weakref Parent = None
 
 fn main():
     child = Child()

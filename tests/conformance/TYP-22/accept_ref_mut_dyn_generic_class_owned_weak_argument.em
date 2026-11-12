@@ -8,11 +8,11 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# An owned Weak[Shared[Token]] argument crossing a ref mut dyn carrier is
+# An owned weakref Token argument crossing a ref mut dyn carrier is
 # copied for the generic class implementation. The mutable dynamic receiver
 # closes its write interval while the callee upgrades and destroys its copy.
 interface Observe:
-    fn observe(owns weak: Weak[Shared[Token]]) -> i32
+    fn observe(owns weak: weakref Token) -> i32
 
 struct Token:
     value: i32
@@ -22,19 +22,18 @@ class Reader implements Observe:
     marker: T
     count: i32
 
-    fn observe(owns weak: Weak[Shared[Token]]) -> i32:
+    fn observe(owns weak: weakref Token) -> i32:
         this.count = this.count + 1
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
-fn inspect(ref mut value: dyn Observe, weak: Weak[Shared[Token]]) -> i32:
-    return value.observe(owns weak)
+fn inspect(ref mut value: dyn Observe, weak: weakref Token) -> i32:
+    return value.observe(owns (weakref weak))
 
 fn main():
-    strong = Shared(Token(7))
+    strong = shares mut Token(7)
     reader = Reader[bool](true, 0)
-    weak = Weak(strong)
+    weak = weakref strong
     println(inspect(ref mut reader, weak))

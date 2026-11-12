@@ -12,7 +12,7 @@
 # A borrowed weak argument through ref dyn Observe + Bump takes None after its
 # target expires, while the composed carrier still dispatches its second slot.
 interface Observe:
-    fn observe(weak: Weak[Shared[Token]]) -> i32
+    fn observe(weak: weakref Token) -> i32
 
 interface Bump:
     fn bump() -> i32
@@ -24,21 +24,20 @@ struct Token:
 class Reader implements Observe, Bump:
     marker: T
 
-    fn observe(weak: Weak[Shared[Token]]) -> i32:
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+    fn observe(weak: weakref Token) -> i32:
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
     fn bump() -> i32:
         return 1
 
-fn expired() -> Weak[Shared[Token]]:
-    strong = Shared(Token(7))
-    return Weak(strong)
+fn expired() -> weakref Token:
+    strong = shares mut Token(7)
+    return weakref strong
 
-fn inspect(value: ref dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
+fn inspect(value: ref dyn Observe + Bump, weak: weakref Token) -> i32:
     return value.observe(weak) + value.bump()
 
 # `program` holds the test, so its values die before `main`'s last

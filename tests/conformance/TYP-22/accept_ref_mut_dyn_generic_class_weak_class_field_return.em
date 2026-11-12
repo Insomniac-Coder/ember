@@ -9,33 +9,32 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 
 # A ref mut dyn Revise carrier updates a generic class and returns its
-# Weak[Token] field. The receiver remains borrowed and the copied weak observer
+# weakref Token field. The receiver remains borrowed and the copied weak observer
 # may upgrade only while the separate Token owner stays alive.
 interface Revise:
-    fn observer() -> Weak[Token]
+    fn observer() -> weakref Token
 
 class Token:
     value: i32
 
 [T]
 class Holder implements Revise:
-    weak: Weak[Token]
+    weak: weakref Token
     marker: T
     count: i32
 
-    fn observer() -> Weak[Token]:
+    fn observer() -> weakref Token:
         this.count = this.count + 1
-        return this.weak
+        return weakref this.weak
 
-fn inspect(ref mut value: dyn Revise) -> Weak[Token]:
+fn inspect(ref mut value: dyn Revise) -> weakref Token:
     return value.observer()
 
 fn main():
     strong = Token(7)
-    holder = Holder[bool](Weak(strong), true, 0)
+    holder = Holder[bool](weakref strong, true, 0)
     weak = inspect(ref mut holder)
-    match weak.upgrade():
-        Some(owner):
-            println(owner.value)
-        None:
-            println(0)
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

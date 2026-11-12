@@ -10,52 +10,50 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# Replacing a live inherited Weak[Shared[Token]] field through a generic
+# Replacing a live inherited weakref Token field through a generic
 # mutable virtual call releases only the field observer. An outside observer
-# to the old Shared payload stays valid while the override upgrades its new
+# to the old `shares` payload stays valid while the override upgrades its new
 # replacement.
 struct Token:
     value: i32
 
 [T]
 open class Base:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
     marker: T
     count: i32
 
-    fn init(weak: Weak[Shared[Token]], marker: T, count: i32):
-        this.weak = weak
+    fn init(weak: weakref Token, marker: T, count: i32):
+        this.weak = weakref weak
         this.marker = marker
         this.count = count
 
-    virtual fn replace(replacement: Weak[Shared[Token]]) -> i32:
-        this.weak = replacement
+    virtual fn replace(replacement: weakref Token) -> i32:
+        this.weak = weakref replacement
         this.count = this.count + 1
         return this.count
 
 [T]
 class Derived(Base[T]):
-    fn init(weak: Weak[Shared[Token]], marker: T, count: i32):
+    fn init(weak: weakref Token, marker: T, count: i32):
         super.init(weak, marker, count)
 
-    override fn replace(replacement: Weak[Shared[Token]]) -> i32:
-        this.weak = replacement
+    override fn replace(replacement: weakref Token) -> i32:
+        this.weak = weakref replacement
         this.count = this.count + 1
-        match this.weak.upgrade():
-            Some(owner):
-                return owner.get().value + this.count
-            None:
-                return this.count
+        if this.weak exists as owner:
+            return owner.value + this.count
+        else:
+            return this.count
 
 fn main():
-    previous = Shared(Token(5))
-    replacement = Shared(Token(7))
-    old = Weak(previous)
+    previous = shares mut Token(5)
+    replacement = shares mut Token(7)
+    old = weakref previous
     derived = Derived[bool](old, true, 0)
     base: Base[bool] = derived
-    println(base.replace(Weak(replacement)))
-    match old.upgrade():
-        Some(owner):
-            println(owner.get().value)
-        None:
-            println(0)
+    println(base.replace(weakref replacement))
+    if old exists as owner:
+        println(owner.value)
+    else:
+        println(0)

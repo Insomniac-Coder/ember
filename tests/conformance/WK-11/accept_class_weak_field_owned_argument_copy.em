@@ -6,23 +6,22 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# Weak[C] has the same explicit owned-copy boundary as Weak[Shared[T]], while
+# weakref C has the same explicit owned-copy boundary as weakref T, while
 # retaining its distinct class-handle representation. Copying a field into the
-# owned parameter gives the callee its own weak handle, not a strong Token.
+# owned parameter gives the callee its own link, not a strong Token.
 class Token:
     value: i32
 
 class Holder:
-    weak: Weak[Token]
+    weak: weakref Token
 
-fn observe(owns weak: Weak[Token]) -> i32:
-    match weak.upgrade():
-        Some(owner):
-            return owner.value
-        None:
-            return 0
+fn observe(owns weak: weakref Token) -> i32:
+    if weak exists as owner:
+        return owner.value
+    else:
+        return 0
 
 fn main():
     strong = Token(7)
-    holder = Holder(Weak(strong))
-    println(observe(owns holder.weak))
+    holder = Holder(weakref strong)
+    println(observe(owns (weakref holder.weak)))

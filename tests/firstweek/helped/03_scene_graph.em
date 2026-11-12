@@ -6,43 +6,35 @@ class Node:
     name: String
     local: Vec3
     children: Array[Node] = []
-    parent: Option[Weak[Node]] = None
+    parent: weakref Node = None
 
     fn init(owns name: String, local: Vec3):
         this.name = name
         this.local = local
 
     fn add_child(child: Node):
-        child.parent = Some(Weak(this))
+        child.parent = weakref this
         this.children.push(owns child)
 
     fn world_position() -> Vec3:
         pos = this.local
-        current = this.parent
-        while current exists as weak:
-            if weak.upgrade() exists as p:
-                pos = pos + p.local
-                current = p.parent
-            else:
-                break
+        up = weakref this.parent
+        while up exists as p:
+            pos = pos + p.local
+            up = weakref p.parent
         return pos
 
     fn depth() -> int:
         d = 0
-        current = this.parent
-        while current exists as weak:
-            match weak.upgrade():
-                Some(p):
-                    d += 1
-                    current = p.parent
-                None:
-                    break
+        up = weakref this.parent
+        while up exists as p:
+            d += 1
+            up = weakref p.parent
         return d
 
     fn path() -> String:
-        if this.parent exists as weak:
-            if weak.upgrade() exists as p:
-                return f"{p.path()}/{this.name}"
+        if this.parent exists as p:
+            return f"{p.path()}/{this.name}"
         return this.name.clone()
 
 fn print_tree(node: Node):

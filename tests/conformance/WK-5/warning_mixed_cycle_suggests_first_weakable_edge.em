@@ -3,10 +3,10 @@
 #$ profiles: debug, development, release
 #$ warning[L3001]: potential reference cycle
 
-# A Shared edge is not a legal Weak rewrite, but the later direct class edge
+# A `shares` edge is not a legal `weakref` rewrite, but the later direct class edge
 # closes the same cycle and can safely become a weak back-reference.
 class Owner:
-    child: Shared[Child]
+    child: shares mut Child
 
 class Child:
     parent: Owner

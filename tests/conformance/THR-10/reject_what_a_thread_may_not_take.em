@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: THR-10, THR-8
-#$ error[E7004]: the thread's function captures `count`, a `Shared[i64]`, which is not Send
+#$ error[E7004]: the thread's function captures `count`, a `shares mut i64`, which is not Send
 #$ error[E3026]: the thread's function borrows `total`, which it may outlive
 #$ error[E7004]: the thread's function returns a `Plain`, which is not Send
 #$ error[E7004]: a `fn() -> i64` value may hold anything, so it is not Send
@@ -15,8 +15,8 @@ class Plain:
     n: int
 
 fn main():
-    count = Shared(0)
-    a = thread.spawn(owns owned fn() => count.get() + 1)
+    count = shares mut 0
+    a = thread.spawn(owns owned fn() => count + 1)
     total = 5
     c = thread.spawn(owns fn() => total + 1)
     d = thread.spawn(owns owned fn() => Plain(3))

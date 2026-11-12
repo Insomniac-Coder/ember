@@ -7,11 +7,11 @@
 # still valid when the diagnostic mode is disabled.
 class Node:
     next: Option[Node] = None    #$ warning[L3001]: potential reference cycle
-    previous: Weak[Node] = Weak[Node].empty()
+    previous: weakref Node = None
 
     fn link():
         this.next = Some(this)
-        this.previous = Weak(this)
+        this.previous = weakref this
 
 fn main():
     node = Node()

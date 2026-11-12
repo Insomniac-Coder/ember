@@ -6,21 +6,20 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# A class field may replace its empty Weak[C] handle with a live one. The
-# assignment owns the new weak handle and releases the old empty handle; it
+# A class field may replace its empty weakref C handle with a live one. The
+# assignment owns the new link and releases the old empty handle; it
 # must not retain the observed class strongly.
 class Token:
     value: i32
 
 class Holder:
-    weak: Weak[Token] = Weak[Token].empty()
+    weak: weakref Token = None
 
 fn main():
     strong = Token(42)
     holder = Holder()
-    holder.weak = Weak(strong)
-    match holder.weak.upgrade():
-        Some(owner):
-            println(owner.value)
-        None:
-            println(0)
+    holder.weak = weakref strong
+    if holder.weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

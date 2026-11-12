@@ -6,24 +6,23 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# Returning Weak[C] from a borrowed class field gives the caller its own weak
+# Returning weakref C from a borrowed class field gives the caller its own weak
 # handle before the source Holder parameter ends. That copy remains non-owning
 # and may upgrade only while a separate class owner is live.
 class Token:
     value: i32
 
 class Holder:
-    weak: Weak[Token]
+    weak: weakref Token
 
-fn observe(holder: Holder) -> Weak[Token]:
-    return holder.weak
+fn observe(holder: Holder) -> weakref Token:
+    return weakref holder.weak
 
 fn main():
     strong = Token(7)
-    holder = Holder(Weak(strong))
+    holder = Holder(weakref strong)
     weak = observe(holder)
-    match weak.upgrade():
-        Some(owner):
-            println(owner.value)
-        None:
-            println(0)
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

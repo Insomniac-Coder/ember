@@ -7,7 +7,7 @@
 #$ stdout: drop 7
 
 # The optimization must not consume a named owner's last use. Clearing its
-# copied list keeps that owner, and Weak.upgrade remains successful.
+# copied list keeps that owner, and `weakref`.upgrade remains successful.
 class Token:
     id: i32
 
@@ -16,12 +16,13 @@ class Token:
 
 fn main():
     held = Token(7)
-    weak = Weak(held)
+    weak = weakref held
     tokens: Array[Token] = Array[Token]()
     tokens.push(owns held)
     println("before")
     tokens.clear()
-    match weak.upgrade():
-        Some(value) => println("live", value.id)
-        None => println("expired")
+    if weak exists as value:
+        println("live", value.id)
+    else:
+        println("expired")
     println("after")

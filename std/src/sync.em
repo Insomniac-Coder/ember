@@ -28,12 +28,12 @@
 ## own. `o.is_completed()` tells whether the run has finished. A `Once` is `Send` and `Sync`. A
 ## `call_once` inside the run it is waiting for never returns.
 ##
-## `[HEAP-10]` — `SyncShared[T]` is `Shared[T]` for several threads: `SyncShared(value)` makes the
-## first owner, a copy is another (its counts are atomic), and the last one's end drops the value,
-## on whichever thread that is. It offers `get() -> ref T` only: mutation goes through `T`'s own
-## locks or atomics. It and its `Weak` are `Send` and `Sync` when `T` is both (`[THR-8]`,
-## `[THR-9]`). The compiler builds it as it builds `Shared`; the declaration here gives it its
-## name.
+## `[HEAP-10]` — `SyncShared[T]` is a value with several owners on several threads, until slice E of
+## M4 builds `thread_shared T`: `SyncShared(value)` makes the first owner, a copy is another (its
+## counts are atomic), and the last one's end drops the value, on whichever thread that is. It offers
+## `get() -> ref T` only: mutation goes through `T`'s own locks or atomics. It is `Send` and `Sync`
+## when `T` is both (`[THR-8]`, `[THR-9]`). The compiler builds it in the block a `shares T` value
+## lives in, with atomic counts; the declaration here gives it its name.
 ##
 ## `[THR-15]` — `channel[T](capacity=n)` makes a queue of at most `n` values (one or more) that any
 ## number of `Sender[T]`s fill and one `Receiver[T]` empties, in order; `channel_unbounded[T]()` one

@@ -8,14 +8,14 @@
 #$ assert-c: contains("ember_weak_release((ember_obj_header*)weak.value);")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# Passing Weak[Token] to an owned generic virtual parameter copies one weak
+# Passing weakref Token to an owned generic virtual parameter copies one weak
 # observer for the derived override. The Holder keeps its field observer while
 # the callee independently upgrades and then destroys its owned weak argument.
 class Token:
     value: i32
 
 class Holder:
-    weak: Weak[Token]
+    weak: weakref Token
 
 [T]
 open class Base:
@@ -24,28 +24,26 @@ open class Base:
     fn init(marker: T):
         this.marker = marker
 
-    virtual fn observe(owns weak: Weak[Token]) -> i32:
-        match weak.upgrade():
-            Some(owner):
-                return owner.value
-            None:
-                return 0
+    virtual fn observe(owns weak: weakref Token) -> i32:
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
 [T]
 class Derived(Base[T]):
     fn init(marker: T):
         super.init(marker)
 
-    override fn observe(owns weak: Weak[Token]) -> i32:
-        match weak.upgrade():
-            Some(owner):
-                return owner.value
-            None:
-                return 0
+    override fn observe(owns weak: weakref Token) -> i32:
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
 fn main():
     strong = Token(7)
-    holder = Holder(Weak(strong))
+    holder = Holder(weakref strong)
     derived = Derived[bool](true)
     base: Base[bool] = derived
-    println(base.observe(owns holder.weak))
+    println(base.observe(owns (weakref holder.weak)))

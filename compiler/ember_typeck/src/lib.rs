@@ -21058,6 +21058,11 @@ impl<'a> Checker<'a> {
     /// a link too), or a value in a block of its own (D5). The value is read where it is, never handed
     /// over, except a new value, which becomes the block's.
     fn synth_link(&mut self, kind: ast::LinkKind, value: &ast::Expr, span: Span) -> Expr {
+        self.synth_link_expecting(kind, value, None, span)
+    }
+
+    /// `synth_link`, with the target type a place wants for a new value.
+    fn synth_link_expecting(&mut self, kind: ast::LinkKind, value: &ast::Expr, wanted: Option<Ty>, span: Span) -> Expr {
         use ember_types::LinkKind;
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         let kind = match kind {
@@ -21075,10 +21080,26 @@ impl<'a> Checker<'a> {
             self.refuse_owner_of_this(kind, span);
             return error;
         }
-        let source = self.synth_committed(value);
+        let named = matches!(
+            written.kind,
+            ast::ExprKind::Path { .. } | ast::ExprKind::Field { .. } | ast::ExprKind::TupleField { .. } | ast::ExprKind::IndexOrInstantiate { .. } | ast::ExprKind::SelfExpr
+        );
+        let source = match wanted {
+            Some(target) if !named && target != self.common.error => self.check_expr(value, target),
+            _ => self.synth_committed(value),
+        };
         if source.ty == self.common.error {
             return error;
         }
+        // `[RC-2e]` — a view of an owner (a loop's name over a list of `shares` owners) makes an
+        // owner of what the owner names: the view is read through.
+        let source = match *self.types.kind(source.ty) {
+            TyKind::Ref { inner, .. } if matches!(self.types.kind(inner), TyKind::Link { .. }) => {
+                let span = source.span;
+                Expr { ty: inner, kind: ExprKind::Deref(Box::new(source)), span }
+            }
+            _ => source,
+        };
         let place = self.written_line(written.span).unwrap_or_else(|| "it".to_string());
         let new_value = !is_place(&source.kind);
         match *self.types.kind(source.ty) {
@@ -21243,10 +21264,15 @@ impl<'a> Checker<'a> {
         let short = self.link_short_name(ty);
         let value = self.written_line(written.span).unwrap_or_else(|| self.types.display(ty));
         let then = self.line_with(span, &format!("weakref {short}")).unwrap_or_else(|| format!("weakref {short}"));
+        // A value that is not a class object lives on its own once it is held `shares` (`[WK-11]`).
+        let (keep, value) = match self.types.kind(ty) {
+            TyKind::Class(_) => ("keep it in a name first", value),
+            _ => ("hold it shared in a name first", format!("shares {value}")),
+        };
         self.error(
             codes::E2119,
             span,
-            format!("the {noun} would end at the end of the line and the link would find nothing; keep it in a name first: write `{short} = {value}` above, then `{then}`"),
+            format!("the {noun} would end at the end of the line and the link would find nothing; {keep}: write `{short} = {value}` above, then `{then}`"),
         );
     }
 
@@ -21406,6 +21432,14 @@ impl<'a> Checker<'a> {
     /// `[WK-12]` — a `weakref T` link opened by `exists as`: `Some` while its target lives, of the class
     /// object, or of an owner of the value that only reads it (`shares T`) for a value in a block.
     fn open_link(&mut self, link: Expr) -> Expr {
+        // A view of a link (a loop's name over a list of links, a `ref` parameter) opens the link.
+        let link = match *self.types.kind(link.ty) {
+            TyKind::Ref { inner, .. } if matches!(self.types.kind(inner), TyKind::Link { kind: ember_types::LinkKind::Weakref, .. }) => {
+                let span = link.span;
+                Expr { ty: inner, kind: ExprKind::Deref(Box::new(link)), span }
+            }
+            _ => link,
+        };
         let TyKind::Link { kind: ember_types::LinkKind::Weakref, target } = *self.types.kind(link.ty) else {
             return link;
         };
@@ -37759,6 +37793,8 @@ impl<'a> Checker<'a> {
             // value in its block.
             if self.types.link_payload(found.ty).is_some()
                 && matches!(self.types.kind(found.ty), TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut, .. })
+                // `[SEL-2]` — never to a C++ smart pointer, which `E5065` refuses.
+                && self.counted_family(expected).is_none()
                 && is_place(&found.kind)
             {
                 found = self.read_link_through(found);
@@ -37934,6 +37970,17 @@ impl<'a> Checker<'a> {
                 kind: ExprKind::Cast { expr: Box::new(expr), to: expected },
                 span,
             };
+        }
+        // `[TYP-5]` item 8 — a class object's owner or link to a base class, with its word kept: a
+        // `shares Dog` to a `shares Animal`, a `weakref Dog` to a `weakref Animal`; the same pointer.
+        if let (&TyKind::Link { kind: found, target: derived }, &TyKind::Link { kind: wanted, target: base }) =
+            (self.types.kind(expr.ty), self.types.kind(expected))
+            && found == wanted
+            && let (&TyKind::Class(derived), &TyKind::Class(base)) = (self.types.kind(derived), self.types.kind(base))
+            && self.types.class_is_subclass_of(derived, base)
+        {
+            let span = expr.span;
+            return Expr { ty: expected, kind: ExprKind::Cast { expr: Box::new(expr), to: expected }, span };
         }
         // `[OBJ-2]`/`[DSP-3]` — an implementing class coerces to the one-word
         // class-handle form of a dyn-compatible interface. Keep the same
@@ -39602,6 +39649,8 @@ impl<'a> Checker<'a> {
                             // `(int, ref int)` was given to C as text).
                             let value = self.synth_committed(expr);
                             let value = self.read_through(value);
+                            // `[RC-1]` — an owner is written as its value.
+                            let value = self.read_link_through(value);
                             let value = self.range_as_repr(value);
                             // D-194 — a `String` is written as the `str` it
                             // borrows, as `print` writes it (D-191).
@@ -40267,7 +40316,14 @@ impl<'a> Checker<'a> {
 
             ast::ExprKind::CopyOf(operand) => self.synth_copy_of(operand, span),
             // `[OWN-13]`, `[RC-1]`, `[WK-11]` — M4 slice A (`M4-plan.md`).
-            ast::ExprKind::Link { kind, value } => self.synth_link(*kind, value, span),
+            ast::ExprKind::Link { kind, value } => {
+                // A new value takes the target type the place wants (`x: shares mut i32 = shares mut 5`).
+                let wanted = expected.and_then(|ty| match *self.types.kind(ty) {
+                    TyKind::Link { target, .. } => Some(target),
+                    _ => None,
+                });
+                self.synth_link_expecting(*kind, value, wanted, span)
+            }
             ast::ExprKind::Owned(inner) => self.synth_owns(inner, span),
             // `[BRW-*]` — `ref place` and `ref mut place`, the explicit forms.
             // They are needed only when initialising a `ref`-typed local or a
@@ -41365,6 +41421,24 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Owned(owned) => {
                 let inner = self.type_from_expr(owned);
                 self.owns_type(inner, owned.span, expr.span)
+            }
+            // `[TYP-45]` — and so do `shares T`, `shares mut T` and `weakref T` (`Array[shares mut
+            // Token]()`).
+            ast::ExprKind::Link { kind, value } => {
+                let target = self.type_from_expr(value);
+                let kind = match kind {
+                    ast::LinkKind::Shares => ember_types::LinkKind::Shares,
+                    ast::LinkKind::SharesMut => ember_types::LinkKind::SharesMut,
+                    ast::LinkKind::Weakref => ember_types::LinkKind::Weakref,
+                    other => {
+                        self.error(codes::E0900, expr.span, format!("`{}` before a type is not built by this compiler yet", other.word()));
+                        return target;
+                    }
+                };
+                if target == self.common.error {
+                    return target;
+                }
+                self.link_of(kind, target)
             }
             // `[GRM-8a]` — a tuple of types (`(int, int)`) and a fixed array
             // (`[int; 4]`) arrive as expressions too, and are read back the
@@ -54168,13 +54242,17 @@ impl<'a> Checker<'a> {
     }
 
     /// `[THR-3]` — the payload type, if this is the `std.sync` lock type `origin` of one.
-    /// `[SEL-2]` — whose count a smart-pointer type uses: `Some(false)` for Ember's `Shared`,
-    /// `SyncShared` and `Weak`, `Some(true)` for C++'s `std.ffi.CppShared` and `std.ffi.CppWeak`.
+    /// `[SEL-2]`, `[WK-14]` — whose count a smart-pointer type uses: `Some(false)` for Ember's
+    /// owners and links (`shares T`, `shares mut T`, `weakref T`, `SyncShared[T]`), `Some(true)` for
+    /// C++'s `std.ffi.CppShared` and `std.ffi.CppWeak`.
     fn counted_family(&self, ty: Ty) -> Option<bool> {
+        if matches!(self.types.kind(ty), TyKind::Link { .. }) {
+            return Some(false);
+        }
         let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
         match &self.types.struct_def(id).origin {
             Some((name, args)) if args.len() == 1 => match name.as_str() {
-                "Shared" | "SyncShared" | "Weak" => Some(false),
+                "SyncShared" => Some(false),
                 "std.ffi.CppShared" | "std.ffi.CppWeak" => Some(true),
                 _ => None,
             },
@@ -54199,7 +54277,7 @@ impl<'a> Checker<'a> {
             )
             .primary_label(format!("this is `{found}`"))
             .note(format!("`{counted_here}` is counted by Ember and `{cpp_side}` by C++; a conversion would leave each count believing it owns the object, and both would free it [SEL-2]"))
-            .help("keep each object on its own side: an Ember value in a `Shared`, a `std::shared_ptr` C++ made in a `CppShared`, and share the object itself through a reference or a C++ call"),
+            .help("keep each object on its own side: an Ember value held `shares`, a `std::shared_ptr` C++ made in a `CppShared`, and share the object itself through a reference or a C++ call"),
         )
     }
 
@@ -61965,6 +62043,8 @@ impl<'a> Checker<'a> {
                 None => {
                     let value = self.synth_committed(&arg.value);
                     let value = self.read_through(value);
+                    // `[RC-1]` — an owner prints as its value.
+                    let value = self.read_link_through(value);
                     let value = self.range_as_repr(value);
                     let value = if matches!(*self.types.kind(value.ty), TyKind::Vec { text: true, .. })
                     {
@@ -64285,7 +64365,7 @@ fn type_shaped(expr: &ast::Expr) -> bool {
             | ast::ExprKind::IndexOrInstantiate { .. }
             | ast::ExprKind::Tuple(_)
             | ast::ExprKind::ArrayRepeat { .. }
-    ) || matches!(&expr.kind, ast::ExprKind::Owned(inner) if type_shaped(inner))
+    ) || matches!(&expr.kind, ast::ExprKind::Owned(inner) | ast::ExprKind::Link { value: inner, .. } if type_shaped(inner))
 }
 
 fn has_attribute(attrs: &[ast::Attribute], name: &str) -> bool {

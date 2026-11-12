@@ -6,7 +6,7 @@
 #$ stdout: 7
 #$ stdout: end
 
-# A loop over `Array[Weak[Token]]` borrows the Weak handle stored in the
+# A loop over `Array[weakref Token]` borrows the `weakref` handle stored in the
 # Array. Construction and insertion retain the weak count; iteration itself
 # must not manufacture another weak owner.
 class Token:
@@ -18,15 +18,14 @@ class Token:
 # would go with it.
 fn program():
     token = Token(7)
-    weak: Weak[Token] = Weak(token)
-    copies: Array[Weak[Token]] = Array[Weak[Token]]()
+    weak: weakref Token = weakref token
+    copies: Array[weakref Token] = Array[weakref Token]()
     copies.push(owns weak)
     for observed in copies:
-        match observed.upgrade():
-            Some(owner):
-                println(owner.value)
-            None:
-                println(0)
+        if observed exists as owner:
+            println(owner.value)
+        else:
+            println(0)
 
 fn main():
     program()

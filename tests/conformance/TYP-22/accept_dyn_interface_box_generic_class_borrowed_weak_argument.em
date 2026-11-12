@@ -8,11 +8,11 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 #$ assert-c: !contains("ember_box_new_copy")
 
-# A default borrowed Weak[Shared[Token]] argument crossing a Box[dyn] call is
+# A default borrowed weakref Token argument crossing a Box[dyn] call is
 # reused by the generic class implementation. Dynamic dispatch must upgrade
-# the observer through Shared.get() without copying it at the call boundary.
+# the observer through the owner read as its value without copying it at the call boundary.
 interface Observe:
-    fn observe(weak: Weak[Shared[Token]]) -> i32
+    fn observe(weak: weakref Token) -> i32
 
 struct Token:
     value: i32
@@ -21,14 +21,13 @@ struct Token:
 class Reader implements Observe:
     marker: T
 
-    fn observe(weak: Weak[Shared[Token]]) -> i32:
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+    fn observe(weak: weakref Token) -> i32:
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
 fn main():
-    strong = Shared(Token(7))
+    strong = shares mut Token(7)
     boxed: owns dyn Observe = owns Reader[bool](true)
-    println(boxed.observe(Weak(strong)))
+    println(boxed.observe(weakref strong))

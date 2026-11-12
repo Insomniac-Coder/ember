@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: JOB-2, THR-10
-#$ error[E7004]: the job's function captures `shared`, a `Shared[i64]`, which is not Send
+#$ error[E7004]: the job's function captures `shared`, a `shares mut i64`, which is not Send
 #$ error[E3014]: `jobs.scope()` must be bound by `with`
 #$ error[E2020]: `jobs.submit` takes a function of no arguments that gives nothing, found `fn() -> i64`
 # `[JOB-2]` — a submitted job may outlive every local of the code that submitted it, so it holds no
@@ -13,7 +13,7 @@ fn count() -> int:
     return 3
 
 fn main():
-    shared = Shared(0)
-    jobs.submit(owns owned fn() => shared.get())
+    shared = shares mut 0
+    jobs.submit(owns owned fn() => shared)
     loose = jobs.scope()
     jobs.submit(count)

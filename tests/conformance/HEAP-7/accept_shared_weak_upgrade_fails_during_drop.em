@@ -8,19 +8,16 @@
 #$ assert-c: contains(ember_weak_release)
 
 struct Node:
-    weak: Weak[Shared[Node]]
+    weak: weakref Node
 
     fn drop():
         # The final strong release has started deinitialisation, so this
         # upgrade must fail rather than resurrecting the payload.
-        match this.weak.upgrade():
-            Some(_):
-                println(0)
-            None:
-                println(1)
+        if this.weak exists as _:
+            println(0)
+        else:
+            println(1)
 
 fn main():
-    node = Shared(Node(Weak[Shared[Node]].empty()))
-    alias = node
-    payload = node.get_mut()
-    payload.weak = Weak(alias)
+    node = shares mut Node(None)
+    node.weak = weakref node

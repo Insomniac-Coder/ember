@@ -21,11 +21,11 @@ enum List[T]:
 [T]
 class Tree:
     value: T
-    kids: Array[Weak[Tree[T]]]
+    kids: Array[weakref Tree[T]]
 
     fn init(value: T):
         this.value = value
-        this.kids = Array[Weak[Tree[T]]]()
+        this.kids = Array[weakref Tree[T]]()
 
 fn node_sum(n: Node[int]) -> int:
     match n.next:
@@ -48,5 +48,6 @@ fn main():
     println(length(List[int].Cons(1, owns List[int].Cons(2, owns List[int].Nil))))
     root = Tree[int](1)
     kid = Tree[int](2)
-    root.kids.push(owns Weak(kid))
-    println(root.value, root.kids[0].upgrade().unwrap().value)
+    root.kids.push(owns weakref kid)
+    if root.kids[0] exists as first:
+        println(root.value, first.value)

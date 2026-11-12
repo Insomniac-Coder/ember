@@ -7,9 +7,9 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 #$ assert-c: !contains("ember_box_new_copy")
 
-# A generic class carrying Weak[Shared[T]] remains a class-handle payload when
+# A generic class carrying weakref T remains a class-handle payload when
 # erased into Box[dyn Render]. Dynamic dispatch upgrades its weak field through
-# the explicit Shared.get() boundary; the box later uses class field-drop glue.
+# the explicit the owner read as its value boundary; the box later uses class field-drop glue.
 interface Render:
     fn render() -> i32
 
@@ -18,17 +18,16 @@ struct Token:
 
 [T]
 class Observer implements Render:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
     marker: T
 
     fn render() -> i32:
-        match this.weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+        if this.weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
 fn main():
-    strong = Shared(Token(7))
-    boxed: owns dyn Render = owns Observer[bool](Weak(strong), true)
+    strong = shares mut Token(7)
+    boxed: owns dyn Render = owns Observer[bool](weakref strong, true)
     println(boxed.render())

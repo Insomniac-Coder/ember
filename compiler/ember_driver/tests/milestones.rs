@@ -4544,7 +4544,7 @@ fn cycle_inspection_reports_edge_kinds_and_shortest_cycle() {
         report.stdout
     );
     assert!(
-        report.stdout.contains("weak Child.root: Weak[Root] -> Root"),
+        report.stdout.contains("weak Child.root: weakref Root -> Root"),
         "cycle inspection omitted a weak edge:\n{}",
         report.stdout
     );
@@ -4866,7 +4866,7 @@ fn cycle_lint_offers_only_safe_weak_suggestions() {
     );
     assert_eq!(direct.exit, 0, "direct-cycle check failed:\n{}", direct.stderr);
     assert!(
-        direct.stdout.contains("\"replacement\":\"Weak[Child]\""),
+        direct.stdout.contains("\"replacement\":\"weakref Child\""),
         "direct class edge lacks a machine-applicable Weak replacement:\n{}",
         direct.stdout
     );
@@ -4898,12 +4898,12 @@ fn cycle_lint_offers_only_safe_weak_suggestions() {
     );
     assert_eq!(mixed.exit, 0, "mixed-cycle check failed:\n{}", mixed.stderr);
     assert!(
-        mixed.stdout.contains("\"replacement\":\"Weak[Owner]\""),
+        mixed.stdout.contains("\"replacement\":\"weakref Owner\""),
         "a later direct class edge in the cycle should receive the safe Weak replacement:\n{}",
         mixed.stdout
     );
     assert!(
-        mixed.stdout.contains("replace `Child.parent` with `Weak[Owner]`"),
+        mixed.stdout.contains("replace `Child.parent` with `weakref Owner`"),
         "the suggestion should name the first safely weakenable edge:\n{}",
         mixed.stdout
     );

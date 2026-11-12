@@ -182,7 +182,7 @@ fn direct_weak_replacement(types: &TypeTable, field_owner: ClassId, ty: Ty) -> O
     let TyKind::Class(target) = types.kind(ty) else {
         return None;
     };
-    Some(format!("Weak[{}]", class_name(types, *target)))
+    Some(format!("weakref {}", class_name(types, *target)))
 }
 
 fn inspect_strong_edge(types: &TypeTable, edge: &StrongEdge) -> OwnershipEdge {
@@ -625,7 +625,7 @@ fn report_cycle(types: &TypeTable, cycle: &[StrongEdge], sink: &mut Sink) {
         // no rewrite of its type (an `Option`, a collection, a generic recipe).
         let owner = class_name(types, ClassId(first.field_owner as u32));
         diagnostic = diagnostic.help(format!(
-            "if `{owner}.{}` is a back-reference, make it hold a `Weak` handle",
+            "if `{owner}.{}` is a back-reference, make it a `weakref` link",
             first.field
         ));
     }

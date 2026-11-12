@@ -13,38 +13,35 @@
 struct Token:
     value: i32
 
-fn expired() -> Weak[Shared[Token]]:
-    shared = Shared(Token(7))
-    return Weak(shared)
+fn expired() -> weakref Token:
+    shared = shares mut Token(7)
+    return weakref shared
 
 # `program` holds the test, so its values die before `main`'s last
 # statement: at the end of `main` a release build leaves what only frees
 # memory to the operating system (`[PHIL-5]`), and the drops read here
 # would go with it.
 fn program():
-    empty: Weak[Shared[Token]] = Weak[Shared[Token]].empty()
-    match empty.upgrade():
-        Some(_):
-            println(0)
-        None:
-            println(1)
+    empty: weakref Token = None
+    if empty exists as _:
+        println(0)
+    else:
+        println(1)
 
-    shared = Shared(Token(42))
-    weak = Weak(shared)
+    shared = shares mut Token(42)
+    weak = weakref shared
     copy = weak
-    match copy.upgrade():
-        Some(owner):
-            value = owner.get()
-            println(value.value)
-        None:
-            println(0)
+    if copy exists as owner:
+        value = owner
+        println(value.value)
+    else:
+        println(0)
 
     stale = expired()
-    match stale.upgrade():
-        Some(_):
-            println(0)
-        None:
-            println(2)
+    if stale exists as _:
+        println(0)
+    else:
+        println(2)
 
 fn main():
     program()

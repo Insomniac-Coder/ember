@@ -9,11 +9,11 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# A borrowed Weak[Shared[Token]] argument crossing a ref mut dyn carrier
+# A borrowed weakref Token argument crossing a ref mut dyn carrier
 # remains a valid observer after expiry. The mutable generic class closes its
-# write interval while upgrade() takes None without copying at dispatch.
+# write interval while `exists as` takes None without copying at dispatch.
 interface Observe:
-    fn observe(weak: Weak[Shared[Token]]) -> i32
+    fn observe(weak: weakref Token) -> i32
 
 struct Token:
     value: i32
@@ -23,19 +23,18 @@ class Reader implements Observe:
     marker: T
     count: i32
 
-    fn observe(weak: Weak[Shared[Token]]) -> i32:
+    fn observe(weak: weakref Token) -> i32:
         this.count = this.count + 1
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
-fn expired() -> Weak[Shared[Token]]:
-    strong = Shared(Token(7))
-    return Weak(strong)
+fn expired() -> weakref Token:
+    strong = shares mut Token(7)
+    return weakref strong
 
-fn inspect(ref mut value: dyn Observe, weak: Weak[Shared[Token]]) -> i32:
+fn inspect(ref mut value: dyn Observe, weak: weakref Token) -> i32:
     return value.observe(weak)
 
 # `program` holds the test, so its values die before `main`'s last

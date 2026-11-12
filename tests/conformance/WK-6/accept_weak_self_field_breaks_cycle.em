@@ -7,7 +7,7 @@
 # must not contribute a strong one-node SCC or receive L3001.
 class Node:
     value: i32 = 6
-    next: Weak[Node] = Weak[Node].empty()
+    next: weakref Node = None
 
 fn main():
     node = Node()

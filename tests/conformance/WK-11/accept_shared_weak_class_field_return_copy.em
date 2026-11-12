@@ -6,24 +6,23 @@
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# Returning a Weak[Shared[T]] read from a class field gives the caller its own
-# weak handle before the borrowed Holder parameter ends. The returned observer
+# Returning a weakref T read from a class field gives the caller its own
+# link before the borrowed Holder parameter ends. The returned observer
 # may upgrade while the independent strong owner remains live.
 struct Token:
     value: i32
 
 class Holder:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
 
-fn observe(holder: Holder) -> Weak[Shared[Token]]:
-    return holder.weak
+fn observe(holder: Holder) -> weakref Token:
+    return weakref holder.weak
 
 fn main():
-    strong = Shared(Token(7))
-    holder = Holder(Weak(strong))
+    strong = shares mut Token(7)
+    holder = Holder(weakref strong)
     weak = observe(holder)
-    match weak.upgrade():
-        Some(owner):
-            println(owner.get().value)
-        None:
-            println(0)
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

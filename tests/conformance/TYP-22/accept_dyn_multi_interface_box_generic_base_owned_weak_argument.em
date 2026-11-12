@@ -10,11 +10,11 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 #$ assert-c: !contains("ember_box_new_copy")
 
-# An owned Weak[Shared[Token]] argument crossing a composed dynamic box gets
+# An owned weakref Token argument crossing a composed dynamic box gets
 # its independent observer copy even when the implementation inherits fields
 # from a generic base. The second slot still updates that same payload.
 interface Observe:
-    fn observe(owns weak: Weak[Shared[Token]]) -> i32
+    fn observe(owns weak: weakref Token) -> i32
 
 interface Bump:
     fn bump() -> i32
@@ -36,19 +36,18 @@ class Holder(Base[T]) implements Observe, Bump:
     fn init(marker: T):
         super.init(marker)
 
-    fn observe(owns weak: Weak[Shared[Token]]) -> i32:
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+    fn observe(owns weak: weakref Token) -> i32:
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
     fn bump() -> i32:
         this.count = this.count + 1
         return this.count
 
 fn main():
-    strong = Shared(Token(7))
+    strong = shares mut Token(7)
     boxed: owns dyn Observe + Bump = owns Holder[bool](true)
-    println(boxed.observe(owns Weak(strong)))
+    println(boxed.observe(owns weakref strong))
     println(boxed.bump())

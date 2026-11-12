@@ -8,41 +8,39 @@
 #$ assert-c: contains("ember_weak_release(")
 
 # A base-typed handle to a generic derived class dispatches its virtual method
-# through the derived slot. The inherited Weak[Shared[T]] field remains a normal
-# weak observer across the upcast and is read only through Shared.get().
+# through the derived slot. The inherited weakref T field remains a normal
+# weak observer across the upcast and is read only through the owner read as its value.
 struct Token:
     value: i32
 
 [T]
 open class Base:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
     marker: T
 
-    fn init(weak: Weak[Shared[Token]], marker: T):
-        this.weak = weak
+    fn init(weak: weakref Token, marker: T):
+        this.weak = weakref weak
         this.marker = marker
 
     virtual fn value() -> i32:
-        match this.weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+        if this.weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
 [T]
 class Derived(Base[T]):
-    fn init(weak: Weak[Shared[Token]], marker: T):
+    fn init(weak: weakref Token, marker: T):
         super.init(weak, marker)
 
     override fn value() -> i32:
-        match this.weak.upgrade():
-            Some(owner):
-                return owner.get().value + 1
-            None:
-                return 1
+        if this.weak exists as owner:
+            return owner.value + 1
+        else:
+            return 1
 
 fn main():
-    strong = Shared(Token(7))
-    derived = Derived[bool](Weak(strong), true)
+    strong = shares mut Token(7)
+    derived = Derived[bool](weakref strong, true)
     base: Base[bool] = derived
     println(base.value())

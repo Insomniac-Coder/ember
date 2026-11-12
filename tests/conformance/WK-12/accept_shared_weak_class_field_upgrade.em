@@ -4,20 +4,19 @@
 #$ stdout: 7
 #$ assert-c: contains("ember_weak_upgrade(")
 
-# A Weak[Shared[T]] may live in a class field. Reading that field gives a
-# borrowed weak handle; upgrading it while the separate strong owner is live
-# returns the same Shared allocation.
+# A weakref T may live in a class field. Reading that field gives a
+# borrowed link; upgrading it while the separate strong owner is live
+# returns the same `shares` allocation.
 struct Token:
     value: i32
 
 class Holder:
-    weak: Weak[Shared[Token]]
+    weak: weakref Token
 
 fn main():
-    owner = Shared(Token(7))
-    holder = Holder(Weak(owner))
-    match holder.weak.upgrade():
-        Some(live):
-            println(live.get().value)
-        None:
-            println(0)
+    owner = shares mut Token(7)
+    holder = Holder(weakref owner)
+    if holder.weak exists as live:
+        println(live.value)
+    else:
+        println(0)

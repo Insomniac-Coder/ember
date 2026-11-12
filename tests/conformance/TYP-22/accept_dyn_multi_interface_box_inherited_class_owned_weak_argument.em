@@ -14,7 +14,7 @@
 # inherited, non-generic class implementation, while the second slot updates
 # the same Pixel payload.
 interface Observe:
-    fn observe(owns weak: Weak[Shared[Token]]) -> i32
+    fn observe(owns weak: weakref Token) -> i32
 
 interface Bump:
     fn bump() -> i32
@@ -32,19 +32,18 @@ class Pixel(Base) implements Observe, Bump:
     fn init():
         super.init()
 
-    fn observe(owns weak: Weak[Shared[Token]]) -> i32:
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+    fn observe(owns weak: weakref Token) -> i32:
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
     fn bump() -> i32:
         this.count = this.count + 1
         return this.count
 
 fn main():
-    strong = Shared(Token(7))
+    strong = shares mut Token(7)
     boxed: owns dyn Observe + Bump = owns Pixel()
-    println(boxed.observe(owns Weak(strong)))
+    println(boxed.observe(owns weakref strong))
     println(boxed.bump())

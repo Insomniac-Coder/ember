@@ -13,7 +13,7 @@
 # Observe + Bump while receiving a borrowed weak argument. Both ordered slots
 # dispatch through the one payload and the inherited counter is updated.
 interface Observe:
-    fn observe(weak: Weak[Shared[Token]]) -> i32
+    fn observe(weak: weakref Token) -> i32
 
 interface Bump:
     fn bump() -> i32
@@ -35,17 +35,16 @@ class Holder(Base[T]) implements Observe, Bump:
     fn init(marker: T):
         super.init(marker)
 
-    fn observe(weak: Weak[Shared[Token]]) -> i32:
-        match weak.upgrade():
-            Some(owner):
-                return owner.get().value
-            None:
-                return 0
+    fn observe(weak: weakref Token) -> i32:
+        if weak exists as owner:
+            return owner.value
+        else:
+            return 0
 
     fn bump() -> i32:
         return 1
 
-fn inspect(value: ref dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
+fn inspect(value: ref dyn Observe + Bump, weak: weakref Token) -> i32:
     return value.observe(weak) + value.bump()
 
 # `program` holds the test, so its values die before `main`'s last
@@ -53,9 +52,9 @@ fn inspect(value: ref dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
 # memory to the operating system (`[PHIL-5]`), and the drops read here
 # would go with it.
 fn program():
-    strong = Shared(Token(7))
+    strong = shares mut Token(7)
     holder = Holder[bool](true)
-    println(inspect(ref holder, Weak(strong)))
+    println(inspect(ref holder, weakref strong))
 
 fn main():
     program()

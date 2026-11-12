@@ -8,38 +8,37 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 #$ assert-c: !contains("ember_box_new_copy")
 
-# A dynamic box may return a Weak[Token] field inherited from a generic base.
+# A dynamic box may return a weakref Token field inherited from a generic base.
 # The adapter sees one derived payload while base initialization and teardown
 # retain and release the class-owner observer normally.
 interface Observe:
-    fn observer() -> Weak[Token]
+    fn observer() -> weakref Token
 
 class Token:
     value: i32
 
 [T]
 open class Base:
-    weak: Weak[Token]
+    weak: weakref Token
     marker: T
 
-    fn init(weak: Weak[Token], marker: T):
-        this.weak = weak
+    fn init(weak: weakref Token, marker: T):
+        this.weak = weakref weak
         this.marker = marker
 
 [T]
 class Holder(Base[T]) implements Observe:
-    fn init(weak: Weak[Token], marker: T):
+    fn init(weak: weakref Token, marker: T):
         super.init(weak, marker)
 
-    fn observer() -> Weak[Token]:
-        return this.weak
+    fn observer() -> weakref Token:
+        return weakref this.weak
 
 fn main():
     strong = Token(7)
-    boxed: owns dyn Observe = owns Holder[bool](Weak(strong), true)
+    boxed: owns dyn Observe = owns Holder[bool](weakref strong, true)
     weak = boxed.observer()
-    match weak.upgrade():
-        Some(owner):
-            println(owner.value)
-        None:
-            println(0)
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

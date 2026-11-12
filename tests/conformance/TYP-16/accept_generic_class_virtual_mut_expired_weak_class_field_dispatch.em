@@ -8,19 +8,19 @@
 #$ assert-c: contains("ember_weak_upgrade(")
 
 # A base-typed generic handle dispatches a mut virtual call after its inherited
-# Weak[Token] field has expired. The derived override still updates its counter,
+# weakref Token field has expired. The derived override still updates its counter,
 # but the weak upgrade takes None without reconstructing the former class owner.
 class Token:
     value: i32
 
 [T]
 open class Base:
-    weak: Weak[Token]
+    weak: weakref Token
     marker: T
     count: i32
 
-    fn init(weak: Weak[Token], marker: T, count: i32):
-        this.weak = weak
+    fn init(weak: weakref Token, marker: T, count: i32):
+        this.weak = weakref weak
         this.marker = marker
         this.count = count
 
@@ -30,20 +30,19 @@ open class Base:
 
 [T]
 class Derived(Base[T]):
-    fn init(weak: Weak[Token], marker: T, count: i32):
+    fn init(weak: weakref Token, marker: T, count: i32):
         super.init(weak, marker, count)
 
     override fn tick() -> i32:
         this.count = this.count + 2
-        match this.weak.upgrade():
-            Some(owner):
-                return owner.value + this.count
-            None:
-                return this.count
+        if this.weak exists as owner:
+            return owner.value + this.count
+        else:
+            return this.count
 
-fn expired() -> Weak[Token]:
+fn expired() -> weakref Token:
     strong = Token(7)
-    return Weak(strong)
+    return weakref strong
 
 fn main():
     derived = Derived[bool](expired(), true, 0)

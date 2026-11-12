@@ -6,9 +6,9 @@
 #$ stdout: 7
 #$ stdout: end
 
-# A normal closure keeps the loop's borrowed Weak[Shared[T]] handle by
-# reference. `upgrade` must see the same Shared allocation without a third weak
-# retain, and the resulting Shared owner still requires explicit `get()`.
+# A normal closure keeps the loop's borrowed weakref T handle by
+# reference. `upgrade` must see the same `shares` allocation without a third weak
+# retain, and the resulting `shares` owner still requires explicit `get()`.
 struct Token:
     value: i32
 
@@ -17,18 +17,15 @@ struct Token:
 # memory to the operating system (`[PHIL-5]`), and the drops read here
 # would go with it.
 fn program():
-    owner = Shared(Token(7))
-    weak: Weak[Shared[Token]] = Weak(owner)
-    copies: Array[Weak[Shared[Token]]] = Array[Weak[Shared[Token]]]()
+    owner = shares mut Token(7)
+    weak: weakref Token = weakref owner
+    copies: Array[weakref Token] = Array[weakref Token]()
     copies.push(owns weak)
     for observed in copies:
         task = fn() -> i32:
-            match observed.upgrade():
-                Some(live):
-                    value = live.get()
-                    return value.value
-                None:
-                    return 0
+            if observed exists as live:
+                return live.value
+            return 0
         println(task())
 
 fn main():

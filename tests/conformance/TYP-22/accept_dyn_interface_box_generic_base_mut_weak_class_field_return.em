@@ -10,40 +10,39 @@
 #$ assert-c: !contains("ember_box_new_copy")
 
 # A mutable dynamic slot may update a generic base field and return the
-# inherited Weak[Token] field from its derived payload. The write interval ends
+# inherited weakref Token field from its derived payload. The write interval ends
 # with the call while the copied weak observer remains independently usable.
 interface Revise:
-    fn observer() -> Weak[Token]
+    fn observer() -> weakref Token
 
 class Token:
     value: i32
 
 [T]
 open class Base:
-    weak: Weak[Token]
+    weak: weakref Token
     marker: T
     count: i32
 
-    fn init(weak: Weak[Token], marker: T):
-        this.weak = weak
+    fn init(weak: weakref Token, marker: T):
+        this.weak = weakref weak
         this.marker = marker
         this.count = 0
 
 [T]
 class Holder(Base[T]) implements Revise:
-    fn init(weak: Weak[Token], marker: T):
+    fn init(weak: weakref Token, marker: T):
         super.init(weak, marker)
 
-    fn observer() -> Weak[Token]:
+    fn observer() -> weakref Token:
         this.count = this.count + 1
-        return this.weak
+        return weakref this.weak
 
 fn main():
     strong = Token(7)
-    boxed: owns dyn Revise = owns Holder[bool](Weak(strong), true)
+    boxed: owns dyn Revise = owns Holder[bool](weakref strong, true)
     weak = boxed.observer()
-    match weak.upgrade():
-        Some(owner):
-            println(owner.value)
-        None:
-            println(0)
+    if weak exists as owner:
+        println(owner.value)
+    else:
+        println(0)

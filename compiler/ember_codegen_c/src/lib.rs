@@ -5136,7 +5136,7 @@ impl Emitter<'_> {
                 let weak_replacement = if self.types.class_def(field_owner).origin.is_none() {
                     match self.types.kind(field.ty) {
                         TyKind::Class(target) => Some(format!(
-                            "Weak[{}]",
+                            "weakref {}",
                             self.types.class_def(*target).name
                         )),
                         _ => None,

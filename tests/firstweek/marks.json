@@ -10,7 +10,7 @@
     "helps": ["R1:P24", "R2:P25", "R2:P21", "R2:P6", "R2:P3", "R3:P26"]
   },
   "03_scene_graph.em": {
-    "mark": "rejected", "shape": "O2", "codes": ["E2020", "E3013"], "after_helps": "accepted",
+    "mark": "rejected", "shape": "none:E1010", "codes": ["E1010", "E2020"], "after_helps": "accepted",
     "shapes": ["P23"],
     "helps": ["R1:P23", "R2:O2"]
   },

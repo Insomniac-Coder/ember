@@ -2,10 +2,10 @@
 #$ rules: OWN-7, HEAP-3, HEAP-4, HEAP-6, RC-1, RC-2e, CTL-1, CTL-2, TYP-14, RNG-4
 #$ profiles: debug, development, release
 #$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 0
-#$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 2
+#$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 1
 #$ stdout: 7
 
-# `[RC-2e]` also covers a borrowed value-type loop element with a Shared field.
+# `[RC-2e]` also covers a borrowed value-type loop element with a `shares` field.
 # Projecting `entry.token` is borrowed from the Array element until the owned
 # call boundary retains precisely that field for the callee.
 # Range facts prove the loop's index in bounds (`[RNG-4]`), so the loop is
@@ -13,16 +13,15 @@
 struct Token:
     value: i32
 
-@derive(Copy)
 struct Entry:
-    token: Shared[Token]
+    token: shares mut Token
 
-fn consume(owns token: Shared[Token]) -> i32:
-    value = token.get()
+fn consume(owns token: shares mut Token) -> i32:
+    value = token
     return value.value
 
 fn main():
     entries: Array[Entry] = Array[Entry]()
-    entries.push(owns Entry(Shared(Token(7))))
+    entries.push(owns Entry(shares mut Token(7)))
     for entry in entries:
-        println(consume(owns entry.token))
+        println(consume(owns (shares mut entry.token)))

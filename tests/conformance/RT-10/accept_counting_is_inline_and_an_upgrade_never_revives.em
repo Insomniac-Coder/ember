@@ -26,19 +26,17 @@ fn program():
     p = Local(2)
     others = [p, p]
     println(copies[0].value + copies[1].value, others[0].value + others[1].value)
-    weak: Weak[Shared] = Weak(s)
+    weak: weakref Shared = weakref s
     copies.clear()
-    match weak.upgrade():
-        Some(still):
-            println("alive", still.value)
-        None:
-            println("gone")
+    if weak exists as still:
+        println("alive", still.value)
+    else:
+        println("gone")
     s = Shared(3)
-    match weak.upgrade():
-        Some(still):
-            println("alive", still.value)
-        None:
-            println("gone")
+    if weak exists as still:
+        println("alive", still.value)
+    else:
+        println("gone")
 
 fn main():
     program()
