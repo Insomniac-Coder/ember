@@ -2089,3 +2089,20 @@ fn a_changed_cpp_header_refuses_the_reload_and_an_overlay_does_not() {
         assert_eq!(refused, label == "reload-header-changed", "{label}: {}", run.stderr);
     }
 }
+
+/// `[DIA-14]` (D-835) — a field whose type does not resolve is reported once, at the program's own
+/// line: the helper written for its default repeats the error and is dropped.
+#[test]
+fn an_unresolved_field_type_is_reported_once_in_a_reloadable_build() {
+    let root = workspace_root();
+    let (package, file) = package(
+        "reload-unresolved-field",
+        RELOAD_ALL,
+        "struct P:\n    x: Missing = 1\n    y: int = 2\n\nfn main():\n    p = P()\n    println(p.y)\n",
+    );
+    let out = package.join("target");
+    let built = ember(&["build", &file.to_string_lossy(), "--out-dir", &out.to_string_lossy()], &root);
+    assert_ne!(built.exit, 0, "{}", built.stderr);
+    assert_eq!(built.stderr.matches("cannot find type `Missing`").count(), 1, "{}", built.stderr);
+    assert!(!built.stderr.contains("reload helpers"), "{}", built.stderr);
+}
