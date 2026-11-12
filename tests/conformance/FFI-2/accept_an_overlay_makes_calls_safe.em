@@ -12,16 +12,16 @@
 # `borrowed count(n)` is a `Span[i32]`, `int*` a `MutSpan[i32]`, `int*` with `borrowed one` a
 # `mut` parameter. `[FFI-13]` — the overlay's `extend` block adds a method to the header's struct.
 # `[FFI-30a]` — it renames a function (`add`) and hides one (`widget_free`), and changes no type:
-# `Size` is the header's struct. An `owned` parameter takes the box `returns_owned` gave.
+# `Size` is the header's struct. An `owns` parameter takes the `owns w.Widget` `returns_owned` gave.
 
 import c "./widgets.c" with (overlay = "overlays/widgets.em") as w
 
-# The box frees its widget, with `widget_free`, when it is dropped here.
+# The `owns w.Widget` frees its widget, with `widget_free`, when it ends here.
 fn id_of_new(n: i32) -> i32:
     widget = w.widget_new(n)
     id: i32 = 0
-    unsafe:  # SAFETY(ffi): the box keeps the widget alive for the call
-        id = w.widget_id(widget.as_ptr() as *w.Widget)
+    unsafe:  # SAFETY(ffi): the `owns w.Widget` keeps the widget alive for the call
+        id = w.widget_id((ref widget) as *w.Widget)
     return id
 
 fn main():

@@ -6,8 +6,9 @@ error[E3020]: cannot mutate `values` while it is borrowed by this loop
 6 |         values.push(owns 3)
   |         ^^^^^^^^^^^^^^^^^^^ mutable borrow here
   |
-  = help: collect the indices or values first, then mutate; use `retain` or `drain` when the operation fits
-  = help: or iterate over a fixed index range and mutate only after taking the current value
+  = help: move line 6, `values.push(owns 3)`, below the loop
+  = help: or keep a list of your own (`added = []`), push what the loop adds to `added` inside the loop, and add its items to `values` after the loop
+  = help: or, to drop items, call `values.retain(owns fn(item) => keep(item))` after the loop
   = note: a `for` loop borrows the iterable until the loop ends (CTL-2)
 
 error: could not compile due to 1 error(s)

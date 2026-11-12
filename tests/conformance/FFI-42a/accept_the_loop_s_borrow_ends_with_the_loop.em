@@ -15,21 +15,21 @@ import cpp "containers.hpp" with (overlay = "overlays/containers.em")
 fn main():
     match cpp.Bag.new():
         Ok(bag):
-            _ = bag.get_mut().put(1)
-            _ = bag.get_mut().put(2)
+            _ = bag.put(1)
+            _ = bag.put(2)
             largest: i32 = 0
-            for item in bag.get_mut():
+            for item in bag:
                 if item > largest:
                     largest = item
-            _ = bag.get_mut().put(largest + 1)
+            _ = bag.put(largest + 1)
             println(largest + 1, largest)
             count = 0
-            for _ in bag.get_mut():
+            for _ in bag:
                 count += 1
-            _ = bag.get_mut().put(10)
+            _ = bag.put(10)
             println(count + 1, count)
             total: i32 = 0
-            for item in bag.get_mut():
+            for item in bag:
                 total += item
             println(total)
         Err(error):

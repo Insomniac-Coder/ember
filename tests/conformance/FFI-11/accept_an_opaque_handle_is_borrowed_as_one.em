@@ -14,14 +14,14 @@ import c "./handles.c" with (overlay = "overlays/handles.em") as h
 # The box frees its counter, with `counter_free`, when it is dropped here.
 fn count() -> i32:
     counter = h.counter_new(5)
-    h.counter_add(counter.get_mut(), 2)
-    same: ref h.Counter = h.counter_same(counter.get())
-    println(h.counter_get(counter.get()), h.counter_get(same), h.counter_get_or(Some(counter.get()), 0))
-    again: ref mut h.Counter = h.counter_same_mut(counter.get_mut())
+    h.counter_add(ref mut counter, 2)
+    same: ref h.Counter = h.counter_same(counter)
+    println(h.counter_get(counter), h.counter_get(same), h.counter_get_or(Some(counter), 0))
+    again: ref mut h.Counter = h.counter_same_mut(ref mut counter)
     h.counter_add(again, 2)
     h.counter_add_if(None, 100)
-    h.counter_add_if(Some(counter.get_mut()), 1)
-    return h.counter_get(counter.get())
+    h.counter_add_if(Some(ref mut counter), 1)
+    return h.counter_get(counter)
 
 fn main():
     println(count(), h.counter_get_or(None, 4))

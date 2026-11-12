@@ -16,7 +16,7 @@
 #$ stdout: 1
 # `[FFI-32]` — a standard-layout, trivially copyable class is a `@layout(c)` struct by value, with
 # its constructor as `new` and its methods; any other class is opaque, made only by its
-# constructor, which returns a `ForeignBox` its destructor frees. `[FFI-40]` — a `const` method is
+# constructor, which returns an `owns T` its destructor ends. `[FFI-40]` — a `const` method is
 # `self`, any other `mut self`; an `&&`-qualified one is skipped (`W5033`). `[FFI-41]` — a static
 # member function is an associated function. `[FFI-17]` — each is one thunk.
 
@@ -34,12 +34,12 @@ fn counter() -> (c_int, c_int, String):
     unsafe:  # SAFETY(ffi): the box owns the object for every call
         match cpp.Counter.new(5):
             Ok(counter):
-                _ = counter.get_mut().add(3)
-                match counter.get_mut().add(-1):
+                _ = counter.add(3)
+                match counter.add(-1):
                     Ok(_):
                         return (0, 0, "no exception".to_string())
                     Err(error):
-                        return (counter.get().total(), counter.get().count(), f"{error.type_name}: {error.what}")
+                        return (counter.total(), counter.count(), f"{error.type_name}: {error.what}")
             Err(error):
                 return (0, 0, error.what)
 

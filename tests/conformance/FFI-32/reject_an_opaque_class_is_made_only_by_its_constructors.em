@@ -2,7 +2,7 @@
 #$ rules: FFI-32
 #$ warning[W5033]: `Counter.consume` is not imported
 # `[FFI-32]` — an opaque C++ class cannot be made from Ember but through its imported constructors
-# (`E5032`): `Counter.new(…)`, which returns the `ForeignBox` its destructor frees.
+# (`E5032`): `Counter.new(…)`, which returns the `owns T` its destructor ends.
 
 import cpp "classes.hpp"
 

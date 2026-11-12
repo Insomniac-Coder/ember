@@ -8,8 +8,8 @@ import std.jobs
 
 fn leak() -> ref mut int:
     arena = jobs.local_arena()
-    return arena.alloc(5)    #$ error[E3060]: the job's arena view does not live long enough
-    #$ error[E3061]: arena allocation cannot outlive `arena`
+    return arena.alloc(5)    #$ error[E3063]: the job's arena view does not live long enough
+    #$ error[E3063]: arena allocation cannot outlive `arena`
 
 fn main():
     kept: Option[ref mut int] = None

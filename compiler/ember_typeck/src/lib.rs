@@ -597,6 +597,13 @@ fn check_round(
         checker.current_module = index;
         checker.collect_foreign_opaque_types(&loaded.module);
     }
+    // `[FFI-36a]`, `[FFI-33b]` — which types results give foreign objects of, and which they bind
+    // to their thread, before any `owns T` of one is made: an `owns T` of such a type holds the
+    // foreign object, two words for one bound to its thread.
+    for (index, loaded) in modules.iter().enumerate() {
+        checker.current_module = index;
+        checker.collect_foreign_results(&loaded.module);
+    }
     // Recipes may refer to earlier recipes in their declaring module. Walking
     // dependencies before importers also makes the normal module case
     // deterministic while all nominal headers are already globally visible.
@@ -2050,6 +2057,8 @@ struct ClosureCall {
     once: bool,
     /// An `owned fn`: its environment owns what it captured (`[CLO-2]`).
     owned: bool,
+    /// The capture a `once` closure gives away, as the program names it (`[CLO-6]`).
+    moved: Option<Symbol>,
 }
 
 /// Whose field default `check_field_default` checks.
@@ -2952,6 +2961,15 @@ struct Checker<'a> {
     /// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — what an opaque foreign type's declaration says of
     /// its objects, by the type's qualified name.
     foreign_type_contracts: HashMap<Symbol, ForeignTypeContract>,
+    /// `[FFI-36a]` — the one destructor of each foreign type that its first `returns_owned
+    /// (destructor=f)` result names, where its declaration names none: the module and the name.
+    foreign_result_destructors: HashMap<Symbol, (usize, ast::Ident)>,
+    /// `[FFI-33b]` — the foreign types a `returns_owned` result binds to the thread that made the
+    /// object (`threads(creator)` on the result), as their declaration's `threads(creator)` does.
+    foreign_result_creators: HashSet<Symbol>,
+    /// `[FFI-36a]` — the structs a header lays out that a `returns_owned` result gives objects of:
+    /// foreign types, whose `owns T` holds the object C made.
+    foreign_owned_structs: HashSet<Symbol>,
     signatures: Vec<Signature>,
     /// `[CLO-1]` — the functions a capture-free closure lowers to. They have
     /// no name in source, so they are collected here and appended to the
@@ -3895,6 +3913,8 @@ struct Checker<'a> {
     pub(crate) assumed_object_reads: HashSet<DefId>,
     /// The same, taken by a closure's capture probe, which reads the checker only.
     probe_object_reads: std::cell::RefCell<Vec<DefId>>,
+    /// The first captured field a closure body gives away (`[CLO-6]`'s message names it).
+    first_moved_capture: std::cell::Cell<Option<usize>>,
     /// The method of each call through a `dyn` value, by its receiver's place: a capture probe asks
     /// whether its object is implicit.
     interface_call_methods: HashMap<Span, DefId>,
@@ -4028,6 +4048,9 @@ impl<'a> Checker<'a> {
             foreign_unsafe_fns: HashSet::new(),
             exported_classes: Vec::new(),
             foreign_type_contracts: HashMap::new(),
+            foreign_result_destructors: HashMap::new(),
+            foreign_result_creators: HashSet::new(),
+            foreign_owned_structs: HashSet::new(),
             signatures: Vec::new(),
             methods: HashMap::new(),
             class_declared_methods: HashMap::new(),
@@ -4352,6 +4375,7 @@ impl<'a> Checker<'a> {
             object_changers: HashSet::new(),
             assumed_object_reads: HashSet::new(),
             probe_object_reads: std::cell::RefCell::new(Vec::new()),
+            first_moved_capture: std::cell::Cell::new(None),
             interface_call_methods: HashMap::new(),
             members_of: None,
             unstated_calls: HashMap::new(),
@@ -5056,6 +5080,51 @@ impl<'a> Checker<'a> {
             let ty = self.types.intern(TyKind::Opaque(name));
             self.named_types.insert(name, ty);
             self.foreign_type_contracts.insert(name, foreign_type_contract(&item.attrs, self.current_module));
+        }
+    }
+
+    /// `[FFI-36a]`, `[FFI-33b]` — what each result contracted `returns_owned(destructor=f)` says of
+    /// the type it gives `owns T` of (`owns T` or `Option[owns T]` as written): a struct a header
+    /// lays out (a C struct C makes and ends) is then a foreign type, whose `owns T` holds the
+    /// object C made, and with `threads(creator)` its objects are bound to the thread that made
+    /// each, as `threads(creator)` on a type's declaration does.
+    fn collect_foreign_results(&mut self, module: &ast::Module) {
+        for item in &module.items {
+            let ast::ItemKind::Fn(decl) = &item.kind else { continue };
+            let Some((destructor, _, creator)) = ffi_owned_result(&item.attrs) else { continue };
+            if !decl.is_foreign_decl {
+                continue;
+            }
+            let mut written = decl.ret.as_ref();
+            // `Option[owns T]` under `nullable`.
+            if let Some(ast::TypeExpr { kind: ast::TypeKind::Path { segments, args }, .. }) = written
+                && matches!(segments.as_slice(), [name] if name.name.is("Option"))
+                && let [ast::GenericArg::Type(inner)] = args.as_slice()
+            {
+                written = Some(inner);
+            }
+            let Some(ast::TypeExpr { kind: ast::TypeKind::Owns(owned), .. }) = written else { continue };
+            let ast::TypeKind::Path { segments, args } = &owned.kind else { continue };
+            let [name] = segments.as_slice() else { continue };
+            if !args.is_empty() {
+                continue;
+            }
+            let resolved = self.resolve_name(name.name);
+            let named = match self.named_types.get(&resolved).map(|&ty| self.types.kind(ty).clone()) {
+                Some(TyKind::Opaque(_)) if self.foreign_type_contracts.contains_key(&resolved) => resolved,
+                Some(TyKind::Struct(id)) => {
+                    let name = self.types.struct_def(id).name;
+                    self.foreign_owned_structs.insert(name);
+                    name
+                }
+                _ => continue,
+            };
+            if creator {
+                self.foreign_result_creators.insert(named);
+            }
+            // The first result to name a destructor names the type's, where its declaration names
+            // none; any other is checked against it (`note_result_destructor`).
+            self.foreign_result_destructors.entry(named).or_insert((self.current_module, destructor));
         }
     }
 
@@ -6234,6 +6303,29 @@ impl<'a> Checker<'a> {
                             }
                             let Some(vis) = public_item(&modules[target].module, item.name.name)
                             else {
+                                // `[FFI-36a]` — `ForeignBox` is gone: a foreign object Ember owns is
+                                // an `owns T` of its type, which needs no import.
+                                if self.prefixes[target] == "std.ffi" && item.name.name.is("ForeignBox") {
+                                    let edit = self.import_item_removal(import, items, item);
+                                    self.sink.emit(
+                                        Diagnostic::error(codes::E1010, item.name.span, "`ForeignBox` is not a type of Ember: write `owns T`")
+                                            .help("a foreign object Ember owns is an `owns T` of its type, which needs no import")
+                                            .migrate_edits("`ForeignBox` is no longer imported", vec![(edit, ember_diag::Replacement::Text(String::new()))]),
+                                    );
+                                    self.failed_imports[index].insert(item.alias.map(|a| a.name).unwrap_or(item.name.name));
+                                    continue;
+                                }
+                                // `[OWN-6]` — and so is `mem.forget`.
+                                if self.prefixes[target] == "std.mem" && item.name.name.is("forget") {
+                                    let edit = self.import_item_removal(import, items, item);
+                                    self.sink.emit(
+                                        Diagnostic::error(codes::E1010, item.name.span, "`mem.forget` is gone: a value always ends with its clean-up")
+                                            .help("to give a value to a C function that keeps it, hand it to a parameter its declaration says it takes, or, inside `unsafe:`, give it `x.into_raw()`")
+                                            .migrate_edits("`forget` is no longer imported", vec![(edit, ember_diag::Replacement::Text(String::new()))]),
+                                    );
+                                    self.failed_imports[index].insert(item.alias.map(|a| a.name).unwrap_or(item.name.name));
+                                    continue;
+                                }
                                 self.error(
                                     codes::E1061,
                                     item.name.span,
@@ -6639,7 +6731,7 @@ impl<'a> Checker<'a> {
             Diagnostic::error(codes::E3015, span, message)
                 .primary_label("its drop could be skipped or put off")
                 .help("keep it in a local and let its scope end it, or bind it with `with`")
-                .note("a `@must_drop` value's drop is a safety guarantee: it may not be forgotten, stored in a class field, `Shared`, `SyncShared`, an `owns` block or a collection, captured by an `owned fn`, or returned from the function that made it (THR-6)"),
+                .note("a `@must_drop` value's drop is a safety guarantee: it may not be stored in a class field, `Shared`, `SyncShared`, an `owns` block or a collection, captured by an `owned fn`, or returned from the function that made it (THR-6)"),
         );
     }
 
@@ -10217,6 +10309,15 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> Expr {
+        // `[FFI-23]` — 0.9.10's `Retained.pin` is gone: `Retained` is only the token of a callback C
+        // keeps, which the registering call makes.
+        if generic.is("std.ffi.Retained") && name.name.is("pin") {
+            self.sink.emit(
+                Diagnostic::error(codes::E1010, span, "`Retained.pin` is gone: C keeps an Ember value handed to a parameter contracted `owns`, or given with `into_raw()` inside `unsafe:`")
+                    .note("`Retained[ForeignCallback]` is only the token a registering call returns for a callback C keeps [FFI-23]"),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         let Some(decl) = self.generic_structs.get(&generic).cloned() else {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
@@ -15203,6 +15304,25 @@ impl<'a> Checker<'a> {
 
     /// `[IDE-3]` — a name an import of a module not found binds: a placeholder, its import
     /// already reported (`E1060`).
+    /// What to remove to take `item` out of `import`'s list: the item with the comma that joins it
+    /// to a neighbour, or the whole line when it is the only one.
+    fn import_item_removal(&self, import: &ast::Import, items: &[ast::ImportItem], item: &ast::ImportItem) -> Span {
+        let end_of = |item: &ast::ImportItem| item.alias.map_or(item.name.span.end, |alias| alias.span.end);
+        let at = items.iter().position(|other| other.name.span == item.name.span).unwrap_or(0);
+        let file = item.name.span.file;
+        match (at.checked_sub(1).and_then(|before| items.get(before)), items.get(at + 1)) {
+            (Some(before), _) => Span::new(file, end_of(before), end_of(item)),
+            (None, Some(after)) => Span::new(file, item.name.span.start, after.name.span.start),
+            (None, None) => {
+                let text: &str = self.sources.get(&file).map_or("", |source| &source.text);
+                let end = import.span.end as usize;
+                let end = if text.as_bytes().get(end) == Some(&b'\r') { end + 1 } else { end };
+                let end = if text.as_bytes().get(end) == Some(&b'\n') { end + 1 } else { end };
+                Span::new(file, import.span.start, end as u32)
+            }
+        }
+    }
+
     fn failed_import(&self, name: Symbol) -> bool {
         self.failed_imports.get(self.current_module).is_some_and(|names| names.contains(&name))
     }
@@ -15575,6 +15695,13 @@ impl<'a> Checker<'a> {
             }
         };
         let qualified = self.qualified_in_module(module, last.name);
+        if qualified.is("std.ffi.ForeignBox") {
+            let resolved: Vec<(Ty, Span)> = args.iter().filter_map(|arg| match arg {
+                ast::GenericArg::Type(t) => Some((self.generic_type_argument(t), t.span)),
+                _ => None,
+            }).collect();
+            return self.refuse_foreign_box(&resolved, span);
+        }
         if !self.named_types.contains_key(&qualified)
             && !self.interfaces.contains_key(&qualified)
             && !self.generic_structs.contains_key(&qualified)
@@ -15707,6 +15834,9 @@ impl<'a> Checker<'a> {
             // `["ann"]`; what enters it must be `static`, checked at each store.
             let (elem, _) = args[0];
             return self.types.intern(TyKind::Vec { elem, text: false });
+        }
+        if name.is("ForeignBox") || resolved_name.is("std.ffi.ForeignBox") {
+            return self.refuse_foreign_box(args, span);
         }
         if name.is("Box") {
             // `[TYP-45]` — `Box` is not a type of Ember: one owner in a block of its own is `owns T`
@@ -16984,9 +17114,32 @@ impl<'a> Checker<'a> {
         Expr { ty: result, kind: ExprKind::Builtin { which: Builtin::AssertDisjoint { mode, result }, args: views }, span }
     }
 
-    /// `[OWN-6]` — `std.mem.take`, `replace`, `swap`, and `forget` are the sanctioned
+    /// `[OWN-6]` — there is no `mem.forget`: `E1010`, "`mem.forget` is gone: a value always ends
+    /// with its clean-up; to give the widget to a C function that keeps it, hand it to a parameter
+    /// its declaration says it takes (`widget_take(owns first)`), or, inside `unsafe:`, give it
+    /// `first.into_raw()`", with the value's type for the widget and the argument as written for
+    /// `first`. The argument is still checked, so that its own mistakes are reported.
+    fn refuse_mem_forget(&mut self, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let value = args.first().map(|arg| (self.synth_committed(&arg.value), arg.value.span));
+        let noun = match &value {
+            Some((value, _)) if value.ty != self.common.error => Self::common_noun(&self.types.display(value.ty)),
+            _ => "value".to_string(),
+        };
+        let written = value.and_then(|(_, at)| self.written_line(at)).unwrap_or_else(|| "it".to_string());
+        let taker = noun.replace(' ', "_");
+        self.sink.emit(
+            Diagnostic::error(codes::E1010, span, format!(
+                "`mem.forget` is gone: a value always ends with its clean-up; to give the {noun} to a C function that keeps it, hand it to a parameter its declaration says it takes (`{taker}_take(owns {written})`), or, inside `unsafe:`, give it `{written}.into_raw()`"
+            ))
+            .note("nothing ends an owner without its clean-up, so nothing can skip one [OWN-2] [OWN-6]"),
+        );
+        error
+    }
+
+    /// `[OWN-6]` — `std.mem.take`, `replace` and `swap` are the sanctioned
     /// operations that mutate a place while transferring its old ownership
-    /// without first dropping it. They are compiler-known while `std.mem` is
+    /// without first dropping it, and `drop` ends a value now; there is no `forget`. They are compiler-known while `std.mem` is
     /// staged, but their operands still use ordinary place, mutability,
     /// generic-inference, `Default`, borrow, and move rules.
     fn synth_mem_ownership_builtin(
@@ -17018,7 +17171,7 @@ impl<'a> Checker<'a> {
         } else if resolved.is("std.mem.swap") {
             "swap"
         } else if resolved.is("std.mem.forget") {
-            "forget"
+            return Some(self.refuse_mem_forget(args, span));
         } else if resolved.is("std.mem.drop") {
             "drop"
         } else {
@@ -17065,11 +17218,11 @@ impl<'a> Checker<'a> {
             }
         }
         let first_arg = if changed.contains(&0) { place_of(&args[0].value) } else { &args[0].value };
-        // `[DRP-1]` — `mem.drop(g)` and `mem.forget(g)` end the guard itself: a guard named here is
+        // `[DRP-1]` — `mem.drop(g)` ends the guard itself: a guard named here is
         // not read through to what it guards (D-594: the lock, or the `RefCell` borrow, stayed
         // held to the end of the scope).
         let named_guard = match &args[0].value.kind {
-            ast::ExprKind::Path { segments } if segments.len() == 1 && matches!(operation, "drop" | "forget") => self
+            ast::ExprKind::Path { segments } if segments.len() == 1 && operation == "drop" => self
                 .lookup(segments[0].name)
                 .map(|local| self.locals[local.0 as usize].ty)
                 .filter(|&ty| self.ref_guard_inner(ty).is_some()),
@@ -17083,19 +17236,6 @@ impl<'a> Checker<'a> {
             return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
         }
         let elem = explicit.first().copied().unwrap_or(first.ty);
-        if operation == "forget" && self.types.is_must_drop(elem) {
-            self.must_drop_error(args[0].value.span, elem, "forgotten");
-        }
-        if operation == "forget" {
-            return Some(Expr {
-                ty: self.common.void,
-                kind: ExprKind::Builtin {
-                    which: Builtin::MemForget { elem },
-                    args: vec![first],
-                },
-                span,
-            });
-        }
         if operation == "drop" {
             return Some(Expr {
                 ty: self.common.void,
@@ -17180,11 +17320,11 @@ impl<'a> Checker<'a> {
         Some(result)
     }
 
-    /// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — `std.ffi.adopt[T](h)`: a `ForeignBox[T]` owning the
-    /// foreign object at `h`, freed by the destructor the declaration of `T` names
-    /// (`@ffi(destroys(f))`); one whose declaration says `adopt=false` is `E5052`. The box's
-    /// address is recorded at run time where the call is (a second owner of a live object panics
-    /// naming both places), and with `threads(creator)` it keeps the thread that made it.
+    /// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — `std.ffi.adopt[T](h)`: an `owns T` of the foreign
+    /// object at `h`, ended by the destructor the declaration of `T` names (`@ffi(destroys(f))`);
+    /// one whose declaration says `adopt=false` is `E5052`. The address is recorded at run time
+    /// where the call is (a second owner of a live object panics naming both places), and with
+    /// `threads(creator)` the value keeps the thread that made it.
     fn synth_foreign_adopt(&mut self, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         self.unsafe_step(span, UnsafeStep::Call { callee: "adopt".to_string(), kind: CallKind::Declared },
@@ -17234,78 +17374,60 @@ impl<'a> Checker<'a> {
             );
             return error;
         };
-        self.foreign_box_of(pointer, pointee, destroys, contract.module, contract.creator, span)
-    }
-
-    /// `[FFI-17a]` — `ember_cpp_adopt_deleted[T](h, f)`, in a module `import cpp` wrote: the
-    /// `ForeignBox[T]` of the object a `std::unique_ptr<T, D>` gave up, freed by `f`, a thunk of
-    /// the module that hands it to the deleter `D`.
-    fn synth_cpp_adopt_deleted(&mut self, name: Symbol, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Option<Expr> {
-        if !name.is(&format!("{}_cpp_adopt_deleted", ember_branding::SYMBOL_PREFIX)) || !self.foreign_cpp.get(self.current_module).copied().unwrap_or(false) {
-            return None;
-        }
-        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        let ([pointee], [object, deleter]) = (explicit, args) else { return Some(error) };
-        let ast::ExprKind::Path { segments } = &deleter.value.kind else { return Some(error) };
-        let [destroys] = segments.as_slice() else { return Some(error) };
-        self.unsafe_step(span, UnsafeStep::Other("the adoption of a foreign object".to_string(), "the adoptions of foreign objects".to_string()),
-            Diagnostic::error(codes::E3100, span, "adopting a foreign object requires an `unsafe` block"));
-        let expected = self.types.intern(TyKind::Ptr { mutable: true, inner: *pointee });
-        let pointer = self.check_expr(&object.value, expected);
-        // The class's own thread rule (`[FFI-33b]`), as `adopt` keeps it.
-        let creator = match *self.types.kind(*pointee) {
-            TyKind::Opaque(name) => self.foreign_type_contracts.get(&name).is_some_and(|contract| contract.creator),
-            _ => false,
-        };
-        Some(self.foreign_box_of(pointer, *pointee, *destroys, self.current_module, creator, span))
-    }
-
-    /// `[FFI-36a]` — the `ForeignBox[T]` owning the foreign object at `pointer`, freed by `destroys`
-    /// (a foreign function of `module` taking one `*mut T`), bound to the thread that made it when
-    /// `creator`.
-    fn foreign_box_of(&mut self, pointer: Expr, pointee: Ty, destroys: ast::Ident, module: usize, creator: bool, span: Span) -> Expr {
-        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        let shown = self.types.display(pointee);
-        let qualified = self.qualified_in_module(module, destroys.name);
-        let destructor = self.fn_ids.get(&qualified).copied()
-            .and_then(|def| self.foreign_symbols.get(&def).map(|symbol| (def, *symbol)));
-        let Some((def, symbol)) = destructor else {
+        let qualified = self.qualified_in_module(contract.module, destroys.name);
+        let destructor = self.fn_ids.get(&qualified).copied().filter(|def| self.foreign_symbols.contains_key(def));
+        let Some(def) = destructor else {
             self.error(codes::E5002, destroys.span, format!("`{}` is not a foreign function of this module", destroys.name));
             return error;
         };
-        let signature = &self.signatures[def.0 as usize];
-        let frees = matches!(signature.params.as_slice(),
-            [(_, ty, _, _)] if matches!(*self.types.kind(*ty), TyKind::Ptr { inner, .. } if inner == pointee));
-        if !frees {
-            self.error(codes::E5002, destroys.span,
-                format!("`{}` frees a `{shown}`, so it takes one `*mut {shown}`", destroys.name));
+        if !self.frees_one(def, pointee) {
+            self.error(codes::E5002, destroys.span, format!("`{}` frees a `{shown}`, so it takes one `*mut {shown}`", destroys.name));
             return error;
         }
-        let ret = signature.ret;
-        let destructor_value = self.fn_value_of(def, destroys.name, destroys.span);
-        let boxed = self.instantiate_named_generic("std.ffi.ForeignBox", &[pointee], span);
-        let TyKind::Struct(id) = *self.types.kind(boxed) else { return error };
+        self.foreign_owner_value(pointer, pointee, span)
+    }
+
+    /// `[FFI-36a]` — whether the function `def` takes one `*mut T` of `pointee`, as a destructor does.
+    fn frees_one(&self, def: DefId, pointee: Ty) -> bool {
+        matches!(self.signatures[def.0 as usize].params.as_slice(),
+            [(_, ty, _, _)] if matches!(*self.types.kind(*ty), TyKind::Ptr { inner, .. } if inner == pointee))
+    }
+
+    /// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — the `owns T` of the foreign object at `pointer`: its
+    /// address recorded as one Ember owns, where the call is, and for a type bound to its thread,
+    /// the thread making it. Its end calls `T`'s one destructor (std's `foreign_end`).
+    fn foreign_owner_value(&mut self, pointer: Expr, pointee: Ty, span: Span) -> Expr {
+        let owner = self.foreign_owner_of(pointee);
+        let TyKind::Struct(id) = *self.types.kind(owner) else { return Expr { ty: self.common.error, kind: ExprKind::Error, span } };
         let fields: Vec<Ty> = self.types.struct_def(id).fields.iter().map(|field| field.ty).collect();
-        let [pointer_ty, fn_ty, creator_ty] = fields[..] else { return error };
-        let adopted = Expr {
-            ty: pointer_ty,
-            kind: ExprKind::Builtin { which: Builtin::ForeignAdopt, args: vec![pointer] },
+        let mut values = vec![Expr { ty: fields[0], kind: ExprKind::Builtin { which: Builtin::ForeignAdopt, args: vec![pointer] }, span }];
+        if let Some(&creator) = fields.get(1) {
+            values.push(Expr { ty: creator, kind: ExprKind::Builtin { which: Builtin::ForeignThread, args: Vec::new() }, span });
+        }
+        Expr { ty: owner, kind: ExprKind::StructLit { struct_id: id, fields: values }, span }
+    }
+
+    /// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — `std.ffi.foreign_end(p, creator)`, the end of an `owns
+    /// T` of a foreign type (std's `ForeignOwner.drop`): the address leaves the runtime's record,
+    /// one bound to its thread checked to end there, and `T`'s one destructor is called on it once,
+    /// directly. In the body checked with `T` opaque, nothing.
+    fn synth_foreign_end(&mut self, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let [pointer, creator] = args else { return error };
+        let pointer = self.synth_committed(&pointer.value);
+        let creator = self.check_expr(&creator.value, self.common.u32);
+        let TyKind::Ptr { inner: pointee, .. } = *self.types.kind(pointer.ty) else { return self.void_value(span) };
+        let Some((destructor, _)) = self.foreign_type_destructor(pointee) else { return self.void_value(span) };
+        let void = self.common.void;
+        let release = Expr { ty: void, kind: ExprKind::Builtin { which: Builtin::ForeignRelease, args: vec![pointer.clone(), creator] }, span };
+        let ret = self.signatures[destructor.0 as usize].ret;
+        let destroy = Expr {
+            ty: ret,
+            kind: ExprKind::Call { callee: destructor, arg_eval_order: None, default_arg_locals: None, args: vec![pointer], latebound: false },
             span,
         };
-        let destructor = Expr {
-            ty: fn_ty,
-            kind: ExprKind::Builtin {
-                which: Builtin::ForeignDestructor { symbol, pointee, ret, fn_ty },
-                args: vec![destructor_value],
-            },
-            span,
-        };
-        let creator = if creator {
-            Expr { ty: creator_ty, kind: ExprKind::Builtin { which: Builtin::ForeignThread, args: Vec::new() }, span }
-        } else {
-            Expr { ty: creator_ty, kind: ExprKind::Int(0), span }
-        };
-        Expr { ty: boxed, kind: ExprKind::StructLit { struct_id: id, fields: vec![adopted, destructor, creator] }, span }
+        let block = Block { stmts: vec![Stmt::Expr(release), Stmt::Expr(destroy)], span };
+        Expr { ty: void, kind: ExprKind::Block { block, value: Box::new(self.void_value(span)) }, span }
     }
 
     /// `[UNS-5]` — `std.mem`'s raw primitives: `alloc[T]`, `free[T]`,
@@ -17348,8 +17470,8 @@ impl<'a> Checker<'a> {
         if resolved.is("std.ffi.adopt") {
             return Some(self.synth_foreign_adopt(args, explicit, span));
         }
-        if let Some(built) = self.synth_cpp_adopt_deleted(name, args, explicit, span) {
-            return Some(built);
+        if resolved.is("std.ffi.foreign_end") {
+            return Some(self.synth_foreign_end(args, span));
         }
         // `[UNS-5]` — `std.mem`'s volatile accesses, which `Volatile[*T]` makes.
         if resolved.is("std.mem.volatile_read") || resolved.is("std.mem.volatile_write") {
@@ -17373,30 +17495,6 @@ impl<'a> Checker<'a> {
             let value = self.check_expr(&args[1].value, inner);
             return Some(Expr { ty: self.common.void, kind: ExprKind::Builtin { which: Builtin::VolatileWrite, args: vec![pointer, value] }, span });
         }
-        // `[HR-20]` (ODR-194) — a `Retained` token's end: its `on_relocate` record goes.
-        if resolved.is("std.ffi.retained_unpin") && args.len() == 1 {
-            let u64_ty = self.common.u64;
-            let id = self.check_expr(&args[0].value, u64_ty);
-            return Some(Expr { ty: self.common.void, kind: ExprKind::Builtin { which: Builtin::RetainedUnpin, args: vec![id] }, span });
-        }
-        // `[FFI-23]` — what `Retained` pins: a class handle, a `Box` or a retained callback, with its `on_relocate`.
-        if resolved.is("std.ffi.retained_pin") && args.len() == 2 {
-            let value = self.synth_committed(&args[0].value);
-            let pinnable = matches!(self.types.kind(value.ty), TyKind::Class(_) | TyKind::Param { .. } | TyKind::Error)
-                || self.box_inner(value.ty).is_some()
-                || self.is_foreign_callback(value.ty);
-            if !pinnable {
-                let shown = self.types.display(value.ty);
-                self.sink.emit(
-                    Diagnostic::error(codes::E2020, span, format!("`Retained` pins a class object or an `owns` value, not a `{shown}`"))
-                        .note("foreign code keeps Ember memory only through a class object or an `owns` value [FFI-23]"),
-                );
-                return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
-            }
-            let callback = self.synth_committed(&args[1].value);
-            let u64_ty = self.common.u64;
-            return Some(Expr { ty: u64_ty, kind: ExprKind::Builtin { which: Builtin::RetainedPin, args: vec![value, callback] }, span });
-        }
         // `[FFI-17e]` — a C++ container's elements, viewed in place, and a smart pointer's object:
         // `cpp_span(ref owner, pointer, count)`, `cpp_span_mut(ref mut owner, …)` and
         // `cpp_pointee(ref owner, pointer)`, each borrowing the owner.
@@ -17419,15 +17517,6 @@ impl<'a> Checker<'a> {
             };
             let ty = self.types.intern(TyKind::Ref { mutable: false, inner });
             return Some(Expr { ty, kind: ExprKind::Builtin { which: Builtin::CppPointee, args: vec![owner, pointer] }, span });
-        }
-        if resolved.is("std.ffi.foreign_release") && args.len() == 2 {
-            let pointer = self.synth_committed(&args[0].value);
-            let creator = self.check_expr(&args[1].value, self.common.u32);
-            return Some(Expr {
-                ty: self.common.void,
-                kind: ExprKind::Builtin { which: Builtin::ForeignRelease, args: vec![pointer, creator] },
-                span,
-            });
         }
         if let Some(built) = self.synth_error_builtin(name, args, explicit, span) {
             return Some(built);
@@ -18019,14 +18108,14 @@ impl<'a> Checker<'a> {
     /// to hold, the object pinned.
     fn synth_cpp_object(&mut self, name: Symbol, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Option<Expr> {
         let prefix = ember_branding::SYMBOL_PREFIX;
-        let which = ["address", "handle", "adopt", "give", "token_object", "overrides"].into_iter().position(|word| name.is(&format!("{prefix}_cpp_{word}")))?;
+        let which = ["address", "handle", "adopt", "give", "overrides"].into_iter().position(|word| name.is(&format!("{prefix}_cpp_{word}")))?;
         if !self.foreign_cpp.get(self.current_module).copied().unwrap_or(false) {
             return None;
         }
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         // `[FFI-39]` (ODR-221) — `ember_cpp_overrides[C](self, "name")`: whether the object's own
         // class overrides `C`'s virtual method `name`.
-        if which == 5 {
+        if which == 4 {
             let ([object, method], [class]) = (args, explicit) else { return Some(error) };
             let TyKind::Class(owner) = *self.types.kind(*class) else { return Some(error) };
             let ast::ExprKind::Lit(ast::Literal::Str(method)) = &method.value.kind else { return Some(error) };
@@ -18039,13 +18128,6 @@ impl<'a> Checker<'a> {
         }
         let [arg] = args else { return Some(error) };
         let value = self.synth_committed(&arg.value);
-        // `[FFI-39c]` — the object a `Retained` token holds (a count of its own).
-        if which == 4 {
-            let Some(held) = self.lock_inner(value.ty, "std.ffi.Retained").filter(|held| matches!(self.types.kind(*held), TyKind::Class(_))) else {
-                return Some(error);
-            };
-            return Some(Expr { ty: held, kind: ExprKind::Field { base: Box::new(value), index: 0 }, span });
-        }
         if matches!(which, 0 | 3) {
             if !matches!(self.types.kind(value.ty), TyKind::Class(_)) {
                 return Some(error);
@@ -19456,19 +19538,18 @@ impl<'a> Checker<'a> {
         }
         let forms = self.const_params_as_forms(&decl.generic_params, args);
         let args = forms.as_slice();
-        // `[FFI-23]` — a `Retained` token holds a class handle or a `Box`: what foreign code keeps
-        // is an object's address. Refused where the type is named (or inferred, at `pin`).
+        // `[FFI-23]` — `Retained[ForeignCallback]` is only the token of a callback C keeps: it gives
+        // no object away and keeps none for C.
         if name.is("std.ffi.Retained")
             && let [held] = args
-            && !matches!(self.types.kind(*held), TyKind::Class(_) | TyKind::Param { .. } | TyKind::Error | TyKind::Infer(_))
-            && self.box_inner(*held).is_none()
-            // `[FFI-21]` — or what C keeps of a `retained` callback.
+            && !matches!(self.types.kind(*held), TyKind::Param { .. } | TyKind::Error | TyKind::Infer(_))
             && !self.is_foreign_callback(*held)
         {
             let shown = self.types.display(*held);
             self.sink.emit(
-                Diagnostic::error(codes::E2020, span, format!("`Retained` pins a class object or an `owns` value, not a `{shown}`"))
-                    .note("foreign code keeps Ember memory only through a class object or an `owns` value [FFI-23]"),
+                Diagnostic::error(codes::E2020, span, format!("`Retained` is only the token of a callback C keeps, `Retained[ForeignCallback]`, not a `Retained[{shown}]`"))
+                    .help("C keeps an Ember value handed to a parameter contracted `owns`, or given with `into_raw()` inside `unsafe:`")
+                    .note("`Retained` gives no object away and keeps none for C [FFI-23]"),
             );
             return self.common.error;
         }
@@ -20123,6 +20204,10 @@ impl<'a> Checker<'a> {
     /// from pretending to own an inline `T`. The C backend supplies the real
     /// glue: drop `*value`, then free the allocation.
     fn box_of(&mut self, inner: Ty) -> Ty {
+        // `[FFI-36a]` (D2) — the block of an `owns T` of a foreign type is the foreign object.
+        if self.foreign_object_name(inner).is_some() {
+            return self.foreign_owner_of(inner);
+        }
         let name = self.unique_instance_name("Box", &[inner]);
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
@@ -20181,6 +20266,60 @@ impl<'a> Checker<'a> {
         self.named_types.insert(name, ty);
         self.boxes.insert(id, inner);
         ty
+    }
+
+    /// `[FFI-36a]` — the qualified name of `ty` when it is a foreign type whose objects foreign
+    /// code makes and ends: one an `extern` block declares (`type Widget`), or a struct a header
+    /// lays out that a `returns_owned` result gives objects of (`collect_foreign_results`).
+    fn foreign_object_name(&self, ty: Ty) -> Option<Symbol> {
+        match *self.types.kind(ty) {
+            TyKind::Opaque(name) if self.foreign_type_contracts.contains_key(&name) => Some(name),
+            TyKind::Struct(id) => Some(self.types.struct_def(id).name).filter(|name| self.foreign_owned_structs.contains(name)),
+            _ => None,
+        }
+    }
+
+    /// `[FFI-33b]` — whether the objects of the foreign type `ty` are bound to the thread that
+    /// made them: its declaration says `threads(creator)`, or a result giving one does.
+    fn foreign_creator(&self, ty: Ty) -> bool {
+        self.foreign_object_name(ty).is_some_and(|name| {
+            self.foreign_type_contracts.get(&name).is_some_and(|contract| contract.creator) || self.foreign_result_creators.contains(&name)
+        })
+    }
+
+    /// `[FFI-36a]`, `[FFI-33b]` (D2) — the `owns T` of the foreign type `inner`: the object's address,
+    /// one word (std's `ForeignOwner[T]`), or for a type bound to its thread two, the address and
+    /// the thread that made it (`ThreadForeignOwner[T]`). It is shown as `owns T` and read through
+    /// as every `owns T` is; its end calls `T`'s one destructor (`foreign_end`).
+    fn foreign_owner_of(&mut self, inner: Ty) -> Ty {
+        let generic = if self.foreign_creator(inner) { "std.ffi.ThreadForeignOwner" } else { "std.ffi.ForeignOwner" };
+        let ty = self.instantiate_named_generic(generic, &[inner], Span::DUMMY);
+        if let TyKind::Struct(id) = *self.types.kind(ty)
+            && !self.boxes.contains_key(&id)
+        {
+            self.boxes.insert(id, inner);
+            let shown = format!("owns {}", self.types.display(inner));
+            self.types.set_shown_as(id, shown);
+        }
+        ty
+    }
+
+    /// `[FFI-36a]` — the foreign object an `owns T` of a foreign type holds, when `ty` is one.
+    fn foreign_owner_inner(&self, ty: Ty) -> Option<Ty> {
+        let inner = self.box_inner(ty)?;
+        self.foreign_object_name(inner).map(|_| inner)
+    }
+
+    /// `[FFI-36a]` — the one destructor of the foreign type `ty`: the function its declaration's
+    /// `@ffi(destroys(f))` names, else the one a `returns_owned(destructor=f)` result names. With
+    /// it, the line that names it.
+    fn foreign_type_destructor(&self, ty: Ty) -> Option<(DefId, Span)> {
+        let name = self.foreign_object_name(ty)?;
+        let (module, destroys) = self.foreign_type_contracts.get(&name)
+            .and_then(|contract| contract.destroys.map(|destroys| (contract.module, destroys)))
+            .or_else(|| self.foreign_result_destructors.get(&name).copied())?;
+        let def = *self.fn_ids.get(&self.qualified_in_module(module, destroys.name))?;
+        Some((def, destroys.span))
     }
 
     /// `[TYP-45]`, `[HEAP-9]` — a block of its own for the value `value` writes, of type `hint` when
@@ -20415,6 +20554,19 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Path { .. } | ast::ExprKind::Field { .. } | ast::ExprKind::IndexOrInstantiate { .. } | ast::ExprKind::SelfExpr
         );
         if !named {
+            // A value that is already an `owns T` of this type (a call returning one) is handed
+            // over, as a name holding one is: its block was made where it was made.
+            if !matches!(self.types.kind(target), TyKind::Dyn { .. }) {
+                let value = self.synth_with_expectation(inner, Some(target));
+                if value.ty == expected || value.ty == self.common.error {
+                    return value;
+                }
+                let value = self.coerce(value, target);
+                if value.ty == self.common.error {
+                    return value;
+                }
+                return self.block_around(value, None, span);
+            }
             return self.owned_block(inner, Some(target), span);
         }
         // A block that holds a view (`owns ref mut i32`) is given the view, which a name of that
@@ -22453,10 +22605,10 @@ impl<'a> Checker<'a> {
                 );
             }
         };
-        // `[FFI-36a]` — a `ForeignBox` (or an `Option` of one) crosses as the object's pointer;
-        // `check_foreign_ownership` checks the contract that moves it.
+        // `[FFI-36a]` — an `owns T` of a foreign type (or an `Option` of one) crosses as the
+        // object's pointer; `check_foreign_ownership` checks the contract that moves it.
         let carries_box = |this: &Self, ty: Ty| decl.is_foreign_decl && decl.is_safe
-            && (this.lock_inner(this.option_some_payload(ty).unwrap_or(ty), "std.ffi.ForeignBox").is_some()
+            && (this.foreign_owner_inner(this.option_some_payload(ty).unwrap_or(ty)).is_some()
                 || this.lock_inner(ty, "std.ffi.Retained").is_some());
         // `[FFI-21]` — a callback's parameter: the callable a caller passes (its user data's left
         // the signature), or with no user data the C function pointer itself.
@@ -22850,7 +23002,10 @@ impl<'a> Checker<'a> {
                     self.error(codes::E5002, span,
                         format!("`safe fn` needs an `@ffi` nullable count contract for span parameter `{name}`"));
                 }
-                if self.foreign_pointer_contract_required(ty) && !callback_params.contains(&name) {
+                // `[FFI-11]` — a `retained` pointer that is no callback is refused once, by
+                // `check_foreign_ownership`.
+                let retained = ffi_retained_params(attrs).iter().any(|(slot, _)| *slot == name);
+                if self.foreign_pointer_contract_required(ty) && !callback_params.contains(&name) && !retained {
                     if contract.is_some() {
                         self.error(codes::E5002, span,
                             format!("`safe fn` cannot expose raw pointer parameter `{name}`"));
@@ -23215,40 +23370,28 @@ impl<'a> Checker<'a> {
         self.named_types.get(&Symbol::intern("std.ffi.ForeignCallback")) == Some(&ty)
     }
 
-    /// `[FFI-11]`, `[FFI-36a]` — a `safe fn`'s ownership words: a `param(p, owned, one)` takes
-    /// `owned p: ForeignBox[T]` (an `Option` of one with `nullable`), a result
-    /// `returns_owned(destructor=f)` is a `ForeignBox[T]` (likewise) whose `f` takes one `*mut T`,
-    /// and a `ForeignBox` crosses no other way.
+    /// `[FFI-11]`, `[FFI-36a]` — a `safe fn`'s ownership words: a `param(p, owns, one)` takes `owns
+    /// p: owns T` of a foreign type (an `Option` of one with `nullable`), a result
+    /// `returns_owned(destructor=f)` is an `owns T` of a foreign type (likewise) whose `f` takes one
+    /// `*mut T` and is `T`'s one destructor, and an `owns T` of a foreign type crosses no other way.
     fn check_foreign_ownership(&mut self, decl: &ast::FnDecl, attrs: &[ast::Attribute], signature: &[(Symbol, Ty, Mode, Span)], ret: Ty) {
         let foreign_box = |this: &Self, ty: Ty, nullable: bool| {
             let ty = if nullable { this.option_some_payload(ty) } else { Some(ty) };
-            ty.and_then(|ty| this.lock_inner(ty, "std.ffi.ForeignBox"))
+            ty.and_then(|ty| this.foreign_owner_inner(ty))
         };
         let owned = ffi_owned_params(attrs);
-        // `[FFI-23]`, `[FFI-22]` — a `retained` parameter takes a `Retained[T]` token; foreign code
-        // may use what it keeps on any thread, so `T` is `Send` unless the contract binds it.
+        // `[FFI-11]`, `[FFI-23]` — `retained` on a pointer that is no callback makes no safe
+        // parameter: C keeps Ember memory only when it is handed over (`owns`) or given with
+        // `into_raw()`, so the call stays unsafe, with a raw pointer. A `Retained` token stays on
+        // Ember's side.
         let retained = ffi_retained_params(attrs);
-        for &(name, ty, mode, span) in signature {
-            let token = self.lock_inner(ty, "std.ffi.Retained");
-            match retained.iter().find(|(slot, _)| *slot == name) {
-                Some(&(_, bound)) => match token {
-                    Some(held) if mode == Mode::Borrow => {
-                        if !bound && !self.is_send(held) {
-                            let shown = self.types.display(held);
-                            self.sink.emit(
-                                Diagnostic::error(codes::E7004, span, format!("`{name}` hands foreign code a `{shown}` to keep, and a `{shown}` is not `Send`"))
-                                    .help(format!("say which thread C uses it on: `param({name}, retained, one, threads(creator))` or `threads(main)`"))
-                                    .note("C may call back from any thread, so what it keeps must be `Send` unless the contract says otherwise [FFI-22]"),
-                            );
-                        }
-                    }
-                    _ => self.error(codes::E5002, span, format!("`retained` contract for `{name}` needs `{name}: Retained[T]`")),
-                },
-                None if token.is_some() => {
-                    self.error(codes::E5002, span,
-                        format!("a `Retained` parameter crosses only as an address C keeps: `param({name}, retained, one)`"));
-                }
-                None => {}
+        for &(name, ty, _, span) in signature {
+            if retained.iter().any(|(slot, _)| *slot == name) {
+                self.error(codes::E5002, span, format!(
+                    "`retained` on `{name}` makes no safe parameter: C keeps Ember memory only when it is handed over (`param({name}, owns, one)`) or given with `into_raw()`; declare `{}` an `unsafe fn`",
+                    decl.name.name));
+            } else if self.lock_inner(ty, "std.ffi.Retained").is_some() {
+                self.error(codes::E5002, span, format!("`{name}` is a `Retained` token, which stays on Ember's side: C is given no token"));
             }
         }
         for &(name, ty, mode, span) in signature {
@@ -23256,13 +23399,13 @@ impl<'a> Checker<'a> {
                 Some(&(_, nullable)) => {
                     if mode != Mode::Owned || foreign_box(self, ty, nullable).is_none() {
                         self.error(codes::E5002, span, format!(
-                            "`owns` contract for `{name}` needs `owns {name}: {}`",
-                            if nullable { "Option[ForeignBox[T]]" } else { "ForeignBox[T]" }));
+                            "`owns` contract for `{name}` needs `owns {name}: {}`, a foreign type's",
+                            if nullable { "Option[owns T]" } else { "owns T" }));
                     }
                 }
                 None if foreign_box(self, ty, false).or_else(|| foreign_box(self, ty, true)).is_some() => {
                     self.error(codes::E5002, span,
-                        format!("a `ForeignBox` parameter crosses only as an object C takes: `param({name}, owns, one)`"));
+                        format!("an `owns` value of a foreign type crosses only as an object C takes: `param({name}, owns, one)`"));
                 }
                 None => {}
             }
@@ -23271,21 +23414,41 @@ impl<'a> Checker<'a> {
             Some((destructor, nullable, _)) => {
                 let Some(pointee) = foreign_box(self, ret, nullable) else {
                     self.error(codes::E5002, decl.name.span, format!(
-                        "`returns_owned` needs a `{}` result",
-                        if nullable { "Option[ForeignBox[T]]" } else { "ForeignBox[T]" }));
+                        "`returns_owned` needs a `{}` result of a foreign type",
+                        if nullable { "Option[owns T]" } else { "owns T" }));
                     return;
                 };
-                if self.foreign_destructor(destructor.name, pointee).is_none() {
+                let Some((def, _, _)) = self.foreign_destructor(destructor.name, pointee) else {
                     let shown = self.types.display(pointee);
                     self.error(codes::E5002, destructor.span,
                         format!("`{}` frees a `{shown}`, so it is a foreign function taking one `*mut {shown}`", destructor.name));
-                }
+                    return;
+                };
+                self.note_result_destructor(pointee, def, destructor);
             }
             None if foreign_box(self, ret, false).or_else(|| foreign_box(self, ret, true)).is_some() => {
                 self.error(codes::E5002, decl.name.span,
-                    "a `ForeignBox` result needs `result(returns_owned(destructor=f), one)`");
+                    "an `owns` result of a foreign type needs `result(returns_owned(destructor=f), one)`");
             }
             None => {}
+        }
+    }
+
+    /// `[FFI-36a]` — a foreign type has one destructor: `returns_owned(destructor=f)` names the one
+    /// its declaration's `@ffi(destroys(f))` names, or the one every other such result of it names;
+    /// two different ones are `E5002` ("`Widget` is ended by `widget_free` (line 3), and line 12 says
+    /// `widget_destroy`; a foreign type has one destructor"). The first a result names is the type's
+    /// when its declaration names none (`collect_foreign_results`).
+    fn note_result_destructor(&mut self, pointee: Ty, def: DefId, named: ast::Ident) {
+        if let Some((first, at)) = self.foreign_type_destructor(pointee)
+            && first != def
+        {
+            let shown = self.types.display(pointee);
+            let ending = self.declared_name(first).unwrap_or_else(|| self.types.display(pointee));
+            let first_line = self.line_of(at).map_or_else(String::new, |line| format!(" (line {line})"));
+            let line = self.line_of(named.span).map_or_else(|| "this line".to_string(), |line| format!("line {line}"));
+            self.error(codes::E5002, named.span, format!(
+                "`{shown}` is ended by `{ending}`{first_line}, and {line} says `{}`; a foreign type has one destructor", named.name));
         }
     }
 
@@ -23468,17 +23631,13 @@ impl<'a> Checker<'a> {
         // `[FFI-11]`, `[FFI-36a]` — the objects the call moves: a parameter C takes, a result the
         // caller comes to own.
         let owned_params = ffi_owned_params(attrs);
-        let retained_params = ffi_retained_params(attrs);
         let result_owned = match ffi_owned_result(attrs) {
-            Some((destructor, nullable, creator)) => {
+            Some((destructor, nullable, _)) => {
                 let boxed = if nullable { self.option_some_payload(result_ty)? } else { result_ty };
-                let pointee = self.lock_inner(boxed, "std.ffi.ForeignBox")?;
-                let (_, symbol, destructor_ret) = self.foreign_destructor(destructor.name, pointee)?;
-                let type_creator = match *self.types.kind(pointee) {
-                    TyKind::Opaque(name) => self.foreign_type_contracts.get(&name).is_some_and(|contract| contract.creator),
-                    _ => false,
-                };
-                Some(hir::FfiOwnedResult { destructor: symbol, destructor_ret, pointee, nullable, creator: creator || type_creator })
+                let pointee = self.foreign_owner_inner(boxed)?;
+                self.foreign_destructor(destructor.name, pointee)?;
+                // `[FFI-33b]` — a result's `threads(creator)` binds its type (`collect_foreign_result_creators`).
+                Some(hir::FfiOwnedResult { pointee, nullable, creator: self.foreign_creator(pointee) })
             }
             None => None,
         };
@@ -23635,7 +23794,7 @@ impl<'a> Checker<'a> {
         let callback_decls = self.foreign_callbacks.get(&def).cloned().unwrap_or_default();
         if counted.is_empty() && fixed.is_empty() && result_array.is_none()
             && result_span.is_none() && !borrowed_aggregate
-            && owned_params.is_empty() && retained_params.is_empty() && result_owned.is_none()
+            && owned_params.is_empty() && result_owned.is_none()
             && outputs.is_none() && callbacks.is_empty() { return None; }
         let mut abi_params = Vec::new();
         for param in &decl.params {
@@ -23658,9 +23817,6 @@ impl<'a> Checker<'a> {
             } else if let Some(&(_, nullable)) = owned_params.iter().find(|(slot, _)| *slot == name.name) {
                 let public_index = visible.iter().position(|(slot, _, _, _)| *slot == name.name)?;
                 abi_params.push(hir::FfiAbiParam::Owned { public_index, nullable });
-            } else if retained_params.iter().any(|(slot, _)| *slot == name.name) {
-                let public_index = visible.iter().position(|(slot, _, _, _)| *slot == name.name)?;
-                abi_params.push(hir::FfiAbiParam::Retained { public_index });
             } else if let Some(&(_, ty)) = outs.iter().find(|(slot, _)| *slot == name.name) {
                 abi_params.push(hir::FfiAbiParam::Out { ty });
             } else {
@@ -23766,6 +23922,24 @@ impl<'a> Checker<'a> {
             return inner;
         }
         self.box_of(inner)
+    }
+
+    /// `[FFI-36a]` — `ForeignBox[T]` is not a type of Ember: a foreign object Ember owns is an `owns
+    /// T` of its type, as `Box`'s refusal says (`[TYP-45]`). The message gives what to write, with
+    /// the migration, and the `owns T` is made, so that the rest of the program is checked.
+    fn refuse_foreign_box(&mut self, args: &[(Ty, Span)], span: Span) -> Ty {
+        let written: Vec<String> = args.iter().map(|&(arg, at)| self.written_line(at).unwrap_or_else(|| self.types.display(arg))).collect();
+        let diagnostic = match written.as_slice() {
+            [inner] => Diagnostic::error(codes::E1010, span, format!("`ForeignBox` is not a type of Ember: write `owns {inner}`"))
+                .help("a foreign object Ember owns is an `owns T` of its type, ended by the type's destructor")
+                .migrate("`ForeignBox[T]` is `owns T`", span, &format!("owns {inner}")),
+            _ => Diagnostic::error(codes::E1010, span, "`ForeignBox` is not a type of Ember: write `owns T`"),
+        };
+        self.sink.emit(diagnostic);
+        match args {
+            [(inner, at)] => self.owns_type(*inner, *at, span),
+            _ => self.common.error,
+        }
     }
 
     /// The name a type written at `span` is declared for, as written: `p` for `p: owns Player`, a
@@ -27439,7 +27613,7 @@ impl<'a> Checker<'a> {
                 let through_shared_ref =
                     self.reject_write_through_shared_ref(&place, target.span);
                 if !through_shared_ref {
-                    self.reject_borrowed_parameter_write(&place, target.span, true);
+                    self.reject_borrowed_parameter_write_as(&place, target.span, true, true);
                 }
                 let place_ty = place.ty;
                 // `[RNG-5a1]` — "No `*Assign` form is generated: `r += 1.0`
@@ -27938,7 +28112,7 @@ impl<'a> Checker<'a> {
             let through_shared_ref =
                 self.reject_write_through_shared_ref(&place, leaf.target.span);
             if !through_shared_ref {
-                self.reject_borrowed_parameter_write(&place, leaf.target.span, true);
+                self.reject_borrowed_parameter_write_as(&place, leaf.target.span, true, true);
             }
             let place_ty = place.ty;
             let source = self.coerce(source, place_ty);
@@ -36021,6 +36195,11 @@ impl<'a> Checker<'a> {
                 return Some(Stmt::Block(Block { stmts: vec![Stmt::Let { local: copy, init: Some(iterable) }, looped], span }));
             }
         }
+        // `[HEAP-9]` — an `owns T` reads as its `T`: a loop over one is a loop over what it holds.
+        let mut iterable = iterable;
+        while self.box_inner(iterable.ty).is_some_and(|inner| !matches!(self.types.kind(inner), TyKind::Dyn { .. })) && is_place(&iterable.kind) {
+            iterable = self.read_box_through(iterable);
+        }
         let referent = match *self.types.kind(iterable.ty) {
             TyKind::Ref { inner, .. } => inner,
             _ => iterable.ty,
@@ -37024,36 +37203,6 @@ impl<'a> Checker<'a> {
         if self.emit_callable_mode_mismatch(expr.span, expected, expr.ty) {
             return Expr { ty: expected, kind: ExprKind::Error, span: expr.span };
         }
-        // `[FFI-23]`, `[FFI-39c]` (ODR-156) — a `Retained` token of a class is a token of its base:
-        // the same object, held as long. The base's token holds the upcast handle, a count of its
-        // own that the token's end releases.
-        if let (Some(found), Some(wanted)) = (self.lock_inner(expr.ty, "std.ffi.Retained"), self.lock_inner(expected, "std.ffi.Retained"))
-            && let (TyKind::Class(derived), TyKind::Class(base)) = (self.types.kind(found).clone(), self.types.kind(wanted).clone())
-            && self.types.class_is_subclass_of(derived, base)
-            && let TyKind::Struct(token) = *self.types.kind(expected)
-        {
-            let span = expr.span;
-            let handle = Expr { ty: found, kind: ExprKind::Field { base: Box::new(expr), index: 0 }, span };
-            let upcast = Expr { ty: wanted, kind: ExprKind::Cast { expr: Box::new(handle), to: wanted }, span };
-            // `[HR-20]` — no `on_relocate` record of its own (`0`): the token it was made from keeps it.
-            let relocation = Expr { ty: self.common.u64, kind: ExprKind::Int(0), span };
-            return Expr { ty: expected, kind: ExprKind::StructLit { struct_id: token, fields: vec![upcast, relocation] }, span };
-        }
-        // `[FFI-39c]` (ODR-156) — an object of a class with a trampoline passed bare where C++
-        // keeps it: nothing would hold the token that keeps it alive.
-        if let Some(wanted) = self.lock_inner(expected, "std.ffi.Retained")
-            && let (TyKind::Class(derived), TyKind::Class(base)) = (self.types.kind(expr.ty).clone(), self.types.kind(wanted).clone())
-            && (derived == base || self.types.class_is_subclass_of(derived, base))
-            && self.cpp_trampoline(base).is_some()
-        {
-            let shown = self.types.display(wanted).rsplit('.').next().unwrap_or_default().to_string();
-            self.sink.emit(
-                Diagnostic::error(codes::E5060, expr.span, format!("C++ keeps this object, and nothing here holds the `Retained` token that keeps it alive for C++"))
-                    .help(format!("pin it and keep the token as long as C++ needs the object: `token = Retained.pin(…)`, then pass `token` (a `Retained[{shown}]`)"))
-                    .note("a parameter that keeps the object takes the token the program holds (ODR-156) [FFI-39c]"),
-            );
-            return Expr { ty: expected, kind: ExprKind::Error, span: expr.span };
-        }
         // `[CLS-4]`/`[DSP-1]` — single-inheritance handles upcast to an
         // open/abstract base without changing the pointed-to object. Keep
         // this as a distinct compiler-inserted cast so C receives a pointer
@@ -37232,9 +37381,9 @@ impl<'a> Checker<'a> {
         // `[CLO-3]`, `[CLO-10]` — a closure where an owned callable value is
         // wanted: an `owned fn` gives the value its environment; a lambda
         // that borrows is a view (`E3063`), and one that moves a capture out
-        // can be called only once (`E3030`).
+        // can be called only once (`E3013`).
         if let TyKind::Struct(id) = *self.types.kind(expr.ty)
-            && let Some(closure) = self.closure_calls.get(&id).map(|call| (call.def, call.once, call.owned))
+            && let Some(closure) = self.closure_calls.get(&id).map(|call| (call.def, call.once, call.owned, call.moved))
             && let TyKind::Fn { abi: None, stateless: false, params: wanted, ret: wanted_ret, .. } =
                 self.types.kind(expected).clone()
             && let Some(signature) = self.callable_signature_of_value(expr.ty)
@@ -37242,7 +37391,7 @@ impl<'a> Checker<'a> {
             && found == wanted
             && found_ret == wanted_ret
         {
-            let (def, once, owned) = closure;
+            let (def, once, owned, moved) = closure;
             let span = expr.span;
             let wanted_shown = self.types.display(expected);
             // `[LT-42]` — an `owned fn`'s captured views are the region analysis's: static ones may
@@ -37267,10 +37416,20 @@ impl<'a> Checker<'a> {
             let wanted_once = matches!(self.types.kind(expected), TyKind::Fn { once: true, .. });
             if once && !wanted_once {
                 self.sink.emit_classified(
-                    Diagnostic::error(codes::E3030, span, "closure would move a captured value out")
-                        .primary_label("this closure is callable only once")
-                        .help(format!("`{wanted_shown}` may be called many times; write `once {wanted_shown}` where it is called once"))
-                        .note("the closure moves a non-`Copy` capture out of its environment [CLO-6]"),
+                    Diagnostic::error(
+                        codes::E3013,
+                        span,
+                        format!(
+                            "this function gives {} away, so it can run only once, and `{wanted_shown}` may run it more than once",
+                            moved.map_or("a captured value".to_string(), |name| format!("`{name}`"))
+                        ),
+                    )
+                    .primary_label("this function can run only once")
+                    .help(match moved {
+                        Some(name) => format!("write `once {wanted_shown}` where it is held; or hand over a copy each time instead (`copy of {name}` where it is given away)"),
+                        None => format!("write `once {wanted_shown}` where it is held"),
+                    })
+                    .note("a function that gives one of its captures away can be called only once [CLO-6]"),
                 );
                 return Expr { ty: expected, kind: ExprKind::Error, span };
             }
@@ -38798,6 +38957,10 @@ impl<'a> Checker<'a> {
                     if self.report_skipped_foreign(module, name.name, name.span) {
                         return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                     }
+                    // `[OWN-6]` — `mem.forget` is gone, and its message says what to write.
+                    if qualified.is("std.mem.forget") {
+                        return self.refuse_mem_forget(args, span);
+                    }
                     let written = self
                         .namespace_segments(recv)
                         .expect("just resolved")
@@ -39386,6 +39549,15 @@ impl<'a> Checker<'a> {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
                 let inner = self.through_a_returned_ref(inner);
+                // `[HEAP-9]` — an `owns T` reads as its `T`: `ref b` or `ref mut b` where a view of
+                // the `T` is wanted views what the block holds, and so does a view of an `owns T` of
+                // a foreign type anywhere, whose block is the foreign object (`[FFI-36a]`).
+                let wanted = match expected.map(|ty| self.types.kind(ty).clone()) {
+                    Some(TyKind::Ref { inner: wanted, .. }) => Some(wanted),
+                    _ => None,
+                };
+                let through = self.box_inner(inner.ty).is_some_and(|held| wanted == Some(held) || self.foreign_owner_inner(inner.ty).is_some());
+                let inner = if through && is_place(&inner.kind) { self.read_box_through(inner) } else { inner };
                 let inner = if *mutable { self.index_place_for_write(inner) } else { inner };
                 // `[MOD-7]` — "taking `ref mut h.value`" is a write.
                 if *mutable {
@@ -41002,6 +41174,7 @@ impl<'a> Checker<'a> {
         // A closure refused at its argument would be refused again inside the instance
         // ([DIA-14]).
         if self.reject_once_closures_for_callable_bounds(
+            name,
             args,
             &declared_modes,
             &generics,
@@ -41404,6 +41577,7 @@ impl<'a> Checker<'a> {
         // A closure refused at its argument would be refused again inside the instance
         // ([DIA-14]).
         if self.reject_once_closures_for_callable_bounds(
+            name,
             args,
             &declared_modes,
             &generics,
@@ -41497,6 +41671,7 @@ impl<'a> Checker<'a> {
     /// carries the source parameter's callable capability.
     fn reject_once_closures_for_callable_bounds(
         &mut self,
+        callee: Symbol,
         args: &[ast::Arg],
         declared: &[(Ty, Mode)],
         generics: &[GenericParam],
@@ -41519,11 +41694,13 @@ impl<'a> Checker<'a> {
             }
             // `[CLO-6a]` — a `once fn` value is called at most once, as such a closure is.
             let once_value = matches!(self.types.kind(value.ty), TyKind::Fn { once: true, .. });
+            let mut moved = None;
             if !once_value {
                 let TyKind::Struct(id) = *self.types.kind(value.ty) else { continue };
                 if !self.closure_calls.get(&id).is_some_and(|closure| closure.once) {
                     continue;
                 }
+                moved = self.closure_calls.get(&id).and_then(|closure| closure.moved);
             }
             // A routed method's parameter is not the user's to change.
             let help = match self.routed_method {
@@ -41531,26 +41708,36 @@ impl<'a> Checker<'a> {
                     "move a clone of the capture into the closure, or use `mem.take` when it implements `Default`: \
                      `{method}` takes a `fn(…)`, which a closure that gives away its captures does not satisfy"
                 ),
-                None => "declare the parameter `f: once fn(...) -> ...` when it is called at most once, or use `mem.take` when the capture implements `Default`; clone only as a last resort".to_string(),
+                None => format!("take the parameter `owns f: once fn(...) -> ...` in `{callee}` when it runs the function at most once"),
             };
             if once_value {
                 let shown = self.types.display(value.ty);
                 self.sink.emit_classified(
-                    Diagnostic::error(codes::E3030, arg.value.span, format!("a `{shown}` value may be called only once"))
-                        .primary_label("this value is callable only once")
-                        .help("declare the parameter `f: once fn(...) -> ...` when it is called at most once")
-                        .note("a `fn(A) -> R` parameter may be called any number of times [CLO-6]"),
+                    Diagnostic::error(
+                        codes::E3013,
+                        arg.value.span,
+                        format!("a `{shown}` value can run only once, and `{callee}` may run it more than once"),
+                    )
+                    .primary_label("this value is callable only once")
+                    .help("take the parameter `owns f: once fn(...) -> ...` when it is called at most once")
+                    .note("a `fn(A) -> R` parameter may be called any number of times [CLO-6]"),
                 );
             } else {
                 self.sink.emit_classified(
                     Diagnostic::error(
-                        codes::E3030,
+                        codes::E3013,
                         arg.value.span,
-                        "closure would move a captured value out",
+                        format!(
+                            "this function gives {} away, so it can run only once, and `{callee}` may run it more than once",
+                            moved.map_or("a captured value".to_string(), |name| format!("`{name}`"))
+                        ),
                     )
-                    .primary_label("this closure is callable only once")
-                    .help(help)
-                    .note("the closure moves a non-`Copy` capture out of its environment [CLO-2]"),
+                    .primary_label("this function can run only once")
+                    .help(match moved {
+                        Some(name) => format!("{help}; or hand over a copy each time instead (`copy of {name}` where it is given away)"),
+                        None => help,
+                    })
+                    .note("a function that gives one of its captures away can be called only once [CLO-6]"),
                 );
             }
             rejected = true;
@@ -41801,7 +41988,7 @@ impl<'a> Checker<'a> {
                     origin: None,
                     declaring_module: self.current_module,
                 });
-                self.closure_calls.insert(id, ClosureCall { def, once: false, owned: false });
+                self.closure_calls.insert(id, ClosureCall { def, once: false, owned: false, moved: None });
                 let ty = self.types.intern(TyKind::Struct(id));
                 (id, Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields: Vec::new() }, span }, Mode::Borrow)
             }
@@ -45311,7 +45498,7 @@ impl<'a> Checker<'a> {
                 let shown = qualified.as_str().rsplit('.').next().unwrap_or("");
                 self.sink.emit(
                     Diagnostic::error(codes::E5032, name_span, format!("`{shown}` is an opaque C++ class: Ember does not know how to make one"))
-                        .help(format!("call one of its imported constructors, `{shown}.new(…)`, which returns a `ForeignBox[{shown}]`"))
+                        .help(format!("call one of its imported constructors, `{shown}.new(…)`, which returns an `owns {shown}`"))
                         .note("a C++ class that is not standard-layout and trivially copyable is opaque, made only through its constructors [FFI-32]"),
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
@@ -46192,6 +46379,18 @@ impl<'a> Checker<'a> {
         span: Span,
         offer_interior_mutability: bool,
     ) -> bool {
+        self.reject_borrowed_parameter_write_as(place, span, offer_interior_mutability, false)
+    }
+
+    /// `assigns`: the write is the assignment of the whole parameter (`n = n + 1`), Python's
+    /// rebinding of its name, which a borrowed parameter reached through its borrow is too.
+    fn reject_borrowed_parameter_write_as(
+        &mut self,
+        place: &Expr,
+        span: Span,
+        offer_interior_mutability: bool,
+        assigns: bool,
+    ) -> bool {
         let Some(local) = root_local(&place.kind) else { return false };
         if !self.borrowed_params.contains(&local) {
             return false;
@@ -46233,14 +46432,26 @@ impl<'a> Checker<'a> {
         let shown = self.types.display(ty);
         // D-823 (B2) — the whole parameter given a new value is Python's rebinding of a name: the
         // value it means is a new local's, and the caller's stays as it was.
-        let rebinding = matches!(place.kind, ExprKind::Local(_)) && !self.callable_parameter_locals.contains(&local);
+        let rebinding = match &place.kind {
+            ExprKind::Local(_) => true,
+            ExprKind::Deref(inner) => assigns && matches!(inner.kind, ExprKind::Local(_)),
+            _ => false,
+        } && !self.callable_parameter_locals.contains(&local);
         let structural_help = if self.callable_parameter_locals.contains(&local) {
             format!(
                 "declare this callable parameter `ref mut {name}: fn(...) -> ...` so it receives a mutable closure place"
             )
         } else if rebinding {
+            // `[DIA-7]`, `[DIA-25]`, shape B4 — a local of your own first (`count = n`), the parameter
+            // as the program wrote it (`n: int`) where the caller is to see the new value.
+            let written = self
+                .sources
+                .get(&declaration.file)
+                .and_then(|source| source.text.get(declaration.start as usize..declaration.end as usize))
+                .filter(|text| !text.is_empty())
+                .map_or_else(|| format!("{name}: {shown}"), str::to_string);
             format!(
-                "bind the new value to a new local (`new_{name} = …`) and use that from here on; declare the parameter `ref mut {name}: {shown}` only if the caller is to see the new value, as a single owner passing it `ref mut`"
+                "give the value a local of your own first, `new_{name} = {name}`, and change and use `new_{name}` from here on; or write `ref mut {written}` for the parameter, and `ref mut` before the argument at each call, if the caller is to see the new value"
             )
         } else {
             // `[DIA-10]`, shape B4 — the line to write: the parameter with `ref mut`, and the same
@@ -46298,7 +46509,7 @@ impl<'a> Checker<'a> {
     }
 
     fn reject_readonly_write(&mut self, place: &Expr, span: Span) {
-        self.reject_readonly_write_inner(place, span, false);
+        self.reject_readonly_write_inner(place, span);
     }
 
     /// An assignment: also the place `[CLS-9]` restricts, a `let` field
@@ -46306,17 +46517,17 @@ impl<'a> Checker<'a> {
     /// any handle (`[CLS-7]`); the access it takes is checked at run time
     /// (VIII.3, `[EXC-16]`; D-462).
     fn reject_readonly_write_in_assignment(&mut self, place: &Expr, span: Span) {
-        self.reject_readonly_write_inner(place, span, true);
+        self.reject_readonly_write_inner(place, span);
     }
 
     /// `[EXC-1]` — a class field passed to a `mut` parameter is a long-term
     /// access at the call boundary: the caller's MIR lowering surrounds the
     /// call with the run-time access interval.
     fn reject_readonly_write_in_mut_argument(&mut self, place: &Expr, span: Span) {
-        self.reject_readonly_write_inner(place, span, false);
+        self.reject_readonly_write_inner(place, span);
     }
 
-    fn reject_readonly_write_inner(&mut self, place: &Expr, span: Span, assignment: bool) {
+    fn reject_readonly_write_inner(&mut self, place: &Expr, span: Span) {
         self.note_written(place);
         let mut current = place;
         loop {
@@ -46355,13 +46566,12 @@ impl<'a> Checker<'a> {
                                 )
                             },
                         );
-                        // `[CLS-9]` — only assignment to the binding itself is
-                        // restricted. A `ref mut` or a `mut` call through the
-                        // field reaches this helper through another entry
-                        // point and remains permitted by `[CLS-9a]`.
-                        let reassigns_let_field = assignment
-                            && std::ptr::eq(current, place)
-                            && field.is_some_and(|(_, _, is_let, _)| is_let)
+                        // `[CLS-9]`, `[CLS-9a]` — after `init`, nothing is changed through a
+                        // `let` field, for every type: it is not assigned, a list in it is not
+                        // added to, and what an object it names is not changed through it. A
+                        // change reaches this helper as an assignment, a `ref mut` or a `mut`
+                        // argument (a method's receiver included), through any depth of path.
+                        let reassigns_let_field = field.is_some_and(|(_, _, is_let, _)| is_let)
                             && self.class_init_field_index(current).is_none();
                         if reassigns_let_field {
                             let (owner_id, field_name, _, _) =
@@ -46380,6 +46590,8 @@ impl<'a> Checker<'a> {
                                     "`{field_name}` is `let`: it is set in `init` and never changed after; to {change}, write the field without `let`: `{field_name}: {shown}`"
                                 ),
                             );
+                            // One mistake, one error: the outer `let` fields on the path are not repeated.
+                            return;
                         }
                         if let Some((owner_id, field_name, _, read_only_outside)) = field {
                             if !reassigns_let_field
@@ -47891,27 +48103,12 @@ impl<'a> Checker<'a> {
         self.synth_method_on(receiver, recv.span, name, generic_args, args, expected, span)
     }
 
-    /// `[FFI-23]` (ODR-132) — `token.ptr()`: an `ObjectPtr[C]` for a class `C`, a `*mut U` for a
-    /// `Box[U]`, a `*mut u8` for a `Box[dyn I]` (and for a token over an opaque parameter, which a
-    /// concrete instance types). The object's address, read from the token's value.
+    /// `[FFI-21]`, `[FFI-23]` — `token.ptr()` of a `Retained[ForeignCallback]`: the user data C was
+    /// given, read from the token's value.
     fn synth_retained_ptr(&mut self, token: Expr, held: Ty, span: Span) -> Expr {
         let bytes = self.types.intern(TyKind::Ptr { mutable: true, inner: self.common.u8 });
-        // `[FFI-21]` — a retained callback's: the user data C was given.
-        if self.is_foreign_callback(held) {
-            let value = Expr { ty: held, kind: ExprKind::Field { base: Box::new(token), index: 0 }, span };
-            return Expr { ty: bytes, kind: ExprKind::Field { base: Box::new(value), index: 0 }, span };
-        }
-        let ty = match *self.types.kind(held) {
-            TyKind::Class(_) => self.instantiate_named_generic("std.ffi.ObjectPtr", &[held], span),
-            _ => match self.box_inner(held) {
-                Some(inner) if !matches!(self.types.kind(inner), TyKind::Dyn { .. }) => {
-                    self.types.intern(TyKind::Ptr { mutable: true, inner })
-                }
-                _ => bytes,
-            },
-        };
         let value = Expr { ty: held, kind: ExprKind::Field { base: Box::new(token), index: 0 }, span };
-        Expr { ty, kind: ExprKind::Builtin { which: Builtin::RetainedAddress, args: vec![value] }, span }
+        Expr { ty: bytes, kind: ExprKind::Field { base: Box::new(value), index: 0 }, span }
     }
 
     /// The rest of a method call, once its receiver is checked: what `recv.name(args)` means for
@@ -47955,10 +48152,10 @@ impl<'a> Checker<'a> {
             self.sink.emit_all(answer);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        // `[FFI-23]` (ODR-132) — `token.ptr()`: the address foreign code keeps, typed by what the
-        // token holds.
+        // `[FFI-21]`, `[FFI-23]` — `token.ptr()`: the user data C keeps for the callback.
         if name.name.is("ptr") && args.is_empty() && generic_args.is_empty()
             && let Some(held) = self.lock_inner(receiver.ty, "std.ffi.Retained")
+            && self.is_foreign_callback(held)
         {
             return self.synth_retained_ptr(receiver, held, span);
         }
@@ -48117,13 +48314,6 @@ impl<'a> Checker<'a> {
             }
             return self.synth_shared_method(receiver, inner, name, args, span);
         }
-        // `[FFI-17a]`, `[FFI-36a]` — a `ForeignBox[T]` owns a live foreign object: `get` borrows it
-        // shared and `get_mut` exclusively, for the methods `import cpp` gives an opaque class.
-        if let Some(inner) = self.foreign_box_inner(receiver.ty)
-            && (name.name.is("get") || name.name.is("get_mut"))
-        {
-            return self.synth_foreign_box_get(receiver, inner, name, args, span);
-        }
         // IX.1 — `get` exposes the canonical shared reference. Other method
         // names are resolved after auto-dereferencing to the payload, so Box
         // does not duplicate the payload's method surface.
@@ -48140,29 +48330,40 @@ impl<'a> Checker<'a> {
         {
             return self.clone_value(receiver);
         }
+        // `[OWN-12]`, `[FFI-54]` — `x.into_raw()` on an `owns` value is the compiler's own, before
+        // the value's (a `T` with an `into_raw` of its own is called below).
+        if name.name.is("into_raw")
+            && self.box_inner(receiver.ty).is_some_and(|inner| self.lookup_method(inner, name.name).is_none())
+        {
+            return self.synth_into_raw(receiver, args, &explicit, span);
+        }
         if self.box_inner(receiver.ty).is_some() && !dyn_box {
             // `[HEAP-9]` — an `owns T` reads as its `T`, with nothing written in between: a `get` of
             // the block itself is not Ember (a `T` with a `get` of its own is called below).
             let inner_get = self.box_inner(receiver.ty).is_some_and(|inner| self.lookup_method(inner, name.name).is_some());
-            if name.name.is("get") && !inner_get {
+            // `[TYP-14]` — and so is its `get_mut` (once `ForeignBox`'s, `[FFI-36a]`).
+            let block_get = (name.name.is("get") || name.name.is("get_mut")) && !inner_get;
+            let written = if name.name.is("get") { "`.get()`" } else { "`.get_mut()`" };
+            if block_get {
                 let call_end = span.end;
                 let dot = Span::new(span.file, receiver.span.end, call_end);
                 let shown = self.written_line(receiver.span).unwrap_or_else(|| "the value".to_string());
                 let held = self.types.display(self.box_inner(receiver.ty).expect("a box"));
                 let line = self.line_with(Span::new(span.file, receiver.span.start, call_end), &shown);
                 // `[TYP-14]` — `E2072`, in the rule's words.
-                let mut diagnostic = Diagnostic::error(codes::E2072, span, format!("an `owns {held}` reads as a `{held}`; remove `.get()`"));
+                let mut diagnostic = Diagnostic::error(codes::E2072, span, format!("an `owns {held}` reads as a `{held}`; remove {written}"));
                 diagnostic = match line {
-                    Some(line) => diagnostic.help(format!("remove `.get()`: `{line}`")),
-                    None => diagnostic.help("remove `.get()`"),
+                    Some(line) => diagnostic.help(format!("remove {written}: `{line}`")),
+                    None => diagnostic.help(format!("remove {written}")),
                 };
                 // A new name given the view says it is one: `r: ref T = b`, not a hand-over of `b`.
                 let fresh = self.bound_name(span).filter(|(name, _)| self.lookup(Symbol::intern(name)).is_none());
+                let mutable = if name.name.is("get_mut") { "mut " } else { "" };
                 let diagnostic = match fresh {
                     Some((_, at)) => diagnostic.migrate_edits(
                         "`r = b.get()` is `r: ref T = b`",
                         vec![
-                            (Span::new(at.file, at.end, at.end), ember_diag::Replacement::Text(format!(": ref {held}"))),
+                            (Span::new(at.file, at.end, at.end), ember_diag::Replacement::Text(format!(": ref {mutable}{held}"))),
                             (dot, ember_diag::Replacement::Text(String::new())),
                         ],
                     ),
@@ -48170,12 +48371,12 @@ impl<'a> Checker<'a> {
                 };
                 self.sink.emit(diagnostic);
             }
-            if name.name.is("get") && !inner_get {
+            if block_get {
                 if !explicit.is_empty() {
                     self.error(
                         codes::E2020,
                         span,
-                        format!("`get` takes no type arguments, found {}", explicit.len()),
+                        format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
                     );
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
@@ -49803,7 +50004,11 @@ impl<'a> Checker<'a> {
         // IX.1 — field lookup auto-dereferences Box owners. Repeat
         // for nested boxes; every generated dereference remains
         // rooted at the owner place for borrow and move analysis.
-        while self.box_inner(base.ty).is_some() {
+        // `[FFI-36a]` — the module that declares a block's own fields (`std.ffi`'s foreign owners)
+        // reads them.
+        while self.box_inner(base.ty).is_some()
+            && !matches!(*self.types.kind(base.ty), TyKind::Struct(id) if self.types.struct_def(id).declaring_module == self.current_module)
+        {
             base = self.read_box_through(base);
         }
         // `[RC-1]` — an owner reads as its object.
@@ -50359,7 +50564,7 @@ impl<'a> Checker<'a> {
                             ffi_counted: None,
                         });
                         self.closure_symbols.insert(def, call.symbol);
-                        self.closure_calls.insert(id, ClosureCall { def, once: call.once, owned: call.owned });
+                        self.closure_calls.insert(id, ClosureCall { def, once: call.once, owned: call.owned, moved: None });
                     }
                     self.types.intern(TyKind::Struct(id))
                 } else if let Some((generic, args)) = &entry.origin {
@@ -50852,7 +51057,9 @@ impl<'a> Checker<'a> {
         // `[CLO-2]` — an `owned fn` stays reusable when it merely reads its
         // directly owned captures. It becomes `CallableOnce` only when the
         // typed body actually consumes a non-`Copy` capture.
+        self.first_moved_capture.set(None);
         let once = owned && self.closure_body_moves_capture(&body, LocalId(0));
+        let moved = if once { self.first_moved_capture.get().and_then(|index| captured.get(index)).map(|(name, _)| *name) } else { None };
         debug_assert_eq!(once, probe_once, "closure probe and final body disagree about CallableOnce");
         let call_mode = if once {
             Mode::Owned
@@ -50878,7 +51085,7 @@ impl<'a> Checker<'a> {
             skipped_before,
             reserved,
         );
-        self.closure_calls.insert(struct_id, ClosureCall { def, once, owned: owned });
+        self.closure_calls.insert(struct_id, ClosureCall { def, once, owned: owned, moved });
 
         // The closure *value* is its environment. Ordinary closures borrow
         // each captured local; `owned fn` moves or copies each capture into
@@ -51795,8 +52002,11 @@ impl<'a> Checker<'a> {
     ) -> bool {
         if consuming
             && !self.types.is_copy(expr.ty)
-            && Self::is_closure_capture_place(expr, environment)
+            && let Some(index) = Self::closure_capture_field_index(expr, environment)
         {
+            if self.first_moved_capture.get().is_none() {
+                self.first_moved_capture.set(Some(index));
+            }
             return true;
         }
 
@@ -51916,11 +52126,6 @@ impl<'a> Checker<'a> {
             | ExprKind::Error => false,
         }
     }
-
-    fn is_closure_capture_place(expr: &Expr, environment: LocalId) -> bool {
-        Self::closure_capture_field_index(expr, environment).is_some()
-    }
-
     /// Return the first generated-environment field on a place projection.
     /// `(*env).field.subfield` and `(*env).field[index]` still belong to the
     /// same capture for both its mutable-borrow and move-out capability.
@@ -51957,7 +52162,8 @@ impl<'a> Checker<'a> {
         match which {
             Builtin::BoxNew { .. }
             | Builtin::SharedNew { .. }
-            | Builtin::MemForget { .. }
+            | Builtin::IntoRaw { .. }
+            | Builtin::FmtSinkClose
             | Builtin::CellIntoInner
             | Builtin::MaybeUninitAssumeInit { .. }
             | Builtin::UnsafeCellIntoInner
@@ -52634,20 +52840,65 @@ impl<'a> Checker<'a> {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         let payload = self.read_box_through(receiver);
-        let ty = self.types.intern(TyKind::Ref { mutable: false, inner });
+        let mutable = name.name.is("get_mut");
+        let ty = self.types.intern(TyKind::Ref { mutable, inner });
         Expr {
             ty,
-            kind: ExprKind::Ref { place: Box::new(payload), mutable: false },
+            kind: ExprKind::Ref { place: Box::new(payload), mutable },
             span,
         }
     }
 
+    /// `[OWN-12]`, `[FFI-54]` — `x.into_raw()` on an `owns T`, built into the compiler: the address
+    /// of what `x` holds (a `*mut T`; a `*mut u8` for an `owns dyn I`), with Ember freeing nothing,
+    /// so nothing else can skip a value's clean-up (there is no `mem.forget`). `x` is handed over:
+    /// the name ends and nothing of it is dropped. An `owns T` of a foreign type's address leaves
+    /// the runtime's record (`[FFI-36b]`), as a parameter contracted `owns` takes it. Outside
+    /// `unsafe:` it is `E3100`: "`into_raw()` stops Ember from freeing the widget, so a mistake
+    /// leaks it or frees it twice; write it inside `unsafe:`: above line 18 write `# SAFETY:` and
+    /// the reason, then `unsafe:`, and indent line 18 under it".
+    fn synth_into_raw(&mut self, receiver: Expr, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if !args.is_empty() || !explicit.is_empty() {
+            self.error(codes::E2020, span, "`into_raw()` takes no arguments");
+            return error;
+        }
+        let Some(inner) = self.box_inner(receiver.ty) else { return error };
+        let step = UnsafeStep::Other("the `into_raw()`".to_string(), "the `into_raw()`s".to_string());
+        self.note_unsafe_step(&step);
+        if !self.unsafe_context() {
+            let noun = Self::common_noun(&self.types.display(inner));
+            let message = format!("`into_raw()` stops Ember from freeing the {noun}, so a mistake leaks it or frees it twice; write it inside `unsafe:`");
+            let block = match self.stmt_lines() {
+                Some(StmtLines { first, last, alone: true }) => {
+                    let these = if first == last { format!("line {first}") } else { format!("lines {first} to {last}") };
+                    format!(": above line {first} write `# SAFETY:` and the reason, then `unsafe:`, and indent {these} under it")
+                }
+                Some(StmtLines { first, .. }) => format!(": put the statement on line {first} on a line of its own, in an `unsafe:` block with a `# SAFETY:` note"),
+                None => String::new(),
+            };
+            let refusal = Diagnostic::error(codes::E3100, span, format!("{message}{block}"))
+                .note("C may then keep or end what the address points to, and nothing checks that [OWN-12] [UNS-1]");
+            if self.in_safe_block {
+                self.refuse_unsafe(span, step, refusal);
+            } else {
+                self.sink.emit(refusal);
+            }
+        }
+        let pointer = match self.types.kind(inner) {
+            TyKind::Dyn { .. } => self.types.intern(TyKind::Ptr { mutable: true, inner: self.common.u8 }),
+            _ => self.types.intern(TyKind::Ptr { mutable: true, inner }),
+        };
+        let foreign = self.foreign_owner_inner(receiver.ty).is_some();
+        Expr { ty: pointer, kind: ExprKind::Builtin { which: Builtin::IntoRaw { foreign }, args: vec![receiver] }, span }
+    }
+
     /// `[FFI-48]` — a C++ object Ember holds as a value or behind a pointer (an opaque class or a
-    /// standard-layout one, by reference or in a `ForeignBox`), not as a class of its own.
+    /// standard-layout one, by reference or as an `owns T`), not as a class of its own.
     fn cpp_object_type(&self, ty: Ty) -> bool {
         let ty = match *self.types.kind(ty) {
             TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => inner,
-            _ => self.foreign_box_inner(ty).unwrap_or(ty),
+            _ => self.foreign_owner_inner(ty).unwrap_or(ty),
         };
         let name = match self.types.kind(ty) {
             TyKind::Opaque(name) => *name,
@@ -52656,34 +52907,6 @@ impl<'a> Checker<'a> {
         };
         name.as_str().rsplit_once('.').and_then(|(prefix, _)| self.prefixes.iter().position(|module| module == prefix))
             .is_some_and(|module| self.foreign_cpp.get(module).copied().unwrap_or(false))
-    }
-
-    /// `[FFI-36a]` — the object a `ForeignBox[T]` owns, when `ty` is one.
-    fn foreign_box_inner(&self, ty: Ty) -> Option<Ty> {
-        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
-        match &self.types.struct_def(id).origin {
-            Some((name, args)) if name.is("std.ffi.ForeignBox") && args.len() == 1 => Some(args[0]),
-            _ => None,
-        }
-    }
-
-    /// `[FFI-17a]`, `[FFI-36a]` — `box.get()` / `box.get_mut()`: a reference to the object the box
-    /// owns, which lives as long as the box, so the box must be a place (as for `Box.get`).
-    fn synth_foreign_box_get(&mut self, receiver: Expr, inner: Ty, name: ast::Ident, args: &[ast::Arg], span: Span) -> Expr {
-        if !args.is_empty() {
-            self.error(codes::E2020, span, format!("`{}` takes 0 arguments, found {}", name.name, args.len()));
-            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        }
-        if !is_place(&receiver.kind) {
-            self.error(codes::E2140, span, format!("`ForeignBox.{}` needs an owner place so its returned reference cannot outlive a temporary", name.name));
-            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        }
-        let mutable = name.name.is("get_mut");
-        let pointer = self.types.intern(TyKind::Ptr { mutable: true, inner });
-        let field = Expr { ty: pointer, kind: ExprKind::Field { base: Box::new(receiver), index: 0 }, span };
-        let object = Expr { ty: inner, kind: ExprKind::Deref(Box::new(field)), span };
-        let ty = self.types.intern(TyKind::Ref { mutable, inner });
-        Expr { ty, kind: ExprKind::Ref { place: Box::new(object), mutable }, span }
     }
 
     /// `[HEAP-4]`, `[HEAP-5]` — `Shared[T]` borrows its payload. The shared
@@ -64032,8 +64255,8 @@ fn ffi_owned_result_arg(arg: &ast::AttrArg) -> Option<(ast::Ident, bool, bool)> 
     Some((segments[0], nullable, creator))
 }
 
-/// `[FFI-11]` — `param(p, owned, one[, nullable])`: the callee takes the object; the caller gives
-/// up its `ForeignBox` (`Option` of one when nullable), which frees nothing.
+/// `[FFI-11]` — `param(p, owns, one[, nullable])`: the callee takes the object; the caller hands
+/// over its `owns T` (`Option` of one when nullable), and Ember frees nothing.
 fn ffi_owned_param_arg(arg: &ast::AttrArg) -> Option<(Symbol, bool)> {
     let ast::AttrArg::Expr(expr) = arg else { return None };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };

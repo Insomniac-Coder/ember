@@ -12,7 +12,7 @@
 # `Span` (`MutSpan` through a non-`const` pointer), the length leaving its signature; a
 # `nul_terminated` pointer is a `cstr`, and a pointer result `borrowed one from(self)` a reference
 # borrowing the receiver. Beside them the wrapper still passes what the importer does: a `T&`, the
-# object a `ForeignBox` or a bridge value holds, and a class by value or a bridge value as the
+# object an `owns T` or a bridge value holds, and a class by value or a bridge value as the
 # result. The entries assert each call safe (`[FFI-2]`): no `unsafe`.
 
 from std.ffi import c_int, CppError, CppString
@@ -46,21 +46,21 @@ fn main():
         Err(error):
             println(error.what)
     tally = cpp.Tally.new()
-    tally.get_mut().add(values.as_span())
+    tally.add(values.as_span())
     slots: Array[c_int] = [0, 0, 0]
     many: Array[c_int] = [0, 0, 0, 0, 0]
-    filled = tally.get().fill(slots.as_mut_span()).unwrap_or(0)
-    spot: ref c_int = tally.get().spot()
-    println(tally.get().total(), filled, slots[0], slots[2], shown(owns tally.get().fill(many.as_mut_span())), spot)
-    parsed = tally.get_mut().parse(c"7").unwrap_or(0)
-    failed = shown(owns tally.get_mut().parse(c"x"))
+    filled = tally.fill(slots.as_mut_span()).unwrap_or(0)
+    spot: ref c_int = tally.spot()
+    println(tally.total(), filled, slots[0], slots[2], shown(owns tally.fill(many.as_mut_span())), spot)
+    parsed = tally.parse(c"7").unwrap_or(0)
+    failed = shown(owns tally.parse(c"x"))
     appended = cpp.hex(bytes.as_span()).unwrap()
     mark: Array[u8] = [33, 63]
-    _ = tally.get().append(ref mut appended, mark.as_span())
+    _ = tally.append(ref mut appended, mark.as_span())
     println(parsed, failed, String.from(appended))
     small: Array[c_int] = [1, 2, 3]
     match cpp.tally_of(small.as_span()):
         Ok(other):
-            println(other.get().total(), cpp.dot(small.as_span(), values.as_span()).unwrap_or(0))
+            println(other.total(), cpp.dot(small.as_span(), values.as_span()).unwrap_or(0))
         Err(error):
             println(error.what)

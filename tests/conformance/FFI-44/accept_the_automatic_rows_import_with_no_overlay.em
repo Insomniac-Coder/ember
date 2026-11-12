@@ -25,7 +25,7 @@
 # single C++ base has the base's methods too), the standard library's vector, an instantiation the
 # import lists, and a function that may throw, whose exception is a `Result`.
 
-from std.ffi import CppError, CppVector, ForeignBox, c_int
+from std.ffi import CppError, CppVector, c_int
 import cpp "rows.hpp" with (instantiate = ["largest<int>"])
 
 fn pair_sum(p: cpp.Pair) -> c_int:
@@ -40,12 +40,12 @@ fn bump_twice() -> (c_int, c_int):
     unsafe:  # SAFETY(ffi): the box owns the counter for both calls
         match cpp.Counter.new():
             Ok(counter):
-                first = counter.get_mut().bump()
-                return (first, counter.get_mut().bump())
+                first = counter.bump()
+                return (first, counter.bump())
             Err(error):
                 panic(error.what)
 
-fn tagged() -> Result[ForeignBox[cpp.Tagged], CppError]:
+fn tagged() -> Result[owns cpp.Tagged, CppError]:
     unsafe:  # SAFETY(ffi): the constructor makes an object the box owns
         return cpp.Tagged.new()
 
@@ -72,7 +72,7 @@ fn main():
     println(first, second)
     match tagged():
         Ok(made):
-            (id, tag) = id_and_tag(made.get())
+            (id, tag) = id_and_tag(made)
             println(id, tag)
         Err(error):
             println(error.what)

@@ -167,9 +167,15 @@ fn starts_with_vowel_sound(word: &str) -> Option<bool> {
         'o' => !(lower.starts_with("one") || lower.starts_with("once")),
         'u' => lower.starts_with("un") && !lower.starts_with("uni"),
         // A short acronym spells its first letter's name: `SoA`, `SIMD`, `FFI`, `NaN`, `Rc` (ess, em, eff, en, ar).
+        // A lowercase name may be a word (`list`, `set`) or letters (`lto`, `msvc`), which its spelling does
+        // not tell: its article stays as the message has it.
         'f' | 'h' | 'l' | 'm' | 'n' | 'r' | 's' | 'x' => {
             let acronym = word.starts_with(|c: char| c.is_uppercase()) && (2..=4).contains(&word.len()) && word[1..].chars().filter(|c| c.is_lowercase()).count() <= 1;
-            acronym || (first == 'f' && word.len() > 1 && word[1..].chars().all(|c| c.is_ascii_digit()))
+            let float = first == 'f' && word.len() > 1 && word[1..].chars().all(|c| c.is_ascii_digit());
+            if !acronym && !float && word.chars().all(|c| !c.is_uppercase()) {
+                return None;
+            }
+            acronym || float
         }
         _ => false,
     })
@@ -463,6 +469,13 @@ pub fn line_mark(span: Span) -> String {
     format!("\u{1}{}:{}\u{2}", span.file.0, span.start)
 }
 
+/// The program's own text of `span`, for a message written where the source text is not at hand
+/// (the analyses; `[DIA-2]`: a refusal names what was refused as the program wrote it): a marker
+/// the renderer replaces by the span's text, a run of whitespace shown as one space.
+pub fn text_mark(span: Span) -> String {
+    format!("\u{1}={}:{}:{}\u{2}", span.file.0, span.start, span.end)
+}
+
 fn has_line_marks(d: &Diagnostic) -> bool {
     let marked = |text: &str| text.contains('\u{1}');
     marked(&d.message)
@@ -501,6 +514,19 @@ fn expand_marks(text: &str, map: &SourceMap) -> String {
         out.push_str(&rest[..open]);
         let after = &rest[open + 1..];
         let Some(close) = after.find('\u{2}') else { break };
+        if let Some(range) = after[..close].strip_prefix('=') {
+            let mut parts = range.split(':').map(|part| part.parse::<u32>().ok());
+            let text = match (parts.next().flatten(), parts.next().flatten(), parts.next().flatten()) {
+                (Some(file), Some(start), Some(end)) => map
+                    .get(FileId(file))
+                    .and_then(|file| file.text.get(start as usize..end as usize))
+                    .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" ")),
+                _ => None,
+            };
+            out.push_str(&text.unwrap_or_else(|| "?".to_string()));
+            rest = &after[close + 1..];
+            continue;
+        }
         let line = after[..close].split_once(':').and_then(|(file, start)| {
             let file = map.get(FileId(file.parse().ok()?))?;
             Some(file.line_of(start.parse().ok()?))
@@ -881,5 +907,6 @@ mod tests {
         assert_eq!(fixed("a `SoA`, a `SIMD` lane, a `Rc`, an `Set`, a `Mat2`"), "an `SoA`, an `SIMD` lane, an `Rc`, a `Set`, a `Mat2`");
         assert_eq!(fixed("data `x`, extra `y`"), "data `x`, extra `y`");
         assert_eq!(fixed("a `n`, a `x`, an `b`, a `e`"), "an `n`, an `x`, a `b`, an `e`");
+        assert_eq!(fixed("an `lto` value, a `list`"), "an `lto` value, a `list`");
     }
 }

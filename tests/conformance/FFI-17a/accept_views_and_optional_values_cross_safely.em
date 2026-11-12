@@ -11,7 +11,7 @@
 # from which the thunk makes the view; a result is a view of the C++ object's elements, borrowing
 # what the entry's lifetime word names (`[FFI-11]`: `from(self)`, `from(text)`, `from(static)`). A
 # `std::optional<T>` of a `T` that maps by value is an `Option[T]`. A `std::unique_ptr<T>`
-# parameter takes the `ForeignBox[T]` the caller gives up: C++ frees the object, once. The
+# parameter takes the `owns T` the caller hands over: C++ frees the object, once. The
 # overlay's entries assert each call safe (`[FFI-2]`): no `unsafe`.
 
 from std.ffi import c_int, CppError
@@ -29,13 +29,13 @@ fn main():
         Err(error):
             println(error.what)
     words = cpp.Words.new().unwrap()
-    first = words.get().first()
-    scores = words.get().scores()
+    first = words.first()
+    scores = words.scores()
     shown = f"{first.to_str().unwrap()} {scores[0]} {scores.len() - 1}"
-    changed = words.get_mut().scores_mut()
+    changed = words.scores_mut()
     changed[0] = 10
     padded = "  hi  ".as_bytes()
-    println(shown, words.get().total(), cpp.greeting().to_str().unwrap(), cpp.trim(padded).to_str().unwrap())
+    println(shown, words.total(), cpp.greeting().to_str().unwrap(), cpp.trim(padded).to_str().unwrap())
     scale = cpp.scaled(Some(2.0), 3.0).unwrap_or(0.0)
     plain = cpp.scaled(None, 3.0).unwrap_or(0.0)
     println(cpp.digit(55).unwrap_or(-1), cpp.digit(120).is_none(), cpp.or_zero(Some(5)), cpp.or_zero(None), scale, plain)

@@ -13,7 +13,7 @@ class Inventory:
 
     fn sell(name: StrView, quantity: int) -> float:
         item = ref this.items[name]
-        this.items[name].quantity -= quantity    #$ error[E3080]: `this.items` is borrowed here and mutably borrowed elsewhere
+        this.items[name].quantity -= quantity    #$ error[E3021]: `this.items` is borrowed here and mutably borrowed elsewhere
         return item.price * quantity as float
 
 fn main():

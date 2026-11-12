@@ -1,7 +1,7 @@
 #$ test: run-pass
 #$ rules: TYP-10, CG-C-1
 #$ profiles: debug, development, release
-#$ assert-c: contains("((int64_t)((uint64_t)(a) << ")
+#$ assert-c: contains("(int64_t)((uint64_t)(a) << ")
 #$ stdout: -12
 #$ -12 -128 -128
 #$ -9223372036854775808

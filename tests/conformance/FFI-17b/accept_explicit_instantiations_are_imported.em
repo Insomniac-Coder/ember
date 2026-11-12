@@ -50,8 +50,8 @@ fn main():
         match cpp.geo.Stack_int.make():
             Ok(made):
                 stack = adopt[cpp.geo.Stack_int](made)
-                _ = stack.get_mut().push(2)
-                _ = stack.get_mut().push(4)
-                println(stack.get().top(), stack.get().size())
+                _ = stack.push(2)
+                _ = stack.push(4)
+                println(stack.top(), stack.size())
             Err(error):
                 println(error.what)

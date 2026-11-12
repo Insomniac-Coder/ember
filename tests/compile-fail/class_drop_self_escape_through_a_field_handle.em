@@ -11,7 +11,7 @@ class Item:
     keeper: Keeper
 
     fn drop():
-        this.keeper.saved = Some(this) #$ error[E3016]: `this` escapes its own `drop`
+        this.keeper.saved = Some(this) #$ error[E3016]: `drop` ends this `Item`; an owner made from it would point at a freed object; keep a copy of what you need
 
 fn main():
     _item = Item(Keeper())

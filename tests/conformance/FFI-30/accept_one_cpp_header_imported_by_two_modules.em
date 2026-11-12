@@ -14,6 +14,6 @@ import cpp "classes.hpp" with (overlay = "overlays/classes.em")
 
 fn main():
     counter = cpp.Counter.new()
-    counter.get_mut().add(3)
-    println(counter.get().count(), counted.made())
+    counter.add(3)
+    println(counter.count(), counted.made())
     println(counted.twice(4), cpp.doubled(4) == counted.twice(4))

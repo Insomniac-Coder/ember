@@ -13,6 +13,6 @@ import cpp "cache.hpp" with (overlay = "overlays/unwritten.em")
 fn main():
     unsafe:  # SAFETY(ffi): the box owns the cache for every call
         cache = cpp.Cache.new()
-        shared = cache.get()
+        shared: ref cpp.Cache = cache
         println(shared.lookups())    #$ error[E3021]: cannot write through a shared reference
         println(shared.hits())

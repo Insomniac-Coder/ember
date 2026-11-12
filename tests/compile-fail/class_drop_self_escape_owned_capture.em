@@ -9,7 +9,7 @@ fn keep(token: Token):
 class Token:
     fn drop():
         copy = this
-        _task = owned fn() => keep(copy) #$ error[E3016]: `this` escapes its own `drop`
+        _task = owned fn() => keep(copy) #$ error[E3016]: `drop` ends this `Token`; an owner made from it would point at a freed object; keep a copy of what you need
 
 fn main():
     _token = Token()

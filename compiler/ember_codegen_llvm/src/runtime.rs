@@ -485,14 +485,12 @@ pub const FNS: &[RtFn] = &[
     ),
     // -- pinned objects ([FFI-23], [HR-20]) and C++ objects ([FFI-39])
     f("obj_pin", "void", &["$obj_header*"]),
-    f("obj_pin_relocatable", "uint64_t", &["$obj_header*", "void (*)(void)"]),
-    f("obj_unpin_relocatable", "void", &["uint64_t"]),
     f("cpp_object_adopt", "$obj_header*", &["$obj_header*", "$loc"]),
     // -- foreign objects and threads ([FFI-36a], [FFI-33b])
     f("ffi_thread", "uint32_t", &[]),
     f("ffi_check_thread", "void", &["uint32_t", "const char*"]),
     f("ffi_adopt", "void*", &["void*", "$loc"]),
-    f("ffi_release", "void", &["void*", "uint32_t"]),
+    f("ffi_release", "void", &["void*", "uint32_t", "const char*"]),
     f("rt_set_args", "void", &["int", "char**"]),
     f("rt_init_v3", "int", &["const $rt_config*", "uint32_t"]),
     f("rt_shutdown", "void", &[]),

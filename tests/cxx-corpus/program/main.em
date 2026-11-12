@@ -1,7 +1,7 @@
 # [CXX-1] — the corpus program: nlohmann/json through its own header and the two functions of
 # `json_api.hpp`. Its overlay (`json_api.overlay.em`) states what the headers cannot, so no call is
 # `unsafe`: each text is a `Span[u8]`, which the call passes as its pointer and length. A parse
-# gives a document a `ForeignBox` owns (an opaque class by value, ODR-166); the instantiation's
+# gives an `owns` of the document (an opaque class by value, ODR-166); the instantiation's
 # methods read it; its `dump` gives a `std::string`; each C++ exception comes back as a `CppError`.
 # Only `what()` is printed: without RTTI a thrown class has no name.
 

@@ -70,7 +70,7 @@ fn required_primary_fragments(shape: Shape) -> &'static [&'static str] {
         // `[DIA-7a]` 0.9.20 — O1 holds the loop and part cases (O3, O4 folded into it): `copy of x` or
         // `shares x`, or for a part a new value first.
         Shape::O1 => &["copy of"],
-        Shape::O2 => &["mem.take", "mem.replace", "swap"],
+        Shape::O2 => &["mem.take", "mem.replace", "swap", "once fn"],
         Shape::O3 => &["loop"],
         Shape::O4 => &["reassign", "destructure"],
         Shape::O5 => &["owned", "mem.take"],
@@ -79,7 +79,7 @@ fn required_primary_fragments(shape: Shape) -> &'static [&'static str] {
         Shape::O8 => &["scope"],
         Shape::O9 => &["mem.take"],
         Shape::B1 => &["get_pair_mut", "split_at"],
-        Shape::B2 => &["retain"],
+        Shape::B2 => &["below the loop", "retain", "for ref mut"],
         Shape::B3 => &["borrow"],
         Shape::B4 => &["ref mut"],
         Shape::B5 => &["index", "Handle", "Weak"],

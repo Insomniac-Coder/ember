@@ -14,7 +14,7 @@ class Counter:
 
 [F: needs fn() -> int]
 fn run_later(owns task: F) -> int:
-    h = thread.spawn(owns owned fn() -> int => task())  #$ error[E7004]: captures `task`, a `F`, which is not Send
+    h = thread.spawn(owns owned fn() -> int => task())  #$ error[E7004]: captures `task`, an `F`, which is not Send
     return h.join()
 
 fn main():

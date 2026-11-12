@@ -23,7 +23,7 @@
 # skipped (`W5033`). A `T&&` parameter is `owned T` (moved in), a `const T&` a borrowed `T`, a
 # `T&` of a type by value `mut T`; of an opaque class, which takes no parameter mode (it is
 # incomplete, `E5015`), a `const T&` is a `ref T`, a `T&` a `ref mut T`, and a `T&&` the `owned`
-# `ForeignBox` the callee moves from, which then frees what is left. A method's `T&`
+# `owns T` the callee moves from, which then frees what is left. A method's `T&`
 # result is a `ref mut` borrowing its receiver, and a `const T&` one, or any of a `const` method,
 # a `ref` (`[LT-1]`), in a `Result` when the method may throw (`[FFI-24]`).
 
@@ -35,26 +35,26 @@ fn main():
     unsafe:  # SAFETY(ffi): the boxes own the bags for every call
         bag = cpp.Bag.new()
         other = cpp.Bag.new()
-        other.get_mut().add(cpp.Item(value = 7))
-        bag.get_mut().put(owns cpp.Item(value = 3))
-        bag.get_mut().merge(other.get())
+        other.add(cpp.Item(value = 7))
+        bag.put(owns cpp.Item(value = 3))
+        bag.merge(other)
         spare = cpp.Bag.new()
-        spare.get_mut().put(owns cpp.Item(value = 4))
-        bag.get_mut().drain(spare.get_mut())
-        println(cpp.both(bag.get(), spare.get()))
+        spare.put(owns cpp.Item(value = 4))
+        bag.drain(ref mut spare)
+        println(cpp.both(bag, spare))
         extra = cpp.Bag.new()
-        extra.get_mut().put(owns cpp.Item(value = 5))
-        bag.get_mut().absorb(owns extra)
-        println(bag.get().total())
-        slot: ref mut c_int = bag.get_mut().slot()
-        slot = other.get().total() + 5
+        extra.put(owns cpp.Item(value = 5))
+        bag.absorb(owns extra)
+        println(bag.total())
+        slot: ref mut c_int = bag.slot()
+        slot = other.total() + 5
         cpp.reset(ref mut value)
-        peeked: ref c_int = bag.get().peek()
-        looked: ref c_int = bag.get().look()
-        println(peeked + looked - looked, value, bag.get().total() + other.get().total())
-        match bag.get_mut().checked():
+        peeked: ref c_int = bag.peek()
+        looked: ref c_int = bag.look()
+        println(peeked + looked - looked, value, bag.total() + other.total())
+        match bag.checked():
             Ok(total):
                 total = 20
             Err(error):
                 println(error.what)
-        println(bag.get().total())
+        println(bag.total())

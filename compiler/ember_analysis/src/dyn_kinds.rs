@@ -389,12 +389,6 @@ fn joined_symbol(targets: &[Target]) -> String {
     format!("\u{1}dyn {}", targets_symbols(targets).join(" | "))
 }
 
-/// Whether `symbol` is one a `dyn` or virtual call is made direct to (a method call, as the call it
-/// replaces), not a body's form.
-pub(crate) fn is_joined(symbol: &str) -> bool {
-    symbol.starts_with("\u{1}dyn ")
-}
-
 fn targets_symbols(targets: &[Target]) -> Vec<&str> {
     targets.iter().map(|target| target.symbol.as_str()).collect::<BTreeSet<_>>().into_iter().collect()
 }

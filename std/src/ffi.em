@@ -158,76 +158,67 @@ extend CppError implements Error:
 extend CppError implements ForeignFailure:
     pass
 
-## `[FFI-36a]` — `ForeignBox[T]` owns a foreign object: its address, and the foreign function
-## that frees it, which the box's end calls once. A box is made by `adopt[T](h)` (the destructor
-## is the one the declaration of `T` names, `@ffi(destroys(f))`) or by a foreign function whose
-## result is contracted `returns_owned(destructor=f)`, and given back to C by a parameter
-## contracted `owned`, which frees nothing. `[FFI-36b]` — the runtime records every address a box
-## owns, with where it was taken, so taking a live one again panics naming both places, in every
-## profile (`foreign_release` takes it out of the record). `[FFI-33b]` — a box of a type whose
-## contract says `threads(creator)` records the thread that made it and, in the debug profile,
-## panics when it ends on another; that is what lets a box move between threads at all (it is
-## `Send`): the thread rule is the contract's, checked where it can be.
+## `[FFI-36a]`, `[FFI-33b]` — what an `owns T` of a foreign type `T` is: the object's address, one
+## word. The compiler makes one wherever a program writes `owns T` of a type an `extern` block
+## declares (`adopt[T](h)`, a result contracted `returns_owned(destructor=f)`, a `std::unique_ptr`
+## or a C++ class returned by value), shows it as `owns T`, and reads it as its `T`, as every `owns
+## T`. A foreign type has one destructor (`@ffi(destroys(f))` on its declaration, or what each
+## `returns_owned(destructor=f)` names), and the end calls it once, directly (`foreign_end`).
+## `[FFI-36b]` — the runtime records every address an `owns T` of a foreign type holds, with the
+## line that made it, so taking a live one again panics naming both lines, in every profile; the
+## end, or a parameter contracted `owns`, takes the address out of the record. Not part of the
+## language: a program writes `owns T`.
 [T]
-pub struct ForeignBox:
+struct ForeignOwner:
     pointer: *mut T
-    destructor: extern "C" fn(*mut T)
-    creator: u32
-
-    ## The object's address, for a call that borrows it.
-    pub fn as_ptr() -> *mut T:
-        return this.pointer
-
-    ## The object, given up: the box frees nothing, and its address leaves the runtime's record
-    ## (`[FFI-36b]`), so foreign code may own it — what a parameter contracted `owned` does
-    ## (`[FFI-11]`), and how a `std::unique_ptr` parameter takes its object (`[FFI-17a]`).
-    pub fn into_raw() owns this -> *mut T:
-        pointer = this.pointer
-        foreign_release(this.pointer, this.creator)
-        mem.forget(this)
-        return pointer
 
     fn drop():
-        foreign_release(this.pointer, this.creator)
-        destroy = this.destructor
-        destroy(this.pointer)
+        foreign_end(this.pointer, 0)
 
-unsafe extend[T] ForeignBox[T] implements Send:  # SAFETY: a box's thread rule is its contract's: `threads(creator)` is checked at its end ([FFI-33b])
+## A foreign object may be ended on any thread unless its type's contract says `threads(creator)`
+## (`ThreadForeignOwner`).
+unsafe extend[T] ForeignOwner[T] implements Send:  # SAFETY: the type's contract binds it to no thread ([FFI-33b])
     pass
 
-## `[FFI-36a]` — take ownership of the foreign object at `h`: its box frees it with the
-## destructor the declaration of `T` names (`@ffi(destroys(f))`). Compiler-known: the destructor
-## is read from that declaration, and one that says `@ffi(adopt=false)` is `E5052`.
+## `[FFI-33b]` — an `owns T` of a type whose contract says `threads(creator)`: two words, the
+## object's address and the number of the thread that made it. Its end compares that number with
+## the running thread's, in every profile, and stops the program on another (naming the type, the
+## line that made it and both threads); safe code never hands one to another thread (it is not
+## `Send`), so the stop backs unsafe code and C.
+[T]
+struct ThreadForeignOwner:
+    pointer: *mut T
+    creator: u32
+
+    fn drop():
+        foreign_end(this.pointer, this.creator)
+
+## `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — compiler-known: the end of an `owns T` of a foreign
+## type. The address leaves the runtime's record (checked against `creator`, the thread that made
+## it, when that is not `0`), then `T`'s destructor is called on it.
+[T]
+fn foreign_end(pointer: *mut T, creator: u32):
+    pass
+
+## `[FFI-36a]` — take ownership of the foreign object at `h`: the `owns T` ends it with the one
+## destructor of `T` (`@ffi(destroys(f))` on its declaration). Compiler-known: the destructor is
+## read from that declaration, and one that says `@ffi(adopt=false)` is `E5052`.
 @safety("`h` is a live foreign object of type `T` that nothing else owns, and `T`'s destructor frees it.")
 [T]
-pub unsafe fn adopt(h: *mut T) -> ForeignBox[T]:
+pub unsafe fn adopt(h: *mut T) -> owns T:
     pass
 
-## `[FFI-23]` — `Retained[T]` is the only way to let foreign code keep Ember memory.
-## `Retained.pin(v)` takes `v`, a class handle or a `Box`: for a class handle the token holds a
-## strong count of the object (it is retained) and the object's header gets its pinned flag, which
-## stays (`[HR-20]`: an object foreign code may hold is never moved); for a `Box` the token owns it.
-## `tok.ptr()` is the object's address, which C keeps, typed by what the token holds (ODR-132): an
-## `ObjectPtr[C]` for a class `C`, a `*mut U` for a `Box[U]`, a `*mut u8` for a `Box[dyn I]`, whose
-## value's type is not known. Compiler-known. Dropping the token releases the object (the class
-## handle's count, or the box and its value). A parameter contracted `retained` takes a token and
-## gives C its address (`[FFI-11]`).
-## `[HR-20]` (ODR-194) — `on_relocate`, when given, lets a reload move the class object the token
-## holds: the runtime calls it with the old and the new address right after commit publishes the
-## move and before reclaim, so foreign code can follow it (a `Box`'s value never moves). Without
-## one, the object is pinned and a reload that would move it is refused.
+## `[FFI-23]` — `Retained[ForeignCallback]` is the token a registering call returns for a callback C
+## keeps (`[FFI-21]`): it keeps the callback's block on Ember's side while C holds its user data,
+## and its end unregisters the callback through `destroys(f)` and then ends the block (the
+## `ForeignCallback`'s end). Only the registering call makes one, and `Retained` holds nothing
+## else: it gives no object away and keeps none for C. An Ember value C keeps is handed to a
+## parameter whose contract says `owns` (the name ends and Ember frees nothing, `[FFI-11]`), or, for
+## a C function whose declaration cannot say so, given with `into_raw()` inside `unsafe:`
+## (`[FFI-54]`). `tok.ptr()` is the user data C was given. Compiler-known.
 [T]
 pub struct Retained:
     value: T
-    ## The runtime's record of `on_relocate` (`0`: none), which the token's end takes out.
-    relocation: u64
-
-    pub static fn pin(owns value: T, on_relocate: Option[extern "C" fn(ObjectPtr[T], ObjectPtr[T])] = None) -> Retained[T]:
-        relocation = retained_pin(value, on_relocate)
-        return Retained(value, relocation)
-
-    fn drop():
-        retained_unpin(this.relocation)
 
 ## `[FFI-21]` — what C keeps of a callback contracted `callback(retained, user_data=p)`: the
 ## callable, moved into an allocation of its own whose address C was given as the user data. Only
@@ -244,10 +235,9 @@ pub struct ForeignCallback:
         release = this.release
         release(this.data)
 
-## `[FFI-23]` (ODR-132) — the address of a class object, for foreign code to keep or to be handed
-## back: no count of its own, so it says nothing about how long the object lives (a `Retained`
-## token keeps it alive). To C it is one pointer to the object. Two are equal when they are the
-## address of one object.
+## `[FFI-23]` (ODR-132) — the address of a class object, which `into_raw()` gives (`[FFI-54]`),
+## for foreign code to keep or to be handed back: no count of its own (to C, one pointer). Two are
+## equal when they are the address of one object.
 @derive(Copy)
 [C]
 pub struct ObjectPtr:
@@ -258,23 +248,6 @@ extend[C] ObjectPtr[C] implements Eq:
     fn eq(other: ObjectPtr[C]) -> bool:
         return this.address == other.address
 
-## `[FFI-23]` — compiler-known: a class object's pinned flag is set, or with `on_relocate` its
-## record made (`[HR-20]`), a `Box` needs nothing, and any other value is refused. The result is
-## the record's number, `0` for none.
-[T]
-fn retained_pin(value: T, on_relocate: Option[extern "C" fn(ObjectPtr[T], ObjectPtr[T])]) -> u64:
-    return 0
-
-## `[HR-20]` — compiler-known: a token's `on_relocate` record goes.
-fn retained_unpin(relocation: u64):
-    pass
-
-
-## `[FFI-36b]`, `[FFI-33b]` — a box's end: the address leaves the runtime's record, and a box
-## that records its creator is checked to end on that thread (debug). Compiler-known.
-[T]
-fn foreign_release(pointer: *mut T, creator: u32):
-    pass
 
 
 ## `[FFI-17a]` — the C++ object a bridge value owns (a `std::vector`, a `std::string`, a

@@ -16,7 +16,7 @@
 # borrowing the receiver and `other`. C++ does not enforce the attribute, so the fact is never
 # checked: `ember tcb` lists it as asserted.
 
-from std.ffi import CppError, CppVector, ForeignBox, c_int
+from std.ffi import CppError, CppVector, c_int
 import cpp "lifetimes.hpp"
 
 fn made() -> Result[CppVector[c_int], CppError]:
@@ -31,7 +31,7 @@ fn bigger(ref mut a: i32, ref mut b: i32) -> ref mut i32:
     unsafe:  # SAFETY(ffi): two numbers the caller lends
         return cpp.larger(ref mut a, ref mut b)
 
-fn shelf() -> Result[ForeignBox[cpp.Shelf], CppError]:
+fn shelf() -> Result[owns cpp.Shelf, CppError]:
     unsafe:  # SAFETY(ffi): the constructor makes a shelf the box owns
         return cpp.Shelf.new()
 
@@ -54,7 +54,7 @@ fn main():
         Ok(mine):
             match shelf():
                 Ok(theirs):
-                    println(last(mine.get(), theirs.get()))
+                    println(last(mine, theirs))
                 Err(error):
                     println(error.what)
         Err(error):

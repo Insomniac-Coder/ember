@@ -12,9 +12,9 @@ import cpp "containers.hpp" with (overlay = "overlays/containers.em")
 fn main():
     match cpp.Bag.new():
         Ok(bag):
-            for item in bag.get_mut():
-                _ = bag.get_mut().put(item)    #$ error[E3020]: cannot mutate `bag` while it is borrowed by this loop
-                println(bag.get().size())    #$ error[E3021]: is borrowed here and mutably borrowed elsewhere
+            for item in bag:
+                _ = bag.put(item)    #$ error[E3020]: cannot mutate `bag` while it is borrowed by this loop
+                println(bag.size())    #$ error[E3021]: is borrowed here and mutably borrowed elsewhere
         Err(error):
             println(error.what)
     row = cpp.Row(cells = [5, 6, 7])

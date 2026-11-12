@@ -9,10 +9,10 @@
 # result borrows `values` and `last_of`'s the other shelf (not only the receiver, as a method's
 # `T&` would otherwise), so neither result outlives what it borrows.
 
-from std.ffi import CppError, CppVector, ForeignBox, c_int
+from std.ffi import CppError, CppVector, c_int
 import cpp "lifetimes.hpp"
 
-fn shelf() -> Result[ForeignBox[cpp.Shelf], CppError]:
+fn shelf() -> Result[owns cpp.Shelf, CppError]:
     unsafe:  # SAFETY(ffi): the constructor makes a shelf the box owns
         return cpp.Shelf.new()
 
@@ -28,7 +28,7 @@ fn last_of_new(mine: ref cpp.Shelf) -> ref c_int:
     match shelf():
         Ok(theirs):
             unsafe:  # SAFETY(ffi): both shelves are live during the call
-                return mine.last_of(theirs.get())    #$ error[E3060]: `theirs` does not live long enough
+                return mine.last_of(theirs)    #$ error[E3060]: `theirs` does not live long enough
         Err(_):
             panic("no shelf")
 
