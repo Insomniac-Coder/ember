@@ -110,7 +110,7 @@ there.
   - layout, copy, drop, display, mangling, thread properties and the codec;
   - the cycle lint and the debug owner graph;
   - C: a class target's handle type, and the end of a link (`ember_release_*`, `ember_weak_release`).
-- **Step 3, next:** the checker makes `Link` values for **class targets**, on today's counted handles.
+- **Step 3** (`087ac833`): the checker makes `Link` values for **class targets**, on today's counted handles.
   - **Builtins.** Each takes its argument by reference (`ref x`), so that reading an owner never moves it:
     - `Builtin::LinkMake { kind, link }`: a +1, or a weak +1, and the same pointer (C: `(retain(*x), *x)`,
       as `WeakNew` does);
@@ -127,3 +127,42 @@ there.
     - `E0900` for a target that is not a class object (D5's block, in a later step) and for
       `thread_shared` (slice E).
   - **Everywhere a builtin goes:** effects, MIR, both backends and the evaluator.
+- **Slice A's rest** (round 6, the Opus helper H2; R6-batch.md tasks 1 to 8):
+  - **The refusals**, each with its rule's message where the rule gives one:
+    - `E2122` (`[RC-1]`) for `shares`/`shares mut` of a list element (the list's own line, each element
+      made with the word), a field (the field's line, made to share), a plain parameter (`owns p:
+      shares T` and the word at each call) and `this` in any method (the method made a `static fn`
+      that takes `owns me`);
+    - `E3023` (`[OWN-13]`, `[RC-7]`) for `shares mut x` from a name that only reads (an owner made
+      `shares`, a plain parameter of a `shares mut` type), and for a change through a `shares` owner
+      (`s.hp = 5`, `other.push(owns 4)`), with the line that makes the owner `shares mut`;
+    - `E2119` (`[WK-11]`, `[WK-16]`, `[OWN-13]`) for `weakref` of a new value, of a value held `owns`,
+      of a part (a field held in its object, an element stored inline), of a local holding its value in
+      place, of a value held `dyn I`, `owns dyn I` or `some I`, and the type `weakref dyn I` (the
+      interface's lines made an `open class` with `virtual` methods, each implementing class derived
+      from it);
+    - `E2020` (`[WK-16]`, `[TYP-45]`) for a link used as its target unopened (a field, a method, a
+      place that wants the target) and an object stored into a link place without `weakref`;
+      `.upgrade()` on a link is `E1010` with `exists as`.
+  - **A link may hold no target**: `None` where a `weakref T` is wanted (a field's default, a local, an
+    argument) is a null link (`WeakEmpty`); re-pointing a link gives the old target's weak count back
+    (the assignment's drop of the old link).
+  - **The limits** (`[RT-7]`): `shares` and `weakref` go through the checked +1 of the runtime and the
+    evaluator; the block's type information names the value by its own type ("too many owners of a
+    `Counter`"). Tests with `#$ count_bits: 8` for both stops.
+  - **Targets that are not class objects** (D5): `TyKind::Link` over any value; the block is `Shared[T]`'s
+    (`counted_of`, made with the link type by `link_of`), and its one logical field (`Field(0)`, the
+    pointer to the value, `TypeTable::link_payload`) is projected in every type walk and placed by C,
+    LLVM and the evaluator as `Shared`'s was. `shares` before a new value makes the block
+    (`SharedNew`); a local a line shares is made in its block on its own line (the checker's next pass
+    of the body, `block_locals`), typed `shares mut T`; an `owns` parameter gets its block at the
+    function's entry. An owner reads as its value in a field, a method's object, an index, an operand,
+    a loop and an argument to a parameter that borrows; it is copied only where `=` copies, borrowed
+    where a view is wanted, and never moved out of its block. An opening of a link to a value in a
+    block gives `Some` of a `shares T` owner (read-only).
+  - **Tests:** RC-1, RC-7, OWN-13, WK-11, WK-12, WK-13, WK-16 and RT-7, with fifteen of the design tests
+    R9 and R11 (one thread) that slice A builds; C, LLVM and the evaluator agree.
+  - **Not built here:** `shares`/`weakref` of an `owns` value or of a `dyn` value (`E0900`); a class
+    local shared by a line keeps its class type (spec question); `shares mut T` to `shares T` and the
+    class-family upcasts of `[TYP-5]` item 8 on links; the design tests that wait for `copy of` (slice
+    D), the views of `[BRW-17]`/`[BRW-18]`, `[WK-17]`/`[WK-18]`'s walks and the cycle rule (A3-9).
