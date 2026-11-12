@@ -15827,6 +15827,17 @@ impl<'a> Checker<'a> {
             return self.types.intern(TyKind::Span { elem, mutable: name.is("MutSpan") });
         }
         if name.is("Array") {
+            // `[ALC-1]` — the memory manager is named by `using`, never as a type argument: `Array[int,
+            // Global]` is `E1010` as `Box[int, Global]` is, and the type it names is still made.
+            if let [(elem, elem_at), (_, manager_at)] = args {
+                let inner = self.written_line(*elem_at).unwrap_or_else(|| self.types.display(*elem));
+                let manager = self.written_line(*manager_at).unwrap_or_else(|| "A".to_string());
+                self.sink.emit(
+                    Diagnostic::error(codes::E1010, span, format!("`Array[{inner}, {manager}]` is not a type of Ember: write `Array[{inner}] using {manager}`"))
+                        .help("the place names the kind of memory manager with `using` after the type; without it the memory comes from the built-in manager, `Global` [ALC-1]"),
+                );
+                return self.types.intern(TyKind::Vec { elem: *elem, text: false });
+            }
             if !require(self, 1) {
                 return self.common.error;
             }
