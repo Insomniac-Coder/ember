@@ -608,17 +608,8 @@ impl Interp<'_, '_> {
                 let TyKind::Struct(id) = *self.types.kind(*shared) else { return fault("a Shared that is no struct") };
                 self.new_shared(id, *elem, &value)?.to_le_bytes().to_vec()
             }
-            Builtin::WeakNew { .. } => {
-                let object = self.pointer(&args[0])?;
-                self.weak_retain(object)?;
-                object.to_le_bytes().to_vec()
-            }
-            Builtin::WeakUpgrade { .. } => {
-                let weak = self.operand(&args[0], None)?;
-                let weak = if self.is_ref(self.operand_ty(body, &args[0])) { self.mem.read(u64_of(&weak), 8)?.to_vec() } else { weak };
-                self.weak_upgrade(u64_of(&weak))?.to_le_bytes().to_vec()
-            }
-            Builtin::WeakEmpty { weak } => vec![0; self.size(*weak) as usize],
+            // `[WK-11]` — a link that holds no target is a null pointer.
+            Builtin::LinkNone { link } => vec![0; self.size(*link) as usize],
             // `[RC-1]`, `[WK-11]` (M4 slice A).
             Builtin::LinkMake { kind, .. } => {
                 let object = self.pointer(&args[0])?;
@@ -985,10 +976,6 @@ impl Interp<'_, '_> {
             TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => *inner,
             _ => ty,
         }
-    }
-
-    fn is_ref(&self, ty: Option<Ty>) -> bool {
-        ty.is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Ref { .. } | TyKind::Ptr { .. }))
     }
 
     pub(crate) fn is_text_ty(&self, ty: Ty) -> bool {

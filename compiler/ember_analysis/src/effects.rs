@@ -450,7 +450,6 @@ pub fn storage_mechanism(types: &TypeTable, ty: Ty) -> &'static str {
             match head.rsplit('.').next().unwrap_or(head) {
                 "Shared" => "Shared[T]",
                 "SyncShared" => "SyncShared[T]",
-                "Weak" => "Weak[O]",
                 "Arena" | "FixedArena" | "ScopedArena" | "ArenaArray" | "ArenaMap" => "Arena, FixedArena",
                 "Pool" | "Handle" => "Pool[T] + Handle[T]",
                 "Cell" | "RefCell" | "OnceCell" => "Cell[T], RefCell[T]",
@@ -1661,7 +1660,6 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::ParallelFor { .. } => (Effects::SYNC | Effects::BLOCK, "a `@parallel` loop"),
         // `[DSJ-1]` — it establishes a static fact; `@static_safe` allows it (`[EFF-12]`).
         B::AssertDisjoint { .. } => (Effects::CHECK_ALIASING, "`assert_disjoint`"),
-        B::WeakUpgrade { .. } => (Effects::CHECK_STALE, "`Weak.upgrade`"),
         // `[RC-1]`, `[WK-11]` — a count or a weak count of one more, with its limit's stop; an opening
         // tests whether the target lives.
         B::LinkMake { .. } | B::LinkTarget { .. } => (Effects::PANIC, "one more owner or link, whose count may reach its limit"),
@@ -1712,8 +1710,8 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         | B::FmtSinkOpen | B::FmtSinkClose
         | B::ParseValue { .. } | B::StrCharNext | B::StrCharNextWide | B::StrContains | B::StrContainsChar
         | B::ArraySort | B::ArrayReverse | B::ArrayClear | B::ArrayPop { .. } | B::ArrayCapacity
-        | B::ArrayTruncate | B::ValueCompare { .. } | B::ClassSuperInit { .. } | B::WeakNew { .. }
-        | B::WeakEmpty { .. } | B::StrIsCharBoundary | B::StrAsBytes | B::ArrayLen | B::StringLen
+        | B::ArrayTruncate | B::ValueCompare { .. } | B::ClassSuperInit { .. }
+        | B::LinkNone { .. } | B::StrIsCharBoundary | B::StrAsBytes | B::ArrayLen | B::StringLen
         | B::StringAsStr | B::PtrIsNull | B::SizeOf | B::AlignOf | B::TypeIsSend | B::TypeIsSync | B::MemReplace { .. } | B::MemTake { .. }
         | B::MemSwap { .. } | B::MemDrop { .. } | B::HandOver | B::SpanLen | B::SpanGet
         | B::SpanFrom { .. } | B::SpanReborrow | B::SpanSharedReborrow | B::SpanIterNext { .. }

@@ -39,13 +39,6 @@ pub fn shared_inner(types: &TypeTable, id: StructId) -> Option<Ty> {
     }
 }
 
-pub fn weak_inner(types: &TypeTable, id: StructId) -> Option<Ty> {
-    match &types.struct_def(id).origin {
-        Some((name, args)) if name.is("Weak") && args.len() == 1 => Some(args[0]),
-        _ => None,
-    }
-}
-
 /// What a type-information address names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Info {
@@ -392,10 +385,6 @@ impl Interp<'_, '_> {
                     let object = self.mem.read_u64(addr)?;
                     return self.retain_object(object);
                 }
-                if weak_inner(self.types, id).is_some() {
-                    let object = self.mem.read_u64(addr)?;
-                    return self.weak_retain(object);
-                }
                 let def = self.types.struct_def(id);
                 if def.name.as_str().starts_with("MaybeUninit_") || !def.drops_fields {
                     return Ok(());
@@ -521,10 +510,6 @@ impl Interp<'_, '_> {
         if shared_inner(types, id).is_some() {
             let object = self.mem.read_u64(addr)?;
             return self.release_object(object);
-        }
-        if weak_inner(types, id).is_some() {
-            let object = self.mem.read_u64(addr)?;
-            return self.weak_release(object);
         }
         if let Some(inner) = types.compiler_box_inner(id) {
             if matches!(types.kind(inner), TyKind::Dyn { .. }) {

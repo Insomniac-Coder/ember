@@ -73,10 +73,9 @@ fn describe(emitter: &Emitter<'_>) -> Vec<Described> {
         let c = emitter.node_name(node);
         match node {
             TypeNode::Struct(id) => {
-                // Compiler-known wrappers are their payload's (`Box`, `Shared`, `Weak`, `Cell`), and a
+                // Compiler-known wrappers are their payload's (`Box`, a block of `shares`, `Cell`), and a
                 // vector of `std.simd` its lanes: a debugger shows them as C does.
                 if emitter.box_inner_id(id).is_some()
-                    || emitter.weak_inner_id(id).is_some()
                     || emitter.shared_inner_id(id).is_some()
                     || emitter.cell_inner_id(id).is_some()
                     || emitter.simd_shape_of(id).is_some()

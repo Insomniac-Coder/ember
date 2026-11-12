@@ -6,7 +6,7 @@
 
 use ember_types::{Ty, TyKind};
 
-use crate::object::{payload_offset, shared_inner, weak_inner, Info};
+use crate::object::{payload_offset, shared_inner, Info};
 use crate::{Interp, R};
 
 const LIST_LIMIT: usize = 64;
@@ -55,10 +55,6 @@ impl Interp<'_, '_> {
             TyKind::Struct(id) => {
                 if shared_inner(self.types, *id).is_some() {
                     out.push((Some(self.mem.read_u64(addr)?), Kind::Strong, top));
-                    return Ok(());
-                }
-                if weak_inner(self.types, *id).is_some() {
-                    out.push((Some(self.mem.read_u64(addr)?), Kind::Weak, true));
                     return Ok(());
                 }
                 if let Some(inner) = self.types.compiler_box_inner(*id) {

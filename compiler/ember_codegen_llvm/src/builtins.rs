@@ -824,20 +824,6 @@ impl<'a> FnCx<'_, 'a> {
                 );
                 Ok(())
             }
-            // `[WK-*]` — a weak handle takes a weak count; `upgrade` the runtime's compare-exchange
-            // (`[RT-10]`, `[WK-12]`); an empty one holds nothing.
-            Builtin::WeakNew { .. } => {
-                let handle = self.pointer(&args[0])?;
-                self.call_rt("weak_retain", vec![Val::Imm(Sc::Ptr, handle.clone())], None);
-                self.store_result(dest, &handle, Sc::Ptr, false)
-            }
-            Builtin::WeakUpgrade { .. } => {
-                let (words, align) = self.view_words(&args[0])?;
-                let handle = self.load(Sc::Ptr, &words, align.min(8));
-                let dest = self.dest_of(dest)?;
-                self.call_rt("weak_upgrade", vec![Val::Imm(Sc::Ptr, handle)], dest.as_ref().map(|(p, a)| (p.as_str(), *a)));
-                Ok(())
-            }
             // `[RC-1]`, `[WK-11]` (M4 slice A) — one more owner (+1) or link (a weak +1) of the object,
             // the same pointer; a counted copy of an owner's handle; an opening is an upgrade.
             Builtin::LinkMake { kind, link } => {
@@ -860,7 +846,8 @@ impl<'a> FnCx<'_, 'a> {
                 self.call_rt("weak_upgrade", vec![Val::Imm(Sc::Ptr, handle)], dest.as_ref().map(|(p, a)| (p.as_str(), *a)));
                 Ok(())
             }
-            Builtin::WeakEmpty { .. } | Builtin::MaybeUninitUninit { .. } => {
+            // `[WK-11]` — a link that holds no target is a null pointer.
+            Builtin::LinkNone { .. } | Builtin::MaybeUninitUninit { .. } => {
                 let at = self.place(dest)?;
                 let size = self.m.ty.size_align(at.ty).0;
                 self.zero(&at.ptr, at.align, size);

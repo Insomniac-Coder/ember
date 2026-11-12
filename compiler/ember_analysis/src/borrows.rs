@@ -1983,7 +1983,7 @@ pub(crate) fn drop_is_quiet(types: &TypeTable, ty: Ty) -> bool {
         TyKind::Struct(id) => {
             let def = types.struct_def(*id);
             !def.has_drop
-                && !matches!(&def.origin, Some((name, _)) if name.is("Weak") || name.is("Shared") || name.is("SyncShared"))
+                && !matches!(&def.origin, Some((name, _)) if name.is("Shared") || name.is("SyncShared"))
                 && def.fields.iter().all(|field| drop_is_quiet(types, field.ty))
         }
         TyKind::Enum(id) => {

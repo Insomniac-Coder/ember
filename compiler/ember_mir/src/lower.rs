@@ -2984,13 +2984,7 @@ impl<'a> Builder<'a> {
                     expr.span,
                 );
             }
-            hir::ExprKind::Builtin {
-                which: hir::Builtin::WeakUpgrade { class, option },
-                args,
-            } => {
-                self.lower_weak_upgrade(place, &args[0], *class, *option, expr.span);
-            }
-            // `[WK-12]` — an opening is lowered as an upgrade is, through the link's own builtin.
+            // `[WK-12]` — an opening: the runtime's upgrade, made into an `Option`.
             hir::ExprKind::Builtin { which: which @ hir::Builtin::LinkOpen { class, option }, args } => {
                 self.lower_option_query(place, &args[0], *which, *class, *option, expr.span);
             }
@@ -3610,7 +3604,7 @@ impl<'a> Builder<'a> {
                     | hir::Builtin::ArenaAllocUninit { .. }
                     | hir::Builtin::ArenaAllocArrayZeroed { .. }
                     | hir::Builtin::MaybeUninitUninit { .. }
-                    | hir::Builtin::WeakEmpty { .. }
+                    | hir::Builtin::LinkNone { .. }
                     | hir::Builtin::ThreadScope
                     | hir::Builtin::ScopeSpawn { .. }
                     | hir::Builtin::JobScope
@@ -7212,24 +7206,11 @@ impl<'a> Builder<'a> {
         self.push(StmtKind::StorageDead(raw));
     }
 
-    /// `[WK-3]` — attempt to acquire one strong handle from a weak control
-    /// block. The runtime result is already an owning class handle, so unlike
-    /// a downcast query it remains a normal statement temporary: copying it
-    /// into `Some` retains once and its statement-end drop releases once.
-    fn lower_weak_upgrade(
-        &mut self,
-        place: Place,
-        source: &'a hir::Expr,
-        class: Ty,
-        option: ember_types::EnumId,
-        span: ember_span::Span,
-    ) {
-        self.lower_option_query(place, source, hir::Builtin::WeakUpgrade { class, option }, class, option, span);
-    }
-
-    /// A builtin that answers a class handle or null (`which`: an upgrade, or `[WK-12]`'s opening of
-    /// a link), made into `option`: `None` for null, `Some` of the handle otherwise. The source is
-    /// read where it is.
+    /// A builtin that answers a class handle or null (`which`: `[WK-12]`'s opening of a link), made
+    /// into `option`: `None` for null, `Some` of the handle otherwise. The source is read where it is.
+    /// The runtime's answer is an owning handle, a statement temporary: a class handle copied into
+    /// `Some` retains once and the temporary's end releases once; an owner of a value in a block
+    /// (not `Copy`) moves into `Some`.
     fn lower_option_query(
         &mut self,
         place: Place,

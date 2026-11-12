@@ -1937,9 +1937,6 @@ impl TypeTable {
                         (send && sync, send && sync)
                     } else if name.is("Box") && args.len() == 1 {
                         both(args[0], visiting)
-                    } else if name.is("Weak") && args.len() == 1 {
-                        let (_, sync) = both(args[0], visiting);
-                        (sync, sync)
                     } else if name.is("std.mem.UnsafeCell") && args.len() == 1 {
                         (both(args[0], visiting).0, false)
                     } else if name.is("std.sync.Mutex") && args.len() == 1 {
@@ -2769,14 +2766,12 @@ impl TypeTable {
             TyKind::Link { .. } => true,
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);
-                // `[WK-2]` — compiler-known weak handles are Copy wrappers
-                // with custom control-block release glue. `has_drop` stays
-                // false so Copy remains valid; their canonical origin is the
-                // separate signal that drop elaboration must run.
+                // `[HEAP-3]` — a block of `shares` and `SyncShared[T]` are counted: `has_drop` stays
+                // false, and their canonical origin is the signal that drop elaboration must run.
                 matches!(
                     &def.origin,
                     Some((name, args))
-                        if (name.is("Weak") || name.is("Shared") || name.is("SyncShared")) && args.len() == 1
+                        if (name.is("Shared") || name.is("SyncShared")) && args.len() == 1
                 ) || def.has_drop
                     || (def.drops_fields && def.fields.iter().any(|f| self.needs_drop(f.ty)))
             }

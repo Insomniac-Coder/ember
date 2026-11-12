@@ -253,9 +253,6 @@ fn collect_strong_targets(
         TyKind::ClassInterface(_) => {}
         TyKind::Struct(id) => {
             let def = types.struct_def(*id);
-            if def.origin.as_ref().is_some_and(|(name, _)| name.is("Weak")) {
-                return;
-            }
             if let Some((name, arguments)) = &def.origin
                 && (name.is("Shared") || name.is("SyncShared") || name.is("Box"))
             {
@@ -338,14 +335,6 @@ fn collect_weak_targets(
         TyKind::Link { target, .. } => collect_weak_targets(types, *target, seen, targets),
         TyKind::Struct(id) => {
             let def = types.struct_def(*id);
-            if let Some((name, arguments)) = &def.origin
-                && name.is("Weak")
-            {
-                for argument in arguments {
-                    targets.extend(strong_targets(types, *argument));
-                }
-                return;
-            }
             for field in &def.fields {
                 collect_weak_targets(types, field.ty, seen, targets);
             }
@@ -419,9 +408,6 @@ fn contains_unknown_owner_inner(types: &TypeTable, ty: Ty, seen: &mut HashSet<Ty
         TyKind::Link { target, .. } => contains_unknown_owner_inner(types, *target, seen),
         TyKind::Struct(id) => {
             let def = types.struct_def(*id);
-            if def.origin.as_ref().is_some_and(|(name, _)| name.is("Weak")) {
-                return false;
-            }
             def.fields
                 .iter()
                 .any(|field| contains_unknown_owner_inner(types, field.ty, seen))
@@ -714,17 +700,7 @@ mod tests {
         let child = class(&mut types, "Child");
         let parent_ty = types.intern(TyKind::Class(parent));
         let child_ty = types.intern(TyKind::Class(child));
-        let weak_child = types.add_struct(StructDef {
-            name: Symbol::intern("Weak[Child]"),
-            fields: Vec::new(),
-            span: Span::DUMMY,
-            derives_copy: true,
-            has_drop: false,
-            drops_fields: false,
-            origin: Some((Symbol::intern("Weak"), vec![child_ty])),
-            declaring_module: 0,
-        });
-        let weak_child_ty = types.intern(TyKind::Struct(weak_child));
+        let weak_child_ty = types.intern(TyKind::Link { kind: ember_types::LinkKind::Weakref, target: child_ty });
         types.class_def_mut(parent).fields = vec![field("child", weak_child_ty)];
         types.class_def_mut(child).fields = vec![field("parent", parent_ty)];
 

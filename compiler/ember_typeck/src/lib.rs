@@ -3529,10 +3529,6 @@ struct Checker<'a> {
     /// `[THR-11]` — a scoped task's lambda, which copies the `Copy` variables it only reads
     /// (`[CLO-13]`), as one stored as a callable value does: a loop's variable lives one pass.
     scoped_task_lambda: Option<Span>,
-    /// `[WK-1]` — every compiler-known `Weak[C]` and the class handle it can
-    /// upgrade. The wrapper has a private class-pointer field, but unlike the
-    /// class handle it retains only the runtime control block.
-    weaks: HashMap<StructId, Ty>,
     /// `[CELL-5]` — every `RefCell[T]` built so far, and the `T` it holds.
     /// A transparent struct with a second field for the one-word borrow
     /// counter plus location fields for the conflicting borrow's source
@@ -4251,7 +4247,6 @@ impl<'a> Checker<'a> {
             soa_element_field: None,
             soa_groups: HashMap::new(),
             soa_gathers: HashMap::new(),
-            weaks: HashMap::new(),
             refcells: HashMap::new(),
             maybe_uninit: HashMap::new(),
             unsafe_cells: HashMap::new(),
@@ -18538,10 +18533,6 @@ impl<'a> Checker<'a> {
                     let soa = map(self, soa);
                     return self.soa_proxy_of(soa, mutable);
                 }
-                if let Some(inner) = self.weaks.get(&id).copied() {
-                    let inner = map(self, inner);
-                    return self.weak_of(inner, Span::DUMMY);
-                }
                 if let Some(inner) = self.cells.get(&id).copied() {
                     let inner = map(self, inner);
                     return self.cell_of(inner);
@@ -20668,71 +20659,9 @@ impl<'a> Checker<'a> {
         self.resolve_name(name).is("std.sync.SyncShared")
     }
 
-    fn is_sync_shared(&self, ty: Ty) -> bool {
-        matches!(self.types.kind(ty), TyKind::Struct(id) if self.sync_shareds.contains(id))
-    }
-
     fn shared_inner(&self, ty: Ty) -> Option<Ty> {
         match self.types.kind(ty) {
             TyKind::Struct(id) => self.shareds.get(id).copied(),
-            _ => None,
-        }
-    }
-
-    /// `[HEAP-7]`, `[WK-11]` — a weak handle observes either kind of counted
-    /// owner: a nominal class handle or `Shared[T]`. Its private field keeps
-    /// the owner handle's pointer layout, while custom copy/drop glue uses the
-    /// runtime weak count rather than the strong count.
-    fn weak_of(&mut self, inner: Ty, span: Span) -> Ty {
-        if inner == self.common.error {
-            return inner;
-        }
-        let counted_owner = matches!(self.types.kind(inner), TyKind::Class(_))
-            || self.shared_inner(inner).is_some();
-        if !counted_owner {
-            self.error(
-                codes::E2020,
-                span,
-                "`Weak` requires a class handle or `Shared[T]` owner type",
-            );
-            return self.common.error;
-        }
-        let name = self.unique_instance_name("Weak", &[inner]);
-        if let Some(&ty) = self.named_types.get(&name) {
-            return ty;
-        }
-        let id = self.types.add_struct(StructDef {
-            name,
-            fields: vec![FieldDef {
-                name: Symbol::intern("value"),
-                // Counted owners are already pointer-sized handles. Wrapping
-                // one in `Ptr[O]` would create a pointer-to-handle in C.
-                ty: inner,
-                span: Span::DUMMY,
-                ty_span: Span::DUMMY,
-                has_default: false,
-                is_let: false,
-                read_only_outside: false,
-                vis: FieldVis::Private,
-            }],
-            span: Span::DUMMY,
-            // Weak handles are Copy, but their copy/drop semantics are not
-            // bitwise: code generation emits weak_retain/weak_release.
-            derives_copy: true,
-            has_drop: false,
-            drops_fields: false,
-            origin: Some((Symbol::intern("Weak"), vec![inner])),
-            declaring_module: ember_types::COMPILER_MODULE,
-        });
-        let ty = self.types.intern(TyKind::Struct(id));
-        self.named_types.insert(name, ty);
-        self.weaks.insert(id, inner);
-        ty
-    }
-
-    fn weak_inner(&self, ty: Ty) -> Option<Ty> {
-        match self.types.kind(ty) {
-            TyKind::Struct(id) => self.weaks.get(id).copied(),
             _ => None,
         }
     }
@@ -39173,7 +39102,7 @@ impl<'a> Checker<'a> {
                     if let Some(wanted) = expected
                         && matches!(self.types.kind(wanted), TyKind::Link { kind: ember_types::LinkKind::Weakref, .. })
                     {
-                        return Expr { ty: wanted, kind: ExprKind::Builtin { which: Builtin::WeakEmpty { weak: wanted }, args: Vec::new() }, span };
+                        return Expr { ty: wanted, kind: ExprKind::Builtin { which: Builtin::LinkNone { link: wanted }, args: Vec::new() }, span };
                     }
                     // `[DIA-21]` P1 — Python's "no value" where the place is not an `Option`.
                     if let Some(wanted) = expected
@@ -41009,33 +40938,8 @@ impl<'a> Checker<'a> {
                 self.sink.emit(diagnostic);
                 return self.synth_link(ast::LinkKind::Weakref, &args[0].value, span);
             }
-            if args.len() != 1 {
-                self.error(
-                    codes::E2020,
-                    span,
-                    format!("`Weak` takes one argument, found {}", args.len()),
-                );
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
-            let expected_inner = expected.and_then(|ty| self.weak_inner(ty));
-            let hint = explicit.first().copied().or(expected_inner);
-            let value = match hint {
-                Some(inner) => self.check_expr(&args[0].value, inner),
-                None => self.synth_committed(&args[0].value),
-            };
-            let class = value.ty;
-            let weak = self.weak_of(class, value.span);
-            if weak == self.common.error {
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
-            return Expr {
-                ty: weak,
-                kind: ExprKind::Builtin {
-                    which: Builtin::WeakNew { class, weak },
-                    args: vec![value],
-                },
-                span,
-            };
+            self.error(codes::E2020, span, format!("`Weak` takes one argument, found {}", args.len()));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
 
         // `[UNS-10]` — `std.mem.UnsafeCell(owned v)`. Its public name is
@@ -49181,20 +49085,6 @@ impl<'a> Checker<'a> {
             self.named_interface_call = outer;
             return call;
         }
-        // `[WK-3]` — a weak handle exposes only `upgrade`; it must not
-        // auto-dereference to the object because that would make a dead
-        // control block look like a live class handle.
-        if let Some(class) = self.weak_inner(receiver.ty) {
-            if !explicit.is_empty() {
-                self.error(
-                    codes::E2020,
-                    span,
-                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
-                );
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
-            return self.synth_weak_method(receiver, class, name, args, span);
-        }
         // `[HEAP-4]` — Shared does not auto-dereference. Its explicit `get`
         // boundary forms an ordinary shared reference rooted at the strong
         // owner, preserving liveness and borrow facts for later analysis.
@@ -51585,7 +51475,6 @@ impl<'a> Checker<'a> {
             ("Box", [inner]) => self.box_of(*inner),
             ("Shared", [inner]) => self.counted_of(*inner, false),
             ("SyncShared", [inner]) => self.counted_of(*inner, true),
-            ("Weak", [inner]) => self.weak_of(*inner, Span::DUMMY),
             ("Cell", [inner]) => self.cell_of(*inner),
             ("MaybeUninit", [inner]) => self.maybe_uninit_of(*inner),
             ("std.mem.UnsafeCell", [inner]) => self.unsafe_cell_of(*inner),
@@ -53654,50 +53543,8 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// `[WK-3]` — `upgrade` asks the runtime to acquire a strong reference if
-    /// the object is still live, then produces the corresponding `Option[C]`.
-    fn synth_weak_method(
-        &mut self,
-        receiver: Expr,
-        class: Ty,
-        name: ast::Ident,
-        args: &[ast::Arg],
-        span: Span,
-    ) -> Expr {
-        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        if !name.name.is("upgrade") {
-            self.error(
-                codes::E2072,
-                name.span,
-                format!("`Weak[{}]` has no method named `{}`", self.types.display(class), name.name),
-            );
-            return error;
-        }
-        if !args.is_empty() {
-            self.error(
-                codes::E2020,
-                span,
-                format!("`upgrade` takes 0 arguments, found {}", args.len()),
-            );
-            return error;
-        }
-        let option_ty = self.option_of(class);
-        let TyKind::Enum(option) = *self.types.kind(option_ty) else {
-            unreachable!("option_of must return an enum")
-        };
-        Expr {
-            ty: option_ty,
-            kind: ExprKind::Builtin {
-                which: Builtin::WeakUpgrade { class, option },
-                args: vec![receiver],
-            },
-            span,
-        }
-    }
-
-    /// `[WK-1]` — `Weak[C].empty()` creates a non-upgradeable weak handle
-    /// without allocating a control block. It is a type-associated operation,
-    /// not a method on an existing weak value.
+    /// `[TYP-45]`, `[WK-11]` — `Weak.empty()` / `Weak[C].empty()`, gone from Ember: refused with the
+    /// rewrite to `None`, and made as the link (`ty`, or the `Option` of one) that holds no target.
     fn synth_weak_construction(
         &mut self,
         ty: Ty,
@@ -53735,16 +53582,26 @@ impl<'a> Checker<'a> {
             return error;
         }
         // `[TYP-45]`, `[WK-11]` — `Weak` is not Ember: a link that holds no target is `None`.
-        self.sink.emit(
-            Diagnostic::error(codes::E1010, span, "`Weak.empty()` is not Ember: a link that holds no target is `None`")
-                .migrate("`Weak.empty()` is `None`", span, "None"),
-        );
+        // A new name given one says its type, which `None` alone does not: `w: weakref T = None`.
+        let fresh = self.bound_name(span).filter(|(name, _)| self.lookup(Symbol::intern(name)).is_none());
+        let refused = Diagnostic::error(codes::E1010, span, "`Weak.empty()` is not Ember: a link that holds no target is `None`");
+        let refused = match fresh {
+            Some((_, at)) => refused.migrate_edits(
+                "`w = Weak[T].empty()` is `w: weakref T = None`",
+                vec![
+                    (Span::new(at.file, at.end, at.end), ember_diag::Replacement::Text(format!(": {}", self.types.display(ty)))),
+                    (span, ember_diag::Replacement::Text("None".to_string())),
+                ],
+            ),
+            None => refused.migrate("`Weak.empty()` is `None`", span, "None"),
+        };
+        self.sink.emit(refused);
         if let TyKind::Enum(id) = *self.types.kind(ty) {
             return Expr { ty, kind: ExprKind::EnumLit { enum_id: id, variant: 0, fields: Vec::new() }, span };
         }
         Expr {
             ty,
-            kind: ExprKind::Builtin { which: Builtin::WeakEmpty { weak: ty }, args: Vec::new() },
+            kind: ExprKind::Builtin { which: Builtin::LinkNone { link: ty }, args: Vec::new() },
             span,
         }
     }
@@ -53862,74 +53719,28 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        let sync = self.is_sync_shared(receiver.ty);
-        let mutable = match name.name.as_str() {
-            "get" => false,
-            "get_mut" if !sync => true,
-            _ => {
-                let kind = if sync { "SyncShared" } else { "Shared" };
-                let mut diagnostic = Diagnostic::error(
-                    codes::E2072,
-                    name.span,
-                    format!("`{kind}[{}]` has no method named `{}`", self.types.display(inner), name.name),
-                );
-                if sync && name.name.is("get_mut") {
-                    diagnostic = diagnostic.note("a `SyncShared` gives `get` only: mutate through the value's own locks or atomics [HEAP-10]");
-                }
-                self.sink.emit(diagnostic);
-                return error;
-            }
-        };
-        let method = if mutable { "get_mut" } else { "get" };
-        if !args.is_empty() {
-            self.error(
-                codes::E2020,
-                span,
-                format!("`{method}` takes 0 arguments, found {}", args.len()),
+        // `[HEAP-10]` — only `SyncShared[T]` is such a struct (a `shares T` owner is a link): `get`.
+        if !name.name.is("get") {
+            let mut diagnostic = Diagnostic::error(
+                codes::E2072,
+                name.span,
+                format!("`SyncShared[{}]` has no method named `{}`", self.types.display(inner), name.name),
             );
+            if name.name.is("get_mut") {
+                diagnostic = diagnostic.note("a `SyncShared` gives `get` only: mutate through the value's own locks or atomics [HEAP-10]");
+            }
+            self.sink.emit(diagnostic);
             return error;
         }
-        if mutable {
-            // A `mut` parameter is already a `ref mut Shared[T]` inside its
-            // callee. Borrow through that caller-owned reference directly:
-            // re-borrowing its dereferenced temporary would make a returned
-            // payload reference appear to derive from local storage instead
-            // of from the parameter. Ordinary local receivers still need the
-            // usual `mut self` adjustment.
-            let receiver = match &receiver.kind {
-                ExprKind::Deref(base)
-                    if matches!(self.types.kind(base.ty), TyKind::Ref { mutable: true, .. }) =>
-                {
-                    receiver
-                }
-                _ => {
-                    let receiver = self.pass_receiver(receiver, Mode::Mut, span);
-                    let TyKind::Ref { mutable: true, inner: shared } =
-                        *self.types.kind(receiver.ty)
-                    else {
-                        return error;
-                    };
-                    Expr {
-                        ty: shared,
-                        kind: ExprKind::Deref(Box::new(receiver)),
-                        span,
-                    }
-                }
-            };
-            let payload = self.read_shared_through(receiver);
-            let ty = self.types.intern(TyKind::Ref { mutable: true, inner });
-            return Expr {
-                ty,
-                kind: ExprKind::Ref { place: Box::new(payload), mutable: true },
-                span,
-            };
+        if !args.is_empty() {
+            self.error(codes::E2020, span, format!("`get` takes 0 arguments, found {}", args.len()));
+            return error;
         }
-
         if !is_place(&receiver.kind) {
             self.error(
                 codes::E2140,
                 span,
-                "`Shared.get` needs an owner place so its returned reference cannot outlive a temporary",
+                "`SyncShared.get` needs an owner place so its returned reference cannot outlive a temporary",
             );
             return error;
         }

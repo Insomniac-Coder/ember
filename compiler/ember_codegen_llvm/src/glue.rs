@@ -396,11 +396,6 @@ impl<'a> FnCx<'_, 'a> {
                     self.emit(format!("call void {helper}(ptr {handle})"));
                     return Ok(());
                 }
-                if weak_inner(table, id).is_some() {
-                    let handle = self.load(Sc::Ptr, ptr, align.min(8));
-                    self.call_rt("weak_retain", vec![Val::Imm(Sc::Ptr, handle)], None);
-                    return Ok(());
-                }
                 if def.name.as_str().starts_with("MaybeUninit_") || !def.drops_fields {
                     return Ok(());
                 }
@@ -456,7 +451,6 @@ impl<'a> FnCx<'_, 'a> {
             TyKind::Struct(id) => {
                 let def = table.struct_def(*id);
                 crate::func::shared_inner(table, *id).is_some()
-                    || weak_inner(table, *id).is_some()
                     || (!def.name.as_str().starts_with("MaybeUninit_")
                         && def.drops_fields
                         && def.fields.iter().any(|field| self.holds_counts(field.ty)))
@@ -648,11 +642,6 @@ impl<'a> FnCx<'_, 'a> {
             let handle = self.load(Sc::Ptr, ptr, align.min(8));
             let helper = count_helper(self.m, "release", "any");
             self.emit(format!("call void {helper}(ptr {handle})"));
-            return Ok(());
-        }
-        if weak_inner(table, id).is_some() {
-            let handle = self.load(Sc::Ptr, ptr, align.min(8));
-            self.call_rt("weak_release", vec![Val::Imm(Sc::Ptr, handle)], None);
             return Ok(());
         }
         if let Some(inner) = table.compiler_box_inner(id) {
@@ -1005,14 +994,6 @@ fn refcell_for_guard(table: &ember_types::TypeTable, guard: Ty) -> Option<Ty> {
         }
         _ => None,
     })
-}
-
-pub(crate) fn weak_inner(table: &ember_types::TypeTable, id: ember_types::StructId) -> Option<Ty> {
-    let def = table.struct_def(id);
-    match &def.origin {
-        Some((name, args)) if name.is("Weak") && args.len() == 1 => Some(args[0]),
-        _ => None,
-    }
 }
 
 /// `[RC-4]`, `[RT-10]` — the header's inline count operations, reproduced: `kind` is `plain`
