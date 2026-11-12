@@ -46409,6 +46409,12 @@ impl<'a> Checker<'a> {
             "value"
         };
         let refused_text = code_before_comment(lines[refused].1).trim();
+        // Only a line that gives the whole parameter a new value (`n = …`, `n -= 1`) is Python's rebinding.
+        let rest = refused_text.strip_prefix(name).map(str::trim_start)?;
+        let operator = rest.split('=').next().unwrap_or("");
+        if !rest.contains('=') || rest[operator.len()..].starts_with("==") || !["", "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "**"].contains(&operator) {
+            return None;
+        }
         let plain = refused_text
             .strip_prefix(name)
             .map(str::trim_start)
