@@ -38942,6 +38942,13 @@ impl<'a> Checker<'a> {
                 // `None` carries nothing, so only the expected type can say
                 // which `Option` it is.
                 if name.is("None") {
+                    // `[WK-11]` — a link may hold no target (`parent: weakref Node = None`): a null
+                    // pointer, which its end gives back nothing for.
+                    if let Some(wanted) = expected
+                        && matches!(self.types.kind(wanted), TyKind::Link { kind: ember_types::LinkKind::Weakref, .. })
+                    {
+                        return Expr { ty: wanted, kind: ExprKind::Builtin { which: Builtin::WeakEmpty { weak: wanted }, args: Vec::new() }, span };
+                    }
                     // `[DIA-21]` P1 — Python's "no value" where the place is not an `Option`.
                     if let Some(wanted) = expected
                         && wanted != self.common.error
