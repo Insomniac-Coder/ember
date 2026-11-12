@@ -1,7 +1,7 @@
 # Ember Programming Language — Specification
 
-**Version:** 0.9.20_Hardened_12
-**Supersedes:** 0.9.20_Hardened_11 (development target until this one), 0.9.20_Hardened_10 to
+**Version:** 0.9.20_Hardened_13
+**Supersedes:** 0.9.20_Hardened_12 (development target until this one), 0.9.20_Hardened_11 to
 0.9.20_Hardened_1, 0.9.15_Hardened_11 to 0.9.15_Hardened_1 and every earlier file:
 0.9.10_Hardened_1 to 0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3
 and 0.8.5_Hardened_1 (adopted). This document is the single specification of Ember; the earlier
@@ -55,8 +55,9 @@ under `unsafe_libs` in the manifest and its import is written `unsafe import`;
 is named there too; **0.9.20_Hardened_10**, of 2026-11-10 (§H.61): his verdict 174, that a
 library only one system has is named for that system (`[link.windows]`);
 **0.9.20_Hardened_11**, of 2026-11-11 (§H.62): the eight fixes of a review of Hardened_10, on his
-word; and **0.9.20_Hardened_12**, of 2026-11-11 (§H.63): the six fixes of a check of Hardened_11,
-on his word. Each of them changes
+word; **0.9.20_Hardened_12**, of 2026-11-11 (§H.63): the six fixes of a check of Hardened_11,
+on his word; and **0.9.20_Hardened_13**, of 2026-11-12 (§H.64): the spec findings of the
+workers' rounds of 2026-11-11, ruled under his delegation. Each of them changes
 the set of accepted programs, so the language version moves (`[VER-9]`). What a program means is written in
 words on the thing it describes: one owner unless a line says `shares`; `owns` for a hand-over and a
 value held alone, at the call too; `copy of` for a copy; `ref mut` on a name, and at the call, for a
@@ -67,7 +68,7 @@ cost (§X.4). It replaces `Box`, `Shared`, `Weak`, `RefCell`, `SyncShared`, `For
 `@borrows`, the mode `owned`, `self`, `mem.forget`, effect clauses on a first line and every check of
 exclusive access made while the program runs. It changes the set of accepted programs, so the
 language version moves (`[VER-9]`); Appendix H §H.41 to §H.51 list every change of 0.9.15, and §H.52
-to §H.63 those of 0.9.20. The revisions before it were
+to §H.64 those of 0.9.20. The revisions before it were
 authored at the owner's direction of 2026-09-23 with delegated authority to decide open language
 questions against the project goal; Appendix H lists each one's changes (§H.1 to §H.40), and every
 finding of the 2026-09-23 research pass (`tasks/audit/FINDINGS.md`, F-001–F-214) is resolved in
@@ -129,7 +130,7 @@ invariant (`[PHIL-10]`) with its conformance tests.
 | Appendix E | Coming from Python (non-normative) |
 | Appendix F | Glossary |
 | Appendix G | Resolution of findings F-001–F-214 |
-| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.51) and in 0.9.20 (§H.52 to §H.63) |
+| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40), in 0.9.15 (§H.41 to §H.51) and in 0.9.20 (§H.52 to §H.64) |
 | Appendix I | Rule index |
 
 **Normative words.** MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119. Text marked

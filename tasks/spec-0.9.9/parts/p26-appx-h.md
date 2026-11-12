@@ -3714,3 +3714,53 @@ Generated: every rule whose text differs from 0.9.20_Hardened_11.
 | `[MAN-10]` | changed |
 | `[RT-1]` | changed |
 
+
+## H.64 Changes in 0.9.20_Hardened_13 (from 0.9.20_Hardened_12)
+
+**0.9.20_Hardened_13**, of 2026-11-12, rules the spec findings the workers' rounds of 2026-11-11
+queued (`tasks/96/redesign/jobs/review.md`), each read against the pinned text and, where it helped,
+run on the compiler. Of the fourteen, five are rulings under the delegation, N171 to N175
+(`decisions.md` §24); the others the text already decides, for the compiler to build, and three of
+those are written out here.
+
+* **Arguments that do not fit a call** (N171): a positional argument after a named one, too many,
+  one missing, a name no parameter has and a parameter given twice, at any call and at a memberwise
+  constructor or `super.init(…)`, are `E2021`, shape N6, whose message gives the callee's first line
+  (`[TYP-25]`, `[STR-1]`, `[CLS-3]`).
+* **What `assert_disjoint`'s stop says** (N172): the call and its line, and for each name the place
+  it views and the line that made the view, as `ember explain --view` shows it (`[DSJ-5]`,
+  `[COST-6]`).
+* **A `std::unique_ptr` with a deleter of its own** (N173): a stateless `D` names `T`'s one
+  destructor; a class whose constructors, results by value or default `std::unique_ptr`s need
+  `delete`, and which a `std::unique_ptr<T, D>` ends otherwise, has two, `E5002` (`[FFI-17a]`,
+  `[FFI-36]`, `[FFI-36a]`).
+* **The local of your own in shape B4** (N174): `new_n`, made by a new first line of the body or by
+  the refused line itself, and written for the parameter in every later line (`[BRW-14]`,
+  §XVII.6.1).
+* **Which types are foreign** (N175): an `extern type`, an opaque C++ class, a `@ffi(handle)` type
+  and a `@layout(c)` struct a contract gives a destructor; Ember makes no `owns T` of one (`E2114`)
+  and copies none (`[FFI-36a]`, §IX.1's `owns T`).
+* **Written out, no ruling:** a `static` function of a header is called through the shim's wrapper
+  (`[FFI-29]`); a type is named as the program spells it (`[DIA-2]`); what makes a type a
+  `threads(creator)` type (`[FFI-33b]`).
+
+Registry rows: E2021 (new), E2114, E5002. One new code, no new rule, none retired. Owner verdicts:
+none touched.
+
+Generated: every rule whose text differs from 0.9.20_Hardened_12.
+
+| Rule | 0.9.20_Hardened_12 → 0.9.20_Hardened_13 |
+|---|---|
+| `[BRW-14]` | changed |
+| `[CLS-3]` | changed |
+| `[COST-6]` | changed |
+| `[DIA-2]` | changed |
+| `[DSJ-5]` | changed |
+| `[FFI-17a]` | changed |
+| `[FFI-29]` | changed |
+| `[FFI-33b]` | changed |
+| `[FFI-36]` | changed |
+| `[FFI-36a]` | changed |
+| `[STR-1]` | changed |
+| `[TYP-25]` | changed |
+

@@ -307,13 +307,15 @@ pub struct Vec2:
 
 * `[STR-1]` *(changed in 0.9.15)* *(changed in 0.9.20)* Every struct has a **memberwise
   constructor** `Name(field0, field1, …)` taking positional or named arguments in field order; a
-  field with a default may be omitted. Its visibility is the narrowest among its fields', since
-  construction writes every field: `pub` when every field is `pub` (a struct with no fields
-  included), `pub(package)` when every field is `pub` or `pub(package)`, and private to its module
-  otherwise (a private, `pub(read)` or `pub(package, read)` field, `[MOD-7]`); a call from where it
-  is not visible is `E1052`, naming the field that narrows it ("`Packet(...)` is not visible here:
-  `seq` is `pub(package)`, so a `Packet` is built only inside the `net` package"). A declared `fn
-  init(…)` replaces it (`[STR-6]`). An argument for an `owns` field is made with `owns` on its line
+  field with a default may be omitted, and arguments that do not fit the fields are `E2021`, as at
+  any call (`[TYP-25]`: "`Point(1)` gives nothing for `y`, which has no default: `Point(x: int, y:
+  int)`"). Its visibility is the narrowest among its fields', since construction writes every
+  field: `pub` when every field is `pub` (a struct with no fields included), `pub(package)` when
+  every field is `pub` or `pub(package)`, and private to its module otherwise (a private,
+  `pub(read)` or `pub(package, read)` field, `[MOD-7]`); a call from where it is not visible is
+  `E1052`, naming the field that narrows it ("`Packet(...)` is not visible here: `seq` is
+  `pub(package)`, so a `Packet` is built only inside the `net` package"). A declared `fn init(…)`
+  replaces it (`[STR-6]`). An argument for an `owns` field is made with `owns` on its line
   (`mesh=owns Mesh(points=[0.0])`, `[OWN-10]`).
 * `[STR-2]` *(changed in 0.9.9)* *(changed in 0.9.20)* A field default is any expression; at a
   construction that omits the field, the written arguments are evaluated first, left to right
@@ -440,18 +442,18 @@ class Door(Script):
   `E2108` ("`init` builds the object, so it cannot take it over; write `fn init(name: String):`").
   Several constructors are written as `static fn`s that call `Self(…)`.
 * `[CLS-3]` *(changed in 0.9.20)* A class with no `init` and no base class gets a memberwise
-  constructor as a struct does (`[STR-1]`), and that constructor is its `init` for every purpose: a
-  derived `init` calls it as `super.init(…)`, with positional or named arguments in field order, a
-  field with a default left out keeping the default `[CLS-2]` has already stored
-  (`super.init(name=name)` for a base with `name: String` and `visible: bool = true`); `[CLS-11]`'s
-  two phases hold around that call as around any `super.init(…)`; and a derived class with no `init`
-  gets it as its base's constructor (`[CLS-10]`: `Panel(name=String("side"))`), and passes it on the
-  same way to a class derived from it. The arguments of `super.init(…)` take the words a call of
-  that constructor takes: none for a memberwise one, whose values are handed over as to every
-  constructor (`[OWN-9]`, so the derived `init` holds them `owns`: `fn init(owns name: String, owns
-  label: String):`), and, for a written base `init`, the words a call of that constructor takes
-  (`[FN-2a]`: none before an argument for its `owns` parameter, `ref mut` before one for its `ref
-  mut` parameter).
+  constructor as a struct does (`[STR-1]`), and that constructor is its `init` for every purpose:
+  a derived `init` calls it as `super.init(…)`, with positional or named arguments in field order
+  (`E2021` where they do not fit the fields, `[TYP-25]`), a field with a default left out keeping
+  the default `[CLS-2]` has already stored (`super.init(name=name)` for a base with `name: String`
+  and `visible: bool = true`); `[CLS-11]`'s two phases hold around that call as around any
+  `super.init(…)`; and a derived class with no `init` gets it as its base's constructor
+  (`[CLS-10]`: `Panel(name=String("side"))`), and passes it on the same way to a class derived
+  from it. The arguments of `super.init(…)` take the words a call of that constructor takes: none
+  for a memberwise one, whose values are handed over as to every constructor (`[OWN-9]`, so the
+  derived `init` holds them `owns`: `fn init(owns name: String, owns label: String):`), and, for a
+  written base `init`, the words a call of that constructor takes (`[FN-2a]`: none before an
+  argument for its `owns` parameter, `ref mut` before one for its `ref mut` parameter).
 * `[CLS-10]` *(new in 0.9.9)* *(changed in 0.9.20)* A derived class with no `init` gets its base's
   constructor: `Door(entity)` evaluates `Door`'s field defaults and then runs `Script.init(entity)`
   (the base's memberwise constructor where it declares no `init`, `[CLS-3]`). A derived class with a

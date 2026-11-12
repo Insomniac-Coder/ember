@@ -54,7 +54,9 @@ pays a count for nothing.
   when `T` is: `copy of` it makes a new block holding a copy of the value, so a struct or enum with
   an `owns` field derives `Clone` (`[STR-5]`). `owns dyn I` is `Clone` when `I` requires it
   (`interface I: needs Clone:`), copying through the entry `I`'s method table holds for it
-  (`[TYP-22]`). A foreign type held `owns` is ended through its contract's destructor (Part XVI).
+  (`[TYP-22]`). A foreign type held `owns` is ended through its contract's destructor,
+  and its `owns T` holds only an object foreign code made, so Ember makes none and it is not
+  `Clone` (`[FFI-36a]`).
 * `[HEAP-3]` *(changed in 0.9.15)* A value with several owners (`shares`, `shares mut`,
   `thread_shared`) lives in one heap block that holds its owner count, and, where `weakref` links
   may reach it, its weak count (`[OBJ-1]`). A class object already has its block, so another owner
@@ -643,10 +645,17 @@ fn mix_any(ref mut tracks: Map[String, Array[float]], dst_name: StrView, src_nam
   references are `E3095`.
 * `[DSJ-5]` *(changed in 0.9.15)* *(changed in 0.9.20)* `assert_disjoint(a, b)` makes the same
   comparison and stops the program if the views overlap, saying where and which names:
-  "`assert_disjoint(d, s)` on line 11: the two spans overlap (`dst_name` and `src_name` name one
-  track)". Both forms record a `RuntimeCheck(Aliasing)` site whose reason is
-  `establishes_static_fact` (`[EFF-11]`), unless the two views are known apart by `[DSJ-11]`, in
-  which case no site is recorded and no comparison is emitted.
+  "`assert_disjoint(d, s)` on line 10: the two spans overlap (`d` views `tracks[dst_name]`, line
+  8, and `s` views `tracks[src_name]`, line 9)". The text gives the call as written and its line;
+  "spans" where both views are `Span` or `MutSpan`, "views" otherwise; and, for each argument that
+  is a name, the place it views as the program writes it and the line that made the view, as
+  `ember explain --view` does (`[DIA-8]`), or, for a parameter, that it is one ("`d` and `s` are
+  parameters of `mix`: its caller gave views that overlap"). All of it is fixed when compiling, so
+  the stop reads nothing of the views but their two address ranges. `assert_disjoint_all` names
+  the first two that overlap, in the order they are written. Both forms record a
+  `RuntimeCheck(Aliasing)` site whose reason is `establishes_static_fact` (`[EFF-11]`), unless the
+  two views are known apart by `[DSJ-11]`, in which case no site is recorded and no comparison is
+  emitted.
 * `[DSJ-11]` *(new in 0.9.20)* **Views known apart.** Two views are known apart, with no compare,
   exactly when the compiler proves them apart as `[BRW-11]` and §IX.8 say: the two results of one
   `split_at`, `get_pair_mut` or `chunks_mut` call; two columns of one SoA; two

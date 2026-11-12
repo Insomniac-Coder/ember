@@ -139,6 +139,7 @@ out of an import), rejected before it was committed and replaced by the owner's 
 | ODR-265 | **CLOSED** — ruled on the owner's instruction (the best solution), 2026-11-08; Hardened_4 | Language / Types | **P1** | **Yes** — 2026-11-08 |
 | ODR-266 | **CLOSED** — ruled on the owner's instruction (the best solution), 2026-11-08; Hardened_4 | C Interop | **P1** | **Yes** — 2026-11-08 |
 | ODR-267 | **CLOSED** — ruled on the owner's instruction (the best solution), 2026-11-08; Hardened_4 | C Interop / Memory Model | **P1** | **Yes** — 2026-11-08 |
+| N171–N175 | **CLOSED** — ruled under the delegation by the lead's Opus deputy, 2026-11-12; 0.9.20_Hardened_13 (`decisions.md` §24); for the lead's and the owner's review | Types / Diagnostics / C Interop | **P1** | **Yes** — 2026-11-12 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -1664,6 +1665,19 @@ diagnostic suggestion ordering and does not require a language-version bump.
 **The question.** A debugger could not stop on an Ember line of a `debug` build: the compiler inlined a function called once and copied its loops (a vectorised copy kept the running total in a temporary), so the line had eight places in the code and the local had no name there.
 
 **Ruling.** The owner, 2026-10-22: a `debug` build skips Ember's own speed rewrites, so a debugger follows the program as written ("give the option to turn the speed rewrite on or off for debug"; "yes, off by default"); a package turns them on with `[profiles.debug] rewrites = true`. The lead's, under `[PRF-1]`: what the rewrites decide that a program is told (the `@simd` verdicts) is decided the same in every profile.
+
+---
+
+## N171 to N175 — the spec findings of the workers' rounds of 2026-11-11 — **CLOSED**
+
+    ID:        N171 to N175 (decisions.md §24)
+    Status:    CLOSED — ruled under the delegation by the lead's Opus deputy, 2026-11-12; incorporated in 0.9.20_Hardened_13; for the lead's and the owner's review
+    Category:  TYPES / DIAGNOSTICS / C INTEROP
+    Location:  0.9.20_Hardened_12 [TYP-25], [STR-1], [CLS-3], [DSJ-5], [FFI-17a], [FFI-36], [FFI-36a], [BRW-14], §XVII.6
+
+**The questions.** Fourteen findings of `tasks/96/redesign/jobs/review.md`. Five left a language decision open: the code of a call's arguments that do not fit its parameters (TYP-25, CLS-3); the general form of `assert_disjoint`'s stop (DSJ-5); which destructor ends an `owns T` a `std::unique_ptr<T, D>` gives (FFI-17a, FFI-36, FFI-36a); the name and place of the local shape B4 gives (DIA-7); which types are foreign (the round-5 helper's choice). The other nine the text already decides; they are the compiler's to build (`docs/AUDIT-0.9.20.md` §18).
+
+**Rulings.** N171: `E2021`, shape N6, with the callee's first line, and after a named argument the call with it named. N172: the call, its line, and for each name the place it views and the line that made the view. N173: a stateless `D` names `T`'s one destructor; a class that `delete` also ends is `E5002`, with the `hide` line. N174: `new_n`, made by the body's first line or the refused line, written in every later line. N175: an `extern type`, an opaque C++ class, a `@ffi(handle)` type and a `@layout(c)` struct a contract gives a destructor; Ember makes no `owns T` of one (`E2114`) and copies none. No owner verdict touched; no question left open.
 
 ---
 
