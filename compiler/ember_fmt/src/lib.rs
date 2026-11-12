@@ -687,6 +687,9 @@ impl Printer<'_> {
                     return format!("const {}: {}", self.name(param.name), self.type_expr(ty));
                 }
                 let mut text = self.name(param.name);
+                if param.pack {
+                    text.push_str("...");
+                }
                 if !param.bounds.is_empty() {
                     text.push_str(&format!(": {}", self.needs(&param.bounds)));
                 }
@@ -1147,6 +1150,7 @@ impl Printer<'_> {
             ast::ExprKind::CopyOf(inner) => format!("copy of {}", self.expr_pure(inner)),
             ast::ExprKind::Comptime(inner) => format!("comptime({})", self.expr_pure(inner)),
             ast::ExprKind::AssumeNoalloc(inner) => format!("@assume_noalloc({})", self.expr_pure(inner)),
+            ast::ExprKind::Spread(name) => format!("{}...", self.name(*name)),
             ast::ExprKind::Jump(jump) => match jump {
                 ast::Jump::Return(Some(value)) => format!("return {}", self.expr_pure(value)),
                 ast::Jump::Return(None) => "return".to_string(),
@@ -1383,6 +1387,7 @@ impl Printer<'_> {
         match &ty.kind {
             ast::TypeKind::Void => "void".to_string(),
             ast::TypeKind::Never => "!".to_string(),
+            ast::TypeKind::Spread(name) => format!("{}...", self.name(*name)),
             ast::TypeKind::Ref { mutable, inner } => {
                 let kind = if *mutable { "ref mut " } else { "ref " };
                 format!("{kind}{}", self.type_expr(inner))

@@ -160,7 +160,7 @@ fn void_type(span: Span) -> ast::TypeExpr {
 }
 
 fn generic(name: &str, bound: &str, span: Span) -> ast::GenericParam {
-    ast::GenericParam { id: ast::NodeId::DUMMY, name: ident(name, span), bounds: vec![named_type(bound, span)], default: None, const_ty: None, span }
+    ast::GenericParam { id: ast::NodeId::DUMMY, name: ident(name, span), bounds: vec![named_type(bound, span)], default: None, const_ty: None, pack: false, span }
 }
 
 /// `std.ser.put(w, "label", value)?`; a range-typed value through a local of its representation,

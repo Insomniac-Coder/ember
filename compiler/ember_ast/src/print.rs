@@ -571,6 +571,7 @@ impl Printer {
             ExprKind::CopyOf(inner) => self.nest("CopyOf", |p| p.expr(inner)),
             ExprKind::Comptime(inner) => self.nest("Comptime", |p| p.expr(inner)),
             ExprKind::AssumeNoalloc(inner) => self.nest("AssumeNoalloc", |p| p.expr(inner)),
+            ExprKind::Spread(name) => self.line(&format!("Spread {}...", name.name)),
             ExprKind::Jump(jump) => match jump {
                 Jump::Return(value) => self.nest("Return", |p| {
                     if let Some(value) = value {
@@ -691,6 +692,7 @@ pub fn type_str(ty: &TypeExpr) -> String {
         TypeKind::Void => "void".to_string(),
         TypeKind::Never => "!".to_string(),
         TypeKind::Infer => "_".to_string(),
+        TypeKind::Spread(name) => format!("{}...", name.name),
     }
 }
 

@@ -309,6 +309,8 @@ macro_rules! puncts {
 puncts! {
     // three characters
     StarStarEq => "**=", ShlEq => "<<=", ShrEq => ">>=", DotDotEq => "..=",
+    // `[LEX-21]`, `[TYP-47]` — `...` before `..`: a pack (`Ts...`, `values...`).
+    DotDotDot => "...",
     // `[LEX-21]` (0.9.9) — `//=` before `//` before `/`.
     SlashSlashEq => "//=",
     // two characters

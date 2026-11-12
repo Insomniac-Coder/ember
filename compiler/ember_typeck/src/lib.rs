@@ -25593,7 +25593,7 @@ impl<'a> Checker<'a> {
     fn class_init_uses_whole_self(expr: &ast::Expr) -> bool {
         match &expr.kind {
             ast::ExprKind::SelfExpr => true,
-            ast::ExprKind::Lit(_) | ast::ExprKind::Path { .. } | ast::ExprKind::Error => false,
+            ast::ExprKind::Lit(_) | ast::ExprKind::Path { .. } | ast::ExprKind::Spread(_) | ast::ExprKind::Error => false,
             ast::ExprKind::Field { base, .. } | ast::ExprKind::TupleField { base, .. } => {
                 !matches!(base.kind, ast::ExprKind::SelfExpr) && Self::class_init_uses_whole_self(base)
             }
@@ -62140,7 +62140,7 @@ fn type_names(ty: &ast::TypeExpr, out: &mut HashSet<Symbol>) {
             }
         }
         ast::TypeKind::Array { elem, .. } | ast::TypeKind::SomeType(elem) => type_names(elem, out),
-        ast::TypeKind::SelfType | ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::Infer => {}
+        ast::TypeKind::SelfType | ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::Infer | ast::TypeKind::Spread(_) => {}
     }
 }
 
@@ -62564,7 +62564,7 @@ fn type_expr_names(ty: &ast::TypeExpr, out: &mut Vec<Symbol>) {
             }
         }
         ast::TypeKind::Array { elem, .. } | ast::TypeKind::SomeType(elem) => type_expr_names(elem, out),
-        ast::TypeKind::SelfType | ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::Infer => {}
+        ast::TypeKind::SelfType | ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::Infer | ast::TypeKind::Spread(_) => {}
     }
 }
 
@@ -63064,7 +63064,7 @@ impl ShareWalk<'_> {
                 self.ty(elem);
                 self.expr(len);
             }
-            ast::TypeKind::SelfType | ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::Infer => {}
+            ast::TypeKind::SelfType | ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::Infer | ast::TypeKind::Spread(_) => {}
         }
     }
 
@@ -63119,7 +63119,7 @@ impl ShareWalk<'_> {
                 }
                 self.args(args);
             }
-            E::Lit(_) | E::SelfExpr | E::Error => {}
+            E::Lit(_) | E::SelfExpr | E::Spread(_) | E::Error => {}
             E::Field { base, .. } | E::TupleField { base, .. } => self.expr(base),
             E::IndexOrInstantiate { base, args } => {
                 self.expr(base);
