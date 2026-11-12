@@ -20472,7 +20472,9 @@ impl<'a> Checker<'a> {
         if place.is_empty() || place.ends_with(['=', '!', '<', '>', '+', '-', '*', '/', '%']) || place.contains('(') {
             return None;
         }
-        let name: String = place.rsplit('.').next()?.chars().filter(|c| *c == '_' || c.is_alphanumeric()).collect();
+        // A typed local (`b: owns dyn Shape = …`) is named by what comes before the colon.
+        let named = place.split(':').next()?.trim();
+        let name: String = named.rsplit('.').next()?.chars().filter(|c| *c == '_' || c.is_alphanumeric()).collect();
         let written = self.written_line(value)?;
         (!name.is_empty()).then(|| (name, format!("{place} = owns {written}")))
     }
