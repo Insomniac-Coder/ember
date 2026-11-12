@@ -142,6 +142,41 @@ impl Checker<'_> {
         Some(self.common.error)
     }
 
+    /// `[TYP-47]` — a declared tuple with a pack among its elements (`(int, Cs...)`), met by
+    /// `actual`: the pairs of the other elements to meet, the pack, and the `Pack` of the elements
+    /// they leave (`(int, f64, StrView)` leaves two, `int` none). `None` when `declared` has no pack
+    /// or `actual` has too few elements.
+    pub(crate) fn pack_tuple_parts(&mut self, declared: Ty, actual: Ty) -> Option<(Vec<(Ty, Ty)>, Ty, Ty)> {
+        let TyKind::Tuple(items) = self.types.kind(declared).clone() else { return None };
+        let at = items.iter().position(|&item| self.types.is_pack_param(item))?;
+        let met: Vec<Ty> = match self.types.kind(actual).clone() {
+            TyKind::Tuple(have) => have,
+            TyKind::Void => Vec::new(),
+            _ => vec![actual],
+        };
+        let after = items.len() - at - 1;
+        if met.len() < at + after {
+            return None;
+        }
+        let tail = met.len() - after;
+        let pairs = items[..at].iter().copied().zip(met[..at].iter().copied()).chain(items[at + 1..].iter().copied().zip(met[tail..].iter().copied())).collect();
+        let pack = self.types.pack_of(met[at..tail].to_vec());
+        Some((pairs, items[at], pack))
+    }
+
+    /// `[TYP-47]` — a generic's arguments with those of its pack (the last of `params`) made one
+    /// `Pack`, as every use of it names the instance: `View[A, B]` and the `View[Cs...]` a
+    /// substitution gives are one argument list, `[Pack(A, B)]`. `None` when it has no pack.
+    pub(crate) fn group_pack_arguments(&mut self, params: &[GenericParam], args: &[Ty]) -> Option<Vec<Ty>> {
+        let at = params.iter().position(|param| param.pack)?;
+        if args.len() < at {
+            return None;
+        }
+        let mut grouped: Vec<Ty> = args[..at].to_vec();
+        grouped.push(self.types.pack_of(args[at..].to_vec()));
+        Some(grouped)
+    }
+
     /// `[TYP-47]` — a function's parameters over its pack, where they are written: one takes the
     /// pack's values, the function's last positional one; one after it has a default and is passed
     /// by name only. Anywhere else, or two, is `E0100`.

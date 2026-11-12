@@ -19025,7 +19025,18 @@ impl<'a> Checker<'a> {
                 literals.push(field);
             } else {
                 let value = self.commit(value);
-                self.types.unify_with_fixed(declared, value.ty, solved, fixed);
+                // `[TYP-47]` — a field over the struct's pack (`cells: (int, Cs...)`) meets it.
+                match self.pack_tuple_parts(declared, value.ty) {
+                    Some((pairs, pack, met)) => {
+                        for (want, have) in pairs {
+                            self.types.unify_with_fixed(want, have, solved, fixed);
+                        }
+                        self.types.unify_with_fixed(pack, met, solved, fixed);
+                    }
+                    None => {
+                        self.types.unify_with_fixed(declared, value.ty, solved, fixed);
+                    }
+                }
                 values[field] = Some(value);
                 continue;
             }
@@ -19289,6 +19300,18 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> Expr {
+        // `[TYP-47]` — the types written for the pack are one `Pack`.
+        let grouped;
+        let explicit = match explicit.is_empty() {
+            false => match self.group_pack_arguments(&decl.generic_params[..decl.params.len().min(decl.generic_params.len())], explicit) {
+                Some(pack) => {
+                    grouped = pack;
+                    grouped.as_slice()
+                }
+                None => explicit,
+            },
+            true => explicit,
+        };
         if explicit.len() > decl.params.len() {
             self.error(
                 codes::E2020,
@@ -19418,6 +19441,18 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> Expr {
+        // `[TYP-47]` — the types written for the pack are one `Pack`.
+        let grouped;
+        let explicit = match explicit.is_empty() {
+            false => match self.group_pack_arguments(&decl.generic_params[..decl.params.len().min(decl.generic_params.len())], explicit) {
+                Some(pack) => {
+                    grouped = pack;
+                    grouped.as_slice()
+                }
+                None => explicit,
+            },
+            true => explicit,
+        };
         if explicit.len() > decl.params.len() {
             self.error(
                 codes::E2020,
@@ -19600,6 +19635,9 @@ impl<'a> Checker<'a> {
         args: &[Ty],
         span: Span,
     ) -> Ty {
+        // `[TYP-47]` — the pack's arguments are one `Pack`, however the instance is reached.
+        let grouped = self.group_pack_arguments(&decl.generic_params[..decl.params.len().min(decl.generic_params.len())], args);
+        let args = grouped.as_deref().unwrap_or(args);
         // D-407 — the hidden parameters come with the arguments (an opaque
         // instance's, every parameter its own) or are computed from them.
         let written = decl.params.len();
@@ -20035,6 +20073,9 @@ impl<'a> Checker<'a> {
         args: &[Ty],
         span: Span,
     ) -> Ty {
+        // `[TYP-47]` — the pack's arguments are one `Pack`, however the instance is reached.
+        let grouped = self.group_pack_arguments(&decl.generic_params[..decl.params.len().min(decl.generic_params.len())], args);
+        let args = grouped.as_deref().unwrap_or(args);
         let filled = match args.len() < decl.params.len() {
             true => self.with_type_defaults(&decl.generic_params, args),
             false => None,
@@ -43002,6 +43043,20 @@ impl<'a> Checker<'a> {
         solved: &mut Vec<Option<Ty>>,
         fixed: usize,
     ) -> bool {
+        // `[TYP-47]` — a pack among a declared tuple's elements is met by the elements the others
+        // leave: `(int, Cs...)` meets `(int, f64, StrView)` with `Cs` two types, `(int, f64)` with
+        // one and `int` with none (`[TYP-27]`).
+        if let TyKind::Tuple(items) = self.types.kind(declared)
+            && items.iter().any(|&item| self.types.is_pack_param(item))
+        {
+            let Some((pairs, pack, met)) = self.pack_tuple_parts(declared, actual) else { return false };
+            for (want, have) in pairs {
+                if !self.unify_generic_argument_shapes(want, have, generics, solved, fixed) {
+                    return false;
+                }
+            }
+            return self.types.unify_with_fixed(pack, met, solved, fixed);
+        }
         // `[TYP-5]` rule 7 — a `T` argument is auto-borrowed for a `ref T`
         // parameter, so inference reads through the borrow. (The unifier
         // accepts a shape mismatch without solving anything, so this is
