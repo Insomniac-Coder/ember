@@ -34270,6 +34270,9 @@ impl<'a> Checker<'a> {
                 self.routed_call = was;
                 return call;
             }
+            if self.mentions_error(elem) {
+                return error;
+            }
             let shown = self.types.display(elem);
             let missing = if ord { "Clone" } else { "Ord" };
             self.error(codes::E2040, span, format!("`{shown}` does not implement `{missing}`, which `{method}` needs"));
@@ -34770,7 +34773,7 @@ impl<'a> Checker<'a> {
             }
             _ => (self.commit(a), self.commit(b)),
         };
-        if a.ty == self.common.error || b.ty == self.common.error {
+        if self.mentions_error(a.ty) || self.mentions_error(b.ty) {
             return None;
         }
         if a.ty != b.ty {
@@ -35546,6 +35549,9 @@ impl<'a> Checker<'a> {
                 // `[TYP-37]` — the numbers and `str` (text is `Ord`; a `str`
                 // is a copied view, so picking one moves nothing).
                 if !self.totally_ordered(a.ty) && a.ty != self.common.str_ {
+                    if self.mentions_error(a.ty) {
+                        return Some(error);
+                    }
                     let shown = self.types.display(a.ty);
                     self.error(codes::E2040, span, format!("`{shown}` does not implement `Ord`, which `{name}` needs"));
                     return Some(error);
@@ -56134,6 +56140,10 @@ impl<'a> Checker<'a> {
     /// `[TYP-17]` — `E2040` for a type argument that misses a bound, with
     /// what would meet it where that is known.
     fn report_missed_bound(&mut self, ty: Ty, bound: Symbol, param: Symbol, span: Span) {
+        // `[DIA-14]` — a type a failed expression gave (`(<error>, int)`) has nothing more to report.
+        if self.mentions_error(ty) {
+            return;
+        }
         // `[THR-8]` (ODR-264) — a lambda where `Send` is required (`f: fn() + Send`, `F: fn() +
         // Send`): the capture that is not, as the thread checks name it (`E7004`).
         if bound.is("std.core.Send")
@@ -61801,6 +61811,9 @@ impl<'a> Checker<'a> {
                         span,
                     };
                     return self.synth_binary(op, &cmp, &equal, span);
+                }
+                if self.mentions_error(operand_ty) {
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
                 let shown = self.types.display(operand_ty);
                 let interface = if equality { "Eq" } else { "Ord" };
