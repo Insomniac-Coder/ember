@@ -242,6 +242,12 @@ pub enum TyKind {
     /// whatever the implementing type declared it to be. Resolved once the
     /// receiver is concrete.
     Assoc { name: Symbol },
+    /// `[TYP-47]` — the types a pack stands for in one instance (`Ts` = `int, StrView`): the
+    /// argument of a pack parameter, never the type of a value. In a list of types (a tuple's
+    /// elements, a function type's parameters, another pack) it is spelled out in place
+    /// (`tuple_of`, `pack_of`); a pack parameter itself (`Param`) in such a list stands for its
+    /// types spelled out there, `Cs...`.
+    Pack(Vec<Ty>),
     /// An unsolved inference variable.
     Infer(InferId),
     /// `[LEX-16]` — an integer literal with no suffix, awaiting context.
@@ -706,6 +712,10 @@ pub struct CommonTypes {
 /// reaches it, so a substitution over one cannot collide with `Self`.
 pub const SELF_PARAM: u32 = u32::MAX;
 
+/// `[TYP-47]` — what follows a pack parameter's name in its `TyKind::Param`, which tells it
+/// from one value's type (the same name and slot without it), written `Ts...` (`render`).
+pub const PACK_MARK: char = '…';
+
 /// The `declaring_module` of a type the compiler makes (`Box`, `Cell`,
 /// `Shared`, the arenas) rather than a program declares.
 pub const COMPILER_MODULE: usize = usize::MAX;
@@ -887,7 +897,7 @@ impl TypeTable {
             }
             TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => self.is_generic_in(*elem, seen),
             TyKind::Span { elem, .. } => self.is_generic_in(*elem, seen),
-            TyKind::Tuple(items) => items.iter().any(|&t| self.is_generic_in(t, seen)),
+            TyKind::Tuple(items) | TyKind::Pack(items) => items.iter().any(|&t| self.is_generic_in(t, seen)),
             TyKind::Fn { params, ret, .. } => {
                 params.iter().any(|param| self.is_generic_in(param.ty, seen))
                     || self.is_generic_in(*ret, seen)
@@ -1127,7 +1137,11 @@ impl TypeTable {
             }
             TyKind::Tuple(items) => {
                 let items: Vec<Ty> = items.iter().map(|&t| self.substitute(t, args)).collect();
-                self.intern(TyKind::Tuple(items))
+                self.tuple_of(items)
+            }
+            TyKind::Pack(items) => {
+                let items: Vec<Ty> = items.iter().map(|&t| self.substitute(t, args)).collect();
+                self.pack_of(items)
             }
             TyKind::Fn { abi, latebound, stateless, is_unsafe, once, send, params, ret } => {
                 let params = params
@@ -1137,11 +1151,70 @@ impl TypeTable {
                         mode: param.mode,
                     })
                     .collect();
+                let params = self.spelled_params(params);
                 let ret = self.substitute(ret, args);
                 self.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, once, send, params, ret })
             }
             _ => ty,
         }
+    }
+
+    /// `[TYP-47]` — a list of types with each `Pack` among them spelled out in its place.
+    /// Whether one was: a list a pack was spelled into is formed only then (`tuple_of`).
+    /// In generic code a pack parameter among them (`Cs...`, `is_pack_param`) stays as it is, and is
+    /// spelled out when a substitution gives it its types.
+    pub fn spelled_out(&self, items: Vec<Ty>) -> (Vec<Ty>, bool) {
+        if !items.iter().any(|&item| matches!(self.kind(item), TyKind::Pack(_))) {
+            return (items, false);
+        }
+        let mut out = Vec::with_capacity(items.len());
+        for item in items {
+            match self.kind(item) {
+                TyKind::Pack(inner) => out.extend(inner.iter().copied()),
+                _ => out.push(item),
+            }
+        }
+        (out, true)
+    }
+
+    /// `[TYP-47]` — whether `ty` is a pack parameter: `Cs...` in generic code, which stands for the
+    /// pack's types spelled out where it is written. One value of the pack (`v` in `for v in
+    /// values:`) is the parameter of the same slot without `PACK_MARK`, so the two never meet.
+    pub fn is_pack_param(&self, ty: Ty) -> bool {
+        matches!(self.kind(ty), TyKind::Param { name, .. } if name.as_str().ends_with(PACK_MARK))
+    }
+
+    /// `[TYP-47]`, `[TYP-27]` — a tuple type over `items`, a pack among them spelled out: once one
+    /// was, two or more elements are a tuple, one is that type itself, and none is `void`.
+    pub fn tuple_of(&mut self, items: Vec<Ty>) -> Ty {
+        let (items, spelled) = self.spelled_out(items);
+        match items.len() {
+            0 if spelled => self.intern(TyKind::Void),
+            1 if spelled => items[0],
+            _ => self.intern(TyKind::Tuple(items)),
+        }
+    }
+
+    /// `[TYP-47]` — the types a pack stands for, a pack among them spelled out.
+    pub fn pack_of(&mut self, items: Vec<Ty>) -> Ty {
+        let (items, _) = self.spelled_out(items);
+        self.intern(TyKind::Pack(items))
+    }
+
+    /// `[TYP-47]` — a function type's parameters, a pack among them spelled out, each of its
+    /// types with the word written before it (`fn(ref mut Ts...)`).
+    pub fn spelled_params(&self, params: Vec<FnParam>) -> Vec<FnParam> {
+        if !params.iter().any(|param| matches!(self.kind(param.ty), TyKind::Pack(_))) {
+            return params;
+        }
+        let mut out = Vec::with_capacity(params.len());
+        for param in params {
+            match self.kind(param.ty) {
+                TyKind::Pack(inner) => out.extend(inner.iter().map(|&ty| FnParam { ty, mode: param.mode })),
+                _ => out.push(param),
+            }
+        }
+        out
     }
 
     /// `[TYP-18]` — match a declared parameter type against the type an
@@ -1659,7 +1732,7 @@ impl TypeTable {
                 field_offsets: vec![0, self.pointer_size, self.pointer_size * 2],
             },
             // A parameter has no layout until it is substituted away.
-            TyKind::Param { .. } | TyKind::Assoc { .. } => Layout::ZERO,
+            TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Pack(_) => Layout::ZERO,
             // `[TYP-22]` — `dyn I` is unsized and may only occur behind an
             // indirection such as `ref` or `Box`.
             TyKind::Dyn { .. } | TyKind::Opaque(_) => Layout::ZERO,
@@ -1879,7 +1952,7 @@ impl TypeTable {
                 self.interfaces_require(interfaces, "std.core.Sync"),
             ),
             TyKind::Ptr { .. } | TyKind::ClassInterface(_) | TyKind::Opaque(_)
-            | TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Infer(_)
+            | TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Pack(_) | TyKind::Infer(_)
             | TyKind::IntLit | TyKind::FloatLit => (false, false),
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);
@@ -2214,7 +2287,7 @@ impl TypeTable {
             TyKind::Vec { .. } => false,
             // `[TYP-17]` — whether a parameter is `Copy` is what its bounds
             // say, which the checker consults rather than the type table.
-            TyKind::Param { .. } | TyKind::Assoc { .. } => params,
+            TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Pack(_) => params,
             TyKind::Infer(_) => false,
             TyKind::Dyn { .. } | TyKind::Opaque(_) => false,
         }
@@ -2704,6 +2777,7 @@ impl TypeTable {
             | TyKind::Ref { .. }
             | TyKind::Fn { .. }
             | TyKind::Param { .. }
+            | TyKind::Pack(_)
             | TyKind::Assoc { .. }
             | TyKind::Dyn { .. }
             | TyKind::Opaque(_)
@@ -3111,7 +3185,9 @@ impl TypeTable {
             // a function's first parameter and over a method's second are two
             // types, and named alike they were one.
             TyKind::Param { name, index } if !user => format!("{name}{index}"),
-            TyKind::Param { name, .. } => name.to_string(),
+            // `[TYP-47]` — a pack parameter (`PACK_MARK` after its name) is written as its types
+            // spelled out are: `Cs...`.
+            TyKind::Param { name, .. } => name.as_str().replace(PACK_MARK, "..."),
             TyKind::Assoc { name } => format!("Self.{name}"),
             TyKind::Dyn { interfaces } => format!(
                 "dyn {}",
@@ -3127,6 +3203,8 @@ impl TypeTable {
                 let inner: Vec<String> = items.iter().map(|&t| self.render(t, user)).collect();
                 format!("({})", inner.join(", "))
             }
+            // `[TYP-47]` — a pack's types, as its instance spells them: `View[Position, Velocity]`.
+            TyKind::Pack(items) => items.iter().map(|&t| self.render(t, user)).collect::<Vec<_>>().join(", "),
             TyKind::Ref { mutable, inner } => {
                 let kw = if *mutable { "ref mut " } else { "ref " };
                 format!("{kw}{}", self.render(*inner, user))
@@ -3300,6 +3378,17 @@ impl TypeTable {
                 out
             }
             TyKind::FnItem { symbol, .. } => format!("fn{{{symbol}}}"),
+            TyKind::Pack(items) => {
+                let mut out = String::from("...(");
+                for (index, item) in items.iter().enumerate() {
+                    if index != 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&self.canonical_name(*item)?);
+                }
+                out.push(')');
+                out
+            }
             TyKind::Param { index, .. } => format!("$P{index}"),
             TyKind::Assoc { name } => format!("Self.{name}"),
             TyKind::Infer(_) => return Err(CanonicalTypeError::InferenceVariable),
@@ -3485,6 +3574,9 @@ impl TypeTable {
     /// in brackets (`[i64, std.core.Option[str]]`).
     pub fn arguments_spelling(&self, args: &[Ty]) -> String {
         let mut out = String::from("[");
+        // `[MNG-6]`, `[TYP-47]` — a pack's types are its generic's arguments, each in its place
+        // (`std.core.println[std.core.StrView, i64]`).
+        let (args, _) = self.spelled_out(args.to_vec());
         for (index, &arg) in args.iter().enumerate() {
             if index != 0 {
                 out.push_str(", ");
@@ -3616,6 +3708,14 @@ impl TypeTable {
                 }
             }
             TyKind::Const(value) => out.push_str(&value.to_string()),
+            TyKind::Pack(items) => {
+                for (index, &item) in items.iter().enumerate() {
+                    if index != 0 {
+                        out.push_str(", ");
+                    }
+                    self.spell(item, out);
+                }
+            }
             // D-306 — a parameter by its name and its slot, as the checker's instance names hold it.
             TyKind::Param { name, index } => out.push_str(&format!("${name}{index}")),
             TyKind::Assoc { name } => out.push_str(&format!("Self.{name}")),

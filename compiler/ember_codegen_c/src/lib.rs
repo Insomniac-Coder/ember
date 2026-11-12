@@ -5338,7 +5338,7 @@ impl Emitter<'_> {
                 );
                 out.push("}".to_string());
             }
-            TyKind::Dyn { .. } | TyKind::Param { .. } | TyKind::Assoc { .. } => out.push(format!(
+            TyKind::Dyn { .. } | TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Pack(_) => out.push(format!(
                 "visitor(context, NULL, {field_c}, EMBER_OWNERSHIP_EDGE_UNKNOWN, NULL, false);"
             )),
             TyKind::Bool
@@ -12259,7 +12259,7 @@ impl Emitter<'_> {
             // A generic parameter never reaches the backend: monomorphisation
             // substitutes it away, and a body still holding one was never
             // instantiated.
-            TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::ArrayN { .. } | TyKind::Const(_) => "void*".into(),
+            TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Pack(_) | TyKind::ArrayN { .. } | TyKind::Const(_) => "void*".into(),
             TyKind::Infer(_) | TyKind::IntLit | TyKind::FloatLit => "int32_t".into(),
         }
     }

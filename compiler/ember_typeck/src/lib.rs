@@ -23,6 +23,7 @@ mod comptime;
 mod coroutines;
 mod habits;
 mod objects;
+mod packs;
 
 pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
 pub use derives::component_registry_key;
@@ -1959,6 +1960,13 @@ enum CountOp {
     PositionOf,
 }
 
+impl GenericParam {
+    /// `[TYP-47]` — the name of this parameter's `TyKind::Param`: a pack's carries `PACK_MARK`.
+    fn param_name(&self) -> Symbol {
+        if self.pack { Checker::pack_param_name(self.name) } else { self.name }
+    }
+}
+
 /// One declared type parameter and what it is allowed to do.
 #[derive(Clone)]
 struct GenericParam {
@@ -1993,6 +2001,8 @@ struct GenericParam {
     /// `[TYP-41]` — `const N: int`: the type of the value this parameter
     /// stands for. Its argument is a `TyKind::Const`.
     const_ty: Option<Ty>,
+    /// `[TYP-47]` — `Ts...`: a pack, whose argument is a `TyKind::Pack` of its types.
+    pack: bool,
 }
 
 /// `[FFI-21]` — a parameter contracted `callback(mode, user_data=p)`: the callable C calls back
@@ -4000,6 +4010,20 @@ struct Checker<'a> {
     module_deterministic: Vec<bool>,
     /// `[CLO-6]` — the callable type being resolved is a parameter's `once fn` bound.
     once_fn_parameter: bool,
+    /// `[TYP-47]` — the pack of values of the function whose body is checked: the local its name
+    /// is bound to, and the locals of its values (in the generic check, one standing for each).
+    pack_values: HashMap<LocalId, Vec<LocalId>>,
+    /// `[TYP-47]` — a function over a pack made for one number of its values (`pack_arity`): the
+    /// function, the pack's slot and the number; and the other way.
+    pack_arities: HashMap<DefId, (DefId, usize, usize)>,
+    pack_arity_of: HashMap<(DefId, usize), DefId>,
+    /// `[TYP-47]` — an instance of a function over a pack: where its pack's values are among its
+    /// parameters (the declaration's index of their parameter) and how many.
+    pack_params: HashMap<DefId, (usize, usize)>,
+    /// `[TYP-47]` — the open `for v in values:` loops, written out.
+    pack_loops: Vec<packs::PackLoop>,
+    /// `[TYP-47]` — the `values...` arguments of calls of functions over a pack, in generic code.
+    pack_spreads: HashSet<Span>,
     /// The lexical policy while checking a body or an inserted default.
     active_overflow: OverflowPolicy,
     /// `[TYP-9]` — the float mode of the function being checked, which a
@@ -4408,6 +4432,12 @@ impl<'a> Checker<'a> {
             module_overflow: Vec::new(),
             module_deterministic: Vec::new(),
             once_fn_parameter: false,
+            pack_values: HashMap::new(),
+            pack_arities: HashMap::new(),
+            pack_arity_of: HashMap::new(),
+            pack_params: HashMap::new(),
+            pack_loops: Vec::new(),
+            pack_spreads: HashSet::new(),
             active_overflow: OverflowPolicy::default(),
             active_fp: FpMode::Strict,
             borrows_in_copy: false,
@@ -5419,6 +5449,8 @@ impl<'a> Checker<'a> {
         params: &[ast::GenericParam],
         index_base: usize,
     ) -> Vec<GenericParam> {
+        // `[TYP-47]` — a pack is the last of its type parameters, and there is one.
+        self.check_pack_placement(params);
         // Reserve the written slots before a bound can introduce hidden
         // projection parameters. Later written parameters must keep their
         // indices even when an earlier bound names `S.Item` (D-540).
@@ -5431,6 +5463,7 @@ impl<'a> Checker<'a> {
             count_op: None,
             bindings: Vec::new(),
             const_ty: None,
+            pack: param.pack,
         }).collect();
         // The bounds whose `[Name = type]` bindings are read once every
         // parameter is declared: (the parameter's place, the bound, its
@@ -5455,11 +5488,13 @@ impl<'a> Checker<'a> {
                 declared[index].const_ty = Some(value_ty);
                 continue;
             }
+            // `[TYP-47]` — a pack's parameter is named with `PACK_MARK`: it stands for its types
+            // spelled out, never for one of them.
             let ty = self
                 .types
                 .intern(TyKind::Param {
                     index: (index_base + index) as u32,
-                    name: param.name.name,
+                    name: if param.pack { Self::pack_param_name(param.name.name) } else { param.name.name },
                 });
             self.type_params.insert(param.name.name, ty);
             // The bound is recorded under the name the interface is
@@ -5682,6 +5717,10 @@ impl<'a> Checker<'a> {
         generics: &mut Vec<GenericParam>,
         index_base: usize,
     ) -> Ty {
+        // `[TYP-47]` — `values: Ts...`: the pack's values, its parameter in generic code.
+        if let ast::TypeKind::Spread(name) = &ty.kind {
+            return self.resolve_spread(*name, ty.span);
+        }
         self.once_fn_parameter = matches!(ty.kind, ast::TypeKind::Fn { once: true, .. });
         self.in_param_type += 1;
         let resolved = self.resolve_type(ty);
@@ -5713,6 +5752,7 @@ impl<'a> Checker<'a> {
             count_op: None,
             bindings: Vec::new(),
             const_ty: None,
+            pack: false,
         });
         param_ty
     }
@@ -7635,6 +7675,7 @@ impl<'a> Checker<'a> {
                 count_op: None,
                 bindings: Vec::new(),
                 const_ty: None,
+                pack: false,
             })
             .collect();
         let args: Vec<Ty> = slots.iter().map(|&(index, name)| self.types.intern(TyKind::Param { index, name })).collect();
@@ -7997,6 +8038,7 @@ impl<'a> Checker<'a> {
         let Some(target) = target else {
             let &[(receiver, receiver_ty, mode, receiver_span)] = signature.params.as_slice() else { return None };
             self.locals = Vec::new();
+            self.pack_values.clear();
             let local_ty = match mode {
                 Mode::Mut => self.mut_param_ty(receiver_ty),
                 Mode::Borrow => self.borrow_param_ty_of(def, receiver, receiver_ty),
@@ -8015,6 +8057,7 @@ impl<'a> Checker<'a> {
             return None;
         }
         self.locals = Vec::new();
+        self.pack_values.clear();
         let mut params = Vec::new();
         let mut args = Vec::new();
         for (&(param, param_ty, mode, param_span), &(target_param, target_ty, _, _)) in signature.params.iter().zip(&target_signature.params) {
@@ -9532,7 +9575,7 @@ impl<'a> Checker<'a> {
         params
             .iter()
             .enumerate()
-            .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.name }))
+            .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.param_name() }))
             .collect()
     }
 
@@ -9939,6 +9982,7 @@ impl<'a> Checker<'a> {
                 count_op: None,
                 bindings: Vec::new(),
                 const_ty: None,
+                pack: false,
             })
             .collect()
     }
@@ -10894,6 +10938,8 @@ impl<'a> Checker<'a> {
                     // `[TYP-16]` — the parameters are in scope for the
                     // signature as well as for the body.
                     let mut generics = self.declare_generics(&decl.generics);
+                    // `[TYP-47]` — the pack's values, where a function takes them.
+                    self.check_pack_values_placement(decl);
                     let mentioned: Vec<&ast::TypeExpr> = decl
                         .params
                         .iter()
@@ -12559,7 +12605,7 @@ impl<'a> Checker<'a> {
             .map(|(index, param)| {
                 self.types.intern(TyKind::Param {
                     index: (base + index) as u32,
-                    name: param.name,
+                    name: param.param_name(),
                 })
             })
             .collect::<Vec<_>>();
@@ -14126,6 +14172,27 @@ impl<'a> Checker<'a> {
         generic_index_base: usize,
     ) -> Option<(Option<Mode>, Signature)> {
         let saved_type_params = self.type_params.clone();
+        // `[TYP-47]` — a method over a pack of its own is not built yet (a free function's is, and
+        // a method of a struct or class over a pack uses the owner's).
+        if let Some(pack) = decl.generics.iter().find(|param| param.pack)
+            && self.refused_spellings.insert(pack.span)
+        {
+            self.sink.emit(
+                Diagnostic::error(codes::E0900, pack.span, format!("a method over a pack of its own (`{}...`) is not built by this compiler yet", pack.name.name))
+                    .help("write a function over the pack, taking the object as its first parameter")
+                    .note("functions, structs and classes over a pack are built [TYP-47]"),
+            );
+        }
+        if !decl.generics.iter().any(|param| param.pack)
+            && let Some(param) = decl.params.iter().find(|param| matches!(&param.kind, ast::ParamKind::Named { ty, .. } if matches!(ty.kind, ast::TypeKind::Spread(_))))
+            && self.refused_spellings.insert(param.span)
+        {
+            self.sink.emit(
+                Diagnostic::error(codes::E0900, param.span, "a method that takes a pack's values is not built by this compiler yet")
+                    .help("write a function over the pack, taking the object as its first parameter")
+                    .note("a function's last positional parameter takes a pack's values [TYP-47]"),
+            );
+        }
         let mut generics =
             self.declare_generics_from(&decl.generics, generic_index_base);
         // D-407 — `U.Elem` in the signature, `U` one of the method's own
@@ -14930,7 +14997,7 @@ impl<'a> Checker<'a> {
             let args: Vec<Ty> = params
                 .iter()
                 .enumerate()
-                .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.name }))
+                .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.param_name() }))
                 .collect();
             recipes.push((name, params, args, implements, module));
         }
@@ -15092,7 +15159,7 @@ impl<'a> Checker<'a> {
         let scope: HashMap<Symbol, Ty> = params
             .iter()
             .enumerate()
-            .map(|(index, param)| (param.name, self.types.intern(TyKind::Param { index: index as u32, name: param.name })))
+            .map(|(index, param)| (param.name, self.types.intern(TyKind::Param { index: index as u32, name: param.param_name() })))
             .collect();
         // D-409 — `implements Conv[I.Item]` names a hidden parameter of the
         // recipe (D-380), which only the recipe's projections lead to.
@@ -15102,7 +15169,7 @@ impl<'a> Checker<'a> {
             .filter_map(|(index, param)| {
                 let (base, assoc) = param.projection?;
                 let base = params.get(base as usize)?.name;
-                Some(((base, assoc), self.types.intern(TyKind::Param { index: index as u32, name: param.name })))
+                Some(((base, assoc), self.types.intern(TyKind::Param { index: index as u32, name: param.param_name() })))
             })
             .collect();
         let saved_params = std::mem::replace(&mut self.type_params, scope);
@@ -15228,7 +15295,7 @@ impl<'a> Checker<'a> {
             if bound.get(&(side, index as u32)).is_none() {
                 continue;
             }
-            let own = self.types.intern(TyKind::Param { index: index as u32, name: param.name });
+            let own = self.types.intern(TyKind::Param { index: index as u32, name: param.param_name() });
             let ty = self.closed_on_side(own, side, bound, 0);
             if self.types.is_generic(ty) {
                 continue;
@@ -15370,6 +15437,18 @@ impl<'a> Checker<'a> {
         match &ty.kind {
             ast::TypeKind::Void => self.common.void,
             ast::TypeKind::Never => self.common.never,
+            // `[TYP-47]` — `Ts...` where no list holds it.
+            ast::TypeKind::Spread(name) => {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0100, ty.span, format!("`{}...` spells a pack's types out, and no list of types holds it here", name.name))
+                        .help(format!(
+                            "spell it out among type arguments (`View[{0}...]`), a tuple's elements (`(int, {0}...)`) or a function type's parameters (`fn({0}...)`), or take the values as the last positional parameter (`values: {0}...`)",
+                            name.name
+                        ))
+                        .note("a type written over a pack is formed once the pack is spelled out [TYP-47]"),
+                );
+                self.common.error
+            }
             // `[GRM-31]` — a `some` type in a function's return type, or nested inside one; elsewhere
             // `E2260`. `[TYP-32]` — one concrete type the body chooses (`some_wrapper`).
             ast::TypeKind::SomeType(bound) if self.in_return_type > 0 && self.some_allowed => self.some_wrapper(bound, ty.span),
@@ -15431,9 +15510,11 @@ impl<'a> Checker<'a> {
             // `[TYP-27]` (ODR-071) — the type `()` is `void`, whose one value
             // `()` is: a tuple type has two or more elements.
             ast::TypeKind::Tuple(items) if items.is_empty() => self.common.void,
+            // `[TYP-47]`, `[TYP-27]` — a pack among the elements is spelled out: two or more
+            // elements are a tuple, one is that type, none is `void`.
             ast::TypeKind::Tuple(items) => {
-                let items: Vec<Ty> = items.iter().map(|t| self.resolve_type(t)).collect();
-                self.types.intern(TyKind::Tuple(items))
+                let items: Vec<Ty> = items.iter().map(|t| self.resolve_list_item(t)).collect();
+                self.types.tuple_of(items)
             }
             // `[FN-6]` — "Functions are values of a unique zero-sized function
             // type; they coerce to `fn(A) -> R`". The written type is the
@@ -15456,10 +15537,12 @@ impl<'a> Checker<'a> {
                 let params: Vec<FnParam> = params
                     .iter()
                     .map(|param| FnParam {
-                        ty: self.resolve_type(&param.ty),
+                        ty: self.resolve_list_item(&param.ty),
                         mode: fn_param_mode(param.mode),
                     })
                     .collect();
+                // `[TYP-47]` — `fn(Ts...)`: each of the pack's types a parameter, with the word.
+                let params = self.types.spelled_params(params);
                 let ret = ret
                     .as_ref()
                     .map(|t| self.resolve_type(t))
@@ -15565,7 +15648,7 @@ impl<'a> Checker<'a> {
                             return self.common.error;
                         }
                     };
-                    resolved.push((self.generic_type_argument(t), t.span));
+                    resolved.push((self.resolve_type_argument(t), t.span));
                 }
                 // `[OBJ-2]` applies to generic interfaces as well: first
                 // materialize the written contract, then use its concrete
@@ -15573,6 +15656,10 @@ impl<'a> Checker<'a> {
                 // mirrors `resolve_interface_use`, rather than treating an
                 // interface application as an ordinary nominal type.
                 let interface = self.resolve_name(name);
+                // `[TYP-47]` — `Cs...` only where a pack is taken.
+                if let Some(error) = self.refuse_pack_argument(interface, &resolved) {
+                    return error;
+                }
                 if let Some(definition) = self.interfaces.get(&interface).cloned() {
                     let args = resolved.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
                     let Some(interface) = self.instantiate_interface(interface, &definition, &args, ty.span)
@@ -15596,6 +15683,15 @@ impl<'a> Checker<'a> {
                     return assoc;
                 }
                 if let Some(&ty) = self.type_params.get(&name) {
+                    // `[TYP-47]` — a pack's name alone is none of its types.
+                    if self.is_pack_like(ty) {
+                        self.sink.emit(
+                            Diagnostic::error(codes::E0100, segments[0].span, format!("`{name}` is a pack: its types are spelled out as `{name}...`"))
+                                .help(format!("write `{name}...` among type arguments, a tuple's elements or a function type's parameters, or `values: {name}...` for a function's last positional parameter"))
+                                .note("a pack stands for any number of types, never for one [TYP-47]"),
+                        );
+                        return self.common.error;
+                    }
                     return ty;
                 }
                 if let Some(ty) = self.scalar_in_scope(name) {
@@ -15719,7 +15815,7 @@ impl<'a> Checker<'a> {
                     return self.common.error;
                 }
             };
-            resolved.push((self.generic_type_argument(t), t.span));
+            resolved.push((self.resolve_type_argument(t), t.span));
         }
         if let Some(definition) = self.interfaces.get(&qualified).cloned() {
             let types = resolved.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
@@ -18453,12 +18549,20 @@ impl<'a> Checker<'a> {
                 let elem = map(self, elem);
                 self.types.intern(TyKind::Vec { elem, text })
             }
+            // `[TYP-47]` — a pack substituted into a list is spelled out there.
             TyKind::Tuple(items) => {
                 let items = items
                     .iter()
                     .map(|&item| map(self, item))
                     .collect();
-                self.types.intern(TyKind::Tuple(items))
+                self.types.tuple_of(items)
+            }
+            TyKind::Pack(items) => {
+                let items = items
+                    .iter()
+                    .map(|&item| map(self, item))
+                    .collect();
+                self.types.pack_of(items)
             }
             TyKind::Fn { abi, latebound, stateless, is_unsafe, once, send, params, ret } => {
                 let params = params
@@ -18468,6 +18572,7 @@ impl<'a> Checker<'a> {
                         mode: param.mode,
                     })
                     .collect();
+                let params = self.types.spelled_params(params);
                 let ret = map(self, ret);
                 self.types.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, once, send, params, ret })
             }
@@ -18586,14 +18691,18 @@ impl<'a> Checker<'a> {
         args: &[Ty],
     ) -> GenericParam {
         let callable = param.callable.as_ref().map(|bound| CallableBound {
-            params: bound
-                .params
-                .iter()
-                .map(|param| FnParam {
-                    ty: self.substitute_ty(param.ty, args),
-                    mode: param.mode,
-                })
-                .collect(),
+            // `[TYP-47]` — `fn(Ts...)`, a pack spelled out among the parameters.
+            params: {
+                let params = bound
+                    .params
+                    .iter()
+                    .map(|param| FnParam {
+                        ty: self.substitute_ty(param.ty, args),
+                        mode: param.mode,
+                    })
+                    .collect();
+                self.types.spelled_params(params)
+            },
             ret: self.substitute_ty(bound.ret, args),
             once: bound.once,
             owned: bound.owned,
@@ -18608,7 +18717,7 @@ impl<'a> Checker<'a> {
             .map(|&(instance, name, value)| (self.substitute_bound(instance, args), name, self.substitute_ty(value, args)))
             .collect();
         let count_op = param.count_op.map(|(op, a, b)| (op, self.substitute_ty(a, args), self.substitute_ty(b, args)));
-        GenericParam { name: param.name, bounds, callable, default, projection: param.projection, count_op, bindings, const_ty: param.const_ty.map(|ty| self.substitute_ty(ty, args)) }
+        GenericParam { name: param.name, bounds, callable, default, projection: param.projection, count_op, bindings, const_ty: param.const_ty.map(|ty| self.substitute_ty(ty, args)), pack: param.pack }
     }
 
     /// A parameter that neither an explicit argument nor inference fixed takes
@@ -19436,6 +19545,11 @@ impl<'a> Checker<'a> {
                     true => "tup0".to_string(),
                     false => format!("tup{}_{}", items.len(), items.join("_")),
                 }
+            }
+            // `[TYP-47]` — a pack's types, counted so that `View[A, B]` and `Pair[(A, B)]` differ.
+            TyKind::Pack(items) => {
+                let items: Vec<String> = items.iter().map(|&item| self.instance_stem(item)).collect();
+                format!("pack{}{}{}", items.len(), if items.is_empty() { "" } else { "_" }, items.join("_"))
             }
             TyKind::Array { elem, len } => format!("arr{len}_{}", self.instance_stem(elem)),
             TyKind::Vec { elem, text: false } => format!("Array_{}", self.instance_stem(elem)),
@@ -21554,11 +21668,12 @@ impl<'a> Checker<'a> {
                 for (index, param) in generics.iter().enumerate() {
                     let ty = self
                         .types
-                        .intern(TyKind::Param { index: index as u32, name: param.name });
+                        .intern(TyKind::Param { index: index as u32, name: param.param_name() });
                     self.type_params.insert(param.name, ty);
                 }
                 if let Some(block) = &decl.body {
                     self.locals = Vec::new();
+                    self.pack_values.clear();
                     self.scopes = vec![HashMap::new()];
                     self.borrowed_params.clear();
                     self.callable_once_locals.clear();
@@ -21582,6 +21697,20 @@ impl<'a> Checker<'a> {
                             _ => ty,
                         };
                         let local = self.declare(Some(name), local_ty, param_span);
+                        // `[TYP-47]` — the pack's values' parameter stands for them all, and one
+                        // more local for each of them (`for v in values:`), of one value's type.
+                        if self.types.is_pack_param(ty)
+                            && let TyKind::Param { index: slot, .. } = *self.types.kind(ty)
+                            && let Some(pack) = generics.get(slot as usize)
+                        {
+                            let one = self.types.intern(TyKind::Param { index: slot, name: pack.name });
+                            let one = match mode {
+                                Mode::Mut => self.mut_param_ty(one),
+                                _ => one,
+                            };
+                            let each = self.declare(None, one, param_span);
+                            self.pack_values.insert(local, vec![each]);
+                        }
                         if mode == Mode::Borrow {
                             self.borrowed_params.insert(local);
                         }
@@ -21630,6 +21759,8 @@ impl<'a> Checker<'a> {
             }
 
             self.locals = Vec::new();
+
+            self.pack_values.clear();
             self.begin_body_marks();
             self.scopes = vec![HashMap::new()];
             self.borrowed_params.clear();
@@ -22111,7 +22242,7 @@ impl<'a> Checker<'a> {
                 for (index, param) in generics.iter().enumerate() {
                     let ty = self.types.intern(TyKind::Param {
                         index: index as u32,
-                        name: param.name,
+                        name: param.param_name(),
                     });
                     self.type_params.insert(param.name, ty);
                 }
@@ -23140,6 +23271,7 @@ impl<'a> Checker<'a> {
                     count_op: None,
                     bindings: Vec::new(),
                     const_ty: None,
+                    pack: false,
                 });
                 self.types.intern(TyKind::Param { index: generic, name: generic_name })
             };
@@ -24249,6 +24381,7 @@ impl<'a> Checker<'a> {
     /// lambda directly. `generic` is the declaration, whose contracts are kept by it.
     fn foreign_instance(&mut self, generic: DefId, instance: DefId, decl: &ast::FnDecl, attrs: &[ast::Attribute], span: Span) -> Option<Function> {
         self.locals = Vec::new();
+        self.pack_values.clear();
         self.scopes = vec![HashMap::new()];
         self.borrowed_params.clear();
         let signature_params: Vec<(Symbol, Ty, Mode, Span)> = self.signatures[instance.0 as usize].params.clone();
@@ -24338,6 +24471,7 @@ impl<'a> Checker<'a> {
         let function = self.closure_function(&ember_types::item_path(self.qualified(decl.name.name).as_str()), def);
         let outer_closures = self.closure_scope.replace((function, 0));
         self.locals = Vec::new();
+        self.pack_values.clear();
         self.begin_body_marks();
         self.scopes = vec![HashMap::new()];
         self.borrowed_params.clear();
@@ -24361,13 +24495,42 @@ impl<'a> Checker<'a> {
             .map(|(n, t, m, s)| (*n, *t, *m, *s))
             .collect();
         let mut params = Vec::new();
-        for (index, (name, ty, mode, param_span)) in signature_params.iter().copied().enumerate() {
+        // `[TYP-47]` — an instance's pack of values: where they are, and how many.
+        self.pack_values.clear();
+        let pack_at = self.pack_params.get(&def).copied();
+        let mut pack_locals = Vec::new();
+        for (written_index, (name, ty, mode, param_span)) in signature_params.iter().copied().enumerate() {
+            // Its index among the declaration's parameters.
+            let index = match pack_at {
+                Some((at, n)) if written_index >= at + n => written_index + 1 - n,
+                Some((at, _)) if written_index >= at => at,
+                _ => written_index,
+            };
             let local_ty = match mode {
                 Mode::Mut => self.mut_param_ty(ty),
                 Mode::Borrow => self.borrow_param_ty_of(def, name, ty),
                 _ => ty,
             };
-            let local = self.declare(Some(name), local_ty, param_span);
+            let value_of_pack = pack_at.is_some_and(|(at, n)| written_index >= at && written_index < at + n);
+            let bound = if value_of_pack { Self::pack_value_name(name, pack_locals.len()) } else { name };
+            let local = self.declare(Some(bound), local_ty, param_span);
+            if value_of_pack {
+                pack_locals.push(local);
+            }
+            // `[TYP-47]` — in the generic check, the pack's values' parameter stands for them all,
+            // and one more local for each of them (`for v in values:`), of one value's type.
+            if pack_at.is_none() && self.types.is_pack_param(ty)
+                && let TyKind::Param { index: slot, .. } = *self.types.kind(ty)
+                && let Some(pack) = self.current_generics.get(slot as usize)
+            {
+                let one = self.types.intern(TyKind::Param { index: slot, name: pack.name });
+                let one = match mode {
+                    Mode::Mut => self.mut_param_ty(one),
+                    _ => one,
+                };
+                let each = self.declare(None, one, param_span);
+                self.pack_values.insert(local, vec![each]);
+            }
             if mode == Mode::Borrow {
                 self.borrowed_params.insert(local);
             }
@@ -24387,6 +24550,19 @@ impl<'a> Checker<'a> {
                 self.callable_value_bindings.insert(local, def);
             }
             params.push(Param { local, mode });
+        }
+        if let Some((at, _)) = pack_at {
+            let name = match decl.params.iter().filter(|param| matches!(param.kind, ast::ParamKind::Named { .. })).nth(at).map(|param| &param.kind) {
+                Some(ast::ParamKind::Named { name, .. }) => name.name,
+                _ => Symbol::intern("values"),
+            };
+            let void = self.common.void;
+            // The name, bound to no value, is the values' own: no local of it is read or reported.
+            let pack = self.declare(None, void, decl.name.span);
+            if let Some(scope) = self.scopes.last_mut() {
+                scope.insert(name, pack);
+            }
+            self.pack_values.insert(pack, pack_locals);
         }
         self.begin_callback_body(def, &params);
         if self.in_static_safe
@@ -24540,7 +24716,7 @@ impl<'a> Checker<'a> {
                     for (index, param) in generics.iter().enumerate() {
                         let ty = self.types.intern(TyKind::Param {
                             index: index as u32,
-                            name: param.name,
+                            name: param.param_name(),
                         });
                         self.type_params.insert(param.name, ty);
                     }
@@ -24901,7 +25077,7 @@ impl<'a> Checker<'a> {
             let self_name = Symbol::intern("Self");
             let opaque_self = self.types.intern(TyKind::Param { index: self_index as u32, name: self_name });
             let mut self_param =
-                GenericParam { name: self_name, bounds: vec![bound], callable: None, default: None, projection: None, count_op: None, bindings: Vec::new(), const_ty: None };
+                GenericParam { name: self_name, bounds: vec![bound], callable: None, default: None, projection: None, count_op: None, bindings: Vec::new(), const_ty: None, pack: false };
             self.close_bounds(&mut self_param.bounds, &mut self_param.bindings);
             let saved_self = self.self_ty.replace(opaque_self);
             let saved_params = std::mem::take(&mut self.type_params);
@@ -25177,7 +25353,7 @@ impl<'a> Checker<'a> {
         let generics = self.signatures[def.0 as usize].generics.clone();
         self.current_generics = generics.clone();
         for (index, param) in generics.iter().enumerate() {
-            let param_ty = self.types.intern(TyKind::Param { index: index as u32, name: param.name });
+            let param_ty = self.types.intern(TyKind::Param { index: index as u32, name: param.param_name() });
             self.type_params.insert(param.name, param_ty);
         }
         let _ = self.check_one_method(ty, fn_decl, block, def, &member.attrs, member.span);
@@ -25254,6 +25430,7 @@ impl<'a> Checker<'a> {
                 format!("`@sync` class `{}` cannot have a method that changes its object", self.types.display(owner)));
         }
         self.locals = Vec::new();
+        self.pack_values.clear();
         self.begin_body_marks();
         self.scopes = vec![HashMap::new()];
         self.borrowed_params.clear();
@@ -28202,7 +28379,8 @@ impl<'a> Checker<'a> {
                     return;
                 }
                 if let Some(depth) = self.loop_depth(*label, "break", span) {
-                    out.push(Stmt::Break { depth });
+                    // `[TYP-47]` — out of a written out `for v in values:`.
+                    out.push(self.pack_jump(depth, true).unwrap_or(Stmt::Break { depth }));
                 }
             }
             ast::Jump::Continue { label } => {
@@ -28211,7 +28389,8 @@ impl<'a> Checker<'a> {
                     return;
                 }
                 if let Some(depth) = self.loop_depth(*label, "continue", span) {
-                    out.push(Stmt::Continue { depth });
+                    // `[TYP-47]` — on to the next value of a written out `for v in values:`.
+                    out.push(self.pack_jump(depth, false).unwrap_or(Stmt::Continue { depth }));
                 }
             }
         }
@@ -30492,6 +30671,10 @@ impl<'a> Checker<'a> {
         else_block: &Option<ast::Block>,
         span: Span,
     ) -> Option<Stmt> {
+        // `[TYP-47]` — `for v in values:` over a pack's values is written out once per value.
+        if let Some(pack) = self.pack_named(iter) {
+            return self.check_pack_for(label, pattern, pack, body, else_block, span);
+        }
         // `[STD-26]` (0.9.9) — `range`, `enumerate`, `zip` and `reversed` in a
         // `for` header are counted loops (`[CTL-3b]`), with no iterator
         // object. A function of the same name shadows them.
@@ -38280,6 +38463,10 @@ impl<'a> Checker<'a> {
                     return value.clone();
                 }
                 if let Some(local) = self.lookup(name) {
+                    // `[TYP-47]` — a pack's values are used one at a time.
+                    if self.pack_values.contains_key(&local) {
+                        return self.refuse_pack_value(name, span);
+                    }
                     let value = self.read_local_expecting(local, span, expected);
                     let value = self.local_generator_value(value, name);
                     return self.generic_local_value(value, name);
@@ -39093,6 +39280,30 @@ impl<'a> Checker<'a> {
             // `[TYP-24]`, Part IV.11 — `recv.m(args)`.
             ast::ExprKind::MethodCall { recv, name, args, .. } if is_single_path(recv, "comptime") => {
                 self.comptime_input(*name, args, span)
+            }
+
+            // `[TYP-47]` — `values.len()`, the number of a pack's values.
+            ast::ExprKind::MethodCall { recv, name, generic_args, args }
+                if name.name.is("len") && generic_args.is_empty() && self.pack_named(recv).is_some() =>
+            {
+                let pack = self.pack_named(recv).expect("just checked");
+                self.pack_len(pack, args, span)
+            }
+            ast::ExprKind::MethodCall { recv, .. } if let Some(pack) = self.pack_named(recv) => {
+                let name = self.locals[pack.0 as usize].name.unwrap_or_else(|| Symbol::intern("values"));
+                self.refuse_pack_value(name, recv.span)
+            }
+
+            // `[TYP-47]` — `values...` passed on, in generic code: the whole pack in one place.
+            ast::ExprKind::Spread(name) => {
+                if self.pack_spreads.contains(&span)
+                    && let Some(pack) = self.lookup(name.name).filter(|local| self.pack_values.contains_key(local))
+                {
+                    let ty = self.locals[pack.0 as usize].ty;
+                    return Expr { ty, kind: ExprKind::Local(pack), span };
+                }
+                self.refuse_spread(*name, span);
+                Expr { ty: self.common.error, kind: ExprKind::Error, span }
             }
 
             ast::ExprKind::MethodCall { recv, name, generic_args, args } => {
@@ -40437,6 +40648,14 @@ impl<'a> Checker<'a> {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
 
+        // `[TYP-47]` — `values...` passes a pack's values on to a function over a pack only.
+        if !self.signatures[def.0 as usize].generics.iter().any(|param| param.pack)
+            && let Some(arg) = args.iter().find(|arg| matches!(arg.value.kind, ast::ExprKind::Spread(_)))
+            && let ast::ExprKind::Spread(spread) = arg.value.kind
+        {
+            self.refuse_spread(spread, arg.value.span);
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         // `[TYP-16]`, `[TYP-18]` — a generic callee is instantiated here: the
         // arguments say what its parameters are, and the instance gets its own
         // symbol.
@@ -40499,7 +40718,7 @@ impl<'a> Checker<'a> {
                 let mut resolved = Vec::with_capacity(args.len());
                 for arg in args {
                     let ty = match arg {
-                        ast::TypeOrExpr::Type(ty) => self.resolve_type(ty),
+                        ast::TypeOrExpr::Type(ty) => self.resolve_type_argument(ty),
                         // `[TYP-41]` (D-773) — `FixedArray[String, 2].new()`: an argument that is no
                         // type's shape (a literal, arithmetic) is a `const` argument, as it is in a
                         // type position.
@@ -40790,6 +41009,10 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> Expr {
+        // `[TYP-47]` — a function over a pack, as made for the number of values the call passes.
+        if let Some(call) = self.synth_pack_call(def, name, args, &explicit, expected, span) {
+            return call;
+        }
         self.check_direct_call_safety(def, span);
         let generics = self.signatures[def.0 as usize].generics.clone();
         let declared = self.signatures[def.0 as usize].params.clone();
@@ -42155,6 +42378,7 @@ impl<'a> Checker<'a> {
             count_op: None,
             bindings: Vec::new(),
             const_ty: None,
+            pack: false,
         });
         let opaque_env = self.types.intern(TyKind::Param { index: (self.current_generics.len() - 1) as u32, name: hidden });
         let mut param_tys = Vec::new();
@@ -42515,6 +42739,15 @@ impl<'a> Checker<'a> {
         span: Span,
         latebound: bool,
     ) -> Expr {
+        // `[TYP-47]` — `f(values...)`: a callable value takes a pack's values as its parameters,
+        // `fn(Ts...)` spelled out.
+        let expanded = self.expand_spread_args(args);
+        for arg in &expanded {
+            if let ast::ExprKind::Spread(_) = arg.value.kind {
+                self.pack_spreads.insert(arg.value.span);
+            }
+        }
+        let args = expanded.as_slice();
         let closure = self.closure_calls[&id];
         let def = closure.def;
         self.check_unsafe_local_call(def, span);
@@ -42973,7 +43206,7 @@ impl<'a> Checker<'a> {
                 solved.get(slot).and_then(|ty| *ty).unwrap_or_else(|| {
                     self.types.intern(TyKind::Param {
                         index: slot as u32,
-                        name: param.name,
+                        name: param.param_name(),
                     })
                 })
             })
@@ -43197,6 +43430,7 @@ impl<'a> Checker<'a> {
                 count_op: None,
                 bindings: Vec::new(),
                 const_ty: None,
+                pack: false,
             });
             self.projection_params.insert((base, assoc.name), ty);
             // D-407 — and the bindings its bounds write (`Iter: Iterator[Item
@@ -43235,7 +43469,7 @@ impl<'a> Checker<'a> {
             .enumerate()
             .map(|(index, param)| {
                 solved.get(index).copied().flatten().unwrap_or_else(|| {
-                    self.types.intern(TyKind::Param { index: index as u32, name: param.name })
+                    self.types.intern(TyKind::Param { index: index as u32, name: param.param_name() })
                 })
             })
             .collect();
@@ -43369,6 +43603,7 @@ impl<'a> Checker<'a> {
             count_op: Some((op, a, b)),
             bindings: Vec::new(),
             const_ty: None,
+            pack: false,
         });
         let ty = self.types.intern(TyKind::Param { index: index as u32, name });
         if self.declaring_count_ops {
@@ -43543,6 +43778,7 @@ impl<'a> Checker<'a> {
             count_op: None,
             bindings: Vec::new(),
             const_ty: None,
+            pack: false,
         });
         // D-407 — and the bindings its bounds write: `U.Iter`'s `Item` is
         // `U.Item` (`type Iter: Iterator[Item = Item]`).
@@ -43576,6 +43812,10 @@ impl<'a> Checker<'a> {
 
     /// Whether a type implements an interface, for `[TYP-17]`'s bound check.
     fn implements(&self, ty: Ty, interface: Symbol) -> bool {
+        // `[TYP-47]` — a pack's needs apply to each of its types.
+        if let TyKind::Pack(items) = self.types.kind(ty) {
+            return items.iter().all(|&item| self.implements(item, interface));
+        }
         // `[STD-12]` (ODR-032, ODR-067) — every `K: Eq + Hash` is `AsKey[K]`,
         // and `ToKey[K]` when it can also be cloned.
         if let Some((generic, args)) = self.open_interface_origin.get(&interface)
@@ -43765,12 +44005,36 @@ impl<'a> Checker<'a> {
         name: Symbol,
         span: Span,
     ) -> DefId {
-        let key = Instance { def, args: args.to_vec(), callable_values };
+        // `[TYP-47]` — an instance of a function over a pack asked for by its `Pack` of types is
+        // the instance of the function made for that number of values.
+        if !self.pack_arities.contains_key(&def)
+            && let Some(at) = self.signatures[def.0 as usize].generics.iter().position(|param| param.pack)
+            && let Some(TyKind::Pack(types)) = args.get(at).map(|&ty| self.types.kind(ty).clone())
+            && let Some(arity) = self.pack_arity(def, types.len())
+        {
+            let mut flat = args[..at].to_vec();
+            flat.extend(types.iter().copied());
+            flat.extend_from_slice(&args[at + 1..]);
+            let mut values: Vec<Option<DefId>> = callable_values.iter().take(at).copied().collect();
+            values.extend(std::iter::repeat_n(None, types.len()));
+            values.extend(callable_values.iter().skip(at + 1).copied());
+            return self.instantiate(arity, &flat, values, name, span);
+        }
+        // `[TYP-47]` — the function made for `n` values of its pack: the instance is the
+        // function's own, over the pack's types as one `Pack` (`[MONO-1]`, `[MNG-6]`).
+        let (signature_def, key) = match self.pack_arities.get(&def).copied() {
+            Some((origin, at, n)) => {
+                let (grouped, values) = self.pack_instance_arguments(at, n, args, &callable_values);
+                (def, Instance { def: origin, args: grouped, callable_values: values })
+            }
+            None => (def, Instance { def, args: args.to_vec(), callable_values }),
+        };
+        let def = key.def;
         if let Some(&existing) = self.instances.get(&key) {
             self.note_asked(existing);
             return existing;
         }
-        let generic = &self.signatures[def.0 as usize];
+        let generic = &self.signatures[signature_def.0 as usize];
         let params: Vec<(Symbol, Ty, Mode, Span)> = generic
             .params
             .iter()
@@ -43784,6 +44048,11 @@ impl<'a> Checker<'a> {
         let concrete_ret = self.substitute_ty(ret, args);
 
         let instance = DefId(self.signatures.len() as u32);
+        if let Some(&(_, _, n)) = self.pack_arities.get(&signature_def)
+            && let Some(at) = self.signatures[def.0 as usize].params.iter().position(|&(_, ty, ..)| self.types.is_pack_param(ty))
+        {
+            self.pack_params.insert(instance, (at, n));
+        }
         let borrows = self.signatures[def.0 as usize].borrows.clone();
         self.signatures.push(Signature { decl: self.signatures[def.0 as usize].decl, implicit_object: self.signatures[def.0 as usize].implicit_object,
             params: concrete_params,
@@ -49799,7 +50068,7 @@ impl<'a> Checker<'a> {
             .current_generics
             .iter()
             .enumerate()
-            .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.name }))
+            .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.param_name() }))
             .collect();
         let key = (def, parameter, bound, callers.clone());
         if let Some(&read) = self.bound_call_signatures.get(&key) {
@@ -50056,6 +50325,15 @@ impl<'a> Checker<'a> {
     /// (`[CLO-11]`) or any expression of callable type (`make()(3)`), by its
     /// type, as a local of that type is called.
     fn call_value(&mut self, value: Expr, args: &[ast::Arg], span: Span) -> Expr {
+        // `[TYP-47]` — `f(values...)`: a callable value takes a pack's values as its parameters,
+        // `fn(Ts...)` spelled out.
+        let expanded = self.expand_spread_args(args);
+        for arg in &expanded {
+            if let ast::ExprKind::Spread(_) = arg.value.kind {
+                self.pack_spreads.insert(arg.value.span);
+            }
+        }
+        let args = expanded.as_slice();
         // ODR-240 — a callable lent `ref mut` is called through the reference.
         let value = if matches!(*self.types.kind(value.ty), TyKind::Ref { mutable: true, .. }) {
             self.through_callable_ref(value)
@@ -50117,6 +50395,15 @@ impl<'a> Checker<'a> {
         consumes_callee: bool,
         latebound_override: bool,
     ) -> Expr {
+        // `[TYP-47]` — `f(values...)`: a callable value takes a pack's values as its parameters,
+        // `fn(Ts...)` spelled out.
+        let expanded = self.expand_spread_args(args);
+        for arg in &expanded {
+            if let ast::ExprKind::Spread(_) = arg.value.kind {
+                self.pack_spreads.insert(arg.value.span);
+            }
+        }
+        let args = expanded.as_slice();
         // ODR-278 — a call through a function item calls its function (lowering makes it direct),
         // as its shape says it is called.
         let signature = self.types.item_shape(callee.ty).unwrap_or(callee.ty);
@@ -52298,7 +52585,7 @@ impl<'a> Checker<'a> {
         args.iter()
             .map(|a| match a {
                 ast::TypeOrExpr::Expr(e) if self.is_const_argument(e) => self.const_argument_type(e),
-                ast::TypeOrExpr::Type(ty) => self.generic_type_argument(ty),
+                ast::TypeOrExpr::Type(ty) => self.resolve_type_argument(ty),
                 ast::TypeOrExpr::Expr(e) => self.type_from_expr(e),
                 ast::TypeOrExpr::Binding { name, .. } => {
                     let name = name.name;
@@ -59102,6 +59389,7 @@ impl<'a> Checker<'a> {
                 ast::ParamKind::Receiver { .. } => Symbol::intern("self"),
             };
             if let Some(default) = &param.default
+                && !matches!(&param.kind, ast::ParamKind::Named { ty, .. } if matches!(ty.kind, ast::TypeKind::Spread(_)))
                 && let Some(&(_, ty, _, _)) = params.iter().find(|(n, ..)| *n == name)
                 // A generic body is checked once per instance; report once.
                 && self.reported_defaults.insert(default.span)
