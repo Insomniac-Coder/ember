@@ -6215,7 +6215,9 @@ impl<'a> Checker<'a> {
             (
                 "std.core",
                 &[
-                    "Eq", "Ord", "Ordering", "Default", "Clone", "Copy", "Send", "Sync", "Sized", "Display", "Debug", "From", "Error", "AnyError", "Iterator", "IntoIterator", "Range", "RangeInclusive", "RangeFrom",
+                    "Eq", "Ord", "Ordering", "Default", "Clone", "Copy", "Send", "Sync", "Sized", "Display", "Debug", "Printable", "From",
+                    // `[STD-9]` (verdict 117) — the console's output functions are the library's.
+                    "print", "println", "eprint", "eprintln", "Error", "AnyError", "Iterator", "IntoIterator", "Range", "RangeInclusive", "RangeFrom",
                     "RangeTo", "Add", "Sub", "Mul", "Div", "FloorDiv", "Rem", "Pow", "Neg", "Not", "BitAnd", "BitOr",
                     "BitXor", "Shl", "Shr", "AddAssign", "SubAssign", "MulAssign", "DivAssign", "FloorDivAssign",
                     "RemAssign", "PowAssign", "BitAndAssign", "BitOrAssign", "BitXorAssign", "ShlAssign", "ShrAssign",
@@ -14866,6 +14868,24 @@ impl<'a> Checker<'a> {
         span: Span,
         written_unsafe: Option<bool>,
     ) {
+        // `[STD-9]` (verdict 117) — `Printable` is the compiler's, for every type with `Display` or
+        // `Debug`; a program writing it by hand is `E2040`.
+        let kept: Vec<ast::TypeExpr> = implements
+            .iter()
+            .filter(|entry| {
+                let printable = interface_name(entry).is_some_and(|name| self.resolve_name(name).is("std.core.Printable"));
+                if printable && written_unsafe.is_some() {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2040, entry.span, "`Printable` is the compiler's: a type is printable when it has `Display` or `Debug`")
+                            .help("implement `Display` for the type's text: `extend … implements Display:`")
+                            .note("a value's printed text is its `Display`, else its `Debug` [STD-9]"),
+                    );
+                }
+                !printable
+            })
+            .cloned()
+            .collect();
+        let implements = kept.as_slice();
         for entry in implements {
             let written = match &entry.kind {
                 ast::TypeKind::Path { segments, .. } if segments.len() == 1 => segments[0].name,
@@ -16623,7 +16643,7 @@ impl<'a> Checker<'a> {
                     None
                 }
             }
-            TyKind::Param { .. } => (!self.param_bound_named(ty, &["Display", "Debug"])).then_some(ty),
+            TyKind::Param { .. } => (!self.param_bound_named(ty, &["Display", "Debug", "Printable"])).then_some(ty),
             _ => Some(ty),
         }
     }
@@ -43940,6 +43960,7 @@ impl<'a> Checker<'a> {
             && matches!(
                 interface.as_str(),
                 "std.core.Eq" | "std.core.Ord" | "std.collections.Hash" | "std.core.Display" | "std.core.Debug" | "Display" | "Debug"
+                    | "std.core.Printable"
             )
         {
             return self.implements(inner, interface);
@@ -43988,6 +44009,8 @@ impl<'a> Checker<'a> {
             // which it writes field-wise for the rest (`[STR-5]`).
             "std.core.Display" => self.has_display(ty),
             "std.core.Debug" => self.is_formattable(ty),
+            // `[STD-9]` (verdict 117) — the compiler's for every type with `Display` or `Debug`.
+            "std.core.Printable" => self.printable(ty),
             // `[TYP-36]` — `void`'s `Default` is `()`; `void` cannot be
             // extended, so the compiler answers it (D-463).
             "std.core.Default" => matches!(self.types.kind(ty), TyKind::Void),
@@ -48351,6 +48374,17 @@ impl<'a> Checker<'a> {
             && self.reflected(receiver.ty)
         {
             return self.synth_class_type_info(receiver, span);
+        }
+        // `[STD-9]` (verdict 117) — `v.fmt_print(ref mut f)`: `Printable`'s method, the compiler's
+        // for every type with `Display` or `Debug`, on a type with no method of that name.
+        if name.name.is("fmt_print")
+            && generic_args.is_empty()
+            && receiver.ty != self.common.error
+            && !matches!(self.types.kind(receiver.ty), TyKind::Param { .. })
+            && self.lookup_method(receiver.ty, name.name).is_none()
+            && let [arg] = args
+        {
+            return self.synth_fmt_print(receiver, &arg.value, span);
         }
         if receiver.ty == self.common.error {
             // `[TYP-23]` — `xs.push(v)` says what an open `xs = []` holds.
@@ -56529,6 +56563,12 @@ impl<'a> Checker<'a> {
     /// `[TYP-17]` — `E2040` for a type argument that misses a bound, with
     /// what would meet it where that is known.
     fn report_missed_bound(&mut self, ty: Ty, bound: Symbol, param: Symbol, span: Span) {
+        // `[STD-9]` — `Printable` is `Display`'s text, else `Debug`'s: a type with neither is
+        // reported as printing it is (`E2040`, whose help is to implement `Display`).
+        if bound.is("std.core.Printable") {
+            self.report_not_printable(ty, span);
+            return;
+        }
         // `[THR-8]` (ODR-264) — a lambda where `Send` is required (`f: fn() + Send`, `F: fn() +
         // Send`): the capture that is not, as the thread checks name it (`E7004`).
         if bound.is("std.core.Send")

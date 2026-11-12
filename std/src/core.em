@@ -74,6 +74,15 @@ pub interface From[T]:
 pub interface Debug:
     fn fmt_debug(ref mut f: Formatter) -> Result[void, FmtError]
 
+## `[STD-9]` (verdict 117) — what `print`, `println`, `eprint`, `eprintln` and `format_to` write of
+## a value: its `Display` text when its type has `Display`, and its `Debug` text otherwise
+## (Python's `str`, else `repr`). The compiler implements it for every type with either, and no
+## program writes it by hand (`E2040`): Ember has no specialisation (`[TYP-19]`), so no library
+## could say "`Display`, else `Debug`". A program's own function takes any number of printable
+## values as they do: `[Ts...: needs Printable]` above `fn log(values: Ts...):`.
+pub interface Printable:
+    fn fmt_print(ref mut f: Formatter) -> Result[void, FmtError]
+
 ## `[ERR-3]` — an error type: its text (`Display`), its structure (`Debug`),
 ## and the error that caused it, if one did. `@derive(Error)` writes `Display`
 ## from `@error("…")` attributes and `source` from an `@from` variant.

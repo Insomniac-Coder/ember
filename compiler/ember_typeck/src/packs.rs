@@ -529,6 +529,105 @@ impl Checker<'_> {
         }))
     }
 
+    /// `[STD-9]` (verdict 117) — `value.fmt_print(ref mut f)`, the compiler's `Printable` for a
+    /// type with `Display` or `Debug`: the value's text, as `print` writes it (its `Display`, else
+    /// its `Debug`), appended to the text `f` is building; `Ok(())`.
+    pub(crate) fn synth_fmt_print(&mut self, receiver: Expr, formatter: &ast::Expr, span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let value = self.read_through(receiver);
+        if !self.check_formattable(value.ty, value.span, "printing") {
+            return error;
+        }
+        let written = match &formatter.kind {
+            ast::ExprKind::RefOf { mutable: true, place } => place.as_ref(),
+            _ => formatter,
+        };
+        let f = self.synth_committed(written);
+        let f = self.read_through(f);
+        let (Some(formatter_ty), Some(error_ty)) = (
+            self.named_types.get(&Symbol::intern("std.fmt.Formatter")).copied(),
+            self.named_types.get(&Symbol::intern("std.fmt.FmtError")).copied(),
+        ) else {
+            return error;
+        };
+        if f.ty != formatter_ty {
+            if f.ty != self.common.error {
+                let shown = self.types.display(f.ty);
+                self.error(codes::E2020, formatter.span, format!("`fmt_print` writes through a `ref mut Formatter`, not a `{shown}`"));
+            }
+            return error;
+        }
+        let TyKind::Struct(id) = *self.types.kind(formatter_ty) else { return error };
+        let Some(index) = self.types.struct_def(id).fields.iter().position(|field| field.name.is("out")) else { return error };
+        let string_ty = self.common.string;
+        let out_ty = self.types.struct_def(id).fields[index].ty;
+        let at = formatter.span;
+        let out = Expr { ty: out_ty, kind: ExprKind::Field { base: Box::new(f), index }, span: at };
+        let text = Expr { ty: string_ty, kind: ExprKind::Deref(Box::new(out)), span: at };
+        let target_ty = self.types.intern(TyKind::Ref { mutable: true, inner: string_ty });
+        let target = Expr { ty: target_ty, kind: ExprKind::Ref { place: Box::new(text), mutable: true }, span: at };
+        // A written `Display` is appended as the text its `fmt` writes, as `print` writes it.
+        let value = match self.written_display_text(value) {
+            Ok(text) => {
+                let str_ty = self.common.str_;
+                self.coerce(text, str_ty)
+            }
+            Err(value) => value,
+        };
+        let void = self.common.void;
+        let append = Expr { ty: void, kind: ExprKind::Builtin { which: Builtin::Format, args: vec![target, value] }, span };
+        let result_ty = self.result_of(void, error_ty);
+        let TyKind::Enum(result_id) = *self.types.kind(result_ty) else { return error };
+        let Some(ok) = self.types.enum_def(result_id).variants.iter().position(|variant| variant.name.is("Ok")) else { return error };
+        let unit = self.void_value(span);
+        let done = Expr { ty: result_ty, kind: ExprKind::EnumLit { enum_id: result_id, variant: ok, fields: vec![unit] }, span };
+        Expr { ty: result_ty, kind: ExprKind::Block { block: Block { stmts: vec![Stmt::Expr(append)], span }, value: Box::new(done) }, span }
+    }
+
+    /// `[STD-9]` (verdict 117) — whether `ty` is `Printable`: whether printing a value of it is
+    /// allowed, as `print` decides for each value (`synth_print_pieces`): its written `Display`
+    /// (through a `Box`, or a `Cell` of a `Copy` value, ODR-109), or a `dyn` value's, or else the
+    /// text the table gives it (`Display`'s, else `Debug`'s).
+    pub(crate) fn printable(&self, ty: Ty) -> bool {
+        let mut ty = ty;
+        while let TyKind::Ref { inner, .. } = *self.types.kind(ty) {
+            ty = inner;
+        }
+        if self.dyn_reaches(ty, "std.core.Display") {
+            return true;
+        }
+        let mut reached = ty;
+        let mut lent = false;
+        while let Some(inner) = self.types.printed_as(reached) {
+            lent |= self.cell_inner(reached).is_some_and(|held| !self.types.is_copy(held));
+            reached = inner;
+        }
+        if self.written_display(reached) {
+            return !lent;
+        }
+        self.is_formattable(ty)
+    }
+
+    /// `[STD-9]` — why `ty` is not `Printable`, as printing a value of it reports it.
+    pub(crate) fn report_not_printable(&mut self, ty: Ty, span: Span) {
+        let mut cell = ty;
+        while let TyKind::Ref { inner, .. } = *self.types.kind(cell) {
+            cell = inner;
+        }
+        let mut reached = cell;
+        while let Some(inner) = self.types.printed_as(reached) {
+            if self.cell_inner(reached).is_some_and(|held| !self.types.is_copy(held)) {
+                cell = reached;
+            }
+            reached = inner;
+        }
+        if self.written_display(reached) && self.cell_inner(cell).is_some() {
+            self.cell_lends_its_value(cell, "Display", span);
+            return;
+        }
+        let _ = self.check_formattable(ty, span, "printing");
+    }
+
     /// `[TYP-47]` — the loop a `break` or `continue` `depth` loops out reaches, when it is a written
     /// out `for v in values:`: the jump that leaves it.
     pub(crate) fn pack_jump(&self, depth: usize, is_break: bool) -> Option<Stmt> {
