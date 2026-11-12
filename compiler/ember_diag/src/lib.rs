@@ -888,12 +888,12 @@ mod tests {
     fn sink_counts_and_deny_warnings() {
         let (map, id) = fixture();
         let mut sink = Sink::new();
-        sink.emit(Diagnostic::warning(codes::W0001, Span::new(id, 0, 2), "dangling doc comment"));
+        sink.emit(Diagnostic::warning(codes::W9030, Span::new(id, 0, 2), "reload requires a restart"));
         assert!(!sink.has_errors());
         sink.deny_warnings = true;
         assert!(sink.has_errors());
         assert_eq!(sink.warning_count(), 1);
-        assert!(sink.render(&map).contains("warning[W0001]"));
+        assert!(sink.render(&map).contains("warning[W9030]"));
     }
 
     /// `[DIA-2]` — the article before a quoted name follows the word after it.
