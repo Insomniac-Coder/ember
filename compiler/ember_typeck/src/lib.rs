@@ -15868,12 +15868,21 @@ impl<'a> Checker<'a> {
                 None => self.common.error,
             };
         }
-        if name.is("Shared") || self.is_sync_shared_name(name) {
+        if self.is_sync_shared_name(name) {
             if !require(self, 1) {
                 return self.common.error;
             }
             let (inner, _) = args[0];
-            return self.counted_of(inner, !name.is("Shared"));
+            return self.counted_of(inner, true);
+        }
+        // `[TYP-45]` — `Shared` is not a type of Ember: the message gives what to write, and the owner
+        // type is made, so that the rest of the program is checked.
+        if name.is("Shared") {
+            if !require(self, 1) {
+                return self.common.error;
+            }
+            let (inner, at) = args[0];
+            return self.refuse_shared_type(inner, at, span);
         }
         // `[SOA-4]` — the fixed-capacity, arena-backed form, `std.collections`'s (`[ARN-5]`).
         if resolved_name.as_str() == "std.collections.ArenaSoA" {
@@ -15894,12 +15903,13 @@ impl<'a> Checker<'a> {
             }
             return self.soa_proxy_of(soa, name.is("SoAMut"));
         }
+        // `[TYP-45]` — nor is `Weak`: a link is `weakref T`.
         if name.is("Weak") {
             if !require(self, 1) {
                 return self.common.error;
             }
             let (inner, arg_span) = args[0];
-            return self.weak_of(inner, arg_span);
+            return self.refuse_weak_type(inner, arg_span, span);
         }
         if name.is("Cell") || name.is("RefCell") {
             if !require(self, 1) {
@@ -20739,6 +20749,89 @@ impl<'a> Checker<'a> {
         self.types.intern(TyKind::Link { kind, target })
     }
 
+    /// `[TYP-45]` (`E1010`) — `Shared[T]` named: several owners of a value on one thread are `shares T`,
+    /// which only reads it, or `shares mut T`, which may also change it, as `Shared`'s `get_mut` did;
+    /// the migration writes `shares mut T`. Inside `Weak[…]` the `Weak`'s refusal says it all
+    /// (`weakref T`). The owner type is made, so that the rest of the program is checked.
+    fn refuse_shared_type(&mut self, inner: Ty, at: Span, span: Span) -> Ty {
+        let written = self.written_line(at).unwrap_or_else(|| self.types.display(inner));
+        let in_weak = self
+            .sources
+            .get(&span.file)
+            .and_then(|source| source.text.get(..span.start as usize))
+            .is_some_and(|before| before.trim_end().ends_with("Weak["));
+        if !in_weak {
+            self.sink.emit(
+                Diagnostic::error(codes::E1010, span, format!("`Shared` is not a type of Ember: write `shares {written}` or `shares mut {written}`"))
+                    .help("several owners of a value on one thread: `shares T` reads it, `shares mut T` may also change it")
+                    .migrate("`Shared[T]` is `shares mut T`", span, format!("shares mut {written}")),
+            );
+        }
+        if inner == self.common.error {
+            return inner;
+        }
+        self.link_of(ember_types::LinkKind::SharesMut, inner)
+    }
+
+    /// `[TYP-45]` (`E1010`) — `Weak[T]` named: a link is `weakref T`, of a class object (`Weak[Node]`) or
+    /// of a value held `shares` (`Weak[Shared[Token]]` is `weakref Token`).
+    fn refuse_weak_type(&mut self, inner: Ty, at: Span, span: Span) -> Ty {
+        if inner == self.common.error {
+            return inner;
+        }
+        let target = match *self.types.kind(inner) {
+            TyKind::Class(_) => inner,
+            TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut, target } => target,
+            _ => {
+                let shown = self.types.display(inner);
+                self.error(codes::E1010, span, format!("`Weak` is not a type of Ember, and a link names a class object or a value held `shares`, not a `{shown}`"));
+                return self.common.error;
+            }
+        };
+        let written = self
+            .written_line(at)
+            .map(|text| text.strip_prefix("Shared[").and_then(|rest| rest.strip_suffix(']')).map_or_else(|| text.clone(), str::to_string))
+            .unwrap_or_else(|| self.types.display(target));
+        self.sink.emit(
+            Diagnostic::error(codes::E1010, span, format!("`Weak` is not a type of Ember: write `weakref {written}`"))
+                .help("a link that does not keep its target alive is `weakref T`")
+                .migrate("`Weak[T]` is `weakref T`", span, format!("weakref {written}")),
+        );
+        self.link_of(ember_types::LinkKind::Weakref, target)
+    }
+
+    /// `[TYP-45]` (`E1010`) — `Shared(v)`: an owner of a new value is made with `shares` or `shares mut`
+    /// before it (the migration writes `shares mut v`); the owner is made as the words make it.
+    fn refuse_shared_value(&mut self, value: &ast::Expr, explicit: Option<Ty>, expected: Option<Ty>, span: Span) -> Expr {
+        let written = self.written_line(value.span);
+        let mut diagnostic = Diagnostic::error(codes::E1010, span, "`Shared` is not Ember");
+        diagnostic = match &written {
+            Some(written) => diagnostic
+                .help(format!("several owners of a value on one thread are made with `shares` or `shares mut`: `shares mut {written}`"))
+                .migrate("`Shared(v)` is `shares mut v`", span, format!("shares mut {written}")),
+            None => diagnostic.help("several owners of a value on one thread are made with `shares` or `shares mut`: `shares mut v`"),
+        };
+        self.sink.emit(diagnostic);
+        let (kind, wanted) = match expected.map(|ty| self.types.kind(ty).clone()) {
+            Some(TyKind::Link { kind: kind @ (ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut), target }) => (kind, Some(target)),
+            _ => (ember_types::LinkKind::SharesMut, None),
+        };
+        let value = match explicit.or(wanted) {
+            Some(inner) => self.check_expr(value, inner),
+            None => self.synth_committed(value),
+        };
+        if value.ty == self.common.error {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let link = self.link_of(kind, value.ty);
+        if matches!(self.types.kind(value.ty), TyKind::Class(_)) {
+            return Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkMake { kind, link }, args: vec![value] }, span };
+        }
+        let elem = value.ty;
+        let block = self.counted_of(elem, false);
+        Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::SharedNew { elem, shared: block }, args: vec![value] }, span }
+    }
+
     /// The 1-based number and the code, trimmed, of the line `span` starts on.
     fn line_text(&self, span: Span) -> Option<(usize, String)> {
         let source = self.sources.get(&span.file)?;
@@ -21062,6 +21155,86 @@ impl<'a> Checker<'a> {
             }
         };
         self.error(codes::E3023, span, message);
+    }
+
+    /// `[TYP-45]`, `[WK-12]` (`E1010`) — `match w.upgrade():` with a `Some(p)` arm and a `None` arm, or
+    /// `if w.upgrade() exists as p:`, on a link: `upgrade` is gone, and the link is opened with `exists
+    /// as`. Reported with the rewrite (the `match` made an `if … exists as p:` and its `else:`, each
+    /// arm's body moved under it; `.upgrade()` removed before `exists as`); the link is what the
+    /// statement then opens.
+    fn refuse_upgrade_match<'e>(&mut self, scrutinee: &'e ast::Expr, arms: &[ast::MatchArm], span: Span) -> Option<&'e ast::Expr> {
+        let ast::ExprKind::MethodCall { recv, name, generic_args, args } = &unparenthesized(scrutinee).kind else { return None };
+        if !name.name.is("upgrade") || !args.is_empty() || !generic_args.is_empty() {
+            return None;
+        }
+        let link_ty = self.synth_quiet_type(recv);
+        let TyKind::Link { kind: ember_types::LinkKind::Weakref, target } = *self.types.kind(link_ty) else { return None };
+        let place = self.written_line(recv.span).unwrap_or_else(|| "the link".to_string());
+        let text = self.sources.get(&span.file).map(|source| source.text.clone())?;
+        let is_match = text.get(span.start as usize..).is_some_and(|rest| rest.starts_with("match"));
+        let pattern = |arm: &ast::MatchArm| text.get(arm.pattern.span.start as usize..arm.pattern.span.end as usize).map(str::trim);
+        let some = arms.iter().find(|arm| arm.guard.is_none() && pattern(arm).is_some_and(|written| written.starts_with("Some(")));
+        let opened = some
+            .and_then(|arm| pattern(arm))
+            .and_then(|written| written.strip_prefix("Some(")?.strip_suffix(')').map(str::trim).map(str::to_string))
+            .unwrap_or_else(|| self.link_short_name(target));
+        let mut refused = Diagnostic::error(codes::E1010, scrutinee.span, format!("a `weakref` link is opened with `exists as`: `if {place} exists as {opened}:`"));
+        if !is_match {
+            if text.get(recv.span.end as usize..).is_some_and(|rest| rest.starts_with(".upgrade()")) {
+                // The call replaced by its link (an empty edit would take the space after it too).
+                let call = Span::new(span.file, recv.span.start, recv.span.end + ".upgrade()".len() as u32);
+                refused = refused.migrate("`w.upgrade() exists as p` is `w exists as p`", call, place.clone());
+            }
+        } else if let Some(rewrite) = self.upgrade_match_rewrite(&text, &place, &opened, arms, span) {
+            refused = refused.migrate_edits("`match w.upgrade():` is `if w exists as p:` and `else:`", vec![rewrite]);
+        }
+        self.sink.emit(refused);
+        Some(recv)
+    }
+
+    /// The `if … exists as …:` and `else:` a `match w.upgrade():` with a `Some(p)` arm and a `None` arm
+    /// is written as, replacing the statement: each arm's body under its branch, at the branch's depth.
+    fn upgrade_match_rewrite(&self, text: &str, place: &str, opened: &str, arms: &[ast::MatchArm], span: Span) -> Option<(Span, ember_diag::Replacement)> {
+        if arms.len() != 2 || arms.iter().any(|arm| arm.guard.is_some()) {
+            return None;
+        }
+        let pattern = |arm: &ast::MatchArm| text.get(arm.pattern.span.start as usize..arm.pattern.span.end as usize).map(str::trim);
+        let some = arms.iter().find(|arm| pattern(arm).is_some_and(|written| written.starts_with("Some(")))?;
+        let none = arms.iter().find(|arm| pattern(arm) == Some("None") || pattern(arm) == Some("_"))?;
+        let line_start = |at: usize| text[..at].rfind('\n').map_or(0, |found| found + 1);
+        let indent: String = text[line_start(span.start as usize)..].chars().take_while(|c| *c == ' ').collect();
+        let inner = format!("{indent}    ");
+        let body = |arm: &ast::MatchArm| -> Option<String> {
+            match &arm.body {
+                ast::MatchArmBody::Expr(expr) => Some(format!("{inner}{}", text.get(expr.span.start as usize..expr.span.end as usize)?.trim())),
+                ast::MatchArmBody::Block(block) => {
+                    let first = block.stmts.first()?.span.start as usize;
+                    let last = block.stmts.last()?.span.end as usize;
+                    let start = line_start(first);
+                    let end = text[last..].find('\n').map_or(text.len(), |at| last + at);
+                    let lines: Vec<&str> = text.get(start..end)?.lines().collect();
+                    let depth = lines.iter().filter(|line| !line.trim().is_empty()).map(|line| line.len() - line.trim_start().len()).min()?;
+                    Some(
+                        lines
+                            .iter()
+                            .map(|line| if line.trim().is_empty() { String::new() } else { format!("{inner}{}", &line[depth..]) })
+                            .collect::<Vec<_>>()
+                            .join("
+"),
+                    )
+                }
+            }
+        };
+        // The statement ends with its last arm's code (a block's span runs on to the next line).
+        let end = arms
+            .iter()
+            .filter_map(|arm| match &arm.body {
+                ast::MatchArmBody::Block(block) => block.stmts.last().map(|stmt| stmt.span.end),
+                ast::MatchArmBody::Expr(expr) => Some(expr.span.end),
+            })
+            .max()?;
+        let rewrite = format!("if {place} exists as {opened}:\n{}\n{indent}else:\n{}", body(some)?, body(none)?);
+        Some((Span::new(span.file, span.start, end), ember_diag::Replacement::Text(rewrite)))
     }
 
     /// `[OWN-13]` (`E2119`) — `weakref` before a new value: it would end at the end of the line.
@@ -28810,6 +28983,12 @@ impl<'a> Checker<'a> {
             _ => (scrutinee, false),
         };
         let calls = self.changed_calls.len();
+        // `[TYP-45]`, `[WK-12]` — `w.upgrade()` is gone: a link is opened with `exists as`, which
+        // this `match` or `if … exists as` then opens, with the rewrite to it.
+        let scrutinee = match self.refuse_upgrade_match(scrutinee, arms, span) {
+            Some(link) => link,
+            None => scrutinee,
+        };
         let mut scrutinee = self.synth_committed(scrutinee);
         // `[WK-12]` — a link is opened by `exists as`.
         scrutinee = self.open_link(scrutinee);
@@ -39681,15 +39860,17 @@ impl<'a> Checker<'a> {
                     && self.lookup(Symbol::intern("Weak")).is_none()
                     && !self.names_program_type("Weak") =>
             {
-                // D-434 — an `Option[Weak[O]]` place knows the type too,
-                // through `[TYP-5]` rule 11's `Some`.
-                let weak = expected.and_then(|ty| match self.weak_inner(ty) {
-                    Some(_) => Some(ty),
-                    None => self
+                // `[TYP-45]` — a link that holds no target is `None`, of the link type the place
+                // has; D-434 — an `Option[weakref T]` place's is the `Option`'s `None`.
+                let link = |checker: &Self, ty: Ty| matches!(checker.types.kind(ty), TyKind::Link { kind: ember_types::LinkKind::Weakref, .. });
+                let weak = expected.and_then(|ty| match link(self, ty) {
+                    true => Some(ty),
+                    false => self
                         .builtin_generic_origin(ty)
                         .filter(|(origin, _)| origin.is("Option"))
                         .and_then(|(_, payload)| payload.first().copied())
-                        .filter(|&inner| self.weak_inner(inner).is_some()),
+                        .filter(|&inner| link(self, inner))
+                        .map(|_| ty),
                 });
                 match (weak, expected) {
                     (Some(ty), _) => self.synth_weak_construction(ty, *name, generic_args, args, span),
@@ -40708,6 +40889,9 @@ impl<'a> Checker<'a> {
         let sync_shared = self.is_sync_shared_name(name);
         if name.is("Shared") || sync_shared {
             let shown = if sync_shared { "SyncShared" } else { "Shared" };
+            if !sync_shared && explicit.len() <= 1 && args.len() == 1 {
+                return self.refuse_shared_value(&args[0].value, explicit.first().copied(), expected, span);
+            }
             if explicit.len() > 1 {
                 self.error(
                     codes::E2020,
@@ -40755,6 +40939,19 @@ impl<'a> Checker<'a> {
                     format!("`Weak` takes one type argument, found {}", explicit.len()),
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            // `[TYP-45]` — `Weak` is not Ember: a link is made with `weakref x`.
+            if args.len() == 1 {
+                let value = self.written_line(args[0].value.span);
+                let mut diagnostic = Diagnostic::error(codes::E1010, span, "`Weak` is not Ember");
+                diagnostic = match &value {
+                    Some(value) => diagnostic
+                        .help(format!("a link that does not keep its target alive is made with `weakref`: `weakref {value}`"))
+                        .migrate("`Weak(x)` is `weakref x`", span, format!("weakref {value}")),
+                    None => diagnostic.help("a link that does not keep its target alive is made with `weakref`: `weakref x`"),
+                };
+                self.sink.emit(diagnostic);
+                return self.synth_link(ast::LinkKind::Weakref, &args[0].value, span);
             }
             if args.len() != 1 {
                 self.error(
@@ -41291,7 +41488,14 @@ impl<'a> Checker<'a> {
                 (self.common.error, name.span)
             }
         };
-        Some(self.weak_of(inner, inner_span))
+        // `[TYP-45]` — `Weak[Node]` and `Weak[Shared[Token]]` name the links `weakref Node` and `weakref
+        // Token`, whose `empty()` is refused where it is called.
+        let _ = inner_span;
+        Some(match *self.types.kind(inner) {
+            _ if inner == self.common.error => inner,
+            TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut, target } => self.link_of(ember_types::LinkKind::Weakref, target),
+            _ => self.link_of(ember_types::LinkKind::Weakref, inner),
+        })
     }
 
     /// `[GRM-8]`, `[TYP-18]` — bracket arguments on a method call are parsed
@@ -49003,6 +49207,22 @@ impl<'a> Checker<'a> {
                 receiver = self.read_box_through(receiver);
             }
         }
+        // `[TYP-45]`, `[TYP-14]` — an owner reads as its value: `Shared`'s `get` and `get_mut` are gone.
+        if args.is_empty()
+            && (name.name.is("get") || name.name.is("get_mut"))
+            && let TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut, target } = *self.types.kind(receiver.ty)
+            && self.lookup_method(target, name.name).is_none()
+        {
+            let written = if name.name.is("get") { "`.get()`" } else { "`.get_mut()`" };
+            let (owner, held) = (self.types.display(receiver.ty), self.types.display(target));
+            let mut refused = Diagnostic::error(codes::E2072, span, format!("a `{owner}` reads as a `{held}`; remove {written}"));
+            // The call replaced by its owner (an empty edit would take the space after it too).
+            if let Some(shown) = self.written_line(receiver.span) {
+                refused = refused.migrate("`.get()` of an owner removed", Span::new(span.file, receiver.span.start, span.end), shown);
+            }
+            self.sink.emit(refused);
+            return self.read_link_through(receiver);
+        }
         // `[RC-1]` — an owner's methods are its object's.
         receiver = self.read_link_through(receiver);
         // `[WK-12]`, `[WK-16]` — a link is opened before its target is used; `upgrade` is gone.
@@ -53413,7 +53633,9 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        let Some(_) = self.weak_inner(ty) else { return error };
+        if ty == self.common.error {
+            return error;
+        }
         if !generic_args.is_empty() {
             self.error(
                 codes::E2020,
@@ -53437,6 +53659,14 @@ impl<'a> Checker<'a> {
                 format!("`empty` takes 0 arguments, found {}", args.len()),
             );
             return error;
+        }
+        // `[TYP-45]`, `[WK-11]` — `Weak` is not Ember: a link that holds no target is `None`.
+        self.sink.emit(
+            Diagnostic::error(codes::E1010, span, "`Weak.empty()` is not Ember: a link that holds no target is `None`")
+                .migrate("`Weak.empty()` is `None`", span, "None"),
+        );
+        if let TyKind::Enum(id) = *self.types.kind(ty) {
+            return Expr { ty, kind: ExprKind::EnumLit { enum_id: id, variant: 0, fields: Vec::new() }, span };
         }
         Expr {
             ty,

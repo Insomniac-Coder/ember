@@ -638,6 +638,63 @@ fn main():
     assert_eq!(run.stdout, "6\n8 4\n30\n", "{}", migrated.stdout);
 }
 
+/// `[TYP-45]`, `[WK-12]`, `[RC-1]` (M4 slice B) — `ember __migrate --checker` rewrites `Shared` and `Weak`
+/// to the words: `Shared[T]` and `Shared(v)` to `shares mut T` and `shares mut v`, `Weak[Shared[T]]` and
+/// `Weak[C]` to `weakref T` and `weakref C`, `Weak(x)` to `weakref x`, `Weak.empty()` to `None`, an
+/// owner's `.get()` away, and `match w.upgrade():` with a `Some` and a `None` arm to `if w exists as p:`
+/// and `else:`; the program prints what it did.
+#[test]
+fn migrate_checker_writes_the_words_for_shared_and_weak() {
+    let root = workspace_root();
+    let directory = temporary_directory("migrate-shared");
+    let old = directory.join(ember_branding::source_file("old"));
+    std::fs::write(&old, "\
+struct Token:
+    value: int
+
+class Node:
+    v: int = 4
+
+fn read(weak: Weak[Shared[Token]]) -> int:
+    match weak.upgrade():
+        Some(owner):
+            return owner.get().value
+        None:
+            return 0
+
+fn main():
+    strong: Shared[Token] = Shared(Token(value=7))
+    weak = Weak(strong)
+    println(read(weak))
+    n = Node()
+    link: Weak[Node] = Weak.empty()
+    match link.upgrade():
+        Some(node) => println(node.v)
+        None => println(\"empty\")
+    link = Weak(n)
+    if link.upgrade() exists as node:
+        println(node.v)
+").expect("the old source is writable");
+    let migrated = ember(&["__migrate", "--checker", &old.to_string_lossy()], &root);
+    assert_eq!(migrated.exit, 0, "{}\n{}", migrated.stderr, migrated.stdout);
+    let text = std::fs::read_to_string(&old).expect("the migrated source is readable").replace("\r\n", "\n");
+    for wanted in [
+        "fn read(weak: weakref Token) -> int:",
+        "    if weak exists as owner:\n        return owner.value\n    else:\n        return 0",
+        "strong: shares mut Token = shares mut Token(value=7)",
+        "weak = weakref strong",
+        "link: weakref Node = None",
+        "    if link exists as node:\n        println(node.v)\n    else:\n        println(\"empty\")",
+        "link = weakref n",
+        "if link exists as node:\n        println(node.v)\n",
+    ] {
+        assert!(text.contains(wanted), "the migration lacks {wanted:?}:\n{text}\n{}", migrated.stderr);
+    }
+    let run = ember(&["run", &old.to_string_lossy()], &root);
+    assert_eq!(run.exit, 0, "{}\n{text}", run.stderr);
+    assert_eq!(run.stdout, "7\nempty\n4\n", "{text}");
+}
+
 /// `[CLI-20]` (verdicts 130, 133) — a declaration left unsafe to call by the word `unsafe` becomes an
 /// `unsafe fn`: on a hand declaration `@ffi(unsafe)`, `param(p, unsafe)` and `result(unsafe)` lose the
 /// word (an `@ffi(…)` left with nothing goes), and in an overlay entry the contract word goes with the
