@@ -40687,13 +40687,6 @@ impl<'a> Checker<'a> {
             }
         }
 
-        if let Some(builtin) = Builtin::from_name(name.as_str()) {
-            // `[STD-9]` (0.9.9) — any number of arguments, `sep=` and `end=`.
-            // One path for every count, so each value is checked for a
-            // printer the same way (D-197).
-            return self.synth_print_pieces(builtin, args, span);
-        }
-
         let Some(&def) = self.fn_ids.get(&self.resolve_name(name)) else {
             let name_span = segments.last().expect("a path has a final segment").span;
             // D-234 — a local of that name exists; it is not callable.
@@ -41155,6 +41148,8 @@ impl<'a> Checker<'a> {
             }
         }
         let mut checked_args: Vec<Option<Expr>> = (0..declared.len()).map(|_| None).collect();
+        // `[DIA-26]` — what each argument's inferring check reported, kept aside (below).
+        let mut inferred_reports: Vec<Vec<Diagnostic>> = vec![Vec::new(); declared.len()];
         // Solve non-lambda arguments first. Type inference is not evaluation,
         // so this does not change source order; it lets a later ordinary
         // argument determine `T` before an earlier `fn(T) -> T` lambda needs
@@ -41185,6 +41180,10 @@ impl<'a> Checker<'a> {
                 checked_args[index] = Some(value);
                 continue;
             }
+            // `[DIA-26]` — one mistake, one error: an argument is checked again against the
+            // parameter's substituted type below, which reports what this check would; only one
+            // that fails outright is reported here, ending the call.
+            let inferring = self.sink.mark();
             let value = match (&arg.value.kind, self.types.kind(param_ty).clone()) {
                 // `[TYP-41]` — a list literal where a fixed array is wanted
                 // is one, of its own length, which then solves `N`.
@@ -41202,6 +41201,10 @@ impl<'a> Checker<'a> {
                 }
                 _ => self.synth(Self::inferred_argument(&arg.value, declared[index].2)),
             };
+            if value.ty != self.common.error {
+                inferred_reports[index] = self.sink.diagnostics()[inferring..].to_vec();
+                self.sink.rollback(inferring);
+            }
             if self.types.is_untyped_literal(value.ty) {
                 deferred_literals.push((index, param_ty, value));
                 continue;
@@ -41469,6 +41472,16 @@ impl<'a> Checker<'a> {
         // rather than copied.
         let mut reusable = checked_args;
         let mut checked = Vec::new();
+        // `[TYP-47]` — which parameters take a pack's values, in a function made for their number.
+        let pack_values: HashSet<usize> = match self.pack_arities.get(&def) {
+            Some(&(_, at, n)) => declared
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, ty, ..))| matches!(*self.types.kind(*ty), TyKind::Param { index, .. } if (at..at + n).contains(&(index as usize))))
+                .map(|(position, _)| position)
+                .collect(),
+            None => HashSet::new(),
+        };
         let mut arg_for_param = vec![None; concrete.len()];
         for (arg_index, slot) in slots.iter().copied().enumerate() {
             if let Some(slot) = slot {
@@ -41488,14 +41501,34 @@ impl<'a> Checker<'a> {
             let already = Self::lambda_of(&arg.value).is_some();
             // D-284 — as the generic's declaration passes it.
             let by_address = self.param_by_address(instance, declared[index].0, param_ty);
-            match reusable.get_mut(index).and_then(|slot| slot.take()).filter(|_| already) {
-                Some(value) => {
+            let first = reusable.get_mut(index).and_then(|slot| slot.take());
+            // `[TYP-47]` — a pack's value read plainly (`println(a, f(b))`), whose inferring check
+            // gave it exactly its parameter's type, is that check: it is not checked twice (a lambda
+            // inside it made twice, a diagnostic reported twice, the work doubled at each call of a
+            // function over a pack).
+            let plain_value = |this: &Self, value: &Expr| {
+                pack_values.contains(&index)
+                    && mode == Mode::Borrow
+                    && arg.name.is_none()
+                    && value.ty == param_ty
+                    && !this.types.is_untyped_literal(value.ty)
+                    && !matches!(arg.value.kind, ast::ExprKind::Owned(_) | ast::ExprKind::RefOf { .. } | ast::ExprKind::CopyOf(_) | ast::ExprKind::Lambda(_))
+                    && !matches!(this.types.kind(param_ty), TyKind::Fn { .. } | TyKind::FnItem { .. })
+                    && !this.lent_callable_args.contains(&arg.value.span)
+            };
+            match first {
+                Some(value) if already => {
                     // `[FN-2a]` (verdict 158) — `owns fn(...)` for an `owns` parameter.
                     self.check_call_word(&arg.value, mode, param_ty, declared[index].3);
                     let value = self.pass_checked_lambda(value, arg.value.span, param_ty, mode, by_address);
                     checked.push(value)
                 }
-                None => {
+                Some(value) if plain_value(self, &value) => {
+                    let reports = std::mem::take(&mut inferred_reports[index]);
+                    self.sink.emit_all(reports);
+                    checked.push(self.pass_argument_by(value, param_ty, mode, by_address));
+                }
+                _ => {
                     let word = self.word_of.replace((arg.value.span, declared[index].3));
                     checked.push(self.check_argument_by(&arg.value, param_ty, mode, by_address));
                     self.word_of = word;
@@ -41640,6 +41673,10 @@ impl<'a> Checker<'a> {
                 checked_args[index] = Some(value);
                 continue;
             }
+            // `[DIA-26]` — one mistake, one error: an argument is checked again against the
+            // parameter's substituted type below, which reports what this check would; only one
+            // that fails outright is reported here, ending the call.
+            let inferring = self.sink.mark();
             let value = match (&arg.value.kind, self.types.kind(param_ty).clone()) {
                 // `[TYP-41]` — a list literal where a fixed array is wanted
                 // is one, of its own length, which then solves `N`.
@@ -41657,6 +41694,9 @@ impl<'a> Checker<'a> {
                 }
                 _ => self.synth(Self::inferred_argument(&arg.value, declared[index].2)),
             };
+            if value.ty != self.common.error {
+                self.sink.rollback(inferring);
+            }
             if self.types.is_untyped_literal(value.ty) {
                 deferred_literals.push((index, param_ty, value));
                 continue;
@@ -55533,8 +55573,14 @@ impl<'a> Checker<'a> {
                 break;
             }
         }
+        // A call checked twice (a generic callee's arguments are checked to infer its parameters,
+        // then against them) noted its lambda twice: each written lambda is checked once.
+        let mut seen = HashSet::new();
         for (callee, index, given) in args {
             let CallableArg::Captures(ty, span) = given else { continue };
+            if !seen.insert((callee, index, span)) {
+                continue;
+            }
             let Some(callback) = self.nullable_callbacks.get(&callee).and_then(|callbacks| callbacks.iter().find(|(at, _)| *at == index)).map(|(_, callback)| callback.clone()) else { continue };
             self.foreign_callback_refused(ty, span, &callback);
         }
@@ -61468,7 +61514,9 @@ impl<'a> Checker<'a> {
             }
         }
         let which = if matches!(builtin, Builtin::EPrint | Builtin::EPrintln) { Builtin::EPrint } else { Builtin::Print };
-        let literal = |expr: &Expr| matches!(expr.kind, ExprKind::Str(_) | ExprKind::Error);
+        // `[STD-9]` — a `sep` or `end` that is a literal, or a local (the library's own parameter,
+        // whose argument was evaluated where the call is written), is read where it is printed.
+        let literal = |expr: &Expr| matches!(expr.kind, ExprKind::Str(_) | ExprKind::Local(_) | ExprKind::Error);
         if literal(&sep) {
             let mut pieces = Vec::new();
             for (index, value) in values.into_iter().enumerate() {

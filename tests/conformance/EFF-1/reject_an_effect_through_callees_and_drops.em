@@ -1,10 +1,10 @@
 #$ test: compile-fail
 #$ rules: EFF-1, EFF-6
-#$ error[E4041]: drops_one -> Node.drop -> console output
-#$ error[E4041]: recursive -> count_up -> count_down -> console output
+#$ error[E4041]: drops_one -> Node.drop -> std.core.println -> console output
+#$ error[E4041]: recursive -> count_up -> count_down -> std.core.println -> console output
 # `[EFF-1]` — a function's effects are its body's and its callees', over the call graph: the
-# drops it performs run `Node.drop`, which prints, and a recursive group has the union of its
-# members' effects.
+# drops it performs run `Node.drop`, which prints (through `println`, the library's, `[STD-9]`), and
+# a recursive group has the union of its members' effects.
 
 class Node:
     v: int

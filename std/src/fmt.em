@@ -28,15 +28,22 @@ extend Formatter:
         this.out.push_str(s)
         return Ok(())
 
-## `[STD-18]` — `format_to(buf, a, b, …, sep=" ", end="")`: the arguments'
-## text, as `print` writes it, written into `buf`, and a view of what was
-## written; `Err(FmtError.Failed)` when it does not fit, `buf`'s bytes then
-## unspecified. Its own machinery never allocates: the call allocates only
-## if a value's written `Display` does (`[EFF-1]`). Compiler-known, with any
-## number of arguments after `buf` (`[TYP-26]`, ODR-060). `format(value,
+## `[STD-18]` (verdict 117) — `format_to(ref mut buf, a, b, …, sep=" ", end="")`: the values'
+## text (`Printable`), as `print` writes it, written into `buf`, and a view of what was written;
+## `Err(FmtError.Failed)` when it does not fit, `buf`'s bytes then unspecified. Its own machinery
+## never allocates: the call allocates only if a value's written `Display` does (`[EFF-1]`). An
+## ordinary function over a pack (`[TYP-47]`): each call is made for its exact types and inlined,
+## so what runs is `write_into`, which the compiler knows by its name here. `format(value,
 ## spec)`, the prelude's, is `f"{value:spec}"` (`[MOD-5]`).
-pub fn format_to(buf: MutSpan[u8]) -> Result[StrView, FmtError]:
-    unreachable()  # a call is the compiler's: this body never runs
+@inline
+[Ts...: needs Printable]
+pub fn format_to(ref mut buf: MutSpan[u8], values: Ts..., sep: StrView = " ", end: StrView = "") -> Result[StrView, FmtError] from buf:
+    return write_into(buf, values..., sep = sep, end = end)
+
+## `format_to`'s writes, the compiler's: each piece appended to a text over `buf` that never grows.
+[Ts...: needs Printable]
+fn write_into(ref mut buf: MutSpan[u8], values: Ts..., sep: StrView = " ", end: StrView = "") -> Result[StrView, FmtError] from buf:
+    unreachable()
 
 ## `[LEX-19]`, `[STD-9]` — how the compiler writes a value whose type has a
 ## written `Display` into text it is building (an f-string's, or `print`'s

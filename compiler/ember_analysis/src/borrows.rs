@@ -324,6 +324,8 @@ fn run_checks(
     let kinds: HashMap<String, Vec<String>> =
         expansion.checked_under.iter().map(|(&index, under)| (bodies[index].symbol.clone(), under.clone())).collect();
     let again = |index: usize| bodies[index].kept && kinds.get(&bodies[index].symbol) != kept.kinds.get(&bodies[index].symbol);
+    // `[CELL-7]` — the functions a call of which cannot reach a cell.
+    let cell_free = cell_free_functions(bodies, types);
     let check_forms = |index: usize, sink: &mut Sink, mut reports: Option<&mut Vec<LoanReport>>| {
         let body = &bodies[index];
         let plain = [crate::dyn_kinds::Form::default()];
@@ -344,6 +346,7 @@ fn run_checks(
                 dynamic.contains(&body.symbol),
                 &names,
                 form,
+                &cell_free,
                 if at == 0 { &mut *sink } else { &mut own },
                 if at == 0 { reports.as_deref_mut() } else { None },
             );
@@ -3675,6 +3678,7 @@ pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
         false,
         &HashMap::new(),
         &crate::dyn_kinds::Form::default(),
+        &HashSet::new(),
         sink,
         None,
     );
@@ -3690,6 +3694,7 @@ fn check_body(
     dynamic: bool,
     names: &HashMap<String, String>,
     form: &crate::dyn_kinds::Form,
+    cell_free: &HashSet<String>,
     sink: &mut Sink,
     reports: Option<&mut Vec<LoanReport>>,
 ) {
@@ -3931,6 +3936,7 @@ fn check_body(
         // a guard loan is live lints (a lint, never an error, and not opt-in).
         if let Terminator::Call { func, .. } = &block.terminator
             && !builtin_cannot_reach_a_cell(func)
+            && !matches!(func, FuncRef::Direct { symbol, .. } if cell_free.contains(symbol))
         {
             check_refcell_call(
                 body,
@@ -4138,6 +4144,58 @@ fn is_growing_arena_ty(types: &TypeTable, ty: Ty) -> bool {
 fn is_arena_ty(types: &TypeTable, ty: Ty) -> bool {
     matches!(types.kind(ty), TyKind::Struct(id)
         if matches!(types.struct_def(*id).name.as_str(), "Arena" | "FixedArena" | "ScopedArena"))
+}
+
+/// `[CELL-7]` — the functions whose call cannot reach a cell: each calls only built-ins that
+/// cannot (`builtin_cannot_reach_a_cell`, `quiet_builtin`) and functions that cannot, and drops only
+/// what frees memory alone. All start in, and each round drops those that break the rule given the
+/// rest (as `quiet_functions` does), so a library function that only prints (`println`'s instance
+/// for its types, `[STD-9]`) is called across a guard without `L3011`, and one whose printing runs a
+/// written `Display` is not.
+fn cell_free_functions(bodies: &[Body], types: &TypeTable) -> HashSet<String> {
+    let mut free: HashSet<String> = bodies.iter().map(|body| body.symbol.clone()).collect();
+    loop {
+        let next: HashSet<String> = bodies
+            .iter()
+            .filter(|body| free.contains(&body.symbol) && cell_free_body(body, types, &free))
+            .map(|body| body.symbol.clone())
+            .collect();
+        if next.len() == free.len() {
+            return free;
+        }
+        free = next;
+    }
+}
+
+fn cell_free_body(body: &Body, types: &TypeTable, free: &HashSet<String>) -> bool {
+    // It writes only its own locals: nothing through a reference or into an object, where a cell
+    // its caller holds a guard of may be.
+    let own = |place: &Place| {
+        !place.projection.iter().any(|projection| matches!(projection, Projection::Deref))
+            && (place.projection.is_empty()
+                || !matches!(types.kind(body.local(place.local).ty), TyKind::Class(_) | TyKind::ClassInterface(_)))
+    };
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            match &stmt.kind {
+                StmtKind::Drop { place, .. } if !drop_is_quiet(types, place_ty(body, types, place)) => return false,
+                StmtKind::Assign { place, .. } if !own(place) => return false,
+                _ => {}
+            }
+        }
+        let fits = match &block.terminator {
+            Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable | Terminator::SwitchInt { .. } | Terminator::Assert { .. } => true,
+            Terminator::Call { func: func @ FuncRef::Builtin { which, arg_ty }, dest, .. } => {
+                own(dest) && (builtin_cannot_reach_a_cell(func) || quiet_builtin(types, which, *arg_ty))
+            }
+            Terminator::Call { func: FuncRef::Direct { symbol, .. }, dest, .. } => own(dest) && free.contains(symbol),
+            Terminator::Call { .. } => false,
+        };
+        if !fits {
+            return false;
+        }
+    }
+    true
 }
 
 /// `[CELL-7]` (F-187) — `L3011` fires only for calls that can reach the cell,

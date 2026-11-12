@@ -150,6 +150,45 @@ extend AnyError:
         unsafe:  # SAFETY: `identity` is the boxed value's type's, so the box holds an `E`
             return Some(dyn_payload[E](this.error))
 
+## `[STD-9]` (verdict 117) — the console's output: `print(a, b, …, sep=" ", end="")` writes its
+## values' text (`Printable`: `Display`'s, else `Debug`'s) to standard output, `sep` between them
+## and `end` after; `println` ends with a newline, and `eprint` and `eprintln` write to standard
+## error. They are ordinary functions over a pack (`[TYP-47]`): a parameter after the values has a
+## default and is passed by name (`println(a, b, sep=", ")`), each call is made for its exact types
+## (`[MONO-1]`) and inlined, so what runs is the writes themselves. `write_stdout` and
+## `write_stderr`, which the compiler knows by their names here, write each piece with the stream
+## held from the first to the last, so one call is one write between threads. `println()` prints
+## an empty line.
+@inline
+[Ts...: needs Printable]
+pub fn print(values: Ts..., sep: StrView = " ", end: StrView = ""):
+    write_stdout(values..., sep = sep, end = end)
+
+@inline
+[Ts...: needs Printable]
+pub fn println(values: Ts..., sep: StrView = " ", end: StrView = "\n"):
+    write_stdout(values..., sep = sep, end = end)
+
+@inline
+[Ts...: needs Printable]
+pub fn eprint(values: Ts..., sep: StrView = " ", end: StrView = ""):
+    write_stderr(values..., sep = sep, end = end)
+
+@inline
+[Ts...: needs Printable]
+pub fn eprintln(values: Ts..., sep: StrView = " ", end: StrView = "\n"):
+    write_stderr(values..., sep = sep, end = end)
+
+## `print`'s and `println`'s writes, the compiler's: each call is the writes of its pieces.
+[Ts...: needs Printable]
+fn write_stdout(values: Ts..., sep: StrView = " ", end: StrView = ""):
+    unreachable()
+
+## `eprint`'s and `eprintln`'s writes, the compiler's.
+[Ts...: needs Printable]
+fn write_stderr(values: Ts..., sep: StrView = " ", end: StrView = ""):
+    unreachable()
+
 ## `[ERR-12]` — how `main` reports an `Err` that is an `Error`: its text,
 ## then one `caused by:` line for each cause in its chain.
 [E: needs Error]
