@@ -689,6 +689,6 @@ mod tests {
     fn display_is_four_digits() {
         assert_eq!(E0001.to_string(), "E0001");
         assert_eq!(E3040.to_string(), "E3040");
-        assert_eq!(W9030.to_string(), "W9030");
+        assert_eq!(W2192.to_string(), "W2192");
     }
 }
