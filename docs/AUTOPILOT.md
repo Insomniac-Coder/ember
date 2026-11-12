@@ -115,6 +115,61 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   `docs/AGENT-WORKFLOW.md` holds his rules for multi-agent work, which apply only when he is
   present and has approved the plan.
 
+### Helper agents in autonomous mode (the owner, 2026-11-12)
+
+**Only when the owner has explicitly allowed agents.** The owner, verbatim: "note that agentic workflow
+guidlines that I just shared in autonomous mode and these additional guidelines are to be follow only when I
+explicitly allow you to use agents". Without his explicit permission there are no agents at all, and a new session or
+a new piece of work needs his permission again. Workflow runs stay out of autonomous mode whatever a session setting
+says (§1). When he has allowed agents, these rules hold.
+
+**Who does what.** The owner, verbatim: "Sonnet for light/medium development work, Opus 5.5 for the real
+challenges/review/merging/solving ODRs. Remember Sonnet does not get to solve ODRs either Opus does it or in a really
+really tough situation you ask me for a Fable 5.2 agent and if I permit it you spawn it to deal with problems. You
+can even use an Opus agent to help you with distributing your load of making decsions, solving ODRs, merging and
+reviewing work", and "by Opus 5.5 I mean either you or the helper that you spawn. Sonnet can suggest you ideas but
+you/other Opus/Fable agent gets to decide the best solution."
+- **Sonnet** takes light and medium development. It never rules a spec question, however small: it reports the
+  question with options as code, and the lead or an Opus agent decides.
+- **Opus** (the lead or an Opus helper) takes the hard problems, reviews, merges and ODR rulings. An Opus deputy may
+  carry part of the lead's decisions, rulings, merges and reviews.
+- **Fable** only for a really tough problem, and only after asking the owner and getting his yes.
+
+**How much each agent gets.** The owner: "each agents gets to do anywhere between 10-30 tasks". The work runs in
+rounds:
+- the lead assigns a round;
+- each agent finishes;
+- the lead collects, tests and combines it himself before any new work;
+- the lead says whenever an assignment's size changes.
+
+**How many agents at once: as many as the machine carries well.** The owner, verbatim: "you can increase and
+decrease the agent count in such a way that if that they all are going to take up the CPU and slow down things then
+it's better to have fewer agents and if the agents are getting simpler work then you can scale up, think of other
+parameters you can use to scale up and down to use system resources efficiently" (it replaced the earlier fixed
+"up to 4"), and "use CPU wisely". The count follows what the work costs the machine:
+- **Builders are heavy.** An agent that compiles and runs suites takes `CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=4`.
+  On the owner's laptop (Core Ultra 9 275HX, 24 cores, 64 GB) three such builders put the CPU at 96% (measured
+  2026-11-12), so about three run at once. More builders run only with fewer jobs each, for lighter compile
+  work.
+- **Readers are light.** Agents that only read, rule, review or probe with an existing binary (no `cargo`) use
+  almost no CPU. They may run beside the builders when there is such work.
+- **Memory:** at least 10 GB stays free.
+- **Disk:** at least 50 GB stays free. Each builder's `target/` is 3 to 9 GB and is deleted when its job ends; the
+  lead deletes any a finished, merged job left behind.
+- **A quiet machine for the push gate and the bench:** no builders while either runs (§4: timing on the
+  performance cores, on mains power).
+- **Never two writers on one file**, so that merges stay clean.
+- **The lead's capacity** to review, test and merge each agent's work.
+- **Token cost:** a pilot of a few items before any large fan-out.
+- **MSVC's linker** livelocks more often under contention (D-933), so few release links run at once.
+
+**Rest after each batch.** The owner, verbatim: "give the system 5-15 minute breaks based on the batch complexity
+after the batch gets completed". When a batch is collected, the laptop idles (no builds, tests, agents or
+benchmarks) before the next one:
+- **5 minutes** after a light batch: readers only, or short jobs;
+- **10 minutes** after a medium batch;
+- **15 minutes** after a heavy one: several builders, a push gate or a bench.
+
 ## 4. Rules of this codebase
 
 - **Generated code runs as close to C speed as possible.** The owner, 2026-09-27: "since we are
