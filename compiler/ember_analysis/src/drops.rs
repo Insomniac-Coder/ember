@@ -2064,7 +2064,9 @@ fn hand_over_site(body: &Body, types: &TypeTable, local: LocalId, at: Span) -> O
             _ => None,
         });
         match (receiver, callee) {
-            (Some(receiver), Some(callee)) => HandOver { dest: Some(receiver.clone()), part, keep: Keep::Call { receiver, callee } },
+            // A whole value is said to have gone to the method (`o.map(taker)` is `map`, as it always was);
+            // a part, to the place that keeps it (`names.push(owns p.name)` is `names`, `[OWN-11]`).
+            (Some(receiver), Some(callee)) => HandOver { dest: Some(if part.is_some() { receiver.clone() } else { callee.clone() }), part, keep: Keep::Call { receiver, callee } },
             (None, Some(callee)) => HandOver { dest: Some(callee), part, keep: Keep::Other },
             _ => HandOver { dest: None, part, keep: Keep::Other },
         }

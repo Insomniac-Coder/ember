@@ -307,7 +307,7 @@ fn a_root_module_never_shares_a_path_with_a_dependency() {
     package(&dir.join("app"), manifest, &[("main", "import util\nprintln(util.f())\n"), ("util", "pub fn f() -> i32:\n    return 2\n")]);
     let file = ember(&["check"], &dir.join("app"));
     assert!(!file.ok && file.stderr.contains("error[E9001]: dependency `util` has the name of this package's own module `util`"), "{}", file.stderr);
-    std::fs::remove_file(dir.join("app/src/util.em")).unwrap();
+    std::fs::remove_file(dir.join("app/src").join(ember_branding::source_file("util"))).unwrap();
     package(&dir.join("app"), manifest, &[("util/inner", "pub fn f() -> i32:\n    return 2\n")]);
     let folder = ember(&["check"], &dir.join("app"));
     assert!(!folder.ok && folder.stderr.contains("error[E9001]: dependency `util` has the name of this package's own module `util`"), "{}", folder.stderr);
