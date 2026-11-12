@@ -321,3 +321,28 @@ after each work batch" is the owner's rule from this round.
     - JOB-5 gives two E3063 on one line (DIA-26).
     - E3030's help is not the rule's exact line: it needs the argument's text.
 - **`lead-fix` merged** (`e49a8545`): the push gate's failures. Its conformance run is green.
+- **The Opus helper, M4's foreign owners** (953k tokens, 64 min after the resume; cut off once by Windows Update's
+  planned restart at 01:00, then resumed). 10 commits, merged (`4a7a48c4`).
+  - **A1-10:** `mem.forget` is gone (E1010 with OWN-6's message), and `std.mem`'s signatures are as OWN-6 writes them.
+  - **A6-5:** an `owns T` of a foreign type replaces `ForeignBox`.
+    - It is std's `ForeignOwner[T]`, one word, or two for `threads(creator)`.
+    - Its destructor is static, one per type (E5002).
+    - The importer writes `owns T`, and about 30 tests were respelled.
+  - **FFI-33b:** the end's thread is checked in every profile.
+  - **A1-11's `owns` half:** `into_raw()` is built in, E3100 outside `unsafe:`.
+  - **A6-10:** `Retained` is only a callback's token. `Retained.pin`, the pinning builtins and the relocation rows are
+    removed, and the old tests are retired or rewritten to hand-over.
+  - **Not done:**
+    - A1-11's class half, and the retired reload pin test, need A1-9.
+    - E5060's new meaning.
+    - FFI-35a's header mark.
+    - FFI-33b's stop does not name the variable.
+    - "The line that made it" for a `returns_owned` result is the declaration's.
+  - **Spec question, for the next cut:** FFI-17a ("ended through the deleter"), FFI-36 (`delete` for an imported
+    class) and FFI-36a (one destructor) do not fit together for a `std::unique_ptr<T, D>`. The helper made a
+    stateless `D` the one destructor.
+  - **Choices the spec does not force:**
+    - which types count as foreign;
+    - `threads(creator)` on a result makes the whole type creator-bound;
+    - foreign owners are `Send` unless creator-bound (E7004 today, where FFI-33b says E7008);
+    - `std.ffi` is loaded wherever foreign declarations exist.

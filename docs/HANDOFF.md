@@ -1,5 +1,28 @@
 # Ember — handoff
 
+> **2026-11-12 morning — round 5 collected (the owner awake: "resume it and merge its work").** The Opus helper
+> was cut off by Windows Update's planned restart at 01:00 (System log: `MoUsoCoreWorker.exe`, "Service pack (Planned)";
+> a clean shutdown, not a crash). It was resumed and finished, and is merged (`4a7a48c4`). Round 5's W1 is merged without
+> its TYP-15 commit, and so is `lead-fix`.
+>
+> **Checks on `main`:**
+>
+> - quick check, LLVM backend: failing 0;
+> - the FFI, OWN, THR, std and run-pass folders on the C backend: 459 of 459;
+> - ui: 12 passed;
+> - `rule_index`: no new problems (231 of 838 rules without tests);
+> - `error_pages`: green.
+>
+> **Not pushed:** origin is still `53da7981`.
+>
+> **Next:**
+>
+> 1. The three-way gate on `main`.
+> 2. The bench on both backends.
+> 3. Push.
+> 4. Credit this week's built rules in `docs/phase-status.json`.
+> 5. M4 on `lead-m4`, which must take `main` in first (A1-10, A6-5 and A6-10 landed there).
+
 > **2026-11-11 late night — the day wrapped up on the owner's word ("work on wrapping up work, once the running agent
 > is done just call it a day"). Nothing pushed since `53da7981`. START HERE next session.**
 >
