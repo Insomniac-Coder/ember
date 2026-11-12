@@ -10768,17 +10768,12 @@ impl<'a> Checker<'a> {
                         }
                     };
                     // D-327 — `-1.5` and `-5` are literals too (`[LEX-24]`).
-                    if !is_literal_value(&value.kind) && value.ty != self.common.error
-                        // Already reported: the value did not check ([DIA-14]).
-                        && !matches!(value.kind, ExprKind::Error)
-                    {
-                        self.error(
-                            codes::E2130,
-                            decl.value.span,
-                            "a `const` must be a literal in this phase of the compiler",
-                        );
-                        continue;
-                    }
+                    // D-721 — what is not a literal as written is evaluated (`[CT-1]`, `expr_const`); a
+                    // literal as written checks to a literal value, so nothing else reaches here.
+                    debug_assert!(
+                        is_literal_value(&value.kind) || value.ty == self.common.error || matches!(value.kind, ExprKind::Error),
+                        "a `const` written as a literal checked to something else"
+                    );
                     let const_name = self.qualified(decl.name.name);
                     if self.constants.contains_key(&const_name) {
                         self.error(
@@ -57355,10 +57350,11 @@ impl<'a> Checker<'a> {
             return error;
         }
         if self.types.is_view(key) || self.types.is_view(value) {
-            self.error(
-                codes::E2130,
-                span,
-                "an ArenaMap cannot store a view key or value",
+            // `[TYP-15a]`, `[ARN-5]` allow it; the check that keeps such views no longer than the arena
+            // is not built, so it is never accepted until then.
+            self.sink.emit(
+                Diagnostic::error(codes::E0900, span, "an `ArenaMap` with a view key or value is not built by this compiler yet")
+                    .note("`[TYP-15a]` and `[ARN-5]` allow it, but the check that keeps such views no longer than the arena is not built"),
             );
             return error;
         }
@@ -57664,10 +57660,9 @@ impl<'a> Checker<'a> {
             }
             let inner = explicit[0];
             if self.types.is_view(inner) {
-                self.error(
-                    codes::E2130,
-                    span,
-                    "an uninitialized arena span cannot itself contain a view type",
+                self.sink.emit(
+                    Diagnostic::error(codes::E0900, span, "an uninitialized arena span of views is not built by this compiler yet")
+                        .note("`[TYP-15a]` and `[ARN-5]` allow it, but the check that keeps such views no longer than the arena is not built"),
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
