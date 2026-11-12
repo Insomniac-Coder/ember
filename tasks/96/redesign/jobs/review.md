@@ -398,3 +398,40 @@ after each work batch" is the owner's rule from this round.
     - HR-16 and HR-20 untested.
   - **Spec question for the next cut (Hardened_14):** `[DIA-2]` says a message never says "you", while the
     spec's own B2 help says "a list of your own" and the compiler says "a copy of your own".
+- **W1 (Sonnet), 18 defects** (408k tokens, 118 min). 12 done and merged (`d8f6df9c`), 3 proposed for closing, 3
+  reported.
+  - **Done:**
+    - D-720: an enum's default tag is the smallest signed type;
+    - D-853: no cascade from an error inside a tuple;
+    - D-835: an unresolved field type is reported once in a reloadable build;
+    - D-707: `std.process.args` is in the `io` layer;
+    - D-854, D-852, D-860 and D-691: already fixed, rows closed;
+    - `E2021` (N171) at every call, constructor and `super.init`, with its page; 6 tests rewritten;
+    - `W0001` retired;
+    - B4's `new_n` (N174);
+    - `E2123` names a typed local by its name;
+    - CLO-6's E3013 help gives the call with a copy.
+  - **E3013's help keeps the program's `owns` before the copy** (`consume(owns copy of s)`). The lead first took it
+    out, then put it back after a probe: `[FN-2a]` writes `owns` before any argument the callee takes over,
+    "whatever is given" (`take(owns copy of xs)`), and the compiler refuses `consume(copy of s)` with E3028. `[CLO-6]`'s
+    own example, `call_twice(fn(): consume(copy of s))`, leaves the word out: a spec finding for Hardened_14.
+  - **The lead's rulings on what W1 reported** (each the spec's to decide, so not ODRs):
+    - **D-721:** E2130's three other uses.
+      - The "literal in this phase" path is removed if it is dead.
+      - An `ArenaMap` or arena span of views is allowed by `[TYP-15a]` and `[ARN-5]`, but the check that keeps such
+        views no longer than the arena is not built (M5). Until then it is `E0900`, "not built yet", never accepted.
+      - Round 7.
+    - **The shapes O3, O4, O5, B8, B14, B15 and X1:** §XVII.6.1 says they are no longer used, so their mappings and
+      variants go. Round 7.
+    - **`[OBJ-2]`'s E2173** (built, then reverted by W1): the 22 tests that use a bare interface name are the
+      class-interface handle of `[DSP-3]`, and their respelling to `dyn I` comes with `dyn I`'s representation under
+      `[DSP-3]`, which is M11's (A4-14). It is deferred to M11, and `f0d4fa67` is kept for it.
+  - **Proposed for closing:** D-699, D-864 and D-850. Each was probed in today's spelling; the lead re-probes them
+    before closing.
+  - **Spec findings for Hardened_14:**
+    - E2021's line to write gives a parameter twice when a later named argument gives the first one that no
+      earlier argument gives (`P(a = 1, b=2, b = 3)`), and a help must compile;
+    - B4's noun ("a number of your own", "a text …", "a value …") and the two examples' differing "and stays that
+      … for the whole call";
+    - `[CLO-6]`'s E3013 example (`consume(copy of s)`) without the `owns` that `[FN-2a]` requires;
+    - with the DIA-2 "you" question above.

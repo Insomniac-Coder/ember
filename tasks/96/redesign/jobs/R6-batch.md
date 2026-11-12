@@ -22,6 +22,10 @@ The owner's rules for this round (2026-11-12):
 - The target is `docs/spec-source/Ember_v0.9.20_Hardened_13.md` (cut this round by the deputy; `decisions.md` §24). Write no `Box` anywhere: one owner in a block
   of its own is `owns T`.
 
+**The quick check's compiler.** `tasks/impl-0.9.9/annotations.py` runs `target/debug/ember.exe` unless `EMBER`
+names another binary. Build the binary first (`cargo build -p ember_driver --bin ember`), or set `EMBER` to the one
+you built, or the check tests an old compiler (it did once this round).
+
 A task that cannot be done as the spec says is reported with its rule, the program, what the compiler
 does and what the spec says. **Never leave files outside your worktree.**
 
@@ -178,7 +182,11 @@ Hardened_13's debts (`decisions.md` §24):
     line when it is a plain top-level `=` and no line above reads the parameter, else by a new first line;
     every later use rewritten, each line named; and BRW-14's message itself.
 
-## Queued for round 7 — W2 (Sonnet): defects, names, C output and FFI messages (16 tasks)
+## W2 (Sonnet), started in round 6 when W1 finished: defects, names, C output and FFI messages (21 tasks)
+
+W1's compile slot became free while H1 and H2 run on, so W2 takes it (the owner's dynamic agent count,
+`docs/AUTOPILOT.md` §3). Its tasks are the 16 below, without task 15 (`[DIA-2]`'s spelling touches the type table,
+which H2 is changing; it waits for H2's merge), plus tasks 17 to 22.
 
 The same rules as W1's.
 
@@ -211,3 +219,28 @@ The same rules as W1's.
     written spelling of an alias for messages.
 16. **The checked helpers' `__builtin_*_overflow` calls** live in `ember_rt.h`, not in the emitted C (found in
     round 4). Find the rule that says where they belong (`[CG-C-*]`); fix or report.
+
+
+The lead's rulings on W1's reports, and the credit pilot's gaps (`review.md`, round 6):
+17. **D-721** (`[TYP-1]`): E2130 keeps only its own condition.
+    - The "a const must be a literal in this phase" path (`ember_typeck`, about line 10749) is removed if no
+      program reaches it; show that with a test of a `const` that `[CT-1]` evaluates.
+    - An `ArenaMap` or an arena span holding views is `E0900` ("… is not built by this compiler yet"). `[TYP-15a]`
+      and `[ARN-5]` allow it, but the check that keeps such views no longer than the arena is M5's. Never accept it
+      before then.
+    - Use the spec's spelling `ArenaMap.in(ref mut frame, n)` in the tests; rewrite
+      `TYP-18/reject_concrete_instantiation_diagnostic_is_not_discarded` to the new code.
+18. **The retired shapes:** §XVII.6.1 says O3, O4, O5, B8, B14, B15 and X1 are no longer used. Remove their
+    mappings (3041, 3042, 3025, 3030, 3065, 2228, 3080 and any other retired code mapped to a shape) and the
+    unused `Shape` variants (`ember_diag/src/shapes.rs`, the match in `ember_driver/tests/ui.rs`, `tests/ui/`).
+19. **`[CLI-7]`'s fourth clause as a test:** `ember bind --check … --merge` on an overlay that does not pass gives
+    E5010, exits 1, and writes no `ember.overlays` (the pilot showed it only by a probe).
+20. **`[DET-4]`'s accuracy as a test:** each `det` function within 1 ulp (atan2 1.3, sqrt correctly rounded)
+    against reference values computed at high precision (mpmath, written into the test as exact decimal or hex
+    floats, with the generator kept in `tools/`). A docstring's measurement is not evidence.
+21. **`Array[int, Global]`** is E1010 with "write `Array[int] using Global`", as `Box[int, Global]` is (`[ALC-1]`).
+22. **`[OWN-11]`'s messages:**
+    - E3040 names where the part went ("`p.name` was handed over to `names` on line 4; …
+      `names.push(owns copy of p.name)`");
+    - E3013's line to write for a class field (`names.push(owns mem.take(ref mut q.name))`);
+    - the hand-over out of a name that does not own its value, in the rule's text.

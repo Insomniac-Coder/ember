@@ -23,6 +23,9 @@
 >   - 10 to 30 tasks each;
 >   - the number at once is set by what the work costs the machine (about three builders; readers beside them);
 >   - 5 to 15 minutes of rest after each batch, by its weight.
+> - **Trap:** the quick check (`annotations.py`) runs `target/debug/ember.exe` unless `EMBER` names another binary.
+>   A stale debug build makes a merge look broken (18 false failures on W1's merge) or, worse, look green. Build
+>   it, or set `EMBER` to the binary just built.
 > - **Next:**
 >   1. Collect round 6: review, merge, the quick check.
 >   2. Bench `counted_handles` before and after M4's slices.
