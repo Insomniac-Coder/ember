@@ -16,12 +16,13 @@
 >   - H2 (Opus): M4's rest of slice A and slice B, on `lead-m4` (`4a7a0d8a`, which has `main` merged in);
 >   - W1 (Sonnet): 18 defects;
 >   - C (Opus): a pilot of crediting 20 rules to `built_for_0915`. There are 195 candidates in all.
-> - **The owner's rules for agents (2026-11-12), only while he allows agents:**
->   - up to 4 at once;
+> - **The owner's rules for agents (2026-11-12), only while he allows agents:** `docs/AUTOPILOT.md` §3, "Helper
+>   agents in autonomous mode". In short:
 >   - Sonnet does light and medium development and never rules a spec question;
 >   - Opus (the lead or a helper) takes reviews, merges and ODRs; Fable only with his yes;
 >   - 10 to 30 tasks each;
->   - 10 to 15 minutes of rest after each batch.
+>   - the number at once is set by what the work costs the machine (about three builders; readers beside them);
+>   - 5 to 15 minutes of rest after each batch, by its weight.
 > - **Next:**
 >   1. Collect round 6: review, merge, the quick check.
 >   2. Bench `counted_handles` before and after M4's slices.
