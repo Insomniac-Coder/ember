@@ -4549,7 +4549,7 @@ fn cycle_inspection_reports_edge_kinds_and_shortest_cycle() {
         report.stdout
     );
     assert!(
-        report.stdout.contains("strong Child.leaf: Shared[Leaf] -> Leaf"),
+        report.stdout.contains("strong Child.leaf: shares Leaf -> Leaf"),
         "cycle inspection leaked compiler-private generic spelling:\n{}",
         report.stdout
     );
@@ -5533,7 +5533,7 @@ fn inspect_alloc_reports_the_mechanism_each_declaration_uses() {
         ("local", "main", "xs", "Array, Map, Set, String"),
         ("local", "main", "ages", "Array, Map, Set, String"),
         ("local", "main", "boxed", "owns T"),
-        ("local", "main", "shared", "Shared[T]"),
+        ("local", "main", "shared", "shares T, shares mut T"),
         ("local", "main", "many", "callable"),
     ] {
         assert!(uses(kind, owner, name, mechanism), "[SEL-1] {kind} {owner}.{name} should use {mechanism:?}:\n{}", json.stdout);
@@ -5579,7 +5579,7 @@ fn inspect_alloc_lists_every_allocating_form() {
         ("main", 36, "std.collections.Map.index_set`"),
         ("main", 37, "std.collections.Set.add`"),
         ("main", 38, "an `owns` block"),
-        ("main", 39, "`Shared(…)`"),
+        ("main", 39, "a value made shared"),
         ("main", 40, "`Array.push`"),
         ("main", 41, "std.collections.Map.insert`"),
         ("main", 42, "std.collections.Set.add`"),

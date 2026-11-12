@@ -20,7 +20,7 @@ use ember_diag::{Diagnostic, Sink, codes};
 use ember_hir::{Builtin, Effects, FloatLib, SimdOp};
 use ember_mir::{AggregateKind, AssertKind, Body, CastKind, FuncRef, Operand, Rvalue, StmtKind, Terminator};
 use ember_span::Span;
-use ember_types::{ClassId, OverflowPolicy, Ty, TyKind, TypeTable};
+use ember_types::{ClassId, LinkKind, OverflowPolicy, Ty, TyKind, TypeTable};
 
 use crate::regions::place_type;
 use crate::targets::Targets;
@@ -442,13 +442,15 @@ pub fn storage_mechanism(types: &TypeTable, ty: Ty) -> &'static str {
         TyKind::Class(_) | TyKind::ClassInterface(_) => "class",
         TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::ArrayN { .. } | TyKind::Enum(_) => AGGREGATE,
         TyKind::Dyn { .. } => "owns T",
+        TyKind::Link { kind: LinkKind::Shares | LinkKind::SharesMut, .. } => "shares T, shares mut T",
+        TyKind::Link { kind: LinkKind::ThreadShared, .. } => "thread_shared T",
+        TyKind::Link { kind: LinkKind::Weakref, .. } => "weakref T",
         // `[SEL-1]` — the compiler's block of one owner, `owns T`, by the type itself.
         TyKind::Struct(id) if types.compiler_box_inner(*id).is_some() => "owns T",
         TyKind::Struct(_) => {
             let shown = types.display(ty);
             let head = shown.split('[').next().unwrap_or("");
             match head.rsplit('.').next().unwrap_or(head) {
-                "Shared" => "Shared[T]",
                 "SyncShared" => "SyncShared[T]",
                 "Arena" | "FixedArena" | "ScopedArena" | "ArenaArray" | "ArenaMap" => "Arena, FixedArena",
                 "Pool" | "Handle" => "Pool[T] + Handle[T]",
@@ -1580,7 +1582,8 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::StringNew => (ALLOC, "a new `String`"),
         B::ClassNew { .. } => (ALLOC, "a new class instance"),
         B::BoxNew { .. } => (ALLOC, "an `owns` block"),
-        B::SharedNew { .. } => (ALLOC, "`Shared(…)`"),
+        // `[PHIL-2]` — the block of `shares x`, `shares mut x` or `thread_shared x` (and `SyncShared(…)`).
+        B::SharedNew { .. } => (ALLOC, "a value made shared"),
         B::ArrayPush => (ALLOC, "`Array.push`"),
         B::ArrayInsert => (ALLOC | Effects::CHECK_BOUNDS, "`Array.insert`"),
         B::ArrayExtend => (ALLOC, "`Array.extend`"),

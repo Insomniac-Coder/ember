@@ -1830,14 +1830,19 @@ fn a_changed_base_is_refused_and_a_renamed_variant_kept() {
     assert_eq!(run.stdout, "30\napplied, 3 migrated\n60\n90\n", "{}", run.stderr);
 }
 
-/// `[HR-15]` — when an instance moves, its `Weak` handles are rewritten with its strong ones: a
-/// `Weak` kept in another static upgrades to the moved instance.
+/// `[HR-15]` — when an instance moves, its `weakref` links are rewritten with its strong ones: a
+/// `weakref` link kept in another static opens to the moved instance.
+///
+/// M4: a `weakref Particle` in a `static` is refused by `[THR-2]` (every thread may reach a static),
+/// and this compiler has no `static mut` yet; the program becomes legal with `thread_shared` particles
+/// and `weakref thread_shared Particle` links, which slice E builds.
 #[test]
+#[ignore = "M4: a weakref link in a static needs `weakref thread_shared` (slice E), [THR-2]"]
 fn weak_handles_follow_a_moved_instance() {
     let v1 = PARTICLES
-        .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Array[Particle]] = Mutex([])\nstatic WATCH: Mutex[Array[Weak[Particle]]] = Mutex([])")
-        .replace("                world.push(owns Particle())", "                p = Particle()\n                with watch = WATCH.lock():\n                    watch.push(owns Weak(p))\n                world.push(owns p)")
-        .replace("    return total\n", "    with watch = WATCH.lock():\n        for w in watch:\n            match w.upgrade():\n                Some(p):\n                    total += 1000 * p.step\n                None:\n                    pass\n    return total\n");
+        .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Array[Particle]] = Mutex([])\nstatic WATCH: Mutex[Array[weakref Particle]] = Mutex([])")
+        .replace("                world.push(owns Particle())", "                p = Particle()\n                with watch = WATCH.lock():\n                    watch.push(owns (weakref p))\n                world.push(owns p)")
+        .replace("    return total\n", "    with watch = WATCH.lock():\n        for w in watch:\n            if w exists as p:\n                total += 1000 * p.step\n    return total\n");
     let v2 = v1.replace("    step: int = 1\n", "    step: int = 1\n    bonus: int = 100\n");
     let run = host_run("reload-weak", &v1, &[&v2], 3);
     assert_eq!(run.stdout, "3003\napplied, 3 migrated\n3006\n3009\n", "{}", run.stderr);
