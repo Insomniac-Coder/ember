@@ -11,7 +11,7 @@ import cpp "json_api.hpp" with (project = "json", instantiate = ["nlohmann::basi
 fn main():
     match cpp.json_api.parse("{\"name\": \"ember\", \"tags\": [1, 2, 3]}".as_bytes()):
         Ok(document):
-            json = document.get()
+            json = document
             println(json.is_object(), json.size())
             match cpp.json_api.count(json, "tags".as_bytes()):
                 Ok(n):
