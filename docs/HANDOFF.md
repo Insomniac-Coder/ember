@@ -1,5 +1,27 @@
 # Ember — handoff
 
+> **2026-11-12 afternoon — round 6 collected; stopped and hibernated on the owner's word ("after this task, stop
+> all work … and also hibernate it").** START HERE.
+>
+> - **origin/main:** `2150f53c`.
+> - **Local `main`, not pushed** (the full push gate and the bench have not run on it):
+>   - Hardened_13;
+>   - round 6's W1, H1 (`[TYP-47]` variadic generics, the print functions as library functions) and W2, with the
+>     lead's merge fixes (`f4f3e695`, `aea472db`);
+>   - the quick check failing 0 with the current binary; the C backend's run tests 207 of 207; the unit suites, ui,
+>     rule_index, error_pages, check_branding and phase_progress green.
+> - **`lead-m4` = `52cd0d61`:** H2's slice A rest and slice B on top of `main` from this morning. It lands on `main`
+>   after slice C. It needs `main` merged in again: W1, H1 and W2 landed after its base.
+> - **For the owner:** slice C's count, before any rewrite (`tasks/96/redesign/jobs/review.md`, round 6, H2): 581
+>   handle copies keep two owners without saying so, in 289 of 2,436 programs, plus 65 in std.
+> - **Next, on the owner's resume:**
+>   1. Merge `main` into `lead-m4`.
+>   2. The push gate on `main` (three ways), the bench on both backends, then push.
+>   3. Round 7: the left items in `review.md`, round 6; the Hardened_14 findings (one cut, by an Opus deputy);
+>      `[DIA-2]`'s spelling; M4's slice C after the owner hears the count; FFI-33b's call line and variable,
+>      option (c).
+> - **The quick check** runs `target/debug/ember.exe` unless `EMBER` names another binary (the trap below).
+
 > **2026-11-12 — pushed, Hardened_13 is the target, round 6 running (the owner: "run the gate and bench, then push
 > and continue the work you can use upto 4 agents").** START HERE.
 >

@@ -495,3 +495,33 @@ after each work batch" is the owner's rule from this round.
     - N173's `hide`: does a hidden declaration still count for the two-destructor conflict, given that `hide` makes
       a declaration private and does not remove it? And in what order are by-value `T` results taken?
     - CG-C-1's wording on where the checked helpers live.
+- **H2 (Opus): M4, the rest of slice A and slice B** (277k tokens, 5 h 49 min). All 16 tasks. Fast-forwarded onto
+  `lead-m4` (`52cd0d61`); not on `main`, since M4 lands whole after slice C (`M4-plan.md`).
+  - **Built:**
+    - E2122, E3023, E2119 and E2020 with the rules' messages;
+    - D5's blocks for values that are not class objects;
+    - `None` as a link, and re-pointing one;
+    - the RT-7 limits;
+    - `Shared` and `Weak` refused with E1010, with migration edits, and 173 files migrated;
+    - `weak_of` and the `Weak` machinery deleted (`Shared[T]`'s block stays for values made `shares` and for
+      `SyncShared` until slice E);
+    - pages E2122 and E2119;
+    - 15 design tests R9 and R11, with C, LLVM and the evaluator agreeing and no leaks in debug.
+  - **Slice C's count (measured, nothing rewritten; for the owner before the rewrite):** 581 copies of a class
+    handle that keep two owners without saying so, in 289 of the 2,436 programs that build. Another 65 are in std,
+    in 19 functions (`std.ecs.World.add` 24, `ecs.aos_storage` 12, …). By folder: `tests/run-pass` 65 (38
+    programs), TYP-16 58 (26), RC-2e 37 (15), WK-11 31 (10), TYP-22 30 (20), RC-3 26 (12), EXC-18 22 (16), and a
+    long tail. The script is `count_handle_copies.py`.
+  - **Choices the spec does not force** (in its report): `Shared[T]` migrates to `shares mut T`; the name opened from
+    a link to a non-class value is a read-only `shares T` owner; and the wording of E2122/E2119 where the spec gives
+    none.
+  - **Left for slice E:**
+    - a `shares` value reaching a thread is E7004, where the spec says E7015;
+    - `static W: Mutex[Array[weakref P]]` is E7002;
+    - `[HR-15]`'s reload test is ignored until `weakref thread_shared`.
+  - **Spec findings for Hardened_14:**
+    - does a class local shared by a line take `shares mut C`, as D5 does for values? (H2 recommends no: `c` keeps
+      `C`);
+    - `[TYP-5]` has no `shares mut T` to `shares T` conversion (H2 recommends adding it, as `ref mut` gives `ref`);
+    - `exists as ref mut v` on a link to a value that is not a class object (H2 recommends refusing it, since
+      `weakref T` does not say its owners may change it).
