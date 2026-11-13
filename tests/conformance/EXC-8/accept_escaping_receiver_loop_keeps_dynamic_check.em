@@ -26,9 +26,9 @@ fn report(ref mut counter: Counter, extra: i32):
 
 fn main():
     counter = Counter(0)
-    alias = counter
-    published = counter
+    alias = shares mut counter
+    published = shares mut counter
     for i in 0..3:
-        published = counter
+        published = shares mut counter
         counter.bump()
     report(ref mut alias, published.value)

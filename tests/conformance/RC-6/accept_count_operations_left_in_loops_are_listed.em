@@ -23,7 +23,7 @@ fn main():
     total = 0
     for i in 0..3:
         nodes.push(owns node)
-        holder.item = other
+        holder.item = shares mut other
         total += holder.item.value
     for item in nodes:
         total += item.value

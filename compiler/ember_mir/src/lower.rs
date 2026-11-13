@@ -347,6 +347,8 @@ struct Builder<'a> {
     class_init_flags: std::collections::HashMap<usize, LocalId>,
     /// `Body::handed_at`.
     handed_at: Vec<(LocalId, ember_span::Span)>,
+    /// `Body::stored_at`.
+    stored_at: Vec<(LocalId, ember_span::Span)>,
 }
 
 impl<'a> Builder<'a> {
@@ -498,6 +500,7 @@ impl<'a> Builder<'a> {
             class_access,
             class_init_flags: std::collections::HashMap::new(),
             handed_at: Vec::new(),
+            stored_at: Vec::new(),
         }
     }
 
@@ -602,6 +605,7 @@ impl<'a> Builder<'a> {
                 positions
             },
             handed_at: self.handed_at,
+            stored_at: self.stored_at,
         }
     }
 
@@ -1149,6 +1153,7 @@ impl<'a> Builder<'a> {
                 self.at(decl_span);
                 self.push(StmtKind::StorageLive(mir_local));
                 if let Some(init) = init {
+                    self.note_stored_object(init);
                     let place = Place::local(mir_local);
                     self.lower_into(place, init);
                 }
@@ -1156,6 +1161,7 @@ impl<'a> Builder<'a> {
                 self.owns(mir_local);
             }
             hir::Stmt::Assign { place, value } => {
+                self.note_stored_object(value);
                 let place = self.lower_place(place);
                 self.lower_assign(place, value);
             }
@@ -7596,6 +7602,16 @@ impl<'a> Builder<'a> {
             _ => {}
         });
         found
+    }
+
+    /// `Body::stored_at` — a `let` or `=` whose value is a class object a local holds.
+    fn note_stored_object(&mut self, value: &hir::Expr) {
+        if let hir::ExprKind::Local(source) = value.kind
+            && matches!(self.types.kind(value.ty), TyKind::Class(_) | TyKind::ClassInterface(_))
+        {
+            let local = self.local_map[source.0 as usize];
+            self.stored_at.push((local, value.span));
+        }
     }
 
     /// `[OWN-9]` — an argument for an `owns` parameter: handed over (`lent`, `handed`).

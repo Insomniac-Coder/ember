@@ -1840,6 +1840,7 @@ impl Reporter<'_> {
                 None => diagnostic,
             };
             let diagnostic = self.kept_by_copy(diagnostic, body, local, again.then_some(span));
+            let diagnostic = self.kept_by_sharing(diagnostic, body, local, again.then_some(span));
             diagnostic
             .primary_label("handed over here, and the loop comes round again")
             .note(concat!(
@@ -1859,6 +1860,7 @@ impl Reporter<'_> {
                 .primary_label("used here")
                 .note("handing a value over gives it away; the old owner cannot use it again [OWN-3]");
             let diagnostic = self.kept_by_copy(diagnostic, body, local, again.then_some(span));
+            let diagnostic = self.kept_by_sharing(diagnostic, body, local, again.then_some(span));
             self.moved_from(diagnostic, body, local, span)
         };
         self.sink.emit_classified(diagnostic);
@@ -1940,6 +1942,26 @@ impl Reporter<'_> {
             return diagnostic;
         }
         diagnostic.migrate_edits("a copy where 0.9.10 copied the number (`owns copy of`)", edits)
+    }
+
+    /// `[CLI-20]` (M4 slice C) — before 0.9.15 `m = n` made a second owner of the class object `n`
+    /// held; it hands it over now (`[TYP-45]`). Where `n` is used again, `ember fmt --migrate` writes
+    /// each such line `m = shares mut n`, two owners that may both change it, so the program does
+    /// what it did; no message changes.
+    fn kept_by_sharing(&self, diagnostic: Diagnostic, body: &Body, local: LocalId, instruction: Option<Span>) -> Diagnostic {
+        let moves: Vec<Span> = moves_reaching(body, local, self.point).into_iter().chain(instruction).collect();
+        let mut edits: Vec<(Span, Replacement)> = Vec::new();
+        for (stored, at) in &body.stored_at {
+            let within = moves.iter().any(|moved| moved.file == at.file && moved.start <= at.end && at.start <= moved.end);
+            let insert = Span::new(at.file, at.start, at.start);
+            if *stored == local && within && !edits.iter().any(|(span, _)| *span == insert) {
+                edits.push((insert, Replacement::Text("shares mut ".to_string())));
+            }
+        }
+        if edits.is_empty() {
+            return diagnostic;
+        }
+        diagnostic.migrate_edits("a second owner where 0.9.10 copied the handle (`shares mut`)", edits)
     }
 
     /// `[OWN-3]` — a use after a move is labelled at the move as well; and a collection's, with the

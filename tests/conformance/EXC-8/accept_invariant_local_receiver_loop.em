@@ -17,7 +17,7 @@ class Counter:
 
 fn main():
     owner = Counter(0)
-    alias = owner
+    alias = shares mut owner
     receiver = alias
     for i in 0..3:
         receiver.bump()

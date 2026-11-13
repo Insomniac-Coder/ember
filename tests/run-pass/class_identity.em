@@ -21,7 +21,7 @@ class Child(Base):
 
 fn main():
     first = Child(7)
-    same = first
+    same = shares mut first
     other = Child(7)
     base: Base = first
     if first is same:

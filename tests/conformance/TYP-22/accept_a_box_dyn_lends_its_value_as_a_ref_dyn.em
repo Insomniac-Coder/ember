@@ -43,7 +43,7 @@ fn main():
     b: owns dyn Shape = owns Square(3)
     println(measure(a), measure(b), a.area())
     tile = Tile(7)
-    keep = tile
+    keep = shares mut tile
     t: owns dyn Shape = owns tile
     m = measure(t)
     keep.grow()

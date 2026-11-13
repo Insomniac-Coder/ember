@@ -22,7 +22,7 @@ class Bag implements Slots:
 
 fn main():
     b = Bag()
-    c = b
+    c = shares mut b
     h: Slots = b
     r = h.slot(0)
     println(len(c.items))
