@@ -1914,7 +1914,30 @@ impl Parser<'_> {
                 break;
             }
         }
+        self.check_word_list(&items);
         Pattern { id: self.next_id(), kind: PatternKind::Tuple(items), span: start.to(self.prev_span()) }
+    }
+
+    /// `[GRM-42]` — in a list of names declared without types (a loop's names, a pattern's names) each
+    /// word belongs to the one name after it, and a name with no word may not follow a name with a
+    /// word (`E0116`), so that no word can be read as covering the next name.
+    pub(crate) fn check_word_list(&mut self, items: &[Pattern]) {
+        let worded = |p: &Pattern| matches!(p.kind, PatternKind::Bind { by_ref: true, .. } | PatternKind::CopyOf { .. });
+        let plain = |p: &Pattern| matches!(p.kind, PatternKind::Bind { by_ref: false, sub: None, .. });
+        for pair in items.windows(2) {
+            let [before, after] = pair else { continue };
+            if !worded(before) || !plain(after) {
+                continue;
+            }
+            let text = |p: &Pattern| self.src.get(p.span.start as usize..p.span.end as usize).unwrap_or("").trim().to_string();
+            let (first, second) = (text(before), text(after));
+            let word = first.rsplit_once(' ').map_or(first.as_str(), |(word, _)| word).to_string();
+            let name = first.rsplit(' ').next().unwrap_or("").to_string();
+            self.report(
+                Diagnostic::error(codes::E0116, after.span, format!("`{word}` here belongs to `{name}` only; say what `{second}` is"))
+                    .help(format!("write `ref {second}` to read it, or `{word} {second}` to treat it as `{name}` is treated")),
+            );
+        }
     }
 
     /// `[GRM-27]` — `for target in or_expr {for target in or_expr | if
@@ -2079,6 +2102,7 @@ impl Parser<'_> {
         self.expect_kw(Kw::Fn);
         self.expect_punct(Punct::LParen);
         let mut params = Vec::new();
+        let mut untyped_words: Vec<(bool, (String, String))> = Vec::new();
         while !self.at_punct(Punct::RParen) && !self.at_eof() {
             let start = self.span();
             let id = self.next_id();
@@ -2096,6 +2120,20 @@ impl Parser<'_> {
             } else {
                 TypeExpr { id: self.next_id(), kind: TypeKind::Infer, span: name.span }
             };
+            // `[GRM-42]` — a lambda's parameters written without types are such a list: a name with no
+            // word may not follow a name with one.
+            let untyped = matches!(ty.kind, TypeKind::Infer);
+            if untyped && !worded && let Some((true, before)) = untyped_words.last() {
+                let (word, kept) = before.clone();
+                self.report(
+                    Diagnostic::error(codes::E0116, name.span, format!("`{word}` here belongs to `{kept}` only; say what `{}` is", name.name))
+                        .help(format!("write `ref {}` to read it, or `{word} {}` to treat it as `{kept}` is treated", name.name, name.name)),
+                );
+            }
+            if untyped {
+                let word = self.src.get(start.start as usize..name.span.start as usize).unwrap_or("").trim().to_string();
+                untyped_words.push((worded, (word, name.name.to_string())));
+            }
             params.push(Param {
                 id,
                 mode,
@@ -2337,6 +2375,7 @@ impl Parser<'_> {
                     self.one_element_tuple(start.to(self.prev_span()));
                     return items.pop().expect("one item");
                 }
+                self.check_word_list(&items);
                 PatternKind::Tuple(items)
             }
             TokenKind::Punct(Punct::LBracket) => {
@@ -2500,7 +2539,9 @@ impl Parser<'_> {
                 PatternKind::Lit(PatternLit { negative: true, lit })
             }
             ExprKind::Tuple(items) => {
-                PatternKind::Tuple(items.into_iter().map(|e| self.expr_to_pattern(e)).collect())
+                let items: Vec<Pattern> = items.into_iter().map(|e| self.expr_to_pattern(e)).collect();
+                self.check_word_list(&items);
+                PatternKind::Tuple(items)
             }
             ExprKind::Paren(inner) => return self.expr_to_pattern(*inner),
             // `[GRM-13]`, `[GRM-19]` — `ref mut path` and `ref n` name a part of a condition's pattern
