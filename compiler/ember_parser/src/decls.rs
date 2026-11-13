@@ -31,6 +31,12 @@ impl Parser<'_> {
             });
         }
 
+        // `[FFI-51]` — `unsafe import c "./bridge.c"`: an import that vouches for the C it compiles in.
+        let unsafe_word = self.at_kw(Kw::Unsafe).then(|| self.span());
+        if let Some(at) = unsafe_word {
+            self.bump();
+            self.unsafe_sites.push(ember_ast::UnsafeSite { span: at, kind: ember_ast::UnsafeSiteKind::Import });
+        }
         self.expect_kw(Kw::Import);
 
         // `import c "header.h"` / `import cpp "header.h"`
@@ -67,12 +73,16 @@ impl Parser<'_> {
             self.expect_newline();
             return Some(Import {
                 id,
-                kind: ImportKind::Foreign { language, header, options, alias },
+                kind: ImportKind::Foreign { language, header, options, alias, is_unsafe: unsafe_word.is_some() },
                 span: start.to(self.prev_span()),
                 public: false,
             });
         }
 
+        if let Some(at) = unsafe_word {
+            self.report(Diagnostic::error(codes::E0100, at, "`unsafe` goes before `import c` and `import cpp` only")
+                .help("an Ember module's code is checked, so its import needs no `unsafe`: remove it"));
+        }
         self.slot_ending_with(&[Kw::As]);
         let path = self.parse_dotted_path();
         let alias = self.eat_kw(Kw::As).then(|| self.expect_ident());
@@ -138,6 +148,13 @@ impl Parser<'_> {
             let start = self.span();
             self.bump();
             let id = self.next_id();
+            // `[FFI-26]` — `@unsafe(export("name"))`: the attribute inside, in its unsafe form.
+            let written_unsafe = self.at_kw(Kw::Unsafe) && self.at_punct_at(1, Punct::LParen);
+            if written_unsafe {
+                self.unsafe_sites.push(ember_ast::UnsafeSite { span: start, kind: ember_ast::UnsafeSiteKind::Attribute });
+                self.bump();
+                self.bump();
+            }
             let path = self.parse_dotted_path();
             let mut args = Vec::new();
             if self.eat_punct(Punct::LParen) {
@@ -155,7 +172,10 @@ impl Parser<'_> {
                 self.expect_punct(Punct::RParen);
                 self.in_ffi_attribute = outer_ffi;
             }
-            attrs.push(Attribute { id, path, args, span: start.to(self.prev_span()) });
+            if written_unsafe {
+                self.expect_punct(Punct::RParen);
+            }
+            attrs.push(Attribute { id, path, args, span: start.to(self.prev_span()), written_unsafe });
             self.eat_newlines();
         }
         self.safety_attribute = attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is("safety"));
@@ -273,6 +293,7 @@ impl Parser<'_> {
             TokenKind::Keyword(Kw::Unsafe) => {
                 self.at_fn_at(1)
                     || self.at_kw_at(1, Kw::Extern)
+                    || self.at_kw_at(1, Kw::Interface)
                     || matches!(self.peek_at(1), TokenKind::Ident(s) if s.is("extend"))
                     || self.at_overlay_decl(1)
             }

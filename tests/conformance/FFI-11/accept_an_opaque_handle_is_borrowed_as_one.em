@@ -9,7 +9,8 @@
 # a `ref mut Counter` (an incomplete type takes no parameter mode, so not `mut counter: Counter`),
 # `nullable` an `Option` of either; a result `from(counter)` borrows the argument. No `unsafe`.
 
-import c "./handles.c" with (overlay = "overlays/handles.em") as h
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./handles.c" with (overlay = "overlays/handles.em") as h
 
 # The box frees its counter, with `counter_free`, when it is dropped here.
 fn count() -> i32:

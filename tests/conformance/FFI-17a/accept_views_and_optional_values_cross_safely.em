@@ -1,5 +1,5 @@
 #$ test: run-pass
-#$ rules: FFI-17a, FFI-11, FFI-2
+#$ rules: FFI-17a, FFI-11, FFI-11a, FFI-2
 #$ profiles: debug, development, release
 #$ stdout: 3 6 -1 -3 6
 #$ stdout: nothing to shout
@@ -9,7 +9,8 @@
 # `[FFI-17a]` — a `std::string_view` is a `Span[u8]`, a `std::span<const T>` a `Span[T]` and a
 # `std::span<T>` a `MutSpan[T]`, zero-copy both ways: a parameter is the view's pointer and length,
 # from which the thunk makes the view; a result is a view of the C++ object's elements, borrowing
-# what the entry's lifetime word names (`[FFI-11]`: `from(self)`, `from(text)`, `from(static)`). A
+# what the entry's lifetime word names (`[FFI-11]`: `from(this)`, `from(text)`, `from(static)`),
+# which it takes alone, with no count word, since the C++ type carries its count (`[FFI-11a]`). A
 # `std::optional<T>` of a `T` that maps by value is an `Option[T]`. A `std::unique_ptr<T>`
 # parameter takes the `owns T` the caller hands over: C++ frees the object, once. The
 # overlay's entries assert each call safe (`[FFI-2]`): no `unsafe`.

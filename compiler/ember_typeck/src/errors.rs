@@ -986,6 +986,7 @@ pub(crate) fn desugar_status_errors(modules: &[LoadedModule]) -> Option<Vec<Load
                 path: vec![ast::Ident { name: Symbol::intern("derive"), span }],
                 args: vec![ast::AttrArg::Expr(path(&[Symbol::intern("Copy")], span))],
                 span,
+                written_unsafe: false,
             };
             generated.push(ast::Item {
                 id: ast::NodeId::DUMMY,

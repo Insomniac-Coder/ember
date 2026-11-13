@@ -13,7 +13,8 @@
 # calls receives one and passes it on, once, to one that reads it.
 
 from std.ffi import VaList, c_char, c_int
-import c "./variadic.c" with (overlay = "overlays/variadic.em") as v
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./variadic.c" with (overlay = "overlays/variadic.em") as v
 
 fn shown(bytes: ref [u8; 32], length: c_int) -> String:
     return String.from(bytes[0..length as int].to_str().unwrap())

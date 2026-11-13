@@ -1,7 +1,8 @@
 #$ test: parse-pass
 #$ rules: FFI-25, FFI-26, PAN-1
 
-@export("host_panic")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("host_panic"))
 pub fn blow_up() -> i32:
     return deep_failure()
 

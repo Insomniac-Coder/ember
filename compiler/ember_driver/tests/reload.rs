@@ -239,21 +239,21 @@ fn a_noreload_body_change_is_refused_whole() {
 #[test]
 fn a_closure_holding_an_instance_follows_it_when_it_moves() {
     let tied = PARTICLES
-        .replace("@export(\"game_frame\")", "class Mote:\n    n: int = 0\n    keep: Option[Ticker] = None\n\n\
+        .replace("# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))", "class Mote:\n    n: int = 0\n    keep: Option[Ticker] = None\n\n\
                   class Ticker:\n    f: fn() -> int\n\n\
                   fn tie():\n    m = Mote()\n    step = owned fn() -> int:\n        m.n = m.n + 1\n        return m.n\n    \
-                  m.keep = Some(Ticker(step))\n\n@export(\"game_frame\")")
+                  m.keep = Some(Ticker(step))\n\n# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))")
         .replace("            for k in 0..3:\n", "            tie()\n            for k in 0..3:\n");
     let grow = |source: &str| source.replace("    n: int = 0\n", "    n: int = 0\n    more: int = 8\n");
     let run = host_run("reload-closure-moves", &tied, &[&grow(&tied)], 3);
     assert_eq!(run.stdout, "3\napplied, 1 migrated\n6\n9\n", "{}", run.stderr);
 
     let boxed = PARTICLES
-        .replace("@export(\"game_frame\")", "interface Speak:\n    fn speak() -> int\n\n\
+        .replace("# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))", "interface Speak:\n    fn speak() -> int\n\n\
                   class Mote implements Speak:\n    n: int = 0\n    keep: Option[Holder] = None\n\n    \
                   fn speak() -> int:\n        return this.n\n\n\
                   class Holder:\n    s: owns dyn Speak\n\n\
-                  fn tie():\n    m = Mote()\n    keeper = m\n    boxed: owns dyn Speak = owns m\n    keeper.keep = Some(Holder(boxed))\n\n@export(\"game_frame\")")
+                  fn tie():\n    m = Mote()\n    keeper = m\n    boxed: owns dyn Speak = owns m\n    keeper.keep = Some(Holder(boxed))\n\n# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))")
         .replace("            for k in 0..3:\n", "            tie()\n            for k in 0..3:\n");
     let run = host_run("reload-dyn-cannot-move", &boxed, &[&grow(&boxed)], 2);
     assert!(run.stdout.contains("an instance of `Mote` must move (its new size does not fit), but 1 of its 1 references are held where the runtime cannot follow them"), "exit {} {}{}", run.exit, run.stdout, run.stderr);
@@ -573,7 +573,7 @@ fn link_host(package: &Path, out: &Path, host: &str) -> PathBuf {
 
 const PARTICLES: &str = "from std.sync import Atomic, Mutex\n\n@sync\nclass Particle:\n    x: Atomic[int] = Atomic(0)\n    step: int = 1\n\n\
     static WORLD: Mutex[Array[Particle]] = Mutex([])\n\n\
-    @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with world = WORLD.lock():\n        \
+    # SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with world = WORLD.lock():\n        \
     if world.len() == 0:\n            for k in 0..3:\n                world.push(owns Particle())\n        \
     for p in world:\n            p.x.fetch_add(p.step)\n            total += p.x.load()\n    return total\n\nfn main():\n    pass\n";
 
@@ -699,7 +699,7 @@ fn a_field_changed_to_a_range_type_is_tested_by_checked() {
     let statics = |ty: &str, range: &str| {
         let seven = if ty == "int" { "fn seven() -> int:\n    println(\"init\")\n    return 7\n" } else { "fn seven() -> Small:\n    println(\"init\")\n    return Small.clamped(7)\n" };
         format!(
-            "type Small = int in {range}\n\n{seven}\nstatic LIMIT: {ty} = seven()\n\n@export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    \
+            "type Small = int in {range}\n\n{seven}\nstatic LIMIT: {ty} = seven()\n\n# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))\nextern \"C\" fn frame(turn: i64) -> i64:\n    \
              x: int = LIMIT\n    return x + turn\n\nfn main():\n    pass\n"
         )
     };
@@ -709,7 +709,7 @@ fn a_field_changed_to_a_range_type_is_tested_by_checked() {
     assert!(run.stdout.contains("refused: static `LIMIT` became the range type `Small`, and its value fails `Small.checked`"), "{}", run.stdout);
     assert!(run.stdout.ends_with("8\n"), "the old code did not run on: {}", run.stdout);
     // Folded into the code, a constant static has no value to migrate: its new type applies.
-    let folded = |ty: &str| format!("type Small = int in 0..10\n\nstatic LIMIT: {ty} = 7\n\n@export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    x: int = LIMIT\n    return x + turn\n\nfn main():\n    pass\n");
+    let folded = |ty: &str| format!("type Small = int in 0..10\n\nstatic LIMIT: {ty} = 7\n\n# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))\nextern \"C\" fn frame(turn: i64) -> i64:\n    x: int = LIMIT\n    return x + turn\n\nfn main():\n    pass\n");
     let run = host_run("reload-range-folded", &folded("int"), &[&folded("Small")], 2);
     assert_eq!(run.stdout, "7\napplied, 0 migrated\n8\n", "{}", run.stderr);
 }
@@ -798,7 +798,7 @@ fn an_enum_payload_migrates_by_the_field_rows() {
 /// frame.
 const POINTS: &str = "from std.sync import Mutex\n\nstruct Point:\n    x: int = 0\n    step: int = 1\n\n\
     static PTS: Mutex[Array[Point]] = Mutex([])\n\n\
-    @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with pts = PTS.lock():\n        \
+    # SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with pts = PTS.lock():\n        \
     if pts.len() == 0:\n            for k in 0..3:\n                pts.push(owns Point())\n        \
     for i in 0..pts.len():\n            pts[i].x += pts[i].step\n            total += pts[i].x\n    return total\n\nfn main():\n    pass\n";
 
@@ -845,7 +845,7 @@ fn value_data_migrates_through_its_container() {
     // Unit enums: reordered, kept by name; removed while held, refused.
     let modes = "from std.sync import Mutex\n\nenum Mode:\n    Slow\n    Fast\n\nstatic MODES: Mutex[Array[Mode]] = Mutex([])\n\n\
                  fn speed(mode: Mode) -> int:\n    match mode:\n        Mode.Slow:\n            return 1\n        Mode.Fast:\n            return 10\n\n\
-                 @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with modes = MODES.lock():\n        \
+                 # SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with modes = MODES.lock():\n        \
                  if modes.len() == 0:\n            modes.push(owns Mode.Slow)\n            modes.push(owns Mode.Fast)\n        \
                  for m in modes:\n            total += speed(m)\n    return total + turn * 100\n\nfn main():\n    pass\n";
     let reordered = modes
@@ -861,7 +861,7 @@ fn value_data_migrates_through_its_container() {
     // Enums with payloads.
     let shapes = "from std.sync import Mutex\n\nenum Shape:\n    Dot\n    Circle(r: int)\n\nstatic SHAPES: Mutex[Array[Shape]] = Mutex([])\n\n\
                   fn size(s: Shape) -> int:\n    match s:\n        Shape.Dot:\n            return 0\n        Shape.Circle(r):\n            return r\n\n\
-                  @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with shapes = SHAPES.lock():\n        \
+                  # SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with shapes = SHAPES.lock():\n        \
                   if shapes.len() == 0:\n            shapes.push(owns Shape.Circle(4))\n            shapes.push(owns Shape.Dot)\n        \
                   for s in shapes:\n            total += size(s)\n    return total + turn * 100\n\nfn main():\n    pass\n";
     let reshaped = shapes
@@ -970,7 +970,7 @@ const WIDGETS_OVERLAY: &str = "unsafe overlay c \"widgets.h\":\n    @ffi(destroy
 /// reclaim end the `owns T`, freeing the object once, by its type's destructor (`[FFI-36a]`).
 #[test]
 fn a_foreign_object_ember_owns_is_carried_across() {
-    let v1 = "import std.hot\nimport c \"./widgets.c\" with (overlay = \"widgets_overlay.em\") as b\n\n\
+    let v1 = "import std.hot\n# SAFETY: the test's own C, which runs nothing before `main`\nunsafe import c \"./widgets.c\" with (overlay = \"widgets_overlay.em\") as b\n\n\
               class Device:\n    w: owns b.Widget\n    n: int = 1\n    spare: int = 0\n\n    \
               fn init(owns w: owns b.Widget):\n        this.w = w\n\n\
               fn tick(d: Device) -> int:\n    \
@@ -1386,7 +1386,7 @@ fn an_enum_static_keeps_its_variant() {
     let v1 = "from std.sync import Mutex\n\nenum Mode:\n    Slow\n    Fast\n\nstruct Setting:\n    mode: Mode = Mode.Slow\n\n\
               static START: Mode = Mode.Fast\nstatic NOW: Mutex[Setting] = Mutex(Setting())\n\n\
               fn speed(mode: Mode) -> int:\n    match mode:\n        Mode.Slow:\n            return 1\n        Mode.Fast:\n            return 10\n\n\
-              @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    with now = NOW.lock():\n        \
+              # SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))\nextern \"C\" fn frame(turn: i64) -> i64:\n    with now = NOW.lock():\n        \
               if turn == 0:\n            now.mode = Mode.Fast\n        return speed(START) * 100 + speed(now.mode)\n\nfn main():\n    pass\n";
     let reordered = v1
         .replace("enum Mode:\n    Slow\n    Fast\n", "enum Mode:\n    Fast\n    Turbo\n    Slow\n")
@@ -1454,7 +1454,7 @@ const MIGRATED: &str = "from std.sync import Atomic, Mutex\nfrom std.hot import 
     fn init(x: int, speed: int):\n        this.x = Atomic(x)\n        this.speed = speed\n\n    \
     static fn migrate_from(old: OldSelf) -> Result[Self, ReloadError]:\n        return Ok(Particle(old.x.load() * 100, old.step * 10))\n\n\
     static WORLD: Mutex[Array[Particle]] = Mutex([])\n\n\
-    @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with world = WORLD.lock():\n        \
+    # SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with world = WORLD.lock():\n        \
     if world.len() == 0:\n            for k in 0..3:\n                world.push(owns Particle(0, 1))\n        \
     for p in world:\n            p.x.fetch_add(p.speed)\n            total += p.x.load()\n    return total\n\nfn main():\n    pass\n";
 
@@ -1499,7 +1499,7 @@ fn a_failing_migration_is_reported_not_fatal() {
 #[test]
 fn a_struct_static_migrates() {
     let v1 = "from std.sync import Mutex\n\nstruct Score:\n    points: int = 0\n\nstatic BOARD: Mutex[Score] = Mutex(Score())\n\n\
-              @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    with board = BOARD.lock():\n        board.points += 5\n        return board.points\n\nfn main():\n    pass\n";
+              # SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))\nextern \"C\" fn frame(turn: i64) -> i64:\n    with board = BOARD.lock():\n        board.points += 5\n        return board.points\n\nfn main():\n    pass\n";
     let v2 = v1.replace("    points: int = 0\n", "    points: int = 0\n    bonus: int = 1000\n").replace("return board.points", "return board.points + board.bonus");
     let run = host_run("reload-static-struct", v1, &[&v2], 3);
     assert_eq!(run.stdout, "5\napplied, 0 migrated\n1010\n1015\n", "exit {}: {}", run.exit, run.stderr);
@@ -1610,7 +1610,7 @@ fn run_hot_tells_a_program_without_a_checkpoint() {
 /// signature is refused, since only a rebuilt host could call them.
 #[test]
 fn exports_are_the_module_protocol() {
-    let added = PARTICLES.replace("fn main():", "@export(\"game_extra\")\nextern \"C\" fn extra() -> i64:\n    return 7\n\nfn main():");
+    let added = PARTICLES.replace("fn main():", "# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_extra\"))\nextern \"C\" fn extra() -> i64:\n    return 7\n\nfn main():");
     let run = host_run("reload-export-added", PARTICLES, &[&added], 2);
     assert!(run.stdout.contains("refused:") && run.stdout.contains("export `game_extra` was added, which changes the module protocol"), "{}", run.stdout);
     assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
@@ -1633,7 +1633,7 @@ fn an_exports_c_abi_is_the_same_under_every_protocol() {
     let define = format!("#define {}_RELOAD_PROTOCOL ", ember_branding::SYMBOL_PREFIX.to_uppercase());
     let protocol = header.lines().find_map(|line| line.strip_prefix(&define)).expect("the header defines the reload protocol").trim().to_string();
     let marker = ember_branding::runtime(&format!("reload_protocol_v{protocol}"));
-    let source = "@export(\"game_frame\")\nextern \"C\" fn frame(turn: i64, scale: f64) -> i64:\n    return turn + 1\n\nfn main():\n    pass\n";
+    let source = "# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))\nextern \"C\" fn frame(turn: i64, scale: f64) -> i64:\n    return turn + 1\n\nfn main():\n    pass\n";
     // `[CG-LL-1]` — under the LLVM backend, the export's IR signature: the same C ABI.
     if backend().is_some() {
         let mut signatures = Vec::new();
@@ -1770,7 +1770,7 @@ fn removing_a_function_whose_address_is_held_is_refused() {
 fn a_type_behind_a_raw_pointer_does_not_migrate() {
     let v1 = "from std.sync import Mutex\n\nstruct Score:\n    points: int = 0\n\nstatic BOARD: Mutex[Score] = Mutex(Score())\n\n\
               fn raw(p: *mut Score) -> int:\n    return 0\n\n\
-              @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    with board = BOARD.lock():\n        board.points += 5\n        return board.points\n\nfn main():\n    pass\n";
+              # SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))\nextern \"C\" fn frame(turn: i64) -> i64:\n    with board = BOARD.lock():\n        board.points += 5\n        return board.points\n\nfn main():\n    pass\n";
     let v2 = v1.replace("    points: int = 0\n", "    points: int = 0\n    bonus: int = 1000\n");
     let run = host_run("reload-raw-pointer", v1, &[&v2], 2);
     assert!(run.stdout.contains("a value of `Score` may be reachable only through a raw pointer or foreign memory"), "{}", run.stdout);
@@ -1784,7 +1784,7 @@ fn a_type_behind_a_raw_pointer_does_not_migrate() {
 fn a_changed_layout_attribute_is_a_schema_change() {
     let v1 = "from std.sync import Mutex\n\nstruct Score:\n    level: u8 = 3\n    points: int = 0\n\nstatic BOARD: Mutex[Score] = Mutex(Score())\n\n\
               fn raw(p: *mut Score) -> int:\n    return 0\n\n\
-              @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    with board = BOARD.lock():\n        board.points += 5\n        return board.points * 10 + board.level as int\n\nfn main():\n    pass\n";
+              # SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))\nextern \"C\" fn frame(turn: i64) -> i64:\n    with board = BOARD.lock():\n        board.points += 5\n        return board.points * 10 + board.level as int\n\nfn main():\n    pass\n";
     let aligned = v1.replace("struct Score:\n", "@align(64)\nstruct Score:\n");
     let run = host_run("reload-layout-foreign", v1, &[&aligned], 2);
     assert!(run.stdout.contains("a value of `Score` may be reachable only through a raw pointer or foreign memory"), "{}", run.stdout);
@@ -1905,7 +1905,7 @@ int main(int argc, char** argv) {
 /// value saying which edit runs (`tag`) and that every instance is still there.
 const BENCH_WORLD: &str = "from std.sync import Atomic, Mutex\n\n@sync\nclass Particle:\n    x: Atomic[int] = Atomic(0)\n    step: int = 1\n\n\
     static WORLD: Mutex[Array[Particle]] = Mutex([])\n\nfn tag(p: Particle) -> int:\n    return 1\n\n\
-    @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    with world = WORLD.lock():\n        \
+    # SAFETY: nothing else in the process defines this name\n@unsafe(export(\"game_frame\"))\nextern \"C\" fn frame(turn: i64) -> i64:\n    with world = WORLD.lock():\n        \
     if world.len() == 0:\n            for k in 0..10000:\n                world.push(owns Particle())\n        \
     for p in world:\n            p.x.fetch_add(p.step)\n        return tag(world[0]) * 100000 + world.len()\n\nfn main():\n    pass\n";
 

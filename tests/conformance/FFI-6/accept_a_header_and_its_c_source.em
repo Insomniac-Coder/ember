@@ -23,7 +23,8 @@
 # incomplete struct an opaque type used behind a pointer, a C name that is an Ember keyword a raw
 # identifier.
 
-import c "./geometry.c"
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./geometry.c"
 
 fn main():
     println(c.GEOMETRY_MAX, c.GEOMETRY_UNITS.to_str().unwrap(), c.GEOMETRY_FLAG_B, c.Shape.SHAPE_AREA as i32)

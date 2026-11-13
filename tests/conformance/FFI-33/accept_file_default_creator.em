@@ -5,11 +5,13 @@
 #$ assert-c: contains("ember_rt_check_main_thread();")
 #$ stdout: 43 44
 
-@export("default_creator_score")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("default_creator_score"))
 pub fn default_creator() -> i32:
     return 43
 
-@export("override_any_score", threads=any)
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("override_any_score", threads=any))
 pub fn override_any() -> i32:
     return 44
 

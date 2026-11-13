@@ -26,11 +26,13 @@ pub class Counter:
     pub fn total() -> i32:
         return this.hits.load(MemoryOrder.Acquire)
 
-@export("make_counter")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("make_counter"))
 pub fn make_counter() -> Counter:
     return Counter()
 
-@export("bump_twice")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("bump_twice"))
 pub fn bump_twice(counter: Counter) -> i32:
     counter.bump()
     return counter.bump()
@@ -45,11 +47,13 @@ pub class Square(Shape):
     pub override fn sides() -> i32:
         return 4
 
-@export("make_square")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("make_square"))
 pub fn make_square() -> Shape:
     return Square()
 
-@export("make_shape")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("make_shape"))
 pub fn make_shape() -> Shape:
     return Shape()
 

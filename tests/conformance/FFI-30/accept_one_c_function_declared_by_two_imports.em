@@ -6,7 +6,8 @@
 # `[FFI-30]` — two imports of one header, with different defines, each declare its function: one C
 # function, one callable, whichever import's name calls it.
 
-import c "answer.h" with (implementation = ["ANSWER_IMPLEMENTATION"])
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "answer.h" with (implementation = ["ANSWER_IMPLEMENTATION"])
 import c "answer.h" with (defines = ["ANSWER_OTHER"]) as other
 
 fn main():

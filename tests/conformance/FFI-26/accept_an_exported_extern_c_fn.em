@@ -8,7 +8,8 @@
 #$ assert-c: contains("int32_t game_on_update(")
 #$ assert-c: !contains("int32_t on_update(")
 
-@export("game_on_update")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("game_on_update"))
 pub extern "C" fn on_update(entity: u64, dt: f32) -> i32:
     return 1
 

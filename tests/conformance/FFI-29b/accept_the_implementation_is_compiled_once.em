@@ -4,12 +4,14 @@
 #$ warning[L3015]: `single_calls` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 42 42 2
-# `[FFI-29b]` — `implementation = ["SINGLE_IMPLEMENTATION"]` compiles a single-header library's
-# implementation (into the import's shim, with the macro defined); the same import written twice
+# `[FFI-29b]` — `implementation = ["SINGLE_IMPLEMENTATION"]`, in an `unsafe import c`, compiles a
+# single-header library's implementation (into the import's shim, with the macro defined); the same import written twice
 # is one module, so the implementation is compiled exactly once and links.
 
-import c "single.h" with (implementation = ["SINGLE_IMPLEMENTATION"])
-import c "single.h" with (implementation = ["SINGLE_IMPLEMENTATION"]) as again
+# SAFETY: single.h's implementation defines two functions and runs nothing before `main`
+unsafe import c "single.h" with (implementation = ["SINGLE_IMPLEMENTATION"])
+# SAFETY: the same import, bound twice
+unsafe import c "single.h" with (implementation = ["SINGLE_IMPLEMENTATION"]) as again
 
 fn main():
     unsafe:  # SAFETY(ffi): scalar calls

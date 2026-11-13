@@ -739,6 +739,7 @@ impl Writer<'_> {
             path: vec![ast::Ident { name: Symbol::intern("no_derive"), span }],
             args: ["Clone", "Eq", "Debug"].iter().map(|name| ast::AttrArg::Expr(path(Symbol::intern(name), span))).collect(),
             span,
+            written_unsafe: false,
         };
         self.items.push(ast::Item {
             id: ast::NodeId::DUMMY,

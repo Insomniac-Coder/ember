@@ -6,7 +6,8 @@
 # another thread panics before C runs, naming the function and both threads.
 
 import std.thread
-import c "./ui.c" as raw
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./ui.c" as raw
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(threads(main), effects=[], link_name="ui_frame")

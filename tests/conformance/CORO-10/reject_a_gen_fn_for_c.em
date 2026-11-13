@@ -7,7 +7,8 @@
 extern "C" gen fn foreign() -> Generator[int]:    #$ error[E2222]: cannot be `extern` or `@export`ed
     yield 1
 
-@export
+# SAFETY: nothing else in the process defines this name
+@unsafe(export)
 gen fn exported() -> Generator[int]:    #$ error[E2222]: cannot be `extern` or `@export`ed
     yield 2
 

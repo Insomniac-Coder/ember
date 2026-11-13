@@ -4,7 +4,8 @@
 # `[FFI-8]` — a `VaList` is not `Copy`: whoever it is passed to reads it, so it is passed on once.
 
 from std.ffi import VaList, c_char, c_int
-import c "./variadic.c" with (overlay = "overlays/variadic.em") as v
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./variadic.c" with (overlay = "overlays/variadic.em") as v
 
 extern "C" fn sink(context: *mut void, format: *c_char, owns arguments: VaList):
     unsafe:  # SAFETY(ffi): the second use is the case the checker refuses

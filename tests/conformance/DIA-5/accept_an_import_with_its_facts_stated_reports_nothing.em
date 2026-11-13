@@ -6,7 +6,8 @@
 # the calls need stated in the overlay, the same calls compile with nothing reported (the header's
 # functions defined in `labels.c`, which the case imports so that it links and runs).
 
-import c "./labels.c" with (overlay = "overlays/stated.em") as labels
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./labels.c" with (overlay = "overlays/stated.em") as labels
 
 fn main():
     println(labels.label_length(c"hello"))

@@ -140,7 +140,9 @@ def module_text(index, count, lines_per_module, body_value=1):
     head.append("from m000 import Item, Shape, item_score, shape_size, larger")
     head += [f"import {module_name(i)}" for i in imports(index) if i != 0]
     if index == 1:
-        head.append('import c "./vkimpl.c"')
+        # `[FFI-51]` — a C source compiled into the program is vouched for.
+        head.append("# SAFETY: the generated package's own C, which runs nothing before `main`")
+        head.append('unsafe import c "./vkimpl.c"')
     text = "\n".join(head) + "\n\n" + body_function(index, body_value)
     parts = []
     used = text.count("\n")

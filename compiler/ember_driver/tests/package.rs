@@ -314,6 +314,37 @@ fn a_root_module_never_shares_a_path_with_a_dependency() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `[FFI-29b]` — a single-header library's implementation is compiled exactly once per build: two
+/// packages requesting it for one header is `E5014`, even when each writes the same import, which
+/// is otherwise one module; one package requesting it and another importing the header alone link.
+#[test]
+fn two_packages_requesting_one_implementation_are_refused() {
+    let dir = scratch();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    std::fs::write(
+        dir.join("vendor/single.h"),
+        "#ifndef SINGLE_H\n#define SINGLE_H\nint single_answer(void);\n#endif\n#ifdef SINGLE_IMPLEMENTATION\nint single_answer(void) { return 42; }\n#endif\n",
+    )
+    .unwrap();
+    let request = "# SAFETY: single.h's implementation defines `single_answer` and runs nothing before `main`\n\
+                   unsafe import c \"../../vendor/single.h\" with (implementation = [\"SINGLE_IMPLEMENTATION\"]) as s\n";
+    let lib = |import: &str| format!("{import}\npub fn answer() -> i32:\n    # SAFETY(ffi): a call with no arguments\n    unsafe:\n        return s.single_answer()\n");
+    package(&dir.join("audio"), "[package]\nname = \"audio\"\nversion = \"1.0.0\"\nkind = \"lib\"\n", &[("lib", &lib(request))]);
+    let manifest = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\naudio = { path = \"../audio\" }\n";
+    let main = |import: &str| format!("{import}import audio\n\nfn main():\n    # SAFETY(ffi): a call with no arguments\n    unsafe:\n        println(audio.answer(), s.single_answer())\n");
+    package(&dir.join("app"), manifest, &[("main", &main(request))]);
+    let twice = ember(&["check"], &dir.join("app"));
+    assert!(
+        !twice.ok && twice.stderr.contains("error[E5014]") && twice.stderr.contains("at another package's request"),
+        "{}",
+        twice.stderr
+    );
+    package(&dir.join("app"), manifest, &[("main", &main("import c \"../../vendor/single.h\" as s\n"))]);
+    let once = ember(&["run", "--backend", &backend()], &dir.join("app"));
+    assert!(once.ok && once.stdout.contains("42 42"), "{}{}", once.stdout, once.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `[STD-6]` — `std` is layered (core, alloc, sync, io, ffi), each depending only on the ones
 /// before it, and a package that declares `[package] layers = ["core"]` may use only core: its
 /// options, results, integers, fixed arrays and math are there, an `Array` (the allocator) is not,
@@ -665,7 +696,7 @@ fn the_cmake_module_builds_packages_as_targets_of_a_c_project() {
     let module = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../cmake").join(format!("{}{}.cmake", cli[..1].to_uppercase(), &cli[1..]));
     let module = std::path::absolute(&module).unwrap().to_string_lossy().replace('\\', "/");
     let p = ember_branding::SYMBOL_PREFIX;
-    let export = "@export(\"twice\")\npub fn twice(x: i32) -> i32:\n    return 2 * x\n";
+    let export = "# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"twice\"))\npub fn twice(x: i32) -> i32:\n    return 2 * x\n";
     for (folder, kind, entry, text) in [("numbers", "staticlib", "lib", export), ("shared", "cdylib", "lib", export), ("tool", "bin", "main", "fn main():\n    println(\"tool\")\n")] {
         std::fs::create_dir_all(dir.join(folder).join("src")).unwrap();
         std::fs::write(dir.join(folder).join(ember_branding::MANIFEST), format!("[package]\nname = \"{folder}\"\nversion = \"0.1.0\"\nkind = \"{kind}\"\n")).unwrap();

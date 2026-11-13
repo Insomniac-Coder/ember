@@ -7,7 +7,8 @@
 # changed by its own operations, here an `Atomic`'s.
 
 from std.sync import Atomic
-import c "./ticks.c" with (overlay = "overlays/any.em") as ticks
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./ticks.c" with (overlay = "overlays/any.em") as ticks
 
 fn main():
     count: Atomic[i32] = Atomic(0)

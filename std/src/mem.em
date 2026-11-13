@@ -50,6 +50,63 @@ fn volatile_read(pointer: *T) -> T:
 fn volatile_write(pointer: *mut T, value: T):
     pass
 
+## `[UNS-5]` — `count` values of `T` from `src` to `dst`, read and written through the raw pointers
+## bit for bit, as C's `memmove` copies: the two ranges may overlap. Nothing is dropped, so a value
+## that needs drop is afterwards in both places.
+@safety("`src` is valid for reading `count` values of `T` and `dst` for writing them, and a value that needs drop is ended once, from one of the two places")
+[T]
+pub unsafe fn copy(src: *T, dst: *mut T, count: usize):
+    bytes = count * size_of[T]()
+    from = src as *u8
+    to = dst as *mut u8
+    if (to as usize) <= (from as usize):
+        i: usize = 0
+        while i < bytes:
+            to.add(i).write(from.add(i).read())
+            i += 1
+    else:
+        i = bytes
+        while i > 0:
+            i -= 1
+            to.add(i).write(from.add(i).read())
+
+## `[UNS-5]` — `copy`, for ranges that do not overlap, as C's `memcpy` copies.
+@safety("`src` is valid for reading `count` values of `T` and `dst` for writing them, the two ranges do not overlap, and a value that needs drop is ended once, from one of the two places")
+[T]
+pub unsafe fn copy_nonoverlapping(src: *T, dst: *mut T, count: usize):
+    bytes = count * size_of[T]()
+    from = src as *u8
+    to = dst as *mut u8
+    i: usize = 0
+    while i < bytes:
+        to.add(i).write(from.add(i).read())
+        i += 1
+
+## `[UNS-5]` — `value`'s bits as a `B`. `value` is handed over and not dropped: the `B` given back
+## holds what it held.
+@safety("`A` and `B` have the same size, and `value`'s bits are a valid `B`")
+[A, B]
+pub unsafe fn transmute(owns value: A) -> B:
+    from = MaybeUninit[A].uninit()
+    from.write(owns value)
+    to = MaybeUninit[B].uninit()
+    copy_nonoverlapping(ref_to_ptr(ref from) as *u8, ref_to_ptr(ref mut to) as *mut u8, size_of[B]())
+    return to.assume_init()
+
+## `[UNS-5]`, `[ARN-11]` — a `T` whose bytes are all zero, which is a valid `T` for every `Zeroable`
+## type (`@derive(Zeroable)`, a number, a `bool`), so the call is safe.
+[T: needs Zeroable]
+pub fn zeroed() -> T:
+    i: usize = 0
+    # SAFETY: `T` is `Zeroable`, so a `T` whose bytes are all zero is valid, and every byte is written
+    unsafe:
+        slot = MaybeUninit[T].uninit()
+        to = ref_to_ptr(ref mut slot) as *mut u8
+        while i < size_of[T]():
+            to.add(i).write(0)
+            i += 1
+        return slot.assume_init()
+
 ## `[OWN-6]`, `[DRP-1]` — `mem.drop(owns x)` ends `x` now: the name given to it ends, for every
 ## type, numbers included, as for every `owns` parameter, and a later use is `E3040`. Handed to
 ## this frame, the value is dropped at its end, once.

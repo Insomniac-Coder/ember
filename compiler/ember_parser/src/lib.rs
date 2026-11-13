@@ -592,6 +592,8 @@ impl<'a> Parser<'a> {
             match self.tokens.get(index).map(|t| &t.kind) {
                 Some(TokenKind::DocComment(_)) | Some(TokenKind::Newline) => index += 1,
                 Some(TokenKind::Keyword(Kw::Import)) => return true,
+                // `[FFI-51]` — `unsafe import c`, and `pub [unsafe] import c`.
+                Some(TokenKind::Keyword(Kw::Unsafe | Kw::Pub)) => index += 1,
                 Some(TokenKind::Ident(s)) => return s.is("from"),
                 _ => return false,
             }
@@ -667,7 +669,7 @@ impl<'a> Parser<'a> {
                 self.discard_dangling_doc(doc);
                 continue;
             }
-            if self.at_kw(Kw::Import) || self.at_contextual("from") {
+            if self.at_kw(Kw::Import) || self.at_contextual("from") || (self.at_kw(Kw::Unsafe) && self.at_kw_at(1, Kw::Import)) {
                 first_any.get_or_insert(self.span());
                 if let Some(import) = self.parse_import() {
                     if let Some(first) = first_decl {
@@ -695,10 +697,11 @@ impl<'a> Parser<'a> {
             first_decl.get_or_insert(self.span());
             first_any.get_or_insert(self.span());
             // `[FFI-30b]` — `pub import c "…"`: only a foreign import may be re-exported.
+            let unsafe_word = usize::from(self.at_kw_at(1, Kw::Unsafe));
             if self.at_kw(Kw::Pub)
-                && matches!(self.peek_at(1), TokenKind::Keyword(Kw::Import))
-                && matches!(self.peek_at(2), TokenKind::Ident(word) if word.is("c") || word.is("cpp"))
-                && matches!(self.peek_at(3), TokenKind::Lit(ember_lexer::Lit::Str(_)))
+                && matches!(self.peek_at(1 + unsafe_word), TokenKind::Keyword(Kw::Import))
+                && matches!(self.peek_at(2 + unsafe_word), TokenKind::Ident(word) if word.is("c") || word.is("cpp"))
+                && matches!(self.peek_at(3 + unsafe_word), TokenKind::Lit(ember_lexer::Lit::Str(_)))
             {
                 let start = self.span();
                 self.bump();
@@ -877,7 +880,7 @@ impl<'a> Parser<'a> {
                 "`#! module` needs one valid attribute name and arguments"));
             return None;
         }
-        Some(ember_ast::Attribute { id, path, args, span: Span::new(self.file, start as u32, end as u32) })
+        Some(ember_ast::Attribute { id, path, args, span: Span::new(self.file, start as u32, end as u32), written_unsafe: false })
     }
 }
 

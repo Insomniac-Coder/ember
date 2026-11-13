@@ -209,7 +209,8 @@ fn locked(m: ref Mutex[i64]) -> i64:
     with g = m.lock():
         return g
 
-@export(\"pair_total\")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export(\"pair_total\"))
 fn pair_total(p: Pair) -> i64:
     return p.a + p.b
 
@@ -517,7 +518,8 @@ double __vectorcall vc_big(big5 v) { return v.a + 2 * v.b + 3 * v.c + 4 * v.d + 
 ").unwrap();
     let source = dir.join(format!("main.{}", ember_branding::SOURCE_EXT));
     std::fs::write(&source, "\
-import c \"./vc.c\"
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c \"./vc.c\"
 
 struct Hva2:
     a: f64

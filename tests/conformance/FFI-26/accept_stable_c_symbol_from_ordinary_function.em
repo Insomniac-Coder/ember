@@ -4,7 +4,8 @@
 #$ assert-c: contains("int32_t stable_score(")
 #$ stdout: 42
 
-@export("stable_score")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("stable_score"))
 fn score(value: i32) -> i32:
     return value + 1
 

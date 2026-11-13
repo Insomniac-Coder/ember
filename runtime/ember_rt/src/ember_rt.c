@@ -2514,7 +2514,24 @@ ember_obj_header* ember_cpp_object_adopt(ember_obj_header* object, ember_loc at)
     return object;
 }
 
+/* `[FFI-33b]` — the call line and the local's name a stop names, each for the next event on this
+ * thread. */
+static EMBER_RT_THREAD_LOCAL ember_loc g_ffi_call_at;
+static EMBER_RT_THREAD_LOCAL const char* g_ffi_end_name;
+
+void ember_ffi_call_at(ember_loc at) {
+    g_ffi_call_at = at;
+}
+
+void ember_ffi_end_name(const char* name) {
+    g_ffi_end_name = name;
+}
+
 void* ember_ffi_adopt(void* object, ember_loc at) {
+    if (g_ffi_call_at.line != 0) {
+        at = g_ffi_call_at;
+        g_ffi_call_at.line = 0;
+    }
     if (object == NULL) {
         return object;
     }
@@ -2558,6 +2575,8 @@ void* ember_ffi_adopt(void* object, ember_loc at) {
 
 void ember_ffi_release(void* object, uint32_t creator, const char* type) {
     ember_loc made = { "<foreign-object>", 0, 0 };
+    const char* name = g_ffi_end_name;
+    g_ffi_end_name = NULL;
     if (object != NULL) {
         foreign_owned_lock();
         if (g_foreign_owned_cap != 0) {
@@ -2578,10 +2597,11 @@ void ember_ffi_release(void* object, uint32_t creator, const char* type) {
      * the thread that made it. Safe code never moves one, so this stop backs unsafe code and C. */
     uint32_t here = thread_number();
     if (creator != 0 && creator != here) {
-        char buffer[384];
+        char buffer[512];
         int written = snprintf(buffer, sizeof buffer,
-            "a `%s` made on thread %u (line %u), ended on thread %u; a `threads(creator)` value ends "
+            "%s%s%sa `%s` made on thread %u (line %u), ended on thread %u; a `threads(creator)` value ends "
             "where it was made [FFI-33b]",
+            name != NULL ? "`" : "", name != NULL ? name : "", name != NULL ? "`, " : "",
             type, (unsigned)creator, (unsigned)made.line, (unsigned)here);
         ember_panic(buffer, written > 0 ? (size_t)written : 0, made);
     }

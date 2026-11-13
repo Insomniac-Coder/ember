@@ -24,6 +24,7 @@ mod coroutines;
 mod habits;
 mod objects;
 mod views;
+mod ffi;
 mod packs;
 
 pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
@@ -933,7 +934,8 @@ fn check_round(
         if function.is_extern_declaration {
             continue;
         }
-        if main.is_some() && function.abi.is_some() && function.symbol == "main" {
+        // `[FFI-26]` — and an export named `main` is refused in a library too.
+        if (main.is_some() || checker.exports_main) && function.abi.is_some() && function.symbol == "main" {
             checker.error(codes::E0104, function.span,
                 "C export `main` conflicts with the generated program entry point");
         }
@@ -1774,6 +1776,9 @@ enum UnsafeStep {
     Read(Option<String>),
     Write(Option<String>),
     Offset(Option<String>),
+    /// `[UNS-5]` — a call of `mem.copy` or `mem.copy_nonoverlapping`, named by what it writes: the
+    /// destination pointer as written, and what must be writable there ("four `int`s").
+    CopyInto { into: Option<String>, needs: String },
     /// A call, the callee as written.
     Call { callee: String, kind: CallKind },
     /// Any other, as a noun phrase, one and several: "the cast between raw pointer types", "the casts
@@ -3993,6 +3998,8 @@ struct Checker<'a> {
     /// `[UNS-3]` — each statement of an `unsafe:` block, by span, and whether any check of it (its
     /// generic's or an instance's) needed `unsafe`; reported once checking is done.
     unsafe_statements: HashMap<Span, bool>,
+    /// `[FFI-26]` — an export names the C symbol `main`.
+    exports_main: bool,
     /// D-929, `[UNS-3]` — the scope of the `unsafe:` block whose statements are being checked, and
     /// whether the statement being checked read a name an earlier statement of that block declared:
     /// it cannot move out of the block, whose scope the name ends with.
@@ -4465,6 +4472,7 @@ impl<'a> Checker<'a> {
             unsafe_used: false,
             unsafe_blocks: HashMap::new(),
             unsafe_statements: HashMap::new(),
+            exports_main: false,
             unsafe_scope: None,
             reads_block_name: std::cell::Cell::new(false),
             assume_noalloc: Vec::new(),
@@ -4627,7 +4635,7 @@ impl<'a> Checker<'a> {
                 };
                 let named = ast::Expr { id: ast::NodeId::DUMMY, kind, span: from.span };
                 let path = vec![ast::Ident { name: Symbol::intern("borrows"), span: from.span }];
-                from_attr = ast::Attribute { id: ast::NodeId::DUMMY, path, args: vec![ast::AttrArg::Expr(named)], span: from.span };
+                from_attr = ast::Attribute { id: ast::NodeId::DUMMY, path, args: vec![ast::AttrArg::Expr(named)], span: from.span, written_unsafe: false };
                 &from_attr
             }
             (None, Some(written)) => written,
@@ -6412,6 +6420,12 @@ impl<'a> Checker<'a> {
                                             .migrate_edits("`ForeignBox` is no longer imported", vec![(edit, ember_diag::Replacement::Text(String::new()))]),
                                     );
                                     self.failed_imports[index].insert(item.alias.map(|a| a.name).unwrap_or(item.name.name));
+                                    continue;
+                                }
+                                // `[UNS-5]` — `std.mem` provides `MaybeUninit`, the compiler-known type the
+                                // prelude names: importing it binds that type.
+                                // ponytail: an `as` alias of it is not bound; add a type alias when one is wanted.
+                                if self.prefixes[target] == "std.mem" && item.name.name.is("MaybeUninit") && item.alias.is_none() {
                                     continue;
                                 }
                                 // `[OWN-6]` — and so is `mem.forget`.
@@ -17572,6 +17586,12 @@ impl<'a> Checker<'a> {
             return error;
         }
         let Some(destroys) = contract.destroys else {
+            // `[FFI-36]` — an imported C++ class is ended by its own destructor and `delete` unless
+            // something names another; one with no public destructor has neither.
+            if self.foreign_cpp.get(contract.module).copied().unwrap_or(false) {
+                self.refuse_no_public_destructor(contract.module, pointee, span);
+                return error;
+            }
             self.sink.emit(
                 Diagnostic::error(codes::E5002, span, format!("the declaration of `{shown}` names no destructor"))
                     .help(format!("write `@ffi(destroys(f))` on `type {shown}`, naming the foreign function that frees one [FFI-36a]")),
@@ -22703,7 +22723,7 @@ impl<'a> Checker<'a> {
                     _ => {
                         self.sink.emit(
                             Diagnostic::error(codes::E0104, attr.span, "`@export_table` takes the table's C symbol and its protocol version")
-                                .help("write `@export_table(\"Name\", protocol=1)`"),
+                                .help("write `@unsafe(export_table(\"Name\", protocol=1))`"),
                         );
                         break;
                     }
@@ -22712,7 +22732,7 @@ impl<'a> Checker<'a> {
             let (Some(name), Some(protocol)) = (name, protocol) else {
                 self.sink.emit(
                     Diagnostic::error(codes::E0104, attr.span, "`@export_table` needs the table's C symbol and its protocol version")
-                        .help("write `@export_table(\"Name\", protocol=1)`"),
+                        .help("write `@unsafe(export_table(\"Name\", protocol=1))`"),
                 );
                 continue;
             };
@@ -22720,6 +22740,8 @@ impl<'a> Checker<'a> {
                 self.error(codes::E0104, attr.span, format!("`{name}` is not a C identifier, which a table's symbol must be: a host declares it in C"));
                 continue;
             }
+            // `[FFI-26]` — the table's C symbol, `Name_vN`, may be one already taken.
+            self.check_export_name_taken(&format!("{name}_v{protocol}"), decl.name.name, attr.span);
             if !decl.generics.is_empty() {
                 self.error(codes::E0104, attr.span, "an exported table is one struct: a generic struct is not one");
                 continue;
@@ -23788,7 +23810,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Call { callee, .. } => ffi_contract_word(callee),
             _ => ffi_contract_word(expr),
         };
-        const FORMS: &[&str] = &["param", "result", "effects", "deterministic", "link_name", "variadic"];
+        const FORMS: &[&str] = &["param", "result", "effects", "deterministic", "link_name", "variadic", "no_callbacks"];
         let (top, inner): (Option<Symbol>, Vec<Symbol>) = match arg {
             ast::AttrArg::Named { name, .. } => (Some(name.name), Vec::new()),
             ast::AttrArg::Expr(value) => {
@@ -23824,7 +23846,7 @@ impl<'a> Checker<'a> {
         match (top, unknown) {
             (_, Some(word)) => self.sink.emit(
                 Diagnostic::error(codes::E0104, span, format!("`{word}` is not a contract word of `@ffi`"))
-                    .help(format!("`@ffi` on a foreign function takes {}; the contract words are {}", FORMS.join(", "), FFI_CONTRACT_WORDS.join(", ")))
+                    .help(format!("`@ffi` on a foreign function takes {}; the contract words are {}", FORMS.join(", "), ffi::contract_words_shown()))
                     .note("a hand declaration's contract is written `@ffi(param(name, word, …), result(word, …))` [FFI-11]"),
             ),
             _ if inner.iter().any(|word| word.is("exclusive")) && inner.iter().any(|word| word.is("aliased")) => {
@@ -24377,6 +24399,18 @@ impl<'a> Checker<'a> {
             return;
         }
         let call = match (&step, written) {
+            // `[UNS-5]` — "`copy_nonoverlapping(p, q, 4)` (line 8) writes through the raw pointer `q`, and
+            // nothing checks that four `int`s are writable there; put line 8 in …".
+            (UnsafeStep::CopyInto { into, needs }, Some(written)) => {
+                let into = into.as_ref().map_or_else(|| "a raw pointer".to_string(), |into| format!("the raw pointer `{into}`"));
+                let mut diagnostic = Diagnostic::error(
+                    codes::E3100,
+                    span,
+                    format!("`{written}` (line {line}) writes through {into}, and nothing checks that {needs} are writable there; {}", unsafe_block_to_write(lines, "that holds here")),
+                );
+                diagnostic.notes = refusal.notes;
+                diagnostic
+            }
             (UnsafeStep::Call { callee, kind }, Some(written)) if *kind != CallKind::Other => {
                 // A call the code does not spell (a `for` loop's `iter`, an operator's method) is named by
                 // its callee.
@@ -24607,7 +24641,7 @@ impl<'a> Checker<'a> {
         if let Some(note) = self.changed_declarations.get(&self.signatures[def.0 as usize].decl) {
             self.changed_calls.push((span, note.clone()));
         }
-        if !self.signatures[def.0 as usize].is_unsafe {
+        if !self.signatures[def.0 as usize].is_unsafe || self.is_mem_copy(def) {
             return;
         }
         let callee = self.declared_name(def).unwrap_or_default();
@@ -41393,7 +41427,41 @@ impl<'a> Checker<'a> {
         if self.fn_ids.get(&Symbol::intern("std.ecs.system")) == Some(&def) {
             self.check_ecs_system_sendable(&call, args);
         }
+        if self.is_mem_copy(def) {
+            self.check_mem_copy_safety(&call, args, span);
+        }
         call
+    }
+
+    /// `[UNS-5]` — whether `def` is `std.mem.copy` or `std.mem.copy_nonoverlapping`, whose calls say
+    /// what they write.
+    fn is_mem_copy(&self, def: DefId) -> bool {
+        ["std.mem.copy", "std.mem.copy_nonoverlapping"].iter().any(|path| self.fn_ids.get(&Symbol::intern(path)) == Some(&def))
+    }
+
+    /// `[UNS-5]` — a call of `copy` or `copy_nonoverlapping` outside unsafe code is `E3100`, naming the
+    /// pointer it writes through and the values that must be writable there.
+    fn check_mem_copy_safety(&mut self, call: &Expr, args: &[ast::Arg], span: Span) {
+        let (into, needs) = match (&call.kind, args) {
+            (ExprKind::Call { args: checked, .. }, [_, dst, count]) if checked.len() == 3 => {
+                let elem = match *self.types.kind(checked[1].ty) {
+                    TyKind::Ptr { inner, .. } => format!("`{}`s", self.types.display(inner)),
+                    _ => "values".to_string(),
+                };
+                let count = match &checked[2].kind {
+                    ExprKind::Int(n) => count_in_words(*n),
+                    _ => self.written_line(count.value.span).map_or_else(|| "that many".to_string(), |written| format!("`{written}`")),
+                };
+                (self.written_line(dst.value.span), format!("{count} {elem}"))
+            }
+            _ => (None, "the values".to_string()),
+        };
+        self.unsafe_step(
+            span,
+            UnsafeStep::CopyInto { into, needs },
+            Diagnostic::error(codes::E3100, span, "a call of `copy` or `copy_nonoverlapping` requires an `unsafe` block")
+                .note("it writes through a raw pointer, which nothing checks [UNS-5]"),
+        );
     }
 
     /// `[ECS-4]` (ODR-218) — `std.ecs.system(body, name)` makes a system `run_parallel` runs on
@@ -45033,7 +45101,7 @@ impl<'a> Checker<'a> {
                     self.sink.emit(
                         Diagnostic::error(codes::E0104, contract.span,
                             format!("`{}` is not a contract word", contract.word.name))
-                            .help(format!("the contract words are {}", FFI_CONTRACT_WORDS.join(", ")))
+                            .help(format!("the contract words are {}", ffi::contract_words_shown()))
                             .note("a contract word takes the place of a type in an overlay entry [FFI-11]"),
                     );
                 }
@@ -45307,10 +45375,6 @@ impl<'a> Checker<'a> {
                         self.error(codes::E0104, attr.span, "a function has only one `@export` attribute");
                     }
                     saw_export = true;
-                    if attr.args.is_empty() {
-                        self.error(codes::E0900, attr.span,
-                            "only a C export symbol, `on_panic=abort`, and `threads=main|any|creator` are supported");
-                    }
                     let mut symbol = None;
                     let mut saw_panic = false;
                     let mut saw_threads = false;
@@ -45361,6 +45425,9 @@ impl<'a> Checker<'a> {
                                 .note("a symbol is not empty and holds no space, quote, backslash or control character"),
                         );
                     }
+                    // `[FFI-26]` — without a name, the function's own; either may be one already taken.
+                    let named = symbol.map_or_else(|| decl.name.name.to_string(), str::to_string);
+                    self.check_export_name_taken(&named, decl.name.name, attr.span);
                     // A C symbol names one function, and a generic's parameters have nothing to be
                     // inferred from at an export: each instance is its own function [TYP-16].
                     if !decl.generics.is_empty() {
@@ -45536,6 +45603,11 @@ impl<'a> Checker<'a> {
                                     }
                                     saw_destroys = true;
                                 } else if let ast::AttrArg::Expr(expr) = arg
+                                    && ffi_contract_word(expr).is_some_and(|word| word.is("no_callbacks")) {
+                                    // `[FFI-11]`, `[FFI-52]` — recorded: the function never calls back
+                                    // into Ember (an asserted fact `ember tcb` lists).
+                                    self.check_no_callbacks(&item.attrs, decl, attr.span);
+                                } else if let ast::AttrArg::Expr(expr) = arg
                                     && (ffi_contract_word(expr).is_some_and(|word| word.is("handle"))
                                         || matches!(&expr.kind, ast::ExprKind::Call { callee, .. } if ffi_contract_word(callee).is_some_and(|word| word.is("handle")))) {
                                     // ODR-247, ODR-269 — `handle` is a word of a type's contract.
@@ -45607,7 +45679,15 @@ impl<'a> Checker<'a> {
             ast::ItemKind::Comptime(_) => "comptime block",
             ast::ItemKind::Overlay(_) => "overlay",
         };
+        let item_name = match &item.kind {
+            ast::ItemKind::Fn(decl) => decl.name.name.to_string(),
+            ast::ItemKind::Struct(decl) => decl.name.name.to_string(),
+            ast::ItemKind::Static(decl) => decl.name.name.to_string(),
+            _ => String::new(),
+        };
         for attr in &item.attrs {
+            // `[FFI-26]` — `@unsafe(export(…))`, and the plain form refused.
+            self.check_unsafe_attribute_form(attr, &item_name);
             if matches!(&item.kind, ast::ItemKind::Fn(decl) if !decl.is_foreign_decl)
                 && attr.path.len() == 1 && attr.path[0].name.is("export") {
                 continue;
@@ -46003,7 +46083,12 @@ impl<'a> Checker<'a> {
             let gone = match (name, attr.args.as_slice()) {
                 ("static_safe", _) => Some(("`@static_safe` is gone", "write `@no_alias_checks`: a function that keeps no check of who else holds its data".to_string())),
                 ("fp", [arg]) if word(arg).as_deref() == Some("contract") => Some(("`@fp(contract)` is gone", "write `@fp(allow_fma)`".to_string())),
-                ("no_runtime_checks", _) => Some(("`@no_runtime_checks` is gone", "no switch turns a safety check off; remove it [UNS-11]".to_string())),
+                // `[UNS-11]` — no switch turns a safety check off, in any build: the two ways to write
+                // what such a switch was wanted for.
+                ("no_runtime_checks", _) => Some((
+                    "there is no switch that turns safety checks off, in any build; to forbid run-time alias checks here write `@no_alias_checks`; to skip the bounds check of an index known to be in range, write `xs.get_unchecked(i)` inside `unsafe:` with a `# SAFETY:` note",
+                    "remove `@no_runtime_checks` [UNS-11]".to_string(),
+                )),
                 // `[LT-1a]`, `[LT-22]` — what a result points into is the first line's rule, narrowed by
                 // the summary its body gives, or `from` naming one parameter or field.
                 ("borrows", args) => {
@@ -53547,7 +53632,10 @@ impl<'a> Checker<'a> {
     /// `uninit()`, `write` and `write_at` are `unsafe` operations (`[UNS-1]`): outside `unsafe:` each
     /// is `E3100`. For a `T` with nothing to drop they stay safe.
     fn maybe_uninit_unsafe(&mut self, inner: Ty, operation: &str, span: Span) {
-        if !self.types.needs_drop(inner) {
+        // A type parameter that is not `Copy` may be one that needs drop, so a generic body vouches as
+        // its every instance would (`[UNS-3]`: the block is needed in each).
+        let maybe_drop = matches!(self.types.kind(inner), TyKind::Param { .. }) && !self.implements(inner, Symbol::intern("std.core.Copy"));
+        if !self.types.needs_drop(inner) && !maybe_drop {
             return;
         }
         let shown = self.types.display(inner);
@@ -55739,6 +55827,7 @@ impl<'a> Checker<'a> {
                 path: vec![name("$reduce")],
                 args: reductions.iter().map(|(var, ..)| ast::AttrArg::Expr(path(var.as_str()))).collect(),
                 span,
+                written_unsafe: false,
             });
         }
         stmts.push(ast::Stmt {
@@ -64694,6 +64783,12 @@ fn is_compiler_known_struct(name: &str) -> bool {
 /// why `why`: "put line 9 in an `unsafe:` block with a `# SAFETY:` note saying why …: above line 9 write
 /// `# SAFETY:` and the reason, then `unsafe:`, and indent line 9 under it". A statement over several
 /// lines is put in whole; one that shares its line with what comes before it is moved onto its own.
+/// `[UNS-5]` — a count as a message says it: "four", or the digits past twelve.
+fn count_in_words(n: u128) -> String {
+    const WORDS: [&str; 13] = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
+    WORDS.get(n as usize).filter(|_| n < 13).map_or_else(|| n.to_string(), |word| word.to_string())
+}
+
 fn unsafe_block_to_write(lines: StmtLines, why: &str) -> String {
     let StmtLines { first, last, alone } = lines;
     if !alone {
@@ -64717,7 +64812,7 @@ fn undocumented_unsafe(name: Symbol, first: Option<&UnsafeStep>) -> String {
     let target = |pointer: &Option<String>| pointer.as_ref().map_or_else(|| "the pointer".to_string(), |pointer| format!("`{pointer}`"));
     let (does, with) = match first {
         Some(UnsafeStep::Read(pointer)) => (format!(" that reads through {}", through(pointer)), format!(", with what {} must point to", target(pointer))),
-        Some(UnsafeStep::Write(pointer)) => (format!(" that writes through {}", through(pointer)), format!(", with what {} must point to", target(pointer))),
+        Some(UnsafeStep::Write(pointer) | UnsafeStep::CopyInto { into: pointer, .. }) => (format!(" that writes through {}", through(pointer)), format!(", with what {} must point to", target(pointer))),
         Some(UnsafeStep::Offset(pointer)) => (format!(" that offsets {}", through(pointer)), format!(", with what {} must point into", target(pointer))),
         Some(UnsafeStep::Call { callee, .. }) if callee.is_empty() => (" that calls an `unsafe fn`".to_string(), ", with what that call needs".to_string()),
         Some(UnsafeStep::Call { callee, .. }) => (format!(" that calls `{callee}`"), format!(", with what calling `{callee}` needs")),
@@ -64748,7 +64843,7 @@ fn unsafe_steps(lines: StmtLines, steps: &[(Span, UnsafeStep)], in_safe_block: b
     for (_, step) in steps {
         let (pointer, kind) = match step {
             UnsafeStep::Read(pointer) => (pointer, 0),
-            UnsafeStep::Write(pointer) => (pointer, 1),
+            UnsafeStep::Write(pointer) | UnsafeStep::CopyInto { into: pointer, .. } => (pointer, 1),
             UnsafeStep::Offset(pointer) => (pointer, 2),
             UnsafeStep::Call { callee, .. } => {
                 match calls.iter_mut().find(|(named, _)| *named == callee.as_str()) {
@@ -65966,7 +66061,8 @@ fn ffi_count_siblings(decl: &ast::FnDecl, pointer: Option<Symbol>) -> Vec<String
         let unsigned = matches!(&ty.kind,
             ast::TypeKind::Path { segments, args } if args.is_empty()
                 && segments.len() == 1
-                && matches!(segments[0].name.as_str(), "u8" | "u16" | "u32" | "u64" | "u128" | "usize"));
+                && matches!(segments[0].name.as_str(), "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
+                    | "c_uchar" | "c_ushort" | "c_uint" | "c_ulong" | "c_ulonglong"));
         (name_looks_like_count || unsigned).then(|| written.to_string())
     }).collect()
 }

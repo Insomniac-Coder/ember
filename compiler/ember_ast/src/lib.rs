@@ -65,6 +65,10 @@ pub enum UnsafeSiteKind {
     Block,
     /// `unsafe extend`, `unsafe extern`, `unsafe overlay` — likewise.
     Implementation,
+    /// `[FFI-26]` — `@unsafe(export(…))`, `@unsafe(export_table(…))`: likewise, a note above it.
+    Attribute,
+    /// `[FFI-51]` — `unsafe import c`, `unsafe import cpp`: likewise.
+    Import,
     /// An `unsafe fn` with a body, which says its callers vouch, with `@safety` saying for what:
     /// its name, and whether it is written with `@safety`.
     Fn { name: Symbol, safety: bool },
@@ -142,6 +146,9 @@ pub struct Attribute {
     pub path: Vec<Ident>,
     pub args: Vec<AttrArg>,
     pub span: Span,
+    /// `[FFI-26]` — written in its unsafe form, `@unsafe(export("name"))`: an attribute whose
+    /// promise the compiler cannot check, vouched for with a safety note.
+    pub written_unsafe: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -295,8 +302,9 @@ pub enum ImportKind {
     /// `from a.b import x, y as z` / `from a.b import *`
     Items { path: Vec<Ident>, items: Vec<ImportItem>, glob: bool },
     /// `import c "header.h" with (...) [as name]` / `import cpp "header.h" with (...)`
-    /// (`[FFI-6]`): the module is bound to `name`, or to `c`.
-    Foreign { language: ForeignLanguage, header: String, options: Vec<AttrArg>, alias: Option<Ident> },
+    /// (`[FFI-6]`): the module is bound to `name`, or to `c`. `is_unsafe`: written `unsafe import c`,
+    /// vouching for the foreign code it compiles into the program (`[FFI-51]`).
+    Foreign { language: ForeignLanguage, header: String, options: Vec<AttrArg>, alias: Option<Ident>, is_unsafe: bool },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

@@ -16,7 +16,8 @@
 
 from std.ffi import c_int
 
-import c "./visits.c" as raw
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./visits.c" as raw
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(values, borrowed, count(count)), param(visit, callback(borrowed, user_data=data)), link_name="visit_each")

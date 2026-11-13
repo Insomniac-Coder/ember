@@ -12,7 +12,8 @@
 
 from std.ffi import c_int
 
-import c "./registry.c" as raw
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./registry.c" as raw
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(visit, callback(borrowed, user_data=context@2)), link_name="each_pair")

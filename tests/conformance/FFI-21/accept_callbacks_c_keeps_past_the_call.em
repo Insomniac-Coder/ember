@@ -20,7 +20,8 @@
 
 from std.ffi import c_int, ForeignCallback, Retained
 
-import c "./events.c" with (overlay = "overlays/events.em") as ev
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./events.c" with (overlay = "overlays/events.em") as ev
 
 fn queue():
     first = "first".to_string()
