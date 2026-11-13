@@ -557,3 +557,30 @@ after each work batch" is the owner's rule from this round.
     where the summaries prove no other name writes it across the call. "a number is copied in" is a text repair.
     The pilot's proposal (copy-in at any size) would have reversed the rule. Q2 to Q13 go to the full run's
     deputy, who rules them before the tests that hang on them and cuts Hardened_15 once for M5.
+- **D4, the deputy: M5 ahead, batch 1** (535k tokens, 45 min; `ember check` probes only). Q2 to Q13 ruled (none open
+  for the owner, no verdict touched; P1 to P14 for Hardened_15), 10 more rules (SPN-1, BRW-1, -2, -4, -5, -16, -17,
+  LT-5, -18, -25): 18 rules, 85 clauses, 115 files, 293 cases in all; the also-needs table in `INDEX.md` §0; merged
+  `aaf44bc5`.
+  - **Q14, the lead's confirmation:** `[BRW-8]`'s "the choice depends only on the declared first line, never on the
+    body" cannot hold beside `[FN-1]`'s "shows through" (Q1). ODR-024 is delegated, not an owner verdict. The
+    deputy's (B) is confirmed: registers by the first line wherever the callee's summary (kept in the interface)
+    clears the call, and a by-address entry for the few callees that may write the argument's place; C speed kept,
+    and the meaning `[FN-1]` gives. Its text is P11.
+  - **Paused after batch 1** for the week's budget (71% used on 2026-11-13 ~09:00, reset 2026-11-15 13:30 IST): M5
+    cannot be credited before M4, which waits for A2-3 (below).
+- **W3 (Sonnet), lane c job 1** (448k tokens, 71 min). 25 commits; merged `3e8c5a9a`. **Credited 10:** GRM-2, GRM-4,
+  GRM-5, GRM-8a, GRM-19, GRM-27, GRM-29, GRM-37, GRM-38, GRM-47. The other 20 are listed with the clause each waits
+  for (mostly M4, M5, M11, the C importer).
+  - **The lead on its questions:**
+    1. LEX-26's E0009 against TXT-3's and the table's E5064 for a NUL in a `c"…"` literal: a contradiction, for
+       Hardened_15; E5064 stays until then.
+    2. `ref a + b`: the text decides it (a): `ref` binds like unary minus, so `(ref a) + b`, and the operand is read
+       through (`[TYP-14]`); accepted, as the compiler does.
+    3. GRM-41's `mut` on `this`: no first-line spelling is given; for Hardened_15.
+    4. GRM-30's `cast s if Circle`: stays until M11's kind test replaces it (removing it leaves no downcast);
+       recorded as waiting on M11.
+    5. GRM-34's "with two instances it stays open (E2060)" against the compiler's E2070: for Hardened_15.
+    6. `names.push(owns g.name)` with `g` of a type that has a `drop` compiles: an implementation defect of
+       `[OWN-11]`/`[EXP-6]` (a part of a value with a `drop` is not handed over alone), a D- row for lane a.
+    7. GRM-17's 31 files with a block after a lambda's `:`: the tests follow the spec, so they are migrated to local
+       functions; the next lane-c job.
