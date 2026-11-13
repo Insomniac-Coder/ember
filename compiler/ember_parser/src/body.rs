@@ -1313,9 +1313,18 @@ impl Parser<'_> {
         // compiler yet (M4); the value after it is read as written.
         if let TokenKind::Keyword(Kw::Shares | Kw::ThreadShared | Kw::Weakref | Kw::Sharedref) = self.peek().clone() {
             let at = self.span();
+            let alone = self.at_kw(Kw::Sharedref) && !self.at_kw_at(1, Kw::Mut);
             self.bump();
             let _ = self.eat_kw(Kw::Mut);
             let written = self.src.get(at.start as usize..self.prev_span().end as usize).unwrap_or("shares").to_string();
+            if alone {
+                // `[GRM-43]` — `sharedref` is always followed by `mut`.
+                self.report(
+                    Diagnostic::error(codes::E0114, at, "`sharedref` is always followed by `mut`: a link that only reads may be held by any number of names")
+                        .help("write `target: ref Player`; `sharedref` is for a link that may change its target: `target: sharedref mut Player`"),
+                );
+                return self.parse_expr_bp(BP_UNARY, allow_block_lambda);
+            }
             self.report(Diagnostic::error(codes::E0900, at.to(self.prev_span()), format!("`{written}` before a value is not built by this compiler yet")));
             return self.parse_expr_bp(BP_UNARY, allow_block_lambda);
         }

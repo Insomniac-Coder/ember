@@ -2005,9 +2005,18 @@ impl Parser<'_> {
         }
         if let TokenKind::Keyword(word @ (Kw::Shares | Kw::ThreadShared | Kw::Weakref | Kw::Sharedref)) = self.peek().clone() {
             let at = self.span();
+            let alone = word == Kw::Sharedref && !self.at_kw_at(1, Kw::Mut);
             self.bump();
             if matches!(word, Kw::Shares | Kw::Sharedref) {
                 self.eat_kw(Kw::Mut);
+            }
+            if alone {
+                // `[GRM-43]` — `sharedref` is always followed by `mut`, before a value and in a type alike.
+                self.report(
+                    Diagnostic::error(codes::E0114, at, "`sharedref` is always followed by `mut`: a link that only reads may be held by any number of names")
+                        .help("write `target: ref Player`; `sharedref` is for a link that may change its target: `target: sharedref mut Player`"),
+                );
+                return self.parse_type_nested(suffix);
             }
             let written = self.src.get(at.start as usize..self.prev_span().end as usize).unwrap_or("owns").to_string();
             self.report(Diagnostic::error(codes::E0900, at.to(self.prev_span()), format!("`{written}` before a type is not built by this compiler yet")));
