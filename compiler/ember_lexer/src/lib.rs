@@ -51,6 +51,16 @@ pub fn safety_note(text: &str) -> Option<SafetyNote> {
     SAFETY_CATEGORIES.iter().find(|known| **known == category).map(|known| SafetyNote { category: Some(*known) })
 }
 
+/// `[LEX-1a]` - U+202A to U+202E and U+2066 to U+2069: what a reviewer sees must be what the compiler reads.
+pub fn is_bidi_format(c: char) -> bool {
+    matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
+/// `[LEX-1a]` - `E0012`'s message, for the manifest as for a source file.
+pub fn bidi_message(line: usize, c: char) -> String {
+    format!("line {line} holds U+{:04X}, which reorders how the line is shown", c as u32)
+}
+
 pub struct LexResult {
     pub tokens: Vec<Token>,
     pub comments: Vec<Comment>,
@@ -58,6 +68,17 @@ pub struct LexResult {
 
 /// Tokenise one already-normalised source file (`[LEX-2]`: LF endings, no BOM).
 pub fn lex(file: FileId, src: &str, sink: &mut Sink) -> LexResult {
+    // `[LEX-1a]` - a bidirectional format character anywhere in the file, a comment or literal included.
+    for (offset, character) in src.char_indices() {
+        if is_bidi_format(character) {
+            let span = Span::new(file, offset as u32, (offset + character.len_utf8()) as u32);
+            let line = src[..offset].matches('\n').count() + 1;
+            sink.emit(
+                Diagnostic::error(codes::E0012, span, bidi_message(line, character))
+                    .help(format!("write the text as an escape, `\\u{{{:04X}}}`, inside the literal, or remove it", character as u32)),
+            );
+        }
+    }
     let mut lexer = Lexer::new(file, src, sink);
     lexer.run();
     LexResult { tokens: lexer.tokens, comments: lexer.comments }
