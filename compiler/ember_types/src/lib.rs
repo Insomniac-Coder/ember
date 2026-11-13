@@ -2302,10 +2302,9 @@ impl TypeTable {
                 let def = self.struct_def(*id);
                 def.derives_copy && !def.has_drop && def.fields.iter().all(|f| self.copy_with(f.ty, params))
             }
-            // `[OWN-7]` explicitly makes class handles Copy, with retain and
-            // release emitted by the ownership/codegen stages rather than a
-            // raw bitwise copy.
-            TyKind::Class(_) | TyKind::ClassInterface(_) => false, // PROBE slice C
+            // `[TYP-45]`, `[OWN-3]` (M4 slice C) — a class object has one owner: `=` and an `owns`
+            // argument hand it over, and a second owner is written `shares`/`shares mut` (`[RC-1]`).
+            TyKind::Class(_) | TyKind::ClassInterface(_) => false,
             // `[ENM-3]` — a unit-only enum is `Copy` automatically, because it
             // is only its discriminant. `[ENM-4]` — a payload enum needs
             // `@derive(Copy)`, like a struct.
