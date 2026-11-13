@@ -1772,6 +1772,9 @@ enum UnsafeStep {
     Read(Option<String>),
     Write(Option<String>),
     Offset(Option<String>),
+    /// `[UNS-5]` — a call of `mem.copy` or `mem.copy_nonoverlapping`, named by what it writes: the
+    /// destination pointer as written, and what must be writable there ("four `int`s").
+    CopyInto { into: Option<String>, needs: String },
     /// A call, the callee as written.
     Call { callee: String, kind: CallKind },
     /// Any other, as a noun phrase, one and several: "the cast between raw pointer types", "the casts
@@ -6379,6 +6382,12 @@ impl<'a> Checker<'a> {
                                             .migrate_edits("`ForeignBox` is no longer imported", vec![(edit, ember_diag::Replacement::Text(String::new()))]),
                                     );
                                     self.failed_imports[index].insert(item.alias.map(|a| a.name).unwrap_or(item.name.name));
+                                    continue;
+                                }
+                                // `[UNS-5]` — `std.mem` provides `MaybeUninit`, the compiler-known type the
+                                // prelude names: importing it binds that type.
+                                // ponytail: an `as` alias of it is not bound; add a type alias when one is wanted.
+                                if self.prefixes[target] == "std.mem" && item.name.name.is("MaybeUninit") && item.alias.is_none() {
                                     continue;
                                 }
                                 // `[OWN-6]` — and so is `mem.forget`.
@@ -24310,6 +24319,18 @@ impl<'a> Checker<'a> {
             return;
         }
         let call = match (&step, written) {
+            // `[UNS-5]` — "`copy_nonoverlapping(p, q, 4)` (line 8) writes through the raw pointer `q`, and
+            // nothing checks that four `int`s are writable there; put line 8 in …".
+            (UnsafeStep::CopyInto { into, needs }, Some(written)) => {
+                let into = into.as_ref().map_or_else(|| "a raw pointer".to_string(), |into| format!("the raw pointer `{into}`"));
+                let mut diagnostic = Diagnostic::error(
+                    codes::E3100,
+                    span,
+                    format!("`{written}` (line {line}) writes through {into}, and nothing checks that {needs} are writable there; {}", unsafe_block_to_write(lines, "that holds here")),
+                );
+                diagnostic.notes = refusal.notes;
+                diagnostic
+            }
             (UnsafeStep::Call { callee, kind }, Some(written)) if *kind != CallKind::Other => {
                 // A call the code does not spell (a `for` loop's `iter`, an operator's method) is named by
                 // its callee.
@@ -24540,7 +24561,7 @@ impl<'a> Checker<'a> {
         if let Some(note) = self.changed_declarations.get(&self.signatures[def.0 as usize].decl) {
             self.changed_calls.push((span, note.clone()));
         }
-        if !self.signatures[def.0 as usize].is_unsafe {
+        if !self.signatures[def.0 as usize].is_unsafe || self.is_mem_copy(def) {
             return;
         }
         let callee = self.declared_name(def).unwrap_or_default();
@@ -41224,7 +41245,41 @@ impl<'a> Checker<'a> {
         if self.fn_ids.get(&Symbol::intern("std.ecs.system")) == Some(&def) {
             self.check_ecs_system_sendable(&call, args);
         }
+        if self.is_mem_copy(def) {
+            self.check_mem_copy_safety(&call, args, span);
+        }
         call
+    }
+
+    /// `[UNS-5]` — whether `def` is `std.mem.copy` or `std.mem.copy_nonoverlapping`, whose calls say
+    /// what they write.
+    fn is_mem_copy(&self, def: DefId) -> bool {
+        ["std.mem.copy", "std.mem.copy_nonoverlapping"].iter().any(|path| self.fn_ids.get(&Symbol::intern(path)) == Some(&def))
+    }
+
+    /// `[UNS-5]` — a call of `copy` or `copy_nonoverlapping` outside unsafe code is `E3100`, naming the
+    /// pointer it writes through and the values that must be writable there.
+    fn check_mem_copy_safety(&mut self, call: &Expr, args: &[ast::Arg], span: Span) {
+        let (into, needs) = match (&call.kind, args) {
+            (ExprKind::Call { args: checked, .. }, [_, dst, count]) if checked.len() == 3 => {
+                let elem = match *self.types.kind(checked[1].ty) {
+                    TyKind::Ptr { inner, .. } => format!("`{}`s", self.types.display(inner)),
+                    _ => "values".to_string(),
+                };
+                let count = match &checked[2].kind {
+                    ExprKind::Int(n) => count_in_words(*n),
+                    _ => self.written_line(count.value.span).map_or_else(|| "that many".to_string(), |written| format!("`{written}`")),
+                };
+                (self.written_line(dst.value.span), format!("{count} {elem}"))
+            }
+            _ => (None, "the values".to_string()),
+        };
+        self.unsafe_step(
+            span,
+            UnsafeStep::CopyInto { into, needs },
+            Diagnostic::error(codes::E3100, span, "a call of `copy` or `copy_nonoverlapping` requires an `unsafe` block")
+                .note("it writes through a raw pointer, which nothing checks [UNS-5]"),
+        );
     }
 
     /// `[ECS-4]` (ODR-218) — `std.ecs.system(body, name)` makes a system `run_parallel` runs on
@@ -53290,7 +53345,10 @@ impl<'a> Checker<'a> {
     /// `uninit()`, `write` and `write_at` are `unsafe` operations (`[UNS-1]`): outside `unsafe:` each
     /// is `E3100`. For a `T` with nothing to drop they stay safe.
     fn maybe_uninit_unsafe(&mut self, inner: Ty, operation: &str, span: Span) {
-        if !self.types.needs_drop(inner) {
+        // A type parameter that is not `Copy` may be one that needs drop, so a generic body vouches as
+        // its every instance would (`[UNS-3]`: the block is needed in each).
+        let maybe_drop = matches!(self.types.kind(inner), TyKind::Param { .. }) && !self.implements(inner, Symbol::intern("std.core.Copy"));
+        if !self.types.needs_drop(inner) && !maybe_drop {
             return;
         }
         let shown = self.types.display(inner);
@@ -64394,6 +64452,12 @@ fn is_compiler_known_struct(name: &str) -> bool {
 /// why `why`: "put line 9 in an `unsafe:` block with a `# SAFETY:` note saying why …: above line 9 write
 /// `# SAFETY:` and the reason, then `unsafe:`, and indent line 9 under it". A statement over several
 /// lines is put in whole; one that shares its line with what comes before it is moved onto its own.
+/// `[UNS-5]` — a count as a message says it: "four", or the digits past twelve.
+fn count_in_words(n: u128) -> String {
+    const WORDS: [&str; 13] = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
+    WORDS.get(n as usize).filter(|_| n < 13).map_or_else(|| n.to_string(), |word| word.to_string())
+}
+
 fn unsafe_block_to_write(lines: StmtLines, why: &str) -> String {
     let StmtLines { first, last, alone } = lines;
     if !alone {
@@ -64417,7 +64481,7 @@ fn undocumented_unsafe(name: Symbol, first: Option<&UnsafeStep>) -> String {
     let target = |pointer: &Option<String>| pointer.as_ref().map_or_else(|| "the pointer".to_string(), |pointer| format!("`{pointer}`"));
     let (does, with) = match first {
         Some(UnsafeStep::Read(pointer)) => (format!(" that reads through {}", through(pointer)), format!(", with what {} must point to", target(pointer))),
-        Some(UnsafeStep::Write(pointer)) => (format!(" that writes through {}", through(pointer)), format!(", with what {} must point to", target(pointer))),
+        Some(UnsafeStep::Write(pointer) | UnsafeStep::CopyInto { into: pointer, .. }) => (format!(" that writes through {}", through(pointer)), format!(", with what {} must point to", target(pointer))),
         Some(UnsafeStep::Offset(pointer)) => (format!(" that offsets {}", through(pointer)), format!(", with what {} must point into", target(pointer))),
         Some(UnsafeStep::Call { callee, .. }) if callee.is_empty() => (" that calls an `unsafe fn`".to_string(), ", with what that call needs".to_string()),
         Some(UnsafeStep::Call { callee, .. }) => (format!(" that calls `{callee}`"), format!(", with what calling `{callee}` needs")),
@@ -64448,7 +64512,7 @@ fn unsafe_steps(lines: StmtLines, steps: &[(Span, UnsafeStep)], in_safe_block: b
     for (_, step) in steps {
         let (pointer, kind) = match step {
             UnsafeStep::Read(pointer) => (pointer, 0),
-            UnsafeStep::Write(pointer) => (pointer, 1),
+            UnsafeStep::Write(pointer) | UnsafeStep::CopyInto { into: pointer, .. } => (pointer, 1),
             UnsafeStep::Offset(pointer) => (pointer, 2),
             UnsafeStep::Call { callee, .. } => {
                 match calls.iter_mut().find(|(named, _)| *named == callee.as_str()) {

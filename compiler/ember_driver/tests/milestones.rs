@@ -3382,6 +3382,35 @@ fn tcb_lists_every_unsafe_with_its_note_and_obligations() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `[UNS-5]` — `transmute`, `copy` and `copy_nonoverlapping` each carry `@safety` (`[UNS-7]`): `ember
+/// tcb` lists, under the block that calls them, what each asks of its caller.
+#[test]
+fn std_mem_unsafe_fns_carry_their_safety() {
+    let root = workspace_root();
+    let dir = temporary_directory("mem-safety");
+    let source = dir.join(format!("copies.{SOURCE_EXT}"));
+    std::fs::write(
+        &source,
+        "from std.mem import copy, copy_nonoverlapping, transmute\n\n\
+         fn main():\n    a: Array[i32] = [1, 2]\n    b: Array[i32] = [0, 0]\n\
+         \x20   # SAFETY: both hold two `i32`s, and they are two arrays\n    unsafe:\n\
+         \x20       copy_nonoverlapping(a.as_span().as_ptr(), b.as_mut_span().as_mut_ptr(), 2)\n\
+         \x20       copy(a.as_span().as_ptr(), b.as_mut_span().as_mut_ptr(), 2)\n\
+         \x20       println(transmute[u32, f32](owns 1))\n",
+    )
+    .expect("write the program");
+    let source_arg = source.to_string_lossy().into_owned();
+    let report = ember(&["tcb", &source_arg], &root);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(report.exit, 0, "tcb failed:
+{}
+{}", report.stdout, report.stderr);
+    let out = &report.stdout;
+    assert!(out.contains("calls `std.mem.copy_nonoverlapping`: `src` is valid for reading `count` values of `T` and `dst` for writing them, the two ranges do not overlap"), "{out}");
+    assert!(out.contains("calls `std.mem.copy`: `src` is valid for reading `count` values of `T` and `dst` for writing them"), "{out}");
+    assert!(out.contains("calls `std.mem.transmute`: `A` and `B` have the same size, and `value`'s bits are a valid `B`"), "{out}");
+}
+
 /// `[FFI-40a]` (ODR-160, verdict 131), `[TCB-1]` — `@ffi(const)` on a member's entry asserts that
 /// the method only reads its object, and `ember tcb` lists it with the overlay's module, graded
 /// asserted.
