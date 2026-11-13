@@ -14,7 +14,7 @@
 >   `R7-batch.md`: Part III's types and LEX-10 reading B); lane a's next job (slice C after A2-3, the `ref mut`
 >   MutSpan ABI of BRW-14.8 / FFI-11b, CTL-7's E3060); lane b's next (FFI-51, BLD-FFI-3, FFI-31b's export carriers,
 >   the GRM-35 overlay test in `ahead/lane-b`); the Hardened_15 cut (INDEX §3's P1-P14 and the round-7 questions
->   listed "for Hardened_15" in `review.md`). Open for the owner: whether UNS-4 is counted (H3's question 1).
+>   listed "for Hardened_15" in `review.md`). UNS-4 (the owner: "it only counts as implemented if the compiler also actually works that way"): counted, credited only on tests that show the compiler refuses outside `unsafe` everything that could break each obligation.
 >
 > **2026-11-13 — resumed; pushed; Hardened_14 is the target; round 7 in lanes (the owner: "resume work and work
 > autonomously, use 2-3 helper agents at max. Lets work towards finishing this language", then "yea" to the lead's

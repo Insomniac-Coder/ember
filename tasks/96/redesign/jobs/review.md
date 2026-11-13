@@ -638,7 +638,9 @@ after each work batch" is the owner's rule from this round.
   - **Its questions:**
     1. UNS-4 states only the programmer's obligations: whether it is counted (tests that each can be broken only
        inside `unsafe`) or classed with the meta rules changes how the percentages are computed, which is the
-       owner's; open.
+       owner's. **The owner, 2026-11-13: "it only counts as implemented if the compiler also actually works that
+       way".** UNS-4 stays counted, never a meta rule; it is credited only when tests show the compiler works so:
+       everything that could break each obligation is refused outside `unsafe`.
     2. LEX-23 against UNS-8 on an end-of-line note beside `unsafe extend/extern/overlay`: a contradiction, for
        Hardened_15; LEX-23's reading stays for the new sites.
     3. An exported static's symbol, ABI and thread rules: a gap, for Hardened_15; E0900 stays.
