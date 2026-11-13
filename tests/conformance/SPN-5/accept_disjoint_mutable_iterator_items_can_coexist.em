@@ -12,13 +12,13 @@ fn main():
     match owns first:
         Some(a):
             replacement: i32 = 10
-            a = ref mut replacement
+            a = replacement
         None:
             pass
     match owns second:
         Some(b):
             replacement: i32 = 20
-            b = ref mut replacement
+            b = replacement
         None:
             pass
     println(view[0])

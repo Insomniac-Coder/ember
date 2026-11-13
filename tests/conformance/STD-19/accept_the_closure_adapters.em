@@ -16,7 +16,7 @@ fn main():
     small = xs.iter().take_while(owns fn(x: ref int) => x < 4).count()
     rest = xs.iter().skip_while(owns fn(x: ref int) => x < 4).count()
     halves = xs.iter().filter_map(owns fn(x: ref int) => Some(x // 2) if x % 2 == 0 else None).to_array()
-    shifted = xs.iter().map(owns fn(x: ref int) => x + k).fold(0, owns fn(a: int, b: int) => a + b)
+    shifted = xs.iter().map(owns fn(x: ref int) => x + k).fold(owns 0, owns fn(a: int, b: int) => a + b)
     total = xs.iter().inspect(owns fn(x: ref int) => print(x, end=" ")).count()
     println(doubled, evens, small, rest, halves, shifted, total)
     println(xs.map(fn(x: ref int) => x + 1).to_array())

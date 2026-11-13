@@ -49,4 +49,4 @@ fn main():
     println(empty.iter().chain(owns empty.iter()).count())
     both = xs.iter().copy_each().chain(owns ys.iter().copy_each()).chain(owns xs.iter().copy_each())
     println(both.enumerate().skip(4).take(3).to_array())
-    println(xs.iter().copy_each().chain(owns ys.iter().copy_each()).fold(0, owns fn(a, b) => a * 2 + b))
+    println(xs.iter().copy_each().chain(owns ys.iter().copy_each()).fold(owns 0, owns fn(a, b) => a * 2 + b))

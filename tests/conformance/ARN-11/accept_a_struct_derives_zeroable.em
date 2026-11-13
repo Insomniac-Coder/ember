@@ -18,7 +18,7 @@ struct Wrap:
     item: T
 
 fn build(frame: Arena, n: int) -> MutSpan[Cmd]:
-    cmds = frame.alloc_zeroed[Cmd](n)
+    cmds = ref mut frame.alloc_zeroed[Cmd](n)
     for i in 0..n:
         cmds[i].id = i
     return cmds

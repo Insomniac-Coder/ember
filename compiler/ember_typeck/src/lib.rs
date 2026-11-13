@@ -23,6 +23,7 @@ mod comptime;
 mod coroutines;
 mod habits;
 mod objects;
+mod views;
 mod packs;
 
 pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
@@ -955,6 +956,7 @@ fn check_round(
     checker.note_changed_declarations();
     checker.note_c_declarations();
     let after_bodies_mark = checker.sink.mark();
+    checker.report_parameter_changes();
     checker.report_unstated_safety();
     checker.report_unneeded_unsafe();
     let after_bodies = after_bodies_mark..checker.sink.mark();
@@ -1241,7 +1243,7 @@ impl ParallelWalk {
         match &expr.kind {
             ast::ExprKind::Paren(inner) => self.place_at(checker, inner, depth),
             // `[FN-2a]` — `ref mut` at a call says how the place is passed; the place is under it.
-            ast::ExprKind::RefOf { mutable: true, place } => self.place_at(checker, place, depth),
+            ast::ExprKind::RefOf { mutable: true, place, .. } => self.place_at(checker, place, depth),
             ast::ExprKind::Path { segments } if segments.len() == 1 => match self.resolve(checker, segments[0].name, depth) {
                 Resolved::Outer => {
                     let local = checker.lookup(segments[0].name)?;
@@ -3703,6 +3705,22 @@ struct Checker<'a> {
     /// ABI, so no write rooted at one is permitted. Keeping the mode here lets
     /// the type checker reject the write before that ABI detail reaches MIR.
     borrowed_params: HashSet<LocalId>,
+    /// `[BRW-12]`, `[BRW-13]`, `[BRW-15]` — the names that view what they name, by the line that
+    /// made them (`views.rs`). Cleared for a local when it is declared, since local numbers are
+    /// reused from body to body.
+    view_names: HashMap<LocalId, views::ViewName>,
+    /// `[BRW-14]` — the headers whose names keep their place, by where their pattern starts.
+    kept_headers: std::collections::BTreeMap<(u32, u32), views::KeptHeader>,
+    /// `[BRW-15]` — the arguments given to each plain parameter (by its declaration), and the changes
+    /// through plain parameters whose messages name those calls once all are checked.
+    plain_arguments: HashMap<Span, Vec<Span>>,
+    parameter_changes: Vec<views::ParameterChange>,
+    /// `[OWN-7]` — the copies of `Copy` values with parts in the body being checked (`views.rs`).
+    copied: views::CopiedValues,
+    /// The loop statements around the statement being checked.
+    loop_spans: Vec<Span>,
+    /// `[BRW-14]` — the names opened `exists as copy of v`: copies of one's own, which may change.
+    own_copies: HashSet<Span>,
     /// Locals declared by `owned f: fn(...) -> R`. The function type itself is
     /// the callable signature, not the ownership mode on `f`; retaining this
     /// fact lets an indirect call consume exactly a `CallableOnce` parameter.
@@ -4340,6 +4358,13 @@ impl<'a> Checker<'a> {
             locals: Vec::new(),
             scopes: Vec::new(),
             borrowed_params: HashSet::new(),
+            view_names: HashMap::new(),
+            kept_headers: std::collections::BTreeMap::new(),
+            plain_arguments: HashMap::new(),
+            parameter_changes: Vec::new(),
+            copied: views::CopiedValues::default(),
+            loop_spans: Vec::new(),
+            own_copies: HashSet::new(),
             callable_once_locals: HashSet::new(),
             callable_parameter_locals: HashSet::new(),
             copy_captures: Vec::new(),
@@ -13935,7 +13960,7 @@ impl<'a> Checker<'a> {
             .filter_map(|param| {
                 let ast::ParamKind::Named { name, ty } = &param.kind else { return None };
                 let value = if whole_type_parameter(ty, &type_params).is_some() {
-                    ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::RefOf { mutable: false, place: Box::new(path(*name)) }, span: name.span }
+                    ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::RefOf { mutable: false, constant: false, place: Box::new(path(*name)) }, span: name.span }
                 } else {
                     path(*name)
                 };
@@ -17392,7 +17417,7 @@ impl<'a> Checker<'a> {
         }
         fn place_of(arg: &ast::Expr) -> &ast::Expr {
             match &arg.kind {
-                ast::ExprKind::RefOf { mutable: true, place } => place,
+                ast::ExprKind::RefOf { mutable: true, place, .. } => place,
                 _ => arg,
             }
         }
@@ -22015,6 +22040,12 @@ impl<'a> Checker<'a> {
                 if mode == Mode::Borrow {
                     self.borrowed_params.insert(local);
                 }
+                // `[BRW-14]` — `const ref mut`: never given another ref.
+                if let ast::ItemKind::Fn(decl) = &item.kind
+                    && decl.params.get(index).is_some_and(|param| param.is_const)
+                {
+                    self.note_const_parameter(local, span);
+                }
                 // `[LT-48]` — a parameter written `runtime` before its `dyn` type.
                 if let ast::ItemKind::Fn(decl) = &item.kind
                     && decl.params.get(index).is_some_and(|param| self.runtime_written.contains(&(span.file, param.id)))
@@ -26439,6 +26470,7 @@ impl<'a> Checker<'a> {
             self.must_drop_container_error(span, container);
         }
         let id = LocalId(self.locals.len() as u32);
+        self.view_names.remove(&id);
         self.locals.push(LocalDecl {
             name,
             ty,
@@ -26473,6 +26505,7 @@ impl<'a> Checker<'a> {
         {
             open.first_use = Some(span);
         }
+        self.note_copy_source_mention(local, span);
         let ty = self.locals[local.0 as usize].ty;
         let read = Expr { ty, kind: ExprKind::Local(local), span };
         // `[CELL-7]` — a guard local reads through like a reference, unless
@@ -27657,6 +27690,7 @@ impl<'a> Checker<'a> {
                 out.push(Stmt::Expr(expr));
             }
             ast::StmtKind::Decl { pattern, ty, init } => {
+                let stmt_init = init.as_ref();
                 if let Some(init) = init {
                     self.check_class_init_whole_self_use(init);
                 }
@@ -27703,6 +27737,9 @@ impl<'a> Checker<'a> {
                     );
                 }
                 let local = self.declare(Some(name), ty, stmt.span);
+                if let Some(value) = stmt_init {
+                    self.note_view_name(local, value, stmt.span, None);
+                }
                 if let Some(range) = init.as_ref().and_then(|e| self.range_of(e)) {
                     self.local_ranges.insert(local, range);
                 }
@@ -27815,8 +27852,17 @@ impl<'a> Checker<'a> {
                         // ODR-278 — a local declared from a function and assigned again holds any
                         // function of its shape.
                         let init = if self.reassigned.contains(&segments[0].name) { self.item_to_shape(init) } else { init };
+                        // `[BRW-12]` — a name bound to a part is a read-only view of it.
+                        // A line the compiler writes itself keeps what it was built to do, and a name that
+                        // is no local here (a lambda's capture, a module's item) is a whole name.
+                        let whole_outer = matches!(&value.kind, ast::ExprKind::Path { segments } if segments.len() == 1 && self.lookup(segments[0].name).is_none());
+                        let (init, part) = if value.id == ast::NodeId::DUMMY || whole_outer { (init, None) } else { self.part_as_view(init) };
                         self.warn_if_literal_loses_precision(value, init.ty);
                         let local = self.declare(Some(segments[0].name), init.ty, stmt.span);
+                        self.note_view_name(local, value, stmt.span, part);
+                        if part.is_none() {
+                            self.note_copied_value(local, &init, value, stmt.span);
+                        }
                         self.plain_declared.insert(local);
                         if from_literal {
                             self.literal_locals.insert(local, stmt.span);
@@ -27831,6 +27877,17 @@ impl<'a> Checker<'a> {
                         out.push(Stmt::Let { local, init: Some(init) });
                         return;
                     }
+                }
+
+                // `[BRW-13]` — `=` on a view name: given another view, it views that.
+                if op.is_none()
+                    && foreign_target.is_none()
+                    && let ast::ExprKind::Path { segments } = &target.kind
+                    && segments.len() == 1
+                    && let Some(local) = self.lookup(segments[0].name)
+                    && self.repoint(local, target, value, stmt.span, out)
+                {
+                    return;
                 }
 
                 // `[STD-17]` — `a[i] = v` calls `index_set(i, v)` when the type
@@ -27945,6 +28002,28 @@ impl<'a> Checker<'a> {
                             .help("assign the elements one at a time (`xs[i] = v`)")
                             .note("a slice is a view of the elements; Ember has no slice assignment");
                     }
+                    self.sink.emit(diagnostic);
+                    return;
+                }
+                self.note_copy_change(&place, stmt.span);
+                // `[BRW-14]` — a loop, pattern or opened name keeps what it was given: `=` on it, and
+                // any change through it, is `E3023` (a `ref mut` one changes what it names; a class
+                // object's fields are its own, Part VIII).
+                if let Some(local) = root_local(&place.kind)
+                    && let Some(header) = self.kept_header(local)
+                    && !matches!(self.types.kind(self.locals[local.0 as usize].ty), TyKind::Ref { mutable: true, .. })
+                    && !self.through_class_field(&place)
+                    && !self.through_a_changing_view(&place)
+                {
+                    let whole = match &place.kind {
+                        ExprKind::Local(_) => true,
+                        ExprKind::Deref(inner) => matches!(inner.kind, ExprKind::Local(_)),
+                        _ => false,
+                    };
+                    let diagnostic = match self.read_only_change(local, target.span) {
+                        Some(diagnostic) if !whole => diagnostic,
+                        _ => self.kept_name_given_a_value(local, header, target.span),
+                    };
                     self.sink.emit(diagnostic);
                     return;
                 }
@@ -28187,7 +28266,9 @@ impl<'a> Checker<'a> {
                 let cond = self.check_condition(cond);
                 self.class_init = incoming_class_init.clone();
                 self.loop_labels.push(label.map(|l| l.name));
+                self.loop_spans.push(stmt.span);
                 let body = self.check_block(body);
+                self.loop_spans.pop();
                 self.loop_labels.pop();
                 let body_class_init = self.class_init.clone();
                 if else_block.is_some() && incoming_class_init.is_some() {
@@ -28217,7 +28298,10 @@ impl<'a> Checker<'a> {
             ast::StmtKind::For { label, pattern, iter, body, else_block } => {
                 let incoming_class_init = self.class_init.clone();
                 self.check_class_init_whole_self_use(iter);
-                if let Some(stmt) = self.check_for(*label, pattern, iter, body, else_block, stmt.span)
+                self.loop_spans.push(stmt.span);
+                let checked = self.check_for(*label, pattern, iter, body, else_block, stmt.span);
+                self.loop_spans.pop();
+                if let Some(stmt) = checked
                 {
                     let body_class_init = self.class_init.clone();
                     if incoming_class_init.is_some() && else_block.is_none() {
@@ -28359,6 +28443,7 @@ impl<'a> Checker<'a> {
         span: Span,
         out: &mut Vec<Stmt>,
     ) {
+        let value_written = value;
         let value = self.synth_committed(value);
         if value.ty == self.common.error {
             return;
@@ -28426,6 +28511,9 @@ impl<'a> Checker<'a> {
                     _ => (source, leaf.ty),
                 };
                 let local = self.declare(Some(segments[0].name), ty, leaf.target.span);
+                if matches!(self.types.kind(ty), TyKind::Span { mutable: true, .. }) {
+                    self.note_span_holder(local, value_written, span);
+                }
                 bindings.push(DestructureBinding::Let { local, value: source });
                 continue;
             }
@@ -28693,6 +28781,9 @@ impl<'a> Checker<'a> {
                 self.class_init = Some(incoming.clone());
             }
             self.scopes.push(HashMap::new());
+            if by_ref {
+                self.note_kept_header(views::KeptKind::Pattern, arm.pattern.span, scrutinee.span);
+            }
             let outer = std::mem::replace(&mut self.match_by_ref, by_ref);
             let pattern = self.check_pattern(&arm.pattern, scrutinee_ty);
             self.match_by_ref = outer;
@@ -30911,6 +31002,10 @@ impl<'a> Checker<'a> {
         else_block: &Option<ast::Block>,
         span: Span,
     ) -> Option<Stmt> {
+        // `[BRW-14]` — a loop's names keep their place, unless the loop is handed what it walks.
+        if !matches!(iter.kind, ast::ExprKind::Owned(_)) {
+            self.note_kept_header(views::KeptKind::Loop, pattern.span, iter.span);
+        }
         // `[TYP-47]` — `for v in values:` over a pack's values is written out once per value.
         if let Some(pack) = self.pack_named(iter) {
             return self.check_pack_for(label, pattern, pack, body, else_block, span);
@@ -31703,6 +31798,7 @@ impl<'a> Checker<'a> {
             reported_defaults: self.reported_defaults.clone(),
         };
         let outer_copies = std::mem::take(&mut self.copy_captures);
+        let outer_copied = std::mem::take(&mut self.copied);
         let outer_body_locals = std::mem::replace(&mut self.body_locals_from, self.locals.len());
         let outer_made = std::mem::take(&mut self.made_must_drop);
         let body = loop {
@@ -31711,6 +31807,7 @@ impl<'a> Checker<'a> {
             self.open.deps.clear();
             self.open.per_use.clear();
             self.copy_captures.clear();
+            self.copied = views::CopiedValues::default();
             let body = self.check_block(block);
             // A name a count or a number relied on, that the body changes,
             // is known no more: another pass (`[STD-19]`).
@@ -31776,6 +31873,8 @@ impl<'a> Checker<'a> {
                 .note("a lambda copies a variable it only reads unless the variable is assigned after it is made (CLO-13)"),
             );
         }
+        self.report_copied_value_changes();
+        self.copied = outer_copied;
         self.open = outer;
         self.reassigned = outer_reassigned;
         self.body_locals_from = outer_body_locals;
@@ -36248,7 +36347,9 @@ impl<'a> Checker<'a> {
                                     },
                                     span,
                                 };
-                                let args = [arg(start.clone()), arg(lambda(&["$total", "$item"], add))];
+                                // `fold` takes its first total over (`owns init: B`).
+                                let given = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Owned(Box::new(start.clone())), span };
+                                let args = [arg(given), arg(lambda(&["$total", "$item"], add))];
                                 self.synth_method_on(iterator, span, method("fold"), &[], &args, None, span)
                             }
                             _ => {
@@ -40013,7 +40114,7 @@ impl<'a> Checker<'a> {
             // parameter mode. `synth` of the operand yields the place, and
             // for a `ref` local it yields the deref, which makes `ref mut r`
             // a reborrow (`[BRW-6]`) with no extra machinery.
-            ast::ExprKind::RefOf { mutable, place } => {
+            ast::ExprKind::RefOf { mutable, place, .. } => {
                 let inner = self.synth(place);
                 if inner.ty == self.common.error {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
@@ -40042,7 +40143,12 @@ impl<'a> Checker<'a> {
                 // field, an index or a dereferenced reference.
                 // `ref mut` before a call that gives a `MutSpan` names that span's elements
                 // (`d = ref mut tracks[name].as_mut_span()`): the span is the view.
-                if *mutable && !is_place(&inner.kind) && matches!(self.types.kind(inner.ty), TyKind::Span { mutable: true, .. }) {
+                let gives_spans = match self.types.kind(inner.ty) {
+                    TyKind::Span { mutable: true, .. } => true,
+                    TyKind::Tuple(items) => !items.is_empty() && items.iter().all(|item| matches!(self.types.kind(*item), TyKind::Span { mutable: true, .. })),
+                    _ => false,
+                };
+                if *mutable && !is_place(&inner.kind) && gives_spans {
                     return inner;
                 }
                 if !is_place(&inner.kind) {
@@ -46928,6 +47034,14 @@ impl<'a> Checker<'a> {
                 return false;
             }
             if let TyKind::Ref { mutable: false, .. } = *self.types.kind(current.ty) {
+                // `[BRW-15]` — a change through a name that only reads: `E3023`, with the line to write.
+                if !call
+                    && let Some(root) = root_local(&current.kind)
+                    && let Some(diagnostic) = self.read_only_change(root, span)
+                {
+                    self.sink.emit(diagnostic);
+                    return true;
+                }
                 let shown = self.types.display(current.ty);
                 // D-823 (B4) — `r = v` on a `ref` local is Python's rebinding of a name, and a
                 // reference is never re-pointed (ADR-010): `ref mut` would write `v` into what `r`
@@ -46953,6 +47067,15 @@ impl<'a> Checker<'a> {
                         "but not write [BRW-1]"
                     )),
                 );
+                return true;
+            }
+            // `[BRW-15]` — an element written through a plain name holding a `MutSpan`.
+            if !call
+                && let ExprKind::Index { base, .. } = &current.kind
+                && let ExprKind::Local(holder) = base.kind
+                && let Some(diagnostic) = self.span_holder_write(holder, span)
+            {
+                self.sink.emit(diagnostic);
                 return true;
             }
             // `[SPN-1]` — a `Span` is the shared view (`MutSpan` is the one
@@ -47093,13 +47216,8 @@ impl<'a> Checker<'a> {
                 [] => String::new(),
             }
         };
-        let noun = if self.types.is_numeric(ty) {
-            "number"
-        } else if ty == self.common.str_ || matches!(self.types.kind(ty), TyKind::Vec { text: true, .. }) {
-            "text"
-        } else {
-            "value"
-        };
+        // `[BRW-14]` (Q5) — the noun of the value's kind, the same in the message's three places.
+        let noun = self.value_noun(ty);
         let refused_text = code_before_comment(lines[refused].1).trim();
         // Only a line that gives the whole parameter a new value (`n = …`, `n -= 1`) is Python's rebinding.
         let rest = refused_text.strip_prefix(name).map(str::trim_start)?;
@@ -47139,7 +47257,8 @@ impl<'a> Checker<'a> {
                 listed(&uses)
             )
         };
-        Some(format!("`{name}` is the {noun} the caller passed and stays that {noun} for the whole call; for a {noun} of your own {plan}"))
+        let a_noun = views::a_noun(&noun);
+        Some(format!("`{name}` is the {noun} the caller passed and stays that {noun} for the whole call; for {a_noun} of your own {plan}"))
     }
 
     /// `assigns`: the write is the assignment of the whole parameter (`n = n + 1`), Python's
@@ -47243,7 +47362,17 @@ impl<'a> Checker<'a> {
                     .map_or_else(|| format!("{name}: {shown}"), str::to_string);
                 (message, format!("or write `ref mut {written}` for the parameter, and `ref mut` before the argument at each call, if the caller is to see the new value"))
             }
-            None => (format!("cannot mutate borrowed parameter `{name}`"), structural_help),
+            // `[BRW-15]` — the line to write, and each call, named once every call is checked.
+            None => match (!rebinding && !self.callable_parameter_locals.contains(&local))
+                .then(|| self.parameter_change(&name, ty, declaration, place, span))
+                .flatten()
+            {
+                Some(change) => {
+                    self.parameter_changes.push(change);
+                    (format!("{}`{name}` only reads the caller's value", views::PROVISIONAL), structural_help)
+                }
+                None => (format!("cannot mutate borrowed parameter `{name}`"), structural_help),
+            },
         };
         let mut diagnostic = Diagnostic::error(codes::E3023, span, message)
             .primary_label("this write needs mutable access")
@@ -48644,12 +48773,19 @@ impl<'a> Checker<'a> {
             let span = name.span;
             let view_ty = self.locals[view.0 as usize].ty;
             let read = self.read_through(Expr { ty: view_ty, kind: ExprKind::Local(view), span });
+            // `[BRW-14]` — `exists as copy of v` over a view (`scores.get(name)` gives a `ref int`) is a
+            // copy of what it views, a value of one's own.
+            let (read, part) = match *self.types.kind(part) {
+                TyKind::Ref { inner, .. } => (self.read_through(read), inner),
+                _ => (read, part),
+            };
             let copy = if self.copy_refused(part, &name.name.to_string(), span) {
                 Expr { ty: self.common.error, kind: ExprKind::Error, span }
             } else {
                 self.synth_method_on(read, span, ast::Ident { name: Symbol::intern("clone"), span }, &[], &[], None, span)
             };
             let local = self.declare(Some(name.name), part, span);
+            self.own_copies.insert(span);
             made.push(Stmt::Let { local, init: Some(copy) });
         }
         made
@@ -48847,6 +48983,24 @@ impl<'a> Checker<'a> {
             }
             if !a_part && (!self.types.is_copy(value.ty) || self.types.needs_drop(value.ty)) {
                 let name = self.written_line(inner.span).unwrap_or_else(|| "it".to_string());
+                // `[OWN-3]`, `[OWN-11]` — a name that is itself a view (a plain parameter, a loop or
+                // pattern name) hands nothing over: `owns` before it is a hand-over out of a name that
+                // does not own the value.
+                if let ExprKind::Deref(reference) = &value.kind
+                    && let TyKind::Ref { mutable: false, .. } = *self.types.kind(reference.ty)
+                {
+                    let noun = self.value_noun(value.ty);
+                    let whose = match reference.kind {
+                        ExprKind::Local(local) if self.borrowed_params.contains(&local) => "the caller's",
+                        _ => "the",
+                    };
+                    let a_noun = views::a_noun(&noun);
+                    self.sink.emit(
+                        Diagnostic::error(codes::E3013, span, format!("`{given} = owns {name}` would hand over {whose} {noun}, but `{name}` only reads it; for {a_noun} of your own write `{given} = copy of {name}`"))
+                            .note("`=` from a name that views its value makes another view, and hands nothing over [OWN-3]"),
+                    );
+                    return value;
+                }
                 self.error(codes::E0109, span, format!("`{given} = {name}` already hands `{name}` over; remove `owns`"));
                 return value;
             }
@@ -60405,12 +60559,15 @@ impl<'a> Checker<'a> {
         if matches!(arg.kind, ast::ExprKind::Error) {
             return;
         }
+        if mode == Mode::Borrow && arg.id != ast::NodeId::DUMMY {
+            self.note_plain_argument(declared, arg.span);
+        }
         // The words are the program's: a call or an argument the compiler makes itself has none.
         if !self.written_call || arg.id == ast::NodeId::DUMMY || self.generated_files.contains(&arg.span.file) {
             return;
         }
         let written = match &arg.kind {
-            ast::ExprKind::RefOf { mutable: true, place } => Some(place.span),
+            ast::ExprKind::RefOf { mutable: true, place, .. } => Some(place.span),
             _ => None,
         };
         // A value that is no place (a temporary, a literal) is `E3027`'s, not a missing word's.
@@ -60488,7 +60645,7 @@ impl<'a> Checker<'a> {
     /// for `fn hash(ref mut h: H)` solves `H` from `h` itself.
     fn inferred_argument(arg: &ast::Expr, mode: Mode) -> &ast::Expr {
         match (&arg.kind, mode) {
-            (ast::ExprKind::RefOf { mutable: true, place }, Mode::Mut) => place,
+            (ast::ExprKind::RefOf { mutable: true, place, .. }, Mode::Mut) => place,
             (ast::ExprKind::Owned(value), _) => value,
             _ => arg,
         }
@@ -60701,7 +60858,7 @@ impl<'a> Checker<'a> {
         // `[FN-2a]` — the call's `ref mut` says how the argument is passed; what a `ref mut`
         // parameter borrows is the place under it.
         let arg = match &arg.kind {
-            ast::ExprKind::RefOf { mutable: true, place } => &**place,
+            ast::ExprKind::RefOf { mutable: true, place, .. } => &**place,
             _ => arg,
         };
         // `[SPN-1]`/`[SPN-3]` — a `MutSpan[T]` **is** the mutable access: it
@@ -61350,7 +61507,7 @@ impl<'a> Checker<'a> {
             body: ast::LambdaBody::Expr(Box::new(if place {
                 ast::Expr {
                     id: ast::NodeId::DUMMY,
-                    kind: ast::ExprKind::RefOf { mutable: true, place: Box::new(default.clone()) },
+                    kind: ast::ExprKind::RefOf { mutable: true, constant: false, place: Box::new(default.clone()) },
                     span,
                 }
             } else {
@@ -61375,7 +61532,7 @@ impl<'a> Checker<'a> {
                     span,
                 };
                 let value = if by_ref {
-                    ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::RefOf { mutable: false, place: Box::new(value) }, span }
+                    ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::RefOf { mutable: false, constant: false, place: Box::new(value) }, span }
                 } else {
                     value
                 };

@@ -562,8 +562,8 @@ impl Printer {
                     }
                 }
             }),
-            ExprKind::RefOf { mutable, place } => {
-                let kw = if *mutable { "ref mut" } else { "ref" };
+            ExprKind::RefOf { mutable, constant, place } => {
+                let kw = if *constant { "const ref mut" } else if *mutable { "ref mut" } else { "ref" };
                 self.nest(&format!("RefOf {kw}"), |p| p.expr(place))
             }
             ExprKind::Paren(e) => self.expr(e),

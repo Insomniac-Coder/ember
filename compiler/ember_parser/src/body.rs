@@ -1337,14 +1337,19 @@ impl Parser<'_> {
             return self.parse_expr_bp(BP_UNARY, allow_block_lambda);
         }
 
-        if self.at_kw(Kw::Ref) && !self.at_keyword_as_name() {
+        // `[GRM-36]` — `const ref mut e`, a name of the place that is never given another ref.
+        let constant = self.at_kw(Kw::Const) && self.at_kw_at(1, Kw::Ref) && self.at_kw_at(2, Kw::Mut);
+        if constant {
+            self.bump();
+        }
+        if constant || (self.at_kw(Kw::Ref) && !self.at_keyword_as_name()) {
             self.bump();
             let mutable = self.eat_kw(Kw::Mut);
             let place = self.parse_expr_bp(BP_UNARY, allow_block_lambda);
             let id = self.next_id();
             return Expr {
                 id,
-                kind: ExprKind::RefOf { mutable, place: Box::new(place) },
+                kind: ExprKind::RefOf { mutable, constant, place: Box::new(place) },
                 span: start.to(self.prev_span()),
             };
         }
@@ -2580,7 +2585,7 @@ impl Parser<'_> {
             ExprKind::Paren(inner) => return self.expr_to_pattern(*inner),
             // `[GRM-13]`, `[GRM-19]` — `ref mut path` and `ref n` name a part of a condition's pattern
             // as they do in a `match` arm; `copy of v` a copy of one's own.
-            ExprKind::RefOf { mutable, place } if matches!(&place.kind, ExprKind::Path { segments } if segments.len() == 1) => {
+            ExprKind::RefOf { mutable, place, .. } if matches!(&place.kind, ExprKind::Path { segments } if segments.len() == 1) => {
                 let ExprKind::Path { segments } = place.kind else { unreachable!("matched above") };
                 PatternKind::Bind { name: segments[0], by_ref: true, mutable, sub: None }
             }

@@ -5,14 +5,14 @@ fn main():
     values: Array[i32] = Array[i32]()
     values.push(owns 3)
     values.push(owns 4)
-    view = values.as_mut_span()
+    view = ref mut values.as_mut_span()
 
     for item in view.iter():
         println(item)
 
     for item in view.iter_mut():
         replacement: i32 = item + 10
-        item = ref mut replacement
+        item = replacement
 
     view[0] = view[0] + 100
     println(view[0])

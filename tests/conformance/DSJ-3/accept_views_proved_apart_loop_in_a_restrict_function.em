@@ -26,7 +26,7 @@ fn scale(ref mut dst: MutSpan[f32], src: Span[f32], k: f32) -> StrView:
 
 @noinline
 fn halves(ref mut xs: MutSpan[int]):
-    (lo, hi) = xs.split_at(2)
+    (lo, hi) = ref mut xs.split_at(2)
     for i in 0..lo.len():
         lo[i] = hi[i] * 0 + (i + 1) * 10
 

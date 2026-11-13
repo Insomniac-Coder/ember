@@ -16,7 +16,7 @@ struct Pair:
 
 fn main():
     pair = Pair(Part(1), Part(2))
-    _old = pair.first
+    _old = owns pair.first
     pair.first = Part(3)
     _restored = pair
 #$ stdout: 2

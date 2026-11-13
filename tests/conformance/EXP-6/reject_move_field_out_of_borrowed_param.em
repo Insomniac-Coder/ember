@@ -15,7 +15,7 @@ struct Outer:
     pub inner: Inner
 
 fn steal(o: Outer):
-    x = o.inner                  #$ error[E3013]: cannot move out of a borrowed parameter
+    x = owns o.inner                #$ error[E3013]: cannot move out of a borrowed parameter
     println(x.n)
 
 fn main():

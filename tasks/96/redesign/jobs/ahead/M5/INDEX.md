@@ -348,3 +348,24 @@ P column is the row of the Hardened_15 cut, made once at the end of M5's run.
 | Q18 | BRW-5, STD-15 | BRW-5 names `swap(i, j)` among the library's ways to two changeable views; STD-15's list of `Array` methods has no `swap` | (b) | `Array` and `MutSpan` have `swap(i, j)`, which BRW-5 states; STD-15's list adds it | P14 |
 
 Q1 to Q13 are the pilot's (Q1 ruled by the lead); Q14 to Q18 are this batch's.
+
+## 4. Built by H4 (A2-3, 2026-11-13)
+
+Moved to `tests/conformance/<RULE>/` where they pass: all of BRW-13 (credited); BRW-12's 12.1, 12.3, 12.4,
+12.6, 12.7, 12.8 and 12.10 files; BRW-14's 14.2 to 14.7 and 14.9 files (`reject_eq_on_a_parameter_…`,
+`reject_the_local_of_your_own_takes_a_free_name`, `accept_the_local_of_your_own_…`, `accept_a_name_handed_its_value_may_change`,
+`accept_exists_as_copy_of_may_change`, both `const ref mut` parameter files, `reject_a_change_through_a_plain_name_that_keeps_its_place`);
+BRW-15's two message files and `accept_a_reading_method_through_a_read_only_name`. `accept_the_lines_the_messages_give`
+had one `#$ stdout: 1` too many (the program prints five lines): removed. What stays here, and what it waits for:
+- BRW-12: `accept_a_link_word_before_a_part_makes_a_link` (M4, `weakref`); `accept_a_part_name_is_a_view_not_a_hand_over`
+  (A1-18: `word = line.to_lower().trim()` views a temporary, E3060); `accept_a_value_a_call_made_is_owned_by_the_name`
+  (LT-1a/LT-45: `letters(s: StrView) -> Array[StrView]` is E3063, Q15); `reject_a_change_while_a_part_name_reads_it`
+  (A2-4: BRW-1's message form; the code, E3021, is right).
+- BRW-14: `accept_a_ref_mut_parameter_given_another_ref` (the `MutSpan` half: a `ref mut dst: MutSpan` parameter is still
+  passed as the span, so `dst = ref mut …` does not reach the caller's `d`; the `Counter` half passes);
+  `reject_eq_on_a_loop_pattern_opened_or_tested_name` (M11, `is T as c`); `reject_where_the_local_of_your_own_is_made`
+  (M4: this compiler gives every struct `Clone`, so the no-`Clone` offer for `Handle` never shows).
+- BRW-15: `accept_types_shared_between_threads_change_through_plain_names` (M9, `Lock`, `guarded by`);
+  `reject_a_change_behind_a_plain_name` (M4 for `shares mut`; the `Cell` through a plain parameter is not refused yet);
+  `reject_a_changing_method_through_a_read_only_name` (EXC-15's text names `for ref mut p in players:`, built with A2-6;
+  the parameter case needs M6a's summaries).

@@ -9,7 +9,7 @@
 # structural repair until the complete call proves otherwise.
 
 fn append_one(values: Array[i32]):
-    values.push(owns 1)  #$ error[E3023]: cannot mutate borrowed parameter `values`
+    values.push(owns 1)  #$ error[E3023]: `values.push(owns 1)` changes the caller's list, but `values` only reads it; write `fn append_one(ref mut values: Array[i32]):` and call it `append_one(ref mut values)`
 
 fn main():
     values: Array[i32] = Array[i32]()

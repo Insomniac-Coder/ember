@@ -12,7 +12,7 @@ struct Particle:
 
 @noinline
 fn step(ref mut ps: SoA[Particle], dt: f32):
-    xs = ps.x
+    xs = ref mut ps.x
     vs = ps.v
     for i in 0..xs.len():
         xs[i] += vs[i] * dt

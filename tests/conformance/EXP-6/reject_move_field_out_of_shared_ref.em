@@ -17,5 +17,5 @@ struct Outer:
 fn main():
     o = Outer(Inner(1))
     r: ref Outer = ref o
-    x = r.inner                  #$ error[E3013]: cannot move out of a reference
+    x = owns r.inner                #$ error[E3013]: cannot move out of a reference
     println(x.n)

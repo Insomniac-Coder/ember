@@ -10,7 +10,7 @@ fn main():
     shared_pointer: *i32 = shared.as_ptr()
     println(shared.len())
 
-    mutable = values.as_mut_span()
+    mutable = ref mut values.as_mut_span()
     read_pointer: *i32 = mutable.as_ptr()
     write_pointer: *mut i32 = mutable.as_mut_ptr()
     mutable[0] = 9

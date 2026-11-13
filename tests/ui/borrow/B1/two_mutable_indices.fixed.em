@@ -3,8 +3,8 @@ fn main():
     values.push(owns 1)
     values.push(owns 2)
     parts = values.as_mut_span().split_at(1)
-    left = parts.0
-    right = parts.1
+    left = ref mut parts.0
+    right = ref mut parts.1
     first: ref mut i32 = ref mut left[0]
     second: ref mut i32 = ref mut right[0]
     first = 10

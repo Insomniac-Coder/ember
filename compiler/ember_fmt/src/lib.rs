@@ -1287,8 +1287,8 @@ impl Printer<'_> {
             ast::ExprKind::ArrayRepeat { value, count } => {
                 format!("[{}; {}]", self.expr_pure(value), self.expr_pure(count))
             }
-            ast::ExprKind::RefOf { mutable, place } => {
-                let kind = if *mutable { "ref mut " } else { "ref " };
+            ast::ExprKind::RefOf { mutable, constant, place } => {
+                let kind = if *constant { "const ref mut " } else if *mutable { "ref mut " } else { "ref " };
                 format!("{kind}{}", self.expr_pure(place))
             }
             ast::ExprKind::Lambda(lambda) if let Some(arrow) = self.arrow_lambda(expr, lambda) => arrow,

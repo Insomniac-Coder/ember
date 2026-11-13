@@ -12,7 +12,7 @@ from std.collections import Pool, Split20, CapacityError
 fn main():
     pool = Pool[int, Split20]()
     first = pool.insert(owns 0)
-    last = first
+    last = copy of first
     for value in 1..4096:
         pool.remove(last)
         last = pool.insert(owns value)

@@ -27,7 +27,7 @@ fn main():
     println(first[i32](values.as_span()))
     item = first_mut[i32](values.as_mut_span())
     replacement: i32 = 9
-    item = ref mut replacement
+    item = replacement
     println(values[0])
 #$ stdout: 7
 #$ stdout: 9

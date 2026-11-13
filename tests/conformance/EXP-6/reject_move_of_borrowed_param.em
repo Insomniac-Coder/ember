@@ -12,7 +12,7 @@ struct Inner:
         println(this.n)
 
 fn steal(o: Inner):
-    x = o                        #$ error[E3013]: cannot move out of a borrowed parameter
+    x = owns o                   #$ error[E3013]: `x = owns o` would hand over the caller's inner, but `o` only reads it; for an inner of your own write `x = copy of o`
     println(x.n)
 
 fn main():

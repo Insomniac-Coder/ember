@@ -10,7 +10,7 @@ struct Counter:
     pub value: i32
 
 fn expose(counter: Counter):
-    value: ref mut i32 = ref mut counter.value  #$ error[E3023]: cannot mutate borrowed parameter `counter`
+    value: ref mut i32 = ref mut counter.value  #$ error[E3023]: `expose` sets `counter.value`, but `counter` only reads the caller's counter; write `fn expose(ref mut counter: Counter):` and call `expose(ref mut counter)`
     value = 2
 
 fn main():

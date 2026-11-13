@@ -8,8 +8,8 @@ fn main():
     values.push(owns 3)
     values.push(owns 4)
     halves = values.as_mut_span().split_at(2)
-    left = halves.0
-    right = halves.1
+    left = ref mut halves.0
+    right = ref mut halves.1
     left_chunks = left.chunks_mut(1)
     right_chunks = right.chunks_mut(1)
     left_first = left_chunks.next()

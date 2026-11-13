@@ -33,10 +33,10 @@
 //! * **accesses** are attributed only to the roots reaching the accessed field
 //!   at that point.
 //!
-//! Reference locals themselves are not reseated (`[TYP-14]`), but `[LT-21]`
-//! explicitly permits a borrowed field in a multi-region view to be replaced.
-//! Consequently the solver must distinguish the value before that write from
-//! the value after it even though both occupy the same compiler region slot.
+//! A view name may be given another view (`[BRW-13]`: `r = ref mut b`), and `[LT-21]`
+//! permits a borrowed field in a multi-region view to be replaced. Consequently the
+//! solver distinguishes the value before that write from the value after it even
+//! though both occupy the same compiler region slot.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ops::{Index, IndexMut};

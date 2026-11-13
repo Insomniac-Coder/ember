@@ -10,4 +10,4 @@ struct Count:
 
 fn reset(ref mut q: Query[Mut[Count]], unused: ()):
     for count in q.iter():
-        count.n = 0  #$ error[E3021]: cannot write through a shared reference
+        count.n = 0  #$ error[E3023]: but `count` only reads it

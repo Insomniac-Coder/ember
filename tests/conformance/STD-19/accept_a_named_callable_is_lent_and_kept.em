@@ -65,7 +65,7 @@ fn main():
         joins += 1
         return a + b
     plus = plus_fn
-    folded = xs.iter().fold(0, add)
+    folded = xs.iter().fold(owns 0, add)
     reduced = xs.iter().copy_each().reduce(plus)
     println(folded, steps, reduced, joins)
     keys = 0

@@ -16,7 +16,7 @@ struct Outer:
     pub inner: Inner
 
     fn drop():
-        x = this.inner               #$ error[E3010]: cannot move a field out of `this` in `drop`
+        x = owns this.inner             #$ error[E3010]: cannot hand over `this.inner` on its own: `Outer` has a `drop` of its own, which would run over a value with a hole in it
         println(x.n)
 
 fn main():

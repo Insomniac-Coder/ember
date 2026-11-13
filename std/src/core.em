@@ -916,7 +916,7 @@ pub interface Iterator:
     ## lambda written at the call (`[STD-19]`, ODR-240), so it may write what it captures
     ## (`[CLO-2]`) and the caller reads that once the callable's last use is past.
     [B, F: needs fn(B, Item) -> B]
-    fn fold(init: B, owns f: F) owns this -> B:
+    fn fold(owns init: B, owns f: F) owns this -> B:
         acc = init
         for x in this:
             acc = f(acc, x)
@@ -2505,9 +2505,9 @@ extend[T] MutSpan[T]:
         if i < 0 or j < 0 or i >= n or j >= n or i == j:
             return None
         if i < j:
-            (low, high) = this.split_at(j)
+            (low, high) = ref mut this.split_at(j)
             return Some((ref mut low[i], ref mut high[0]))
-        (low, high) = this.split_at(i)
+        (low, high) = ref mut this.split_at(i)
         return Some((ref mut high[0], ref mut low[j]))
 
 ## `[STR-5]` — element-wise equality through `T: Eq`. The checker routes a
