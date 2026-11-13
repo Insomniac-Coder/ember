@@ -608,3 +608,43 @@ after each work batch" is the owner's rule from this round.
     4. LEX-26/TXT-3, a NUL in `c"…"`: W3's question 1, already for Hardened_15; E5064 stays.
     5. STR-2's message for a field of a compound type: fixed by (2), the type as written.
     6. TXT-2's `_lossy` form: the rule allows one ("or"), it requires none; nothing missing.
+- **H4 (Opus), lane a job 1: M5's A2-3** (656k tokens, 3 h 10 min). One commit `d394c27a`; merged `5fdf72e9` (one
+  conflict: STD-19's test kept W4's local function and H4's `fold(owns 0, …)`). **Credited:** BRW-13. BRW-12, -14
+  and -15 are built but not credited, each waiting on a clause of another milestone (weakref M4, A1-18's
+  temporaries, LT-1a/Q15, A2-4's message, kind tests M11, A2-6, M6a, M9); 10 files wait in `ahead/M5` (INDEX §4).
+  - **The lead's review:** the part-view rule skips lines the compiler writes itself (`NodeId::DUMMY`), which keep
+    the meaning they were built for: accepted, as no program writes them. BRW-15's messages are written once every
+    call is known through a marker character; the marker now never reaches the reader where no change was
+    recorded (`ee927f1c`). E3010, E3011 and E3013's pages hand the part over with `owns` (a part named with `=` is
+    a view now).
+  - **The lead on its questions:**
+    1. `acc = init` then `acc = f(acc, x)`: (a) confirmed. A name has one type: a view name never becomes an
+       owner, so `=` with a whole value writes what it views (E3023), and `fold` takes its start value over
+       (`owns init`), as the loop does with it.
+    2. A part of a `packed` struct: (a) confirmed. A view of a packed field may be unaligned (E2170 stands); the
+       program writes `copy of` or `owns`.
+    3. BRW-15's "call" and "call it": the spec gives both; kept as given, one form for Hardened_15.
+  - **For lane a's next job:** a `ref mut dst: MutSpan` parameter passed as the span itself (14.8; the same piece
+    as H3's FFI-11b, A6-4's last part); CTL-7's E3060 for a view a later reshape ends (`[BRW-17]`, W4's question 2).
+- **H3 (Opus), lane b job 1: the C interface's safety words** (794k tokens, 4 h 35 min). 16 commits; merged
+  `2de9c3d7` (three conflicts, each two additions side by side). **Credited 14:** UNS-2, UNS-3, UNS-5, UNS-10,
+  UNS-10a, UNS-11, FFI-11a, FFI-25, FFI-26, FFI-29, FFI-29b, FFI-33b, FFI-36, BLD-FFI-1. Not credited, each with what
+  it waits for (`lanes/b.md`): FFI-51 and BLD-FFI-3 (large, in lane), TCB-4, BLD-FFI-1a (MAN-10), FFI-33/-33c
+  (`static mut`, `Lock`, `guarded by`), FFI-33a (E7015, THR-9), FFI-11b and FFI-11 (A6-4's last part), FFI-56 and
+  FFI-8, FFI-31b, FFI-36a (N173/N180), FFI-17a, UNS-4.
+  - **The lead's review:** `from std.mem import MaybeUninit` binds the compiler-known type by name, as the
+    `ForeignBox` and `forget` imports beside it are handled; a re-export in `std.mem` would be the general form
+    once compiler-known types can be re-exported.
+  - **Its questions:**
+    1. UNS-4 states only the programmer's obligations: whether it is counted (tests that each can be broken only
+       inside `unsafe`) or classed with the meta rules changes how the percentages are computed, which is the
+       owner's; open.
+    2. LEX-23 against UNS-8 on an end-of-line note beside `unsafe extend/extern/overlay`: a contradiction, for
+       Hardened_15; LEX-23's reading stays for the new sites.
+    3. An exported static's symbol, ABI and thread rules: a gap, for Hardened_15; E0900 stays.
+  - Its other findings (UNS-5's "four `int`s" against `int` shown as `i64`, UNS-11's `get_unchecked` on `Array`,
+    the interpreter's pointer-cast read, E2116's help on `UnsafeCell`, E7005's "Sync", `mem.drop(owns s)`) go to
+    the lanes' next jobs.
+- **After the merges, the lead:** the quick check now runs parse tests (`6eda5530`; W3's GRM-35 overlay test waits
+  in `ahead/lane-b`), the guide and FMT-2's test follow GRM-17 (`6e158a1d`), the test runs' load limit (the owner,
+  `b1d6179b`), seven error pages and three rewritten (`ee927f1c`).
