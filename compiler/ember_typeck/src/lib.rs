@@ -19366,6 +19366,16 @@ impl<'a> Checker<'a> {
         Expr { ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(value) }, span }
     }
 
+    /// `[STR-2]` — an argument whose evaluation does nothing but give its value (a literal, a local,
+    /// a reference to a local), so it may be read where it stands; any other is made first, in order.
+    fn evaluates_to_nothing_else(value: &Expr) -> bool {
+        match &value.kind {
+            ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_) | ExprKind::Local(_) | ExprKind::Error => true,
+            ExprKind::Ref { place, .. } => matches!(place.kind, ExprKind::Local(_)),
+            _ => false,
+        }
+    }
+
     /// `[STR-6]` (D-283) — a struct that declares `init(self, …)` is built by
     /// it, not by the memberwise constructor: from its field defaults, then
     /// `init` runs on the value with the arguments. `init`'s own visibility
@@ -19406,7 +19416,7 @@ impl<'a> Checker<'a> {
         let mut stmts = Vec::new();
         if let ExprKind::Call { args, .. } = &mut call.kind {
             for arg in args.iter_mut().skip(1) {
-                if matches!(arg.kind, ExprKind::Call { .. } | ExprKind::Binary { .. } | ExprKind::FString { .. } | ExprKind::Block { .. }) {
+                if !Self::evaluates_to_nothing_else(arg) {
                     let (aty, aspan) = (arg.ty, arg.span);
                     let temp = self.declare(None, aty, aspan);
                     let made = std::mem::replace(arg, Expr { ty: aty, kind: ExprKind::Local(temp), span: aspan });
@@ -60859,7 +60869,7 @@ impl<'a> Checker<'a> {
         if !in_order {
             for &field in &written {
                 if let Some(value) = values[field].take() {
-                    if matches!(value.kind, ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_) | ExprKind::Local(_) | ExprKind::Error) {
+                    if Self::evaluates_to_nothing_else(&value) {
                         values[field] = Some(value);
                         continue;
                     }
@@ -61227,25 +61237,25 @@ impl<'a> Checker<'a> {
         let outer = (!bindings.is_empty()).then(|| std::mem::replace(&mut self.type_params, bindings));
         let errors_before = self.sink.error_count();
         // `[STR-2]` - which field this default is for, and the fields beside it.
-        let context = match owner {
+        let (fields, defaults) = match owner {
             DefaultOwner::Struct(id) => {
                 let def = self.types.struct_def(id);
-                let names: Vec<(Symbol, Ty)> = def.fields.iter().map(|f| (f.name, f.ty)).collect();
-                let index = self.struct_default_exprs.get(&id).and_then(|all| all.iter().position(|e| e.as_ref().is_some_and(|e| e.span == default.span)));
-                let owner_name = def.name.to_string();
-                index.map(|index| (names[index].0, names, owner_name))
+                (Some((def.fields.clone(), def.name.to_string())), self.struct_default_exprs.get(&id))
             }
             DefaultOwner::Class(id) => {
                 let def = self.types.class_def(id);
-                let names: Vec<(Symbol, Ty)> = def.fields.iter().map(|f| (f.name, f.ty)).collect();
-                let index = self.class_default_exprs.get(&id).and_then(|all| all.iter().position(|e| e.as_ref().is_some_and(|e| e.span == default.span)));
-                let owner_name = def.name.to_string();
-                index.map(|index| (names[index].0, names, owner_name))
+                (Some((def.fields.clone(), def.name.to_string())), self.class_default_exprs.get(&id))
             }
-            DefaultOwner::Constant => None,
-        }
-        .map(|(field, names, owner_name)| {
-            (field, names.into_iter().map(|(n, t)| (n, self.types.display(t).replace("i64", "int"))).collect(), owner_name)
+            DefaultOwner::Constant => (None, None),
+        };
+        let index = defaults.and_then(|all| all.iter().position(|e| e.as_ref().is_some_and(|e| e.span == default.span)));
+        // Each field's type as its declaration writes it (`n: int`), for the line the message gives.
+        let context = fields.zip(index).map(|((fields, owner_name), index)| {
+            let written: Vec<(Symbol, String)> = fields
+                .iter()
+                .map(|f| (f.name, self.written_line(f.ty_span).unwrap_or_else(|| self.types.display(f.ty))))
+                .collect();
+            (fields[index].name, written, owner_name)
         });
         let outer_context = std::mem::replace(&mut self.default_context, context);
         let written = self.written_line(default.span);
