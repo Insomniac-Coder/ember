@@ -1678,7 +1678,7 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         // `[OWN-12]`, `[FFI-54]` — the address an `owns T` holds; a foreign object's leaves the record.
         B::IntoRaw { foreign: true } => (Effects::SYNC | Effects::PANIC, "a foreign object given to C"),
         B::IntoRaw { foreign: false } => (Effects::NONE, ""),
-        B::ForeignThread | B::CppObjectAddress | B::CppOverrides { .. } | B::UnionLit { .. } => (Effects::NONE, ""),
+        B::ForeignThread | B::ForeignCallAt | B::CppObjectAddress | B::CppOverrides { .. } | B::UnionLit { .. } => (Effects::NONE, ""),
         // `[UNS-5]` — through a raw pointer, which is `unsafe`.
         B::VolatileRead | B::VolatileWrite => (Effects::UNSAFE, "a volatile access through a raw pointer"),
         // `[FFI-39]`, `[FFI-17d]` — a count of a class object, and the check that a foreign

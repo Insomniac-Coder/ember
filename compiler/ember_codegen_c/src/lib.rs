@@ -8169,6 +8169,14 @@ impl Emitter<'_> {
                 if lines.is_empty() {
                     return;
                 }
+                // `[FFI-33b]` — a named local bound to its thread passes its name to the stop of its end.
+                if place.projection.is_empty()
+                    && matches!(self.types.kind(ty), TyKind::Struct(_))
+                    && self.types.thread_bound_foreign_owner(ty)
+                    && let Some(name) = &body.locals[place.local.0 as usize].name
+                {
+                    lines.insert(0, format!("{RT}ffi_end_name({});", c_string_literal(name)));
+                }
                 // ADR-141 — a list still in its frame buffer frees nothing.
                 if place.projection.is_empty() && body.stack_buffers.iter().any(|buffer| buffer.local == place.local) {
                     let local = place.local.0;
@@ -9794,6 +9802,7 @@ impl Emitter<'_> {
                         return format!("{RT}ffi_release((void*)({}), {}, {shown})", rendered[0], rendered[1]);
                     }
                     Builtin::ForeignThread => return format!("{RT}ffi_thread()"),
+                    Builtin::ForeignCallAt => return format!("{RT}ffi_call_at({})", self.location(span)),
                     // `[OWN-12]`, `[FFI-54]` — the address the owner's first word holds; the owner
                     // was handed to the call and nothing drops it. A foreign object's leaves the
                     // runtime's record first, as an `owns` parameter's does.

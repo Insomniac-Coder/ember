@@ -3301,8 +3301,15 @@ ember_obj_header* ember_cpp_object_adopt(ember_obj_header* object, ember_loc at)
 void* ember_ffi_adopt(void* object, ember_loc at);
 void ember_ffi_release(void* object, uint32_t creator, const char* type);
 uint32_t ember_ffi_thread(void);
+/* `[FFI-33b]` — what a stop names, set just before the event it names: `ember_ffi_call_at` the
+ * line of a call whose `returns_owned` result gives a value bound to its thread, which the next
+ * `ember_ffi_adopt` on this thread records instead of the wrapper's; `ember_ffi_end_name` the
+ * name of a local whose value bound to its thread ends, which the next `ember_ffi_release` on this
+ * thread names. Each is used once and cleared. */
+void ember_ffi_call_at(ember_loc at);
+void ember_ffi_end_name(const char* name);
 /* `[FFI-22]`, `[FFI-33b]`, `[FFI-1]` — a callback, or a foreign function, whose contract says
- * `threads(creator)` or `threads(main)`: the debug profile checks that it is called on that
+ * `threads(creator)` or `threads(main)`: every profile checks that it is called on that
  * thread (`EMBER_FFI_MAIN_THREAD` names the main one) and panics naming `what` and both threads
  * otherwise. */
 #define EMBER_FFI_MAIN_THREAD UINT32_MAX

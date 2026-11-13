@@ -1,8 +1,8 @@
 #$ test: run-fail
 #$ rules: FFI-33b, FFI-21
-#$ profiles: debug
+#$ profiles: debug, development, release
 #$ panics: a callback whose contract says `threads(creator)` is called on thread
-# `[FFI-33b]` — in the debug profile, a callback contracted `threads(creator)` that C calls on
+# `[FFI-33b]`, `[FFI-53]` — in every profile, a callback contracted `threads(creator)` that C calls on
 # another thread panics, naming both threads, before it runs.
 
 # SAFETY: the test's own C, which runs nothing before `main`

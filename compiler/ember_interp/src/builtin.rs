@@ -1476,6 +1476,8 @@ impl Interp<'_, '_> {
             Builtin::JobScope | Builtin::JobScopeSubmit { .. } | Builtin::JobSubmit { .. } | Builtin::JobWait | Builtin::ParallelFor { .. } => {
                 "a job on the pool"
             }
+            // `[FFI-33b]` — what a stop names: the evaluator stops on no foreign object.
+            Builtin::ForeignCallAt => return Ok(None),
             Builtin::ForeignStatic { .. } | Builtin::ForeignAdopt | Builtin::ForeignRelease | Builtin::ForeignThread => {
                 "a foreign object"
             }

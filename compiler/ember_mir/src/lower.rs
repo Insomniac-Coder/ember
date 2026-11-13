@@ -2717,6 +2717,22 @@ impl<'a> Builder<'a> {
                 for place in &class_accesses {
                     self.push(StmtKind::BeginAccess { place: place.clone(), mutable: true });
                 }
+                // `[FFI-33b]` — a `returns_owned` result bound to its thread is recorded as made at this
+                // call's line, not at its declaration's.
+                if function.ffi_counted.as_ref().is_some_and(|counted| counted.result_owned.is_some())
+                    && self.types.thread_bound_foreign_owner(function.ret)
+                {
+                    self.at(expr.span);
+                    let unit = self.temp(self.void_ty, expr.span);
+                    let after = self.new_block();
+                    self.terminate(Terminator::Call {
+                        func: FuncRef::Builtin { which: hir::Builtin::ForeignCallAt, arg_ty: function.ret },
+                        args: Vec::new(),
+                        dest: Place::local(unit),
+                        next: after,
+                    });
+                    self.current = after;
+                }
                 let next = self.new_block();
                 let func = match (function.class_owner, function.class_virtual_slot) {
                     (Some(owner), Some(slot)) => FuncRef::Virtual {

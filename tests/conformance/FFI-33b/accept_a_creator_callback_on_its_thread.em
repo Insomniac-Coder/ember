@@ -4,7 +4,7 @@
 #$ stdout: 2
 # `[FFI-33b]`, `[FFI-22]` — a callback whose contract says `threads(creator)`: what it captures
 # need not be `Send` (a class handle here), and C calls it on the thread that made the call. The
-# debug profile checks each call (the run-fail case beside this one calls it elsewhere).
+# trampoline checks each call, in every profile (the run-fail case beside this one calls it elsewhere).
 
 # SAFETY: the test's own C, which runs nothing before `main`
 unsafe import c "./ticks.c" with (overlay = "overlays/ticks.em") as ticks
