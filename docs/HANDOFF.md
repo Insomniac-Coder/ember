@@ -1,5 +1,21 @@
 # Ember — handoff
 
+> **2026-11-13 afternoon — PAUSED by the owner after round 7's merges ("yes merge everything and then pause, even
+> the workers that are running don't pause them abruptly", "let them finish their job").** START HERE. Resume only
+> when the owner says so.
+>
+> - **Local `main`, not pushed** (origin/main = `0205c9b8`): W3, W4 (lane c), H4 (lane a, A2-3) and H3 (lane b) are
+>   reviewed and merged, the lead's fixes on top (`tasks/96/redesign/jobs/review.md`, round 7). The quick check fails
+>   0; the suites ran green in the ci profile but for two lane-b tests that met lane a's BRW-12/BRW-15, fixed in
+>   `c51c02d8`; the conformance suite and the quick check pass after it. Overall 17% (phase 1 25, 2 12, 5 17, 7 19).
+> - **The load limit (the owner, 2026-11-13, the laptop at 102 °C):** one full test run at a time, at most 16
+>   threads, enforced in code (`docs/AUTOPILOT.md` §3, "How hard the laptop runs").
+> - **Next, when resumed:** the push (gate + bench on core 1, mains power); W5, lane c job 3 (its section is in
+>   `R7-batch.md`: Part III's types and LEX-10 reading B); lane a's next job (slice C after A2-3, the `ref mut`
+>   MutSpan ABI of BRW-14.8 / FFI-11b, CTL-7's E3060); lane b's next (FFI-51, BLD-FFI-3, FFI-31b's export carriers,
+>   the GRM-35 overlay test in `ahead/lane-b`); the Hardened_15 cut (INDEX §3's P1-P14 and the round-7 questions
+>   listed "for Hardened_15" in `review.md`). Open for the owner: whether UNS-4 is counted (H3's question 1).
+>
 > **2026-11-13 — resumed; pushed; Hardened_14 is the target; round 7 in lanes (the owner: "resume work and work
 > autonomously, use 2-3 helper agents at max. Lets work towards finishing this language", then "yea" to the lead's
 > six changes).** START HERE.
