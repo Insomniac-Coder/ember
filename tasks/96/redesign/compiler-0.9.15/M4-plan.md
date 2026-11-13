@@ -228,6 +228,16 @@ there.
   - **C5:** `uncounted_handles.rs` and `temporary_owners.rs` re-targeted, `is` compares objects, ODR-065's store-back
     and the copy's retain glue for class handles go.
   - **C6:** the suites three ways, the bench; then `lead-m4` takes the branch.
+  - **Found by C2 (2026-11-13): slice C needs `[BRW-12]` first.** After C2's migration 258 programs still fail, and
+    most are reads of a class object out of a place: `x = list[0]` (E3011, "cannot move out of an element", 29),
+    `x = p.child` through a view (E3013, 28 + 27), a part of a shared object (11). The copy used to hide them; under
+    the spec none is a hand-over: `[BRW-12]` clause 2, "a name bound to a part … is a read-only view: never a
+    hand-over, never a silent copy". `[BRW-12]` is M5's A2-3, and it holds for every type, not class objects alone
+    (one rule, no exception by type). Tried on its own (`x = <part>` of a type that is not `Copy` binds a `ref`): the
+    quick check then gives 3,344 "cannot write through a shared reference", the programs that write through a name
+    bound to a part, which `[BRW-12]` clause 6 writes `ref mut x = <part>`. So the order is: `[BRW-12]` with its own
+    checker migration (`ref mut` where the name is written through, a hand-over word where the part is moved
+    out), then slice C on top. The experiment was reverted; C1 and C2 stay on `m4-slice-c-probe`.
 - **Task 15, the suites** (round 6, H2): the quick check (failing 0; the touched folders on the C backend
   too), `cargo test -p` of every crate touched (`ember_types`, `ember_hir`, `ember_typeck`, `ember_mir`,
   `ember_analysis`, `ember_interp`, `ember_codegen_c`, `ember_codegen_llvm`, `ember_driver`; the reload
