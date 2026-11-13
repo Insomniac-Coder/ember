@@ -86,14 +86,15 @@ fn main():
 10
 ```
 
-A lambda can use the names around it (`offset` above). Its body can also be a block:
+A lambda can use the names around it (`offset` above). Its body is one simple statement; when it
+needs a block, declare a local function and use its name as the value:
 
 ```ember
 fn apply(f: fn(int) -> int, x: int) -> int:
     return f(x)
 
 fn main():
-    clamp = fn(x: int) -> int:
+    fn clamp(x: int) -> int:
         if x > 100:
             return 100
         return x

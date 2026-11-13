@@ -6052,10 +6052,15 @@ fn one_full_run_at_a_time(cases: usize) {
     }
     HELD.get_or_init(|| {
         let path = std::env::temp_dir().join("ember-suite.lock");
-        let file = std::fs::OpenOptions::new().create(true).append(true).open(&path).expect("the suite lock opens");
-        if file.try_lock().is_err() {
-            eprintln!("waiting for another full test run to finish ({})", path.display());
-            file.lock().expect("the suite lock is taken");
+        // Read and write access: Windows refuses to lock a file opened for appending only.
+        let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path).expect("the suite lock opens");
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => {
+                eprintln!("waiting for another full test run to finish ({})", path.display());
+                file.lock().expect("the suite lock is taken");
+            }
+            Err(std::fs::TryLockError::Error(error)) => panic!("the suite lock {}: {error}", path.display()),
         }
         file
     });
@@ -6222,9 +6227,10 @@ fn formatting_is_idempotent_and_preserves_the_tree() {
 }
 
 /// `[FMT-2]` — the formatter writes a lambda whose body is one expression in
-/// the `=>` form: a block that only returns a value, and the `:` form inside
-/// brackets. A body of more than that, or one with a comment, keeps its form;
-/// the result formats to itself and parses to the same tree (`[FMT-1]`).
+/// the `=>` form: a `:` body on the lambda's own line (`: return x + 1`) and
+/// the `:` form inside brackets. A block after a lambda's `:` is `E0106` since
+/// 0.9.20 (`[GRM-17]`), so there is none to format. The result formats to
+/// itself and parses to the same tree (`[FMT-1]`).
 #[test]
 fn formatter_writes_one_expression_lambdas_in_the_arrow_form() {
     let root = workspace_root();
@@ -6232,7 +6238,7 @@ fn formatter_writes_one_expression_lambdas_in_the_arrow_form() {
     let scratch = directory.join(ember_branding::source_file("main"));
     std::fs::write(
         &scratch,
-        "fn apply(f: fn(int) -> int, x: int) -> int:\n    return f(x)\n\n\nfn main():\n    add = fn(x: int) -> int:\n        return x + 1\n    keep = fn(x: int) -> int:\n        # a note\n        return x\n    two = fn(x: int) -> int:\n        y = x * 2\n        return y\n    println(apply(fn(x): x * 3, 2), apply(fn(x): return x - 1, 2), add(1), keep(2), two(3))\n    println(apply(fn(x) => x, 5))\n",
+        "fn apply(f: fn(int) -> int, x: int) -> int:\n    return f(x)\n\n\nfn main():\n    add = fn(x: int) -> int: return x + 1\n    println(apply(fn(x): x * 3, 2), apply(fn(x): return x - 1, 2), add(1))\n    println(apply(fn(x) => x, 5))\n",
     )
     .expect("the fixture is writable");
     let path = scratch.to_string_lossy().into_owned();
@@ -6241,7 +6247,7 @@ fn formatter_writes_one_expression_lambdas_in_the_arrow_form() {
     assert_eq!(once.exit, 0, "{}", once.stderr);
     assert_eq!(
         once.stdout,
-        "fn apply(f: fn(int) -> int, x: int) -> int:\n    return f(x)\n\n\nfn main():\n    add = fn(x: int) -> int => x + 1\n    keep = fn(x: int) -> int:\n        # a note\n        return x\n    two = fn(x: int) -> int:\n        y = x * 2\n        return y\n    println(apply(fn(x) => x * 3, 2), apply(fn(x) => x - 1, 2), add(1), keep(2), two(3))\n    println(apply(fn(x) => x, 5))\n",
+        "fn apply(f: fn(int) -> int, x: int) -> int:\n    return f(x)\n\n\nfn main():\n    add = fn(x: int) -> int => x + 1\n    println(apply(fn(x) => x * 3, 2), apply(fn(x) => x - 1, 2), add(1))\n    println(apply(fn(x) => x, 5))\n",
         "[FMT-2]"
     );
     std::fs::write(&scratch, &once.stdout).expect("the formatted fixture is writable");
