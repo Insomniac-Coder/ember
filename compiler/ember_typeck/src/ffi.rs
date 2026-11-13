@@ -152,3 +152,37 @@ impl Checker<'_> {
         );
     }
 }
+
+impl Checker<'_> {
+    /// `[FFI-36]` — `adopt` of an imported C++ class with no public destructor: nothing Ember can call
+    /// ends one, so the overlay names the function that does (`E5002`). The function suggested is the
+    /// header's one that takes one `*mut T` of it, where there is exactly one.
+    pub(crate) fn refuse_no_public_destructor(&mut self, module: usize, pointee: Ty, span: Span) {
+        let shown = self.types.foreign_object_shown(pointee);
+        let prefix = format!("{}.", self.prefixes[module]);
+        let mut candidates: Vec<String> = self
+            .fn_ids
+            .iter()
+            .filter(|(path, def)| {
+                path.as_str().starts_with(&prefix) && self.frees_one(**def, pointee) && self.signatures[def.0 as usize].ret == self.common.void
+            })
+            .map(|(path, _)| path.as_str().rsplit('.').next().unwrap_or_default().to_string())
+            // The importer's own thunks are no function of the header.
+            .filter(|name| !name.starts_with(ember_branding::RUNTIME_PREFIX))
+            .collect();
+        candidates.sort();
+        candidates.dedup();
+        let destructor = match candidates.as_slice() {
+            [one] => one.clone(),
+            _ => "f".to_string(),
+        };
+        self.sink.emit(
+            Diagnostic::error(
+                codes::E5002,
+                span,
+                format!("`{shown}` has no public destructor, so nothing Ember can call ends an adopted one; name the function that does in the overlay: `@ffi(destroys({destructor}))` above `type {shown}`"),
+            )
+            .note("an adopted object is ended by its type's one destructor [FFI-36], [FFI-36a]"),
+        );
+    }
+}

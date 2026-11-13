@@ -17553,6 +17553,12 @@ impl<'a> Checker<'a> {
             return error;
         }
         let Some(destroys) = contract.destroys else {
+            // `[FFI-36]` — an imported C++ class is ended by its own destructor and `delete` unless
+            // something names another; one with no public destructor has neither.
+            if self.foreign_cpp.get(contract.module).copied().unwrap_or(false) {
+                self.refuse_no_public_destructor(contract.module, pointee, span);
+                return error;
+            }
             self.sink.emit(
                 Diagnostic::error(codes::E5002, span, format!("the declaration of `{shown}` names no destructor"))
                     .help(format!("write `@ffi(destroys(f))` on `type {shown}`, naming the foreign function that frees one [FFI-36a]")),
