@@ -13,7 +13,7 @@ fn increment(ref mut counter: Counter):
     counter.value = counter.value + 1
 
 fn forward(counter: Counter):
-    increment(ref mut counter)  #$ error[E3023]: cannot mutate borrowed parameter `counter`
+    increment(ref mut counter)  #$ error[E3023]: `increment(ref mut counter)` changes the caller's counter, but `counter` only reads it; write `fn forward(ref mut counter: Counter):` and call it `forward(ref mut counter)`
 
 fn main():
     counter = Counter(1)

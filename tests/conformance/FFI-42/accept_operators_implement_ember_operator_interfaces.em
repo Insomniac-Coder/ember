@@ -42,7 +42,7 @@ fn main():
     d = -c
     println(c.x, c.y, d.x, d.y)
     println(a == b, a != b, c == a + b)
-    e = c
+    e = copy of c
     e += a
     println(e.x, e.y)
     match a * 3:
@@ -73,7 +73,7 @@ fn main():
             println(error.what)
     price = cpp.bank.Money(cents = 100)
     total = price + cpp.bank.Money(cents = 250)
-    paid = total
+    paid = copy of total
     paid += price
     println(total.cents, paid.cents, total == price + cpp.bank.Money(cents = 250))
     scaled = cpp.bank.Points(value = 4) * 3

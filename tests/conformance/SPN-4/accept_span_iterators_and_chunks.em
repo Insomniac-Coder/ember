@@ -55,7 +55,7 @@ fn main():
     mutable = values.as_mut_span()
     for item in mutable.iter_mut():
         replacement: i32 = item + 10
-        item = ref mut replacement
+        item = replacement
 
     chunk_count: int = 0
     last_len: int = 0

@@ -5,7 +5,7 @@
 
 fn main():
     a: Array[i32] = [1, 2, 3]
-    m: MutSpan[i32] = a.as_mut_span()
+    m: MutSpan[i32] = ref mut a.as_mut_span()
     view: Span[i32] = m
     m[0] = 10              #$ error[E3021]: `m` cannot be written while it is borrowed
     println(view[0])

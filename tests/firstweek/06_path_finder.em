@@ -55,7 +55,7 @@ fn shortest_path(grid: Grid) -> Option[Array[Pos]]:
     seen: Set[Pos] = {grid.start}
     head = 0
     while head < queue.len():
-        current = queue[head]
+        current = copy of queue[head]
         head += 1
         if current == grid.goal:
             path = [current]

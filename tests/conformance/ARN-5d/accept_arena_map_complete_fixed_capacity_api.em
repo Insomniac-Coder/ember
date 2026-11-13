@@ -47,7 +47,7 @@ fn main():
     match values.get_mut(2):
         Some(found):
             replacement: i32 = found + 1
-            found = ref mut replacement
+            found = replacement
         None:
             pass
     total: i32 = 0

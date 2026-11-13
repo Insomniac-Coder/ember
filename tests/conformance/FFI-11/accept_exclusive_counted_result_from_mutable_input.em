@@ -16,7 +16,7 @@ fn main():
     values: Array[i32] = Array[i32]()
     values.push(owns 7)
     values.push(owns 8)
-    result: MutSpan[i32] = echo(values.as_mut_span())
+    result: MutSpan[i32] = ref mut echo(values.as_mut_span())
     result[0] = 29
     println(result.len())
     println(result[0])

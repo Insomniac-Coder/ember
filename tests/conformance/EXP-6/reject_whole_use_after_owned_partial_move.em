@@ -18,6 +18,6 @@ fn consume(owns pair: Pair):
 
 fn main():
     pair = Pair(Part(1), Part(2))
-    _first = pair.first
+    _first = owns pair.first
     println(pair.second.n)
     consume(owns pair)              #$ error[E3040]: `pair.first` was handed over to `_first` on line 21; `pair` is used whole on line 23; give it a new value first, or keep a copy: `_first = copy of pair.first`

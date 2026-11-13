@@ -9,7 +9,7 @@ struct Holder:
     f: fn() -> int
 
 fn through(h: Holder) -> int:
-    return h.f()    #$ error[E3023]: cannot mutate borrowed parameter `h`
+    return h.f()    #$ error[E3023]: `through` sets `f`, but `h` only reads the caller's holder; write `fn through(ref mut h: Holder) -> int:` and call `through(ref mut h)`
 
 fn main():
     h = Holder(fn() => 1)

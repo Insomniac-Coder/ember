@@ -15,4 +15,4 @@ struct Total:
 fn add(ref mut q: Query[(Mut[Total], Count)], unused: ()):
     for total, count in q.iter_mut():
         total.n += count.n
-        count.n = 0  #$ error[E3021]: cannot write through a shared reference
+        count.n = 0  #$ error[E3023]: but `count` only reads it

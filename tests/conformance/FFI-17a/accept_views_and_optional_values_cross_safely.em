@@ -32,7 +32,7 @@ fn main():
     first = words.first()
     scores = words.scores()
     shown = f"{first.to_str().unwrap()} {scores[0]} {scores.len() - 1}"
-    changed = words.scores_mut()
+    changed = ref mut words.scores_mut()
     changed[0] = 10
     padded = "  hi  ".as_bytes()
     println(shown, words.total(), cpp.greeting().to_str().unwrap(), cpp.trim(padded).to_str().unwrap())

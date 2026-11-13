@@ -13,7 +13,7 @@ fn consume(owns pair: Pair):
 
 fn main():
     pair = Pair(Part(1), Part(2))
-    _first = pair.first
+    _first = owns pair.first
     println(pair.second.n)
     consume(owns pair)
 

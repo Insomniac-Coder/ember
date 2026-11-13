@@ -19,7 +19,7 @@ struct Outer:
 
 fn main():
     outer = Outer(Pair(Part(1), Part(2)), Part(3))
-    _first = outer.left.first
+    _first = owns outer.left.first
     println(outer.left.second.n + outer.right.n)
 #$ stdout: 5
 #$ 1

@@ -204,7 +204,7 @@ default.
 ## ADR-010 — Regions are location-insensitive, and a reference local is assigned once
 
 **Spec rule:** Part XVIII §4.7 steps 1–4, `[LT-5]`.
-**Status:** taken 2026-09-09, on the permission §4.7 gives.
+**Status:** taken 2026-09-09, on the permission §4.7 gives. **Expired 2026-11-13** (A2-3): `[BRW-13]` (Hardened_14) gives a view name another view with `=` (`r = ref mut b` points `r` at `b`), as its last paragraph foresaw; the region solver's forward value state (`[LT-21]`) already tells a name's value before the `=` from the one after it, so a view name given another view ends its old loan there (`tests/conformance/BRW-13`).
 
 **Context.** §4.7 says "Polonius-style location-sensitive reasoning is not
 required for v1", so a constraint may propagate a whole point set rather than

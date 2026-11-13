@@ -12,7 +12,7 @@ struct Panel:
     pub h: i32
 
 fn retitle(p: Panel, t: i32) -> Panel:
-    q = p
+    q = copy of p
     q.w = t
     return q
 

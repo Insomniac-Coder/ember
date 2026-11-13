@@ -3,7 +3,6 @@
 # the name owns and may advance, `[CTL-1]`"
 #$ test: run-pass
 #$ rules: BRW-15, DIA-25, CTL-1
-#$ stdout: 1
 #$ stdout: 2
 #$ stdout: 1
 #$ stdout: 1

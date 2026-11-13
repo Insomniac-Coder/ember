@@ -13,7 +13,7 @@ struct Counter:
     pub value: i32
 
 fn increment(counter: Counter):
-    counter.value = counter.value + 1  #$ error[E3023]: cannot mutate borrowed parameter `counter`
+    counter.value = counter.value + 1  #$ error[E3023]: `increment` sets `counter.value`, but `counter` only reads the caller's counter; write `fn increment(ref mut counter: Counter):` and call `increment(ref mut counter)`
 
 fn main():
     counter = Counter(1)

@@ -829,8 +829,9 @@ pub enum ExprKind {
     ArrayRepeat { value: Box<Expr>, count: Box<Expr> },
     FString(Vec<FStringPart>),
     /// `ref place` / `ref mut place`, needed only when initialising a
-    /// `ref`-typed local or a view struct field.
-    RefOf { mutable: bool, place: Box<Expr> },
+    /// `ref`-typed local or a view struct field. `[GRM-36]`, `[BRW-13]` — `constant`: `const ref mut
+    /// place`, a name that is never given another ref (`mutable` is then true).
+    RefOf { mutable: bool, constant: bool, place: Box<Expr> },
     /// `[GRM-43]`, `[OWN-8]` — `copy of e`, a copy of the program's own made with `Clone`.
     CopyOf(Box<Expr>),
     Paren(Box<Expr>),

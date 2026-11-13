@@ -73,9 +73,7 @@ pub struct Rng:
         while i > 0:
             j = this.int_in(0..i + 1)
             if j < i:
-                parts = items.split_at(i)
-                head = parts.0
-                tail = parts.1
+                head, tail = ref mut items.split_at(i)
                 mem.swap(ref mut head[j], ref mut tail[0])
             i = i - 1
 

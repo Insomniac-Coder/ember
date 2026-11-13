@@ -20,7 +20,7 @@ fn widen(x: int) -> int:
 
 @noalloc
 fn scaled(owns s: Scaler, x: int) -> int:
-    f = s.by
+    f = owns s.by
     return f(x)
 
 fn main():
