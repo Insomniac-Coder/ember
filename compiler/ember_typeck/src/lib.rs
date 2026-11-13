@@ -22882,6 +22882,14 @@ impl<'a> Checker<'a> {
                     format!("exported parameter `{name}` reaches an owning Ember value"));
                 continue;
             }
+            // `[TXT-2]`, `[FFI-31b]` - C would hand bytes to a `StrView` unvalidated.
+            if !decl.is_foreign_decl && matches!(self.types.kind(ty), TyKind::Str) {
+                self.sink.emit(
+                    Diagnostic::error(codes::E5063, span, format!("`{name}` would be text C never validated; take `{name}: Span[u8]` and write `{name}.to_str()?` for the `StrView` ([TXT-2])"))
+                        .help(format!("take `{name}: Span[u8]` and write `{name}.to_str()?` for the `StrView` [TXT-2]")),
+                );
+                continue;
+            }
             if carries_box(self, ty) {
                 continue;
             }
