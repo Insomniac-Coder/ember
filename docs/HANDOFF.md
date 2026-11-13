@@ -1,5 +1,28 @@
 # Ember — handoff
 
+> **2026-11-13 — resumed; pushed; Hardened_14 is the target; round 7 in lanes (the owner: "resume work and work
+> autonomously, use 2-3 helper agents at max. Lets work towards finishing this language", then "yea" to the lead's
+> six changes).** START HERE.
+>
+> - **Pushed:** origin/main = `0205c9b8`. The gate's failures were all from round 6's print functions (the `why`
+>   chain and the summaries now name `std.core.println`; the loop rewrite took only number locals; the engine report
+>   named std's inlined function): fixed in `ed2e3bd5`, the four tests pass three ways, the quick check fails 0, the
+>   C backend's runs 184 of 184. The bench: 25 of 25 on both backends.
+> - **Local `main`, not pushed:** `c167f08d` merges **0.9.20_Hardened_14** (the deputy's cut: N176 to N181,
+>   `decisions.md` §25; `check_examples` as Hardened_13's; the code tables, parser, guide, first-week, ui and
+>   spec-tied tests green); `ed092043` merges the M5-ahead pilot (`tasks/96/redesign/jobs/ahead/M5/`).
+> - **How the work is organised now:** `docs/AUTOPILOT.md` §3, "How the work is organised, to finish the language
+>   faster": whole rules per job; the deputy one milestone ahead; rolling slots; three lanes with notes files
+>   (`tasks/96/redesign/jobs/lanes/`) and kept worktrees (`.claude/worktrees/lane-b`, `lane-c`; lane a is `lead`);
+>   at most three helpers (the owner, 2026-11-13).
+> - **Why:** 594 rules are unfinished, and 497 of them already have tests: they count 0 until the reworked rule is
+>   checked clause by clause and credited (`phase_progress.py`'s condition 3).
+> - **Round 7** (`tasks/96/redesign/jobs/R7-batch.md`): H3 (Opus, lane b) 29 C-interface and `unsafe` rules; W3
+>   (Sonnet, lane c) the 27 grammar rules and 3 lexer rules; the deputy's full M5-ahead run in batches of ~10 rules
+>   (Q1 ruled by the lead, `review.md` round 7); the lead: lane a, `lead-m4` (main merged in, conflicts resolved,
+>   not yet built), then M4 with `[RC-1]`'s and `[WK-12]`'s Hardened_14 changes, then slice C.
+> - **The quick check** now refuses a stale build of the tree's compiler (`75a12568`).
+
 > **2026-11-12 afternoon — round 6 collected; stopped and hibernated on the owner's word ("after this task, stop
 > all work … and also hibernate it").** START HERE.
 >
