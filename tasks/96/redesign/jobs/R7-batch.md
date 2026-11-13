@@ -100,3 +100,43 @@ From round 6's reports, each now a part of a rule: `[DIA-2]`'s spelling done gen
 `29cc91df`'s whole-program scan is not the rule); `[MNG-1]`/`[MNG-6]`'s `StrView` under `std.core`; DIA-10 B5's and
 B9's helps; `[TYP-26]`; `[TYP-15a]`; `[STD-26]`; `[FFI-10]`/`[FFI-21]` (needs A6-6, M8); E5060; E7008's other cases;
 the `match owns jobs.pop():` help; `ArenaMap.in`; HR-16 and HR-20; D-861; `[DSP-3]`; CLI-7's credit.
+
+## H4 (Opus), lane a, job 1: M5's A2-3, a name for a part is a view (`[BRW-12]` to `[BRW-15]`) (rolling slot, 2026-11-13)
+
+Worktree `C:\Users\ism19\Code\ember\.claude\worktrees\lane-a` (branch `lane-a`, from `main`). It lands on `main` on
+its own; M4's slice C (the lead, branch `m4-slice-c-probe`) builds on it. Read `M4-plan.md`, "Found by C2", and
+`lanes/a.md` first: they hold the measurements.
+
+1. **`[BRW-12]` clause 2:** a name bound to a part (a field, an element, a value read through a view) of a type that
+   is not `Copy` is a read-only view: never a hand-over, never a silent copy; a part of a `Copy` type is copied; a
+   name whose first line writes its type takes the part as that type says. The lead's experiment (both `let`
+   paths in `ember_typeck`, a `part_as_view` wrapping the place in a `ref`) gave 3,344 "cannot write through a
+   shared reference": the programs that write through such a name.
+2. **`[BRW-12]` clause 6:** `x = ref mut <part>` names that very place and may change it (today `x = ref mut b.items;
+   x.push(3)` is E3021); clause 7 (`ref mut` before a call that gives `MutSpan`s) works since W3's GRM-36.
+3. **`[BRW-13]`:** `=` on a name that has a value: a view name is re-pointed (checked against its new target), a
+   `ref mut` name writes its place.
+4. **`[BRW-14]`:** parameters, loop, pattern and opened names keep their place: `=` on one is E3023 (B4's `new_n`
+   is built, N174).
+5. **`[BRW-15]`:** a plain name never changes what it names or leads to.
+6. **The migration:** where a name bound to a part is written through, its line becomes `x = ref mut <part>`,
+   which is what the line did before (it moved the part out, so a valid old program never used the part again):
+   a checker migration (`Diagnostic::migrate_edits`, as `kept_by_copy` in `ember_analysis/src/drops.rs` does),
+   applied with `ember __migrate --checker <file>` over `tests/`, `std/` and `docs/book/`. A name that is moved on
+   (`take(owns x)`) is rewritten by hand, with `copy of` or by handing the part over where it is used.
+7. **The tests:** the deputy's in `tasks/96/redesign/jobs/ahead/M5/BRW-12/` to `BRW-15/` (with `INDEX.md`'s rulings
+   Q3 to Q5, Q12; its §2 lists the old tests the target contradicts). Move each into `tests/conformance/<RULE>/`
+   when it passes; one that needs another milestone stays, with the milestone named.
+8. Credit what is whole (the also-needs table says which clauses wait for M4 or M11).
+
+## W4 (Sonnet), lane c, job 2: the block-lambda migration and the core language (26 tasks) (rolling slot)
+
+1. **`[GRM-17]`:** a block after a lambda's `:` outside brackets is E0106 with a local function as the line to
+   write. W3 built it and reverted it because 31 older tests use one (CLO-2, RC-2e, GRM-28, STD-19, CTL-1, CLS-2,
+   ECS-4, JOB-5, CLO-15, …): rebuild it, migrate the 31 to local functions (the tests follow the spec), credit
+   GRM-17 if whole.
+2. **`[LEX-*]`, the rest:** LEX-1a, LEX-10, LEX-11, LEX-16, LEX-18, LEX-20, LEX-21.
+3. **`[TXT-*]`:** TXT-2, TXT-3, TXT-4, TXT-6, TXT-8, TXT-9, TXT-10, TXT-11 (TXT-10's temporaries may need A1-18,
+   M5: report).
+4. **`[STR-*]`:** STR-1, STR-2, STR-3, STR-5, STR-6, STR-7.
+5. **`[CTL-*]`:** CTL-3b, CTL-7, CTL-10, CTL-11 (CTL-1 and CTL-2 are M5's A2-6: not this job).
