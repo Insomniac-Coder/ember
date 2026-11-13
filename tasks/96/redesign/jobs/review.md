@@ -525,3 +525,35 @@ after each work batch" is the owner's rule from this round.
     - `[TYP-5]` has no `shares mut T` to `shares T` conversion (H2 recommends adding it, as `ref mut` gives `ref`);
     - `exists as ref mut v` on a link to a value that is not a class object (H2 recommends refusing it, since
       `weakref T` does not say its owners may change it).
+
+## Round 7 (R7-batch.md): lane jobs, the owner's new way of working (2026-11-13)
+
+- **D2, the Opus deputy: Hardened_14** (431k tokens, 37 min; no builds). `0.9.20_Hardened_14` (`355cf49f`, merged
+  `c167f08d`): N176 to N181, `decisions.md` §25. Nothing open for the owner, no verdict touched.
+  - **The lead's review.** N176 rests on the owner's own approval of "return `String(...)` to hand back your own copy"
+    (JOB.md, 2026-10-24, example 5): "your own" stays, every other "you" goes, "did you mean" included (`[DIA-2]`
+    has banned "you" since 0.6; told to the owner as his call if he wants it kept). `[RC-1]`'s class local shared by
+    a line takes the shared type: `[TYP-45]` decides it (a bare class type is one owner, which frees with no count),
+    against H2's recommendation; M4 changes before slice C.
+  - **The lead's checks:** `check_examples` on Hardened_14 gives Hardened_13's results exactly (56 blocks: 42
+    compile, 1 unbuilt, 13 errors); `ember_diag` and `ember_parser` green; `spec_history.py verify` 0 mismatches.
+  - **Compiler work it makes** (into the lanes' rule jobs): N176's respellings (~47 tests, the pages; `[DIA-24]`'s
+    "the nearest name is"); N177 `E2021`'s line to write; N179 `refuse_spread` gives `E2021`; N180 `E1052` for a
+    hidden declaration and the importer comparing every destructor place; N181 the `shares mut T` to `shares T`
+    conversion; `[RC-1]` and `[WK-12]` in M4 (lane a).
+- **D3, the Opus deputy: the M5-ahead pilot** (363k tokens, 28 min; no builds). A2-2 and A2-3: 8 rules (BRW-8, LT-4,
+  BCK-4, BRW-12 to BRW-15, CTL-11; SPN-1 left), 45 clauses, 63 test files in `tasks/96/redesign/jobs/ahead/M5/`
+  with `INDEX.md`, 13 questions; merged `ed092043`.
+  - **Worth scaling:** two real contradictions found before any builder (Q1, Q2), the old tests the target
+    contradicts listed, a test per clause. Its four changes are taken: a parse probe with the existing binary
+    allowed (`ember check`, no cargo); the rulings before the tests that hang on them; each rule's "also needs
+    Mx" recorded (a rule is rarely whole in one milestone: BRW-15 needs M6a, LT-4 needs M9 and M10, so M5's
+    credit comes in steps); cases counted, not files. Estimate for all of M5 (~62 rules): 6 or 7 sessions of 8 to
+    10 rules, 3 to 4 hours, ~1.3M tokens.
+  - **The lead's ruling on Q1** (the text decides it, (a), not the pilot's (c)): `[FN-1]` says a number another
+    name writes across the call "shows through `a`", since the compiler never assumes a value unchanged where it
+    cannot prove the names apart, and a copy in registers is allowed where "the meaning is the same" (`[BRW-8]`:
+    "cannot be observed"). So a plain parameter reads the caller's place; the copy is the compiler's choice only
+    where the summaries prove no other name writes it across the call. "a number is copied in" is a text repair.
+    The pilot's proposal (copy-in at any size) would have reversed the rule. Q2 to Q13 go to the full run's
+    deputy, who rules them before the tests that hang on them and cuts Hardened_15 once for M5.

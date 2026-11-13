@@ -108,11 +108,14 @@ is a defect of the file.
   and returns it without the line ending. The prelude's console functions treat a console failure as
   fatal, as Python does when the exception is not caught: end of input or a closed stream panics, and
   the message names the `Result` forms in `std.io` (`stdin().read_line()`).
-* `[STD-18]` *(new in 0.9.9)* *(changed in 0.9.15)* `format(value, spec="") -> String` formats one value with a format spec
+* `[STD-18]` *(new in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* `format(value, spec="") -> String` formats one value with a format spec
   (`[LEX-19]`), like Python's `format`; the spec is a string literal, checked against the value's type
   where it is written, as an f-string's is (`E2250`, ODR-168).
-  `format_to(ref mut buf: MutSpan[u8], values: Ts...) -> Result[StrView, FmtError] from buf`, under
-  `[Ts...: needs Printable]`, formats into a caller's buffer, called `format_to(ref mut buf, …)`, and gives a view of the text it wrote there; its
+  `format_to(ref mut buf: MutSpan[u8], values: Ts..., sep: StrView = " ", end: StrView = "") ->
+  Result[StrView, FmtError] from buf`, under `[Ts...: needs Printable]`, writes into a caller's
+  buffer the text `print` writes for the same arguments (each value's text, `sep` between them and
+  `end` after, `[STD-9]`), called `format_to(ref mut buf, …)` (`format_to(ref mut buf, x, y,
+  sep=", ")`), and gives a view of the text it wrote there; its
   own machinery never allocates, so the call allocates only if a value's
   `Display` does (`[EFF-1]`). An f-string lowers to a `StringBuilder` sized from its
   literal parts.

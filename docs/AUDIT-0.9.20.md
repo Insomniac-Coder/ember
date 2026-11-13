@@ -815,3 +815,40 @@ as N171 to N175 (`decisions.md` §24), with three rules written out where the te
   `split_spec.py --check`, `hardening_check.py`, `rule_index.py` (its baseline grows by `E2021`'s page and
   test, the gap this cut opens, written with `--allow-growth`; three entries closed since left it), `phase_progress.py --check` (README written by it:
   phase 5 from 13% to 12%), `check_branding.py`. **Not run:** `check_examples` (left for the lead), no `cargo`.
+
+## 19. The fourteenth pass: 0.9.20_Hardened_14 (2026-11-13, a worktree branch, the lead's Opus deputy, under the delegation)
+
+The eleven spec findings `tasks/96/redesign/jobs/review.md` queued in its "Round 6" section, ruled as N176 to N181
+(`decisions.md` §25), with the rules the text already decided written out: `[DIA-2]`, `[DIA-24]`, `[GRM-19]` and the
+messages of `[TYP-43]`, `[THR-8]`, `[FFI-51]`, `[FFI-26]`, `[OBJ-5]`, `[UNS-11]`; `[TYP-25]`; `[STD-18]`; `[TYP-47]`;
+`[GRM-35]`, `[FFI-36a]`; `[TYP-5]`; `[BRW-14]`, `[CLO-6]`, `[MOD-5]`, `[CG-C-1]`, `[RC-1]`; registry rows E2021 and E1052,
+and the same two rows in `compiler/ember_diag/src/codes.rs`, which `ember_diag`'s tests compare with the pinned table.
+
+* **What the compiler now owes:**
+  * `[DIA-2]` (N176): no message says "you". "did you mean `x`?" becomes "the nearest name is `x`" (`habits.rs`, the
+    name suggestions in `ember_typeck/src/lib.rs`, `unused.rs`'s "did you mean to assign to"), `[GRM-19]`'s help "to
+    compare, write `if x == 5:`" (`ember_parser/src/body.rs`), `E3016`'s "keep a copy of `this.name`" (`drops.rs`), and
+    four helps of `ember_typeck` ("if you only need a handle", "the one you mean", "the instance you mean", "when you
+    will explicitly manage"); about 47 test expectations and their pages follow. "Your own" stays.
+  * `[TYP-25]` (N177): the named form takes the first parameter no other argument gives, a later named one included
+    (`constructor_slots` and the call path take the first one no earlier argument gives); none left, no rewritten call.
+  * `[STD-18]` (N178): nothing; `std/src/fmt.em` already has `sep` and `end`.
+  * `[TYP-47]` (N179): `values...` given to parameters of a fixed number is `E2021`, with the callee's first line
+    (`packs.rs`'s `refuse_spread` gives `E2020`); `E2021`'s page names the case.
+  * `[GRM-35]`, `[FFI-36a]` (N180): a use of a hidden declaration is `E1052`, naming the overlay's line, with a reject
+    test under `GRM-35`; the importer collects every place naming a type's destructor before fixing it (today the first
+    `std::unique_ptr` it meets decides), counts a hidden declaration only where an overlay's wrapper calls it, and gives
+    one `E5002` per type naming every place of each other destructor with its `hide` line or contract.
+  * `[TYP-5]` (N181): a `shares mut T` owner given to a `shares T` place, then rule 8; M4's list has it as not built.
+  * `[RC-1]`: a class object's local shared by a line has the shared type, `shares mut C` (M4 keeps `C`: needed before
+    slice C makes class objects one-owner).
+  * `[WK-12]`, `[GRM-44]`: the name opened from a link to a value that is not a class object is a view (M4 gives a
+    `shares T` owner, one count more), and `exists as ref mut` on such a link is allowed, as on a class object's.
+* **Probed:** nothing (no builds and no `ember.exe` runs during the lead's push gate); the compiler's behaviour above is
+  read from its source.
+* **Checked at the cut:** `check_ids` 0 problems (1,020 rules), `check_citations` 0 undefined, `code_registry --check`
+  0 problems (272 live, 36 retired), `check_findings` 0 problems, `split_inline` the same 14 flags as Hardened_13 on the
+  whole file (EFF-17 and CXX-1 among them; UNS-8 alone on the parts), `spec_history.py verify` (136 cuts, 0
+  mismatches), `split_spec.py --check`, `hardening_check.py`, `rule_index.py` (no new problems), `phase_progress.py
+  --check` (README's spec lines written by it; the table unchanged), `check_branding.py`. **Not run:** `check_examples`
+  and `tools/spec_check.py` (both run the compiler; left for the lead), no `cargo`.

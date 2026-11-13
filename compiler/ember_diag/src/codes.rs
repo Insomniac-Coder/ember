@@ -202,7 +202,7 @@ codes! {
     E1042 = (Error, 1042, Resolve, "[STD-6]", "a use of a name of a layer of `std` the package does not declare");
     E1050 = (Error, 1050, Resolve, "[MOD-7]", "field is read-only outside its module");
     E1051 = (Error, 1051, Resolve, "[MOD-7]", "`read` visibility is valid on fields only");
-    E1052 = (Error, 1052, Resolve, "[MOD-2], [STR-1]", "item, field or constructor not visible here");
+    E1052 = (Error, 1052, Resolve, "[MOD-2], [STR-1], [GRM-35]", "item, field or constructor not visible here, a declaration an overlay hides (`hide`) among them");
     E1060 = (Error, 1060, Resolve, "[MOD-3]", "no module of that name");
     E1061 = (Error, 1061, Resolve, "[MOD-3]", "no item of that name in the module");
 
@@ -212,7 +212,7 @@ codes! {
     E2010 = (Error, 2010, Types, "[LEX-16]", "literal does not fit its type; a suffixed literal that does not fit its suffix's type (`128i8`)");
     E2011 = (Error, 2011, Types, "[TYP-31], [LEX-24]", "negative literal index");
     E2020 = (Error, 2020, Types, "[TYP-4], [CLO-3], [TYP-45], [TYP-6], [TYP-5], [UNS-12], [FN-6], [GRM-13]", "mismatched types, among them a lambda parameter whose word differs from the function type it is given to (a plain `fn(s)` where the type hands the value over, `fn(owns String)`); a `weakref` link used as its target without opening it; an object stored into a `weakref` place without `weakref`; a value given to a `using A` place that was not made in an instance of `A`; a `weakref T` link given to a `weakref thread_shared T` place, or the reverse (neither converts); an integer cast to an enum (`7 as Color`), `as` between types no pair of `[TYP-6]` lists, and a `ref mut Dog` given to a `ref mut Animal` place; an `unsafe fn` written as `drop`, as an `override` of a method that is not `unsafe`, or as the implementation of an interface method the interface declares without `unsafe`; a parameter or result of an `extern \"C\" fn` type outside what an export's signature admits; a list pattern against a `String` or `StrView`, or against a `[T; N]` whose `N` can never equal the pattern's count");
-    E2021 = (Error, 2021, Types, "[TYP-25], [STR-1], [CLS-3]", "a call whose arguments do not fit the callee's parameters: a positional argument after a named one, more arguments than parameters, a parameter with no default given none, a name no parameter has, one parameter given twice; at a memberwise constructor or `super.init(…)`, the same of the fields (shape N6)");
+    E2021 = (Error, 2021, Types, "[TYP-25], [STR-1], [CLS-3], [TYP-47]", "a call whose arguments do not fit the callee's parameters: a positional argument after a named one, more arguments than parameters, a parameter with no default given none, a name no parameter has, one parameter given twice, a pack's values (`values...`) given to parameters no pack makes up; at a memberwise constructor or `super.init(…)`, the same of the fields (shape N6)");
     E2035 = (Error, 2035, Types, "[CTL-0]", "condition must be `bool`");
     E2036 = (Error, 2036, Types, "[GRM-19]", "this pattern always matches: an `if` or `while` opening whose left side always holds a value, or a kind test that always passes");
     E2037 = (Error, 2037, Types, "[TYP-44], [DSP-4]", "a kind test that can never pass: the type tested for does not implement the interface, or derive from the base class, of the value tested");

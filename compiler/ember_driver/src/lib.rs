@@ -1923,6 +1923,9 @@ struct EngineReport {
     hints: Vec<String>,
     classes: Vec<String>,
     standard_symbols: std::collections::HashSet<String>,
+    /// The source names of std's functions: one inlined into the program is std's decision, its
+    /// own `@inline` or size, not one about the program's code (`[CLI-10]`).
+    standard_names: std::collections::HashSet<String>,
 }
 
 impl EngineReport {
@@ -2043,7 +2046,7 @@ impl EngineReport {
         let inlining: Vec<String> = self
             .inlined
             .iter()
-            .filter(|(_, _, caller)| !self.standard_symbols.contains(caller))
+            .filter(|(callee, _, caller)| !self.standard_symbols.contains(caller) && !self.standard_names.contains(callee))
             .map(|(callee, caller, _)| format!("{callee} inlined into {caller}: called from that one place"))
             .chain(self.hints.iter().cloned())
             .collect();
@@ -5918,6 +5921,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         let (standard, standard_files) = standard_parts(mir.bodies(), &modules);
         // Before inlining folds some of them away: a caller the report leaves out.
         engine.standard_symbols = mir.bodies().iter().zip(&standard).filter(|(_, standard)| **standard).map(|(body, _)| body.symbol.clone()).collect();
+        engine.standard_names = mir.bodies().iter().zip(&standard).filter(|(_, standard)| **standard).map(|(body, _)| body.name.clone()).collect();
         for site in ember_analysis::allocation_sites(mir.bodies(), &types, &standard, &|file| standard_files.contains(&file)) {
             engine.allocations.push(format!("{} in {}: {}", map.location(site.span), site.function, site.operations.join(", ")));
         }

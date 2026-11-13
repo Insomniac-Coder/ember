@@ -22,8 +22,8 @@ pages, and the records that keep them consistent.
 
 | | |
 |---|---|
-| Language version being implemented | **0.9.20**, specification `Ember_v0.9.20_Hardened_13` (what changed: its Appendix H, §H.41 to §H.64) |
-| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.20_Hardened_13.md`](docs/spec-source/Ember_v0.9.20_Hardened_13.md) |
+| Language version being implemented | **0.9.20**, specification `Ember_v0.9.20_Hardened_14` (what changed: its Appendix H, §H.41 to §H.65) |
+| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.20_Hardened_14.md`](docs/spec-source/Ember_v0.9.20_Hardened_14.md) |
 | Specification sources | [`tasks/spec-0.9.9/parts/`](tasks/spec-0.9.9/parts/), one file per Part; each `Hardened_N` is their concatenation and is never edited afterwards |
 | Last adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), 0.8.5_Hardened_1 (0.9.10 is adopted when its gates pass and the owner installs it) |
 | Tests | Rust unit and integration suites; Ember run and conformance suites in [`tests/`](tests/) |

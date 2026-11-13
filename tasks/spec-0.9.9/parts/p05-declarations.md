@@ -82,7 +82,7 @@
   walks `this.log` while it runs the handlers (its line 12); push to a list of your own in the
   handler and move it into the log after `flush`"). A member no recorded line refuses is accepted;
   nothing runs for it while the program runs.
-* `[MOD-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* **The prelude.** Every module implicitly
+* `[MOD-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* **The prelude.** Every module implicitly
   imports these names from `std`, and this list is the only definition of the prelude:
 
   | Group | Names |
@@ -93,7 +93,7 @@
   | Collections | `Array`, `Map`, `Set`, `Span`, `MutSpan` |
   | Ranges | `Range`, `RangeInclusive`, `RangeFrom`, `RangeTo` |
   | Cells | `Cell` |
-  | Interfaces | `Copy`, `Clone`, `Drop`, `Default`, `Eq`, `Ord`, `Ordering`, `Hash`, `Debug`, `Display`, `Iterator`, `Iterable`, `IntoIterator`, `Generator`, `Contains`, `From`, `Send`, `ThreadShared`, and the operator interfaces `Add`, `Sub`, `Mul`, `Div`, `FloorDiv`, `Rem`, `Pow`, `Neg`, `Not`, `BitAnd`, `BitOr`, `BitXor`, `Shl`, `Shr`, `Index`, `IndexMut`, `IndexSet`, with the `…Assign` forms of the arithmetic and bitwise interfaces |
+  | Interfaces | `Copy`, `Clone`, `Drop`, `Default`, `Eq`, `Ord`, `Ordering`, `Hash`, `Debug`, `Display`, `Printable`, `Iterator`, `Iterable`, `IntoIterator`, `Generator`, `Contains`, `From`, `Send`, `ThreadShared`, and the operator interfaces `Add`, `Sub`, `Mul`, `Div`, `FloorDiv`, `Rem`, `Pow`, `Neg`, `Not`, `BitAnd`, `BitOr`, `BitXor`, `Shl`, `Shr`, `Index`, `IndexMut`, `IndexSet`, with the `…Assign` forms of the arithmetic and bitwise interfaces |
   | Functions | `print`, `println`, `eprint`, `eprintln`, `input`, `assert`, `assert_eq`, `assert_ne`, `debug_assert`, `panic`, `todo`, `unreachable`, `min`, `max`, `abs`, `clamp`, and Python's `len`, `range`, `sum`, `sorted`, `enumerate`, `zip`, `reversed`, `any`, `all` (`[STD-26]`) |
   | Modules | `mem` (the module `std.mem`) |
 

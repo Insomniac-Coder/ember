@@ -620,9 +620,15 @@ fn main():
 * `[DIA-1]` A diagnostic has a code, one primary span, labelled secondary spans, an optional `help`
   (with a machine-applicable fix-it where possible) and notes. `--json` gives the same structure.
 * `[DIA-2]` *(changed in 0.9.15)* *(changed in 0.9.20)* Messages start lowercase, have no trailing
-  period, name the thing, and say what is wrong; `help` says what to do; a message never says
-  "you" and never blames the programmer. Every refusal names what was refused in the program's own
-  names (`enemies[0]`, not `*enemies[0]`; `line.to_lower()`, not a temporary's internal name;
+  period, name the thing, and say what is wrong; `help` says what to do; a message, its `help` and
+  its notes included, never says "you" and never blames the programmer: what went wrong is said of
+  the program ("`a` was handed over to `b` on line 4"), and what to do as the line to write ("to
+  vouch for it, write `unsafe extend Counter implements Send:`"). The one phrase in the second
+  person is "your own", which names no one's fault but a value the line to write gives the program
+  alone, to change or keep as it likes: `copy of x` is "a copy of your own" (§VI.3), and the owner
+  agreed "return `String(...)` to hand back your own copy" (2026-10-24). Every refusal names what
+  was refused in the program's own names (`enemies[0]`, not `*enemies[0]`; `line.to_lower()`, not
+  a temporary's internal name;
   `int`, not `i64`; `fn()`, not an internal callable type; at a call, the caller's variable, not
   the callee's parameter), says why in one line, and gives the exact line to write (`[DIA-25]`). A
   type is named as the program spells it where it is written, and otherwise as the declaration it
@@ -744,12 +750,14 @@ fn main():
   in the programmer's code, with the callee's declaration as a secondary span.
 * `[DIA-23]` *(new in 0.9.9)* *(changed in 0.9.15)* A run-time panic names Ember entities — the class, field, variable, file
   and line — never a C symbol or a mangled name (the stop texts of `[PRF-4]`).
-* `[DIA-24]` *(new in 0.9.9)* *(changed in 0.9.10)* **Name suggestions (shape N1).** A candidate is
+* `[DIA-24]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.20)* **Name suggestions (shape N1).** A candidate is
   suggested when its Damerau–Levenshtein distance from the unknown name is at most 1 for names of up
   to 4 characters and at most 2 otherwise, and it is of the right kind for the position (a type where
   a type is expected, a value where a value is, and a type where a value is only before `.`, as
   `Color` in `Color.Red`). At most three are suggested, closest first, then same file before other
-  files, then by qualified name.
+  files, then by qualified name. The help names them as a fact of the program (`[DIA-2]`), with a
+  fix-it for the first: "the nearest name is `count`"; "the nearest names are `count`, `counter`
+  and `cout`".
 
 ### XVII.6.1 Ownership and view shapes
 

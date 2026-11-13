@@ -218,7 +218,7 @@ import c "vulkan/vulkan.h" with (
   code that nothing checks, so it is written `unsafe import c` or `unsafe import cpp`, with a `#
   SAFETY:` note above it saying why that code is sound (`W3012` when missing). Without `unsafe` it
   is `E3100`: "`import c "./bridge.c"` compiles `bridge.c` into the program, where its code runs
-  unchecked, before `main` too; say that you vouch for it: write `unsafe import c "./bridge.c" as b`
+  unchecked, before `main` too; to vouch for it, write `unsafe import c "./bridge.c" as b`
   with a `# SAFETY:` note above it"; for a header the message names what runs: "`import cpp
   "json.hpp"` compiles the initialiser of `g_default` (json.hpp, line 12) into the program, where it
   runs unchecked before `main`; write `unsafe import cpp "json.hpp" with (project="engine") as js`
@@ -452,7 +452,13 @@ call: a `VkViewport` holds only numbers, `pViewports` is a counted view, and `co
   one member of such a name (`rename put(v: c_long) as put_long`, `hide put(v: c_long)`, `rename
   get() -> f64 as get_f64` for two members alike in every parameter), inside a class section one of
   its members (verdict 131); without one it names every member of the name; a `rename` gives the
-  member a name of its own, outside the set. An item may begin with `override`, replacing an earlier
+  member a name of its own, outside the set. `hide` leaves what it names out of what the import
+  gives the program, so a use of it there is `E1052` ("`widget_free` is hidden by
+  `overlays/widget.em`, line 9"); the declaration stays in the module, private, so the overlay
+  still names it in a contract (`returns_owned(destructor=widget_free)`,
+  `@ffi(destroys(widget_free))`) and its wrappers may call it (`[FFI-13]`): a hidden destructor is
+  how an overlay keeps the program from ending by hand an object its `owns T` ends. An item may
+  begin with `override`, replacing an earlier
   overlay's entry for that function (`[FFI-30c]`, ODR-149). An `overlay_class` section holds the
   entries of a C++ class's members (verdict 131): its methods, which list no receiver, its
   constructors (`new`) and its static functions, each written as any other entry; `@ffi(const)`
@@ -626,9 +632,20 @@ call: a `VkViewport` holds only numbers, `pViewports` is a counted view, and `co
   ("`Widget` is ended by `widget_free` (line 3), and line 12 says `widget_destroy`; a foreign type
   has one destructor"; "`Node` is ended by `delete` (its constructor, node.hpp line 4) and by
   `PoolDeleter` (`make_pooled`'s `std::unique_ptr`, line 9); a foreign type has one destructor:
-  write `hide make_pooled` in `overlays/node.em`"), so an `owns T` foreign value stays one word,
-  two for a `threads(creator)` type (`[FFI-33b]`): an address given with `into_raw()` and taken
-  back with `adopt` carries nothing else, so the type alone says how its objects end. **The
+  write `hide make_pooled` in `overlays/node.em`"). The places are compared all at once, so their
+  order decides nothing but the message: the importer reads the type's entry and every declaration
+  of the header before it fixes `T`'s destructor, and one `E5002` stands for the type
+  (`[DIA-26]`), naming the destructor of its first place (the type's `@ffi(destroys(f))`, else the
+  first declaration that names one, in the order the header or the `extern` block declares them, a
+  `T` result by value counted where it is declared) and each other destructor at every place that
+  names it, with the line that removes each: for a declaration the header makes (a constructor, a
+  result by value, a `std::unique_ptr`), its `hide` line, and for a contract the program writes (an
+  overlay's entry, a hand declaration), that contract naming the first destructor ("write
+  `returns_owned(destructor=widget_free)` on line 12"). A declaration the overlay hides
+  (`[GRM-35]`) is no place, since nothing it makes reaches the program, unless a wrapper of the
+  overlay calls it (`[FFI-13]`); that call is then the place, and the help removes it. So an
+  `owns T` foreign value stays one word, two for a `threads(creator)` type (`[FFI-33b]`): an
+  address given with `into_raw()` and taken back with `adopt` carries nothing else, so the type alone says how its objects end. **The
   foreign types** are those whose objects foreign code makes: an `extern type`, an opaque C++
   class (`[FFI-32]`), a `@ffi(handle)` type (`[FFI-8]`), and a `@layout(c)` struct that a contract
   gives a destructor (`@ffi(destroys(f))` on its declaration, or a `returns_owned(destructor=f)`
@@ -975,7 +992,7 @@ pub extern "C" fn on_update(entity: u64, dt: f32) -> i32:
     return 0
 ```
 
-* `[FFI-26]` *(changed in 0.9.10)* *(changed in 0.9.15)* `@unsafe(export("symbol"))` gives a
+* `[FFI-26]` *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* `@unsafe(export("symbol"))` gives a
   function a stable C symbol with the C ABI (without a name, the function's own name).
   `@unsafe(export_table("Name", protocol=N))` on a struct of `extern "C" fn` fields exports a
   constant of that struct, a table of function pointers, under the C symbol `Name_vN` (`[ABI-1]`),
@@ -989,7 +1006,7 @@ pub extern "C" fn on_update(entity: u64, dt: f32) -> i32:
   `@unsafe(export_table("Name", protocol=N))`, with a `# SAFETY:` note above saying why nothing else
   defines that name (`W3012` when missing); the plain form is `E3100`: "`@export("game_on_update")`
   gives `on_update` a C name the whole process shares, and the compiler cannot see whether the host
-  or a library already defines it; say that you vouch: write `@unsafe(export("game_on_update"))`
+  or a library already defines it; to vouch for it, write `@unsafe(export("game_on_update"))`
   with a `# SAFETY:` note above it". A name the compiler knows is taken is refused even so
   (`E0104`): `main`, a name beginning with the runtime's prefix (`[RT-5]`), the module-protocol
   names of `[FFI-28]`, and the functions of the C standard library ("`realloc` is a function of the

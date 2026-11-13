@@ -238,6 +238,27 @@ def evaluator_disagrees(path, text, profile, code, out, err):
     return problems
 
 
+def stale_sources(binary):
+    """The files built into `binary` that changed after it was linked, when it is a build of this
+    tree (under `target/`): the compilers' sources, the runtime, the error pages and the defect
+    ledger (`include_str!`). A stale compiler made a merge look broken once (18 false failures) and
+    could as well make one look green, so the check refuses to run it."""
+    if not os.path.isfile(binary):
+        return [f'{binary} does not exist']
+    if not os.path.abspath(binary).startswith(os.path.join(ROOT, 'target') + os.sep):
+        return []
+    built = os.path.getmtime(binary)
+    roots = [os.path.join(ROOT, 'compiler', crate, part) for crate in os.listdir(os.path.join(ROOT, 'compiler'))
+             for part in ('src', 'build.rs', 'Cargo.toml')]
+    roots += [os.path.join(ROOT, 'runtime'), os.path.join(ROOT, 'docs', 'errors'),
+              os.path.join(ROOT, 'docs', 'DEFECTS.md'), os.path.join(ROOT, 'Cargo.lock')]
+    newer = []
+    for root in roots:
+        files = [root] if os.path.isfile(root) else [os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs]
+        newer += [f for f in files if os.path.getmtime(f) > built]
+    return newer
+
+
 def main():
     global OUT
     with tempfile.TemporaryDirectory(prefix="ember-annotations-") as output:
@@ -275,4 +296,10 @@ def main():
 
 
 if __name__ == "__main__":
+    stale = stale_sources(EMBER)
+    if stale:
+        print(f'{os.path.relpath(EMBER, ROOT)} is older than {len(stale)} of the files built into it '
+              f'(first: {os.path.relpath(stale[0], ROOT)}): build it (`cargo build -p ember_driver --bin ember`), '
+              f'or set EMBER to the compiler you built.')
+        sys.exit(2)
     main()
