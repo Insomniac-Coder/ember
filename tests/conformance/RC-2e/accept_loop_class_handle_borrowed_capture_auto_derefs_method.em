@@ -18,6 +18,7 @@ fn main():
     tokens: Array[Token] = Array[Token]()
     tokens.push(owns Token(7))
     for token in tokens:
-        task = fn() -> i32:
+        fn task_fn() -> i32:
             return token.read()
+        task = task_fn
         println(task())

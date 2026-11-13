@@ -21,8 +21,9 @@ fn main():
     seen.clear()  #$ error[E3022]: `seen` is already mutably borrowed
     g(1)
     n = 0
-    bump = fn(v: int):
+    fn bump_fn(v: int):
         n += v
+    bump = bump_fn
     other = steal(bump)
     bump(1)
     other(2)

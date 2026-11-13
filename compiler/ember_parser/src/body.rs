@@ -2162,8 +2162,25 @@ impl Parser<'_> {
         let body = if self.eat_punct(Punct::FatArrow) {
             LambdaBody::Expr(Box::new(self.parse_expr()))
         } else if allow_block_lambda && self.eat_punct(Punct::Colon) {
-            if self.at_newline() {
+            if self.at_newline() && is_owned {
+                // The 0.9.10 `owned fn(x):` closure keeps its block until its capture words are built
+                // (`fn() owns x:`, `[GRM-42]`, M-CLO): it is not a lambda of the 0.9.20 grammar.
                 LambdaBody::Block(self.parse_block())
+            } else if self.at_newline() {
+                // `[GRM-17]` — a `NEWLINE` and `INDENT` after a lambda's `:` is `E0106`: the body is one
+                // simple statement, and a block belongs to a local function (`[GRM-28]`).
+                let colon = self.prev_span();
+                self.report(
+                    Diagnostic::error(
+                        codes::E0106,
+                        colon,
+                        "a lambda's body is one simple statement; declare a local function: `fn add(x):` on the line above with the block below it, then `h = add`",
+                    )
+                    .help("`fn add(x):` on the line above with the block below it, then `h = add` [GRM-28]"),
+                );
+                // The block is read so the rest of the file parses; its body is a placeholder the checker ignores.
+                let _ = self.parse_block();
+                LambdaBody::Expr(Box::new(Expr { id: self.next_id(), kind: ExprKind::Error, span: colon }))
             } else {
                 // `[GRM-17]` (ODR-209) — a `:` body on the lambda's own line is one simple
                 // statement that ends at the statement's newline: `h = fn(x): total += x` is one

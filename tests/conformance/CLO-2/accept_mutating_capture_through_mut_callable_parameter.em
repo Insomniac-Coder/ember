@@ -11,8 +11,9 @@ fn invoke(ref mut f: fn() -> i32) -> i32:
 
 fn main():
     counter: i32 = 0
-    increment = fn() -> i32:
+    fn increment_fn() -> i32:
         counter = counter + 1
         return counter
+    increment = increment_fn
     println(invoke(ref mut increment))
     println(invoke(ref mut increment))

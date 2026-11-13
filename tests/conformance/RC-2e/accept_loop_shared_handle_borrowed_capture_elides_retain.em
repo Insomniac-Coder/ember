@@ -14,7 +14,8 @@ fn main():
     tokens: Array[Shared[Token]] = Array[Shared[Token]]()
     tokens.push(owns Shared(Token(7)))
     for token in tokens:
-        task = fn() -> i32:
+        fn task_fn() -> i32:
             value = token.get()
             return value.value
+        task = task_fn
         println(task())

@@ -43,8 +43,9 @@ fn by_a_mut_self_call() -> int:
 
 fn by_a_closure() -> int:
     m = -5
-    lower = fn():
+    fn lower_fn():
         m -= 1000
+    lower = lower_fn
     total = 0
     for i, x in (m .. 10).iter().enumerate():
         total += i                  #$ error[E2020]: this is `u64`
