@@ -273,6 +273,7 @@ impl Parser<'_> {
             TokenKind::Keyword(Kw::Unsafe) => {
                 self.at_fn_at(1)
                     || self.at_kw_at(1, Kw::Extern)
+                    || self.at_kw_at(1, Kw::Interface)
                     || matches!(self.peek_at(1), TokenKind::Ident(s) if s.is("extend"))
                     || self.at_overlay_decl(1)
             }

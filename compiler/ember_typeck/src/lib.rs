@@ -45834,7 +45834,12 @@ impl<'a> Checker<'a> {
             let gone = match (name, attr.args.as_slice()) {
                 ("static_safe", _) => Some(("`@static_safe` is gone", "write `@no_alias_checks`: a function that keeps no check of who else holds its data".to_string())),
                 ("fp", [arg]) if word(arg).as_deref() == Some("contract") => Some(("`@fp(contract)` is gone", "write `@fp(allow_fma)`".to_string())),
-                ("no_runtime_checks", _) => Some(("`@no_runtime_checks` is gone", "no switch turns a safety check off; remove it [UNS-11]".to_string())),
+                // `[UNS-11]` — no switch turns a safety check off, in any build: the two ways to write
+                // what such a switch was wanted for.
+                ("no_runtime_checks", _) => Some((
+                    "there is no switch that turns safety checks off, in any build; to forbid run-time alias checks here write `@no_alias_checks`; to skip the bounds check of an index known to be in range, write `xs.get_unchecked(i)` inside `unsafe:` with a `# SAFETY:` note",
+                    "remove `@no_runtime_checks` [UNS-11]".to_string(),
+                )),
                 // `[LT-1a]`, `[LT-22]` — what a result points into is the first line's rule, narrowed by
                 // the summary its body gives, or `from` naming one parameter or field.
                 ("borrows", args) => {

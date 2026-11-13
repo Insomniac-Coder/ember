@@ -2653,6 +2653,47 @@ fn realtime_stands_for_the_manifests_contracts() {
     assert!(rendered.contains("error[E9001]") && rendered.contains("`fast` is not a contract `@realtime` can stand for"), "{}", checked.stderr);
 }
 
+/// `[UNS-11]` — no switch turns a safety check off, in any build or profile: a manifest setting that
+/// would (`overflow`, `bounds_checks`, `exclusivity`, in a profile or at the top) is `E9001`, and the
+/// program is not built.
+#[test]
+fn no_manifest_setting_turns_a_safety_check_off() {
+    let root = workspace_root();
+    let package = temporary_directory("no-check-switch");
+    let source = package.join(ember_branding::source_file("main"));
+    std::fs::write(&source, "fn main():
+    xs = [1]
+    println(xs[0])
+").expect("source is writable");
+    let source_arg = source.to_string_lossy().into_owned();
+    for (setting, key) in [
+        ("[profiles.release]
+overflow = \"wrap\"
+", "overflow"),
+        ("[profiles.release]
+bounds_checks = false
+", "bounds_checks"),
+        ("exclusivity = \"unchecked\"
+", "exclusivity"),
+    ] {
+        std::fs::write(package.join(MANIFEST), format!("[package]
+name = \"p\"
+version = \"0.1.0\"
+{setting}"))
+            .expect("manifest is writable");
+        let checked = ember(&["check", &source_arg], &root);
+        assert_ne!(checked.exit, 0, "`{key}` turned a check off:
+{}", checked.stderr);
+        assert!(
+            checked.stderr.contains("error[E9001]")
+                && checked.stderr.contains(&format!("removed manifest setting `{key}` cannot disable a safety check")),
+            "{}",
+            checked.stderr
+        );
+    }
+    let _ = std::fs::remove_dir_all(&package);
+}
+
 /// `[MAN-3]` — the registry spelling and the descriptive lint names used by
 /// the manifest examples all remain valid configuration keys.
 #[test]
