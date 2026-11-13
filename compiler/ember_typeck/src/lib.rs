@@ -62335,33 +62335,16 @@ impl<'a> Checker<'a> {
                 self.sink.emit(
                     Diagnostic::error(codes::E2040, span, "`StrView` does not implement `Add`")
                         .help("build the text with an f-string: `f\"{a}{b}\"`")
-                        .note("`a + b` extends a `String` on the left, consuming it [TXT-11]"),
+                        .note("`a + b` reads a `String` on the left and gives a new `String` [TXT-11]"),
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
-            let string_ty = lhs.ty;
-            let text = self.coerce(rhs, str_ty);
-            let joined = self.declare(None, string_ty, span);
-            let local = || Expr { ty: string_ty, kind: ExprKind::Local(joined), span };
-            let receiver = self.pass_receiver(local(), Mode::Mut, span);
-            return Expr {
-                ty: string_ty,
-                kind: ExprKind::Block {
-                    block: Block {
-                        stmts: vec![
-                            Stmt::Let { local: joined, init: Some(lhs) },
-                            Stmt::Expr(Expr {
-                                ty: self.common.void,
-                                kind: ExprKind::Builtin { which: Builtin::StringPush, args: vec![receiver, text] },
-                                span,
-                            }),
-                        ],
-                        span,
-                    },
-                    value: Box::new(local()),
-                },
-                span,
-            };
+            // `[TXT-11]` - both operands are read in place, so `a` stays usable: the sum is built as
+            // `f"{a}{b}"` is, a new `String` of `a`'s text then `b`'s.
+            let string_ty = self.common.string;
+            let buffer_ref = self.types.intern(TyKind::Ref { mutable: true, inner: string_ty });
+            let parts = vec![self.plain_text_piece(lhs), self.plain_text_piece(rhs)];
+            return Expr { ty: string_ty, kind: ExprKind::FString { parts, buffer_ref }, span };
         }
         // `[EXP-9]` (D-322) — `a is b` on two references compares where they
         // point: the same place or not. A reference names its place's value
