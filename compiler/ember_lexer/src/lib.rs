@@ -426,13 +426,10 @@ impl<'a> Lexer<'a> {
 
         if is_doc {
             let tok = Token { kind: TokenKind::DocComment(text.trim().to_string()), span };
-            if own_line {
-                // Held back so the doc lands after the block's INDENT.
-                self.pending_docs.push(tok);
-            } else {
-                self.line_has_tokens = true;
-                self.tokens.push(tok);
-            }
+            // Held back so the doc lands after the block's INDENT; one after code (`fn f(): ## note`)
+            // too, since a comment never affects compilation (`[LEX-11]`): it attaches to the next
+            // declaration, and where there is none it is discarded.
+            self.pending_docs.push(tok);
         } else {
             self.comments.push(Comment { span, own_line, safety: safety_note(&text) });
         }

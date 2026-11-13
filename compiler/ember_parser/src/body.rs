@@ -450,6 +450,7 @@ impl Parser<'_> {
         let then_block = self.parse_block();
 
         // `elif` is a nested `if` in the else position (Part XVIII §3).
+        self.skip_docs_before_else();
         let else_block = if self.at_kw(Kw::Elif) {
             self.bump_as_if();
             Some(Box::new(ElseBranch::If(self.parse_if_after_keyword())))
@@ -468,6 +469,7 @@ impl Parser<'_> {
         let cond = self.parse_condition();
         self.expect_punct(Punct::Colon);
         let then_block = self.parse_block();
+        self.skip_docs_before_else();
         let else_block = if self.at_kw(Kw::Elif) {
             self.bump_as_if();
             Some(Box::new(ElseBranch::If(self.parse_if_after_keyword())))
@@ -717,6 +719,7 @@ impl Parser<'_> {
     /// `[CTL-4]`/`[GRM-6]` — the loop `else` runs when the loop ends without
     /// `break`.
     fn parse_loop_else(&mut self) -> Option<Block> {
+        self.skip_docs_before_else();
         if !self.eat_kw(Kw::Else) {
             return None;
         }
@@ -739,6 +742,11 @@ impl Parser<'_> {
             if self.eat_indent() {
                 while !self.at_dedent() && !self.at_eof() {
                     self.eat_newlines();
+                    if self.at_dedent() || self.at_eof() {
+                        break;
+                    }
+                    // `[LEX-11]` - a doc comment before an arm documents nothing.
+                    let _ = self.take_doc();
                     if self.at_dedent() || self.at_eof() {
                         break;
                     }
