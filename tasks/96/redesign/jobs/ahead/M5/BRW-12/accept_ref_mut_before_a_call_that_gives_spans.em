@@ -5,7 +5,8 @@
 #$ rules: BRW-12, SPN-3, SPN-5
 #$ stdout: 9 7 8 4
 #$ stdout: true
-# `s` is a `MutSpan`, which `split_at` splits into two (`[SPN-5]`; see Q6 for the spec's `xs`).
+# `s` is a `MutSpan`, which `split_at` splits into two (`[SPN-5]`). Q6 (INDEX.md): the spec's `xs`
+# is a `MutSpan` too; an `Array` is split for changing as `a.as_mut_span().split_at(i)`.
 
 fn main():
     xs = [1, 2, 3, 4]

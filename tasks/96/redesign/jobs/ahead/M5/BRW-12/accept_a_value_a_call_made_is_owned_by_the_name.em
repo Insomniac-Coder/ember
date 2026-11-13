@@ -5,7 +5,8 @@
 #$ rules: BRW-12, LT-45, OWN-9
 #$ stdout: 4
 #$ stdout: 3
-# Each name owns its list and may change it; a read-only view could not (`[BRW-15]`).
+# Each name owns its list and may change it; a read-only view could not (`[BRW-15]`). `letters`'s list
+# points into `s`, its one source parameter (`[LT-1]` rule 2).
 
 fn build(n: int) -> Array[int]:
     xs: Array[int] = []
@@ -13,7 +14,7 @@ fn build(n: int) -> Array[int]:
         xs.push(owns i)
     return xs
 
-fn letters(s: StrView) -> Array[StrView] from s:
+fn letters(s: StrView) -> Array[StrView]:
     return [s[0..1], s[1..2]]
 
 fn main():

@@ -16,9 +16,11 @@ unsafe extend LevelArena implements Allocator:
         this.made += 1
         return Global().allocate(layout)
 
+    @safety("`p` came from this arena's `allocate` with `layout`, and nothing uses it after this call")
     unsafe fn deallocate(p: *mut u8, layout: Layout):
         Global().deallocate(p, layout)
 
+    @safety("`p` came from this arena's `allocate` with `old`, and nothing uses it after this call")
     unsafe fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
         return Global().reallocate(p, old, new_size)
 
