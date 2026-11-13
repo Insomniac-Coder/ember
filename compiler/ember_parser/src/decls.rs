@@ -1942,6 +1942,9 @@ impl Parser<'_> {
         // `[TYP-45]`, `[LEX-14]` — the other words before a type that say who owns the value
         // (`weakref Node`, `shares mut Game`): never a name, and not built by this compiler yet (M4);
         // the type after it is read as written.
+        if self.at_kw(Kw::Weakref) && let Some(stacked) = self.weakref_stacked_word() {
+            return self.refuse_stacked_weakref(start, stacked, suffix);
+        }
         if let TokenKind::Keyword(word @ (Kw::Shares | Kw::ThreadShared | Kw::Weakref | Kw::Sharedref)) = self.peek().clone() {
             let at = self.span();
             self.bump();
@@ -2205,5 +2208,83 @@ impl Parser<'_> {
         } else {
             false
         }
+    }
+}
+
+/// `[GRM-3a]` — what stands between `weakref` and the target's type, when it is a word `weakref` does
+/// not take.
+#[derive(Clone, Copy, PartialEq)]
+enum Stacked {
+    /// `weakref shares T`, `weakref shares mut T`.
+    Shares,
+    /// `weakref owns T`.
+    Owns,
+    /// `weakref ref T`, `ref mut`, `sharedref mut`, `weakref weakref T`, `weakref *T`.
+    ViewLinkOrPointer,
+}
+
+impl Parser<'_> {
+    fn weakref_stacked_word(&self) -> Option<Stacked> {
+        Some(match self.peek_at(1) {
+            TokenKind::Keyword(Kw::Shares) => Stacked::Shares,
+            TokenKind::Keyword(Kw::Owns) => Stacked::Owns,
+            TokenKind::Keyword(Kw::Ref | Kw::Sharedref | Kw::Weakref) | TokenKind::Punct(Punct::Star) => Stacked::ViewLinkOrPointer,
+            _ => return None,
+        })
+    }
+
+    /// `[GRM-3a]` — `E0100` with the line to write: the program's own declaration with the extra word
+    /// gone. The type is read on, so the line is one mistake.
+    fn refuse_stacked_weakref(&mut self, start: ember_span::Span, stacked: Stacked, suffix: bool) -> TypeExpr {
+        let at = self.pos;
+        let name = (at >= 2 && matches!(self.tokens[at - 1].kind, TokenKind::Punct(Punct::Colon)))
+            .then(|| match self.tokens[at - 2].kind {
+                TokenKind::Ident(_) => self.src.get(self.tokens[at - 2].span.start as usize..self.tokens[at - 2].span.end as usize).map(str::to_string),
+                _ => None,
+            })
+            .flatten();
+        self.bump(); // `weakref`
+        // The extra word, and the words that go with it.
+        match stacked {
+            Stacked::Shares => {
+                self.bump();
+                self.eat_kw(Kw::Mut);
+            }
+            Stacked::Owns => {
+                self.bump();
+            }
+            Stacked::ViewLinkOrPointer => {
+                // `ref mut`, `sharedref mut`, `weakref`, `*` and `*mut`: one word and its `mut`.
+                self.bump();
+                self.eat_kw(Kw::Mut);
+            }
+        }
+        let words = start.to(self.prev_span());
+        let target_at = self.span();
+        let inner = self.parse_type_nested(suffix);
+        let target = self.src.get(target_at.start as usize..inner.span.end as usize).unwrap_or("T").to_string();
+        let rest = self.src.get(inner.span.end as usize..).unwrap_or("");
+        let rest = rest.lines().next().unwrap_or("");
+        // Not a comment that follows the line.
+        let rest = if rest.contains('"') { rest } else { rest.split('#').next().unwrap_or("") }.trim_end();
+        let line = match &name {
+            Some(name) => format!("{name}: weakref {target}{rest}"),
+            None => format!("weakref {target}"),
+        };
+        let diagnostic = match stacked {
+            Stacked::Shares => Diagnostic::error(codes::E0100, words, "a link does not say how its target's owners hold it")
+                .primary_label(format!("`weakref {target}` links a value with one owner or with `shares` owners alike"))
+                .help(format!("write `{line}`")),
+            Stacked::Owns => Diagnostic::error(codes::E0100, words, "a value held `owns` has no header for a link to test")
+                .primary_label("a link names a class object or a value held `shares` or `thread_shared`".to_string())
+                .help("a link names a class object or a value held `shares` or `thread_shared`".to_string())
+                .help(format!("write `{line}` here")),
+            Stacked::ViewLinkOrPointer => Diagnostic::error(codes::E0100, words, "a link names the value itself, not a view, a link or a pointer to it")
+                .help(format!("write `{line}`")),
+        };
+        self.report(diagnostic);
+        // A link is read as the `Option` it is initialised as, so the one error is not followed by others.
+        let option = Ident { name: ember_span::Symbol::intern("Option"), span: inner.span };
+        TypeExpr { id: self.next_id(), kind: TypeKind::Path { segments: vec![option], args: vec![GenericArg::Type(inner.clone())] }, span: inner.span }
     }
 }
