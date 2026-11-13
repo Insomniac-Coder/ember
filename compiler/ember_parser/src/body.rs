@@ -2180,7 +2180,7 @@ impl Parser<'_> {
                         colon.to(self.span()),
                         "a multi-statement closure cannot be written inside brackets",
                     )
-                    .help("bind it on a preceding line: `h = fn(e): …` then pass `h`")
+                    .help("declare a local function on the preceding line: `fn add(x):` with the block below it, then pass `add` [GRM-28]")
                     .note("indentation is not significant inside brackets [LEX-6]"),
                 );
                 // The rest of the body, up to the enclosing `,` or closing
