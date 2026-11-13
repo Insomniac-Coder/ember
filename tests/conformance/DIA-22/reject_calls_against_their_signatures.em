@@ -14,9 +14,9 @@ struct Rect:
         return this.w * k
 
 fn main():
-    println(area(1))    #$ error[E2020]: `area` takes 2 arguments, found 1
+    println(area(1))    #$ error[E2021]: `area(1)` gives nothing for `h`, which has no default: `fn area(w: int, h: int) -> int`
     println(area(1, "x"))    #$ error[E2020]: expected `i64`, found `StrView`
     r = Rect(2)
-    println(r.scale(1, 2))    #$ error[E2020]: `scale` takes 1 argument, found 2
+    println(r.scale(1, 2))    #$ error[E2021]: `r.scale(1, 2)` gives 2 arguments, and `scale` takes 1: `fn scale(k: int) -> int`
     println(r.scale("k"))    #$ error[E2020]: expected `i64`, found `StrView`
-    println(area(w=1, depth=2))    #$ error[E2020]: `area` has no parameter `depth`
+    println(area(w=1, depth=2))    #$ error[E2021]: `area(w=1, depth=2)` names `depth`, and `area` has no parameter of that name: `fn area(w: int, h: int) -> int`

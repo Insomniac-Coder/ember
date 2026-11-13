@@ -231,7 +231,7 @@ codes! {
     E2073 = (Error, 2073, Types, "[STD-26]", "`len` of a string (Python counts characters, `s.len()` bytes)");
     E2074 = (Error, 2074, Types, "[ECS-4a]", "a component type listed twice in one ECS view, or listed and excluded");
     E2230 = (Error, 2230, Types, "[CTL-10]", "a name assigned in every branch at different types");
-    E2228 = (Error, 2228, Types, "[CLO-3]", "callable parameter-mode mismatch (shape B15)");
+    E2228 = (Error, 2228, Types, "[CLO-3]", "retired: folded into `E2020`: a lambda parameter whose word differs from the function type it is given to");
     E2080 = (Error, 2080, Types, "[STR-3], [ARN-11], [ERR-3], [SER-1], [DRV-1]", "`@derive(Copy)` on a type with a field that is not Copy, or on a type that declares `drop`; `@derive(Zeroable)` on an enum whose zero bytes are no variant or whose zero variant's payload is not `Zeroable`; a derive's requirement a field does not meet, `@from`'s included (`@derive(Copy)` on a type with a `String` field); a `@ser(skip)` field with no declared default whose type has no `Default`");
     E2090 = (Error, 2090, Types, "[ENM-2]", "non-exhaustive match");
     E2100 = (Error, 2100, Types, "[CLS-2]", "field read before it is set, `init` calling a method whose body reads a field not yet set included; in a `pub` `open` or `abstract` class, `init` calling a `virtual` method before every field is set");
@@ -472,7 +472,7 @@ codes! {
     E9042 = (Error, 9042, Build, "[BLD-15]", "a link ran past its time limit");
 
     // --- warnings --------------------------------------------------------------
-    W0001 = (Warning, 1, Lex, "[LEX-11]", "dangling doc comment");
+    W0001 = (Warning, 1, Lex, "[LEX-11]", "retired: a dangling doc comment is discarded in silence");
     W1002 = (Warning, 1002, Resolve, "[GRM-12]", "binding shadows an enum variant of the same name");
     W1003 = (Warning, 1003, Resolve, "[MOD-3]", "a package module shadows the standard module of the same name");
     W2091 = (Warning, 2091, Types, "[CTL-5]", "unreachable match arm");
@@ -689,6 +689,6 @@ mod tests {
     fn display_is_four_digits() {
         assert_eq!(E0001.to_string(), "E0001");
         assert_eq!(E3040.to_string(), "E3040");
-        assert_eq!(W0001.to_string(), "W0001");
+        assert_eq!(W2192.to_string(), "W2192");
     }
 }

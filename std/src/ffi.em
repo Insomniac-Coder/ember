@@ -180,6 +180,16 @@ struct ForeignOwner:
 unsafe extend[T] ForeignOwner[T] implements Send:  # SAFETY: the type's contract binds it to no thread ([FFI-33b])
     pass
 
+## `[FFI-8]`, `[THR-8]` — an `owns T` of a type whose contract says `threads(main)`: one word, as a
+## `ForeignOwner`, but not `Send` (no `unsafe extend` below): the objects are used by the main thread
+## only, so safe code never hands one to another thread (`E7008`).
+[T]
+struct MainForeignOwner:
+    pointer: *mut T
+
+    fn drop():
+        foreign_end(this.pointer, 0)
+
 ## `[FFI-33b]` — an `owns T` of a type whose contract says `threads(creator)`: two words, the
 ## object's address and the number of the thread that made it. Its end compares that number with
 ## the running thread's, in every profile, and stops the program on another (naming the type, the

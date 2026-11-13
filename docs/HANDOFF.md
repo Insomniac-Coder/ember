@@ -1,5 +1,59 @@
 # Ember — handoff
 
+> **2026-11-12 afternoon — round 6 collected; stopped and hibernated on the owner's word ("after this task, stop
+> all work … and also hibernate it").** START HERE.
+>
+> - **origin/main:** `2150f53c`.
+> - **Local `main`, not pushed** (the full push gate and the bench have not run on it):
+>   - Hardened_13;
+>   - round 6's W1, H1 (`[TYP-47]` variadic generics, the print functions as library functions) and W2, with the
+>     lead's merge fixes (`f4f3e695`, `aea472db`);
+>   - the quick check failing 0 with the current binary; the C backend's run tests 207 of 207; the unit suites, ui,
+>     rule_index, error_pages, check_branding and phase_progress green.
+> - **`lead-m4` = `52cd0d61`:** H2's slice A rest and slice B on top of `main` from this morning. It lands on `main`
+>   after slice C. It needs `main` merged in again: W1, H1 and W2 landed after its base.
+> - **For the owner:** slice C's count, before any rewrite (`tasks/96/redesign/jobs/review.md`, round 6, H2): 581
+>   handle copies keep two owners without saying so, in 289 of 2,436 programs, plus 65 in std.
+> - **Next, on the owner's resume:**
+>   1. Merge `main` into `lead-m4`.
+>   2. The push gate on `main` (three ways), the bench on both backends, then push.
+>   3. Round 7: the left items in `review.md`, round 6; the Hardened_14 findings (one cut, by an Opus deputy);
+>      `[DIA-2]`'s spelling; M4's slice C after the owner hears the count; FFI-33b's call line and variable,
+>      option (c).
+> - **The quick check** runs `target/debug/ember.exe` unless `EMBER` names another binary (the trap below).
+
+> **2026-11-12 — pushed, Hardened_13 is the target, round 6 running (the owner: "run the gate and bench, then push
+> and continue the work you can use upto 4 agents").** START HERE.
+>
+> - **Pushed:** origin/main = `2150f53c`.
+>   - The gate's one failure, `the_cpp_corpus_binds_as_recorded`, was A6-5's leftover `document.get()` in the
+>     corpus program. It is fixed, and the test passes three ways.
+>   - The bench: 25 of 25 on both backends.
+> - **Local `main`, not pushed:**
+>   - `f7c61773` merges **0.9.20_Hardened_13**, which the Opus deputy cut: N171 to N175, `decisions.md` §24.
+>     `check_examples` gives Hardened_12's results exactly; the gates and the quick check are green.
+>   - `2572d2b6` adds `R6-batch.md`.
+> - **Round 6** (`tasks/96/redesign/jobs/R6-batch.md`):
+>   - H1 (Opus): `[TYP-47]` variadic generics;
+>   - H2 (Opus): M4's rest of slice A and slice B, on `lead-m4` (`4a7a0d8a`, which has `main` merged in);
+>   - W1 (Sonnet): 18 defects;
+>   - C (Opus): a pilot of crediting 20 rules to `built_for_0915`. There are 195 candidates in all.
+> - **The owner's rules for agents (2026-11-12), only while he allows agents:** `docs/AUTOPILOT.md` §3, "Helper
+>   agents in autonomous mode". In short:
+>   - Sonnet does light and medium development and never rules a spec question;
+>   - Opus (the lead or a helper) takes reviews, merges and ODRs; Fable only with his yes;
+>   - 10 to 30 tasks each;
+>   - the number at once is set by what the work costs the machine (about three builders; readers beside them);
+>   - 5 to 15 minutes of rest after each batch, by its weight.
+> - **Trap:** the quick check (`annotations.py`) runs `target/debug/ember.exe` unless `EMBER` names another binary.
+>   A stale debug build makes a merge look broken (18 false failures on W1's merge) or, worse, look green. Build
+>   it, or set `EMBER` to the binary just built.
+> - **Next:**
+>   1. Collect round 6: review, merge, the quick check.
+>   2. Bench `counted_handles` before and after M4's slices.
+>   3. Round 7: W2's 16 tasks, which are queued in `R6-batch.md`.
+>   4. The credit review, scaled if the pilot works.
+
 > **2026-11-12 morning — round 5 collected (the owner awake: "resume it and merge its work").** The Opus helper
 > was cut off by Windows Update's planned restart at 01:00 (System log: `MoUsoCoreWorker.exe`, "Service pack (Planned)";
 > a clean shutdown, not a crash). It was resumed and finished, and is merged (`4a7a48c4`). Round 5's W1 is merged without

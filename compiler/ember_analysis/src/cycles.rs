@@ -302,6 +302,7 @@ fn collect_strong_targets(
         | TyKind::FnItem { .. }
         | TyKind::Dyn { .. }
         | TyKind::Param { .. }
+        | TyKind::Pack(_)
         | TyKind::Assoc { .. }
         | TyKind::Infer(_)
         | TyKind::IntLit
@@ -378,6 +379,7 @@ fn collect_weak_targets(
         | TyKind::FnItem { .. }
         | TyKind::Dyn { .. }
         | TyKind::Param { .. }
+        | TyKind::Pack(_)
         | TyKind::Assoc { .. }
         | TyKind::Infer(_)
         | TyKind::IntLit
@@ -403,6 +405,7 @@ fn contains_unknown_owner_inner(types: &TypeTable, ty: Ty, seen: &mut HashSet<Ty
         TyKind::Dyn { .. }
         | TyKind::ClassInterface(_)
         | TyKind::Param { .. }
+        | TyKind::Pack(_)
         | TyKind::Assoc { .. } => true,
         TyKind::Link { kind: ember_types::LinkKind::Weakref, .. } => false,
         TyKind::Link { target, .. } => contains_unknown_owner_inner(types, *target, seen),

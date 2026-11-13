@@ -364,3 +364,164 @@ after each work batch" is the owner's rule from this round.
     blocks: 42 compile, 1 unbuilt, 13 errors, the same errors); `ember_diag`, `ember_parser`, the guide and
     first-week tests and the three spec-tied milestone tests green; the 14 gates and `spec_history.py verify`
     (135 cuts, 0 mismatches) green.
+- **C, the Opus credit pilot: 20 rules** (242k tokens, 17 min; read-only, probes with the release binary). Only
+  **OWN-2** and **CLI-7** have every clause built and shown. The other 18 are partial or not built. OWN-2 was
+  checked by the lead and credited. CLI-7 waits for a test of its fourth clause (`--merge` writes nothing until the
+  overlay passes), which only a probe showed.
+  - **The lead's rulings on the method** (tooling, not ODRs):
+    - a probe becomes a test before a rule is credited (`phase_progress.py`'s first condition);
+    - a docstring's one-off measurement is no evidence: DET-4's ulp bounds need a test against reference values.
+  - **Not scaled.** At about 12k tokens a rule, the other 175 would cost about 2.1M tokens and credit perhaps 15 to
+    20. Instead, each job credits the rules it builds whole, in its own commit.
+  - **Passing tests that pin the old behaviour against Hardened_13** (the tests follow the spec, so each is a
+    task):
+    - DIA-2: `int` shown as `i64`, in `DIA-2/reject_a_message_says_an_before_a_vowel_sound.em:9`,
+      `compile-fail/generic_instances_are_named_as_written.em:14` and
+      `MOD-5/reject_a_programs_box_is_named_as_written.em:12`;
+    - FFI-10/FFI-21: a callback parameter is the Ember callable (`owns cb: fn()`), not `extern "C" fn`
+      (`FFI-21/accept_a_borrowed_callback_takes_a_lambda.em`);
+    - DIA-10 B9: its help says `owned fn`, which the target makes E1010;
+    - TYP-15a: `TYP-15/accept_an_owning_container_at_a_view_type.em`;
+    - STD-26: `sorted` of views, in `accept_sorted_of_an_iterator_of_references_copies_or_clones.em`;
+    - ECS-2: `type_hash` is pinned as `fnv1a("Position")`, and the pools are not `Map[TypeId, owns dyn AnyStorage]`;
+    - FFI-33b: `accept_a_creator_callback_on_its_thread.em` still says "the debug profile checks each call".
+  - **Gaps found, beyond the milestones that own them** (for round 7 and later):
+    - `@ffi(no_callbacks)` is refused as no contract word, and E0104's help still lists `unsafe`;
+    - `Array[int, Global]` is E2020 where E1010 is due;
+    - OWN-11's messages (E3040 "handed over to `names` on line 4", E3013's lines to write, and a hand-over out
+      of a non-owning name), and `while jobs.pop() exists as job: done.push(owns job)` is accepted;
+    - DIA-10 B5's help is a category;
+    - TYP-26: `fn sqrt` beside `from std.math import sqrt` compiles;
+    - TCB-4: the library and the `unsafe import`/`@unsafe(export)` lines are not listed;
+    - DSP-3: the per-entry fact;
+    - `zip` of three or more (TYP-47's, H1);
+    - HR-16 and HR-20 untested.
+  - **Spec question for the next cut (Hardened_14):** `[DIA-2]` says a message never says "you", while the
+    spec's own B2 help says "a list of your own" and the compiler says "a copy of your own".
+- **W1 (Sonnet), 18 defects** (408k tokens, 118 min). 12 done and merged (`d8f6df9c`), 3 proposed for closing, 3
+  reported.
+  - **Done:**
+    - D-720: an enum's default tag is the smallest signed type;
+    - D-853: no cascade from an error inside a tuple;
+    - D-835: an unresolved field type is reported once in a reloadable build;
+    - D-707: `std.process.args` is in the `io` layer;
+    - D-854, D-852, D-860 and D-691: already fixed, rows closed;
+    - `E2021` (N171) at every call, constructor and `super.init`, with its page; 6 tests rewritten;
+    - `W0001` retired;
+    - B4's `new_n` (N174);
+    - `E2123` names a typed local by its name;
+    - CLO-6's E3013 help gives the call with a copy.
+  - **E3013's help keeps the program's `owns` before the copy** (`consume(owns copy of s)`). The lead first took it
+    out, then put it back after a probe: `[FN-2a]` writes `owns` before any argument the callee takes over,
+    "whatever is given" (`take(owns copy of xs)`), and the compiler refuses `consume(copy of s)` with E3028. `[CLO-6]`'s
+    own example, `call_twice(fn(): consume(copy of s))`, leaves the word out: a spec finding for Hardened_14.
+  - **The lead's rulings on what W1 reported** (each the spec's to decide, so not ODRs):
+    - **D-721:** E2130's three other uses.
+      - The "literal in this phase" path is removed if it is dead.
+      - An `ArenaMap` or arena span of views is allowed by `[TYP-15a]` and `[ARN-5]`, but the check that keeps such
+        views no longer than the arena is not built (M5). Until then it is `E0900`, "not built yet", never accepted.
+      - Round 7.
+    - **The shapes O3, O4, O5, B8, B14, B15 and X1:** §XVII.6.1 says they are no longer used, so their mappings and
+      variants go. Round 7.
+    - **`[OBJ-2]`'s E2173** (built, then reverted by W1): the 22 tests that use a bare interface name are the
+      class-interface handle of `[DSP-3]`, and their respelling to `dyn I` comes with `dyn I`'s representation under
+      `[DSP-3]`, which is M11's (A4-14). It is deferred to M11, and `f0d4fa67` is kept for it.
+  - **Proposed for closing:** D-699, D-864 and D-850. Each was probed in today's spelling; the lead re-probes them
+    before closing.
+  - **Spec findings for Hardened_14:**
+    - E2021's line to write gives a parameter twice when a later named argument gives the first one that no
+      earlier argument gives (`P(a = 1, b=2, b = 3)`), and a help must compile;
+    - B4's noun ("a number of your own", "a text …", "a value …") and the two examples' differing "and stays that
+      … for the whole call";
+    - `[CLO-6]`'s E3013 example (`consume(copy of s)`) without the `owns` that `[FN-2a]` requires;
+    - with the DIA-2 "you" question above.
+- **H1 (Opus): `[TYP-47]`** (954k tokens, 4 h 6 min). All 13 tasks, plus 3 fixes its quick check found. Merged as
+  `7de3dd14`. The one conflict was in `report_missed_bound`; both sides were kept, W1's `[DIA-14]` error guard
+  first, then `Printable`'s report.
+  - **Built:**
+    - packs in the grammar, types, needs, calls, loops, structs and classes;
+    - tuple interfaces written once;
+    - instances with `[MNG-*]` symbols;
+    - `Printable`;
+    - `print`, `println`, `eprint`, `eprintln` (`std.core`, `@inline`, over `write_stdout`/`write_stderr`) and
+      `format_to` (`std.fmt`) as library functions, with `Builtin::from_name` gone;
+    - `zip` of any number.
+  - **Print calls before and after:** one direct inlined call per type list. The machine code of a print-heavy
+    `main` is the same (clang -O2: 133 to 132 instructions from LLVM, 134 to 134 from C), and the output is byte
+    for byte the same on both backends. Compile time went from 6.0 s to 5.2 s on 400 calls; the LLVM exe is
+    2.5 KB bigger (stack-name tables).
+  - **Not built (E0900):**
+    - methods over a pack, and enum, interface and alias packs, so `reg.view[A, B]()` waits (M14);
+    - an extension over `(A, B, Ts...)` reaches only the written elements of `this`.
+  - **Spec findings for Hardened_14, with the lead's view:**
+    - `[STD-18]`'s `format_to` signature has no `sep`/`end`, which H1 kept as print has them; consistency says
+      add them to the signature;
+    - `[TYP-47]` puts `[A, B, Ts...]` "above" `extend`, where `[GRM-40]` puts an extend block's brackets after
+      `extend`: a text repair;
+    - `Printable` is not in `[MOD-5]`'s prelude list: a text repair;
+    - `values...` into a function with no pack is E2020 (H1's choice, since a body is checked before its
+      instances): say so.
+  - **A defect for round 7:** instance spellings write `StrView`, where `[MNG-1]`/`[MNG-6]` put built-in types
+    under `std.core`. The spec says it; the symbols change.
+- **W2 (Sonnet), 21 tasks** (457k tokens, 2 h 35 min). 16 commits, merged `18485e7f` cleanly.
+  - **Done:**
+    - D-834: a static's `Sync` was asked before the hand-written `Send` markers were recorded; now deferred;
+    - D-721: the dead E2130 path is a `debug_assert`, and views in arena storage are E0900;
+    - JOB-5: one E3063;
+    - N175: foreign structs are `@layout(c)` ones; no Ember-made `owns` of one; not `Clone`;
+    - E7008 for a thread-bound foreign owner, with `MainForeignOwner`;
+    - the retired shapes removed;
+    - CLI-7's fourth clause and DET-4's accuracy as tests (`tools/det_reference.py`, mpmath at 400 bits, 169
+      cases);
+    - `Array[int, Global]` is E1010;
+    - OWN-11's three messages.
+  - **Already held, now with tests:** D-859, D-862, D-863, D-882, D-693.
+  - **The lead's rulings on what W2 asked:**
+    - **E2228 to E2020:** confirmed; the code table folds it.
+    - **N175's suggested type name** from the function's name, and "(line N)": accepted.
+    - **FFI-33b's variable and the call's line:** option (c). The checker wraps a `returns_owned` call in a builtin
+      carrying the call's line, and a named local's end passes its name to the release. One mechanism serves both
+      backends, with no ABI change and no lookup while running. Round 7.
+    - **CG-C-1's checked helpers:** (a), no code change; the helpers are the builtins on gcc and clang. The wording
+      goes to Hardened_14.
+  - **Left:**
+    - FFI-35a's header mark: M4's files, after H2;
+    - E5060: the importer marks a parameter that keeps the object, and the checker gives E5060 at the call;
+    - N173 in the importer (below);
+    - `ArenaMap.in(ref mut frame, n)` not built;
+    - E7008 for `unsafe extend … implements ThreadShared` on a creator or main type, and other thread-bound values;
+    - the `match owns jobs.pop():` help.
+  - **Spec findings for Hardened_14:**
+    - N173's `hide`: does a hidden declaration still count for the two-destructor conflict, given that `hide` makes
+      a declaration private and does not remove it? And in what order are by-value `T` results taken?
+    - CG-C-1's wording on where the checked helpers live.
+- **H2 (Opus): M4, the rest of slice A and slice B** (277k tokens, 5 h 49 min). All 16 tasks. Fast-forwarded onto
+  `lead-m4` (`52cd0d61`); not on `main`, since M4 lands whole after slice C (`M4-plan.md`).
+  - **Built:**
+    - E2122, E3023, E2119 and E2020 with the rules' messages;
+    - D5's blocks for values that are not class objects;
+    - `None` as a link, and re-pointing one;
+    - the RT-7 limits;
+    - `Shared` and `Weak` refused with E1010, with migration edits, and 173 files migrated;
+    - `weak_of` and the `Weak` machinery deleted (`Shared[T]`'s block stays for values made `shares` and for
+      `SyncShared` until slice E);
+    - pages E2122 and E2119;
+    - 15 design tests R9 and R11, with C, LLVM and the evaluator agreeing and no leaks in debug.
+  - **Slice C's count (measured, nothing rewritten; for the owner before the rewrite):** 581 copies of a class
+    handle that keep two owners without saying so, in 289 of the 2,436 programs that build. Another 65 are in std,
+    in 19 functions (`std.ecs.World.add` 24, `ecs.aos_storage` 12, …). By folder: `tests/run-pass` 65 (38
+    programs), TYP-16 58 (26), RC-2e 37 (15), WK-11 31 (10), TYP-22 30 (20), RC-3 26 (12), EXC-18 22 (16), and a
+    long tail. The script is `count_handle_copies.py`.
+  - **Choices the spec does not force** (in its report): `Shared[T]` migrates to `shares mut T`; the name opened from
+    a link to a non-class value is a read-only `shares T` owner; and the wording of E2122/E2119 where the spec gives
+    none.
+  - **Left for slice E:**
+    - a `shares` value reaching a thread is E7004, where the spec says E7015;
+    - `static W: Mutex[Array[weakref P]]` is E7002;
+    - `[HR-15]`'s reload test is ignored until `weakref thread_shared`.
+  - **Spec findings for Hardened_14:**
+    - does a class local shared by a line take `shares mut C`, as D5 does for values? (H2 recommends no: `c` keeps
+      `C`);
+    - `[TYP-5]` has no `shares mut T` to `shares T` conversion (H2 recommends adding it, as `ref mut` gives `ref`);
+    - `exists as ref mut v` on a link to a value that is not a class object (H2 recommends refusing it, since
+      `weakref T` does not say its owners may change it).

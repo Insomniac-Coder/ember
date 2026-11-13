@@ -19,7 +19,7 @@
         "XV.6"
       ],
       "rules": 436,
-      "done": 175,
+      "done": 176,
       "missing": [
         "ATT-1",
         "ATT-2",
@@ -207,7 +207,6 @@
         "OWN-11",
         "OWN-12",
         "OWN-13",
-        "OWN-2",
         "OWN-3",
         "OWN-4",
         "OWN-6",
@@ -296,7 +295,7 @@
         "XV.7"
       ],
       "rules": 627,
-      "done": 218,
+      "done": 219,
       "missing": [
         "ALC-1",
         "ALC-2",
@@ -560,7 +559,6 @@
         "OWN-11",
         "OWN-12",
         "OWN-13",
-        "OWN-2",
         "OWN-3",
         "OWN-4",
         "OWN-6",
@@ -715,7 +713,7 @@
         "XVI"
       ],
       "rules": 690,
-      "done": 243,
+      "done": 244,
       "missing": [
         "ALC-1",
         "ALC-2",
@@ -1017,7 +1015,6 @@
         "OWN-11",
         "OWN-12",
         "OWN-13",
-        "OWN-2",
         "OWN-3",
         "OWN-4",
         "OWN-6",
@@ -1172,7 +1169,7 @@
         "Annex B"
       ],
       "rules": 756,
-      "done": 275,
+      "done": 276,
       "missing": [
         "ALC-1",
         "ALC-2",
@@ -1508,7 +1505,6 @@
         "OWN-11",
         "OWN-12",
         "OWN-13",
-        "OWN-2",
         "OWN-3",
         "OWN-4",
         "OWN-6",

@@ -1,10 +1,10 @@
-error[E0100]: `*` is Python's; Ember has no variadic functions
+error[E0100]: `*` is Python's; Ember's function takes any number of values as a pack
  --> tests/ui/python/P19/star_args.em:1:10
   |
 1 | fn total(*values: int) -> int:
   |          ^^^^^^^
   |
-  = help: take the values as one parameter, an `Array[T]` or a `Span[T]`, and pass `[a, b]`
-  = note: a call passes exactly the parameters the signature declares (I.6)
+  = help: take any number of values as a pack, `[Ts...]` above the function and `args: Ts...`, or one `Array[T]` or `Span[T]` parameter, passed `[a, b]`
+  = note: a call passes the parameters the signature declares, a pack's values each of its own type [TYP-47]
 
 error: could not compile due to 1 error(s)

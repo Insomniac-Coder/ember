@@ -11,7 +11,7 @@ class Side(Panel):
     size: int = 3
 
     fn init():
-        super.init(visible=false)       #$ error[E2020]: field `name` of `Panel` has no value
+        super.init(visible=false)       #$ error[E2021]: `super.init(visible=false)` gives nothing for `name`, which has no default: `Panel(name: String, visible: bool = …)`
 
 fn main():
     s = Side()

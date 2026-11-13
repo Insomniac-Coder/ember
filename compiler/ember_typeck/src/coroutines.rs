@@ -472,6 +472,7 @@ impl Writer<'_> {
             | ast::ExprKind::Jump(_)
             | ast::ExprKind::Lit(_)
             | ast::ExprKind::Path { .. }
+            | ast::ExprKind::Spread(_)
             | ast::ExprKind::SelfExpr
             | ast::ExprKind::Error => {}
         }
@@ -539,6 +540,7 @@ impl Writer<'_> {
             bounds: Vec::new(),
             default: None,
             const_ty: None,
+            pack: false,
             span,
         };
         let mut lifted_names = Vec::new();
@@ -1202,7 +1204,7 @@ impl Rewriter<'_> {
                 self.arms(arms);
             }
             ast::ExprKind::Jump(ast::Jump::Return(Some(value))) => self.expr(value, Place::Operand),
-            ast::ExprKind::Lit(_) | ast::ExprKind::Jump(_) | ast::ExprKind::Error => {}
+            ast::ExprKind::Lit(_) | ast::ExprKind::Jump(_) | ast::ExprKind::Spread(_) | ast::ExprKind::Error => {}
             ast::ExprKind::Cast { expr: base, ty } | ast::ExprKind::Downcast { expr: base, ty, .. } => {
                 self.expr(base, Place::Operand);
                 self.ty(ty);

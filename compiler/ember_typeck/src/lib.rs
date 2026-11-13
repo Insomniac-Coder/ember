@@ -23,6 +23,7 @@ mod comptime;
 mod coroutines;
 mod habits;
 mod objects;
+mod packs;
 
 pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
 pub use derives::component_registry_key;
@@ -681,6 +682,7 @@ fn check_round(
         checker.current_module = index;
         checker.collect_methods(&loaded.module);
     }
+    checker.check_deferred_static_sync();
     // A default body gives the implementing type a method it did not write. These have to exist
     // before any body is checked, or a call to one would not resolve. D-878 — once every module's
     // implementations are collected: given module by module, an implementation in a module after
@@ -1959,6 +1961,13 @@ enum CountOp {
     PositionOf,
 }
 
+impl GenericParam {
+    /// `[TYP-47]` — the name of this parameter's `TyKind::Param`: a pack's carries `PACK_MARK`.
+    fn param_name(&self) -> Symbol {
+        if self.pack { Checker::pack_param_name(self.name) } else { self.name }
+    }
+}
+
 /// One declared type parameter and what it is allowed to do.
 #[derive(Clone)]
 struct GenericParam {
@@ -1993,6 +2002,8 @@ struct GenericParam {
     /// `[TYP-41]` — `const N: int`: the type of the value this parameter
     /// stands for. Its argument is a `TyKind::Const`.
     const_ty: Option<Ty>,
+    /// `[TYP-47]` — `Ts...`: a pack, whose argument is a `TyKind::Pack` of its types.
+    pack: bool,
 }
 
 /// `[FFI-21]` — a parameter contracted `callback(mode, user_data=p)`: the callable C calls back
@@ -2059,6 +2070,8 @@ struct ClosureCall {
     owned: bool,
     /// The capture a `once` closure gives away, as the program names it (`[CLO-6]`).
     moved: Option<Symbol>,
+    /// Where it is given away in the body, for the help's rewritten line (`[CLO-6]`).
+    moved_at: Option<Span>,
 }
 
 /// Whose field default `check_field_default` checks.
@@ -2897,6 +2910,9 @@ struct ForeignTypeContract {
     destroys: Option<ast::Ident>,
     adopt: bool,
     creator: bool,
+    /// `[FFI-8]`, `[THR-8]` — `threads(main)`: its objects are used by the main thread only, so an
+    /// `owns T` of it is no more `Send` than a `threads(creator)` one.
+    main: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -2967,6 +2983,15 @@ struct Checker<'a> {
     /// `[FFI-33b]` — the foreign types a `returns_owned` result binds to the thread that made the
     /// object (`threads(creator)` on the result), as their declaration's `threads(creator)` does.
     foreign_result_creators: HashSet<Symbol>,
+    /// `[FFI-36a]` (N175) — the structs declared `@layout(c)`: the only structs C can make an object of.
+    layout_c_structs: HashSet<Symbol>,
+    /// `[FFI-36a]` (N175) — the first function whose `returns_owned` result gives an `owns T` of each
+    /// foreign type `T`, which a message names as where to get one.
+    foreign_result_makers: HashMap<Symbol, Symbol>,
+    /// `[STA-1]`, D-834 — the statics whose type was not `Sync` when `collect` met them: a `Send` or
+    /// `Sync` written by hand (`unsafe extend`, std's `ForeignOwner`) is recorded later, by
+    /// `collect_methods`, so each is asked again once every module's are known (type, where, foreign).
+    deferred_static_sync: Vec<(Ty, Span, bool)>,
     /// `[FFI-36a]` — the structs a header lays out that a `returns_owned` result gives objects of:
     /// foreign types, whose `owns T` holds the object C made.
     foreign_owned_structs: HashSet<Symbol>,
@@ -3916,6 +3941,8 @@ struct Checker<'a> {
     probe_object_reads: std::cell::RefCell<Vec<DefId>>,
     /// The first captured field a closure body gives away (`[CLO-6]`'s message names it).
     first_moved_capture: std::cell::Cell<Option<usize>>,
+    /// Where it is given away.
+    first_moved_span: std::cell::Cell<Option<Span>>,
     /// The method of each call through a `dyn` value, by its receiver's place: a capture probe asks
     /// whether its object is implicit.
     interface_call_methods: HashMap<Span, DefId>,
@@ -4001,6 +4028,20 @@ struct Checker<'a> {
     module_deterministic: Vec<bool>,
     /// `[CLO-6]` — the callable type being resolved is a parameter's `once fn` bound.
     once_fn_parameter: bool,
+    /// `[TYP-47]` — the pack of values of the function whose body is checked: the local its name
+    /// is bound to, and the locals of its values (in the generic check, one standing for each).
+    pack_values: HashMap<LocalId, Vec<LocalId>>,
+    /// `[TYP-47]` — a function over a pack made for one number of its values (`pack_arity`): the
+    /// function, the pack's slot and the number; and the other way.
+    pack_arities: HashMap<DefId, (DefId, usize, usize)>,
+    pack_arity_of: HashMap<(DefId, usize), DefId>,
+    /// `[TYP-47]` — an instance of a function over a pack: where its pack's values are among its
+    /// parameters (the declaration's index of their parameter) and how many.
+    pack_params: HashMap<DefId, (usize, usize)>,
+    /// `[TYP-47]` — the open `for v in values:` loops, written out.
+    pack_loops: Vec<packs::PackLoop>,
+    /// `[TYP-47]` — the `values...` arguments of calls of functions over a pack, in generic code.
+    pack_spreads: HashSet<Span>,
     /// The lexical policy while checking a body or an inserted default.
     active_overflow: OverflowPolicy,
     /// `[TYP-9]` — the float mode of the function being checked, which a
@@ -4051,6 +4092,9 @@ impl<'a> Checker<'a> {
             foreign_type_contracts: HashMap::new(),
             foreign_result_destructors: HashMap::new(),
             foreign_result_creators: HashSet::new(),
+            layout_c_structs: HashSet::new(),
+            foreign_result_makers: HashMap::new(),
+            deferred_static_sync: Vec::new(),
             foreign_owned_structs: HashSet::new(),
             signatures: Vec::new(),
             methods: HashMap::new(),
@@ -4377,6 +4421,7 @@ impl<'a> Checker<'a> {
             assumed_object_reads: HashSet::new(),
             probe_object_reads: std::cell::RefCell::new(Vec::new()),
             first_moved_capture: std::cell::Cell::new(None),
+            first_moved_span: std::cell::Cell::new(None),
             interface_call_methods: HashMap::new(),
             members_of: None,
             unstated_calls: HashMap::new(),
@@ -4409,6 +4454,12 @@ impl<'a> Checker<'a> {
             module_overflow: Vec::new(),
             module_deterministic: Vec::new(),
             once_fn_parameter: false,
+            pack_values: HashMap::new(),
+            pack_arities: HashMap::new(),
+            pack_arity_of: HashMap::new(),
+            pack_params: HashMap::new(),
+            pack_loops: Vec::new(),
+            pack_spreads: HashSet::new(),
             active_overflow: OverflowPolicy::default(),
             active_fp: FpMode::Strict,
             borrows_in_copy: false,
@@ -5113,13 +5164,16 @@ impl<'a> Checker<'a> {
             let resolved = self.resolve_name(name.name);
             let named = match self.named_types.get(&resolved).map(|&ty| self.types.kind(ty).clone()) {
                 Some(TyKind::Opaque(_)) if self.foreign_type_contracts.contains_key(&resolved) => resolved,
-                Some(TyKind::Struct(id)) => {
+                // `[FFI-36a]` (N175) — only a `@layout(c)` struct is one C can make an object of; any
+                // other is `E5002` where the result is checked (`check_foreign_ownership`).
+                Some(TyKind::Struct(id)) if self.layout_c_structs.contains(&self.types.struct_def(id).name) => {
                     let name = self.types.struct_def(id).name;
                     self.foreign_owned_structs.insert(name);
                     name
                 }
                 _ => continue,
             };
+            self.foreign_result_makers.entry(named).or_insert(decl.name.name);
             if creator {
                 self.foreign_result_creators.insert(named);
             }
@@ -5420,6 +5474,8 @@ impl<'a> Checker<'a> {
         params: &[ast::GenericParam],
         index_base: usize,
     ) -> Vec<GenericParam> {
+        // `[TYP-47]` — a pack is the last of its type parameters, and there is one.
+        self.check_pack_placement(params);
         // Reserve the written slots before a bound can introduce hidden
         // projection parameters. Later written parameters must keep their
         // indices even when an earlier bound names `S.Item` (D-540).
@@ -5432,6 +5488,7 @@ impl<'a> Checker<'a> {
             count_op: None,
             bindings: Vec::new(),
             const_ty: None,
+            pack: param.pack,
         }).collect();
         // The bounds whose `[Name = type]` bindings are read once every
         // parameter is declared: (the parameter's place, the bound, its
@@ -5456,11 +5513,13 @@ impl<'a> Checker<'a> {
                 declared[index].const_ty = Some(value_ty);
                 continue;
             }
+            // `[TYP-47]` — a pack's parameter is named with `PACK_MARK`: it stands for its types
+            // spelled out, never for one of them.
             let ty = self
                 .types
                 .intern(TyKind::Param {
                     index: (index_base + index) as u32,
-                    name: param.name.name,
+                    name: if param.pack { Self::pack_param_name(param.name.name) } else { param.name.name },
                 });
             self.type_params.insert(param.name.name, ty);
             // The bound is recorded under the name the interface is
@@ -5683,6 +5742,10 @@ impl<'a> Checker<'a> {
         generics: &mut Vec<GenericParam>,
         index_base: usize,
     ) -> Ty {
+        // `[TYP-47]` — `values: Ts...`: the pack's values, its parameter in generic code.
+        if let ast::TypeKind::Spread(name) = &ty.kind {
+            return self.resolve_spread(*name, ty.span);
+        }
         self.once_fn_parameter = matches!(ty.kind, ast::TypeKind::Fn { once: true, .. });
         self.in_param_type += 1;
         let resolved = self.resolve_type(ty);
@@ -5714,6 +5777,7 @@ impl<'a> Checker<'a> {
             count_op: None,
             bindings: Vec::new(),
             const_ty: None,
+            pack: false,
         });
         param_ty
     }
@@ -6176,7 +6240,9 @@ impl<'a> Checker<'a> {
             (
                 "std.core",
                 &[
-                    "Eq", "Ord", "Ordering", "Default", "Clone", "Copy", "Send", "Sync", "Sized", "Display", "Debug", "From", "Error", "AnyError", "Iterator", "IntoIterator", "Range", "RangeInclusive", "RangeFrom",
+                    "Eq", "Ord", "Ordering", "Default", "Clone", "Copy", "Send", "Sync", "Sized", "Display", "Debug", "Printable", "From",
+                    // `[STD-9]` (verdict 117) — the console's output functions are the library's.
+                    "print", "println", "eprint", "eprintln", "Error", "AnyError", "Iterator", "IntoIterator", "Range", "RangeInclusive", "RangeFrom",
                     "RangeTo", "Add", "Sub", "Mul", "Div", "FloorDiv", "Rem", "Pow", "Neg", "Not", "BitAnd", "BitOr",
                     "BitXor", "Shl", "Shr", "AddAssign", "SubAssign", "MulAssign", "DivAssign", "FloorDivAssign",
                     "RemAssign", "PowAssign", "BitAndAssign", "BitOrAssign", "BitXorAssign", "ShlAssign", "ShrAssign",
@@ -6514,6 +6580,9 @@ impl<'a> Checker<'a> {
                     }
                     if has_derive(&item.attrs, "Hash") {
                         self.hash_derived.insert(name);
+                    }
+                    if item.attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is("layout") && (attribute_names(attr, "c") || layout_names(attr).is_some())) {
+                        self.layout_c_structs.insert(name);
                     }
                     if has_derive(&item.attrs, "Zeroable") {
                         self.types.derive_zeroable(name);
@@ -7636,6 +7705,7 @@ impl<'a> Checker<'a> {
                 count_op: None,
                 bindings: Vec::new(),
                 const_ty: None,
+                pack: false,
             })
             .collect();
         let args: Vec<Ty> = slots.iter().map(|&(index, name)| self.types.intern(TyKind::Param { index, name })).collect();
@@ -7998,6 +8068,7 @@ impl<'a> Checker<'a> {
         let Some(target) = target else {
             let &[(receiver, receiver_ty, mode, receiver_span)] = signature.params.as_slice() else { return None };
             self.locals = Vec::new();
+            self.pack_values.clear();
             let local_ty = match mode {
                 Mode::Mut => self.mut_param_ty(receiver_ty),
                 Mode::Borrow => self.borrow_param_ty_of(def, receiver, receiver_ty),
@@ -8016,6 +8087,7 @@ impl<'a> Checker<'a> {
             return None;
         }
         self.locals = Vec::new();
+        self.pack_values.clear();
         let mut params = Vec::new();
         let mut args = Vec::new();
         for (&(param, param_ty, mode, param_span), &(target_param, target_ty, _, _)) in signature.params.iter().zip(&target_signature.params) {
@@ -8139,6 +8211,20 @@ impl<'a> Checker<'a> {
             // only an extension implementing an interface may add to it (`[IFC-2]`).
             let tuple_args: Vec<ast::GenericArg>;
             let (name, args): (Symbol, &[ast::GenericArg]) = match &decl.target.kind {
+                // `[TYP-47]` — `extend[A, B, Ts...] (A, B, Ts...)`: every tuple of the elements
+                // before the pack and any number after, written once from two elements up.
+                ast::TypeKind::Tuple(items) if items.iter().any(|item| matches!(item.kind, ast::TypeKind::Spread(_))) => {
+                    if !matches!(items.last().map(|item| &item.kind), Some(ast::TypeKind::Spread(_))) {
+                        let at = items.iter().find(|item| matches!(item.kind, ast::TypeKind::Spread(_))).map_or(decl.target.span, |item| item.span);
+                        self.sink.emit(
+                            Diagnostic::error(codes::E0100, at, "a pack spelled out in an extended tuple is its last element")
+                                .note("the pack takes the elements after those written before it [TYP-47]"),
+                        );
+                        continue;
+                    }
+                    tuple_args = items.iter().cloned().map(ast::GenericArg::Type).collect();
+                    (Self::tuple_pack_extension_target(items.len() - 1), &tuple_args)
+                }
                 ast::TypeKind::Tuple(items) => {
                     tuple_args = items.iter().cloned().map(ast::GenericArg::Type).collect();
                     (Self::tuple_extension_target(items.len()), &tuple_args)
@@ -8190,7 +8276,7 @@ impl<'a> Checker<'a> {
                     self.error(codes::E1010, decl.target.span, "expected a type argument");
                     continue;
                 };
-                target_args.push(self.resolve_type(arg));
+                target_args.push(self.resolve_type_argument(arg));
             }
             // D-414 — a target that leaves out a defaulted type argument
             // (`extend[K] Store[K]` of `struct Store[K, H = Tag]`) means the
@@ -9370,6 +9456,12 @@ impl<'a> Checker<'a> {
         Symbol::intern(&format!("$tuple{arity}"))
     }
 
+    /// `[TYP-47]` — where an extension of tuples of `fixed` written elements and a pack after them
+    /// is kept: `extend[A, B, Ts...] (A, B, Ts...)` under `$tuple+2`.
+    fn tuple_pack_extension_target(fixed: usize) -> Symbol {
+        Symbol::intern(&format!("$tuple+{fixed}"))
+    }
+
     /// The name an extension of the generic type written `segment` is kept
     /// under: a generic struct, enum or class recipe's, or one of the
     /// built-in generic types'.
@@ -9533,7 +9625,7 @@ impl<'a> Checker<'a> {
         params
             .iter()
             .enumerate()
-            .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.name }))
+            .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.param_name() }))
             .collect()
     }
 
@@ -9688,8 +9780,14 @@ impl<'a> Checker<'a> {
         args: &[Ty],
     ) -> Vec<(usize, GenericExtension, Vec<(Symbol, Ty)>)> {
         let Some(extensions) = self.generic_extensions.get(&name).cloned() else { return Vec::new() };
+        // `[TYP-47]` — a tuple's extensions over a pack are counted apart from its own.
+        let offset = match name.as_str().strip_prefix("$tuple+").and_then(|fixed| fixed.parse::<usize>().ok()) {
+            Some(fixed) => (fixed + 1) << 20,
+            None => 0,
+        };
         let mut matching = Vec::new();
         for (index, extension) in extensions.into_iter().enumerate() {
+            let index = index + offset;
             if self.applied_extensions.contains(&(ty, index)) {
                 continue;
             }
@@ -9743,6 +9841,24 @@ impl<'a> Checker<'a> {
     /// its own, for their vtable slots. `extend_early_instances` calls it for
     /// every kind.
     fn apply_generic_extensions(&mut self, ty: Ty, name: Symbol, args: &[Ty]) {
+        // `[TYP-47]` — a tuple takes the extensions of tuples over a pack whose written elements
+        // it has, the rest of its elements the pack's types, from two elements up.
+        if let Some(arity) = name
+            .as_str()
+            .strip_prefix("$tuple")
+            .filter(|count| count.bytes().all(|digit| digit.is_ascii_digit()))
+            .and_then(|count| count.parse::<usize>().ok())
+        {
+            for fixed in 0..=arity {
+                let target = Self::tuple_pack_extension_target(fixed);
+                if !self.generic_extensions.contains_key(&target) || arity < 2 {
+                    continue;
+                }
+                let mut grouped = args[..fixed].to_vec();
+                grouped.push(self.types.pack_of(args[fixed..].to_vec()));
+                self.apply_generic_extensions(ty, target, &grouped);
+            }
+        }
         let matching = self.matching_generic_extensions(ty, name, args);
         if matching.is_empty() {
             return;
@@ -9940,6 +10056,7 @@ impl<'a> Checker<'a> {
                 count_op: None,
                 bindings: Vec::new(),
                 const_ty: None,
+                pack: false,
             })
             .collect()
     }
@@ -10742,17 +10859,12 @@ impl<'a> Checker<'a> {
                         }
                     };
                     // D-327 — `-1.5` and `-5` are literals too (`[LEX-24]`).
-                    if !is_literal_value(&value.kind) && value.ty != self.common.error
-                        // Already reported: the value did not check ([DIA-14]).
-                        && !matches!(value.kind, ExprKind::Error)
-                    {
-                        self.error(
-                            codes::E2130,
-                            decl.value.span,
-                            "a `const` must be a literal in this phase of the compiler",
-                        );
-                        continue;
-                    }
+                    // D-721 — what is not a literal as written is evaluated (`[CT-1]`, `expr_const`); a
+                    // literal as written checks to a literal value, so nothing else reaches here.
+                    debug_assert!(
+                        is_literal_value(&value.kind) || value.ty == self.common.error || matches!(value.kind, ExprKind::Error),
+                        "a `const` written as a literal checked to something else"
+                    );
                     let const_name = self.qualified(decl.name.name);
                     if self.constants.contains_key(&const_name) {
                         self.error(
@@ -10773,12 +10885,10 @@ impl<'a> Checker<'a> {
                     // one, and a foreign one read safely (`@ffi(immutable)`). A foreign static read
                     // only in `unsafe` (Part XVI's table) is the programmer's to share (the owner's
                     // ruling of 2026-10-21, ODR-163).
+                    // D-834 — asked again after `collect_methods` (`check_deferred_static_sync`): a
+                    // `Send` written by hand is not recorded yet.
                     if !self.is_sync(ty) && (!decl.is_foreign_decl || ffi_static_immutable(&item.attrs)) {
-                        let shown = self.types.display(ty);
-                        self.error(codes::E7002, decl.ty.span,
-                            format!("{}static type `{shown}` is not Sync",
-                                if decl.is_foreign_decl { "foreign " } else { "" }));
-                        continue;
+                        self.deferred_static_sync.push((ty, decl.ty.span, decl.is_foreign_decl));
                     }
                     if decl.is_foreign_decl {
                         // `[FFI-10]` — any value C can lay out is a global C may
@@ -10895,6 +11005,8 @@ impl<'a> Checker<'a> {
                     // `[TYP-16]` — the parameters are in scope for the
                     // signature as well as for the body.
                     let mut generics = self.declare_generics(&decl.generics);
+                    // `[TYP-47]` — the pack's values, where a function takes them.
+                    self.check_pack_values_placement(decl);
                     let mentioned: Vec<&ast::TypeExpr> = decl
                         .params
                         .iter()
@@ -11127,9 +11239,7 @@ impl<'a> Checker<'a> {
     }
 
     /// `[TYP-12]` — the integer type the tag lives in. `@repr(u8)` names it;
-    /// otherwise the compiler picks the smallest type up to 32 bits that holds
-    /// every discriminant, which is what the spec's "`i32`-sized-or-smaller,
-    /// chosen by the compiler" means.
+    /// otherwise the compiler picks the smallest signed type that holds every discriminant.
     fn enum_repr(&mut self, attrs: &[ast::Attribute], decl: &ast::EnumDecl) -> (Ty, bool) {
         // `[LAY-2]` — the discriminant type is one of the eight fixed-width integers.
         if let Some(attr) = attrs.iter().find(|attr| attr.path.len() == 1 && attr.path[0].name.is("repr")) {
@@ -11162,25 +11272,18 @@ impl<'a> Checker<'a> {
             next += 1;
         }
         let c = self.common;
-        // D-720 — a discriminant beyond 32 bits widens the type to 64 (it was truncated to 32).
-        let ty = if lo >= 0 {
-            if hi <= u8::MAX as i128 {
-                c.u8
-            } else if hi <= u16::MAX as i128 {
-                c.u16
-            } else if hi <= u32::MAX as i128 {
-                c.u32
-            } else {
-                c.u64
-            }
-        } else if lo >= i8::MIN as i128 && hi <= i8::MAX as i128 {
+        // `[TYP-12]` (D-720) — the smallest *signed* type that holds every discriminant. A value
+        // above `i64::MAX` has no signed type; `u64` holds it (the spec is silent there).
+        let ty = if lo >= i8::MIN as i128 && hi <= i8::MAX as i128 {
             c.i8
         } else if lo >= i16::MIN as i128 && hi <= i16::MAX as i128 {
             c.i16
         } else if lo >= i32::MIN as i128 && hi <= i32::MAX as i128 {
             c.i32
-        } else {
+        } else if hi <= i64::MAX as i128 {
             c.i64
+        } else {
+            c.u64
         };
         (ty, false)
     }
@@ -12560,7 +12663,7 @@ impl<'a> Checker<'a> {
             .map(|(index, param)| {
                 self.types.intern(TyKind::Param {
                     index: (base + index) as u32,
-                    name: param.name,
+                    name: param.param_name(),
                 })
             })
             .collect::<Vec<_>>();
@@ -14127,6 +14230,27 @@ impl<'a> Checker<'a> {
         generic_index_base: usize,
     ) -> Option<(Option<Mode>, Signature)> {
         let saved_type_params = self.type_params.clone();
+        // `[TYP-47]` — a method over a pack of its own is not built yet (a free function's is, and
+        // a method of a struct or class over a pack uses the owner's).
+        if let Some(pack) = decl.generics.iter().find(|param| param.pack)
+            && self.refused_spellings.insert(pack.span)
+        {
+            self.sink.emit(
+                Diagnostic::error(codes::E0900, pack.span, format!("a method over a pack of its own (`{}...`) is not built by this compiler yet", pack.name.name))
+                    .help("write a function over the pack, taking the object as its first parameter")
+                    .note("functions, structs and classes over a pack are built [TYP-47]"),
+            );
+        }
+        if !decl.generics.iter().any(|param| param.pack)
+            && let Some(param) = decl.params.iter().find(|param| matches!(&param.kind, ast::ParamKind::Named { ty, .. } if matches!(ty.kind, ast::TypeKind::Spread(_))))
+            && self.refused_spellings.insert(param.span)
+        {
+            self.sink.emit(
+                Diagnostic::error(codes::E0900, param.span, "a method that takes a pack's values is not built by this compiler yet")
+                    .help("write a function over the pack, taking the object as its first parameter")
+                    .note("a function's last positional parameter takes a pack's values [TYP-47]"),
+            );
+        }
         let mut generics =
             self.declare_generics_from(&decl.generics, generic_index_base);
         // D-407 — `U.Elem` in the signature, `U` one of the method's own
@@ -14633,6 +14757,17 @@ impl<'a> Checker<'a> {
     /// with no members; a generic one holds for the instances whose arguments meet the parameters'
     /// marker bounds. `Copy` comes from `@derive(Copy)` and `Sized` from what a type is (`E2040`).
     /// `unsafe extend` writes markers only.
+    /// `[STA-1]` — a static's type that was not `Sync` when it was collected, now that every `Send`
+    /// and `Sync` written by hand is recorded: still not `Sync` is `E7002`.
+    fn check_deferred_static_sync(&mut self) {
+        for (ty, span, foreign) in std::mem::take(&mut self.deferred_static_sync) {
+            if !self.is_sync(ty) {
+                let shown = self.types.display(ty);
+                self.error(codes::E7002, span, format!("{}static type `{shown}` is not Sync", if foreign { "foreign " } else { "" }));
+            }
+        }
+    }
+
     fn collect_markers(&mut self, decl: &ast::ExtendDecl) {
         let markers: Vec<(&'static str, Span)> = decl
             .implements
@@ -14756,6 +14891,24 @@ impl<'a> Checker<'a> {
         span: Span,
         written_unsafe: Option<bool>,
     ) {
+        // `[STD-9]` (verdict 117) — `Printable` is the compiler's, for every type with `Display` or
+        // `Debug`; a program writing it by hand is `E2040`.
+        let kept: Vec<ast::TypeExpr> = implements
+            .iter()
+            .filter(|entry| {
+                let printable = interface_name(entry).is_some_and(|name| self.resolve_name(name).is("std.core.Printable"));
+                if printable && written_unsafe.is_some() {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2040, entry.span, "`Printable` is the compiler's: a type is printable when it has `Display` or `Debug`")
+                            .help("implement `Display` for the type's text: `extend … implements Display:`")
+                            .note("a value's printed text is its `Display`, else its `Debug` [STD-9]"),
+                    );
+                }
+                !printable
+            })
+            .cloned()
+            .collect();
+        let implements = kept.as_slice();
         for entry in implements {
             let written = match &entry.kind {
                 ast::TypeKind::Path { segments, .. } if segments.len() == 1 => segments[0].name,
@@ -14931,7 +15084,7 @@ impl<'a> Checker<'a> {
             let args: Vec<Ty> = params
                 .iter()
                 .enumerate()
-                .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.name }))
+                .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.param_name() }))
                 .collect();
             recipes.push((name, params, args, implements, module));
         }
@@ -15093,7 +15246,7 @@ impl<'a> Checker<'a> {
         let scope: HashMap<Symbol, Ty> = params
             .iter()
             .enumerate()
-            .map(|(index, param)| (param.name, self.types.intern(TyKind::Param { index: index as u32, name: param.name })))
+            .map(|(index, param)| (param.name, self.types.intern(TyKind::Param { index: index as u32, name: param.param_name() })))
             .collect();
         // D-409 — `implements Conv[I.Item]` names a hidden parameter of the
         // recipe (D-380), which only the recipe's projections lead to.
@@ -15103,7 +15256,7 @@ impl<'a> Checker<'a> {
             .filter_map(|(index, param)| {
                 let (base, assoc) = param.projection?;
                 let base = params.get(base as usize)?.name;
-                Some(((base, assoc), self.types.intern(TyKind::Param { index: index as u32, name: param.name })))
+                Some(((base, assoc), self.types.intern(TyKind::Param { index: index as u32, name: param.param_name() })))
             })
             .collect();
         let saved_params = std::mem::replace(&mut self.type_params, scope);
@@ -15229,7 +15382,7 @@ impl<'a> Checker<'a> {
             if bound.get(&(side, index as u32)).is_none() {
                 continue;
             }
-            let own = self.types.intern(TyKind::Param { index: index as u32, name: param.name });
+            let own = self.types.intern(TyKind::Param { index: index as u32, name: param.param_name() });
             let ty = self.closed_on_side(own, side, bound, 0);
             if self.types.is_generic(ty) {
                 continue;
@@ -15371,6 +15524,18 @@ impl<'a> Checker<'a> {
         match &ty.kind {
             ast::TypeKind::Void => self.common.void,
             ast::TypeKind::Never => self.common.never,
+            // `[TYP-47]` — `Ts...` where no list holds it.
+            ast::TypeKind::Spread(name) => {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0100, ty.span, format!("`{}...` spells a pack's types out, and no list of types holds it here", name.name))
+                        .help(format!(
+                            "spell it out among type arguments (`View[{0}...]`), a tuple's elements (`(int, {0}...)`) or a function type's parameters (`fn({0}...)`), or take the values as the last positional parameter (`values: {0}...`)",
+                            name.name
+                        ))
+                        .note("a type written over a pack is formed once the pack is spelled out [TYP-47]"),
+                );
+                self.common.error
+            }
             // `[GRM-31]` — a `some` type in a function's return type, or nested inside one; elsewhere
             // `E2260`. `[TYP-32]` — one concrete type the body chooses (`some_wrapper`).
             ast::TypeKind::SomeType(bound) if self.in_return_type > 0 && self.some_allowed => self.some_wrapper(bound, ty.span),
@@ -15459,9 +15624,11 @@ impl<'a> Checker<'a> {
             // `[TYP-27]` (ODR-071) — the type `()` is `void`, whose one value
             // `()` is: a tuple type has two or more elements.
             ast::TypeKind::Tuple(items) if items.is_empty() => self.common.void,
+            // `[TYP-47]`, `[TYP-27]` — a pack among the elements is spelled out: two or more
+            // elements are a tuple, one is that type, none is `void`.
             ast::TypeKind::Tuple(items) => {
-                let items: Vec<Ty> = items.iter().map(|t| self.resolve_type(t)).collect();
-                self.types.intern(TyKind::Tuple(items))
+                let items: Vec<Ty> = items.iter().map(|t| self.resolve_list_item(t)).collect();
+                self.types.tuple_of(items)
             }
             // `[FN-6]` — "Functions are values of a unique zero-sized function
             // type; they coerce to `fn(A) -> R`". The written type is the
@@ -15484,10 +15651,12 @@ impl<'a> Checker<'a> {
                 let params: Vec<FnParam> = params
                     .iter()
                     .map(|param| FnParam {
-                        ty: self.resolve_type(&param.ty),
+                        ty: self.resolve_list_item(&param.ty),
                         mode: fn_param_mode(param.mode),
                     })
                     .collect();
+                // `[TYP-47]` — `fn(Ts...)`: each of the pack's types a parameter, with the word.
+                let params = self.types.spelled_params(params);
                 let ret = ret
                     .as_ref()
                     .map(|t| self.resolve_type(t))
@@ -15593,7 +15762,7 @@ impl<'a> Checker<'a> {
                             return self.common.error;
                         }
                     };
-                    resolved.push((self.generic_type_argument(t), t.span));
+                    resolved.push((self.resolve_type_argument(t), t.span));
                 }
                 // `[OBJ-2]` applies to generic interfaces as well: first
                 // materialize the written contract, then use its concrete
@@ -15601,6 +15770,10 @@ impl<'a> Checker<'a> {
                 // mirrors `resolve_interface_use`, rather than treating an
                 // interface application as an ordinary nominal type.
                 let interface = self.resolve_name(name);
+                // `[TYP-47]` — `Cs...` only where a pack is taken.
+                if let Some(error) = self.refuse_pack_argument(interface, &resolved) {
+                    return error;
+                }
                 if let Some(definition) = self.interfaces.get(&interface).cloned() {
                     let args = resolved.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
                     let Some(interface) = self.instantiate_interface(interface, &definition, &args, ty.span)
@@ -15624,6 +15797,15 @@ impl<'a> Checker<'a> {
                     return assoc;
                 }
                 if let Some(&ty) = self.type_params.get(&name) {
+                    // `[TYP-47]` — a pack's name alone is none of its types.
+                    if self.is_pack_like(ty) {
+                        self.sink.emit(
+                            Diagnostic::error(codes::E0100, segments[0].span, format!("`{name}` is a pack: its types are spelled out as `{name}...`"))
+                                .help(format!("write `{name}...` among type arguments, a tuple's elements or a function type's parameters, or `values: {name}...` for a function's last positional parameter"))
+                                .note("a pack stands for any number of types, never for one [TYP-47]"),
+                        );
+                        return self.common.error;
+                    }
                     return ty;
                 }
                 if let Some(ty) = self.scalar_in_scope(name) {
@@ -15747,7 +15929,7 @@ impl<'a> Checker<'a> {
                     return self.common.error;
                 }
             };
-            resolved.push((self.generic_type_argument(t), t.span));
+            resolved.push((self.resolve_type_argument(t), t.span));
         }
         if let Some(definition) = self.interfaces.get(&qualified).cloned() {
             let types = resolved.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
@@ -15833,6 +16015,17 @@ impl<'a> Checker<'a> {
             return self.types.intern(TyKind::Span { elem, mutable: name.is("MutSpan") });
         }
         if name.is("Array") {
+            // `[ALC-1]` — the memory manager is named by `using`, never as a type argument: `Array[int,
+            // Global]` is `E1010` as `Box[int, Global]` is, and the type it names is still made.
+            if let [(elem, elem_at), (_, manager_at)] = args {
+                let inner = self.written_line(*elem_at).unwrap_or_else(|| self.types.display(*elem));
+                let manager = self.written_line(*manager_at).unwrap_or_else(|| "A".to_string());
+                self.sink.emit(
+                    Diagnostic::error(codes::E1010, span, format!("`Array[{inner}, {manager}]` is not a type of Ember: write `Array[{inner}] using {manager}`"))
+                        .help("the place names the kind of memory manager with `using` after the type; without it the memory comes from the built-in manager, `Global` [ALC-1]"),
+                );
+                return self.types.intern(TyKind::Vec { elem: *elem, text: false });
+            }
             if !require(self, 1) {
                 return self.common.error;
             }
@@ -16521,7 +16714,7 @@ impl<'a> Checker<'a> {
                     None
                 }
             }
-            TyKind::Param { .. } => (!self.param_bound_named(ty, &["Display", "Debug"])).then_some(ty),
+            TyKind::Param { .. } => (!self.param_bound_named(ty, &["Display", "Debug", "Printable"])).then_some(ty),
             _ => Some(ty),
         }
     }
@@ -17477,7 +17670,9 @@ impl<'a> Checker<'a> {
             let signature = &self.signatures[def.0 as usize];
             let (params, ret) = (signature.params.clone(), signature.ret);
             if args.len() != params.len() {
-                self.error(codes::E2020, span, format!("`{}` takes {} arguments, found {}", name, params.len(), args.len()));
+                let what = format!("gives {} arguments, and `{name}` takes {}", args.len(), params.len());
+                let diagnostic = self.argument_misfit(span, span, &name.to_string(), what, self.declaration_first_line(def));
+                self.sink.emit(diagnostic);
                 return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
             }
             let checked = args.iter().zip(&params).map(|(arg, &(_, ty, mode, _))| self.check_argument_by(&arg.value, ty, mode, false)).collect();
@@ -18496,12 +18691,20 @@ impl<'a> Checker<'a> {
                 let elem = map(self, elem);
                 self.types.intern(TyKind::Vec { elem, text })
             }
+            // `[TYP-47]` — a pack substituted into a list is spelled out there.
             TyKind::Tuple(items) => {
                 let items = items
                     .iter()
                     .map(|&item| map(self, item))
                     .collect();
-                self.types.intern(TyKind::Tuple(items))
+                self.types.tuple_of(items)
+            }
+            TyKind::Pack(items) => {
+                let items = items
+                    .iter()
+                    .map(|&item| map(self, item))
+                    .collect();
+                self.types.pack_of(items)
             }
             TyKind::Fn { abi, latebound, stateless, is_unsafe, once, send, params, ret } => {
                 let params = params
@@ -18511,6 +18714,7 @@ impl<'a> Checker<'a> {
                         mode: param.mode,
                     })
                     .collect();
+                let params = self.types.spelled_params(params);
                 let ret = map(self, ret);
                 self.types.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, once, send, params, ret })
             }
@@ -18625,14 +18829,18 @@ impl<'a> Checker<'a> {
         args: &[Ty],
     ) -> GenericParam {
         let callable = param.callable.as_ref().map(|bound| CallableBound {
-            params: bound
-                .params
-                .iter()
-                .map(|param| FnParam {
-                    ty: self.substitute_ty(param.ty, args),
-                    mode: param.mode,
-                })
-                .collect(),
+            // `[TYP-47]` — `fn(Ts...)`, a pack spelled out among the parameters.
+            params: {
+                let params = bound
+                    .params
+                    .iter()
+                    .map(|param| FnParam {
+                        ty: self.substitute_ty(param.ty, args),
+                        mode: param.mode,
+                    })
+                    .collect();
+                self.types.spelled_params(params)
+            },
             ret: self.substitute_ty(bound.ret, args),
             once: bound.once,
             owned: bound.owned,
@@ -18647,7 +18855,7 @@ impl<'a> Checker<'a> {
             .map(|&(instance, name, value)| (self.substitute_bound(instance, args), name, self.substitute_ty(value, args)))
             .collect();
         let count_op = param.count_op.map(|(op, a, b)| (op, self.substitute_ty(a, args), self.substitute_ty(b, args)));
-        GenericParam { name: param.name, bounds, callable, default, projection: param.projection, count_op, bindings, const_ty: param.const_ty.map(|ty| self.substitute_ty(ty, args)) }
+        GenericParam { name: param.name, bounds, callable, default, projection: param.projection, count_op, bindings, const_ty: param.const_ty.map(|ty| self.substitute_ty(ty, args)), pack: param.pack }
     }
 
     /// A parameter that neither an explicit argument nor inference fixed takes
@@ -18955,7 +19163,18 @@ impl<'a> Checker<'a> {
                 literals.push(field);
             } else {
                 let value = self.commit(value);
-                self.types.unify_with_fixed(declared, value.ty, solved, fixed);
+                // `[TYP-47]` — a field over the struct's pack (`cells: (int, Cs...)`) meets it.
+                match self.pack_tuple_parts(declared, value.ty) {
+                    Some((pairs, pack, met)) => {
+                        for (want, have) in pairs {
+                            self.types.unify_with_fixed(want, have, solved, fixed);
+                        }
+                        self.types.unify_with_fixed(pack, met, solved, fixed);
+                    }
+                    None => {
+                        self.types.unify_with_fixed(declared, value.ty, solved, fixed);
+                    }
+                }
                 values[field] = Some(value);
                 continue;
             }
@@ -18994,43 +19213,58 @@ impl<'a> Checker<'a> {
         fields: &[Symbol],
         args: &[ast::Arg],
         span: Span,
+        line: Option<String>,
     ) -> Vec<(usize, usize)> {
         // `[TYP-25]` — positional arguments first, in field order, then named
-        // ones; each field at most once.
+        // ones; each field at most once. A mistake is `E2021`.
         let mut slots = Vec::new();
         let mut given = vec![false; fields.len()];
         let mut named_seen = false;
+        let callee = name.to_string();
         let positional = args.iter().filter(|a| a.name.is_none()).count();
         if positional > fields.len() {
-            self.error(
-                codes::E2020,
-                span,
-                format!("`{name}` has {} fields, found {positional} arguments", fields.len()),
-            );
+            let what = format!("gives {positional} arguments, and `{name}` takes {}", fields.len());
+            let diagnostic = self.argument_misfit(span, span, &callee, what, line.clone());
+            self.sink.emit(diagnostic);
         }
         for (index, arg) in args.iter().enumerate() {
             let field = match arg.name {
                 None if named_seen => {
-                    self.error(codes::E2020, arg.span, "positional arguments must come before named ones");
-                    continue;
+                    let earlier = args[..index].iter().rev().find(|earlier| earlier.name.is_some()).and_then(|earlier| self.written_line(earlier.span));
+                    let free_slot = given.iter().position(|taken| !taken);
+                    let free = free_slot.map(|slot| fields[slot]);
+                    let mut what = match (self.written_line(span).and(self.written_line(arg.span)), &earlier) {
+                        (Some(this), Some(earlier)) => format!("gives `{this}` after the named `{earlier}`, and positional arguments come first"),
+                        _ => "gives a positional argument after a named one, and positional arguments come first".to_string(),
+                    };
+                    if let Some(fixed) = free.and_then(|free| self.call_with_argument_named(span, arg.span, free)) {
+                        what.push_str(&format!("; write `{fixed}`"));
+                    }
+                    let diagnostic = self.argument_misfit(arg.span, span, &callee, what, None);
+                    self.sink.emit(diagnostic);
+                    // The argument fills the field the line names, so the field is not reported missing too.
+                    match free_slot {
+                        Some(slot) => slot,
+                        None => continue,
+                    }
                 }
                 None if index < fields.len() => index,
                 None => continue,
                 Some(arg_name) => {
                     named_seen = true;
                     let Some(field) = fields.iter().position(|field| *field == arg_name.name) else {
-                        self.error(
-                            codes::E2020,
-                            arg_name.span,
-                            format!("`{name}` has no field `{}`", arg_name.name),
-                        );
+                        let what = format!("names `{}`, and `{name}` has no field of that name", arg_name.name);
+                        let diagnostic = self.argument_misfit(arg_name.span, span, &callee, what, line.clone());
+                        self.sink.emit(diagnostic);
                         continue;
                     };
                     field
                 }
             };
             if std::mem::replace(&mut given[field], true) {
-                self.error(codes::E1030, arg.value.span, format!("field `{}` is given twice", fields[field]));
+                let what = format!("gives `{}` twice", fields[field]);
+                let diagnostic = self.argument_misfit(arg.value.span, span, &callee, what, line.clone());
+                self.sink.emit(diagnostic);
                 continue;
             }
             slots.push((index, field));
@@ -19187,7 +19421,7 @@ impl<'a> Checker<'a> {
                 })
             })
             .collect();
-        let value = self.finish_struct_literal(id, name, slots, span);
+        let value = self.finish_struct_literal(id, name, slots, span, true);
         let local = self.declare(None, ty, span);
         let receiver = Expr { ty, kind: ExprKind::Local(local), span };
         // `[OWN-9]` (verdict 159) — as a class's: a constructor's argument takes no word.
@@ -19219,6 +19453,18 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> Expr {
+        // `[TYP-47]` — the types written for the pack are one `Pack`.
+        let grouped;
+        let explicit = match explicit.is_empty() {
+            false => match self.group_pack_arguments(&decl.generic_params[..decl.params.len().min(decl.generic_params.len())], explicit) {
+                Some(pack) => {
+                    grouped = pack;
+                    grouped.as_slice()
+                }
+                None => explicit,
+            },
+            true => explicit,
+        };
         if explicit.len() > decl.params.len() {
             self.error(
                 codes::E2020,
@@ -19293,7 +19539,13 @@ impl<'a> Checker<'a> {
         let fields: Vec<Ty> =
             decl.fields.iter().map(|field| if cell_kept { self.types.cell_held(field.ty) } else { field.ty }).collect();
         let names: Vec<Symbol> = decl.fields.iter().map(|field| field.name).collect();
-        let slots = self.constructor_slots(name, &names, args, span);
+        let line = {
+            let info: Vec<(Symbol, Ty, bool, Span)> = decl.fields.iter().map(|field| (field.name, field.ty, field.has_default, field.ty_span)).collect();
+            self.memberwise_line(name, &info)
+        };
+        let slots = self.constructor_slots(name, &names, args, span, Some(line));
+        // An argument that did not bind was reported, and may be the one meant for a field left empty.
+        let bound_all = slots.len() == args.len();
         let values =
             self.infer_constructor_arguments(name, args, &slots, &fields, expected, &mut solved, explicit.len());
 
@@ -19336,7 +19588,7 @@ impl<'a> Checker<'a> {
             })
             .collect();
         let instance = self.types.struct_def(id).name;
-        self.finish_struct_literal(id, instance, values, span)
+        self.finish_struct_literal(id, instance, values, span, bound_all)
     }
 
     fn synth_generic_class_constructor(
@@ -19348,6 +19600,18 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> Expr {
+        // `[TYP-47]` — the types written for the pack are one `Pack`.
+        let grouped;
+        let explicit = match explicit.is_empty() {
+            false => match self.group_pack_arguments(&decl.generic_params[..decl.params.len().min(decl.generic_params.len())], explicit) {
+                Some(pack) => {
+                    grouped = pack;
+                    grouped.as_slice()
+                }
+                None => explicit,
+            },
+            true => explicit,
+        };
         if explicit.len() > decl.params.len() {
             self.error(
                 codes::E2020,
@@ -19374,7 +19638,7 @@ impl<'a> Checker<'a> {
         // The constructor checks the arguments again, so this pass only
         // infers, and reports nothing of its own.
         let quiet = self.sink.mark();
-        let slots = self.constructor_slots(name, &names, args, span);
+        let slots = self.constructor_slots(name, &names, args, span, None);
         self.infer_constructor_arguments(name, args, &slots, &fields, expected, &mut solved, explicit.len());
         self.sink.rollback(quiet);
         self.fill_solved_defaults(&decl.generic_params, &mut solved);
@@ -19476,6 +19740,11 @@ impl<'a> Checker<'a> {
                     false => format!("tup{}_{}", items.len(), items.join("_")),
                 }
             }
+            // `[TYP-47]` — a pack's types, counted so that `View[A, B]` and `Pair[(A, B)]` differ.
+            TyKind::Pack(items) => {
+                let items: Vec<String> = items.iter().map(|&item| self.instance_stem(item)).collect();
+                format!("pack{}{}{}", items.len(), if items.is_empty() { "" } else { "_" }, items.join("_"))
+            }
             TyKind::Array { elem, len } => format!("arr{len}_{}", self.instance_stem(elem)),
             TyKind::Vec { elem, text: false } => format!("Array_{}", self.instance_stem(elem)),
             TyKind::Span { elem, mutable } => {
@@ -19525,6 +19794,9 @@ impl<'a> Checker<'a> {
         args: &[Ty],
         span: Span,
     ) -> Ty {
+        // `[TYP-47]` — the pack's arguments are one `Pack`, however the instance is reached.
+        let grouped = self.group_pack_arguments(&decl.generic_params[..decl.params.len().min(decl.generic_params.len())], args);
+        let args = grouped.as_deref().unwrap_or(args);
         // D-407 — the hidden parameters come with the arguments (an opaque
         // instance's, every parameter its own) or are computed from them.
         let written = decl.params.len();
@@ -19960,6 +20232,9 @@ impl<'a> Checker<'a> {
         args: &[Ty],
         span: Span,
     ) -> Ty {
+        // `[TYP-47]` — the pack's arguments are one `Pack`, however the instance is reached.
+        let grouped = self.group_pack_arguments(&decl.generic_params[..decl.params.len().min(decl.generic_params.len())], args);
+        let args = grouped.as_deref().unwrap_or(args);
         let filled = match args.len() < decl.params.len() {
             true => self.with_type_defaults(&decl.generic_params, args),
             false => None,
@@ -20309,7 +20584,14 @@ impl<'a> Checker<'a> {
     /// the thread that made it (`ThreadForeignOwner[T]`). It is shown as `owns T` and read through
     /// as every `owns T` is; its end calls `T`'s one destructor (`foreign_end`).
     fn foreign_owner_of(&mut self, inner: Ty) -> Ty {
-        let generic = if self.foreign_creator(inner) { "std.ffi.ThreadForeignOwner" } else { "std.ffi.ForeignOwner" };
+        let main = self.foreign_object_name(inner).and_then(|name| self.foreign_type_contracts.get(&name)).is_some_and(|contract| contract.main);
+        let generic = if self.foreign_creator(inner) {
+            "std.ffi.ThreadForeignOwner"
+        } else if main {
+            "std.ffi.MainForeignOwner"
+        } else {
+            "std.ffi.ForeignOwner"
+        };
         let ty = self.instantiate_named_generic(generic, &[inner], Span::DUMMY);
         if let TyKind::Struct(id) = *self.types.kind(ty)
             && !self.boxes.contains_key(&id)
@@ -20383,6 +20665,26 @@ impl<'a> Checker<'a> {
                 kind: ExprKind::DynBoxNew { concrete, interfaces, layout, implementations, value: Box::new(value) },
                 span,
             };
+        }
+        // `[FFI-36a]` (N175) — an `owns T` of a foreign type holds only an object foreign code made.
+        if let Some(name) = self.foreign_object_name(value.ty).filter(|_| matches!(self.types.kind(value.ty), TyKind::Struct(_))) {
+            let shown = self.types.display(value.ty);
+            let ended = self.foreign_type_destructor(value.ty).map(|(def, at)| {
+                let line = self.line_of(at).map_or_else(String::new, |line| format!(" (line {line})"));
+                format!(" and ended by `{}`{line}", self.declared_name(def).unwrap_or_else(|| "its destructor".to_string()))
+            }).unwrap_or_default();
+            let maker = self.foreign_result_makers.get(&name).map_or_else(
+                || "get one from the function that returns it".to_string(), |maker| format!("get one from `{maker}`"));
+            // The second is offered for a value written whole (a sized struct): `p = Packet(len=0)`.
+            let given = self.owns_at_equals.get(&span).cloned();
+            let kept = match (self.written_line(value.span), given) {
+                (Some(text), Some(given)) => format!(", or keep this one where it is made: `{given} = {text}`"),
+                (Some(text), None) => format!(", or keep this one where it is made: `{text}`"),
+                _ => String::new(),
+            };
+            self.error(codes::E2114, span, format!(
+                "`{shown}`'s objects are made by C{ended}, so an `owns {shown}` holds only one C made; {maker}{kept}"));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         let inner = value.ty;
         // `[TYP-15]` is region-based: forming `owns str` is legal, and
@@ -20520,7 +20822,9 @@ impl<'a> Checker<'a> {
         if place.is_empty() || place.ends_with(['=', '!', '<', '>', '+', '-', '*', '/', '%']) || place.contains('(') {
             return None;
         }
-        let name: String = place.rsplit('.').next()?.chars().filter(|c| *c == '_' || c.is_alphanumeric()).collect();
+        // A typed local (`b: owns dyn Shape = …`) is named by what comes before the colon.
+        let named = place.split(':').next()?.trim();
+        let name: String = named.rsplit('.').next()?.chars().filter(|c| *c == '_' || c.is_alphanumeric()).collect();
         let written = self.written_line(value)?;
         (!name.is_empty()).then(|| (name, format!("{place} = owns {written}")))
     }
@@ -22244,11 +22548,12 @@ impl<'a> Checker<'a> {
                 for (index, param) in generics.iter().enumerate() {
                     let ty = self
                         .types
-                        .intern(TyKind::Param { index: index as u32, name: param.name });
+                        .intern(TyKind::Param { index: index as u32, name: param.param_name() });
                     self.type_params.insert(param.name, ty);
                 }
                 if let Some(block) = &decl.body {
                     self.locals = Vec::new();
+                    self.pack_values.clear();
                     self.scopes = vec![HashMap::new()];
                     self.borrowed_params.clear();
                     self.callable_once_locals.clear();
@@ -22272,6 +22577,20 @@ impl<'a> Checker<'a> {
                             _ => ty,
                         };
                         let local = self.declare(Some(name), local_ty, param_span);
+                        // `[TYP-47]` — the pack's values' parameter stands for them all, and one
+                        // more local for each of them (`for v in values:`), of one value's type.
+                        if self.types.is_pack_param(ty)
+                            && let TyKind::Param { index: slot, .. } = *self.types.kind(ty)
+                            && let Some(pack) = generics.get(slot as usize)
+                        {
+                            let one = self.types.intern(TyKind::Param { index: slot, name: pack.name });
+                            let one = match mode {
+                                Mode::Mut => self.mut_param_ty(one),
+                                _ => one,
+                            };
+                            let each = self.declare(None, one, param_span);
+                            self.pack_values.insert(local, vec![each]);
+                        }
                         if mode == Mode::Borrow {
                             self.borrowed_params.insert(local);
                         }
@@ -22320,6 +22639,8 @@ impl<'a> Checker<'a> {
             }
 
             self.locals = Vec::new();
+
+            self.pack_values.clear();
             self.begin_body_marks();
             self.scopes = vec![HashMap::new()];
             self.borrowed_params.clear();
@@ -22801,7 +23122,7 @@ impl<'a> Checker<'a> {
                 for (index, param) in generics.iter().enumerate() {
                     let ty = self.types.intern(TyKind::Param {
                         index: index as u32,
-                        name: param.name,
+                        name: param.param_name(),
                     });
                     self.type_params.insert(param.name, ty);
                 }
@@ -23830,6 +24151,7 @@ impl<'a> Checker<'a> {
                     count_op: None,
                     bindings: Vec::new(),
                     const_ty: None,
+                    pack: false,
                 });
                 self.types.intern(TyKind::Param { index: generic, name: generic_name })
             };
@@ -24026,6 +24348,22 @@ impl<'a> Checker<'a> {
         match ffi_owned_result(attrs) {
             Some((destructor, nullable, _)) => {
                 let Some(pointee) = foreign_box(self, ret, nullable) else {
+                    // `[FFI-36a]` (N175) — an `owns T` of a type Ember lays out is one C cannot make.
+                    let written = if nullable { self.option_some_payload(ret) } else { Some(ret) };
+                    if let Some(inner) = written.and_then(|ty| self.box_inner(ty)) {
+                        let shown = self.types.display(inner);
+                        let function = decl.name.name.to_string();
+                        let stem = ["make_", "new_", "create_", "alloc_"].iter().find_map(|prefix| function.strip_prefix(prefix)).unwrap_or(&function);
+                        let suggested: String = stem.split('_').filter(|part| !part.is_empty()).map(|part| {
+                            let mut letters = part.chars();
+                            letters.next().map_or_else(String::new, |first| first.to_uppercase().chain(letters).collect())
+                        }).collect();
+                        let result = if nullable { format!("Option[owns {suggested}]") } else { format!("owns {suggested}") };
+                        self.error(codes::E5002, decl.name.span, format!(
+                            "`{function}` gives an `owns {shown}` C made, and Ember makes the blocks of a `{shown}`; declare a type for it, `type {suggested}` with `@ffi(destroys({}))`, and write `-> {result}`",
+                            destructor.name));
+                        return;
+                    }
                     self.error(codes::E5002, decl.name.span, format!(
                         "`returns_owned` needs a `{}` result of a foreign type",
                         if nullable { "Option[owns T]" } else { "owns T" }));
@@ -24939,6 +25277,7 @@ impl<'a> Checker<'a> {
     /// lambda directly. `generic` is the declaration, whose contracts are kept by it.
     fn foreign_instance(&mut self, generic: DefId, instance: DefId, decl: &ast::FnDecl, attrs: &[ast::Attribute], span: Span) -> Option<Function> {
         self.locals = Vec::new();
+        self.pack_values.clear();
         self.scopes = vec![HashMap::new()];
         self.borrowed_params.clear();
         let signature_params: Vec<(Symbol, Ty, Mode, Span)> = self.signatures[instance.0 as usize].params.clone();
@@ -25028,6 +25367,7 @@ impl<'a> Checker<'a> {
         let function = self.closure_function(&ember_types::item_path(self.qualified(decl.name.name).as_str()), def);
         let outer_closures = self.closure_scope.replace((function, 0));
         self.locals = Vec::new();
+        self.pack_values.clear();
         self.begin_body_marks();
         self.scopes = vec![HashMap::new()];
         self.borrowed_params.clear();
@@ -25051,13 +25391,42 @@ impl<'a> Checker<'a> {
             .map(|(n, t, m, s)| (*n, *t, *m, *s))
             .collect();
         let mut params = Vec::new();
-        for (index, (name, ty, mode, param_span)) in signature_params.iter().copied().enumerate() {
+        // `[TYP-47]` — an instance's pack of values: where they are, and how many.
+        self.pack_values.clear();
+        let pack_at = self.pack_params.get(&def).copied();
+        let mut pack_locals = Vec::new();
+        for (written_index, (name, ty, mode, param_span)) in signature_params.iter().copied().enumerate() {
+            // Its index among the declaration's parameters.
+            let index = match pack_at {
+                Some((at, n)) if written_index >= at + n => written_index + 1 - n,
+                Some((at, _)) if written_index >= at => at,
+                _ => written_index,
+            };
             let local_ty = match mode {
                 Mode::Mut => self.mut_param_ty(ty),
                 Mode::Borrow => self.borrow_param_ty_of(def, name, ty),
                 _ => ty,
             };
-            let local = self.declare(Some(name), local_ty, param_span);
+            let value_of_pack = pack_at.is_some_and(|(at, n)| written_index >= at && written_index < at + n);
+            let bound = if value_of_pack { Self::pack_value_name(name, pack_locals.len()) } else { name };
+            let local = self.declare(Some(bound), local_ty, param_span);
+            if value_of_pack {
+                pack_locals.push(local);
+            }
+            // `[TYP-47]` — in the generic check, the pack's values' parameter stands for them all,
+            // and one more local for each of them (`for v in values:`), of one value's type.
+            if pack_at.is_none() && self.types.is_pack_param(ty)
+                && let TyKind::Param { index: slot, .. } = *self.types.kind(ty)
+                && let Some(pack) = self.current_generics.get(slot as usize)
+            {
+                let one = self.types.intern(TyKind::Param { index: slot, name: pack.name });
+                let one = match mode {
+                    Mode::Mut => self.mut_param_ty(one),
+                    _ => one,
+                };
+                let each = self.declare(None, one, param_span);
+                self.pack_values.insert(local, vec![each]);
+            }
             if mode == Mode::Borrow {
                 self.borrowed_params.insert(local);
             }
@@ -25077,6 +25446,19 @@ impl<'a> Checker<'a> {
                 self.callable_value_bindings.insert(local, def);
             }
             params.push(Param { local, mode });
+        }
+        if let Some((at, _)) = pack_at {
+            let name = match decl.params.iter().filter(|param| matches!(param.kind, ast::ParamKind::Named { .. })).nth(at).map(|param| &param.kind) {
+                Some(ast::ParamKind::Named { name, .. }) => name.name,
+                _ => Symbol::intern("values"),
+            };
+            let void = self.common.void;
+            // The name, bound to no value, is the values' own: no local of it is read or reported.
+            let pack = self.declare(None, void, decl.name.span);
+            if let Some(scope) = self.scopes.last_mut() {
+                scope.insert(name, pack);
+            }
+            self.pack_values.insert(pack, pack_locals);
         }
         self.begin_callback_body(def, &params);
         if self.in_static_safe
@@ -25230,7 +25612,7 @@ impl<'a> Checker<'a> {
                     for (index, param) in generics.iter().enumerate() {
                         let ty = self.types.intern(TyKind::Param {
                             index: index as u32,
-                            name: param.name,
+                            name: param.param_name(),
                         });
                         self.type_params.insert(param.name, ty);
                     }
@@ -25304,6 +25686,11 @@ impl<'a> Checker<'a> {
     /// `Array`/`String` whose elements can be, or a tuple, `Option` or
     /// `Result` whose parts can be.
     fn is_cloneable(&self, ty: Ty) -> bool {
+        // `[FFI-36a]` (N175) — an `owns T` of a foreign type is not `Clone`: a copy would be a block
+        // Ember made, which the type's destructor would end.
+        if self.foreign_owner_inner(ty).is_some() {
+            return false;
+        }
         self.types.is_copy(ty)
             || self.clone_method(ty).is_some()
             || self.assumed_cloneable.contains(&ty)
@@ -25591,7 +25978,7 @@ impl<'a> Checker<'a> {
             let self_name = Symbol::intern("Self");
             let opaque_self = self.types.intern(TyKind::Param { index: self_index as u32, name: self_name });
             let mut self_param =
-                GenericParam { name: self_name, bounds: vec![bound], callable: None, default: None, projection: None, count_op: None, bindings: Vec::new(), const_ty: None };
+                GenericParam { name: self_name, bounds: vec![bound], callable: None, default: None, projection: None, count_op: None, bindings: Vec::new(), const_ty: None, pack: false };
             self.close_bounds(&mut self_param.bounds, &mut self_param.bindings);
             let saved_self = self.self_ty.replace(opaque_self);
             let saved_params = std::mem::take(&mut self.type_params);
@@ -25867,7 +26254,7 @@ impl<'a> Checker<'a> {
         let generics = self.signatures[def.0 as usize].generics.clone();
         self.current_generics = generics.clone();
         for (index, param) in generics.iter().enumerate() {
-            let param_ty = self.types.intern(TyKind::Param { index: index as u32, name: param.name });
+            let param_ty = self.types.intern(TyKind::Param { index: index as u32, name: param.param_name() });
             self.type_params.insert(param.name, param_ty);
         }
         let _ = self.check_one_method(ty, fn_decl, block, def, &member.attrs, member.span);
@@ -25944,6 +26331,7 @@ impl<'a> Checker<'a> {
                 format!("`@sync` class `{}` cannot have a method that changes its object", self.types.display(owner)));
         }
         self.locals = Vec::new();
+        self.pack_values.clear();
         self.begin_body_marks();
         self.scopes = vec![HashMap::new()];
         self.borrowed_params.clear();
@@ -26283,7 +26671,7 @@ impl<'a> Checker<'a> {
     fn class_init_uses_whole_self(expr: &ast::Expr) -> bool {
         match &expr.kind {
             ast::ExprKind::SelfExpr => true,
-            ast::ExprKind::Lit(_) | ast::ExprKind::Path { .. } | ast::ExprKind::Error => false,
+            ast::ExprKind::Lit(_) | ast::ExprKind::Path { .. } | ast::ExprKind::Spread(_) | ast::ExprKind::Error => false,
             ast::ExprKind::Field { base, .. } | ast::ExprKind::TupleField { base, .. } => {
                 !matches!(base.kind, ast::ExprKind::SelfExpr) && Self::class_init_uses_whole_self(base)
             }
@@ -28902,7 +29290,8 @@ impl<'a> Checker<'a> {
                     return;
                 }
                 if let Some(depth) = self.loop_depth(*label, "break", span) {
-                    out.push(Stmt::Break { depth });
+                    // `[TYP-47]` — out of a written out `for v in values:`.
+                    out.push(self.pack_jump(depth, true).unwrap_or(Stmt::Break { depth }));
                 }
             }
             ast::Jump::Continue { label } => {
@@ -28911,7 +29300,8 @@ impl<'a> Checker<'a> {
                     return;
                 }
                 if let Some(depth) = self.loop_depth(*label, "continue", span) {
-                    out.push(Stmt::Continue { depth });
+                    // `[TYP-47]` — on to the next value of a written out `for v in values:`.
+                    out.push(self.pack_jump(depth, false).unwrap_or(Stmt::Continue { depth }));
                 }
             }
         }
@@ -31200,6 +31590,10 @@ impl<'a> Checker<'a> {
         else_block: &Option<ast::Block>,
         span: Span,
     ) -> Option<Stmt> {
+        // `[TYP-47]` — `for v in values:` over a pack's values is written out once per value.
+        if let Some(pack) = self.pack_named(iter) {
+            return self.check_pack_for(label, pattern, pack, body, else_block, span);
+        }
         // `[STD-26]` (0.9.9) — `range`, `enumerate`, `zip` and `reversed` in a
         // `for` header are counted loops (`[CTL-3b]`), with no iterator
         // object. A function of the same name shadows them.
@@ -32308,7 +32702,9 @@ impl<'a> Checker<'a> {
         };
         if let Some(arg) = unknown {
             let key = arg.name.expect("named");
-            self.error(codes::E2020, key.span, format!("`{name}` has no parameter `{}`", key.name));
+            let what = format!("names `{}`, and `{name}` has no parameter of that name", key.name);
+            let diagnostic = self.argument_misfit(key.span, iter.span, name, what, None);
+            self.sink.emit(diagnostic);
             return None;
         }
         match name {
@@ -32340,9 +32736,18 @@ impl<'a> Checker<'a> {
                 _ => wrong(self, "one to three arguments"),
             },
             "enumerate" | "reversed" | "zip" => {
-                let arity = if name == "zip" { 2 } else { 1 };
-                if positional.len() != arity {
-                    return wrong(self, if arity == 2 { "two iterables" } else { "one iterable" });
+                // `[TYP-47]` — `zip` of any number of iterables: of one, its items plainly; of
+                // three or more over lists bound to as many names, one counted loop as of two.
+                if name == "zip" {
+                    if positional.is_empty() {
+                        return wrong(self, "one iterable or more");
+                    }
+                    let flat = matches!(&pattern.kind, ast::PatternKind::Tuple(items) if items.len() == positional.len());
+                    if positional.len() == 1 || (positional.len() > 2 && !flat) {
+                        return self.check_for_iterator(label, pattern, iter, body, else_block, span);
+                    }
+                } else if positional.len() != 1 {
+                    return wrong(self, "one iterable");
                 }
                 let mut sources = Vec::new();
                 for arg in &positional {
@@ -32365,7 +32770,26 @@ impl<'a> Checker<'a> {
                 if name != "reversed" {
                     let shape = match name {
                         "enumerate" => FusedShape::Pair(Box::new(FusedShape::Value), Box::new(FusedShape::Ref)),
-                        _ => FusedShape::Pair(Box::new(FusedShape::Ref), Box::new(FusedShape::Ref)),
+                        _ => {
+                            // `((a, b), c)`, as the zips nest: the names are bound to it.
+                            let mut shape = FusedShape::Ref;
+                            for _ in 1..positional.len() {
+                                shape = FusedShape::Pair(Box::new(shape), Box::new(FusedShape::Ref));
+                            }
+                            shape
+                        }
+                    };
+                    let nested;
+                    let pattern = match &pattern.kind {
+                        ast::PatternKind::Tuple(items) if name == "zip" && items.len() > 2 => {
+                            let mut grouped = items[0].clone();
+                            for item in &items[1..] {
+                                grouped = ast::Pattern { id: ast::NodeId::DUMMY, kind: ast::PatternKind::Tuple(vec![grouped, item.clone()]), span: pattern.span };
+                            }
+                            nested = grouped;
+                            &nested
+                        }
+                        _ => pattern,
                     };
                     if !Self::fused_pattern_fits(pattern, &shape) {
                         self.error(
@@ -32406,7 +32830,9 @@ impl<'a> Checker<'a> {
                         });
                         chain.links.push(FusedLink::Enumerate(start, pos, values));
                     } else {
-                        chain.links.push(FusedLink::Zip(chains.remove(0)));
+                        while !chains.is_empty() {
+                            chain.links.push(FusedLink::Zip(chains.remove(0)));
+                        }
                     }
                     let fused = self.check_for_fused(label, pattern, chain, body, else_block, span)?;
                     stmts.push(fused);
@@ -34993,6 +35419,9 @@ impl<'a> Checker<'a> {
                 self.routed_call = was;
                 return call;
             }
+            if self.mentions_error(elem) {
+                return error;
+            }
             let shown = self.types.display(elem);
             let missing = if ord { "Clone" } else { "Ord" };
             self.error(codes::E2040, span, format!("`{shown}` does not implement `{missing}`, which `{method}` needs"));
@@ -35493,7 +35922,7 @@ impl<'a> Checker<'a> {
             }
             _ => (self.commit(a), self.commit(b)),
         };
-        if a.ty == self.common.error || b.ty == self.common.error {
+        if self.mentions_error(a.ty) || self.mentions_error(b.ty) {
             return None;
         }
         if a.ty != b.ty {
@@ -35522,7 +35951,9 @@ impl<'a> Checker<'a> {
             },
         };
         if args.len() + 1 != arity || args.iter().any(|arg| arg.name.is_some()) {
-            self.error(codes::E2020, span, format!("`{method}` takes {} argument(s), found {}", arity - 1, args.len()));
+            let what = format!("gives {} argument(s), and `{method}` takes {}", args.len(), arity - 1);
+            let diagnostic = self.argument_misfit(span, span, &method.to_string(), what, None);
+            self.sink.emit(diagnostic);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         let mut operands = vec![receiver];
@@ -36116,11 +36547,12 @@ impl<'a> Checker<'a> {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         let positional: Vec<&ast::Expr> = args.iter().filter(|a| a.name.is_none()).map(|a| &a.value).collect();
         let named: Vec<ast::Arg> = args.iter().filter(|a| a.name.is_some()).cloned().collect();
-        let arity = if name == "zip" { 2 } else { 1 };
+        // `[STD-26]`, `[TYP-47]` — `zip` takes any number of iterables, one or more.
+        let fits = if name == "zip" { !positional.is_empty() } else { positional.len() == 1 };
         let named_ok = named.len() <= 1
             && named.iter().all(|a| name == "enumerate" && a.name.is_some_and(|n| n.name.is("start")));
-        if positional.len() != arity || !named_ok {
-            let wanted = if name == "enumerate" { "one iterable and an optional `start`" } else if arity == 2 { "two iterables" } else { "one iterable" };
+        if !fits || !named_ok {
+            let wanted = if name == "enumerate" { "one iterable and an optional `start`" } else if name == "zip" { "one iterable or more" } else { "one iterable" };
             self.error(codes::E2020, span, format!("`{name}` takes {wanted}"));
             return error;
         }
@@ -36133,27 +36565,72 @@ impl<'a> Checker<'a> {
         match name {
             "enumerate" => self.synth_method_on(first, span, method("enumerate"), &[], &named, None, span),
             "reversed" => self.synth_method_on(first, span, method("rev"), &[], &[], None, span),
+            // `[TYP-47]` — `zip(xs)` gives each item plainly (there is no one-element tuple).
+            _ if positional.len() == 1 => first,
             _ => {
-                let second = self.synth_committed(positional[1]);
-                if second.ty == self.common.error {
-                    return error;
-                }
-                let Some(second) = self.iterator_of(second, positional[1].span) else { return error };
-                // The second iterator, checked, is handed to `zip` through a hidden local.
-                let hidden = Symbol::intern("$zipped");
+                // Each further iterator, checked where it is written, is handed to `zip` through
+                // a hidden local: `a.zip(b).zip(c)…`, stopping at the shortest.
+                let mut stmts = Vec::new();
+                let mut call = first;
                 self.scopes.push(HashMap::new());
-                let local = self.declare(Some(hidden), second.ty, span);
-                let path = ast::Expr {
-                    id: ast::NodeId::DUMMY,
-                    kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: hidden, span }] },
-                    span,
-                };
-                let call = self.synth_method_on(first, span, method("zip"), &[], &[ast::Arg { name: None, value: path, span }], None, span);
+                for (index, written) in positional.iter().enumerate().skip(1) {
+                    let next = self.synth_committed(written);
+                    if next.ty == self.common.error {
+                        self.scopes.pop();
+                        return error;
+                    }
+                    let Some(next) = self.iterator_of(next, written.span) else {
+                        self.scopes.pop();
+                        return error;
+                    };
+                    let hidden = Symbol::intern(&format!("$zipped{index}"));
+                    let local = self.declare(Some(hidden), next.ty, span);
+                    stmts.push(Stmt::Let { local, init: Some(next) });
+                    let path = ast::Expr {
+                        id: ast::NodeId::DUMMY,
+                        kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: hidden, span }] },
+                        span,
+                    };
+                    call = self.synth_method_on(call, span, method("zip"), &[], &[ast::Arg { name: None, value: path, span }], None, span);
+                    if call.ty == self.common.error {
+                        self.scopes.pop();
+                        return error;
+                    }
+                }
+                // `[TYP-47]` — of three or more, each item is one flat tuple, `(a, b, c)`, read
+                // from the nested pairs `((a, b), c)`: `(p.0.0, p.0.1, p.1)`.
+                if positional.len() > 2 {
+                    let item = ast::Ident { name: Symbol::intern("$zipped"), span };
+                    let at = |expr: ast::Expr, index: u32| ast::Expr {
+                        id: ast::NodeId::DUMMY,
+                        kind: ast::ExprKind::TupleField { base: Box::new(expr), index },
+                        span,
+                    };
+                    let count = positional.len();
+                    let items = (0..count)
+                        .map(|index| {
+                            let mut part = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Path { segments: vec![item] }, span };
+                            // The first is under every pair; each other one is the second of its own.
+                            let depth = if index == 0 { count - 1 } else { count - index };
+                            for _ in 1..depth {
+                                part = at(part, 0);
+                            }
+                            at(part, u32::from(index != 0))
+                        })
+                        .collect();
+                    let flat = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Tuple(items), span };
+                    let pattern = ast::Pattern {
+                        id: ast::NodeId::DUMMY,
+                        kind: ast::PatternKind::Bind { name: item, by_ref: false, mutable: false, sub: None },
+                        span,
+                    };
+                    call = self.call_adapter(call, "map", clause_lambda(&pattern, flat, span), span);
+                }
                 self.scopes.pop();
                 if call.ty == self.common.error {
                     return error;
                 }
-                let block = Block { stmts: vec![Stmt::Let { local, init: Some(second) }], span };
+                let block = Block { stmts, span };
                 Expr { ty: call.ty, kind: ExprKind::Block { block, value: Box::new(call) }, span }
             }
         }
@@ -36269,6 +36746,9 @@ impl<'a> Checker<'a> {
                 // `[TYP-37]` — the numbers and `str` (text is `Ord`; a `str`
                 // is a copied view, so picking one moves nothing).
                 if !self.totally_ordered(a.ty) && a.ty != self.common.str_ {
+                    if self.mentions_error(a.ty) {
+                        return Some(error);
+                    }
                     let shown = self.types.display(a.ty);
                     self.error(codes::E2040, span, format!("`{shown}` does not implement `Ord`, which `{name}` needs"));
                     return Some(error);
@@ -38548,9 +39028,11 @@ impl<'a> Checker<'a> {
 
         let expected_signature = self.types.display(expected);
         let found_signature = self.types.display(found);
-        self.sink.emit_classified(
+        // §XVII.6.1 — `E2228` is folded into `E2020`: a lambda parameter whose word differs from the
+        // function type it is given to.
+        self.sink.emit(
             Diagnostic::error(
-                codes::E2228,
+                codes::E2020,
                 span,
                 format!(
                     "callable parameter mode mismatch at parameter {index}: expected `{}`, found `{}`",
@@ -39058,6 +39540,10 @@ impl<'a> Checker<'a> {
                     return value.clone();
                 }
                 if let Some(local) = self.lookup(name) {
+                    // `[TYP-47]` — a pack's values are used one at a time.
+                    if self.pack_values.contains_key(&local) {
+                        return self.refuse_pack_value(name, span);
+                    }
                     let value = self.read_local_expecting(local, span, expected);
                     let value = self.local_generator_value(value, name);
                     return self.generic_local_value(value, name);
@@ -39888,6 +40374,30 @@ impl<'a> Checker<'a> {
             // `[TYP-24]`, Part IV.11 — `recv.m(args)`.
             ast::ExprKind::MethodCall { recv, name, args, .. } if is_single_path(recv, "comptime") => {
                 self.comptime_input(*name, args, span)
+            }
+
+            // `[TYP-47]` — `values.len()`, the number of a pack's values.
+            ast::ExprKind::MethodCall { recv, name, generic_args, args }
+                if name.name.is("len") && generic_args.is_empty() && self.pack_named(recv).is_some() =>
+            {
+                let pack = self.pack_named(recv).expect("just checked");
+                self.pack_len(pack, args, span)
+            }
+            ast::ExprKind::MethodCall { recv, .. } if let Some(pack) = self.pack_named(recv) => {
+                let name = self.locals[pack.0 as usize].name.unwrap_or_else(|| Symbol::intern("values"));
+                self.refuse_pack_value(name, recv.span)
+            }
+
+            // `[TYP-47]` — `values...` passed on, in generic code: the whole pack in one place.
+            ast::ExprKind::Spread(name) => {
+                if self.pack_spreads.contains(&span)
+                    && let Some(pack) = self.lookup(name.name).filter(|local| self.pack_values.contains_key(local))
+                {
+                    let ty = self.locals[pack.0 as usize].ty;
+                    return Expr { ty, kind: ExprKind::Local(pack), span };
+                }
+                self.refuse_spread(*name, span);
+                Expr { ty: self.common.error, kind: ExprKind::Error, span }
             }
 
             ast::ExprKind::MethodCall { recv, name, generic_args, args } => {
@@ -41166,13 +41676,6 @@ impl<'a> Checker<'a> {
             }
         }
 
-        if let Some(builtin) = Builtin::from_name(name.as_str()) {
-            // `[STD-9]` (0.9.9) — any number of arguments, `sep=` and `end=`.
-            // One path for every count, so each value is checked for a
-            // printer the same way (D-197).
-            return self.synth_print_pieces(builtin, args, span);
-        }
-
         let Some(&def) = self.fn_ids.get(&self.resolve_name(name)) else {
             let name_span = segments.last().expect("a path has a final segment").span;
             // D-234 — a local of that name exists; it is not callable.
@@ -41232,6 +41735,14 @@ impl<'a> Checker<'a> {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
 
+        // `[TYP-47]` — `values...` passes a pack's values on to a function over a pack only.
+        if !self.signatures[def.0 as usize].generics.iter().any(|param| param.pack)
+            && let Some(arg) = args.iter().find(|arg| matches!(arg.value.kind, ast::ExprKind::Spread(_)))
+            && let ast::ExprKind::Spread(spread) = arg.value.kind
+        {
+            self.refuse_spread(spread, arg.value.span);
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         // `[TYP-16]`, `[TYP-18]` — a generic callee is instantiated here: the
         // arguments say what its parameters are, and the instance gets its own
         // symbol.
@@ -41246,10 +41757,10 @@ impl<'a> Checker<'a> {
             self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
         let ret = self.signatures[def.0 as usize].ret;
         if !self.arity_fits(def, args.len(), signature.len()) {
-            self.report_arity(def, format!("`{name}`"), signature.len(), args.len(), span);
+            self.report_arity(def, format!("`{name}`"), signature.len(), args.len(), span, args);
         }
         let params = self.signatures[def.0 as usize].params.clone();
-        let slots = self.call_argument_slots(name, args, &params);
+        let slots = self.call_argument_slots(name, args, &params, span, Some(def));
         let (checked, slots, default_arg_locals) =
             self.check_call_with_defaults(def, name, args, &params, &slots, span, None, None);
         // `[FFI-21]`, `[FFI-22]` (ODR-253) — what a `nullable` callback's callable value captures.
@@ -41294,7 +41805,7 @@ impl<'a> Checker<'a> {
                 let mut resolved = Vec::with_capacity(args.len());
                 for arg in args {
                     let ty = match arg {
-                        ast::TypeOrExpr::Type(ty) => self.resolve_type(ty),
+                        ast::TypeOrExpr::Type(ty) => self.resolve_type_argument(ty),
                         // `[TYP-41]` (D-773) — `FixedArray[String, 2].new()`: an argument that is no
                         // type's shape (a literal, arithmetic) is a `const` argument, as it is in a
                         // type position.
@@ -41562,7 +42073,7 @@ impl<'a> Checker<'a> {
                 if !self.is_send(ty) {
                     let shown = self.types.display(ty);
                     self.sink.emit(
-                        Diagnostic::error(codes::E7004, span, format!("{name} captures `{capture}`, a `{shown}`, which is not Send"))
+                        Diagnostic::error(self.not_send_code(ty), span, format!("{name} captures `{capture}`, a `{shown}`, which is not Send"))
                             .note(note),
                     );
                 }
@@ -41610,6 +42121,10 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> Expr {
+        // `[TYP-47]` — a function over a pack, as made for the number of values the call passes.
+        if let Some(call) = self.synth_pack_call(def, name, args, &explicit, expected, span) {
+            return call;
+        }
         self.check_direct_call_safety(def, span);
         let generics = self.signatures[def.0 as usize].generics.clone();
         let declared = self.signatures[def.0 as usize].params.clone();
@@ -41629,10 +42144,10 @@ impl<'a> Checker<'a> {
         }
 
         if !self.arity_fits(def, args.len(), declared.len()) {
-            self.report_arity(def, format!("`{name}`"), declared.len(), args.len(), span);
+            self.report_arity(def, format!("`{name}`"), declared.len(), args.len(), span, args);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        let slots = self.call_argument_slots(name, args, &declared);
+        let slots = self.call_argument_slots(name, args, &declared, span, Some(def));
         let declared_modes = declared
             .iter()
             .map(|(_, ty, mode, _)| (*ty, *mode))
@@ -41647,6 +42162,8 @@ impl<'a> Checker<'a> {
             }
         }
         let mut checked_args: Vec<Option<Expr>> = (0..declared.len()).map(|_| None).collect();
+        // `[DIA-26]` — what each argument's inferring check reported, kept aside (below).
+        let mut inferred_reports: Vec<Vec<Diagnostic>> = vec![Vec::new(); declared.len()];
         // Solve non-lambda arguments first. Type inference is not evaluation,
         // so this does not change source order; it lets a later ordinary
         // argument determine `T` before an earlier `fn(T) -> T` lambda needs
@@ -41677,6 +42194,10 @@ impl<'a> Checker<'a> {
                 checked_args[index] = Some(value);
                 continue;
             }
+            // `[DIA-26]` — one mistake, one error: an argument is checked again against the
+            // parameter's substituted type below, which reports what this check would; only one
+            // that fails outright is reported here, ending the call.
+            let inferring = self.sink.mark();
             let value = match (&arg.value.kind, self.types.kind(param_ty).clone()) {
                 // `[TYP-41]` — a list literal where a fixed array is wanted
                 // is one, of its own length, which then solves `N`.
@@ -41694,6 +42215,10 @@ impl<'a> Checker<'a> {
                 }
                 _ => self.synth(Self::inferred_argument(&arg.value, declared[index].2)),
             };
+            if value.ty != self.common.error {
+                inferred_reports[index] = self.sink.diagnostics()[inferring..].to_vec();
+                self.sink.rollback(inferring);
+            }
             if self.types.is_untyped_literal(value.ty) {
                 deferred_literals.push((index, param_ty, value));
                 continue;
@@ -41961,6 +42486,16 @@ impl<'a> Checker<'a> {
         // rather than copied.
         let mut reusable = checked_args;
         let mut checked = Vec::new();
+        // `[TYP-47]` — which parameters take a pack's values, in a function made for their number.
+        let pack_values: HashSet<usize> = match self.pack_arities.get(&def) {
+            Some(&(_, at, n)) => declared
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, ty, ..))| matches!(*self.types.kind(*ty), TyKind::Param { index, .. } if (at..at + n).contains(&(index as usize))))
+                .map(|(position, _)| position)
+                .collect(),
+            None => HashSet::new(),
+        };
         let mut arg_for_param = vec![None; concrete.len()];
         for (arg_index, slot) in slots.iter().copied().enumerate() {
             if let Some(slot) = slot {
@@ -41980,14 +42515,34 @@ impl<'a> Checker<'a> {
             let already = Self::lambda_of(&arg.value).is_some();
             // D-284 — as the generic's declaration passes it.
             let by_address = self.param_by_address(instance, declared[index].0, param_ty);
-            match reusable.get_mut(index).and_then(|slot| slot.take()).filter(|_| already) {
-                Some(value) => {
+            let first = reusable.get_mut(index).and_then(|slot| slot.take());
+            // `[TYP-47]` — a pack's value read plainly (`println(a, f(b))`), whose inferring check
+            // gave it exactly its parameter's type, is that check: it is not checked twice (a lambda
+            // inside it made twice, a diagnostic reported twice, the work doubled at each call of a
+            // function over a pack).
+            let plain_value = |this: &Self, value: &Expr| {
+                pack_values.contains(&index)
+                    && mode == Mode::Borrow
+                    && arg.name.is_none()
+                    && value.ty == param_ty
+                    && !this.types.is_untyped_literal(value.ty)
+                    && !matches!(arg.value.kind, ast::ExprKind::Owned(_) | ast::ExprKind::RefOf { .. } | ast::ExprKind::CopyOf(_) | ast::ExprKind::Lambda(_))
+                    && !matches!(this.types.kind(param_ty), TyKind::Fn { .. } | TyKind::FnItem { .. })
+                    && !this.lent_callable_args.contains(&arg.value.span)
+            };
+            match first {
+                Some(value) if already => {
                     // `[FN-2a]` (verdict 158) — `owns fn(...)` for an `owns` parameter.
                     self.check_call_word(&arg.value, mode, param_ty, declared[index].3);
                     let value = self.pass_checked_lambda(value, arg.value.span, param_ty, mode, by_address);
                     checked.push(value)
                 }
-                None => {
+                Some(value) if plain_value(self, &value) => {
+                    let reports = std::mem::take(&mut inferred_reports[index]);
+                    self.sink.emit_all(reports);
+                    checked.push(self.pass_argument_by(value, param_ty, mode, by_address));
+                }
+                _ => {
                     let word = self.word_of.replace((arg.value.span, declared[index].3));
                     checked.push(self.check_argument_by(&arg.value, param_ty, mode, by_address));
                     self.word_of = word;
@@ -42093,10 +42648,10 @@ impl<'a> Checker<'a> {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         if !self.arity_fits(def, args.len(), declared.len()) {
-            self.report_arity(def, format!("`{name}`"), declared.len(), args.len(), span);
+            self.report_arity(def, format!("`{name}`"), declared.len(), args.len(), span, args);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        let slots = self.call_argument_slots(name, args, &declared);
+        let slots = self.call_argument_slots(name, args, &declared, span, Some(def));
         let declared_modes = declared
             .iter()
             .map(|(_, ty, mode, _)| (*ty, *mode))
@@ -42132,6 +42687,10 @@ impl<'a> Checker<'a> {
                 checked_args[index] = Some(value);
                 continue;
             }
+            // `[DIA-26]` — one mistake, one error: an argument is checked again against the
+            // parameter's substituted type below, which reports what this check would; only one
+            // that fails outright is reported here, ending the call.
+            let inferring = self.sink.mark();
             let value = match (&arg.value.kind, self.types.kind(param_ty).clone()) {
                 // `[TYP-41]` — a list literal where a fixed array is wanted
                 // is one, of its own length, which then solves `N`.
@@ -42149,6 +42708,9 @@ impl<'a> Checker<'a> {
                 }
                 _ => self.synth(Self::inferred_argument(&arg.value, declared[index].2)),
             };
+            if value.ty != self.common.error {
+                self.sink.rollback(inferring);
+            }
             if self.types.is_untyped_literal(value.ty) {
                 deferred_literals.push((index, param_ty, value));
                 continue;
@@ -42428,12 +42990,14 @@ impl<'a> Checker<'a> {
             // `[CLO-6a]` — a `once fn` value is called at most once, as such a closure is.
             let once_value = matches!(self.types.kind(value.ty), TyKind::Fn { once: true, .. });
             let mut moved = None;
+            let mut moved_at = None;
             if !once_value {
                 let TyKind::Struct(id) = *self.types.kind(value.ty) else { continue };
                 if !self.closure_calls.get(&id).is_some_and(|closure| closure.once) {
                     continue;
                 }
                 moved = self.closure_calls.get(&id).and_then(|closure| closure.moved);
+                moved_at = self.closure_calls.get(&id).and_then(|closure| closure.moved_at);
             }
             // A routed method's parameter is not the user's to change.
             let help = match self.routed_method {
@@ -42456,7 +43020,17 @@ impl<'a> Checker<'a> {
                     .note("a `fn(A) -> R` parameter may be called any number of times [CLO-6]"),
                 );
             } else {
-                self.sink.emit_classified(
+                // The argument as written with `copy of` before the capture where it is given away;
+                // a call of one argument is shown whole, as `[CLO-6]` writes it.
+                let copied_line = moved.zip(moved_at).and_then(|(name, at)| {
+                    let span = arg.value.span;
+                    let text = self.written_line(span)?;
+                    let (from, to) = (at.start.checked_sub(span.start)? as usize, at.end.checked_sub(span.start)? as usize);
+                    let (head, tail) = (text.get(..from)?, text.get(to..)?);
+                    let shown = format!("{head}copy of {name}{tail}");
+                    Some(if args.len() == 1 { format!("{}({shown})", callee.as_str().rsplit('.').next().unwrap_or(callee.as_str())) } else { shown })
+                });
+                let mut diagnostic =
                     Diagnostic::error(
                         codes::E3013,
                         arg.value.span,
@@ -42466,12 +43040,19 @@ impl<'a> Checker<'a> {
                         ),
                     )
                     .primary_label("this function can run only once")
-                    .help(match moved {
-                        Some(name) => format!("{help}; or hand over a copy each time instead (`copy of {name}` where it is given away)"),
-                        None => help,
+                    .help(match (moved, &copied_line) {
+                        (Some(_), Some(_)) if self.routed_method.is_none() => help,
+                        (Some(name), _) => format!("{help}; or hand over a copy each time instead (`copy of {name}` where it is given away)"),
+                        (None, _) => help,
                     })
-                    .note("a function that gives one of its captures away can be called only once [CLO-6]"),
-                );
+                    .note("a function that gives one of its captures away can be called only once [CLO-6]");
+                // `[CLO-6]` — the rule's own line: the call with a copy given away.
+                if self.routed_method.is_none()
+                    && let Some(line) = copied_line
+                {
+                    diagnostic = diagnostic.help(format!("hand over a copy each time instead: `{line}`"));
+                }
+                self.sink.emit_classified(diagnostic);
             }
             rejected = true;
         }
@@ -42516,7 +43097,7 @@ impl<'a> Checker<'a> {
             self.signatures[own.def.0 as usize].params.iter().map(|(_, ty, mode, _)| (*ty, *mode)).collect();
         let ret = self.signatures[own.def.0 as usize].ret;
         if args.len() != signature.len() {
-            self.report_arity(own.def, format!("`{}`", own.name), signature.len(), args.len(), span);
+            self.report_arity(own.def, format!("`{}`", own.name), signature.len(), args.len(), span, args);
             return Expr { ty: ret, kind: ExprKind::Error, span };
         }
         let env = if matches!(self.types.kind(env.ty), TyKind::Ref { .. }) { self.read_through(env) } else { env };
@@ -42721,7 +43302,7 @@ impl<'a> Checker<'a> {
                     origin: None,
                     declaring_module: self.current_module,
                 });
-                self.closure_calls.insert(id, ClosureCall { def, once: false, owned: false, moved: None });
+                self.closure_calls.insert(id, ClosureCall { def, once: false, owned: false, moved: None, moved_at: None });
                 let ty = self.types.intern(TyKind::Struct(id));
                 (id, Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields: Vec::new() }, span }, Mode::Borrow)
             }
@@ -42975,6 +43556,7 @@ impl<'a> Checker<'a> {
             count_op: None,
             bindings: Vec::new(),
             const_ty: None,
+            pack: false,
         });
         let opaque_env = self.types.intern(TyKind::Param { index: (self.current_generics.len() - 1) as u32, name: hidden });
         let mut param_tys = Vec::new();
@@ -43212,7 +43794,7 @@ impl<'a> Checker<'a> {
             // Its own parameters are what a program counts.
             let declared = self.signatures[def.0 as usize].params.len();
             if !self.arity_fits(def, args.len() + 1, declared) {
-                self.report_arity(def, format!("`{name}`"), declared - 1, args.len(), span);
+                self.report_arity(def, format!("`{name}`"), declared - 1, args.len(), span, args);
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             let value = ast::Expr {
@@ -43335,6 +43917,15 @@ impl<'a> Checker<'a> {
         span: Span,
         latebound: bool,
     ) -> Expr {
+        // `[TYP-47]` — `f(values...)`: a callable value takes a pack's values as its parameters,
+        // `fn(Ts...)` spelled out.
+        let expanded = self.expand_spread_args(args);
+        for arg in &expanded {
+            if let ast::ExprKind::Spread(_) = arg.value.kind {
+                self.pack_spreads.insert(arg.value.span);
+            }
+        }
+        let args = expanded.as_slice();
         let closure = self.closure_calls[&id];
         let def = closure.def;
         self.check_unsafe_local_call(def, span);
@@ -43407,6 +43998,30 @@ impl<'a> Checker<'a> {
 
     fn is_send(&self, ty: Ty) -> bool {
         self.thread_facts(ty).0
+    }
+
+    /// `[THR-8]`, `[FFI-33b]` — `E7008` where a value that is not `Send` is a thread-bound foreign
+    /// owner (an `owns T` of a type whose contract says `threads(creator)` or `threads(main)`, held
+    /// whole or as a part), `E7004` for any other.
+    fn not_send_code(&self, ty: Ty) -> ember_diag::Code {
+        if self.holds_thread_bound_foreign_owner(ty, &mut HashSet::new()) { codes::E7008 } else { codes::E7004 }
+    }
+
+    fn holds_thread_bound_foreign_owner(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+        if !seen.insert(ty) {
+            return false;
+        }
+        match self.types.kind(ty) {
+            TyKind::Struct(id) => {
+                let def = self.types.struct_def(*id);
+                def.origin.as_ref().is_some_and(|(name, _)| name.is("std.ffi.ThreadForeignOwner") || name.is("std.ffi.MainForeignOwner"))
+                    || def.fields.iter().any(|field| self.holds_thread_bound_foreign_owner(field.ty, seen))
+            }
+            TyKind::Enum(id) => self.types.enum_def(*id).variants.iter().flat_map(|variant| &variant.fields).any(|field| self.holds_thread_bound_foreign_owner(field.ty, seen)),
+            TyKind::Tuple(items) => items.iter().any(|&item| self.holds_thread_bound_foreign_owner(item, seen)),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } => self.holds_thread_bound_foreign_owner(*elem, seen),
+            _ => false,
+        }
     }
 
     fn is_sync(&self, ty: Ty) -> bool {
@@ -43589,6 +44204,20 @@ impl<'a> Checker<'a> {
         solved: &mut Vec<Option<Ty>>,
         fixed: usize,
     ) -> bool {
+        // `[TYP-47]` — a pack among a declared tuple's elements is met by the elements the others
+        // leave: `(int, Cs...)` meets `(int, f64, StrView)` with `Cs` two types, `(int, f64)` with
+        // one and `int` with none (`[TYP-27]`).
+        if let TyKind::Tuple(items) = self.types.kind(declared)
+            && items.iter().any(|&item| self.types.is_pack_param(item))
+        {
+            let Some((pairs, pack, met)) = self.pack_tuple_parts(declared, actual) else { return false };
+            for (want, have) in pairs {
+                if !self.unify_generic_argument_shapes(want, have, generics, solved, fixed) {
+                    return false;
+                }
+            }
+            return self.types.unify_with_fixed(pack, met, solved, fixed);
+        }
         // `[TYP-5]` rule 7 — a `T` argument is auto-borrowed for a `ref T`
         // parameter, so inference reads through the borrow. (The unifier
         // accepts a shape mismatch without solving anything, so this is
@@ -43793,7 +44422,7 @@ impl<'a> Checker<'a> {
                 solved.get(slot).and_then(|ty| *ty).unwrap_or_else(|| {
                     self.types.intern(TyKind::Param {
                         index: slot as u32,
-                        name: param.name,
+                        name: param.param_name(),
                     })
                 })
             })
@@ -44017,6 +44646,7 @@ impl<'a> Checker<'a> {
                 count_op: None,
                 bindings: Vec::new(),
                 const_ty: None,
+                pack: false,
             });
             self.projection_params.insert((base, assoc.name), ty);
             // D-407 — and the bindings its bounds write (`Iter: Iterator[Item
@@ -44055,7 +44685,7 @@ impl<'a> Checker<'a> {
             .enumerate()
             .map(|(index, param)| {
                 solved.get(index).copied().flatten().unwrap_or_else(|| {
-                    self.types.intern(TyKind::Param { index: index as u32, name: param.name })
+                    self.types.intern(TyKind::Param { index: index as u32, name: param.param_name() })
                 })
             })
             .collect();
@@ -44189,6 +44819,7 @@ impl<'a> Checker<'a> {
             count_op: Some((op, a, b)),
             bindings: Vec::new(),
             const_ty: None,
+            pack: false,
         });
         let ty = self.types.intern(TyKind::Param { index: index as u32, name });
         if self.declaring_count_ops {
@@ -44363,6 +44994,7 @@ impl<'a> Checker<'a> {
             count_op: None,
             bindings: Vec::new(),
             const_ty: None,
+            pack: false,
         });
         // D-407 — and the bindings its bounds write: `U.Iter`'s `Item` is
         // `U.Item` (`type Iter: Iterator[Item = Item]`).
@@ -44396,6 +45028,10 @@ impl<'a> Checker<'a> {
 
     /// Whether a type implements an interface, for `[TYP-17]`'s bound check.
     fn implements(&self, ty: Ty, interface: Symbol) -> bool {
+        // `[TYP-47]` — a pack's needs apply to each of its types.
+        if let TyKind::Pack(items) = self.types.kind(ty) {
+            return items.iter().all(|&item| self.implements(item, interface));
+        }
         // `[STD-12]` (ODR-032, ODR-067) — every `K: Eq + Hash` is `AsKey[K]`,
         // and `ToKey[K]` when it can also be cloned.
         if let Some((generic, args)) = self.open_interface_origin.get(&interface)
@@ -44421,6 +45057,7 @@ impl<'a> Checker<'a> {
             && matches!(
                 interface.as_str(),
                 "std.core.Eq" | "std.core.Ord" | "std.collections.Hash" | "std.core.Display" | "std.core.Debug" | "Display" | "Debug"
+                    | "std.core.Printable"
             )
         {
             return self.implements(inner, interface);
@@ -44469,6 +45106,8 @@ impl<'a> Checker<'a> {
             // which it writes field-wise for the rest (`[STR-5]`).
             "std.core.Display" => self.has_display(ty),
             "std.core.Debug" => self.is_formattable(ty),
+            // `[STD-9]` (verdict 117) — the compiler's for every type with `Display` or `Debug`.
+            "std.core.Printable" => self.printable(ty),
             // `[TYP-36]` — `void`'s `Default` is `()`; `void` cannot be
             // extended, so the compiler answers it (D-463).
             "std.core.Default" => matches!(self.types.kind(ty), TyKind::Void),
@@ -44585,12 +45224,36 @@ impl<'a> Checker<'a> {
         name: Symbol,
         span: Span,
     ) -> DefId {
-        let key = Instance { def, args: args.to_vec(), callable_values };
+        // `[TYP-47]` — an instance of a function over a pack asked for by its `Pack` of types is
+        // the instance of the function made for that number of values.
+        if !self.pack_arities.contains_key(&def)
+            && let Some(at) = self.signatures[def.0 as usize].generics.iter().position(|param| param.pack)
+            && let Some(TyKind::Pack(types)) = args.get(at).map(|&ty| self.types.kind(ty).clone())
+            && let Some(arity) = self.pack_arity(def, types.len())
+        {
+            let mut flat = args[..at].to_vec();
+            flat.extend(types.iter().copied());
+            flat.extend_from_slice(&args[at + 1..]);
+            let mut values: Vec<Option<DefId>> = callable_values.iter().take(at).copied().collect();
+            values.extend(std::iter::repeat_n(None, types.len()));
+            values.extend(callable_values.iter().skip(at + 1).copied());
+            return self.instantiate(arity, &flat, values, name, span);
+        }
+        // `[TYP-47]` — the function made for `n` values of its pack: the instance is the
+        // function's own, over the pack's types as one `Pack` (`[MONO-1]`, `[MNG-6]`).
+        let (signature_def, key) = match self.pack_arities.get(&def).copied() {
+            Some((origin, at, n)) => {
+                let (grouped, values) = self.pack_instance_arguments(at, n, args, &callable_values);
+                (def, Instance { def: origin, args: grouped, callable_values: values })
+            }
+            None => (def, Instance { def, args: args.to_vec(), callable_values }),
+        };
+        let def = key.def;
         if let Some(&existing) = self.instances.get(&key) {
             self.note_asked(existing);
             return existing;
         }
-        let generic = &self.signatures[def.0 as usize];
+        let generic = &self.signatures[signature_def.0 as usize];
         let params: Vec<(Symbol, Ty, Mode, Span)> = generic
             .params
             .iter()
@@ -44604,6 +45267,11 @@ impl<'a> Checker<'a> {
         let concrete_ret = self.substitute_ty(ret, args);
 
         let instance = DefId(self.signatures.len() as u32);
+        if let Some(&(_, _, n)) = self.pack_arities.get(&signature_def)
+            && let Some(at) = self.signatures[def.0 as usize].params.iter().position(|&(_, ty, ..)| self.types.is_pack_param(ty))
+        {
+            self.pack_params.insert(instance, (at, n));
+        }
         let borrows = self.signatures[def.0 as usize].borrows.clone();
         self.signatures.push(Signature { decl: self.signatures[def.0 as usize].decl, implicit_object: self.signatures[def.0 as usize].implicit_object,
             params: concrete_params,
@@ -46265,10 +46933,10 @@ impl<'a> Checker<'a> {
             self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
         let ret = self.signatures[def.0 as usize].ret;
         if !self.arity_fits(def, args.len(), signature.len()) {
-            self.report_arity(def, format!("`{qualified}`"), signature.len(), args.len(), span);
+            self.report_arity(def, format!("`{qualified}`"), signature.len(), args.len(), span, args);
         }
         let params = self.signatures[def.0 as usize].params.clone();
-        let slots = self.call_argument_slots(qualified, args, &params);
+        let slots = self.call_argument_slots(qualified, args, &params, span, Some(def));
         let (checked, slots, default_arg_locals) =
             self.check_call_with_defaults(def, qualified, args, &params, &slots, span, None, None);
         self.note_callable_value_args(def, &checked, span);
@@ -46529,7 +47197,7 @@ impl<'a> Checker<'a> {
             .collect::<Vec<_>>();
         let ret = self.signatures[def.0 as usize].ret;
         if !self.arity_fits(def, args.len(), signature.len()) {
-            self.report_arity(def, format!("`{}.{}`", self.types.display(owner), name.name), signature.len(), args.len(), span);
+            self.report_arity(def, format!("`{}.{}`", self.types.display(owner), name.name), signature.len(), args.len(), span, args);
         }
         let params = self.signatures[def.0 as usize].params.clone();
         let params = params
@@ -46538,7 +47206,7 @@ impl<'a> Checker<'a> {
                 (param, self.substitute_self(ty, owner), mode, param_span)
             })
             .collect::<Vec<_>>();
-        let slots = self.call_argument_slots(name.name, args, &params);
+        let slots = self.call_argument_slots(name.name, args, &params, span, Some(def));
         let (checked, slots, default_arg_locals) = self.check_call_with_defaults(
             def, name.name, args, &params, &slots, span, None, Some(owner));
         self.note_callable_value_args(def, &checked, span);
@@ -46649,7 +47317,7 @@ impl<'a> Checker<'a> {
         let ret = self.substitute_self(self.signatures[def.0 as usize].ret, owner);
         let ret = self.resolve_assoc(ret, owner);
         if !self.arity_fits(def, args.len(), signature.len()) {
-            self.report_arity(def, format!("`{}.{}`", param, name.name), signature.len(), args.len(), span);
+            self.report_arity(def, format!("`{}.{}`", param, name.name), signature.len(), args.len(), span, args);
         }
         let params = self.signatures[def.0 as usize].params.clone();
         let params = params
@@ -46660,7 +47328,7 @@ impl<'a> Checker<'a> {
             })
             .collect::<Vec<_>>();
         self.assoc_instance = saved_instance;
-        let slots = self.call_argument_slots(name.name, args, &params);
+        let slots = self.call_argument_slots(name.name, args, &params, span, Some(def));
         let (checked, slots, default_arg_locals) = self.check_call_with_defaults(
             def, name.name, args, &params, &slots, span, None, Some(owner));
         self.note_callable_value_args(def, &checked, span);
@@ -47178,6 +47846,111 @@ impl<'a> Checker<'a> {
         true
     }
 
+    /// `[BRW-14]` (N174) — the message for a parameter given a new value: the local of your own
+    /// (`new_n`, or `new_n_2` and on where the name is taken), made by the refused line itself where
+    /// that line is a plain `=` at the top level of the body and no line above reads the parameter,
+    /// otherwise by a new first line of the body, and each later use written with it, each line named.
+    /// `None` where the source cannot be read as that (the plain message stands).
+    fn rebound_parameter_message(&self, name: &str, ty: Ty, write: Span) -> Option<String> {
+        let source = self.sources.get(&write.file)?;
+        let text = &source.text[..];
+        let mut lines: Vec<(usize, &str)> = Vec::new();
+        let mut at = 0;
+        for line in text.split('\n') {
+            lines.push((at, line.trim_end_matches('\r')));
+            at += line.len() + 1;
+        }
+        let line_of = |offset: usize| lines.partition_point(|(start, _)| *start <= offset).checked_sub(1);
+        let indent = |line: &str| line.len() - line.trim_start().len();
+        let blank = |line: &str| line.trim().is_empty() || line.trim_start().starts_with('#');
+        let head = line_of(self.fn_decl.start as usize)?;
+        let fn_indent = indent(lines[head].1);
+        // The signature ends at the first line that closes its parentheses and ends in `:`.
+        let mut depth = 0i32;
+        let mut signature_end = None;
+        for (index, (_, line)) in lines.iter().enumerate().skip(head) {
+            let code = line.split('#').next().unwrap_or("");
+            depth += code.matches('(').count() as i32 - code.matches(')').count() as i32;
+            if depth <= 0 && code.trim_end().ends_with(':') {
+                signature_end = Some(index);
+                break;
+            }
+        }
+        let first = (signature_end? + 1..lines.len()).find(|&index| !blank(lines[index].1))?;
+        let body_indent = indent(lines[first].1);
+        if body_indent <= fn_indent {
+            return None;
+        }
+        let last = (first..lines.len()).take_while(|&index| blank(lines[index].1) || indent(lines[index].1) >= body_indent).last()?;
+        let refused = line_of(write.start as usize)?;
+        if refused < first || refused > last {
+            return None;
+        }
+        let uses: Vec<usize> = (first..=last).filter(|&index| line_mentions(lines[index].1, name)).collect();
+        // The local's name: `new_n`, or the first `new_n_2`, `new_n_3`, … the function does not have.
+        let mut local = format!("new_{name}");
+        let mut number = 1;
+        while (head..=last).any(|index| line_mentions(lines[index].1, &local)) {
+            number += 1;
+            local = format!("new_{name}_{number}");
+        }
+        let listed = |indexes: &[usize]| -> String {
+            let numbers: Vec<String> = indexes.iter().map(|index| (index + 1).to_string()).collect();
+            match numbers.as_slice() {
+                [one] => format!("line {one}"),
+                [init @ .., last] => format!("lines {} and {last}", init.join(", ")),
+                [] => String::new(),
+            }
+        };
+        let noun = if self.types.is_numeric(ty) {
+            "number"
+        } else if ty == self.common.str_ || matches!(self.types.kind(ty), TyKind::Vec { text: true, .. }) {
+            "text"
+        } else {
+            "value"
+        };
+        let refused_text = code_before_comment(lines[refused].1).trim();
+        // Only a line that gives the whole parameter a new value (`n = …`, `n -= 1`) is Python's rebinding.
+        let rest = refused_text.strip_prefix(name).map(str::trim_start)?;
+        let operator = rest.split('=').next().unwrap_or("");
+        if !rest.contains('=') || rest[operator.len()..].starts_with("==") || !["", "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "**"].contains(&operator) {
+            return None;
+        }
+        let plain = refused_text
+            .strip_prefix(name)
+            .map(str::trim_start)
+            .is_some_and(|rest| rest.starts_with('=') && !rest.starts_with("=="))
+            && indent(lines[refused].1) == body_indent
+            && !uses.iter().any(|&index| index < refused);
+        let later: Vec<usize> = uses.iter().copied().filter(|&index| index > refused).collect();
+        let plan = if plain {
+            let rewritten = format!("{local}{}", &refused_text[name.len()..]);
+            let mut plan = format!("write `{rewritten}` in place of line {}", refused + 1);
+            if !later.is_empty() {
+                plan.push_str(&format!(", and `{local}` for `{name}` in {}", listed(&later)));
+            }
+            plan
+        } else {
+            let init = if self.types.is_copy(ty) || self.types.is_view(ty) {
+                name.to_string()
+            } else if self.implements(ty, Symbol::intern("std.core.Clone")) {
+                format!("copy of {name}")
+            } else {
+                return None;
+            };
+            let function = text
+                .get(self.fn_decl.start as usize..self.fn_decl.end as usize)
+                .map(|written| written.trim().trim_start_matches("fn ").split('(').next().unwrap_or("").trim().to_string())
+                .filter(|written| !written.is_empty() && written.chars().all(|c| c == '_' || c == '.' || c.is_alphanumeric()))?;
+            format!(
+                "write `{local} = {init}` above line {}, as the first line of `{function}`'s body, and `{local}` for `{name}` in {}",
+                first + 1,
+                listed(&uses)
+            )
+        };
+        Some(format!("`{name}` is the {noun} the caller passed and stays that {noun} for the whole call; for a {noun} of your own {plan}"))
+    }
+
     /// `assigns`: the write is the assignment of the whole parameter (`n = n + 1`), Python's
     /// rebinding of its name, which a borrowed parameter reached through its borrow is too.
     fn reject_borrowed_parameter_write_as(
@@ -47270,14 +48043,24 @@ impl<'a> Checker<'a> {
                 ),
             }
         };
-        let mut diagnostic = Diagnostic::error(
-            codes::E3023,
-            span,
-            format!("cannot mutate borrowed parameter `{name}`"),
-        )
-        .primary_label("this write needs mutable access")
-        .secondary(declaration, format!("`{name}` is borrowed here"))
-        .help(structural_help);
+        // `[BRW-14]` — a parameter given a new value: the rule's message, with the local of your own.
+        let rebound = if rebinding { self.rebound_parameter_message(&name, ty, span) } else { None };
+        let (message, structural_help) = match rebound {
+            Some(message) => {
+                let written = self
+                    .sources
+                    .get(&declaration.file)
+                    .and_then(|source| source.text.get(declaration.start as usize..declaration.end as usize))
+                    .filter(|text| !text.is_empty())
+                    .map_or_else(|| format!("{name}: {shown}"), str::to_string);
+                (message, format!("or write `ref mut {written}` for the parameter, and `ref mut` before the argument at each call, if the caller is to see the new value"))
+            }
+            None => (format!("cannot mutate borrowed parameter `{name}`"), structural_help),
+        };
+        let mut diagnostic = Diagnostic::error(codes::E3023, span, message)
+            .primary_label("this write needs mutable access")
+            .secondary(declaration, format!("`{name}` is borrowed here"))
+            .help(structural_help);
         if rebinding {
             diagnostic = diagnostic.note(format!("Python rebinds a parameter's name; an Ember parameter is the caller's `{shown}`, borrowed [FN-1]"));
         }
@@ -47803,7 +48586,7 @@ impl<'a> Checker<'a> {
         }
         let params = &signature[1..];
         if args.len() != params.len() {
-            self.report_arity(entry.def, "`super.init(...)`".to_string(), params.len(), args.len(), span);
+            self.report_arity(entry.def, "`super.init(...)`".to_string(), params.len(), args.len(), span, args);
             return error();
         }
         let values = args
@@ -47832,11 +48615,15 @@ impl<'a> Checker<'a> {
             .collect();
         let name = self.types.class_def(base_id).name;
         let names: Vec<Symbol> = fields.iter().map(|field| field.name).collect();
-        let slots = self.constructor_slots(name, &names, args, span);
+        let info: Vec<(Symbol, Ty, bool, Span)> = fields.iter().map(|field| (field.name, field.ty, field.has_default, field.ty_span)).collect();
+        let line = self.memberwise_line(name, &info);
+        let slots = self.constructor_slots(name, &names, args, span, Some(line.clone()));
         let mut complete = true;
         for (index, field) in fields.iter().enumerate() {
-            if !field.has_default && !slots.iter().any(|(_, slot)| *slot == index) {
-                self.error(codes::E2020, span, format!("field `{}` of `{name}` has no value", field.name));
+            if !field.has_default && slots.len() == args.len() && !slots.iter().any(|(_, slot)| *slot == index) {
+                let what = format!("gives nothing for `{}`, which has no default", field.name);
+                let diagnostic = self.argument_misfit(span, span, &name.to_string(), what, Some(line.clone()));
+                self.sink.emit(diagnostic);
                 complete = false;
             }
         }
@@ -48705,6 +49492,17 @@ impl<'a> Checker<'a> {
             );
             return true;
         }
+        if let Some(inner) = self.foreign_owner_inner(ty) {
+            let object = self.types.display(inner);
+            let ended = self.foreign_type_destructor(inner).and_then(|(def, _)| self.declared_name(def))
+                .map_or_else(String::new, |name| format!(" and `{name}` ends"));
+            self.sink.emit(
+                Diagnostic::error(codes::E2116, span, format!(
+                    "`{text}` is an `owns {object}`, an object C made{ended}, so `copy of` cannot copy it: a copy would be a block Ember made that the destructor would end"))
+                    .help(format!("keep a view of it: `ref {text}`, or get another from the function that returns one")),
+            );
+            return true;
+        }
         let has_clone = self.is_cloneable(ty) || self.implements(ty, Symbol::intern("std.core.Clone"));
         if !has_clone {
             let help = match self.types.kind(ty) {
@@ -48869,6 +49667,17 @@ impl<'a> Checker<'a> {
             && self.reflected(receiver.ty)
         {
             return self.synth_class_type_info(receiver, span);
+        }
+        // `[STD-9]` (verdict 117) — `v.fmt_print(ref mut f)`: `Printable`'s method, the compiler's
+        // for every type with `Display` or `Debug`, on a type with no method of that name.
+        if name.name.is("fmt_print")
+            && generic_args.is_empty()
+            && receiver.ty != self.common.error
+            && !matches!(self.types.kind(receiver.ty), TyKind::Param { .. })
+            && self.lookup_method(receiver.ty, name.name).is_none()
+            && let [arg] = args
+        {
+            return self.synth_fmt_print(receiver, &arg.value, span);
         }
         if receiver.ty == self.common.error {
             // `[TYP-23]` — `xs.push(v)` says what an open `xs = []` holds.
@@ -49291,9 +50100,9 @@ impl<'a> Checker<'a> {
             }
             let signature = self.signatures[def.0 as usize].clone();
             if args.len() != signature.params.len() {
-                self.report_arity(def, format!("`{}`", name.name), signature.params.len(), args.len(), span);
+                self.report_arity(def, format!("`{}`", name.name), signature.params.len(), args.len(), span, args);
             }
-            let slots = self.call_argument_slots(name.name, args, &signature.params);
+            let slots = self.call_argument_slots(name.name, args, &signature.params, span, Some(def));
             let checked = self.check_bound_call_arguments(args, &signature.params, &slots, None);
             let modes = signature.params.iter().map(|(_, _, mode, _)| *mode).collect();
             let layout = self.dyn_vtable_layout(&interfaces);
@@ -50447,7 +51256,7 @@ impl<'a> Checker<'a> {
         // rest.
         let expected = signature.len().saturating_sub(1);
         if !self.arity_fits(def, args.len(), expected) {
-            self.report_arity(def, format!("`{}`", name.name), expected, args.len(), span);
+            self.report_arity(def, format!("`{}`", name.name), expected, args.len(), span, args);
         }
         // `[IFC-4]` — the receiver is concrete here, so an associated type in
         // the signature resolves to what this type declared it to be.
@@ -50493,7 +51302,7 @@ impl<'a> Checker<'a> {
         };
         let mut checked = vec![checked_receiver];
         let params = self.signatures[def.0 as usize].params[1..].to_vec();
-        let slots = self.call_argument_slots(name.name, args, &params);
+        let slots = self.call_argument_slots(name.name, args, &params, span, Some(def));
         let owner = self.signatures[def.0 as usize].params[0].1;
         let (values, slots, default_arg_locals) = self.check_call_with_defaults(
             def, name.name, args, &params, &slots, span, Some(checked[0].ty), Some(owner));
@@ -50658,7 +51467,7 @@ impl<'a> Checker<'a> {
         // An interface declaration has no receiver in its parameter list, so
         // every declared parameter is a written argument.
         if args.len() != signature.len() {
-            self.report_arity(def, format!("`{}`", name.name), signature.len(), args.len(), span);
+            self.report_arity(def, format!("`{}`", name.name), signature.len(), args.len(), span, args);
         }
         let mut checked = vec![self.pass_receiver_to(receiver, receiver_mode, def, span)];
         let params = self.signatures[def.0 as usize].params.clone();
@@ -50673,7 +51482,7 @@ impl<'a> Checker<'a> {
             })
             .collect::<Vec<_>>();
         self.assoc_instance = saved_instance;
-        let slots = self.call_argument_slots(name.name, args, &params);
+        let slots = self.call_argument_slots(name.name, args, &params, span, Some(def));
         self.check_direct_call_safety(def, span);
         checked.extend(self.check_bound_call_arguments(args, &params, &slots, Some(def)));
         Expr {
@@ -50701,7 +51510,7 @@ impl<'a> Checker<'a> {
             .current_generics
             .iter()
             .enumerate()
-            .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.name }))
+            .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.param_name() }))
             .collect();
         let key = (def, parameter, bound, callers.clone());
         if let Some(&read) = self.bound_call_signatures.get(&key) {
@@ -50967,6 +51776,15 @@ impl<'a> Checker<'a> {
     /// (`[CLO-11]`) or any expression of callable type (`make()(3)`), by its
     /// type, as a local of that type is called.
     fn call_value(&mut self, value: Expr, args: &[ast::Arg], span: Span) -> Expr {
+        // `[TYP-47]` — `f(values...)`: a callable value takes a pack's values as its parameters,
+        // `fn(Ts...)` spelled out.
+        let expanded = self.expand_spread_args(args);
+        for arg in &expanded {
+            if let ast::ExprKind::Spread(_) = arg.value.kind {
+                self.pack_spreads.insert(arg.value.span);
+            }
+        }
+        let args = expanded.as_slice();
         // ODR-240 — a callable lent `ref mut` is called through the reference.
         let value = if matches!(*self.types.kind(value.ty), TyKind::Ref { mutable: true, .. }) {
             self.through_callable_ref(value)
@@ -51028,6 +51846,15 @@ impl<'a> Checker<'a> {
         consumes_callee: bool,
         latebound_override: bool,
     ) -> Expr {
+        // `[TYP-47]` — `f(values...)`: a callable value takes a pack's values as its parameters,
+        // `fn(Ts...)` spelled out.
+        let expanded = self.expand_spread_args(args);
+        for arg in &expanded {
+            if let ast::ExprKind::Spread(_) = arg.value.kind {
+                self.pack_spreads.insert(arg.value.span);
+            }
+        }
+        let args = expanded.as_slice();
         // ODR-278 — a call through a function item calls its function (lowering makes it direct),
         // as its shape says it is called.
         let signature = self.types.item_shape(callee.ty).unwrap_or(callee.ty);
@@ -51073,11 +51900,9 @@ impl<'a> Checker<'a> {
         let latebound = latebound || latebound_override;
         if args.len() != params.len() {
             let shown = self.types.display(signature);
-            self.error(
-                codes::E2020,
-                span,
-                format!("`{shown}` takes {} arguments, found {}", params.len(), args.len()),
-            );
+            let what = format!("gives {} arguments, and `{shown}` takes {}", args.len(), params.len());
+            let diagnostic = self.argument_misfit(span, span, &shown, what, None);
+            self.sink.emit(diagnostic);
             return Expr { ty: ret, kind: ExprKind::Error, span };
         }
         let mut checked = Vec::new();
@@ -51085,11 +51910,9 @@ impl<'a> Checker<'a> {
             if let Some(name) = arg.name {
                 // `[TYP-25]`'s named arguments match parameter *names*, and a
                 // function type has none.
-                self.error(
-                    codes::E2020,
-                    name.span,
-                    "a call through a function value takes positional arguments",
-                );
+                let what = format!("names `{}`, and a function value has no parameter names: give it by position", name.name);
+                let diagnostic = self.argument_misfit(name.span, span, "f", what, None);
+                self.sink.emit(diagnostic);
             }
             checked.push(self.check_argument(&arg.value, param.ty, hir_mode(param.mode)));
         }
@@ -51120,11 +51943,9 @@ impl<'a> Checker<'a> {
             self.signatures[def.0 as usize].params.iter().map(|(_, ty, mode, _)| (*ty, *mode)).collect();
         let ret = self.signatures[def.0 as usize].ret;
         if args.len() != signature.len() {
-            self.error(
-                codes::E2020,
-                span,
-                format!("this function takes {} argument{}, found {}", signature.len(), if signature.len() == 1 { "" } else { "s" }, args.len()),
-            );
+            let what = format!("gives {} argument{}, and this function takes {}", args.len(), if args.len() == 1 { "" } else { "s" }, signature.len());
+            let diagnostic = self.argument_misfit(span, span, "f", what, self.declaration_first_line(def));
+            self.sink.emit(diagnostic);
             return Expr { ty: ret, kind: ExprKind::Error, span };
         }
         let checked = args
@@ -51132,11 +51953,9 @@ impl<'a> Checker<'a> {
             .zip(signature.iter())
             .map(|(arg, &(param_ty, mode))| {
                 if let Some(name) = arg.name {
-                    self.error(
-                        codes::E2020,
-                        name.span,
-                        "a call through a function value takes positional arguments",
-                    );
+                    let what = format!("names `{}`, and a function value has no parameter names: give it by position", name.name);
+                    let diagnostic = self.argument_misfit(name.span, span, "f", what, None);
+                    self.sink.emit(diagnostic);
                 }
                 self.check_argument(&arg.value, param_ty, mode)
             })
@@ -51384,7 +52203,7 @@ impl<'a> Checker<'a> {
                             ffi_counted: None,
                         });
                         self.closure_symbols.insert(def, call.symbol);
-                        self.closure_calls.insert(id, ClosureCall { def, once: call.once, owned: call.owned, moved: None });
+                        self.closure_calls.insert(id, ClosureCall { def, once: call.once, owned: call.owned, moved: None, moved_at: None });
                     }
                     self.types.intern(TyKind::Struct(id))
                 } else if let Some((generic, args)) = &entry.origin {
@@ -51563,7 +52382,7 @@ impl<'a> Checker<'a> {
             // is no keyword for "borrowed") receives the value, so
             // `opt.map(fn(s) => s)` can hand `s` on. `mut` is never inferred:
             // a write to the caller's place is written where it happens, and
-            // an unwritten `mut` stays `E2228` (shape B15).
+            // an unwritten `mut` stays `E2020`.
             let mode = match (param.mode, expected) {
                 (ast::Mode::Borrow, Some(expected)) if expected.mode == FnParamMode::Owned => {
                     FnParamMode::Owned
@@ -51877,8 +52696,10 @@ impl<'a> Checker<'a> {
         // directly owned captures. It becomes `CallableOnce` only when the
         // typed body actually consumes a non-`Copy` capture.
         self.first_moved_capture.set(None);
+        self.first_moved_span.set(None);
         let once = owned && self.closure_body_moves_capture(&body, LocalId(0));
         let moved = if once { self.first_moved_capture.get().and_then(|index| captured.get(index)).map(|(name, _)| *name) } else { None };
+        let moved_at = if moved.is_some() { self.first_moved_span.get() } else { None };
         debug_assert_eq!(once, probe_once, "closure probe and final body disagree about CallableOnce");
         let call_mode = if once {
             Mode::Owned
@@ -51904,7 +52725,7 @@ impl<'a> Checker<'a> {
             skipped_before,
             reserved,
         );
-        self.closure_calls.insert(struct_id, ClosureCall { def, once, owned: owned, moved });
+        self.closure_calls.insert(struct_id, ClosureCall { def, once, owned: owned, moved, moved_at });
 
         // The closure *value* is its environment. Ordinary closures borrow
         // each captured local; `owned fn` moves or copies each capture into
@@ -52825,6 +53646,7 @@ impl<'a> Checker<'a> {
         {
             if self.first_moved_capture.get().is_none() {
                 self.first_moved_capture.set(Some(index));
+                self.first_moved_span.set(Some(expr.span));
             }
             return true;
         }
@@ -53208,7 +54030,7 @@ impl<'a> Checker<'a> {
         args.iter()
             .map(|a| match a {
                 ast::TypeOrExpr::Expr(e) if self.is_const_argument(e) => self.const_argument_type(e),
-                ast::TypeOrExpr::Type(ty) => self.generic_type_argument(ty),
+                ast::TypeOrExpr::Type(ty) => self.resolve_type_argument(ty),
                 ast::TypeOrExpr::Expr(e) => self.type_from_expr(e),
                 ast::TypeOrExpr::Binding { name, .. } => {
                     let name = name.name;
@@ -55813,7 +56635,7 @@ impl<'a> Checker<'a> {
                     refused = true;
                 } else if !self.is_send(ty) {
                     let mut diagnostic =
-                        Diagnostic::error(codes::E7004, arg_span, format!("{} captures `{capture}`, a `{ty_shown}`, which is not Send", words.who))
+                        Diagnostic::error(self.not_send_code(ty), arg_span, format!("{} captures `{capture}`, a `{ty_shown}`, which is not Send", words.who))
                             .note(words.moves_note);
                     if let Some(advice) = self.sync_class_advice(ty) {
                         diagnostic = diagnostic.help(advice);
@@ -55959,8 +56781,14 @@ impl<'a> Checker<'a> {
                 break;
             }
         }
+        // A call checked twice (a generic callee's arguments are checked to infer its parameters,
+        // then against them) noted its lambda twice: each written lambda is checked once.
+        let mut seen = HashSet::new();
         for (callee, index, given) in args {
             let CallableArg::Captures(ty, span) = given else { continue };
+            if !seen.insert((callee, index, span)) {
+                continue;
+            }
             let Some(callback) = self.nullable_callbacks.get(&callee).and_then(|callbacks| callbacks.iter().find(|(at, _)| *at == index)).map(|(_, callback)| callback.clone()) else { continue };
             self.foreign_callback_refused(ty, span, &callback);
         }
@@ -56192,7 +57020,7 @@ impl<'a> Checker<'a> {
                 let (code, what, ok) = match *self.types.kind(ty) {
                     TyKind::Ref { mutable: false, inner } => (codes::E7005, (inner, "borrows", "Sync"), self.is_sync(inner)),
                     TyKind::Ref { mutable: true, inner } => (codes::E7004, (inner, "borrows mutably", "Send"), self.is_send(inner)),
-                    _ => (codes::E7004, (ty, "captures", "Send"), self.is_send(ty)),
+                    _ => (self.not_send_code(ty), (ty, "captures", "Send"), self.is_send(ty)),
                 };
                 if !ok {
                     let (ty, verb, marker) = what;
@@ -56989,6 +57817,16 @@ impl<'a> Checker<'a> {
     /// `[TYP-17]` — `E2040` for a type argument that misses a bound, with
     /// what would meet it where that is known.
     fn report_missed_bound(&mut self, ty: Ty, bound: Symbol, param: Symbol, span: Span) {
+        // `[DIA-14]` — a type a failed expression gave (`(<error>, int)`) has nothing more to report.
+        if self.mentions_error(ty) {
+            return;
+        }
+        // `[STD-9]` — `Printable` is `Display`'s text, else `Debug`'s: a type with neither is
+        // reported as printing it is (`E2040`, whose help is to implement `Display`).
+        if bound.is("std.core.Printable") {
+            self.report_not_printable(ty, span);
+            return;
+        }
         // `[THR-8]` (ODR-264) — a lambda where `Send` is required (`f: fn() + Send`, `F: fn() +
         // Send`): the capture that is not, as the thread checks name it (`E7004`).
         if bound.is("std.core.Send")
@@ -57002,7 +57840,7 @@ impl<'a> Checker<'a> {
                     continue;
                 }
                 let shown = self.types.display(capture_ty);
-                let mut diagnostic = Diagnostic::error(codes::E7004, span, format!("this lambda captures `{capture}`, a `{shown}`, which is not Send"))
+                let mut diagnostic = Diagnostic::error(self.not_send_code(capture_ty), span, format!("this lambda captures `{capture}`, a `{shown}`, which is not Send"))
                     .primary_label("passed here")
                     .note("the parameter takes only what may move to another thread [CLO-10], [THR-8]");
                 if let Some(advice) = self.sync_class_advice(capture_ty) {
@@ -57919,10 +58757,11 @@ impl<'a> Checker<'a> {
             return error;
         }
         if self.types.is_view(key) || self.types.is_view(value) {
-            self.error(
-                codes::E2130,
-                span,
-                "an ArenaMap cannot store a view key or value",
+            // `[TYP-15a]`, `[ARN-5]` allow it; the check that keeps such views no longer than the arena
+            // is not built, so it is never accepted until then.
+            self.sink.emit(
+                Diagnostic::error(codes::E0900, span, "an `ArenaMap` with a view key or value is not built by this compiler yet")
+                    .note("`[TYP-15a]` and `[ARN-5]` allow it, but the check that keeps such views no longer than the arena is not built"),
             );
             return error;
         }
@@ -58228,10 +59067,9 @@ impl<'a> Checker<'a> {
             }
             let inner = explicit[0];
             if self.types.is_view(inner) {
-                self.error(
-                    codes::E2130,
-                    span,
-                    "an uninitialized arena span cannot itself contain a view type",
+                self.sink.emit(
+                    Diagnostic::error(codes::E0900, span, "an uninitialized arena span of views is not built by this compiler yet")
+                        .note("`[TYP-15a]` and `[ARN-5]` allow it, but the check that keeps such views no longer than the arena is not built"),
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
@@ -59826,11 +60664,94 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// `[DIA-22]` — a call with the wrong number of arguments, reported at the call with the
-    /// callee's declaration as a secondary span.
-    fn report_arity(&mut self, def: DefId, shown: String, declared: usize, given: usize, span: Span) {
-        let noun = if declared == 1 { "argument" } else { "arguments" };
-        let mut diagnostic = Diagnostic::error(codes::E2020, span, format!("{shown} takes {declared} {noun}, found {given}"));
+    /// `[TYP-25]` — the first line of the declaration of `def`, as written (`fn area(w: int, h: int)
+    /// -> int`): what an `E2021` message shows of the callee.
+    fn declaration_first_line(&self, def: DefId) -> Option<String> {
+        let span = self.signatures[def.0 as usize].decl;
+        if span == Span::DUMMY {
+            return None;
+        }
+        let text = &self.sources.get(&span.file)?.text;
+        let start = text.get(..span.start as usize)?.rfind('\n').map_or(0, |at| at + 1);
+        let line = text.get(start..)?.lines().next()?.trim();
+        let line = line.strip_suffix(':').unwrap_or(line).trim_end();
+        (!line.is_empty()).then(|| line.to_string())
+    }
+
+    /// `[STR-1]` — a memberwise constructor's first line, as its parameters would read: `Point(x:
+    /// int, y: int)`, a field with a default `y: int = …`.
+    fn memberwise_line(&self, name: Symbol, fields: &[(Symbol, Ty, bool, Span)]) -> String {
+        let shown: Vec<String> = fields
+            .iter()
+            .map(|(field, ty, has_default, written)| {
+                // The type as the declaration wrote it (`int`), else as the checker names it.
+                let ty = self
+                    .sources
+                    .get(&written.file)
+                    .and_then(|source| source.text.get(written.start as usize..written.end as usize))
+                    .filter(|text| !text.is_empty() && !text.contains('\n'))
+                    .map_or_else(|| self.types.display(*ty), str::to_string);
+                format!("{field}: {ty}{}", if *has_default { " = …" } else { "" })
+            })
+            .collect();
+        format!("{name}({})", shown.join(", "))
+    }
+
+    /// `[TYP-25]` — `E2021` (shape N6): `what` about the call written at `call`, with the callee's
+    /// first line when it has one.
+    fn argument_misfit(&self, span: Span, call: Span, callee: &str, what: String, line: Option<String>) -> Diagnostic {
+        let call = self.written_line(call).unwrap_or_else(|| format!("{callee}(…)"));
+        let mut message = format!("`{call}` {what}");
+        if let Some(line) = line {
+            message.push_str(&format!(": `{line}`"));
+        }
+        Diagnostic::error(codes::E2021, span, message)
+    }
+
+    /// `[TYP-25]` — the call with a parameter's name before one positional argument, which `E2021`
+    /// writes for an argument that came after a named one.
+    fn call_with_argument_named(&self, call: Span, argument: Span, name: Symbol) -> Option<String> {
+        let text = self.written_line(call)?;
+        let (from, to) = (argument.start.checked_sub(call.start)? as usize, argument.end.checked_sub(call.start)? as usize);
+        Some(format!("{}{name}={}{}", text.get(..from)?, text.get(from..to)?, text.get(to..)?))
+    }
+
+    /// `[DIA-22]`, `[TYP-25]` — a call with more arguments than the callee has parameters, or too few
+    /// for the parameters that have no default: `E2021` at the call, with the callee's first line and
+    /// its declaration as a secondary span.
+    fn report_arity(&mut self, def: DefId, shown: String, declared: usize, given: usize, span: Span, args: &[ast::Arg]) {
+        // The parameters a call gives: the signature's last `declared` (a method's receiver comes first).
+        let params: Vec<Symbol> = {
+            let all = &self.signatures[def.0 as usize].params;
+            let skip = all.len().saturating_sub(declared);
+            all.iter().skip(skip).map(|(name, ..)| *name).collect()
+        };
+        self.report_arity_of(def, shown, &params, given, span, args);
+    }
+
+    /// `[TYP-25]` (N171) — `E2021` for a call that gives too many arguments or leaves out a parameter with no
+    /// default, against `params`, the parameters its positional arguments fill (for a function over a pack,
+    /// the ones before the pack's values, `[TYP-47]`).
+    fn report_arity_of(&mut self, def: DefId, shown: String, params: &[Symbol], given: usize, span: Span, args: &[ast::Arg]) {
+        let declared = params.len();
+        let callee = shown.trim_matches('`').to_string();
+        let line = self.declaration_first_line(def);
+        let what = if given > declared {
+            let noun = |n: usize| if n == 1 { "argument" } else { "arguments" };
+            format!("gives {given} {}, and `{callee}` takes {declared}", noun(given))
+        } else {
+            // The first parameter that nothing gives and that has no default.
+            let defaults = self.param_defaults.get(&def).map(|(_, list)| list.iter().map(|(name, _)| *name).collect::<Vec<_>>()).unwrap_or_default();
+            let positional = args.iter().filter(|arg| arg.name.is_none()).count();
+            let missing = params.iter().enumerate().find(|(index, name)| {
+                *index >= positional && !args.iter().any(|arg| arg.name.is_some_and(|given| given.name == **name)) && !defaults.contains(name)
+            });
+            match missing {
+                Some((_, name)) => format!("gives nothing for `{name}`, which has no default"),
+                None => format!("gives {given} {}, and `{callee}` takes {declared}", if given == 1 { "argument" } else { "arguments" }),
+            }
+        };
+        let mut diagnostic = self.argument_misfit(span, span, &callee, what, line);
         let decl = self.signatures[def.0 as usize].decl;
         if decl != Span::DUMMY {
             diagnostic = diagnostic.secondary(decl, format!("{shown} is declared here"));
@@ -59854,7 +60775,11 @@ impl<'a> Checker<'a> {
         callee: Symbol,
         args: &[ast::Arg],
         params: &[(Symbol, Ty, Mode, Span)],
+        call: Span,
+        def: Option<DefId>,
     ) -> Vec<Option<usize>> {
+        let line = def.and_then(|def| self.declaration_first_line(def));
+        let callee_shown = callee.to_string();
         // `[DIA-22]` — where the parameters are declared, for an unknown name.
         let declared = params.first().map_or(Span::DUMMY, |param| param.3);
         let mut slots = vec![None; args.len()];
@@ -59868,7 +60793,8 @@ impl<'a> Checker<'a> {
                 match params.iter().position(|(param, _, _, _)| *param == name.name) {
                     Some(slot) => Some(slot),
                     None => {
-                        let mut diagnostic = Diagnostic::error(codes::E2020, name.span, format!("`{callee}` has no parameter `{}`", name.name));
+                        let what = format!("names `{}`, and `{callee}` has no parameter of that name", name.name);
+                        let mut diagnostic = self.argument_misfit(name.span, call, &callee_shown, what, line.clone());
                         if declared != Span::DUMMY {
                             let names: Vec<String> = params.iter().map(|(param, ..)| format!("`{param}`")).collect();
                             diagnostic = diagnostic.secondary(declared, format!("its parameters are {}", names.join(", ")));
@@ -59879,11 +60805,19 @@ impl<'a> Checker<'a> {
                 }
             } else {
                 if named_seen {
-                    self.error(
-                        codes::E2020,
-                        arg.span,
-                        "positional arguments must come before named ones",
-                    );
+                    // The line to write names this argument with the first parameter no argument before it gives.
+                    let earlier = args[..arg_index].iter().rev().find(|earlier| earlier.name.is_some()).and_then(|earlier| self.written_line(earlier.span));
+                    let free = assigned.iter().position(|taken| !taken).map(|slot| params[slot].0);
+                    let written = self.written_line(call).and(self.written_line(arg.span));
+                    let mut what = match (&written, &earlier) {
+                        (Some(this), Some(earlier)) => format!("gives `{this}` after the named `{earlier}`, and positional arguments come first"),
+                        _ => "gives a positional argument after a named one, and positional arguments come first".to_string(),
+                    };
+                    if let Some(fixed) = free.and_then(|free| self.call_with_argument_named(call, arg.span, free)) {
+                        what.push_str(&format!("; write `{fixed}`"));
+                    }
+                    let diagnostic = self.argument_misfit(arg.span, call, &callee_shown, what, None);
+                    self.sink.emit(diagnostic);
                 }
                 while next_positional < assigned.len() && assigned[next_positional] {
                     next_positional += 1;
@@ -59895,11 +60829,9 @@ impl<'a> Checker<'a> {
 
             let Some(slot) = slot else { continue };
             if assigned[slot] {
-                self.error(
-                    codes::E1030,
-                    arg.value.span,
-                    format!("parameter `{}` is given twice", params[slot].0),
-                );
+                let what = format!("gives `{}` twice", params[slot].0);
+                let diagnostic = self.argument_misfit(arg.value.span, call, &callee_shown, what, line.clone());
+                self.sink.emit(diagnostic);
                 continue;
             }
             assigned[slot] = true;
@@ -59948,6 +60880,7 @@ impl<'a> Checker<'a> {
                 ast::ParamKind::Receiver { .. } => Symbol::intern("self"),
             };
             if let Some(default) = &param.default
+                && !matches!(&param.kind, ast::ParamKind::Named { ty, .. } if matches!(ty.kind, ast::TypeKind::Spread(_)))
                 && let Some(&(_, ty, _, _)) = params.iter().find(|(n, ..)| *n == name)
                 // A generic body is checked once per instance; report once.
                 && self.reported_defaults.insert(default.span)
@@ -60043,7 +60976,8 @@ impl<'a> Checker<'a> {
                 // was reported already, and may be the one meant here.
                 if slots.iter().all(Option::is_some) && self.arity_fits(def, slots.len(), params.len()) {
                     let declared = params[index].3;
-                    let mut diagnostic = Diagnostic::error(codes::E2020, span, format!("`{callee}` needs a value for `{name}`"));
+                    let line = self.declaration_first_line(def);
+                    let mut diagnostic = self.argument_misfit(span, span, &callee.to_string(), format!("gives nothing for `{name}`, which has no default"), line);
                     if declared != Span::DUMMY {
                         diagnostic = diagnostic.secondary(declared, format!("`{name}` is declared here, with no default"));
                     }
@@ -60623,17 +61557,19 @@ impl<'a> Checker<'a> {
             let value = self.check_expr(&args[0].value, fields[field].ty);
             return Expr { ty, kind: ExprKind::Builtin { which: Builtin::UnionLit { union: id, field }, args: vec![value] }, span };
         }
-        let field_info: Vec<(Symbol, Ty, bool)> = self
+        let field_info: Vec<(Symbol, Ty, bool, Span)> = self
             .types
             .struct_def(id)
             .fields
             .iter()
-            .map(|f| (f.name, f.ty, f.has_default))
+            .map(|f| (f.name, f.ty, f.has_default, f.ty_span))
             .collect();
 
         // `[STR-1]` — positional or named; fields with defaults may be omitted.
-        let names: Vec<Symbol> = field_info.iter().map(|(field, _, _)| *field).collect();
-        let slots = self.constructor_slots(name, &names, args, span);
+        let names: Vec<Symbol> = field_info.iter().map(|(field, ..)| *field).collect();
+        let line = self.memberwise_line(name, &field_info);
+        let slots = self.constructor_slots(name, &names, args, span, Some(line));
+        let bound_all = slots.len() == args.len();
         let mut values: Vec<Option<Expr>> = (0..field_info.len()).map(|_| None).collect();
         for (arg, field) in slots {
             // `[OWN-10]` — the field a value is made for, for `E2123`'s words.
@@ -60641,22 +61577,22 @@ impl<'a> Checker<'a> {
             values[field] = Some(self.check_expr(&args[arg].value, field_info[field].1));
             self.filling = outer;
         }
-        self.finish_struct_literal(id, name, values, span)
+        self.finish_struct_literal(id, name, values, span, bound_all)
     }
 
     /// The literal of struct `id` from the value for each field; a field
     /// given none takes its default (`[STR-2]`) or is reported.
-    fn finish_struct_literal(&mut self, id: StructId, name: Symbol, mut values: Vec<Option<Expr>>, span: Span) -> Expr {
-        let field_info: Vec<(Symbol, Ty, bool)> = self
+    fn finish_struct_literal(&mut self, id: StructId, name: Symbol, mut values: Vec<Option<Expr>>, span: Span, complain: bool) -> Expr {
+        let field_info: Vec<(Symbol, Ty, bool, Span)> = self
             .types
             .struct_def(id)
             .fields
             .iter()
-            .map(|f| (f.name, f.ty, f.has_default))
+            .map(|f| (f.name, f.ty, f.has_default, f.ty_span))
             .collect();
         let ty = self.types.intern(TyKind::Struct(id));
         let mut fields = Vec::with_capacity(field_info.len());
-        for (index, (field_name, field_ty, has_default)) in field_info.iter().enumerate() {
+        for (index, (field_name, field_ty, has_default, _)) in field_info.iter().enumerate() {
             match values[index].take() {
                 Some(expr) => fields.push(expr),
                 None => {
@@ -60678,12 +61614,11 @@ impl<'a> Checker<'a> {
                             fields.push(value);
                         }
                         _ => {
-                            if !has_default {
-                                self.error(
-                                    codes::E2020,
-                                    span,
-                                    format!("field `{field_name}` of `{name}` has no value"),
-                                );
+                            if !has_default && complain {
+                                let line = self.memberwise_line(name, &field_info);
+                                let what = format!("gives nothing for `{field_name}`, which has no default");
+                                let diagnostic = self.argument_misfit(span, span, &name.to_string(), what, Some(line));
+                                self.sink.emit(diagnostic);
                             }
                             fields.push(Expr { ty: self.common.error, kind: ExprKind::Error, span });
                         }
@@ -60749,11 +61684,11 @@ impl<'a> Checker<'a> {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         if !has_init && !has_base && args.len() > fields.len() {
-            self.error(
-                codes::E2020,
-                span,
-                format!("`{name}()` has {} fields, found {} arguments", fields.len(), args.len()),
-            );
+            let info: Vec<(Symbol, Ty, bool, Span)> = fields.iter().map(|field| (field.name, field.ty, field.has_default, field.ty_span)).collect();
+            let line = self.memberwise_line(name, &info);
+            let what = format!("gives {} arguments, and `{name}` takes {}", args.len(), fields.len());
+            let diagnostic = self.argument_misfit(span, span, &name.to_string(), what, Some(line));
+            self.sink.emit(diagnostic);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         if has_init {
@@ -60781,10 +61716,10 @@ impl<'a> Checker<'a> {
             let (init, values, arg_eval_order) = if self.signatures[init.0 as usize].generics.is_empty() {
                 let params = &signature_params[1..];
                 if args.len() != params.len() {
-                    self.report_arity(init, format!("`{name}()`"), params.len(), args.len(), span);
+                    self.report_arity(init, format!("`{name}()`"), params.len(), args.len(), span, args);
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
-                let slots = self.call_argument_slots(name, args, params);
+                let slots = self.call_argument_slots(name, args, params, span, Some(init));
                 self.check_direct_call_safety(init, span);
                 // `[OWN-9]` (verdict 159) — a constructor's argument takes no word: it is given as `=`
                 // gives a value, whatever `init`'s first line says.
@@ -60900,7 +61835,12 @@ impl<'a> Checker<'a> {
         // are a function-call contract, not field names.
         let mut values_by_field: Vec<Option<Expr>> = (0..fields.len()).map(|_| None).collect();
         let names: Vec<Symbol> = fields.iter().map(|field| field.name).collect();
-        for (arg, index) in self.constructor_slots(name, &names, args, span) {
+        let info: Vec<(Symbol, Ty, bool, Span)> = fields.iter().map(|field| (field.name, field.ty, field.has_default, field.ty_span)).collect();
+        let line = self.memberwise_line(name, &info);
+        let bound = self.constructor_slots(name, &names, args, span, Some(line.clone()));
+        // An argument that did not bind was reported, and may be the one meant for a field left empty.
+        let bound_all = bound.len() == args.len();
+        for (arg, index) in bound {
             values_by_field[index] = Some(self.check_expr(&args[arg].value, fields[index].ty));
         }
 
@@ -60912,11 +61852,11 @@ impl<'a> Checker<'a> {
                 continue;
             }
             if !field.has_default {
-                self.error(
-                    codes::E2020,
-                    span,
-                    format!("field `{}` of `{name}` has no value", field.name),
-                );
+                if bound_all {
+                    let what = format!("gives nothing for `{}`, which has no default", field.name);
+                    let diagnostic = self.argument_misfit(span, span, &name.to_string(), what, Some(line.clone()));
+                    self.sink.emit(diagnostic);
+                }
                 invalid = true;
                 continue;
             }
@@ -61787,7 +62727,9 @@ impl<'a> Checker<'a> {
                 None if spec.is_none() => spec = Some(&arg.value),
                 Some(name) if name.name.is("spec") && spec.is_none() => spec = Some(&arg.value),
                 Some(name) => {
-                    self.error(codes::E2020, name.span, format!("`format` has no parameter `{}`", name.name));
+                    let what = format!("names `{}`, and `format` has no parameter of that name", name.name);
+                    let diagnostic = self.argument_misfit(name.span, span, "format", what, None);
+                    self.sink.emit(diagnostic);
                     return error;
                 }
                 None => {
@@ -61889,7 +62831,9 @@ impl<'a> Checker<'a> {
             }
         }
         let which = if matches!(builtin, Builtin::EPrint | Builtin::EPrintln) { Builtin::EPrint } else { Builtin::Print };
-        let literal = |expr: &Expr| matches!(expr.kind, ExprKind::Str(_) | ExprKind::Error);
+        // `[STD-9]` — a `sep` or `end` that is a literal, or a local (the library's own parameter,
+        // whose argument was evaluated where the call is written), is read where it is printed.
+        let literal = |expr: &Expr| matches!(expr.kind, ExprKind::Str(_) | ExprKind::Local(_) | ExprKind::Error);
         if literal(&sep) {
             let mut pieces = Vec::new();
             for (index, value) in values.into_iter().enumerate() {
@@ -62666,6 +63610,9 @@ impl<'a> Checker<'a> {
                     };
                     return self.synth_binary(op, &cmp, &equal, span);
                 }
+                if self.mentions_error(operand_ty) {
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
                 let shown = self.types.display(operand_ty);
                 let interface = if equality { "Eq" } else { "Ord" };
                 // `[DIA-21]` P10 — `x == None` asks whether `x` holds nothing: `x is None` (`[EXP-9]`).
@@ -62995,7 +63942,7 @@ fn type_names(ty: &ast::TypeExpr, out: &mut HashSet<Symbol>) {
             }
         }
         ast::TypeKind::Array { elem, .. } | ast::TypeKind::SomeType(elem) => type_names(elem, out),
-        ast::TypeKind::SelfType | ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::Infer => {}
+        ast::TypeKind::SelfType | ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::Infer | ast::TypeKind::Spread(_) => {}
     }
 }
 
@@ -63419,7 +64366,7 @@ fn type_expr_names(ty: &ast::TypeExpr, out: &mut Vec<Symbol>) {
             }
         }
         ast::TypeKind::Array { elem, .. } | ast::TypeKind::SomeType(elem) => type_expr_names(elem, out),
-        ast::TypeKind::SelfType | ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::Infer => {}
+        ast::TypeKind::SelfType | ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::Infer | ast::TypeKind::Spread(_) => {}
     }
 }
 
@@ -63921,7 +64868,7 @@ impl ShareWalk<'_> {
                 self.ty(elem);
                 self.expr(len);
             }
-            ast::TypeKind::SelfType | ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::Infer => {}
+            ast::TypeKind::SelfType | ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::Infer | ast::TypeKind::Spread(_) => {}
         }
     }
 
@@ -63976,7 +64923,7 @@ impl ShareWalk<'_> {
                 }
                 self.args(args);
             }
-            E::Lit(_) | E::SelfExpr | E::Error => {}
+            E::Lit(_) | E::SelfExpr | E::Spread(_) | E::Error => {}
             E::Field { base, .. } | E::TupleField { base, .. } => self.expr(base),
             E::IndexOrInstantiate { base, args } => {
                 self.expr(base);
@@ -64603,7 +65550,7 @@ fn ffi_link_name(attrs: &[ast::Attribute]) -> Option<String> {
 /// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — an opaque foreign type's `@ffi(…)`: `destroys(f)`,
 /// `adopt=false`, `threads(creator)` (the other words are checked where the attribute is).
 fn foreign_type_contract(attrs: &[ast::Attribute], module: usize) -> ForeignTypeContract {
-    let mut contract = ForeignTypeContract { module, destroys: None, adopt: true, creator: false };
+    let mut contract = ForeignTypeContract { module, destroys: None, adopt: true, creator: false, main: false };
     for arg in attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi")).flat_map(|attr| &attr.args) {
         match arg {
             ast::AttrArg::Named { name, value } if name.name.is("adopt") => {
@@ -64619,6 +65566,7 @@ fn foreign_type_contract(attrs: &[ast::Attribute], module: usize) -> ForeignType
                     contract.destroys = Some(segments[0]);
                 } else if word.is("threads") {
                     contract.creator = ffi_contract_word(&only.value).is_some_and(|thread| thread.is("creator"));
+                    contract.main = ffi_contract_word(&only.value).is_some_and(|thread| thread.is("main"));
                 }
             }
             _ => {}
@@ -66572,4 +67520,91 @@ fn variadic_arg_text(expr: &ast::Expr) -> Option<String> {
         ast::ExprKind::Lit(ast::Literal::Str(text)) => Some(format!("{text:?}")),
         _ => None,
     }
+}
+
+/// `[BRW-14]` — whether `line` of a program uses the name `name`: an identifier of that spelling in
+/// its code or in an f-string's braces, not after a `.`, not a named argument's name (`f(n=1)`), not
+/// in a plain string or a comment.
+fn line_mentions(line: &str, name: &str) -> bool {
+    let bytes = line.as_bytes();
+    let word = |c: u8| c == b'_' || c.is_ascii_alphanumeric();
+    let (mut at, mut string, mut braces): (usize, Option<(u8, bool)>, usize) = (0, None, 0);
+    while at < bytes.len() {
+        let c = bytes[at];
+        match string {
+            Some((quote, formatted)) if braces == 0 => {
+                if c == b'\\' {
+                    at += 2;
+                    continue;
+                }
+                if c == quote {
+                    string = None;
+                } else if formatted && c == b'{' {
+                    if bytes.get(at + 1) == Some(&b'{') {
+                        at += 1;
+                    } else {
+                        braces = 1;
+                    }
+                }
+                at += 1;
+                continue;
+            }
+            Some(_) => {
+                if c == b'}' {
+                    braces -= 1;
+                } else if c == b'{' {
+                    braces += 1;
+                }
+            }
+            None => {
+                if c == b'#' {
+                    return false;
+                }
+                if c == b'"' || c == b'\'' {
+                    let formatted = at > 0 && bytes[at - 1] == b'f' && (at == 1 || !word(bytes[at - 2]));
+                    string = Some((c, formatted));
+                    at += 1;
+                    continue;
+                }
+            }
+        }
+        if word(c) {
+            let end = (at..bytes.len()).find(|&i| !word(bytes[i])).unwrap_or(bytes.len());
+            if &line[at..end] == name {
+                let before = line[..at].trim_end().as_bytes().last().copied();
+                let after = line[end..].trim_start();
+                let named_argument = matches!(before, Some(b'(' | b',')) && after.starts_with('=') && !after.starts_with("==");
+                if before != Some(b'.') && !named_argument {
+                    return true;
+                }
+            }
+            at = end;
+            continue;
+        }
+        at += 1;
+    }
+    false
+}
+
+/// `[BRW-14]` — `line` without a trailing comment (a `#` outside a string).
+fn code_before_comment(line: &str) -> &str {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (at, c) in line.char_indices() {
+        match quote {
+            Some(open) => {
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == open {
+                    quote = None;
+                }
+            }
+            None if c == '"' || c == '\'' => quote = Some(c),
+            None if c == '#' => return &line[..at],
+            None => {}
+        }
+    }
+    line
 }

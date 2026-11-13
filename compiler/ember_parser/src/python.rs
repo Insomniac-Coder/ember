@@ -113,8 +113,9 @@ impl Parser<'_> {
         self.tokens.insert(self.pos + 1, token(TokenKind::Punct(Punct::LParen), first.shrink_to_start()));
     }
 
-    /// P19 — `*args` or `**kwargs` in a signature: Ember has no variadic functions. The stars are
-    /// skipped, so the parameter is read as the one it would be.
+    /// P19 — `*args` or `**kwargs` in a signature: Ember's are a pack (`[Ts...]` above the function
+    /// and `args: Ts...`, `[TYP-47]`), or keyword arguments with defaults. The stars are skipped, so
+    /// the parameter is read as the one it would be.
     pub(crate) fn python_star_param(&mut self) {
         let stars = if self.at_punct(Punct::Star) {
             1
@@ -128,15 +129,20 @@ impl Parser<'_> {
         }
         let span = self.span().to(self.tokens[self.pos + 1].span);
         let help = if stars == 1 {
-            "take the values as one parameter, an `Array[T]` or a `Span[T]`, and pass `[a, b]`"
+            "take any number of values as a pack, `[Ts...]` above the function and `args: Ts...`, or one `Array[T]` or `Span[T]` parameter, passed `[a, b]`"
         } else {
             "declare each keyword argument as a parameter with a default: `fn f(width: int = 80)`"
         };
+        let message = if stars == 1 {
+            "`*` is Python's; Ember's function takes any number of values as a pack".to_string()
+        } else {
+            "`**` is Python's; Ember has no keyword arguments beyond the parameters".to_string()
+        };
         self.report(
-            Diagnostic::error(codes::E0100, span, format!("`{}` is Python's; Ember has no variadic functions", "*".repeat(stars)))
+            Diagnostic::error(codes::E0100, span, message)
                 .habit(Habit::P19)
                 .help(help)
-                .note("a call passes exactly the parameters the signature declares (I.6)"),
+                .note("a call passes the parameters the signature declares, a pack's values each of its own type [TYP-47]"),
         );
         self.bump();
     }
