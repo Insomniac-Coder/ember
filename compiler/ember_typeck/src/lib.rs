@@ -39986,6 +39986,11 @@ impl<'a> Checker<'a> {
                 }
                 // `[GRM-36]` — the operand of `ref` is a place: a local, a
                 // field, an index or a dereferenced reference.
+                // `ref mut` before a call that gives a `MutSpan` names that span's elements
+                // (`d = ref mut tracks[name].as_mut_span()`): the span is the view.
+                if *mutable && !is_place(&inner.kind) && matches!(self.types.kind(inner.ty), TyKind::Span { mutable: true, .. }) {
+                    return inner;
+                }
                 if !is_place(&inner.kind) {
                     self.sink.emit(
                         Diagnostic::error(codes::E0111, place.span, "only a place can be borrowed")
