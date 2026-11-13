@@ -1,8 +1,8 @@
 #$ test: compile-fail
 #$ rules: GRM-30, TYP-6
 #$ profiles: debug
-# ODR-280 — `as!` and `as?` are not Ember: a downcast is written `cast x as D` (the `D`, or a panic)
-# or `cast x if D` (`Some(d)` or `None`), and the error for the old spelling names the new one.
+# `[GRM-30]` — `as?` and `as!` are not Ember (`E1010`): the message gives the kind test for a downcast
+# that may fail and `cast s as Circle` for one that stops the program; `cast s when D` is none either.
 
 open class Animal:
     fn name() -> int:
@@ -14,5 +14,6 @@ class Dog(Animal):
 
 fn main():
     a: Animal = Dog()
-    d = a as! Dog    #$ error[E0100]: `as!` is not Ember: a downcast is written `cast x as D`
-    m = a as? Dog    #$ error[E0100]: `as?` is not Ember: a downcast is written `cast x if D`
+    d = a as! Dog    #$ error[E1010]: `as!` is not Ember: write `cast a as Dog`
+    m = a as? Dog    #$ error[E1010]: `as?` is not Ember: test the kind, `if a is Dog as c:`
+    w = cast a when Dog    #$ error[E1010]: `cast a when Dog` is not Ember

@@ -48741,7 +48741,41 @@ impl<'a> Checker<'a> {
         {
             // VII.1 — `=` copies only a `Copy` type's value; a counted one (a class handle, a `shares`
             // value) is none, though this compiler still keeps a count for it.
-            if !self.types.is_copy(value.ty) || self.types.needs_drop(value.ty) {
+            // `[GRM-15]`, `[OWN-11]` — before a part (`body = owns req.body`) the word hands the part over
+            // into the new name, where `=` alone makes a view (`[BRW-12]`).
+            // `[EXP-6]` — an element is the collection's, whose end drops it again: `E3011`.
+            if matches!(value.kind, ExprKind::Index { .. }) && (!self.types.is_copy(value.ty) || self.types.needs_drop(value.ty)) {
+                let part = self.written_line(inner.span).unwrap_or_else(|| "the element".to_string());
+                self.sink.emit(
+                    Diagnostic::error(codes::E3011, span, "cannot move out of an element")
+                        .primary_label("handed over here")
+                        .help(format!("take it out with `mem.take`, `mem.replace`, `swap`, `pop` or `remove`: `{given} = mem.take(ref mut {part})`; or keep a copy: `{given} = copy of {part}`")),
+                );
+                return value;
+            }
+            let a_part = matches!(value.kind, ExprKind::Field { .. });
+            // `[EXP-6]` — a field of a value whose type has a `drop` of its own cannot be taken out of it.
+            if let ExprKind::Field { base, .. } = &value.kind {
+                let owner = match *self.types.kind(base.ty) {
+                    TyKind::Ref { inner, .. } => inner,
+                    _ => base.ty,
+                };
+                let dropping = match *self.types.kind(owner) {
+                    TyKind::Struct(id) => self.types.struct_def(id).has_drop,
+                    TyKind::Enum(id) => self.types.enum_def(id).has_drop,
+                    _ => false,
+                };
+                if dropping {
+                    let part = self.written_line(inner.span).unwrap_or_else(|| "the part".to_string());
+                    let shown = self.types.display(owner);
+                    self.sink.emit(
+                        Diagnostic::error(codes::E3010, span, format!("cannot hand over `{part}` on its own: `{shown}` has a `drop` of its own, which would run over a value with a hole in it"))
+                            .help(format!("take it and leave a value in its place: `{given_line} = mem.take(ref mut {part})`", given_line = given)),
+                    );
+                    return value;
+                }
+            }
+            if !a_part && (!self.types.is_copy(value.ty) || self.types.needs_drop(value.ty)) {
                 let name = self.written_line(inner.span).unwrap_or_else(|| "it".to_string());
                 self.error(codes::E0109, span, format!("`{given} = {name}` already hands `{name}` over; remove `owns`"));
                 return value;

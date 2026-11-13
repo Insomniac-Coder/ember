@@ -544,9 +544,20 @@ impl Parser<'_> {
                 if let PatternKind::Bind { name, sub: None, .. } = &pattern.kind {
                     let comparison = format!("{} == {value_text}", name.name);
                     // `[DIA-21]` P16 — Python's `if x = 5:` typo.
+                    // The header's own word (`if`, `elif`, `while`): the token before the condition.
+                    let word = self
+                        .tokens
+                        .iter()
+                        .rev()
+                        .skip_while(|token| token.span.start >= start.start)
+                        .find_map(|token| match token.kind {
+                            TokenKind::Keyword(kw @ (Kw::If | Kw::Elif | Kw::While)) => Some(kw.as_str()),
+                            _ => None,
+                        })
+                        .unwrap_or("if");
                     diagnostic = diagnostic
                         .habit(ember_diag::habits::Habit::P16)
-                        .suggest(format!("did you mean `{comparison}`?"), span, comparison)
+                        .suggest(format!("to compare, write `{word} {comparison}:`"), span, comparison)
                         .note(format!("to declare `{}`, write `{} = {value_text}` on the line before", name.name, name.name));
                 } else {
                     diagnostic = diagnostic.help("write `x = e` on the preceding line");
@@ -615,8 +626,12 @@ impl Parser<'_> {
         }
         let type_only = matches!(
             self.peek(),
-            TokenKind::Keyword(Kw::Ref | Kw::Dyn | Kw::Fn | Kw::Extern | Kw::Void)
+            TokenKind::Keyword(
+                Kw::Ref | Kw::Owns | Kw::Shares | Kw::ThreadShared | Kw::Weakref | Kw::Sharedref | Kw::Dyn | Kw::Fn | Kw::Extern | Kw::Void
+            )
         ) || self.at_punct(Punct::Star)
+            || (self.at_contextual("some") && matches!(self.peek_at(1), TokenKind::Ident(_)))
+            || (self.at_contextual("once") && self.at_kw_at(1, Kw::Fn))
             || self.at_punct(Punct::Bang);
         if type_only {
             return TypeOrExpr::Type(self.parse_type());
@@ -1331,6 +1346,20 @@ impl Parser<'_> {
             true
         } else if self.eat_kw(Kw::If) {
             false
+        } else if self.at_contextual("when") {
+            // `[GRM-30]` — `cast s when Circle` is not Ember either.
+            let span = self.span();
+            self.bump();
+            let ty = self.parse_type();
+            let name = self.src.get(operand.span.start as usize..operand.span.end as usize).unwrap_or("s").to_string();
+            let kind = self.src.get(ty.span.start as usize..ty.span.end as usize).unwrap_or("T").to_string();
+            self.report(Diagnostic::error(
+                codes::E1010,
+                span,
+                format!("`cast {name} when {kind}` is not Ember: test the kind, `if {name} is {kind} as c:`, or write `cast {name} as {kind}` for one that stops the program"),
+            ));
+            let id = self.next_id();
+            return Expr { id, kind: ExprKind::Downcast { expr: Box::new(operand), ty, forced: true }, span: start.to(self.prev_span()) };
         } else {
             let found = self.peek().to_string();
             let span = self.span();
@@ -1350,15 +1379,22 @@ impl Parser<'_> {
     /// spelling that replaced it, and the downcast it meant, so checking goes on.
     #[inline(never)]
     fn old_downcast(&mut self, expr: Expr) -> ExprKind {
-        let (forced, written, word) = if self.at_punct(Punct::Bang) { (true, "as!", "as") } else { (false, "as?", "if") };
+        let forced = self.at_punct(Punct::Bang);
+        let written = if forced { "as!" } else { "as?" };
         let span = self.span();
         self.bump();
-        self.report(
-            Diagnostic::error(codes::E0100, span, format!("`{written}` is not Ember: a downcast is written `cast x {word} D`"))
-                .primary_label(format!("write `cast` before the value and `{word}` here"))
-                .help("`cast x as D` gives the `D` and panics if `x` is not one; `cast x if D` gives `Some(d)` or `None`"),
-        );
-        ExprKind::Downcast { expr: Box::new(expr), ty: self.parse_type(), forced }
+        let ty = self.parse_type();
+        // `[GRM-30]` — `E1010`, whose message gives the line to write, from the program's own names.
+        let operand = self.src.get(expr.span.start as usize..expr.span.end as usize).unwrap_or("s").to_string();
+        let kind = self.src.get(ty.span.start as usize..ty.span.end as usize).unwrap_or("T").to_string();
+        let diagnostic = if forced {
+            Diagnostic::error(codes::E1010, span, format!("`as!` is not Ember: write `cast {operand} as {kind}`, which gives the `{kind}` and stops the program if `{operand}` is not one"))
+        } else {
+            Diagnostic::error(codes::E1010, span, format!("`as?` is not Ember: test the kind, `if {operand} is {kind} as c:`, for a downcast that may fail"))
+                .help(format!("`cast {operand} as {kind}` is the one that stops the program if `{operand}` is not a `{kind}`"))
+        };
+        self.report(diagnostic.primary_label(format!("`{written}` is not a word of Ember")));
+        ExprKind::Downcast { expr: Box::new(expr), ty, forced }
     }
 
     fn parse_atom(&mut self, allow_block_lambda: bool) -> Expr {
@@ -2467,6 +2503,16 @@ impl Parser<'_> {
                 PatternKind::Tuple(items.into_iter().map(|e| self.expr_to_pattern(e)).collect())
             }
             ExprKind::Paren(inner) => return self.expr_to_pattern(*inner),
+            // `[GRM-13]`, `[GRM-19]` — `ref mut path` and `ref n` name a part of a condition's pattern
+            // as they do in a `match` arm; `copy of v` a copy of one's own.
+            ExprKind::RefOf { mutable, place } if matches!(&place.kind, ExprKind::Path { segments } if segments.len() == 1) => {
+                let ExprKind::Path { segments } = place.kind else { unreachable!("matched above") };
+                PatternKind::Bind { name: segments[0], by_ref: true, mutable, sub: None }
+            }
+            ExprKind::CopyOf(inner) if matches!(&inner.kind, ExprKind::Path { segments } if segments.len() == 1) => {
+                let ExprKind::Path { segments } = inner.kind else { unreachable!("matched above") };
+                PatternKind::CopyOf { name: segments[0] }
+            }
             // D-776 — `Shape.Square(side)` arrives as a method call on the path `Shape`.
             ExprKind::MethodCall { recv, name, generic_args, args } if generic_args.is_empty() && dotted_path(&recv).is_some() => {
                 let mut path = dotted_path(&recv).expect("just checked");

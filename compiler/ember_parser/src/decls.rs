@@ -1056,7 +1056,9 @@ impl Parser<'_> {
                 break;
             }
         }
+        let rparen_end = self.span().end;
         self.expect_punct(Punct::RParen);
+        let fn_start = self.tokens[signature_start.saturating_sub(1)].span.start;
 
         // `[GRM-41]`, `[FN-4]` — `owns this` after the parameters: the method takes its object over.
         let owns_this_span = self.span();
@@ -1088,12 +1090,51 @@ impl Parser<'_> {
             params.insert(0, Param { id, mode, is_const: false, kind, default: None, span: name.span });
         }
 
+        // `[GRM-41]` — `from` before the result type is out of order (`E0118`): read on, in order.
+        let early_from = (!self.at_punct(Punct::Arrow) && self.at_contextual("from") && matches!(self.peek_at(1), TokenKind::Ident(_)) && self.at_punct_at(2, Punct::Arrow))
+            .then(|| {
+                let at = self.span();
+                self.bump();
+                (at, self.expect_ident())
+            });
         let ret = self.eat_punct(Punct::Arrow).then(|| self.parse_type());
         // `[GRM-41]` — `from` and what the result points into come after its type.
         let from = (ret.is_some() && self.at_contextual("from")).then(|| {
             self.bump();
             self.expect_ident()
         });
+        let from = from.or(early_from.map(|(_, name)| name));
+        // `[GRM-41]` — `owns this` after the result type is out of order too.
+        let late_owns_this = ret.is_some() && !owns_this && self.at_kw(Kw::Owns) && self.at_kw_at(1, Kw::This);
+        let order_at = early_from.map(|(at, _)| at).or_else(|| late_owns_this.then(|| self.span()));
+        if late_owns_this {
+            self.bump();
+            self.bump();
+        }
+        if let Some(at) = order_at {
+            let text = |start: u32, end: u32| self.src.get(start as usize..end as usize).unwrap_or("").to_string();
+            let owns_part = if owns_this || late_owns_this { " owns this" } else { "" };
+            let ret_part = ret.as_ref().map_or(String::new(), |ty| format!(" -> {}", text(ty.span.start, ty.span.end)));
+            let from_part = from.map_or(String::new(), |name| format!(" from {}", name.name));
+            let line = format!("{}{owns_part}{ret_part}{from_part}:", text(fn_start, rparen_end + 1).trim_end());
+            self.report(
+                Diagnostic::error(codes::E0118, at.to(self.prev_span()), "a function's first line gives its parts in this order: the parameters, `owns this`, `->` and the result type, `from` and what the result points into")
+                    .help(format!("write `{line}`")),
+            );
+        }
+        // `[GRM-41]` — nothing else follows the brackets: a clause that says what the function changes or
+        // reads is `E0100`, whose message gives the first line without it.
+        if matches!(self.peek(), TokenKind::Ident(word) if word.is("changes") || word.is("reads")) && matches!(self.peek_at(1), TokenKind::Ident(_)) {
+            let at = self.span();
+            while !self.at_punct(Punct::Colon) && !matches!(self.peek(), TokenKind::Newline | TokenKind::Eof) {
+                self.bump();
+            }
+            let kept = self.src.get(fn_start as usize..at.start as usize).unwrap_or("fn f()").trim_end().to_string();
+            self.report(
+                Diagnostic::error(codes::E0100, at.to(self.prev_span()), "nothing follows a function's brackets that says what it changes or reads: the compiler works out what every function changes and reads from its code")
+                    .help(format!("write `{kept}:`")),
+            );
+        }
         let where_clause = self.parse_where_clause();
 
         // A body is present unless this is an interface or extern signature.
