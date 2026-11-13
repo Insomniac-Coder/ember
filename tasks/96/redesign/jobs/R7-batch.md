@@ -57,8 +57,9 @@ The rules of `N-batch.md`, "Rules for every job", apply, with these:
 
 ## D2 (Opus deputy, a reader; no builds): Hardened_14, then M5 ahead
 
-1. The 11 findings of `review.md`'s round 6, ruled, and the cut `0.9.20_Hardened_14` (running).
-2. Then, one milestone ahead: M5's rules (`MILESTONES.md`, M5: views inside a function, loops, spans, kept views,
+1. The 11 findings of `review.md`'s round 6, ruled, and the cut `0.9.20_Hardened_14` (done: N176 to N181, merged
+   `c167f08d`).
+2. Then, one milestone ahead (a pilot first: A2-2 and A2-3, up to 8 rules, tests in `tasks/96/redesign/jobs/ahead/M5/`): M5's rules (`MILESTONES.md`, M5: views inside a function, loops, spans, kept views,
    generators): their clauses, a test per clause written from the spec alone, and every spec question gathered
    into one cut. And reviews of finished lane jobs when the lead asks.
 
@@ -78,7 +79,8 @@ the files and the old tests for most of these.
   `[FFI-11b]`; E0104's help no longer lists `unsafe` among the contract words.
 - **`ember tcb`** (A5-5): `[TCB-4]`.
 - **A `unique_ptr`'s deleter as the one destructor** (N173): `[FFI-17a]`, `[FFI-36]`, `[FFI-36a]`; what `hide` does to
-  the conflict waits for D2's ruling (the lead tells you).
+  the conflict is N180 (Hardened_14): a hidden declaration counts only where a wrapper calls it, every place is
+  compared at once, and one `E5002` per type names every place.
 - **`unsafe`'s rules**: `[UNS-2]`, `[UNS-3]`, `[UNS-4]`, `[UNS-5]`, `[UNS-10]`, `[UNS-10a]`, `[UNS-11]`. (`[UNS-1]`'s
   `into_raw()` is lane a's.)
 
