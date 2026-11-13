@@ -6,8 +6,9 @@
 
 fn main():
     counter: i32 = 0
-    increment = fn() -> i32:
+    fn increment_fn() -> i32:
         counter = counter + 1
         return counter
+    increment = increment_fn
     counter = 99 #$ error[E3021]: `counter` cannot be written while it is borrowed
     println(increment())

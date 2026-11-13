@@ -12,8 +12,9 @@ class Grid:
     spare: int = 0
 
     fn init(width: int):
-        bump = fn(v: int) -> int:
+        fn bump_fn(v: int) -> int:
             return v + 1
+        bump = bump_fn
         total = width * width
         this.cells = total
         this.rows = 1

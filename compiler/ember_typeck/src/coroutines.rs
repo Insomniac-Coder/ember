@@ -1130,7 +1130,7 @@ impl Rewriter<'_> {
                 let refused = if self.parallel {
                     Some(Diagnostic::error(codes::E7010, span, "a `@parallel` loop's body may not `yield`").note("each chunk of the loop runs on its own, and none can suspend the generator [PAR-2]"))
                 } else if self.deferred {
-                    Some(Diagnostic::error(codes::E2160, span, "a `defer` block cannot `yield`").note("a deferred block runs as its scope ends, which a suspension would leave half done [CTL-7]"))
+                    Some(Diagnostic::error(codes::E2160, span, "a `defer` block runs while its block exits, and `yield` would suspend the generator in the middle of that exit; yield before the block exits, or move the `defer` line below the `yield`").note("a deferred block runs as its scope ends, which a suspension would leave half done [CTL-7]"))
                 } else if place == Place::Operand {
                     Some(
                         Diagnostic::error(codes::E0107, span, "`yield` must be a whole statement")

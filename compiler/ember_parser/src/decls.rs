@@ -1080,6 +1080,17 @@ impl Parser<'_> {
             let why = if !method || is_static { "has no object" } else { "takes its object in its parameters" };
             self.report(Diagnostic::error(codes::E1010, span, format!("`owns this` on a function that {why}")).help("remove `owns this`"));
         }
+        // `[STR-6]`, `[CLS-2]` - `owns this` on `init` is `E2108`: `init` builds the object.
+        if owns_this && method && !is_static && !explicit_receiver && name.name.is("init") {
+            let line = self.src.get(fn_start as usize..(rparen_end + 1) as usize).unwrap_or("fn init()").trim_end().to_string();
+            self.report(
+                Diagnostic::error(
+                    codes::E2108,
+                    owns_this_span.to(self.prev_span()),
+                    format!("`init` builds the object, so it cannot take it over; write `{line}:`"),
+                ),
+            );
+        }
         // A method that does not list its object: it is `this`, its mode worked out from the body
         // (`[EXC-15]`). 0.9.10 read such a function as one with no object; M1's migration writes
         // `static` before those (`M1-plan.md`).

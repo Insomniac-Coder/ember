@@ -450,6 +450,7 @@ impl Parser<'_> {
         let then_block = self.parse_block();
 
         // `elif` is a nested `if` in the else position (Part XVIII §3).
+        self.skip_docs_before_else();
         let else_block = if self.at_kw(Kw::Elif) {
             self.bump_as_if();
             Some(Box::new(ElseBranch::If(self.parse_if_after_keyword())))
@@ -468,6 +469,7 @@ impl Parser<'_> {
         let cond = self.parse_condition();
         self.expect_punct(Punct::Colon);
         let then_block = self.parse_block();
+        self.skip_docs_before_else();
         let else_block = if self.at_kw(Kw::Elif) {
             self.bump_as_if();
             Some(Box::new(ElseBranch::If(self.parse_if_after_keyword())))
@@ -717,6 +719,7 @@ impl Parser<'_> {
     /// `[CTL-4]`/`[GRM-6]` — the loop `else` runs when the loop ends without
     /// `break`.
     fn parse_loop_else(&mut self) -> Option<Block> {
+        self.skip_docs_before_else();
         if !self.eat_kw(Kw::Else) {
             return None;
         }
@@ -739,6 +742,11 @@ impl Parser<'_> {
             if self.eat_indent() {
                 while !self.at_dedent() && !self.at_eof() {
                     self.eat_newlines();
+                    if self.at_dedent() || self.at_eof() {
+                        break;
+                    }
+                    // `[LEX-11]` - a doc comment before an arm documents nothing.
+                    let _ = self.take_doc();
                     if self.at_dedent() || self.at_eof() {
                         break;
                     }
@@ -2162,8 +2170,25 @@ impl Parser<'_> {
         let body = if self.eat_punct(Punct::FatArrow) {
             LambdaBody::Expr(Box::new(self.parse_expr()))
         } else if allow_block_lambda && self.eat_punct(Punct::Colon) {
-            if self.at_newline() {
+            if self.at_newline() && is_owned {
+                // The 0.9.10 `owned fn(x):` closure keeps its block until its capture words are built
+                // (`fn() owns x:`, `[GRM-42]`, M-CLO): it is not a lambda of the 0.9.20 grammar.
                 LambdaBody::Block(self.parse_block())
+            } else if self.at_newline() {
+                // `[GRM-17]` — a `NEWLINE` and `INDENT` after a lambda's `:` is `E0106`: the body is one
+                // simple statement, and a block belongs to a local function (`[GRM-28]`).
+                let colon = self.prev_span();
+                self.report(
+                    Diagnostic::error(
+                        codes::E0106,
+                        colon,
+                        "a lambda's body is one simple statement; declare a local function: `fn add(x):` on the line above with the block below it, then `h = add`",
+                    )
+                    .help("`fn add(x):` on the line above with the block below it, then `h = add` [GRM-28]"),
+                );
+                // The block is read so the rest of the file parses; its body is a placeholder the checker ignores.
+                let _ = self.parse_block();
+                LambdaBody::Expr(Box::new(Expr { id: self.next_id(), kind: ExprKind::Error, span: colon }))
             } else {
                 // `[GRM-17]` (ODR-209) — a `:` body on the lambda's own line is one simple
                 // statement that ends at the statement's newline: `h = fn(x): total += x` is one

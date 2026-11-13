@@ -574,6 +574,18 @@ impl<'a> Parser<'a> {
     /// Whether the run of doc comments at the cursor is followed by an import
     /// rather than by a declaration. `[LEX-11]` ignores blank lines between a
     /// doc comment and what it attaches to, so newlines are skipped here too.
+    /// `[LEX-11]` - a doc comment before `elif` or `else` documents nothing: it is skipped, so the
+    /// comment does not change what the statement means.
+    fn skip_docs_before_else(&mut self) {
+        let mut index = self.pos;
+        while matches!(self.tokens.get(index).map(|t| &t.kind), Some(TokenKind::DocComment(_) | TokenKind::Newline)) {
+            index += 1;
+        }
+        if index > self.pos && matches!(self.tokens.get(index).map(|t| &t.kind), Some(TokenKind::Keyword(Kw::Elif | Kw::Else))) {
+            self.pos = index;
+        }
+    }
+
     fn import_follows_doc_comment(&self) -> bool {
         let mut index = self.pos;
         loop {
@@ -617,15 +629,28 @@ impl<'a> Parser<'a> {
         let mut placement = Vec::new();
         // `[GRM-2]` (0.20) — where the first item or statement begins; an import after it is `E0100`.
         let mut first_decl: Option<ember_span::Span> = None;
+        // `[LEX-10]` - where the first import or item begins.
+        let mut first_any: Option<ember_span::Span> = None;
 
         loop {
             self.eat_newlines();
             if self.at_eof() {
                 break;
             }
-            if matches!(self.peek(), TokenKind::Directive { .. }) {
+            if let TokenKind::Directive { name, value } = self.peek().clone() {
+                // `[LEX-10]` - a `#!` line is a directive wherever it stands, and one below an import or an
+                // item says where to move it.
+                let written = if value.is_empty() { format!("#! {name}") } else { format!("#! {name} {value}") };
+                let above = match first_any {
+                    Some(span) => {
+                        let from = self.src[..span.start as usize].rfind(char::from(10)).map_or(0, |at| at + 1);
+                        let line = self.src[from..].lines().find(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#')).unwrap_or("").trim().trim_end_matches(':').to_string();
+                        format!("; move it above `{line}`")
+                    }
+                    None => String::new(),
+                };
                 self.report(Diagnostic::error(codes::E0104, self.span(),
-                    "a directive must appear before imports and declarations"));
+                    format!("`{written}` is a directive, and directives come first{above}")));
                 self.bump();
                 continue;
             }
@@ -643,6 +668,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if self.at_kw(Kw::Import) || self.at_contextual("from") {
+                first_any.get_or_insert(self.span());
                 if let Some(import) = self.parse_import() {
                     if let Some(first) = first_decl {
                         let line = self.src[..first.start as usize].matches('\n').count() + 1;
@@ -667,6 +693,7 @@ impl<'a> Parser<'a> {
                 self.import_at = Some((self.span().shrink_to_start(), false));
             }
             first_decl.get_or_insert(self.span());
+            first_any.get_or_insert(self.span());
             // `[FFI-30b]` — `pub import c "…"`: only a foreign import may be re-exported.
             if self.at_kw(Kw::Pub)
                 && matches!(self.peek_at(1), TokenKind::Keyword(Kw::Import))

@@ -12,7 +12,8 @@ fn main():
     tokens: Array[Shared[Token]] = Array[Shared[Token]]()
     tokens.push(owns Shared(Token(7)))
     for token in tokens:
-        task = fn():
+        fn task_fn():
             value = token.get_mut() #$ error[E3021]: cannot write through a shared reference
             value.value = 8
+        task = task_fn
         task()

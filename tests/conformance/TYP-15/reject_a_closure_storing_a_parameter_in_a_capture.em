@@ -6,7 +6,8 @@
 
 fn main():
     name = "ann"
-    set = fn(v: StrView):
+    fn set_fn(v: StrView):
         name = v #$ error[E3063]: a parameter's view is stored in
+    set = set_fn
     set("bob")
     println(name)

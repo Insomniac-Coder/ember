@@ -52,8 +52,9 @@ fn strict(a: f64, b: f64, c: f64) -> f64:
 
 @fastmath
 fn total(xs: Array[f64], shapes: Array[Area]) -> f64:
-    scaled = fn(x: f64) -> f64:
+    fn scaled_fn(x: f64) -> f64:
         return x * 1.25
+    scaled = scaled_fn
     sum = 0.0
     for x in xs:
         sum += x

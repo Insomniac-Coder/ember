@@ -12,8 +12,9 @@ fn inc(x: i32) -> i32:
 
 fn main():
     f: fn(i32) -> i32 = inc
-    borrowed = fn() -> i32:
+    fn borrowed_fn() -> i32:
         return f(1)
+    borrowed = borrowed_fn
     println(borrowed())
     owning = owned fn() => f(41)
     println(owning())

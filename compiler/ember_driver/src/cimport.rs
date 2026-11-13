@@ -6919,7 +6919,14 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                 }
                 let mut spell = |ty: &ast::TypeExpr| {
                     let spelled = c_spelling(ty, imported, false);
-                    if spelled.is_none() {
+                    if spelled.is_none() && snippet(ty.span) == "StrView" {
+                        // `[TXT-2]` - text C made is not validated: a `StrView` would take it as it is.
+                        sink.emit(
+                            Diagnostic::error(codes::E5063, ty.span, format!("`StrView` would take text C never validated, in the wrapper of macro `{}`", name.name))
+                                .help("write `CStrView`, and make a `StrView` from it with `to_str()?` [TXT-2]"),
+                        );
+                        matched = false;
+                    } else if spelled.is_none() {
                         sink.emit(
                             Diagnostic::error(codes::E5015, ty.span, format!("`{}` has no C type for the wrapper of macro `{}`", snippet(ty.span), name.name))
                                 .note("a macro's wrapper takes and returns scalars, `CStrView`, the header's types and raw pointers [FFI-6b]"),

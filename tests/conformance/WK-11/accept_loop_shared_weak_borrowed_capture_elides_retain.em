@@ -22,13 +22,14 @@ fn program():
     copies: Array[Weak[Shared[Token]]] = Array[Weak[Shared[Token]]]()
     copies.push(owns weak)
     for observed in copies:
-        task = fn() -> i32:
+        fn task_fn() -> i32:
             match observed.upgrade():
                 Some(live):
                     value = live.get()
                     return value.value
                 None:
                     return 0
+        task = task_fn
         println(task())
 
 fn main():

@@ -9591,3 +9591,17 @@ fn bench_compare_times_each_pair_and_checks_its_output() {
     assert!(report.stdout.contains("differs: FAIL"), "{}", report.stdout);
     assert_eq!(report.exit, 0, "--report fails nothing:\n{}", report.stdout);
 }
+
+/// `[LEX-1a]` — a bidirectional format character in `ember.toml` is `E0012`, as in a source file.
+#[test]
+fn a_bidirectional_character_in_the_manifest_is_e0012() {
+    let root = workspace_root();
+    let directory = temporary_directory("bidi_manifest");
+    std::fs::create_dir_all(directory.join("src")).expect("the package is writable");
+    std::fs::write(directory.join(MANIFEST), "[package]\nname = \"bidi\" # \u{202E}\n").expect("the manifest is writable");
+    std::fs::write(directory.join("src").join(ember_branding::source_file("main")), "fn main():\n    println(1)\n")
+        .expect("the source is writable");
+    let refused = ember(&["check", &directory.to_string_lossy()], &root);
+    assert_ne!(refused.exit, 0);
+    assert!(refused.stderr.contains("error[E0012]") && refused.stderr.contains("line 2 holds U+202E"), "{}", refused.stderr);
+}

@@ -7,6 +7,6 @@
 from std.core import NonZero
 
 fn main():
-    _forged = NonZero(0) #$ error[E1052]: `NonZero[i64]`'s memberwise constructor is private to its module
+    _forged = NonZero(0) #$ error[E1052]: `NonZero[i64](...)` is not visible here
     n = NonZero.new(3).unwrap()
     println(n.value) #$ error[E1052]: `value` is private to `NonZero[i64]`'s module

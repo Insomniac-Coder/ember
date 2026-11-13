@@ -25,8 +25,9 @@ fn main():
         return helper(n) + 1
     println(plain(3))
     fn deep(n: int) -> int:
-        a = fn(x: int) -> int:
+        fn a_fn(x: int) -> int:
             b = fn(y: int) => deep(y - 1) + base if y > 0 else 0
             return b(x)
+        a = a_fn
         return a(n)
     println(deep(2))

@@ -13,8 +13,9 @@ fn main():
     for v in bad(2):
         println(v)
     gen fn stray(n: int) -> Generator[int]:
-        f = fn(x: int):
+        fn f_fn(x: int):
             yield x    #$ error[E2220]: `yield` outside a `gen fn`
+        f = f_fn
         yield n
     for v in stray(1):
         println(v)

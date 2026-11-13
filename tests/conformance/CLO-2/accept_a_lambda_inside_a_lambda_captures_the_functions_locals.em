@@ -12,13 +12,15 @@ fn main():
     k = 3
     total = 0
     name = "ab".to_string()
-    f = fn(x: int) -> int:
+    fn f_fn(x: int) -> int:
         g = fn(y: int) => x * y + k + name.len()
         return g(2)
-    bump = fn():
+    f = f_fn
+    fn bump_fn():
         inner = fn(): total += k
         inner()
         inner()
+    bump = bump_fn
     bump()
     println(f(1), total)
     env = 5

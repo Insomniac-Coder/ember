@@ -57,8 +57,9 @@ fn main():
     tail = keep_last(owns words.iter().take_while(owns fn(w: ref String) => w.len() < 4).skip_while(owns fn(w: ref String) => w.len() < 2))
     println(stepped.unwrap(), tail.unwrap())
     looked = 0
-    two = fn(w: ref String) -> bool:
+    fn two_fn(w: ref String) -> bool:
         looked += 1
         return w.len() == 2
+    two = two_fn
     found = words.iter().find(two)
     println(found, looked)
