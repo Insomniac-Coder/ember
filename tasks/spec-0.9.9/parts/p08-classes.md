@@ -138,7 +138,7 @@ offset  size  field
   the object being ended: an owner made from `this` (`thread_shared this`; `shares this` and `shares
   mut this` are refused in every method, `[RC-1]`) is `E3016`, as storing `this` anywhere that
   outlives the call is (`[CLS-7a]`): "`drop` ends this `Player`; an owner made from it would point
-  at a freed object; keep a copy of what you need: `NAMES.push(owns copy of this.name)`". `weakref
+  at a freed object; keep a copy of `this.name`: `NAMES.push(owns copy of this.name)`". `weakref
   this` and `weakref thread_shared this` stay allowed (`[OWN-13]`): the weak count keeps the block,
   and opening the link finds the object ended (`[WK-3]`). Nothing is checked for it while the
   program runs.
@@ -160,7 +160,10 @@ offset  size  field
   function that owns its value (which becomes one of the owners: a value that is not a class object
   is then made in a block of its own from the line that declares the local (`xs = make()` puts the
   result in that block), as if that line had said `shares`, so nothing moves and no view of it ends
-  at the `shares` line, and the local's type is the shared type throughout the function) or a name
+  at the `shares` line, and the local's type, a class object's included, is the shared type
+  throughout the function, since a class type alone says that its object has one owner, which ends
+  it with no count to test (`[TYP-45]`): after `d = shares mut c` or `d = shares c`, `c` is a
+  `shares mut Counter` from `c = Counter()` on, keeping what it could do (`[RC-7]`)) or a name
   that is already a `shares` or `shares mut` owner (for an `owns` parameter, which this function
   owns from its first line, the block is made at the function's entry, before any view of it is
   made, so that the parameter's type is the shared type throughout the function and the caller's

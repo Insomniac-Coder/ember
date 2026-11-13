@@ -163,7 +163,7 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[CG-C-1]` | XVIII | The emitted C has no undefined behaviour. Checked signed arithmetic … |
+| `[CG-C-1]` | XVIII | *(changed in 0.9.20)* The emitted C has no undefined behaviour. … |
 | `[CG-C-2]` | XVIII | Accepted programs compile. A program Ember accepts never produces C … |
 | `[CG-C-3]` | XVIII | Cross-module inlining. Because each module is one translation unit, … |
 | `[CG-C-3a]` | XVIII | *(changed in 0.9.10)* *(changed in 0.9.20)* `@inline` is binding: the … |
@@ -215,7 +215,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[CLO-3]` | VI | *(changed in 0.9.10)* *(changed in 0.9.15)* A callable type is one … |
 | `[CLO-4]` | VI | *(changed in 0.9.10)* *(changed in 0.9.15)* A function value does not … |
 | `[CLO-5]` | VI | *(changed in 0.9.15)* A function value that captures an object with … |
-| `[CLO-6]` | VI | *(changed in 0.9.15)* A function that gives one of its captures away … |
+| `[CLO-6]` | VI | *(changed in 0.9.15)* *(changed in 0.9.20)* A function that gives one … |
 | `[CLO-6a]` | VI | *(changed in 0.9.15)* *(changed in 0.9.20)* A `once fn` value is … |
 | `[CLO-7]` | VI | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* … |
 | `[CLO-10]` | VI | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* A … |
@@ -364,7 +364,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[DIA-21]` | XVII | *(changed in 0.9.10)* *(changed in 0.9.15)* Python habits. Each of … |
 | `[DIA-22]` | XVII | *(changed in 0.9.15)* A diagnostic caused by a callee's contract, its … |
 | `[DIA-23]` | XVII | *(changed in 0.9.15)* A run-time panic names Ember entities — the … |
-| `[DIA-24]` | XVII | *(changed in 0.9.10)* Name suggestions (shape N1). A candidate is … |
+| `[DIA-24]` | XVII | *(changed in 0.9.10)* *(changed in 0.9.20)* Name suggestions (shape … |
 | `[DIA-25]` | XVII | *(new in 0.9.15)* The line a message gives compiles under this … |
 | `[DIA-26]` | XVII | *(new in 0.9.15)* One mistake gives one message, at the program's … |
 | `[DIA-27]` | XVII | *(new in 0.9.15)* A message about a change a call makes names the … |
@@ -569,7 +569,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-24c]` | Annex C | *(changed in 0.9.10)* `ember inspect --cost`, which reads the built … |
 | `[FFI-24d]` | Annex C | A header that adds or removes `noexcept` changes the Ember signature; … |
 | `[FFI-25]` | XVI | *(changed in 0.9.15)* A panic in an exported function, or anywhere … |
-| `[FFI-26]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* … |
+| `[FFI-26]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* … |
 | `[FFI-27]` | XVI | *(changed in 0.9.20)* The runtime `ember_rt` is a C11 static library … |
 | `[FFI-28]` | XVI | *(changed in 0.9.10)* A package built as `kind = "staticlib"` … |
 | `[FFI-29]` | XVI | *(changed in 0.9.20)* For every `import c` the importer emits a shim … |
@@ -691,7 +691,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[GRM-16]` | III | `return`, `break` and `continue` are expressions of type `Never`; … |
 | `[GRM-17]` | III | *(changed in 0.9.10)* *(changed in 0.9.20)* A lambda with a `:` body … |
 | `[GRM-18]` | III | `;` never separates statements. `a = 1; b = 2` is `E0105`, whose help … |
-| `[GRM-19]` | III | *(changed in 0.9.15)* The pattern of a `condition` MUST be refutable. … |
+| `[GRM-19]` | III | *(changed in 0.9.15)* *(changed in 0.9.20)* The pattern of a … |
 | `[GRM-20]` | III | The attributes before a statement are limited to `@parallel`, … |
 | `[GRM-21]` | III | `gen fn` declares a generator (`[CORO-1]`). It is legal wherever `fn` … |
 | `[GRM-23]` | III | `x in c` and `x not in c` are membership tests at comparison … |
@@ -973,7 +973,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[MOD-2]` | V | Items are private to their module unless marked. `pub(package)` makes … |
 | `[MOD-3]` | V | `import a.b.c` binds the name `c` to module `a.b.c`, and `import … |
 | `[MOD-4]` | V | Import cycles within a package are allowed; cycles between packages … |
-| `[MOD-5]` | V | *(changed in 0.9.15)* The prelude. Every module implicitly imports … |
+| `[MOD-5]` | V | *(changed in 0.9.15)* *(changed in 0.9.20)* The prelude. Every module … |
 | `[MOD-7]` | V | A field declared `pub(read)` (or `pub(package, read)`) may be read … |
 | `[MOD-8]` | V | *(changed in 0.9.20)* `from m import *` binds every `pub` item of … |
 | `[MOD-9]` | V | *(new in 0.9.15)* *(changed in 0.9.20)* A package's edge. What a … |
@@ -1223,7 +1223,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[STD-15]` | XV | *(changed in 0.9.15)* *(changed in 0.9.20)* `Array[T]` is a growable … |
 | `[STD-16]` | XV | *(changed in 0.9.15)* *(changed in 0.9.20)* `Map` operations. `m[k]` … |
 | `[STD-17]` | XV | *(changed in 0.9.15)* Index assignment. `a[i] = v` calls … |
-| `[STD-18]` | XV | *(changed in 0.9.15)* `format(value, spec="") -> String` formats one … |
+| `[STD-18]` | XV | *(changed in 0.9.15)* *(changed in 0.9.20)* `format(value, spec="") … |
 | `[STD-19]` | XV | *(changed in 0.9.10)* *(changed in 0.9.15)* *(changed in 0.9.20)* … |
 | `[STD-20]` | XV | Integer methods, built into every integer type: `abs` (a signed `MIN` … |
 | `[STD-21]` | XV | *(changed in 0.9.15)* `std.math` provides `PI`, `TAU`, `E`; `sin`, … |
@@ -1412,7 +1412,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[UNS-8]` | IX | *(changed in 0.9.15)* Every `unsafe:` block, and every `unsafe` … |
 | `[UNS-10]` | IX | *(changed in 0.9.15)* `UnsafeCell[T]` (in `std.mem`) is the primitive … |
 | `[UNS-10a]` | IX | *(changed in 0.9.15)* `UnsafeCell` suspends no rule globally: the … |
-| `[UNS-11]` | IX | *(new in 0.9.15)* Only inside `unsafe`. Anything that can break a … |
+| `[UNS-11]` | IX | *(new in 0.9.15)* *(changed in 0.9.20)* Only inside `unsafe`. … |
 | `[UNS-12]` | IX | *(new in 0.9.15)* *(changed in 0.9.20)* An `unsafe fn` is unsafe as a … |
 
 ## VER

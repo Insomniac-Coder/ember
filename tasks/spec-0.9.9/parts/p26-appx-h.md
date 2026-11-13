@@ -3764,3 +3764,62 @@ Generated: every rule whose text differs from 0.9.20_Hardened_12.
 | `[STR-1]` | changed |
 | `[TYP-25]` | changed |
 
+
+## H.65 Changes in 0.9.20_Hardened_14 (from 0.9.20_Hardened_13)
+
+**0.9.20_Hardened_14**, of 2026-11-13, rules the spec findings round 6's workers queued
+(`tasks/96/redesign/jobs/review.md`, "Round 6"), each read against the pinned text. Six are rulings
+under the delegation, N176 to N181 (`decisions.md` §25); the others the text already decides, and
+six of those are written out here.
+
+* **"You" in a message** (N176): a message, its help and notes never say "you"; "your own", which
+  names a value the line to write gives the program alone, is the one phrase of the second person,
+  and the messages that said "you" say what to do instead ("to vouch for it, write …"; "the nearest
+  name is `count`") (`[DIA-2]`, `[DIA-24]`, `[GRM-19]`, `[TYP-43]`, `[THR-8]`, `[FFI-51]`,
+  `[FFI-26]`, `[OBJ-5]`, `[UNS-11]`).
+* **The named form gives each parameter once** (N177): a positional argument after a named one is
+  named with the first parameter that no other argument of the call gives; where none is left, the
+  message gives the callee's first line alone (`[TYP-25]`).
+* **`format_to` takes `sep` and `end`** (N178): it writes what `print` writes for the same arguments
+  (`[STD-18]`).
+* **A pack's values go only to parameters written over a pack** (N179): given to parameters of a
+  fixed number, `values...` is `E2021` (`[TYP-47]`).
+* **What `hide` does, and which places name a foreign type's destructor** (N180): a hidden
+  declaration is private to the module, which may still name it in a contract and call it from a
+  wrapper; it is a place of `[FFI-36a]`'s rule only where a wrapper calls it; the places are compared
+  all at once, and their order decides only what the one `E5002` names first and what its help
+  removes (`[GRM-35]`, `[FFI-36a]`).
+* **A `shares mut T` owner given to a `shares T` place** (N181): the same owner, which then only
+  reads, as `MutSpan[T]` gives `Span[T]` (`[TYP-5]`).
+* **Written out, no ruling:** shape B4's two examples in one form (`[BRW-14]`); the copy `[CLO-6]`'s
+  help hands over says `owns` (`[FN-2a]`); an extend block's brackets in `[TYP-47]` (`[GRM-40]`);
+  `Printable` among the prelude's names (`[MOD-5]`); where the checked helpers of the emitted C live
+  (`[CG-C-1]`); a class object's local shared by a line has the shared type (`[RC-1]`, `[TYP-45]`).
+
+Registry rows: E2021, E1052. No new code, no new rule, none retired. Owner verdicts: none touched.
+
+Generated: every rule whose text differs from 0.9.20_Hardened_13.
+
+| Rule | 0.9.20_Hardened_13 → 0.9.20_Hardened_14 |
+|---|---|
+| `[BRW-14]` | changed |
+| `[CG-C-1]` | changed |
+| `[CLO-6]` | changed |
+| `[DIA-2]` | changed |
+| `[DIA-24]` | changed |
+| `[FFI-26]` | changed |
+| `[FFI-36a]` | changed |
+| `[FFI-51]` | changed |
+| `[GRM-19]` | changed |
+| `[GRM-35]` | changed |
+| `[MOD-5]` | changed |
+| `[OBJ-5]` | changed |
+| `[RC-1]` | changed |
+| `[STD-18]` | changed |
+| `[THR-8]` | changed |
+| `[TYP-5]` | changed |
+| `[TYP-25]` | changed |
+| `[TYP-43]` | changed |
+| `[TYP-47]` | changed |
+| `[UNS-11]` | changed |
+

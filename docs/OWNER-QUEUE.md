@@ -140,6 +140,7 @@ out of an import), rejected before it was committed and replaced by the owner's 
 | ODR-266 | **CLOSED** — ruled on the owner's instruction (the best solution), 2026-11-08; Hardened_4 | C Interop | **P1** | **Yes** — 2026-11-08 |
 | ODR-267 | **CLOSED** — ruled on the owner's instruction (the best solution), 2026-11-08; Hardened_4 | C Interop / Memory Model | **P1** | **Yes** — 2026-11-08 |
 | N171–N175 | **CLOSED** — ruled under the delegation by the lead's Opus deputy, 2026-11-12; 0.9.20_Hardened_13 (`decisions.md` §24); for the lead's and the owner's review | Types / Diagnostics / C Interop | **P1** | **Yes** — 2026-11-12 |
+| N176–N181 | **CLOSED** — ruled under the delegation by the lead's Opus deputy, 2026-11-13; 0.9.20_Hardened_14 (`decisions.md` §25); for the lead's and the owner's review | Diagnostics / Types / Standard library / C Interop | **P1** | **Yes** — 2026-11-13 |
 
 **ODR-001 through ODR-003 were resolved by the owner on 2026-09-10.** ODR-002
 is now fully closed because `RIDX-1` landed; ODR-003 remains deferred editorial
@@ -1665,6 +1666,19 @@ diagnostic suggestion ordering and does not require a language-version bump.
 **The question.** A debugger could not stop on an Ember line of a `debug` build: the compiler inlined a function called once and copied its loops (a vectorised copy kept the running total in a temporary), so the line had eight places in the code and the local had no name there.
 
 **Ruling.** The owner, 2026-10-22: a `debug` build skips Ember's own speed rewrites, so a debugger follows the program as written ("give the option to turn the speed rewrite on or off for debug"; "yes, off by default"); a package turns them on with `[profiles.debug] rewrites = true`. The lead's, under `[PRF-1]`: what the rewrites decide that a program is told (the `@simd` verdicts) is decided the same in every profile.
+
+---
+
+## N176 to N181 — the spec findings of round 6 — **CLOSED**
+
+    ID:        N176 to N181 (decisions.md §25)
+    Status:    CLOSED — ruled under the delegation by the lead's Opus deputy, 2026-11-13; incorporated in 0.9.20_Hardened_14; for the lead's and the owner's review
+    Category:  DIAGNOSTICS / TYPES / STANDARD LIBRARY / C INTEROP
+    Location:  0.9.20_Hardened_13 [DIA-2], [DIA-24], [TYP-25], [STD-18], [TYP-47], [GRM-35], [FFI-36a], [TYP-5]
+
+**The questions.** Eleven findings of `tasks/96/redesign/jobs/review.md` ("Round 6"). Six left a language decision open: whether "your own" is the "you" a message never says, while seven of the spec's own messages said "you" (DIA-2); the line to write when a later named argument gives the parameter N171's named form would give (TYP-25); what `format_to` writes between its values (STD-18); `values...` given to a function with no pack (TYP-47); whether a declaration `hide` names counts for the one-destructor rule, and in what order the places are taken (GRM-35, FFI-36a); a `shares mut T` owner given to a `shares T` place (TYP-5). The others the text already decides: six are written out (`[BRW-14]`, `[CLO-6]`, `[TYP-47]`'s extend block, `[MOD-5]`, `[CG-C-1]`, `[RC-1]`), and one is the compiler's (`exists as ref mut` on any link).
+
+**Rulings.** N176: no "you" in a message, its help or notes; "your own" names a value the line to write gives the program alone and stays (the owner's agreed wording); the seven messages respelt ("to vouch for it, write …", "the nearest name is `count`"). N177: the positional argument is named with the first parameter no other argument gives; none left, the callee's first line alone. N178: `format_to` takes `sep=" "` and `end=""` and writes what `print` writes. N179: `values...` goes only to parameters written over a pack; elsewhere `E2021`. N180: `hide` makes a declaration private to the module, which still names it in contracts and wrappers; a hidden one counts only where a wrapper calls it; the places are compared all at once, the order deciding only the message. N181: `shares mut T` converts to `shares T`, as `MutSpan[T]` to `Span[T]`. No owner verdict touched; no question left open. H2's two other recommendations were not taken: a class local shared by a line has the shared type (`[RC-1]`, `[TYP-45]`: keeping `C` lets its object be freed under another owner), and `exists as ref mut` stays allowed on every link (`[GRM-44]`, principle 4, verdict 26).
 
 ---
 

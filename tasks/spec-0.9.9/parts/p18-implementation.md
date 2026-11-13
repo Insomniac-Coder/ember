@@ -9,9 +9,11 @@ programs it accepts. How a compiler is organised internally is not specified.
 
 The reference implementation compiles Ember to C11 and hands it to the platform's C compiler.
 
-* `[CG-C-1]` *(changed in 0.9.9)* **The emitted C has no undefined behaviour.** Checked signed
-  arithmetic uses the compiler's overflow builtins (`__builtin_add_overflow` and friends; checked
-  helpers on MSVC); wrapping arithmetic is done in the unsigned type and converted back; shifts are
+* `[CG-C-1]` *(changed in 0.9.9)* *(changed in 0.9.20)* **The emitted C has no undefined behaviour.** Checked signed
+  arithmetic calls the checked helpers of `ember_rt.h`, forced inline into the emitted C, which on
+  Clang and GCC are the compiler's overflow builtins (`__builtin_add_overflow` and friends) and on
+  MSVC exact checks of their own (its overflow intrinsics, or the operation in a wider type and a
+  range test); wrapping arithmetic is done in the unsigned type and converted back; shifts are
   range-checked before they execute; `MIN // -1` and `MIN % -1` are handled before the C operator
   runs; type punning uses `memcpy`; no object is accessed through an lvalue of an incompatible type.
   The C compiles without warnings under `-std=c11 -Wall -Wextra` (Clang, GCC) and `/W3` (MSVC).

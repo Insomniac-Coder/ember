@@ -366,11 +366,11 @@ fn main():
   `thread_shared` holds one more owner of it. A loop of owners through function values' state is
   refused as every loop of owners is (`[WK-1]`); the link back is captured `weakref` (`fn() weakref
   ui:`), or the object is given to the function as a parameter.
-* `[CLO-6]` *(changed in 0.9.9)* *(changed in 0.9.15)* A function that gives one of its captures
+* `[CLO-6]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* A function that gives one of its captures
   away (to an `owns` parameter, a return, a field) can be called only once. Its type is `once fn(A)
   -> R`, not `fn(A) -> R`; given where a function may run twice it is `E3013` ("this function gives
   `s` away, so it can run only once, and `call_twice` runs it twice; hand over a copy each time
-  instead: `call_twice(fn(): consume(copy of s))`"). A parameter that takes a `once fn` holds it,
+  instead: `call_twice(fn(): consume(owns copy of s))`"). A parameter that takes a `once fn` holds it,
   `owns f: once fn(A) -> R`, and accepts both kinds; a plain `f: once fn(A) -> R` is `E3013`
   ("`call_once` uses `f` up, so it must hold it: write `owns f: once fn()`"). Calling `f` uses it
   up; a second call is `E3040`.

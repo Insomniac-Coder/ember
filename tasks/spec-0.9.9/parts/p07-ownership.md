@@ -326,10 +326,12 @@ view hands nothing over and makes no copy.
   `match e:`) and a name opened with `exists as` (`[GRM-44]`) or named by a kind test (`[DSP-4]`)
   stand for what the caller, the loop, the opening or the test gave, and keep it for their whole
   scope: `=` on one is `E3023` ("`line` is the text the caller passed and stays that text for the
-  whole call; for a view of your own write `new_line = line.trim()` in place of line 2, and
-  `new_line` for `line` in line 3"; "`n` is the number the caller passed; for a number of your own
-  write `new_n = n` above line 2, as the first line of `countdown`'s body, and `new_n` for `n` in
-  lines 3, 4 and 6"), and so is any other change through one that is plain (`[BRW-15]`). The local
+  whole call; for a text of your own write `new_line = line.trim()` in place of line 2, and
+  `new_line` for `line` in line 3"; "`n` is the number the caller passed and stays that number for
+  the whole call; for a number of your own write `new_n = n` above line 2, as the first line of
+  `countdown`'s body, and `new_n` for `n` in lines 3, 4 and 6": one form for every parameter, its
+  noun the same in its three places), and so is any other change through one that is plain
+  (`[BRW-15]`). The local
   of your own such a message gives is named `new_` and the parameter's name, or, where the
   function already has that name, the first of `new_n_2`, `new_n_3`, … it does not have. It is
   made by the refused line itself where that line is a plain `=` at the top level of the body and
