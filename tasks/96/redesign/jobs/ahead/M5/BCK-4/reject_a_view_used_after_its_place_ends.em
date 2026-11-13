@@ -3,7 +3,8 @@
 #$ test: compile-fail
 #$ rules: BCK-4, OWN-3, BRW-13
 # One case per way a place ends; the spec gives no message text for them (shape B7): codes only,
-# each at the view's later use. See Q2 (INDEX.md) for the first case.
+# each at the view's later use. Q2 (INDEX.md): a view a local of the same function holds is clause
+# 1's, whatever block the local was declared in; `E3063` is for a value leaving the function's locals.
 
 fn scope_exit():
     r: Option[ref int] = None

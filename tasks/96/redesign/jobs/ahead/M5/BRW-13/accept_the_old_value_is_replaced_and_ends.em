@@ -4,7 +4,7 @@
 #$ test: run-pass
 #$ rules: BRW-13, OWN-5, OWN-2
 #$ stdout: end first
-#$ stdout: after
+#$ stdout: after second
 #$ stdout: end second
 
 struct Noisy:
@@ -15,4 +15,4 @@ struct Noisy:
 fn main():
     t = Noisy(name=String("first"))
     t = Noisy(name=String("second"))
-    println("after")
+    println("after", t.name)

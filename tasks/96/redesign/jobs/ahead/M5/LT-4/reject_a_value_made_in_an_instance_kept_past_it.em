@@ -16,9 +16,11 @@ unsafe extend LevelArena implements Allocator:
         this.made += 1
         return Global().allocate(layout)
 
+    @safety("`p` came from this arena's `allocate` with `layout`, and nothing uses it after this call")
     unsafe fn deallocate(p: *mut u8, layout: Layout):
         Global().deallocate(p, layout)
 
+    @safety("`p` came from this arena's `allocate` with `old`, and nothing uses it after this call")
     unsafe fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
         return Global().reallocate(p, old, new_size)
 
@@ -32,7 +34,7 @@ struct Enemy:
 fn load_level() -> Enemy:
     current = LevelArena()
     boss = Enemy(hp=500, mesh=owns Mesh(points=[0.0, 1.0]) using current)
-    return boss    #$ error[E3063]: `boss` holds a mesh made in `current` (line 34), and `current` ends when `load_level` returns, so `boss` cannot be returned; make it in an arena the caller keeps: `fn load_level(ref mut arena: LevelArena) -> Enemy:`, with `mesh=owns Mesh(points=[0.0, 1.0]) using arena`, and in the caller `current = LevelArena()` and `boss = load_level(ref mut current)`
+    return boss    #$ error[E3063]: `boss` holds a mesh made in `current` (line 36), and `current` ends when `load_level` returns, so `boss` cannot be returned; make it in an arena the caller keeps: `fn load_level(ref mut arena: LevelArena) -> Enemy:`, with `mesh=owns Mesh(points=[0.0, 1.0]) using arena`, and in the caller `current = LevelArena()` and `boss = load_level(ref mut current)`
 
 fn stash(ref mut out: Array[Enemy]):
     current = LevelArena()

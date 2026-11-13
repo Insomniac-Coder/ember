@@ -3,8 +3,8 @@
 # `b`; to point `r` at `b` write `r = ref mut b`, or for a read-only name `rb = ref b`")."
 #$ test: compile-fail
 #$ rules: BRW-13, TYP-14
-# The first message is the spec's. The second, for a `String`, pins only the part the spec's form
-# decides: how the read-only name is spelled for another name than `b` is Q4 (INDEX.md).
+# The first message is the spec's. The second, for a `String`, follows Q4's ruling (INDEX.md): the
+# new name is the refused name followed by the target's root name (`rb`, `tsecond`).
 
 fn main():
     a = 1
@@ -15,5 +15,5 @@ fn main():
     first = String("ab")
     second = String("cd")
     t = ref mut first
-    t = ref second    #$ error[E3023]: `t` may change what it refers to, and `ref second` only reads `second`; to point `t` at `second` write `t = ref mut second`
+    t = ref second    #$ error[E3023]: `t` may change what it refers to, and `ref second` only reads `second`; to point `t` at `second` write `t = ref mut second`, or for a read-only name `tsecond = ref second`
     println(t, second)
