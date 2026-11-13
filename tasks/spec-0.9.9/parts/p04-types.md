@@ -82,7 +82,11 @@
      (`[SPN-1]`), and `MutSpan[T]` to `Span[T]`, a read-only view of the same elements (`[SPN-3]`,
      ODR-116);
   7. `ref T` from a place (a read-only view of it), and reading through a `ref`, an `owns T` or a
-     `shares`, `shares mut` or `thread_shared` owner where a `T` is expected (`[TYP-14]`);
+     `shares`, `shares mut` or `thread_shared` owner where a `T` is expected (`[TYP-14]`); and a
+     `shares mut T` owner to a `shares T` place, the same owner, which from there on only reads the
+     value (`[RC-7]`), as rule 6 gives a `MutSpan[T]` to a `Span[T]` and C++ a `shared_ptr<T>` to a
+     `shared_ptr<const T>`: nothing runs and the count is unchanged (`shares mut Circle` to `shares
+     dyn Shape` is this rule, then rule 8);
   8. a value to an interface its type implements, keeping the word that says who owns it: a value
      read in place to `dyn I`, an `owns T` to `owns dyn I`, a `shares T` to `shares dyn I`, a
      `shares mut T` to `shares mut dyn I` (`[TYP-45]`); and a class object to a base class (upcast),
@@ -640,12 +644,18 @@ fn main():
   once the pack is spelled out, so a tuple type that then has two or more elements is a tuple, one
   that has one is that type itself, and one that has none is `void` (`[TYP-27]`: there is no
   one-element tuple; `View[Position]`'s items are `(Entity, Position)`, `zip(xs)` of one iterable
-  gives each item plainly, and a tuple's interfaces are written once from two elements up, `[A, B,
-  Ts...]` above `extend (A, B, Ts...) implements Display:`). A `struct` or `class` takes a pack as a
-  function does (`[Cs...]` above `struct View:`), its last type parameter. `values...` among a
-  call's arguments passes the values on (`log(values...)`), and `values.len()` is their number,
-  known when compiling. `for v in values:` is written out by the compiler once per value, each `v`
-  of its own type, and nothing runs for the loop itself. Each use is made for its exact types, as
+  gives each item plainly, and a tuple's interfaces are written once from two elements up,
+  `extend[A, B, Ts...] (A, B, Ts...) implements Display:`, the brackets after `extend` as an extend
+  block's are, `[GRM-40]`). A `struct` or `class` takes a pack as a function does (`[Cs...]` above
+  `struct View:`), its last type parameter. `values...` among a
+  call's arguments passes the values on (`log(values...)`) to parameters written over a pack: the
+  callee's own pack parameter, or the parameters of a function type over the same pack
+  (`f(values...)` for `f: fn(Ts...)`). A body is checked once, before its instances (`[TYP-17]`),
+  so the values, whose number is not known there, fit no parameters of a fixed number: given to
+  them, the call is `E2021` (shape N6), whose message gives the callee's first line
+  ("`pair(values...)` gives a pack's values, any number of them, and `pair` takes two: `fn pair(a:
+  int, b: int)`"). `values.len()` is their number, known when compiling. `for v in values:` is
+  written out by the compiler once per value, each `v` of its own type, and nothing runs for the loop itself. Each use is made for its exact types, as
   any generic is (`[MONO-1]`): nothing is looked up while the program runs, and each value is
   checked as an ordinary parameter's is, its word included (`owns values: Ts...` takes each one
   over). A pack is the last of its type parameters, and its values' parameter is the function's last
@@ -748,7 +758,7 @@ implements Display:` block.
   taking the responsibility the compiler cannot check; the declaration vouches for the type's raw
   pointers alone, and every other component is inferred as for any type, so a `shares` owner or a
   `weakref T` link in such a type still keeps it on one thread (`E7015`) (written without `unsafe`
-  it is `E3100`: "say that you vouch for it: write `unsafe extend Counter implements Send:` with a
+  it is `E3100`: "to vouch for it, write `unsafe extend Counter implements Send:` with a
   `# SAFETY:` note above it"); a generic one (`unsafe extend[T: needs Send] W[T] implements Send:`)
   holds for each instance whose arguments meet the markers its parameters are bounded by.
   `ThreadShared` is written only in bounds and in that header, `Copy` comes from `@derive(Copy)`,
@@ -1102,10 +1112,14 @@ For `recv.m(args)`:
   with no default given none, a name no parameter has, one parameter given twice) is `E2021`
   (shape N6), and its message gives the callee's first line: "`area(2)` gives nothing for `h`,
   which has no default: `fn area(w: int, h: int, scale: int = 1) -> int`". For a positional
-  argument after a named one, the line to write names it with the first parameter that no argument
-  before it gives: "`area(w=2, 3)` gives `3` after the named `w=2`, and positional arguments come
-  first; write `area(w=2, h=3)`". A memberwise constructor and `super.init(…)` are such calls
-  (`[STR-1]`, `[CLS-3]`); a use of a C++ name of several members that no member fits is `E5035`
+  argument after a named one, the line to write names it with the first parameter that no other
+  argument of the call gives, before it or after it, so that the line gives each parameter once:
+  "`area(w=2, 3)` gives `3` after the named `w=2`, and positional arguments come first; write
+  `area(w=2, h=3)`", and for `area(w=2, 3, h=4)`, "write `area(w=2, scale=3, h=4)`"; several such
+  arguments take, in their order, the first parameters left. Where no parameter is left for one,
+  the call also gives more arguments than parameters, and its message gives the callee's first line
+  alone, since no line that keeps every argument compiles. A memberwise constructor and
+  `super.init(…)` are such calls (`[STR-1]`, `[CLS-3]`); a use of a C++ name of several members that no member fits is `E5035`
   (`[FFI-57]`).
 * `[TYP-26]` *(changed in 0.9.9)* *(changed in 0.9.20)* There is no overloading: two functions of one name in one scope
   are `E1030`, except operator-interface implementations and `extend` blocks for different types. A

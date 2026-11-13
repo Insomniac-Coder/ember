@@ -799,7 +799,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.20', 13)
+CURRENT = ('0.9.20', 14)
 H52_PARTS = '0.9.9_Hardened_52'
 V010_H1_PARTS = '0.9.10_Hardened_1'
 V010_H2_PARTS = '0.9.10_Hardened_2'
@@ -859,7 +859,8 @@ V0920_H9_PARTS = '0.9.20_Hardened_9'
 V0920_H10_PARTS = '0.9.20_Hardened_10'
 V0920_H11_PARTS = '0.9.20_Hardened_11'
 V0920_H12_PARTS = '0.9.20_Hardened_12'
-V0920_H13_PARTS = os.path.join(HERE, '..', 'parts')
+V0920_H13_PARTS = '0.9.20_Hardened_13'
+V0920_H14_PARTS = os.path.join(HERE, '..', 'parts')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -2501,6 +2502,52 @@ def v0920_h13():
     return H64_HEAD + rule_diff(V0920_H12_PARTS, V0920_H13_PARTS)
 
 
+H65_HEAD = r'''
+
+## H.65 Changes in 0.9.20_Hardened_14 (from 0.9.20_Hardened_13)
+
+**0.9.20_Hardened_14**, of 2026-11-13, rules the spec findings round 6's workers queued
+(`tasks/96/redesign/jobs/review.md`, "Round 6"), each read against the pinned text. Six are rulings
+under the delegation, N176 to N181 (`decisions.md` §25); the others the text already decides, and
+six of those are written out here.
+
+* **"You" in a message** (N176): a message, its help and notes never say "you"; "your own", which
+  names a value the line to write gives the program alone, is the one phrase of the second person,
+  and the messages that said "you" say what to do instead ("to vouch for it, write …"; "the nearest
+  name is `count`") (`[DIA-2]`, `[DIA-24]`, `[GRM-19]`, `[TYP-43]`, `[THR-8]`, `[FFI-51]`,
+  `[FFI-26]`, `[OBJ-5]`, `[UNS-11]`).
+* **The named form gives each parameter once** (N177): a positional argument after a named one is
+  named with the first parameter that no other argument of the call gives; where none is left, the
+  message gives the callee's first line alone (`[TYP-25]`).
+* **`format_to` takes `sep` and `end`** (N178): it writes what `print` writes for the same arguments
+  (`[STD-18]`).
+* **A pack's values go only to parameters written over a pack** (N179): given to parameters of a
+  fixed number, `values...` is `E2021` (`[TYP-47]`).
+* **What `hide` does, and which places name a foreign type's destructor** (N180): a hidden
+  declaration is private to the module, which may still name it in a contract and call it from a
+  wrapper; it is a place of `[FFI-36a]`'s rule only where a wrapper calls it; the places are compared
+  all at once, and their order decides only what the one `E5002` names first and what its help
+  removes (`[GRM-35]`, `[FFI-36a]`).
+* **A `shares mut T` owner given to a `shares T` place** (N181): the same owner, which then only
+  reads, as `MutSpan[T]` gives `Span[T]` (`[TYP-5]`).
+* **Written out, no ruling:** shape B4's two examples in one form (`[BRW-14]`); the copy `[CLO-6]`'s
+  help hands over says `owns` (`[FN-2a]`); an extend block's brackets in `[TYP-47]` (`[GRM-40]`);
+  `Printable` among the prelude's names (`[MOD-5]`); where the checked helpers of the emitted C live
+  (`[CG-C-1]`); a class object's local shared by a line has the shared type (`[RC-1]`, `[TYP-45]`).
+
+Registry rows: E2021, E1052. No new code, no new rule, none retired. Owner verdicts: none touched.
+
+Generated: every rule whose text differs from 0.9.20_Hardened_13.
+
+| Rule | 0.9.20_Hardened_13 → 0.9.20_Hardened_14 |
+|---|---|
+'''
+
+
+def v0920_h14():
+    return H65_HEAD + rule_diff(V0920_H13_PARTS, V0920_H14_PARTS)
+
+
 def h1_to_h2():
     return rule_diff(H1_PARTS, H2_PARTS)
 
@@ -2571,7 +2618,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n' + v0915_h3_to_h4() + '\n' + v0915_h4_to_h5() + '\n' + v0915_h5_to_h6() + '\n' + v0915_h6_to_h7() + '\n' + v0915_h7_to_h8() + '\n' + v0915_h8_to_h9() + '\n' + v0915_h9_to_h10() + '\n' + v0915_h10_to_h11() + '\n' + v0920_h1() + '\n' + v0920_h2() + '\n' + v0920_h3() + '\n' + v0920_h4() + '\n' + v0920_h5() + '\n' + v0920_h6() + '\n' + v0920_h7() + '\n' + v0920_h8() + '\n' + v0920_h9() + '\n' + v0920_h10() + '\n' + v0920_h11() + '\n' + v0920_h12() + '\n' + v0920_h13() + '\n\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n' + v0915_h3_to_h4() + '\n' + v0915_h4_to_h5() + '\n' + v0915_h5_to_h6() + '\n' + v0915_h6_to_h7() + '\n' + v0915_h7_to_h8() + '\n' + v0915_h8_to_h9() + '\n' + v0915_h9_to_h10() + '\n' + v0915_h10_to_h11() + '\n' + v0920_h1() + '\n' + v0920_h2() + '\n' + v0920_h3() + '\n' + v0920_h4() + '\n' + v0920_h5() + '\n' + v0920_h6() + '\n' + v0920_h7() + '\n' + v0920_h8() + '\n' + v0920_h9() + '\n' + v0920_h10() + '\n' + v0920_h11() + '\n' + v0920_h12() + '\n' + v0920_h13() + '\n' + v0920_h14() + '\n\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

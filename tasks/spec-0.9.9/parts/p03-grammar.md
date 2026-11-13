@@ -289,9 +289,9 @@ comptime_stmt := "comptime" ":" block
   argument, `[FN-2a]`; `apply(push_a)` for an `F`-bounded parameter, which lends it).
 * `[GRM-18]` `;` never separates statements. `a = 1; b = 2` is `E0105`, whose help puts each
   statement on its own line. `;` appears only inside `[T; N]` and `[v; N]`.
-* `[GRM-19]` *(changed in 0.9.9)* *(changed in 0.9.15)* The pattern of a `condition` MUST be
+* `[GRM-19]` *(changed in 0.9.9)* *(changed in 0.9.15)* *(changed in 0.9.20)* The pattern of a `condition` MUST be
   refutable. An irrefutable one is `E2036`; when it is a bare name already in scope (`if x = 5:`),
-  the primary help is `did you mean 'x == 5'?`. The pattern form tests a variant other than an
+  the primary help is "to compare, write `if x == 5:`". The pattern form tests a variant other than an
   `Option`'s (`if Ok(v) = r:`, `if State.Walking(ref mut path) = n.state:`); `Some(...)` as the
   pattern of an `if`, `elif` or `while` header is `E0115`, since an `Option` is opened with `exists
   as` (`[GRM-44]`).

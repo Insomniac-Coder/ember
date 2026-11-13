@@ -88,7 +88,7 @@ change one place unordered.
   where it is a promise about every class derived from it that the compiler checks (above); the
   author of a type that holds a raw pointer declares it with `unsafe extend T implements Send:` and
   a `# SAFETY:` note (`E3100` without `unsafe`: "`Counter` holds a raw pointer, so the compiler
-  cannot tell that another thread may have it; say that you vouch for it: write `unsafe extend
+  cannot tell that another thread may have it; to vouch for it, write `unsafe extend
   Counter implements Send:` with a `# SAFETY:` note above it"). A thread-bound value sent to another
   thread is `E7008`. So a class with a `weakref T` field has no `thread_shared` objects: `root =
   thread_shared Node()` for a `class Node:` with `parent: weakref Node = None` is `E7015` at that

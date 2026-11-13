@@ -458,12 +458,13 @@ fn parse(data: Span[u8]) -> Option[u32]:
   and VIII, region, type and bounds checking all still apply around it. Unsafe code may break the
   aliasing rules inside an abstraction built on it, and must never let a conflicting view escape
   into Safe Ember.
-* `[UNS-11]` *(new in 0.9.15)* **Only inside `unsafe`.** Anything that can break a safety promise
+* `[UNS-11]` *(new in 0.9.15)* *(changed in 0.9.20)* **Only inside `unsafe`.** Anything that can break a safety promise
   (misuse memory, race, leak, skip a promised check, or reach memory the rules cannot see) is
   possible only inside an `unsafe` block, and no switch turns a safety check off, in any build or
   profile: `@no_runtime_checks` is not Ember (`E0104`: "there is no switch that turns safety checks
-  off, in any build; to forbid run-time alias checks here write `@no_alias_checks`; to skip one
-  bounds check you have proved, write `xs.get_unchecked(i)` inside `unsafe:` with a `# SAFETY:`
+  off, in any build; to forbid run-time alias checks here write `@no_alias_checks`; to skip the
+  bounds check of an index known to be in range, write `xs.get_unchecked(i)` inside `unsafe:`
+  with a `# SAFETY:`
   note"). `unsafe` is one word with one meaning by position: before a declaration (`unsafe fn`,
   `unsafe interface`, an `unsafe fn(…)` type) it says that whoever uses it must vouch, with
   `@safety` saying what they must make true (`[UNS-7]`); before a block or an implementation
