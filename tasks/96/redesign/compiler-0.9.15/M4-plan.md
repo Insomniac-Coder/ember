@@ -211,6 +211,23 @@ there.
   1 (1), GRM-33 1 (1), HR-12 1 (1), LEX-15 1 (1), LNT-6 1 (1), MNG-4 1 (1), OBJ-4 1 (1), PHIL-1 1 (1),
   PHIL-3 1 (1), RC-1 1 (1), RFL-2 1 (1), SPN-1 1 (1), STR-5 1 (1), STR-6 1 (1), THR-1 1 (1), TYP-13 1
   (1).
+- **Slice C, the lead's steps (2026-11-13, on branch `m4-slice-c-probe` in the lead worktree):**
+  - **The probe:** `copy_with` gives `false` for `Class`/`ClassInterface` (`ember_types/src/lib.rs`): the quick check
+    fails 262 programs (E3040 145+85, E3013 75+35, E3011 29+14, E3021 13+9; TYP-22 46, run-pass 31, EXC-18 16,
+    RC-2e 12, EXC-19 9, RC-3 8, ECS-4 8, …). Every other program builds and runs as before, so the compiler already
+    moves a handle that is not `Copy`.
+  - **C2:** MIR records each store that hands a class object over (`m = n`), with the source's span, and `E3040`
+    carries a migration there, `m = shares mut n` (the old meaning exactly: two counted owners that both change
+    it); `ember __migrate --checker` applies it; a script then tries `shares` at each and keeps it where the program
+    still checks.
+  - **C3:** `[RC-1]` (Hardened_14): a class local a line shares takes `shares mut C` from its declaration, by a
+    builtin that takes the one owner over with no count (`LinkAdopt`, an `Operand::Move`); a marked local whose
+    declaration cannot make it (a loop's name) is `E0900`, never a second owner the type does not say.
+  - **C4:** the tests and std migrated; a call that hands the object over `owns` and uses it again is rewritten by
+    hand (its callee's parameter changes).
+  - **C5:** `uncounted_handles.rs` and `temporary_owners.rs` re-targeted, `is` compares objects, ODR-065's store-back
+    and the copy's retain glue for class handles go.
+  - **C6:** the suites three ways, the bench; then `lead-m4` takes the branch.
 - **Task 15, the suites** (round 6, H2): the quick check (failing 0; the touched folders on the C backend
   too), `cargo test -p` of every crate touched (`ember_types`, `ember_hir`, `ember_typeck`, `ember_mir`,
   `ember_analysis`, `ember_interp`, `ember_codegen_c`, `ember_codegen_llvm`, `ember_driver`; the reload

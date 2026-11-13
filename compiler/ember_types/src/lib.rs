@@ -2305,7 +2305,7 @@ impl TypeTable {
             // `[OWN-7]` explicitly makes class handles Copy, with retain and
             // release emitted by the ownership/codegen stages rather than a
             // raw bitwise copy.
-            TyKind::Class(_) | TyKind::ClassInterface(_) => true,
+            TyKind::Class(_) | TyKind::ClassInterface(_) => false, // PROBE slice C
             // `[ENM-3]` — a unit-only enum is `Copy` automatically, because it
             // is only its discriminant. `[ENM-4]` — a payload enum needs
             // `@derive(Copy)`, like a struct.
