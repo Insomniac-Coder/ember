@@ -46657,34 +46657,45 @@ impl<'a> Checker<'a> {
         let owner = self.types.intern(TyKind::Struct(id));
         let owner = self.types.display(owner);
         let def = self.types.struct_def(id);
-        let blocking = def
-            .fields
-            .iter()
-            .find(|f| f.vis != FieldVis::Public || f.read_only_outside)
+        // `[STR-1]` - the constructor is as visible as the narrowest field: `pub` when every field is,
+        // `pub(package)` when every field is `pub` or `pub(package)`, and private to its module
+        // otherwise (a private, `pub(read)` or `pub(package, read)` field).
+        let module_narrow = def.fields.iter().find(|f| f.vis == FieldVis::Private || f.read_only_outside)
             .map(|f| (f.name.to_string(), f.vis, f.read_only_outside));
+        let package_narrow = def.fields.iter().find(|f| f.vis == FieldVis::Package)
+            .map(|f| (f.name.to_string(), f.vis, f.read_only_outside));
+        let declaring = def.declaring_module;
+        let in_package = declaring != usize::MAX && self.same_package(declaring, self.current_module);
+        let blocking = match (module_narrow, package_narrow) {
+            (Some(narrow), _) => Some(narrow),
+            (None, Some(narrow)) if !in_package => Some(narrow),
+            _ => None,
+        };
         let Some((field, vis, read_only)) = blocking else { return true };
         // A compiler-known struct's fields are the compiler's: refused outright, its arguments are
         // not checked against them.
         let compiler_known = def.declaring_module == usize::MAX;
-        let why = if read_only {
-            format!("`{field}` is `pub(read)`, and construction is a write")
+        let short = owner.rsplit('.').next().unwrap_or(&owner).to_string();
+        let (why, only) = if read_only {
+            (format!("`{field}` is `pub(read)`, and construction is a write"), format!("only inside its module (`{}`)", self.prefixes.get(declaring).map(|p| p.to_string()).unwrap_or_default()))
         } else if vis == FieldVis::Package {
-            format!("`{field}` is `pub(package)`, not `pub`")
+            let package = self.prefixes.get(declaring).map(|p| p.to_string()).unwrap_or_default();
+            let package = package.split('.').next().unwrap_or("").to_string();
+            (format!("`{field}` is `pub(package)`"), format!("only inside the `{package}` package"))
         } else {
-            format!("`{field}` is private")
+            (format!("`{field}` is private"), self.prefixes.get(declaring).map_or("only inside its own module".to_string(), |p| format!("only inside its module (`{p}`)")))
         };
         self.sink.emit(
             Diagnostic::error(
                 codes::E1052,
                 span,
-                format!("`{owner}`'s memberwise constructor is private to its module"),
+                format!("`{short}(...)` is not visible here: {why}, so a `{short}` is built {only}"),
             )
-            .primary_label(why)
             .help(format!(
                 "call a function `{owner}`'s module exports, or make every field `pub`"
             ))
             .note(concat!(
-                "the memberwise constructor is `pub` only when every field is, ",
+                "the memberwise constructor is as visible as its narrowest field, ",
                 "because constructing writes them all [STR-1]"
             )),
         );

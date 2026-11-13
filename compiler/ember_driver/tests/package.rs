@@ -778,3 +778,26 @@ fn man_9_a_folder_with_no_manifest_gets_the_default_one() {
     assert!(second.ok && !second.stderr.contains("created"), "{}", second.stderr);
     let _ = std::fs::remove_dir_all(dir.parent().expect("the scratch folder"));
 }
+
+/// `[STR-1]` — a struct's memberwise constructor is as visible as its narrowest field: with a
+/// `pub(package)` field it is built only inside its own package, and a call from another package is
+/// `E1052`, naming the field; inside the package it is allowed.
+#[test]
+fn a_package_visible_field_narrows_the_constructor_to_its_package() {
+    let dir = scratch();
+    package(&dir.join("net"), "[package]\nname = \"net\"\nversion = \"1.0.0\"\nkind = \"lib\"\n", &[
+        ("lib", "pub struct Packet:\n    pub id: i32\n    pub(package) seq: i32\n\npub fn make() -> Packet:\n    return Packet(1, 2)\n"),
+    ]);
+    package(&dir.join("app"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\nkind = \"bin\"\n\n[dependencies]\nnet = { path = \"../net\" }\n", &[
+        ("main", "import net\n\nfn main():\n    p = net.make()\n    println(p.id)\n"),
+    ]);
+    let app = dir.join("app");
+    let fine = ember(&["check"], &app);
+    assert!(fine.ok, "{}", fine.stderr);
+    std::fs::write(app.join("src").join(ember_branding::source_file("main")),
+        "import net\n\nfn main():\n    p = net.Packet(1, 2)\n    println(p.id)\n").unwrap();
+    let refused = ember(&["check"], &app);
+    assert!(!refused.ok && refused.stderr.contains("error[E1052]"), "{}", refused.stderr);
+    assert!(refused.stderr.contains("`Packet(...)` is not visible here: `seq` is `pub(package)`, so a `Packet` is built only inside the `net` package"), "{}", refused.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+}
