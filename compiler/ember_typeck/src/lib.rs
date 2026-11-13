@@ -10705,7 +10705,7 @@ impl<'a> Checker<'a> {
                             .struct_def(id)
                             .fields
                             .iter()
-                            .filter(|f| !self.types.is_copy(f.ty) || self.holds_class_object(f.ty, &mut HashSet::new()))
+                            .filter(|f| !self.types.is_copy(f.ty))
                             .map(|f| (f.name, f.ty, f.span))
                             .collect();
                         for (name, field_ty, span) in offenders {

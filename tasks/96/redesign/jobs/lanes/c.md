@@ -70,7 +70,7 @@ Read first by every job in this lane; updated last by each.
   field: pub, pub(package) via `same_package`, module); cross-package test in `ember_driver/tests/package.rs`. `[STR-2]`:
   `finish_struct_literal` (`written_field_order`: written arguments in locals first when the field order differs) and
   `construct_through_init` (arguments hoisted before the defaults); `default_context` gives the two `E1010` messages for a default
-  reading a field or `this`. `[STR-3]`: `@derive(Copy)` over a class field is E2080 (`holds_class_object`). `[STR-6]`: E2108 is in
+  reading a field or `this`. `[STR-6]`: E2108 is in
   `parse_fn_signature` (`decls.rs`).
 - **Traps:** `annotations.py` needs `PYTHONIOENCODING=utf-8` for output with non-ASCII; a per-file run says "no accept_* case", run the folder.
   A type error stops the borrow checker, so an `E3040` line in a test beside an `E2040` never fires. Bash eats backslashes in
@@ -81,6 +81,7 @@ Read first by every job in this lane; updated last by each.
     `fn f() owns x:` (capture words, GRM-42), is E0900 (M-CLO). So `owned fn(x):` + block keeps its block (`parse_lambda`, `is_owned`)
     until capture words exist; the other 24 tests are migrated and E0106 is built and tested for `fn(x):` and `owns fn(x):`.
   - TXT-6: the export that takes a `Span[u8]` is `E5015` today (FFI-31b, lane b); nothing else of the rule is testable.
-  - STR-3, STR-5: a field of `shares`, `weakref` or `sharedref mut` is E0900 (M4); the class-field part of STR-3 is built.
+  - STR-3, STR-5: a field of `shares`, `weakref` or `sharedref mut` is E0900 (M4); and a class handle is `Copy` in `copy_with` (OWN-7's
+    tests, RC-2e, rely on it) while the spec says a class object is not (lane a's A1-9), so `@derive(Copy)` over a class field is accepted.
   - CTL-7: a view a `defer` uses that a later reshape ends is `E3021`, the spec says `E3060` (question below).
   - CTL-11: `weakref` (M4), the kind test `is C as c` (M11), a plain `exists as p` name is read-only (`p += 1`, GRM-44, unbuilt).
