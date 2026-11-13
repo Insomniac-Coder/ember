@@ -679,6 +679,13 @@ impl Checker<'_> {
                 self.sink.amend(at, |diagnostic| diagnostic.message = message);
             }
         }
+        // The lead's review: a message whose change was not recorded keeps its words; the marker
+        // never reaches the reader.
+        let left: Vec<usize> =
+            self.sink.diagnostics().iter().enumerate().filter(|(_, d)| d.message.starts_with(PROVISIONAL)).map(|(at, _)| at).collect();
+        for at in left {
+            self.sink.amend(at, |diagnostic| diagnostic.message = diagnostic.message.trim_start_matches(PROVISIONAL).to_string());
+        }
     }
 }
 
