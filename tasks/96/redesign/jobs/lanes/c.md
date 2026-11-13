@@ -54,3 +54,33 @@ Read first by every job in this lane; updated last by each.
   - GRM-45: the kind test is M11. GRM-46: `from` and `guarded by` after a field's type are not parsed (kept views M5, locks).
   - LEX-15: `from` and `guarded`/`by` after a field's type (GRM-46). LEX-23: `unsafe import c` and `@unsafe(...)` notes (lane b).
   - LEX-26: the spec says E0009 for a NUL in a `c"..."` literal in LEX-26 and E5064 in TXT-3 and the error table (question).
+
+## W4, job 2 (GRM-17's block lambda and the core language), 2026-11-13
+
+- **Credited (built_for_0915):** LEX-1a, LEX-10, LEX-11, LEX-16, LEX-18, LEX-20, LEX-21, TXT-2, TXT-3, TXT-4, TXT-8, TXT-9,
+  TXT-10, TXT-11, STR-1, STR-2, STR-6, STR-7, CTL-3b, CTL-10.
+- **Where things are:** `[GRM-17]`'s E0106 for `fn(x):` + INDENT is in `parse_lambda` (`ember_parser/src/body.rs`; the old
+  `owned fn(x):` block is still read there, see below). `[LEX-1a]` is a scan at the top of `ember_lexer::lex` (`is_bidi_format`,
+  `bidi_message`; the manifest check is in `ember_driver/src/packages.rs::read_manifest`, tested in `milestones.rs`). `[LEX-10]`'s
+  message is in `parse_module` (`ember_parser/src/lib.rs`, `first_any`). `[LEX-11]`: a trailing `##` is held in `pending_docs`
+  like an own-line one (it was a token in the middle of the line and broke `fn f(): ## note`); `skip_docs_before_else` and a
+  `take_doc` before each match arm. `[TXT-2]`'s E5063: an export taking a `StrView` (`ember_typeck/src/lib.rs`, the export-parameter
+  loop) and a `@ffi(macro_fn)` entry typed `StrView` (`ember_driver/src/cimport.rs`, `spell`). `[TXT-11]`: `String + StrView` is now
+  the f-string's `FString` node over both operands (so `a` is not consumed). `[STR-1]`: `check_memberwise_constructor` (narrowest
+  field: pub, pub(package) via `same_package`, module); cross-package test in `ember_driver/tests/package.rs`. `[STR-2]`:
+  `finish_struct_literal` (`written_field_order`: written arguments in locals first when the field order differs) and
+  `construct_through_init` (arguments hoisted before the defaults); `default_context` gives the two `E1010` messages for a default
+  reading a field or `this`. `[STR-3]`: `@derive(Copy)` over a class field is E2080 (`holds_class_object`). `[STR-6]`: E2108 is in
+  `parse_fn_signature` (`decls.rs`).
+- **Traps:** `annotations.py` needs `PYTHONIOENCODING=utf-8` for output with non-ASCII; a per-file run says "no accept_* case", run the folder.
+  A type error stops the borrow checker, so an `E3040` line in a test beside an `E2040` never fires. Bash eats backslashes in
+  heredocs: write Rust with `\n`/`\u{..}` through a Python file made with the Write tool, or the Edit tool.
+- **Not credited, and why:**
+  - GRM-17: the 14 older tests whose lambda is `owned fn(...):` + block (CLO-10 x3, CLO-2 x2, CLO-6, FFI-21 x2, RC-2e x3, STD-19 x2,
+    ...) cannot become local functions: a local function is not `owned` (`E1010`, "`owned` is gone"), and the spec's spelling,
+    `fn f() owns x:` (capture words, GRM-42), is E0900 (M-CLO). So `owned fn(x):` + block keeps its block (`parse_lambda`, `is_owned`)
+    until capture words exist; the other 24 tests are migrated and E0106 is built and tested for `fn(x):` and `owns fn(x):`.
+  - TXT-6: the export that takes a `Span[u8]` is `E5015` today (FFI-31b, lane b); nothing else of the rule is testable.
+  - STR-3, STR-5: a field of `shares`, `weakref` or `sharedref mut` is E0900 (M4); the class-field part of STR-3 is built.
+  - CTL-7: a view a `defer` uses that a later reshape ends is `E3021`, the spec says `E3060` (question below).
+  - CTL-11: `weakref` (M4), the kind test `is C as c` (M11), a plain `exists as p` name is read-only (`p += 1`, GRM-44, unbuilt).
