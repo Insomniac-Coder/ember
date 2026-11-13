@@ -3184,6 +3184,11 @@ struct Checker<'a> {
     prefixes: Vec<String>,
     /// `[MOD-2]` — the package of each module (`LoadedModule::package`).
     module_packages: Vec<Option<usize>>,
+    /// `[STR-2]` - the fields a memberwise call wrote, in the order written, for its literal.
+    written_field_order: Option<Vec<usize>>,
+    /// `[STR-2]` - while a field default is checked: the field it is for, and the type's fields with their types.
+    default_context: Option<(Symbol, Vec<(Symbol, String)>, String)>,
+    default_source: Option<String>,
     /// Per module: the names it can write, mapped to the qualified name each
     /// one means. Its own items plus whatever it imported.
     visible: Vec<HashMap<Symbol, Symbol>>,
@@ -4120,6 +4125,9 @@ impl<'a> Checker<'a> {
             foreign_statics: HashMap::new(),
             prefixes: vec![String::new()],
             module_packages: Vec::new(),
+            written_field_order: None,
+            default_context: None,
+            default_source: None,
             visible: vec![HashMap::new()],
             ambiguous_globs: vec![HashMap::new()],
             foreign_skipped: Vec::new(),
@@ -19392,14 +19400,23 @@ impl<'a> Checker<'a> {
         self.constructing = None;
         self.written_call = outer_written;
         let result = Expr { ty, kind: ExprKind::Local(local), span };
-        Some(Expr {
-            ty,
-            kind: ExprKind::Block {
-                block: Block { stmts: vec![Stmt::Let { local, init: Some(value) }, Stmt::Expr(call)], span },
-                value: Box::new(result),
-            },
-            span,
-        })
+        // `[STR-2]` - the arguments are evaluated first, left to right, then every field's default,
+        // then `init`'s body: the arguments that make a value are made before the defaults run.
+        let mut call = call;
+        let mut stmts = Vec::new();
+        if let ExprKind::Call { args, .. } = &mut call.kind {
+            for arg in args.iter_mut().skip(1) {
+                if matches!(arg.kind, ExprKind::Call { .. } | ExprKind::Binary { .. } | ExprKind::FString { .. } | ExprKind::Block { .. }) {
+                    let (aty, aspan) = (arg.ty, arg.span);
+                    let temp = self.declare(None, aty, aspan);
+                    let made = std::mem::replace(arg, Expr { ty: aty, kind: ExprKind::Local(temp), span: aspan });
+                    stmts.push(Stmt::Let { local: temp, init: Some(made) });
+                }
+            }
+        }
+        stmts.push(Stmt::Let { local, init: Some(value) });
+        stmts.push(Stmt::Expr(call));
+        Some(Expr { ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(result) }, span })
     }
 
     /// `[STR-1]`, `[TYP-18]` — the memberwise constructor of a generic
@@ -19549,6 +19566,7 @@ impl<'a> Checker<'a> {
             })
             .collect();
         let instance = self.types.struct_def(id).name;
+        self.written_field_order = Some(slots.iter().map(|(_, field)| *field).collect());
         self.finish_struct_literal(id, instance, values, span, bound_all)
     }
 
@@ -38734,6 +38752,11 @@ impl<'a> Checker<'a> {
                             Diagnostic::error(codes::E1010, span, "inside a method its object is `this`").help("write `this`")
                         } else {
                             match self.body_fn {
+                                _ if let Some((field, _, _)) = &self.default_context => Diagnostic::error(
+                                    codes::E1010,
+                                    span,
+                                    format!("`this` can only be used in a method, and a field default runs before `init`, when there is no object yet; set `{field}` in `init`: write `this.{field} = ...` in `fn init(...):`"),
+                                ),
                                 Some((name, true)) => Diagnostic::error(
                                     codes::E1010,
                                     span,
@@ -38867,6 +38890,19 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(diagnostic) = self.python_constant(name, span) {
                     self.sink.emit(diagnostic);
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                if let Some((field, fields, owner)) = self.default_context.clone()
+                    && let Some((_, read_ty)) = fields.iter().find(|(f, _)| *f == name)
+                {
+                    let text = self.default_source.clone().unwrap_or_else(|| "...".to_string());
+                    self.sink.emit(
+                        Diagnostic::error(
+                            codes::E1010,
+                            span,
+                            format!("`{field}`'s default reads `{name}`, a field of the same `{owner}`, which has no value when defaults run; set `{field}` in an `init`: `fn init({name}: {read_ty}):` with `this.{name} = {name}` and `this.{field} = {text}`"),
+                        ),
+                    );
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
                 let mut diagnostic = Diagnostic::error(
@@ -60791,12 +60827,14 @@ impl<'a> Checker<'a> {
         let slots = self.constructor_slots(name, &names, args, span, Some(line));
         let bound_all = slots.len() == args.len();
         let mut values: Vec<Option<Expr>> = (0..field_info.len()).map(|_| None).collect();
+        let order: Vec<usize> = slots.iter().map(|(_, field)| *field).collect();
         for (arg, field) in slots {
             // `[OWN-10]` — the field a value is made for, for `E2123`'s words.
             let outer = self.filling.replace((args[arg].value.span, field_info[field].0));
             values[field] = Some(self.check_expr(&args[arg].value, field_info[field].1));
             self.filling = outer;
         }
+        self.written_field_order = Some(order);
         self.finish_struct_literal(id, name, values, span, bound_all)
     }
 
@@ -60811,6 +60849,27 @@ impl<'a> Checker<'a> {
             .map(|f| (f.name, f.ty, f.has_default, f.ty_span))
             .collect();
         let ty = self.types.intern(TyKind::Struct(id));
+        // `[STR-2]` - the written arguments are evaluated first, left to right, then the omitted
+        // fields' defaults in field order. The literal evaluates its fields in field order, so when
+        // that is not the order wanted the written values are made first, each in a local.
+        let written = self.written_field_order.take().unwrap_or_default();
+        let in_order = written.windows(2).all(|pair| pair[0] < pair[1])
+            && written.iter().all(|&field| (0..field).all(|before| values[before].is_some()));
+        let mut prelude: Vec<Stmt> = Vec::new();
+        if !in_order {
+            for &field in &written {
+                if let Some(value) = values[field].take() {
+                    if matches!(value.kind, ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_) | ExprKind::Local(_) | ExprKind::Error) {
+                        values[field] = Some(value);
+                        continue;
+                    }
+                    let (vty, vspan) = (value.ty, value.span);
+                    let local = self.declare(None, vty, vspan);
+                    prelude.push(Stmt::Let { local, init: Some(value) });
+                    values[field] = Some(Expr { ty: vty, kind: ExprKind::Local(local), span: vspan });
+                }
+            }
+        }
         let mut fields = Vec::with_capacity(field_info.len());
         for (index, (field_name, field_ty, has_default, _)) in field_info.iter().enumerate() {
             match values[index].take() {
@@ -60847,7 +60906,11 @@ impl<'a> Checker<'a> {
             }
         }
 
-        Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields }, span }
+        let literal = Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields }, span };
+        if prelude.is_empty() {
+            return literal;
+        }
+        Expr { ty, kind: ExprKind::Block { block: Block { stmts: prelude, span }, value: Box::new(literal) }, span }
     }
 
     /// `[CLS-10]` — the `init` of the nearest base class that has one.
@@ -61163,7 +61226,33 @@ impl<'a> Checker<'a> {
         .unwrap_or_default();
         let outer = (!bindings.is_empty()).then(|| std::mem::replace(&mut self.type_params, bindings));
         let errors_before = self.sink.error_count();
+        // `[STR-2]` - which field this default is for, and the fields beside it.
+        let context = match owner {
+            DefaultOwner::Struct(id) => {
+                let def = self.types.struct_def(id);
+                let names: Vec<(Symbol, Ty)> = def.fields.iter().map(|f| (f.name, f.ty)).collect();
+                let index = self.struct_default_exprs.get(&id).and_then(|all| all.iter().position(|e| e.as_ref().is_some_and(|e| e.span == default.span)));
+                let owner_name = def.name.to_string();
+                index.map(|index| (names[index].0, names, owner_name))
+            }
+            DefaultOwner::Class(id) => {
+                let def = self.types.class_def(id);
+                let names: Vec<(Symbol, Ty)> = def.fields.iter().map(|f| (f.name, f.ty)).collect();
+                let index = self.class_default_exprs.get(&id).and_then(|all| all.iter().position(|e| e.as_ref().is_some_and(|e| e.span == default.span)));
+                let owner_name = def.name.to_string();
+                index.map(|index| (names[index].0, names, owner_name))
+            }
+            DefaultOwner::Constant => None,
+        }
+        .map(|(field, names, owner_name)| {
+            (field, names.into_iter().map(|(n, t)| (n, self.types.display(t).replace("i64", "int"))).collect(), owner_name)
+        });
+        let outer_context = std::mem::replace(&mut self.default_context, context);
+        let written = self.written_line(default.span);
+        let outer_source = std::mem::replace(&mut self.default_source, written);
         let mut value = self.check_expr(default, ty);
+        self.default_context = outer_context;
+        self.default_source = outer_source;
         // `[TYP-9]`, ODR-090 — a construction's field default is strict IEEE
         // in whichever function builds the value: one doing float work is the
         // body of a strict closure. (A constant's is folded while compiling.)
