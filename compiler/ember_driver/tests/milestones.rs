@@ -3626,7 +3626,7 @@ fn why_prints_the_shortest_chain_to_an_effect() {
     let pure = ember(&["why", "--alloc", "pure", &source_arg], &root);
     assert!(pure.stdout.contains("`pure` does not reach `Alloc`"), "{}", pure.stdout);
     let io = ember(&["why", "--io", "main", &source_arg], &root);
-    assert!(io.stdout.contains("`main` reaches `Io`:") && io.stdout.contains("main -> console output"), "{}", io.stdout);
+    assert!(io.stdout.contains("`main` reaches `Io`:") && io.stdout.contains("main -> std.core.println -> console output"), "{}", io.stdout);
     let unsafe_chain = ember(&["why", "--unsafe", "through", &source_arg], &root);
     assert!(unsafe_chain.stdout.contains("  through -> first -> an `unsafe fn`"), "{}", unsafe_chain.stdout);
     assert!(unsafe_chain.stdout.contains("  `first` requires: `n` is at least 1"), "{}", unsafe_chain.stdout);
@@ -7826,21 +7826,22 @@ fn main():
         ("log_twice", "changes out (through log)\nreshapes out (through log)\nadds to out (through log)\nonly adds to out (through log)\n"),
         ("log_and_peek", "changes out\nreads out, out[_]\nreshapes out\nadds to out\n"),
         ("log_and_clear", "changes out\nreshapes out\nadds to out\n"),
-        // A `StrView` points at its text, which printing it reads; a string just made is memory no
-        // parameter reaches, so pushing it reads nothing of the caller's.
-        ("note_text", "reads s\n"),
-        ("fresh_then_print", "changes out\nreads s\nreshapes out\nadds to out\nonly adds to out\nuses s after it may reshape or end out\n"),
+        // A `StrView` points at its text, which printing it reads (`println`, a function of std's
+        // since `[TYP-47]`, so through it); a string just made is memory no parameter reaches, so
+        // pushing it reads nothing of the caller's.
+        ("note_text", "reads s (through std.core.println)\n"),
+        ("fresh_then_print", "changes out\nreads s (through std.core.println)\nreshapes out\nadds to out\nonly adds to out\nuses s after it may reshape or end out\n"),
         // `[BRW-21]` — what a function may reshape or end before its last use of a view parameter:
         // on a line before it (not after), through a callee, by a callee given the view, before a view
         // made from it, before the next turn of a loop; never a change made through the parameter
         // itself (`log`'s own clear, `Counter.note`'s push and `twice`'s calls above).
-        ("clear_then_use", "changes log\nreads s\nreshapes log\nuses s after it may reshape or end log\n"),
-        ("use_then_clear", "changes log\nreads s\nreshapes log\nwhile it uses log, reads s\n"),
+        ("clear_then_use", "changes log\nreads s (through std.core.println)\nreshapes log\nuses s after it may reshape or end log\n"),
+        ("use_then_clear", "changes log\nreads s (through std.core.println)\nreshapes log\nwhile it uses log, reads s (through std.core.println)\n"),
         ("wipe", "changes log\nreshapes log\n"),
-        ("clear_through", "changes log (through wipe)\nreads s\nreshapes log (through wipe)\nuses s after it may reshape or end log (through wipe)\n"),
+        ("clear_through", "changes log (through wipe)\nreads s (through std.core.println)\nreshapes log (through wipe)\nuses s after it may reshape or end log (through wipe)\n"),
         ("pass_on", "changes log (through clear_then_use)\nreads s (through clear_then_use)\nreshapes log (through clear_then_use)\nuses s after it may reshape or end log (through clear_then_use)\n"),
         ("piece_after", "changes log\nreads s\nreshapes log\nuses s after it may reshape or end log\nwhile it uses log, reads s\n"),
-        ("in_a_loop", "changes log\nreads s\nreshapes log\nuses s after it may reshape or end log\nwhile it uses log, reads s\n"),
+        ("in_a_loop", "changes log\nreads s (through std.core.println)\nreshapes log\nuses s after it may reshape or end log\nwhile it uses log, reads s (through std.core.println)\n"),
         // `[BRW-1]`, `[BRW-21]` — what a function reads and changes by other names while it still uses a
         // `ref mut` parameter: a static, another parameter, through a callee too; not what a callee does
         // after the call that was its last use of it (`pass_on` above).

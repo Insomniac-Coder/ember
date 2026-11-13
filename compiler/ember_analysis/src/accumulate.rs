@@ -60,8 +60,10 @@ struct Shape {
     span: Span,
 }
 
+/// A local a turn of the loop may simply assign again: a value copied as its bits that nothing ends
+/// (a number, a flag, a view of static text such as `print`'s `sep` and `end`).
 fn is_plain(types: &TypeTable, local: &LocalDecl) -> bool {
-    matches!(types.kind(local.ty), TyKind::Int(_) | TyKind::Uint(_) | TyKind::Bool | TyKind::Void)
+    types.is_copy(local.ty) && !types.needs_drop(local.ty) && !matches!(types.kind(local.ty), TyKind::Class(_) | TyKind::ClassInterface(_))
 }
 
 fn is_marker(stmt: &Stmt) -> bool {
