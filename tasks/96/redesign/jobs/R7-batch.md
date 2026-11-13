@@ -140,3 +140,23 @@ its own; M4's slice C (the lead, branch `m4-slice-c-probe`) builds on it. Read `
    M5: report).
 4. **`[STR-*]`:** STR-1, STR-2, STR-3, STR-5, STR-6, STR-7.
 5. **`[CTL-*]`:** CTL-3b, CTL-7, CTL-10, CTL-11 (CTL-1 and CTL-2 are M5's A2-6: not this job).
+
+## W5 (Sonnet), lane c, job 3: the types of Part III, and LEX-10 (28 tasks) (rolling slot)
+
+The rules, each a task: TYP-1, TYP-5, TYP-6, TYP-9, TYP-9b, TYP-10, TYP-12, TYP-13, TYP-14, TYP-17, TYP-19,
+TYP-21, TYP-22, TYP-23, TYP-24, TYP-25, TYP-26, TYP-31, TYP-32, TYP-34, TYP-35, TYP-36, TYP-38, TYP-39, TYP-43,
+TYP-44a, TYP-47; and LEX-10 first:
+
+- **LEX-10, the lead's ruling (reading B, `review.md`, W4's question 3):** a line whose first characters after its
+  indentation are `#!` is a directive, never a comment. So an indented `#! module overflow(wrap)` in a function body
+  is `E0104` with the spec's message ("`#! module overflow(wrap)` is a directive, and directives come first; move it
+  above `<the first import or item>`"). W4 built reading A (column 0 only) and an existing test pins A: change that
+  test (the tests follow the ruling), build B, and credit LEX-10 again.
+
+- Not this job (other lanes' milestones): TYP-15/15a (stored views, M5), TYP-44 (kind tests, M11), TYP-45/45a
+  (owner words, lane a's M4 slice C), TYP-46/46a (memory managers).
+- TYP-14: test what is built; the `shares`/`weakref`/`thread_shared` parts are M4 (E0900 today): report them.
+- TYP-47 (any number of types and values) may be a large piece: build it if it fits, else test what is built and
+  report what is missing, clause by clause.
+- A class handle is still `Copy` on main (lane a changes that in M4 slice C): do not change `copy_with`.
+

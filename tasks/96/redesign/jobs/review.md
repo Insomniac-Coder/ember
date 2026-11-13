@@ -584,3 +584,27 @@ after each work batch" is the owner's rule from this round.
        `[OWN-11]`/`[EXP-6]` (a part of a value with a `drop` is not handed over alone), a D- row for lane a.
     7. GRM-17's 31 files with a block after a lambda's `:`: the tests follow the spec, so they are migrated to local
        functions; the next lane-c job.
+- **W4 (Sonnet), lane c job 2** (406k tokens, 71 min). 28 commits; the lead's review fixes `84f33c33`, `3a5f2ad6`.
+  **Credited 19:** LEX-1a, LEX-11, LEX-16, LEX-18, LEX-20, LEX-21, TXT-2, TXT-3, TXT-4, TXT-8, TXT-9, TXT-10, TXT-11,
+  STR-1, STR-2, STR-6, STR-7, CTL-3b, CTL-10. Not credited: GRM-17, TXT-6, STR-3, STR-5, CTL-7, CTL-11 (each with the
+  clause it waits for, in `lanes/c.md`), and LEX-10 (below).
+  - **The lead's review:** (1) `[STR-2]`: the path through `init` chose which arguments to make first from four
+    expression kinds (a call, a binary, an f-string, a block) and missed method calls, `if`, `match` and indexing;
+    both paths now use one rule, `evaluates_to_nothing_else` (a literal, a local, a reference to a local stays where
+    it is; any other argument is made first, in order). (2) The `E1010` line for a default that reads a field built
+    the type by replacing `i64` with `int` in the type's display; it now writes each field's type as its
+    declaration does (`ty_span`). The quick check after both: failing 0.
+  - **The lead on its questions:**
+    1. GRM-17, `owned fn(x):` + block: kept until the capture words exist (M-CLO); sequencing, not a language
+       question. GRM-17 stays uncredited until then.
+    2. CTL-7, a view a `defer` uses that a later reshape ends: `[BRW-17]` decides it: a view a call gives ends at any
+       change that may reshape what it points into, and a later use is `E3060`, in a `defer` or not. The
+       compiler's `E3021` is an implementation gap of `[BRW-17]`, lane a's; no spec question.
+    3. LEX-10, an indented `#!` line: ruled reading B (an ODR the lead may rule): a line whose first characters
+       after its indentation are `#!` is a directive, so one in a body is `E0104`. "Wherever it stands … and never a
+       comment" says so, and reading A would leave a directive written in a block doing nothing in silence, a hidden
+       path the owner's direction rules out. Hardened_15 words it ("after its indentation"); W5 builds it, and
+       LEX-10's credit is taken back until then.
+    4. LEX-26/TXT-3, a NUL in `c"…"`: W3's question 1, already for Hardened_15; E5064 stays.
+    5. STR-2's message for a field of a compound type: fixed by (2), the type as written.
+    6. TXT-2's `_lossy` form: the rule allows one ("or"), it requires none; nothing missing.
