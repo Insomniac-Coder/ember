@@ -85,6 +85,9 @@ pub(crate) struct Parser<'a> {
     /// `[LEX-14]` — a name or pattern expected at this token, and the keywords the grammar expects
     /// right after it (`in` after `for`'s pattern): one of them here is that keyword, not a name.
     slot_end: (usize, &'static [Kw]),
+    /// `[GRM-47]` — an `owns` expression met as an operand of an operator, until the call or the `=`
+    /// it stands in gives its message the line to write (the rest are flushed at the end of the file).
+    owns_operands: Vec<crate::body::OwnsOperand>,
 }
 
 pub use ember_ast::NESTING_LIMIT;
@@ -118,6 +121,7 @@ impl<'a> Parser<'a> {
             runtime_params: Vec::new(),
             stmt_start: usize::MAX,
             slot_end: (usize::MAX, &[]),
+            owns_operands: Vec::new(),
         }
     }
 
@@ -758,6 +762,7 @@ impl<'a> Parser<'a> {
             Script { main: items.len() - 1, placement, first }
         });
 
+        self.flush_owns_operands(0, crate::body::OwnsPlace::Elsewhere);
         let unsafe_sites = std::mem::take(&mut self.unsafe_sites);
         // ODR-281 — at their count, as a block's statements are (`parse_block_nested`).
         items.shrink_to_fit();

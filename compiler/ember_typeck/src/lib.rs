@@ -60293,6 +60293,10 @@ impl<'a> Checker<'a> {
     /// it takes over": a missing word, or one written where the parameter does not say it, is `E3028`,
     /// in the program's own names (verdicts 146, 147, 149, 158).
     fn check_call_word(&mut self, arg: &ast::Expr, mode: Mode, param_ty: Ty, declared: Span) {
+        // A placeholder (`[GRM-47]`'s `E0119` already said what was wrong) has no word to miss.
+        if matches!(arg.kind, ast::ExprKind::Error) {
+            return;
+        }
         // The words are the program's: a call or an argument the compiler makes itself has none.
         if !self.written_call || arg.id == ast::NodeId::DUMMY || self.generated_files.contains(&arg.span.file) {
             return;

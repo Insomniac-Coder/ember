@@ -9,6 +9,8 @@ use ember_diag::{Diagnostic, codes};
 use ember_lexer::{Kw, Lit, Punct, TokenKind};
 
 use crate::Parser;
+pub(crate) use self::owns_operand::{OwnsOperand, OwnsPlace};
+mod owns_operand;
 
 /// Binding power for a precedence level in Part III §5.
 const fn bp(level: u8) -> u8 {
@@ -375,6 +377,7 @@ impl Parser<'_> {
     fn parse_expr_statement(&mut self) -> Option<StmtKind> {
         let outer = std::mem::replace(&mut self.stmt_start, self.pos);
         let first = self.parse_expr();
+        let first_start = first.span.start;
         self.stmt_start = outer;
 
         // `x: T [= e]` — a typed declaration.
@@ -382,7 +385,11 @@ impl Parser<'_> {
             self.bump();
             let pattern = self.expr_to_pattern(first);
             let ty = Some(self.parse_type());
+            let owns_mark = self.owns_operands.len();
             let init = self.eat_punct(Punct::Eq).then(|| self.parse_expr_list(true));
+            if let Some(init) = &init {
+                self.flush_owns_operands(owns_mark, OwnsPlace::Assigned { stmt_start: first_start, value_start: init.span.start });
+            }
             return Some(StmtKind::Decl { pattern, ty, init });
         }
 
@@ -404,7 +411,9 @@ impl Parser<'_> {
             return Some(StmtKind::Assign { targets, op: Some(op), value });
         }
         if self.eat_punct(Punct::Eq) {
+            let owns_mark = self.owns_operands.len();
             let value = self.parse_expr_list(true);
+            self.flush_owns_operands(owns_mark, OwnsPlace::Assigned { stmt_start: targets[0].span.start, value_start: value.span.start });
             return Some(StmtKind::Assign { targets, op: None, value });
         }
 
@@ -1024,6 +1033,16 @@ impl Parser<'_> {
                 continue;
             }
             let rhs = self.parse_expr_bp(rbp, allow_block_lambda);
+            let op_text = match op {
+                InfixOp::Bin(bin) => bin.as_str(),
+                InfixOp::Logical(LogicalOp::And) => "and",
+                InfixOp::Logical(LogicalOp::Or) => "or",
+                InfixOp::Range { inclusive: false } => "..",
+                InfixOp::Range { inclusive: true } => "..=",
+            };
+            self.note_owns_operand(&mut lhs, op_text, true);
+            let mut rhs = rhs;
+            self.note_owns_operand(&mut rhs, op_text, false);
 
             if non_assoc && matches!(op, InfixOp::Bin(b) if b.is_comparison()) {
                 // `[GRM-25]` (0.9.9) — `==`, `!=`, `<`, `>`, `<=`, `>=` chain
@@ -1070,8 +1089,9 @@ impl Parser<'_> {
                                     break;
                                 }
                                 self.bump_infix(next);
-                                let operand = self.parse_expr_bp(next_rbp, allow_block_lambda);
+                                let mut operand = self.parse_expr_bp(next_rbp, allow_block_lambda);
                                 let InfixOp::Bin(bin) = next else { unreachable!("a comparison") };
+                                self.note_owns_operand(&mut operand, bin.as_str(), false);
                                 rest.push((bin, operand));
                             }
                             let id = self.next_id();
@@ -1211,7 +1231,8 @@ impl Parser<'_> {
 
         if self.at_kw(Kw::Not) && !self.at_keyword_as_name() {
             self.bump();
-            let operand = self.parse_expr_bp(BP_NOT + 1, allow_block_lambda);
+            let mut operand = self.parse_expr_bp(BP_NOT + 1, allow_block_lambda);
+            self.note_owns_operand(&mut operand, "not", false);
             let id = self.next_id();
             return Expr {
                 id,
@@ -1225,7 +1246,8 @@ impl Parser<'_> {
             self.bump();
             // `[III.5]` — `**` binds tighter than a unary minus on its left,
             // so `-2**2` is `-(2**2)`.
-            let operand = self.parse_expr_bp(BP_UNARY + 1, allow_block_lambda);
+            let mut operand = self.parse_expr_bp(BP_UNARY + 1, allow_block_lambda);
+            self.note_owns_operand(&mut operand, if matches!(op, UnOp::Neg) { "-" } else { "~" }, false);
             let id = self.next_id();
             return Expr {
                 id,
@@ -1241,6 +1263,10 @@ impl Parser<'_> {
             let hi = self
                 .starts_expression()
                 .then(|| Box::new(self.parse_expr_bp(BP_RANGE + 1, allow_block_lambda)));
+            let mut hi = hi;
+            if let Some(hi) = &mut hi {
+                self.note_owns_operand(hi, if inclusive { "..=" } else { ".." }, false);
+            }
             let id = self.next_id();
             return Expr {
                 id,
@@ -1678,7 +1704,18 @@ impl Parser<'_> {
             let kind = match self.peek() {
                 TokenKind::Punct(Punct::LParen) => {
                     self.bump();
-                    let args = self.parse_args();
+                    let owns_mark = self.owns_operands.len();
+                    let mut args = self.parse_args();
+                    // The arguments are placeholders once reported: the call's checks add nothing to the one error.
+                    let reported = self.flush_owns_operands(owns_mark, OwnsPlace::Argument { call_start: start.start });
+                    for arg in &mut args {
+                        if reported.iter().any(|at| arg.span.start <= at.start && at.end <= arg.span.end) {
+                            // `owns` over a placeholder: the call's own check of the word finds it said.
+                            let span = arg.value.span;
+                            let placeholder = Expr { id: self.next_id(), kind: ExprKind::Error, span };
+                            arg.value.kind = ExprKind::Owned(Box::new(placeholder));
+                        }
+                    }
                     // A call on a field access is a method call. `[GRM-8]`
                     // leaves `recv.method[T]` as an `IndexOrInstantiate`
                     // until the following `(` proves that the bracketed
@@ -1810,7 +1847,9 @@ impl Parser<'_> {
                     if self.at_punct(Punct::Question) || self.at_punct(Punct::Bang) {
                         self.old_downcast(expr)
                     } else {
-                        ExprKind::Cast { expr: Box::new(expr), ty: self.parse_type() }
+                        let ty = self.parse_type();
+                        self.note_owns_operand(&mut expr, "as", true);
+                        ExprKind::Cast { expr: Box::new(expr), ty }
                     }
                 }
                 _ => return expr,
