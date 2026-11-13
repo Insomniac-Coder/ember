@@ -1172,7 +1172,9 @@ fn strip_common_indent(body: &str) -> String {
 enum EscapeError {
     Truncated,
     HexDigits,
-    HexAboveAscii,
+    HexAboveAscii(u32),
+    /// A unicode escape in a byte or C string: the scalar value it names.
+    UnicodeInBytes(u32),
     MissingBrace,
     UnicodeDigits,
     NotScalar(u32),
@@ -1190,9 +1192,17 @@ impl EscapeError {
             EscapeError::HexDigits => {
                 Diagnostic::error(codes::E0009, span, r"`\x` needs exactly two hex digits")
             }
-            EscapeError::HexAboveAscii => {
-                Diagnostic::error(codes::E0009, span, r"`\x` above 0x7F is not valid in a string")
-                    .help(r"use `\u{…}` for a non-ASCII character")
+            EscapeError::HexAboveAscii(value) => {
+                Diagnostic::error(codes::E0009, span, r"`\x` above 0x7F is not valid in a text literal: its text is UTF-8")
+                    .help(format!(r#"write the character, `\u{{{value:X}}}`, or a byte string, `b"\x{value:02X}"`"#))
+            }
+            EscapeError::UnicodeInBytes(value) => {
+                let utf8: String = char::from_u32(value).map_or(String::new(), |c| {
+                    let mut buf = [0u8; 4];
+                    c.encode_utf8(&mut buf).bytes().map(|b| format!(r"\x{b:02X}")).collect()
+                });
+                Diagnostic::error(codes::E0009, span, "a byte string holds bytes")
+                    .help(format!("write the UTF-8 bytes, `{utf8}`, or a text literal"))
             }
             EscapeError::MissingBrace => {
                 Diagnostic::error(codes::E0009, span, r"`\u` must be followed by `{`")
@@ -1248,7 +1258,7 @@ fn scan_escape(src: &str, pos: &mut usize, context: EscapeContext) -> Result<u32
             *pos += 2;
             let value = u32::from_str_radix(&digits, 16).expect("two hex digits");
             if context == EscapeContext::Text && value > 0x7F {
-                return Err(EscapeError::HexAboveAscii);
+                return Err(EscapeError::HexAboveAscii(value));
             }
             Ok(value)
         }
@@ -1269,6 +1279,9 @@ fn scan_escape(src: &str, pos: &mut usize, context: EscapeContext) -> Result<u32
             let value = u32::from_str_radix(&digits, 16).map_err(|_| EscapeError::UnicodeDigits)?;
             if char::from_u32(value).is_none() {
                 return Err(EscapeError::NotScalar(value));
+            }
+            if context == EscapeContext::Bytes {
+                return Err(EscapeError::UnicodeInBytes(value));
             }
             Ok(value)
         }
