@@ -142,7 +142,10 @@ rounds:
 - the lead collects, tests and combines it himself before any new work;
 - the lead says whenever an assignment's size changes.
 
-**How many agents at once: as many as the machine carries well.** The owner, verbatim: "you can increase and
+**How many agents at once: at most three, fewer when the machine is loaded.** The owner, 2026-11-13, verbatim:
+"resume work and work autonomously, use 2-3 helper agents at max. Lets work towards finishing this language". So
+at most three helpers run at once, whatever else the list below allows; within that cap the count follows the
+machine. The earlier rule, as many as the machine carries well: The owner, verbatim: "you can increase and
 decrease the agent count in such a way that if that they all are going to take up the CPU and slow down things then
 it's better to have fewer agents and if the agents are getting simpler work then you can scale up, think of other
 parameters you can use to scale up and down to use system resources efficiently" (it replaced the earlier fixed
