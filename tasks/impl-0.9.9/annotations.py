@@ -159,7 +159,17 @@ def check(path):
     text = open(path, encoding='utf-8').read()
     kind = (re.search(r'^#\$ test:\s*(\S+)', text, re.M) or [None, ''])[1]
     if kind in ('parse-pass', 'parse-fail'):
-        return [] if FULL else None
+        if not FULL:
+            return None
+        # `[CLI-9]` — as `milestones.rs` runs them: `ember check --syntax-only`. Skipping them let a
+        # parse-pass test that does not parse look green here and fail the suite (GRM-35, 2026-11-13).
+        code, _, err = run(['check', '--syntax-only'], path)
+        if kind == 'parse-pass':
+            first = next((line for line in err.splitlines() if line.startswith('error')), err.strip()[:200])
+            return [] if code == 0 else ['expected it to parse: ' + first]
+        if code == 0:
+            return ['expected a parse error, but it parsed']
+        return [f'missing {c}: {m!r}' for _, c, m, _ in annotations(text) if c not in err or m not in err]
     profile = (re.search(r'^#\$ profiles:\s*([a-z]+)', text, re.M) or [None, 'debug'])[1]
     if not FULL:
         if kind not in ('run-pass', 'run-fail'):

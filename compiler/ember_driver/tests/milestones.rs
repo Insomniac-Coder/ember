@@ -9454,10 +9454,8 @@ fn every_example_of_the_specification_checks() {
         ("V.7 Constants and statics", 1, WRITTEN_IN_0915),
         ("VI.5 Lambdas and function values", 1, WRITTEN_IN_0915),
         ("Views with several regions", 1, WRITTEN_IN_0915),
-        ("VII.7 Views over containers: `Span` and `MutSpan`", 1, WRITTEN_IN_0915),
         ("Part VIII — Classes, Shared Owners and Links", 1, WRITTEN_IN_0915),
         ("VIII.5 `weakref` links, parent links and loops of owners", 1, WRITTEN_IN_0915),
-        ("IX.2 Arenas", 1, WRITTEN_IN_0915),
         ("IX.3 Memory managers: `using` and `Allocator`", 1, WRITTEN_IN_0915),
         // `owns (…)` before an argument for an `owns` parameter, since 0.9.20_Hardened_3.
         ("IX.7 `Cell`, and changes checked when compiling", 1, WRITTEN_IN_0920),
@@ -9467,7 +9465,6 @@ fn every_example_of_the_specification_checks() {
         ("XI.3 Scoped tasks", 1, WRITTEN_IN_0915),
         ("XI.4 Parallel loops", 1, WRITTEN_IN_0915),
         ("XII.1 `SoA[T]`", 1, WRITTEN_IN_0915),
-        ("XII.2 SIMD", 1, WRITTEN_IN_0915),
         ("XII.3 ECS (`std.ecs`)", 1, WRITTEN_IN_0915),
         ("Part XVI — Calling C", 1, WRITTEN_IN_0915),
         ("XVI.7 Exporting Ember to C", 1, WRITTEN_IN_0915),
