@@ -178,6 +178,29 @@ me percentage completion status". When a batch is collected, the lead runs `tool
 its table to the owner, in §7's form (a table first, one bold percentage per phase, a text bar, and the overall
 row), with what changed since the last report and why.
 
+**How the work is organised, to finish the language faster** (the owner asked for an approach, 2026-11-13: "also
+for the future agents think of an approach which will help us take this language towards completion much fastee";
+the lead proposed six changes and the owner answered "yea" to all of them). Why: round 6 spent about 2.8M tokens and
+15 agent-hours and moved the overall figure by under one point, because few rules were finished whole (the credit
+pilot found 18 of 20 rules partly built, and a partial rule counts 0).
+1. **A job finishes whole rules.** Its tasks are rules from `tools/phase_progress.py`'s unfinished list, inside one
+   milestone: every clause built, a test for every clause, and the rule credited in `built_for_0915` in the same
+   job. Leftovers and findings go in only where they block a rule of the job.
+2. **The Opus deputy works one milestone ahead.** It reads the next milestone's rules, writes their conformance
+   tests from the spec alone, and gathers every spec question of that milestone into one hardening before the
+   builders start it. Between those, it reviews finished jobs for the lead.
+3. **Rolling slots, not rounds.** When a helper finishes, the lead collects, tests and merges that one job, and its
+   slot takes the next job at once. "Collect before new work" holds per helper.
+4. **Lanes.** Three lanes that persist from job to job: (a) ownership, views and borrowing (M4 to M7); (b) the C
+   interface and threads (M12, M9); (c) types, messages and std (M11, M14, diagnostics). Each lane keeps a notes
+   file, `tasks/96/redesign/jobs/lanes/<lane>.md` (where its code is, its traps, what is done), which every job of
+   the lane reads first and updates last. A lane's new code goes in its own module files, not appended to
+   `ember_typeck/src/lib.rs`.
+5. **Faster builds.** Each lane keeps its worktree's `target/` between jobs (the owner's yes, 2026-11-13: about 8 GB
+   each, about 23 GB for three; the 50 GB free-disk floor still holds). The linker and any other build change is
+   measured first (cold build, rebuild after one edit, link time) and kept only where it helps.
+6. **No trap that costs a run.** A check that can run a stale binary refuses to.
+
 ## 4. Rules of this codebase
 
 - **Generated code runs as close to C speed as possible.** The owner, 2026-09-27: "since we are
