@@ -6031,7 +6031,8 @@ static RUNNING: Mutex<usize> = Mutex::new(0);
 static FINISHED: Condvar = Condvar::new();
 
 fn cores() -> usize {
-    let available = std::thread::available_parallelism().map_or(4, |n| n.get());
+    // The owner (2026-11-13, the laptop at 102 °C): at most 16 cases at once in any run.
+    let available = std::thread::available_parallelism().map_or(4, |n| n.get()).min(16);
     // Honour the standard test runner's explicit worker limit inside a case
     // sweep too; --test-threads alone only serializes the outer test functions.
     std::env::var("RUST_TEST_THREADS")
@@ -6039,6 +6040,25 @@ fn cores() -> usize {
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|&limit| limit > 0)
         .map_or(available, |limit| limit.min(available))
+}
+
+/// The owner (2026-11-13): one full test run on this laptop at a time. A sweep of 300 cases or more
+/// takes a lock on a file in the temp folder that every worktree's runs share (`annotations.py`
+/// takes the same one), and this process holds it until it exits; the system frees it if it dies.
+fn one_full_run_at_a_time(cases: usize) {
+    static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
+    if cases < 300 {
+        return;
+    }
+    HELD.get_or_init(|| {
+        let path = std::env::temp_dir().join("ember-suite.lock");
+        let file = std::fs::OpenOptions::new().create(true).append(true).open(&path).expect("the suite lock opens");
+        if file.try_lock().is_err() {
+            eprintln!("waiting for another full test run to finish ({})", path.display());
+            file.lock().expect("the suite lock is taken");
+        }
+        file
+    });
 }
 
 /// A place among the `cores()` cases that may run at once, held until drop.
@@ -6066,6 +6086,7 @@ impl Drop for Permit {
 /// files' order. A failing case is recorded rather than stopping the run, so
 /// one run reports every failing case rather than the first.
 fn run_cases(files: &[PathBuf], case: impl Fn(&Path) + Sync) -> Vec<String> {
+    one_full_run_at_a_time(files.len());
     let next = AtomicUsize::new(0);
     let mut failures: Vec<(usize, String)> = std::thread::scope(|scope| {
         let workers: Vec<_> = (0..cores().min(files.len()))

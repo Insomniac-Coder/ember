@@ -142,6 +142,14 @@ rounds:
 - the lead collects, tests and combines it himself before any new work;
 - the lead says whenever an assignment's size changes.
 
+**How hard the laptop runs: one full test run at a time, at most 16 test threads.** The owner, 2026-11-13, after
+the laptop hit 102 °C too often ("yes, apply the limit"): the cause was several full test runs at once (42 test
+programs, 7 C compiles, 3 links on 24 threads at 100%), each runner starting a program per thread. So: only one full
+test run at a time, each at most 16 threads; builds `CARGO_BUILD_JOBS=4` each. The code enforces both:
+`annotations.py`, `milestones.rs`'s `run_cases`/`cores()`, `firstweek.rs` and `fuzz.rs` cap at 16, and a run of 300
+cases or more waits for a lock on `%TEMP%\ember-suite.lock`, which every worktree's runs share. A helper runs the full
+quick check once, at the end of its job, at `RUST_TEST_THREADS=8`; between rules, only the folders it changed.
+
 **How many agents at once: at most three, fewer when the machine is loaded.** The owner, 2026-11-13, verbatim:
 "resume work and work autonomously, use 2-3 helper agents at max. Lets work towards finishing this language". So
 at most three helpers run at once, whatever else the list below allows; within that cap the count follows the

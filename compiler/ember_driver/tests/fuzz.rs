@@ -66,7 +66,7 @@ struct Reported {
 /// `ember check --json` on each file, side by side. Panics on an internal error.
 fn check_all(dir: &Path, files: &[PathBuf]) -> Vec<Vec<Reported>> {
     let next = AtomicUsize::new(0);
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(files.len().max(1));
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(16).min(files.len().max(1)); // at most 16 at once (the owner, 2026-11-13)
     let mut results: Vec<(usize, Vec<Reported>)> = std::thread::scope(|scope| {
         let workers: Vec<_> = (0..threads)
             .map(|_| {

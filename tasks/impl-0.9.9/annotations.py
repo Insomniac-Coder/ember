@@ -259,6 +259,38 @@ def stale_sources(binary):
     return newer
 
 
+SUITE_LOCK = None
+
+
+def one_full_run_at_a_time(cases):
+    """The owner (2026-11-13): one full test run on this laptop at a time. A run of 300 files or more
+    locks a file in the temp folder that every worktree's runs share (`milestones.rs` takes the same
+    one) and holds it until this process exits; the system frees it if the process dies."""
+    global SUITE_LOCK
+    if cases < 300 or SUITE_LOCK is not None:
+        return
+    path = os.path.join(tempfile.gettempdir(), 'ember-suite.lock')
+    handle = open(path, 'a+')
+    if os.name == 'nt':
+        import msvcrt
+        import time
+        waiting = False
+        while True:
+            try:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                break
+            except OSError:
+                if not waiting:
+                    print(f'waiting for another full test run to finish ({path})', file=sys.stderr, flush=True)
+                    waiting = True
+                time.sleep(5)
+    else:
+        import fcntl
+        fcntl.flock(handle, fcntl.LOCK_EX)
+    SUITE_LOCK = handle
+
+
 def main():
     global OUT
     with tempfile.TemporaryDirectory(prefix="ember-annotations-") as output:
@@ -266,8 +298,10 @@ def main():
         directories = [(d, sorted(glob.glob(os.path.join(d, '*.em')))) for d in sys.argv[1:]]
         everything = sorted({path for _, paths in directories for path in paths})
         # RUST_TEST_THREADS caps the workers, as it does the cargo suite's case sweep:
-        # every core at once keeps a laptop's CPU near its thermal limit.
-        workers = int(os.environ.get('RUST_TEST_THREADS') or 0) or os.cpu_count()
+        # every core at once keeps a laptop's CPU near its thermal limit. The owner
+        # (2026-11-13, the laptop at 102 °C): at most 16 at once, and one full run at a time.
+        workers = min(int(os.environ.get('RUST_TEST_THREADS') or 0) or os.cpu_count(), 16)
+        one_full_run_at_a_time(len(everything))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             found = dict(zip(everything, pool.map(check, everything)))
 
