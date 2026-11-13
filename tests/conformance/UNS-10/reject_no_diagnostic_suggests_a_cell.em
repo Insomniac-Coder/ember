@@ -9,7 +9,7 @@ struct Hits:
     n: int
 
 fn bump(h: Hits):
-    h.n += 1    #$ error[E3023]: cannot mutate borrowed parameter `h`
+    h.n += 1    #$ error[E3023]: `bump` sets `h.n`, but `h` only reads the caller's hits
 
 fn main():
     h = Hits(n=0)

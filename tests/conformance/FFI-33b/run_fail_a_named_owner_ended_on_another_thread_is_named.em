@@ -45,6 +45,6 @@ fn made() -> Carrier:
 fn main():
     worker = thread.spawn(owns owned fn() -> Carrier => made())
     carrier = worker.join()
-    gadget = carrier.gadget
+    gadget = owns carrier.gadget
     look(gadget)
     println("taken")
