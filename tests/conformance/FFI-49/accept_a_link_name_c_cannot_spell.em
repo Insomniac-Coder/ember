@@ -9,7 +9,8 @@
 # symbol (an assembler label; MSVC's linker resolving the alias). `import c "./weird.c"` compiles the
 # C file that defines it.
 
-import c "./weird.c"
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./weird.c"
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(link_name="weird$twice")

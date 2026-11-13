@@ -6,7 +6,8 @@
 # `[FFI-1]` — the effects of a function whose C declaration states none are unknown: every
 # effect (`[EFF-3]`).
 
-import c "./maths.c" as m
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./maths.c" as m
 
 @noalloc @deterministic
 fn count() -> i32:

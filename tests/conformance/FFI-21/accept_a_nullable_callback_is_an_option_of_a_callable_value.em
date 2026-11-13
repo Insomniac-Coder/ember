@@ -19,7 +19,8 @@
 
 from std.ffi import c_int, ForeignCallback, Retained
 
-import c "./registry.c" as raw
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./registry.c" as raw
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(hook, callback(borrowed, user_data=data), nullable), link_name="maybe_call")

@@ -20,7 +20,8 @@
 
 from std.ffi import c_int
 
-import c "./newtypes.c" with (overlay = "overlays/newtypes.em") as nt
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./newtypes.c" with (overlay = "overlays/newtypes.em") as nt
 
 @ffi(newtype)
 type ticket_t = c_int

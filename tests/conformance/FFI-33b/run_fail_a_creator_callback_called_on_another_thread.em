@@ -5,7 +5,8 @@
 # `[FFI-33b]` — in the debug profile, a callback contracted `threads(creator)` that C calls on
 # another thread panics, naming both threads, before it runs.
 
-import c "./ticks.c" with (overlay = "overlays/ticks.em") as ticks
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./ticks.c" with (overlay = "overlays/ticks.em") as ticks
 
 class Counter:
     count: i32 = 0

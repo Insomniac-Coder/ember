@@ -5,7 +5,8 @@
 # header, and says `newtype` alone: one naming a struct (`struct widget` has no typedef of that
 # name) or with another word beside it does not match the header (`E5010`).
 
-import c "./newtypes.c" with (overlay = "overlays/newtypes_misused.em") as nt
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./newtypes.c" with (overlay = "overlays/newtypes_misused.em") as nt
 
 fn main():
     println(nt.twice(2))

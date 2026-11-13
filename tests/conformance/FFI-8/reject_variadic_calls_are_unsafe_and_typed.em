@@ -7,7 +7,8 @@
 # value.
 
 from std.ffi import c_int
-import c "./variadic.c" with (overlay = "overlays/variadic.em") as v
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./variadic.c" with (overlay = "overlays/variadic.em") as v
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(variadic, param(format, borrowed, nul_terminated))

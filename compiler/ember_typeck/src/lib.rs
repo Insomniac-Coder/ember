@@ -23,6 +23,7 @@ mod comptime;
 mod coroutines;
 mod habits;
 mod objects;
+mod ffi;
 mod packs;
 
 pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
@@ -932,7 +933,8 @@ fn check_round(
         if function.is_extern_declaration {
             continue;
         }
-        if main.is_some() && function.abi.is_some() && function.symbol == "main" {
+        // `[FFI-26]` — and an export named `main` is refused in a library too.
+        if (main.is_some() || checker.exports_main) && function.abi.is_some() && function.symbol == "main" {
             checker.error(codes::E0104, function.span,
                 "C export `main` conflicts with the generated program entry point");
         }
@@ -3973,6 +3975,8 @@ struct Checker<'a> {
     /// `[UNS-3]` — each statement of an `unsafe:` block, by span, and whether any check of it (its
     /// generic's or an instance's) needed `unsafe`; reported once checking is done.
     unsafe_statements: HashMap<Span, bool>,
+    /// `[FFI-26]` — an export names the C symbol `main`.
+    exports_main: bool,
     /// D-929, `[UNS-3]` — the scope of the `unsafe:` block whose statements are being checked, and
     /// whether the statement being checked read a name an earlier statement of that block declared:
     /// it cannot move out of the block, whose scope the name ends with.
@@ -4435,6 +4439,7 @@ impl<'a> Checker<'a> {
             unsafe_used: false,
             unsafe_blocks: HashMap::new(),
             unsafe_statements: HashMap::new(),
+            exports_main: false,
             unsafe_scope: None,
             reads_block_name: std::cell::Cell::new(false),
             assume_noalloc: Vec::new(),
@@ -4597,7 +4602,7 @@ impl<'a> Checker<'a> {
                 };
                 let named = ast::Expr { id: ast::NodeId::DUMMY, kind, span: from.span };
                 let path = vec![ast::Ident { name: Symbol::intern("borrows"), span: from.span }];
-                from_attr = ast::Attribute { id: ast::NodeId::DUMMY, path, args: vec![ast::AttrArg::Expr(named)], span: from.span };
+                from_attr = ast::Attribute { id: ast::NodeId::DUMMY, path, args: vec![ast::AttrArg::Expr(named)], span: from.span, written_unsafe: false };
                 &from_attr
             }
             (None, Some(written)) => written,
@@ -22653,7 +22658,7 @@ impl<'a> Checker<'a> {
                     _ => {
                         self.sink.emit(
                             Diagnostic::error(codes::E0104, attr.span, "`@export_table` takes the table's C symbol and its protocol version")
-                                .help("write `@export_table(\"Name\", protocol=1)`"),
+                                .help("write `@unsafe(export_table(\"Name\", protocol=1))`"),
                         );
                         break;
                     }
@@ -22662,7 +22667,7 @@ impl<'a> Checker<'a> {
             let (Some(name), Some(protocol)) = (name, protocol) else {
                 self.sink.emit(
                     Diagnostic::error(codes::E0104, attr.span, "`@export_table` needs the table's C symbol and its protocol version")
-                        .help("write `@export_table(\"Name\", protocol=1)`"),
+                        .help("write `@unsafe(export_table(\"Name\", protocol=1))`"),
                 );
                 continue;
             };
@@ -22670,6 +22675,8 @@ impl<'a> Checker<'a> {
                 self.error(codes::E0104, attr.span, format!("`{name}` is not a C identifier, which a table's symbol must be: a host declares it in C"));
                 continue;
             }
+            // `[FFI-26]` — the table's C symbol, `Name_vN`, may be one already taken.
+            self.check_export_name_taken(&format!("{name}_v{protocol}"), decl.name.name, attr.span);
             if !decl.generics.is_empty() {
                 self.error(codes::E0104, attr.span, "an exported table is one struct: a generic struct is not one");
                 continue;
@@ -23730,7 +23737,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Call { callee, .. } => ffi_contract_word(callee),
             _ => ffi_contract_word(expr),
         };
-        const FORMS: &[&str] = &["param", "result", "effects", "deterministic", "link_name", "variadic"];
+        const FORMS: &[&str] = &["param", "result", "effects", "deterministic", "link_name", "variadic", "no_callbacks"];
         let (top, inner): (Option<Symbol>, Vec<Symbol>) = match arg {
             ast::AttrArg::Named { name, .. } => (Some(name.name), Vec::new()),
             ast::AttrArg::Expr(value) => {
@@ -23766,7 +23773,7 @@ impl<'a> Checker<'a> {
         match (top, unknown) {
             (_, Some(word)) => self.sink.emit(
                 Diagnostic::error(codes::E0104, span, format!("`{word}` is not a contract word of `@ffi`"))
-                    .help(format!("`@ffi` on a foreign function takes {}; the contract words are {}", FORMS.join(", "), FFI_CONTRACT_WORDS.join(", ")))
+                    .help(format!("`@ffi` on a foreign function takes {}; the contract words are {}", FORMS.join(", "), ffi::contract_words_shown()))
                     .note("a hand declaration's contract is written `@ffi(param(name, word, …), result(word, …))` [FFI-11]"),
             ),
             _ if inner.iter().any(|word| word.is("exclusive")) && inner.iter().any(|word| word.is("aliased")) => {
@@ -44919,7 +44926,7 @@ impl<'a> Checker<'a> {
                     self.sink.emit(
                         Diagnostic::error(codes::E0104, contract.span,
                             format!("`{}` is not a contract word", contract.word.name))
-                            .help(format!("the contract words are {}", FFI_CONTRACT_WORDS.join(", ")))
+                            .help(format!("the contract words are {}", ffi::contract_words_shown()))
                             .note("a contract word takes the place of a type in an overlay entry [FFI-11]"),
                     );
                 }
@@ -45193,10 +45200,6 @@ impl<'a> Checker<'a> {
                         self.error(codes::E0104, attr.span, "a function has only one `@export` attribute");
                     }
                     saw_export = true;
-                    if attr.args.is_empty() {
-                        self.error(codes::E0900, attr.span,
-                            "only a C export symbol, `on_panic=abort`, and `threads=main|any|creator` are supported");
-                    }
                     let mut symbol = None;
                     let mut saw_panic = false;
                     let mut saw_threads = false;
@@ -45247,6 +45250,9 @@ impl<'a> Checker<'a> {
                                 .note("a symbol is not empty and holds no space, quote, backslash or control character"),
                         );
                     }
+                    // `[FFI-26]` — without a name, the function's own; either may be one already taken.
+                    let named = symbol.map_or_else(|| decl.name.name.to_string(), str::to_string);
+                    self.check_export_name_taken(&named, decl.name.name, attr.span);
                     // A C symbol names one function, and a generic's parameters have nothing to be
                     // inferred from at an export: each instance is its own function [TYP-16].
                     if !decl.generics.is_empty() {
@@ -45422,6 +45428,11 @@ impl<'a> Checker<'a> {
                                     }
                                     saw_destroys = true;
                                 } else if let ast::AttrArg::Expr(expr) = arg
+                                    && ffi_contract_word(expr).is_some_and(|word| word.is("no_callbacks")) {
+                                    // `[FFI-11]`, `[FFI-52]` — recorded: the function never calls back
+                                    // into Ember (an asserted fact `ember tcb` lists).
+                                    self.check_no_callbacks(&item.attrs, decl, attr.span);
+                                } else if let ast::AttrArg::Expr(expr) = arg
                                     && (ffi_contract_word(expr).is_some_and(|word| word.is("handle"))
                                         || matches!(&expr.kind, ast::ExprKind::Call { callee, .. } if ffi_contract_word(callee).is_some_and(|word| word.is("handle")))) {
                                     // ODR-247, ODR-269 — `handle` is a word of a type's contract.
@@ -45493,7 +45504,15 @@ impl<'a> Checker<'a> {
             ast::ItemKind::Comptime(_) => "comptime block",
             ast::ItemKind::Overlay(_) => "overlay",
         };
+        let item_name = match &item.kind {
+            ast::ItemKind::Fn(decl) => decl.name.name.to_string(),
+            ast::ItemKind::Struct(decl) => decl.name.name.to_string(),
+            ast::ItemKind::Static(decl) => decl.name.name.to_string(),
+            _ => String::new(),
+        };
         for attr in &item.attrs {
+            // `[FFI-26]` — `@unsafe(export(…))`, and the plain form refused.
+            self.check_unsafe_attribute_form(attr, &item_name);
             if matches!(&item.kind, ast::ItemKind::Fn(decl) if !decl.is_foreign_decl)
                 && attr.path.len() == 1 && attr.path[0].name.is("export") {
                 continue;
@@ -55540,6 +55559,7 @@ impl<'a> Checker<'a> {
                 path: vec![name("$reduce")],
                 args: reductions.iter().map(|(var, ..)| ast::AttrArg::Expr(path(var.as_str()))).collect(),
                 span,
+                written_unsafe: false,
             });
         }
         stmts.push(ast::Stmt {
@@ -65730,7 +65750,8 @@ fn ffi_count_siblings(decl: &ast::FnDecl, pointer: Option<Symbol>) -> Vec<String
         let unsigned = matches!(&ty.kind,
             ast::TypeKind::Path { segments, args } if args.is_empty()
                 && segments.len() == 1
-                && matches!(segments[0].name.as_str(), "u8" | "u16" | "u32" | "u64" | "u128" | "usize"));
+                && matches!(segments[0].name.as_str(), "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
+                    | "c_uchar" | "c_ushort" | "c_uint" | "c_ulong" | "c_ulonglong"));
         (name_looks_like_count || unsigned).then(|| written.to_string())
     }).collect()
 }

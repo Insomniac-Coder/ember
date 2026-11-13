@@ -10,7 +10,8 @@
 # and both call the one C function (`[FFI-30]`): C sees one prototype of each, whatever Ember's
 # spellings of the two.
 
-import c "pointers.h" with (implementation = ["POINTERS_IMPLEMENTATION"], overlay = "overlays/pointers.em")
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "pointers.h" with (implementation = ["POINTERS_IMPLEMENTATION"], overlay = "overlays/pointers.em")
 import c "pointers.h" with (defines = ["POINTERS_RAW"]) as raw
 
 fn main():

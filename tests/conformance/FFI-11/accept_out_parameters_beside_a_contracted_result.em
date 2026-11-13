@@ -11,7 +11,8 @@
 # (`returns_owned`), boxed and freed by its destructor when the box ends, and `None` where C
 # returned null (`nullable`). No `unsafe`.
 
-import c "./tokens.c" with (overlay = "overlays/tokens.em") as t
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./tokens.c" with (overlay = "overlays/tokens.em") as t
 
 fn made():
     _token, id = t.token_make(5)

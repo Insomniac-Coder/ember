@@ -5,7 +5,8 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     static ember_native_fn_value_0: i32
     static ember_native_fn_c_entry_1: i32
 
-@export("reserved_static_value")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("reserved_static_value"))
 fn read_reserved_globals() -> i32:
     unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         return ember_native_fn_value_0 + ember_native_fn_c_entry_1
@@ -53,44 +54,54 @@ fn check_value(value: i32):
 fn native_address(value: Pair) -> *Pair:
     return ref_to_ptr(ref value)
 
-@export("make_named")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("make_named"))
 fn named() -> extern "C" fn(i32) -> i32:
     return add_one
 
-@export("make_inline")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("make_inline"))
 fn inline_callback() -> extern "C" fn(i32) -> i32:
     return fn(value: i32) -> i32 => value + 3
 
-@export("make_selected")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("make_selected"))
 fn selected(choice: i32) -> extern "C" fn(i32) -> i32:
     native: fn(i32) -> i32 = select_native(choice)
     return native
 
-@export("make_pair")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("make_pair"))
 fn pair_callback() -> extern "C" fn(Pair) -> i32:
     return pair_sum
 
-@export("make_large")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("make_large"))
 fn large_callback() -> extern "C" fn(Large) -> i64:
     return large_sum
 
-@export("make_mut")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("make_mut"))
 fn mut_callback() -> extern "C" fn(ref mut Pair) -> i32:
     return pair_change
 
-@export("make_returned")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("make_returned"))
 fn returned_callback() -> extern "C" fn(i32) -> Pair:
     return pair_create
 
-@export("make_nested")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("make_nested"))
 fn nested_callback() -> extern "C" fn(extern "C" fn(i32) -> i32, i32) -> i32:
     return invoke_nested
 
-@export("make_void")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("make_void"))
 fn void_callback() -> extern "C" fn(i32):
     return check_value
 
-@export("check_native_identity")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("check_native_identity"))
 fn check_identity() -> i32:
     pair = Pair(left = 10, right = 20)
     native: fn(Pair) -> *Pair = native_address

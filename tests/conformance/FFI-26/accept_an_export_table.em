@@ -21,7 +21,8 @@ pub extern "C" fn on_update(id: u64, dt: f32) -> i32:
 pub extern "C" fn door_destroyed(id: u64) -> i32:
     return (id + 6) as i32
 
-@export_table("RvScriptApi", protocol=3)
+# SAFETY: nothing else in the process defines this name
+@unsafe(export_table("RvScriptApi", protocol=3))
 pub struct ScriptApi:
     on_create: extern "C" fn(u64) -> i32
     on_update: extern "C" fn(u64, f32) -> i32

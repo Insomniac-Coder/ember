@@ -161,22 +161,26 @@ const PLUGIN: &str = r#"class Node:
 fn helper(x: i32) -> i32:
     return x * 2
 
-@export("plugin_double")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("plugin_double"))
 fn double(x: i32) -> i32:
     return helper(x)
 
-@export("plugin_on_main", threads=main)
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("plugin_on_main", threads=main))
 fn on_main() -> i32:
     return 7
 
-@export("plugin_leak")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("plugin_leak"))
 fn leak() -> i32:
     a = Node("a", None)
     b = Node("b", Some(a))
     a.next = Some(b)
     return 1
 
-@export("plugin-odd")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("plugin-odd"))
 fn odd() -> i32:
     return 9
 "#;
@@ -345,9 +349,9 @@ fn shared_libraries_share_one_runtime() {
     let toolchain = toolchain();
     let manifest = |name: &str| format!("[package]\nname = \"{name}\"\nkind = \"cdylib\"\n[build]\nruntime = \"shared\"\n");
     package(&dir.join("first"), &manifest("first"),
-        "@export(\"first_value\", threads=main)\nfn first_value() -> i32:\n    return 1\n");
+        "# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"first_value\", threads=main))\nfn first_value() -> i32:\n    return 1\n");
     package(&dir.join("second"), &manifest("second"),
-        "@export(\"second_value\", threads=creator)\nfn second_value() -> i32:\n    return 2\n");
+        "# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"second_value\", threads=creator))\nfn second_value() -> i32:\n    return 2\n");
     let out = dir.join("out");
     let out_arg = out.to_string_lossy().into_owned();
     for name in ["first", "second"] {
@@ -405,7 +409,7 @@ int main(void) {{
         output.status.code(), String::from_utf8_lossy(&output.stderr));
 
     package(&dir.join("owning"), &manifest("owning"),
-        "@export(\"owning_text\")\nfn owning_text() -> String:\n    return String()\n");
+        "# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"owning_text\"))\nfn owning_text() -> String:\n    return String()\n");
     let refused = ember(&["build"], &dir.join("owning"));
     assert!(!refused.status.success());
     assert!(String::from_utf8_lossy(&refused.stderr).contains("error[E5015]"), "{}", String::from_utf8_lossy(&refused.stderr));
@@ -422,7 +426,7 @@ fn a_module_built_for_another_runtime_abi_is_refused_first() {
     let dir = scratch();
     let toolchain = toolchain();
     package(&dir.join("plugin"), "[package]\nname = \"plugin\"\nkind = \"cdylib\"\n",
-        "@export(\"plugin_value\")\nfn plugin_value() -> i32:\n    return 3\n");
+        "# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"plugin_value\"))\nfn plugin_value() -> i32:\n    return 3\n");
     if backend().is_some() {
         return a_module_s_ir_built_for_another_runtime_abi_is_refused_first(&dir, &toolchain);
     }
@@ -511,9 +515,9 @@ fn an_export_table_is_found_by_name_with_threads_per_entry() {
     let dir = scratch();
     let toolchain = toolchain();
     package(&dir.join("game"), "[package]\nname = \"game\"\nkind = \"cdylib\"\n",
-        "@export(threads=main)\npub extern \"C\" fn on_draw() -> i32:\n    return 5\n\n\
+        "# SAFETY: nothing else in the process defines this name\n@unsafe(export(threads=main))\npub extern \"C\" fn on_draw() -> i32:\n    return 5\n\n\
          pub extern \"C\" fn on_tick(n: i32) -> i32:\n    return n + 1\n\n\
-         @export_table(\"GameApi\", protocol=3)\nstruct GameApi:\n    on_draw: extern \"C\" fn() -> i32\n    on_tick: extern \"C\" fn(i32) -> i32\n");
+         # SAFETY: nothing else in the process defines this name\n@unsafe(export_table(\"GameApi\", protocol=3))\nstruct GameApi:\n    on_draw: extern \"C\" fn() -> i32\n    on_tick: extern \"C\" fn(i32) -> i32\n");
     for profile in ["debug", "development", "release"] {
         let built = ember(&["build", "--profile", profile], &dir.join("game"));
         assert_success(&built, "the cdylib with a table");
@@ -584,7 +588,7 @@ fn a_cdylib_with_a_relaxed_function_is_built_and_called() {
     let dir = scratch();
     let toolchain = toolchain();
     package(&dir.join("fastdll"), "[package]\nname = \"fastdll\"\nkind = \"cdylib\"\n",
-        "@fastmath\nfn scaled(x: f64) -> f64:\n    return x * 2.0\n\n@export(\"fast_value\")\npub extern \"C\" fn fast_value(x: f64) -> f64:\n    return scaled(x) + 1.0\n");
+        "@fastmath\nfn scaled(x: f64) -> f64:\n    return x * 2.0\n\n# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"fast_value\"))\npub extern \"C\" fn fast_value(x: f64) -> f64:\n    return scaled(x) + 1.0\n");
     let built = ember(&["build"], &dir.join("fastdll"));
     assert_success(&built, "the cdylib with a relaxed function");
     let lib = dir.join("fastdll/target/debug/lib");
@@ -628,7 +632,7 @@ fn shutdown_ends_the_job_workers_a_module_started() {
     let toolchain = toolchain();
     package(&dir.join("worker"), "[package]\nname = \"worker\"\nkind = \"cdylib\"\n",
         "import std.jobs\nfrom std.sync import Atomic\n\nstatic TOTAL: Atomic[int] = Atomic(0)\n\n\
-         @export(\"busy\")\nfn busy() -> i32:\n    jobs.wait(jobs.submit(owns owned fn() => TOTAL.fetch_add(1)))\n    return TOTAL.load() as i32\n");
+         # SAFETY: nothing else in the process defines this name\n@unsafe(export(\"busy\"))\nfn busy() -> i32:\n    jobs.wait(jobs.submit(owns owned fn() => TOTAL.fetch_add(1)))\n    return TOTAL.load() as i32\n");
     let built = ember(&["build"], &dir.join("worker"));
     assert_success(&built, "the cdylib running jobs");
     let lib = dir.join("worker/target/debug/lib");
@@ -800,7 +804,7 @@ fn import_c_compiles_its_source_with_the_c_section_and_links_in_order() {
     let mut outputs = Vec::new();
     for (first, second) in [(&one, &two), (&two, &one)] {
         std::fs::write(app.join("src").join(ember_branding::source_file("main")), format!(
-            "import c \"./bridge.c\" with (link = [\"vendor/{first}\", \"vendor/{second}\"])\n\nfn main():\n    \
+            "# SAFETY: the test's own C, which runs nothing before `main`\nunsafe import c \"./bridge.c\" with (link = [\"vendor/{first}\", \"vendor/{second}\"])\n\nfn main():\n    \
              unsafe:  # SAFETY(ffi): scalar calls\n        println(c.BRIDGE_FROM_FLAGS, c.bridge_value(), c.which_lib())\n")).unwrap();
         let built = ember(&["build"], &app);
         assert_success(&built, "the build importing bridge.c");

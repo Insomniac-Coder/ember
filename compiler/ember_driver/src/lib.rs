@@ -880,7 +880,7 @@ fn new_package(args: &[String]) -> Result<ExitCode, String> {
     let (file, source) = match kind {
         "bin" => ("main", "println(\"hello, world\")\n".to_string()),
         "lib" => ("lib", "pub fn answer() -> i32:\n    return 42\n".to_string()),
-        _ => ("lib", format!("@export(\"{}_answer\")\nfn answer() -> i32:\n    return 42\n", package.replace('-', "_"))),
+        _ => ("lib", format!("# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"{}_answer\"))\nfn answer() -> i32:\n    return 42\n", package.replace('-', "_"))),
     };
     let manifest = format!(
         "[package]\nname = \"{package}\"\nversion = \"0.1.0\"\nlanguage = \"{}\"\nkind = \"{kind}\"\n",
@@ -2341,6 +2341,9 @@ struct UnsafeEntry {
     site: Span,
     extent: Span,
     block: bool,
+    /// `[TCB-4]` — an `unsafe import c` or an `@unsafe(…)` attribute, as written; `None` for a block
+    /// or an `unsafe fn`.
+    written: Option<String>,
     function: String,
     module: String,
     note: Option<(Option<&'static str>, String)>,
@@ -2465,14 +2468,23 @@ fn print_tcb_report(
                 unsafe_blocks(body, &mut blocks);
             }
         }
-        // Blocks and `unsafe fn`s; `unsafe` implementations are not listed yet (`[TCB-4]`'s sections, A5-5).
+        // `[TCB-4]` — blocks, `unsafe fn`s, `unsafe import c`s and `@unsafe(…)` attributes; `unsafe`
+        // implementations are not in this section.
         let sites = loaded.module.unsafe_sites.iter().filter(|site| site.kind != ember_ast::UnsafeSiteKind::Implementation);
-        for site in sites.map(|site| site.span) {
+        for (site, kind) in sites.map(|site| (site.span, site.kind)) {
             let at = line(site);
+            // `[LEX-23]` — an import's or an attribute's note is on the line above it.
+            let above_only = matches!(kind, ember_ast::UnsafeSiteKind::Import | ember_ast::UnsafeSiteKind::Attribute);
+            let written = above_only.then(|| {
+                let starts = text[..site.start as usize].rfind('\n').map_or(0, |at| at + 1);
+                let ends = text[site.start as usize..].find('\n').map_or(text.len(), |at| site.start as usize + at);
+                let line_text = &text[starts..ends];
+                line_text.split(" #").next().unwrap_or(line_text).trim().to_string()
+            });
             let note = comments
                 .iter()
                 .filter(|comment| comment.safety.is_some())
-                .find(|comment| (line(comment.span) == at && !comment.own_line) || (at > 1 && line(comment.span) == at - 1 && comment.own_line))
+                .find(|comment| (!above_only && line(comment.span) == at && !comment.own_line) || (at > 1 && line(comment.span) == at - 1 && comment.own_line))
                 .map(|comment| {
                     let written = &text[comment.span.start as usize..comment.span.end as usize];
                     let reason = written.split_once(':').map_or(written, |(_, reason)| reason).trim().to_string();
@@ -2481,10 +2493,11 @@ fn print_tcb_report(
             let owner = functions.iter().filter(|(span, _)| contains(*span, site)).min_by_key(|(span, _)| span.end - span.start);
             let function = owner.map_or_else(String::new, |(_, decl)| decl.name.name.to_string());
             let entry = match blocks.iter().find(|(stmt, _)| stmt.start == site.start && stmt.file == site.file) {
-                Some(&(_, body)) => UnsafeEntry { site, extent: body, block: true, function, module: name.clone(), note, calls: Vec::new() },
+                Some(&(_, body)) => UnsafeEntry { site, extent: body, block: true, written: None, function, module: name.clone(), note, calls: Vec::new() },
+                None if written.is_some() => UnsafeEntry { site, extent: site, block: false, written, function, module: name.clone(), note, calls: Vec::new() },
                 None => {
                     let extent = owner.and_then(|(_, decl)| decl.body.as_ref()).map_or(site, |body| body.span);
-                    UnsafeEntry { site, extent, block: false, function, module: name.clone(), note, calls: Vec::new() }
+                    UnsafeEntry { site, extent, block: false, written: None, function, module: name.clone(), note, calls: Vec::new() }
                 }
             };
             entries.push(entry);
@@ -2566,7 +2579,13 @@ fn print_tcb_report(
                 serde_json::json!({
                     "module": entry.module,
                     "source": map.location(entry.site),
-                    "kind": if entry.block { "block" } else { "fn" },
+                    "kind": match &entry.written {
+                        Some(written) if written.starts_with('@') => "attribute",
+                        Some(_) => "import",
+                        None if entry.block => "block",
+                        None => "fn",
+                    },
+                    "written": entry.written,
                     "function": entry.function,
                     "note": entry.note.as_ref().map(|(_, reason)| reason.clone()),
                     "category": entry.note.as_ref().and_then(|(category, _)| *category),
@@ -2611,7 +2630,9 @@ fn print_tcb_report(
         let blocks = entries.iter().filter(|entry| entry.block).count();
         let noted = entries.iter().filter(|entry| entry.note.is_some()).count();
         println!("Audit: {}", input.display());
-        println!("  unsafe: {blocks} block(s) and {} unsafe fn(s), {noted} with a safety note", entries.len() - blocks);
+        let written = entries.iter().filter(|entry| entry.written.is_some()).count();
+        let others = if written == 0 { String::new() } else { format!(", {written} unsafe import(s) and attribute(s)") };
+        println!("  unsafe: {blocks} block(s) and {} unsafe fn(s){others}, {noted} with a safety note", entries.len() - blocks - written);
         let totals: Vec<String> = effect_totals(bodies, types, modules)
             .into_iter()
             .filter(|(_, count)| *count > 0)
@@ -2637,7 +2658,11 @@ fn print_tcb_report(
             println!("  module {}", entry.module);
             module = Some(&entry.module);
         }
-        let what = if entry.block { format!("block in `{}`", entry.function) } else { format!("unsafe fn `{}`", entry.function) };
+        let what = match &entry.written {
+            Some(written) => format!("`{written}`"),
+            None if entry.block => format!("block in `{}`", entry.function),
+            None => format!("unsafe fn `{}`", entry.function),
+        };
         let note = match &entry.note {
             Some((Some(category), reason)) => format!("SAFETY({category}): {reason}"),
             Some((None, reason)) => format!("SAFETY: {reason}"),
@@ -7961,7 +7986,21 @@ fn check_safety_notes(module: &ember_ast::Module, comments: &[ember_lexer::Comme
     };
     for site in &module.unsafe_sites {
         let found = note(line(site.span));
+        // `[LEX-23]` — an `@unsafe(…)` attribute's note and an `unsafe import`'s are on the line above.
+        let found = match site.kind {
+            ember_ast::UnsafeSiteKind::Attribute | ember_ast::UnsafeSiteKind::Import => found.filter(|comment| comment.own_line),
+            _ => found,
+        };
         match (site.kind, found) {
+            (ember_ast::UnsafeSiteKind::Attribute | ember_ast::UnsafeSiteKind::Import, None) => sink.emit(
+                Diagnostic::warning(codes::W3012, site.span, "this `unsafe` has no safety note")
+                    .primary_label("nothing here says why it is sound")
+                    .help(if site.kind == ember_ast::UnsafeSiteKind::Attribute {
+                        "write `# SAFETY: <why nothing else defines this name>` on the line above it [FFI-26]"
+                    } else {
+                        "write `# SAFETY: <why the code it compiles in is sound>` on the line above it [FFI-51]"
+                    }),
+            ),
             (ember_ast::UnsafeSiteKind::Block | ember_ast::UnsafeSiteKind::Implementation, None) => sink.emit(
                 Diagnostic::warning(codes::W3012, site.span, "this `unsafe` has no safety note")
                     .primary_label("nothing here says why it is sound")

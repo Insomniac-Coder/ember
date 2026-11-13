@@ -3,7 +3,8 @@
 #$ profiles: debug
 #$ error[E0104]: C export `main` conflicts with the generated program entry point
 
-@export("main")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("main"))
 fn host_entry() -> i32:
     return 1
 

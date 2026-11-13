@@ -11,7 +11,8 @@
 
 from std.ffi import c_longdouble
 from std.mem import size_of
-import c "./precise.c" with (overlay = "overlays/precise.em") as p
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./precise.c" with (overlay = "overlays/precise.em") as p
 
 fn main():
     third: c_longdouble = p.precise_third()

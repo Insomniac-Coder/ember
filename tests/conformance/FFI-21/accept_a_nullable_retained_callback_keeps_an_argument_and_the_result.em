@@ -16,7 +16,8 @@
 
 from std.ffi import c_int, ForeignCallback, Retained
 
-import c "./channels.c" as raw
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./channels.c" as raw
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(hook, callback(retained, user_data=data), nullable), destroys(unsubscribe_on), link_name="subscribe_on")

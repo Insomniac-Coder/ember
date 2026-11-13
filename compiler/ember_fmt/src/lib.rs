@@ -948,9 +948,16 @@ impl Printer<'_> {
     }
 
     fn attribute(&self, attr: &ast::Attribute) -> String {
+        let written = self.attribute_inside(attr);
+        // `[FFI-26]` — the unsafe form keeps its word.
+        if attr.written_unsafe { format!("@unsafe({written})") } else { format!("@{written}") }
+    }
+
+    /// An attribute as written after its `@`.
+    fn attribute_inside(&self, attr: &ast::Attribute) -> String {
         let path: Vec<String> = attr.path.iter().map(|s| s.name.to_string()).collect();
         if attr.args.is_empty() {
-            return format!("@{}", path.join("."));
+            return path.join(".");
         }
         let args: Vec<String> = attr
             .args
@@ -962,7 +969,7 @@ impl Printer<'_> {
                 }
             })
             .collect();
-        format!("@{}({})", path.join("."), args.join(", "))
+        format!("{}({})", path.join("."), args.join(", "))
     }
 
     // -- statements ----------------------------------------------------------

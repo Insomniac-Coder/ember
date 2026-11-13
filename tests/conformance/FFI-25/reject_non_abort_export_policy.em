@@ -5,7 +5,8 @@
 # `[FFI-25]` — `@export(on_panic=abort)` is the only form in this version: another policy is
 # refused as not admitted, never as something still to come.
 
-@export(on_panic=unwind)
+# SAFETY: nothing else in the process defines this name
+@unsafe(export(on_panic=unwind))
 pub fn unwind_not_supported() -> i32:
     return 0
 

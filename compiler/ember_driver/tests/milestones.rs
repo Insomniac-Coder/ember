@@ -1612,11 +1612,11 @@ fn gcc_executables_keep_c_exports_and_discard_unreachable_native_bodies() {
         "linker capability detection disagrees with an actual link");
     let imported = directory.join(ember_branding::source_file("exports"));
     std::fs::write(&imported,
-        "@export(\"imported_root\", threads=any)\npub fn imported_value() -> i32:\n    return 42\n")
+        "# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"imported_root\", threads=any))\npub fn imported_value() -> i32:\n    return 42\n")
         .expect("imported exports are writable");
     let entry = directory.join(ember_branding::source_file("entry"));
     std::fs::write(&entry,
-        "import exports\n@export(\"selected_root\", threads=any)\npub fn local_value() -> i32:\n    return 43\npub extern \"C\" fn plain_root() -> i32:\n    return 44\n@export(\"relaxed_root\", threads=any)\n@fp(allow_fma)\npub fn relaxed_value(x: f64) -> f64:\n    return x * x + 1.0\nunsafe extern \"C\":\n    unsafe fn absent_foreign() -> i32\n@noinline\npub fn unused_native() -> i32:\n    return 99\nfn main():\n    println(7)\n")
+        "import exports\n# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"selected_root\", threads=any))\npub fn local_value() -> i32:\n    return 43\npub extern \"C\" fn plain_root() -> i32:\n    return 44\n# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"relaxed_root\", threads=any))\n@fp(allow_fma)\npub fn relaxed_value(x: f64) -> f64:\n    return x * x + 1.0\nunsafe extern \"C\":\n    unsafe fn absent_foreign() -> i32\n@noinline\npub fn unused_native() -> i32:\n    return 99\nfn main():\n    println(7)\n")
         .expect("executable fixture is writable");
     let entry_arg = entry.to_string_lossy().into_owned();
     // A file cannot contain cache/runtime: this exercises the uncached runtime
@@ -2167,7 +2167,7 @@ fn imported_module_export_keeps_its_c_symbol() {
     let imported = directory.join(ember_branding::source_file("exported"));
     let entry = directory.join(ember_branding::source_file("entry"));
     std::fs::write(&imported,
-        "@export(\"module_score\")\npub fn score(value: i32) -> i32:\n    return value + 1\n")
+        "# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"module_score\"))\npub fn score(value: i32) -> i32:\n    return value + 1\n")
         .expect("exported module is writable");
     std::fs::write(&entry,
         "import exported\nunsafe extern \"C\":\n    safe fn call_module_score(value: i32) -> i32\nfn main():\n    println(call_module_score(41))\n")
@@ -2199,7 +2199,9 @@ fn imported_module_export_keeps_its_c_symbol() {
 }
 
 /// `[FFI-33c]` — real C threads enforce explicit and imported-file policies
-/// in every profile, including after shutdown and initialization elsewhere.
+/// in every profile, including after shutdown and initialization elsewhere. `[FFI-25]` — the
+/// panic below an export a C host calls aborts the process (Windows' abort status 3, `SIGABRT`
+/// elsewhere): no panic unwinds into C.
 #[test]
 fn exported_thread_contracts_hold_in_every_profile() {
     let root = workspace_root();
@@ -2208,13 +2210,13 @@ fn exported_thread_contracts_hold_in_every_profile() {
     let creator_imported = directory.join(ember_branding::source_file("creator_defaults"));
     let entry = directory.join(ember_branding::source_file("entry"));
     std::fs::write(&imported,
-        "#! language \"0.9.20\"\n#! threads main\n@export(\"default_score\")\npub fn default_value() -> i32:\n    return 43\n@export(\"override_score\", threads=any)\npub fn override_value() -> i32:\n    return 44\n")
+        "#! language \"0.9.20\"\n#! threads main\n# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"default_score\"))\npub fn default_value() -> i32:\n    return 43\n# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"override_score\", threads=any))\npub fn override_value() -> i32:\n    return 44\n")
         .expect("default policy module is writable");
     std::fs::write(&creator_imported,
-        "#! language \"0.9.20\"\n#! threads creator\n@export(\"creator_default_score\")\npub fn default_value() -> i32:\n    return 46\n@export(\"creator_override_score\", threads=any)\npub fn override_value() -> i32:\n    return 47\n")
+        "#! language \"0.9.20\"\n#! threads creator\n# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"creator_default_score\"))\npub fn default_value() -> i32:\n    return 46\n# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"creator_override_score\", threads=any))\npub fn override_value() -> i32:\n    return 47\n")
         .expect("creator default policy module is writable");
     std::fs::write(&entry,
-        "import thread_defaults\nimport creator_defaults\n@export(\"main_score\", threads=main, on_panic=abort)\npub fn main_value() -> i32:\n    return 41\n@export(\"creator_score\", threads=creator)\npub fn creator_value() -> i32:\n    return 45\n@export(\"any_score\", threads=any)\npub fn any_value() -> i32:\n    return 42\n")
+        "import thread_defaults\nimport creator_defaults\n# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"main_score\", threads=main, on_panic=abort))\npub fn main_value() -> i32:\n    return 41\n# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"creator_score\", threads=creator))\npub fn creator_value() -> i32:\n    return 45\n# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"any_score\", threads=any))\npub fn any_value() -> i32:\n    return 42\n")
         .expect("explicit policy module is writable");
     let entry_arg = entry.to_string_lossy().into_owned();
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/foreign_export_threads.c");
@@ -2267,6 +2269,9 @@ fn exported_thread_contracts_hold_in_every_profile() {
     }
 }
 
+/// `[FFI-26]`, `[FFI-33]` — `ember build --emit-header` writes `<package>.h`: a prototype for each
+/// export, a typedef for each `@layout(c)` type they use, and each export's thread contract as a
+/// comment (`threads: creator`, `any`, `main`); C and C++ hosts link against it.
 #[test]
 fn export_headers_link_from_separate_c_and_cpp_translation_units() {
     let root = workspace_root();
@@ -2487,7 +2492,7 @@ fn export_header_rejects_reachable_native_only_types_without_writing_a_header() 
 #[test]
 fn export_header_guards_distinguish_safe_names_and_unicode_paths() {
     let root = workspace_root();
-    let source_text = "@export(\"score\")\npub fn score() -> i32:\n    return 42\n";
+    let source_text = "# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"score\"))\npub fn score() -> i32:\n    return 42\n";
     let mut guards = Vec::new();
     for (label, package_name, source_name) in [
         ("dash", "foo-bar", "api"),
@@ -2661,29 +2666,17 @@ fn no_manifest_setting_turns_a_safety_check_off() {
     let root = workspace_root();
     let package = temporary_directory("no-check-switch");
     let source = package.join(ember_branding::source_file("main"));
-    std::fs::write(&source, "fn main():
-    xs = [1]
-    println(xs[0])
-").expect("source is writable");
+    std::fs::write(&source, "fn main():\n    xs = [1]\n    println(xs[0])\n").expect("source is writable");
     let source_arg = source.to_string_lossy().into_owned();
     for (setting, key) in [
-        ("[profiles.release]
-overflow = \"wrap\"
-", "overflow"),
-        ("[profiles.release]
-bounds_checks = false
-", "bounds_checks"),
-        ("exclusivity = \"unchecked\"
-", "exclusivity"),
+        ("[profiles.release]\noverflow = \"wrap\"\n", "overflow"),
+        ("[profiles.release]\nbounds_checks = false\n", "bounds_checks"),
+        ("exclusivity = \"unchecked\"\n", "exclusivity"),
     ] {
-        std::fs::write(package.join(MANIFEST), format!("[package]
-name = \"p\"
-version = \"0.1.0\"
-{setting}"))
+        std::fs::write(package.join(MANIFEST), format!("[package]\nname = \"p\"\nversion = \"0.1.0\"\n{setting}"))
             .expect("manifest is writable");
         let checked = ember(&["check", &source_arg], &root);
-        assert_ne!(checked.exit, 0, "`{key}` turned a check off:
-{}", checked.stderr);
+        assert_ne!(checked.exit, 0, "`{key}` turned a check off:\n{}", checked.stderr);
         assert!(
             checked.stderr.contains("error[E9001]")
                 && checked.stderr.contains(&format!("removed manifest setting `{key}` cannot disable a safety check")),
@@ -3402,9 +3395,7 @@ fn std_mem_unsafe_fns_carry_their_safety() {
     let source_arg = source.to_string_lossy().into_owned();
     let report = ember(&["tcb", &source_arg], &root);
     let _ = std::fs::remove_dir_all(&dir);
-    assert_eq!(report.exit, 0, "tcb failed:
-{}
-{}", report.stdout, report.stderr);
+    assert_eq!(report.exit, 0, "tcb failed:\n{}\n{}", report.stdout, report.stderr);
     let out = &report.stdout;
     assert!(out.contains("calls `std.mem.copy_nonoverlapping`: `src` is valid for reading `count` values of `T` and `dst` for writing them, the two ranges do not overlap"), "{out}");
     assert!(out.contains("calls `std.mem.copy`: `src` is valid for reading `count` values of `T` and `dst` for writing them"), "{out}");
@@ -8984,7 +8975,7 @@ int wrapped_plain(int x);
 ").unwrap();
     std::fs::write(dir.join("wrapped.c"), "#include \"wrapped.h\"\nint wrapped_plain(int x) { return x + 1; }\n").unwrap();
     let source = dir.join(format!("calls.{SOURCE_EXT}"));
-    std::fs::write(&source, "import c \"./wrapped.c\"\n\nfn main():\n    unsafe:  # SAFETY(ffi): scalar calls\n        \
+    std::fs::write(&source, "# SAFETY: the test's own C, which runs nothing before `main`\nunsafe import c \"./wrapped.c\"\n\nfn main():\n    unsafe:  # SAFETY(ffi): scalar calls\n        \
         println(c.wrapped_twice(2), c.wrapped_plain(2))\n").unwrap();
     let out_dir = dir.join("out");
     let build = ember(&["build", &source.to_string_lossy(), "--out-dir", &out_dir.to_string_lossy()], &root);
@@ -9147,7 +9138,7 @@ fn the_cpp_header_takes_views_where_c_takes_pointer_and_length() {
     std::fs::write(dir.join(MANIFEST), "[package]\nname = \"numbers\"\nkind = \"lib\"\n").unwrap();
     let source = dir.join(format!("lib.{SOURCE_EXT}"));
     std::fs::write(&source, "\
-@export(\"total\")
+# SAFETY: nothing else in the process defines this name\n@unsafe(export(\"total\"))
 pub fn total(values: *i32, count: usize) -> i64:
     sum: i64 = 0
     i: usize = 0
@@ -9157,11 +9148,13 @@ pub fn total(values: *i32, count: usize) -> i64:
         i += 1
     return sum
 
-@export(\"letters\")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export(\"letters\"))
 pub fn letters(text: *u8, length: usize) -> usize:
     return length
 
-@export(\"fill\")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export(\"fill\"))
 pub fn fill(out: *mut i32, count: usize, value: i32):
     i: usize = 0
     while i < count:
@@ -9169,7 +9162,8 @@ pub fn fill(out: *mut i32, count: usize, value: i32):
             write(out, i, value)
         i += 1
 
-@export(\"twice\")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export(\"twice\"))
 pub fn twice(x: i32) -> i32:
     return 2 * x
 ").unwrap();
@@ -9235,11 +9229,13 @@ pub class World:
     pub fn label() -> String:
         return \"world\"
 
-@export(\"make_world\")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export(\"make_world\"))
 pub fn make_world(seed: i32) -> World:
     return World(seed)
 
-@export(\"population_of\")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export(\"population_of\"))
 pub fn population_of(world: World) -> i32:
     return world.population()
 ").unwrap();
@@ -9518,8 +9514,6 @@ fn every_example_of_the_specification_checks() {
         ("XII.1 `SoA[T]`", 1, WRITTEN_IN_0915),
         ("XII.2 SIMD", 1, WRITTEN_IN_0915),
         ("XII.3 ECS (`std.ecs`)", 1, WRITTEN_IN_0915),
-        ("Part XVI — Calling C", 1, WRITTEN_IN_0915),
-        ("XVI.7 Exporting Ember to C", 1, WRITTEN_IN_0915),
         ("Annex A — Syntax Quick Reference", 1, WRITTEN_IN_0915),
     ];
     let mut failing_under: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();

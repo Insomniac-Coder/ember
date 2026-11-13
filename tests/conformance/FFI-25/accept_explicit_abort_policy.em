@@ -6,11 +6,13 @@
 #$ stdout: 42
 #$ 43
 
-@export(on_panic=abort)
+# SAFETY: nothing else in the process defines this name
+@unsafe(export(on_panic=abort))
 pub fn default_abort(value: i32) -> i32:
     return value + 1
 
-@export("named_abort", on_panic=abort)
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("named_abort", on_panic=abort))
 pub fn source_named(value: i32) -> i32:
     return value + 2
 

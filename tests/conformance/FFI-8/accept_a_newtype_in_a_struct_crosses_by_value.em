@@ -13,7 +13,8 @@
 
 from std.ffi import c_int
 
-import c "./stamps.c" with (overlay = "overlays/stamps.em") as st
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./stamps.c" with (overlay = "overlays/stamps.em") as st
 
 fn main():
     s = st.span_t(1.5 as st.when_t, 4.0 as st.when_t)
