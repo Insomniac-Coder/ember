@@ -1439,6 +1439,13 @@ impl Parser<'_> {
         InterfaceDecl { is_unsafe: false, name, generics, supertraits, where_clause, members }
     }
 
+    fn sink_report_extend_field(&mut self, span: ember_span::Span, written: &str, target: &str) {
+        self.report(
+            Diagnostic::error(codes::E0100, span, "an `extend` block adds no field: a type's layout is its declaration's [TYP-11]")
+                .help(format!("write `{written}` in `struct {target}:`")),
+        );
+    }
+
     fn parse_extend(&mut self) -> ExtendDecl {
         // The contextual `extend` that `at_extend_decl` saw.
         self.bump();
@@ -1447,7 +1454,17 @@ impl Parser<'_> {
         let implements = self.parse_implements();
         let where_clause = self.parse_where_clause();
         self.expect_punct(Punct::Colon);
-        let members = self.parse_type_body();
+        let mut members = self.parse_type_body();
+        // `[GRM-34]` — an `extend` block adds methods, constants and associated types, no field.
+        let target_text = self.src.get(target.span.start as usize..target.span.end as usize).unwrap_or("T").to_string();
+        let src = self.src;
+        members.retain(|member| {
+            let MemberKind::Field(field) = &member.kind else { return true };
+            let end = field.default.as_ref().map_or(field.ty.span.end, |default| default.span.end);
+            let written = src.get(field.name.span.start as usize..end as usize).unwrap_or("y: int = 0").trim().to_string();
+            self.sink_report_extend_field(member.span, &written, &target_text);
+            false
+        });
         ExtendDecl { is_unsafe: false, generics, target, implements, where_clause, members, blanket: Vec::new() }
     }
 
