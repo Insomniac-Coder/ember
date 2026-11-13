@@ -9,6 +9,8 @@ use ember_diag::{Diagnostic, codes};
 use ember_lexer::{Kw, Lit, Punct, TokenKind};
 
 use crate::Parser;
+pub(crate) use self::owns_operand::{OwnsOperand, OwnsPlace};
+mod owns_operand;
 
 /// Binding power for a precedence level in Part III §5.
 const fn bp(level: u8) -> u8 {
@@ -375,6 +377,7 @@ impl Parser<'_> {
     fn parse_expr_statement(&mut self) -> Option<StmtKind> {
         let outer = std::mem::replace(&mut self.stmt_start, self.pos);
         let first = self.parse_expr();
+        let first_start = first.span.start;
         self.stmt_start = outer;
 
         // `x: T [= e]` — a typed declaration.
@@ -382,7 +385,11 @@ impl Parser<'_> {
             self.bump();
             let pattern = self.expr_to_pattern(first);
             let ty = Some(self.parse_type());
+            let owns_mark = self.owns_operands.len();
             let init = self.eat_punct(Punct::Eq).then(|| self.parse_expr_list(true));
+            if let Some(init) = &init {
+                self.flush_owns_operands(owns_mark, OwnsPlace::Assigned { stmt_start: first_start, value_start: init.span.start });
+            }
             return Some(StmtKind::Decl { pattern, ty, init });
         }
 
@@ -404,7 +411,9 @@ impl Parser<'_> {
             return Some(StmtKind::Assign { targets, op: Some(op), value });
         }
         if self.eat_punct(Punct::Eq) {
+            let owns_mark = self.owns_operands.len();
             let value = self.parse_expr_list(true);
+            self.flush_owns_operands(owns_mark, OwnsPlace::Assigned { stmt_start: targets[0].span.start, value_start: value.span.start });
             return Some(StmtKind::Assign { targets, op: None, value });
         }
 
@@ -535,9 +544,20 @@ impl Parser<'_> {
                 if let PatternKind::Bind { name, sub: None, .. } = &pattern.kind {
                     let comparison = format!("{} == {value_text}", name.name);
                     // `[DIA-21]` P16 — Python's `if x = 5:` typo.
+                    // The header's own word (`if`, `elif`, `while`): the token before the condition.
+                    let word = self
+                        .tokens
+                        .iter()
+                        .rev()
+                        .skip_while(|token| token.span.start >= start.start)
+                        .find_map(|token| match token.kind {
+                            TokenKind::Keyword(kw @ (Kw::If | Kw::Elif | Kw::While)) => Some(kw.as_str()),
+                            _ => None,
+                        })
+                        .unwrap_or("if");
                     diagnostic = diagnostic
                         .habit(ember_diag::habits::Habit::P16)
-                        .suggest(format!("did you mean `{comparison}`?"), span, comparison)
+                        .suggest(format!("to compare, write `{word} {comparison}:`"), span, comparison)
                         .note(format!("to declare `{}`, write `{} = {value_text}` on the line before", name.name, name.name));
                 } else {
                     diagnostic = diagnostic.help("write `x = e` on the preceding line");
@@ -606,8 +626,12 @@ impl Parser<'_> {
         }
         let type_only = matches!(
             self.peek(),
-            TokenKind::Keyword(Kw::Ref | Kw::Dyn | Kw::Fn | Kw::Extern | Kw::Void)
+            TokenKind::Keyword(
+                Kw::Ref | Kw::Owns | Kw::Shares | Kw::ThreadShared | Kw::Weakref | Kw::Sharedref | Kw::Dyn | Kw::Fn | Kw::Extern | Kw::Void
+            )
         ) || self.at_punct(Punct::Star)
+            || (self.at_contextual("some") && matches!(self.peek_at(1), TokenKind::Ident(_)))
+            || (self.at_contextual("once") && self.at_kw_at(1, Kw::Fn))
             || self.at_punct(Punct::Bang);
         if type_only {
             return TypeOrExpr::Type(self.parse_type());
@@ -1024,6 +1048,16 @@ impl Parser<'_> {
                 continue;
             }
             let rhs = self.parse_expr_bp(rbp, allow_block_lambda);
+            let op_text = match op {
+                InfixOp::Bin(bin) => bin.as_str(),
+                InfixOp::Logical(LogicalOp::And) => "and",
+                InfixOp::Logical(LogicalOp::Or) => "or",
+                InfixOp::Range { inclusive: false } => "..",
+                InfixOp::Range { inclusive: true } => "..=",
+            };
+            self.note_owns_operand(&mut lhs, op_text, true);
+            let mut rhs = rhs;
+            self.note_owns_operand(&mut rhs, op_text, false);
 
             if non_assoc && matches!(op, InfixOp::Bin(b) if b.is_comparison()) {
                 // `[GRM-25]` (0.9.9) — `==`, `!=`, `<`, `>`, `<=`, `>=` chain
@@ -1070,8 +1104,9 @@ impl Parser<'_> {
                                     break;
                                 }
                                 self.bump_infix(next);
-                                let operand = self.parse_expr_bp(next_rbp, allow_block_lambda);
+                                let mut operand = self.parse_expr_bp(next_rbp, allow_block_lambda);
                                 let InfixOp::Bin(bin) = next else { unreachable!("a comparison") };
+                                self.note_owns_operand(&mut operand, bin.as_str(), false);
                                 rest.push((bin, operand));
                             }
                             let id = self.next_id();
@@ -1211,7 +1246,8 @@ impl Parser<'_> {
 
         if self.at_kw(Kw::Not) && !self.at_keyword_as_name() {
             self.bump();
-            let operand = self.parse_expr_bp(BP_NOT + 1, allow_block_lambda);
+            let mut operand = self.parse_expr_bp(BP_NOT + 1, allow_block_lambda);
+            self.note_owns_operand(&mut operand, "not", false);
             let id = self.next_id();
             return Expr {
                 id,
@@ -1225,7 +1261,8 @@ impl Parser<'_> {
             self.bump();
             // `[III.5]` — `**` binds tighter than a unary minus on its left,
             // so `-2**2` is `-(2**2)`.
-            let operand = self.parse_expr_bp(BP_UNARY + 1, allow_block_lambda);
+            let mut operand = self.parse_expr_bp(BP_UNARY + 1, allow_block_lambda);
+            self.note_owns_operand(&mut operand, if matches!(op, UnOp::Neg) { "-" } else { "~" }, false);
             let id = self.next_id();
             return Expr {
                 id,
@@ -1241,6 +1278,10 @@ impl Parser<'_> {
             let hi = self
                 .starts_expression()
                 .then(|| Box::new(self.parse_expr_bp(BP_RANGE + 1, allow_block_lambda)));
+            let mut hi = hi;
+            if let Some(hi) = &mut hi {
+                self.note_owns_operand(hi, if inclusive { "..=" } else { ".." }, false);
+            }
             let id = self.next_id();
             return Expr {
                 id,
@@ -1272,9 +1313,18 @@ impl Parser<'_> {
         // compiler yet (M4); the value after it is read as written.
         if let TokenKind::Keyword(Kw::Shares | Kw::ThreadShared | Kw::Weakref | Kw::Sharedref) = self.peek().clone() {
             let at = self.span();
+            let alone = self.at_kw(Kw::Sharedref) && !self.at_kw_at(1, Kw::Mut);
             self.bump();
             let _ = self.eat_kw(Kw::Mut);
             let written = self.src.get(at.start as usize..self.prev_span().end as usize).unwrap_or("shares").to_string();
+            if alone {
+                // `[GRM-43]` — `sharedref` is always followed by `mut`.
+                self.report(
+                    Diagnostic::error(codes::E0114, at, "`sharedref` is always followed by `mut`: a link that only reads may be held by any number of names")
+                        .help("write `target: ref Player`; `sharedref` is for a link that may change its target: `target: sharedref mut Player`"),
+                );
+                return self.parse_expr_bp(BP_UNARY, allow_block_lambda);
+            }
             self.report(Diagnostic::error(codes::E0900, at.to(self.prev_span()), format!("`{written}` before a value is not built by this compiler yet")));
             return self.parse_expr_bp(BP_UNARY, allow_block_lambda);
         }
@@ -1305,6 +1355,20 @@ impl Parser<'_> {
             true
         } else if self.eat_kw(Kw::If) {
             false
+        } else if self.at_contextual("when") {
+            // `[GRM-30]` — `cast s when Circle` is not Ember either.
+            let span = self.span();
+            self.bump();
+            let ty = self.parse_type();
+            let name = self.src.get(operand.span.start as usize..operand.span.end as usize).unwrap_or("s").to_string();
+            let kind = self.src.get(ty.span.start as usize..ty.span.end as usize).unwrap_or("T").to_string();
+            self.report(Diagnostic::error(
+                codes::E1010,
+                span,
+                format!("`cast {name} when {kind}` is not Ember: test the kind, `if {name} is {kind} as c:`, or write `cast {name} as {kind}` for one that stops the program"),
+            ));
+            let id = self.next_id();
+            return Expr { id, kind: ExprKind::Downcast { expr: Box::new(operand), ty, forced: true }, span: start.to(self.prev_span()) };
         } else {
             let found = self.peek().to_string();
             let span = self.span();
@@ -1324,15 +1388,22 @@ impl Parser<'_> {
     /// spelling that replaced it, and the downcast it meant, so checking goes on.
     #[inline(never)]
     fn old_downcast(&mut self, expr: Expr) -> ExprKind {
-        let (forced, written, word) = if self.at_punct(Punct::Bang) { (true, "as!", "as") } else { (false, "as?", "if") };
+        let forced = self.at_punct(Punct::Bang);
+        let written = if forced { "as!" } else { "as?" };
         let span = self.span();
         self.bump();
-        self.report(
-            Diagnostic::error(codes::E0100, span, format!("`{written}` is not Ember: a downcast is written `cast x {word} D`"))
-                .primary_label(format!("write `cast` before the value and `{word}` here"))
-                .help("`cast x as D` gives the `D` and panics if `x` is not one; `cast x if D` gives `Some(d)` or `None`"),
-        );
-        ExprKind::Downcast { expr: Box::new(expr), ty: self.parse_type(), forced }
+        let ty = self.parse_type();
+        // `[GRM-30]` — `E1010`, whose message gives the line to write, from the program's own names.
+        let operand = self.src.get(expr.span.start as usize..expr.span.end as usize).unwrap_or("s").to_string();
+        let kind = self.src.get(ty.span.start as usize..ty.span.end as usize).unwrap_or("T").to_string();
+        let diagnostic = if forced {
+            Diagnostic::error(codes::E1010, span, format!("`as!` is not Ember: write `cast {operand} as {kind}`, which gives the `{kind}` and stops the program if `{operand}` is not one"))
+        } else {
+            Diagnostic::error(codes::E1010, span, format!("`as?` is not Ember: test the kind, `if {operand} is {kind} as c:`, for a downcast that may fail"))
+                .help(format!("`cast {operand} as {kind}` is the one that stops the program if `{operand}` is not a `{kind}`"))
+        };
+        self.report(diagnostic.primary_label(format!("`{written}` is not a word of Ember")));
+        ExprKind::Downcast { expr: Box::new(expr), ty, forced }
     }
 
     fn parse_atom(&mut self, allow_block_lambda: bool) -> Expr {
@@ -1678,7 +1749,18 @@ impl Parser<'_> {
             let kind = match self.peek() {
                 TokenKind::Punct(Punct::LParen) => {
                     self.bump();
-                    let args = self.parse_args();
+                    let owns_mark = self.owns_operands.len();
+                    let mut args = self.parse_args();
+                    // The arguments are placeholders once reported: the call's checks add nothing to the one error.
+                    let reported = self.flush_owns_operands(owns_mark, OwnsPlace::Argument { call_start: start.start });
+                    for arg in &mut args {
+                        if reported.iter().any(|at| arg.span.start <= at.start && at.end <= arg.span.end) {
+                            // `owns` over a placeholder: the call's own check of the word finds it said.
+                            let span = arg.value.span;
+                            let placeholder = Expr { id: self.next_id(), kind: ExprKind::Error, span };
+                            arg.value.kind = ExprKind::Owned(Box::new(placeholder));
+                        }
+                    }
                     // A call on a field access is a method call. `[GRM-8]`
                     // leaves `recv.method[T]` as an `IndexOrInstantiate`
                     // until the following `(` proves that the bracketed
@@ -1810,7 +1892,9 @@ impl Parser<'_> {
                     if self.at_punct(Punct::Question) || self.at_punct(Punct::Bang) {
                         self.old_downcast(expr)
                     } else {
-                        ExprKind::Cast { expr: Box::new(expr), ty: self.parse_type() }
+                        let ty = self.parse_type();
+                        self.note_owns_operand(&mut expr, "as", true);
+                        ExprKind::Cast { expr: Box::new(expr), ty }
                     }
                 }
                 _ => return expr,
@@ -1839,7 +1923,30 @@ impl Parser<'_> {
                 break;
             }
         }
+        self.check_word_list(&items);
         Pattern { id: self.next_id(), kind: PatternKind::Tuple(items), span: start.to(self.prev_span()) }
+    }
+
+    /// `[GRM-42]` — in a list of names declared without types (a loop's names, a pattern's names) each
+    /// word belongs to the one name after it, and a name with no word may not follow a name with a
+    /// word (`E0116`), so that no word can be read as covering the next name.
+    pub(crate) fn check_word_list(&mut self, items: &[Pattern]) {
+        let worded = |p: &Pattern| matches!(p.kind, PatternKind::Bind { by_ref: true, .. } | PatternKind::CopyOf { .. });
+        let plain = |p: &Pattern| matches!(p.kind, PatternKind::Bind { by_ref: false, sub: None, .. });
+        for pair in items.windows(2) {
+            let [before, after] = pair else { continue };
+            if !worded(before) || !plain(after) {
+                continue;
+            }
+            let text = |p: &Pattern| self.src.get(p.span.start as usize..p.span.end as usize).unwrap_or("").trim().to_string();
+            let (first, second) = (text(before), text(after));
+            let word = first.rsplit_once(' ').map_or(first.as_str(), |(word, _)| word).to_string();
+            let name = first.rsplit(' ').next().unwrap_or("").to_string();
+            self.report(
+                Diagnostic::error(codes::E0116, after.span, format!("`{word}` here belongs to `{name}` only; say what `{second}` is"))
+                    .help(format!("write `ref {second}` to read it, or `{word} {second}` to treat it as `{name}` is treated")),
+            );
+        }
     }
 
     /// `[GRM-27]` — `for target in or_expr {for target in or_expr | if
@@ -2004,6 +2111,7 @@ impl Parser<'_> {
         self.expect_kw(Kw::Fn);
         self.expect_punct(Punct::LParen);
         let mut params = Vec::new();
+        let mut untyped_words: Vec<(bool, (String, String))> = Vec::new();
         while !self.at_punct(Punct::RParen) && !self.at_eof() {
             let start = self.span();
             let id = self.next_id();
@@ -2021,6 +2129,20 @@ impl Parser<'_> {
             } else {
                 TypeExpr { id: self.next_id(), kind: TypeKind::Infer, span: name.span }
             };
+            // `[GRM-42]` — a lambda's parameters written without types are such a list: a name with no
+            // word may not follow a name with one.
+            let untyped = matches!(ty.kind, TypeKind::Infer);
+            if untyped && !worded && let Some((true, before)) = untyped_words.last() {
+                let (word, kept) = before.clone();
+                self.report(
+                    Diagnostic::error(codes::E0116, name.span, format!("`{word}` here belongs to `{kept}` only; say what `{}` is", name.name))
+                        .help(format!("write `ref {}` to read it, or `{word} {}` to treat it as `{kept}` is treated", name.name, name.name)),
+                );
+            }
+            if untyped {
+                let word = self.src.get(start.start as usize..name.span.start as usize).unwrap_or("").trim().to_string();
+                untyped_words.push((worded, (word, name.name.to_string())));
+            }
             params.push(Param {
                 id,
                 mode,
@@ -2105,7 +2227,7 @@ impl Parser<'_> {
                         colon.to(self.span()),
                         "a multi-statement closure cannot be written inside brackets",
                     )
-                    .help("bind it on a preceding line: `h = fn(e): …` then pass `h`")
+                    .help("declare a local function on the preceding line: `fn add(x):` with the block below it, then pass `add` [GRM-28]")
                     .note("indentation is not significant inside brackets [LEX-6]"),
                 );
                 // The rest of the body, up to the enclosing `,` or closing
@@ -2262,6 +2384,7 @@ impl Parser<'_> {
                     self.one_element_tuple(start.to(self.prev_span()));
                     return items.pop().expect("one item");
                 }
+                self.check_word_list(&items);
                 PatternKind::Tuple(items)
             }
             TokenKind::Punct(Punct::LBracket) => {
@@ -2425,9 +2548,21 @@ impl Parser<'_> {
                 PatternKind::Lit(PatternLit { negative: true, lit })
             }
             ExprKind::Tuple(items) => {
-                PatternKind::Tuple(items.into_iter().map(|e| self.expr_to_pattern(e)).collect())
+                let items: Vec<Pattern> = items.into_iter().map(|e| self.expr_to_pattern(e)).collect();
+                self.check_word_list(&items);
+                PatternKind::Tuple(items)
             }
             ExprKind::Paren(inner) => return self.expr_to_pattern(*inner),
+            // `[GRM-13]`, `[GRM-19]` — `ref mut path` and `ref n` name a part of a condition's pattern
+            // as they do in a `match` arm; `copy of v` a copy of one's own.
+            ExprKind::RefOf { mutable, place } if matches!(&place.kind, ExprKind::Path { segments } if segments.len() == 1) => {
+                let ExprKind::Path { segments } = place.kind else { unreachable!("matched above") };
+                PatternKind::Bind { name: segments[0], by_ref: true, mutable, sub: None }
+            }
+            ExprKind::CopyOf(inner) if matches!(&inner.kind, ExprKind::Path { segments } if segments.len() == 1) => {
+                let ExprKind::Path { segments } = inner.kind else { unreachable!("matched above") };
+                PatternKind::CopyOf { name: segments[0] }
+            }
             // D-776 — `Shape.Square(side)` arrives as a method call on the path `Shape`.
             ExprKind::MethodCall { recv, name, generic_args, args } if generic_args.is_empty() && dotted_path(&recv).is_some() => {
                 let mut path = dotted_path(&recv).expect("just checked");

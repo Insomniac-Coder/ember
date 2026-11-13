@@ -28349,46 +28349,32 @@ impl<'a> Checker<'a> {
 
         // `[GRM-5]`'s consistency rule: `_` is neutral, while every other
         // leaf must be either a fresh bare name or an existing writable place.
-        let mut declares = false;
-        let mut assigns = false;
+        // `[GRM-5]` (0.9.20) — each target follows `[GRM-4]` on its own: a name not in scope is
+        // declared, one in scope assigned; a name twice in one list is `E1020`.
+        let mut declared_leaves = Vec::with_capacity(leaves.len());
         let mut fresh = HashSet::new();
         for leaf in &leaves {
-            if is_single_path(leaf.target, "_") {
-                continue;
-            }
-            match &leaf.target.kind {
-                ast::ExprKind::Path { segments } if segments.len() == 1 => {
-                    let name = segments[0].name;
-                    if self.lookup(name).is_some() {
-                        assigns = true;
-                    } else {
-                        declares = true;
-                        if !fresh.insert(name) {
-                            self.error(
-                                codes::E1020,
-                                leaf.target.span,
-                                format!("`{name}` is declared more than once in this destructuring"),
-                            );
-                            return;
-                        }
-                    }
+            let mut declares = false;
+            if !is_single_path(leaf.target, "_")
+                && let ast::ExprKind::Path { segments } = &leaf.target.kind
+                && segments.len() == 1
+            {
+                let name = segments[0].name;
+                if !fresh.insert(name) {
+                    self.error(codes::E1020, leaf.target.span, format!("`{name}` is declared more than once in this destructuring"));
+                } else if self.lookup(name).is_none() {
+                    declares = true;
                 }
-                _ => assigns = true,
             }
+            declared_leaves.push(declares);
         }
-        if declares && assigns {
-            self.error(
-                codes::E1010,
-                span,
-                "all names in a destructuring assignment must be declared or assigned consistently",
-            );
-            return;
-        }
+        let mut declared_leaves = declared_leaves.into_iter();
 
         let aggregate_ty = value.ty;
         let temp = self.declare(None, aggregate_ty, value.span);
         let mut bindings = Vec::new();
         for leaf in leaves {
+            let declares = declared_leaves.next().unwrap_or(false);
             if is_single_path(leaf.target, "_") {
                 continue;
             }
@@ -28458,12 +28444,14 @@ impl<'a> Checker<'a> {
                 }
                 fields.into_iter().map(|(ty, _, _)| ty).collect()
             }
+            // `[GRM-5]` — a fixed array is destructured too, its elements in order.
+            TyKind::Array { elem, len } => vec![elem; len as usize],
             _ => {
                 let shown = self.types.display(aggregate);
                 self.error(
                     codes::E2020,
                     span,
-                    format!("destructuring requires a tuple or struct, found `{shown}`"),
+                    format!("destructuring requires a tuple, a struct or a fixed array, found `{shown}`"),
                 );
                 return false;
             }
@@ -28517,6 +28505,11 @@ impl<'a> Checker<'a> {
             let ty = match self.types.kind(source.ty) {
                 TyKind::Tuple(items) => items[index],
                 TyKind::Struct(id) => self.types.struct_def(*id).fields[index].ty,
+                TyKind::Array { elem, .. } => {
+                    let at = Expr { ty: self.common.usize, kind: ExprKind::Int(index as u128), span };
+                    source = Expr { ty: *elem, kind: ExprKind::Index { base: Box::new(source), index: Box::new(at) }, span };
+                    continue;
+                }
                 _ => unreachable!("validated destructuring projection"),
             };
             source = Expr { ty, kind: ExprKind::Field { base: Box::new(source), index }, span };
@@ -39993,6 +39986,11 @@ impl<'a> Checker<'a> {
                 }
                 // `[GRM-36]` — the operand of `ref` is a place: a local, a
                 // field, an index or a dereferenced reference.
+                // `ref mut` before a call that gives a `MutSpan` names that span's elements
+                // (`d = ref mut tracks[name].as_mut_span()`): the span is the view.
+                if *mutable && !is_place(&inner.kind) && matches!(self.types.kind(inner.ty), TyKind::Span { mutable: true, .. }) {
+                    return inner;
+                }
                 if !is_place(&inner.kind) {
                     self.sink.emit(
                         Diagnostic::error(codes::E0111, place.span, "only a place can be borrowed")
@@ -40988,6 +40986,17 @@ impl<'a> Checker<'a> {
     fn type_from_expr(&mut self, expr: &ast::Expr) -> Ty {
         match &expr.kind {
             ast::ExprKind::Path { segments } => {
+                // `[GRM-8b]` — a local variable is neither a type nor a constant.
+                if let [name] = segments.as_slice()
+                    && self.lookup(name.name).is_some()
+                {
+                    self.error(
+                        codes::E2173,
+                        expr.span,
+                        format!("`{}` is a variable, which is neither a type nor a constant; an instantiation takes types and constants", name.name),
+                    );
+                    return self.common.error;
+                }
                 let ty = ast::TypeExpr {
                     id: ast::NodeId(0),
                     kind: ast::TypeKind::Path {
@@ -48737,7 +48746,41 @@ impl<'a> Checker<'a> {
         {
             // VII.1 — `=` copies only a `Copy` type's value; a counted one (a class handle, a `shares`
             // value) is none, though this compiler still keeps a count for it.
-            if !self.types.is_copy(value.ty) || self.types.needs_drop(value.ty) {
+            // `[GRM-15]`, `[OWN-11]` — before a part (`body = owns req.body`) the word hands the part over
+            // into the new name, where `=` alone makes a view (`[BRW-12]`).
+            // `[EXP-6]` — an element is the collection's, whose end drops it again: `E3011`.
+            if matches!(value.kind, ExprKind::Index { .. }) && (!self.types.is_copy(value.ty) || self.types.needs_drop(value.ty)) {
+                let part = self.written_line(inner.span).unwrap_or_else(|| "the element".to_string());
+                self.sink.emit(
+                    Diagnostic::error(codes::E3011, span, "cannot move out of an element")
+                        .primary_label("handed over here")
+                        .help(format!("take it out with `mem.take`, `mem.replace`, `swap`, `pop` or `remove`: `{given} = mem.take(ref mut {part})`; or keep a copy: `{given} = copy of {part}`")),
+                );
+                return value;
+            }
+            let a_part = matches!(value.kind, ExprKind::Field { .. });
+            // `[EXP-6]` — a field of a value whose type has a `drop` of its own cannot be taken out of it.
+            if let ExprKind::Field { base, .. } = &value.kind {
+                let owner = match *self.types.kind(base.ty) {
+                    TyKind::Ref { inner, .. } => inner,
+                    _ => base.ty,
+                };
+                let dropping = match *self.types.kind(owner) {
+                    TyKind::Struct(id) => self.types.struct_def(id).has_drop,
+                    TyKind::Enum(id) => self.types.enum_def(id).has_drop,
+                    _ => false,
+                };
+                if dropping {
+                    let part = self.written_line(inner.span).unwrap_or_else(|| "the part".to_string());
+                    let shown = self.types.display(owner);
+                    self.sink.emit(
+                        Diagnostic::error(codes::E3010, span, format!("cannot hand over `{part}` on its own: `{shown}` has a `drop` of its own, which would run over a value with a hole in it"))
+                            .help(format!("take it and leave a value in its place: `{given_line} = mem.take(ref mut {part})`", given_line = given)),
+                    );
+                    return value;
+                }
+            }
+            if !a_part && (!self.types.is_copy(value.ty) || self.types.needs_drop(value.ty)) {
                 let name = self.written_line(inner.span).unwrap_or_else(|| "it".to_string());
                 self.error(codes::E0109, span, format!("`{given} = {name}` already hands `{name}` over; remove `owns`"));
                 return value;
@@ -60293,6 +60336,10 @@ impl<'a> Checker<'a> {
     /// it takes over": a missing word, or one written where the parameter does not say it, is `E3028`,
     /// in the program's own names (verdicts 146, 147, 149, 158).
     fn check_call_word(&mut self, arg: &ast::Expr, mode: Mode, param_ty: Ty, declared: Span) {
+        // A placeholder (`[GRM-47]`'s `E0119` already said what was wrong) has no word to miss.
+        if matches!(arg.kind, ast::ExprKind::Error) {
+            return;
+        }
         // The words are the program's: a call or an argument the compiler makes itself has none.
         if !self.written_call || arg.id == ast::NodeId::DUMMY || self.generated_files.contains(&arg.span.file) {
             return;
