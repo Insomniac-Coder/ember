@@ -125,8 +125,8 @@ Read first by every job in this lane; updated last by each.
   E1010 help for a script name used in a function (`script_locals`). `[FN-4]`: `static_build_help` (the help that builds the value). `[EXP-5]`:
   a method that changes a temporary as a whole statement is recorded in `pass_receiver_to` (`discarded_receiver`) and refused in
   `decide_implicit_objects` (`objects.rs`), once the method is known to change its object. `[EXP-4]`: `lower_match` (`ember_mir/src/lower.rs`)
-  ends a match subject's temporaries before the arms unless the value holds views (`holds_views`).
-- **Traps:** after a Python edit of a Rust file, `touch` it if `cargo build` says it is up to date; NEVER `cd ..` from a lane's `compiler/`
+  ends a match subject's temporaries before the arms only when the subject's value is plain data (`is_plain_data`): any other value broke 71 tests (a value that owns heap storage may share it with the dropped temporary), so `match owns JOBS.lock().pop():` (N101) still needs its own analysis.
+- **Traps:** a default on a `ref mut` parameter (E3027) contradicted TYP-9's old test (rewritten with `owns`); a method on a temporary that views a place (`q.commands().add(..)`) is not E2140. After a Python edit of a Rust file, `touch` it if `cargo build` says it is up to date; NEVER `cd ..` from a lane's `compiler/`
   directory (it lands in the main checkout): every command starts with `cd <lane root>`. A debug `eprintln!` in `ember_typeck` is not shown
   by `ember check`; write to a file. The shell tool resets its directory to the main checkout between calls.
 - **Not credited, and why:**
