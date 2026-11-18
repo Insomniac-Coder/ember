@@ -50947,8 +50947,14 @@ impl<'a> Checker<'a> {
                     Some(entry) => Some(entry),
                     None => {
                         let (a, b) = (self.interface_shown(first.2), self.interface_shown(second.2));
+                        // `[TYP-24]` — the message names both bounds and the call to write with each.
+                        let mut written = Vec::new();
+                        written.extend(self.written_line(receiver.span));
+                        written.extend(args.iter().filter_map(|arg| self.written_line(arg.span)));
+                        let call = |interface: &str| format!("`{interface}.{}({})`", name.name, written.join(", "));
+                        let line = if written.is_empty() { String::new() } else { format!(": write {} or {}", call(&a), call(&b)) };
                         self.sink.emit(
-                            Diagnostic::error(codes::E2070, name.span, format!("`{}` is offered by both `{a}` and `{b}`", name.name))
+                            Diagnostic::error(codes::E2070, name.span, format!("`{}` is offered by both `{a}` and `{b}`{line}", name.name))
                                 .help(format!("name the one to call: `{b}.{}(…)` with the receiver first", name.name))
                                 .note("two of the parameter's bounds offer this method [TYP-24]"),
                         );

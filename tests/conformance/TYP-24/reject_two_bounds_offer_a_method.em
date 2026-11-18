@@ -14,7 +14,7 @@ interface D:
 
 [C: needs (A, B)]
 fn both(c: C) -> int:
-    return c.m()    #$ error[E2070]: `m` is offered by both `A` and `B`
+    return c.m()    #$ error[E2070]: `m` is offered by both `A` and `B`: write `A.m(c)` or `B.m(c)`
     #$ help: name the one to call: `B.m(…)` with the receiver first
 
 [C: needs A]
