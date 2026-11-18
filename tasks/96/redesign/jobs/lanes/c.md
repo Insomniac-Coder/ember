@@ -110,3 +110,42 @@ Read first by every job in this lane; updated last by each.
   TYP-22 (`dyn (A, B)`, E2050 messages, M11), TYP-23 (wording), TYP-32 (`some (A, B, Send)` is not parsed), TYP-34 (`from static`,
   M5), TYP-36 (cells: tuple and array `Default`, `Option` `Ord`, `Map`/`Set` `Display` as a bound, a class's `Clone`), TYP-38 (a literal
   followed by `using m`, TYP-46), TYP-43 (`ThreadShared` does not exist: M4), TYP-44a (type indices at link: M11).
+
+## W6, job 4 (functions, errors, expressions, interfaces, attributes), 2026-11-19
+
+- **Credited (built_for_0915):** ERR-13, ATT-2, FN-1a, FN-2, FN-4, FN-5, ERR-2, ERR-9, EXP-5, EXP-10.
+- **Where things are:** `[ERR-13]`: `ember_panic_bounds` (`runtime/ember_rt/templates/ember_rt.c.in`, then `python tools/generate_runtime.py`)
+  and the interpreter's `bounds_message` (`ember_interp/src/lib.rs`): "...; use .get(i) for an Option" on every bounds panic. `[FN-2a]`'s E3027
+  for `ref mut` before a name that only reads: `reject_borrowed_parameter_write_as` (`ember_typeck/src/lib.rs`, uses `ref_mut_argument`, set in
+  `check_argument_by`) for a parameter, `read_only_change` (`views.rs`) for a loop, pattern or view name; a constructor's `init` `ref mut`
+  parameter takes the word (`constructor_arg`, `check_call_word`). `[FN-5]`: `check_declared_defaults` (E3027 for a default on `ref mut`, an
+  `owns` default is checked as an argument so an earlier plain parameter cannot be handed over). `[FN-8]`: `main`'s `E` must be `Display`
+  (`check_main_form`); a script's `?` makes the implicit `main` `Result[void, AnyError]` and appends `Ok(())` (`parse_module`,
+  `script_try`/`script_scope`/`script_nesting` in `ember_parser`); `return`/`yield` at file scope are E0100 (`script_jump`, `body.rs`); the
+  E1010 help for a script name used in a function (`script_locals`). `[FN-4]`: `static_build_help` (the help that builds the value). `[EXP-5]`:
+  a method that changes a temporary as a whole statement is recorded in `pass_receiver_to` (`discarded_receiver`) and refused in
+  `decide_implicit_objects` (`objects.rs`), once the method is known to change its object. `[EXP-4]`: `lower_match` (`ember_mir/src/lower.rs`)
+  ends a match subject's temporaries before the arms unless the value holds views (`holds_views`).
+- **Traps:** after a Python edit of a Rust file, `touch` it if `cargo build` says it is up to date; NEVER `cd ..` from a lane's `compiler/`
+  directory (it lands in the main checkout): every command starts with `cd <lane root>`. A debug `eprintln!` in `ember_typeck` is not shown
+  by `ember check`; write to a file. The shell tool resets its directory to the main checkout between calls.
+- **Not credited, and why:**
+  - ATT-1: `@sync` is still a working attribute (48 files; the replacement is `thread_shared`, M4) and `@component(layout=soa)` is std.ecs's storage choice
+    (the target says "any type is a component, with no mark": M14).
+  - FN-1: the `shares` clauses are M4, a class object is not `Copy` (A1-9: `p.heal()` through a reading class parameter and `owns p: Player` then use are not E3023/E3040).
+  - FN-2a: a function from a variable lent to a callable-bounded `owns f: F` (`apply(h)`, `ref mut h` for state that changes, `owns h` E0109) needs `[CLO-18]`'s
+    state analysis; today `apply(h)` is E3028 and a state-changing closure takes no word. The `shares mut game` examples are M4.
+  - FN-3: the compiler says E3060 for a returned view of a local, the spec E3063 (question 2).
+  - FN-6: `extern "C" fn(Span[T])` and `ref mut x: T` as C carriers, the thread-attaching C entry, and E2020 (the compiler says E5015) are FFI-31b (lane b).
+  - FN-8: tested and built except "`args` decodes invalid bytes as U+FFFD": built in the runtime (`push_utf8_lossy`, Linux) but a test needs raw argv bytes (Linux only).
+  - FN-9: class objects (A1-9).
+  - ERR-1: `f"{e}"` and `println(e)` of an error with no `Display` compile (question 3).
+  - ERR-3, ERR-8: a one-thread error through `?` into `AnyError` is not E2040 (needs `Error`'s `Send`/`ThreadShared` check at the conversion, N130) and `@from` on a bad variant is E0104/E2020, not E2080.
+  - ERR-4: ERR-10's `context` and the list of methods are tested, but the 0.9.20 `once fn` bounds were not re-checked one by one.
+  - EXP-4: E3063 vs E3060 for a view that outlives its temporary (question 2).
+  - IFC-3: the E2040 message "`Sq.scale` takes `k: i64`, and `Scaler.scale` takes `k: f64`; write `fn scale(k: f64) -> f64:`" is `does not match the signature required by` (5 older tests pin the prefix).
+  - IFC-4: an interface's associated constant (`const N: int = 3` then `A.N`) is not built.
+  - IFC-5: a bare `dyn I` in a field, result or payload is E2020 "an unsized interface value", the spec says E2173 with the owner and the two lines to write.
+  - IFC-6 and TYP-17: bound inference for a generic that is not `pub` is not built (`fn total[T](a: T, b: T)` with `a + b` is E2040 today).
+  - TYP-10 (the shift panic's operands in five backends), TYP-23's wording (the callee is not known where the lambda is checked: `argument_of` is
+    `None` there), TYP-17: not started.

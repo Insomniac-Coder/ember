@@ -60238,7 +60238,13 @@ impl<'a> Checker<'a> {
             if !is_place(&receiver.kind) && !matches!(self.types.kind(receiver.ty), TyKind::Span { mutable: true, .. }) {
                 // `[EXP-5]` — a method that may change its object, called on a temporary that ends with
                 // the line, is `E2140` when that change is the call's only effect (its result unused).
-                if self.discarded_receiver == Some(span) && matches!(receiver.kind, ExprKind::Call { .. }) {
+                // A temporary that holds a view or a handle (`q.commands()`, whose `add` records into the queue it
+                // views) changes what it points at: the change is not lost.
+                if self.discarded_receiver == Some(span)
+                    && matches!(receiver.kind, ExprKind::Call { .. })
+                    && !self.types.may_be_view(receiver.ty)
+                    && !matches!(self.types.kind(receiver.ty), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Ref { .. })
+                {
                     self.discarded_temp_calls.push((callee, span));
                 }
                 let ty = self.types.intern(TyKind::Ref { mutable: true, inner: receiver.ty });
