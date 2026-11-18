@@ -1588,12 +1588,14 @@ impl TypeTable {
     }
 
     /// `[EXC-19]` — whether field `index` of class `id` (object layout, bases
-    /// first) has its own access word: every non-`Copy` field. A `Copy`
-    /// field's reads and writes are instantaneous and never checked
+    /// first) has its own access word: every non-`Copy` field but a class object's handle. A `Copy`
+    /// field's reads and writes, and a handle's, are one word and instantaneous, and never checked
     /// (`[EXC-17]`). Immutable `@sync` objects need no access words.
     pub fn class_field_has_access_word(&self, id: ClassId, index: usize) -> bool {
         !self.class_def(id).is_sync
-            && self.class_field_at(id, index).is_some_and(|field| !self.is_copy(field.ty))
+            && self.class_field_at(id, index).is_some_and(|field| {
+                !self.is_copy(field.ty) && !matches!(self.kind(field.ty), TyKind::Class(_) | TyKind::ClassInterface(_))
+            })
     }
 
     /// Number of fields physically present in the object, including bases.
