@@ -423,6 +423,7 @@ codes! {
     E6010 = (Error, 6010, Comptime, "[CT-2], [CLI-21], [CT-5], [CT-1a]", "operation not available at compile time, among them a compile-time value a plain name could change (an `Atomic`, lock, `Once`, channel end, `guarded by` field or `@cached` class in a `comptime(e)`), and a `static mut`, or a `static` built on first access, reached by compile-time code; in `unsafe` code at compile time, a read or write through a pointer not at the bytes of a live value the evaluator holds; inline assembly; `comptime.read_file` of a file missing, unreadable or not UTF-8");
 
     // --- concurrency ----------------------------------------------------------
+    // `E7001` and `E7003` are registered and never emitted, so their numbers are not reused.
     E7001 = (Error, 7001, Concurrency, "[THR-1]", "`@sync` is gone: a value shared between threads is `thread_shared`, its changing fields `guarded by` a lock or `Atomic`");
     E7002 = (Error, 7002, Concurrency, "[STA-1], [THR-20], [THR-9], [CLS-12]", "`static` of a type that is not `ThreadShared`; a `guarded by` `static mut` of a type that is not `Send`; a `static` `Receiver`; a `static` of a class with a `@cached` method that declares nothing saying its objects are shared (its kept result is filled with plain stores)");
     E7003 = (Error, 7003, Concurrency, "[THR-1]", "`@sync` is gone (as `E7001`); a `thread_shared` value changed directly is `E7014`");
