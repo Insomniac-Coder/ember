@@ -3431,6 +3431,11 @@ struct Checker<'a> {
     ref_mut_argument: Option<(Span, Span)>,
     /// `[FN-8]` — the names a script's statements bind: locals of the implicit `main`.
     script_locals: HashSet<Symbol>,
+    /// `[EXP-5]` — the receiver of the method call an expression statement is: its result is not used.
+    discarded_receiver: Option<Span>,
+    /// `[EXP-5]` — a method called on a temporary as a whole statement: refused (`E2140`) once the method is
+    /// known to change its object (`decide_implicit_objects`).
+    discarded_temp_calls: Vec<(DefId, Span)>,
     /// `[FN-2a]` — the argument being checked against a declared parameter, and that parameter's
     /// declaration, for the word the call writes before it (`check_call_word`).
     word_of: Option<(Span, Span)>,
@@ -4306,6 +4311,8 @@ impl<'a> Checker<'a> {
             argument_of: None,
             ref_mut_argument: None,
             script_locals: HashSet::new(),
+            discarded_receiver: None,
+            discarded_temp_calls: Vec::new(),
             word_of: None,
             inline_fns: HashMap::new(),
             module_asts: Vec::new(),
@@ -27812,7 +27819,12 @@ impl<'a> Checker<'a> {
                     self.lower_jump(jump, expr.span, out);
                     return;
                 }
+                let outer_discarded = self.discarded_receiver.take();
+                if let ast::ExprKind::MethodCall { recv: receiver, .. } = &expr.kind {
+                    self.discarded_receiver = Some(receiver.span);
+                }
                 let expr = self.synth(expr);
+                self.discarded_receiver = outer_discarded;
                 // `[ERR-5]` — a `Result` is `@must_use`: one an expression statement drops is unused.
                 if self.is_result(expr.ty) {
                     self.sink.emit(
@@ -60224,6 +60236,11 @@ impl<'a> Checker<'a> {
                 return receiver;
             }
             if !is_place(&receiver.kind) && !matches!(self.types.kind(receiver.ty), TyKind::Span { mutable: true, .. }) {
+                // `[EXP-5]` — a method that may change its object, called on a temporary that ends with
+                // the line, is `E2140` when that change is the call's only effect (its result unused).
+                if self.discarded_receiver == Some(span) && matches!(receiver.kind, ExprKind::Call { .. }) {
+                    self.discarded_temp_calls.push((callee, span));
+                }
                 let ty = self.types.intern(TyKind::Ref { mutable: true, inner: receiver.ty });
                 return Expr { ty, kind: ExprKind::Ref { place: Box::new(receiver), mutable: true }, span };
             }
