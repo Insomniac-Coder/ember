@@ -29,7 +29,16 @@ Add-Type -Namespace HeatGuard -Name Native -MemberDefinition @'
 
 function Say($text) {
     $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $text"
-    Add-Content -Path $log -Value $line -Encoding UTF8
+    # Shared, and retried: a reader of the log must never stop the guard.
+    foreach ($try in 1..5) {
+        try {
+            $stream = [IO.File]::Open($log, 'Append', 'Write', 'ReadWrite')
+            $bytes = [Text.Encoding]::UTF8.GetBytes("$line`r`n")
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Close()
+            break
+        } catch { Start-Sleep -Milliseconds 200 }
+    }
     Write-Output $line
 }
 
