@@ -139,6 +139,21 @@ fn semicolons_only_in_fixed_arrays() {
     assert!(fixed_arrays > 0, "the corpus has no `[T; N]` or `[v; N]` to check");
 }
 
+/// `[FN-8]` — the `return Ok(())` a script's `?` adds to its implicit `main` is not the program's text.
+#[test]
+fn the_formatter_leaves_out_what_a_scripts_question_mark_adds() {
+    let text = "n = parse(\"1\")?
+println(n)
+";
+    let mut map = SourceMap::new();
+    let file = map.add("script.em".to_string(), text.to_string());
+    let mut sink = Sink::new();
+    let lexed = ember_lexer::lex(file, text, &mut sink);
+    let module = ember_parser::parse(file, text, lexed.tokens, &mut sink);
+    assert!(!sink.has_errors());
+    assert_eq!(ember_fmt::format(&module, text, &lexed.comments), text);
+}
+
 // -- items -------------------------------------------------------------------
 
 #[test]
