@@ -27,7 +27,7 @@ class Child(Base):
 
 fn main():
     child = Child()
-    base: Base = child
+    base: ref Base = ref child
     println(base.tick())
     println(base.label())
     println(child.extra())

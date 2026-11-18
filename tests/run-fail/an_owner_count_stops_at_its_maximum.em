@@ -9,7 +9,7 @@ class Node:
 
 fn main():
     n = Node()
-    keep: Array[Node] = []
+    keep: Array[shares Node] = []
     for _ in 0..300:
-        keep.push(owns n)
+        keep.push(shares n)
     println(keep.len())

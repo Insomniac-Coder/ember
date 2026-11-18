@@ -12,6 +12,7 @@
 # handle by copying the handle), a `String` copies its bytes, and a derived
 # `Clone` clones such fields. Every clone is independent of its original.
 
+@derive(Clone)
 class Token:
     n: int
 

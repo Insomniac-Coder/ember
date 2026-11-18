@@ -14,11 +14,11 @@ class Counter:
     fn bump():
         this.log.push(owns 1)
 
-    fn bump_other(other: Counter):
+    fn bump_other(other: shares mut Counter):
         this.log.push(owns 0)
-        alias = other
+        alias = shares mut other
         alias.bump()
 
 fn main():
     c = Counter()
-    c.bump_other(c)
+    c.bump_other(shares mut c)

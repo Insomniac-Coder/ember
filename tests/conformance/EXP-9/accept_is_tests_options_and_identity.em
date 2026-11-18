@@ -31,7 +31,7 @@ fn empty(o: ref Option[int]) -> bool:
 fn same(a: ref int, b: ref int) -> bool:
     return a is b
 
-fn same_node(a: ref Node, b: ref Node) -> bool:
+fn same_node(a: ref shares mut Node, b: ref shares mut Node) -> bool:
     return a is b
 
 fn main():
@@ -48,5 +48,5 @@ fn main():
     println(same(ref n, ref n), same(ref n, ref m), same(ref p.a, ref p.b), r is ref n, r is not ref m)
     first = Node(1)
     alias = shares mut first
-    other = Node(1)
+    other = shares mut Node(1)
     println(same_node(ref first, ref alias), same_node(ref first, ref other), first is alias)

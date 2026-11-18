@@ -23,7 +23,7 @@ fn main():
     first = Child(7)
     same = shares mut first
     other = Child(7)
-    base: Base = first
+    base: shares mut Base = shares mut first
     if first is same:
         println(1)
     else:

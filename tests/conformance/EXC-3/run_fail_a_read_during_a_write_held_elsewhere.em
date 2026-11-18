@@ -12,11 +12,11 @@ class Player:
     fn init():
         this.items = [1]
 
-    fn update(all: Array[Player]):
+    fn update(all: Array[shares mut Player]):
         this.items.push(owns 0)
         println(score(all))
 
-fn score(all: Array[Player]) -> int:
+fn score(all: Array[shares mut Player]) -> int:
     total = 0
     for p in all:
         total = total + len(p.items)
@@ -24,6 +24,6 @@ fn score(all: Array[Player]) -> int:
 
 fn main():
     p = Player()
-    all: Array[Player] = []
-    all.push(owns p)
+    all: Array[shares mut Player] = []
+    all.push(shares mut p)
     p.update(all)

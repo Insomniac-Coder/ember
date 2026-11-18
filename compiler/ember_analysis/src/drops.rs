@@ -720,24 +720,28 @@ fn report_drop_self_escape(sink: &mut Sink, types: &TypeTable, self_ty: Ty, span
         TyKind::Struct(id) => types.struct_def(*id).fields.first().map(|field| field.name),
         _ => None,
     };
+    // One mistake, one error (`[DIA-14]`): this says more than the plain move `check_drop_moves` reports.
+    let plain_move = sink.diagnostics().iter().position(|d| d.code == Some(codes::E3013) && d.primary.span == span && d.message.starts_with("cannot move `this` out of `drop`"));
     let line = ember_diag::line_mark(span);
     let help = match field {
         Some(field) => format!("on line {line}, hand over a copy of what you need where it has `this`: `copy of this.{field}`; or move the data out with `mem.take`"),
         None => format!("on line {line}, hand over a value of your own where it has `this`; or move the data out with `mem.take`"),
     };
-    sink.emit_classified(
-        Diagnostic::error(
-            codes::E3016,
-            span,
-            format!(
-                "`drop` ends this `{}`; an owner made from it would point at a freed object; keep a copy of what you need",
-                types.display(inner)
-            ),
-        )
-        .primary_label("published here")
-        .note("a destructor may not publish a handle to the object being destroyed [CLS-7a]")
-        .help(help),
-    );
+    let diagnostic = Diagnostic::error(
+        codes::E3016,
+        span,
+        format!(
+            "`drop` ends this `{}`; an owner made from it would point at a freed object; keep a copy of what you need",
+            types.display(inner)
+        ),
+    )
+    .primary_label("published here")
+    .note("a destructor may not publish a handle to the object being destroyed [CLS-7a]")
+    .help(help);
+    match plain_move {
+        Some(at) => sink.amend(at, |existing| *existing = diagnostic),
+        None => sink.emit_classified(diagnostic),
+    }
 }
 
 /// Whether a move leaves through `drop`'s `self`: rooted at it, past the borrow.
@@ -801,7 +805,7 @@ fn check_drop_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usize {
                 .note("a `drop` body may not take fields out of `this` [DRP-5]; the field is dropped again after `drop` returns [EXP-6]")
                 .help("use `mem.take`, `mem.replace` or `swap` to leave a value in its place"),
             );
-        } else {
+        } else if !sink.diagnostics().iter().any(|d| d.code == Some(codes::E3016) && d.primary.span == span) {
             sink.emit_classified(
                 Diagnostic::error(codes::E3013, span, "cannot move `this` out of `drop`")
                     .primary_label("moved out here")

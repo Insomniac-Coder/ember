@@ -29,6 +29,7 @@ extend Square implements Shape:
     fn scaled(k: int) -> int:
         return this.side * k
 
+@derive(Clone)
 class Tile:
     size: int
 

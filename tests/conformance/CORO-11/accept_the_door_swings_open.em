@@ -31,7 +31,7 @@ gen fn blink(c: Counter) -> Generator[Wait]:
         c.blinks += 1
         yield wait_frames(2)
 
-gen fn waiting_for(c: Counter) -> Generator[Wait]:
+gen fn waiting_for(owns c: shares mut Counter) -> Generator[Wait]:
     yield wait_until(owns owned fn() => c.blinks == 0)
     c.blinks = 2
 
@@ -55,7 +55,7 @@ fn main():
     s.update(0.25)
     println(f"blinks {c.blinks}, running {s.len()}")
     t = Scheduler.new()
-    t.start(owns waiting_for(c))
+    t.start(owns waiting_for(shares mut c))
     t.update(0.1)
     c.blinks = 0
     t.update(0.1)

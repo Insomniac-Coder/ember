@@ -12,7 +12,6 @@ class Node:
 class Parent:
     child: Node
 
-@derive(Copy)
 struct Pair:
     a: Node
     b: int

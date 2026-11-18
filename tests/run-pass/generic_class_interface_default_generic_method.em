@@ -22,7 +22,7 @@ class Factory:
     fn project_default(payload: Payload[A], value: i32) -> i32:
         return payload.project(value)
 
-    fn round_trip(payload: Payload[A]) -> Payload[A]:
+    fn round_trip(owns payload: Payload[A]) -> Payload[A]:
         return payload
 
 fn main():

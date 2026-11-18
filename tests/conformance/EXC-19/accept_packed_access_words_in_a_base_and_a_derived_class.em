@@ -23,7 +23,7 @@ class Derived(Base):
 
 fn main():
     d = Derived()
-    as_base: Base = d
+    as_base: shares mut Base = shares mut d
     for x in as_base.a:
         d.b.push(owns (x * 10))
         d.c.push('d')

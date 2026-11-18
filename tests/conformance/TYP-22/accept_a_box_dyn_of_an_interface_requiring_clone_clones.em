@@ -20,6 +20,7 @@ struct Square:
 enum Rect:
     Sized(float, float)
 
+@derive(Clone)
 class Tile:
     size: float
 

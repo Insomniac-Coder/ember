@@ -12,7 +12,7 @@ class Counter:
 
 fn make() -> fn() -> int:
     c = Counter(5)
-    return fn() -> int => c.value
+    return owned fn() -> int => c.value
 
 fn main():
     f = make()

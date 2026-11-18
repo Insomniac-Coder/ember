@@ -22,9 +22,9 @@ class Local:
 
 fn program():
     s = Shared(1)
-    copies = [s, s]
+    copies = [shares s, shares s]
     p = Local(2)
-    others = [p, p]
+    others = [shares p, shares p]
     println(copies[0].value + copies[1].value, others[0].value + others[1].value)
     weak: weakref Shared = weakref s
     copies.clear()
@@ -32,7 +32,7 @@ fn program():
         println("alive", still.value)
     else:
         println("gone")
-    s = Shared(3)
+    s = shares mut Shared(3)
     if weak exists as still:
         println("alive", still.value)
     else:

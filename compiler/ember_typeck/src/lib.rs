@@ -63599,7 +63599,7 @@ impl<'a> Checker<'a> {
         if matches!(op, ast::BinOp::Is | ast::BinOp::IsNot)
             && let Some(left) = self.referent(&lhs)
             && let Some(right) = self.referent(&rhs)
-            && !matches!(self.types.kind(left), TyKind::Class(_) | TyKind::ClassInterface(_))
+            && !matches!(self.types.kind(left), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Link { .. })
         {
             let lhs = Self::the_reference(lhs);
             let rhs = Self::the_reference(rhs);

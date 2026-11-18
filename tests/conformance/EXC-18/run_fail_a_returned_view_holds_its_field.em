@@ -25,6 +25,6 @@ class Person:
 fn main():
     p = Person()
     n = p.relay()
-    q = p
+    q = shares mut p
     q.rename()
     println(n)

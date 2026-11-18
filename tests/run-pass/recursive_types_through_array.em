@@ -19,7 +19,7 @@ class Node:
     id: i64
     children: Array[Node]    #$ warning[L3001]: potential reference cycle
 
-    fn add(child: Node):
+    fn add(owns child: Node):
         this.children.push(owns child)
 
 # `program` holds the test, so its values die before `main`'s last
