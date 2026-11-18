@@ -2031,7 +2031,7 @@ impl Parser<'_> {
         }
         // `[TYP-45]`, `[LEX-14]` — the other words before a type that say who owns the value, or
         // link it (`weakref Node`, `shares mut Game`): never a name. `sharedref` is always `sharedref
-        // mut`; alone it is not built yet.
+        // mut`; alone it is `E0114`.
         if self.at_kw(Kw::Weakref) && let Some(stacked) = self.weakref_stacked_word() {
             return self.refuse_stacked_weakref(start, stacked, suffix);
         }
