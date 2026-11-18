@@ -1036,13 +1036,8 @@ impl Interp<'_, '_> {
 
     /// The payload a `Box`, a `Cell` or a `some` wrapper prints as, repeatedly.
     fn unwrap_printed(&self, mut at: u64, mut ty: Ty) -> R<(u64, Ty)> {
-        while let Some(inner) = self.types.printed_as(ty) {
-            let TyKind::Struct(id) = *self.types.kind(ty) else { break };
-            at = match self.types.compiler_box_inner(id) {
-                Some(_) => self.mem.read_u64(at)?,
-                None => at + self.layout(ty).field_offsets.first().copied().unwrap_or(0),
-            };
-            ty = inner;
+        while let Some((payload, inner)) = self.printed_payload(at, ty)? {
+            (at, ty) = (payload, inner);
         }
         Ok((at, ty))
     }

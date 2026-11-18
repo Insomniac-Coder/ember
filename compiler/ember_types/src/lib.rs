@@ -2294,6 +2294,12 @@ impl TypeTable {
     /// `Cell[T]` print as the `T` they hold (`Box(5)` prints `5`). A boxed
     /// `dyn` value has no type of its own to print as.
     pub fn printed_as(&self, ty: Ty) -> Option<Ty> {
+        // `[TYP-36]` — an owner prints as the value it owns.
+        if let TyKind::Link { kind, target } = *self.kind(ty)
+            && kind != LinkKind::Weakref
+        {
+            return Some(target);
+        }
         let TyKind::Struct(id) = *self.kind(ty) else { return None };
         // `[TYP-32]` — a `some Display` (or `Debug`) prints as the value it holds.
         if let Some(&(display, debug)) = self.some_prints.get(&id) {

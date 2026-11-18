@@ -45642,8 +45642,14 @@ impl<'a> Checker<'a> {
                 );
             return implied || self.generic_bounds(index, name).contains(&interface);
         }
-        // ODR-181 — `ref T` implements `Eq`, `Ord`, `Hash`, `Display` and `Debug` as `T` does.
-        if let TyKind::Ref { mutable: false, inner } = *self.types.kind(ty)
+        // ODR-181, `[TYP-36]` — `ref T`, and an owner of a `T`, implement `Eq`, `Ord`, `Hash`, `Display`
+        // and `Debug` as `T` does.
+        let viewed = match *self.types.kind(ty) {
+            TyKind::Ref { mutable: false, inner } => Some(inner),
+            TyKind::Link { kind, target } if kind != ember_types::LinkKind::Weakref => Some(target),
+            _ => None,
+        };
+        if let Some(inner) = viewed
             && matches!(
                 interface.as_str(),
                 "std.core.Eq" | "std.core.Ord" | "std.collections.Hash" | "std.core.Display" | "std.core.Debug" | "Display" | "Debug"
@@ -64100,11 +64106,12 @@ impl<'a> Checker<'a> {
         while !dyn_boxes && self.box_inner(rhs.ty).is_some() {
             rhs = self.read_box_through(rhs);
         }
-        // `[RC-1]` — an owner of a value in a block is an operand as its value.
-        if self.types.link_payload(lhs.ty).is_some() {
+        // `[RC-1]` — an owner of a value in a block is an operand as its value; `is` asks about the owners.
+        let identity = matches!(op, ast::BinOp::Is | ast::BinOp::IsNot);
+        if !identity && self.types.link_payload(lhs.ty).is_some() {
             lhs = self.read_link_through(lhs);
         }
-        if self.types.link_payload(rhs.ty).is_some() {
+        if !identity && self.types.link_payload(rhs.ty).is_some() {
             rhs = self.read_link_through(rhs);
         }
         // `[SIMD-8]` — a lane-wise operator on two `std.simd` vectors or masks.
@@ -64133,9 +64140,14 @@ impl<'a> Checker<'a> {
             if self.is_option(rhs.ty) && names_none(lhs_ast) {
                 return self.option_test(rhs, present, span);
             }
-            // `[EXP-9]` — an owner of a class object names that object.
-            lhs = self.read_link_through(lhs);
-            rhs = self.read_link_through(rhs);
+            // `[EXP-9]`, `[TYP-36]` — an owner of a class object names that object; two owners of a value
+            // in a block are the same when their block is.
+            if self.types.link_payload(lhs.ty).is_none() {
+                lhs = self.read_link_through(lhs);
+            }
+            if self.types.link_payload(rhs.ty).is_none() {
+                rhs = self.read_link_through(rhs);
+            }
             // Any other operand that is not a handle or a link (two references were
             // compared above) is `E2150`.
             let handle = |this: &Self, ty: Ty| {

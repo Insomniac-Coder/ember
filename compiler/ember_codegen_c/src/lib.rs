@@ -2536,6 +2536,17 @@ impl Emitter<'_> {
     /// struct whose `value` is.
     fn printed_payload(&self, v: &str, ty: Ty) -> Option<(String, Ty)> {
         let inner = self.types.printed_as(ty)?;
+        // `[TYP-36]` — an owner: of an object, the object's pointer; of a value, the value in its block.
+        if matches!(self.types.kind(ty), TyKind::Link { .. }) {
+            if self.types.link_payload(ty).is_none() {
+                return Some((v.to_string(), inner));
+            }
+            let inner_c = self.c_type(inner);
+            let payload = ember_branding::runtime("obj_payload");
+            let header = ember_branding::runtime("obj_header");
+            let align = c_align(&inner_c);
+            return Some((format!("(*({inner_c}*){payload}(({header}*)({v}), {align}))"), inner));
+        }
         let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
         match self.types.compiler_box_inner(id) {
             Some(_) => Some((format!("(*({v}))"), inner)),
