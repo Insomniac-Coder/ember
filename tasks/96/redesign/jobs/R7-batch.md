@@ -160,3 +160,24 @@ TYP-44a, TYP-47; and LEX-10 first:
   report what is missing, clause by clause.
 - A class handle is still `Copy` on main (lane a changes that in M4 slice C): do not change `copy_with`.
 
+## W6 (Sonnet), lane c, job 4: functions, errors, expressions, interfaces, attributes (27 tasks) (rolling slot)
+
+The rules, each a task: FN-1, FN-1a, FN-2, FN-2a, FN-3, FN-4, FN-5, FN-6, FN-8, FN-9, ERR-1, ERR-2, ERR-3, ERR-4, ERR-8,
+ERR-9, ERR-13, EXP-4, EXP-5, EXP-10, IFC-3, IFC-4, IFC-5, IFC-6, ATT-1, ATT-2; and finish these three of W5's:
+
+- **TYP-10:** the panic text `shift out of range`: "`1 << n` on line 9 shifts an `int` by 70; use `wrapping_shl`" (today
+  "integer overflow in `shift`"): `AssertKind::ShiftTooLarge` carries no operands in MIR, the C and LLVM backends, the
+  evaluator and the analyses.
+- **TYP-17:** bound inference for a function that is not `pub`, the `pub` E2040 message, E2072's, E2070 from the body;
+  `dyn A + B` and `some A + B` are E0100 (today silently accepted); the `needs (Add, Copy)` of `[T: Add + Copy]`'s E0100
+  goes in the **message**, as the spec gives it (the lead's reading of W5's question 2).
+- **TYP-23 (the lead's reading of W5's question 1):** the message names the callee and the callable type when the call
+  has them: "`each_name` hands each value over (`fn(owns String)`), so this function receives it as its own: write
+  `fn(owns s) => println(s.len())`"; "value" is the noun where the program gives none. Then credit it if whole.
+- Also W5's question 3: `@fp(contract)`'s E0104 **message** gives `@fp(allow_fma)`, as the spec says.
+
+- Not this job: EXP-6 and EXP-9 (lane a's M4 slice C changes them), TYP-13/14's `shares` parts (M4).
+- FN-1's text is being repaired for Hardened_15 (Q1 in `tasks/96/redesign/jobs/ahead/M5/INDEX.md` §3): build what
+  Hardened_14 and that ruling agree on, and report any clause they do not.
+- `tasks/96/redesign/jobs/review.md`, round 7, holds the rulings on W3's, W4's and W5's questions.
+

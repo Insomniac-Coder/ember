@@ -650,3 +650,14 @@ after each work batch" is the owner's rule from this round.
 - **After the merges, the lead:** the quick check now runs parse tests (`6eda5530`; W3's GRM-35 overlay test waits
   in `ahead/lane-b`), the guide and FMT-2's test follow GRM-17 (`6e158a1d`), the test runs' load limit (the owner,
   `b1d6179b`), seven error pages and three rewritten (`ee927f1c`).
+- **W5 (Sonnet), lane c job 3** (460k tokens). 21 commits; merged `be8a5711`. **Credited 16:** LEX-10 (reading B), TYP-1, -6,
+  -9, -9b, -12, -19, -21, -24, -25, -26, -31, -35, -39, -47 and the rules its report lists. Phase 1 is 30%, overall 18%.
+  - **The lead's review (`c9ba6dee`):** no exception for `#! error[`, which nothing uses; `String`'s `add_assign` is
+    `push_str`. **Its finding was a real bug:** `m = add(m, two)` for a type passed by address was E3021, since the call's
+    result was built in `m` while the call read it; it is made apart when the value names the place (`[BRW-2]`).
+  - **The push gate's find:** W4's `String + text` gave the C backend a `String` where it wants text (seven programs did not
+    compile in C); both operands are read as text now.
+  - **Its questions:** 1. TYP-23: the message names the callee and the callable type where the call has them; job W6.
+    2. TYP-17's `needs (Add, Copy)` and 3. TYP-6's `@fp(allow_fma)` go in the message, as the spec says; job W6.
+    4. Whether a fixed array is one of TYP-31's standard containers (`[T; N].len()` does not exist), and 5. what `Result`'s
+    order is in TYP-36's table (its row is shared with `Option`): for Hardened_15.
