@@ -4,7 +4,8 @@
 #$ assert-c: contains("ember_rt_check_main_thread();")
 #$ stdout: 45
 
-@export("creator_score", threads=creator)
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("creator_score", threads=creator))
 pub fn creator_bound() -> i32:
     return 45
 

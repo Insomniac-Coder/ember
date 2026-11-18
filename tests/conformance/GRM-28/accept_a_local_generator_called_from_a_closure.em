@@ -21,17 +21,19 @@ fn main():
     gen fn quiet(n: int) -> Generator[int]:
         for i in 0..n:
             yield i
-    sum_of = fn(n: int) -> int:
+    fn sum_of_fn(n: int) -> int:
         total = 0
         for v in upto(n):
             total += v
         return total
+    sum_of = sum_of_fn
     println(sum_of(3))
     count_of = fn(n: int) -> int => quiet(n).count()
     println(count_of(3))
-    deep = fn(n: int) -> int:
+    fn deep_fn(n: int) -> int:
         inner = fn(m: int) -> int => upto(m).count() * 10
         return inner(n)
+    deep = deep_fn
     println(deep(2), calls)
     for base in 5..6:
         got = [v for v in upto(1)]

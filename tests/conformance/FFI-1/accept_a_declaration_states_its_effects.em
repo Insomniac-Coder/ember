@@ -12,7 +12,8 @@
 # memory). A function whose declaration states nothing has every effect (`[EFF-3]`) and an unknown
 # thread rule. The facts make no call safe: these are still `unsafe` to call.
 
-import c "./maths.c" as m
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./maths.c" as m
 
 @noalloc @nolock @noblock @noio @nosync @nopanic(explicit) @deterministic
 fn squared(x: i32) -> i32:

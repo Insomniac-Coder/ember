@@ -14,7 +14,7 @@ struct Holder:
     pub item: Item
 
     fn drop():
-        old = this.item
+        old = owns this.item
         println(old.value)
 
 fn main():

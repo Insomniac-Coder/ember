@@ -26,9 +26,10 @@ struct Noisy:
 fn main():
     o: Option[int] = Some(3)
     calls = 0
-    inc = fn(owns x: int) -> int:
+    fn inc_fn(owns x: int) -> int:
         calls += 1
         return x + 1
+    inc = inc_fn
     a = o.map(inc)
     b = o.map(inc)
     r: Result[int, int] = Ok(5)
@@ -38,14 +39,16 @@ fn main():
     println(a, b, c, d, calls)
     n: Option[int] = None
     made = 0
-    fallback = fn() -> int:
+    fn fallback_fn() -> int:
         made += 1
         return 7
+    fallback = fallback_fn
     println(n.unwrap_or_else(fallback), n.unwrap_or_else(fallback), made)
     once = Once()
     ran = 0
-    work = fn():
+    fn work_fn():
         ran += 1
+    work = work_fn
     once.call_once(work)
     once.call_once(work)
     println(ran)

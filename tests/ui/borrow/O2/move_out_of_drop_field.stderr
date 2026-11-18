@@ -1,10 +1,9 @@
-error[E3010]: cannot move a field out of `this` in `drop`
+error[E3010]: cannot hand over `this.item` on its own: `Holder` has a `drop` of its own, which would run over a value with a hole in it
   --> tests/ui/borrow/O2/move_out_of_drop_field.em:17:15
    |
-17 |         old = this.item
-   |               ^^^^^^^^^ moved out here
+17 |         old = owns this.item
+   |               ^^^^^^^^^^^^^^
    |
-   = help: use `mem.take`, `mem.replace` or `swap` to leave a value in its place
-   = note: a `drop` body may not take fields out of `this` [DRP-5]; the field is dropped again after `drop` returns [EXP-6]
+   = help: take it and leave a value in its place: `old = mem.take(ref mut this.item)`
 
 error: could not compile due to 1 error(s)

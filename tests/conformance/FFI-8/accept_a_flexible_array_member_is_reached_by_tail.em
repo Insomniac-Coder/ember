@@ -10,7 +10,8 @@
 # and alignment are C's (`[FFI-5]` checks them).
 
 from std.mem import size_of
-import c "./packets.c" with (overlay = "overlays/packets.em") as p
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./packets.c" with (overlay = "overlays/packets.em") as p
 
 ## The packet's elements: a view that borrows it.
 fn elements(packet: ref p.Packet) -> Span[i64]:

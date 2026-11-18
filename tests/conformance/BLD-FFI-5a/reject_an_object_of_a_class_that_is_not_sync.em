@@ -9,11 +9,13 @@
 class World:
     people: i32 = 0
 
-@export("make_world")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("make_world"))
 pub fn make_world() -> World:    #$ error[E5015]: the exported result is a `World`, whose class is not `@sync`
     return World()
 
-@export("people_of")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("people_of"))
 pub fn people_of(world: World) -> i32:    #$ error[E5015]: exported parameter `world` is a `World`
     return world.people
 

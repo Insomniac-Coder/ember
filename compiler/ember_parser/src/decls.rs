@@ -31,6 +31,12 @@ impl Parser<'_> {
             });
         }
 
+        // `[FFI-51]` — `unsafe import c "./bridge.c"`: an import that vouches for the C it compiles in.
+        let unsafe_word = self.at_kw(Kw::Unsafe).then(|| self.span());
+        if let Some(at) = unsafe_word {
+            self.bump();
+            self.unsafe_sites.push(ember_ast::UnsafeSite { span: at, kind: ember_ast::UnsafeSiteKind::Import });
+        }
         self.expect_kw(Kw::Import);
 
         // `import c "header.h"` / `import cpp "header.h"`
@@ -67,12 +73,16 @@ impl Parser<'_> {
             self.expect_newline();
             return Some(Import {
                 id,
-                kind: ImportKind::Foreign { language, header, options, alias },
+                kind: ImportKind::Foreign { language, header, options, alias, is_unsafe: unsafe_word.is_some() },
                 span: start.to(self.prev_span()),
                 public: false,
             });
         }
 
+        if let Some(at) = unsafe_word {
+            self.report(Diagnostic::error(codes::E0100, at, "`unsafe` goes before `import c` and `import cpp` only")
+                .help("an Ember module's code is checked, so its import needs no `unsafe`: remove it"));
+        }
         self.slot_ending_with(&[Kw::As]);
         let path = self.parse_dotted_path();
         let alias = self.eat_kw(Kw::As).then(|| self.expect_ident());
@@ -138,6 +148,13 @@ impl Parser<'_> {
             let start = self.span();
             self.bump();
             let id = self.next_id();
+            // `[FFI-26]` — `@unsafe(export("name"))`: the attribute inside, in its unsafe form.
+            let written_unsafe = self.at_kw(Kw::Unsafe) && self.at_punct_at(1, Punct::LParen);
+            if written_unsafe {
+                self.unsafe_sites.push(ember_ast::UnsafeSite { span: start, kind: ember_ast::UnsafeSiteKind::Attribute });
+                self.bump();
+                self.bump();
+            }
             let path = self.parse_dotted_path();
             let mut args = Vec::new();
             if self.eat_punct(Punct::LParen) {
@@ -155,7 +172,10 @@ impl Parser<'_> {
                 self.expect_punct(Punct::RParen);
                 self.in_ffi_attribute = outer_ffi;
             }
-            attrs.push(Attribute { id, path, args, span: start.to(self.prev_span()) });
+            if written_unsafe {
+                self.expect_punct(Punct::RParen);
+            }
+            attrs.push(Attribute { id, path, args, span: start.to(self.prev_span()), written_unsafe });
             self.eat_newlines();
         }
         self.safety_attribute = attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is("safety"));
@@ -273,6 +293,7 @@ impl Parser<'_> {
             TokenKind::Keyword(Kw::Unsafe) => {
                 self.at_fn_at(1)
                     || self.at_kw_at(1, Kw::Extern)
+                    || self.at_kw_at(1, Kw::Interface)
                     || matches!(self.peek_at(1), TokenKind::Ident(s) if s.is("extend"))
                     || self.at_overlay_decl(1)
             }
@@ -1056,7 +1077,9 @@ impl Parser<'_> {
                 break;
             }
         }
+        let rparen_end = self.span().end;
         self.expect_punct(Punct::RParen);
+        let fn_start = self.tokens[signature_start.saturating_sub(1)].span.start;
 
         // `[GRM-41]`, `[FN-4]` — `owns this` after the parameters: the method takes its object over.
         let owns_this_span = self.span();
@@ -1078,6 +1101,17 @@ impl Parser<'_> {
             let why = if !method || is_static { "has no object" } else { "takes its object in its parameters" };
             self.report(Diagnostic::error(codes::E1010, span, format!("`owns this` on a function that {why}")).help("remove `owns this`"));
         }
+        // `[STR-6]`, `[CLS-2]` - `owns this` on `init` is `E2108`: `init` builds the object.
+        if owns_this && method && !is_static && !explicit_receiver && name.name.is("init") {
+            let line = self.src.get(fn_start as usize..(rparen_end + 1) as usize).unwrap_or("fn init()").trim_end().to_string();
+            self.report(
+                Diagnostic::error(
+                    codes::E2108,
+                    owns_this_span.to(self.prev_span()),
+                    format!("`init` builds the object, so it cannot take it over; write `{line}:`"),
+                ),
+            );
+        }
         // A method that does not list its object: it is `this`, its mode worked out from the body
         // (`[EXC-15]`). 0.9.10 read such a function as one with no object; M1's migration writes
         // `static` before those (`M1-plan.md`).
@@ -1088,12 +1122,51 @@ impl Parser<'_> {
             params.insert(0, Param { id, mode, is_const: false, kind, default: None, span: name.span });
         }
 
+        // `[GRM-41]` — `from` before the result type is out of order (`E0118`): read on, in order.
+        let early_from = (!self.at_punct(Punct::Arrow) && self.at_contextual("from") && matches!(self.peek_at(1), TokenKind::Ident(_)) && self.at_punct_at(2, Punct::Arrow))
+            .then(|| {
+                let at = self.span();
+                self.bump();
+                (at, self.expect_ident())
+            });
         let ret = self.eat_punct(Punct::Arrow).then(|| self.parse_type());
         // `[GRM-41]` — `from` and what the result points into come after its type.
         let from = (ret.is_some() && self.at_contextual("from")).then(|| {
             self.bump();
             self.expect_ident()
         });
+        let from = from.or(early_from.map(|(_, name)| name));
+        // `[GRM-41]` — `owns this` after the result type is out of order too.
+        let late_owns_this = ret.is_some() && !owns_this && self.at_kw(Kw::Owns) && self.at_kw_at(1, Kw::This);
+        let order_at = early_from.map(|(at, _)| at).or_else(|| late_owns_this.then(|| self.span()));
+        if late_owns_this {
+            self.bump();
+            self.bump();
+        }
+        if let Some(at) = order_at {
+            let text = |start: u32, end: u32| self.src.get(start as usize..end as usize).unwrap_or("").to_string();
+            let owns_part = if owns_this || late_owns_this { " owns this" } else { "" };
+            let ret_part = ret.as_ref().map_or(String::new(), |ty| format!(" -> {}", text(ty.span.start, ty.span.end)));
+            let from_part = from.map_or(String::new(), |name| format!(" from {}", name.name));
+            let line = format!("{}{owns_part}{ret_part}{from_part}:", text(fn_start, rparen_end + 1).trim_end());
+            self.report(
+                Diagnostic::error(codes::E0118, at.to(self.prev_span()), "a function's first line gives its parts in this order: the parameters, `owns this`, `->` and the result type, `from` and what the result points into")
+                    .help(format!("write `{line}`")),
+            );
+        }
+        // `[GRM-41]` — nothing else follows the brackets: a clause that says what the function changes or
+        // reads is `E0100`, whose message gives the first line without it.
+        if matches!(self.peek(), TokenKind::Ident(word) if word.is("changes") || word.is("reads")) && matches!(self.peek_at(1), TokenKind::Ident(_)) {
+            let at = self.span();
+            while !self.at_punct(Punct::Colon) && !matches!(self.peek(), TokenKind::Newline | TokenKind::Eof) {
+                self.bump();
+            }
+            let kept = self.src.get(fn_start as usize..at.start as usize).unwrap_or("fn f()").trim_end().to_string();
+            self.report(
+                Diagnostic::error(codes::E0100, at.to(self.prev_span()), "nothing follows a function's brackets that says what it changes or reads: the compiler works out what every function changes and reads from its code")
+                    .help(format!("write `{kept}:`")),
+            );
+        }
         let where_clause = self.parse_where_clause();
 
         // A body is present unless this is an interface or extern signature.
@@ -1398,6 +1471,13 @@ impl Parser<'_> {
         InterfaceDecl { is_unsafe: false, name, generics, supertraits, where_clause, members }
     }
 
+    fn sink_report_extend_field(&mut self, span: ember_span::Span, written: &str, target: &str) {
+        self.report(
+            Diagnostic::error(codes::E0100, span, "an `extend` block adds no field: a type's layout is its declaration's [TYP-11]")
+                .help(format!("write `{written}` in `struct {target}:`")),
+        );
+    }
+
     fn parse_extend(&mut self) -> ExtendDecl {
         // The contextual `extend` that `at_extend_decl` saw.
         self.bump();
@@ -1406,7 +1486,17 @@ impl Parser<'_> {
         let implements = self.parse_implements();
         let where_clause = self.parse_where_clause();
         self.expect_punct(Punct::Colon);
-        let members = self.parse_type_body();
+        let mut members = self.parse_type_body();
+        // `[GRM-34]` — an `extend` block adds methods, constants and associated types, no field.
+        let target_text = self.src.get(target.span.start as usize..target.span.end as usize).unwrap_or("T").to_string();
+        let src = self.src;
+        members.retain(|member| {
+            let MemberKind::Field(field) = &member.kind else { return true };
+            let end = field.default.as_ref().map_or(field.ty.span.end, |default| default.span.end);
+            let written = src.get(field.name.span.start as usize..end as usize).unwrap_or("y: int = 0").trim().to_string();
+            self.sink_report_extend_field(member.span, &written, &target_text);
+            false
+        });
         ExtendDecl { is_unsafe: false, generics, target, implements, where_clause, members, blanket: Vec::new() }
     }
 
@@ -1942,6 +2032,9 @@ impl Parser<'_> {
         // `[TYP-45]`, `[LEX-14]` — the other words before a type that say who owns the value, or
         // link it (`weakref Node`, `shares mut Game`): never a name. `sharedref` is always `sharedref
         // mut`; alone it is not built yet.
+        if self.at_kw(Kw::Weakref) && let Some(stacked) = self.weakref_stacked_word() {
+            return self.refuse_stacked_weakref(start, stacked, suffix);
+        }
         if let TokenKind::Keyword(word @ (Kw::Shares | Kw::ThreadShared | Kw::Weakref | Kw::Sharedref)) = self.peek().clone() {
             let at = self.span();
             self.bump();
@@ -1953,7 +2046,11 @@ impl Parser<'_> {
                 (Kw::Weakref, _) => ember_ast::LinkKind::Weakref,
                 (_, true) => ember_ast::LinkKind::SharedrefMut,
                 _ => {
-                    self.report(Diagnostic::error(codes::E0900, at, "`sharedref` without `mut` before a type is not built by this compiler yet"));
+                    // `[GRM-43]` — `sharedref` is always followed by `mut`.
+                    self.report(
+                        Diagnostic::error(codes::E0114, at, "`sharedref` is always followed by `mut`: a link that only reads may be held by any number of names")
+                            .help("write `target: ref Player`; `sharedref` is for a link that may change its target: `target: sharedref mut Player`"),
+                    );
                     return self.parse_type_nested(suffix);
                 }
             };
@@ -2213,5 +2310,83 @@ impl Parser<'_> {
         } else {
             false
         }
+    }
+}
+
+/// `[GRM-3a]` — what stands between `weakref` and the target's type, when it is a word `weakref` does
+/// not take.
+#[derive(Clone, Copy, PartialEq)]
+enum Stacked {
+    /// `weakref shares T`, `weakref shares mut T`.
+    Shares,
+    /// `weakref owns T`.
+    Owns,
+    /// `weakref ref T`, `ref mut`, `sharedref mut`, `weakref weakref T`, `weakref *T`.
+    ViewLinkOrPointer,
+}
+
+impl Parser<'_> {
+    fn weakref_stacked_word(&self) -> Option<Stacked> {
+        Some(match self.peek_at(1) {
+            TokenKind::Keyword(Kw::Shares) => Stacked::Shares,
+            TokenKind::Keyword(Kw::Owns) => Stacked::Owns,
+            TokenKind::Keyword(Kw::Ref | Kw::Sharedref | Kw::Weakref) | TokenKind::Punct(Punct::Star) => Stacked::ViewLinkOrPointer,
+            _ => return None,
+        })
+    }
+
+    /// `[GRM-3a]` — `E0100` with the line to write: the program's own declaration with the extra word
+    /// gone. The type is read on, so the line is one mistake.
+    fn refuse_stacked_weakref(&mut self, start: ember_span::Span, stacked: Stacked, suffix: bool) -> TypeExpr {
+        let at = self.pos;
+        let name = (at >= 2 && matches!(self.tokens[at - 1].kind, TokenKind::Punct(Punct::Colon)))
+            .then(|| match self.tokens[at - 2].kind {
+                TokenKind::Ident(_) => self.src.get(self.tokens[at - 2].span.start as usize..self.tokens[at - 2].span.end as usize).map(str::to_string),
+                _ => None,
+            })
+            .flatten();
+        self.bump(); // `weakref`
+        // The extra word, and the words that go with it.
+        match stacked {
+            Stacked::Shares => {
+                self.bump();
+                self.eat_kw(Kw::Mut);
+            }
+            Stacked::Owns => {
+                self.bump();
+            }
+            Stacked::ViewLinkOrPointer => {
+                // `ref mut`, `sharedref mut`, `weakref`, `*` and `*mut`: one word and its `mut`.
+                self.bump();
+                self.eat_kw(Kw::Mut);
+            }
+        }
+        let words = start.to(self.prev_span());
+        let target_at = self.span();
+        let inner = self.parse_type_nested(suffix);
+        let target = self.src.get(target_at.start as usize..inner.span.end as usize).unwrap_or("T").to_string();
+        let rest = self.src.get(inner.span.end as usize..).unwrap_or("");
+        let rest = rest.lines().next().unwrap_or("");
+        // Not a comment that follows the line.
+        let rest = if rest.contains('"') { rest } else { rest.split('#').next().unwrap_or("") }.trim_end();
+        let line = match &name {
+            Some(name) => format!("{name}: weakref {target}{rest}"),
+            None => format!("weakref {target}"),
+        };
+        let diagnostic = match stacked {
+            Stacked::Shares => Diagnostic::error(codes::E0100, words, "a link does not say how its target's owners hold it")
+                .primary_label(format!("`weakref {target}` links a value with one owner or with `shares` owners alike"))
+                .help(format!("write `{line}`")),
+            Stacked::Owns => Diagnostic::error(codes::E0100, words, "a value held `owns` has no header for a link to test")
+                .primary_label("a link names a class object or a value held `shares` or `thread_shared`".to_string())
+                .help("a link names a class object or a value held `shares` or `thread_shared`".to_string())
+                .help(format!("write `{line}` here")),
+            Stacked::ViewLinkOrPointer => Diagnostic::error(codes::E0100, words, "a link names the value itself, not a view, a link or a pointer to it")
+                .help(format!("write `{line}`")),
+        };
+        self.report(diagnostic);
+        // A link is read as the `Option` it is initialised as, so the one error is not followed by others.
+        let option = Ident { name: ember_span::Symbol::intern("Option"), span: inner.span };
+        TypeExpr { id: self.next_id(), kind: TypeKind::Path { segments: vec![option], args: vec![GenericArg::Type(inner.clone())] }, span: inner.span }
     }
 }

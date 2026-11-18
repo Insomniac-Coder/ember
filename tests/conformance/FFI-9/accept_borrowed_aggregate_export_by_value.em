@@ -11,7 +11,8 @@ pub extern "C" fn exported_pair_score(pair: ForeignPair) -> i32:
 pub extern "C" fn exported_pair_mix(left: ForeignPair, scale: i32, right: ForeignPair) -> ForeignPair:
     return ForeignPair(left = left.left * scale + right.left, right = left.right * scale + right.right)
 
-@export("api_pair_score")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("api_pair_score"))
 pub fn named_pair_score(pair: ForeignPair) -> i32:
     return pair.left + pair.right * 3
 

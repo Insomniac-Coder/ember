@@ -14,7 +14,8 @@ fn main():
     tokens: Array[shares mut Token] = Array[shares mut Token]()
     tokens.push(owns shares mut Token(7))
     for token in tokens:
-        task = fn() -> i32:
+        fn task_fn() -> i32:
             value = token
             return value.value
+        task = task_fn
         println(task())

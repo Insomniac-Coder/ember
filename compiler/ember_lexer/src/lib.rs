@@ -51,6 +51,16 @@ pub fn safety_note(text: &str) -> Option<SafetyNote> {
     SAFETY_CATEGORIES.iter().find(|known| **known == category).map(|known| SafetyNote { category: Some(*known) })
 }
 
+/// `[LEX-1a]` - U+202A to U+202E and U+2066 to U+2069: what a reviewer sees must be what the compiler reads.
+pub fn is_bidi_format(c: char) -> bool {
+    matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
+/// `[LEX-1a]` - `E0012`'s message, for the manifest as for a source file.
+pub fn bidi_message(line: usize, c: char) -> String {
+    format!("line {line} holds U+{:04X}, which reorders how the line is shown", c as u32)
+}
+
 pub struct LexResult {
     pub tokens: Vec<Token>,
     pub comments: Vec<Comment>,
@@ -58,6 +68,17 @@ pub struct LexResult {
 
 /// Tokenise one already-normalised source file (`[LEX-2]`: LF endings, no BOM).
 pub fn lex(file: FileId, src: &str, sink: &mut Sink) -> LexResult {
+    // `[LEX-1a]` - a bidirectional format character anywhere in the file, a comment or literal included.
+    for (offset, character) in src.char_indices() {
+        if is_bidi_format(character) {
+            let span = Span::new(file, offset as u32, (offset + character.len_utf8()) as u32);
+            let line = src[..offset].matches('\n').count() + 1;
+            sink.emit(
+                Diagnostic::error(codes::E0012, span, bidi_message(line, character))
+                    .help(format!("write the text as an escape, `\\u{{{:04X}}}`, inside the literal, or remove it", character as u32)),
+            );
+        }
+    }
     let mut lexer = Lexer::new(file, src, sink);
     lexer.run();
     LexResult { tokens: lexer.tokens, comments: lexer.comments }
@@ -405,13 +426,10 @@ impl<'a> Lexer<'a> {
 
         if is_doc {
             let tok = Token { kind: TokenKind::DocComment(text.trim().to_string()), span };
-            if own_line {
-                // Held back so the doc lands after the block's INDENT.
-                self.pending_docs.push(tok);
-            } else {
-                self.line_has_tokens = true;
-                self.tokens.push(tok);
-            }
+            // Held back so the doc lands after the block's INDENT; one after code (`fn f(): ## note`)
+            // too, since a comment never affects compilation (`[LEX-11]`): it attaches to the next
+            // declaration, and where there is none it is discarded.
+            self.pending_docs.push(tok);
         } else {
             self.comments.push(Comment { span, own_line, safety: safety_note(&text) });
         }
@@ -1172,7 +1190,9 @@ fn strip_common_indent(body: &str) -> String {
 enum EscapeError {
     Truncated,
     HexDigits,
-    HexAboveAscii,
+    HexAboveAscii(u32),
+    /// A unicode escape in a byte or C string: the scalar value it names.
+    UnicodeInBytes(u32),
     MissingBrace,
     UnicodeDigits,
     NotScalar(u32),
@@ -1190,9 +1210,17 @@ impl EscapeError {
             EscapeError::HexDigits => {
                 Diagnostic::error(codes::E0009, span, r"`\x` needs exactly two hex digits")
             }
-            EscapeError::HexAboveAscii => {
-                Diagnostic::error(codes::E0009, span, r"`\x` above 0x7F is not valid in a string")
-                    .help(r"use `\u{…}` for a non-ASCII character")
+            EscapeError::HexAboveAscii(value) => {
+                Diagnostic::error(codes::E0009, span, r"`\x` above 0x7F is not valid in a text literal: its text is UTF-8")
+                    .help(format!(r#"write the character, `\u{{{value:X}}}`, or a byte string, `b"\x{value:02X}"`"#))
+            }
+            EscapeError::UnicodeInBytes(value) => {
+                let utf8: String = char::from_u32(value).map_or(String::new(), |c| {
+                    let mut buf = [0u8; 4];
+                    c.encode_utf8(&mut buf).bytes().map(|b| format!(r"\x{b:02X}")).collect()
+                });
+                Diagnostic::error(codes::E0009, span, "a byte string holds bytes")
+                    .help(format!("write the UTF-8 bytes, `{utf8}`, or a text literal"))
             }
             EscapeError::MissingBrace => {
                 Diagnostic::error(codes::E0009, span, r"`\u` must be followed by `{`")
@@ -1248,7 +1276,7 @@ fn scan_escape(src: &str, pos: &mut usize, context: EscapeContext) -> Result<u32
             *pos += 2;
             let value = u32::from_str_radix(&digits, 16).expect("two hex digits");
             if context == EscapeContext::Text && value > 0x7F {
-                return Err(EscapeError::HexAboveAscii);
+                return Err(EscapeError::HexAboveAscii(value));
             }
             Ok(value)
         }
@@ -1269,6 +1297,9 @@ fn scan_escape(src: &str, pos: &mut usize, context: EscapeContext) -> Result<u32
             let value = u32::from_str_radix(&digits, 16).map_err(|_| EscapeError::UnicodeDigits)?;
             if char::from_u32(value).is_none() {
                 return Err(EscapeError::NotScalar(value));
+            }
+            if context == EscapeContext::Bytes {
+                return Err(EscapeError::UnicodeInBytes(value));
             }
             Ok(value)
         }

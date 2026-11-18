@@ -5,7 +5,7 @@
 
 fn main():
     arena = Arena.with_capacity(64)
-    values: MutSpan[i32] = arena.alloc_array[i32](3)
+    values: MutSpan[i32] = ref mut arena.alloc_array[i32](3)
     println(values[0])
     println(values[2])
     values[1] = 7

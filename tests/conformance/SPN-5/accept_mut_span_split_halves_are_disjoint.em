@@ -14,7 +14,7 @@ fn main():
     values.push(owns 2)
     values.push(owns 3)
     view = values.as_mut_span()
-    (left, right) = view.split_at(1)
+    (left, right) = ref mut view.split_at(1)
 
     # Keep both mutable halves live and write through each one.
     left[0] = 11

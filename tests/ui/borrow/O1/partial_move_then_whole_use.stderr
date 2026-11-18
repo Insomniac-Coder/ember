@@ -1,8 +1,8 @@
 error[E3040]: `pair.first` was handed over to `_first` on line 16; `pair` is used whole on line 18; give it a new value first, or keep a copy: `_first = copy of pair.first`
   --> tests/ui/borrow/O1/partial_move_then_whole_use.em:18:18
    |
-16 |     _first = pair.first
-   |              ---------- handed over here
+16 |     _first = owns pair.first
+   |              --------------- handed over here
 17 |     println(pair.second.n)
 18 |     consume(owns pair)
    |                  ^^^^ used here

@@ -15,6 +15,6 @@ pub fn secret_of(p: Panel) -> i32:
 
 pub fn retitle(p: Panel, t: i32) -> Panel:
     # And `pub(read)` is writable in here, which is the whole point of it.
-    q = p
+    q = copy of p
     q.title = t
     return q

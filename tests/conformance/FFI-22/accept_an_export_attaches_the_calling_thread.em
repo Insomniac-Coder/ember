@@ -7,7 +7,8 @@
 # `[FFI-22]` — every exported function first attaches the calling thread to the runtime
 # (`ember_rt_thread_attach()`, a thread-local check after the first time).
 
-@export(on_panic=abort, "attached_score")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export(on_panic=abort, "attached_score"))
 pub fn score(value: i32) -> i32:
     return value + 1
 

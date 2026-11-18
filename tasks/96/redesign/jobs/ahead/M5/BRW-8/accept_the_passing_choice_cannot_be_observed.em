@@ -1,14 +1,14 @@
 # Clause BRW-8.6: "The choice depends only on the declared first line, never on the body; it is an
 # ABI decision and cannot be observed."
 #$ test: run-pass
-#$ rules: BRW-8, FN-1, OWN-7
-#$ stdout: 1
-#$ stdout: 1
-# PENDING Q1 (INDEX.md): `Pair` fits in two pointers and goes in registers, `Quad` does not and is
-# passed by address. Since the choice "cannot be observed", both functions must print the same;
-# this file expects the value at the call (`[OWN-7]`: a `Copy` value is duplicated on use; `[FN-1]`:
-# "a number is copied in"), the proposed ruling of Q1. `[FN-1]`'s "shows through `a`" read for every
-# plain parameter would expect 9 for both, which no register passing can give.
+#$ rules: BRW-8, FN-1, BRW-21
+#$ stdout: 9
+#$ stdout: 9
+# Q1, ruled by the lead (INDEX.md): a plain parameter reads the caller's place, and a number another
+# name writes across the call shows through it (`[FN-1]`'s own words; `decisions.md` §4, area 2 Q4).
+# `Pair` fits in two pointers, `Quad` does not; both print the number `P.a = 9` and `Q.a = 9` wrote,
+# since a copy in registers is the compiler's choice only where nothing can observe it. (How that sits with
+# "depends only on the declared first line" is Q14.)
 
 @derive(Copy)
 struct Pair:

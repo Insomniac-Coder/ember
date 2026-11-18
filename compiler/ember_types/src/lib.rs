@@ -3089,6 +3089,20 @@ impl TypeTable {
 
     /// `[FFI-33b]` — the name a run-time stop gives the foreign object a pointer of type `pointer`
     /// points to: its type as the program writes it, without the module (`GlContext`).
+    /// `[FFI-33b]` — whether `ty` is an `owns T` of a type bound to its thread (std's
+    /// `ThreadForeignOwner`), or an `Option` of one.
+    pub fn thread_bound_foreign_owner(&self, ty: Ty) -> bool {
+        match self.kind(ty) {
+            TyKind::Struct(id) => self.struct_def(*id).origin.as_ref().is_some_and(|(name, _)| name.is("std.ffi.ThreadForeignOwner")),
+            TyKind::Enum(id) => {
+                let def = self.enum_def(*id);
+                def.origin.as_ref().is_some_and(|(name, _)| name.is("Option"))
+                    && def.variants.iter().flat_map(|variant| &variant.fields).any(|field| self.thread_bound_foreign_owner(field.ty))
+            }
+            _ => false,
+        }
+    }
+
     pub fn foreign_object_shown(&self, pointer: Ty) -> String {
         let pointee = match self.kind(pointer) {
             TyKind::Ptr { inner, .. } => *inner,

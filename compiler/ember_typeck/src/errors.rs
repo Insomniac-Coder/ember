@@ -986,6 +986,7 @@ pub(crate) fn desugar_status_errors(modules: &[LoadedModule]) -> Option<Vec<Load
                 path: vec![ast::Ident { name: Symbol::intern("derive"), span }],
                 args: vec![ast::AttrArg::Expr(path(&[Symbol::intern("Copy")], span))],
                 span,
+                written_unsafe: false,
             };
             generated.push(ast::Item {
                 id: ast::NodeId::DUMMY,
@@ -1002,7 +1003,7 @@ pub(crate) fn desugar_status_errors(modules: &[LoadedModule]) -> Option<Vec<Load
                 span,
             });
             // `[FN-2a]` — `implicit_fmt_debug` may change the formatter, and the call says so.
-            let f = expr(ast::ExprKind::RefOf { mutable: true, place: Box::new(path(&[Symbol::intern("f")], span)) }, span);
+            let f = expr(ast::ExprKind::RefOf { mutable: true, constant: false, place: Box::new(path(&[Symbol::intern("f")], span)) }, span);
             let read = expr(ast::ExprKind::Field { base: Box::new(self_expr(span)), name: ast::Ident { name: Symbol::intern("code"), span } }, span);
             let body = ret(Some(call(path(&[Symbol::intern("std.fmt.implicit_fmt_debug")], span), vec![read, f], span)), span);
             generated.push(extend_item(&[], owner_type(status.error, &[]), vec![named_type("std.core.Display", span)], vec![fmt_member(body, span)], span));

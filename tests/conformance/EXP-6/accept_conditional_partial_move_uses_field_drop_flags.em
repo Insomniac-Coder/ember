@@ -17,7 +17,7 @@ struct Pair:
 fn exercise(move_first: bool):
     pair = Pair(Part(1), Part(2))
     if move_first:
-        _first = pair.first
+        _first = owns pair.first
         println(10)
 
 fn main():

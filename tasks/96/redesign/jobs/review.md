@@ -557,3 +557,96 @@ after each work batch" is the owner's rule from this round.
     where the summaries prove no other name writes it across the call. "a number is copied in" is a text repair.
     The pilot's proposal (copy-in at any size) would have reversed the rule. Q2 to Q13 go to the full run's
     deputy, who rules them before the tests that hang on them and cuts Hardened_15 once for M5.
+- **D4, the deputy: M5 ahead, batch 1** (535k tokens, 45 min; `ember check` probes only). Q2 to Q13 ruled (none open
+  for the owner, no verdict touched; P1 to P14 for Hardened_15), 10 more rules (SPN-1, BRW-1, -2, -4, -5, -16, -17,
+  LT-5, -18, -25): 18 rules, 85 clauses, 115 files, 293 cases in all; the also-needs table in `INDEX.md` §0; merged
+  `aaf44bc5`.
+  - **Q14, the lead's confirmation:** `[BRW-8]`'s "the choice depends only on the declared first line, never on the
+    body" cannot hold beside `[FN-1]`'s "shows through" (Q1). ODR-024 is delegated, not an owner verdict. The
+    deputy's (B) is confirmed: registers by the first line wherever the callee's summary (kept in the interface)
+    clears the call, and a by-address entry for the few callees that may write the argument's place; C speed kept,
+    and the meaning `[FN-1]` gives. Its text is P11.
+  - **Paused after batch 1** for the week's budget (71% used on 2026-11-13 ~09:00, reset 2026-11-15 13:30 IST): M5
+    cannot be credited before M4, which waits for A2-3 (below).
+- **W3 (Sonnet), lane c job 1** (448k tokens, 71 min). 25 commits; merged `3e8c5a9a`. **Credited 10:** GRM-2, GRM-4,
+  GRM-5, GRM-8a, GRM-19, GRM-27, GRM-29, GRM-37, GRM-38, GRM-47. The other 20 are listed with the clause each waits
+  for (mostly M4, M5, M11, the C importer).
+  - **The lead on its questions:**
+    1. LEX-26's E0009 against TXT-3's and the table's E5064 for a NUL in a `c"…"` literal: a contradiction, for
+       Hardened_15; E5064 stays until then.
+    2. `ref a + b`: the text decides it (a): `ref` binds like unary minus, so `(ref a) + b`, and the operand is read
+       through (`[TYP-14]`); accepted, as the compiler does.
+    3. GRM-41's `mut` on `this`: no first-line spelling is given; for Hardened_15.
+    4. GRM-30's `cast s if Circle`: stays until M11's kind test replaces it (removing it leaves no downcast);
+       recorded as waiting on M11.
+    5. GRM-34's "with two instances it stays open (E2060)" against the compiler's E2070: for Hardened_15.
+    6. `names.push(owns g.name)` with `g` of a type that has a `drop` compiles: an implementation defect of
+       `[OWN-11]`/`[EXP-6]` (a part of a value with a `drop` is not handed over alone), a D- row for lane a.
+    7. GRM-17's 31 files with a block after a lambda's `:`: the tests follow the spec, so they are migrated to local
+       functions; the next lane-c job.
+- **W4 (Sonnet), lane c job 2** (406k tokens, 71 min). 28 commits; the lead's review fixes `84f33c33`, `3a5f2ad6`.
+  **Credited 19:** LEX-1a, LEX-11, LEX-16, LEX-18, LEX-20, LEX-21, TXT-2, TXT-3, TXT-4, TXT-8, TXT-9, TXT-10, TXT-11,
+  STR-1, STR-2, STR-6, STR-7, CTL-3b, CTL-10. Not credited: GRM-17, TXT-6, STR-3, STR-5, CTL-7, CTL-11 (each with the
+  clause it waits for, in `lanes/c.md`), and LEX-10 (below).
+  - **The lead's review:** (1) `[STR-2]`: the path through `init` chose which arguments to make first from four
+    expression kinds (a call, a binary, an f-string, a block) and missed method calls, `if`, `match` and indexing;
+    both paths now use one rule, `evaluates_to_nothing_else` (a literal, a local, a reference to a local stays where
+    it is; any other argument is made first, in order). (2) The `E1010` line for a default that reads a field built
+    the type by replacing `i64` with `int` in the type's display; it now writes each field's type as its
+    declaration does (`ty_span`). The quick check after both: failing 0.
+  - **The lead on its questions:**
+    1. GRM-17, `owned fn(x):` + block: kept until the capture words exist (M-CLO); sequencing, not a language
+       question. GRM-17 stays uncredited until then.
+    2. CTL-7, a view a `defer` uses that a later reshape ends: `[BRW-17]` decides it: a view a call gives ends at any
+       change that may reshape what it points into, and a later use is `E3060`, in a `defer` or not. The
+       compiler's `E3021` is an implementation gap of `[BRW-17]`, lane a's; no spec question.
+    3. LEX-10, an indented `#!` line: ruled reading B (an ODR the lead may rule): a line whose first characters
+       after its indentation are `#!` is a directive, so one in a body is `E0104`. "Wherever it stands … and never a
+       comment" says so, and reading A would leave a directive written in a block doing nothing in silence, a hidden
+       path the owner's direction rules out. Hardened_15 words it ("after its indentation"); W5 builds it, and
+       LEX-10's credit is taken back until then.
+    4. LEX-26/TXT-3, a NUL in `c"…"`: W3's question 1, already for Hardened_15; E5064 stays.
+    5. STR-2's message for a field of a compound type: fixed by (2), the type as written.
+    6. TXT-2's `_lossy` form: the rule allows one ("or"), it requires none; nothing missing.
+- **H4 (Opus), lane a job 1: M5's A2-3** (656k tokens, 3 h 10 min). One commit `d394c27a`; merged `5fdf72e9` (one
+  conflict: STD-19's test kept W4's local function and H4's `fold(owns 0, …)`). **Credited:** BRW-13. BRW-12, -14
+  and -15 are built but not credited, each waiting on a clause of another milestone (weakref M4, A1-18's
+  temporaries, LT-1a/Q15, A2-4's message, kind tests M11, A2-6, M6a, M9); 10 files wait in `ahead/M5` (INDEX §4).
+  - **The lead's review:** the part-view rule skips lines the compiler writes itself (`NodeId::DUMMY`), which keep
+    the meaning they were built for: accepted, as no program writes them. BRW-15's messages are written once every
+    call is known through a marker character; the marker now never reaches the reader where no change was
+    recorded (`ee927f1c`). E3010, E3011 and E3013's pages hand the part over with `owns` (a part named with `=` is
+    a view now).
+  - **The lead on its questions:**
+    1. `acc = init` then `acc = f(acc, x)`: (a) confirmed. A name has one type: a view name never becomes an
+       owner, so `=` with a whole value writes what it views (E3023), and `fold` takes its start value over
+       (`owns init`), as the loop does with it.
+    2. A part of a `packed` struct: (a) confirmed. A view of a packed field may be unaligned (E2170 stands); the
+       program writes `copy of` or `owns`.
+    3. BRW-15's "call" and "call it": the spec gives both; kept as given, one form for Hardened_15.
+  - **For lane a's next job:** a `ref mut dst: MutSpan` parameter passed as the span itself (14.8; the same piece
+    as H3's FFI-11b, A6-4's last part); CTL-7's E3060 for a view a later reshape ends (`[BRW-17]`, W4's question 2).
+- **H3 (Opus), lane b job 1: the C interface's safety words** (794k tokens, 4 h 35 min). 16 commits; merged
+  `2de9c3d7` (three conflicts, each two additions side by side). **Credited 14:** UNS-2, UNS-3, UNS-5, UNS-10,
+  UNS-10a, UNS-11, FFI-11a, FFI-25, FFI-26, FFI-29, FFI-29b, FFI-33b, FFI-36, BLD-FFI-1. Not credited, each with what
+  it waits for (`lanes/b.md`): FFI-51 and BLD-FFI-3 (large, in lane), TCB-4, BLD-FFI-1a (MAN-10), FFI-33/-33c
+  (`static mut`, `Lock`, `guarded by`), FFI-33a (E7015, THR-9), FFI-11b and FFI-11 (A6-4's last part), FFI-56 and
+  FFI-8, FFI-31b, FFI-36a (N173/N180), FFI-17a, UNS-4.
+  - **The lead's review:** `from std.mem import MaybeUninit` binds the compiler-known type by name, as the
+    `ForeignBox` and `forget` imports beside it are handled; a re-export in `std.mem` would be the general form
+    once compiler-known types can be re-exported.
+  - **Its questions:**
+    1. UNS-4 states only the programmer's obligations: whether it is counted (tests that each can be broken only
+       inside `unsafe`) or classed with the meta rules changes how the percentages are computed, which is the
+       owner's. **The owner, 2026-11-13: "it only counts as implemented if the compiler also actually works that
+       way".** UNS-4 stays counted, never a meta rule; it is credited only when tests show the compiler works so:
+       everything that could break each obligation is refused outside `unsafe`.
+    2. LEX-23 against UNS-8 on an end-of-line note beside `unsafe extend/extern/overlay`: a contradiction, for
+       Hardened_15; LEX-23's reading stays for the new sites.
+    3. An exported static's symbol, ABI and thread rules: a gap, for Hardened_15; E0900 stays.
+  - Its other findings (UNS-5's "four `int`s" against `int` shown as `i64`, UNS-11's `get_unchecked` on `Array`,
+    the interpreter's pointer-cast read, E2116's help on `UnsafeCell`, E7005's "Sync", `mem.drop(owns s)`) go to
+    the lanes' next jobs.
+- **After the merges, the lead:** the quick check now runs parse tests (`6eda5530`; W3's GRM-35 overlay test waits
+  in `ahead/lane-b`), the guide and FMT-2's test follow GRM-17 (`6e158a1d`), the test runs' load limit (the owner,
+  `b1d6179b`), seven error pages and three rewritten (`ee927f1c`).

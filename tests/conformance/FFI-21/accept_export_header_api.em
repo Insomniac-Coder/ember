@@ -27,15 +27,18 @@ pub extern "C" fn header_handle_roundtrip(handle: *HeaderHandle) -> *HeaderHandl
 pub extern "C" fn header_i128_identity(value: i128) -> i128:
     return value
 
-@export("header_creator", threads=creator)
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("header_creator", threads=creator))
 pub fn creator_score() -> i32:
     return 46
 
-@export("header_any", threads=any)
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("header_any", threads=any))
 pub fn any_score() -> i32:
     return 47
 
-@export("header_main", threads=main)
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("header_main", threads=main))
 pub fn main_score() -> i32:
     return 48
 

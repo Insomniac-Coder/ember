@@ -6,7 +6,8 @@
 #$ assert-c: contains("int32_t policy_score(")
 #$ stdout: 42
 
-@export(threads=main, on_panic=abort, "policy_score")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export(threads=main, on_panic=abort, "policy_score"))
 pub fn score(value: i32) -> i32:
     return value + 1
 

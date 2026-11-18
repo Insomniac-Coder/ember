@@ -17,7 +17,7 @@ struct Pair:
 
 fn main():
     pair = Pair(Part(1), Part(2))
-    _first = pair.first
+    _first = owns pair.first
 #$ stdout: 1
 #$ 2
 #$ assert-c: contains("em_4Part4drop(&pair.second)")

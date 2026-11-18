@@ -5729,6 +5729,9 @@ pub struct Known {
     modules: HashMap<String, Vec<String>>,
     /// `[FFI-29b]` — each header's implementation macros compiled, with the import that asked.
     implementations: HashMap<(PathBuf, String), Span>,
+    /// `[FFI-29b]` — each import that asked for an implementation, by its key: the package that asked
+    /// (its folder) and where. Another package asking for it too is `E5014`.
+    implementation_requests: HashMap<String, (PathBuf, Span)>,
     /// `[FFI-30]` — each C declaration an import wrote, by Clang's USR.
     shared: HashMap<String, Shared>,
     /// `[BLD-FFI-1b]` — the first import whose flags name the runtime: its header, those flags, and
@@ -5749,6 +5752,32 @@ pub struct Loaded {
     pub children: Vec<(Vec<String>, ast::Module, ember_typeck::ForeignImport)>,
 }
 
+/// `[FFI-51]` — an import that compiles into the program foreign code that runs with no call from
+/// Ember (a C source file, `[BLD-FFI-1]`; a header's `implementation = [...]`, `[FFI-29b]`) is written
+/// `unsafe import c`: without `unsafe` it is `E3100`, whose message gives the import to write.
+fn refuse_compiled_in(header: &str, implementation: &[String], cpp: bool, span: Span, map: &SourceMap, sink: &mut Sink) {
+    let word = if cpp { "cpp" } else { "c" };
+    let file = Path::new(header).file_name().map_or_else(|| header.to_string(), |name| name.to_string_lossy().into_owned());
+    let what = if header.ends_with(".c") {
+        format!("`{file}`")
+    } else if !implementation.is_empty() {
+        let macros: Vec<String> = implementation.iter().map(|name| format!("`{name}`")).collect();
+        format!("`{file}`'s implementation ({})", macros.join(", "))
+    } else {
+        return;
+    };
+    let written = map.file(span.file).text.get(span.start as usize..span.end as usize).unwrap_or_default().trim();
+    let fix = written.strip_prefix("pub ").map_or_else(|| format!("unsafe {written}"), |rest| format!("pub unsafe {rest}"));
+    sink.emit(
+        Diagnostic::error(
+            codes::E3100,
+            span,
+            format!("`import {word} \"{header}\"` compiles {what} into the program, where its code runs unchecked, before `main` too; to vouch for it, write `{fix}` with a `# SAFETY:` note above it"),
+        )
+        .note("C compiled into the program runs code nothing checks [FFI-51]"),
+    );
+}
+
 /// `[FFI-6]` — the module an `import c` names, written from its header, and the import rewritten
 /// to bind it (to `name`, or `c`). `known` maps each import already loaded (its header, folder and
 /// options) to its module's path: a second import of it binds the same module and returns `None`.
@@ -5767,10 +5796,13 @@ pub fn load(
     sink: &mut Sink,
 ) -> Option<Loaded> {
     let span = import.span;
-    let ast::ImportKind::Foreign { language, header, options: written, alias } = &import.kind else { return None };
+    let ast::ImportKind::Foreign { language, header, options: written, alias, is_unsafe } = &import.kind else { return None };
     let language = *language;
     let cpp = language == ast::ForeignLanguage::Cpp;
     let mut options = options(written, cpp, sink)?;
+    if !*is_unsafe {
+        refuse_compiled_in(header, &options.implementation, cpp, span, map, sink);
+    }
     let bound = alias.map_or_else(|| Symbol::intern(if cpp { "cpp" } else { "c" }), |alias| alias.name);
     // `[FFI-17]`, `[FFI-50]` — the C++ project's configuration: its standard, defines, include
     // paths and flags, from the manifest's `[cpp.<project>]`.
@@ -5850,8 +5882,24 @@ pub fn load(
     };
     if let Some(path) = known.modules.get(&key) {
         let path = path.clone();
+        // `[FFI-29b]` — one import of a header in two packages is one module, but two packages
+        // requesting its implementation is `E5014`.
+        if let Some((package, first)) = known.implementation_requests.get(&key)
+            && package != base
+        {
+            let file = Path::new(&header).file_name().map_or_else(|| header.clone(), |name| name.to_string_lossy().into_owned());
+            sink.emit(
+                Diagnostic::error(codes::E5014, span, format!("`{file}`'s implementation (`{}`) is already compiled into this build, at another package's request", options.implementation.join("`, `")))
+                    .secondary(*first, "requested here first")
+                    .note("a single-header library's implementation is compiled exactly once per build, for one package [FFI-29b]")
+                    .help("let one package request it and the others import the header alone"),
+            );
+        }
         rewrite(import, &path);
         return None;
+    }
+    if !options.implementation.is_empty() {
+        known.implementation_requests.insert(key.clone(), (base.to_path_buf(), span));
     }
     let stem: String = Path::new(&header)
         .file_stem()
@@ -6919,7 +6967,14 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                 }
                 let mut spell = |ty: &ast::TypeExpr| {
                     let spelled = c_spelling(ty, imported, false);
-                    if spelled.is_none() {
+                    if spelled.is_none() && snippet(ty.span) == "StrView" {
+                        // `[TXT-2]` - text C made is not validated: a `StrView` would take it as it is.
+                        sink.emit(
+                            Diagnostic::error(codes::E5063, ty.span, format!("`StrView` would take text C never validated, in the wrapper of macro `{}`", name.name))
+                                .help("write `CStrView`, and make a `StrView` from it with `to_str()?` [TXT-2]"),
+                        );
+                        matched = false;
+                    } else if spelled.is_none() {
                         sink.emit(
                             Diagnostic::error(codes::E5015, ty.span, format!("`{}` has no C type for the wrapper of macro `{}`", snippet(ty.span), name.name))
                                 .note("a macro's wrapper takes and returns scalars, `CStrView`, the header's types and raw pointers [FFI-6b]"),

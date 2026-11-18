@@ -159,7 +159,17 @@ def check(path):
     text = open(path, encoding='utf-8').read()
     kind = (re.search(r'^#\$ test:\s*(\S+)', text, re.M) or [None, ''])[1]
     if kind in ('parse-pass', 'parse-fail'):
-        return [] if FULL else None
+        if not FULL:
+            return None
+        # `[CLI-9]` — as `milestones.rs` runs them: `ember check --syntax-only`. Skipping them let a
+        # parse-pass test that does not parse look green here and fail the suite (GRM-35, 2026-11-13).
+        code, _, err = run(['check', '--syntax-only'], path)
+        if kind == 'parse-pass':
+            first = next((line for line in err.splitlines() if line.startswith('error')), err.strip()[:200])
+            return [] if code == 0 else ['expected it to parse: ' + first]
+        if code == 0:
+            return ['expected a parse error, but it parsed']
+        return [f'missing {c}: {m!r}' for _, c, m, _ in annotations(text) if c not in err or m not in err]
     profile = (re.search(r'^#\$ profiles:\s*([a-z]+)', text, re.M) or [None, 'debug'])[1]
     if not FULL:
         if kind not in ('run-pass', 'run-fail'):
@@ -259,6 +269,38 @@ def stale_sources(binary):
     return newer
 
 
+SUITE_LOCK = None
+
+
+def one_full_run_at_a_time(cases):
+    """The owner (2026-11-13): one full test run on this laptop at a time. A run of 300 files or more
+    locks a file in the temp folder that every worktree's runs share (`milestones.rs` takes the same
+    one) and holds it until this process exits; the system frees it if the process dies."""
+    global SUITE_LOCK
+    if cases < 300 or SUITE_LOCK is not None:
+        return
+    path = os.path.join(tempfile.gettempdir(), 'ember-suite.lock')
+    handle = open(path, 'a+')
+    if os.name == 'nt':
+        import msvcrt
+        import time
+        waiting = False
+        while True:
+            try:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                break
+            except OSError:
+                if not waiting:
+                    print(f'waiting for another full test run to finish ({path})', file=sys.stderr, flush=True)
+                    waiting = True
+                time.sleep(5)
+    else:
+        import fcntl
+        fcntl.flock(handle, fcntl.LOCK_EX)
+    SUITE_LOCK = handle
+
+
 def main():
     global OUT
     with tempfile.TemporaryDirectory(prefix="ember-annotations-") as output:
@@ -266,8 +308,10 @@ def main():
         directories = [(d, sorted(glob.glob(os.path.join(d, '*.em')))) for d in sys.argv[1:]]
         everything = sorted({path for _, paths in directories for path in paths})
         # RUST_TEST_THREADS caps the workers, as it does the cargo suite's case sweep:
-        # every core at once keeps a laptop's CPU near its thermal limit.
-        workers = int(os.environ.get('RUST_TEST_THREADS') or 0) or os.cpu_count()
+        # every core at once keeps a laptop's CPU near its thermal limit. The owner
+        # (2026-11-13, the laptop at 102 °C): at most 16 at once, and one full run at a time.
+        workers = min(int(os.environ.get('RUST_TEST_THREADS') or 0) or os.cpu_count(), 16)
+        one_full_run_at_a_time(len(everything))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             found = dict(zip(everything, pool.map(check, everything)))
 

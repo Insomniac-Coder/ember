@@ -23,6 +23,8 @@ mod comptime;
 mod coroutines;
 mod habits;
 mod objects;
+mod views;
+mod ffi;
 mod packs;
 
 pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
@@ -932,7 +934,8 @@ fn check_round(
         if function.is_extern_declaration {
             continue;
         }
-        if main.is_some() && function.abi.is_some() && function.symbol == "main" {
+        // `[FFI-26]` — and an export named `main` is refused in a library too.
+        if (main.is_some() || checker.exports_main) && function.abi.is_some() && function.symbol == "main" {
             checker.error(codes::E0104, function.span,
                 "C export `main` conflicts with the generated program entry point");
         }
@@ -955,6 +958,7 @@ fn check_round(
     checker.note_changed_declarations();
     checker.note_c_declarations();
     let after_bodies_mark = checker.sink.mark();
+    checker.report_parameter_changes();
     checker.report_unstated_safety();
     checker.report_unneeded_unsafe();
     let after_bodies = after_bodies_mark..checker.sink.mark();
@@ -1241,7 +1245,7 @@ impl ParallelWalk {
         match &expr.kind {
             ast::ExprKind::Paren(inner) => self.place_at(checker, inner, depth),
             // `[FN-2a]` — `ref mut` at a call says how the place is passed; the place is under it.
-            ast::ExprKind::RefOf { mutable: true, place } => self.place_at(checker, place, depth),
+            ast::ExprKind::RefOf { mutable: true, place, .. } => self.place_at(checker, place, depth),
             ast::ExprKind::Path { segments } if segments.len() == 1 => match self.resolve(checker, segments[0].name, depth) {
                 Resolved::Outer => {
                     let local = checker.lookup(segments[0].name)?;
@@ -1772,6 +1776,9 @@ enum UnsafeStep {
     Read(Option<String>),
     Write(Option<String>),
     Offset(Option<String>),
+    /// `[UNS-5]` — a call of `mem.copy` or `mem.copy_nonoverlapping`, named by what it writes: the
+    /// destination pointer as written, and what must be writable there ("four `int`s").
+    CopyInto { into: Option<String>, needs: String },
     /// A call, the callee as written.
     Call { callee: String, kind: CallKind },
     /// Any other, as a noun phrase, one and several: "the cast between raw pointer types", "the casts
@@ -3184,6 +3191,11 @@ struct Checker<'a> {
     prefixes: Vec<String>,
     /// `[MOD-2]` — the package of each module (`LoadedModule::package`).
     module_packages: Vec<Option<usize>>,
+    /// `[STR-2]` - the fields a memberwise call wrote, in the order written, for its literal.
+    written_field_order: Option<Vec<usize>>,
+    /// `[STR-2]` - while a field default is checked: the field it is for, and the type's fields with their types.
+    default_context: Option<(Symbol, Vec<(Symbol, String)>, String)>,
+    default_source: Option<String>,
     /// Per module: the names it can write, mapped to the qualified name each
     /// one means. Its own items plus whatever it imported.
     visible: Vec<HashMap<Symbol, Symbol>>,
@@ -3699,6 +3711,22 @@ struct Checker<'a> {
     /// ABI, so no write rooted at one is permitted. Keeping the mode here lets
     /// the type checker reject the write before that ABI detail reaches MIR.
     borrowed_params: HashSet<LocalId>,
+    /// `[BRW-12]`, `[BRW-13]`, `[BRW-15]` — the names that view what they name, by the line that
+    /// made them (`views.rs`). Cleared for a local when it is declared, since local numbers are
+    /// reused from body to body.
+    view_names: HashMap<LocalId, views::ViewName>,
+    /// `[BRW-14]` — the headers whose names keep their place, by where their pattern starts.
+    kept_headers: std::collections::BTreeMap<(u32, u32), views::KeptHeader>,
+    /// `[BRW-15]` — the arguments given to each plain parameter (by its declaration), and the changes
+    /// through plain parameters whose messages name those calls once all are checked.
+    plain_arguments: HashMap<Span, Vec<Span>>,
+    parameter_changes: Vec<views::ParameterChange>,
+    /// `[OWN-7]` — the copies of `Copy` values with parts in the body being checked (`views.rs`).
+    copied: views::CopiedValues,
+    /// The loop statements around the statement being checked.
+    loop_spans: Vec<Span>,
+    /// `[BRW-14]` — the names opened `exists as copy of v`: copies of one's own, which may change.
+    own_copies: HashSet<Span>,
     /// Locals declared by `owned f: fn(...) -> R`. The function type itself is
     /// the callable signature, not the ownership mode on `f`; retaining this
     /// fact lets an indirect call consume exactly a `CallableOnce` parameter.
@@ -3971,6 +3999,8 @@ struct Checker<'a> {
     /// `[UNS-3]` — each statement of an `unsafe:` block, by span, and whether any check of it (its
     /// generic's or an instance's) needed `unsafe`; reported once checking is done.
     unsafe_statements: HashMap<Span, bool>,
+    /// `[FFI-26]` — an export names the C symbol `main`.
+    exports_main: bool,
     /// D-929, `[UNS-3]` — the scope of the `unsafe:` block whose statements are being checked, and
     /// whether the statement being checked read a name an earlier statement of that block declared:
     /// it cannot move out of the block, whose scope the name ends with.
@@ -4121,6 +4151,9 @@ impl<'a> Checker<'a> {
             foreign_statics: HashMap::new(),
             prefixes: vec![String::new()],
             module_packages: Vec::new(),
+            written_field_order: None,
+            default_context: None,
+            default_source: None,
             visible: vec![HashMap::new()],
             ambiguous_globs: vec![HashMap::new()],
             foreign_skipped: Vec::new(),
@@ -4333,6 +4366,13 @@ impl<'a> Checker<'a> {
             locals: Vec::new(),
             scopes: Vec::new(),
             borrowed_params: HashSet::new(),
+            view_names: HashMap::new(),
+            kept_headers: std::collections::BTreeMap::new(),
+            plain_arguments: HashMap::new(),
+            parameter_changes: Vec::new(),
+            copied: views::CopiedValues::default(),
+            loop_spans: Vec::new(),
+            own_copies: HashSet::new(),
             callable_once_locals: HashSet::new(),
             callable_parameter_locals: HashSet::new(),
             copy_captures: Vec::new(),
@@ -4433,6 +4473,7 @@ impl<'a> Checker<'a> {
             unsafe_used: false,
             unsafe_blocks: HashMap::new(),
             unsafe_statements: HashMap::new(),
+            exports_main: false,
             unsafe_scope: None,
             reads_block_name: std::cell::Cell::new(false),
             assume_noalloc: Vec::new(),
@@ -4595,7 +4636,7 @@ impl<'a> Checker<'a> {
                 };
                 let named = ast::Expr { id: ast::NodeId::DUMMY, kind, span: from.span };
                 let path = vec![ast::Ident { name: Symbol::intern("borrows"), span: from.span }];
-                from_attr = ast::Attribute { id: ast::NodeId::DUMMY, path, args: vec![ast::AttrArg::Expr(named)], span: from.span };
+                from_attr = ast::Attribute { id: ast::NodeId::DUMMY, path, args: vec![ast::AttrArg::Expr(named)], span: from.span, written_unsafe: false };
                 &from_attr
             }
             (None, Some(written)) => written,
@@ -6380,6 +6421,12 @@ impl<'a> Checker<'a> {
                                             .migrate_edits("`ForeignBox` is no longer imported", vec![(edit, ember_diag::Replacement::Text(String::new()))]),
                                     );
                                     self.failed_imports[index].insert(item.alias.map(|a| a.name).unwrap_or(item.name.name));
+                                    continue;
+                                }
+                                // `[UNS-5]` — `std.mem` provides `MaybeUninit`, the compiler-known type the
+                                // prelude names: importing it binds that type.
+                                // ponytail: an `as` alias of it is not bound; add a type alias when one is wanted.
+                                if self.prefixes[target] == "std.mem" && item.name.name.is("MaybeUninit") && item.alias.is_none() {
                                     continue;
                                 }
                                 // `[OWN-6]` — and so is `mem.forget`.
@@ -13928,7 +13975,7 @@ impl<'a> Checker<'a> {
             .filter_map(|param| {
                 let ast::ParamKind::Named { name, ty } = &param.kind else { return None };
                 let value = if whole_type_parameter(ty, &type_params).is_some() {
-                    ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::RefOf { mutable: false, place: Box::new(path(*name)) }, span: name.span }
+                    ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::RefOf { mutable: false, constant: false, place: Box::new(path(*name)) }, span: name.span }
                 } else {
                     path(*name)
                 };
@@ -17422,7 +17469,7 @@ impl<'a> Checker<'a> {
         }
         fn place_of(arg: &ast::Expr) -> &ast::Expr {
             match &arg.kind {
-                ast::ExprKind::RefOf { mutable: true, place } => place,
+                ast::ExprKind::RefOf { mutable: true, place, .. } => place,
                 _ => arg,
             }
         }
@@ -17577,6 +17624,12 @@ impl<'a> Checker<'a> {
             return error;
         }
         let Some(destroys) = contract.destroys else {
+            // `[FFI-36]` — an imported C++ class is ended by its own destructor and `delete` unless
+            // something names another; one with no public destructor has neither.
+            if self.foreign_cpp.get(contract.module).copied().unwrap_or(false) {
+                self.refuse_no_public_destructor(contract.module, pointee, span);
+                return error;
+            }
             self.sink.emit(
                 Diagnostic::error(codes::E5002, span, format!("the declaration of `{shown}` names no destructor"))
                     .help(format!("write `@ffi(destroys(f))` on `type {shown}`, naming the foreign function that frees one [FFI-36a]")),
@@ -19397,6 +19450,16 @@ impl<'a> Checker<'a> {
         Expr { ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(value) }, span }
     }
 
+    /// `[STR-2]` — an argument whose evaluation does nothing but give its value (a literal, a local,
+    /// a reference to a local), so it may be read where it stands; any other is made first, in order.
+    fn evaluates_to_nothing_else(value: &Expr) -> bool {
+        match &value.kind {
+            ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_) | ExprKind::Local(_) | ExprKind::Error => true,
+            ExprKind::Ref { place, .. } => matches!(place.kind, ExprKind::Local(_)),
+            _ => false,
+        }
+    }
+
     /// `[STR-6]` (D-283) — a struct that declares `init(self, …)` is built by
     /// it, not by the memberwise constructor: from its field defaults, then
     /// `init` runs on the value with the arguments. `init`'s own visibility
@@ -19431,14 +19494,23 @@ impl<'a> Checker<'a> {
         self.constructing = None;
         self.written_call = outer_written;
         let result = Expr { ty, kind: ExprKind::Local(local), span };
-        Some(Expr {
-            ty,
-            kind: ExprKind::Block {
-                block: Block { stmts: vec![Stmt::Let { local, init: Some(value) }, Stmt::Expr(call)], span },
-                value: Box::new(result),
-            },
-            span,
-        })
+        // `[STR-2]` - the arguments are evaluated first, left to right, then every field's default,
+        // then `init`'s body: the arguments that make a value are made before the defaults run.
+        let mut call = call;
+        let mut stmts = Vec::new();
+        if let ExprKind::Call { args, .. } = &mut call.kind {
+            for arg in args.iter_mut().skip(1) {
+                if !Self::evaluates_to_nothing_else(arg) {
+                    let (aty, aspan) = (arg.ty, arg.span);
+                    let temp = self.declare(None, aty, aspan);
+                    let made = std::mem::replace(arg, Expr { ty: aty, kind: ExprKind::Local(temp), span: aspan });
+                    stmts.push(Stmt::Let { local: temp, init: Some(made) });
+                }
+            }
+        }
+        stmts.push(Stmt::Let { local, init: Some(value) });
+        stmts.push(Stmt::Expr(call));
+        Some(Expr { ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(result) }, span })
     }
 
     /// `[STR-1]`, `[TYP-18]` — the memberwise constructor of a generic
@@ -19588,6 +19660,7 @@ impl<'a> Checker<'a> {
             })
             .collect();
         let instance = self.types.struct_def(id).name;
+        self.written_field_order = Some(slots.iter().map(|(_, field)| *field).collect());
         self.finish_struct_literal(id, instance, values, span, bound_all)
     }
 
@@ -22677,6 +22750,12 @@ impl<'a> Checker<'a> {
                 if mode == Mode::Borrow {
                     self.borrowed_params.insert(local);
                 }
+                // `[BRW-14]` — `const ref mut`: never given another ref.
+                if let ast::ItemKind::Fn(decl) = &item.kind
+                    && decl.params.get(index).is_some_and(|param| param.is_const)
+                {
+                    self.note_const_parameter(local, span);
+                }
                 // `[LT-48]` — a parameter written `runtime` before its `dyn` type.
                 if let ast::ItemKind::Fn(decl) = &item.kind
                     && decl.params.get(index).is_some_and(|param| self.runtime_written.contains(&(span.file, param.id)))
@@ -23334,7 +23413,7 @@ impl<'a> Checker<'a> {
                     _ => {
                         self.sink.emit(
                             Diagnostic::error(codes::E0104, attr.span, "`@export_table` takes the table's C symbol and its protocol version")
-                                .help("write `@export_table(\"Name\", protocol=1)`"),
+                                .help("write `@unsafe(export_table(\"Name\", protocol=1))`"),
                         );
                         break;
                     }
@@ -23343,7 +23422,7 @@ impl<'a> Checker<'a> {
             let (Some(name), Some(protocol)) = (name, protocol) else {
                 self.sink.emit(
                     Diagnostic::error(codes::E0104, attr.span, "`@export_table` needs the table's C symbol and its protocol version")
-                        .help("write `@export_table(\"Name\", protocol=1)`"),
+                        .help("write `@unsafe(export_table(\"Name\", protocol=1))`"),
                 );
                 continue;
             };
@@ -23351,6 +23430,8 @@ impl<'a> Checker<'a> {
                 self.error(codes::E0104, attr.span, format!("`{name}` is not a C identifier, which a table's symbol must be: a host declares it in C"));
                 continue;
             }
+            // `[FFI-26]` — the table's C symbol, `Name_vN`, may be one already taken.
+            self.check_export_name_taken(&format!("{name}_v{protocol}"), decl.name.name, attr.span);
             if !decl.generics.is_empty() {
                 self.error(codes::E0104, attr.span, "an exported table is one struct: a generic struct is not one");
                 continue;
@@ -23570,6 +23651,14 @@ impl<'a> Checker<'a> {
             if !decl.is_foreign_decl && self.exported_owner_reachable(ty, &mut HashSet::new()) {
                 self.error(codes::E5015, span,
                     format!("exported parameter `{name}` reaches an owning Ember value"));
+                continue;
+            }
+            // `[TXT-2]`, `[FFI-31b]` - C would hand bytes to a `StrView` unvalidated.
+            if !decl.is_foreign_decl && matches!(self.types.kind(ty), TyKind::Str) {
+                self.sink.emit(
+                    Diagnostic::error(codes::E5063, span, format!("`{name}` would be text C never validated; take `{name}: Span[u8]` and write `{name}.to_str()?` for the `StrView` ([TXT-2])"))
+                        .help(format!("take `{name}: Span[u8]` and write `{name}.to_str()?` for the `StrView` [TXT-2]")),
+                );
                 continue;
             }
             if carries_box(self, ty) {
@@ -24411,7 +24500,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Call { callee, .. } => ffi_contract_word(callee),
             _ => ffi_contract_word(expr),
         };
-        const FORMS: &[&str] = &["param", "result", "effects", "deterministic", "link_name", "variadic"];
+        const FORMS: &[&str] = &["param", "result", "effects", "deterministic", "link_name", "variadic", "no_callbacks"];
         let (top, inner): (Option<Symbol>, Vec<Symbol>) = match arg {
             ast::AttrArg::Named { name, .. } => (Some(name.name), Vec::new()),
             ast::AttrArg::Expr(value) => {
@@ -24447,7 +24536,7 @@ impl<'a> Checker<'a> {
         match (top, unknown) {
             (_, Some(word)) => self.sink.emit(
                 Diagnostic::error(codes::E0104, span, format!("`{word}` is not a contract word of `@ffi`"))
-                    .help(format!("`@ffi` on a foreign function takes {}; the contract words are {}", FORMS.join(", "), FFI_CONTRACT_WORDS.join(", ")))
+                    .help(format!("`@ffi` on a foreign function takes {}; the contract words are {}", FORMS.join(", "), ffi::contract_words_shown()))
                     .note("a hand declaration's contract is written `@ffi(param(name, word, …), result(word, …))` [FFI-11]"),
             ),
             _ if inner.iter().any(|word| word.is("exclusive")) && inner.iter().any(|word| word.is("aliased")) => {
@@ -25000,6 +25089,18 @@ impl<'a> Checker<'a> {
             return;
         }
         let call = match (&step, written) {
+            // `[UNS-5]` — "`copy_nonoverlapping(p, q, 4)` (line 8) writes through the raw pointer `q`, and
+            // nothing checks that four `int`s are writable there; put line 8 in …".
+            (UnsafeStep::CopyInto { into, needs }, Some(written)) => {
+                let into = into.as_ref().map_or_else(|| "a raw pointer".to_string(), |into| format!("the raw pointer `{into}`"));
+                let mut diagnostic = Diagnostic::error(
+                    codes::E3100,
+                    span,
+                    format!("`{written}` (line {line}) writes through {into}, and nothing checks that {needs} are writable there; {}", unsafe_block_to_write(lines, "that holds here")),
+                );
+                diagnostic.notes = refusal.notes;
+                diagnostic
+            }
             (UnsafeStep::Call { callee, kind }, Some(written)) if *kind != CallKind::Other => {
                 // A call the code does not spell (a `for` loop's `iter`, an operator's method) is named by
                 // its callee.
@@ -25230,7 +25331,7 @@ impl<'a> Checker<'a> {
         if let Some(note) = self.changed_declarations.get(&self.signatures[def.0 as usize].decl) {
             self.changed_calls.push((span, note.clone()));
         }
-        if !self.signatures[def.0 as usize].is_unsafe {
+        if !self.signatures[def.0 as usize].is_unsafe || self.is_mem_copy(def) {
             return;
         }
         let callee = self.declared_name(def).unwrap_or_default();
@@ -27093,6 +27194,7 @@ impl<'a> Checker<'a> {
             self.must_drop_container_error(span, container);
         }
         let id = LocalId(self.locals.len() as u32);
+        self.view_names.remove(&id);
         self.locals.push(LocalDecl {
             name,
             ty,
@@ -27127,6 +27229,7 @@ impl<'a> Checker<'a> {
         {
             open.first_use = Some(span);
         }
+        self.note_copy_source_mention(local, span);
         let ty = self.locals[local.0 as usize].ty;
         let read = Expr { ty, kind: ExprKind::Local(local), span };
         // `[CELL-7]` — a guard local reads through like a reference, unless
@@ -28311,6 +28414,7 @@ impl<'a> Checker<'a> {
                 out.push(Stmt::Expr(expr));
             }
             ast::StmtKind::Decl { pattern, ty, init } => {
+                let stmt_init = init.as_ref();
                 if let Some(init) = init {
                     self.check_class_init_whole_self_use(init);
                 }
@@ -28365,6 +28469,9 @@ impl<'a> Checker<'a> {
                     );
                 }
                 let local = self.declare(Some(name), ty, stmt.span);
+                if let Some(value) = stmt_init {
+                    self.note_view_name(local, value, stmt.span, None);
+                }
                 if let Some(range) = init.as_ref().and_then(|e| self.range_of(e)) {
                     self.local_ranges.insert(local, range);
                 }
@@ -28477,10 +28584,20 @@ impl<'a> Checker<'a> {
                         // ODR-278 — a local declared from a function and assigned again holds any
                         // function of its shape.
                         let init = if self.reassigned.contains(&segments[0].name) { self.item_to_shape(init) } else { init };
-                        // D5 — a local a line of this function shares is made in its block here.
-                        let init = if self.block_locals.contains(&stmt.span) { self.into_block(init) } else { init };
+                        // `[BRW-12]` — a name bound to a part is a read-only view of it.
+                        // A line the compiler writes itself keeps what it was built to do, and a name that
+                        // is no local here (a lambda's capture, a module's item) is a whole name.
+                        let whole_outer = matches!(&value.kind, ast::ExprKind::Path { segments } if segments.len() == 1 && self.lookup(segments[0].name).is_none());
+                        let (init, part) = if value.id == ast::NodeId::DUMMY || whole_outer { (init, None) } else { self.part_as_view(init) };
+                        // D5 — a local a line of this function shares is made in its block here; a name
+                        // for a part is a view and owns nothing to share (`[RC-1]`, `E2122`).
+                        let init = if part.is_none() && self.block_locals.contains(&stmt.span) { self.into_block(init) } else { init };
                         self.warn_if_literal_loses_precision(value, init.ty);
                         let local = self.declare(Some(segments[0].name), init.ty, stmt.span);
+                        self.note_view_name(local, value, stmt.span, part);
+                        if part.is_none() {
+                            self.note_copied_value(local, &init, value, stmt.span);
+                        }
                         self.plain_declared.insert(local);
                         if from_literal {
                             self.literal_locals.insert(local, stmt.span);
@@ -28495,6 +28612,17 @@ impl<'a> Checker<'a> {
                         out.push(Stmt::Let { local, init: Some(init) });
                         return;
                     }
+                }
+
+                // `[BRW-13]` — `=` on a view name: given another view, it views that.
+                if op.is_none()
+                    && foreign_target.is_none()
+                    && let ast::ExprKind::Path { segments } = &target.kind
+                    && segments.len() == 1
+                    && let Some(local) = self.lookup(segments[0].name)
+                    && self.repoint(local, target, value, stmt.span, out)
+                {
+                    return;
                 }
 
                 // `[STD-17]` — `a[i] = v` calls `index_set(i, v)` when the type
@@ -28609,6 +28737,28 @@ impl<'a> Checker<'a> {
                             .help("assign the elements one at a time (`xs[i] = v`)")
                             .note("a slice is a view of the elements; Ember has no slice assignment");
                     }
+                    self.sink.emit(diagnostic);
+                    return;
+                }
+                self.note_copy_change(&place, stmt.span);
+                // `[BRW-14]` — a loop, pattern or opened name keeps what it was given: `=` on it, and
+                // any change through it, is `E3023` (a `ref mut` one changes what it names; a class
+                // object's fields are its own, Part VIII).
+                if let Some(local) = root_local(&place.kind)
+                    && let Some(header) = self.kept_header(local)
+                    && !matches!(self.types.kind(self.locals[local.0 as usize].ty), TyKind::Ref { mutable: true, .. })
+                    && !self.through_class_field(&place)
+                    && !self.through_a_changing_view(&place)
+                {
+                    let whole = match &place.kind {
+                        ExprKind::Local(_) => true,
+                        ExprKind::Deref(inner) => matches!(inner.kind, ExprKind::Local(_)),
+                        _ => false,
+                    };
+                    let diagnostic = match self.read_only_change(local, target.span) {
+                        Some(diagnostic) if !whole => diagnostic,
+                        _ => self.kept_name_given_a_value(local, header, target.span),
+                    };
                     self.sink.emit(diagnostic);
                     return;
                 }
@@ -28851,7 +29001,9 @@ impl<'a> Checker<'a> {
                 let cond = self.check_condition(cond);
                 self.class_init = incoming_class_init.clone();
                 self.loop_labels.push(label.map(|l| l.name));
+                self.loop_spans.push(stmt.span);
                 let body = self.check_block(body);
+                self.loop_spans.pop();
                 self.loop_labels.pop();
                 let body_class_init = self.class_init.clone();
                 if else_block.is_some() && incoming_class_init.is_some() {
@@ -28881,7 +29033,10 @@ impl<'a> Checker<'a> {
             ast::StmtKind::For { label, pattern, iter, body, else_block } => {
                 let incoming_class_init = self.class_init.clone();
                 self.check_class_init_whole_self_use(iter);
-                if let Some(stmt) = self.check_for(*label, pattern, iter, body, else_block, stmt.span)
+                self.loop_spans.push(stmt.span);
+                let checked = self.check_for(*label, pattern, iter, body, else_block, stmt.span);
+                self.loop_spans.pop();
+                if let Some(stmt) = checked
                 {
                     let body_class_init = self.class_init.clone();
                     if incoming_class_init.is_some() && else_block.is_none() {
@@ -29023,6 +29178,7 @@ impl<'a> Checker<'a> {
         span: Span,
         out: &mut Vec<Stmt>,
     ) {
+        let value_written = value;
         let value = self.synth_committed(value);
         if value.ty == self.common.error {
             return;
@@ -29049,46 +29205,32 @@ impl<'a> Checker<'a> {
 
         // `[GRM-5]`'s consistency rule: `_` is neutral, while every other
         // leaf must be either a fresh bare name or an existing writable place.
-        let mut declares = false;
-        let mut assigns = false;
+        // `[GRM-5]` (0.9.20) — each target follows `[GRM-4]` on its own: a name not in scope is
+        // declared, one in scope assigned; a name twice in one list is `E1020`.
+        let mut declared_leaves = Vec::with_capacity(leaves.len());
         let mut fresh = HashSet::new();
         for leaf in &leaves {
-            if is_single_path(leaf.target, "_") {
-                continue;
-            }
-            match &leaf.target.kind {
-                ast::ExprKind::Path { segments } if segments.len() == 1 => {
-                    let name = segments[0].name;
-                    if self.lookup(name).is_some() {
-                        assigns = true;
-                    } else {
-                        declares = true;
-                        if !fresh.insert(name) {
-                            self.error(
-                                codes::E1020,
-                                leaf.target.span,
-                                format!("`{name}` is declared more than once in this destructuring"),
-                            );
-                            return;
-                        }
-                    }
+            let mut declares = false;
+            if !is_single_path(leaf.target, "_")
+                && let ast::ExprKind::Path { segments } = &leaf.target.kind
+                && segments.len() == 1
+            {
+                let name = segments[0].name;
+                if !fresh.insert(name) {
+                    self.error(codes::E1020, leaf.target.span, format!("`{name}` is declared more than once in this destructuring"));
+                } else if self.lookup(name).is_none() {
+                    declares = true;
                 }
-                _ => assigns = true,
             }
+            declared_leaves.push(declares);
         }
-        if declares && assigns {
-            self.error(
-                codes::E1010,
-                span,
-                "all names in a destructuring assignment must be declared or assigned consistently",
-            );
-            return;
-        }
+        let mut declared_leaves = declared_leaves.into_iter();
 
         let aggregate_ty = value.ty;
         let temp = self.declare(None, aggregate_ty, value.span);
         let mut bindings = Vec::new();
         for leaf in leaves {
+            let declares = declared_leaves.next().unwrap_or(false);
             if is_single_path(leaf.target, "_") {
                 continue;
             }
@@ -29104,6 +29246,9 @@ impl<'a> Checker<'a> {
                     _ => (source, leaf.ty),
                 };
                 let local = self.declare(Some(segments[0].name), ty, leaf.target.span);
+                if matches!(self.types.kind(ty), TyKind::Span { mutable: true, .. }) {
+                    self.note_span_holder(local, value_written, span);
+                }
                 bindings.push(DestructureBinding::Let { local, value: source });
                 continue;
             }
@@ -29158,12 +29303,14 @@ impl<'a> Checker<'a> {
                 }
                 fields.into_iter().map(|(ty, _, _)| ty).collect()
             }
+            // `[GRM-5]` — a fixed array is destructured too, its elements in order.
+            TyKind::Array { elem, len } => vec![elem; len as usize],
             _ => {
                 let shown = self.types.display(aggregate);
                 self.error(
                     codes::E2020,
                     span,
-                    format!("destructuring requires a tuple or struct, found `{shown}`"),
+                    format!("destructuring requires a tuple, a struct or a fixed array, found `{shown}`"),
                 );
                 return false;
             }
@@ -29217,6 +29364,11 @@ impl<'a> Checker<'a> {
             let ty = match self.types.kind(source.ty) {
                 TyKind::Tuple(items) => items[index],
                 TyKind::Struct(id) => self.types.struct_def(*id).fields[index].ty,
+                TyKind::Array { elem, .. } => {
+                    let at = Expr { ty: self.common.usize, kind: ExprKind::Int(index as u128), span };
+                    source = Expr { ty: *elem, kind: ExprKind::Index { base: Box::new(source), index: Box::new(at) }, span };
+                    continue;
+                }
                 _ => unreachable!("validated destructuring projection"),
             };
             source = Expr { ty, kind: ExprKind::Field { base: Box::new(source), index }, span };
@@ -29372,6 +29524,9 @@ impl<'a> Checker<'a> {
                 self.class_init = Some(incoming.clone());
             }
             self.scopes.push(HashMap::new());
+            if by_ref {
+                self.note_kept_header(views::KeptKind::Pattern, arm.pattern.span, scrutinee.span);
+            }
             let outer = std::mem::replace(&mut self.match_by_ref, by_ref);
             let pattern = self.check_pattern(&arm.pattern, scrutinee_ty);
             self.match_by_ref = outer;
@@ -31590,6 +31745,10 @@ impl<'a> Checker<'a> {
         else_block: &Option<ast::Block>,
         span: Span,
     ) -> Option<Stmt> {
+        // `[BRW-14]` — a loop's names keep their place, unless the loop is handed what it walks.
+        if !matches!(iter.kind, ast::ExprKind::Owned(_)) {
+            self.note_kept_header(views::KeptKind::Loop, pattern.span, iter.span);
+        }
         // `[TYP-47]` — `for v in values:` over a pack's values is written out once per value.
         if let Some(pack) = self.pack_named(iter) {
             return self.check_pack_for(label, pattern, pack, body, else_block, span);
@@ -32382,6 +32541,7 @@ impl<'a> Checker<'a> {
             reported_defaults: self.reported_defaults.clone(),
         };
         let outer_copies = std::mem::take(&mut self.copy_captures);
+        let outer_copied = std::mem::take(&mut self.copied);
         let outer_body_locals = std::mem::replace(&mut self.body_locals_from, self.locals.len());
         let outer_made = std::mem::take(&mut self.made_must_drop);
         let body = loop {
@@ -32390,6 +32550,7 @@ impl<'a> Checker<'a> {
             self.open.deps.clear();
             self.open.per_use.clear();
             self.copy_captures.clear();
+            self.copied = views::CopiedValues::default();
             // D5 — the `owns` parameters a line of the body shares, each in its block from the entry.
             let blocks = self.block_locals.len();
             let entry = self.enter_parameter_blocks();
@@ -32461,6 +32622,8 @@ impl<'a> Checker<'a> {
                 .note("a lambda copies a variable it only reads unless the variable is assigned after it is made (CLO-13)"),
             );
         }
+        self.report_copied_value_changes();
+        self.copied = outer_copied;
         self.open = outer;
         self.reassigned = outer_reassigned;
         self.body_locals_from = outer_body_locals;
@@ -36933,7 +37096,9 @@ impl<'a> Checker<'a> {
                                     },
                                     span,
                                 };
-                                let args = [arg(start.clone()), arg(lambda(&["$total", "$item"], add))];
+                                // `fold` takes its first total over (`owns init: B`).
+                                let given = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Owned(Box::new(start.clone())), span };
+                                let args = [arg(given), arg(lambda(&["$total", "$item"], add))];
                                 self.synth_method_on(iterator, span, method("fold"), &[], &args, None, span)
                             }
                             _ => {
@@ -39511,6 +39676,11 @@ impl<'a> Checker<'a> {
                             Diagnostic::error(codes::E1010, span, "inside a method its object is `this`").help("write `this`")
                         } else {
                             match self.body_fn {
+                                _ if let Some((field, _, _)) = &self.default_context => Diagnostic::error(
+                                    codes::E1010,
+                                    span,
+                                    format!("`this` can only be used in a method, and a field default runs before `init`, when there is no object yet; set `{field}` in `init`: write `this.{field} = ...` in `fn init(...):`"),
+                                ),
                                 Some((name, true)) => Diagnostic::error(
                                     codes::E1010,
                                     span,
@@ -39651,6 +39821,19 @@ impl<'a> Checker<'a> {
                 }
                 if let Some(diagnostic) = self.python_constant(name, span) {
                     self.sink.emit(diagnostic);
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                if let Some((field, fields, owner)) = self.default_context.clone()
+                    && let Some((_, read_ty)) = fields.iter().find(|(f, _)| *f == name)
+                {
+                    let text = self.default_source.clone().unwrap_or_else(|| "...".to_string());
+                    self.sink.emit(
+                        Diagnostic::error(
+                            codes::E1010,
+                            span,
+                            format!("`{field}`'s default reads `{name}`, a field of the same `{owner}`, which has no value when defaults run; set `{field}` in an `init`: `fn init({name}: {read_ty}):` with `this.{name} = {name}` and `this.{field} = {text}`"),
+                        ),
+                    );
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
                 let mut diagnostic = Diagnostic::error(
@@ -40770,7 +40953,7 @@ impl<'a> Checker<'a> {
             // parameter mode. `synth` of the operand yields the place, and
             // for a `ref` local it yields the deref, which makes `ref mut r`
             // a reborrow (`[BRW-6]`) with no extra machinery.
-            ast::ExprKind::RefOf { mutable, place } => {
+            ast::ExprKind::RefOf { mutable, place, .. } => {
                 let inner = self.synth(place);
                 if inner.ty == self.common.error {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
@@ -40797,6 +40980,16 @@ impl<'a> Checker<'a> {
                 }
                 // `[GRM-36]` — the operand of `ref` is a place: a local, a
                 // field, an index or a dereferenced reference.
+                // `ref mut` before a call that gives a `MutSpan` names that span's elements
+                // (`d = ref mut tracks[name].as_mut_span()`): the span is the view.
+                let gives_spans = match self.types.kind(inner.ty) {
+                    TyKind::Span { mutable: true, .. } => true,
+                    TyKind::Tuple(items) => !items.is_empty() && items.iter().all(|item| matches!(self.types.kind(*item), TyKind::Span { mutable: true, .. })),
+                    _ => false,
+                };
+                if *mutable && !is_place(&inner.kind) && gives_spans {
+                    return inner;
+                }
                 if !is_place(&inner.kind) {
                     self.sink.emit(
                         Diagnostic::error(codes::E0111, place.span, "only a place can be borrowed")
@@ -41783,6 +41976,17 @@ impl<'a> Checker<'a> {
     fn type_from_expr(&mut self, expr: &ast::Expr) -> Ty {
         match &expr.kind {
             ast::ExprKind::Path { segments } => {
+                // `[GRM-8b]` — a local variable is neither a type nor a constant.
+                if let [name] = segments.as_slice()
+                    && self.lookup(name.name).is_some()
+                {
+                    self.error(
+                        codes::E2173,
+                        expr.span,
+                        format!("`{}` is a variable, which is neither a type nor a constant; an instantiation takes types and constants", name.name),
+                    );
+                    return self.common.error;
+                }
                 let ty = ast::TypeExpr {
                     id: ast::NodeId(0),
                     kind: ast::TypeKind::Path {
@@ -42044,7 +42248,41 @@ impl<'a> Checker<'a> {
         if self.fn_ids.get(&Symbol::intern("std.ecs.system")) == Some(&def) {
             self.check_ecs_system_sendable(&call, args);
         }
+        if self.is_mem_copy(def) {
+            self.check_mem_copy_safety(&call, args, span);
+        }
         call
+    }
+
+    /// `[UNS-5]` — whether `def` is `std.mem.copy` or `std.mem.copy_nonoverlapping`, whose calls say
+    /// what they write.
+    fn is_mem_copy(&self, def: DefId) -> bool {
+        ["std.mem.copy", "std.mem.copy_nonoverlapping"].iter().any(|path| self.fn_ids.get(&Symbol::intern(path)) == Some(&def))
+    }
+
+    /// `[UNS-5]` — a call of `copy` or `copy_nonoverlapping` outside unsafe code is `E3100`, naming the
+    /// pointer it writes through and the values that must be writable there.
+    fn check_mem_copy_safety(&mut self, call: &Expr, args: &[ast::Arg], span: Span) {
+        let (into, needs) = match (&call.kind, args) {
+            (ExprKind::Call { args: checked, .. }, [_, dst, count]) if checked.len() == 3 => {
+                let elem = match *self.types.kind(checked[1].ty) {
+                    TyKind::Ptr { inner, .. } => format!("`{}`s", self.types.display(inner)),
+                    _ => "values".to_string(),
+                };
+                let count = match &checked[2].kind {
+                    ExprKind::Int(n) => count_in_words(*n),
+                    _ => self.written_line(count.value.span).map_or_else(|| "that many".to_string(), |written| format!("`{written}`")),
+                };
+                (self.written_line(dst.value.span), format!("{count} {elem}"))
+            }
+            _ => (None, "the values".to_string()),
+        };
+        self.unsafe_step(
+            span,
+            UnsafeStep::CopyInto { into, needs },
+            Diagnostic::error(codes::E3100, span, "a call of `copy` or `copy_nonoverlapping` requires an `unsafe` block")
+                .note("it writes through a raw pointer, which nothing checks [UNS-5]"),
+        );
     }
 
     /// `[ECS-4]` (ODR-218) — `std.ecs.system(body, name)` makes a system `run_parallel` runs on
@@ -45684,7 +45922,7 @@ impl<'a> Checker<'a> {
                     self.sink.emit(
                         Diagnostic::error(codes::E0104, contract.span,
                             format!("`{}` is not a contract word", contract.word.name))
-                            .help(format!("the contract words are {}", FFI_CONTRACT_WORDS.join(", ")))
+                            .help(format!("the contract words are {}", ffi::contract_words_shown()))
                             .note("a contract word takes the place of a type in an overlay entry [FFI-11]"),
                     );
                 }
@@ -45958,10 +46196,6 @@ impl<'a> Checker<'a> {
                         self.error(codes::E0104, attr.span, "a function has only one `@export` attribute");
                     }
                     saw_export = true;
-                    if attr.args.is_empty() {
-                        self.error(codes::E0900, attr.span,
-                            "only a C export symbol, `on_panic=abort`, and `threads=main|any|creator` are supported");
-                    }
                     let mut symbol = None;
                     let mut saw_panic = false;
                     let mut saw_threads = false;
@@ -46012,6 +46246,9 @@ impl<'a> Checker<'a> {
                                 .note("a symbol is not empty and holds no space, quote, backslash or control character"),
                         );
                     }
+                    // `[FFI-26]` — without a name, the function's own; either may be one already taken.
+                    let named = symbol.map_or_else(|| decl.name.name.to_string(), str::to_string);
+                    self.check_export_name_taken(&named, decl.name.name, attr.span);
                     // A C symbol names one function, and a generic's parameters have nothing to be
                     // inferred from at an export: each instance is its own function [TYP-16].
                     if !decl.generics.is_empty() {
@@ -46187,6 +46424,11 @@ impl<'a> Checker<'a> {
                                     }
                                     saw_destroys = true;
                                 } else if let ast::AttrArg::Expr(expr) = arg
+                                    && ffi_contract_word(expr).is_some_and(|word| word.is("no_callbacks")) {
+                                    // `[FFI-11]`, `[FFI-52]` — recorded: the function never calls back
+                                    // into Ember (an asserted fact `ember tcb` lists).
+                                    self.check_no_callbacks(&item.attrs, decl, attr.span);
+                                } else if let ast::AttrArg::Expr(expr) = arg
                                     && (ffi_contract_word(expr).is_some_and(|word| word.is("handle"))
                                         || matches!(&expr.kind, ast::ExprKind::Call { callee, .. } if ffi_contract_word(callee).is_some_and(|word| word.is("handle")))) {
                                     // ODR-247, ODR-269 — `handle` is a word of a type's contract.
@@ -46258,7 +46500,15 @@ impl<'a> Checker<'a> {
             ast::ItemKind::Comptime(_) => "comptime block",
             ast::ItemKind::Overlay(_) => "overlay",
         };
+        let item_name = match &item.kind {
+            ast::ItemKind::Fn(decl) => decl.name.name.to_string(),
+            ast::ItemKind::Struct(decl) => decl.name.name.to_string(),
+            ast::ItemKind::Static(decl) => decl.name.name.to_string(),
+            _ => String::new(),
+        };
         for attr in &item.attrs {
+            // `[FFI-26]` — `@unsafe(export(…))`, and the plain form refused.
+            self.check_unsafe_attribute_form(attr, &item_name);
             if matches!(&item.kind, ast::ItemKind::Fn(decl) if !decl.is_foreign_decl)
                 && attr.path.len() == 1 && attr.path[0].name.is("export") {
                 continue;
@@ -46654,7 +46904,12 @@ impl<'a> Checker<'a> {
             let gone = match (name, attr.args.as_slice()) {
                 ("static_safe", _) => Some(("`@static_safe` is gone", "write `@no_alias_checks`: a function that keeps no check of who else holds its data".to_string())),
                 ("fp", [arg]) if word(arg).as_deref() == Some("contract") => Some(("`@fp(contract)` is gone", "write `@fp(allow_fma)`".to_string())),
-                ("no_runtime_checks", _) => Some(("`@no_runtime_checks` is gone", "no switch turns a safety check off; remove it [UNS-11]".to_string())),
+                // `[UNS-11]` — no switch turns a safety check off, in any build: the two ways to write
+                // what such a switch was wanted for.
+                ("no_runtime_checks", _) => Some((
+                    "there is no switch that turns safety checks off, in any build; to forbid run-time alias checks here write `@no_alias_checks`; to skip the bounds check of an index known to be in range, write `xs.get_unchecked(i)` inside `unsafe:` with a `# SAFETY:` note",
+                    "remove `@no_runtime_checks` [UNS-11]".to_string(),
+                )),
                 // `[LT-1a]`, `[LT-22]` — what a result points into is the first line's rule, narrowed by
                 // the summary its body gives, or `from` naming one parameter or field.
                 ("borrows", args) => {
@@ -47460,34 +47715,45 @@ impl<'a> Checker<'a> {
         let owner = self.types.intern(TyKind::Struct(id));
         let owner = self.types.display(owner);
         let def = self.types.struct_def(id);
-        let blocking = def
-            .fields
-            .iter()
-            .find(|f| f.vis != FieldVis::Public || f.read_only_outside)
+        // `[STR-1]` - the constructor is as visible as the narrowest field: `pub` when every field is,
+        // `pub(package)` when every field is `pub` or `pub(package)`, and private to its module
+        // otherwise (a private, `pub(read)` or `pub(package, read)` field).
+        let module_narrow = def.fields.iter().find(|f| f.vis == FieldVis::Private || f.read_only_outside)
             .map(|f| (f.name.to_string(), f.vis, f.read_only_outside));
+        let package_narrow = def.fields.iter().find(|f| f.vis == FieldVis::Package)
+            .map(|f| (f.name.to_string(), f.vis, f.read_only_outside));
+        let declaring = def.declaring_module;
+        let in_package = declaring != usize::MAX && self.same_package(declaring, self.current_module);
+        let blocking = match (module_narrow, package_narrow) {
+            (Some(narrow), _) => Some(narrow),
+            (None, Some(narrow)) if !in_package => Some(narrow),
+            _ => None,
+        };
         let Some((field, vis, read_only)) = blocking else { return true };
         // A compiler-known struct's fields are the compiler's: refused outright, its arguments are
         // not checked against them.
         let compiler_known = def.declaring_module == usize::MAX;
-        let why = if read_only {
-            format!("`{field}` is `pub(read)`, and construction is a write")
+        let short = owner.rsplit('.').next().unwrap_or(&owner).to_string();
+        let (why, only) = if read_only {
+            (format!("`{field}` is `pub(read)`, and construction is a write"), format!("only inside its module (`{}`)", self.prefixes.get(declaring).map(|p| p.to_string()).unwrap_or_default()))
         } else if vis == FieldVis::Package {
-            format!("`{field}` is `pub(package)`, not `pub`")
+            let package = self.prefixes.get(declaring).map(|p| p.to_string()).unwrap_or_default();
+            let package = package.split('.').next().unwrap_or("").to_string();
+            (format!("`{field}` is `pub(package)`"), format!("only inside the `{package}` package"))
         } else {
-            format!("`{field}` is private")
+            (format!("`{field}` is private"), self.prefixes.get(declaring).map_or("only inside its own module".to_string(), |p| format!("only inside its module (`{p}`)")))
         };
         self.sink.emit(
             Diagnostic::error(
                 codes::E1052,
                 span,
-                format!("`{owner}`'s memberwise constructor is private to its module"),
+                format!("`{short}(...)` is not visible here: {why}, so a `{short}` is built {only}"),
             )
-            .primary_label(why)
             .help(format!(
                 "call a function `{owner}`'s module exports, or make every field `pub`"
             ))
             .note(concat!(
-                "the memberwise constructor is `pub` only when every field is, ",
+                "the memberwise constructor is as visible as its narrowest field, ",
                 "because constructing writes them all [STR-1]"
             )),
         );
@@ -47674,6 +47940,14 @@ impl<'a> Checker<'a> {
                 return false;
             }
             if let TyKind::Ref { mutable: false, .. } = *self.types.kind(current.ty) {
+                // `[BRW-15]` — a change through a name that only reads: `E3023`, with the line to write.
+                if !call
+                    && let Some(root) = root_local(&current.kind)
+                    && let Some(diagnostic) = self.read_only_change(root, span)
+                {
+                    self.sink.emit(diagnostic);
+                    return true;
+                }
                 let shown = self.types.display(current.ty);
                 // D-823 (B4) — `r = v` on a `ref` local is Python's rebinding of a name, and a
                 // reference is never re-pointed (ADR-010): `ref mut` would write `v` into what `r`
@@ -47699,6 +47973,15 @@ impl<'a> Checker<'a> {
                         "but not write [BRW-1]"
                     )),
                 );
+                return true;
+            }
+            // `[BRW-15]` — an element written through a plain name holding a `MutSpan`.
+            if !call
+                && let ExprKind::Index { base, .. } = &current.kind
+                && let ExprKind::Local(holder) = base.kind
+                && let Some(diagnostic) = self.span_holder_write(holder, span)
+            {
+                self.sink.emit(diagnostic);
                 return true;
             }
             // `[SPN-1]` — a `Span` is the shared view (`MutSpan` is the one
@@ -47902,13 +48185,8 @@ impl<'a> Checker<'a> {
                 [] => String::new(),
             }
         };
-        let noun = if self.types.is_numeric(ty) {
-            "number"
-        } else if ty == self.common.str_ || matches!(self.types.kind(ty), TyKind::Vec { text: true, .. }) {
-            "text"
-        } else {
-            "value"
-        };
+        // `[BRW-14]` (Q5) — the noun of the value's kind, the same in the message's three places.
+        let noun = self.value_noun(ty);
         let refused_text = code_before_comment(lines[refused].1).trim();
         // Only a line that gives the whole parameter a new value (`n = …`, `n -= 1`) is Python's rebinding.
         let rest = refused_text.strip_prefix(name).map(str::trim_start)?;
@@ -47948,7 +48226,8 @@ impl<'a> Checker<'a> {
                 listed(&uses)
             )
         };
-        Some(format!("`{name}` is the {noun} the caller passed and stays that {noun} for the whole call; for a {noun} of your own {plan}"))
+        let a_noun = views::a_noun(&noun);
+        Some(format!("`{name}` is the {noun} the caller passed and stays that {noun} for the whole call; for {a_noun} of your own {plan}"))
     }
 
     /// `assigns`: the write is the assignment of the whole parameter (`n = n + 1`), Python's
@@ -48055,7 +48334,17 @@ impl<'a> Checker<'a> {
                     .map_or_else(|| format!("{name}: {shown}"), str::to_string);
                 (message, format!("or write `ref mut {written}` for the parameter, and `ref mut` before the argument at each call, if the caller is to see the new value"))
             }
-            None => (format!("cannot mutate borrowed parameter `{name}`"), structural_help),
+            // `[BRW-15]` — the line to write, and each call, named once every call is checked.
+            None => match (!rebinding && !self.callable_parameter_locals.contains(&local))
+                .then(|| self.parameter_change(&name, ty, declaration, place, span))
+                .flatten()
+            {
+                Some(change) => {
+                    self.parameter_changes.push(change);
+                    (format!("{}`{name}` only reads the caller's value", views::PROVISIONAL), structural_help)
+                }
+                None => (format!("cannot mutate borrowed parameter `{name}`"), structural_help),
+            },
         };
         let mut diagnostic = Diagnostic::error(codes::E3023, span, message)
             .primary_label("this write needs mutable access")
@@ -49456,12 +49745,19 @@ impl<'a> Checker<'a> {
             let span = name.span;
             let view_ty = self.locals[view.0 as usize].ty;
             let read = self.read_through(Expr { ty: view_ty, kind: ExprKind::Local(view), span });
+            // `[BRW-14]` — `exists as copy of v` over a view (`scores.get(name)` gives a `ref int`) is a
+            // copy of what it views, a value of one's own.
+            let (read, part) = match *self.types.kind(part) {
+                TyKind::Ref { inner, .. } => (self.read_through(read), inner),
+                _ => (read, part),
+            };
             let copy = if self.copy_refused(part, &name.name.to_string(), span) {
                 Expr { ty: self.common.error, kind: ExprKind::Error, span }
             } else {
                 self.synth_method_on(read, span, ast::Ident { name: Symbol::intern("clone"), span }, &[], &[], None, span)
             };
             let local = self.declare(Some(name.name), part, span);
+            self.own_copies.insert(span);
             made.push(Stmt::Let { local, init: Some(copy) });
         }
         made
@@ -49623,8 +49919,60 @@ impl<'a> Checker<'a> {
         {
             // VII.1 — `=` copies only a `Copy` type's value; a counted one (a class handle, a `shares`
             // value) is none, though this compiler still keeps a count for it.
-            if !self.types.is_copy(value.ty) || self.types.needs_drop(value.ty) {
+            // `[GRM-15]`, `[OWN-11]` — before a part (`body = owns req.body`) the word hands the part over
+            // into the new name, where `=` alone makes a view (`[BRW-12]`).
+            // `[EXP-6]` — an element is the collection's, whose end drops it again: `E3011`.
+            if matches!(value.kind, ExprKind::Index { .. }) && (!self.types.is_copy(value.ty) || self.types.needs_drop(value.ty)) {
+                let part = self.written_line(inner.span).unwrap_or_else(|| "the element".to_string());
+                self.sink.emit(
+                    Diagnostic::error(codes::E3011, span, "cannot move out of an element")
+                        .primary_label("handed over here")
+                        .help(format!("take it out with `mem.take`, `mem.replace`, `swap`, `pop` or `remove`: `{given} = mem.take(ref mut {part})`; or keep a copy: `{given} = copy of {part}`")),
+                );
+                return value;
+            }
+            let a_part = matches!(value.kind, ExprKind::Field { .. });
+            // `[EXP-6]` — a field of a value whose type has a `drop` of its own cannot be taken out of it.
+            if let ExprKind::Field { base, .. } = &value.kind {
+                let owner = match *self.types.kind(base.ty) {
+                    TyKind::Ref { inner, .. } => inner,
+                    _ => base.ty,
+                };
+                let dropping = match *self.types.kind(owner) {
+                    TyKind::Struct(id) => self.types.struct_def(id).has_drop,
+                    TyKind::Enum(id) => self.types.enum_def(id).has_drop,
+                    _ => false,
+                };
+                if dropping {
+                    let part = self.written_line(inner.span).unwrap_or_else(|| "the part".to_string());
+                    let shown = self.types.display(owner);
+                    self.sink.emit(
+                        Diagnostic::error(codes::E3010, span, format!("cannot hand over `{part}` on its own: `{shown}` has a `drop` of its own, which would run over a value with a hole in it"))
+                            .help(format!("take it and leave a value in its place: `{given_line} = mem.take(ref mut {part})`", given_line = given)),
+                    );
+                    return value;
+                }
+            }
+            if !a_part && (!self.types.is_copy(value.ty) || self.types.needs_drop(value.ty)) {
                 let name = self.written_line(inner.span).unwrap_or_else(|| "it".to_string());
+                // `[OWN-3]`, `[OWN-11]` — a name that is itself a view (a plain parameter, a loop or
+                // pattern name) hands nothing over: `owns` before it is a hand-over out of a name that
+                // does not own the value.
+                if let ExprKind::Deref(reference) = &value.kind
+                    && let TyKind::Ref { mutable: false, .. } = *self.types.kind(reference.ty)
+                {
+                    let noun = self.value_noun(value.ty);
+                    let whose = match reference.kind {
+                        ExprKind::Local(local) if self.borrowed_params.contains(&local) => "the caller's",
+                        _ => "the",
+                    };
+                    let a_noun = views::a_noun(&noun);
+                    self.sink.emit(
+                        Diagnostic::error(codes::E3013, span, format!("`{given} = owns {name}` would hand over {whose} {noun}, but `{name}` only reads it; for {a_noun} of your own write `{given} = copy of {name}`"))
+                            .note("`=` from a name that views its value makes another view, and hands nothing over [OWN-3]"),
+                    );
+                    return value;
+                }
                 self.error(codes::E0109, span, format!("`{given} = {name}` already hands `{name}` over; remove `owns`"));
                 return value;
             }
@@ -54195,7 +54543,10 @@ impl<'a> Checker<'a> {
     /// `uninit()`, `write` and `write_at` are `unsafe` operations (`[UNS-1]`): outside `unsafe:` each
     /// is `E3100`. For a `T` with nothing to drop they stay safe.
     fn maybe_uninit_unsafe(&mut self, inner: Ty, operation: &str, span: Span) {
-        if !self.types.needs_drop(inner) {
+        // A type parameter that is not `Copy` may be one that needs drop, so a generic body vouches as
+        // its every instance would (`[UNS-3]`: the block is needed in each).
+        let maybe_drop = matches!(self.types.kind(inner), TyKind::Param { .. }) && !self.implements(inner, Symbol::intern("std.core.Copy"));
+        if !self.types.needs_drop(inner) && !maybe_drop {
             return;
         }
         let shown = self.types.display(inner);
@@ -56323,6 +56674,7 @@ impl<'a> Checker<'a> {
                 path: vec![name("$reduce")],
                 args: reductions.iter().map(|(var, ..)| ast::AttrArg::Expr(path(var.as_str()))).collect(),
                 span,
+                written_unsafe: false,
             });
         }
         stmts.push(ast::Stmt {
@@ -61139,12 +61491,19 @@ impl<'a> Checker<'a> {
     /// it takes over": a missing word, or one written where the parameter does not say it, is `E3028`,
     /// in the program's own names (verdicts 146, 147, 149, 158).
     fn check_call_word(&mut self, arg: &ast::Expr, mode: Mode, param_ty: Ty, declared: Span) {
+        // A placeholder (`[GRM-47]`'s `E0119` already said what was wrong) has no word to miss.
+        if matches!(arg.kind, ast::ExprKind::Error) {
+            return;
+        }
+        if mode == Mode::Borrow && arg.id != ast::NodeId::DUMMY {
+            self.note_plain_argument(declared, arg.span);
+        }
         // The words are the program's: a call or an argument the compiler makes itself has none.
         if !self.written_call || arg.id == ast::NodeId::DUMMY || self.generated_files.contains(&arg.span.file) {
             return;
         }
         let written = match &arg.kind {
-            ast::ExprKind::RefOf { mutable: true, place } => Some(place.span),
+            ast::ExprKind::RefOf { mutable: true, place, .. } => Some(place.span),
             _ => None,
         };
         // A value that is no place (a temporary, a literal) is `E3027`'s, not a missing word's.
@@ -61222,7 +61581,7 @@ impl<'a> Checker<'a> {
     /// for `fn hash(ref mut h: H)` solves `H` from `h` itself.
     fn inferred_argument(arg: &ast::Expr, mode: Mode) -> &ast::Expr {
         match (&arg.kind, mode) {
-            (ast::ExprKind::RefOf { mutable: true, place }, Mode::Mut) => place,
+            (ast::ExprKind::RefOf { mutable: true, place, .. }, Mode::Mut) => place,
             (ast::ExprKind::Owned(value), _) => value,
             _ => arg,
         }
@@ -61435,7 +61794,7 @@ impl<'a> Checker<'a> {
         // `[FN-2a]` — the call's `ref mut` says how the argument is passed; what a `ref mut`
         // parameter borrows is the place under it.
         let arg = match &arg.kind {
-            ast::ExprKind::RefOf { mutable: true, place } => &**place,
+            ast::ExprKind::RefOf { mutable: true, place, .. } => &**place,
             _ => arg,
         };
         // `[SPN-1]`/`[SPN-3]` — a `MutSpan[T]` **is** the mutable access: it
@@ -61571,12 +61930,14 @@ impl<'a> Checker<'a> {
         let slots = self.constructor_slots(name, &names, args, span, Some(line));
         let bound_all = slots.len() == args.len();
         let mut values: Vec<Option<Expr>> = (0..field_info.len()).map(|_| None).collect();
+        let order: Vec<usize> = slots.iter().map(|(_, field)| *field).collect();
         for (arg, field) in slots {
             // `[OWN-10]` — the field a value is made for, for `E2123`'s words.
             let outer = self.filling.replace((args[arg].value.span, field_info[field].0));
             values[field] = Some(self.check_expr(&args[arg].value, field_info[field].1));
             self.filling = outer;
         }
+        self.written_field_order = Some(order);
         self.finish_struct_literal(id, name, values, span, bound_all)
     }
 
@@ -61591,6 +61952,27 @@ impl<'a> Checker<'a> {
             .map(|f| (f.name, f.ty, f.has_default, f.ty_span))
             .collect();
         let ty = self.types.intern(TyKind::Struct(id));
+        // `[STR-2]` - the written arguments are evaluated first, left to right, then the omitted
+        // fields' defaults in field order. The literal evaluates its fields in field order, so when
+        // that is not the order wanted the written values are made first, each in a local.
+        let written = self.written_field_order.take().unwrap_or_default();
+        let in_order = written.windows(2).all(|pair| pair[0] < pair[1])
+            && written.iter().all(|&field| (0..field).all(|before| values[before].is_some()));
+        let mut prelude: Vec<Stmt> = Vec::new();
+        if !in_order {
+            for &field in &written {
+                if let Some(value) = values[field].take() {
+                    if Self::evaluates_to_nothing_else(&value) {
+                        values[field] = Some(value);
+                        continue;
+                    }
+                    let (vty, vspan) = (value.ty, value.span);
+                    let local = self.declare(None, vty, vspan);
+                    prelude.push(Stmt::Let { local, init: Some(value) });
+                    values[field] = Some(Expr { ty: vty, kind: ExprKind::Local(local), span: vspan });
+                }
+            }
+        }
         let mut fields = Vec::with_capacity(field_info.len());
         for (index, (field_name, field_ty, has_default, _)) in field_info.iter().enumerate() {
             match values[index].take() {
@@ -61627,7 +62009,11 @@ impl<'a> Checker<'a> {
             }
         }
 
-        Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields }, span }
+        let literal = Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields }, span };
+        if prelude.is_empty() {
+            return literal;
+        }
+        Expr { ty, kind: ExprKind::Block { block: Block { stmts: prelude, span }, value: Box::new(literal) }, span }
     }
 
     /// `[CLS-10]` — the `init` of the nearest base class that has one.
@@ -61943,7 +62329,33 @@ impl<'a> Checker<'a> {
         .unwrap_or_default();
         let outer = (!bindings.is_empty()).then(|| std::mem::replace(&mut self.type_params, bindings));
         let errors_before = self.sink.error_count();
+        // `[STR-2]` - which field this default is for, and the fields beside it.
+        let (fields, defaults) = match owner {
+            DefaultOwner::Struct(id) => {
+                let def = self.types.struct_def(id);
+                (Some((def.fields.clone(), def.name.to_string())), self.struct_default_exprs.get(&id))
+            }
+            DefaultOwner::Class(id) => {
+                let def = self.types.class_def(id);
+                (Some((def.fields.clone(), def.name.to_string())), self.class_default_exprs.get(&id))
+            }
+            DefaultOwner::Constant => (None, None),
+        };
+        let index = defaults.and_then(|all| all.iter().position(|e| e.as_ref().is_some_and(|e| e.span == default.span)));
+        // Each field's type as its declaration writes it (`n: int`), for the line the message gives.
+        let context = fields.zip(index).map(|((fields, owner_name), index)| {
+            let written: Vec<(Symbol, String)> = fields
+                .iter()
+                .map(|f| (f.name, self.written_line(f.ty_span).unwrap_or_else(|| self.types.display(f.ty))))
+                .collect();
+            (fields[index].name, written, owner_name)
+        });
+        let outer_context = std::mem::replace(&mut self.default_context, context);
+        let written = self.written_line(default.span);
+        let outer_source = std::mem::replace(&mut self.default_source, written);
         let mut value = self.check_expr(default, ty);
+        self.default_context = outer_context;
+        self.default_source = outer_source;
         // `[TYP-9]`, ODR-090 — a construction's field default is strict IEEE
         // in whichever function builds the value: one doing float work is the
         // body of a strict closure. (A constant's is folded while compiling.)
@@ -62031,7 +62443,7 @@ impl<'a> Checker<'a> {
             body: ast::LambdaBody::Expr(Box::new(if place {
                 ast::Expr {
                     id: ast::NodeId::DUMMY,
-                    kind: ast::ExprKind::RefOf { mutable: true, place: Box::new(default.clone()) },
+                    kind: ast::ExprKind::RefOf { mutable: true, constant: false, place: Box::new(default.clone()) },
                     span,
                 }
             } else {
@@ -62056,7 +62468,7 @@ impl<'a> Checker<'a> {
                     span,
                 };
                 let value = if by_ref {
-                    ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::RefOf { mutable: false, place: Box::new(value) }, span }
+                    ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::RefOf { mutable: false, constant: false, place: Box::new(value) }, span }
                 } else {
                     value
                 };
@@ -63128,33 +63540,16 @@ impl<'a> Checker<'a> {
                 self.sink.emit(
                     Diagnostic::error(codes::E2040, span, "`StrView` does not implement `Add`")
                         .help("build the text with an f-string: `f\"{a}{b}\"`")
-                        .note("`a + b` extends a `String` on the left, consuming it [TXT-11]"),
+                        .note("`a + b` reads a `String` on the left and gives a new `String` [TXT-11]"),
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
-            let string_ty = lhs.ty;
-            let text = self.coerce(rhs, str_ty);
-            let joined = self.declare(None, string_ty, span);
-            let local = || Expr { ty: string_ty, kind: ExprKind::Local(joined), span };
-            let receiver = self.pass_receiver(local(), Mode::Mut, span);
-            return Expr {
-                ty: string_ty,
-                kind: ExprKind::Block {
-                    block: Block {
-                        stmts: vec![
-                            Stmt::Let { local: joined, init: Some(lhs) },
-                            Stmt::Expr(Expr {
-                                ty: self.common.void,
-                                kind: ExprKind::Builtin { which: Builtin::StringPush, args: vec![receiver, text] },
-                                span,
-                            }),
-                        ],
-                        span,
-                    },
-                    value: Box::new(local()),
-                },
-                span,
-            };
+            // `[TXT-11]` - both operands are read in place, so `a` stays usable: the sum is built as
+            // `f"{a}{b}"` is, a new `String` of `a`'s text then `b`'s.
+            let string_ty = self.common.string;
+            let buffer_ref = self.types.intern(TyKind::Ref { mutable: true, inner: string_ty });
+            let parts = vec![self.plain_text_piece(lhs), self.plain_text_piece(rhs)];
+            return Expr { ty: string_ty, kind: ExprKind::FString { parts, buffer_ref }, span };
         }
         // `[EXP-9]` (D-322) — `a is b` on two references compares where they
         // point: the same place or not. A reference names its place's value
@@ -65246,6 +65641,12 @@ fn is_compiler_known_struct(name: &str) -> bool {
 /// why `why`: "put line 9 in an `unsafe:` block with a `# SAFETY:` note saying why …: above line 9 write
 /// `# SAFETY:` and the reason, then `unsafe:`, and indent line 9 under it". A statement over several
 /// lines is put in whole; one that shares its line with what comes before it is moved onto its own.
+/// `[UNS-5]` — a count as a message says it: "four", or the digits past twelve.
+fn count_in_words(n: u128) -> String {
+    const WORDS: [&str; 13] = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
+    WORDS.get(n as usize).filter(|_| n < 13).map_or_else(|| n.to_string(), |word| word.to_string())
+}
+
 fn unsafe_block_to_write(lines: StmtLines, why: &str) -> String {
     let StmtLines { first, last, alone } = lines;
     if !alone {
@@ -65269,7 +65670,7 @@ fn undocumented_unsafe(name: Symbol, first: Option<&UnsafeStep>) -> String {
     let target = |pointer: &Option<String>| pointer.as_ref().map_or_else(|| "the pointer".to_string(), |pointer| format!("`{pointer}`"));
     let (does, with) = match first {
         Some(UnsafeStep::Read(pointer)) => (format!(" that reads through {}", through(pointer)), format!(", with what {} must point to", target(pointer))),
-        Some(UnsafeStep::Write(pointer)) => (format!(" that writes through {}", through(pointer)), format!(", with what {} must point to", target(pointer))),
+        Some(UnsafeStep::Write(pointer) | UnsafeStep::CopyInto { into: pointer, .. }) => (format!(" that writes through {}", through(pointer)), format!(", with what {} must point to", target(pointer))),
         Some(UnsafeStep::Offset(pointer)) => (format!(" that offsets {}", through(pointer)), format!(", with what {} must point into", target(pointer))),
         Some(UnsafeStep::Call { callee, .. }) if callee.is_empty() => (" that calls an `unsafe fn`".to_string(), ", with what that call needs".to_string()),
         Some(UnsafeStep::Call { callee, .. }) => (format!(" that calls `{callee}`"), format!(", with what calling `{callee}` needs")),
@@ -65300,7 +65701,7 @@ fn unsafe_steps(lines: StmtLines, steps: &[(Span, UnsafeStep)], in_safe_block: b
     for (_, step) in steps {
         let (pointer, kind) = match step {
             UnsafeStep::Read(pointer) => (pointer, 0),
-            UnsafeStep::Write(pointer) => (pointer, 1),
+            UnsafeStep::Write(pointer) | UnsafeStep::CopyInto { into: pointer, .. } => (pointer, 1),
             UnsafeStep::Offset(pointer) => (pointer, 2),
             UnsafeStep::Call { callee, .. } => {
                 match calls.iter_mut().find(|(named, _)| *named == callee.as_str()) {
@@ -66518,7 +66919,8 @@ fn ffi_count_siblings(decl: &ast::FnDecl, pointer: Option<Symbol>) -> Vec<String
         let unsigned = matches!(&ty.kind,
             ast::TypeKind::Path { segments, args } if args.is_empty()
                 && segments.len() == 1
-                && matches!(segments[0].name.as_str(), "u8" | "u16" | "u32" | "u64" | "u128" | "usize"));
+                && matches!(segments[0].name.as_str(), "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
+                    | "c_uchar" | "c_ushort" | "c_uint" | "c_ulong" | "c_ulonglong"));
         (name_looks_like_count || unsigned).then(|| written.to_string())
     }).collect()
 }

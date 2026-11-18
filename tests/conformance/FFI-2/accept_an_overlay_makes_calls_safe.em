@@ -14,7 +14,8 @@
 # `[FFI-30a]` — it renames a function (`add`) and hides one (`widget_free`), and changes no type:
 # `Size` is the header's struct. An `owns` parameter takes the `owns w.Widget` `returns_owned` gave.
 
-import c "./widgets.c" with (overlay = "overlays/widgets.em") as w
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./widgets.c" with (overlay = "overlays/widgets.em") as w
 
 # The `owns w.Widget` frees its widget, with `widget_free`, when it ends here.
 fn id_of_new(n: i32) -> i32:

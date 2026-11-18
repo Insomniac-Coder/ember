@@ -16,7 +16,8 @@
 
 from std.ffi import c_int, ForeignCallback, Retained
 
-import c "./registry.c" with (overlay = "overlays/registry.em") as reg
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./registry.c" with (overlay = "overlays/registry.em") as reg
 
 fn main():
     scale: c_int = 100

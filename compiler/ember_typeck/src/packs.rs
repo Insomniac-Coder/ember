@@ -543,7 +543,7 @@ impl Checker<'_> {
             return error;
         }
         let written = match &formatter.kind {
-            ast::ExprKind::RefOf { mutable: true, place } => place.as_ref(),
+            ast::ExprKind::RefOf { mutable: true, place, .. } => place.as_ref(),
             _ => formatter,
         };
         let f = self.synth_committed(written);

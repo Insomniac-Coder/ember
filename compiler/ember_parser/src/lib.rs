@@ -85,6 +85,9 @@ pub(crate) struct Parser<'a> {
     /// `[LEX-14]` — a name or pattern expected at this token, and the keywords the grammar expects
     /// right after it (`in` after `for`'s pattern): one of them here is that keyword, not a name.
     slot_end: (usize, &'static [Kw]),
+    /// `[GRM-47]` — an `owns` expression met as an operand of an operator, until the call or the `=`
+    /// it stands in gives its message the line to write (the rest are flushed at the end of the file).
+    owns_operands: Vec<crate::body::OwnsOperand>,
 }
 
 pub use ember_ast::NESTING_LIMIT;
@@ -118,6 +121,7 @@ impl<'a> Parser<'a> {
             runtime_params: Vec::new(),
             stmt_start: usize::MAX,
             slot_end: (usize::MAX, &[]),
+            owns_operands: Vec::new(),
         }
     }
 
@@ -570,12 +574,26 @@ impl<'a> Parser<'a> {
     /// Whether the run of doc comments at the cursor is followed by an import
     /// rather than by a declaration. `[LEX-11]` ignores blank lines between a
     /// doc comment and what it attaches to, so newlines are skipped here too.
+    /// `[LEX-11]` - a doc comment before `elif` or `else` documents nothing: it is skipped, so the
+    /// comment does not change what the statement means.
+    fn skip_docs_before_else(&mut self) {
+        let mut index = self.pos;
+        while matches!(self.tokens.get(index).map(|t| &t.kind), Some(TokenKind::DocComment(_) | TokenKind::Newline)) {
+            index += 1;
+        }
+        if index > self.pos && matches!(self.tokens.get(index).map(|t| &t.kind), Some(TokenKind::Keyword(Kw::Elif | Kw::Else))) {
+            self.pos = index;
+        }
+    }
+
     fn import_follows_doc_comment(&self) -> bool {
         let mut index = self.pos;
         loop {
             match self.tokens.get(index).map(|t| &t.kind) {
                 Some(TokenKind::DocComment(_)) | Some(TokenKind::Newline) => index += 1,
                 Some(TokenKind::Keyword(Kw::Import)) => return true,
+                // `[FFI-51]` — `unsafe import c`, and `pub [unsafe] import c`.
+                Some(TokenKind::Keyword(Kw::Unsafe | Kw::Pub)) => index += 1,
                 Some(TokenKind::Ident(s)) => return s.is("from"),
                 _ => return false,
             }
@@ -613,15 +631,28 @@ impl<'a> Parser<'a> {
         let mut placement = Vec::new();
         // `[GRM-2]` (0.20) — where the first item or statement begins; an import after it is `E0100`.
         let mut first_decl: Option<ember_span::Span> = None;
+        // `[LEX-10]` - where the first import or item begins.
+        let mut first_any: Option<ember_span::Span> = None;
 
         loop {
             self.eat_newlines();
             if self.at_eof() {
                 break;
             }
-            if matches!(self.peek(), TokenKind::Directive { .. }) {
+            if let TokenKind::Directive { name, value } = self.peek().clone() {
+                // `[LEX-10]` - a `#!` line is a directive wherever it stands, and one below an import or an
+                // item says where to move it.
+                let written = if value.is_empty() { format!("#! {name}") } else { format!("#! {name} {value}") };
+                let above = match first_any {
+                    Some(span) => {
+                        let from = self.src[..span.start as usize].rfind(char::from(10)).map_or(0, |at| at + 1);
+                        let line = self.src[from..].lines().find(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#')).unwrap_or("").trim().trim_end_matches(':').to_string();
+                        format!("; move it above `{line}`")
+                    }
+                    None => String::new(),
+                };
                 self.report(Diagnostic::error(codes::E0104, self.span(),
-                    "a directive must appear before imports and declarations"));
+                    format!("`{written}` is a directive, and directives come first{above}")));
                 self.bump();
                 continue;
             }
@@ -638,7 +669,8 @@ impl<'a> Parser<'a> {
                 self.discard_dangling_doc(doc);
                 continue;
             }
-            if self.at_kw(Kw::Import) || self.at_contextual("from") {
+            if self.at_kw(Kw::Import) || self.at_contextual("from") || (self.at_kw(Kw::Unsafe) && self.at_kw_at(1, Kw::Import)) {
+                first_any.get_or_insert(self.span());
                 if let Some(import) = self.parse_import() {
                     if let Some(first) = first_decl {
                         let line = self.src[..first.start as usize].matches('\n').count() + 1;
@@ -663,11 +695,13 @@ impl<'a> Parser<'a> {
                 self.import_at = Some((self.span().shrink_to_start(), false));
             }
             first_decl.get_or_insert(self.span());
+            first_any.get_or_insert(self.span());
             // `[FFI-30b]` — `pub import c "…"`: only a foreign import may be re-exported.
+            let unsafe_word = usize::from(self.at_kw_at(1, Kw::Unsafe));
             if self.at_kw(Kw::Pub)
-                && matches!(self.peek_at(1), TokenKind::Keyword(Kw::Import))
-                && matches!(self.peek_at(2), TokenKind::Ident(word) if word.is("c") || word.is("cpp"))
-                && matches!(self.peek_at(3), TokenKind::Lit(ember_lexer::Lit::Str(_)))
+                && matches!(self.peek_at(1 + unsafe_word), TokenKind::Keyword(Kw::Import))
+                && matches!(self.peek_at(2 + unsafe_word), TokenKind::Ident(word) if word.is("c") || word.is("cpp"))
+                && matches!(self.peek_at(3 + unsafe_word), TokenKind::Lit(ember_lexer::Lit::Str(_)))
             {
                 let start = self.span();
                 self.bump();
@@ -758,6 +792,7 @@ impl<'a> Parser<'a> {
             Script { main: items.len() - 1, placement, first }
         });
 
+        self.flush_owns_operands(0, crate::body::OwnsPlace::Elsewhere);
         let unsafe_sites = std::mem::take(&mut self.unsafe_sites);
         // ODR-281 — at their count, as a block's statements are (`parse_block_nested`).
         items.shrink_to_fit();
@@ -845,7 +880,7 @@ impl<'a> Parser<'a> {
                 "`#! module` needs one valid attribute name and arguments"));
             return None;
         }
-        Some(ember_ast::Attribute { id, path, args, span: Span::new(self.file, start as u32, end as u32) })
+        Some(ember_ast::Attribute { id, path, args, span: Span::new(self.file, start as u32, end as u32), written_unsafe: false })
     }
 }
 

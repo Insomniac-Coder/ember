@@ -91,7 +91,7 @@ fn error_codes(root: &Path, file: &Path) -> Vec<(String, Option<String>)> {
 /// `ember check` on every file, on as many threads as the machine has.
 fn check_all(root: &Path, files: &[PathBuf]) -> Vec<Vec<(String, Option<String>)>> {
     let next = AtomicUsize::new(0);
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(files.len().max(1));
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(16).min(files.len().max(1)); // at most 16 at once (the owner, 2026-11-13)
     let mut results: Vec<(usize, Vec<(String, Option<String>)>)> = std::thread::scope(|scope| {
         let workers: Vec<_> = (0..threads)
             .map(|_| scope.spawn(|| {

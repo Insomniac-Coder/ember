@@ -677,6 +677,20 @@ impl Interp<'_, '_> {
                 self.mem.write(p + i * size, &value)?;
                 return Ok(None);
             }
+            // `[UNS-5]` — a volatile access is one read or write of the pointee, as the evaluator makes
+            // every access.
+            Builtin::VolatileRead => {
+                let p = self.pointer(&args[0])?;
+                let size = self.size(self.element_of(arg_ty));
+                self.mem.read(p, size)?.to_vec()
+            }
+            Builtin::VolatileWrite => {
+                let p = self.pointer(&args[0])?;
+                let elem = self.element_of(arg_ty);
+                let value = self.operand(&args[1], Some(elem))?;
+                self.mem.write(p, &value)?;
+                return Ok(None);
+            }
             Builtin::PtrIsNull => vec![u8::from(self.pointer(&args[0])? == 0)],
             Builtin::PtrAdd => {
                 let p = self.pointer(&args[0])?;
@@ -1467,6 +1481,8 @@ impl Interp<'_, '_> {
             Builtin::JobScope | Builtin::JobScopeSubmit { .. } | Builtin::JobSubmit { .. } | Builtin::JobWait | Builtin::ParallelFor { .. } => {
                 "a job on the pool"
             }
+            // `[FFI-33b]` — what a stop names: the evaluator stops on no foreign object.
+            Builtin::ForeignCallAt => return Ok(None),
             Builtin::ForeignStatic { .. } | Builtin::ForeignAdopt | Builtin::ForeignRelease | Builtin::ForeignThread => {
                 "a foreign object"
             }

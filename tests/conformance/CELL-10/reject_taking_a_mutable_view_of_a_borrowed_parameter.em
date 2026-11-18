@@ -7,7 +7,7 @@
 # expose writable storage from a default-mode Array parameter.
 
 fn expose(values: Array[i32]):
-    view: MutSpan[i32] = values.as_mut_span()  #$ error[E3023]: cannot mutate borrowed parameter `values`
+    view: MutSpan[i32] = ref mut values.as_mut_span()  #$ error[E3023]: `view: MutSpan[i32] = ref mut values.as_mut_span()` changes the caller's list, but `values` only reads it; write `fn expose(ref mut values: Array[i32]):` and call it `expose(ref mut values)`
     view[0] = 2
 
 fn main():

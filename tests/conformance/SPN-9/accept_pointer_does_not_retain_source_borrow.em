@@ -4,7 +4,7 @@
 fn main():
     values: Array[i32] = Array[i32]()
     values.push(owns 1)
-    view = values.as_mut_span()
+    view = ref mut values.as_mut_span()
     pointer: *mut i32 = view.as_mut_ptr()
     view[0] = 2
     unsafe:  # SAFETY: this test sets up what the operation requires

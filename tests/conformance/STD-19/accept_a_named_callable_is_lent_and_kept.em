@@ -21,70 +21,81 @@ fn main():
     xs = [3, 1, 4, 1, 5]
     ys = [9, 2]
     looked = 0
-    tall = fn(x: ref int) -> bool:
+    fn tall_fn(x: ref int) -> bool:
         looked += 1
         return x > 3
+    tall = tall_fn
     a = xs.iter().any(tall)
     b = ys.iter().any(tall)
     println(a, b, looked)
     mapped = 0
-    double = fn(x: ref int) -> int:
+    fn double_fn(x: ref int) -> int:
         mapped += 1
         return x * 2
+    double = double_fn
     first = xs.iter().map(double).sum()
     second = ys.iter().map(double).sum()
     println(first, second, mapped - 5)
     seen = 0
-    positive = fn(x: ref int) -> bool:
+    fn positive_fn(x: ref int) -> bool:
         seen += 1
         return x > 0
+    positive = positive_fn
     tries = 0
-    big = fn(x: ref int) -> bool:
+    fn big_fn(x: ref int) -> bool:
         tries += 1
         return x > 3
+    big = big_fn
     at_tries = 0
-    four = fn(x: ref int) -> bool:
+    fn four_fn(x: ref int) -> bool:
         at_tries += 1
         return x == 4
+    four = four_fn
     all_positive = xs.iter().all(positive)
     found = xs.iter().find(big)
     at = xs.iter().position(four)
     println(all_positive, seen - 2, found, tries, at, at_tries)
     steps = 0
-    add = fn(a: int, b: ref int) -> int:
+    fn add_fn(a: int, b: ref int) -> int:
         steps += 1
         return a + b
+    add = add_fn
     joins = 0
-    plus = fn(a: int, b: int) -> int:
+    fn plus_fn(a: int, b: int) -> int:
         joins += 1
         return a + b
-    folded = xs.iter().fold(0, add)
+    plus = plus_fn
+    folded = xs.iter().fold(owns 0, add)
     reduced = xs.iter().copy_each().reduce(plus)
     println(folded, steps, reduced, joins)
     keys = 0
-    key = fn(x: int) -> int:
+    fn key_fn(x: int) -> int:
         keys += 1
         return x
+    key = key_fn
     compared = 0
-    order = fn(a: int, b: int) -> Ordering:
+    fn order_fn(a: int, b: int) -> Ordering:
         compared += 1
         return a.cmp(b)
+    order = order_fn
     most = xs.iter().copy_each().max_by_key(key)
     least = xs.iter().copy_each().min_by_key(key)
     largest = xs.iter().copy_each().max_by(order)
     smallest = xs.iter().copy_each().min_by(order)
     println(most, least, keys, largest, smallest, compared + 2)
     kept = 0
-    keep = fn(x: int) -> bool:
+    fn keep_fn(x: int) -> bool:
         kept += 1
         return x > 2
+    keep = keep_fn
     zs = [3, 1, 4]
     zs.retain(keep)
     zs.sort_by_key(owns fn(x) => -x)
     sorted_calls = 0
-    by = fn(x: int) -> int:
+    fn by_fn(x: int) -> int:
         sorted_calls += 1
         return x
+    by = by_fn
     ws = [5, 1, 4, 1, 3]
     ws.sort_by_key(by)
     println(zs, kept + 2, ws, sorted_calls)

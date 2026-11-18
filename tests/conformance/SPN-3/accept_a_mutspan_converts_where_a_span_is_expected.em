@@ -21,7 +21,7 @@ fn first(xs: Span[T]) -> T:
 
 fn main():
     a: Array[i32] = [1, 2, 3]
-    m: MutSpan[i32] = a.as_mut_span()
+    m: MutSpan[i32] = ref mut a.as_mut_span()
     println(total(m))
     println(first(m))
     m[0] = 10

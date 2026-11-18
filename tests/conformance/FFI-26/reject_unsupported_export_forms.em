@@ -4,11 +4,13 @@
 # `[FFI-26]`, `[MNG-2]` — the symbol is set exactly, so it must be one a linker can hold; and a
 # C symbol names one function, which a generic is not until its parameters are known.
 
-@export("two words") #$ error[E0104]: `two words` cannot be a linker symbol
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("two words")) #$ error[E0104]: `two words` cannot be a linker symbol
 fn odd_name() -> i32:
     return 1
 
-@export("identity") #$ error[E2060]: `identity` is generic, so its type parameters cannot be inferred for one C symbol
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("identity")) #$ error[E2060]: `identity` is generic, so its type parameters cannot be inferred for one C symbol
 [T]
 fn identity(value: T) -> T:
     return value

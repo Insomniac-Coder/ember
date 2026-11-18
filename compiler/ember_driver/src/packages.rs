@@ -228,6 +228,16 @@ fn spec_from_pairs(name: &str, pairs: &[(String, String)], file: &Path) -> Resul
 
 fn read_manifest(file: &Path) -> Result<Manifest, String> {
     let text = std::fs::read_to_string(file).map_err(|error| format!("cannot read `{}`: {error}", file.display()))?;
+    // `[LEX-1a]` - a bidirectional format character in the manifest.
+    for (index, line) in text.lines().enumerate() {
+        if let Some(c) = line.chars().find(|c| ember_lexer::is_bidi_format(*c)) {
+            return Err(format!(
+                "error[E0012]: {} in {}\n  = help: remove it from the manifest",
+                ember_lexer::bidi_message(index + 1, c),
+                file.display()
+            ));
+        }
+    }
     let mut manifest = Manifest { name: None, version: None, layers: None, deps: Vec::new() };
     let mut section = String::new();
     let mut table_dep: Option<(String, Vec<(String, String)>)> = None;

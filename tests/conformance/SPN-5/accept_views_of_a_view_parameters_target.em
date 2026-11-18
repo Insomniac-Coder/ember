@@ -26,7 +26,7 @@ fn main():
     xs: Array[int] = Array[int]()
     xs.push(owns 1)
     xs.push(owns 2)
-    t = tail(xs.as_mut_span())
+    t = ref mut tail(xs.as_mut_span())
     t[0] = 20
     println(t[0])
     println(xs[1])

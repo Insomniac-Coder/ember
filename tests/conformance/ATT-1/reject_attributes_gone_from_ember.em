@@ -16,7 +16,7 @@ fn two(a: f64) -> f64:
 fn pick(a: Span[int], b: Span[int]) -> Span[int]:
     return a
 
-@no_runtime_checks    #$ error[E0104]: `@no_runtime_checks` is gone
+@no_runtime_checks    #$ error[E0104]: there is no switch that turns safety checks off, in any build
 fn three() -> int:
     return 3
 

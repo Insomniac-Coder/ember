@@ -1857,6 +1857,9 @@ pub enum Builtin {
     /// `[FFI-33b]` — the number of the thread running it, recorded by an
     /// `owns T` of a type bound to its thread (`threads(creator)`).
     ForeignThread,
+    /// `[FFI-33b]` — before a call whose `returns_owned` result gives a value bound to its thread:
+    /// the call's line, which the object is recorded as made at (no arguments).
+    ForeignCallAt,
     /// `[OWN-12]`, `[FFI-54]` — `x.into_raw()`: the address of what an `owns
     /// T` holds (the argument, handed over and never dropped), as the
     /// result's raw pointer: the block's first word (`*mut u8` for `owns dyn
@@ -2462,6 +2465,7 @@ impl Builtin {
             Builtin::ForeignAdopt => "ffi_adopt",
             Builtin::ForeignRelease => "ffi_release",
             Builtin::ForeignThread => "ffi_thread",
+            Builtin::ForeignCallAt => "ffi_call_at",
             Builtin::IntoRaw { .. } => "into_raw",
             Builtin::CppObjectAddress => "cpp_object_address",
             Builtin::CppOverrides { .. } => "cpp_overrides",

@@ -8,8 +8,9 @@
 #$ stdout: 7
 # `sum` takes a small `Copy` value and means the same as by address. `first`'s object is passed by
 # address (a copy would make `ref this.a` a view of the call's own storage, `E3063`), so `r` views
-# `p`. A `Copy` struct holding a `Cell` is passed by address, so a change the module variable's own
-# name makes across the call shows through `t` (`[FN-1]`).
+# `p`. A `Copy` struct holding a `Cell` is passed by address, its first line says so, and a change
+# the module variable's own name makes across the call shows through `t`, as through every plain
+# parameter (`[FN-1]`; Q1).
 
 @derive(Copy)
 struct Pair:

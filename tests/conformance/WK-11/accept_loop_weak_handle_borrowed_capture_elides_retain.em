@@ -22,10 +22,11 @@ fn program():
     copies: Array[weakref Token] = Array[weakref Token]()
     copies.push(owns (weakref weak))
     for observed in copies:
-        task = fn() -> i32:
+        fn task_fn() -> i32:
             if observed exists as owner:
                 return owner.value
             return 0
+        task = task_fn
         println(task())
 
 fn main():

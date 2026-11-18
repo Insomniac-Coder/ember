@@ -7,7 +7,8 @@
 # header's global holding a pointer imports as any other (`c.cursor`), and a hand-declared one is
 # accepted too; the programmer, not the checker, answers for sharing them between threads.
 
-import c "./cursor.c"
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "./cursor.c"
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     static mut foreign_cursor: *mut i32

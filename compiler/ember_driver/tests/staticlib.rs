@@ -470,11 +470,13 @@ pub class Moon(World):
     pub override fn kind() -> i32:
         return 2
 
-@export(\"make_world\")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export(\"make_world\"))
 pub fn make_world() -> World:
     return World()
 
-@export(\"make_moon\")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export(\"make_moon\"))
 pub fn make_moon() -> World:
     return Moon()
 ";

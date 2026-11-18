@@ -6,7 +6,8 @@
 # `[FFI-29]` — the shim holds an external wrapper for every `static inline` function Ember calls:
 # `inline_twice` has no symbol of its own, and the call below links through the wrapper.
 
-import c "inline.c"
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "inline.c"
 
 fn main():
     r: i32 = 0

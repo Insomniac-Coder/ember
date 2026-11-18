@@ -9,7 +9,8 @@
 # symbol is `game-update` (an assembler label; with MSVC, a linker alias of that C name).
 # Ember code calls it as any function.
 
-@export("game-update")
+# SAFETY: nothing else in the process defines this name
+@unsafe(export("game-update"))
 fn update() -> i32:
     return 7
 

@@ -5,7 +5,8 @@
 ## call in the generated C is the C function's own (`milestones.rs`,
 ## `a_direct_ffi_call_is_the_c_functions_own_call`).
 
-import c "ffi_direct_call_mix.c"
+# SAFETY: the test's own C, which runs nothing before `main`
+unsafe import c "ffi_direct_call_mix.c"
 
 @overflow(wrap)
 fn main():

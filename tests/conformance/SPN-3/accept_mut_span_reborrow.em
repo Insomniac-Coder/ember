@@ -17,13 +17,13 @@ fn main():
     values: Array[i32] = Array[i32]()
     values.push(owns 1)
     values.push(owns 2)
-    parent = values.as_mut_span()
-    child = parent.reborrow()
+    parent = ref mut values.as_mut_span()
+    child = ref mut parent.reborrow()
     child[0] = 10
     println(child[0])
     parent[1] = 20
     println(parent[1])
-    direct = values.as_mut_span().reborrow()
+    direct = ref mut values.as_mut_span().reborrow()
     direct[0] = 30
     println(direct[0])
     println(view_len[i32](values.as_mut_span()))

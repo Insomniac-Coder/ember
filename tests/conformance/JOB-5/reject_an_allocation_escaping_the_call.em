@@ -14,8 +14,9 @@ fn leak() -> ref mut int:
 fn main():
     kept: Option[ref mut int] = None
     with s = jobs.scope():
-        keep = fn():
+        fn keep_fn():
             arena = jobs.local_arena()
             kept = Some(arena.alloc(1))    #$ error[E3063]: is stored in a captured variable, which the closure's creator owns
+        keep = keep_fn
         s.submit(owns keep)
     println(kept is None)

@@ -1316,6 +1316,15 @@ impl<'m, 'a> FnCx<'m, 'a> {
         }
         let at = self.place(place)?;
         let align = if ember_mir::unaligned_place(self.m.ty.table, body, place) { 1 } else { at.align };
+        // `[FFI-33b]` — a named local bound to its thread passes its name to the stop of its end.
+        if place.projection.is_empty()
+            && matches!(self.m.ty.table.kind(ty), ember_types::TyKind::Struct(_))
+            && self.m.ty.table.thread_bound_foreign_owner(ty)
+            && let Some(name) = body.locals[place.local.0 as usize].name.clone()
+        {
+            let shown = self.m.bytes(name.as_bytes());
+            self.call_rt("ffi_end_name", vec![Val::Imm(Sc::Ptr, shown)], None);
+        }
         self.drop_at(&at.ptr, align, ty)?;
         if branched {
             self.emit(format!("br label %{done}"));

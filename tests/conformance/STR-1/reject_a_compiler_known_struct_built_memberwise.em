@@ -5,6 +5,6 @@
 # made by `Arena.with_capacity(n)`, `[ARN-1]`).
 
 fn main():
-    arena = Arena()    #$ error[E1052]: `Arena`'s memberwise constructor is private to its module
-    fixed = FixedArena()    #$ error[E1052]: `FixedArena`'s memberwise constructor is private to its module
+    arena = Arena()    #$ error[E1052]: `Arena(...)` is not visible here
+    fixed = FixedArena()    #$ error[E1052]: `FixedArena(...)` is not visible here
     println(1)

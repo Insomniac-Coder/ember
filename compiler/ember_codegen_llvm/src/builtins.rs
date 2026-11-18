@@ -1111,6 +1111,12 @@ impl<'a> FnCx<'_, 'a> {
                 Ok(())
             }
             Builtin::ForeignThread => self.call_rt_into("ffi_thread", Vec::new(), dest),
+            // `[FFI-33b]` — the call's line, for the object its result records.
+            Builtin::ForeignCallAt => {
+                let loc = self.loc(span);
+                self.call_rt("ffi_call_at", vec![loc], None);
+                Ok(())
+            }
             // `[OWN-12]`, `[FFI-54]` — the address the owner's first word holds; the owner was handed
             // to the call and nothing drops it. A foreign object's leaves the runtime's record first.
             Builtin::IntoRaw { foreign } => {

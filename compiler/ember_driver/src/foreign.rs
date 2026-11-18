@@ -129,6 +129,10 @@ fn declaration(item: &Item, abi: &str, module: &str, prefix: &str, map: &SourceM
                     ember_ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name.is("deterministic") => {
                         "the same result on every run"
                     }
+                    // `[FFI-11]`, `[FFI-52]`, `[TCB-4]` — an asserted fact the C FFI section lists.
+                    ember_ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name.is("no_callbacks") => {
+                        "it never calls back into Ember"
+                    }
                     ember_ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name.is("unsafe") => {
                         "its calls left unsafe on purpose"
                     }

@@ -80,10 +80,10 @@ fn main():
         Message.Data(a, b) => a + b as u64 + 21
     println(headers[1].length, headers[1].flags, size)
     r = Record(tag = 2, name = "hi", items = [1, 2, 3])
-    name = r.name
-    items = r.items
+    name = owns r.name
+    items = owns r.items
     r.name = "ok"
-    latest = r.name
+    latest = copy of r.name
     println(name, len(items), latest, r.tag)
     println(size_of[Message](), offset_of[Record](name), offset_of[Record](items))
     p = Pair[u64](a = 1, b = 7)

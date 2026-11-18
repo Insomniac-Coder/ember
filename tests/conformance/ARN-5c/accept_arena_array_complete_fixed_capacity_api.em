@@ -45,13 +45,13 @@ fn main():
     println(total)
     for item in values.iter_mut():
         replacement: i32 = item + 1
-        item = ref mut replacement
+        item = replacement
     println(show(values.get(0)))
     println(show(values.get(2)))
     match values.get_mut(0):
         Some(item):
             replacement: i32 = item + 100
-            item = ref mut replacement
+            item = replacement
         None:
             pass
     println(show(values.get(0)))

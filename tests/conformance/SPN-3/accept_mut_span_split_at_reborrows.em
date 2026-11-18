@@ -13,10 +13,10 @@ fn main():
     values: Array[i32] = Array[i32]()
     values.push(owns 1)
     values.push(owns 2)
-    view = values.as_mut_span()
+    view = ref mut values.as_mut_span()
     parts = view.split_at(1)
-    left = parts.0
-    right = parts.1
+    left = ref mut parts.0
+    right = ref mut parts.1
     left[0] = 10
     right[0] = 20
     println(left[0])

@@ -5,7 +5,8 @@
 #$ assert-c: !contains("ember_rt_check_main_thread();")
 #$ stdout: 42
 
-@export(threads=any)
+# SAFETY: nothing else in the process defines this name
+@unsafe(export(threads=any))
 pub fn score(value: i32) -> i32:
     return value + 1
 
