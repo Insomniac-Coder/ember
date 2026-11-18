@@ -9111,9 +9111,9 @@ void ember_panic_bounds(size_t index, size_t len, ember_loc loc) {
      * size_t, and no length reaches the upper half, so print it back signed.
      * ponytail: an unsigned index of 2^63 or more prints negative too. */
     int written = index > (size_t)PTRDIFF_MAX
-        ? snprintf(buffer, sizeof buffer, "index %td is out of bounds for a length of %zu",
+        ? snprintf(buffer, sizeof buffer, "index %td is out of bounds for a length of %zu; use .get(i) for an Option",
                    (ptrdiff_t)index, len)
-        : snprintf(buffer, sizeof buffer, "index %zu is out of bounds for a length of %zu",
+        : snprintf(buffer, sizeof buffer, "index %zu is out of bounds for a length of %zu; use .get(i) for an Option",
                    index, len);
     panic_with(buffer, written > 0 ? (size_t)written : 0, loc);
 }
