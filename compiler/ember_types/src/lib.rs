@@ -2368,6 +2368,12 @@ impl TypeTable {
         self.coroutine_frame_params(id).is_some()
     }
 
+    /// `[CORO-1]` (M4 slice C) — whether field `index` of a frame holds a parameter that was only read:
+    /// a class object given so is held by a count the frame gives back when it ends.
+    pub fn coroutine_field_is_read_parameter(&self, id: StructId, index: usize) -> bool {
+        self.coroutine_frame_params(id).is_some_and(|params| matches!(params.get(index), Some(FrameParam::Borrowed)))
+    }
+
     fn coroutine_frame_params(&self, id: StructId) -> Option<&Vec<FrameParam>> {
         if self.coroutine_frames.is_empty() {
             return None;

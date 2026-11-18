@@ -6779,7 +6779,10 @@ impl<'a> Builder<'a> {
             // convert.
             hir::ExprKind::EraseRange(inner) => Rvalue::Use(self.lower_operand(inner)),
             hir::ExprKind::StructLit { struct_id, fields } => {
-                let operands = self.lower_aggregate_operands(fields, expr.span);
+                let mut operands = self.lower_aggregate_operands_of_frame(*struct_id, fields);
+                if operands.is_empty() {
+                    operands = self.lower_aggregate_operands(fields, expr.span);
+                }
                 Rvalue::Aggregate { kind: AggregateKind::Struct(*struct_id), operands }
             }
             hir::ExprKind::TupleLit(items) => {
@@ -6823,6 +6826,25 @@ impl<'a> Builder<'a> {
     /// first value moved out of a place (`self.title` of `R(title=self.title, n=1)`), where a move
     /// a diagnostic reports happens, else at the aggregate: not at the last operand, which may be
     /// a field's default in its declaration.
+    /// `[CORO-1]` — a generator's frame outlives the call that makes it, so a class object its caller
+    /// only lent is held by a count of the frame's own. Empty for any other struct.
+    fn lower_aggregate_operands_of_frame(&mut self, id: ember_types::StructId, items: &'a [hir::Expr]) -> Vec<Operand> {
+        if !self.types.is_coroutine_frame_struct(id) {
+            return Vec::new();
+        }
+        items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                if self.types.coroutine_field_is_read_parameter(id, index) && self.counted_handle(item.ty) && is_place_expr(item) {
+                    Operand::Copy(self.lower_place(item))
+                } else {
+                    self.lower_operand_kept(item)
+                }
+            })
+            .collect()
+    }
+
     fn lower_aggregate_operands(&mut self, items: &'a [hir::Expr], span: ember_span::Span) -> Vec<Operand> {
         let mut moved_at = None;
         let operands = items
