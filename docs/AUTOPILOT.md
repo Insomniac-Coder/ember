@@ -150,7 +150,11 @@ test run at a time, each at most 16 threads; builds `CARGO_BUILD_JOBS=4` each. T
 cases or more waits for a lock on `%TEMP%\ember-suite.lock`, which every worktree's runs share. A helper runs the full
 quick check once, at the end of its job, at `RUST_TEST_THREADS=8`; between rules, only the folders it changed.
 
-**How many agents at once: at most three, fewer when the machine is loaded.** The owner, 2026-11-13, verbatim:
+**How many agents at once: ONE helper beside the lead.** The owner, 2026-11-18, verbatim: "resume the work
+autonomously and at most you can use one more agent to help you out". This replaces the cap of three below; the
+three lanes and their notes stay, and the lead works one lane while the helper works another.
+
+**The earlier cap: at most three, fewer when the machine is loaded.** The owner, 2026-11-13, verbatim:
 "resume work and work autonomously, use 2-3 helper agents at max. Lets work towards finishing this language". So
 at most three helpers run at once, whatever else the list below allows; within that cap the count follows the
 machine. The earlier rule, as many as the machine carries well: The owner, verbatim: "you can increase and
