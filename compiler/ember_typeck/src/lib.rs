@@ -19237,7 +19237,13 @@ impl<'a> Checker<'a> {
         let mut given = vec![false; fields.len()];
         let mut named_seen = false;
         let callee = name.to_string();
+        // `[TYP-25]` — a positional argument after a named one takes the first field no other argument gives.
+        let named_anywhere: Vec<bool> = fields
+            .iter()
+            .map(|field| args.iter().any(|arg| arg.name.is_some_and(|name| name.name == *field)))
+            .collect();
         let positional = args.iter().filter(|a| a.name.is_none()).count();
+        let mut too_many_said = positional > fields.len();
         if positional > fields.len() {
             let what = format!("gives {positional} arguments, and `{name}` takes {}", fields.len());
             let diagnostic = self.argument_misfit(span, span, &callee, what, line.clone());
@@ -19247,7 +19253,7 @@ impl<'a> Checker<'a> {
             let field = match arg.name {
                 None if named_seen => {
                     let earlier = args[..index].iter().rev().find(|earlier| earlier.name.is_some()).and_then(|earlier| self.written_line(earlier.span));
-                    let free_slot = given.iter().position(|taken| !taken);
+                    let free_slot = (0..fields.len()).find(|&slot| !given[slot] && !named_anywhere[slot]);
                     let free = free_slot.map(|slot| fields[slot]);
                     let mut what = match (self.written_line(span).and(self.written_line(arg.span)), &earlier) {
                         (Some(this), Some(earlier)) => format!("gives `{this}` after the named `{earlier}`, and positional arguments come first"),
@@ -19256,12 +19262,20 @@ impl<'a> Checker<'a> {
                     if let Some(fixed) = free.and_then(|free| self.call_with_argument_named(span, arg.span, free)) {
                         what.push_str(&format!("; write `{fixed}`"));
                     }
-                    let diagnostic = self.argument_misfit(arg.span, span, &callee, what, None);
+                    let diagnostic = self.argument_misfit(arg.span, span, &callee, what, if free_slot.is_some() { None } else { line.clone() });
                     self.sink.emit(diagnostic);
                     // The argument fills the field the line names, so the field is not reported missing too.
                     match free_slot {
                         Some(slot) => slot,
-                        None => continue,
+                        None => {
+                            // Nothing is left for it: the call also gives more arguments than parameters.
+                            if !std::mem::replace(&mut too_many_said, true) {
+                                let what = format!("gives {} arguments, and `{name}` takes {}", args.len(), fields.len());
+                                let diagnostic = self.argument_misfit(span, span, &callee, what, line.clone());
+                                self.sink.emit(diagnostic);
+                            }
+                            continue;
+                        }
                     }
                 }
                 None if index < fields.len() => index,
@@ -60399,6 +60413,12 @@ impl<'a> Checker<'a> {
         let mut assigned = vec![false; params.len()];
         let mut next_positional = 0usize;
         let mut named_seen = false;
+        // `[TYP-25]` — the parameters the call names anywhere: a positional argument after a named one takes
+        // the first parameter no other argument of the call gives, before it or after it.
+        let named_anywhere: Vec<bool> = params
+            .iter()
+            .map(|(param, ..)| args.iter().any(|arg| arg.name.is_some_and(|name| name.name == *param)))
+            .collect();
 
         for (arg_index, arg) in args.iter().enumerate() {
             let slot = if let Some(name) = arg.name {
@@ -60420,7 +60440,8 @@ impl<'a> Checker<'a> {
                 if named_seen {
                     // The line to write names this argument with the first parameter no argument before it gives.
                     let earlier = args[..arg_index].iter().rev().find(|earlier| earlier.name.is_some()).and_then(|earlier| self.written_line(earlier.span));
-                    let free = assigned.iter().position(|taken| !taken).map(|slot| params[slot].0);
+                    let mut misplaced_slot = (0..params.len()).find(|&slot| !assigned[slot] && !named_anywhere[slot]);
+                    let free = misplaced_slot.map(|slot| params[slot].0);
                     let written = self.written_line(call).and(self.written_line(arg.span));
                     let mut what = match (&written, &earlier) {
                         (Some(this), Some(earlier)) => format!("gives `{this}` after the named `{earlier}`, and positional arguments come first"),
@@ -60429,15 +60450,23 @@ impl<'a> Checker<'a> {
                     if let Some(fixed) = free.and_then(|free| self.call_with_argument_named(call, arg.span, free)) {
                         what.push_str(&format!("; write `{fixed}`"));
                     }
-                    let diagnostic = self.argument_misfit(arg.span, call, &callee_shown, what, None);
+                    // Where no parameter is left, the message gives the callee's first line alone.
+                    let diagnostic = self.argument_misfit(arg.span, call, &callee_shown, what, if misplaced_slot.is_some() { None } else { line.clone() });
                     self.sink.emit(diagnostic);
+                    let taken = misplaced_slot.take();
+                    if taken.is_some() {
+                        taken
+                    } else {
+                        continue;
+                    }
+                } else {
+                    while next_positional < assigned.len() && assigned[next_positional] {
+                        next_positional += 1;
+                    }
+                    let slot = (next_positional < params.len()).then_some(next_positional);
+                    next_positional = next_positional.saturating_add(1);
+                    slot
                 }
-                while next_positional < assigned.len() && assigned[next_positional] {
-                    next_positional += 1;
-                }
-                let slot = (next_positional < params.len()).then_some(next_positional);
-                next_positional = next_positional.saturating_add(1);
-                slot
             };
 
             let Some(slot) = slot else { continue };
