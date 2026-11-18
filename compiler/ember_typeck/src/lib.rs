@@ -470,6 +470,33 @@ fn check_round(
     let modules: &[LoadedModule] = expanded_foreign.as_deref().unwrap_or(modules);
     let mut checker = Checker::new(types, common, sink);
     checker.object_changers = object_changers.clone();
+    // `[FN-8]` — the names the entry file's statements bind.
+    for loaded in modules {
+        if let Some(script) = &loaded.module.script
+            && let ast::ItemKind::Fn(main) = &loaded.module.items[script.main].kind
+            && let Some(body) = &main.body
+        {
+            for stmt in &body.stmts {
+                match &stmt.kind {
+                    ast::StmtKind::Assign { targets, .. } => {
+                        for target in targets {
+                            if let ast::ExprKind::Path { segments } = &target.kind
+                                && let [name] = segments.as_slice()
+                            {
+                                checker.script_locals.insert(name.name);
+                            }
+                        }
+                    }
+                    ast::StmtKind::Decl { pattern, .. } | ast::StmtKind::For { pattern, .. } => {
+                        if let ast::PatternKind::Bind { name, .. } = &pattern.kind {
+                            checker.script_locals.insert(name.name);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
     checker.module_asts = modules.iter().map(|loaded| loaded.module.clone()).collect();
     checker.runtime_written = modules.iter().flat_map(|loaded| loaded.module.runtime_params.iter().map(move |id| (loaded.module.span.file, *id))).collect();
     checker.generated_files = modules.iter().filter(|loaded| loaded.foreign.is_some()).map(|loaded| loaded.module.span.file).collect();
@@ -3402,6 +3429,8 @@ struct Checker<'a> {
     argument_of: Option<(Span, Symbol, Span)>,
     /// `[FN-2a]` — the place a call's `ref mut` argument names, and the parameter it is given to.
     ref_mut_argument: Option<(Span, Span)>,
+    /// `[FN-8]` — the names a script's statements bind: locals of the implicit `main`.
+    script_locals: HashSet<Symbol>,
     /// `[FN-2a]` — the argument being checked against a declared parameter, and that parameter's
     /// declaration, for the word the call writes before it (`check_call_word`).
     word_of: Option<(Span, Span)>,
@@ -4274,6 +4303,7 @@ impl<'a> Checker<'a> {
             dyn_debug_holders: Vec::new(),
             argument_of: None,
             ref_mut_argument: None,
+            script_locals: HashSet::new(),
             word_of: None,
             inline_fns: HashMap::new(),
             module_asts: Vec::new(),
@@ -39155,6 +39185,13 @@ impl<'a> Checker<'a> {
                     span,
                     format!("cannot find `{name}` in this scope"),
                 );
+                // `[FN-8]` — a script's names are locals of its implicit `main`: a function that uses one
+                // does not read a global, unlike Python.
+                if self.script_locals.contains(&name) {
+                    diagnostic = diagnostic
+                        .help(format!("`{name}` is a local of the script's implicit `main`, which no function reads: take it as a parameter, make it a `const` if it never changes, a `static`, or a `static mut` for a module variable that functions change"))
+                        .note("the statements at file scope form the body of an implicit `fn main()`, so the names they bind are its locals, not module variables [FN-8], [STA-1]");
+                }
                 for candidate in self.name_suggestions(name, segments[0].span, true) {
                     diagnostic = diagnostic.suggest(
                         format!("did you mean `{candidate}`?"),
@@ -52652,7 +52689,16 @@ impl<'a> Checker<'a> {
             return;
         }
         if let Some(error) = error {
-            self.check_formattable(error, name, "reporting `main`'s error");
+            // `[FN-8]` — an `Err` returned from `main` is printed with `Display`: an `E` without
+            // one is `E2040`, an unmet bound (ODR-101), whatever else it implements.
+            if !self.has_display(error) {
+                let shown = self.types.display(error);
+                self.sink.emit(
+                    Diagnostic::error(codes::E2040, name, format!("`{shown}` does not implement `Display`, which reporting `main`'s error needs"))
+                        .help(format!("implement `Display` for `{shown}`: `extend {shown} implements Display:`"))
+                        .note("an `Err` returned from `main` is printed with `Display` to standard error [FN-8]"),
+                );
+            }
         }
     }
 
