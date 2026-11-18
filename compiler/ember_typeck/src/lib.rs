@@ -3400,6 +3400,8 @@ struct Checker<'a> {
     /// `[DIA-22]` — the argument being checked against a declared parameter: its span, and the
     /// parameter's name and declaration, the secondary span of a mismatch on the argument.
     argument_of: Option<(Span, Symbol, Span)>,
+    /// `[FN-2a]` — the place a call's `ref mut` argument names, and the parameter it is given to.
+    ref_mut_argument: Option<(Span, Span)>,
     /// `[FN-2a]` — the argument being checked against a declared parameter, and that parameter's
     /// declaration, for the word the call writes before it (`check_call_word`).
     word_of: Option<(Span, Span)>,
@@ -4036,6 +4038,8 @@ struct Checker<'a> {
     /// `[OWN-9]`, `[FN-2a]` (verdict 159) — the type whose constructor's arguments the next
     /// `check_bound_call_arguments` checks: they are given as `=` gives a value (`given_as_equals`).
     constructing: Option<Symbol>,
+    /// `[FN-2a]` — the argument being checked is a constructor's (`constructing` is taken for the call's own arguments).
+    constructor_arg: Option<Symbol>,
     /// `[OWN-10]` — the value a memberwise constructor is checking, and the field it is for.
     filling: Option<(Span, Symbol)>,
     /// `[GRM-15]` — a built-in `push` is checking the value it takes over.
@@ -4269,6 +4273,7 @@ impl<'a> Checker<'a> {
             debug_writer_defs: Vec::new(),
             dyn_debug_holders: Vec::new(),
             argument_of: None,
+            ref_mut_argument: None,
             word_of: None,
             inline_fns: HashMap::new(),
             module_asts: Vec::new(),
@@ -4487,6 +4492,7 @@ impl<'a> Checker<'a> {
             static_safe_unsafe_cell_reported: false,
             ret_ty,
             constructing: None,
+            constructor_arg: None,
             filling: None,
             pushing: false,
             fn_decl: Span::DUMMY,
@@ -47544,6 +47550,37 @@ impl<'a> Checker<'a> {
             _ => decl.ty,
         };
         let shown = self.types.display(ty);
+        // `[FN-2a]` — `ref mut` before a name that only reads is `E3027`: the name does not say it
+        // may change what it names, so it cannot be given on as `ref mut`.
+        if let Some((at, callee_param)) = self.ref_mut_argument
+            && at == span
+            && let Some(callee) = self.declaring_function(callee_param)
+        {
+            let noun = self.value_noun(ty);
+            let own = self
+                .sources
+                .get(&self.fn_decl.file)
+                .and_then(|source| source.text.get(self.fn_decl.start as usize..self.fn_decl.end as usize))
+                .map(|written| written.trim().trim_start_matches("fn ").split('(').next().unwrap_or("").trim().to_string())
+                .filter(|written| !written.is_empty());
+            let written = self
+                .sources
+                .get(&declaration.file)
+                .and_then(|source| source.text.get(declaration.start as usize..declaration.end as usize))
+                .filter(|text| !text.is_empty())
+                .map_or_else(|| format!("{name}: {shown}"), str::to_string);
+            let help = match own {
+                Some(own) => format!("take it as `ref mut {written}` on `{own}`'s first line"),
+                None => format!("take it as `ref mut {written}`"),
+            };
+            self.sink.emit_classified(
+                Diagnostic::error(codes::E3027, span, format!("`{name}` only reads the caller's {noun}, so it cannot be given to `{callee}` as `ref mut`"))
+                    .secondary(declaration, format!("`{name}` is declared here"))
+                    .help(help)
+                    .note("a name that does not say `ref mut` never changes what it names [FN-2a], [BRW-15]"),
+            );
+            return true;
+        }
         // D-823 (B2) — the whole parameter given a new value is Python's rebinding of a name: the
         // value it means is a new local's, and the caller's stays as it was.
         let rebinding = match &place.kind {
@@ -60784,7 +60821,9 @@ impl<'a> Checker<'a> {
             // `[DIA-22]` — a mismatch points at the parameter too.
             let outer = self.argument_of.replace((arg.value.span, name, declared));
             let word = self.word_of.replace((arg.value.span, declared));
+            let constructor_arg = std::mem::replace(&mut self.constructor_arg, constructing);
             let value = self.check_argument_by(&arg.value, param_ty, mode, by_address);
+            self.constructor_arg = constructor_arg;
             let value = match constructing {
                 Some(type_name) if mode == Mode::Owned => self.given_as_equals(type_name, &arg.value, value),
                 _ => value,
@@ -60840,7 +60879,10 @@ impl<'a> Checker<'a> {
             self.note_plain_argument(declared, arg.span);
         }
         // The words are the program's: a call or an argument the compiler makes itself has none.
-        if !self.written_call || arg.id == ast::NodeId::DUMMY || self.generated_files.contains(&arg.span.file) {
+        // `[FN-2a]` — a constructor's argument takes no `owns` (`[OWN-9]`), but `ref mut` is written
+        // before one for an `init`'s `ref mut` parameter, as at every call.
+        let constructor_ref_mut = self.constructor_arg.is_some() && mode == Mode::Mut;
+        if !(self.written_call || constructor_ref_mut) || arg.id == ast::NodeId::DUMMY || self.generated_files.contains(&arg.span.file) {
             return;
         }
         let written = match &arg.kind {
@@ -60886,6 +60928,11 @@ impl<'a> Checker<'a> {
         let diagnostic = match (mode, written) {
             (Mode::Mut, None) if a_place => {
                 let (Some(function), Some(name), Some(first)) = (self.declaring_function(declared), self.written_line(arg.span), self.written_line(declared)) else { return };
+                // A constructor's `init` is called by the type's name.
+                let function = match self.constructor_arg {
+                    Some(type_name) if function == "init" => type_name.to_string(),
+                    _ => function,
+                };
                 let Some(line) = self.line_with(arg.span, &format!("ref mut {name}")) else { return };
                 // `[CLI-20]` — a 0.9.10 `mut x: T` parameter is `ref mut x: T` "with `ref mut` written
                 // before each argument given to it".
@@ -60941,14 +60988,21 @@ impl<'a> Checker<'a> {
         // An argument written over several lines (a long lambda) is named by its place in the call.
         let mut diagnostic = match self.written_line(given) {
             Some(name) => {
-                let mut diagnostic = Diagnostic::error(codes::E3028, arg.span, format!("`{function}` takes `{name}` over{first}"));
+                // `[FN-2a]` — a computed argument is named "this argument", and the help says why
+                // the brackets.
+                let mut diagnostic = if compound {
+                    Diagnostic::error(codes::E3028, arg.span, format!("`{function}` takes this argument over{first}"))
+                } else {
+                    Diagnostic::error(codes::E3028, arg.span, format!("`{function}` takes `{name}` over{first}"))
+                };
                 let fixed = match name.strip_prefix("owns ") {
                     Some(rest) if compound => format!("owns ({rest})"),
                     _ if compound => format!("owns ({name})"),
                     _ => format!("owns {name}"),
                 };
                 if let Some(line) = self.line_with(arg.span, &fixed) {
-                    diagnostic = diagnostic.help(format!("say so at the call: `{line}`"));
+                    let how = if compound { "write `owns` before it, in brackets: " } else { "" };
+                    diagnostic = diagnostic.help(format!("say so at the call: {how}`{line}`"));
                 }
                 if (a_place || written.is_some()) && let Some(copy) = self.line_with(arg.span, &format!("owns copy of {name}")) {
                     diagnostic = diagnostic.help(format!("to keep `{name}`, give it a copy: `{copy}`"));
@@ -61073,6 +61127,7 @@ impl<'a> Checker<'a> {
     /// `check_argument` for a parameter whose passing the callee decides
     /// (`param_by_address`, D-284).
     fn check_argument_by(&mut self, arg: &ast::Expr, param_ty: Ty, mode: Mode, by_address: bool) -> Expr {
+        let declared_here = self.word_of.filter(|(argument, _)| *argument == arg.span).map(|(_, declared)| declared);
         if let Some((argument, declared)) = self.word_of
             && argument == arg.span
         {
@@ -61135,7 +61190,10 @@ impl<'a> Checker<'a> {
         // `[FN-2a]` — the call's `ref mut` says how the argument is passed; what a `ref mut`
         // parameter borrows is the place under it.
         let arg = match &arg.kind {
-            ast::ExprKind::RefOf { mutable: true, place, .. } => &**place,
+            ast::ExprKind::RefOf { mutable: true, place, .. } => {
+                self.ref_mut_argument = declared_here.map(|declared| (place.span, declared));
+                &**place
+            }
             _ => arg,
         };
         // `[SPN-1]`/`[SPN-3]` — a `MutSpan[T]` **is** the mutable access: it

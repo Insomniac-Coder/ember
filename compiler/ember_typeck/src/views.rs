@@ -469,6 +469,8 @@ impl Checker<'_> {
     pub(crate) fn read_only_change(&self, local: LocalId, write: Span) -> Option<Diagnostic> {
         let name = self.locals.get(local.0 as usize)?.name?;
         let change = self.line_code(write).unwrap_or_else(|| "this".to_string());
+        // `[FN-2a]` — `ref mut` before a name that only reads is `E3027`, not a change through it.
+        let given_to = self.ref_mut_argument.filter(|(at, _)| *at == write).and_then(|(_, declared)| self.declaring_function(declared));
         if let Some(view) = self.view_names.get(&local).copied() {
             if !matches!(view.kind, ViewKind::Part | ViewKind::Ref { mutable: false, .. }) {
                 return None;
@@ -486,7 +488,18 @@ impl Checker<'_> {
                     "`{change}` changes `{target}`, but `{name}` only reads it, and so does this function; for {a_noun} of your own write `{name} = copy of {target}`{line}"
                 )
             };
-            let mut diagnostic = Diagnostic::error(codes::E3023, write, message)
+            let mut diagnostic = match &given_to {
+                Some(callee) => {
+                    let target = self.written_line(view.target)?;
+                    let help = if view.changeable {
+                        format!("to change `{target}` through `{name}`, write `{name} = ref mut {target}`{line}")
+                    } else {
+                        format!("what it names is only read here too: for a value of your own write `{name} = copy of {target}`{line}")
+                    };
+                    Diagnostic::error(codes::E3027, write, format!("`{name}` only reads `{target}`, so it cannot be given to `{callee}` as `ref mut`")).help(help)
+                }
+                None => Diagnostic::error(codes::E3023, write, message),
+            }
                 .secondary(view.line, format!("`{name}` is made here, a view that only reads"))
                 .note("a name bound to a part, or written `ref`, only reads it [BRW-12], [BRW-15]");
             let at = Span::new(view.target.file, view.target.start, view.target.start);
@@ -513,6 +526,14 @@ impl Checker<'_> {
         let message = format!(
             "`{change}` changes the {noun} in `{source}`, but `{name}` only reads it; to change that {noun} through `{name}`, write `{fix}`"
         );
+        if let Some(callee) = given_to {
+            return Some(
+                Diagnostic::error(codes::E3027, write, format!("`{name}` only reads the {noun} in `{source}`, so it cannot be given to `{callee}` as `ref mut`"))
+                    .help(format!("to change that {noun} through `{name}`, write `{fix}`"))
+                    .secondary(decl.span, format!("`{name}` reads the {noun} here"))
+                    .note("a loop, pattern or opened name views what it names and only reads it [BRW-14], [BRW-15]"),
+            );
+        }
         Some(
             Diagnostic::error(codes::E3023, write, message)
                 .secondary(decl.span, format!("`{name}` reads the {noun} here"))
