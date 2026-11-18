@@ -3283,7 +3283,7 @@ impl Writer {
                         format!(
                             "## `[FFI-17a]` (ODR-199) — `{spelled}` as an Ember callable: its call is the thunk's, its capture the `std::function`, deleted with it.\n\
                              fn {ops}_callable(owns holder: CppFunction) -> {callable}:\n    return owned fn({}){returned} => {ops}_invoke(holder{})\n\n\
-                             fn {ops}_invoke(holder: ref CppFunction{}){returned}:\n    unsafe:  # SAFETY(ffi): the holder owns a live `{spelled}` of this signature\n        {}{ops}_call(holder.as_ptr(){})\n",
+                             fn {ops}_invoke(ref holder: CppFunction{}){returned}:\n    unsafe:  # SAFETY(ffi): the holder owns a live `{spelled}` of this signature\n        {}{ops}_call(holder.as_ptr(){})\n",
                             params.join(", "),
                             comma(&forwarded),
                             comma(&params),
@@ -7640,7 +7640,7 @@ fn wrapper_param(param: &str, ty: &CType) -> String {
         Some((inner, _)) if ty.mode == "bridged owned " => format!("owns {param}: {inner}"),
         // `[GRM-41]` — the mode on the name: `ref mut other: Bag`.
         Some((inner, _)) if ty.mode == "ref mut " => format!("ref mut {param}: {inner}"),
-        Some((inner, _)) if wrapped(ty) => format!("{param}: {}{inner}", ty.mode),
+        Some((inner, _)) if wrapped(ty) => format!("{}{param}: {inner}", written_mode(&ty.mode)),
         _ => format!("{}{param}: {}", written_mode(&ty.mode), ty.ember),
     }
 }
@@ -7728,7 +7728,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         let mutable_word = if mutable { "mut " } else { "" };
         if contracted {
             call_unsafe |= trampoline.is_some();
-            slots.push((self_name.clone(), format!("{self_name}: ref {mutable_word}{object}"), one(mutable), Some(reference)));
+            slots.push((self_name.clone(), format!("ref {mutable_word}{self_name}: {object}"), one(mutable), Some(reference)));
         } else {
             slots.push((self_name.clone(), format!("{self_name}: *{mutable_word}{object}"), Vec::new(), Some(address)));
         }
@@ -7811,7 +7811,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
             // `[GRM-41]` — a mutable one's mode on the name: `ref mut values: [c_int; 2]`.
             fixed if fixed.starts_with("fixed ") => match fixed_array(fixed, &inner).1.strip_prefix("mut ") {
                 Some(array) => format!("ref mut {param}: {array}"),
-                None => format!("{param}: ref {}", fixed_array(fixed, &inner).1),
+                None => format!("ref {param}: {}", fixed_array(fixed, &inner).1),
             },
             // ODR-198 — a variant: its enum.
             variant if variant.starts_with("variant ") => format!("{param}: {}", variant.trim().rsplit(' ').next().unwrap_or_default()),
@@ -7835,13 +7835,13 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
             continue;
         }
         let (text, contract_words, argument) = match (ty.mode.as_str(), contracted) {
-            ("ref ", true) => (format!("{param}: ref {inner}"), one(false), param.clone()),
-            ("ref mut ", true) => (format!("{param}: ref mut {inner}"), one(true), param.clone()),
+            ("ref ", true) => (format!("ref {param}: {inner}"), one(false), param.clone()),
+            ("ref mut ", true) => (format!("ref mut {param}: {inner}"), one(true), param.clone()),
             // The `owns T` the callee moves from, whose end frees what is left.
-            ("owned ", true) => (format!("{param}: ref mut {inner}"), one(true), format!("ref mut {param}")),
-            ("bridged ", true) => (format!("{param}: ref CppObject"), one(false), deref(format!("{param}.as_ptr() as *CppObject"), true)),
-            ("bridged mut " | "bridged owned ", true) => (format!("{param}: ref mut CppObject"), one(true), deref(format!("{param}.as_ptr() as *mut CppObject"), false)),
-            ("tramp ", true) => (format!("{param}: ref {mutable_word}{opaque}"), one(!constant), deref(format!("{param}.{prefix}_cpp_base.object"), constant)),
+            ("owned ", true) => (format!("ref mut {param}: {inner}"), one(true), format!("ref mut {param}")),
+            ("bridged ", true) => (format!("ref {param}: CppObject"), one(false), deref(format!("{param}.as_ptr() as *CppObject"), true)),
+            ("bridged mut " | "bridged owned ", true) => (format!("ref mut {param}: CppObject"), one(true), deref(format!("{param}.as_ptr() as *mut CppObject"), false)),
+            ("tramp ", true) => (format!("ref {mutable_word}{param}: {opaque}"), one(!constant), deref(format!("{param}.{prefix}_cpp_base.object"), constant)),
             // `[FFI-17a]` — `std::optional<T>`: a pointer to the value, null for none.
             ("optional ", true) => (format!("{param}: Option[ref {inner}]"), ["borrowed", "one", "nullable"].map(str::to_string).to_vec(), format!("{param}.as_ref()")),
             ("optional ", false) => {
@@ -7862,7 +7862,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
                 let held = format!("{prefix}_{}_held", param.trim_start_matches("r#"));
                 prelude.push(format!("{held} = {ops}_store({param})"));
                 if contracted {
-                    (format!("{param}: ref {inner}"), one(false), held)
+                    (format!("ref {param}: {inner}"), one(false), held)
                 } else {
                     (format!("{param}: *{inner}"), Vec::new(), format!("(ref {held}) as *{inner}"))
                 }
@@ -7871,7 +7871,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
             (fixed, true) if fixed.starts_with("fixed ") => {
                 let (extent, array) = fixed_array(fixed, &inner);
                 let words = ["borrowed".to_string(), format!("fixed({extent})")].into_iter().chain(array.starts_with("mut ").then(|| "exclusive".to_string())).collect();
-                (format!("{param}: ref {array}"), words, param.clone())
+                (format!("ref {param}: {array}"), words, param.clone())
             }
             (fixed, false) if fixed.starts_with("fixed ") => {
                 let mutable = fixed_array(fixed, &inner).1.starts_with("mut ");

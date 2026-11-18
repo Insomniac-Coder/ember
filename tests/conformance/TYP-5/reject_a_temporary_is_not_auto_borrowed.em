@@ -7,7 +7,7 @@
 struct Counter:
     n: int
 
-fn peek(c: ref Counter) -> int:
+fn peek(ref c: Counter) -> int:
     return c.n
 
 fn main():

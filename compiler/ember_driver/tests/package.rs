@@ -355,7 +355,7 @@ fn two_packages_requesting_one_implementation_are_refused() {
 fn a_package_uses_only_its_layers() {
     let dir = scratch();
     let core_only = "[package]\nname = \"firmware\"\nversion = \"1.0.0\"\nkind = \"lib\"\nlayers = [\"core\"]\n";
-    let fits = "pub fn checksum(data: ref [u8; 4]) -> Option[u32]:\n    total: u32 = 0\n    for byte in data:\n        total = total * 31 + byte as u32\n    if total == 0:\n        return None\n    return Some(max(total, 7))\n\npub fn clamp_to(x: i32, hi: i32) -> Result[i32, i32]:\n    if x > hi:\n        return Err(x - hi)\n    return Ok(x)\n";
+    let fits = "pub fn checksum(ref data: [u8; 4]) -> Option[u32]:\n    total: u32 = 0\n    for byte in data:\n        total = total * 31 + byte as u32\n    if total == 0:\n        return None\n    return Some(max(total, 7))\n\npub fn clamp_to(x: i32, hi: i32) -> Result[i32, i32]:\n    if x > hi:\n        return Err(x - hi)\n    return Ok(x)\n";
     package(&dir.join("firmware"), core_only, &[("lib", fits)]);
     let checked = ember(&["check"], &dir.join("firmware"));
     assert!(checked.ok, "core-only code was refused: {}", checked.stderr);

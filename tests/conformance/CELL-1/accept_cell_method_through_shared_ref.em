@@ -5,7 +5,7 @@
 
 # A compiler-known Cell operation must still be found through an ordinary
 # shared reference; auto-dereference reaches the Cell, not its payload.
-fn read_cell(cell: ref Cell[i32]) -> i32:
+fn read_cell(ref cell: Cell[i32]) -> i32:
     return cell.get()
 
 fn main():

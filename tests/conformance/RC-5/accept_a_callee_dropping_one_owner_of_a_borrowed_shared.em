@@ -12,7 +12,7 @@ class Holder:
 
 ## The callee drops the field holding one owner of the `Shared` its parameter points into; the
 ## caller's local is another owner, so the value lives (`[RC-5]`).
-fn read_then_drop(x: ref int, h: Holder) -> int:
+fn read_then_drop(ref x: int, h: Holder) -> int:
     h.shared = None
     return x
 

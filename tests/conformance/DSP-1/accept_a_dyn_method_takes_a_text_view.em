@@ -19,7 +19,7 @@ struct Echo implements Titled:
     fn title(default: StrView) -> StrView:
         return default
 
-fn show(p: ref dyn Titled, s: StrView):
+fn show(ref p: dyn Titled, s: StrView):
     println(p.title(s))
 
 fn main():

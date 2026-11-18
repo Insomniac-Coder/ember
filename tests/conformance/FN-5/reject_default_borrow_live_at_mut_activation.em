@@ -8,7 +8,7 @@ struct Counter:
     total: int
 
 extend Counter:
-    fn collide(alias: ref int = ref this.total):
+    fn collide(ref alias: int = ref this.total):
         this.total += 1
         println(alias)
 

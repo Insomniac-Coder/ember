@@ -17,7 +17,7 @@ interface Child: needs Parent:
 class Pixel implements Parent, Child:
     marker: T
 
-fn total(value: ref dyn Child) -> i32:
+fn total(ref value: dyn Child) -> i32:
     return value.parent() + value.child()
 
 fn main():

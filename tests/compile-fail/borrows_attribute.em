@@ -9,13 +9,13 @@
 ## does not name. It is part of the function's public contract: `[VER-2]` makes
 ## widening it a breaking change, so a typo in it is worth catching loudly.
 
-fn names_a_value(a: ref i32, n: i32) -> ref i32 from n:
+fn names_a_value(ref a: i32, n: i32) -> ref i32 from n:
     return a
 
-fn names_nothing(a: ref i32) -> ref i32 from missing:
+fn names_nothing(ref a: i32) -> ref i32 from missing:
     return a
 
-fn returns_a_value(a: ref i32) -> i32 from a:
+fn returns_a_value(ref a: i32) -> i32 from a:
     return a
 
 fn main():

@@ -7,7 +7,7 @@
 
 from std.mem import UnsafeCell
 
-fn change(shared: ref UnsafeCell[i32]):
+fn change(ref shared: UnsafeCell[i32]):
     unsafe:  # SAFETY(aliasing): nothing else reaches this storage while it is used
         pointer: *mut i32 = shared.get()
         write(pointer, 0, 42)

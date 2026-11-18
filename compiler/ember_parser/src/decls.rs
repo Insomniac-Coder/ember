@@ -1234,7 +1234,7 @@ impl Parser<'_> {
 
         let name = self.expect_ident();
         self.expect_punct(Punct::Colon);
-        let mode = if !worded && self.refuse_mode_in_type(name) { Mode::Mut } else { mode };
+        let mode = if worded { mode } else { self.refuse_mode_in_type(name).unwrap_or(mode) };
         // `[LEX-15]`, `[LT-48]` — `runtime` is a keyword only after the `:` and directly before `dyn`.
         if self.at_contextual("runtime") && self.at_kw_at(1, Kw::Dyn) {
             self.bump();
@@ -1267,20 +1267,31 @@ impl Parser<'_> {
     /// Refused, the words are taken and the parameter is read as the line written right is (`ref mut
     /// c: Counter`), so what is checked after is what was meant: whether it was.
     /// Called for a name with no word before it: `ref mut x: ref mut T` is a parameter of a view type.
-    pub(crate) fn refuse_mode_in_type(&mut self, name: Ident) -> bool {
-        if !(self.at_kw(Kw::Ref) && self.at_kw_at(1, Kw::Mut)) || self.in_extern_block {
-            return false;
+    pub(crate) fn refuse_mode_in_type(&mut self, name: Ident) -> Option<Mode> {
+        if !self.at_kw(Kw::Ref) || self.in_extern_block {
+            return None;
         }
-        let words = self.span().to(self.tokens[self.pos + 1].span);
-        let written = ember_span::Span::new(name.span.file, name.span.start, self.tokens[self.pos + 2].span.start);
-        let line = self.line_with(written, &format!("ref mut {}: ", name.name));
+        let mutable = self.at_kw_at(1, Kw::Mut);
+        let n = if mutable { 2 } else { 1 };
+        let words = if mutable { self.span().to(self.tokens[self.pos + 1].span) } else { self.span() };
+        let written = ember_span::Span::new(name.span.file, name.span.start, self.tokens[self.pos + n].span.start);
+        let word = if mutable { "ref mut" } else { "ref" };
+        let line = self.line_with(written, &format!("{word} {}: ", name.name));
         self.report(
             Diagnostic::error(codes::E0117, words, "the mode goes on the name, not in its type")
-                .help(format!("write `{line}`")),
+                .help(format!("write `{line}`"))
+                .migrate_edits(
+                    format!("move `{word}` to the name"),
+                    vec![
+                        (ember_span::Span::new(name.span.file, name.span.start, name.span.start), ember_diag::Replacement::Text(format!("{word} "))),
+                        (ember_span::Span::new(name.span.file, self.span().start, self.tokens[self.pos + n].span.start), ember_diag::Replacement::Text(String::new())),
+                    ],
+                ),
         );
-        self.bump();
-        self.bump();
-        true
+        for _ in 0..n {
+            self.bump();
+        }
+        Some(if mutable { Mode::Mut } else { Mode::Borrow })
     }
 
     pub(crate) fn parse_param_word(&mut self, in_type: bool) -> (Mode, bool) {

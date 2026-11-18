@@ -48,7 +48,7 @@ fn expired() -> Weak[Shared[Token]]:
     strong = Shared(Token(7))
     return Weak(strong)
 
-fn inspect(value: ref dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
+fn inspect(ref value: dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
     return value.observe(weak) + value.bump()
 
 # `program` holds the test, so its values die before `main`'s last

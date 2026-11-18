@@ -35,7 +35,7 @@ class Reader implements Observe, Bump:
     fn bump() -> i32:
         return 1
 
-fn inspect(value: ref dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
+fn inspect(ref value: dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
     return value.observe(weak) + value.bump()
 
 # `program` holds the test, so its values die before `main`'s last

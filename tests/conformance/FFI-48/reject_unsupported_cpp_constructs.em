@@ -17,7 +17,7 @@
 import cpp "unsupported.hpp"
 import cpp "nttp.hpp" with (project = "nttp") as n
 
-fn narrow(shape: ref cpp.Shape) -> i32:
+fn narrow(ref shape: cpp.Shape) -> i32:
     square = cast shape if cpp.Square    #$ error[E5034]: a cast across a C++ hierarchy
     return 0
 

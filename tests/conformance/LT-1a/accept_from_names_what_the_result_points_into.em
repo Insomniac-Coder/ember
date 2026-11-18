@@ -20,7 +20,7 @@ struct WordIter:
         this.at += 1
         return Some(ref this.owner[i])
 
-fn longest(words: ref Array[String]) -> Option[ref String] from words:
+fn longest(ref words: Array[String]) -> Option[ref String] from words:
     it = WordIter(words, 0)
     best = 0
     at = 0

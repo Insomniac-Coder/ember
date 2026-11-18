@@ -24,7 +24,7 @@ class Observer implements Observe:
     fn observer() -> Weak[Shared[Token]]:
         return this.weak
 
-fn inspect(value: ref dyn Observe) -> Weak[Shared[Token]]:
+fn inspect(ref value: dyn Observe) -> Weak[Shared[Token]]:
     return value.observer()
 
 fn expired() -> Weak[Shared[Token]]:

@@ -9,7 +9,7 @@ interface Base:
 interface Child: needs Base:
     fn draw() -> i32
 
-fn take(x: ref dyn Child) -> i32:
+fn take(ref x: dyn Child) -> i32:
     return x.inspect() #$ error[E2020]: requires `Self: Sized`
 
 fn main():

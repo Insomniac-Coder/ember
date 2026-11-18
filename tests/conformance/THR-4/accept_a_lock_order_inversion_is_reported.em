@@ -12,7 +12,7 @@
 from std.sync import Mutex
 import std.thread
 
-fn both(first: ref Mutex[int], second: ref Mutex[int]) -> int:
+fn both(ref first: Mutex[int], ref second: Mutex[int]) -> int:
     with x = first.lock():
         with y = second.lock():
             return x + y

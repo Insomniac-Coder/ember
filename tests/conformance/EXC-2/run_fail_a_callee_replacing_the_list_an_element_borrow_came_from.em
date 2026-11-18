@@ -14,7 +14,7 @@ class Bag:
 
 ## The callee replaces the list its parameter's element came from: as clearing it, a write while
 ## the caller's read access holds (`[EXC-2]`).
-fn read_then_replace(x: ref int, b: Bag) -> int:
+fn read_then_replace(ref x: int, b: Bag) -> int:
     println("before", x)
     b.items = [1]
     return x

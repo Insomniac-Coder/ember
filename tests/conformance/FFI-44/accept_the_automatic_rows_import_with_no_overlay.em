@@ -49,7 +49,7 @@ fn tagged() -> Result[owns cpp.Tagged, CppError]:
     unsafe:  # SAFETY(ffi): the constructor makes an object the box owns
         return cpp.Tagged.new()
 
-fn id_and_tag(tagged: ref cpp.Tagged) -> (c_int, c_int):
+fn id_and_tag(ref tagged: cpp.Tagged) -> (c_int, c_int):
     unsafe:  # SAFETY(ffi): the box's object, read for the calls
         return (tagged.id(), tagged.tag())
 

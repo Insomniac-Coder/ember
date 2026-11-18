@@ -13,7 +13,7 @@ class Holder:
 
 ## The callee replaces the only owner of the `Shared` its parameter points into: the caller's
 ## borrow holds the payload's access (`[HEAP-5]`) for the call, so the replacement panics.
-fn read_then_replace(x: ref int, h: Holder) -> int:
+fn read_then_replace(ref x: int, h: Holder) -> int:
     h.shared = Shared(9)
     return x
 

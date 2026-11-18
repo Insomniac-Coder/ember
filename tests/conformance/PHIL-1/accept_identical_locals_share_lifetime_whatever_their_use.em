@@ -17,7 +17,7 @@ struct Noisy:
     fn drop():
         println(f"drop {this.name}")
 
-fn peek(n: ref Noisy) -> int:
+fn peek(ref n: Noisy) -> int:
     return n.name.len()
 
 fn main():

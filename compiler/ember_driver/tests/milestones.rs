@@ -1014,7 +1014,7 @@ fn inspect_cost_reports_each_row_by_site() {
          extend Square implements Shape:\n    fn area() -> int:\n        return this.side * this.side\n\n\
          class Counter:\n    n: int = 0\n\n    fn bump():\n        this.n += 1\n\n\
          fn bump_all(counters: Array[Counter]):\n    for c in counters:\n        keep = c\n        keep.bump()\n\n\
-         fn measure(shape: ref dyn Shape) -> int:\n    return shape.area()\n\n\
+         fn measure(ref shape: dyn Shape) -> int:\n    return shape.area()\n\n\
          fn get(xs: Array[int], i: int) -> int:\n    return xs[i]\n\n\
          fn main():\n    xs = [1, 2, 3]\n    s = Set[int]()\n    s.add(owns 2)\n    text = f\"value {xs[0]}\"\n\
          \x20   square = Square(side = 2)\n    counters = [Counter(), Counter()]\n    bump_all(counters)\n\
@@ -3624,7 +3624,7 @@ fn calls_foreign_lists_what_an_item_reaches_with_each_contract() {
          extend Square implements Shape:\n    fn area() -> i64:\n        return labs(this.side * this.side)\n\n\
          class Counter:\n    count: i32\n\n    fn bump() -> i32:\n        this.count += clib.abs(-1)\n        return this.count\n\n\
          fn noisy() -> i32:\n    unsafe:  # SAFETY(ffi): rand has no precondition\n        return clib.rand()\n\n\
-         fn measure(shape: ref dyn Shape) -> i64:\n    return shape.area()\n\n\
+         fn measure(ref shape: dyn Shape) -> i64:\n    return shape.area()\n\n\
          fn main():\n    counter = Counter(count = 0)\n    println(counter.bump(), length(c\"abc\"), noisy())\n\
          \x20   pick = imaxabs\n    println(pick(-4))\n    square = Square(side = 2)\n    println(measure(ref square))\n",
     )

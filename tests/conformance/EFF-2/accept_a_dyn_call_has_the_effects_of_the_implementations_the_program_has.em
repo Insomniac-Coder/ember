@@ -25,7 +25,7 @@ extend Strip implements Shape:
         return this.long
 
 @noalloc
-fn area_of(shape: ref dyn Shape) -> int:
+fn area_of(ref shape: dyn Shape) -> int:
     return shape.area()
 
 fn main():

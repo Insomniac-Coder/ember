@@ -35,7 +35,7 @@ fn shelf() -> Result[owns cpp.Shelf, CppError]:
     unsafe:  # SAFETY(ffi): the constructor makes a shelf the box owns
         return cpp.Shelf.new()
 
-fn last(of: ref cpp.Shelf, other: ref cpp.Shelf) -> ref c_int:
+fn last(ref of: cpp.Shelf, ref other: cpp.Shelf) -> ref c_int:
     unsafe:  # SAFETY(ffi): both shelves are live
         return of.last_of(other)
 

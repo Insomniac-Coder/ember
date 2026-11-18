@@ -30,10 +30,10 @@ extend S implements Sized2:
     fn area(scale: int) -> int:
         return this.n * scale
 
-fn via_a(x: ref dyn A) -> int:
+fn via_a(ref x: dyn A) -> int:
     return x.m()
 
-fn via_b(x: ref dyn B) -> int:
+fn via_b(ref x: dyn B) -> int:
     return x.m()
 
 fn main():

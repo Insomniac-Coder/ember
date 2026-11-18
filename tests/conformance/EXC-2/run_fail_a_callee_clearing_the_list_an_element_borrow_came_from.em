@@ -14,7 +14,7 @@ class Bag:
 
 ## The callee clears the list its parameter's element came from: the caller's loan of `b.items`
 ## holds a read access for the call (`[EXC-2]`), so the clear panics before freeing anything.
-fn read_then_clear(x: ref int, b: Bag) -> int:
+fn read_then_clear(ref x: int, b: Bag) -> int:
     println("before", x)
     b.items.clear()
     return x

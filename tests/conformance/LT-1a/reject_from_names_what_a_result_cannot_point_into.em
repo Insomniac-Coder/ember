@@ -15,7 +15,7 @@ struct Cursor:
     fn second() -> ref int from missing:    #$ error[E2031]: `from` names `missing`, which is not a parameter or a field of `this`
         return ref this.owner[1]
 
-fn count(xs: ref Array[int]) -> int from xs:    #$ error[E2031]: `from` is only meaningful on a function that returns a view
+fn count(ref xs: Array[int]) -> int from xs:    #$ error[E2031]: `from` is only meaningful on a function that returns a view
     return xs.len()
 
 fn main():

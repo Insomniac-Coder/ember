@@ -11,32 +11,32 @@
 
 @view
 struct Cursor:
-    at: ref i32
+    at: ref String
 
 ## The borrow is of a local, so the struct that carries it may not leave.
 fn escaping() -> Cursor:
-    n: i32 = 1
+    n: String = "1".to_string()
     c: Cursor = Cursor(ref n)
     return c
 
 ## `[LT-1a]` reaches through the struct: the returned view points into `b`
 ## whatever it is wrapped in.
-fn wrapped(a: ref i32, b: ref i32) -> Cursor from a:
+fn wrapped(ref a: String, ref b: String) -> Cursor from a:
     return Cursor(b)
 
 ## And the caller holds the borrow for as long as it holds the struct.
-fn hand_back(a: ref i32) -> Cursor:
+fn hand_back(ref a: String) -> Cursor:
     return Cursor(a)
 
-fn conflicting() -> i32:
-    k: i32 = 1
+fn conflicting() -> int:
+    k: String = "1".to_string()
     c: Cursor = hand_back(ref k)
-    k = 5
-    return c.at
+    k = "5".to_string()
+    return c.at.len()
 
 fn main():
     println(escaping().at)
-    x: i32 = 1
-    y: i32 = 2
+    x: String = "1".to_string()
+    y: String = "2".to_string()
     println(wrapped(ref x, ref y).at)
     println(conflicting())

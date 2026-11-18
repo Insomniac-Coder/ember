@@ -11,7 +11,7 @@ pub fn read(x: int) -> Result[int, SensorError]:
         return Err(SensorError(code=x))
     return Ok(x)
 
-pub fn pick(values: ref [int; 3]) -> Option[int]:
+pub fn pick(ref values: [int; 3]) -> Option[int]:
     if values[0] > values[1]:
         return Some(values[0])
     return None

@@ -20,7 +20,7 @@ class Holder:
 extend[T] Holder[T] implements Parent, Child:
     pass
 
-fn answer(value: ref dyn Child) -> i32:
+fn answer(ref value: dyn Child) -> i32:
     return value.parent() + value.child()
 
 fn main():

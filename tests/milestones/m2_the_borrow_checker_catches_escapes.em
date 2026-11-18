@@ -10,7 +10,7 @@
 ## storage ends with the frame.
 
 ## Fine: the region is tied to the parameter by `[LT-1]`'s elision.
-fn first(xs: ref i32) -> ref i32:
+fn first(ref xs: String) -> ref String:
     return xs
 
 fn bad() -> ref i32:
@@ -18,7 +18,6 @@ fn bad() -> ref i32:
     return ref n
 
 fn main():
-    n: i32 = 7
-    r: ref i32 = ref n
-    v: i32 = first(r)
-    println(v)
+    n: String = "7".to_string()
+    r: ref String = ref n
+    println(first(r))

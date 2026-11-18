@@ -18,7 +18,7 @@ extend Rod implements Sized2:    #$ warning[W2192]: `support.old.Sized2` is depr
 fn measure(t: T) -> int:
     return t.size()
 
-fn measure_dyn(t: ref dyn Sized2) -> int:    #$ warning[W2192]: `support.old.Sized2` is deprecated since 0.9
+fn measure_dyn(ref t: dyn Sized2) -> int:    #$ warning[W2192]: `support.old.Sized2` is deprecated since 0.9
     return t.size()
 
 fn main():

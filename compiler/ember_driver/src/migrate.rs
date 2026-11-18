@@ -1,6 +1,6 @@
 //! `[CLI-20]` — the 0.9.10 spellings M1 replaces, rewritten from a file's tokens and tree: the words
 //! on parameters and before values (`owned` to `owns`, `mut x` to `ref mut x`, `x: ref mut T` to
-//! `ref mut x: T`; `x: ref T` to `x: T` is M4's, `M1-plan.md`), `str` and `cstr` to `StrView` and `CStrView`, an `if Some(p) = e:` header to
+//! `ref mut x: T`, `x: ref T` to `ref x: T`), `str` and `cstr` to `StrView` and `CStrView`, an `if Some(p) = e:` header to
 //! `if e exists as p:`, `@borrows(p)` to `-> T from p`, the renamed attributes, `.copied()` and
 //! `.cloned()` to `.copy_each()`, and type parameters on a line of their own with `needs` before
 //! their bounds (`[GRM-40]`). The repository's own migration makes these alone (`migrate_file`); a
@@ -185,8 +185,8 @@ fn owned_to_owns(words: &Words, out: &mut Rewrites) {
 
 /// `[FN-1]`, `[GRM-41]` — in each parameter list (a function's, a lambda's, a callable type's): `mut`
 /// alone is `ref mut`, and a mode written in the type (`c: ref mut Counter`) goes on the name
-/// (`ref mut c: Counter`). `x: ref T` is left: as `x: T` it would be passed as a copy where `T` is a
-/// `Copy` type, a class handle among them until M4, and a view into it would end with the call.
+/// (`ref mut c: Counter`), `x: ref T` likewise (`ref x: T`, never a plain `x: T`: a `Copy` type is passed
+/// as a copy, and a view into it would end with the call).
 fn parameter_words(words: &Words, foreign: &[Span], out: &mut Rewrites) {
     for at in 0..words.tokens.len() {
         if !words.kw(at, Kw::Fn) {
@@ -224,16 +224,17 @@ fn parameter(words: &Words, first: usize, end: usize, in_foreign: bool, out: &mu
         out.rewrite(words.at(at), "ref ", "`mut` on a parameter is `ref mut`");
         return;
     }
-    // `x: ref mut T`, with no word before the name.
-    if !in_foreign
-        && words.is_name(first) && words.punct(first + 1, Punct::Colon) && words.kw(first + 2, Kw::Ref) && words.kw(first + 3, Kw::Mut) {
-        let ty = first + 4;
+    // `x: ref mut T` and `x: ref T`, with no word before the name (`[FN-1]`: `E0117`).
+    if !in_foreign && words.is_name(first) && words.punct(first + 1, Punct::Colon) && words.kw(first + 2, Kw::Ref) {
+        let mutable = words.kw(first + 3, Kw::Mut);
+        let ty = first + if mutable { 4 } else { 3 };
         if ty >= end {
             return;
         }
         let word = Span::new(words.file, words.span(first + 2).start, words.span(ty).start);
-        out.rewrite(word, "", "the mode goes on the name: `ref mut x: T`");
-        out.edits.push((words.at(words.span(first).start), "ref mut ".to_string()));
+        let moved = if mutable { "ref mut " } else { "ref " };
+        out.rewrite(word, "", format!("the mode goes on the name: `{moved}x: T`"));
+        out.edits.push((words.at(words.span(first).start), moved.to_string()));
     }
 }
 
@@ -596,7 +597,7 @@ mod tests {
              for x in owned xs:\n        pass\n    total = xs.iter().copied().sum()\n",
         );
         let expected = "[T: needs (Clone, Eq)]\nstruct Pair:\n    a: T\n\n    fn first() -> ref T from a:\n        return ref this.a\n\n\
-             [T]\nfn pick(xs: ref Array[T], ys: ref Array[T]) -> ref T from xs:\n    return ref xs[0]\n\n\
+             [T]\nfn pick(ref xs: Array[T], ref ys: Array[T]) -> ref T from xs:\n    return ref xs[0]\n\n\
              @no_alias_checks\nfn bump(ref mut n: int, owns s: String, ref mut c: int) where T: needs (Ord, Hash):\n    n += 1\n\n\
              fn main():\n    name: StrView = \"a\"\n    h: Option[int] = Some(1)\n    if h exists as copy of v:\n        v += 1\n    \
              while it.next() exists as x:\n        pass\n    if Some(Mode.Fast) = m:\n        pass\n    \

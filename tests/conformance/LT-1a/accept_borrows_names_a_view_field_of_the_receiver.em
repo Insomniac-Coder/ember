@@ -63,7 +63,7 @@ struct Holder:
         return ref this.owner[this.at]
 
 # The item outlives `it`, a local of this function: it borrows `words`.
-fn first_long(words: ref Array[String]) -> Option[ref String]:
+fn first_long(ref words: Array[String]) -> Option[ref String]:
     it = WordIter(words, 0)
     while true:
         match it.next():

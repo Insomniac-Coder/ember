@@ -25,13 +25,13 @@ fn find(xs: Span[int], wanted: int) -> Option[int]:
             return Some(i)
     return None
 
-fn empty(o: ref Option[int]) -> bool:
+fn empty(ref o: Option[int]) -> bool:
     return o is None
 
-fn same(a: ref int, b: ref int) -> bool:
+fn same(ref a: int, ref b: int) -> bool:
     return a is b
 
-fn same_node(a: ref Node, b: ref Node) -> bool:
+fn same_node(ref a: Node, ref b: Node) -> bool:
     return a is b
 
 fn main():

@@ -24,7 +24,7 @@ fn second_of_new() -> ref c_int:
             Err(_):
                 panic("no numbers")
 
-fn last_of_new(mine: ref cpp.Shelf) -> ref c_int:
+fn last_of_new(ref mine: cpp.Shelf) -> ref c_int:
     match shelf():
         Ok(theirs):
             unsafe:  # SAFETY(ffi): both shelves are live during the call

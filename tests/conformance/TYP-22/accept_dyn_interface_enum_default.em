@@ -13,7 +13,7 @@ interface Answer:
 enum Signal implements Answer:
     Ready
 
-fn answer_ref(value: ref dyn Answer) -> i32:
+fn answer_ref(ref value: dyn Answer) -> i32:
     return value.answer()
 
 fn main():

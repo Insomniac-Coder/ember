@@ -15,7 +15,7 @@ struct Payload implements Render:
     fn render() -> i32:
         return 42
 
-fn render_it(value: ref dyn Render) -> i32:
+fn render_it(ref value: dyn Render) -> i32:
     return value.render()
 
 fn main():

@@ -67,7 +67,7 @@ struct Temp implements Display:
 fn show(x: T) -> String:
     return f"<{x}>"
 
-fn by_ref(t: ref Thing) -> String:
+fn by_ref(ref t: Thing) -> String:
     return f"[{t}]"
 
 fn main():

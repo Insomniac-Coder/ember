@@ -145,7 +145,7 @@ struct Big:
     b: i64
     c: i64
 
-fn total(x: ref Big) -> i64:
+fn total(ref x: Big) -> i64:
     return x.a + x.b + x.c
 
 fn make(n: i64) -> Big:
@@ -184,7 +184,7 @@ struct Stats:
     name: i64
 
 @noinline
-fn sum(p: ref Pair) -> i64:
+fn sum(ref p: Pair) -> i64:
     return p.a + p.b
 
 @noinline
@@ -192,20 +192,20 @@ fn bump(ref mut p: Pair):
     p.a += 1
 
 @noinline
-fn poke(cell: ref Cell[i64]):
+fn poke(ref cell: Cell[i64]):
     cell.set(cell.get() + 1)
 
 @noinline
-fn grow(cell: ref RefCell[i64]):
+fn grow(ref cell: RefCell[i64]):
     with g = cell.borrow_mut():
         g += 1
 
 @noinline
-fn tick(stats: ref Stats):
+fn tick(ref stats: Stats):
     stats.hits.fetch_add(1, MemoryOrder.Relaxed)
 
 @noinline
-fn locked(m: ref Mutex[i64]) -> i64:
+fn locked(ref m: Mutex[i64]) -> i64:
     with g = m.lock():
         return g
 
@@ -250,7 +250,7 @@ fn cg_ll_3_functions_name_the_runtimes_cpu_and_elements_are_scaled_addresses() {
     let ir = ir(
         "\
 @noinline
-fn total(xs: ref Array[i64]) -> i64:
+fn total(ref xs: Array[i64]) -> i64:
     sum = 0
     for i in 0..xs.len():
         sum += xs[i]
@@ -406,7 +406,7 @@ fn clo_1_a_lambda_in_an_adapter_is_called_directly() {
         "\
 fn main():
     xs = [1, 2, 3]
-    it = xs.iter().map(owns fn(x: ref int) -> int => x * 2)
+    it = xs.iter().map(owns fn(ref x: int) -> int => x * 2)
     total = 0
     for v in it:
         total += v

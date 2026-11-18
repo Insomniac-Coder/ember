@@ -10,7 +10,7 @@ from generic_enum_dynamic_box_imported_support.model import Signal
 from generic_enum_dynamic_box_imported_support.model import Token
 from generic_enum_dynamic_box_imported_support.traits import Render
 
-fn render(value: ref dyn Render) -> i32:
+fn render(ref value: dyn Render) -> i32:
     return value.render()
 
 fn main():

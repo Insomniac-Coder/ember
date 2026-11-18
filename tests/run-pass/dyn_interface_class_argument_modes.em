@@ -13,7 +13,7 @@ class Adjuster implements Adjust:
         value = value + amount
         return value
 
-fn adjust_it(source: ref dyn Adjust, ref mut value: i32) -> i32:
+fn adjust_it(ref source: dyn Adjust, ref mut value: i32) -> i32:
     return source.adjust(value = ref mut value, amount = 2)
 
 fn main():

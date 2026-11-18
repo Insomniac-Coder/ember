@@ -5,7 +5,7 @@
 ## to check at run time, so the suggestion is to change the type.
 
 @no_alias_checks
-fn peek(cell: ref RefCell[int]) -> int:
+fn peek(ref cell: RefCell[int]) -> int:
     with g = cell.borrow():  #$ error[E4030]: the check's reason is `requested_by_type`
         return g
 

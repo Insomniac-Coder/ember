@@ -16,7 +16,7 @@ extend Good implements Scored:
         return this.value
 
 [T: needs Scored]
-fn read_score(value: ref T) -> i32:
+fn read_score(ref value: T) -> i32:
     return value.score()
 
 fn main():

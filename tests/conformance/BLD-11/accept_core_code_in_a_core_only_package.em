@@ -3,7 +3,7 @@
 ## `[BLD-11]`, `[STD-6]` — a package that declares `layers = ["core"]` may use core: options,
 ## results, integers and fixed arrays.
 
-pub fn checksum(data: ref [u8; 4]) -> Option[u32]:
+pub fn checksum(ref data: [u8; 4]) -> Option[u32]:
     total: u32 = 0
     for byte in data:
         total = total * 31 + byte as u32

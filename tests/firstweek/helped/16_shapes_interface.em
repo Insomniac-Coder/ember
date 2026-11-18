@@ -46,7 +46,7 @@ extend Triangle implements Shape:
     fn name() -> String:
         return f"triangle {this.a}/{this.b}/{this.c}"
 
-fn describe(s: ref dyn Shape):
+fn describe(ref s: dyn Shape):
     println(f"{s.name():<20} area {s.area():8.2f}  perimeter {s.perimeter():8.2f}")
 
 fn total_area(shapes: Array[owns dyn Shape]) -> float:

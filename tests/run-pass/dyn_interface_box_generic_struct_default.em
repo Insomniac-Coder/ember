@@ -13,7 +13,7 @@ interface Answer:
 struct Payload implements Answer:
     value: T
 
-fn answer_it(value: ref dyn Answer) -> i32:
+fn answer_it(ref value: dyn Answer) -> i32:
     return value.answer()
 
 fn main():

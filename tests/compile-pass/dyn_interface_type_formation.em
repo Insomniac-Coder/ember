@@ -5,7 +5,7 @@ interface Drawable:
     fn draw():
         pass
 
-fn take(x: ref dyn Drawable):
+fn take(ref x: dyn Drawable):
     pass
 
 fn main():

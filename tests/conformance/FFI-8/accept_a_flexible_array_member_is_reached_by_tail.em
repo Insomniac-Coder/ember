@@ -14,7 +14,7 @@ from std.mem import size_of
 unsafe import c "./packets.c" with (overlay = "overlays/packets.em") as p
 
 ## The packet's elements: a view that borrows it.
-fn elements(packet: ref p.Packet) -> Span[i64]:
+fn elements(ref packet: p.Packet) -> Span[i64]:
     unsafe:  # SAFETY: C allocated `count` elements after the packet
         return packet.tail(packet.count as usize)
 

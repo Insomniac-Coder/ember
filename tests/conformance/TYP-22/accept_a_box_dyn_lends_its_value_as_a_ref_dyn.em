@@ -32,7 +32,7 @@ extend Tile implements Shape:
     fn area() -> int:
         return this.size
 
-fn measure(s: ref dyn Shape) -> int:
+fn measure(ref s: dyn Shape) -> int:
     return s.area()
 
 struct Holder:

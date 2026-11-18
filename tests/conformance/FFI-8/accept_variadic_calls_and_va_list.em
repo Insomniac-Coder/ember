@@ -16,7 +16,7 @@ from std.ffi import VaList, c_char, c_int
 # SAFETY: the test's own C, which runs nothing before `main`
 unsafe import c "./variadic.c" with (overlay = "overlays/variadic.em") as v
 
-fn shown(bytes: ref [u8; 32], length: c_int) -> String:
+fn shown(ref bytes: [u8; 32], length: c_int) -> String:
     return String.from(bytes[0..length as int].to_str().unwrap())
 
 ## What the logger calls with its arguments: they go on to `vsnprintf`.

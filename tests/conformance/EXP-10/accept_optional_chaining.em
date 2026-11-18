@@ -29,7 +29,7 @@ struct P:
     fn shout():
         println(this.name)
 
-fn through(o: ref Option[P]) -> Option[int]:
+fn through(ref o: Option[P]) -> Option[int]:
     return o?.x
 
 fn main():

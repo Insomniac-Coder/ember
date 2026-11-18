@@ -24,7 +24,7 @@ class Holder implements Observe:
     fn observer() -> Weak[Token]:
         return this.weak
 
-fn inspect(value: ref dyn Observe) -> Weak[Token]:
+fn inspect(ref value: dyn Observe) -> Weak[Token]:
     return value.observer()
 
 fn main():

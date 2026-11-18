@@ -12,7 +12,7 @@ struct Pair:
     a: StrView
     b: StrView
 
-fn both(p: ref Pair) -> (ref StrView, ref StrView):
+fn both(ref p: Pair) -> (ref StrView, ref StrView):
     e: ref Pair = p
     return (ref e.a, ref e.b)
 

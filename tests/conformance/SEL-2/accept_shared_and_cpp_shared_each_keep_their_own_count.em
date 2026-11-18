@@ -6,7 +6,7 @@
 # `Copy`, `[HEAP-6]`: a copy retains.)
 from std.ffi import CppShared
 
-fn read_through_cpp(pointer: ref CppShared[i32]) -> i32:
+fn read_through_cpp(ref pointer: CppShared[i32]) -> i32:
     copy: CppShared[i32] = pointer.clone()
     return copy.get()
 

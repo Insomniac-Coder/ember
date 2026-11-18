@@ -52598,7 +52598,7 @@ impl<'a> Checker<'a> {
                     // (`i64`, `f64`), as any expression does: kept untyped, the lambda was a
                     // `fn() -> an integer`, which converted to no `fn` type and whose C was `int32_t`.
                     // D-876 — and a body that reads a value through a reference, which only a copy
-                    // could give by value, gives the reference: `fn(w: ref String) => w` is a
+                    // could give by value, gives the reference: `fn(ref w: String) => w` is a
                     // `fn(ref String) -> ref String`, as it is with the result type written. Read
                     // through, the `String` was moved out of the borrowed parameter (`E3013`).
                     None => {

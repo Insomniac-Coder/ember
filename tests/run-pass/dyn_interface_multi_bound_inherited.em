@@ -21,7 +21,7 @@ struct Pair implements Parent, Child:
     fn child() -> i32:
         return this.right
 
-fn total(value: ref dyn Parent + Child) -> i32:
+fn total(ref value: dyn Parent + Child) -> i32:
     return value.parent() + value.child()
 
 fn main():

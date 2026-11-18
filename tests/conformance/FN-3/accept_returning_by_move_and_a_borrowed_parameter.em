@@ -11,7 +11,7 @@ fn make() -> Array[int]:
     values.push(owns 3)
     return values
 
-fn first(values: ref Array[int]) -> ref int:
+fn first(ref values: Array[int]) -> ref int:
     return values[0]
 
 fn main():

@@ -6,16 +6,16 @@
 # is text, not a list (the compiler keeps a `String` as a list marked as text).
 
 interface Titled:
-    fn title(default: ref String) -> StrView
+    fn title(ref default: String) -> StrView
 
 struct Mine implements Titled:
     name: String
-    fn title(default: ref String) -> StrView:
+    fn title(ref default: String) -> StrView:
         return this.name
 
 struct Yours implements Titled:
     name: String
-    fn title(default: ref String) -> StrView:
+    fn title(ref default: String) -> StrView:
         return default
 
 fn show(p: runtime dyn Titled):

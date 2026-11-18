@@ -8,20 +8,20 @@
 
 @view
 struct Cursor:
-    at: ref i32
+    at: ref String
 
-fn hand_back(a: ref i32) -> Cursor:
+fn hand_back(ref a: String) -> Cursor:
     return Cursor(a)
 
 fn main():
-    k: i32 = 4
+    k: String = "4444".to_string()
     c: Cursor = hand_back(ref k)
-    v: i32 = c.at
+    v: int = c.at.len()
     ## `c` is finished with, so `k` is the owner's again.
-    k = 5
-    println(v + k)
+    k = "55555".to_string()
+    println(v + k.len())
 
     ## A view struct built and read inside one expression borrows for no
     ## longer than the expression.
-    n: i32 = 7
+    n: String = "7".to_string()
     println(Cursor(ref n).at)

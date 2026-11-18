@@ -20,7 +20,7 @@ extend Both implements Right:
     fn describe() -> i32:
         return 22
 
-fn call(value: ref dyn Left + Right) -> i32:
+fn call(ref value: dyn Left + Right) -> i32:
     return value.describe()
 
 fn main():

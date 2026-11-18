@@ -21,7 +21,7 @@ class Child:
 
 ## The callee ends the owner it was given while its other parameter borrows into the owner's
 ## object: the caller's loan keeps the object alive (`[RC-5]`) to the end of its statement.
-fn take(r: ref int, owns c: Child) -> int:
+fn take(ref r: int, owns c: Child) -> int:
     println("dropping")
     mem.drop(c)
     println("read", r)

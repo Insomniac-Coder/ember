@@ -8,7 +8,7 @@
 from generic_enum_generic_interface_default_imported_support.model import Signal
 from generic_enum_generic_interface_default_imported_support.traits import Answer
 
-fn answer(value: ref dyn Answer[i32]) -> i32:
+fn answer(ref value: dyn Answer[i32]) -> i32:
     return value.answer(7)
 
 fn main():

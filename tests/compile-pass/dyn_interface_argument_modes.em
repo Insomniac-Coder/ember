@@ -5,7 +5,7 @@
 interface Adjust:
     fn adjust(amount: i32, ref mut value: i32) -> i32
 
-fn take(x: ref dyn Adjust) -> i32:
+fn take(ref x: dyn Adjust) -> i32:
     value: i32 = 1
     return x.adjust(value = ref mut value, amount = 2)
 

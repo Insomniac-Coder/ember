@@ -16,7 +16,7 @@ extend[T] Holder[T] implements Measure:
     fn measure() -> i32:
         return this.value
 
-fn measure(value: ref dyn Measure) -> i32:
+fn measure(ref value: dyn Measure) -> i32:
     return value.measure()
 
 fn main():
