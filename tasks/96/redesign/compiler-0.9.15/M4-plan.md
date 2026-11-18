@@ -273,6 +273,20 @@ there.
   6. **`weakref thread_shared T`** (`[GRM-3a]`, `[WK-12]`): a link kind of its own; an opening holds a count.
   7. **Biased counting** (`[RC-4]`: home and away counts, the queue, check points) comes after 1-6, on the header of M6b; until then a
      `thread_shared` value has one atomic count, which behaves the same and costs more. Measure `counted_sync_handles` then.
+- **Slice E, where it stands (2026-11-19, `5ae9d455`):** step 1 is built: `thread_shared x` (new value by `LinkAdopt`, owner by `LinkMake`,
+  `this`), `E7017` (`refuse_mixed_counting`), `E7014` (in `reject_change_through_reader`), a class `Send`/`ThreadShared` by its fields,
+  `TypeTable::settle_thread_shared` (run after the bodies) gives every class a `thread_shared` type names atomic counts. **Next, in order:**
+  (a) `link_of` and `synth_value_link` use `counted_of(ty, kind == ThreadShared)`; (b) `@sync` is `E0104` with `[THR-1]`'s text and a
+  migration removing the line (`has_attribute(.., "sync")` at the two `ClassDef`/generic-class sites, `is_sync: false` there); (c)
+  `SyncShared[T]`/`SyncShared(v)` are `E1010` with migrations to `thread_shared T`/`thread_shared v` (generalise `refuse_shared_type` and
+  `refuse_shared_value`), `std.sync`'s channel state becomes `thread_shared ChannelState[T]` (`state = this.state`, `Sender(thread_shared
+  this.state)`), its `SyncShared` struct goes; `std.ecs`: `@sync` off `Commands`, `cmds: thread_shared Commands`, `Array[thread_shared
+  Commands]`, `thread_shared commands`; (d) `note_stored_object` also records `Link` values and `kept_by_sharing` writes that link's own
+  word (`thread_shared `, `shares `); (e) `E7015` when a `thread_shared` value is made of a type with a part that is not `Send` and
+  `ThreadShared`, naming the field, and for a one-thread owner reaching a thread (today `E7004`); (f) the 48 test files with `@sync` and 6
+  with `SyncShared`: for each `@sync` class, `C(...)` becomes `thread_shared C(...)` and `: C` becomes `: thread_shared C`, then the rest
+  by the migrations; pages for `E7014`, `E7015`, `E7017`. Then: `[TYP-36]`'s row for owners; the full quick check (use
+  `scratchpad/qc_again.py`-style rechecks between), the suites three ways, the bench; M4 merges to `main`.
 - **Task 15, the suites** (round 6, H2): the quick check (failing 0; the touched folders on the C backend
   too), `cargo test -p` of every crate touched (`ember_types`, `ember_hir`, `ember_typeck`, `ember_mir`,
   `ember_analysis`, `ember_interp`, `ember_codegen_c`, `ember_codegen_llvm`, `ember_driver`; the reload
