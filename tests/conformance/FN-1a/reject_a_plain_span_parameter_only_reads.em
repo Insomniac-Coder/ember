@@ -5,7 +5,7 @@
 # whose message says to write `ref mut` on the parameter.
 
 fn blend(dst: MutSpan[float], src: Span[float]):
-    dst[0] += src[0]    #$ error[E3023]: `dst[0] += src[0]` writes an element of the caller's span, but `dst` only reads it; write `fn blend(ref mut dst: MutSpan[float], src: Span[float]):`
+    dst[0] += src[0]    #$ error[E3023]: `dst[0] += src[0]` writes an element of the caller's span, but `dst` only reads it; write `fn blend(ref mut dst: MutSpan[float], src: Span[float]):` and call it `blend(ref mut a.as_mut_span(), b.as_span())`
 
 fn main():
     a = [1.0]
