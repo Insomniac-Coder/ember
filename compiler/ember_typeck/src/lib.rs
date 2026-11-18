@@ -63671,10 +63671,13 @@ impl<'a> Checker<'a> {
             if self.is_option(rhs.ty) && names_none(lhs_ast) {
                 return self.option_test(rhs, present, span);
             }
-            // Any other operand that is not a handle (two references were
+            // `[EXP-9]` — an owner of a class object names that object.
+            lhs = self.read_link_through(lhs);
+            rhs = self.read_link_through(rhs);
+            // Any other operand that is not a handle or a link (two references were
             // compared above) is `E2150`.
             let handle = |this: &Self, ty: Ty| {
-                matches!(this.types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_)) || ty == this.common.error
+                matches!(this.types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Link { .. }) || ty == this.common.error
             };
             if !handle(self, lhs.ty) || !handle(self, rhs.ty) {
                 let shown = if handle(self, lhs.ty) { self.types.display(rhs.ty) } else { self.types.display(lhs.ty) };
@@ -63686,6 +63689,7 @@ impl<'a> Checker<'a> {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             let compatible = match (self.types.kind(lhs.ty), self.types.kind(rhs.ty)) {
+                (TyKind::Link { .. }, TyKind::Link { .. }) => lhs.ty == rhs.ty,
                 (TyKind::Class(left), TyKind::Class(right)) if left == right => true,
                 (TyKind::Class(left), TyKind::Class(right))
                     if self.types.class_is_subclass_of(*left, *right) =>

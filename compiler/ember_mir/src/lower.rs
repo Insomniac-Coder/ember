@@ -6836,9 +6836,9 @@ impl<'a> Builder<'a> {
     /// An operand of `==`: ODR-102 compares two owned callable values where
     /// they are, without moving either.
     fn lower_compared(&mut self, expr: &'a hir::Expr) -> Operand {
-        if matches!(self.types.kind(expr.ty), TyKind::Fn { abi: None, stateless: false, .. })
-            && matches!(&expr.kind, hir::ExprKind::Local(_) | hir::ExprKind::Field { .. }
-                | hir::ExprKind::Index { .. } | hir::ExprKind::Deref(_))
+        // `[EXP-9]` — `is` reads the two addresses and leaves both operands where they are.
+        if matches!(self.types.kind(expr.ty), TyKind::Fn { abi: None, stateless: false, .. } | TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Link { .. })
+            && is_place_expr(expr)
         {
             self.at(expr.span);
             return Operand::Copy(self.lower_place(expr));
