@@ -886,7 +886,7 @@ fn moved_place_ty(place: &Place, body: &Body, types: &TypeTable) -> Ty {
                 ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
                 variant = None;
             }
-            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_payload(ty).unwrap_or(ty),
+            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_field(ty).unwrap_or(ty),
             (Projection::Field(i), TyKind::Struct(id)) => {
                 let fields = &types.struct_def(*id).fields;
                 ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
@@ -931,7 +931,7 @@ fn through_class_field(place: &Place, body: &Body, types: &TypeTable) -> bool {
                 ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
                 variant = None;
             }
-            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_payload(ty).unwrap_or(ty),
+            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_field(ty).unwrap_or(ty),
             (Projection::Field(i), TyKind::Struct(id)) => {
                 let fields = &types.struct_def(*id).fields;
                 ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
@@ -957,7 +957,7 @@ fn class_object_of_field(place: &Place, body: &Body, types: &TypeTable) -> Optio
     for projection in &place.projection {
         match (projection, types.kind(ty)) {
             (Projection::Field(_), TyKind::Class(_)) => return Some(ty),
-            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_payload(ty).unwrap_or(ty),
+            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_field(ty).unwrap_or(ty),
             (Projection::Field(i), TyKind::Struct(id)) => ty = types.struct_def(*id).fields.get(*i).map(|f| f.ty).unwrap_or(ty),
             (Projection::Field(i), TyKind::Tuple(items)) => ty = items.get(*i).copied().unwrap_or(ty),
             (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => ty = *inner,
@@ -973,7 +973,7 @@ fn describe_place(place: &Place, body: &Body, types: &TypeTable) -> String {
     let mut ty = body.local(place.local).ty;
     for projection in &place.projection {
         match (projection, types.kind(ty)) {
-            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_payload(ty).unwrap_or(ty),
+            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_field(ty).unwrap_or(ty),
             (Projection::Field(i), TyKind::Struct(id)) => {
                 if let Some(field) = types.struct_def(*id).fields.get(*i) {
                     text.push('.');
@@ -1016,7 +1016,7 @@ fn deref_through_ref(place: &Place, body: &Body, types: &TypeTable) -> bool {
                 ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
                 variant = None;
             }
-            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_payload(ty).unwrap_or(ty),
+            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_field(ty).unwrap_or(ty),
             (Projection::Field(i), TyKind::Struct(id)) => {
                 let fields = &types.struct_def(*id).fields;
                 ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);

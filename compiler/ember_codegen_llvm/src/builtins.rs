@@ -825,7 +825,7 @@ impl<'a> FnCx<'_, 'a> {
                 Ok(())
             }
             // `[RC-1]`, `[WK-11]` (M4 slice A) — one more owner (+1) or link (a weak +1) of the object,
-            // the same pointer; a counted copy of an owner's handle; an opening is an upgrade.
+            // the same pointer; an opening is an upgrade.
             Builtin::LinkMake { kind, link } => {
                 let handle = self.pointer(&args[0])?;
                 let TyKind::Link { target, .. } = self.m.ty.kind(*link).clone() else { return unsupported("a link builtin without a link") };
@@ -838,11 +838,6 @@ impl<'a> FnCx<'_, 'a> {
             // `[RC-1]` — the one owner taken over: the same pointer, no count.
             Builtin::LinkAdopt { .. } => {
                 let handle = self.pointer(&args[0])?;
-                self.store_result(dest, &handle, Sc::Ptr, false)
-            }
-            Builtin::LinkTarget { class, .. } => {
-                let handle = self.pointer(&args[0])?;
-                self.retain_handle(&handle, *class);
                 self.store_result(dest, &handle, Sc::Ptr, false)
             }
             Builtin::LinkOpen { .. } => {

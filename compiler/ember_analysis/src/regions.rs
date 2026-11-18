@@ -2523,7 +2523,7 @@ pub(crate) fn project_type(types: &TypeTable, ty: Ty, projection: &Projection, v
             Some(v) => types.enum_def(*id).variants[v].fields.get(*i).map_or(ty, |field| field.ty),
             None => ty,
         },
-        (Projection::Field(0), TyKind::Link { .. }) => types.link_payload(ty).unwrap_or(ty),
+        (Projection::Field(0), TyKind::Link { .. }) => types.link_field(ty).unwrap_or(ty),
         (Projection::Field(i), TyKind::Struct(id)) => types.struct_def(*id).fields.get(*i).map_or(ty, |field| field.ty),
         (Projection::Field(i), TyKind::Class(id)) => types.class_field_at(*id, *i).map_or(ty, |field| field.ty),
         (Projection::Field(i), TyKind::Tuple(items)) => items.get(*i).copied().unwrap_or(ty),

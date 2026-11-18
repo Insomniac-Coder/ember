@@ -1823,7 +1823,7 @@ impl<'a> Planner<'a> {
                     None => at,
                     Some(variant) => self.types.enum_def(*id).variants[variant].fields.get(*index).map(|f| f.ty).unwrap_or(at),
                 },
-                (Projection::Field(0), TyKind::Link { .. }) => self.types.link_payload(at).unwrap_or(at),
+                (Projection::Field(0), TyKind::Link { .. }) => self.types.link_field(at).unwrap_or(at),
                 (Projection::Field(index), TyKind::Struct(id)) => self.types.struct_def(*id).fields.get(*index).map(|f| f.ty).unwrap_or(at),
                 (Projection::Field(index), TyKind::Class(id)) => self.types.class_field_at(*id, *index).map(|field| field.ty).unwrap_or(at),
                 (Projection::Field(index), TyKind::Tuple(items)) => items.get(*index).copied().unwrap_or(at),

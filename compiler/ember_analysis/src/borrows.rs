@@ -1797,7 +1797,7 @@ fn field_boundaries(body: &Body, types: &TypeTable, place: &Place, self_covered:
                 let Some(v) = variant.take() else { continue };
                 ty = types.enum_def(*id).variants[v].fields.get(*i).map_or(ty, |f| f.ty);
             }
-            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_payload(ty).unwrap_or(ty),
+            (Projection::Field(0), TyKind::Link { .. }) => ty = types.link_field(ty).unwrap_or(ty),
             (Projection::Field(i), TyKind::Struct(id)) => {
                 ty = types.struct_def(*id).fields.get(*i).map_or(ty, |f| f.ty);
             }

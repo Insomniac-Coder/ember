@@ -888,6 +888,17 @@ impl TypeTable {
         }
     }
 
+    /// `[RC-1]` (M4 slice C) — the type of a link's one logical field (`Field(0)`): the pointer to the
+    /// value in its block, or, for a link to a class object, the object's handle: the link is the
+    /// object's own pointer, so an owner read where the object is wanted is that same place, with no
+    /// count.
+    pub fn link_field(&self, ty: Ty) -> Option<Ty> {
+        match *self.kind(ty) {
+            TyKind::Link { target, .. } if matches!(self.kind(target), TyKind::Class(_)) => Some(target),
+            _ => self.link_payload(ty),
+        }
+    }
+
     pub fn intern(&mut self, kind: TyKind) -> Ty {
         if let Some(&ty) = self.lookup.get(&kind) {
             return ty;
@@ -1852,6 +1863,9 @@ impl TypeTable {
         match self.kind(ty) {
             TyKind::Ref { .. } | TyKind::Ptr { .. } | TyKind::Span { .. } | TyKind::Str | TyKind::Error => false,
             TyKind::Dyn { .. } => false,
+            // `[TYP-45]` (M4 slice C) — a class handle is the object's address, not `Copy`: a parameter
+            // that reads the object takes that address, with no count and no second indirection.
+            TyKind::Class(_) | TyKind::ClassInterface(_) => false,
             // A view (a `@view` struct, a tuple holding one) is already a
             // borrow and passes as itself, keeping each field's own region.
             _ if self.is_view(ty) => false,

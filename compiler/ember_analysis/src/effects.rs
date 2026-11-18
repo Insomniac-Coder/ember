@@ -1665,7 +1665,7 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::AssertDisjoint { .. } => (Effects::CHECK_ALIASING, "`assert_disjoint`"),
         // `[RC-1]`, `[WK-11]` — a count or a weak count of one more, with its limit's stop; an opening
         // tests whether the target lives.
-        B::LinkMake { .. } | B::LinkTarget { .. } => (Effects::PANIC, "one more owner or link, whose count may reach its limit"),
+        B::LinkMake { .. } => (Effects::PANIC, "one more owner or link, whose count may reach its limit"),
         B::LinkAdopt { .. } => (Effects::NONE, "the one owner of a class object, made a `shares mut` owner"),
         B::LinkOpen { .. } => (Effects::CHECK_STALE, "`exists as` of a `weakref` link"),
         B::LazyStatic { .. } => (Effects::SYNC | Effects::BLOCK, "a static's first access, which may wait for another thread's"),

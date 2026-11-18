@@ -10703,8 +10703,7 @@ impl Emitter<'_> {
                         return format!("(({link_c})NULL)");
                     }
                     // `[RC-1]`, `[WK-11]` — one more owner (+1) or link (a weak +1) of the object the
-                    // operand points at, the same pointer; `LinkTarget` is a counted copy of an
-                    // owner's handle (M4 slice A).
+                    // operand points at, the same pointer.
                     Builtin::LinkMake { kind, link } => {
                         let header = ember_branding::runtime("obj_header");
                         let link_c = self.c_type(*link);
@@ -10719,12 +10718,6 @@ impl Emitter<'_> {
                     Builtin::LinkAdopt { link } => {
                         let link_c = self.c_type(*link);
                         return format!("(({link_c}){})", rendered[0]);
-                    }
-                    Builtin::LinkTarget { class, .. } => {
-                        let header = ember_branding::runtime("obj_header");
-                        let class_c = self.c_type(*class);
-                        let count = self.count_function("retain", *class);
-                        return format!("({count}(({header}*){}), ({class_c}){})", rendered[0], rendered[0]);
                     }
                     Builtin::LinkOpen { class, .. } => {
                         let class_c = self.c_type(*class);
@@ -11250,6 +11243,8 @@ impl Emitter<'_> {
                             c_align(&inner_c),
                         );
                     }
+                    // `[RC-1]` — a link to a class object is the object's own pointer: the same place.
+                    (_, TyKind::Link { .. }) => {}
                     (_, TyKind::Struct(id)) => {
                         let def = self.types.struct_def(*id);
                         // The checker models Box auto-deref as private field 0
@@ -11372,7 +11367,7 @@ impl Emitter<'_> {
                 let fields = &self.types.enum_def(*id).variants[variant].fields;
                 plain(fields.get(*index).map(|f| f.ty).unwrap_or(at.ty))
             }
-            (Projection::Field(0), TyKind::Link { .. }) => plain(self.types.link_payload(at.ty).unwrap_or(at.ty)),
+            (Projection::Field(0), TyKind::Link { .. }) => plain(self.types.link_field(at.ty).unwrap_or(at.ty)),
             (Projection::Field(index), TyKind::Struct(id)) => {
                 let fields = &self.types.struct_def(*id).fields;
                 plain(fields.get(*index).map(|f| f.ty).unwrap_or(at.ty))

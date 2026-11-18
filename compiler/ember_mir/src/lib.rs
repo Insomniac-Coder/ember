@@ -485,7 +485,7 @@ pub fn unaligned_field(types: &ember_types::TypeTable, body: &Body, place: &Plac
                 }
                 field.map_or(ty, |field| field.ty)
             }
-            (Projection::Field(0), TyKind::Link { .. }) => types.link_payload(ty).unwrap_or(ty),
+            (Projection::Field(0), TyKind::Link { .. }) => types.link_field(ty).unwrap_or(ty),
             (Projection::Field(i), TyKind::Struct(id)) => {
                 let field = types.struct_def(*id).fields.get(*i);
                 if packed.is_none() && types.layout_attrs(ty).packed {

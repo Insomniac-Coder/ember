@@ -2109,10 +2109,6 @@ pub enum Builtin {
     /// argument, the handle, is handed over; the same pointer, and no count, since the object still has
     /// one owner. The declaration of a local a line of its function shares.
     LinkAdopt { link: Ty },
-    /// `[RC-1]` — a `shares C` owner read where a `C` is wanted: its one argument is a reference to
-    /// the owner; a counted copy of the handle (+1), which the copy's end gives back (until M4's
-    /// slice C makes such a read a view).
-    LinkTarget { link: Ty, class: Ty },
     /// `[WK-12]` — `if w exists as p:` on a `weakref C` link: `Some` of the object while it lives
     /// (a +1, given back at the view's end), `None` once it has ended; for a value in a block, `Some` of
     /// a `shares T` owner.
@@ -2552,7 +2548,6 @@ impl Builtin {
             Builtin::LinkNone { .. } => "None",
             Builtin::LinkMake { kind, .. } => kind.word(),
             Builtin::LinkAdopt { .. } => "shares mut",
-            Builtin::LinkTarget { .. } => "the owner's object",
             Builtin::LinkOpen { .. } => "exists as",
             Builtin::ArrayPush => "push",
             Builtin::ArrayLen => "len",

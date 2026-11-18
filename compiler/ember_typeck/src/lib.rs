@@ -21736,10 +21736,9 @@ impl<'a> Checker<'a> {
         entry
     }
 
-    /// `[RC-1]` — an owner (`shares T`, `shares mut T`) read where its value is wanted: a class
-    /// object's handle (M4 slice A: a counted copy, which its end gives back), or the place of the
-    /// value in its block, rooted at the owner (as `Shared`'s was), so that borrows of it are borrows
-    /// of the owner.
+    /// `[RC-1]` — an owner (`shares T`, `shares mut T`) read where its value is wanted: the place of
+    /// the object's handle, which is the owner's own pointer, or of the value in its block, rooted at the
+    /// owner, so that borrows of it are borrows of the owner and no count is taken.
     fn read_link_through(&mut self, owner: Expr) -> Expr {
         let TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut, target } = *self.types.kind(owner.ty) else {
             return owner;
@@ -21750,7 +21749,7 @@ impl<'a> Checker<'a> {
             let field = Expr { ty: pointer, kind: ExprKind::Field { base: Box::new(owner), index: 0 }, span };
             return Expr { ty: target, kind: ExprKind::Deref(Box::new(field)), span };
         }
-        Expr { ty: target, kind: ExprKind::Builtin { which: Builtin::LinkTarget { link, class: target }, args: vec![owner] }, span }
+        Expr { ty: target, kind: ExprKind::Field { base: Box::new(owner), index: 0 }, span }
     }
 
     /// `[WK-12]` — a `weakref T` link opened by `exists as`: `Some` while its target lives, of the class
@@ -48099,10 +48098,10 @@ impl<'a> Checker<'a> {
         let mut current = place;
         let owner = loop {
             match &current.kind {
-                ExprKind::Builtin { which: Builtin::LinkTarget { link, .. }, args }
-                    if matches!(self.types.kind(*link), TyKind::Link { kind: ember_types::LinkKind::Shares, .. }) =>
+                ExprKind::Field { base, index: 0 }
+                    if matches!(self.types.kind(base.ty), TyKind::Link { kind: ember_types::LinkKind::Shares, target } if matches!(self.types.kind(*target), TyKind::Class(_))) =>
                 {
-                    break &args[0];
+                    break &**base;
                 }
                 ExprKind::Deref(inner) => {
                     if let ExprKind::Field { base, index: 0 } = &inner.kind
@@ -64924,7 +64923,6 @@ fn is_place(kind: &ExprKind) -> bool {
         ExprKind::Field { base, .. } => is_place(&base.kind),
         ExprKind::Deref(_) => true,
         // `[RC-1]` — a class object read through an owner is the object the owner names, where it is.
-        ExprKind::Builtin { which: Builtin::LinkTarget { .. }, args } => is_place(&args[0].kind),
         _ => false,
     }
 }

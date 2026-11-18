@@ -3011,7 +3011,7 @@ impl<'a> Builder<'a> {
                 self.lower_option_query(place, &args[0], *which, *class, *option, expr.span);
             }
             // `[RC-1]`, `[WK-11]` — the owner or the handle is read where it is, never moved.
-            hir::ExprKind::Builtin { which: which @ (hir::Builtin::LinkMake { .. } | hir::Builtin::LinkTarget { .. }), args } => {
+            hir::ExprKind::Builtin { which: which @ hir::Builtin::LinkMake { .. }, args } => {
                 let source = self.lower_operand_borrowed(&args[0]);
                 let next = self.new_block();
                 self.terminate(Terminator::Call {
