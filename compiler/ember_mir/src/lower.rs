@@ -4041,9 +4041,16 @@ impl<'a> Builder<'a> {
             | hir::ExprKind::Deref(_)
             | hir::ExprKind::Index { .. } => self.lower_place(scrutinee),
             _ => {
+                let temps = self.statement_temps.len();
                 let temp = self.temp(scrutinee.ty, scrutinee.span);
                 self.push(StmtKind::StorageLive(temp));
                 self.lower_into(Place::local(temp), scrutinee);
+                // `[EXP-4]` — a temporary of the subject (`match owns JOBS.lock().pop():` holds the
+                // lock for the pop) is dropped before the chosen arm runs, unless the value the subject
+                // gives holds a view an arm's pattern may name: then it lives with the statement.
+                if !holds_views(self.types, scrutinee.ty) {
+                    self.emit_statement_temps(temps);
+                }
                 Place::local(temp)
             }
         };
@@ -7757,6 +7764,27 @@ fn below_top(types: &ember_types::TypeTable, end: &hir::Expr, ty: Ty) -> bool {
         hir::ExprKind::Int(value) => ember_types::int_max(types, ty).is_some_and(|top| *value < top),
         _ => false,
     }
+}
+
+/// `[EXP-4]` — whether a value of `ty` holds a view (a list's elements and what an option or a
+/// tuple holds included), which may point into a temporary of the statement.
+fn holds_views(types: &ember_types::TypeTable, ty: Ty) -> bool {
+    fn walk(types: &ember_types::TypeTable, ty: Ty, seen: &mut Vec<Ty>) -> bool {
+        if seen.contains(&ty) {
+            return false;
+        }
+        seen.push(ty);
+        match types.kind(ty) {
+            TyKind::Vec { elem, .. } => walk(types, *elem, seen),
+            TyKind::Tuple(items) => items.iter().any(|&item| walk(types, item, seen)),
+            TyKind::Enum(id) => {
+                types.may_be_view(ty) || types.enum_def(*id).variants.iter().any(|variant| variant.fields.iter().any(|field| walk(types, field.ty, seen)))
+            }
+            TyKind::Struct(id) => types.may_be_view(ty) || types.struct_def(*id).fields.iter().any(|field| walk(types, field.ty, seen)),
+            _ => types.may_be_view(ty),
+        }
+    }
+    walk(types, ty, &mut Vec::new())
 }
 
 /// `[EXP-4]` (D-342) — a value that needs no drop and holds nothing that points
