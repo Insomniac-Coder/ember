@@ -961,6 +961,7 @@ fn check_round(
     checker.note_c_declarations();
     let after_bodies_mark = checker.sink.mark();
     checker.report_parameter_changes();
+    checker.types.settle_thread_shared();
     checker.report_unstated_safety();
     checker.report_unneeded_unsafe();
     let after_bodies = after_bodies_mark..checker.sink.mark();
@@ -21385,14 +21386,16 @@ impl<'a> Checker<'a> {
             ast::LinkKind::Shares => LinkKind::Shares,
             ast::LinkKind::SharesMut => LinkKind::SharesMut,
             ast::LinkKind::Weakref => LinkKind::Weakref,
+            ast::LinkKind::ThreadShared => LinkKind::ThreadShared,
             other => {
                 self.error(codes::E0900, span, format!("`{}` before a value is not built by this compiler yet", other.word()));
                 return self.synth(value);
             }
         };
         let written = unparenthesized(value);
-        // `[RC-1]` — `shares this` and `shares mut this` are refused in every method.
-        if kind != LinkKind::Weakref && matches!(written.kind, ast::ExprKind::SelfExpr) {
+        // `[RC-1]` — `shares this` and `shares mut this` are refused in every method; `thread_shared this`
+        // says every object of the class is `thread_shared` (`[OWN-13]`).
+        if matches!(kind, LinkKind::Shares | LinkKind::SharesMut) && matches!(written.kind, ast::ExprKind::SelfExpr) {
             self.refuse_owner_of_this(kind, span);
             return error;
         }
@@ -21435,6 +21438,11 @@ impl<'a> Checker<'a> {
                     self.refuse_changing_owner_of_reader(written, &source, target, span);
                     return error;
                 }
+                // `[RC-1]`, `[THR-1]` — one kind of counting for one value.
+                if (kind == LinkKind::ThreadShared) != (owner == LinkKind::ThreadShared) && kind != LinkKind::Weakref {
+                    self.refuse_mixed_counting(kind, &place, &source, span);
+                    return error;
+                }
                 let link = self.link_of(kind, target);
                 Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkMake { kind, link }, args: vec![source] }, span }
             }
@@ -21442,6 +21450,15 @@ impl<'a> Checker<'a> {
                 if kind == LinkKind::Weakref {
                     if new_value {
                         self.refuse_link_to_a_new_value(written, source.ty, span);
+                        return error;
+                    }
+                } else if new_value {
+                    // `[RC-1]` — a new object's one owner is the first of the owners: no count is taken.
+                    let link = self.link_of(kind, source.ty);
+                    return Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkAdopt { link }, args: vec![source] }, span };
+                } else if kind == LinkKind::ThreadShared {
+                    if !matches!(written.kind, ast::ExprKind::SelfExpr) {
+                        self.refuse_mixed_counting(kind, &place, &source, span);
                         return error;
                     }
                 } else if self.refuse_owner_of_one_owner_place(kind, written, &source, span) {
@@ -21452,8 +21469,25 @@ impl<'a> Checker<'a> {
                 let link = self.link_of(kind, source.ty);
                 Expr { ty: link, kind: ExprKind::Builtin { which: Builtin::LinkMake { kind, link }, args: vec![source] }, span }
             }
+            _ if kind == LinkKind::ThreadShared && !new_value => {
+                self.refuse_mixed_counting(kind, &place, &source, span);
+                error
+            }
             _ => self.synth_value_link(kind, written, source, span),
         }
+    }
+
+    /// `[THR-1]`, `[RC-1]` (`E7017`) — `thread_shared` of a value made otherwise, or `shares` of one made
+    /// `thread_shared`: its owners are counted one way from its making.
+    fn refuse_mixed_counting(&mut self, kind: ember_types::LinkKind, place: &str, source: &Expr, span: Span) {
+        let made = root_local(&source.kind).filter(|_| matches!(source.kind, ExprKind::Local(_))).and_then(|local| self.line_of(self.locals[local.0 as usize].span));
+        let at = made.map_or_else(String::new, |line| format!(" (made on line {line})"));
+        let message = if kind == ember_types::LinkKind::ThreadShared {
+            format!("`{place}` was not made `thread_shared`{at}, so its owners are counted on one thread; to share it between threads, create it shared: `{place} = thread_shared ...`")
+        } else {
+            format!("`{place}` is `thread_shared`{at}, so its owners are counted for several threads; for one more owner write `q = thread_shared {place}`, and for a name that only reads it `q = ref {place}`")
+        };
+        self.error(codes::E7017, span, message);
     }
 
     /// `[RC-7]`, `[OWN-13]` — whether an owner that may change the value can be made from `source`, an
@@ -21745,7 +21779,7 @@ impl<'a> Checker<'a> {
     /// the object's handle, which is the owner's own pointer, or of the value in its block, rooted at the
     /// owner, so that borrows of it are borrows of the owner and no count is taken.
     fn read_link_through(&mut self, owner: Expr) -> Expr {
-        let TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut, target } = *self.types.kind(owner.ty) else {
+        let TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::SharesMut | ember_types::LinkKind::ThreadShared, target } = *self.types.kind(owner.ty) else {
             return owner;
         };
         let span = owner.span;
@@ -48256,14 +48290,14 @@ impl<'a> Checker<'a> {
         let owner = loop {
             match &current.kind {
                 ExprKind::Field { base, index: 0 }
-                    if matches!(self.types.kind(base.ty), TyKind::Link { kind: ember_types::LinkKind::Shares, target } if matches!(self.types.kind(*target), TyKind::Class(_))) =>
+                    if matches!(self.types.kind(base.ty), TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::ThreadShared, target } if matches!(self.types.kind(*target), TyKind::Class(_))) =>
                 {
                     break &**base;
                 }
                 ExprKind::Deref(inner) => {
                     if let ExprKind::Field { base, index: 0 } = &inner.kind
                         && self.types.link_payload(base.ty).is_some()
-                        && matches!(self.types.kind(base.ty), TyKind::Link { kind: ember_types::LinkKind::Shares, .. })
+                        && matches!(self.types.kind(base.ty), TyKind::Link { kind: ember_types::LinkKind::Shares | ember_types::LinkKind::ThreadShared, .. })
                     {
                         break &**base;
                     }
@@ -48274,11 +48308,21 @@ impl<'a> Checker<'a> {
                 _ => return false,
             }
         };
-        let TyKind::Link { target, .. } = *self.types.kind(owner.ty) else { return false };
+        let TyKind::Link { kind: owner_kind, target } = *self.types.kind(owner.ty) else { return false };
         let noun = self.link_noun(target);
         let shown = self.types.display(target);
         let change = self.written_line(span).unwrap_or_else(|| "this change".to_string());
         let held = self.written_line(owner.span).unwrap_or_else(|| "the owner".to_string());
+        // `[THR-1]` — a `thread_shared` value changes only through what is made for it.
+        if owner_kind == ember_types::LinkKind::ThreadShared {
+            let made = root_local(&owner.kind).filter(|_| matches!(owner.kind, ExprKind::Local(_))).and_then(|local| self.line_of(self.locals[local.0 as usize].span));
+            let at = made.map_or_else(String::new, |line| format!(" (line {line})"));
+            self.sink.emit(
+                Diagnostic::error(codes::E7014, span, format!("`{held}` is shared between threads{at}, so no owner changes it directly, and `{change}` does"))
+                    .help(format!("set it where the {noun} is made, `{held} = thread_shared {shown}(...)`, or keep the state in an `Atomic` or under a lock")),
+            );
+            return true;
+        }
         let mut refused = Diagnostic::error(codes::E3023, span, format!("`{change}` changes the {noun}, but `{held}` only reads the {noun} it shares"))
             .note("an owner made with `shares` only reads the value; one made with `shares mut`, and the name it was first shared from, change it [RC-7]");
         let declared = root_local(&owner.kind).filter(|_| matches!(owner.kind, ExprKind::Local(_)));

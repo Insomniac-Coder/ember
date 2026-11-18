@@ -888,6 +888,36 @@ impl TypeTable {
         }
     }
 
+    /// `[RC-4]` — every class a `thread_shared` type names counts its owners atomically, with its whole
+    /// family, since an object is reached through its base classes too. Biased counting replaces this
+    /// with the two counts on the header of M6b.
+    pub fn settle_thread_shared(&mut self) {
+        let root = |types: &Self, mut id: ClassId| {
+            while let Some(base) = types.class_def(id).base {
+                id = base;
+            }
+            id
+        };
+        let roots: HashSet<ClassId> = self
+            .kinds
+            .iter()
+            .filter_map(|kind| match kind {
+                TyKind::Link { kind: LinkKind::ThreadShared, target } => match self.kind(*target) {
+                    TyKind::Class(id) => Some(root(self, *id)),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        if roots.is_empty() {
+            return;
+        }
+        let family: Vec<ClassId> = self.classes().map(|(id, _)| id).filter(|&id| roots.contains(&root(self, id))).collect();
+        for id in family {
+            self.class_def_mut(id).is_sync = true;
+        }
+    }
+
     /// A link of `kind` to `target`, with the pointer type `link_payload` finds for a value in a block.
     pub fn intern_link(&mut self, kind: LinkKind, target: Ty) -> Ty {
         if !matches!(self.kind(target), TyKind::Class(_)) {
@@ -2012,9 +2042,18 @@ impl TypeTable {
             | TyKind::Float(_) | TyKind::CLongDouble | TyKind::Void | TyKind::Never | TyKind::Str
             | TyKind::Range(_) | TyKind::Fn { .. } | TyKind::FnItem { .. } | TyKind::Error => (true, true),
             TyKind::Newtype(id) => both(self.newtype_def(*id).repr, visiting),
+            // `[THR-8]`, `[THR-9]` — a class object by its class's fields, inherited ones included.
             TyKind::Class(id) => {
-                let safe = self.class_def(*id).is_sync;
-                (safe, safe)
+                let mut facts = (true, true);
+                if !self.class_def(*id).is_sync {
+                    for index in 0..self.class_field_count(*id) {
+                        if let Some(field) = self.class_field_at(*id, index) {
+                            let (send, shared) = both(field.ty, visiting);
+                            facts = (facts.0 && send, facts.1 && shared);
+                        }
+                    }
+                }
+                facts
             }
             TyKind::CStr => (false, false),
             TyKind::Ref { mutable, inner } | TyKind::Span { mutable, elem: inner } => {
