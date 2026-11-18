@@ -6,5 +6,5 @@
 
 fn main():
     name: Option[String] = Some(String("ann"))
-    upper = name.map(fn(s: String) -> String => s.to_upper())  #$ error[E3028]: `map` takes `fn(s: String) -> String => s.to_upper()` over
+    upper = name.map(fn(owns s: String) -> String => s.to_upper())  #$ error[E3028]: `map` takes `fn(owns s: String) -> String => s.to_upper()` over
     println(upper)

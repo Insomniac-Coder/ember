@@ -13,10 +13,10 @@ fn join(owns a: String, tail: StrView) -> String:
 fn main():
     tail = "!"
     name: Option[String] = Some("hi".to_string())
-    println(name.map(owns owned fn(s) => join(owns s, tail)))
+    println(name.map(owns owned fn(owns s) => join(owns s, tail)))
     keep = "kept".to_string()
     failed: Result[int, String] = Err("bad".to_string())
-    println(failed.unwrap_or_else(owns owned fn(e) => e.len() + keep.len()))
+    println(failed.unwrap_or_else(owns owned fn(owns e) => e.len() + keep.len()))
     word = "word".to_string()
     fine: Result[int, String] = Ok(1)
-    println(fine.map(owns owned fn(v) => v + word.len() - 1))
+    println(fine.map(owns owned fn(owns v) => v + word.len() - 1))

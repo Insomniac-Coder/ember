@@ -16,6 +16,6 @@ struct Unit:
 
 fn main():
     bad: Result[Unit, SerError] = json.from_str[Unit]("{\"hp\":200}")
-    println(bad.map(owns fn(u) => u.hp))
+    println(bad.map(owns fn(owns u) => u.hp))
     good: Result[Unit, SerError] = json.from_str[Unit]("{\"hp\":50}")
-    println(good.map(owns fn(u) => u.hp).unwrap_or(0))
+    println(good.map(owns fn(owns u) => u.hp).unwrap_or(0))
