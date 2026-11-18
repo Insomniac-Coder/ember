@@ -26,6 +26,7 @@ mod objects;
 mod views;
 mod ffi;
 mod packs;
+mod infinite_size;
 
 pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
 pub use derives::component_registry_key;
@@ -668,6 +669,7 @@ fn check_round(
     // D-761 — an `SoA[T]` a signature named above `T`'s declaration was made before `T` had fields.
     checker.refresh_soa_columns();
     checker.check_view_attributes();
+    checker.check_infinite_size();
     // `[FFI-5]` — each struct `import c` wrote, laid out as Clang lays it out.
     for (index, loaded) in modules.iter().enumerate() {
         if let Some(foreign) = &loaded.foreign {
